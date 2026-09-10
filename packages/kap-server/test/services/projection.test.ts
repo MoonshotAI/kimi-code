@@ -1228,6 +1228,14 @@ describe('SessionProjection', () => {
       },
     };
     agent.bus.emit(ev({ type: 'tool.call.started', turnId: 1, toolCallId: 'call_1', name: 'Bash', args: '{}' }) as Event2<any>);
+    agent.bus.emit(ev({ type: 'compaction.blocked', turnId: 1 }) as Event2<any>);
+    agent.bus.emit(ev({ type: 'compaction.started', trigger: 'auto' }) as Event2<any>);
+    agent.bus.emit(
+      ev({
+        type: 'compaction.completed',
+        result: { summary: 'compacted', compactedCount: 3, tokensBefore: 10, tokensAfter: 5 },
+      }) as Event2<any>,
+    );
     agent.activity = {};
     agent.bus.emit(ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }) as Event2<any>);
     agent.bus.emit(
@@ -1282,6 +1290,11 @@ describe('SessionProjection', () => {
         ),
       ).toBe(true);
     });
+    const mainStates = ofType(received, 'agent.state').filter((m) => m.agent_id === 'main');
+    const compactingStates = mainStates.filter((m) => m.turn?.status === 'compacting');
+    expect(compactingStates).toHaveLength(1);
+    const lastActingIndex = mainStates.findLastIndex((m) => m.turn?.status === 'acting');
+    expect(lastActingIndex).toBeGreaterThan(mainStates.indexOf(compactingStates[0]!));
     const mainIdle = ofType(received, 'agent.state')
       .filter((m) => m.agent_id === 'main')
       .at(-1)!;
