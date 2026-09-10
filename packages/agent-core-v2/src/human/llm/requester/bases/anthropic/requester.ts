@@ -1,10 +1,14 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { assign, shake } from 'radashi';
 
 import { headersToRecord } from '#/llm/errors';
+import { providerImagePolicy } from '#/llm/media/image-formats';
 import type { LlmModel } from '#/llm/model';
 import { toLlmSyntaxErrorMessage } from '#/llm/syntax-errors';
-import type { ProtocolBase } from '#/llm/protocol/base';
-import { resolveModelConnection, type ProtocolTrait, type TraitContext } from '#/llm/protocol/trait';
+import type { ProtocolBase, ProtocolRequesterOptions, TraitContext } from '#/llm/protocol/base';
+import { resolveModelConnection } from '#/llm/protocol/connection';
+import { applyThinking } from '#/llm/protocol/thinking';
+import { resolveMaxCompletionCap, type FormatRequestInput } from '#/llm/protocol/format';
 import {
   mergeRequestHeaders,
   type LlmClientContext,
@@ -22,19 +26,33 @@ import {
   sanitizeToolCallId,
 } from '../tool-call-id';
 import { getAnthropicModelCapability } from './capability';
+import type { AnthropicTrait } from './trait';
 import {
+  applyAnthropicResponseFormat,
+  applyAnthropicThinkingKeep,
+  assembleAnthropicRequest,
   createAnthropicFormat,
+  defaultAnthropicMergeHistory,
+  defaultAnthropicTool,
+  encodeAnthropicMaxTokens,
+  encodeAnthropicRequest,
+  lowerAnthropicRequest,
   type AnthropicFormatOptions,
   type AnthropicRequestParams,
   convertAnthropicError,
 } from './format';
+import { isAnthropicWireMessageEmpty } from './lower';
+import { encodeThinking, INTERLEAVED_THINKING_BETA, resolveDefaultMaxTokens } from './profile';
 
 const ANTHROPIC_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
   normalize: (id) => sanitizeToolCallId(id, 64),
   maxLength: 64,
 };
 
-export type AnthropicBaseOptions = AnthropicFormatOptions & LlmRequesterOptions<Anthropic>;
+export interface AnthropicRequesterOptions
+  extends ProtocolRequesterOptions<AnthropicTrait>,
+    AnthropicFormatOptions,
+    LlmRequesterOptions<Anthropic> {}
 
 function anthropicCustomHeaderEnvNames(): string[] {
   const customHeaders = process.env['ANTHROPIC_CUSTOM_HEADERS'];
@@ -74,8 +92,68 @@ function createClient(model: LlmModel, headers: Record<string, string> | undefin
   });
 }
 
+export interface AnthropicRequestPlanOptions {
+  readonly trait?: AnthropicTrait;
+  readonly betaApi?: boolean;
+}
+
+export function planAnthropicRequest(
+  input: FormatRequestInput,
+  options?: AnthropicRequestPlanOptions,
+): AnthropicRequestParams {
+  const trait = options?.trait;
+  const ctx: TraitContext = { model: input.model };
+  let kwargs: Record<string, unknown> = { betaFeatures: [INTERLEAVED_THINKING_BETA] };
+  if (input.thinking !== undefined) {
+    kwargs = applyThinking(kwargs, input.thinking, trait?.thinking, ctx, (t, c) =>
+      encodeThinking(t, c.model),
+    ).kwargs;
+  }
+  if (input.responseFormat !== undefined) {
+    kwargs = applyAnthropicResponseFormat(kwargs, input.responseFormat);
+  }
+  const cap = resolveMaxCompletionCap(input);
+  if (cap !== undefined) {
+    const capped = resolveDefaultMaxTokens(ctx.model.model, cap);
+    kwargs = {
+      ...kwargs,
+      ...(trait?.maxCompletionTokens?.(capped, ctx) ?? encodeAnthropicMaxTokens(capped)),
+    };
+  }
+  kwargs = assign(kwargs, input.extraParams?.anthropic ?? {});
+  if (input.thinking?.keep !== undefined) {
+    kwargs = applyAnthropicThinkingKeep(kwargs, input.thinking.keep);
+  }
+  kwargs = shake(kwargs);
+
+  const acceptedMimes =
+    trait?.acceptedImageMimes?.(ctx) ?? providerImagePolicy().acceptedMimes;
+  const lowered = lowerAnthropicRequest(input, acceptedMimes);
+  const converted = lowered
+    .flatMap(({ source, message }) => {
+      if (trait?.convertMessage === undefined) {
+        return [message];
+      }
+      const hooked = trait.convertMessage(source, message, ctx);
+      return hooked === null ? [] : [hooked];
+    })
+    .filter((message) => !isAnthropicWireMessageEmpty(message));
+  const merged = trait?.mergeHistory?.(converted, ctx) ?? defaultAnthropicMergeHistory(converted);
+  const tools = input.tools.map(
+    (tool) => trait?.convertTool?.(tool, ctx) ?? defaultAnthropicTool(tool),
+  );
+  const assembly = assembleAnthropicRequest(input, {
+    messages: merged,
+    tools,
+    kwargs,
+    betaApi: options?.betaApi === true,
+  });
+  const finalParams = trait?.buildParams?.(assembly.params, ctx) ?? assembly.params;
+  return encodeAnthropicRequest({ ...assembly, params: finalParams });
+}
+
 interface AnthropicTransport {
-  readonly trait: ProtocolTrait | undefined;
+  readonly connection: AnthropicRequesterOptions['connection'];
   readonly ctx: TraitContext;
   readonly format: ReturnType<typeof createAnthropicFormat>;
   readonly resolveClient: (request: LlmClientContext) => Anthropic;
@@ -87,10 +165,10 @@ async function internalGenerate(
   request: AnthropicRequestParams,
   transport: AnthropicTransport,
 ): Promise<void> {
-  const { trait, ctx, format, resolveClient, signal, onEvent } = transport;
+  const { connection, ctx, format, resolveClient, signal, onEvent } = transport;
   const client = resolveClient({
     model: ctx.model,
-    headers: mergeRequestHeaders(trait?.defaultHeaders?.(ctx), ctx.model.defaultHeaders),
+    headers: mergeRequestHeaders(connection?.defaultHeaders?.(ctx), ctx.model.defaultHeaders),
   });
   onEvent?.({ type: 'llm.sent' });
   const betaHeaders =
@@ -102,7 +180,7 @@ async function internalGenerate(
     ? await client.beta.messages.create(request.params, requestOptions).withResponse()
     : await client.messages.create(request.params, requestOptions).withResponse();
   onEvent?.({ type: 'llm.streaming.headers', headers: headersToRecord(response.headers) ?? {} });
-  const parse = format.createStreamParser({ trait, ctx });
+  const parse = format.createStreamParser();
   let messageId: string | undefined;
   for await (const event of stream) {
     let failed = false;
@@ -127,11 +205,11 @@ async function internalGenerate(
   onEvent?.({ type: 'llm.done' });
 }
 
-export function createAnthropicRequester(
-  trait?: ProtocolTrait,
-  options?: AnthropicBaseOptions,
-): LlmRequester {
-  const format = createAnthropicFormat(options);
+export function createAnthropicRequester(options?: AnthropicRequesterOptions): LlmRequester {
+  const connection = options?.connection;
+  const trait = options?.trait;
+  const convertError = options?.convertError;
+  const format = createAnthropicFormat();
   const resolveClient =
     options?.clientFactory ??
     ((request: LlmClientContext) => createClient(request.model, request.headers));
@@ -141,52 +219,58 @@ export function createAnthropicRequester(
       content: LlmRequestContent,
       control: LlmRequestControl,
     ): Promise<void> {
-      const model = resolveModelConnection(config.model, trait);
-      const { systemPrompt, tools = [] } = config;
+      const model = resolveModelConnection(config.model, connection);
+      const { tools = [] } = config;
       const { messages } = content;
       const { signal, onEvent } = control;
       const ctx: TraitContext = { model };
       let request: AnthropicRequestParams;
       try {
-        const policy = trait?.toolCallIdPolicy?.(ctx) ?? ANTHROPIC_TOOL_CALL_ID_POLICY;
-        request = format.formatRequest({
-          model,
-          messages: normalizeToolCallIdsForProvider(messages, policy),
-          systemPrompt,
-          tools,
-          trait,
-          ctx,
-          cacheKey: config.cacheKey,
-          thinking: config.thinking,
-          responseFormat: config.responseFormat,
-          maxCompletionTokens: config.maxCompletionTokens,
-          usedContextTokens: content.usedContextTokens,
-          maxContextTokens: config.maxContextTokens,
-          extraParams: config.extraParams,
-        });
+        const policy = trait?.toolCallIdPolicy ?? ANTHROPIC_TOOL_CALL_ID_POLICY;
+        request = planAnthropicRequest(
+          {
+            ...config,
+            model,
+            messages: normalizeToolCallIdsForProvider(messages, policy),
+            tools,
+            usedContextTokens: content.usedContextTokens,
+          },
+          { trait, betaApi: options?.betaApi },
+        );
       } catch (error) {
         onEvent?.({ type: 'llm.failed.syntax', error: toLlmSyntaxErrorMessage(error) });
         return;
       }
       try {
-        await internalGenerate(request, { trait, ctx, format, resolveClient, signal, onEvent });
+        await internalGenerate(request, {
+          connection,
+          ctx,
+          format,
+          resolveClient,
+          signal,
+          onEvent,
+        });
       } catch (error) {
         onEvent?.({
           type: 'llm.failed.remote',
-          error: convertAnthropicError(error, (e) => trait?.convertError?.(e, ctx)),
+          error: convertAnthropicError(error, (e) => convertError?.(e)),
         });
       }
     },
   };
 }
 
-export function createAnthropicBase(options?: AnthropicBaseOptions): ProtocolBase {
+export function createAnthropicBase(
+  options?: AnthropicFormatOptions & LlmRequesterOptions<Anthropic>,
+): ProtocolBase<AnthropicTrait> {
   return {
     capability: getAnthropicModelCapability,
-    createRequester: (trait?: ProtocolTrait) => createAnthropicRequester(trait, options),
+    createRequester: (requesterOptions) => createAnthropicRequester({ ...options, ...requesterOptions }),
   };
 }
 
-export const anthropicBase: ProtocolBase = createAnthropicBase();
+export const anthropicBase: ProtocolBase<AnthropicTrait> = createAnthropicBase();
 
-export const anthropicBetaBase: ProtocolBase = createAnthropicBase({ betaApi: true });
+export const anthropicBetaBase: ProtocolBase<AnthropicTrait> = createAnthropicBase({
+  betaApi: true,
+});
