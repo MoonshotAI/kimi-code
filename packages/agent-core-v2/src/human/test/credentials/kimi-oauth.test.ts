@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { kimiOAuthCredentialProvider } from '#/kimi-oauth/kimi-oauth';
+import { kimiOAuthCredentialProvider } from '#/credentials/kimi-oauth';
 
 describe('kimiOAuthCredentialProvider', () => {
   function createTokens() {
