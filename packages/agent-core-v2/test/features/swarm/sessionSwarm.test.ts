@@ -1005,6 +1005,28 @@ describe('SessionSwarmService metadata compatibility', () => {
     });
   });
 
+  it('cleans up without an unhandled rejection when the batch fails', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const service = ix.get(ISessionSwarmService);
+      const running = service.run({
+        callerAgentId: 'main',
+        tasks: [spawnSessionTask('src/a.ts'), spawnSessionTask('src/b.ts')],
+      });
+      const expectation = expect(running).rejects.toThrow();
+      service.cancel({ callerAgentId: 'main' });
+      await expectation;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
   it('keeps v1 resume ownership errors inside the per-subagent result', async () => {
     agents['other-child'] = {
       labels: { parentAgentId: 'other', swarmItem: 'src/other.ts' },
