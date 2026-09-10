@@ -1,11 +1,11 @@
 # 服务 API
 
-`kimi web` 启动的本地服务暴露两组程序化接口：REST API（`/api/v1`，另有 `/api/v2/sessions` 和 `/api/v2/mcp`）和 WebSocket 事件流（`/api/v1/ws`）。本页是这两组接口的协议参考。如何启动服务及其命令行选项见 [kimi 命令](./kimi-command.md#kimi-web) 参考；端到端的上手流程见下文「[用 API 驱动一个会话](#用-api-驱动一个会话)」。
+`kimi web` 启动的本地服务暴露一组程序化接口：REST API（`/api/v1`，另有 `/api/v2/sessions` 和 `/api/v2/mcp`）。本页是该接口的协议参考。如何启动服务及其命令行选项见 [kimi 命令](./kimi-command.md#kimi-web) 参考；端到端的上手流程见下文「[用 API 驱动一个会话](#用-api-驱动一个会话)」。
 
-本页是一份经过整理、面向人阅读的参考：下文逐一记录每个端点的参数、请求体与响应结构。每个端点精确的机器可读 schema 以服务的在线规范文档为准：`GET /openapi.json`（OpenAPI）与 `GET /asyncapi.json`（AsyncAPI），两者都由服务运行时实际执行的校验 schema 生成。两者都需要鉴权；当本页与在线规范不一致时，以在线规范为准。
+本页是一份经过整理、面向人阅读的参考：下文逐一记录每个端点的参数、请求体与响应结构。每个端点精确的机器可读 schema 以服务的在线规范文档为准：`GET /openapi.json`（OpenAPI），由服务运行时实际执行的校验 schema 生成。该文档需要鉴权；当本页与在线规范不一致时，以在线规范为准。
 
 ::: warning 注意
-本页描述的 REST 与 WebSocket API 为实验性特性：不保证接口稳定性，端点、字段与事件类型可能随任何版本更改。集成时请以你所用版本服务的 `/openapi.json` 与 `/asyncapi.json` 文档为准。
+本页描述的 REST API 为实验性特性：不保证接口稳定性，端点与字段可能随任何版本更改。集成时请以你所用版本服务的 `/openapi.json` 文档为准。
 :::
 
 ## 基础约定
@@ -16,7 +16,7 @@
 
 ### 鉴权
 
-除以下例外，所有 `/api/*` 路径（含 `/openapi.json` 与 `/asyncapi.json`）都要求 bearer token：
+除以下例外，所有 `/api/*` 路径（含 `/openapi.json`）都要求 bearer token：
 
 - `OPTIONS` 预检请求
 - `GET /api/v1/healthz`（探活）
@@ -76,12 +76,12 @@ HTTP 状态码几乎总是 200，业务结果以 `code` 为准。例外情况：
 
 列表端点有两种分页风格：
 
-- **游标式**：`before_id` / `after_id`（互斥）加 `page_size`（1–100），响应为 `{ items, has_more }`。用于会话列表、消息列表、转录等。
+- **游标式**：`before_id` / `after_id`（互斥）加 `page_size`（1–100），响应为 `{ items, has_more }`。用于会话列表等。
 - **`page_token`**：不透明令牌（绑定了查询条件的指纹），用于 `POST /api/v1/search` 与 `GET /api/v2/sessions`。翻页途中改变任何查询条件会使令牌失效：v2 返回 `40922`，search 返回 `40001`。`GET /api/v2/sessions` 另提供无状态的 `page` 页码模式作为替代。
 
 ## 用 API 驱动一个会话
 
-下面用 curl 走一遍最小流程：确认服务状态 → 创建会话 → 订阅事件 → 提交提示词 → 回读历史。示例假设服务跑在默认地址，token 已存入 shell 变量 `TOKEN`。
+下面用 curl 走一遍最小流程：确认服务状态 → 创建会话 → 提交提示词 → 回读会话状态。示例假设服务跑在默认地址，token 已存入 shell 变量 `TOKEN`。
 
 1. 确认服务状态：
 
@@ -102,25 +102,7 @@ curl -s -X POST http://127.0.0.1:58627/api/v1/sessions \
 
 返回的 `data.id`（形如 `session_...`）就是后续所有请求要用的会话 id。
 
-3. 连接 WebSocket 并订阅会话事件。任何 WebSocket 客户端都可以；下面是一个零依赖的 Node.js 脚本（Node.js 22+ 内置 `WebSocket` 客户端）：
-
-```js
-// subscribe.mjs —— 用法：TOKEN=... node subscribe.mjs session_...
-const ws = new WebSocket('ws://127.0.0.1:58627/api/v1/ws', [
-  `kimi-code.bearer.${process.env.TOKEN}`,
-]);
-ws.onmessage = (e) => console.log(e.data);
-ws.onopen = () =>
-  ws.send(
-    JSON.stringify({
-      type: 'subscribe',
-      id: '1',
-      payload: { session_ids: [process.argv[2]] },
-    }),
-  );
-```
-
-4. 提交提示词：
+3. 提交提示词：
 
 ```sh
 curl -s -X POST http://127.0.0.1:58627/api/v1/sessions/<session_id>/prompts \
@@ -129,14 +111,14 @@ curl -s -X POST http://127.0.0.1:58627/api/v1/sessions/<session_id>/prompts \
   -d '{"content": [{"type": "text", "text": "用一句话介绍这个仓库"}]}'
 ```
 
-订阅端会依次看到 `turn.started`（轮次开始）→ `assistant.delta`（流式文本增量）→ 发生工具调用时的 `tool.call.started` / `tool.result` → `turn.ended`（轮次结束）。
-
-5. 随时可以用 REST 回读历史消息：
+4. 随时可以用 REST 回读会话的实时状态：
 
 ```sh
 curl -s -H "Authorization: Bearer $TOKEN" \
-  "http://127.0.0.1:58627/api/v1/sessions/<session_id>/messages?page_size=20"
+  "http://127.0.0.1:58627/api/v1/sessions/<session_id>/status"
 ```
+
+汇总中的 `busy` 表示轮次是否在进行中，同时给出生效模型与上下文用量。
 
 ## REST 端点
 
@@ -274,7 +256,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | 方法与路径 | 说明 |
 | --- | --- |
 | `GET /api/v1/config` | 读取全局配置（密钥字段脱敏） |
-| `POST /api/v1/config` | 合并式更新配置，并广播 `event.config.changed` |
+| `POST /api/v1/config` | 合并式更新配置 |
 
 #### `GET /api/v1/config`
 
@@ -309,8 +291,6 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 #### `POST /api/v1/config`
 
 合并式更新全局配置：请求体中的每个顶层域被深合并进对应域，未出现在请求体中的域保持不动。把 `yolo` 设为 `true` 是 `default_permission_mode: "yolo"` 的简写；被拒绝的补丁（值非法或持久化失败）返回 `40001` 与底层错误信息。
-
-每一次配置变更——经本端点成功更新、在进程外编辑 `config.toml`，或服务端内部写入（如 OAuth 登录刷新）——都会广播全局 `event.config.changed` 事件。短时间窗内的多次变更会合并为一个事件，其 `changedFields` 携带受影响的域名（camelCase 配置域，例如 `defaultModel`），`config` 携带当前完整的配置投影（与 `GET /api/v1/config` 响应同形状）。
 
 请求体是部分配置对象——上述响应域中除 `raw` 外的任意子集，均为可选：
 
@@ -469,7 +449,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 #### `POST /api/v1/providers/{provider_id}:refresh`
 
-从上游来源重新发现单个供应商的模型元数据，并重写该供应商的别名。模型来源为静态的供应商不经任何网络调用直接报告 `unchanged`。至少一个供应商的别名发生变化时，服务会广播全局 `event.model_catalog.changed` 事件。
+从上游来源重新发现单个供应商的模型元数据，并重写该供应商的别名。模型来源为静态的供应商不经任何网络调用直接报告 `unchanged`。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -568,7 +548,6 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `GET /api/v1/sessions/{session_id}/runtime` | 读取 main agent 的运行时绑定 |
 | `POST /api/v1/sessions/{session_id}/runtime` | 切换 main agent 的运行时绑定 |
 | `POST /api/v1/sessions/{session_id}/export` | 导出会话与诊断信息（zip 流，不走信封） |
-| `GET /api/v1/sessions/{session_id}/snapshot` | 客户端重建用全量快照（含 `as_of_seq` 与 `epoch`） |
 | `GET /api/v1/sessions/{session_id}/media/{file_id}` | 按文件 id 下载提示词媒体（二进制） |
 
 #### session 对象
@@ -589,15 +568,14 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `last_turn_reason` | string | main agent 最近一次轮次的结果：`completed` / `cancelled` / `failed` |
 | `last_prompt` | string | 最近一条用户提示词文本（如有） |
 | `metadata` | object | 自定义元数据；始终携带 `cwd`（会话的工作目录） |
-| `agent_config` | object | 投影为 `{ model }`；`model` 在大多数响应中为 `""`，仅由 `GET /api/v1/sessions/{session_id}/snapshot` 填入实时模型 |
-| `usage` | object | token 汇总 `{ input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, context_tokens, context_limit?, total_cost_usd?, turn_count? }`；在 snapshot 端点之外全为零 |
+| `agent_config` | object | 投影为 `{ model }`；`model` 当前始终为 `""` |
+| `usage` | object | token 汇总 `{ input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, context_tokens, context_limit?, total_cost_usd?, turn_count? }`；当前全为零 |
 | `permission_rules` | array | 会话权限规则；当前始终为 `[]` |
 | `message_count` | integer | 消息数；当前始终为 `0` |
-| `last_seq` | integer | 最后的事件序列号；当前始终为 `0` |
 
 #### `POST /api/v1/sessions`
 
-创建会话并返回。目标目录来自 `workspace_id`（已注册的工作区）或 `metadata.cwd`（首次使用时注册该工作区）；两者同时提供时必须一致。创建时会广播全局 `event.session.created` 事件。
+创建会话并返回。目标目录来自 `workspace_id`（已注册的工作区）或 `metadata.cwd`（首次使用时注册该工作区）；两者同时提供时必须一致。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -658,7 +636,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 #### `POST /api/v1/sessions/{session_id}/profile`
 
-更新会话档案：标题、自定义元数据以及 main agent 的配置。在这里设置的标题会成为自定义标题，优先级高于生成的标题；设置标题会广播全局 `session.meta.updated` 事件。
+更新会话档案：标题、自定义元数据以及 main agent 的配置。在这里设置的标题会成为自定义标题，优先级高于生成的标题。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -687,7 +665,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 #### `POST /api/v1/sessions/{session_id}/title/generate`
 
-通过托管供应商的 `chat_title` 工具根据会话的提示词生成标题并应用，同时广播 `session.meta.updated`。生成需要托管 OAuth 登录和 `auto_session_title` 实验开关；未提供 `force` 时，已有自定义标题或已生成标题的会话会上报为不可用，而不会被覆盖。
+通过托管供应商的 `chat_title` 工具根据会话的提示词生成标题并应用。生成需要托管 OAuth 登录和 `auto_session_title` 实验开关；未提供 `force` 时，已有自定义标题或已生成标题的会话会上报为不可用，而不会被覆盖。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -706,7 +684,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 #### `POST /api/v1/sessions/{session_id}:fork`
 
-将会话——其转录、Agent 状态与文件——复制到同一工作区中的新会话，并广播 `event.session.created`。当会话中任一 Agent 有进行中的轮次时，fork 会被拒绝。
+将会话——其转录、Agent 状态与文件——复制到同一工作区中的新会话。当会话中任一 Agent 有进行中的轮次时，fork 会被拒绝。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -719,7 +697,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 #### `POST /api/v1/sessions/{session_id}:compact`
 
-对 main agent 的上下文发起一次手动全量压缩。调用立即返回；进度与完成通过 `compaction.*` WebSocket 事件投递。
+对 main agent 的上下文发起一次手动全量压缩。调用立即返回。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -757,7 +735,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 #### `POST /api/v1/sessions/{session_id}:archive`
 
-将会话标记为已归档：它从默认会话列表中消失（使用 `include_archive` 或 `archived_only` 时仍会列出），并且服务端广播全局 `event.session.archived` 事件。
+将会话标记为已归档：它从默认会话列表中消失（使用 `include_archive` 或 `archived_only` 时仍会列出）。
 
 成功时，`data` 为 `{ archived: true }`。
 
@@ -793,7 +771,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 | `title` | body | string | 子会话的标题（至少 1 个字符）。默认 `Child: <source title>` |
 | `metadata` | body | object | 子会话的自定义元数据 |
 
-成功时，`data` 为新会话的 [session 对象](#session-对象)，并且服务端广播 `event.session.created`。
+成功时，`data` 为新会话的 [session 对象](#session-对象)。
 
 - `40901`：会话有进行中的轮次，无法 fork
 
@@ -869,18 +847,6 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 | `web_log` | body | string | 要包含在归档中的客户端日志文本，最多 256 KB UTF-8 |
 | `desktop` | body | boolean | 同时包含桌面宿主的日志。默认 `false` |
 
-#### `GET /api/v1/sessions/{session_id}/snapshot`
-
-为重新同步后重建客户端组装一份原子快照：会话、最近的消息、进行中的轮次、存活的 subagent 以及待处理交互，全部盖上 `as_of_seq` 水位与用于重新订阅的 `epoch`——见 [断线恢复](#断线恢复)。与普通的会话端点不同，内嵌的会话携带实时的 `agent_config.model` 与真实的 `usage` 总计。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-
-成功时，`data` 为 `{ as_of_seq, epoch, session, messages, in_flight_turn, subagents?, pending_approvals, pending_questions }`：`session` 为 [session 对象](#session-对象)，`messages` 为最新 100 条消息的 `{ items, has_more }`，`in_flight_turn` 为已部分流式输出的轮次（空闲时为 `null`，已知时带 `current_prompt_id`），`subagents` 列出存活的 subagent 任务，`pending_approvals` / `pending_questions` 承载未答复的交互。
-
-- `40401`：会话不存在
-
 #### `GET /api/v1/sessions/{session_id}/media/{file_id}`
 
 按文件 id 下载提示词媒体文件（会话提示词引用的图片或其他附件）；尚未提交到会话的 id 会回退到暂存的上传中查找。响应为二进制并支持 `Range`（范围请求返回 206）——共享约定见 [二进制与流式端点](#二进制与流式端点)；与那里走信封的端点不同，会话或文件不存在时会返回真正的 404 状态码并携带信封体。
@@ -890,115 +856,9 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 | `session_id` | path | string | **必填。** 会话 id |
 | `file_id` | path | string | **必填。** 媒体文件 id |
 
-### 消息与转录
-
-`messages` 端点分页返回 main agent 的扁平化消息历史，`transcript` 端点则提供按 Agent 组织的结构化转录——轮次、任务、交互、附件——即 WebSocket [转录协议](#转录协议) 实时流式推送的内容。历史分页与补漏用这些端点，实时尾部用 WebSocket 订阅。
-
-| 方法与路径 | 说明 |
-| --- | --- |
-| `GET /api/v1/sessions/{session_id}/messages` | 消息分页（`before_id` / `after_id` / `role`） |
-| `GET /api/v1/sessions/{session_id}/messages/{message_id}` | 读取单条消息 |
-| `GET /api/v1/sessions/{session_id}/transcript` | 按轮次分页的转录（需 `agent_id`）；全局状态不分页随响应返回 |
-| `GET /api/v1/sessions/{session_id}/transcript/ops` | op 批次补漏（`since_seq`）；`complete: false` 表示需要全量刷新 |
-| `GET /api/v1/sessions/{session_id}/transcript/user-messages` | 各轮次起始的用户输入，不分页 |
-| `GET /api/v1/sessions/{session_id}/transcript/plan` | ExitPlanMode 计划内容、路径与审阅结果 |
-
-#### `GET /api/v1/sessions/{session_id}/messages`
-
-分页返回 main agent 的消息历史——与会话快照共享的扁平化上下文转录——最新在前。游标分页遵循 [分页](#分页)；读取历史会在会话为冷态时将其恢复。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `before_id` | query | string | 只保留早于该消息 id 的消息；与 `after_id` 互斥 |
-| `after_id` | query | string | 只保留晚于该消息 id 的消息；与 `before_id` 互斥 |
-| `page_size` | query | integer | 1–100。默认 `50` |
-| `role` | query | string | 只保留单一角色：`user` / `assistant` / `tool` / `system`。过滤在分页切片之后应用，因此过滤后的一页可能少于 `page_size` 条而 `has_more` 仍为 `true`——持续翻页直到 `has_more` 为 `false` |
-
-成功时，`data` 为 `{ items, has_more }`，其中每个元素是消息对象 `{ id, session_id, role, content, created_at, prompt_id?, parent_message_id?, metadata? }`；`content` 是按 [提示词](#提示词) 中说明的线上格式组成的内容块数组（`text`、`tool_use`、`tool_result`、`image`、`video`、`file`、`thinking`）。
-
-- `40001`：校验失败——例如 `before_id` 与 `after_id` 同用
-- `40401`：会话不存在
-
-#### `GET /api/v1/sessions/{session_id}/messages/{message_id}`
-
-按 id 从同一历史中读取单条消息。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `message_id` | path | string | **必填。** 消息 id |
-
-成功时，`data` 为上文 `GET /api/v1/sessions/{session_id}/messages` 中说明的元素形态的消息对象。
-
-- `40401`：会话不存在
-- `40403`：该会话中不存在此 id 的消息
-
-#### `GET /api/v1/sessions/{session_id}/transcript`
-
-返回某个 Agent 的结构化转录中的一页：轮次（含其步骤与帧）以及轮次之间的标记与任务引用。活跃会话从内存存储应答（先回填所请求 Agent 的持久化历史）；冷会话则从持久化的线上记录重建 Agent。这是转录能力的历史半边——实时流式半边是 [转录协议](#转录协议) 订阅。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `agent_id` | query | string | **必填。** 要读取其转录的 Agent；必须是纯文本形式的 agent id（字母、数字、`.`、`_`、`-`——不含路径分隔符） |
-| `before_turn` | query | string | 只保留早于该轮次 id 的轮次；与 `after_turn` 互斥 |
-| `after_turn` | query | string | 只保留晚于该轮次 id 的轮次；与 `before_turn` 互斥 |
-| `page_size` | query | integer | 1–100 个轮次。默认 `20` |
-
-分页单位是轮次：不带游标时返回最新的一页，`has_more` 表示还有更早的轮次。成功时，`data` 为 `{ agent_id, items, has_more, tasks, interactions, attachments, todos, meta, agents, pending_interactions, seq? }`——`items` 是本次分页的轮次切片，`tasks` / `interactions` / `attachments` / `todos` / `meta` / `agents` / `pending_interactions` 是不分页、随每次响应一起返回的全局 Agent 状态，`seq` 是该 Agent 用于恢复流的 op 批次水位（仅活跃会话）。
-
-- `40001`：校验失败——`before_turn` 与 `after_turn` 同用，或 `agent_id` 不是纯文本形式
-- `40401`：会话不存在
-
-#### `GET /api/v1/sessions/{session_id}/transcript/ops`
-
-从服务端的 op 日志提供点对点的补漏：某个 Agent 的 `seq > since_seq` 的已记录 op 批次，最旧在前。它是 [转录协议](#转录协议) 中 `transcript_since` 恢复游标的 REST 对应物，共享同一份有界日志，因此适用相同的回退规则。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `agent_id` | query | string | **必填。** Agent id（纯文本形式，约束与转录端点相同） |
-| `since_seq` | query | integer | **必填。** 调用方已应用的最后一个 op 批次 seq，最小为 `0`；返回其之后的批次 |
-
-成功时，`data` 为 `{ agent_id, batches, latest_seq, complete }`，每个批次为 `{ seq, ops }`。`complete: true` 表示直到 `latest_seq` 的每个批次都在；`complete: false` 表示日志已不再覆盖到 `since_seq`（或会话根本不是活跃状态），调用方必须回退为一次完整的 `GET .../transcript` 刷新。
-
-- `40001`：校验失败
-- `40401`：会话不存在
-
-#### `GET /api/v1/sessions/{session_id}/transcript/user-messages`
-
-列出会话中每个开启轮次的输入，按 Agent 分组且不分页：真实用户文本、以斜杠命令形式使用的 Skill 与插件命令、以及 cron 提示词——可通过 `origin` 区分——另有仅含附件的提示词，其 `prompt` 投影为空。所列消息引用的附件实体会随响应一起返回（仅元数据，绝不包含字节内容）。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `agent_id` | query | string | 只读取一个 Agent（纯文本 id）。默认读取所有在册 Agent |
-
-成功时，`data` 为 `{ agents }`，每个条目为 `{ agent_id, messages, attachments }`；消息为 `{ turn_id, ordinal, state, origin, prompt, attachment_ids?, started_at? }`，其中 `state` 为轮次状态（`queued` / `running` / `completed` / `failed` / `cancelled`）。
-
-- `40001`：校验失败——`agent_id` 不是纯文本形式
-- `40401`：会话不存在
-
-#### `GET /api/v1/sessions/{session_id}/transcript/plan`
-
-按时间线顺序读取某个 Agent 的 `ExitPlanMode` 工具调用的计划信息——计划内容、计划文件路径、提供的选项以及审阅结果。内容投影自第一个可用的事实来源：关联的审批交互（交互式审阅）、实时工具帧的展示（auto 模式），或工具结果的输出文本；每个条目在 `source` 中记录了具体来源。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `agent_id` | query | string | **必填。** Agent id（纯文本形式） |
-| `tool_call_id` | query | string | 将读取范围限定到单次 `ExitPlanMode` 调用；不提供时列出所有可恢复计划内容的调用 |
-
-成功时，`data` 为 `{ agent_id, plans }`，每个计划为 `{ tool_call_id, turn_id, source, plan, path?, options?, review? }`：`source` 为 `interaction` / `display` / `output`，`options` 是审阅选项，形如 `{ label, description? }`，`review`（仅交互式审阅时存在）为 `{ state, selected_option?, feedback? }`，其中 `state` 为 `pending` / `approved` / `rejected` / `cancelled` 之一。
-
-- `40001`：校验失败
-- `40401`：会话不存在
-- `40416`：提供了 `tool_call_id`，但不存在该 id 的 `ExitPlanMode` 调用
-
 ### 提示词
 
-提示词是一次用户输入的单位：提交一条提示词会把它排入会话的 main agent（或指定 Agent）的队列，排队中的提示词可以插入进行中的轮次，运行中的提示词可以中止。轮次进度本身通过 WebSocket [事件](#事件) 流式推送，不经过这些端点。
+提示词是一次用户输入的单位：提交一条提示词会把它排入会话的 main agent（或指定 Agent）的队列，排队中的提示词可以插入进行中的轮次，运行中的提示词可以中止。
 
 | 方法与路径 | 说明 |
 | --- | --- |
@@ -1108,7 +968,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 ### 审批与提问
 
-审批与提问是会话的两类待处理交互：审批是为工具调用请求许可，提问是请求带标签选项的结构化输入。这些端点用于列出和答复它们；新的请求通过 WebSocket 以 `event.approval.requested` 与 `event.question.requested` 到达。
+审批与提问是会话的两类待处理交互：审批是为工具调用请求许可，提问是请求带标签选项的结构化输入。这些端点用于列出和答复它们。
 
 | 方法与路径 | 说明 |
 | --- | --- |
@@ -1483,7 +1343,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 ### 终端
 
-PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳过它们，除非传入 `--allow-remote-terminals`）。终端的输入、输出与尺寸调整经 WebSocket 的 `terminal_*` 帧传输——REST 侧只管理终端生命周期。
+PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳过它们，除非传入 `--allow-remote-terminals`）。REST 侧只管理终端生命周期。
 
 | 方法与路径 | 说明 |
 | --- | --- |
@@ -1500,7 +1360,7 @@ PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳�
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
 
-成功时 `data` 为 `{ items }`，每项是一个终端对象 `{ id, session_id, cwd, shell, cols, rows, status, created_at, exited_at?, exit_code? }`：`status` 为 `running` / `exited`；已退出的终端携带 `exited_at` 与 `exit_code`（进程未报告退出码时为 `null`，例如因信号终止）。回滚缓冲不属于该对象——输出经 WebSocket 回放与流式推送。
+成功时 `data` 为 `{ items }`，每项是一个终端对象 `{ id, session_id, cwd, shell, cols, rows, status, created_at, exited_at?, exit_code? }`：`status` 为 `running` / `exited`；已退出的终端携带 `exited_at` 与 `exit_code`（进程未报告退出码时为 `null`，例如因信号终止）。回滚缓冲不属于该对象。
 
 - `40401`：会话不存在
 
@@ -1569,7 +1429,7 @@ PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳�
 
 #### workspace 对象
 
-所有返回工作区的端点都使用此传输结构。注册与重命名会广播全局事件 `event.workspace.created` / `event.workspace.updated`。
+所有返回工作区的端点都使用此传输结构。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -1588,7 +1448,7 @@ PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳�
 
 #### `POST /api/v1/workspaces`
 
-注册工作区并返回它。注册按根路径幂等：重复注册同一根路径会返回已存在的工作区，仅刷新 `last_opened_at`（保留已存名称），并广播 `event.workspace.updated` 而非 `event.workspace.created`。
+注册工作区并返回它。注册按根路径幂等：重复注册同一根路径会返回已存在的工作区，仅刷新 `last_opened_at`（保留已存名称）。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -2334,68 +2194,6 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 - `40001`：校验失败——包括 `:complete` 的 `flowId` 未知，或 `:begin` 的 server 无法使用 OAuth（stdio 传输、静态 bearer token，或未设置 `auth: "oauth"` 的静态请求头）
 - `40408`：（`:begin` / `:reset`）locator 未匹配到任何条目
 - `40929`：OAuth 流程本身失败
-
-## WebSocket 协议
-
-### 建立连接
-
-唯一端点是 `ws://<host>:<port>/api/v1/ws`；鉴权在升级请求时完成（见上文 [鉴权](#鉴权)）。连接建立后服务端立即发送 `server_hello`：
-
-```json
-{
-  "type": "server_hello",
-  "timestamp": "2026-01-01T00:00:00.000Z",
-  "payload": {
-    "ws_connection_id": "conn_01JZX4...",
-    "protocol_version": 2,
-    "max_event_buffer_size": 1000,
-    "capabilities": { "event_batching": false, "compression": false }
-  }
-}
-```
-
-注意服务端不发送心跳，也不会主动断开空闲连接——保活与重连由客户端自己负责。
-
-### 控制帧
-
-客户端发送 JSON 帧 `{ "type", "id"?, "payload" }`；每个请求帧都会收到应答 `{ "type": "ack", "id", "code", "msg", "payload" }`，`code` 为 `0` 表示成功。
-
-| 帧 | payload | 说明 |
-| --- | --- | --- |
-| `subscribe` | `{ session_ids, cursors?, agent_filter? }` | 订阅会话事件；带 `cursors`（每会话 `{seq, epoch}`）时回放错过的持久事件 |
-| `unsubscribe` | `{ session_ids }` | 取消会话订阅 |
-| `subscribe_v2` | `{ session_id, transcript, transcript_since? }` | 订阅转录流（唯一的转录订阅通道），`transcript` 按 agent 指定粒度 |
-| `unsubscribe_v2` | `{ session_id, agent_ids? }` | 退订转录流；省略 `agent_ids` 表示整个会话 |
-| `client_hello` | `{ client_id }` | 握手帧，其余字段为遗留兼容 |
-
-### 事件
-
-事件帧形状为 `{ "type", "seq", "epoch"?, "volatile"?, "offset"?, "session_id"?, "timestamp", "payload" }`，`type` 即事件类型。按投递范围分两类：
-
-- **全局事件**：发送到每个已建立连接，无需订阅——`session.meta.updated`、`event.session.created`、`event.session.archived`、`event.session.work_changed`、`event.session.status_changed`、`event.workspace.*`、`event.config.*`、`event.model_catalog.*`。
-- **会话事件**：只发给订阅了该会话的连接，受 `agent_filter` 过滤。主要事件族：
-
-| 事件族 | 主要事件 |
-| --- | --- |
-| 轮次 | `turn.started`、`turn.ended`、`turn.step.started` / `completed` / `interrupted` / `retrying` |
-| 流式文本 | `assistant.delta`、`thinking.delta`（带 `offset` 用于对齐） |
-| 工具调用 | `tool.call.started`、`tool.call.delta`、`tool.progress`、`tool.result` |
-| 交互 | `event.approval.requested` / `resolved`、`event.question.requested` / `answered` / `dismissed` |
-| subagent | `subagent.spawned` / `started` / `suspended` / `completed` / `failed` |
-| 后台 | `task.started` / `terminated`、`shell.started` / `output` / `completed` |
-| 其他 | `compaction.*`、`skill.activated`、`goal.updated`、`prompt.*`、`error`、`warning` |
-
-有三个全局生命周期事件可以让跨工作区概览免掉逐工作区轮询。`event.session.archived` 在在线归档与冷归档两条路径上都会发出；其事件帧 `session_id` 是全局水位 `__global__`，真实会话 id 在 payload 里：`{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }`（payload 字段为 `workspace_id` / `sessionId`）。`event.workspace.created` / `updated` 携带完整工作区对象（`{ id, root, name, created_at, last_opened_at, session_count }`——会话创建触碰工作区时也会发 `updated`），`event.workspace.deleted` 携带 `{ "workspace_id", "root" }`。这些事件只覆盖本服务进程内的变更；其他进程（例如写同一 home 目录的 CLI）的变更要等索引 reconcile（约一分钟）才可见，因此概览客户端应保留低频兜底轮询。目前没有会话删除事件。
-
-事件另分持久与易失两种：持久事件带严格递增的 `seq`，落盘并可回放；易失事件（各 `*.delta`、`tool.progress`、`shell.*` 等）标 `volatile: true`，不回放。消费易失文本流时用 `offset`（该轮次内的累计字符偏移）与本地已累积文本比对：小于本地长度说明是重复帧，大于说明有缺漏、需走快照恢复。
-
-### 断线恢复
-
-重连后在 `subscribe` 的 `cursors` 里带上每个会话最后应用事件的 `{seq, epoch}`，服务端会回放缺口；落后超过缓冲（1000 条）或游标失效时改为收到 `resync_required`。此时调用 `GET /api/v1/sessions/{session_id}/snapshot` 拿全量快照（含 `as_of_seq` 与 `epoch`），再以新游标重新订阅。
-
-### 转录协议
-
-`subscribe_v2` 的 `transcript` 按 agent 指定粒度：`off` / `turn` / `block` / `delta`（键 `"*"` 表示默认粒度），粒度越高推送越细。粒度非 `off` 的 agent 走两帧推送：`transcript.reset`（基线快照，历史经 REST 分页回读）和 `transcript.ops`（增量批次，带每个 agent 连续递增的 `seq`）；该 agent 的旧式事件在同一连接上被抑制，改由转录帧承载。断线时用 `transcript_since` 续传；服务端批次日志无法覆盖缺口时（REST 补漏返回 `complete: false`）需全量刷新。REST 侧对应 `GET .../transcript`（按轮次分页）与 `GET .../transcript/ops?since_seq=`（批次补漏）。
 
 ## 二进制与流式端点
 

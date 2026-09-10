@@ -58,6 +58,37 @@ function seedFetch(items: Record<string, unknown>[]): typeof fetch {
   })) as unknown as typeof fetch;
 }
 
+function sessionMessage(
+  subtype: 'created' | 'updated' | 'archived' | 'deleted',
+  session: Record<string, unknown> & { id: string },
+): Record<string, unknown> {
+  return {
+    type: 'session',
+    timestamp: Date.now(),
+    subtype,
+    session: {
+      workspace_id: 'wd_example_0123456789ab',
+      title: 'session',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      busy: false,
+      metadata: { cwd: '/tmp/example' },
+      agent_config: { model: 'test-model' },
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        context_tokens: 0,
+      },
+      permission_rules: [],
+      message_count: 0,
+      last_seq: 0,
+      ...session,
+    },
+  };
+}
+
 describe('SessionActivityStore', () => {
   it('applies work facts and notifies with a version bump', () => {
     const store = new SessionActivityStore();
@@ -112,17 +143,13 @@ describe('SessionActivityHub', () => {
 
     expect(hub.store.get('s1')).toEqual(facts({ busy: true, mainTurnActive: true }));
     expect(hub.store.get('s2')?.pendingInteraction).toBe('approval');
-    // The hello goes out with no subscriptions — global facts flow regardless.
-    const hello = JSON.parse(instances[0]!.sent[0]!) as {
-      type: string;
-      payload: { subscriptions: string[] };
-    };
-    expect(hello.type).toBe('client_hello');
-    expect(hello.payload.subscriptions).toEqual([]);
+    // Nothing goes out — v3 global messages flow to every connection with no
+    // subscribe frame.
+    expect(instances[0]!.sent).toEqual([]);
     hub.close();
   });
 
-  it('applies live work_changed frames by session id', () => {
+  it('applies live session messages by session id', () => {
     const { ctor, instances } = makeFakeWsCtor();
     const hub = new SessionActivityHub({
       url: 'http://127.0.0.1:58627',
@@ -132,17 +159,14 @@ describe('SessionActivityHub', () => {
     });
     instances[0]!.emit('open');
 
-    instances[0]!.emitFrame({
-      type: 'event.session.work_changed',
-      session_id: 's1',
-      payload: {
-        type: 'event.session.work_changed',
+    instances[0]!.emitFrame(
+      sessionMessage('updated', {
+        id: 's1',
         busy: true,
         main_turn_active: true,
         pending_interaction: 'question',
-        last_turn_reason: null,
-      },
-    });
+      }),
+    );
 
     expect(hub.store.get('s1')).toEqual(
       facts({ busy: true, mainTurnActive: true, pendingInteraction: 'question' }),
@@ -150,7 +174,7 @@ describe('SessionActivityHub', () => {
     hub.close();
   });
 
-  it('forwards created and meta updates as list-level signals', () => {
+  it('forwards created and updated messages as list-level signals', () => {
     const { ctor, instances } = makeFakeWsCtor();
     const onListChanged = vi.fn();
     const hub = new SessionActivityHub({
@@ -161,17 +185,17 @@ describe('SessionActivityHub', () => {
     });
     instances[0]!.emit('open');
 
-    instances[0]!.emitFrame({ type: 'event.session.created', session_id: 's1', payload: {} });
-    instances[0]!.emitFrame({ type: 'session.meta.updated', session_id: 's1', payload: {} });
-    // Agent-grained frames are ignored even if they somehow arrive.
+    instances[0]!.emitFrame(sessionMessage('created', { id: 's1' }));
+    instances[0]!.emitFrame(sessionMessage('updated', { id: 's1' }));
+    // Unknown future message types are ignored silently.
     instances[0]!.emitFrame({ type: 'turn.started', session_id: 's1', payload: {} });
 
     expect(onListChanged).toHaveBeenCalledTimes(2);
-    expect(hub.store.get('s1')).toBeUndefined();
+    expect(hub.store.get('s1')).toEqual(facts());
     hub.close();
   });
 
-  it('forwards archived and workspace frames as list-level signals and drops archived facts', () => {
+  it('forwards archived/deleted and workspace messages as list-level signals and drops gone facts', () => {
     const { ctor, instances } = makeFakeWsCtor();
     const onListChanged = vi.fn();
     const hub = new SessionActivityHub({
@@ -182,46 +206,36 @@ describe('SessionActivityHub', () => {
     });
     instances[0]!.emit('open');
 
-    instances[0]!.emitFrame({
-      type: 'event.session.work_changed',
-      session_id: 's1',
-      payload: { type: 'event.session.work_changed', busy: true },
-    });
+    instances[0]!.emitFrame(sessionMessage('updated', { id: 's1', busy: true }));
     expect(hub.store.get('s1')).toBeDefined();
 
-    // Global-dispatched frames carry the __global__ watermark; the real
-    // session id rides in the payload.
-    instances[0]!.emitFrame({
-      type: 'event.session.archived',
-      session_id: '__global__',
-      payload: { type: 'event.session.archived', sessionId: 's1', workspace_id: 'wd_1' },
-    });
+    instances[0]!.emitFrame(sessionMessage('archived', { id: 's1', archived: true }));
     expect(hub.store.get('s1')).toBeUndefined();
-    expect(onListChanged).toHaveBeenCalledTimes(1);
-
-    instances[0]!.emitFrame({
-      type: 'event.session.work_changed',
-      session_id: 's2',
-      payload: { type: 'event.session.work_changed', busy: true },
-    });
-    expect(hub.store.get('s2')).toBeDefined();
-
-    instances[0]!.emitFrame({
-      type: 'event.session.deleted',
-      session_id: '__global__',
-      payload: { type: 'event.session.deleted', sessionId: 's2', workspace_id: 'wd_1' },
-    });
-    expect(hub.store.get('s2')).toBeUndefined();
     expect(onListChanged).toHaveBeenCalledTimes(2);
 
-    for (const type of [
-      'event.workspace.created',
-      'event.workspace.updated',
-      'event.workspace.deleted',
-    ]) {
-      instances[0]!.emitFrame({ type, session_id: '__global__', payload: {} });
+    instances[0]!.emitFrame(sessionMessage('updated', { id: 's2', busy: true }));
+    expect(hub.store.get('s2')).toBeDefined();
+
+    instances[0]!.emitFrame(sessionMessage('deleted', { id: 's2' }));
+    expect(hub.store.get('s2')).toBeUndefined();
+    expect(onListChanged).toHaveBeenCalledTimes(4);
+
+    for (const subtype of ['created', 'updated', 'deleted']) {
+      instances[0]!.emitFrame({
+        type: 'workspace',
+        timestamp: Date.now(),
+        subtype,
+        workspace: {
+          id: 'wd_example_0123456789ab',
+          root: '/tmp/example',
+          name: 'example',
+          created_at: new Date().toISOString(),
+          last_opened_at: new Date().toISOString(),
+          session_count: 0,
+        },
+      });
     }
-    expect(onListChanged).toHaveBeenCalledTimes(5);
+    expect(onListChanged).toHaveBeenCalledTimes(7);
     hub.close();
   });
 });

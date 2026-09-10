@@ -12,7 +12,6 @@ import {
 
 import { GlobalSearchError, type GlobalSearchIncomplete } from './contract.ts';
 import {
-  MAX_DOC_TEXT_CHARS,
   type FileMetaDoc,
   type MessageDoc,
   type SearchDoc,
@@ -31,7 +30,7 @@ import {
   type NormalizedQuery,
   type SearchBudgets,
 } from './match.ts';
-import { analyzeWireLine, type StepEffect, type TurnEffect } from './wireExtract.ts';
+import { collectWireDocs, initialWireDocCounters, type WireDocCounters } from './wireExtract.ts';
 
 const TEXT_INDEX_NAME = 'body';
 const TRI_INDEX_NAME = 'tri';
@@ -63,68 +62,6 @@ const EMPTY_BUFFER = Buffer.alloc(0);
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-const INITIAL_TURN_STATE: TurnCounterState = { next: 0, hasTurn: false, openers: [] };
-
-function initialTurnState(): TurnCounterState {
-  return INITIAL_TURN_STATE;
-}
-
-function applyUndoToTurnState(state: TurnCounterState, count: number): TurnCounterState {
-  let found = 0;
-  for (let i = state.openers.length - 1; i >= 0; i--) {
-    if (state.openers[i]!.anchor) {
-      found++;
-      if (found === count) {
-        return {
-          next: state.openers[i]!.turn,
-          hasTurn: i > 0,
-          openers: state.openers.slice(0, i),
-        };
-      }
-    }
-  }
-  return state;
-}
-
-function advanceTurnCounter(
-  state: TurnCounterState,
-  effect: TurnEffect,
-): { docTurn: number | undefined; state: TurnCounterState } {
-  switch (effect.kind) {
-    case 'open':
-      return {
-        docTurn: state.next,
-        state: {
-          next: state.next + 1,
-          hasTurn: true,
-          openers: [...state.openers, { turn: state.next, anchor: effect.anchor }],
-        },
-      };
-    case 'ensure': {
-      const next = state.hasTurn ? state : { ...state, next: state.next + 1, hasTurn: true };
-      return { docTurn: next.next - 1, state: next };
-    }
-    case 'undo':
-      return { docTurn: undefined, state: applyUndoToTurnState(state, effect.count) };
-    case 'none':
-      return { docTurn: undefined, state };
-  }
-}
-
-const INITIAL_STEP_STATE: StepTrackerState = { byUuid: {}, begins: 0 };
-
-function initialStepState(): StepTrackerState {
-  return INITIAL_STEP_STATE;
-}
-
-function advanceStepTracker(state: StepTrackerState, effect: StepEffect): StepTrackerState {
-  if (effect.kind !== 'begin') return state;
-  const begins = state.begins + 1;
-  const ordinal = effect.ordinal ?? begins;
-  if (state.byUuid[effect.uuid] === ordinal) return state;
-  return { byUuid: { ...state.byUuid, [effect.uuid]: ordinal }, begins };
 }
 
 export interface SearchCoreLog {
@@ -585,8 +522,9 @@ export class SearchIndexCore {
     }
     const known = meta?.kind === 'fileMeta' ? meta : undefined;
     let offset = known?.offset ?? 0;
-    let turnState: TurnCounterState = known?.turnState ?? initialTurnState();
-    let stepState: StepTrackerState = known?.stepState ?? initialStepState();
+    const initial = initialWireDocCounters();
+    let turnState: TurnCounterState = known?.turnState ?? initial.turnState;
+    let stepState: StepTrackerState = known?.stepState ?? initial.stepState;
     const fileMeta = (
       nextOffset: number,
       turns: TurnCounterState,
@@ -610,10 +548,10 @@ export class SearchIndexCore {
       known?.mtimeMs !== undefined && size === known.offset && st.mtimeMs > known.mtimeMs;
     if (size < offset || legacyMeta || replacedFile || rewrittenInPlace) {
       this.syncReplaced = true;
-      await this.deleteFileDocs(db, fileMeta(0, initialTurnState(), initialStepState()));
+      await this.deleteFileDocs(db, fileMeta(0, initial.turnState, initial.stepState));
       offset = 0;
-      turnState = initialTurnState();
-      stepState = initialStepState();
+      turnState = initial.turnState;
+      stepState = initial.stepState;
     }
     if (size === offset) {
       if (
@@ -697,24 +635,11 @@ export class SearchIndexCore {
     file: WireFileRef,
     line: string,
     lineOffset: number,
-    counters: { turnState: TurnCounterState; stepState: StepTrackerState },
-  ): { turnState: TurnCounterState; stepState: StepTrackerState } {
-    let { turnState, stepState } = counters;
-    const analysis = analyzeWireLine(line);
-    const advanced = advanceTurnCounter(turnState, analysis.turn);
-    if (
-      analysis.turn.kind === 'open' ||
-      analysis.turn.kind === 'undo' ||
-      (analysis.turn.kind === 'ensure' && !turnState.hasTurn)
-    ) {
-      stepState = initialStepState();
-    }
-    turnState = advanced.state;
-    stepState = advanceStepTracker(stepState, analysis.step);
-    const extracted = analysis.messages;
-    for (let i = 0; i < extracted.length; i++) {
-      const e = extracted[i]!;
-      const stepOrdinal = e.stepUuid !== undefined ? stepState.byUuid[e.stepUuid] : undefined;
+    counters: WireDocCounters,
+  ): WireDocCounters {
+    const { counters: next, docs } = collectWireDocs(counters, line);
+    for (let i = 0; i < docs.length; i++) {
+      const e = docs[i]!;
       const doc: MessageDoc = {
         kind: 'message',
         sessionId: summary.id,
@@ -722,13 +647,10 @@ export class SearchIndexCore {
         sessionTitle: summary.title ?? '',
         agentId: file.agentId,
         role: e.role,
-        text: e.text.length > MAX_DOC_TEXT_CHARS ? e.text.slice(0, MAX_DOC_TEXT_CHARS) : e.text,
+        text: e.text,
         time: e.time ?? summary.updatedAt,
-        turn: advanced.docTurn,
-        stepId:
-          advanced.docTurn !== undefined && stepOrdinal !== undefined
-            ? `t${advanced.docTurn}.${stepOrdinal}`
-            : undefined,
+        turn: e.turn,
+        stepId: e.stepId,
       };
       ops.push({
         op: 'set',
@@ -736,7 +658,7 @@ export class SearchIndexCore {
         value: doc,
       });
     }
-    return { turnState, stepState };
+    return next;
   }
 
   async search(params: CoreSearchParams): Promise<CoreSearchResult> {

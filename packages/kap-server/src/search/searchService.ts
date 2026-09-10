@@ -17,7 +17,6 @@ import {
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import { normalizeLiteral, tokenize } from '@moonshot-ai/minidb';
-import type { TranscriptStore } from '@moonshot-ai/transcript';
 
 import {
   GlobalSearchError,
@@ -103,8 +102,21 @@ export interface IGlobalSearchService {
 
 export const IGlobalSearchService = createDecorator<IGlobalSearchService>('globalSearch');
 
+export interface LiveWireDoc {
+  readonly role: 'user' | 'assistant';
+  readonly text: string;
+  readonly time?: number;
+  readonly turn?: number;
+  readonly stepId?: string;
+}
+
+export interface LiveTranscriptView {
+  agents(): readonly { agentId: string }[];
+  docs(agentId: string): readonly LiveWireDoc[] | undefined;
+}
+
 export interface LiveTranscriptSource {
-  forSessionLive(sessionId: string): TranscriptStore | undefined;
+  forSessionLive(sessionId: string): LiveTranscriptView | undefined;
   whenReady(sessionId: string): Promise<void>;
   ensureAgentHistory(sessionId: string, agentId: string): Promise<void>;
 }
@@ -393,9 +405,9 @@ export class GlobalSearchService implements IGlobalSearchService {
   async search(input: GlobalSearchQuery): Promise<GlobalSearchPage> {
     const q = normalizeQuery(input, this.maxQueryTerms);
     const sessionId = q.container?.sessionId;
-    const liveStore = sessionId !== undefined ? this.liveSource?.forSessionLive(sessionId) : undefined;
-    if (liveStore !== undefined && sessionId !== undefined) {
-      return this.searchLive(q, sessionId, liveStore, input.pageToken);
+    const liveView = sessionId !== undefined ? this.liveSource?.forSessionLive(sessionId) : undefined;
+    if (liveView !== undefined && sessionId !== undefined) {
+      return this.searchLive(q, sessionId, liveView, input.pageToken);
     }
     return this.searchIndex(q, input.pageToken);
   }
@@ -403,7 +415,7 @@ export class GlobalSearchService implements IGlobalSearchService {
   private async searchLive(
     q: NormalizedQuery,
     sessionId: string,
-    store: TranscriptStore,
+    view: LiveTranscriptView,
     pageToken: string | undefined,
   ): Promise<GlobalSearchPage> {
     const page = decodePageToken(q, 'live', pageToken, undefined);
@@ -415,11 +427,11 @@ export class GlobalSearchService implements IGlobalSearchService {
     const agentIds =
       q.container?.agentId !== undefined
         ? [q.container.agentId]
-        : store.agents().map((agent) => agent.agentId);
+        : view.agents().map((agent) => agent.agentId);
     for (const agentId of agentIds) {
       await source.ensureAgentHistory(sessionId, agentId);
     }
-    const docs = await this.collectLiveDocs(sessionId, store, agentIds);
+    const docs = await this.collectLiveDocs(sessionId, view, agentIds);
     const budget = {
       deadlineAt: Date.now() + this.queryDeadlineMs,
       textCharsLeft: this.queryTextBudgetChars,
@@ -454,66 +466,35 @@ export class GlobalSearchService implements IGlobalSearchService {
 
   private async collectLiveDocs(
     sessionId: string,
-    store: TranscriptStore,
+    view: LiveTranscriptView,
     agentIds: readonly string[],
   ): Promise<{ key: string; value: MessageDoc | TitleDoc }[]> {
     const summary = await this.sessionIndex.get(sessionId);
     const workspaceId = summary?.workspaceId ?? '';
     const sessionTitle = summary?.title ?? '';
     const fallbackTime = summary?.updatedAt ?? 0;
-    const parseTime = (iso: string | undefined): number => {
-      if (iso === undefined) return fallbackTime;
-      const ms = Date.parse(iso);
-      return Number.isNaN(ms) ? fallbackTime : ms;
-    };
     const docs: { key: string; value: MessageDoc | TitleDoc }[] = [];
     for (const agentId of agentIds) {
-      const transcript = store.getAgent(agentId);
-      if (transcript === undefined) continue;
-      for (const item of transcript.snapshot().items) {
-        if (item.kind !== 'turn') continue;
-        const turnTime = parseTime(item.startedAt);
-        const prompt = item.prompt?.trim() ?? '';
-        if (prompt.length > 0) {
-          docs.push({
-            key: `${sessionId}/${agentId}/live/u/t${item.ordinal}`,
-            value: {
-              kind: 'message',
-              sessionId,
-              workspaceId,
-              sessionTitle,
-              agentId,
-              role: 'user',
-              text: prompt.length > MAX_DOC_TEXT_CHARS ? prompt.slice(0, MAX_DOC_TEXT_CHARS) : prompt,
-              time: turnTime,
-              turn: item.ordinal,
-              stepId: undefined,
-            },
-          });
-        }
-        for (const step of item.steps) {
-          const stepTime = parseTime(step.endedAt ?? step.startedAt ?? item.startedAt);
-          for (const frame of step.frames) {
-            if (frame.kind !== 'text' || frame.role !== 'assistant') continue;
-            const text = frame.text.trim();
-            if (text.length === 0) continue;
-            docs.push({
-              key: `${sessionId}/${agentId}/live/a/${frame.frameId}`,
-              value: {
-                kind: 'message',
-                sessionId,
-                workspaceId,
-                sessionTitle,
-                agentId,
-                role: 'assistant',
-                text: text.length > MAX_DOC_TEXT_CHARS ? text.slice(0, MAX_DOC_TEXT_CHARS) : text,
-                time: stepTime,
-                turn: item.ordinal,
-                stepId: step.stepId,
-              },
-            });
-          }
-        }
+      const liveDocs = view.docs(agentId);
+      if (liveDocs === undefined) continue;
+      for (const liveDoc of liveDocs) {
+        const text = liveDoc.text.trim();
+        if (text.length === 0) continue;
+        docs.push({
+          key: `${sessionId}/${agentId}/live/${docs.length}`,
+          value: {
+            kind: 'message',
+            sessionId,
+            workspaceId,
+            sessionTitle,
+            agentId,
+            role: liveDoc.role,
+            text: text.length > MAX_DOC_TEXT_CHARS ? text.slice(0, MAX_DOC_TEXT_CHARS) : text,
+            time: liveDoc.time ?? fallbackTime,
+            turn: liveDoc.turn,
+            stepId: liveDoc.stepId,
+          },
+        });
       }
     }
     if (sessionTitle.length > 0) {

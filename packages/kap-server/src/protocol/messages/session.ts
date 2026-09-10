@@ -68,7 +68,6 @@ export const sessionInfoSchema = z.object({
   usage: sessionInfoUsageSchema,
   permission_rules: z.array(sessionInfoPermissionRuleSchema),
   message_count: z.number().int().nonnegative(),
-  last_seq: z.number().int().nonnegative(),
 });
 
 export type SessionInfo = z.infer<typeof sessionInfoSchema>;

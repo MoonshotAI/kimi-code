@@ -49,7 +49,7 @@ function expectRejected(url: string, opts?: ConnectOptions): Promise<void> {
 describe('WS upgrade Host/Origin checks', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
-  let v1Url: string;
+  let v3Url: string;
   const sockets: WebSocket[] = [];
 
   beforeAll(async () => {
@@ -62,7 +62,7 @@ describe('WS upgrade Host/Origin checks', () => {
       logLevel: 'silent',
       authTokenService: fixedTokenAuth(TOKEN),
     });
-    v1Url = `ws://127.0.0.1:${server.port}/api/v1/ws`;
+    v3Url = `ws://127.0.0.1:${server.port}/api/v3/ws`;
   });
 
   afterEach(() => {
@@ -85,8 +85,8 @@ describe('WS upgrade Host/Origin checks', () => {
     }
   });
 
-  describe('/api/v1/ws', () => {
-    const url = (): string => v1Url;
+  describe('/api/v3/ws', () => {
+    const url = (): string => v3Url;
 
     it('rejects a spoofed Host before token validation', async () => {
       await expectRejected(url(), { headers: { Host: 'evil.com' } });
@@ -114,7 +114,7 @@ describe('WS upgrade Host/Origin checks', () => {
       authTokenService: fixedTokenAuth(TOKEN),
       corsOrigins: ['https://app.example.test'],
     });
-    const url = `ws://127.0.0.1:${server.port}/api/v1/ws`;
+    const url = `ws://127.0.0.1:${server.port}/api/v3/ws`;
     const ws = await openConn(url, { headers: { origin: 'https://app.example.test' } });
     sockets.push(ws);
     expect(ws.readyState).toBe(WebSocket.OPEN);

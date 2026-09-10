@@ -1,8 +1,11 @@
 import {
   IEventService,
+  ISessionActivityView,
   ISessionIndex,
   ISessionManager,
   IWorkspaceService,
+  getLiveSessionById,
+  type IDisposable,
   type Scope,
   type Workspace,
 } from '@moonshot-ai/agent-core-v2';
@@ -65,6 +68,42 @@ export function registerWsV3(core: Scope, opts: RegisterWsV3Options): WsV3Regist
         (await core.accessor.get(IWorkspaceService).get(summary.workspaceId))?.root;
       if (cwd === undefined) return undefined;
       return toWireSession(summary, cwd, resolveSessionFacts(core, sessionId));
+    },
+    watchSessionActivity(listener) {
+      const watchers = new Map<string, IDisposable>();
+      const drop = (sessionId: string): void => {
+        watchers.get(sessionId)?.dispose();
+        watchers.delete(sessionId);
+      };
+      const attach = (sessionId: string): void => {
+        if (watchers.has(sessionId)) return;
+        const handle = getLiveSessionById(core.accessor, sessionId);
+        if (handle === undefined) return;
+        watchers.set(
+          sessionId,
+          handle.accessor.get(ISessionActivityView).onDidChange(() => listener(sessionId)),
+        );
+      };
+      const eventDisposable = core.accessor.get(IEventService).subscribe((event) => {
+        const payload = (event as { readonly payload?: unknown }).payload;
+        if (typeof payload !== 'object' || payload === null) return;
+        const sessionId = (payload as { readonly sessionId?: unknown }).sessionId;
+        if (event.type === 'event.session.archived' || event.type === 'event.session.deleted') {
+          if (typeof sessionId === 'string') drop(sessionId);
+          return;
+        }
+        if (typeof sessionId === 'string' && sessionId.length > 0) attach(sessionId);
+      });
+      const manager = core.accessor.get(ISessionManager);
+      const closeDisposable = manager.onDidCloseSession?.((event) => drop(event.sessionId));
+      return {
+        dispose: () => {
+          eventDisposable.dispose();
+          closeDisposable?.dispose();
+          for (const watcher of watchers.values()) watcher.dispose();
+          watchers.clear();
+        },
+      };
     },
   };
   const hub = new WsV3Hub({

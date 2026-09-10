@@ -87,9 +87,9 @@ describe('server-v2 disableAuth (--dangerous-bypass-auth)', () => {
   });
 
   it('disableAuth:true lets WebSocket upgrades through without a token', async () => {
-    const v1 = await openConn(`ws://127.0.0.1:${server!.port}/api/v1/ws`);
-    sockets.push(v1.ws);
-    expect(v1.firstFrame).toMatchObject({ type: 'server_hello' });
+    const v3 = await openConn(`ws://127.0.0.1:${server!.port}/api/v3/ws`);
+    sockets.push(v3.ws);
+    expect(v3.firstFrame).toMatchObject({ type: 'hello' });
   });
 
   it('default boot keeps the gate closed and reports dangerous_bypass_auth: false', async () => {

@@ -8,8 +8,10 @@ import type { WsV3CoreEvent, WsV3GlobalSource, WsV3Logger } from './wsV3Deps';
 export class GlobalMessageTranslator {
   private queue: Promise<void> = Promise.resolve();
   private readonly workspaces = new Map<string, WorkspaceInfo>();
+  private readonly sessions = new Map<string, unknown>();
   private readonly validationFailures = new Map<string, number>();
   private readonly disposable: IDisposable;
+  private readonly activityDisposable: IDisposable | undefined;
   private disposed = false;
 
   constructor(
@@ -18,6 +20,9 @@ export class GlobalMessageTranslator {
     private readonly logger?: WsV3Logger,
   ) {
     this.disposable = deps.subscribe((event) => this.onEvent(event));
+    this.activityDisposable = deps.watchSessionActivity?.((sessionId) =>
+      this.onSessionActivity(sessionId),
+    );
     this.enqueue(async () => {
       for (const workspace of await deps.listWorkspaces()) {
         this.workspaces.set(workspace.id, await deps.workspaceInfo(workspace));
@@ -28,7 +33,19 @@ export class GlobalMessageTranslator {
   dispose(): void {
     this.disposed = true;
     this.disposable.dispose();
+    this.activityDisposable?.dispose();
     this.workspaces.clear();
+    this.sessions.clear();
+  }
+
+  private onSessionActivity(sessionId: string): void {
+    this.enqueue(async () => {
+      if (this.disposed) return;
+      const session = await this.deps.sessionInfo(sessionId);
+      if (session === undefined) return;
+      this.sessions.set(sessionId, session);
+      this.emitValidated({ type: 'session', timestamp: Date.now(), subtype: 'updated', session });
+    });
   }
 
   private onEvent(event: WsV3CoreEvent): void {
@@ -118,6 +135,7 @@ export class GlobalMessageTranslator {
         if (payload === undefined || sessionId === undefined) return [];
         const session = payload['session'] ?? (await this.deps.sessionInfo(sessionId));
         if (typeof session !== 'object' || session === null) return [];
+        this.sessions.set(sessionId, session);
         return [{ type: 'session', timestamp, subtype: 'created', session }];
       }
       case 'event.session.archived': {
@@ -125,7 +143,16 @@ export class GlobalMessageTranslator {
         if (sessionId === undefined) return [];
         const session = await this.deps.sessionInfo(sessionId);
         if (session === undefined) return [];
+        this.sessions.set(sessionId, session);
         return [{ type: 'session', timestamp, subtype: 'archived', session }];
+      }
+      case 'event.session.deleted': {
+        const sessionId = stringField(asRecord(event.payload), 'sessionId');
+        if (sessionId === undefined) return [];
+        const cached = this.sessions.get(sessionId);
+        this.sessions.delete(sessionId);
+        if (cached === undefined) return [];
+        return [{ type: 'session', timestamp, subtype: 'deleted', session: cached }];
       }
       case 'session.meta.updated': {
         const payload = asRecord(event.payload);
@@ -133,6 +160,7 @@ export class GlobalMessageTranslator {
         if (payload === undefined || sessionId === undefined) return [];
         const session = await this.deps.sessionInfo(sessionId);
         if (session === undefined) return [];
+        this.sessions.set(sessionId, session);
         return [
           {
             type: 'session',
