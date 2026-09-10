@@ -117,7 +117,6 @@ function createRequester(
     maxContextSize: 1000,
     alwaysThinking: false,
     providerName: 'p',
-    authProvider: { getAuth: async () => undefined },
   };
   return {
     model,
@@ -168,6 +167,7 @@ function createService(
   ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-code-llm-requester-test', options.env ?? {}));
   const thinkingLevel = options.thinkingLevel ?? 'off';
   const profile: Partial<IAgentProfileService> = {
+    hasProvider: () => true,
     resolveModelContext: () => ({
       modelAlias: 'm',
       modelCapabilities: capabilities,
@@ -754,7 +754,6 @@ describe('AgentLLMRequesterService trace id', () => {
       maxContextSize: 1000,
       alwaysThinking: false,
       providerName: 'p',
-      authProvider: { getAuth: async () => undefined },
     };
     return {
       model,

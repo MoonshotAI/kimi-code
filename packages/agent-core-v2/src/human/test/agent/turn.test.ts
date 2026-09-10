@@ -6,9 +6,9 @@ import type { LlmErrorMessage } from '#/llm/errors';
 import type { ContentPart, Message, UserMessage } from '#/llm/message';
 import { createMediaDegradeRecovery } from '#/llm/media/degrade';
 import type { LlmModel } from '#/llm/model';
-import { createLlmMachine, type LlmEvent } from '#/llm/requester/machine';
+import { createRequestActor, type LlmEvent } from '#/llm/requester/actor';
 import type { LlmRecovery } from '#/llm/requester/recovery';
-import type { LlmRequester } from '#/llm/requester/requester';
+import type { LlmCredentialProvider, LlmRequester } from '#/llm/requester/requester';
 import type { LlmRetryOptions } from '#/llm/requester/retry';
 import {
   createTurnMachine,
@@ -92,7 +92,7 @@ function startTurnActor(
       events: {} as TurnEvent,
       emitted: {} as TurnLlmEvent,
     },
-    actors: { turn: createTurnMachine(createLlmMachine({ requester }), options) },
+    actors: { turn: createTurnMachine(requester, options) },
   }).createMachine({
     id: 'harness',
     initial: 'running',
@@ -130,6 +130,44 @@ function startTurnActor(
   actor.on('llm.failed.remote', (event) => failed.push(event.error));
   actor.start();
   return { actor, retrying, recovering, sent, failed };
+}
+
+function startRequestActor(requester: LlmRequester, signal: AbortSignal) {
+  const harness = setup({
+    types: {
+      input: {} as { signal: AbortSignal },
+      context: {} as { signal: AbortSignal },
+      events: {} as LlmEvent,
+      emitted: {} as LlmEvent,
+    },
+    actors: { request: createRequestActor(requester) },
+  }).createMachine({
+    id: 'request-harness',
+    initial: 'running',
+    context: ({ input }) => input,
+    states: {
+      running: {
+        invoke: {
+          src: 'request',
+          input: ({ context }) => ({
+            config: { model },
+            content: { messages: [] },
+            signal: context.signal,
+          }),
+        },
+        on: {
+          '*': {
+            actions: emit(({ event }) => event),
+          },
+        },
+      },
+    },
+  });
+  const failed: unknown[] = [];
+  const actor = createActor(harness, { input: { signal } });
+  actor.on('llm.failed.remote', (event) => failed.push(event));
+  actor.start();
+  return { failed };
 }
 
 async function flush(): Promise<void> {
@@ -532,5 +570,179 @@ describe('turn machine media recovery', () => {
     expect(calls()).toBe(1);
     expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'failed' });
     expect(recovering).toHaveLength(0);
+  });
+});
+
+describe('turn machine credential recovery', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function createCredentials(onInvalidate: () => void): {
+    provider: LlmCredentialProvider;
+    tokens: readonly string[];
+  } {
+    const tokens = ['tok-1', 'tok-2'];
+    let resolutions = 0;
+    return {
+      tokens,
+      provider: {
+        resolve: () => {
+          const apiKey = tokens[Math.min(resolutions, tokens.length - 1)] as string;
+          resolutions += 1;
+          return { apiKey };
+        },
+        canRecover: (error) =>
+          typeof error === 'object' &&
+          error !== null &&
+          (error as { statusCode?: number }).statusCode === 401,
+        invalidate: onInvalidate,
+      },
+    };
+  }
+
+  it('refreshes credentials once on a recoverable 401 and retries', async () => {
+    let invalidations = 0;
+    const { provider } = createCredentials(() => (invalidations += 1));
+    const apiKeys: (string | undefined)[] = [];
+    const requester: LlmRequester = {
+      generate: (config, _content, control) => {
+        apiKeys.push(config.model.apiKey);
+        control.onEvent?.({ type: 'llm.sent' });
+        if (apiKeys.length === 1) {
+          control.onEvent?.({ type: 'llm.failed.remote', error: statusError(401, 'unauthorized') });
+          return Promise.resolve();
+        }
+        control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'done' } });
+        control.onEvent?.({ type: 'llm.done' });
+        return Promise.resolve();
+      },
+    };
+    const { actor, recovering, sent, failed } = startTurnActor(requester, undefined, {
+      request: { model, credentials: provider },
+    });
+
+    await drain();
+
+    expect(apiKeys).toEqual(['tok-1', 'tok-2']);
+    expect(invalidations).toBe(1);
+    expect(recovering).toHaveLength(1);
+    expect(recovering[0]).toMatchObject({
+      strategy: 'credentials',
+      action: 'refresh',
+      statusCode: 401,
+    });
+    expect(sent.map((event) => event.recovery?.action)).toEqual([undefined, 'refresh']);
+    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'done' });
+    expect(failed).toHaveLength(0);
+  });
+
+  it('keeps recovered messages when a credential refresh follows a message recovery', async () => {
+    let invalidations = 0;
+    const { provider } = createCredentials(() => (invalidations += 1));
+    const { requester, calls, seen } = createCapturingRequester([
+      tooLargeError(),
+      statusError(401, 'unauthorized'),
+      'ok',
+    ]);
+    const { actor, recovering } = startTurnActor(
+      requester,
+      { recovery: createMediaDegradeRecovery() },
+      {
+        ...mediaHistory([mediaMessage('a', 2), mediaMessage('b', 1), mediaMessage('c', 1)]),
+        request: { model, credentials: provider },
+      },
+    );
+
+    await drain();
+
+    expect(calls()).toBe(3);
+    expect(invalidations).toBe(1);
+    expect(recovering.map((event) => `${event.strategy}:${event.action}`)).toEqual([
+      'media-degrade:degraded',
+      'credentials:refresh',
+    ]);
+    expect(countImageParts(seen[1] ?? [])).toBe(2);
+    expect(countImageParts(seen[2] ?? [])).toBe(2);
+    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'done' });
+  });
+
+  it('fails when the attempt after a credential refresh also fails', async () => {
+    let invalidations = 0;
+    const { provider } = createCredentials(() => (invalidations += 1));
+    const { requester, calls } = createStubRequester([
+      statusError(401, 'unauthorized'),
+      statusError(401, 'still unauthorized'),
+    ]);
+    const { actor, recovering, failed } = startTurnActor(requester, undefined, {
+      request: { model, credentials: provider },
+    });
+
+    await drain();
+
+    expect(calls()).toBe(2);
+    expect(invalidations).toBe(1);
+    expect(recovering).toHaveLength(1);
+    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'failed' });
+    expect(failed).toHaveLength(1);
+  });
+
+  it('does not refresh when the request carries no recoverable credentials', async () => {
+    const { requester, calls } = createStubRequester([statusError(401, 'unauthorized')]);
+    const { actor, recovering, failed } = startTurnActor(requester);
+
+    await drain();
+
+    expect(calls()).toBe(1);
+    expect(recovering).toHaveLength(0);
+    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'failed' });
+    expect(failed).toHaveLength(1);
+  });
+
+  it('fails the turn instead of hanging when credential resolution rejects', async () => {
+    const { requester, calls } = createStubRequester(['ok']);
+    const provider: LlmCredentialProvider = {
+      resolve: () => Promise.reject(new Error('login required')),
+    };
+    const { actor, failed } = startTurnActor(requester, undefined, {
+      request: { model, credentials: provider },
+    });
+
+    await drain();
+
+    expect(calls()).toBe(0);
+    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'failed' });
+    expect(failed).toHaveLength(1);
+    expect((failed[0] as { message?: string }).message).toContain('login required');
+  });
+
+  it('does not report llm.failed.remote when the request aborts', async () => {
+    const requester: LlmRequester = {
+      generate: () => Promise.reject(new DOMException('The operation was aborted.', 'AbortError')),
+    };
+    const { failed } = startRequestActor(requester, new AbortController().signal);
+
+    await drain();
+
+    expect(failed).toHaveLength(0);
+  });
+
+  it('does not report llm.failed.remote when the signal is already aborted', async () => {
+    const controller = new AbortController();
+    const requester: LlmRequester = {
+      generate: () => {
+        controller.abort();
+        return Promise.reject(new Error('boom'));
+      },
+    };
+    const { failed } = startRequestActor(requester, controller.signal);
+
+    await drain();
+
+    expect(failed).toHaveLength(0);
   });
 });

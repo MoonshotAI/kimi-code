@@ -2,6 +2,8 @@ import { hostname, platform } from 'node:os';
 import { join } from 'node:path';
 import { request as httpRequest, validateHeaderName, validateHeaderValue } from 'node:http';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { promisify } from 'node:util';
+import { gzip } from 'node:zlib';
 
 import {
   createKimiDeviceId,
@@ -80,6 +82,14 @@ const BLOCKED_RESPONSE_HEADERS = new Set([
   'transfer-encoding',
   'upgrade',
 ]);
+const GZIP_MIN_BODY_BYTES = 1024;
+const GZIP_COMPRESSIBLE_TYPES = new Set([
+  'application/javascript',
+  'application/json',
+  'application/xml',
+  'image/svg+xml',
+]);
+const gzipAsync = promisify(gzip);
 
 interface RelayMessage {
   readonly type: string;
@@ -296,6 +306,27 @@ export function rewriteRemoteControlResponse(
     return Buffer.from(text);
   }
   return body;
+}
+
+function acceptsGzipEncoding(headers: readonly [string, string][]): boolean {
+  let wildcard = false;
+  for (const [name, value] of headers) {
+    if (name.toLowerCase() !== 'accept-encoding') continue;
+    for (const token of value.split(',')) {
+      const [encoding, ...params] = token.trim().toLowerCase().split(';');
+      if (encoding !== 'gzip' && encoding !== '*') continue;
+      const quality = params.map((param) => param.trim()).find((param) => param.startsWith('q='));
+      const acceptable = quality === undefined || Number(quality.slice(2)) > 0;
+      if (encoding === 'gzip') return acceptable;
+      wildcard = wildcard || acceptable;
+    }
+  }
+  return wildcard;
+}
+
+function isGzipCompressibleType(contentType: string): boolean {
+  const mime = contentType.split(';', 1)[0]!.trim().toLowerCase();
+  return mime.startsWith('text/') || GZIP_COMPRESSIBLE_TYPES.has(mime);
 }
 
 export async function startRemoteControl(
@@ -930,30 +961,61 @@ function requestLocalHttp(
         response.on('data', (chunk: Buffer | string) => chunks.push(Buffer.from(chunk)));
         response.once('error', reject);
         response.once('end', () => {
-          const contentType = response.headers['content-type'] ?? '';
-          const receivedBody = Buffer.concat(chunks);
-          const statusCode = response.statusCode ?? 502;
-          const statusMessage = response.statusMessage ?? 'Bad Gateway';
-          const bodilessStatus = headRequest || statusCode === 204 || statusCode === 304;
-          const bodiless = bodilessStatus || receivedBody.length === 0;
-          const body =
-            !bodiless && response.headers['content-encoding'] === undefined
-              ? rewriteRemoteControlResponse(contentType, receivedBody, publicPrefix)
-              : receivedBody;
-          const rewritten = !body.equals(receivedBody);
-          const headers = filterResponseHeaders(response.rawHeaders);
-          if (rewritten || (statusCode === 304 && validatesRewrite)) {
-            applyRewrittenCacheHeaders(headers);
-          }
-          if (!bodilessStatus) {
-            headers.push('Content-Length', String(body.length));
-          }
-          resolve(
-            Buffer.concat([
+          void (async (): Promise<Buffer> => {
+            const contentType = response.headers['content-type'] ?? '';
+            const receivedBody = Buffer.concat(chunks);
+            const statusCode = response.statusCode ?? 502;
+            const statusMessage = response.statusMessage ?? 'Bad Gateway';
+            const bodilessStatus = headRequest || statusCode === 204 || statusCode === 304;
+            const bodiless = bodilessStatus || receivedBody.length === 0;
+            const identityEncoded = response.headers['content-encoding'] === undefined;
+            let body =
+              !bodiless && identityEncoded
+                ? rewriteRemoteControlResponse(contentType, receivedBody, publicPrefix)
+                : receivedBody;
+            const rewritten = !body.equals(receivedBody);
+            const headers = filterResponseHeaders(response.rawHeaders);
+            if (rewritten || (statusCode === 304 && validatesRewrite)) {
+              applyRewrittenCacheHeaders(headers);
+            }
+            const negotiated =
+              !bodiless &&
+              identityEncoded &&
+              statusCode !== 206 &&
+              body.length >= GZIP_MIN_BODY_BYTES &&
+              isGzipCompressibleType(contentType);
+            if (negotiated) {
+              let varyCovers = false;
+              for (let index = 0; index < headers.length; index += 2) {
+                if (headers[index]!.toLowerCase() !== 'vary') continue;
+                const tokens = new Set(headers[index + 1]!
+                  .toLowerCase()
+                  .split(',')
+                  .map((token) => token.trim()));
+                if (tokens.has('*') || tokens.has('accept-encoding')) varyCovers = true;
+              }
+              if (!varyCovers) headers.push('Vary', 'Accept-Encoding');
+            }
+            if (negotiated && acceptsGzipEncoding(parsed.headers)) {
+              body = await gzipAsync(body);
+              headers.push('Content-Encoding', 'gzip');
+              // A strong validator names exact bytes, so it cannot describe the gzip
+              // representation; drop it. Weak validators (including the versioned tag that
+              // `applyRewrittenCacheHeaders` assigns to rewritten bodies) cover semantically
+              // equivalent encodings and keep 304 revalidation working through the tunnel.
+              for (let index = headers.length - 2; index >= 0; index -= 2) {
+                if (headers[index]!.toLowerCase() !== 'etag') continue;
+                if (!headers[index + 1]!.startsWith('W/')) headers.splice(index, 2);
+              }
+            }
+            if (!bodilessStatus) {
+              headers.push('Content-Length', String(body.length));
+            }
+            return Buffer.concat([
               Buffer.from(`HTTP/1.1 ${statusCode} ${statusMessage}\r\n${headerLines(headers)}\r\n\r\n`),
               body,
-            ]),
-          );
+            ]);
+          })().then(resolve, reject);
         });
       },
     );

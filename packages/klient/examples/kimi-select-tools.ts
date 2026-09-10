@@ -63,7 +63,8 @@ import { renderLoadableToolsAnnouncement } from '@moonshot-ai/agent-core-v2/agen
 import { UNKNOWN_CAPABILITY } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/capability';
 import type { Message } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/message';
 import type { ToolDescription as Tool } from '@moonshot-ai/agent-core-v2/human/llm/message';
-import type { AuthProvider, Model } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
+import { staticCredentials } from '@moonshot-ai/agent-core-v2/human/credentials/credentials';
+import type { Model } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import type {
   ModelRequestInput,
@@ -281,10 +282,6 @@ async function probeWireEncoding(): Promise<void> {
   const port = (server.address() as AddressInfo).port;
 
   const registry = new ProtocolAdapterRegistry();
-  const staticKey: AuthProvider = {
-    canRefresh: false,
-    getAuth: () => Promise.resolve({ apiKey: 'sk-probe' }),
-  };
   const makeRequester = (providerType?: string): ModelRequester => {
     const model: Model = {
       id: 'probe',
@@ -298,7 +295,7 @@ async function probeWireEncoding(): Promise<void> {
       alwaysThinking: false,
       providerType,
       providerName: providerType ?? 'probe',
-      authProvider: staticKey,
+      credentials: staticCredentials('sk-probe'),
     };
     return new ModelRequesterImpl(model, registry);
   };

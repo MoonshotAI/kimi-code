@@ -8,7 +8,6 @@ import {
   extractText,
 } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
-import { createLlmMachine } from '#/llm/requester/machine';
 import type { LlmRequester } from '#/llm/requester/requester';
 import { emptyUsage } from '#/llm/usage';
 import { createAgentMachine } from '#/agent/machine';
@@ -53,7 +52,7 @@ function createTestSession(requester: LlmRequester): SessionActor {
     createSessionMachine({
       agent: createAgentMachine({
         tools: [],
-        turnActor: createTurnMachine(createLlmMachine({ requester })),
+        turnActor: createTurnMachine(requester),
       }),
     }),
     { input: { request: { model } } },

@@ -1,7 +1,7 @@
 import type { ModelCapability } from '#/llm/capability';
 import type { ContentPart, Message, VideoURLPart } from '#/llm/message';
 import type { Provider } from '#/llm/provider/definition';
-import type { MessageResolveContext, MessageResolver } from '#/llm/requester/machine';
+import type { MessageResolveContext, MessageResolver } from '#/llm/requester/actor';
 
 import type { MediaUploadCache } from './cache';
 import { mediaKindForMime, mediaMimeForPath, type MediaKind } from './mime';
