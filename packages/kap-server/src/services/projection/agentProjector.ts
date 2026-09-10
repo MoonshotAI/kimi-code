@@ -1241,10 +1241,11 @@ export class AgentMessageProjector {
       tool.agentRefs = [...tool.agentRefs, ref];
       ops.push(this.toolOp(tool));
     }
-    const taskId = event.taskId;
+    const taskId =
+      event.taskId ?? (event.swarmIndex !== undefined ? event.subagentId : undefined);
     if (taskId === undefined) return ops;
     this.subagentTaskIds.set(event.subagentId, taskId);
-    if (tool !== undefined && tool.taskId !== taskId) {
+    if (event.taskId !== undefined && tool !== undefined && tool.taskId !== taskId) {
       tool.taskId = taskId;
       ops.push(this.toolOp(tool));
     }

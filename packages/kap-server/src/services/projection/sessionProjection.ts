@@ -16,6 +16,7 @@ import {
   INTERACTION_TAG_SESSION_ID,
   ISessionActivityView,
   ISessionIndex,
+  ISessionMetadata,
   IWireService,
   MAIN_AGENT_ID,
   interactions,
@@ -575,6 +576,72 @@ export class SessionProjection {
     if (records === undefined) return;
     if (this.disposed || this.projectors.get(agentId) !== projector) return;
     projector.applyTimelineSeed(foldTimelineSeed(records));
+    await this.resolveSwarmOriginsFromWire(agentId, records);
+  }
+
+  private async resolveSwarmOriginsFromWire(
+    agentId: string,
+    records: readonly ContextRecord[],
+  ): Promise<void> {
+    if (agentId !== MAIN_AGENT_ID) return;
+    let toolCallId: string | undefined;
+    let args: Record<string, unknown> | undefined;
+    for (const record of records) {
+      const event = record['event'] as
+        | { type?: string; toolCallId?: string; name?: string; args?: unknown }
+        | undefined;
+      if (event?.type === 'tool.call' && event.name === 'AgentSwarm') {
+        if (typeof event.toolCallId !== 'string') continue;
+        toolCallId = event.toolCallId;
+        const raw = event.args;
+        const parsed = typeof raw === 'string' ? safeParseObject(raw) : raw;
+        args =
+          parsed !== null && typeof parsed === 'object'
+            ? (parsed as Record<string, unknown>)
+            : undefined;
+      } else if (event?.type === 'tool.result' && event.toolCallId === toolCallId) {
+        toolCallId = undefined;
+        args = undefined;
+      }
+    }
+    if (toolCallId === undefined || args === undefined) return;
+    const resumeIds =
+      args['resume_agent_ids'] !== null && typeof args['resume_agent_ids'] === 'object'
+        ? Object.keys(args['resume_agent_ids'] as Record<string, unknown>)
+        : [];
+    const items = Array.isArray(args['items'])
+      ? (args['items'] as unknown[]).filter((item): item is string => typeof item === 'string')
+      : [];
+    const metadata = this.session.accessor.get(ISessionMetadata) as ISessionMetadata | undefined;
+    const agents = metadata === undefined ? undefined : (await metadata.read()).agents;
+    if (this.disposed) return;
+    for (const [memberId, tracker] of this.agentStates) {
+      if (memberId === MAIN_AGENT_ID || tracker.hasOrigin) continue;
+      let swarmIndex: number | undefined;
+      const resumePosition = resumeIds.indexOf(memberId);
+      if (resumePosition >= 0) {
+        swarmIndex = resumePosition + 1;
+      } else {
+        const meta = agents?.[memberId];
+        const item = meta?.labels?.['swarmItem'] ?? meta?.swarmItem;
+        if (item !== undefined) {
+          const itemPosition = items.findIndex((candidate) => candidate.trim() === item);
+          if (itemPosition >= 0) swarmIndex = resumeIds.length + itemPosition + 1;
+        }
+      }
+      if (swarmIndex === undefined) continue;
+      const profile = this.agentHandle(memberId)?.accessor.get(IAgentProfileService) as
+        | IAgentProfileService
+        | undefined;
+      const seeded = tracker.seedToolSpawned({
+        subagentId: memberId,
+        subagentName: profile?.data().profileName ?? '',
+        parentToolCallId: toolCallId,
+        parentAgentId: 'main',
+        swarmIndex,
+      });
+      if (seeded) this.emitAgentState(memberId);
+    }
   }
 
   private async healTurns(agentId: string, ordinals: ReadonlySet<number>): Promise<void> {
@@ -699,4 +766,12 @@ function interactionAgentId(interaction: Interaction): string {
     (typeof payloadAgent === 'string' ? payloadAgent : undefined) ??
     MAIN_AGENT_ID
   );
+}
+
+function safeParseObject(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
 }
