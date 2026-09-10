@@ -1,5 +1,7 @@
 import { fromCallback } from '#/xstate2';
 
+import { applyCredential } from '#/credentials/credentials';
+import { isAbortError, toLlmErrorMessage } from '#/llm/errors';
 import type { Message } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
 
@@ -58,21 +60,36 @@ export function createRequestActor(
 ) {
   return fromCallback<LlmEvent, LlmInput>(({ input, sendBack }) => {
     void (async () => {
-      let messages = input.content.messages;
-      for (const resolver of messageResolvers) {
-        messages = await resolver.resolve(messages, {
-          model: input.config.model,
-          signal: input.signal,
-        });
+      try {
+        const credential = input.config.credentials?.resolve();
+        const config =
+          credential === undefined
+            ? input.config
+            : credential instanceof Promise
+              ? {
+                  ...input.config,
+                  model: applyCredential(input.config.model, await credential),
+                }
+              : { ...input.config, model: applyCredential(input.config.model, credential) };
+        let messages = input.content.messages;
+        for (const resolver of messageResolvers) {
+          messages = await resolver.resolve(messages, {
+            model: config.model,
+            signal: input.signal,
+          });
+        }
+        await requester.generate(
+          config,
+          { ...input.content, messages },
+          {
+            signal: input.signal,
+            onEvent: sendBack,
+          },
+        );
+      } catch (error) {
+        if (isAbortError(error) || input.signal.aborted) return;
+        sendBack({ type: 'llm.failed.remote', error: toLlmErrorMessage(error), rawError: error });
       }
-      await requester.generate(
-        input.config,
-        { ...input.content, messages },
-        {
-          signal: input.signal,
-          onEvent: sendBack,
-        },
-      );
     })();
   });
 }

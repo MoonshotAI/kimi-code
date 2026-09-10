@@ -86,7 +86,6 @@ function modelWith(spec: {
     providerName: spec.providerType ?? spec.protocol,
     reasoningKey: spec.reasoningKey,
     supportEfforts: spec.supportEfforts,
-    authProvider: { canRefresh: false, getAuth: () => Promise.resolve(undefined) },
     providerOptions: spec.providerOptions,
   };
 }

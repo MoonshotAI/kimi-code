@@ -1918,6 +1918,33 @@ describe('aborted step tool execution', () => {
       await ctx.dispose();
     }
   });
+
+  it('settles a message-less notification when credential resolution rejects before the first request', async () => {
+    const rejectingCredentials = () => ({
+      resolve: () => Promise.reject(new Error('OAuth login required')),
+    });
+    const requester: IAgentLLMRequesterService = {
+      _serviceBrand: undefined,
+      prepareTurnConfig: () => ({ thinkingEffort: 'off' }),
+      currentCredentials: rejectingCredentials,
+      credentialsForTurn: rejectingCredentials,
+      async request() {
+        throw new Error('request must not run');
+      },
+      start() {
+        throw new Error('request must not run');
+      },
+    };
+    const ctx = createTestAgent(agentService(IAgentLLMRequesterService, requester));
+    try {
+      const loopService = ctx.get(IAgentLoopService);
+      const handle = loopService.notify();
+      await loopService.settled();
+      expect(handle.dropped).toBe(false);
+    } finally {
+      await ctx.dispose();
+    }
+  });
 });
 
 function submitTurn(loop: IAgentLoopService, text: string): { readonly turn: Turn } {
@@ -1945,6 +1972,8 @@ function createTimingRequester(): IAgentLLMRequesterService {
   const requester: IAgentLLMRequesterService = {
     _serviceBrand: undefined,
     prepareTurnConfig: () => ({ thinkingEffort: 'off' }),
+    currentCredentials: () => undefined,
+    credentialsForTurn: () => undefined,
     async request(_overrides, onPart = () => {}) {
       await onPart({ type: 'text', text: 'answer' });
       return {

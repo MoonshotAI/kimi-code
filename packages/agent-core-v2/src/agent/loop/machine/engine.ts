@@ -15,6 +15,7 @@ import type { FinishInfo } from '#human/llm/finish-reason';
 import type { StreamedMessagePart, UserMessage } from '#human/llm/message';
 import type { LlmModel } from '#human/llm/model';
 import type { LlmRecovery, LlmRecoveryRecord } from '#human/llm/requester/recovery';
+import type { LlmCredentialProvider } from '#human/llm/requester/requester';
 import { resolveMaxAttempts } from '#human/llm/requester/retry';
 import type { ToolResult as MachineToolResult, ToolUpdate } from '#human/tool/executor';
 import type { TokenUsage } from '#human/llm/usage';
@@ -269,6 +270,17 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
       publish({ type: 'toolBatchFailed', error });
     },
   });
+  const current = (): LlmCredentialProvider | undefined => {
+    const source = options.source?.();
+    return source?.type === 'turn'
+      ? options.llmRequester.credentialsForTurn(source.turnId)
+      : options.llmRequester.currentCredentials();
+  };
+  const credentials: LlmCredentialProvider = {
+    resolve: () => current()?.resolve(),
+    canRecover: (error) => current()?.canRecover?.(error) === true,
+    invalidate: () => current()?.invalidate?.(),
+  };
   const journal = memoryJournal();
   const initialTurnId = options.initialTurnId ?? 0;
   if (initialTurnId > 0) {
@@ -288,7 +300,12 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
       }),
       abortTimeoutMs: options.abortTimeoutMs,
     }),
-    { input: { request: { model: options.model, systemPrompt: options.systemPrompt }, store } },
+    {
+      input: {
+        request: { model: options.model, systemPrompt: options.systemPrompt, credentials },
+        store,
+      },
+    },
   );
   const subscriptions: Subscription[] = [
     actor.on('turn.started', (event) => {

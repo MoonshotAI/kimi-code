@@ -286,7 +286,7 @@ describe('Model assembly (pure data)', () => {
     }
   });
 
-  it('resolves provider env-bag credentials and endpoints through the registry', () => {
+  it('resolves provider env-bag credentials and endpoints through the registry', async () => {
     const { host, catalog } = createHost({
       providers: {
         kimi: { type: 'kimi', env: { KIMI_API_KEY: 'env-token', KIMI_BASE_URL: 'https://kimi-env.example.test/v1' } },
@@ -300,7 +300,7 @@ describe('Model assembly (pure data)', () => {
     try {
       const kimi = catalog.get('k1');
       expect(kimi.baseUrl).toBe('https://kimi-env.example.test/v1');
-      return expect(kimi.authProvider.getAuth()).resolves.toEqual({ apiKey: 'env-token' });
+      return expect(await kimi.credentials?.resolve()).toEqual({ apiKey: 'env-token' });
     } finally {
       host.dispose();
     }
@@ -473,7 +473,7 @@ describe('Model assembly (pure data)', () => {
     }
   });
 
-  it('builds a refreshable OAuth auth provider for oauth-backed models', async () => {
+  it('builds recoverable OAuth credentials for oauth-backed models', async () => {
     const tokenProvider = stubTokenProvider(['tok-1']);
     const { host, catalog } = createHost(
       {
@@ -486,8 +486,10 @@ describe('Model assembly (pure data)', () => {
     );
     try {
       const model = catalog.get('k1');
-      expect(model.authProvider.canRefresh).toBe(true);
-      await expect(model.authProvider.getAuth()).resolves.toEqual({ apiKey: 'tok-1' });
+      expect(model.credentials?.canRecover?.(Object.assign(new Error('x'), { status: 401 }))).toBe(
+        true,
+      );
+      await expect(model.credentials?.resolve()).resolves.toEqual({ apiKey: 'tok-1' });
     } finally {
       host.dispose();
     }
