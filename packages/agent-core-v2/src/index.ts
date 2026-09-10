@@ -162,7 +162,7 @@ export type { ToolCallIdPolicy } from '#human/llm/requester/requester';
 export type { ProviderRequestAuth } from '#/llm-adapter/model/catalog';
 export type { SamplingOptions } from '#/llm-adapter/model/model-requester';
 export * from '#/llm-adapter/contract/request-trace';
-export type { ExtraBody, KimiThinkingConfig } from '#human/llm-kimi/trait';
+export type { KimiThinkingConfig } from '#human/llm-kimi/trait';
 
 export * from '#/app/sessionIndex/sessionIndex';
 export * from '#/app/sessionIndex/sessionIndexService';

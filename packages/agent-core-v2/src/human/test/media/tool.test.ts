@@ -29,8 +29,7 @@ import type { LlmModel } from '#/llm/model';
 import { createProvider } from '#/llm/provider/definition';
 import { createLlmMachine } from '#/llm/requester/machine';
 import type { LlmRequester } from '#/llm/requester/requester';
-import { openAIFormat } from '#/llm/requester/bases/openai/format';
-import { openAIBase } from '#/llm/requester/bases/openai/requester';
+import { openAIBase, planOpenAIRequest } from '#/llm/requester/bases/openai/requester';
 import { createReadMediaFileTool } from '#/media/tool';
 
 const CAPABILITY: ModelCapability = {
@@ -210,11 +209,10 @@ describe('media stack wiring', () => {
     ]);
     expect(uploadVideo).toHaveBeenCalledTimes(1);
 
-    const wire = openAIFormat.formatRequest({
+    const wire = planOpenAIRequest({
       model,
       messages: seenMessages[1] as readonly Message[],
       tools: [],
-      ctx: { model },
     });
     const wireMessages = wire.params.messages as unknown as Record<string, unknown>[];
     const toolWire = wireMessages.find((message) => message['role'] === 'tool');

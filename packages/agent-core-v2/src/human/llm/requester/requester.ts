@@ -20,6 +20,8 @@ export interface ToolCallIdPolicy {
   maxLength?: number;
 }
 
+export type LlmErrorClassifier = (error: unknown) => LlmRemoteErrorMessage | undefined;
+
 export type LlmRequestEvent =
   | { type: 'llm.sent' }
   | { type: 'llm.streaming.headers'; headers: Record<string, string> }

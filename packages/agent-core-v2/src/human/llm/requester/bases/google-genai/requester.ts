@@ -1,9 +1,12 @@
 import { GoogleGenAI as GenAIClient, type GenerateContentParameters } from '@google/genai';
+import { assign, shake } from 'radashi';
 
 import type { LlmModel } from '#/llm/model';
 import { toLlmSyntaxErrorMessage } from '#/llm/syntax-errors';
-import type { ProtocolBase } from '#/llm/protocol/base';
-import { resolveModelConnection, type ProtocolTrait, type TraitContext } from '#/llm/protocol/trait';
+import type { ProtocolBase, ProtocolRequesterOptions, TraitContext } from '#/llm/protocol/base';
+import { resolveModelConnection } from '#/llm/protocol/connection';
+import { applyThinking } from '#/llm/protocol/thinking';
+import { resolveMaxCompletionCap, type FormatRequestInput } from '#/llm/protocol/format';
 import {
   mergeRequestHeaders,
   type LlmClientContext,
@@ -16,10 +19,62 @@ import {
 } from '#/llm/requester/requester';
 
 import { getGoogleGenAIModelCapability } from './capability';
-import { convertGoogleGenAIError, googleGenAIFormat, type GoogleGenAIRequestParams } from './format';
+import type { GoogleGenAITrait } from './trait';
+import {
+  applyGoogleGenAIResponseFormat,
+  assembleGoogleGenAIRequest,
+  convertGoogleGenAIError,
+  createGoogleGenAIFormat,
+  encodeGoogleGenAIMaxOutputTokens,
+  encodeGoogleGenAIRequest,
+  encodeGoogleGenAIThinking,
+  messagesToGoogleGenAIContents,
+  toolToGoogleGenAI,
+  type GoogleGenAIRequestParams,
+} from './format';
 
-export interface GoogleGenAIBaseOptions extends LlmRequesterOptions<GenAIClient> {
-  vertexai?: boolean;
+export interface GoogleGenAIRequesterOptions
+  extends ProtocolRequesterOptions<GoogleGenAITrait>,
+    LlmRequesterOptions<GenAIClient> {
+  readonly vertexai?: boolean;
+}
+
+export interface GoogleGenAIRequestPlanOptions {
+  readonly trait?: GoogleGenAITrait;
+}
+
+export function planGoogleGenAIRequest(
+  input: FormatRequestInput,
+  options?: GoogleGenAIRequestPlanOptions,
+): GoogleGenAIRequestParams {
+  const trait = options?.trait;
+  const ctx: TraitContext = { model: input.model };
+  let kwargs: Record<string, unknown> = {};
+  if (input.thinking !== undefined) {
+    kwargs = applyThinking(kwargs, input.thinking, trait?.thinking, ctx, (t, c) => ({
+      thinkingConfig: encodeGoogleGenAIThinking(c.model.model, t.effort),
+    })).kwargs;
+  }
+  const cap = resolveMaxCompletionCap(input);
+  if (cap !== undefined) {
+    kwargs = {
+      ...kwargs,
+      ...(trait?.maxCompletionTokens?.(cap, ctx) ?? encodeGoogleGenAIMaxOutputTokens(cap)),
+    };
+  }
+  if (input.responseFormat !== undefined) {
+    kwargs = applyGoogleGenAIResponseFormat(kwargs, input.responseFormat);
+  }
+  kwargs = shake(assign(kwargs, input.extraParams?.googleGenai ?? {}));
+
+  const contents = messagesToGoogleGenAIContents(input.messages);
+  const merged = trait?.mergeHistory?.(contents, ctx) ?? contents;
+  const tools = input.tools.map(
+    (tool) => trait?.convertTool?.(tool, ctx) ?? toolToGoogleGenAI(tool),
+  );
+  const params = assembleGoogleGenAIRequest(input, { contents: merged, tools, kwargs });
+  const finalParams = trait?.buildParams?.(params, ctx) ?? params;
+  return encodeGoogleGenAIRequest(finalParams);
 }
 
 function createClient(
@@ -61,8 +116,9 @@ async function abortPromise(signal: AbortSignal): Promise<never> {
 }
 
 interface GoogleGenAITransport {
-  readonly trait: ProtocolTrait | undefined;
+  readonly connection: GoogleGenAIRequesterOptions['connection'];
   readonly ctx: TraitContext;
+  readonly format: ReturnType<typeof createGoogleGenAIFormat>;
   readonly resolveClient: (request: LlmClientContext) => GenAIClient;
   readonly signal: AbortSignal;
   readonly onEvent?: (event: LlmRequestEvent) => void;
@@ -72,11 +128,11 @@ async function internalGenerate(
   request: GoogleGenAIRequestParams,
   transport: GoogleGenAITransport,
 ): Promise<void> {
-  const { trait, ctx, resolveClient, signal, onEvent } = transport;
+  const { connection, ctx, format, resolveClient, signal, onEvent } = transport;
   const client = resolveClient({
     model: ctx.model,
     headers: mergeRequestHeaders(
-      mergeRequestHeaders(trait?.defaultHeaders?.(ctx), ctx.model.defaultHeaders),
+      mergeRequestHeaders(connection?.defaultHeaders?.(ctx), ctx.model.defaultHeaders),
       request.headers,
     ),
   });
@@ -90,7 +146,7 @@ async function internalGenerate(
     models.generateContentStream(request.params),
     abortPromise(signal),
   ]);
-  const parse = googleGenAIFormat.createStreamParser({ trait, ctx });
+  const parse = format.createStreamParser();
   let messageId: string | undefined;
   for await (const chunk of stream) {
     if (signal.aborted) {
@@ -118,10 +174,11 @@ async function internalGenerate(
   onEvent?.({ type: 'llm.done' });
 }
 
-export function createGoogleGenAIRequester(
-  trait?: ProtocolTrait,
-  options?: GoogleGenAIBaseOptions,
-): LlmRequester {
+export function createGoogleGenAIRequester(options?: GoogleGenAIRequesterOptions): LlmRequester {
+  const connection = options?.connection;
+  const trait = options?.trait;
+  const convertError = options?.convertError;
+  const format = createGoogleGenAIFormat();
   const vertexai = options?.vertexai === true;
   const resolveClient =
     options?.clientFactory ??
@@ -133,49 +190,54 @@ export function createGoogleGenAIRequester(
       content: LlmRequestContent,
       control: LlmRequestControl,
     ): Promise<void> {
-      const model = resolveModelConnection(config.model, trait);
-      const { systemPrompt, tools = [] } = config;
+      const model = resolveModelConnection(config.model, connection);
+      const { tools = [] } = config;
       const { messages } = content;
       const { signal, onEvent } = control;
       const ctx: TraitContext = { model };
       let request: GoogleGenAIRequestParams;
       try {
-        request = googleGenAIFormat.formatRequest({
-          model,
-          messages,
-          systemPrompt,
-          tools,
-          trait,
-          ctx,
-          cacheKey: config.cacheKey,
-          thinking: config.thinking,
-          responseFormat: config.responseFormat,
-          maxCompletionTokens: config.maxCompletionTokens,
-          usedContextTokens: content.usedContextTokens,
-          maxContextTokens: config.maxContextTokens,
-          extraParams: config.extraParams,
-        });
+        request = planGoogleGenAIRequest(
+          {
+            ...config,
+            model,
+            messages,
+            tools,
+            usedContextTokens: content.usedContextTokens,
+          },
+          { trait },
+        );
       } catch (error) {
         onEvent?.({ type: 'llm.failed.syntax', error: toLlmSyntaxErrorMessage(error) });
         return;
       }
       try {
-        await internalGenerate(request, { trait, ctx, resolveClient, signal, onEvent });
+        await internalGenerate(request, {
+          connection,
+          ctx,
+          format,
+          resolveClient,
+          signal,
+          onEvent,
+        });
       } catch (error) {
         onEvent?.({
           type: 'llm.failed.remote',
-          error: convertGoogleGenAIError(error, (e) => trait?.convertError?.(e, ctx)),
+          error: convertGoogleGenAIError(error, (e) => convertError?.(e)),
         });
       }
     },
   };
 }
 
-export function createGoogleGenAIBase(options?: GoogleGenAIBaseOptions): ProtocolBase {
+export function createGoogleGenAIBase(
+  options?: Pick<GoogleGenAIRequesterOptions, 'clientFactory' | 'vertexai'>,
+): ProtocolBase<GoogleGenAITrait> {
   return {
     capability: getGoogleGenAIModelCapability,
-    createRequester: (trait?: ProtocolTrait) => createGoogleGenAIRequester(trait, options),
+    createRequester: (requesterOptions) =>
+      createGoogleGenAIRequester({ ...options, ...requesterOptions }),
   };
 }
 
-export const googleGenAIBase: ProtocolBase = createGoogleGenAIBase();
+export const googleGenAIBase: ProtocolBase<GoogleGenAITrait> = createGoogleGenAIBase();

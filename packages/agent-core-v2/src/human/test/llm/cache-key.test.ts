@@ -105,7 +105,7 @@ function stubAnthropicClient(events: readonly Record<string, unknown>[]): {
 describe('openai requester cacheKey', () => {
   it('encodes the cache key as prompt_cache_key by default', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester(undefined, { clientFactory: client.clientFactory });
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     await requester.generate(
       {
         model,
@@ -123,10 +123,10 @@ describe('openai requester cacheKey', () => {
 
   it('lets a trait override the cache key params', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester(
-      { cacheKey: (key) => ({ custom_cache: key }) },
-      { clientFactory: client.clientFactory },
-    );
+    const requester = createOpenAIRequester({
+      trait: { cacheKey: (key) => ({ custom_cache: key }) },
+      clientFactory: client.clientFactory,
+    });
     await requester.generate(
       { model, cacheKey: 'session-1' },
       { messages },
@@ -138,7 +138,7 @@ describe('openai requester cacheKey', () => {
 
   it('omits prompt_cache_key when no cache key is given', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester(undefined, { clientFactory: client.clientFactory });
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     await requester.generate(
       { model },
       { messages },
@@ -151,7 +151,7 @@ describe('openai requester cacheKey', () => {
 describe('anthropic requester cacheKey', () => {
   it('encodes the cache key as metadata.user_id', async () => {
     const client = stubAnthropicClient(anthropicStreamEvents);
-    const requester = createAnthropicRequester(undefined, { clientFactory: client.clientFactory });
+    const requester = createAnthropicRequester({ clientFactory: client.clientFactory });
     await requester.generate(
       { model, cacheKey: 'session-1', extraParams: { anthropic: { top_k: 5 } } },
       { messages },
