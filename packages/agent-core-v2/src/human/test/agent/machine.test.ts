@@ -713,6 +713,31 @@ describe('agent machine lifecycle', () => {
       'assistant:recovered',
     ]);
   });
+
+  it('persists turn events without reporting unhandled store.changed', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const requester = createStubRequester([
+        createAssistantMessage([{ type: 'text', text: 'hi' }]),
+      ]);
+      const store = await testStore();
+      const actor = createActor(createTestAgentMachine([], requester), {
+        input: { request: { model }, store },
+      });
+      actor.start();
+      actor.send({ type: 'input.submit', message: createUserMessage('hello') });
+      await waitFor(actor, (s) => s.matches('idle') && store.getState().history.length === 2, {
+        timeout: 5000,
+      });
+      await store.flush();
+      const unhandled = warn.mock.calls.filter(([message]) =>
+        String(message).includes('unhandled event "store.changed"'),
+      );
+      expect(unhandled).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });
 
 describe('agent machine input.notify', () => {

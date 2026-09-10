@@ -433,6 +433,7 @@ export function createAgentMachine({
       'store.error': {
         actions: 'forwardToParent',
       },
+      'store.changed': {},
       'tool.update': {
         actions: [emit(({ event }) => event), 'forwardToParent'],
       },
