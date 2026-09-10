@@ -606,9 +606,6 @@ export class TasksBrowserApp extends Container implements Focusable {
     }
     if (task.kind === 'question') {
       lines.push(`${label('Questions:')}${currentTheme.fg('textMuted', String(task.questionCount))}`);
-      if (task.toolCallId !== undefined) {
-        lines.push(`${label('Tool call:')}${currentTheme.fg('textMuted', task.toolCallId)}`);
-      }
     }
     const timing =
       task.status === 'running'

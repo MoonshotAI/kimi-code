@@ -304,11 +304,8 @@ function toWireTask(
   if (info.kind === 'agent' && info.subagentType !== undefined) {
     base.subagent_type = info.subagentType;
   }
-  if (
-    (info.kind === 'agent' || info.kind === 'process') &&
-    info.parentToolCallId !== undefined
-  ) {
-    base.parent_tool_call_id = info.parentToolCallId;
+  if (info.kind === 'agent' || info.kind === 'process') {
+    base.parent_tool_call_id = info.parentToolCallId ?? info.taskId;
   }
   if (output !== undefined) {
     base.output_preview = output.preview;

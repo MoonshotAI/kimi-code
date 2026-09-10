@@ -9,7 +9,6 @@ import type { ExecutableToolResult } from '#/tool/toolContract';
 export interface QuestionTaskInfo extends AgentTaskInfoBase {
   readonly kind: 'question';
   readonly questionCount: number;
-  readonly toolCallId?: string;
 }
 
 declare module '#/agent/task/types' {
@@ -24,17 +23,16 @@ function errorMessage(err: unknown): string {
 
 export class QuestionBackgroundTask implements AgentTask {
   readonly kind = 'question' as const;
-  readonly idPrefix: string = 'question';
+  readonly taskId: string;
   private readonly questionCount: number;
-  private readonly toolCallId?: string;
 
   constructor(
     private readonly run: (signal: AbortSignal) => Promise<ExecutableToolResult>,
     readonly description: string,
-    info: { questionCount: number; toolCallId?: string },
+    info: { questionCount: number; taskId: string },
   ) {
     this.questionCount = info.questionCount;
-    this.toolCallId = info.toolCallId;
+    this.taskId = info.taskId;
   }
 
   async start(sink: AgentTaskSink): Promise<void> {
@@ -62,7 +60,6 @@ export class QuestionBackgroundTask implements AgentTask {
       ...base,
       kind: 'question',
       questionCount: this.questionCount,
-      toolCallId: this.toolCallId,
     };
   }
 }

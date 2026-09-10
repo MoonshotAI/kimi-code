@@ -743,13 +743,13 @@ describe('foldWireHistory interactions, facts and modes', () => {
         'task.started',
         {
           info: {
-            taskId: 'task-2',
+            taskId: 'task_legacy_9',
             kind: 'agent',
             agentId: 'sub-1',
-            parentToolCallId: 'call_9',
             status: 'running',
             model: 'k2',
             thinkingEffort: 'high',
+            parentToolCallId: 'call_9',
           },
         },
         T0 + 3,
@@ -757,7 +757,7 @@ describe('foldWireHistory interactions, facts and modes', () => {
     ]);
     const task = ofType(messages, 'task')[0]!;
     expect(task).toMatchObject({
-      task_id: 'task-2',
+      task_id: 'task_legacy_9',
       kind: 'subagent',
       child_agent_id: 'sub-1',
       model: 'k2',
@@ -765,7 +765,8 @@ describe('foldWireHistory interactions, facts and modes', () => {
     });
     const tool = ofType(messages, 'tool_call')[0]!;
     expect(tool).toMatchObject({
-      task_id: 'task-2',
+      tool_call_id: 'call_9',
+      task_id: 'task_legacy_9',
       agent_refs: [{ agent_id: 'sub-1', role: 'child' }],
     });
 

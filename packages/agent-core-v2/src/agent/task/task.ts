@@ -1,5 +1,4 @@
 import { createDecorator } from '#/_base/di/instantiation';
-import type { ITaskHandle } from '#/app/task/task';
 import type {
   AgentTask,
   AgentTaskInfo,
@@ -39,23 +38,6 @@ export interface RegisterAgentTaskOptions {
 
 export type ForegroundTaskReleaseReason = 'detached' | 'timeout_detached' | 'terminal';
 
-export interface AgentTaskTrackOptions {
-  readonly idPrefix?: string;
-  readonly description: string;
-  readonly detached?: boolean;
-  readonly timeoutMs?: number;
-  readonly detachTimeoutMs?: number;
-  readonly signal?: AbortSignal;
-  readonly forceStop?: () => Promise<void>;
-  readonly onDetach?: () => void;
-  readonly toInfo: (base: AgentTaskInfoBase) => AgentTaskInfo;
-}
-
-export interface IAgentTaskEntry {
-  readonly taskId: string;
-  readonly onDidDetach: Promise<ForegroundTaskReleaseReason>;
-}
-
 export interface AgentTaskNotificationContext {
   readonly agentId: string;
   readonly notificationType: string;
@@ -74,7 +56,6 @@ export interface AgentTaskWaitDelivery {
 export interface IAgentTaskService {
   readonly _serviceBrand: undefined;
 
-  track(handle: ITaskHandle, options: AgentTaskTrackOptions): IAgentTaskEntry;
   registerTask(task: AgentTask, options?: RegisterAgentTaskOptions): string;
   getTask(taskId: string): AgentTaskInfo | undefined;
   list(activeOnly?: boolean, limit?: number): readonly AgentTaskInfo[];

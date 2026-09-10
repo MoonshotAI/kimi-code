@@ -88,7 +88,6 @@ function makeTool(
             endedAt: null,
             kind: 'question',
             questionCount: 1,
-            toolCallId: 'call_bg',
           }
         : undefined,
   );

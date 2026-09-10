@@ -570,14 +570,14 @@ describe('AgentMessageProjector', () => {
         subagentId: 'sub-b',
         parentToolCallId: 'call_b',
         runInBackground: true,
-        taskId: 'task-b',
+        taskId: 'call_b',
         description: 'watch logs',
       }),
       sink,
     );
     const taskB = ofType(sink, 'task').at(-1)!;
     expect(taskB).toMatchObject({
-      task_id: 'task-b',
+      task_id: 'call_b',
       kind: 'subagent',
       status: 'running',
       detached: true,
@@ -585,7 +585,7 @@ describe('AgentMessageProjector', () => {
       description: 'watch logs',
     });
     const toolB = ofType(sink, 'tool_call').at(-1)!;
-    expect(toolB.task_id).toBe('task-b');
+    expect(toolB.task_id).toBe('call_b');
     feed(
       projector,
       ev({ type: 'subagent.completed', subagentId: 'sub-b', resultSummary: 'tail', usage: { inputOther: 1, output: 2, inputCacheRead: 0, inputCacheCreation: 0 } }),
@@ -609,29 +609,29 @@ describe('AgentMessageProjector', () => {
       ev({
         type: 'task.started',
         info: {
-          taskId: 'task-c',
+          taskId: 'legacy_task_c',
           kind: 'agent',
           agentId: 'sub-c',
-          parentToolCallId: 'call_c',
           status: 'running',
           description: 'detached mid-flight',
           detached: true,
           startedAt: T0 + 5000,
           endedAt: null,
+          parentToolCallId: 'call_c',
         },
       }),
       sink,
     );
     const taskC = ofType(sink, 'task').at(-1)!;
     expect(taskC).toMatchObject({
-      task_id: 'task-c',
+      task_id: 'legacy_task_c',
       kind: 'subagent',
       detached: true,
       child_agent_id: 'sub-c',
       started_at: new Date(T0).toISOString(),
     });
     const toolC = ofType(sink, 'tool_call').at(-1)!;
-    expect(toolC.task_id).toBe('task-c');
+    expect(toolC.task_id).toBe('legacy_task_c');
 
     feed(
       projector,

@@ -96,6 +96,7 @@ function agentTask(
   const handle: SubagentHandle = {
     agentId: options.agentId ?? 'agent-child',
     profileName: options.subagentType ?? 'coder',
+    parentToolCallId: 'call_agent',
     completion,
   };
   const task = new SubagentTask(
@@ -278,12 +279,12 @@ function notificationMessageFor(agent: FakeTaskAgent, taskId: string): TestConte
 }
 
 function toolContext<Input>(
-  toolCallId: string,
+  taskId: string,
   args: Input,
 ): TestExecutableToolContext<Input> {
   return {
     turnId: 0,
-    toolCallId,
+    toolCallId: taskId,
     args,
     signal: new AbortController().signal,
   };
@@ -293,13 +294,17 @@ function outputString(result: { readonly output: string | readonly unknown[] }):
   return typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
 }
 
+let processTaskSeq = 0;
+
 function registerProcess(
   manager: IAgentTaskService,
   proc: IHostProcess,
   command: string,
   description: string,
 ): string {
-  return manager.registerTask(new ProcessTask(proc, command, description));
+  return manager.registerTask(
+    new ProcessTask(proc, command, description, undefined, undefined, `call_process_${++processTaskSeq}`),
+  );
 }
 
 describe('AgentTaskService — event emission', () => {
@@ -513,7 +518,7 @@ describe('AgentTaskService — notification delivery', () => {
       new QuestionBackgroundTask(
         async () => ({ isError: false, output: answer }),
         'Which database?',
-        { questionCount: 1, toolCallId: 'call_q' },
+        { questionCount: 1, taskId: 'call_q' },
       ),
       { detached: true },
     );
@@ -552,7 +557,7 @@ describe('AgentTaskService — notification delivery', () => {
       new QuestionBackgroundTask(
         async () => ({ isError: false, output: dismissed }),
         'Which database?',
-        { questionCount: 1, toolCallId: 'call_q' },
+        { questionCount: 1, taskId: 'call_q' },
       ),
       { detached: true },
     );
@@ -579,7 +584,7 @@ describe('AgentTaskService — notification delivery', () => {
       new QuestionBackgroundTask(
         async () => ({ isError: false, output: 'not an answer payload' }),
         'Which database?',
-        { questionCount: 1, toolCallId: 'call_q' },
+        { questionCount: 1, taskId: 'call_q' },
       ),
       { detached: true },
     );
@@ -610,7 +615,7 @@ describe('AgentTaskService — notification delivery', () => {
           output: 'The connected client does not support interactive questions.',
         }),
         'Which database?',
-        { questionCount: 1, toolCallId: 'call_q' },
+        { questionCount: 1, taskId: 'call_q' },
       ),
       { detached: true },
     );

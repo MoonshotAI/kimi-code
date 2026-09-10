@@ -4,7 +4,9 @@ Use this tool to discover which background tasks exist and where each one
 stands. It is the entry point for inspecting background work: it returns a
 task ID, status, and description for every task it reports, plus the command,
 PID, and (once finished) exit code for shell tasks, and a stop reason for any
-task that ended early.
+task that ended early. A task's ID is the tool call ID of the
+Bash/Agent/AskUserQuestion call that started it — the same `task_id` shown
+in this list and in completion notifications.
 
 Guidelines:
 
