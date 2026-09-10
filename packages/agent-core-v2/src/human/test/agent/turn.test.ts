@@ -6,7 +6,7 @@ import type { LlmErrorMessage } from '#/llm/errors';
 import type { ContentPart, Message, UserMessage } from '#/llm/message';
 import { createMediaDegradeRecovery } from '#/llm/media/degrade';
 import type { LlmModel } from '#/llm/model';
-import { createLlmMachine, type LlmEvent } from '#/llm/requester/machine';
+import type { LlmEvent } from '#/llm/requester/actor';
 import type { LlmRecovery } from '#/llm/requester/recovery';
 import type { LlmRequester } from '#/llm/requester/requester';
 import type { LlmRetryOptions } from '#/llm/requester/retry';
@@ -92,7 +92,7 @@ function startTurnActor(
       events: {} as TurnEvent,
       emitted: {} as TurnLlmEvent,
     },
-    actors: { turn: createTurnMachine(createLlmMachine({ requester }), options) },
+    actors: { turn: createTurnMachine(requester, options) },
   }).createMachine({
     id: 'harness',
     initial: 'running',
