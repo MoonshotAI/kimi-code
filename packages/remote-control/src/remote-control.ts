@@ -856,12 +856,23 @@ function requestLocalHttp(
           if (rewritten) headers.push('Cache-Control', 'no-cache');
           if (
             response.headers['content-encoding'] === undefined &&
+            response.statusCode !== 206 &&
             body.length >= GZIP_MIN_BODY_BYTES &&
             isGzipCompressibleType(contentType) &&
             acceptsGzipEncoding(parsed.headers)
           ) {
             body = gzipSync(body);
             headers.push('Content-Encoding', 'gzip');
+            let varyCovers = false;
+            for (let index = 0; index < headers.length; index += 2) {
+              if (headers[index]!.toLowerCase() !== 'vary') continue;
+              const tokens = headers[index + 1]!
+                .toLowerCase()
+                .split(',')
+                .map((token) => token.trim());
+              if (tokens.includes('*') || tokens.includes('accept-encoding')) varyCovers = true;
+            }
+            if (!varyCovers) headers.push('Vary', 'Accept-Encoding');
           }
           headers.push('Content-Length', String(body.length));
           const statusCode = response.statusCode ?? 502;

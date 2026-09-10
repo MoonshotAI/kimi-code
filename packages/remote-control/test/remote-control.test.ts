@@ -277,6 +277,8 @@ describe('Remote Control tunnel', () => {
     const localWsServer = new WebSocketServer({ noServer: true });
     const assetJs = `const boot = "/assets/boot.js";\n${'const chunk = "/assets/chunk.js";\n'.repeat(120)}`;
     const assetPng = Buffer.alloc(4096, 7);
+    const assetSvg = `<svg xmlns="http://www.w3.org/2000/svg">${'<rect width="100" height="100"/>'.repeat(100)}</svg>`;
+    const assetText = 'chunk of text\n'.repeat(160);
     const localServer = createServer((request, response) => {
       localHttpRequest = request;
       if (request.url === '/assets/index.js') {
@@ -287,6 +289,22 @@ describe('Remote Control tunnel', () => {
       if (request.url === '/assets/logo.png') {
         response.writeHead(200, { 'Content-Type': 'image/png' });
         response.end(assetPng);
+        return;
+      }
+      if (request.url === '/assets/logo.svg') {
+        response.writeHead(200, {
+          'Content-Type': 'image/svg+xml',
+          'Cache-Control': 'public, max-age=31536000, immutable',
+        });
+        response.end(assetSvg);
+        return;
+      }
+      if (request.url === '/assets/partial.txt' && request.headers.range !== undefined) {
+        response.writeHead(206, {
+          'Content-Type': 'text/plain',
+          'Content-Range': 'bytes 0-2047/4096',
+        });
+        response.end(assetText);
         return;
       }
       response.writeHead(200, {
@@ -435,6 +453,7 @@ describe('Remote Control tunnel', () => {
     const gzipBody = gzipResponse.subarray(gzipSeparator + 4);
     expect(gzipHead).toContain('HTTP/1.1 200 OK');
     expect(gzipHead).toContain('Content-Encoding: gzip');
+    expect(gzipHead).toContain('Vary: Accept-Encoding');
     expect(gzipHead).toContain(`Content-Length: ${gzipBody.length}`);
     expect(gunzipSync(gzipBody).toString()).toBe(
       assetJs.replaceAll('"/assets/', `"/coding-relay/devices/${handle.deviceId}/assets/`),
@@ -483,6 +502,47 @@ describe('Remote Control tunnel', () => {
     expect(excludedResponse.subarray(excludedSeparator + 4).toString()).toBe(
       assetJs.replaceAll('"/assets/', `"/coding-relay/devices/${handle.deviceId}/assets/`),
     );
+
+    const svgResponsePromise = nextJsonMessage(httpConnections[0]!);
+    httpConnections[0]!.send(
+      JSON.stringify({
+        request_id: 'request-6',
+        type: 'request',
+        is_last: true,
+        body_base64: Buffer.from(
+          'GET /assets/logo.svg HTTP/1.1\r\nHost: relay.test\r\nAccept-Encoding: gzip\r\n\r\n',
+        ).toString('base64'),
+      }),
+    );
+    const svgResponse = Buffer.from((await svgResponsePromise)['body_base64'] as string, 'base64');
+    const svgSeparator = svgResponse.indexOf('\r\n\r\n');
+    const svgHead = svgResponse.subarray(0, svgSeparator).toString('latin1');
+    expect(svgHead).toContain('Content-Encoding: gzip');
+    expect(svgHead).toContain('Vary: Accept-Encoding');
+    expect(svgHead).toContain('immutable');
+    expect(gunzipSync(svgResponse.subarray(svgSeparator + 4)).toString()).toBe(assetSvg);
+
+    const rangeResponsePromise = nextJsonMessage(httpConnections[0]!);
+    httpConnections[0]!.send(
+      JSON.stringify({
+        request_id: 'request-7',
+        type: 'request',
+        is_last: true,
+        body_base64: Buffer.from(
+          'GET /assets/partial.txt HTTP/1.1\r\nHost: relay.test\r\nAccept-Encoding: gzip\r\nRange: bytes=0-2047\r\n\r\n',
+        ).toString('base64'),
+      }),
+    );
+    const rangeResponse = Buffer.from(
+      (await rangeResponsePromise)['body_base64'] as string,
+      'base64',
+    );
+    const rangeSeparator = rangeResponse.indexOf('\r\n\r\n');
+    const rangeHead = rangeResponse.subarray(0, rangeSeparator).toString('latin1');
+    expect(rangeHead).toContain('206');
+    expect(rangeHead).toContain('Content-Range: bytes 0-2047/4096');
+    expect(rangeHead).not.toContain('Content-Encoding');
+    expect(rangeResponse.subarray(rangeSeparator + 4).toString()).toBe(assetText);
 
     managementConnections[0]!.send(
       JSON.stringify({
