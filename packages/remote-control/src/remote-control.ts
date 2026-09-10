@@ -541,7 +541,12 @@ class RemoteControlClient {
       ) {
         throw new SyntaxError('invalid HTTP tunnel request message');
       }
-      const chunk = decodeBase64(parsed['body_base64']);
+      const bodyBase64 = parsed['body_base64'];
+      const minDecodedBytes = Math.floor(bodyBase64.length / 4) * 3 - 2;
+      if (this.pendingHttpBytes + minDecodedBytes > MAX_HTTP_REQUEST_BYTES) {
+        throw new SyntaxError('HTTP tunnel request exceeds 10 MiB');
+      }
+      const chunk = decodeBase64(bodyBase64);
       const pending = this.pendingHttpRequests.get(requestId) ?? { chunks: [], size: 0 };
       if (this.pendingHttpBytes + chunk.length > MAX_HTTP_REQUEST_BYTES) {
         throw new SyntaxError('HTTP tunnel request exceeds 10 MiB');
@@ -557,7 +562,8 @@ class RemoteControlClient {
     } catch (error) {
       if (requestId !== undefined) {
         this.clearPendingHttpRequest(requestId);
-        this.sendHttpResponse(requestId, buildErrorResponse(400));
+        const status = error instanceof SyntaxError ? 400 : 502;
+        this.sendHttpResponse(requestId, buildErrorResponse(status));
       }
       this.stderr.write(`Remote Control HTTP message error: ${errorMessage(error)}\n`);
     }
@@ -1023,7 +1029,30 @@ function stringField(
 }
 
 function decodeBase64(value: string): Buffer {
-  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
+  if (value.length % 4 !== 0) {
+    throw new SyntaxError('invalid HTTP tunnel request base64');
+  }
+  let paddingStart = -1;
+  for (let i = 0; i < value.length; i++) {
+    const c = value.codePointAt(i)!;
+    if (c === 0x3d) {
+      if (paddingStart === -1) paddingStart = i;
+      continue;
+    }
+    if (paddingStart !== -1) {
+      throw new SyntaxError('invalid HTTP tunnel request base64');
+    }
+    const ok =
+      (c >= 0x41 && c <= 0x5a) ||
+      (c >= 0x61 && c <= 0x7a) ||
+      (c >= 0x30 && c <= 0x39) ||
+      c === 0x2b ||
+      c === 0x2f;
+    if (!ok) {
+      throw new SyntaxError('invalid HTTP tunnel request base64');
+    }
+  }
+  if (paddingStart !== -1 && value.length - paddingStart > 2) {
     throw new SyntaxError('invalid HTTP tunnel request base64');
   }
   return Buffer.from(value, 'base64');
