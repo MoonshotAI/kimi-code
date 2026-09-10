@@ -238,6 +238,12 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
               'prompt_id cannot be combined with a bundled skill submission',
             );
           }
+          if (req.body.steer === true) {
+            throw new Error2(
+              ErrorCodes.REQUEST_INVALID,
+              'steer cannot be combined with a bundled skill submission',
+            );
+          }
           await assertActivatableSkills(
             session.accessor.get(ISessionSkillCatalog),
             req.body.skills,
@@ -354,6 +360,13 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           origin: { kind: 'user', attachments: promptAttachments },
         });
         enqueued = true;
+        if (req.body.steer === true && handle.state === 'pending') {
+          try {
+            await resolved.prompt.steer([handle.id]);
+          } catch (error) {
+            if (!(isError2(error) && error.code === ErrorCodes.PROMPT_NOT_FOUND)) throw error;
+          }
+        }
         const staging = preparedMedia;
         void Promise.race([handle.launched, handle.completion]).then(
           () => staging?.discard(),
