@@ -163,6 +163,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         initialTurnId: this.states.get(turnKey).nextTurnId,
         trace: () => this.activeRequestTrace,
         toolTurnId: () => this.active?.id,
+        steerSignal: () => this.active?.steerController.signal,
         source: () =>
           this.active === undefined
             ? undefined
@@ -218,11 +219,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const id = prompt.promptId ?? randomUUID();
     this.nudges.push({
       contextMessage: message,
+      steer: true,
       bypassMaxSteps: false,
       turnScoped: false,
       onConsume: prompt.onMaterialize,
       onDrop: undefined,
     });
+    active.steerController.abort(abortError('Steered by new input'));
     this.machineEngine().submit({ id, message: machineUserMessage(message) });
     this.machineEngine().steer(id);
     return active.turn;
@@ -503,6 +506,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (turn.stopRequested) return { type: 'fail' };
     if (turn.failedStep !== undefined) return { type: 'fail' };
     const consumed = this.mirrorConsumedNudges(turn);
+    if (
+      turn.steerController.signal.aborted &&
+      !this.nudges.slice(this.nudgeCursor).some((nudge) => nudge.steer && !nudge.dropped)
+    ) {
+      turn.steerController = new AbortController();
+    }
     if (turn.toolStopRequested && consumed.live === 0) return { type: 'fail' };
     const stepOrdinal = Math.max(this.engine?.currentStep() ?? 0, turn.steps + 1);
     const maxSteps = this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn;
@@ -652,6 +661,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       id,
       reservation,
       controller: reservation.controller,
+      steerController: new AbortController(),
       turn,
       startedAt: Date.now(),
       steps: 0,
@@ -1314,7 +1324,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           turn.interruptStep = undefined;
           if (turn.retryRequested) {
             turn.retryRequested = false;
-            this.machineEngine().resetHistory(historyFromContext(this.context.get()));
+            await this.machineEngine().resetHistory(historyFromContext(this.context.get()));
             this.machineEngine().notify(EMPTY_MACHINE_PROMPT);
           }
           return;
@@ -1528,6 +1538,7 @@ interface TurnReservation {
 
 interface Nudge {
   readonly contextMessage?: ContextMessage;
+  readonly steer?: boolean;
   readonly bypassMaxSteps: boolean;
   readonly turnScoped: boolean;
   readonly onConsume?: () => void;
@@ -1566,6 +1577,7 @@ interface ActiveTurn {
   readonly id: number;
   readonly reservation: TurnReservation;
   readonly controller: AbortController;
+  steerController: AbortController;
   readonly turn: MutableTurn;
   readonly startedAt: number;
   steps: number;

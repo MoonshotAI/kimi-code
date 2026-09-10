@@ -250,7 +250,7 @@ describe('Model assembly (pure data)', () => {
     });
   });
 
-  it('keeps an explicit foreign protocol for a kimi model (the dialect path)', () => {
+  it('keeps an explicit foreign protocol for a kimi model (the trait path)', () => {
     const { host, catalog } = createHost({
       providers: { kimi: { type: 'kimi', apiKey: 'sk', baseUrl: 'https://api.example.test/v1' } },
       models: {

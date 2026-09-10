@@ -4,7 +4,7 @@ import { Error2, ErrorCodes, toErrorMessage } from '#/errors';
 import { isAbortError } from '#/_base/utils/abort';
 
 import type { ExecutableTool, ExecutableToolContext } from '#/tool/toolContract';
-import { mcpResultToExecutableOutput } from '#/agent/mcp/output';
+import { mcpResultToExecutableOutput, type McpOutputOptions } from '#/agent/mcp/output';
 import type { MCPClient, MCPToolResult } from '#/mcpCore/types';
 import {
   isMcpConnectionClosedError,
@@ -14,6 +14,7 @@ import {
 } from '#/mcpCore/client-shared';
 
 interface McpToolOptions {
+  readonly attachmentStore?: McpOutputOptions['attachmentStore'];
   readonly originalsDir?: string;
   readonly telemetry?: ITelemetryService;
   readonly providerType?: () => string | undefined;
@@ -51,6 +52,8 @@ export function createMcpTool(
           result = await retryAfterReconnect(error, client, args, context, options, callTool);
         }
         return mcpResultToExecutableOutput(result, qualifiedName, {
+          signal: context.signal,
+          attachmentStore: options.attachmentStore,
           originalsDir: options.originalsDir,
           telemetry: options.telemetry,
           providerType: options.providerType?.(),

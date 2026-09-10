@@ -11,11 +11,15 @@ import {
   type UserMessage,
 } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
-import { createLlmMachine } from '#/llm/requester/machine';
 import type { LlmRequestConfig, LlmRequester, LlmRequestEvent } from '#/llm/requester/requester';
 import { connectPlugins, type AgentPluginTarget } from '#/plugin';
 import { createAgentMachine, type AgentEmitted } from '#/agent/machine';
+import { agentSlices, type AgentEventStore } from '#/agent/slices';
 import { createTurnMachine, type HistoryMessage } from '#/agent/turn';
+import { createEventStore } from '#/eventStore/eventStore';
+import { journalFromBranch } from '#/eventStore/journal';
+import { MemoryBackend } from '#/store/backend/memory';
+import { TreeStore } from '#/store/store';
 import type { ToolExecuteInput } from '#/tool/executor';
 import { defineTool, type ToolDefinition } from '#/tool/tool';
 import {
@@ -39,6 +43,14 @@ function toolCall(name: string, args: unknown, id = 'call-1'): ToolCall {
 
 function executeInput(name: string, args: unknown): ToolExecuteInput {
   return { toolCall: toolCall(name, args), signal: new AbortController().signal };
+}
+
+async function testStore(): Promise<AgentEventStore> {
+  const backend = new MemoryBackend();
+  const store = await TreeStore.open(backend, {});
+  const tree = await store.tree('test');
+  tree.createBranch('main');
+  return createEventStore({ journal: journalFromBranch(tree.openBranch('main'), tree), slices: agentSlices });
 }
 
 function weatherTool(execute?: ToolDefinition['execute']): ToolDefinition {
@@ -288,19 +300,20 @@ describe('tool select agent flow', () => {
       }),
       state,
     );
+    const store = await testStore();
     const actor = createActor(
       createAgentMachine({
         tools: [createSelectToolsTool(state), deferred],
-        turnActor: createTurnMachine(createLlmMachine({ requester })),
+        turnActor: createTurnMachine(requester),
       }),
-      { input: { request: { model } } },
+      { input: { request: { model }, store } },
     );
     connectPlugins(actor, [plugin]);
     actor.start();
     actor.send({ type: 'input.submit', message: createUserMessage('weather?') });
-    const snapshot = await waitFor(
+    await waitFor(
       actor,
-      (s) => s.matches('idle') && s.context.messages.length > 1,
+      (s) => s.matches('idle') && store.getState().history.length > 1,
       { timeout: 5000 },
     );
 
@@ -309,7 +322,7 @@ describe('tool select agent flow', () => {
     expect(firstTools).not.toContain('get_weather');
     expect(executed).toEqual(['get_weather']);
 
-    const schemaEntry = snapshot.context.messages.find(
+    const schemaEntry = store.getState().history.find(
       (entry: HistoryMessage) => entry.message.role === 'system',
     );
     expect(schemaEntry?.meta.key).toBe(DYNAMIC_TOOL_SCHEMA_REMINDER_KEY);

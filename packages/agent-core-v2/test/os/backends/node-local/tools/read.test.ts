@@ -375,9 +375,9 @@ describe('ReadTool', () => {
     ).toBe(false);
   });
 
-  it('matches permission args with glob path semantics', () => {
+  it('matches permission args with glob path semantics', async () => {
     const tool = toolWithContent('');
-    const execution = tool.resolveExecution({ path: '/etc/passwd' });
+    const execution = await tool.resolveExecution({ path: '/etc/passwd' });
     if (execution.isError === true) throw new TypeError('expected runnable execution');
 
     expect(execution.matchesRule?.('/etc/**')).toBe(true);
@@ -1368,7 +1368,7 @@ describe('ReadTool', () => {
       stubToolResultTruncationService(),
       stubConfigService(),
     );
-    const execution = tool.resolveExecution({ path: '/workspace/a.txt' });
+    const execution = await tool.resolveExecution({ path: '/workspace/a.txt' });
     expect('execute' in execution).toBe(true);
 
     runtimeValue.setStatus('disconnected');

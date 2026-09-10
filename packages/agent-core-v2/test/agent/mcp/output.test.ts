@@ -9,12 +9,17 @@ import { describe, expect, test } from 'vitest';
 import type { ITelemetryService, TelemetryProperties } from '#/app/telemetry/telemetry';
 import { convertMCPContentBlock, mcpResultToExecutableOutput } from '#/agent/mcp/output';
 import { createMcpTool } from '#/agent/mcp/tools/mcp';
+import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { StdioMcpClient } from '#/mcpCore/client-stdio';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
 import type { MCPClient, MCPContentBlock, MCPToolResult } from '#/mcpCore/types';
 import type { ToolExecution } from '#/tool/toolContract';
 import { sniffImageDimensions } from '#/agent/media/file-type';
+
+function modelText(result: Awaited<ReturnType<typeof mcpResultToExecutableOutput>>): string {
+  return renderToolResultForModel(result).map((part) => part.type === 'text' ? part.text : '').join('\n');
+}
 
 function isPromiseLike(value: ToolExecution | Promise<ToolExecution>): value is Promise<ToolExecution> {
   return typeof (value as Promise<ToolExecution>).then === 'function';
@@ -677,7 +682,7 @@ describe('mcpResultToExecutableOutput', () => {
       'mcp__s__big',
     );
     const parts = out.output as ContentPart[];
-    expect(parts).toHaveLength(3);
+    expect(parts).toHaveLength(4);
     expect(parts[0]).toEqual({ type: 'text', text: '<mcp_tool_result name="mcp__s__big">' });
     expect(parts[1]?.type).toBe('text');
     expect((parts[1] as { text: string }).text).toContain('image_url dropped');
@@ -737,7 +742,7 @@ describe('mcpResultToExecutableOutput', () => {
     );
 
     const parts = out.output as ContentPart[];
-    const caption = out.note;
+    const caption = modelText(out);
     expect(caption).toContain('Image compressed');
     expect(caption).toContain('3600x1800');
     expect(parts.some((p) => p.type === 'image_url')).toBe(true);
@@ -759,7 +764,7 @@ describe('mcpResultToExecutableOutput', () => {
       'mcp__s__shot',
     );
 
-    expect(out.note).toBeUndefined();
+    expect(modelText(out)).not.toContain('Image compressed');
   });
 
   test('reports MCP image compression telemetry with the MCP tool-result source', async () => {
@@ -805,7 +810,7 @@ describe('mcpResultToExecutableOutput', () => {
       { originalsDir: dir },
     );
 
-    const caption = out.note;
+    const caption = modelText(out);
     expect(caption).toContain('Image compressed');
     const pathMatch = /saved at "([^"]+)"/.exec(caption!);
     expect(pathMatch).not.toBeNull();
@@ -836,8 +841,8 @@ describe('mcpResultToExecutableOutput', () => {
     const toolText = parts[0];
     if (toolText?.type !== 'text') throw new Error('expected the tool text part first');
     expect(toolText.text).toBe('x'.repeat(100_001));
-    expect(out.note).toMatch(/<\/system>$/);
-    expect(out.note).toContain('saved at');
+    expect(modelText(out)).toMatch(/<\/system>$/);
+    expect(modelText(out)).toContain('saved at');
     await rm(dir, { recursive: true, force: true });
   });
 
@@ -857,9 +862,9 @@ describe('mcpResultToExecutableOutput', () => {
     );
 
     expect(out.truncated).toBeUndefined();
-    expect(out.note).toMatch(/^<system>Image compressed/);
-    expect(out.note).toMatch(/<\/system>$/);
-    expect(out.note).toContain('saved at');
+    expect(modelText(out)).toMatch(/<system>Image compressed/);
+    expect(modelText(out)).toMatch(/<\/system>$/);
+    expect(modelText(out)).toContain('saved at');
     const parts = out.output as ContentPart[];
     const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
     expect(joined).not.toContain('Output truncated');
@@ -868,6 +873,26 @@ describe('mcpResultToExecutableOutput', () => {
 });
 
 describe('createMcpTool', () => {
+  test('propagates cancellation after the remote call instead of processing its attachments', async () => {
+    const controller = new AbortController();
+    const reason = new Error('stop attachment processing');
+    let calls = 0;
+    const client: MCPClient = {
+      async listTools() { return []; },
+      async callTool() {
+        calls++;
+        controller.abort(reason);
+        return { isError: false, content: [{ type: 'audio', mimeType: 'audio/wav', data: 'YXVkaW8=' }] };
+      },
+      async ping() {},
+    };
+    const tool = createMcpTool('mcp__example__audio', { name: 'audio', description: 'Example audio', parameters: {} }, client);
+    const execution = await tool.resolveExecution({});
+    if (execution.isError === true) throw new Error('expected tool execution');
+    await expect(execution.execute({ turnId: 1, toolCallId: 'audio', signal: controller.signal })).rejects.toBe(reason);
+    expect(calls).toBe(1);
+  });
+
   test('omits truncated when the MCP output was not truncated', async () => {
     const client = {
       async listTools() {

@@ -1,6 +1,8 @@
 import { createActor as createXStateActor } from 'xstate';
 import type { Actor, ActorOptions, AnyActorLogic, InspectionEvent } from 'xstate';
 
+import { xstateInspectionCollector } from '#/xstateInspection';
+
 export * from 'xstate';
 
 function reportUnhandled(event: InspectionEvent): void {
@@ -24,6 +26,7 @@ function createActorWithInspect<TLogic extends AnyActorLogic>(
     ...options,
     inspect: (event) => {
       reportUnhandled(event);
+      xstateInspectionCollector.publish(event);
       if (typeof inspect === 'function') {
         inspect(event);
       } else {
