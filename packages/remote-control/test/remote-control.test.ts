@@ -455,7 +455,7 @@ describe('Remote Control tunnel', () => {
     expect(gzipHead).toContain('HTTP/1.1 200 OK');
     expect(gzipHead).toContain('Content-Encoding: gzip');
     expect(gzipHead).toContain('Vary: Accept-Encoding');
-    expect(gzipHead).toContain('ETag: "v1-gzip"');
+    expect(gzipHead).not.toContain('ETag');
     expect(gzipHead).toContain(`Content-Length: ${gzipBody.length}`);
     expect(gunzipSync(gzipBody).toString()).toBe(
       assetJs.replaceAll('"/assets/', `"/coding-relay/devices/${handle.deviceId}/assets/`),
@@ -502,7 +502,6 @@ describe('Remote Control tunnel', () => {
     expect(excludedHead).not.toContain('Content-Encoding');
     expect(excludedHead).toContain('Vary: Accept-Encoding');
     expect(excludedHead).toContain('ETag: "v1"');
-    expect(excludedHead).not.toContain('v1-gzip');
     expect(excludedResponse.subarray(excludedSeparator + 4).toString()).toBe(
       assetJs.replaceAll('"/assets/', `"/coding-relay/devices/${handle.deviceId}/assets/`),
     );

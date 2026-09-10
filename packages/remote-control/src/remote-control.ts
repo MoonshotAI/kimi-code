@@ -877,10 +877,8 @@ function requestLocalHttp(
             if (negotiated && acceptsGzipEncoding(parsed.headers)) {
               body = await gzipAsync(body);
               headers.push('Content-Encoding', 'gzip');
-              for (let index = 0; index < headers.length; index += 2) {
-                if (headers[index]!.toLowerCase() === 'etag') {
-                  headers[index + 1] = headers[index + 1]!.replace(/"$/, '-gzip"');
-                }
+              for (let index = headers.length - 2; index >= 0; index -= 2) {
+                if (headers[index]!.toLowerCase() === 'etag') headers.splice(index, 2);
               }
             }
             headers.push('Content-Length', String(body.length));
