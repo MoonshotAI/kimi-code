@@ -442,7 +442,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       const seeded = this.nudges.slice(this.nudgeCursor).find(
         (nudge) => !nudge.dropped && nudge.contextMessage !== undefined && nudge.contextMessage.content.length > 0,
       );
-      if (seeded === undefined) return;
+      if (seeded === undefined) {
+        this.consumeDrainedNudges();
+        return;
+      }
       this.beginActiveTurn(
         this.createSeededReservation(seeded.contextMessage as ContextMessage),
         pending.id,
@@ -788,7 +791,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.context.append(message);
   }
 
-  private mirrorConsumedNudges(turn: ActiveTurn): { readonly live: number; readonly bypass: boolean } {
+  private consumeDrainedNudges(): { readonly live: number; readonly bypass: boolean } {
     const engine = this.engine;
     if (engine === undefined) return { live: 0, bypass: false };
     const notificationCount = engine.snapshot().notificationCount;
@@ -808,8 +811,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       }
       nudge.onConsume?.();
     }
-    turn.nudgeCursor = this.nudgeCursor;
     return { live, bypass };
+  }
+
+  private mirrorConsumedNudges(turn: ActiveTurn): { readonly live: number; readonly bypass: boolean } {
+    const consumed = this.consumeDrainedNudges();
+    turn.nudgeCursor = this.nudgeCursor;
+    return consumed;
   }
 
   private projectMachineEvent(event: MachineEngineEvent): void {
