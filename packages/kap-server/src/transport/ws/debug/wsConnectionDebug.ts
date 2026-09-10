@@ -20,12 +20,13 @@ export interface WsConnectionDebugOptions {
 
 export class WsConnectionDebug {
   private readonly socket: WebSocket;
+  private readonly collector: XstateInspectionCollector;
   private readonly heartbeatIntervalMs: number;
   private readonly flushIntervalMs: number;
   private readonly highWaterMarkBytes: number;
-  private readonly unsubscribe: () => void;
 
   private closed = false;
+  private collectorUnsubscribe?: () => void;
   private outbound: XstateInspectionEnvelope[] = [];
   private flushTimer?: ReturnType<typeof setTimeout>;
   private heartbeatTimer?: ReturnType<typeof setInterval>;
@@ -33,6 +34,7 @@ export class WsConnectionDebug {
 
   constructor(opts: WsConnectionDebugOptions) {
     this.socket = opts.socket;
+    this.collector = opts.collector ?? xstateInspectionCollector;
     this.heartbeatIntervalMs = opts.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
     this.flushIntervalMs = opts.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
     this.highWaterMarkBytes = opts.highWaterMarkBytes ?? DEFAULT_HIGH_WATER_MARK_BYTES;
@@ -42,12 +44,38 @@ export class WsConnectionDebug {
     this.socket.on('pong', () => {
       this.lastPongAt = Date.now();
     });
-
-    const collector = opts.collector ?? xstateInspectionCollector;
-    this.unsubscribe = collector.subscribe((envelope) => this.onEnvelope(envelope));
+    this.socket.on('message', (data) => this.onMessage(data));
 
     this.heartbeatTimer = setInterval(() => this.onHeartbeat(), this.heartbeatIntervalMs);
     this.heartbeatTimer.unref?.();
+  }
+
+  private onMessage(data: unknown): void {
+    let frame: unknown;
+    try {
+      frame = JSON.parse(String(data));
+    } catch {
+      return;
+    }
+    if (frame === null || typeof frame !== 'object') return;
+    const type = (frame as Record<string, unknown>)['type'];
+    if (type === 'subscribe') {
+      this.subscribe();
+    } else if (type === 'unsubscribe') {
+      this.unsubscribe();
+    }
+  }
+
+  private subscribe(): void {
+    if (this.closed || this.collectorUnsubscribe !== undefined) return;
+    this.collectorUnsubscribe = this.collector.subscribe((envelope) => this.onEnvelope(envelope));
+  }
+
+  private unsubscribe(): void {
+    if (this.collectorUnsubscribe === undefined) return;
+    this.collectorUnsubscribe();
+    this.collectorUnsubscribe = undefined;
+    this.outbound = [];
   }
 
   private onEnvelope(envelope: XstateInspectionEnvelope): void {
@@ -109,6 +137,7 @@ export class WsConnectionDebug {
     if (this.flushTimer !== undefined) clearTimeout(this.flushTimer);
     if (this.heartbeatTimer !== undefined) clearInterval(this.heartbeatTimer);
     this.outbound = [];
-    this.unsubscribe();
+    this.collectorUnsubscribe?.();
+    this.collectorUnsubscribe = undefined;
   }
 }
