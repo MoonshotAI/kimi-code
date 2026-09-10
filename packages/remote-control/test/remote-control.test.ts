@@ -33,6 +33,7 @@ import {
   type RemoteControlHandle,
 } from '../src/remote-control';
 import { remoteControlChunkedResponsesFlag } from '../src/flag';
+import { createRemoteControlManager } from '../src/manager';
 import { remoteControlLockPath } from '../src/lock';
 
 const CLIENT_VERSION = 'kimi-code/test';
@@ -789,8 +790,9 @@ describe('Remote Control stream bridge', () => {
 
 describe('Remote Control chunked responses', () => {
   async function tunnelLargeResponse(
-    options: { chunkedResponses?: boolean } = {},
+    options: { chunkedResponses?: boolean; viaManager?: boolean } = {},
   ): Promise<Array<Record<string, unknown>>> {
+    const { viaManager, ...tunnelFlags } = options;
     const body = Buffer.alloc(600 * 1024);
     for (let index = 0; index < body.length; index += 1) body[index] = index % 251;
     const localServer = createServer((_request, response) => {
@@ -801,17 +803,31 @@ describe('Remote Control chunked responses', () => {
     cleanups.push(() => closeServer(localServer));
     const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
     const relay = await startAuthRelay();
-    let handle: RemoteControlHandle | undefined;
-    cleanups.push(async () => handle?.close());
-    handle = await startRemoteControl({
+    const tunnelOptions = {
       homeDir,
       localOrigin: `http://127.0.0.1:${localPort}`,
-      localServerToken: 'local-server-token',
       clientVersion: CLIENT_VERSION,
       relayOrigin: `http://127.0.0.1:${relay.port}/coding-relay`,
       stderr: { write: () => true },
-      ...options,
-    });
+    };
+    if (viaManager === true) {
+      const manager = createRemoteControlManager({
+        ...tunnelOptions,
+        localOrigin: () => tunnelOptions.localOrigin,
+        localServerToken: () => 'local-server-token',
+        chunkedResponses: () => tunnelFlags.chunkedResponses ?? false,
+      });
+      cleanups.push(() => manager.close());
+      await manager.enable();
+    } else {
+      let handle: RemoteControlHandle | undefined;
+      cleanups.push(async () => handle?.close());
+      handle = await startRemoteControl({
+        ...tunnelOptions,
+        localServerToken: 'local-server-token',
+        ...tunnelFlags,
+      });
+    }
     const http = relay.httpSockets[0]!;
     const frames: Array<Record<string, unknown>> = [];
     const done = new Promise<void>((resolve) => {
@@ -856,6 +872,11 @@ describe('Remote Control chunked responses', () => {
     const lengths = frames.map((frame) => Buffer.from(frame['body_base64'] as string, 'base64').length);
     expect(lengths[0]).toBe(256 * 1024);
     expect(lengths[1]).toBe(256 * 1024);
+  });
+
+  it('splits responses for manager-created tunnels when the flag resolves true', async () => {
+    const frames = await tunnelLargeResponse({ chunkedResponses: true, viaManager: true });
+    expect(frames.map((frame) => frame['is_last'])).toEqual([false, false, true]);
   });
 
   it('sends a single frame by default', async () => {

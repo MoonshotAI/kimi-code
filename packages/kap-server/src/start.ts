@@ -87,7 +87,10 @@ import { ProjectionService } from './services/projection';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
 import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
 import { createAuthFailureLimiter } from './middleware/rateLimit';
-import { createRemoteControlManager } from '@moonshot-ai/remote-control';
+import {
+  createRemoteControlManager,
+  REMOTE_CONTROL_CHUNKED_RESPONSES_FLAG_ID,
+} from '@moonshot-ai/remote-control';
 
 import { createAuthTokenService, type IAuthTokenService } from './services/auth/authTokenService';
 import { createCredentialValidator } from './services/auth/credentials';
@@ -205,18 +208,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const logging = resolveLoggingConfig({ homeDir, env: process.env });
   let boundPort = port;
   const localOriginHost = host.includes(':') ? `[${host}]` : host;
-  const remoteControlManager = createRemoteControlManager({
-    homeDir,
-    localOrigin: () => `http://${localOriginHost}:${boundPort}`,
-    localServerToken: () => authTokenService.getToken(),
-    clientVersion: `kimi-code/${serverVersion}`,
-    stderr: {
-      write: (text) => {
-        logger.warn(String(text).trimEnd());
-        return true;
-      },
-    },
-  });
   const { app: core } = bootstrap(
     {
       homeDir,
@@ -232,6 +223,20 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     },
     [...logSeed(logging), ...(opts.seeds ?? [])],
   );
+  const remoteControlManager = createRemoteControlManager({
+    homeDir,
+    localOrigin: () => `http://${localOriginHost}:${boundPort}`,
+    localServerToken: () => authTokenService.getToken(),
+    clientVersion: `kimi-code/${serverVersion}`,
+    chunkedResponses: () =>
+      core.accessor.get(IFlagService).enabled(REMOTE_CONTROL_CHUNKED_RESPONSES_FLAG_ID),
+    stderr: {
+      write: (text) => {
+        logger.warn(String(text).trimEnd());
+        return true;
+      },
+    },
+  });
 
   let telemetry: ServerTelemetry = {};
   if (opts.telemetry === true) {
