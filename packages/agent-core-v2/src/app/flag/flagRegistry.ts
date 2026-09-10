@@ -15,6 +15,7 @@ export interface FlagDefinitionInput {
   readonly default: boolean;
   readonly surface: FlagSurface;
   readonly isExposed?: (flags: IFlagService) => boolean;
+  readonly excludeFromMaster?: boolean;
 }
 
 const contributedFlags: FlagDefinitionInput[] = [];

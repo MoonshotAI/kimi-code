@@ -92,6 +92,7 @@ export class WsConnectionV1 implements BroadcastTarget {
   private flushTimer?: ReturnType<typeof setTimeout>;
   private backpressureRetryTimer?: ReturnType<typeof setTimeout>;
   private backpressureSince?: number;
+  private backpressureBufferedAmount = 0;
 
   private heartbeatTimer?: ReturnType<typeof setInterval>;
   private lastInboundAt = Date.now();
@@ -422,8 +423,16 @@ export class WsConnectionV1 implements BroadcastTarget {
 
   private sendImmediateFrame(msg: unknown): void {
     if (this.closed) return;
-    this.outbound.push(msg);
-    this.flush(true);
+    this.flush();
+    this.sendFrame(msg);
+  }
+
+  private sendFrame(frame: unknown): void {
+    if (this.closed || this.socket.readyState !== this.socket.OPEN) return;
+    try {
+      this.socket.send(JSON.stringify(frame));
+    } catch {
+    }
   }
 
   private scheduleFlush(): void {
@@ -455,18 +464,16 @@ export class WsConnectionV1 implements BroadcastTarget {
 
     const frames = coalesceFrames(this.outbound);
     this.outbound = [];
-    for (const frame of frames) {
-      if (this.closed || this.socket.readyState !== this.socket.OPEN) return;
-      try {
-        this.socket.send(JSON.stringify(frame));
-      } catch {
-      }
-    }
+    for (const frame of frames) this.sendFrame(frame);
   }
 
   private deferForBackpressure(): void {
     const now = Date.now();
-    if (this.backpressureSince === undefined) this.backpressureSince = now;
+    const buffered = this.socket.bufferedAmount;
+    if (this.backpressureSince === undefined || buffered < this.backpressureBufferedAmount) {
+      this.backpressureSince = now;
+    }
+    this.backpressureBufferedAmount = buffered;
     if (now - this.backpressureSince >= MAX_BACKPRESSURE_STALL_MS) {
       this.closeSlowConsumer();
       return;

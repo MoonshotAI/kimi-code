@@ -129,21 +129,31 @@ export class SessionActivityHub {
       headers['authorization'] = `Bearer ${this.token}`;
     }
     try {
-      // The list is always paged (default 50, max 100): drain it with the
-      // before_id cursor so every live session gets a baseline badge.
+      // An unsized request returns every session in one response today; the
+      // before_id drain only kicks in should the server ever report has_more.
+      // A page that fails after the first one still seeds what was collected.
       const items: Record<string, unknown>[] = [];
       let before: string | undefined;
       for (;;) {
-        const params = new URLSearchParams({ page_size: String(SEED_PAGE_SIZE) });
-        if (before !== undefined) params.set('before_id', before);
-        const res = await this.fetchImpl(`${this.baseUrl}/api/v1/sessions?${params.toString()}`, {
-          headers,
-        });
-        const envelope = (await res.json()) as {
+        const query =
+          before === undefined
+            ? ''
+            : `?${new URLSearchParams({ page_size: String(SEED_PAGE_SIZE), before_id: before })}`;
+        let envelope: {
           code: number;
           data?: { items?: Record<string, unknown>[]; has_more?: boolean };
         };
-        if (envelope.code !== 0 || envelope.data?.items === undefined) return;
+        try {
+          const res = await this.fetchImpl(`${this.baseUrl}/api/v1/sessions${query}`, { headers });
+          envelope = (await res.json()) as typeof envelope;
+        } catch {
+          if (items.length === 0) return;
+          break;
+        }
+        if (envelope.code !== 0 || envelope.data?.items === undefined) {
+          if (items.length === 0) return;
+          break;
+        }
         items.push(...envelope.data.items);
         const lastId = envelope.data.items.at(-1)?.['id'];
         if (envelope.data.has_more !== true || typeof lastId !== 'string') break;

@@ -55,7 +55,6 @@ import {
 import {
   healTurnOps,
   TranscriptService,
-  parseTranscriptOpsBatchMs,
   snapshotToOps,
   TRANSCRIPT_OPS_BATCH_MAX_OPS,
   TRANSCRIPT_OPS_JOURNAL_CAPACITY,
@@ -4120,16 +4119,6 @@ describe('bindSessionTranscript', () => {
       ]);
       expectContiguous(seen);
       service.dropSession('s1');
-    });
-
-    it('parses the ops batch window env value as a non-negative integer', () => {
-      expect(parseTranscriptOpsBatchMs(undefined)).toBeUndefined();
-      expect(parseTranscriptOpsBatchMs('')).toBeUndefined();
-      expect(parseTranscriptOpsBatchMs('abc')).toBeUndefined();
-      expect(parseTranscriptOpsBatchMs('-1')).toBeUndefined();
-      expect(parseTranscriptOpsBatchMs('1.5')).toBeUndefined();
-      expect(parseTranscriptOpsBatchMs('0')).toBe(0);
-      expect(parseTranscriptOpsBatchMs(' 32 ')).toBe(32);
     });
   });
 });

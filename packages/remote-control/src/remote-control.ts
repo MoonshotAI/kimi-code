@@ -246,18 +246,22 @@ export function stripRewriteVersion(ifNoneMatch: string): string {
 // Marks a response whose body was rewritten (or a 304 validating such a body): the browser may
 // store it but must revalidate on every load, and its ETag carries the rewrite version.
 export function applyRewrittenCacheHeaders(headers: string[]): void {
-  let cacheControlIndex = -1;
-  for (let index = 0; index < headers.length; index += 2) {
-    const lower = headers[index]!.toLowerCase();
-    if (lower === 'cache-control') {
-      cacheControlIndex = index;
-    } else if (lower === 'etag') {
-      const tag = /^(?:W\/)?("[^"]*)"$/.exec(headers[index + 1]!);
-      if (tag !== null) headers[index + 1] = `W/${tag[1]}${REWRITE_ETAG_SUFFIX}"`;
-    }
+  const etagIndex = findHeaderIndex(headers, 'etag');
+  if (etagIndex >= 0) {
+    const tag = /^(?:W\/)?("[^"]*)"$/.exec(headers[etagIndex + 1]!);
+    if (tag !== null) headers[etagIndex + 1] = `W/${tag[1]}${REWRITE_ETAG_SUFFIX}"`;
   }
+  const cacheControlIndex = findHeaderIndex(headers, 'cache-control');
   if (cacheControlIndex < 0) headers.push('Cache-Control', REWRITTEN_CACHE_CONTROL);
   else headers[cacheControlIndex + 1] = REWRITTEN_CACHE_CONTROL;
+}
+
+// Index of a header name in a flat `[name, value, name, value]` list, or -1 when absent.
+function findHeaderIndex(headers: readonly string[], name: string): number {
+  for (let index = 0; index < headers.length; index += 2) {
+    if (headers[index]!.toLowerCase() === name) return index;
+  }
+  return -1;
 }
 
 export function rewriteRemoteControlResponse(
@@ -902,12 +906,12 @@ function requestLocalHttp(
   // A versioned tag means the browser holds a rewritten copy; strip the suffix so the local
   // server can answer 304 and remember to describe the 304 as the rewritten representation.
   let validatesRewrite = false;
-  for (let index = 0; index < forwardHeaders.length; index += 2) {
-    if (forwardHeaders[index]!.toLowerCase() !== 'if-none-match') continue;
-    const stripped = stripRewriteVersion(forwardHeaders[index + 1]!);
-    if (stripped === forwardHeaders[index + 1]) continue;
-    forwardHeaders[index + 1] = stripped;
-    validatesRewrite = true;
+  const ifNoneMatchIndex = findHeaderIndex(forwardHeaders, 'if-none-match');
+  if (ifNoneMatchIndex >= 0) {
+    const received = forwardHeaders[ifNoneMatchIndex + 1]!;
+    const stripped = stripRewriteVersion(received);
+    validatesRewrite = stripped !== received;
+    forwardHeaders[ifNoneMatchIndex + 1] = stripped;
   }
   const headRequest = parsed.method === 'HEAD';
   return new Promise((resolve, reject) => {
@@ -936,7 +940,7 @@ function requestLocalHttp(
             !bodiless && response.headers['content-encoding'] === undefined
               ? rewriteRemoteControlResponse(contentType, receivedBody, publicPrefix)
               : receivedBody;
-          const rewritten = body !== receivedBody && !body.equals(receivedBody);
+          const rewritten = !body.equals(receivedBody);
           const headers = filterResponseHeaders(response.rawHeaders);
           if (rewritten || (statusCode === 304 && validatesRewrite)) {
             applyRewrittenCacheHeaders(headers);

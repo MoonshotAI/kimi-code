@@ -158,6 +158,20 @@ describe('FlagService', () => {
     expect(state?.source).toBe('master-env');
   });
 
+  it('leaves flags marked excludeFromMaster on their default under the master env', () => {
+    const { flags, flagRegistry } = makeFlags({ [MASTER_ENV]: '1' });
+    flagRegistry.register({
+      ...exampleFlag,
+      id: 'guarded_flag',
+      env: 'KIMI_CODE_EXPERIMENTAL_GUARDED_FLAG',
+      default: false,
+      excludeFromMaster: true,
+    });
+    const state = flags.explain('guarded_flag');
+    expect(state?.enabled).toBe(false);
+    expect(state?.source).toBe('default');
+  });
+
   it('treats a falsy master env as unset', () => {
     const { flags } = makeFlags({ [MASTER_ENV]: '0' });
     const state = flags.explain('example_flag');

@@ -299,20 +299,12 @@ export class TranscriptService {
     }
   }
 
-  flushPendingOps(sessionId?: string, agentId?: string): void {
-    if (sessionId !== undefined && agentId !== undefined) {
-      const perAgent = this.pendingAppends.get(sessionId);
-      const pending = perAgent?.get(agentId);
-      if (perAgent === undefined || pending === undefined) return;
-      this.flushOnePending(sessionId, agentId, perAgent, pending);
-      return;
-    }
-    for (const [sid, perAgent] of this.pendingAppends) {
-      if (sessionId !== undefined && sid !== sessionId) continue;
-      for (const [aid, pending] of perAgent) {
-        if (agentId !== undefined && aid !== agentId) continue;
-        this.flushOnePending(sid, aid, perAgent, pending);
-      }
+  flushPendingOps(sessionId: string, agentId?: string): void {
+    const perAgent = this.pendingAppends.get(sessionId);
+    if (perAgent === undefined) return;
+    for (const [aid, pending] of perAgent) {
+      if (agentId !== undefined && aid !== agentId) continue;
+      this.flushOnePending(sessionId, aid, perAgent, pending);
     }
   }
 
@@ -326,13 +318,6 @@ export class TranscriptService {
     perAgent.delete(agentId);
     if (perAgent.size === 0) this.pendingAppends.delete(sessionId);
     this.emitOps(sessionId, { agentId, ops: coalesceAppendOps(pending.ops) });
-  }
-
-  private discardPendingOps(sessionId: string): void {
-    const perAgent = this.pendingAppends.get(sessionId);
-    if (perAgent === undefined) return;
-    for (const pending of perAgent.values()) clearTimeout(pending.timer);
-    this.pendingAppends.delete(sessionId);
   }
 
   private journalOps(sessionId: string, event: TranscriptChangeEvent): number {
@@ -371,7 +356,13 @@ export class TranscriptService {
     const complete = newer.length === 0 || (oldest !== undefined && oldest <= sinceSeq + 1);
     const hasMore = limit !== undefined && newer.length > limit;
     const batches = hasMore ? newer.slice(0, limit) : newer;
-    return { batches, latestSeq, complete, hasMore };
+    const lastReturned = batches.at(-1)?.seq;
+    return {
+      batches,
+      latestSeq: hasMore && lastReturned !== undefined ? lastReturned : latestSeq,
+      complete,
+      hasMore,
+    };
   }
 
   private handleLiveOps(sessionId: string, event: TranscriptChangeEvent): void {
@@ -652,8 +643,8 @@ export class TranscriptService {
   }
 
   dropSession(sessionId: string): void {
+    this.flushPendingOps(sessionId);
     this.opsListeners.delete(sessionId);
-    this.discardPendingOps(sessionId);
     for (const [key, pending] of this.healTimers) {
       if (key.startsWith(`${sessionId}:`)) {
         clearTimeout(pending.timer);
@@ -733,12 +724,6 @@ function onlyAppends(ops: readonly TranscriptOperation[]): AppendOp[] | undefine
     appends.push(op);
   }
   return appends;
-}
-
-export function parseTranscriptOpsBatchMs(value: string | undefined): number | undefined {
-  if (value === undefined || !/^\d+$/.test(value.trim())) return undefined;
-  const n = Number(value.trim());
-  return Number.isSafeInteger(n) ? n : undefined;
 }
 
 function projectQuestionInteractionRecords(

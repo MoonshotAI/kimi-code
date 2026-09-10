@@ -92,7 +92,7 @@
 
 中转对网页界面的缓存方式取决于文件是否被改写。字体、wasm 等二进制资源（`/assets/` 下带哈希的文件）保留原有的长期 `Cache-Control` 头，因此远程浏览器会跨会话缓存它们。HTML、JavaScript 和 CSS 会被改写到设备前缀之下，因此以 `Cache-Control: public, no-cache` 和带版本的 `ETag` 存储：浏览器每次加载都会重新校验，在包未变化时只是一次开销很小的 `304 Not Modified`，只有真正变化的文件才会重新下载。慢速网络下首次加载仍需完整传输一次。
 
-实验性功能 `remote_control_chunked_responses` 会把较大的 HTTP 响应拆成 256 KiB 的中转帧，而不是一帧发送整个响应。它与其他实验性功能的启用方式相同（`KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL_CHUNKED_RESPONSES=1`、`[experimental]` 配置段或 `KIMI_CODE_EXPERIMENTAL_FLAG=1`）。默认关闭，仅用于排查慢速网络下的问题；除非被要求尝试，否则不要开启。
+实验性功能 `remote_control_chunked_responses` 会把较大的 HTTP 响应拆成 256 KiB 的中转帧，而不是一帧发送整个响应。需要显式启用：设置 `KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL_CHUNKED_RESPONSES=1` 或使用 `[experimental]` 配置段；`KIMI_CODE_EXPERIMENTAL_FLAG` 总开关会刻意跳过它。默认关闭，仅用于排查慢速网络下的问题；除非被要求尝试，否则不要开启。
 
 ## 远程控制和 Kimi Code 网页版有什么区别？
 

@@ -192,7 +192,7 @@ describe('web asset routes', () => {
       const response = await app.inject({ method: 'GET', url: HASHED_JS });
 
       expect(response.statusCode).toBe(200);
-      expect(response.headers.etag).toMatch(/^W\/"[0-9a-f]+-[0-9a-f]+"$/);
+      expect(response.headers.etag).toMatch(/^W\/"[0-9a-z]+-[0-9a-z]+-[0-9a-z]+"$/);
       expect(response.headers['last-modified']).toMatch(/GMT$/);
     });
 

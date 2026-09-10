@@ -962,7 +962,7 @@ Serves point-to-point catch-up from the server's op journal: the journaled op ba
 | `since_seq` | query | integer | **Required.** The caller's last applied op-batch seq, minimum `0`; batches above it are returned |
 | `limit` | query | integer | Maximum batches per response, 1–500. Default `500` |
 
-On success, `data` is `{ agent_id, batches, latest_seq, complete, has_more }`, each batch `{ seq, ops }`. `latest_seq` is always the journal's newest seq, even when the response is capped. `has_more: true` means the cap cut the response short and batches remain below `latest_seq` — call again with `since_seq` set to the last received batch `seq` until `has_more` is `false`. `complete: true` means the journal covers everything from `since_seq` up to `latest_seq` (a capped response is still `complete`); `complete: false` means the journal no longer reaches back to `since_seq` (or the session is not live at all), and the caller must fall back to a full `GET .../transcript` refresh.
+On success, `data` is `{ agent_id, batches, latest_seq, complete, has_more }`, each batch `{ seq, ops }`. `latest_seq` is the newest seq covered by this response: the journal's newest seq, or the last returned batch `seq` when the response is capped. `has_more: true` means the cap cut the response short and newer batches remain — call again with `since_seq` set to `latest_seq` until `has_more` is `false`. `complete: true` means every batch from `since_seq` up to `latest_seq` is present (a capped response is still `complete`); `complete: false` means the journal no longer reaches back to `since_seq` (or the session is not live at all), and the caller must fall back to a full `GET .../transcript` refresh.
 
 - `40001`: validation failure
 - `40401`: session not found

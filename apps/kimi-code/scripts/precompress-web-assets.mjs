@@ -12,11 +12,12 @@
 // (`index.html`, `boot.js`) are tiny and always regenerated: their name does not
 // change with their content, so mtimes are not a trustworthy signal for them.
 //
-// Usage: node scripts/precompress-web-assets.mjs [--check] [--force] [--only=br|gz]
+// Usage: node scripts/precompress-web-assets.mjs [--check] [--force]
 
-import { readdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
+import { readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { parseArgs } from 'node:util';
 import { brotliCompressSync, constants, gzipSync } from 'node:zlib';
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -34,17 +35,6 @@ const COMPRESSIBLE_EXTENSIONS = new Set([
   '.map',
   '.wasm',
   '.txt',
-]);
-const SKIPPED_EXTENSIONS = new Set([
-  '.woff2',
-  '.woff',
-  '.ttf',
-  '.ico',
-  '.riv',
-  '.png',
-  '.jpg',
-  '.jpeg',
-  '.webp',
 ]);
 const MIN_SOURCE_BYTES = 1024;
 // A sibling only earns its place when it shaves at least this fraction off.
@@ -76,7 +66,7 @@ const isMain =
   process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
   try {
-    const options = parseArgs(process.argv.slice(2));
+    const options = parseCliArgs(process.argv.slice(2));
     const summary = await precompressWebAssets({ distDir: DEFAULT_DIST_DIR, ...options });
     console.log(
       options.check
@@ -90,17 +80,17 @@ if (isMain) {
 }
 
 /**
- * @param {{ distDir: string, check?: boolean, force?: boolean, only?: 'br' | 'gz' }} options
+ * @param {{ distDir: string, check?: boolean, force?: boolean }} options
  * @returns {Promise<{ processed: number, written: number, skipped: number, removed: number, bytesBefore: number, bytesAfter: number }>}
  */
-export async function precompressWebAssets({ distDir, check = false, force = false, only }) {
+export async function precompressWebAssets({ distDir, check = false, force = false }) {
   const files = await listFiles(distDir);
   if (check) {
-    assertEntryAssetsPrecompressed(distDir, files);
+    await assertEntryAssetsPrecompressed(distDir, files);
     return { processed: 0, written: 0, skipped: 0, removed: 0, bytesBefore: 0, bytesAfter: 0 };
   }
 
-  const formats = only === undefined ? Object.values(FORMATS) : [FORMATS[only]];
+  const formats = Object.values(FORMATS);
   const summary = { processed: 0, written: 0, skipped: 0, removed: 0, bytesBefore: 0, bytesAfter: 0 };
   const present = new Set(files);
 
@@ -148,20 +138,37 @@ async function emitSiblings(file, sourceStats, formats, force, summary) {
       }
       continue;
     }
-    await writeFile(siblingPath, compressed);
+    await writeSiblingAtomically(siblingPath, compressed);
     summary.written++;
     smallest = Math.min(smallest, compressed.length);
   }
   return smallest;
 }
 
-function assertEntryAssetsPrecompressed(distDir, files) {
-  const present = new Set(files);
-  const missing = files
+// A sibling is written to a temp name and renamed into place so an interrupted
+// build never leaves a truncated `.br`/`.gz` that the server would trust.
+async function writeSiblingAtomically(siblingPath, data) {
+  const tempPath = `${siblingPath}.${process.pid}.tmp`;
+  await writeFile(tempPath, data);
+  await rename(tempPath, siblingPath);
+}
+
+// Mirrors the runtime rule in kap-server's webAssets route: a sibling only
+// counts when it exists and is at least as new as its source. Entry files the
+// writer would skip (under MIN_SOURCE_BYTES) are not required to have one.
+async function assertEntryAssetsPrecompressed(distDir, files) {
+  const entryFiles = files
     .filter((file) => dirname(file) === join(distDir, 'assets'))
-    .filter((file) => ENTRY_ASSET_PATTERN.test(relative(join(distDir, 'assets'), file)))
-    .filter((file) => !present.has(`${file}${FORMATS.br.extension}`))
-    .map((file) => relative(distDir, file));
+    .filter((file) => ENTRY_ASSET_PATTERN.test(relative(join(distDir, 'assets'), file)));
+  const missing = [];
+  for (const file of entryFiles) {
+    const sourceStats = await stat(file);
+    if (sourceStats.size < MIN_SOURCE_BYTES) continue;
+    const sibling = await stat(`${file}${FORMATS.br.extension}`).catch(() => undefined);
+    if (sibling === undefined || sibling.mtimeMs < sourceStats.mtimeMs) {
+      missing.push(relative(distDir, file));
+    }
+  }
   if (missing.length > 0) {
     throw new Error(
       `Precompressed web assets are missing a .br sibling for: ${missing.join(', ')}. ` +
@@ -171,8 +178,7 @@ function assertEntryAssetsPrecompressed(distDir, files) {
 }
 
 function isCompressible(file) {
-  const extension = extname(file).toLowerCase();
-  return COMPRESSIBLE_EXTENSIONS.has(extension) && !SKIPPED_EXTENSIONS.has(extension);
+  return COMPRESSIBLE_EXTENSIONS.has(extname(file).toLowerCase());
 }
 
 async function listFiles(dir) {
@@ -199,26 +205,10 @@ function formatBytes(bytes) {
     : `${(bytes / 1024).toFixed(0)} KB`;
 }
 
-function parseArgs(args) {
-  const options = {};
-  for (const arg of args) {
-    if (arg === '--check') {
-      options.check = true;
-      continue;
-    }
-    if (arg === '--force') {
-      options.force = true;
-      continue;
-    }
-    if (arg.startsWith('--only=')) {
-      const only = arg.slice('--only='.length);
-      if (!(only in FORMATS)) {
-        throw new Error(`--only expects one of ${Object.keys(FORMATS).join('|')}, got "${only}".`);
-      }
-      options.only = only;
-      continue;
-    }
-    throw new Error(`Unknown argument: ${arg}`);
-  }
-  return options;
+function parseCliArgs(args) {
+  return parseArgs({
+    args,
+    options: { check: { type: 'boolean' }, force: { type: 'boolean' } },
+    strict: true,
+  }).values;
 }

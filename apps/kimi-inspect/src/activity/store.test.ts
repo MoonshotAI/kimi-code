@@ -122,7 +122,7 @@ describe('SessionActivityHub', () => {
     hub.close();
   });
 
-  it('drains every session page with page_size=100 and before_id while has_more is true', async () => {
+  it('seeds from an unsized request and drains with before_id only while has_more is true', async () => {
     const { ctor, instances } = makeFakeWsCtor();
     const urls: string[] = [];
     const fetchImpl = vi.fn(async (input: string) => {
@@ -157,13 +157,45 @@ describe('SessionActivityHub', () => {
     expect(urls).toHaveLength(2);
     const firstUrl = new URL(urls[0]!);
     expect(firstUrl.pathname).toBe('/api/v1/sessions');
-    expect(firstUrl.searchParams.get('page_size')).toBe('100');
+    expect(firstUrl.searchParams.get('page_size')).toBeNull();
     expect(firstUrl.searchParams.get('before_id')).toBeNull();
     const secondUrl = new URL(urls[1]!);
     expect(secondUrl.searchParams.get('page_size')).toBe('100');
     expect(secondUrl.searchParams.get('before_id')).toBe('s1');
     expect(hub.store.get('s1')).toEqual(facts({ busy: true, mainTurnActive: true }));
     expect(hub.store.get('s2')?.pendingInteraction).toBe('question');
+    hub.close();
+  });
+
+  it('seeds the pages already collected when a later page fails', async () => {
+    const { ctor, instances } = makeFakeWsCtor();
+    const fetchImpl = vi.fn(async (input: string) => {
+      const before = new URL(input).searchParams.get('before_id');
+      if (before === null) {
+        return {
+          json: async () => ({
+            code: 0,
+            data: {
+              items: [{ id: 's1', busy: true, main_turn_active: true, pending_interaction: 'none' }],
+              has_more: true,
+            },
+          }),
+        };
+      }
+      return { json: async () => ({ code: 50000, message: 'boom' }) };
+    }) as unknown as typeof fetch;
+    const hub = new SessionActivityHub({
+      url: 'http://127.0.0.1:58627',
+      onListChanged: () => {},
+      WebSocketImpl: ctor,
+      fetchImpl,
+    });
+
+    instances[0]!.emit('open');
+    await vi.waitFor(() => {
+      expect(hub.store.get('s1')).toEqual(facts({ busy: true, mainTurnActive: true }));
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
     hub.close();
   });
 

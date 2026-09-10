@@ -156,6 +156,31 @@ describe('precompressWebAssets', () => {
     await expect(exists(`${js}.br`)).resolves.toBe(false);
   });
 
+  it('does not require a sibling for an entry asset too small to compress', async () => {
+    const distDir = await makeDist();
+    const css = join(distDir, 'assets', 'index-Ab12Cd34.css');
+    await writeFile(css, '.kimi{color:red}\n');
+
+    await precompressWebAssets({ distDir });
+    await expect(exists(`${css}.br`)).resolves.toBe(false);
+    await expect(precompressWebAssets({ distDir, check: true })).resolves.toMatchObject({
+      written: 0,
+    });
+  });
+
+  it('fails the check when an entry sibling is older than its source', async () => {
+    const distDir = await makeDist();
+    const js = join(distDir, 'assets', 'index-Dy7xs5tu.js');
+    await writeFile(js, LARGE_TEXT);
+    await precompressWebAssets({ distDir });
+    const stale = new Date(Date.now() - 60_000);
+    await utimes(`${js}.br`, stale, stale);
+
+    await expect(precompressWebAssets({ distDir, check: true })).rejects.toThrow(
+      /index-Dy7xs5tu\.js/,
+    );
+  });
+
   it('passes the check once entry bundles have brotli siblings', async () => {
     const distDir = await makeDist();
     const js = join(distDir, 'assets', 'index-Dy7xs5tu.js');
@@ -167,17 +192,5 @@ describe('precompressWebAssets', () => {
     await expect(precompressWebAssets({ distDir, check: true })).resolves.toMatchObject({
       written: 0,
     });
-  });
-
-  it('emits only brotli siblings with only=br', async () => {
-    const distDir = await makeDist();
-    const js = join(distDir, 'assets', 'index-Dy7xs5tu.js');
-    await writeFile(js, LARGE_TEXT);
-
-    const summary = await precompressWebAssets({ distDir, only: 'br' });
-
-    expect(summary.written).toBe(1);
-    await expect(exists(`${js}.br`)).resolves.toBe(true);
-    await expect(exists(`${js}.gz`)).resolves.toBe(false);
   });
 });

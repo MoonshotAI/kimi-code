@@ -927,7 +927,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     expect(first.body.data).toMatchObject({
       has_more: true,
       complete: true,
-      latest_seq: all.body.data.latest_seq,
+      latest_seq: base + 1,
     });
 
     const rest = await getJson<OpsCatchupContract>(

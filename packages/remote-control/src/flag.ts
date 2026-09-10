@@ -8,7 +8,8 @@ export const REMOTE_CONTROL_CHUNKED_RESPONSES_FLAG_ENV =
   'KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL_CHUNKED_RESPONSES';
 
 // The relay's handling of multi-frame responses (is_last: false) is unverified, so the
-// split stays off until it has been exercised end to end.
+// split stays off until it has been exercised end to end. It is also excluded from the
+// KIMI_CODE_EXPERIMENTAL_FLAG master switch: only an explicit per-flag opt-in enables it.
 export const remoteControlChunkedResponsesFlag: FlagDefinitionInput = {
   id: REMOTE_CONTROL_CHUNKED_RESPONSES_FLAG_ID,
   title: 'Chunked Remote Control responses',
@@ -17,6 +18,7 @@ export const remoteControlChunkedResponsesFlag: FlagDefinitionInput = {
   env: REMOTE_CONTROL_CHUNKED_RESPONSES_FLAG_ENV,
   default: false,
   surface: 'core',
+  excludeFromMaster: true,
 };
 
 registerFlagDefinition(remoteControlChunkedResponsesFlag);

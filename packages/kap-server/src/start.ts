@@ -27,6 +27,7 @@ import {
   type Scope,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
+import { parseNonNegativeIntEnv } from '@moonshot-ai/agent-core-v2/_base/utils/env';
 import {
   createKimiDefaultHeaders,
   kimiRegionProfile,
@@ -79,10 +80,7 @@ import {
   type ServerTelemetry,
   shutdownServerTelemetry,
 } from './services/telemetry';
-import {
-  TranscriptService,
-  parseTranscriptOpsBatchMs,
-} from './services/transcript/transcriptService';
+import { TranscriptService } from './services/transcript/transcriptService';
 import { ProjectionService } from './services/projection';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
 import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
@@ -366,7 +364,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     homeDir,
     core,
     logger,
-    opsBatchMs: parseTranscriptOpsBatchMs(process.env['KIMI_CODE_TRANSCRIPT_OPS_BATCH_MS']),
+    opsBatchMs: parseNonNegativeIntEnv(process.env['KIMI_CODE_TRANSCRIPT_OPS_BATCH_MS']),
   });
   core.accessor.get(IGlobalSearchService).setLiveTranscriptSource(transcriptService);
   const wsTuning = parseWsTuning(process.env);

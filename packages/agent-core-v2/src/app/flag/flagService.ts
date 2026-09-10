@@ -58,7 +58,10 @@ export class FlagService extends Disposable implements IFlagService {
     const override = parseBooleanEnv(this.bootstrap.getEnv(def.env));
     if (override !== undefined) return this.state(def, override, 'env', configValue);
     if (configValue !== undefined) return this.state(def, configValue, 'config', configValue);
-    if (parseBooleanEnv(this.bootstrap.getEnv(MASTER_ENV)) === true) {
+    if (
+      def.excludeFromMaster !== true &&
+      parseBooleanEnv(this.bootstrap.getEnv(MASTER_ENV)) === true
+    ) {
       return this.state(def, true, 'master-env', configValue);
     }
     return this.state(def, def.default, 'default', undefined);

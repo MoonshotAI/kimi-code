@@ -2,7 +2,10 @@ import { createReadStream, type Stats } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { extname, join, normalize, relative, resolve, sep } from 'node:path';
 
+import { buildEtag } from '@moonshot-ai/agent-core-v2/_base/utils/fileMeta';
 import type { FastifyReply, FastifyRequest } from 'fastify';
+
+import { pickHeader } from '../lib/httpRange';
 
 interface WebAssetRouteHost {
   get(
@@ -78,16 +81,16 @@ async function serveWebAsset(
 
   const compressible = COMPRESSIBLE_EXTENSIONS.has(extname(file.path));
   const variant = compressible
-    ? await findEncodedVariant(file, headerValue(req.headers['accept-encoding']))
+    ? await findEncodedVariant(file, pickHeader(req.headers, 'accept-encoding'))
     : undefined;
   const source = variant ?? file;
-  const etag = weakEtag(source.stats, variant?.etagSuffix ?? '');
+  const etag = `W/"${buildEtag(source.stats)}${variant?.etagSuffix ?? ''}"`;
 
   reply.header('ETag', etag).header('Cache-Control', cacheControl(assetsDir, file.path));
   if (compressible) {
     reply.header('Vary', 'Accept-Encoding');
   }
-  if (matchesIfNoneMatch(headerValue(req.headers['if-none-match']), etag)) {
+  if (matchesIfNoneMatch(pickHeader(req.headers, 'if-none-match'), etag)) {
     return reply.code(304).send();
   }
 
@@ -99,10 +102,6 @@ async function serveWebAsset(
     reply.header('Content-Encoding', variant.encoding);
   }
   return reply.send(createReadStream(source.path));
-}
-
-function headerValue(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value.join(',') : value;
 }
 
 async function findEncodedVariant(
@@ -119,11 +118,20 @@ async function findEncodedVariant(
   }))
     .filter(({ weight }) => weight > 0)
     .toSorted((a, b) => b.weight - a.weight);
-  for (const { candidate } of candidates) {
-    const path = `${file.path}${candidate.extension}`;
-    const stats = await stat(path).catch(() => undefined);
-    if (stats?.isFile() === true && stats.mtimeMs >= file.stats.mtimeMs) {
+  if (candidates.length === 0) {
+    return undefined;
+  }
+  const siblings = await Promise.all(
+    candidates.map(async ({ candidate }) => {
+      const path = `${file.path}${candidate.extension}`;
+      const stats = await stat(path).catch(() => undefined);
       return { path, stats, encoding: candidate.encoding, etagSuffix: candidate.etagSuffix };
+    }),
+  );
+  for (const sibling of siblings) {
+    const { stats } = sibling;
+    if (stats?.isFile() === true && stats.mtimeMs >= file.stats.mtimeMs) {
+      return { ...sibling, stats };
     }
   }
   return undefined;
@@ -146,10 +154,6 @@ function parseAcceptEncoding(header: string): Map<string, number> {
 
 function encodingWeight(weights: Map<string, number>, encoding: string): number {
   return weights.get(encoding) ?? weights.get('*') ?? 0;
-}
-
-function weakEtag(stats: Stats, suffix: string): string {
-  return `W/"${stats.size.toString(16)}-${Math.floor(stats.mtimeMs).toString(16)}${suffix}"`;
 }
 
 function matchesIfNoneMatch(header: string | undefined, etag: string): boolean {
@@ -255,8 +259,6 @@ function mimeType(filePath: string): string {
       return 'font/ttf';
     case '.wasm':
       return 'application/wasm';
-    case '.riv':
-      return 'application/octet-stream';
     default:
       return 'application/octet-stream';
   }

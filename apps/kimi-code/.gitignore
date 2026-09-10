@@ -13,3 +13,4 @@ src/generated/vis-web-asset.ts
 # Precompressed siblings generated at build time by scripts/precompress-web-assets.mjs
 dist-web/**/*.br
 dist-web/**/*.gz
+dist-web/**/*.tmp
