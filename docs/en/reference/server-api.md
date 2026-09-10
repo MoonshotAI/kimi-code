@@ -614,13 +614,13 @@ On success, `data` is [the session object](#the-session-object) of the new sessi
 
 #### `GET /api/v1/sessions`
 
-Lists sessions across workspaces, newest `updated_at` first. Cursor pagination follows [Pagination](#pagination) and always applies: without `page_size` the response is the first page of `50` sessions, and `has_more` is computed on every response — keep paging with `before_id` until it is `false`. With `after_id` the response is the newest `page_size` sessions newer than the cursor, and `has_more` means more sessions exist between the cursor and that page (`before_id` and `after_id` are mutually exclusive, so the two directions cannot be combined in one request).
+Lists sessions across workspaces, newest `updated_at` first. Cursor pagination follows [Pagination](#pagination): without `page_size` the response holds every matching session and `has_more` is `false` (`archived_only` listings default to pages of `20`); with `page_size` the response is one page and `has_more` is computed — keep paging with `before_id` until it is `false`. With `after_id` the response is the newest `page_size` sessions newer than the cursor, and `has_more` means more sessions exist between the cursor and that page (`before_id` and `after_id` are mutually exclusive, so the two directions cannot be combined in one request).
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `before_id` | query | string | Only sessions older than this id; mutually exclusive with `after_id` |
 | `after_id` | query | string | Only sessions newer than this id; mutually exclusive with `before_id`. The page holds the newest `page_size` matches above the cursor; `has_more` reports whether more exist between the cursor and the page |
-| `page_size` | query | integer | 1–100. Default `50` |
+| `page_size` | query | integer | 1–100. Omitted: the whole list (`20` per page for `archived_only`) |
 | `busy` | query | boolean | Keep only busy (or only idle) sessions. Applied while collecting, so pages are filled up to `page_size` and `has_more` is accurate |
 | `include_archive` | query | boolean | Include archived sessions alongside live ones. Default `false` |
 | `archived_only` | query | boolean | Keep only archived sessions; mutually exclusive with `include_archive` |

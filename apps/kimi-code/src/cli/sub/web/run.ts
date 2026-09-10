@@ -11,6 +11,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { IFlagService } from '@moonshot-ai/agent-core-v2';
 import { createServerLogger, startServer, type ServerLogger } from '@moonshot-ai/kap-server';
 import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
 import chalk from 'chalk';
@@ -40,6 +41,7 @@ import { type NetworkAddress } from './networks';
 import {
   formatRemoteControlOutput,
   formatRemoteControlStatus,
+  REMOTE_CONTROL_CHUNKED_RESPONSES_FLAG_ID,
   startRemoteControl,
   type RemoteControlHandle,
   type RemoteControlOptions,
@@ -75,9 +77,14 @@ export interface WebCliOptions extends ServerCliOptions {
   remoteControl?: boolean;
 }
 
+/** What the ready hook may ask of the listening server. */
+export interface ForegroundServer {
+  readonly flags: Pick<IFlagService, 'enabled'>;
+}
+
 export interface StartForegroundHooks {
   /** Fires once the server is listening, before the foreground runner blocks. */
-  onReady?: (origin: string) => void | Promise<void>;
+  onReady?: (origin: string, server: ForegroundServer) => void | Promise<void>;
   onShutdown?: (reason: string) => void | Promise<void>;
 }
 
@@ -201,7 +208,7 @@ export async function handleWebCommand(
   const run = deps.startServerForeground ?? startServerForeground;
   let remoteControl: RemoteControlHandle | undefined;
   await run(parsed, {
-    onReady: async (origin) => {
+    onReady: async (origin, server) => {
       // Resolve the persistent token only once the server is up: a fresh
       // server writes `server.token` on first boot, so reading it beforehand
       // would miss first-time starts and the browser would hit the auth gate.
@@ -227,6 +234,7 @@ export async function handleWebCommand(
           clientVersion: `kimi-code/${getVersion()}`,
           stderr: deps.stderr,
           onStatus,
+          chunkedResponses: server.flags.enabled(REMOTE_CONTROL_CHUNKED_RESPONSES_FLAG_ID),
         });
         const qrCode = await generateRemoteControlQr(remoteControl.url, dataDir);
         deps.stdout.write(
@@ -400,7 +408,7 @@ async function runServerInProcess(
   running.logger.info({ address: running.address }, 'server ready');
 
   try {
-    await hooks.onReady?.(running.address);
+    await hooks.onReady?.(running.address, { flags: v2.core.accessor.get(IFlagService) });
   } catch (error) {
     try {
       await hooks.onShutdown?.('startup_failed');

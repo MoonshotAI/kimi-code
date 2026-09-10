@@ -96,7 +96,7 @@ const booleanQueryParam = z.preprocess((value) => {
   return value;
 }, z.boolean().optional());
 
-const DEFAULT_SESSION_LIST_PAGE_SIZE = 50;
+const DEFAULT_ARCHIVED_LIST_PAGE_SIZE = 20;
 
 const sessionsListQueryCoercion = z
   .object({
@@ -278,7 +278,7 @@ export function registerSessionsRoutes(
         [ErrorCode.WORKSPACE_NOT_FOUND]: {},
       },
       description:
-        'List sessions, newest updated_at first. Filters (busy, archived_only, exclude_empty) are applied while collecting, so pages are filled up to page_size. With before_id the page is the newest page_size sessions older than the cursor; with after_id it is the newest page_size sessions newer than the cursor, and has_more means more sessions exist between the cursor and the page.',
+        'List sessions, newest updated_at first. Without page_size the response holds every eligible session and has_more is false (archived_only defaults to pages of 20). Filters (busy, archived_only, exclude_empty) are applied while collecting, so pages are filled up to page_size. With before_id the page is the newest page_size sessions older than the cursor; with after_id it is the newest page_size sessions newer than the cursor, and has_more means more sessions exist between the cursor and the page.',
       tags: ['sessions'],
     },
     async (req, reply) => {
@@ -312,8 +312,10 @@ export function registerSessionsRoutes(
         readonly facts: SessionFacts;
       }
 
-      const collect = async (pageSize: number): Promise<{ visible: Eligible[]; hasMore: boolean }> => {
-        const wanted = pageSize + 1;
+      const collect = async (
+        pageSize: number | undefined,
+      ): Promise<{ visible: Eligible[]; hasMore: boolean }> => {
+        const wanted = pageSize === undefined ? undefined : pageSize + 1;
         const collected: Eligible[] = [];
         let before = raw.before_id;
         const after = raw.after_id;
@@ -322,11 +324,11 @@ export function registerSessionsRoutes(
           afterCursor === undefined ||
           summary.updatedAt > afterCursor.updatedAt ||
           (summary.updatedAt === afterCursor.updatedAt && summary.id > afterCursor.id);
-        while (collected.length < wanted) {
+        while (wanted === undefined || collected.length < wanted) {
           const page = await index.listRecent({
             workspaceIds,
             includeArchived,
-            limit: wanted - collected.length,
+            limit: wanted === undefined ? undefined : wanted - collected.length,
             before,
             after: before === undefined ? after : undefined,
           });
@@ -348,10 +350,12 @@ export function registerSessionsRoutes(
           if (exhausted || page.nextCursor === undefined) break;
           before = page.nextCursor;
         }
+        if (pageSize === undefined) return { visible: collected, hasMore: false };
         return { visible: collected.slice(0, pageSize), hasMore: collected.length > pageSize };
       };
 
-      const pageSize = raw.page_size ?? DEFAULT_SESSION_LIST_PAGE_SIZE;
+      const pageSize =
+        raw.page_size ?? (archivedOnly ? DEFAULT_ARCHIVED_LIST_PAGE_SIZE : undefined);
       const { visible, hasMore } = await collect(pageSize);
       const items = visible.map(({ summary, cwd, facts }) => toWireSession(summary, cwd, facts));
       reply.send(okEnvelope({ items, has_more: hasMore }, req.id));

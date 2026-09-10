@@ -8,6 +8,7 @@ import {
   formatRemoteControlOutput,
   formatRemoteControlStatus,
   inspectRemoteControlLock,
+  REMOTE_CONTROL_CHUNKED_RESPONSES_FLAG_ID,
   startRemoteControl,
   type RemoteControlStatus,
 } from '#/cli/sub/web/remote-control';
@@ -56,7 +57,7 @@ export async function handleRemoteControlCommand(host: SlashCommandHost): Promis
     let remoteControl: Awaited<ReturnType<typeof startRemoteControl>> | undefined;
     try {
       await startServerForeground(options, {
-        onReady: async (origin) => {
+        onReady: async (origin, server) => {
           const dataDir = getDataDir();
           const token = tryResolveServerToken(dataDir);
           if (token === undefined) throw new Error('Unable to read the local server token.');
@@ -73,6 +74,7 @@ export async function handleRemoteControlCommand(host: SlashCommandHost): Promis
             localServerToken: token,
             clientVersion: `kimi-code/${getVersion()}`,
             onStatus,
+            chunkedResponses: server.flags.enabled(REMOTE_CONTROL_CHUNKED_RESPONSES_FLAG_ID),
           });
           const url = buildRemoteControlUrl(remoteControl.deviceId, session?.id);
           const qrCode = await generateRemoteControlQr(url, dataDir);

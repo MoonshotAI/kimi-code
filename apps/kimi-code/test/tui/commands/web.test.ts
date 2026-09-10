@@ -19,6 +19,9 @@ const mocks = vi.hoisted(() => ({
   openUrl: vi.fn(),
 }));
 
+type FakeServer = { flags: { enabled: (id: string) => boolean } };
+const FLAGS_OFF: FakeServer = { flags: { enabled: () => false } };
+
 vi.mock('#/cli/sub/web/remote-control', async (importOriginal) => {
   const actual = await importOriginal<typeof import('#/cli/sub/web/remote-control')>();
   return { ...actual, startRemoteControl: mocks.startRemoteControl };
@@ -121,8 +124,8 @@ describe('handleWebCommand', () => {
     mocks.tryResolveServerToken.mockReturnValue('tok-1');
     const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     mocks.startServerForeground.mockImplementation(
-      async (_options: unknown, hooks: { onReady?: (origin: string) => void }) => {
-        hooks.onReady?.('http://127.0.0.1:58627');
+      async (_options: unknown, hooks: { onReady?: (origin: string, server: FakeServer) => void }) => {
+        hooks.onReady?.('http://127.0.0.1:58627', FLAGS_OFF);
       },
     );
     const host = makeHost();
@@ -210,11 +213,13 @@ describe('handleRemoteControlCommand', () => {
       async (
         _options: unknown,
         hooks: {
-          onReady?: (origin: string) => void | Promise<void>;
+          onReady?: (origin: string, server: FakeServer) => void | Promise<void>;
           onShutdown?: (reason: string) => void | Promise<void>;
         },
       ) => {
-        await hooks.onReady?.('http://127.0.0.1:58627');
+        await hooks.onReady?.('http://127.0.0.1:58627', {
+          flags: { enabled: (id) => id === 'remote_control_chunked_responses' },
+        });
         await hooks.onShutdown?.('SIGINT');
       },
     );
@@ -231,6 +236,7 @@ describe('handleRemoteControlCommand', () => {
           homeDir: dataDir,
           localOrigin: 'http://127.0.0.1:58627',
           localServerToken: 'local-server-token',
+          chunkedResponses: true,
         }),
       );
       expect(mocks.openUrl).toHaveBeenCalledWith(sessionUrl);
@@ -279,11 +285,11 @@ describe('handleRemoteControlCommand', () => {
       async (
         _options: unknown,
         hooks: {
-          onReady?: (origin: string) => void | Promise<void>;
+          onReady?: (origin: string, server: FakeServer) => void | Promise<void>;
           onShutdown?: (reason: string) => void | Promise<void>;
         },
       ) => {
-        await hooks.onReady?.('http://127.0.0.1:58627');
+        await hooks.onReady?.('http://127.0.0.1:58627', FLAGS_OFF);
         await hooks.onShutdown?.('SIGINT');
       },
     );

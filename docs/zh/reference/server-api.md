@@ -614,13 +614,13 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 #### `GET /api/v1/sessions`
 
-跨工作区列出会话，按 `updated_at` 最新在前。游标分页遵循 [分页](#分页) 且始终生效：不提供 `page_size` 时，响应是前 `50` 条会话的第一页，并且每次响应都会计算 `has_more`——请用 `before_id` 持续翻页，直到其为 `false`。使用 `after_id` 时，响应是晚于该游标的最新 `page_size` 条会话，`has_more` 表示游标与这一页之间还存在更多会话（`before_id` 与 `after_id` 互斥，同一请求不能同时向两个方向翻页）。
+跨工作区列出会话，按 `updated_at` 最新在前。游标分页遵循 [分页](#分页)：不提供 `page_size` 时，响应包含全部匹配会话且 `has_more` 为 `false`（`archived_only` 列表默认每页 `20` 条）；提供 `page_size` 时响应为一页并计算 `has_more`——请用 `before_id` 持续翻页，直到其为 `false`。使用 `after_id` 时，响应是晚于该游标的最新 `page_size` 条会话，`has_more` 表示游标与这一页之间还存在更多会话（`before_id` 与 `after_id` 互斥，同一请求不能同时向两个方向翻页）。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `before_id` | query | string | 只保留早于该 id 的会话；与 `after_id` 互斥 |
 | `after_id` | query | string | 只保留晚于该 id 的会话；与 `before_id` 互斥。该页为晚于游标的最新 `page_size` 条匹配项；`has_more` 表示游标与这一页之间是否还有更多会话 |
-| `page_size` | query | integer | 1–100。默认 `50` |
+| `page_size` | query | integer | 1–100。省略时返回整个列表（`archived_only` 默认每页 `20` 条） |
 | `busy` | query | boolean | 只保留忙碌（或只保留空闲）的会话。过滤在收集阶段应用，因此每页会填满到 `page_size` 条，且 `has_more` 准确 |
 | `include_archive` | query | boolean | 在活跃会话之外同时包含已归档会话。默认 `false` |
 | `archived_only` | query | boolean | 只保留已归档会话；与 `include_archive` 互斥 |

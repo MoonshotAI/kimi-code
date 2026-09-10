@@ -32,6 +32,7 @@ import {
   type EarlyFrameBuffer,
   type RemoteControlHandle,
 } from '../src/remote-control';
+import { remoteControlChunkedResponsesFlag } from '../src/flag';
 import { remoteControlLockPath } from '../src/lock';
 
 const CLIENT_VERSION = 'kimi-code/test';
@@ -787,7 +788,9 @@ describe('Remote Control stream bridge', () => {
 });
 
 describe('Remote Control chunked responses', () => {
-  async function tunnelLargeResponse(): Promise<Array<Record<string, unknown>>> {
+  async function tunnelLargeResponse(
+    options: { chunkedResponses?: boolean } = {},
+  ): Promise<Array<Record<string, unknown>>> {
     const body = Buffer.alloc(600 * 1024);
     for (let index = 0; index < body.length; index += 1) body[index] = index % 251;
     const localServer = createServer((_request, response) => {
@@ -807,6 +810,7 @@ describe('Remote Control chunked responses', () => {
       clientVersion: CLIENT_VERSION,
       relayOrigin: `http://127.0.0.1:${relay.port}/coding-relay`,
       stderr: { write: () => true },
+      ...options,
     });
     const http = relay.httpSockets[0]!;
     const frames: Array<Record<string, unknown>> = [];
@@ -835,9 +839,16 @@ describe('Remote Control chunked responses', () => {
     return frames;
   }
 
-  it('splits responses into 256 KiB frames when the flag is set', async () => {
-    vi.stubEnv('KIMI_CODE_REMOTE_CONTROL_CHUNKED_RESPONSES', '1');
-    const frames = await tunnelLargeResponse();
+  it('registers chunked responses as an experimental flag that defaults off', () => {
+    expect(remoteControlChunkedResponsesFlag).toMatchObject({
+      id: 'remote_control_chunked_responses',
+      env: 'KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL_CHUNKED_RESPONSES',
+      default: false,
+    });
+  });
+
+  it('splits responses into 256 KiB frames when chunked responses are enabled', async () => {
+    const frames = await tunnelLargeResponse({ chunkedResponses: true });
     expect(frames.map((frame) => frame['is_last'])).toEqual([false, false, true]);
     expect(frames.every((frame) => frame['request_id'] === 'large' && frame['type'] === 'response')).toBe(
       true,

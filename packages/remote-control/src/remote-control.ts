@@ -35,8 +35,6 @@ const BRIDGE_HIGH_WATER_MARK_BYTES = 1024 * 1024;
 const BRIDGE_LOW_WATER_MARK_BYTES = 256 * 1024;
 const BRIDGE_DRAIN_POLL_MS = 20;
 const RESPONSE_CHUNK_BYTES = 256 * 1024;
-// Experimental: the relay's handling of multi-frame responses (is_last: false) is unverified.
-export const REMOTE_CONTROL_CHUNKED_RESPONSES_ENV = 'KIMI_CODE_REMOTE_CONTROL_CHUNKED_RESPONSES';
 const RELAY_PING_INTERVAL_MS = 30_000;
 const RELAY_SILENCE_TIMEOUT_MS = 300_000;
 // Bump whenever the `rewriteRemoteControlResponse` rules change. Rewritten bodies are stored by
@@ -135,6 +133,12 @@ export interface RemoteControlOptions {
   readonly onStatus?: (status: RemoteControlStatus) => void;
   readonly pingIntervalMs?: number;
   readonly silenceTimeoutMs?: number;
+  /**
+   * Split HTTP responses into 256 KiB tunnel frames. Resolve it from the
+   * `remote_control_chunked_responses` experimental flag (see `flag.ts`);
+   * off by default.
+   */
+  readonly chunkedResponses?: boolean;
 }
 
 export interface RemoteControlHandle {
@@ -389,8 +393,7 @@ class RemoteControlClient {
     this.onStatus = options.onStatus ?? (() => {});
     this.pingIntervalMs = options.pingIntervalMs ?? RELAY_PING_INTERVAL_MS;
     this.silenceTimeoutMs = options.silenceTimeoutMs ?? RELAY_SILENCE_TIMEOUT_MS;
-    const chunked = process.env[REMOTE_CONTROL_CHUNKED_RESPONSES_ENV]?.trim().toLowerCase();
-    this.chunkedResponses = chunked === '1' || chunked === 'true';
+    this.chunkedResponses = options.chunkedResponses ?? false;
   }
 
   async start(): Promise<void> {

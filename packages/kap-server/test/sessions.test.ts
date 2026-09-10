@@ -576,7 +576,7 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(body.data.has_more).toBe(false);
   });
 
-  it('pages with a computed has_more when page_size is omitted', async () => {
+  it('returns every session with has_more false when page_size is omitted', async () => {
     await restartWithFreshHome();
     const cwd = home as string;
     const ids: string[] = [];
@@ -592,7 +592,7 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(body.data.has_more).toBe(false);
   });
 
-  it('caps an unsized listing at the default page size of 50 and pages the rest', async () => {
+  it('keeps an unsized listing unbounded and pages only when page_size is given', async () => {
     await restartWithFreshHome();
     const cwd = home as string;
     const ids: string[] = [];
@@ -602,14 +602,19 @@ describe('server-v2 /api/v1/sessions', () => {
       ids.push(body.data.id);
     }
 
-    const first = await getJson<PageWire>('/api/v1/sessions');
+    const all = await getJson<PageWire>('/api/v1/sessions');
+    expect(all.body.code).toBe(0);
+    expect(all.body.data.items).toHaveLength(51);
+    expect(all.body.data.has_more).toBe(false);
+
+    const first = await getJson<PageWire>('/api/v1/sessions?page_size=50');
     expect(first.body.code).toBe(0);
     expect(first.body.data.items).toHaveLength(50);
     expect(first.body.data.has_more).toBe(true);
 
     const cursor = first.body.data.items.at(-1)!.id;
     const rest = await getJson<PageWire>(
-      `/api/v1/sessions?before_id=${encodeURIComponent(cursor)}`,
+      `/api/v1/sessions?before_id=${encodeURIComponent(cursor)}&page_size=50`,
     );
     expect(rest.body.code).toBe(0);
     expect(rest.body.data.items).toHaveLength(1);

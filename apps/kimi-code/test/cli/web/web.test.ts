@@ -52,7 +52,7 @@ function makeRunner(origin = 'http://127.0.0.1:58627'): {
   const calls: { options: ParsedServerOptions | undefined } = { options: undefined };
   const runner: ForegroundRunner = async (options, hooks) => {
     calls.options = options;
-    await hooks?.onReady?.(origin);
+    await hooks?.onReady?.(origin, { flags: { enabled: () => false } });
     return undefined as never;
   };
   return { runner, calls };
