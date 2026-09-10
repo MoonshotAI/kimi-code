@@ -138,6 +138,15 @@ kimi
 | --- | --- | --- |
 | `KIMI_DISABLE_TELEMETRY` | 关闭匿名遥测上报 | `1`、`true`、`yes`、`y`（不区分大小写） |
 | `KIMI_CODE_PASSWORD` | 为 `kimi web` 本地服务设置并列鉴权密码；绑到非本机地址时建议设置，见 [安全注意](../guides/web.md#安全注意) | 任意非空字符串；未设置时仅 token 有效 |
+| `KIMI_CODE_WS_COMPRESSION` | `kimi web` WebSocket 连接是否提供 `permessage-deflate`（默认开启） | `1`/`true` 或 `0`/`false`；其他值被忽略 |
+| `KIMI_CODE_WS_MAX_PAYLOAD_BYTES` | 入站 WebSocket 消息大小上限（默认 `16777216`） | 正整数；非法值被忽略 |
+| `KIMI_CODE_WS_HEARTBEAT_MS` | 服务端 `ping` 间隔（毫秒）；连续两个周期无入站帧即关闭连接（默认 `10000`） | 正整数；非法值被忽略 |
+| `KIMI_CODE_WS_FLUSH_INTERVAL_MS` | 订阅事件帧的合并发送窗口（毫秒，默认 `16`） | 正整数；非法值被忽略 |
+| `KIMI_CODE_WS_MAX_BATCH_SIZE` | 缓冲多少条订阅帧后立即发送（默认 `64`） | 正整数；非法值被忽略 |
+| `KIMI_CODE_WS_HIGH_WATER_MARK_BYTES` | socket `bufferedAmount` 超过该值时暂缓发送（默认 `1048576`） | 正整数；非法值被忽略 |
+| `KIMI_CODE_WS_MAX_BUFFER_SIZE` | 每个会话的事件回放窗口，同时作为 `server_hello.max_event_buffer_size` 下发（默认 `1000`） | 正整数；非法值被忽略 |
+| `KIMI_CODE_REMOTE_CONTROL_CHUNKED_RESPONSES` | 实验性：将远程控制的 HTTP 响应拆成 256 KiB 的中转帧发送（默认关闭，每个响应一帧） | `1`/`true`；其他值保持默认 |
+| `KIMI_CODE_TRANSCRIPT_OPS_BATCH_MS` | 将连续的流式文本追加合并为一个 `transcript.ops` 批次的时间窗口（毫秒），合并在分配序号之前完成（默认 `16`；`0` 表示每次追加立即转发） | 非负整数；非法值被忽略 |
 | `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` | 会话关闭时是否保留后台任务，优先级高于 `config.toml`。默认会在退出时停止后台任务 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS` | 同时运行的后台任务数上限，优先级高于 `config.toml` 的 `[background] max_running_tasks`；不设置表示无上限 | 正整数；非法值被忽略 |
 | `KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S` | 后台 `Bash` 任务的默认超时（秒），也用于前台命令转入后台后的重新计时，优先级高于 `[task] bash_task_timeout_s`；`0` 表示无超时 | 非负整数；非法值被忽略 |

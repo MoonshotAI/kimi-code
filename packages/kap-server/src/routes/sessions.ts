@@ -96,7 +96,7 @@ const booleanQueryParam = z.preprocess((value) => {
   return value;
 }, z.boolean().optional());
 
-const DEFAULT_SESSION_LIST_PAGE_SIZE = 20;
+const DEFAULT_SESSION_LIST_PAGE_SIZE = 50;
 
 const sessionsListQueryCoercion = z
   .object({
@@ -277,7 +277,8 @@ export function registerSessionsRoutes(
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.WORKSPACE_NOT_FOUND]: {},
       },
-      description: 'List sessions',
+      description:
+        'List sessions, newest updated_at first. Filters (busy, archived_only, exclude_empty) are applied while collecting, so pages are filled up to page_size. With before_id the page is the newest page_size sessions older than the cursor; with after_id it is the newest page_size sessions newer than the cursor, and has_more means more sessions exist between the cursor and the page.',
       tags: ['sessions'],
     },
     async (req, reply) => {
@@ -308,7 +309,7 @@ export function registerSessionsRoutes(
       interface Eligible {
         readonly summary: SessionSummary;
         readonly cwd: string;
-        readonly facts?: SessionFacts;
+        readonly facts: SessionFacts;
       }
 
       const collect = async (pageSize: number): Promise<{ visible: Eligible[]; hasMore: boolean }> => {
@@ -339,14 +340,10 @@ export function registerSessionsRoutes(
             const cwd = summary.cwd ?? roots.get(summary.workspaceId);
             if (cwd === undefined) continue;
             if (raw.exclude_empty === true && (summary.lastPrompt ?? '').length === 0) continue;
-            if (archivedOnly) {
-              if (!summary.archived) continue;
-              const facts = resolveSessionFacts(core, summary.id);
-              if (raw.busy !== undefined && facts.busy !== raw.busy) continue;
-              collected.push({ summary, cwd, facts });
-            } else {
-              collected.push({ summary, cwd });
-            }
+            if (archivedOnly && !summary.archived) continue;
+            const facts = resolveSessionFacts(core, summary.id);
+            if (raw.busy !== undefined && facts.busy !== raw.busy) continue;
+            collected.push({ summary, cwd, facts });
           }
           if (exhausted || page.nextCursor === undefined) break;
           before = page.nextCursor;
@@ -354,40 +351,9 @@ export function registerSessionsRoutes(
         return { visible: collected.slice(0, pageSize), hasMore: collected.length > pageSize };
       };
 
-      if (!archivedOnly && raw.page_size === undefined) {
-        const page = await index.listRecent({
-          workspaceIds,
-          includeArchived,
-          before: raw.before_id,
-          after: raw.after_id,
-        });
-        const eligible: Eligible[] = [];
-        for (const summary of page.items) {
-          const cwd = summary.cwd ?? roots.get(summary.workspaceId);
-          if (cwd === undefined) continue;
-          if (raw.exclude_empty === true && (summary.lastPrompt ?? '').length === 0) continue;
-          eligible.push({ summary, cwd });
-        }
-        const projected = eligible.map(({ summary, cwd }) =>
-          toWireSession(summary, cwd, resolveSessionFacts(core, summary.id)),
-        );
-        const items =
-          raw.busy !== undefined
-            ? projected.filter((session) => session.busy === raw.busy)
-            : projected;
-        reply.send(okEnvelope({ items, has_more: false }, req.id));
-        return;
-      }
-
       const pageSize = raw.page_size ?? DEFAULT_SESSION_LIST_PAGE_SIZE;
       const { visible, hasMore } = await collect(pageSize);
-      const projected = visible.map(({ summary, cwd, facts }) =>
-        toWireSession(summary, cwd, facts ?? resolveSessionFacts(core, summary.id)),
-      );
-      const items =
-        raw.busy !== undefined && !archivedOnly
-          ? projected.filter((session) => session.busy === raw.busy)
-          : projected;
+      const items = visible.map(({ summary, cwd, facts }) => toWireSession(summary, cwd, facts));
       reply.send(okEnvelope({ items, has_more: hasMore }, req.id));
     },
   );

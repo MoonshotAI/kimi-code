@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage } from 'node:http';
 import { spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -15,12 +16,20 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 
 import {
+  applyRewrittenCacheHeaders,
+  bridgeSockets,
+  bufferEarlyFrame,
   buildRemoteControlUrl,
   filterForwardRequestHeaders,
   parseRawHttpRequest,
+  reconnectDelayMs,
+  REMOTE_CONTROL_REWRITE_VERSION,
   resolveRemoteControlRelayOrigin,
   rewriteRemoteControlResponse,
   startRemoteControl,
+  stripRewriteVersion,
+  type BridgeSocket,
+  type EarlyFrameBuffer,
   type RemoteControlHandle,
 } from '../src/remote-control';
 import { remoteControlLockPath } from '../src/lock';
@@ -40,6 +49,8 @@ const cleanups: Array<() => Promise<void> | void> = [];
 
 afterEach(async () => {
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+  vi.useRealTimers();
   while (cleanups.length > 0) await cleanups.pop()!();
 });
 
@@ -93,6 +104,26 @@ describe('Remote Control HTTP forwarding', () => {
     ]);
   });
 
+  it('forwards conditional request headers but not accept-encoding', () => {
+    expect(
+      filterForwardRequestHeaders(
+        [
+          ['If-None-Match', 'W/"abc"'],
+          ['If-Modified-Since', 'Wed, 21 Oct 2015 07:28:00 GMT'],
+          ['Accept-Encoding', 'gzip, br'],
+        ],
+        'local-token',
+      ),
+    ).toEqual([
+      'If-None-Match',
+      'W/"abc"',
+      'If-Modified-Since',
+      'Wed, 21 Oct 2015 07:28:00 GMT',
+      'Authorization',
+      'Bearer local-token',
+    ]);
+  });
+
   it('rejects absolute-form and malformed request targets', () => {
     expect(() =>
       parseRawHttpRequest(Buffer.from('GET https://example.test/ HTTP/1.1\r\n\r\n')),
@@ -131,6 +162,28 @@ describe('Remote Control HTTP forwarding', () => {
       prefix,
     ).toString();
     expect(css).toBe(`.x{background:url(${prefix}/assets/x.png)}`);
+  });
+
+  it('strips only the current rewrite version from If-None-Match entity tags', () => {
+    const suffix = `-rc${REMOTE_CONTROL_REWRITE_VERSION}`;
+    expect(stripRewriteVersion(`W/"asset-1${suffix}"`)).toBe('W/"asset-1"');
+    expect(stripRewriteVersion(`"asset-1${suffix}", W/"asset-2${suffix}"`)).toBe(
+      '"asset-1", W/"asset-2"',
+    );
+    expect(stripRewriteVersion('W/"asset-1-rc0"')).toBe('W/"asset-1-rc0"');
+    expect(stripRewriteVersion('W/"asset-1"')).toBe('W/"asset-1"');
+    expect(stripRewriteVersion('*')).toBe('*');
+  });
+
+  it('marks rewritten responses as revalidate-always with a versioned weak ETag', () => {
+    const suffix = `-rc${REMOTE_CONTROL_REWRITE_VERSION}`;
+    const weak = ['ETag', 'W/"asset-1"', 'Cache-Control', 'public, max-age=31536000, immutable'];
+    applyRewrittenCacheHeaders(weak);
+    expect(weak).toEqual(['ETag', `W/"asset-1${suffix}"`, 'Cache-Control', 'public, no-cache']);
+
+    const strong = ['etag', '"asset-1"'];
+    applyRewrittenCacheHeaders(strong);
+    expect(strong).toEqual(['etag', `W/"asset-1${suffix}"`, 'Cache-Control', 'public, no-cache']);
   });
 });
 
@@ -276,8 +329,27 @@ describe('Remote Control tunnel', () => {
     const localWsServer = new WebSocketServer({ noServer: true });
     const localServer = createServer((request, response) => {
       localHttpRequest = request;
+      if (request.url === '/assets/font-1.woff2') {
+        response.writeHead(200, {
+          'Content-Type': 'font/woff2',
+          ETag: 'W/"font-1"',
+          'Cache-Control': 'public, max-age=31536000, immutable',
+        });
+        response.end('font-bytes');
+        return;
+      }
+      if (request.headers['if-none-match'] === 'W/"asset-1"') {
+        response.writeHead(304, {
+          'Content-Type': 'text/html',
+          ETag: 'W/"asset-1"',
+          'Cache-Control': 'public, max-age=31536000, immutable',
+        });
+        response.end();
+        return;
+      }
       response.writeHead(200, {
         'Content-Type': 'text/html',
+        ETag: 'W/"asset-1"',
         'Cache-Control': 'public, max-age=31536000, immutable',
         Connection: 'X-Remove',
         'X-Remove': 'gone',
@@ -383,9 +455,68 @@ describe('Remote Control tunnel', () => {
     expect(localHttpRequest?.headers['x-hop']).toBeUndefined();
     expect(localHttpRequest?.headers['x-keep']).toBe('yes');
     expect(response).not.toContain('X-Remove');
+    // Rewritten bodies are stored but revalidated per load under a versioned validator.
+    const rewriteSuffix = `-rc${REMOTE_CONTROL_REWRITE_VERSION}`;
+    expect(response).toContain('Cache-Control: public, no-cache');
     expect(response).not.toContain('immutable');
-    expect(response).toContain('Cache-Control: no-cache');
+    expect(response).toContain(`ETag: W/"asset-1${rewriteSuffix}"`);
     expect(response).toContain(`/coding-relay/devices/${handle.deviceId}/boot.js`);
+
+    const tunnelRequest = async (requestId: string, raw: string): Promise<string> => {
+      const reply = nextJsonMessage(httpConnections[0]!);
+      httpConnections[0]!.send(
+        JSON.stringify({
+          request_id: requestId,
+          type: 'request',
+          is_last: true,
+          body_base64: Buffer.from(raw).toString('base64'),
+        }),
+      );
+      return Buffer.from((await reply)['body_base64'] as string, 'base64').toString();
+    };
+
+    const notModified = await tunnelRequest(
+      'request-304',
+      `GET / HTTP/1.1\r\nHost: relay.test\r\nIf-None-Match: W/"asset-1${rewriteSuffix}"\r\n\r\n`,
+    );
+    expect(localHttpRequest?.headers['if-none-match']).toBe('W/"asset-1"');
+    expect(notModified).toMatch(/^HTTP\/1\.1 304 Not Modified\r\n/);
+    expect(notModified).toContain(`ETag: W/"asset-1${rewriteSuffix}"`);
+    expect(notModified).toContain('Cache-Control: public, no-cache');
+    expect(notModified).not.toContain('immutable');
+    expect(notModified).not.toContain('Content-Length');
+    expect(notModified).not.toContain('<script');
+    expect(notModified.endsWith('\r\n\r\n')).toBe(true);
+
+    // A validator from an older rewrite must miss so the browser gets a fresh rewrite.
+    const staleRewrite = await tunnelRequest(
+      'request-stale',
+      'GET / HTTP/1.1\r\nHost: relay.test\r\nIf-None-Match: W/"asset-1-rc0"\r\n\r\n',
+    );
+    expect(localHttpRequest?.headers['if-none-match']).toBe('W/"asset-1-rc0"');
+    expect(staleRewrite).toMatch(/^HTTP\/1\.1 200 OK\r\n/);
+    expect(staleRewrite).toContain(`ETag: W/"asset-1${rewriteSuffix}"`);
+    expect(staleRewrite).toContain(`/coding-relay/devices/${handle.deviceId}/boot.js`);
+
+    // Untouched assets keep the upstream validator and long-lived caching verbatim.
+    const font = await tunnelRequest(
+      'request-font',
+      'GET /assets/font-1.woff2 HTTP/1.1\r\nHost: relay.test\r\n\r\n',
+    );
+    expect(font).toMatch(/^HTTP\/1\.1 200 OK\r\n/);
+    expect(font).toContain('ETag: W/"font-1"');
+    expect(font).toContain('Cache-Control: public, max-age=31536000, immutable');
+    expect(font).not.toContain('no-cache');
+    expect(font).toContain('Content-Length: 10');
+    expect(font.endsWith('\r\n\r\nfont-bytes')).toBe(true);
+
+    // HEAD is bodiless: nothing to rewrite and no synthesized Content-Length.
+    const head = await tunnelRequest('request-head', 'HEAD / HTTP/1.1\r\nHost: relay.test\r\n\r\n');
+    expect(localHttpRequest?.method).toBe('HEAD');
+    expect(head).toMatch(/^HTTP\/1\.1 200 OK\r\n/);
+    expect(head).not.toContain('Content-Length');
+    expect(head).not.toContain('<script');
+    expect(head.endsWith('\r\n\r\n')).toBe(true);
 
     currentToken = 'rotated-server-token';
     const rotatedResponsePromise = nextJsonMessage(httpConnections[0]!);
@@ -508,6 +639,211 @@ describe('Remote Control tunnel', () => {
   }, 15_000);
 });
 
+describe('Remote Control reconnect backoff', () => {
+  it('applies equal jitter within the exponential schedule', () => {
+    const random = vi.spyOn(Math, 'random');
+    random.mockReturnValue(0);
+    expect(reconnectDelayMs(1)).toBe(500);
+    expect(reconnectDelayMs(2)).toBe(1000);
+    expect(reconnectDelayMs(6)).toBe(15_000);
+    expect(reconnectDelayMs(20)).toBe(15_000);
+    random.mockReturnValue(1);
+    expect(reconnectDelayMs(1)).toBe(1000);
+    expect(reconnectDelayMs(3)).toBe(4000);
+    expect(reconnectDelayMs(20)).toBe(30_000);
+    expect(reconnectDelayMs(4, () => 0.5)).toBe(6000);
+  });
+});
+
+describe('Remote Control stream bridge', () => {
+  class FakeSocket extends EventEmitter implements BridgeSocket {
+    readyState = 1;
+    bufferedAmount = 0;
+    isPaused = false;
+    readonly sent: string[] = [];
+    readonly closes: number[] = [];
+    pause(): void {
+      this.isPaused = true;
+    }
+    resume(): void {
+      this.isPaused = false;
+    }
+    send(data: RawData): void {
+      this.sent.push(rawDataText(data));
+    }
+    close(code = 1000): void {
+      this.closes.push(code);
+      this.readyState = 3;
+      this.emit('close', code, Buffer.alloc(0));
+    }
+  }
+
+  it('caps early local frames by pausing the socket and resumes it after replay', () => {
+    const socket = new FakeSocket();
+    const buffer: EarlyFrameBuffer = { frames: [], bytes: 0 };
+    for (let index = 0; index < 255; index += 1) {
+      bufferEarlyFrame(socket, buffer, Buffer.from('x'), false);
+    }
+    expect(socket.isPaused).toBe(false);
+    bufferEarlyFrame(socket, buffer, Buffer.from('x'), false);
+    expect(socket.isPaused).toBe(true);
+    expect(buffer.frames).toHaveLength(256);
+
+    const large = new FakeSocket();
+    const largeBuffer: EarlyFrameBuffer = { frames: [], bytes: 0 };
+    bufferEarlyFrame(large, largeBuffer, Buffer.alloc(1024 * 1024), true);
+    expect(large.isPaused).toBe(false);
+    bufferEarlyFrame(large, largeBuffer, [Buffer.alloc(1)], true);
+    expect(large.isPaused).toBe(true);
+    expect(largeBuffer.bytes).toBe(1024 * 1024 + 1);
+
+    const tunnel = new FakeSocket();
+    bridgeSockets(socket, tunnel, () => {}, buffer.frames);
+    expect(tunnel.sent).toHaveLength(256);
+    expect(socket.isPaused).toBe(false);
+  });
+
+  it('pauses the source while the sink is above the high-water mark and resumes below the low one', () => {
+    vi.useFakeTimers();
+    const local = new FakeSocket();
+    const tunnel = new FakeSocket();
+    const onClose = vi.fn();
+    bridgeSockets(local, tunnel, onClose);
+
+    local.emit('message', Buffer.from('one'), false);
+    expect(tunnel.sent).toEqual(['one']);
+    expect(local.isPaused).toBe(false);
+
+    tunnel.bufferedAmount = 1024 * 1024 + 1;
+    local.emit('message', Buffer.from('two'), false);
+    expect(tunnel.sent).toEqual(['one', 'two']);
+    expect(local.isPaused).toBe(true);
+
+    vi.advanceTimersByTime(40);
+    expect(local.isPaused).toBe(true);
+    tunnel.bufferedAmount = 256 * 1024;
+    vi.advanceTimersByTime(20);
+    expect(local.isPaused).toBe(true);
+    tunnel.bufferedAmount = 256 * 1024 - 1;
+    vi.advanceTimersByTime(20);
+    expect(local.isPaused).toBe(false);
+
+    tunnel.emit('message', Buffer.from('back'), true);
+    expect(local.sent).toEqual(['back']);
+    expect(vi.getTimerCount()).toBe(0);
+
+    tunnel.bufferedAmount = 2 * 1024 * 1024;
+    local.emit('message', Buffer.from('three'), false);
+    expect(local.isPaused).toBe(true);
+    expect(vi.getTimerCount()).toBe(1);
+    tunnel.close(1001);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(local.closes).toEqual([1001]);
+    expect(local.isPaused).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('resumes a source paused by back-pressure before closing it', () => {
+    vi.useFakeTimers();
+    const local = new FakeSocket();
+    const tunnel = new FakeSocket();
+    bridgeSockets(local, tunnel, () => {});
+
+    tunnel.bufferedAmount = 2 * 1024 * 1024;
+    local.emit('message', Buffer.from('one'), false);
+    expect(local.isPaused).toBe(true);
+    expect(vi.getTimerCount()).toBe(1);
+
+    local.emit('error', new Error('boom'));
+    expect(local.isPaused).toBe(false);
+    expect(tunnel.closes).toEqual([1011]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('resumes a source still paused from early-frame buffering when the peer closes', () => {
+    const local = new FakeSocket();
+    const tunnel = new FakeSocket();
+    const buffer: EarlyFrameBuffer = { frames: [], bytes: 0 };
+    bufferEarlyFrame(local, buffer, Buffer.alloc(1024 * 1024 + 1), true);
+    expect(local.isPaused).toBe(true);
+    // The tunnel is already backed up, so replaying the early frame keeps the source paused.
+    tunnel.bufferedAmount = 2 * 1024 * 1024;
+    bridgeSockets(local, tunnel, () => {}, buffer.frames);
+    expect(local.isPaused).toBe(true);
+
+    tunnel.close(1000);
+    expect(local.isPaused).toBe(false);
+    expect(local.closes).toEqual([1000]);
+  });
+});
+
+describe('Remote Control chunked responses', () => {
+  async function tunnelLargeResponse(): Promise<Array<Record<string, unknown>>> {
+    const body = Buffer.alloc(600 * 1024);
+    for (let index = 0; index < body.length; index += 1) body[index] = index % 251;
+    const localServer = createServer((_request, response) => {
+      response.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+      response.end(body);
+    });
+    const localPort = await listen(localServer);
+    cleanups.push(() => closeServer(localServer));
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    const relay = await startAuthRelay();
+    let handle: RemoteControlHandle | undefined;
+    cleanups.push(async () => handle?.close());
+    handle = await startRemoteControl({
+      homeDir,
+      localOrigin: `http://127.0.0.1:${localPort}`,
+      localServerToken: 'local-server-token',
+      clientVersion: CLIENT_VERSION,
+      relayOrigin: `http://127.0.0.1:${relay.port}/coding-relay`,
+      stderr: { write: () => true },
+    });
+    const http = relay.httpSockets[0]!;
+    const frames: Array<Record<string, unknown>> = [];
+    const done = new Promise<void>((resolve) => {
+      http.on('message', (data) => {
+        const frame = JSON.parse(rawDataText(data)) as Record<string, unknown>;
+        frames.push(frame);
+        if (frame['is_last'] === true) resolve();
+      });
+    });
+    http.send(
+      JSON.stringify({
+        request_id: 'large',
+        type: 'request',
+        is_last: true,
+        body_base64: Buffer.from('GET /blob HTTP/1.1\r\nHost: relay.test\r\n\r\n').toString('base64'),
+      }),
+    );
+    await done;
+    const raw = Buffer.concat(
+      frames.map((frame) => Buffer.from(frame['body_base64'] as string, 'base64')),
+    );
+    const separator = raw.indexOf('\r\n\r\n');
+    expect(raw.subarray(0, separator).toString()).toMatch(/^HTTP\/1\.1 200 OK\r\n/);
+    expect(raw.subarray(separator + 4).equals(body)).toBe(true);
+    return frames;
+  }
+
+  it('splits responses into 256 KiB frames when the flag is set', async () => {
+    vi.stubEnv('KIMI_CODE_REMOTE_CONTROL_CHUNKED_RESPONSES', '1');
+    const frames = await tunnelLargeResponse();
+    expect(frames.map((frame) => frame['is_last'])).toEqual([false, false, true]);
+    expect(frames.every((frame) => frame['request_id'] === 'large' && frame['type'] === 'response')).toBe(
+      true,
+    );
+    const lengths = frames.map((frame) => Buffer.from(frame['body_base64'] as string, 'base64').length);
+    expect(lengths[0]).toBe(256 * 1024);
+    expect(lengths[1]).toBe(256 * 1024);
+  });
+
+  it('sends a single frame by default', async () => {
+    const frames = await tunnelLargeResponse();
+    expect(frames.map((frame) => frame['is_last'])).toEqual([true]);
+  });
+});
+
 describe('Remote Control single-instance lock', () => {
   async function deadPid(): Promise<number> {
     const child = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' });
@@ -594,7 +930,7 @@ describe('Remote Control single-instance lock', () => {
     second = await startRemoteControl(options);
     expect(second.url).toContain('/devices/');
 
-    relay.managementSockets[relay.managementSockets.length - 1]!.send(
+    relay.managementSockets.at(-1)!.send(
       JSON.stringify({ type: 'disconnect', payload: { reason: 'user_requested' } }),
     );
     await second.closed;

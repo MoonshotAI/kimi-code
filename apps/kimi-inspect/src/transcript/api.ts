@@ -152,6 +152,11 @@ export interface TranscriptOpsCatchup {
   readonly latestSeq: number;
   /** False = the journal cannot cover `sinceSeq`; the caller must full-refresh. */
   readonly complete: boolean;
+  /**
+   * True = the server capped this response (`limit`) and batches remain below
+   * `latestSeq`; page again with `sinceSeq` = the last received batch seq.
+   */
+  readonly hasMore: boolean;
 }
 
 export interface FetchTranscriptOpsOptions {
@@ -161,6 +166,8 @@ export interface FetchTranscriptOpsOptions {
   readonly agentId: string;
   /** Return journaled batches with seq strictly greater than this watermark. */
   readonly sinceSeq: number;
+  /** Max batches per response (1–500; the server defaults to 500). */
+  readonly limit?: number | undefined;
   /** Injectable for tests. */
   readonly fetchImpl?: typeof fetch;
 }
@@ -169,6 +176,7 @@ export interface FetchTranscriptOpsOptions {
  * Point-to-point catch-up: `GET .../transcript/ops?agent_id=&since_seq=N`.
  * Available on sequenced servers; a 404/envelope error means the server
  * predates the endpoint and the caller should fall back to a full refresh.
+ * One call returns at most `limit` batches — keep calling while `hasMore`.
  */
 export async function fetchTranscriptOps(
   opts: FetchTranscriptOpsOptions,
@@ -177,6 +185,7 @@ export async function fetchTranscriptOps(
     agent_id: opts.agentId,
     since_seq: String(opts.sinceSeq),
   });
+  if (opts.limit !== undefined) params.set('limit', String(opts.limit));
   const headers: Record<string, string> = {};
   if (opts.token !== undefined && opts.token !== '') {
     headers['authorization'] = `Bearer ${opts.token}`;
@@ -198,6 +207,7 @@ export async function fetchTranscriptOps(
     batches: parsed.data.batches,
     latestSeq: parsed.data.latest_seq,
     complete: parsed.data.complete,
+    hasMore: parsed.data.has_more,
   };
 }
 

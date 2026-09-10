@@ -42,7 +42,7 @@ import {
   type TranscriptTask,
   type TranscriptTurn,
 } from '@moonshot-ai/transcript';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { bindSessionTranscript } from '../../src/services/transcript/coreBinding';
 import { toWireQuestion } from '../../src/protocol/question-wire';
@@ -55,7 +55,9 @@ import {
 import {
   healTurnOps,
   TranscriptService,
+  parseTranscriptOpsBatchMs,
   snapshotToOps,
+  TRANSCRIPT_OPS_BATCH_MAX_OPS,
   TRANSCRIPT_OPS_JOURNAL_CAPACITY,
 } from '../../src/services/transcript/transcriptService';
 
@@ -3691,7 +3693,9 @@ describe('bindSessionTranscript', () => {
     const deadline = Date.now() + timeoutMs;
     while (!condition()) {
       if (Date.now() > deadline) throw new Error('waitFor timed out');
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await new Promise((resolve) => {
+        setTimeout(resolve, 20);
+      });
     }
   }
 
@@ -3983,6 +3987,149 @@ describe('bindSessionTranscript', () => {
         Array.from({ length: 10 }, (_, i) => watermark - 9 + i),
       );
       service.dropSession('s1');
+    });
+
+    interface SeenBatch {
+      readonly seq: number;
+      readonly ops: readonly TranscriptOperation[];
+    }
+
+    async function openStreamingTurn(opsBatchMs: number): Promise<{
+      service: TranscriptService;
+      bus: { emit(event: ProjectorBusEvent): void };
+      seen: SeenBatch[];
+    }> {
+      const agents = new FakeAgents();
+      const main = agents.add('main');
+      const service = new TranscriptService({
+        homeDir: '/nonexistent-home',
+        core: fakeCoreWithAgents(agents),
+        opsBatchMs,
+      });
+      service.forSessionLive('s1');
+      await service.whenReady('s1');
+      const seen: SeenBatch[] = [];
+      service.onSessionOps('s1', (event, seq) => seen.push({ seq, ops: event.ops }));
+      main.bus.emit(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' } }));
+      main.bus.emit(ev({ type: 'turn.step.started', turnId: 0, step: 1 }));
+      main.bus.emit(ev({ type: 'assistant.delta', turnId: 0, delta: 'Hel' }));
+      expect(seen.at(-1)?.ops.map((op) => op.op)).toEqual(['frame.upsert', 'append']);
+      return { service, bus: main.bus, seen };
+    }
+
+    function expectContiguous(seen: readonly SeenBatch[]): void {
+      const first = seen[0]!.seq;
+      expect(seen.map((batch) => batch.seq)).toEqual(seen.map((_, i) => first + i));
+    }
+
+    it('coalesces streamed appends into one batch once the window elapses', async () => {
+      const { service, bus, seen } = await openStreamingTurn(5);
+      const before = seen.length;
+      bus.emit(ev({ type: 'assistant.delta', turnId: 0, delta: 'lo' }));
+      bus.emit(ev({ type: 'assistant.delta', turnId: 0, delta: ' wor' }));
+      bus.emit(ev({ type: 'assistant.delta', turnId: 0, delta: 'ld' }));
+      expect(seen).toHaveLength(before);
+
+      await vi.waitFor(() => {
+        expect(seen.length).toBeGreaterThan(before);
+      });
+      await new Promise((resolve) => {
+        setTimeout(resolve, 20);
+      });
+      expect(seen).toHaveLength(before + 1);
+      expect(seen.at(-1)!.ops).toEqual([
+        {
+          op: 'append',
+          target: { type: 'frame', turnId: 't0', stepId: 't0.1', frameId: 't0.1.f1' },
+          offset: 3,
+          text: 'lo world',
+        },
+      ]);
+      expectContiguous(seen);
+      expect(service.forSessionLive('s1')?.getAgent('main')?.getTurn('t0')?.steps[0]?.frames[0]).toMatchObject({
+        kind: 'text',
+        text: 'Hello world',
+      });
+      service.dropSession('s1');
+    });
+
+    it('flushes buffered appends before exposing the seq watermark or catch-up batches', async () => {
+      const { service, bus, seen } = await openStreamingTurn(60_000);
+      bus.emit(ev({ type: 'assistant.delta', turnId: 0, delta: 'lo' }));
+      bus.emit(ev({ type: 'assistant.delta', turnId: 0, delta: ' world' }));
+      const before = seen.length;
+
+      const watermark = service.getSeqWatermark('s1', 'main');
+      expect(seen).toHaveLength(before + 1);
+      expect(seen.at(-1)).toMatchObject({
+        seq: watermark,
+        ops: [{ op: 'append', offset: 3, text: 'lo world' }],
+      });
+
+      bus.emit(ev({ type: 'assistant.delta', turnId: 0, delta: '!' }));
+      bus.emit(ev({ type: 'assistant.delta', turnId: 0, delta: '?' }));
+      const catchup = service.getOpsSince('s1', 'main', watermark);
+      expect(catchup?.batches).toEqual([
+        { seq: watermark + 1, ops: [expect.objectContaining({ op: 'append', offset: 11, text: '!?' })] },
+      ]);
+      expect(catchup?.latestSeq).toBe(watermark + 1);
+      expect(seen.at(-1)?.seq).toBe(watermark + 1);
+      expectContiguous(seen);
+      service.dropSession('s1');
+    });
+
+    it('flushes buffered appends ahead of a non-append event so seqs stay ordered', async () => {
+      const { service, bus, seen } = await openStreamingTurn(60_000);
+      bus.emit(ev({ type: 'assistant.delta', turnId: 0, delta: 'lo' }));
+      bus.emit(ev({ type: 'assistant.delta', turnId: 0, delta: ' world' }));
+      const before = seen.length;
+
+      bus.emit(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
+      expect(seen).toHaveLength(before + 2);
+      expect(seen.at(-2)!.ops).toEqual([expect.objectContaining({ op: 'append', offset: 3, text: 'lo world' })]);
+      expect(seen.at(-1)!.ops.map((op) => op.op)).toContain('turn.upsert');
+      expect(seen.at(-1)!.seq).toBe(seen.at(-2)!.seq + 1);
+      expectContiguous(seen);
+      service.dropSession('s1');
+    });
+
+    it('flushes immediately once the buffered append count reaches the cap', async () => {
+      const { service, bus, seen } = await openStreamingTurn(60_000);
+      const before = seen.length;
+      for (let i = 0; i < TRANSCRIPT_OPS_BATCH_MAX_OPS - 1; i++) {
+        bus.emit(ev({ type: 'assistant.delta', turnId: 0, delta: 'x' }));
+      }
+      expect(seen).toHaveLength(before);
+      bus.emit(ev({ type: 'assistant.delta', turnId: 0, delta: 'x' }));
+      expect(seen).toHaveLength(before + 1);
+      expect(seen.at(-1)!.ops).toEqual([
+        expect.objectContaining({ op: 'append', offset: 3, text: 'x'.repeat(TRANSCRIPT_OPS_BATCH_MAX_OPS) }),
+      ]);
+      service.dropSession('s1');
+    });
+
+    it('keeps one batch per append when batching is disabled', async () => {
+      const { service, bus, seen } = await openStreamingTurn(0);
+      const before = seen.length;
+      bus.emit(ev({ type: 'assistant.delta', turnId: 0, delta: 'lo' }));
+      bus.emit(ev({ type: 'assistant.delta', turnId: 0, delta: ' world' }));
+      expect(seen).toHaveLength(before + 2);
+      expect(seen.slice(-2).map((batch) => batch.ops)).toEqual([
+        [expect.objectContaining({ op: 'append', offset: 3, text: 'lo' })],
+        [expect.objectContaining({ op: 'append', offset: 5, text: ' world' })],
+      ]);
+      expectContiguous(seen);
+      service.dropSession('s1');
+    });
+
+    it('parses the ops batch window env value as a non-negative integer', () => {
+      expect(parseTranscriptOpsBatchMs(undefined)).toBeUndefined();
+      expect(parseTranscriptOpsBatchMs('')).toBeUndefined();
+      expect(parseTranscriptOpsBatchMs('abc')).toBeUndefined();
+      expect(parseTranscriptOpsBatchMs('-1')).toBeUndefined();
+      expect(parseTranscriptOpsBatchMs('1.5')).toBeUndefined();
+      expect(parseTranscriptOpsBatchMs('0')).toBe(0);
+      expect(parseTranscriptOpsBatchMs(' 32 ')).toBe(32);
     });
   });
 });

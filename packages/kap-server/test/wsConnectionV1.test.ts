@@ -3,8 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { IConnectionRegistry } from '../src/transport/ws/connectionRegistry';
 import type { SessionEventBroadcaster } from '../src/transport/ws/v1/sessionEventBroadcaster';
+import { parseWsTuning } from '../src/transport/ws/v1/registerWsV1';
 import {
   type WsConnectionV1Options,
+  MAX_BACKPRESSURE_STALL_MS,
+  MAX_OUTBOUND_FRAMES,
   WsConnectionV1,
   coalesceFrames,
 } from '../src/transport/ws/v1/wsConnectionV1';
@@ -14,6 +17,7 @@ class FakeSocket {
   readonly CLOSED = 3;
   readyState = 1;
   bufferedAmount = 0;
+  extensions = '';
   sent: string[] = [];
   closeCalls: Array<{ code?: number; reason?: string }> = [];
   private readonly handlers = new Map<string, Array<(...a: unknown[]) => void>>();
@@ -609,6 +613,23 @@ describe('WsConnectionV1 outbound buffer', () => {
     conn.close();
   });
 
+  it('advertises compression=false when permessage-deflate was not negotiated', () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket);
+    const hello = socket.frames()[0] as { payload: { capabilities: { compression: boolean } } };
+    expect(hello.payload.capabilities.compression).toBe(false);
+    conn.close();
+  });
+
+  it('advertises compression=true when permessage-deflate was negotiated', () => {
+    const socket = new FakeSocket();
+    socket.extensions = 'permessage-deflate; server_no_context_takeover; client_no_context_takeover';
+    const conn = makeConn(socket);
+    const hello = socket.frames()[0] as { payload: { capabilities: { compression: boolean } } };
+    expect(hello.payload.capabilities.compression).toBe(true);
+    conn.close();
+  });
+
   it('buffers subscribe_v2 transcript frames without merging them', async () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { flushIntervalMs: 16 });
@@ -702,6 +723,85 @@ describe('WsConnectionV1 outbound buffer', () => {
     const frames = socket.frames();
     expect(frames).toHaveLength(1);
     expect((frames[0] as { payload: { delta: string } }).payload.delta).toBe('Hello world');
+    conn.close();
+  });
+
+  it('never force-flushes while above the high-water mark', async () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { flushIntervalMs: 16, highWaterMarkBytes: 100 });
+    socket.sent = [];
+
+    socket.bufferedAmount = 200;
+    conn.send(delta('s1', 'main', 1, 'stuck', 0));
+    await vi.advanceTimersByTimeAsync(200);
+    expect(socket.sent).toHaveLength(0);
+    expect(socket.closeCalls).toHaveLength(0);
+    conn.close();
+  });
+
+  it('closes 1013 slow consumer after the stall limit', async () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, {
+      flushIntervalMs: 16,
+      highWaterMarkBytes: 100,
+      heartbeatIntervalMs: 60_000,
+    });
+    socket.sent = [];
+
+    socket.bufferedAmount = 200;
+    conn.send(delta('s1', 'main', 1, 'stuck', 0));
+    await vi.advanceTimersByTimeAsync(MAX_BACKPRESSURE_STALL_MS - 1);
+    expect(socket.closeCalls).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(MAX_BACKPRESSURE_STALL_MS);
+    expect(socket.closeCalls).toEqual([{ code: 1013, reason: 'slow consumer' }]);
+    expect(socket.sent).toHaveLength(0);
+    conn.close();
+    expect(socket.sent).toHaveLength(0);
+  });
+
+  it('closes when the queue exceeds MAX_OUTBOUND_FRAMES after a deferred flush', async () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { flushIntervalMs: 16, highWaterMarkBytes: 100 });
+    socket.sent = [];
+
+    socket.bufferedAmount = 200;
+    for (let i = 0; i <= MAX_OUTBOUND_FRAMES; i++) conn.send(durable('turn.ended', 's1', i));
+    expect(socket.closeCalls).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(5);
+    expect(socket.closeCalls).toEqual([{ code: 1013, reason: 'slow consumer' }]);
+    expect(socket.sent).toHaveLength(0);
+    conn.close();
+  });
+
+  it('does not close on a synchronous burst above MAX_OUTBOUND_FRAMES while the socket is draining', async () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { flushIntervalMs: 16, highWaterMarkBytes: 100 });
+    socket.sent = [];
+
+    socket.bufferedAmount = 200;
+    for (let i = 0; i <= MAX_OUTBOUND_FRAMES; i++) conn.send(durable('turn.ended', 's1', i));
+    expect(socket.closeCalls).toHaveLength(0);
+    socket.bufferedAmount = 0;
+    await vi.advanceTimersByTimeAsync(5);
+    expect(socket.closeCalls).toHaveLength(0);
+    expect(socket.sent).toHaveLength(MAX_OUTBOUND_FRAMES + 1);
+    conn.close();
+  });
+
+  it('flushes a control frame even above the high-water mark', async () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { flushIntervalMs: 16, highWaterMarkBytes: 100 });
+    socket.sent = [];
+
+    socket.bufferedAmount = 200;
+    conn.send(delta('s1', 'main', 1, 'stuck', 0));
+    await vi.advanceTimersByTimeAsync(16);
+    expect(socket.sent).toHaveLength(0);
+
+    conn.send(durable('session.work_changed', 's1', 7), 'immediate');
+    const frames = socket.frames() as Array<{ type: string }>;
+    expect(frames.map((f) => f.type)).toEqual(['assistant.delta', 'session.work_changed']);
+    expect(socket.closeCalls).toHaveLength(0);
     conn.close();
   });
 
@@ -898,5 +998,68 @@ describe('WsConnectionV1 global target registration', () => {
     );
     await vi.waitFor(() => expect(diOptIns).toEqual([conn]));
     conn.close();
+  });
+});
+
+describe('parseWsTuning', () => {
+  it('returns all-undefined for an empty env', () => {
+    expect(parseWsTuning({})).toEqual({
+      flushIntervalMs: undefined,
+      maxBatchSize: undefined,
+      highWaterMarkBytes: undefined,
+      heartbeatIntervalMs: undefined,
+      maxBufferSize: undefined,
+      compression: undefined,
+      maxPayloadBytes: undefined,
+    });
+  });
+
+  it('parses positive integers from every KIMI_CODE_WS_* variable', () => {
+    expect(
+      parseWsTuning({
+        KIMI_CODE_WS_FLUSH_INTERVAL_MS: '8',
+        KIMI_CODE_WS_MAX_BATCH_SIZE: '128',
+        KIMI_CODE_WS_HIGH_WATER_MARK_BYTES: '2097152',
+        KIMI_CODE_WS_HEARTBEAT_MS: '5000',
+        KIMI_CODE_WS_MAX_BUFFER_SIZE: '2000',
+        KIMI_CODE_WS_COMPRESSION: '1',
+        KIMI_CODE_WS_MAX_PAYLOAD_BYTES: '1048576',
+      }),
+    ).toEqual({
+      flushIntervalMs: 8,
+      maxBatchSize: 128,
+      highWaterMarkBytes: 2097152,
+      heartbeatIntervalMs: 5000,
+      maxBufferSize: 2000,
+      compression: true,
+      maxPayloadBytes: 1048576,
+    });
+  });
+
+  it('rejects zero, negative, fractional, and non-numeric values', () => {
+    const tuning = parseWsTuning({
+      KIMI_CODE_WS_FLUSH_INTERVAL_MS: '0',
+      KIMI_CODE_WS_MAX_BATCH_SIZE: '-5',
+      KIMI_CODE_WS_HIGH_WATER_MARK_BYTES: '1.5',
+      KIMI_CODE_WS_HEARTBEAT_MS: 'abc',
+      KIMI_CODE_WS_MAX_BUFFER_SIZE: '',
+      KIMI_CODE_WS_MAX_PAYLOAD_BYTES: '1e6',
+    });
+    expect(tuning.flushIntervalMs).toBeUndefined();
+    expect(tuning.maxBatchSize).toBeUndefined();
+    expect(tuning.highWaterMarkBytes).toBeUndefined();
+    expect(tuning.heartbeatIntervalMs).toBeUndefined();
+    expect(tuning.maxBufferSize).toBeUndefined();
+    expect(tuning.maxPayloadBytes).toBeUndefined();
+  });
+
+  it('maps compression 0/false to false, 1/true to true, anything else to undefined', () => {
+    expect(parseWsTuning({ KIMI_CODE_WS_COMPRESSION: '0' }).compression).toBe(false);
+    expect(parseWsTuning({ KIMI_CODE_WS_COMPRESSION: 'false' }).compression).toBe(false);
+    expect(parseWsTuning({ KIMI_CODE_WS_COMPRESSION: 'FALSE' }).compression).toBe(false);
+    expect(parseWsTuning({ KIMI_CODE_WS_COMPRESSION: '1' }).compression).toBe(true);
+    expect(parseWsTuning({ KIMI_CODE_WS_COMPRESSION: 'true' }).compression).toBe(true);
+    expect(parseWsTuning({ KIMI_CODE_WS_COMPRESSION: 'yes' }).compression).toBeUndefined();
+    expect(parseWsTuning({ KIMI_CODE_WS_COMPRESSION: '' }).compression).toBeUndefined();
   });
 });

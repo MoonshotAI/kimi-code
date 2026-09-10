@@ -29,8 +29,22 @@ const MAX_HTTP_REQUEST_BYTES = 10 * 1024 * 1024;
 const HTTP_REQUEST_TIMEOUT_MS = 30_000;
 const REGISTER_TIMEOUT_MS = 10_000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
+const MAX_EARLY_FRAME_BYTES = 1024 * 1024;
+const MAX_EARLY_FRAMES = 256;
+const BRIDGE_HIGH_WATER_MARK_BYTES = 1024 * 1024;
+const BRIDGE_LOW_WATER_MARK_BYTES = 256 * 1024;
+const BRIDGE_DRAIN_POLL_MS = 20;
+const RESPONSE_CHUNK_BYTES = 256 * 1024;
+// Experimental: the relay's handling of multi-frame responses (is_last: false) is unverified.
+export const REMOTE_CONTROL_CHUNKED_RESPONSES_ENV = 'KIMI_CODE_REMOTE_CONTROL_CHUNKED_RESPONSES';
 const RELAY_PING_INTERVAL_MS = 30_000;
 const RELAY_SILENCE_TIMEOUT_MS = 300_000;
+// Bump whenever the `rewriteRemoteControlResponse` rules change. Rewritten bodies are stored by
+// the browser under an ETag carrying this version and revalidated on every load, so a bump makes
+// the stored validator miss and forces a fresh rewrite instead of serving year-old bytes.
+export const REMOTE_CONTROL_REWRITE_VERSION = 1;
+const REWRITE_ETAG_SUFFIX = `-rc${REMOTE_CONTROL_REWRITE_VERSION}`;
+const REWRITTEN_CACHE_CONTROL = 'public, no-cache';
 const BLOCKED_REQUEST_HEADERS = new Set([
   'authorization',
   'cookie',
@@ -68,6 +82,25 @@ interface RelayMessage {
 interface PendingHttpRequest {
   readonly chunks: Buffer[];
   size: number;
+}
+
+export interface EarlyFrameBuffer {
+  readonly frames: [RawData, boolean][];
+  bytes: number;
+}
+
+export interface BridgeSocket {
+  readonly readyState: number;
+  readonly bufferedAmount: number;
+  readonly isPaused: boolean;
+  pause(): void;
+  resume(): void;
+  send(data: RawData, options: { binary: boolean }): void;
+  close(code?: number, reason?: Buffer): void;
+  on(event: 'message', listener: (data: RawData, isBinary: boolean) => void): unknown;
+  once(event: 'close', listener: (code: number, reason: Buffer) => void): unknown;
+  once(event: 'error', listener: (error: Error) => void): unknown;
+  removeAllListeners(event: 'message'): unknown;
 }
 
 export interface ParsedRawHttpRequest {
@@ -109,6 +142,11 @@ interface ActiveStream {
 }
 
 class RegistrationError extends Error {}
+
+export function reconnectDelayMs(attempt: number, random: () => number = Math.random): number {
+  const delay = Math.min(MAX_RECONNECT_DELAY_MS, 1000 * 2 ** Math.min(attempt - 1, 5));
+  return delay / 2 + random() * (delay / 2);
+}
 
 export function buildRemoteControlUrl(
   deviceId: string,
@@ -181,6 +219,32 @@ export function filterForwardRequestHeaders(
   }
   result.push('Authorization', `Bearer ${serverToken}`);
   return result;
+}
+
+// Drops the rewrite-version suffix from entity tags in an `If-None-Match` value so the local
+// server's weak comparison matches its own tag and answers 304. Only the current version is
+// stripped: a tag from an older rewrite must miss so the browser fetches a fresh rewrite.
+export function stripRewriteVersion(ifNoneMatch: string): string {
+  return ifNoneMatch.replaceAll(/-rc\d+"/g, (match) =>
+    match === `${REWRITE_ETAG_SUFFIX}"` ? '"' : match,
+  );
+}
+
+// Marks a response whose body was rewritten (or a 304 validating such a body): the browser may
+// store it but must revalidate on every load, and its ETag carries the rewrite version.
+export function applyRewrittenCacheHeaders(headers: string[]): void {
+  let cacheControlIndex = -1;
+  for (let index = 0; index < headers.length; index += 2) {
+    const lower = headers[index]!.toLowerCase();
+    if (lower === 'cache-control') {
+      cacheControlIndex = index;
+    } else if (lower === 'etag') {
+      const tag = /^(?:W\/)?("[^"]*)"$/.exec(headers[index + 1]!);
+      if (tag !== null) headers[index + 1] = `W/${tag[1]}${REWRITE_ETAG_SUFFIX}"`;
+    }
+  }
+  if (cacheControlIndex < 0) headers.push('Cache-Control', REWRITTEN_CACHE_CONTROL);
+  else headers[cacheControlIndex + 1] = REWRITTEN_CACHE_CONTROL;
 }
 
 export function rewriteRemoteControlResponse(
@@ -290,6 +354,7 @@ class RemoteControlClient {
   private reconnectImmediately = false;
   private readonly pingIntervalMs: number;
   private readonly silenceTimeoutMs: number;
+  private readonly chunkedResponses: boolean;
   private stopped = false;
   private connected = false;
   private relayOnline = false;
@@ -315,6 +380,8 @@ class RemoteControlClient {
     this.onStatus = options.onStatus ?? (() => {});
     this.pingIntervalMs = options.pingIntervalMs ?? RELAY_PING_INTERVAL_MS;
     this.silenceTimeoutMs = options.silenceTimeoutMs ?? RELAY_SILENCE_TIMEOUT_MS;
+    const chunked = process.env[REMOTE_CONTROL_CHUNKED_RESPONSES_ENV]?.trim().toLowerCase();
+    this.chunkedResponses = chunked === '1' || chunked === 'true';
   }
 
   async start(): Promise<void> {
@@ -374,11 +441,7 @@ class RemoteControlClient {
         continue;
       }
       this.reconnectAttempt += 1;
-      const delay = Math.min(
-        MAX_RECONNECT_DELAY_MS,
-        1000 * 2 ** Math.min(this.reconnectAttempt - 1, 5),
-      );
-      await this.waitForReconnect(delay);
+      await this.waitForReconnect(reconnectDelayMs(this.reconnectAttempt));
     }
   }
 
@@ -550,15 +613,22 @@ class RemoteControlClient {
   }
 
   private sendHttpResponse(requestId: string, response: Buffer): void {
-    if (this.http?.readyState !== WebSocket.OPEN) return;
-    this.http.send(
-      JSON.stringify({
-        request_id: requestId,
-        type: 'response',
-        is_last: true,
-        body_base64: response.toString('base64'),
-      }),
-    );
+    const http = this.http;
+    if (http?.readyState !== WebSocket.OPEN) return;
+    const chunkBytes = this.chunkedResponses ? RESPONSE_CHUNK_BYTES : Math.max(response.length, 1);
+    let offset = 0;
+    do {
+      const end = Math.min(response.length, offset + chunkBytes);
+      http.send(
+        JSON.stringify({
+          request_id: requestId,
+          type: 'response',
+          is_last: end >= response.length,
+          body_base64: response.subarray(offset, end).toString('base64'),
+        }),
+      );
+      offset = end;
+    } while (offset < response.length);
   }
 
   private async openStream(payload: Record<string, unknown>): Promise<void> {
@@ -573,13 +643,14 @@ class RemoteControlClient {
 
     let local: WebSocket | undefined;
     let tunnel: WebSocket | undefined;
-    const earlyLocalFrames: [RawData, boolean][] = [];
+    const earlyLocalFrames: EarlyFrameBuffer = { frames: [], bytes: 0 };
     try {
       local = await connectWebSocket(
         localWebSocketUrl(this.localOrigin, path),
         this.localServerToken(),
         relayHeaders(payload['headers']),
         earlyLocalFrames,
+        false,
       );
       tunnel = await this.connectRelay(`/v1/remote/stream/${encodeURIComponent(streamId)}`);
       if (this.stopped || this.management?.readyState !== WebSocket.OPEN) {
@@ -596,12 +667,12 @@ class RemoteControlClient {
             this.onStatus('device_disconnected');
           }
         },
-        earlyLocalFrames,
+        earlyLocalFrames.frames,
       );
       this.sendOpenStreamResult(streamId, true);
     } catch (error) {
-      local?.close();
-      tunnel?.close();
+      if (local !== undefined) closeResumed(local);
+      if (tunnel !== undefined) closeResumed(tunnel);
       this.sendOpenStreamResult(
         streamId,
         false,
@@ -636,8 +707,8 @@ class RemoteControlClient {
     if (stream === undefined) return;
     this.streams.delete(streamId);
     this.onStatus('device_disconnected');
-    stream.local.close();
-    stream.tunnel.close();
+    closeResumed(stream.local);
+    closeResumed(stream.tunnel);
   }
 
   private clearPendingHttpRequest(requestId: string): void {
@@ -684,12 +755,13 @@ async function connectWebSocket(
   url: string,
   token: string,
   headers: Record<string, string> = {},
-  earlyFrames?: [RawData, boolean][],
+  earlyFrames?: EarlyFrameBuffer,
+  perMessageDeflate = true,
 ): Promise<WebSocket> {
   const protocol = `kimi-code.bearer.${token}`;
   if (isWebSocketProtocolToken(protocol)) {
     try {
-      return await connectWebSocketAttempt(url, [protocol], headers, earlyFrames);
+      return await connectWebSocketAttempt(url, [protocol], headers, earlyFrames, perMessageDeflate);
     } catch {}
   }
   return connectWebSocketAttempt(
@@ -700,6 +772,7 @@ async function connectWebSocket(
       Authorization: `Bearer ${token}`,
     },
     earlyFrames,
+    perMessageDeflate,
   );
 }
 
@@ -707,16 +780,18 @@ function connectWebSocketAttempt(
   url: string,
   protocols: string[] | undefined,
   headers: Record<string, string>,
-  earlyFrames?: [RawData, boolean][],
+  earlyFrames: EarlyFrameBuffer | undefined,
+  perMessageDeflate: boolean,
 ): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(url, protocols, {
       headers,
       handshakeTimeout: REGISTER_TIMEOUT_MS,
+      perMessageDeflate,
     });
     if (earlyFrames !== undefined) {
       socket.on('message', (data, isBinary) => {
-        earlyFrames.push([data, isBinary]);
+        bufferEarlyFrame(socket, earlyFrames, data, isBinary);
       });
     }
     let settled = false;
@@ -741,6 +816,21 @@ function connectWebSocketAttempt(
     socket.once('error', onError);
     socket.once('close', onClose);
   });
+}
+
+// Frames the local server pushes before the tunnel stream exists. Pausing stops reading
+// from the TCP socket; frames already decoded from the current chunk still arrive and are kept.
+export function bufferEarlyFrame(
+  socket: Pick<BridgeSocket, 'pause'>,
+  buffer: EarlyFrameBuffer,
+  data: RawData,
+  isBinary: boolean,
+): void {
+  buffer.frames.push([data, isBinary]);
+  buffer.bytes += rawDataLength(data);
+  if (buffer.bytes > MAX_EARLY_FRAME_BYTES || buffer.frames.length >= MAX_EARLY_FRAMES) {
+    socket.pause();
+  }
 }
 
 function isWebSocketProtocolToken(value: string): boolean {
@@ -796,6 +886,18 @@ function requestLocalHttp(
   publicPrefix: string,
 ): Promise<Buffer> {
   const origin = new URL(localOrigin);
+  const forwardHeaders = filterForwardRequestHeaders(parsed.headers, serverToken);
+  // A versioned tag means the browser holds a rewritten copy; strip the suffix so the local
+  // server can answer 304 and remember to describe the 304 as the rewritten representation.
+  let validatesRewrite = false;
+  for (let index = 0; index < forwardHeaders.length; index += 2) {
+    if (forwardHeaders[index]!.toLowerCase() !== 'if-none-match') continue;
+    const stripped = stripRewriteVersion(forwardHeaders[index + 1]!);
+    if (stripped === forwardHeaders[index + 1]) continue;
+    forwardHeaders[index + 1] = stripped;
+    validatesRewrite = true;
+  }
+  const headRequest = parsed.method === 'HEAD';
   return new Promise((resolve, reject) => {
     const request = httpRequest(
       {
@@ -804,11 +906,7 @@ function requestLocalHttp(
         port: origin.port,
         method: parsed.method,
         path: parsed.path,
-        headers: [
-          ...filterForwardRequestHeaders(parsed.headers, serverToken),
-          'Host',
-          origin.host,
-        ],
+        headers: [...forwardHeaders, 'Host', origin.host],
         timeout: HTTP_REQUEST_TIMEOUT_MS,
       },
       (response) => {
@@ -818,16 +916,22 @@ function requestLocalHttp(
         response.once('end', () => {
           const contentType = response.headers['content-type'] ?? '';
           const receivedBody = Buffer.concat(chunks);
-          const body =
-            response.headers['content-encoding'] === undefined
-              ? rewriteRemoteControlResponse(contentType, receivedBody, publicPrefix)
-              : receivedBody;
-          const rewritten = body !== receivedBody;
-          const headers = filterResponseHeaders(response.rawHeaders, rewritten);
-          if (rewritten) headers.push('Cache-Control', 'no-cache');
-          headers.push('Content-Length', String(body.length));
           const statusCode = response.statusCode ?? 502;
           const statusMessage = response.statusMessage ?? 'Bad Gateway';
+          const bodilessStatus = headRequest || statusCode === 204 || statusCode === 304;
+          const bodiless = bodilessStatus || receivedBody.length === 0;
+          const body =
+            !bodiless && response.headers['content-encoding'] === undefined
+              ? rewriteRemoteControlResponse(contentType, receivedBody, publicPrefix)
+              : receivedBody;
+          const rewritten = body !== receivedBody && !body.equals(receivedBody);
+          const headers = filterResponseHeaders(response.rawHeaders);
+          if (rewritten || (statusCode === 304 && validatesRewrite)) {
+            applyRewrittenCacheHeaders(headers);
+          }
+          if (!bodilessStatus) {
+            headers.push('Content-Length', String(body.length));
+          }
           resolve(
             Buffer.concat([
               Buffer.from(`HTTP/1.1 ${statusCode} ${statusMessage}\r\n${headerLines(headers)}\r\n\r\n`),
@@ -843,7 +947,7 @@ function requestLocalHttp(
   });
 }
 
-function filterResponseHeaders(rawHeaders: readonly string[], blockCacheControl = false): string[] {
+function filterResponseHeaders(rawHeaders: readonly string[]): string[] {
   const connectionHeaders = new Set<string>();
   for (let index = 0; index < rawHeaders.length; index += 2) {
     if (rawHeaders[index]!.toLowerCase() === 'connection') {
@@ -859,7 +963,6 @@ function filterResponseHeaders(rawHeaders: readonly string[], blockCacheControl 
     if (BLOCKED_RESPONSE_HEADERS.has(lower) || connectionHeaders.has(lower)) {
       continue;
     }
-    if (blockCacheControl && lower === 'cache-control') continue;
     result.push(name, rawHeaders[index + 1]!);
   }
   return result;
@@ -881,16 +984,20 @@ function relayHeaders(value: unknown): Record<string, string> {
   return Object.fromEntries(entries);
 }
 
-function bridgeSockets(
-  left: WebSocket,
-  right: WebSocket,
+export function bridgeSockets(
+  left: BridgeSocket,
+  right: BridgeSocket,
   onClose: () => void,
-  earlyLeftFrames?: [RawData, boolean][],
+  earlyLeftFrames?: readonly [RawData, boolean][],
 ): void {
   let closed = false;
-  const closeBoth = (code = 1000, reason = Buffer.alloc(0)): void => {
+  const leftToRight = createPump(left, right);
+  const rightToLeft = createPump(right, left);
+  const closeBoth = (code = 1000, reason: Buffer = Buffer.alloc(0)): void => {
     if (closed) return;
     closed = true;
+    leftToRight.dispose();
+    rightToLeft.dispose();
     onClose();
     const safeCode = isValidCloseCode(code) ? code : 1000;
     if (left.readyState === WebSocket.OPEN) left.close(safeCode, reason);
@@ -898,20 +1005,54 @@ function bridgeSockets(
   };
   if (earlyLeftFrames !== undefined) {
     left.removeAllListeners('message');
-    for (const [data, isBinary] of earlyLeftFrames) {
-      if (right.readyState === WebSocket.OPEN) right.send(data, { binary: isBinary });
-    }
+    for (const [data, isBinary] of earlyLeftFrames) leftToRight.forward(data, isBinary);
+    if (left.isPaused && !leftToRight.throttled()) left.resume();
   }
-  left.on('message', (data, isBinary) => {
-    if (right.readyState === WebSocket.OPEN) right.send(data, { binary: isBinary });
-  });
-  right.on('message', (data, isBinary) => {
-    if (left.readyState === WebSocket.OPEN) left.send(data, { binary: isBinary });
-  });
+  left.on('message', leftToRight.forward);
+  right.on('message', rightToLeft.forward);
   left.once('close', closeBoth);
   right.once('close', closeBoth);
   left.once('error', () => closeBoth(1011));
   right.once('error', () => closeBoth(1011));
+}
+
+// One direction of the bridge: pauses the source while the sink's send buffer is above the
+// high-water mark and polls it back below the low-water mark before resuming.
+function createPump(
+  from: BridgeSocket,
+  to: BridgeSocket,
+): {
+  readonly forward: (data: RawData, isBinary: boolean) => void;
+  readonly throttled: () => boolean;
+  readonly dispose: () => void;
+} {
+  let drain: NodeJS.Timeout | undefined;
+  // Always leaves the source reading: a close handshake on a paused socket never sees the
+  // peer's close frame and lingers until ws gives up on it.
+  const dispose = (): void => {
+    if (drain !== undefined) {
+      clearInterval(drain);
+      drain = undefined;
+    }
+    if (from.isPaused) from.resume();
+  };
+  const forward = (data: RawData, isBinary: boolean): void => {
+    if (to.readyState !== WebSocket.OPEN) return;
+    to.send(data, { binary: isBinary });
+    if (drain !== undefined || to.bufferedAmount <= BRIDGE_HIGH_WATER_MARK_BYTES) return;
+    from.pause();
+    drain = setInterval(() => {
+      if (to.bufferedAmount < BRIDGE_LOW_WATER_MARK_BYTES) dispose();
+    }, BRIDGE_DRAIN_POLL_MS);
+  };
+  return { forward, throttled: () => drain !== undefined, dispose };
+}
+
+// Resumes a socket paused by back-pressure or early-frame buffering before closing it so the
+// close handshake can complete instead of waiting out the close timer.
+function closeResumed(socket: Pick<BridgeSocket, 'isPaused' | 'resume' | 'close'>): void {
+  if (socket.isPaused) socket.resume();
+  socket.close();
 }
 
 function isValidCloseCode(code: number): boolean {
@@ -972,6 +1113,11 @@ function decodeBase64(value: string): Buffer {
     throw new SyntaxError('invalid HTTP tunnel request base64');
   }
   return Buffer.from(value, 'base64');
+}
+
+function rawDataLength(data: RawData): number {
+  if (Array.isArray(data)) return data.reduce((total, chunk) => total + chunk.length, 0);
+  return data.byteLength;
 }
 
 function rawDataText(data: RawData): string {

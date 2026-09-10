@@ -614,16 +614,16 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 #### `GET /api/v1/sessions`
 
-跨工作区列出会话，按 `updated_at` 最新在前。游标分页遵循 [分页](#分页)，但有一个特例：不提供 `page_size`（且不提供 `archived_only`）时，响应是单个不分页的窗口，其 `has_more` 恒为 `false`，因此要真正翻页请传入 `page_size`。
+跨工作区列出会话，按 `updated_at` 最新在前。游标分页遵循 [分页](#分页) 且始终生效：不提供 `page_size` 时，响应是前 `50` 条会话的第一页，并且每次响应都会计算 `has_more`——请用 `before_id` 持续翻页，直到其为 `false`。使用 `after_id` 时，响应是晚于该游标的最新 `page_size` 条会话，`has_more` 表示游标与这一页之间还存在更多会话（`before_id` 与 `after_id` 互斥，同一请求不能同时向两个方向翻页）。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `before_id` | query | string | 只保留早于该 id 的会话；与 `after_id` 互斥 |
-| `after_id` | query | string | 只保留晚于该 id 的会话；与 `before_id` 互斥 |
-| `page_size` | query | integer | 1–100。分页生效时默认为 `20`；不分页的默认行为见上文说明 |
-| `busy` | query | boolean | 只保留忙碌（或只保留空闲）的会话 |
+| `after_id` | query | string | 只保留晚于该 id 的会话；与 `before_id` 互斥。该页为晚于游标的最新 `page_size` 条匹配项；`has_more` 表示游标与这一页之间是否还有更多会话 |
+| `page_size` | query | integer | 1–100。默认 `50` |
+| `busy` | query | boolean | 只保留忙碌（或只保留空闲）的会话。过滤在收集阶段应用，因此每页会填满到 `page_size` 条，且 `has_more` 准确 |
 | `include_archive` | query | boolean | 在活跃会话之外同时包含已归档会话。默认 `false` |
-| `archived_only` | query | boolean | 只保留已归档会话；与 `include_archive` 互斥；即使不提供 `page_size` 也会启用游标分页 |
+| `archived_only` | query | boolean | 只保留已归档会话；与 `include_archive` 互斥 |
 | `exclude_empty` | query | boolean | 去掉没有任何用户提示词的会话 |
 | `workspace_id` | query | string | 限定到单个工作区（别名会被解析） |
 
@@ -953,15 +953,16 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 
 #### `GET /api/v1/sessions/{session_id}/transcript/ops`
 
-从服务端的 op 日志提供点对点的补漏：某个 Agent 的 `seq > since_seq` 的已记录 op 批次，最旧在前。它是 [转录协议](#转录协议) 中 `transcript_since` 恢复游标的 REST 对应物，共享同一份有界日志，因此适用相同的回退规则。
+从服务端的 op 日志提供点对点的补漏：某个 Agent 的 `seq > since_seq` 的已记录 op 批次，最旧在前，每次响应最多 `limit` 个批次。它是 [转录协议](#转录协议) 中 `transcript_since` 恢复游标的 REST 对应物，共享同一份有界日志，因此适用相同的回退规则。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
 | `agent_id` | query | string | **必填。** Agent id（纯文本形式，约束与转录端点相同） |
 | `since_seq` | query | integer | **必填。** 调用方已应用的最后一个 op 批次 seq，最小为 `0`；返回其之后的批次 |
+| `limit` | query | integer | 每次响应最多返回的批次数，1–500。默认 `500` |
 
-成功时，`data` 为 `{ agent_id, batches, latest_seq, complete }`，每个批次为 `{ seq, ops }`。`complete: true` 表示直到 `latest_seq` 的每个批次都在；`complete: false` 表示日志已不再覆盖到 `since_seq`（或会话根本不是活跃状态），调用方必须回退为一次完整的 `GET .../transcript` 刷新。
+成功时，`data` 为 `{ agent_id, batches, latest_seq, complete, has_more }`，每个批次为 `{ seq, ops }`。`latest_seq` 始终是日志中最新的 seq，即使响应被截断也是如此。`has_more: true` 表示响应被 `limit` 截断、`latest_seq` 之前仍有批次未返回——请把 `since_seq` 设为最后收到的批次 `seq` 再次调用，直到 `has_more` 为 `false`。`complete: true` 表示日志覆盖了从 `since_seq` 到 `latest_seq` 的全部批次（被截断的响应仍然是 `complete`）；`complete: false` 表示日志已不再覆盖到 `since_seq`（或会话根本不是活跃状态），调用方必须回退为一次完整的 `GET .../transcript` 刷新。
 
 - `40001`：校验失败
 - `40401`：会话不存在
@@ -2353,7 +2354,9 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 }
 ```
 
-注意服务端不发送心跳，也不会主动断开空闲连接——保活与重连由客户端自己负责。
+连接协商了 `permessage-deflate` 时 `capabilities.compression` 为 `true`；服务端默认提供该扩展（`KIMI_CODE_WS_COMPRESSION=0` 关闭）。
+
+服务端每 10 秒（`KIMI_CODE_WS_HEARTBEAT_MS`）发送一条应用层 `ping` 帧，连续两个周期没有收到任何入站帧就以 `1001` 关闭连接——客户端需回复 `pong`（任意帧均可）。对端停止读取时，出站帧滞留 15 秒或队列超过 4096 帧会以 `1013 slow consumer` 关闭。重连由客户端自己负责。
 
 ### 控制帧
 

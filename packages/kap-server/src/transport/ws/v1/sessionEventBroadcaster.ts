@@ -403,6 +403,7 @@ export class SessionEventBroadcaster {
     transcript: AgentTranscript,
     grade: TranscriptGrade,
   ): void {
+    this.opts.transcriptService?.flushPendingOps(state.sessionId, transcript.agentId);
     const snapshot = redactSnapshotForGrade(
       grade,
       transcript.snapshot({ tailTurns: TRANSCRIPT_RESET_TAIL_TURNS }),

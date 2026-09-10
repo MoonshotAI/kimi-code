@@ -614,16 +614,16 @@ On success, `data` is [the session object](#the-session-object) of the new sessi
 
 #### `GET /api/v1/sessions`
 
-Lists sessions across workspaces, newest `updated_at` first. Cursor pagination follows [Pagination](#pagination), with one twist: without `page_size` (and without `archived_only`) the response is a single unpaginated window whose `has_more` is always `false`, so pass `page_size` to actually page.
+Lists sessions across workspaces, newest `updated_at` first. Cursor pagination follows [Pagination](#pagination) and always applies: without `page_size` the response is the first page of `50` sessions, and `has_more` is computed on every response — keep paging with `before_id` until it is `false`. With `after_id` the response is the newest `page_size` sessions newer than the cursor, and `has_more` means more sessions exist between the cursor and that page (`before_id` and `after_id` are mutually exclusive, so the two directions cannot be combined in one request).
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `before_id` | query | string | Only sessions older than this id; mutually exclusive with `after_id` |
-| `after_id` | query | string | Only sessions newer than this id; mutually exclusive with `before_id` |
-| `page_size` | query | integer | 1–100. When paging applies, the default is `20`; see the note above for the unpaginated default behavior |
-| `busy` | query | boolean | Keep only busy (or only idle) sessions |
+| `after_id` | query | string | Only sessions newer than this id; mutually exclusive with `before_id`. The page holds the newest `page_size` matches above the cursor; `has_more` reports whether more exist between the cursor and the page |
+| `page_size` | query | integer | 1–100. Default `50` |
+| `busy` | query | boolean | Keep only busy (or only idle) sessions. Applied while collecting, so pages are filled up to `page_size` and `has_more` is accurate |
 | `include_archive` | query | boolean | Include archived sessions alongside live ones. Default `false` |
-| `archived_only` | query | boolean | Keep only archived sessions; mutually exclusive with `include_archive`; implies cursor paging even without `page_size` |
+| `archived_only` | query | boolean | Keep only archived sessions; mutually exclusive with `include_archive` |
 | `exclude_empty` | query | boolean | Drop sessions that carry no user prompt |
 | `workspace_id` | query | string | Restrict to one workspace (aliases are resolved) |
 
@@ -953,15 +953,16 @@ The page unit is the turn: without a cursor the newest page is returned, and `ha
 
 #### `GET /api/v1/sessions/{session_id}/transcript/ops`
 
-Serves point-to-point catch-up from the server's op journal: the journaled op batches with `seq > since_seq` for one agent, oldest first. It is the REST counterpart of the `transcript_since` resume cursor described in [Transcript protocol](#transcript-protocol) and shares the same bounded journal, so the same fallback rule applies.
+Serves point-to-point catch-up from the server's op journal: the journaled op batches with `seq > since_seq` for one agent, oldest first, at most `limit` batches per response. It is the REST counterpart of the `transcript_since` resume cursor described in [Transcript protocol](#transcript-protocol) and shares the same bounded journal, so the same fallback rule applies.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 | `agent_id` | query | string | **Required.** Agent id (plain id, same constraint as the transcript endpoint) |
 | `since_seq` | query | integer | **Required.** The caller's last applied op-batch seq, minimum `0`; batches above it are returned |
+| `limit` | query | integer | Maximum batches per response, 1–500. Default `500` |
 
-On success, `data` is `{ agent_id, batches, latest_seq, complete }`, each batch `{ seq, ops }`. `complete: true` means every batch up to `latest_seq` is present; `complete: false` means the journal no longer reaches back to `since_seq` (or the session is not live at all), and the caller must fall back to a full `GET .../transcript` refresh.
+On success, `data` is `{ agent_id, batches, latest_seq, complete, has_more }`, each batch `{ seq, ops }`. `latest_seq` is always the journal's newest seq, even when the response is capped. `has_more: true` means the cap cut the response short and batches remain below `latest_seq` — call again with `since_seq` set to the last received batch `seq` until `has_more` is `false`. `complete: true` means the journal covers everything from `since_seq` up to `latest_seq` (a capped response is still `complete`); `complete: false` means the journal no longer reaches back to `since_seq` (or the session is not live at all), and the caller must fall back to a full `GET .../transcript` refresh.
 
 - `40001`: validation failure
 - `40401`: session not found
@@ -2353,7 +2354,9 @@ The only endpoint is `ws://<host>:<port>/api/v1/ws`; authentication happens at t
 }
 ```
 
-Note that the server never sends heartbeats and never disconnects an idle connection — keepalive and reconnection are the client's job.
+`capabilities.compression` is `true` when the connection negotiated `permessage-deflate`; the server offers it by default (`KIMI_CODE_WS_COMPRESSION=0` disables it).
+
+The server sends an application-level `ping` frame every 10 s (`KIMI_CODE_WS_HEARTBEAT_MS`) and closes the connection (`1001`) after two intervals without any inbound frame — reply with `pong` (any frame counts). A peer that stops reading is closed with `1013 slow consumer` once outbound frames stall for 15 s or the queue exceeds 4096 frames. Reconnection is the client's job.
 
 ### Control frames
 

@@ -86,6 +86,9 @@ import { ChatSearchBar } from './ChatSearchBar';
 
 const noopSubscribe = () => () => {};
 
+/** Upper bound on `has_more` catch-up pages before giving up on the loop. */
+const MAX_CATCHUP_ROUNDS = 50;
+
 /** Active session id for deeply nested interaction views (approve/answer buttons). */
 const SessionContext = createContext<string>('');
 
@@ -240,7 +243,8 @@ function useTranscriptChannel(
 
     /**
      * Targeted catch-up: fetch exactly the op batches after our watermark
-     * (`GET .../transcript/ops?since_seq=`). Falls back to a full page
+     * (`GET .../transcript/ops?since_seq=`), paging from the last received
+     * seq while the server reports `has_more`. Falls back to a full page
      * reload on a legacy server (no seq / endpoint missing), a journal that
      * no longer covers the gap (`complete: false`), or a fetch failure.
      */
@@ -253,22 +257,31 @@ function useTranscriptChannel(
       buffer = [];
       bufferedSeq = undefined;
       try {
-        const res = await fetchTranscriptOps({
-          baseUrl,
-          token: authToken,
-          sessionId,
-          agentId,
-          sinceSeq: lastSeq,
-        });
-        if (disposed) return;
-        if (!res.complete) {
-          await reloadPages();
-        } else {
+        let since: number = lastSeq;
+        for (let round = 0; round < MAX_CATCHUP_ROUNDS; round++) {
+          const res = await fetchTranscriptOps({
+            baseUrl,
+            token: authToken,
+            sessionId,
+            agentId,
+            sinceSeq: since,
+          });
+          if (disposed) return;
+          if (!res.complete) {
+            await reloadPages();
+            break;
+          }
           for (const batch of res.batches) {
             store.applyOps(batch.ops);
             trail.recordOps(batch.ops, 'catchup', undefined, store.getState());
           }
-          noteSeq(res.latestSeq);
+          const lastBatch = res.batches.at(-1);
+          if (!res.hasMore || lastBatch === undefined || lastBatch.seq >= res.latestSeq) {
+            noteSeq(res.latestSeq);
+            break;
+          }
+          since = lastBatch.seq;
+          noteSeq(since);
         }
       } catch {
         try {

@@ -284,6 +284,7 @@ describe('fetchTranscriptOps', () => {
     ],
     latest_seq: 7,
     complete: true,
+    has_more: false,
   };
 
   it('requests the ops endpoint with since_seq and unwraps batches in order', async () => {
@@ -299,9 +300,30 @@ describe('fetchTranscriptOps', () => {
     expect(calls[0]!.url).toContain('/api/v1/sessions/s1/transcript/ops?');
     expect(calls[0]!.url).toContain('agent_id=main');
     expect(calls[0]!.url).toContain('since_seq=5');
+    expect(calls[0]!.url).not.toContain('limit=');
     expect(res.complete).toBe(true);
+    expect(res.hasMore).toBe(false);
     expect(res.latestSeq).toBe(7);
     expect(res.batches.map((batch) => batch.seq)).toEqual([6, 7]);
+  });
+
+  it('forwards limit and surfaces has_more for a capped catch-up', async () => {
+    const { calls, fetchImpl } = fakeFetch(
+      okEnvelope({ ...catchupData, batches: catchupData.batches.slice(0, 1), has_more: true }),
+    );
+    const res = await fetchTranscriptOps({
+      baseUrl: 'http://h:1',
+      sessionId: 's1',
+      agentId: 'main',
+      sinceSeq: 5,
+      limit: 1,
+      fetchImpl,
+    });
+    expect(calls[0]!.url).toContain('limit=1');
+    expect(res.hasMore).toBe(true);
+    expect(res.complete).toBe(true);
+    expect(res.latestSeq).toBe(7);
+    expect(res.batches.map((batch) => batch.seq)).toEqual([6]);
   });
 
   it('surfaces an incomplete catch-up (journal cannot cover)', async () => {
