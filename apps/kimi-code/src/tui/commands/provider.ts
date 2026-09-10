@@ -13,11 +13,6 @@ import {
   type Catalog,
   type ThinkingEffort,
 } from '#/core/index';
-import {
-  cascadeSubagentModelPool,
-  type SecondaryModelConfig,
-} from '@moonshot-ai/agent-core-v2/session/subagent/configSection';
-
 import { createKimiCodeUserAgent } from '#/cli/version';
 import { fetchCatalogOrBuiltIn } from '#/utils/catalog-fetch';
 import { refreshKimiRegion } from '#/utils/region';
@@ -239,10 +234,6 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
   // entered. The model selector that follows is just a convenience to pick the
   // default model; ESC leaves the provider in place without a default selection.
   const existingConfig = await host.harness.getConfig();
-  const poolSnapshot =
-    providersView(existingConfig)[providerId] !== undefined
-      ? (existingConfig['secondaryModel'] as SecondaryModelConfig | undefined)
-      : undefined;
   if (providersView(existingConfig)[providerId] !== undefined) {
     await host.harness.removeProvider(providerId);
   }
@@ -265,17 +256,6 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
     providers: providersView(config),
     models: modelsView(config),
   });
-
-  // removeProvider cascaded the subagent pool against a model table where
-  // every `${providerId}/...` alias was absent; restore the entries that
-  // survived the re-add (aliases the catalog genuinely dropped stay dropped).
-  if (poolSnapshot !== undefined) {
-    const restored = cascadeSubagentModelPool(poolSnapshot, modelsView(config));
-    if (restored !== null) {
-      await host.harness.setConfig({ secondaryModel: restored ?? poolSnapshot });
-    }
-  }
-
 
   await host.authFlow.refreshConfigAfterLogin();
   host.track('connect', { provider: providerId, method: 'catalog' });

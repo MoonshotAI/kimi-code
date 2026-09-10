@@ -403,11 +403,18 @@ export class CoreHarness {
         `Session "${sourceId}" was not found.`,
       );
     }
-    const handle = await app.get(ISessionManager).fork({
+    const meta = await app.get(ISessionManager).fork({
       sourceSessionId: sourceId,
       newSessionId: input.forkId,
       title: input.title,
     });
+    const handle = await app.get(ISessionManager).resume(meta.id);
+    if (handle === undefined) {
+      throw new CoreError(
+        CoreErrorCodes.SESSION_NOT_FOUND,
+        `Forked session "${meta.id}" could not be resumed.`,
+      );
+    }
     const session = await this.hydrateSession(handle);
     this.trackSessionStarted(session.id, true);
     this.trackSessionEvent(session.id, 'session_fork');

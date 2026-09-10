@@ -294,10 +294,10 @@ export class CoreSession {
     else swarm.exit();
   }
 
-  async setTowerMode(on: boolean): Promise<void> {
+  async setTowerMode(on: boolean, base?: string): Promise<void> {
     const agent = await this.agent();
     const tower = agent.accessor.get(IAgentTowerService);
-    if (on) await tower.enter();
+    if (on) await tower.enter(base);
     else tower.exit();
   }
 

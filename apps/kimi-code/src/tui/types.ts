@@ -59,8 +59,6 @@ export interface AppState {
    * default is used instead when unset.
    */
   lazySessionThinking?: ThinkingEffort;
-  agentProfile?: string;
-  agentFiles?: readonly string[];
   contextUsage: number;
   contextTokens: number;
   /** Whole stored-history estimate before projection folds; 0 until measured. */
@@ -326,6 +324,8 @@ export interface TUIStartupOptions {
   readonly auto: boolean;
   readonly plan: boolean;
   readonly model?: string;
+  readonly agentProfile?: string;
+  readonly agentFiles?: readonly string[];
   readonly startupNotice?: string;
 }
 

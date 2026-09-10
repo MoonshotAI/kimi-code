@@ -95,8 +95,8 @@ describe('SessionEventHandler — update panel lifecycle', () => {
     const { host } = makeHost();
     const handler = new SessionEventHandler(host);
     handler.notifications.setEnabled(true);
-    handler.notifications.handleEvent({ type: 'tool.call.started', sessionId: 's1', agentId: 'main', turnId: 0, toolCallId: 'n1', name: 'NotifyUser', args: { message: 'Earlier finding' } } as Event);
-    handler.notifications.handleEvent({ type: 'tool.result', sessionId: 's1', agentId: 'main', turnId: 0, toolCallId: 'n1', output: 'Update shown to the user.' } as Event);
+    handler.notifications.handleEvent({ type: 'tool.call.started', sessionId: 's1', agentId: 'main', turnId: 0, toolCallId: 'n1', name: 'NotifyUser', args: { message: 'Earlier finding' } } as unknown as Parameters<typeof handler.notifications.handleEvent>[0]);
+    handler.notifications.handleEvent({ type: 'tool.result', sessionId: 's1', agentId: 'main', turnId: 0, toolCallId: 'n1', output: 'Update shown to the user.' } as unknown as Parameters<typeof handler.notifications.handleEvent>[0]);
     handler.handleEvent(turnStarted({ kind }), vi.fn());
     handler.handleEvent(turnEnded(), vi.fn());
     expect(host.state.notifyPanel.getEntries().map((entry: { text: string }) => entry.text)).toEqual([]);

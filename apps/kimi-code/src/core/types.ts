@@ -151,7 +151,9 @@ export type DomainEvent =
   | ({ readonly type: 'tool.call.delta' } & ToolCallDeltaPayload)
   | ({ readonly type: 'tool.progress' } & ToolProgressPayload)
   | ({ readonly type: 'tool.result' } & ToolResultEventPayload)
-  | ({ readonly type: 'agent.status.updated' } & AgentStatusUpdatedPayload)
+  | ({ readonly type: 'agent.status.updated' } & AgentStatusUpdatedPayload & {
+        readonly contextUsage?: number;
+      })
   | ({ readonly type: 'goal.updated' } & GoalUpdatedPayload)
   | ({ readonly type: 'skill.activated' } & SkillActivatedPayload)
   | ({ readonly type: 'plugin_command.activated' } & PluginCommandActivatedPayload)

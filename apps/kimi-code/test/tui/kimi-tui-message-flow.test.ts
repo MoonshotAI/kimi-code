@@ -1261,7 +1261,7 @@ describe('KimiTUI message flow', () => {
       },
     });
 
-    const replayed = await driver.sessionReplay.hydrateFromReplay(session as unknown as Session);
+    const replayed = await driver.sessionReplay.hydrateFromReplay(session as unknown as CoreSession);
     expect(replayed).toBe(true);
 
     expect(driver.state.notifyPanel.isEmpty()).toBe(true);
@@ -1348,7 +1348,7 @@ describe('KimiTUI message flow', () => {
       },
     });
 
-    const replayed = await driver.sessionReplay.hydrateFromReplay(session as unknown as Session);
+    const replayed = await driver.sessionReplay.hydrateFromReplay(session as unknown as CoreSession);
     expect(replayed).toBe(true);
 
     // Live, the cron fire's turn.started closes the panel; replay folds the

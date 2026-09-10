@@ -8,6 +8,7 @@ import type {
   ResumedAgentState,
   ToolCall,
 } from '#/core/index';
+import type { NotifyController } from './notify';
 
 import { ToolCallComponent } from '../components/messages/tool-call';
 import { ShellRunComponent } from '../components/messages/shell-run';
@@ -133,7 +134,9 @@ export class SessionReplayRenderer {
       this.hydrateSnapshot(main);
       this.renderRecords(main);
       this.applyTerminalBackgroundAgentStatuses(main);
-      this.host.sessionEventHandler.notifications.restore(session.getResumeState());
+      this.host.sessionEventHandler.notifications.restore(
+        session.getResumeState() as unknown as Parameters<NotifyController['restore']>[0],
+      );
       this.host.mergeAllTurnSteps();
       return true;
     } catch (error) {

@@ -284,7 +284,7 @@ export class SessionEventHandler {
   }
 
   handleEvent(event: SessionEvent, sendQueued: (item: QueuedMessage) => void): void {
-    this.notifications.handleEvent(event);
+    this.notifications.handleEvent(event as unknown as Parameters<NotifyController['handleEvent']>[0]);
     if (this.subAgentEventHandler.routeChildAgentEvent(event)) return;
 
     if ('turnId' in event && event.turnId !== undefined) {

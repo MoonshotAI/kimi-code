@@ -652,7 +652,7 @@ export class EditorKeyboardController {
     // applies immediately.
     const compressed = await compressImageForModel(originalBytes, originalMime, {
       telemetry: {
-        track2: (event, properties) => {
+        track2: (event: string, properties?: Record<string, unknown>) => {
           this.host.track(event, properties === undefined ? undefined : { ...properties });
         },
       } as unknown as ITelemetryService,
