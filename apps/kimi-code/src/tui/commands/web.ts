@@ -80,6 +80,7 @@ export async function handleRemoteControlCommand(host: SlashCommandHost): Promis
             formatRemoteControlOutput({
               url,
               localOrigin: origin,
+              localServerToken: token,
               deviceName: remoteControl.deviceName,
               qrCode: qrCode.terminal,
               pngPath: qrCode.pngPath,
