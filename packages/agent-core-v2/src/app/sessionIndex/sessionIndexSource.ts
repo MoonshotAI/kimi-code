@@ -209,20 +209,27 @@ export async function sessionStateMaxMtime(
   return Math.max(direct ?? 0, nested ?? 0);
 }
 
-export async function scanSessionsMaxMtime(
+export interface SessionsFreshness {
+  readonly maxMtimeMs: number;
+  readonly sessionCount: number;
+}
+
+export async function scanSessionsFreshness(
   storage: IFileSystemStorageService,
   sessionsScope: string,
   log?: ILogService,
-): Promise<number> {
-  let max = (await storage.mtime(SESSION_INDEX_SCOPE, SESSION_INDEX_KEY)) ?? 0;
+): Promise<SessionsFreshness> {
+  let maxMtimeMs = (await storage.mtime(SESSION_INDEX_SCOPE, SESSION_INDEX_KEY)) ?? 0;
+  let sessionCount = 0;
   for (const workspaceId of await listWorkspaceIds(storage, sessionsScope)) {
     const sessionIds = await listSessionIds(storage, sessionsScope, workspaceId);
+    sessionCount += sessionIds.length;
     const mtimes = await mapBounded(sessionIds, MTIME_SCAN_CONCURRENCY, (sessionId) =>
       sessionStateMaxMtime(storage, sessionsScope, workspaceId, sessionId, log),
     );
     for (const mtime of mtimes) {
-      if (mtime > max) max = mtime;
+      if (mtime > maxMtimeMs) maxMtimeMs = mtime;
     }
   }
-  return max;
+  return { maxMtimeMs, sessionCount };
 }

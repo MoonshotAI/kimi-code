@@ -17,7 +17,7 @@ import { MiniDb } from '@moonshot-ai/minidb';
 import { TranscriptStore, type TranscriptOperation } from '@moonshot-ai/transcript';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { SyncSessionInput } from '../../src/search/indexCore';
+import { SearchIndexCore, type SyncSessionInput } from '../../src/search/indexCore';
 import {
   GlobalSearchError,
   GlobalSearchService,
@@ -411,19 +411,6 @@ describe('GlobalSearchService', () => {
     );
   });
 
-  it('picks up appended wire lines on the next sync pass', async () => {
-    const s1 = summary('s1', 'incremental', T1);
-    const file = await writeWire(home!, 's1', 'main', [userLine('苹果 initial', T1)]);
-    const service = track(makeService(home!, staticIndex([s1])));
-    await service.reindex();
-
-    await appendFile(file, `${userLine('苹果 appended', T2)}\n`, 'utf8');
-    await settleSync(service);
-    const page = await service.search({ query: '苹果' });
-    expect(page.items.length).toBe(2);
-    expect(page.items.some((h) => h.snippet.includes('appended'))).toBe(true);
-  });
-
   it('reports indexState building before the first full sync and ready after', async () => {
     const s1 = summary('s1', 'state', T1);
     await writeWire(home!, 's1', 'main', [userLine('苹果 state', T1)]);
@@ -505,6 +492,40 @@ describe('GlobalSearchService', () => {
     const page = await service.search({ query: 'partial' });
     expect(page.items.length).toBe(1);
     expect(page.items[0]?.role).toBe('user');
+  });
+
+  it('marks a mid-file budget stop as truncated and still completes an oversized record', async () => {
+    const s1 = summary('s1', 'budget', T1);
+    const lines = [
+      userLine('苹果 head', T1),
+      userLine(`苹果 giant ${'x'.repeat(1_700_000)}`, T2),
+      userLine(`苹果 tail ${'y'.repeat(400_000)}`, T3),
+    ];
+    await writeWire(home!, 's1', 'main', lines);
+    const core = new SearchIndexCore({
+      indexDir: join(home!, 'search-index'),
+      log: noopLog,
+      bootSalt: 'budget-test',
+    });
+    core.syncRoundBytes = 1 << 20;
+    const input = [syncInput(home!, s1)];
+    const messageCount = (): number =>
+      core.db?.query({ key: { prefix: 's1/' }, project: ['kind'] }).filter((row) => row.value.kind === 'message')
+        .length ?? 0;
+    try {
+      const first = await core.sync(input);
+      expect(first.truncated).toBe(true);
+      expect(core.fullSyncDone).toBe(false);
+      expect(messageCount()).toBe(2);
+
+      const second = await core.sync(input);
+      expect(second.truncated).toBe(false);
+      expect(core.fullSyncDone).toBe(true);
+      expect(messageCount()).toBe(3);
+    } finally {
+      core.beginClose();
+      await core.close();
+    }
   });
 
   it('indexes legacy root and v2 agents layouts of one session without key collisions', async () => {

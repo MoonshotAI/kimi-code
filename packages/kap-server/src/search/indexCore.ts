@@ -240,6 +240,8 @@ export class SearchIndexCore {
   openPromise: Promise<void> | null = null;
   refreshPromise: Promise<void> | null = null;
   fullSyncDone = false;
+  syncRoundBytes = SYNC_ROUND_BYTE_BUDGET;
+  syncRoundMs = SYNC_ROUND_TIME_BUDGET_MS;
 
   constructor(private readonly options: SearchCoreOptions) {}
 
@@ -492,8 +494,8 @@ export class SearchIndexCore {
     }
 
     const budget: SyncRoundBudget = {
-      bytesLeft: SYNC_ROUND_BYTE_BUDGET,
-      deadline: Date.now() + SYNC_ROUND_TIME_BUDGET_MS,
+      bytesLeft: this.syncRoundBytes,
+      deadline: Date.now() + this.syncRoundMs,
     };
     let indexed = 0;
     let truncated = false;
@@ -504,7 +506,7 @@ export class SearchIndexCore {
         break;
       }
       try {
-        await this.syncSession(db, summary, budget);
+        if (await this.syncSession(db, summary, budget)) truncated = true;
         indexed++;
       } catch (error) {
         if (classifyStorageError(error) === 'rebuild') throw error;
@@ -524,7 +526,7 @@ export class SearchIndexCore {
       lastIndexedAt: Date.now(),
     };
     await db.set(STATS_KEY, stats);
-    this.fullSyncDone = true;
+    if (!truncated) this.fullSyncDone = true;
     if (this.syncReplaced) {
       this.generation++;
     }
@@ -556,7 +558,11 @@ export class SearchIndexCore {
     await db.del(SESSION_META_PREFIX + sessionId);
   }
 
-  private async syncSession(db: MiniDb<SearchDoc>, summary: SyncSessionInput, budget: SyncRoundBudget): Promise<void> {
+  private async syncSession(
+    db: MiniDb<SearchDoc>,
+    summary: SyncSessionInput,
+    budget: SyncRoundBudget,
+  ): Promise<boolean> {
     const wireFiles = await collectWireFiles(summary.dir);
     const seenPaths = new Set(wireFiles.map((file) => file.path));
 
@@ -568,8 +574,9 @@ export class SearchIndexCore {
       await db.del(row.key);
     }
 
+    let truncated = false;
     for (const file of wireFiles) {
-      await this.syncWireFile(db, summary, file, budget);
+      if (await this.syncWireFile(db, summary, file, budget)) truncated = true;
     }
 
     const title = summary.title ?? '';
@@ -597,6 +604,7 @@ export class SearchIndexCore {
       const sessionMeta: SessionMetaDoc = { kind: 'sessionMeta' };
       await db.set(SESSION_META_PREFIX + summary.id, sessionMeta);
     }
+    return truncated;
   }
 
   private async deleteFileDocs(db: MiniDb<SearchDoc>, meta: FileMetaDoc): Promise<void> {
@@ -611,12 +619,12 @@ export class SearchIndexCore {
     summary: SyncSessionInput,
     file: WireFileRef,
     budget: SyncRoundBudget,
-  ): Promise<void> {
+  ): Promise<boolean> {
     let st: { size: number; mtimeMs: number; ino: number };
     try {
       st = await stat(file.path);
     } catch {
-      return;
+      return false;
     }
     const size = st.size;
     const metaKey = fileMetaKey(summary.id, file.path);
@@ -677,19 +685,23 @@ export class SearchIndexCore {
         if (legacyKey !== null) ops.push({ op: 'del', key: legacyKey });
         await db.batch(ops);
       }
-      return;
+      return false;
     }
 
     const handle = await open(file.path, 'r');
     const ops: BatchInputOp<SearchDoc>[] = [];
     let byteCursor = offset;
+    let position = offset;
     try {
-      let position = offset;
       let pending: Buffer = EMPTY_BUFFER;
+      let finishing = false;
       const chunk = Buffer.allocUnsafe(WIRE_READ_CHUNK_BYTES);
       while (position < size) {
-        if (this.disposed) return;
-        if (syncBudgetExhausted(budget)) break;
+        if (this.disposed) return false;
+        if (syncBudgetExhausted(budget)) {
+          if (pending.length === 0) break;
+          finishing = true;
+        }
         const { bytesRead } = await handle.read(
           chunk,
           0,
@@ -701,6 +713,7 @@ export class SearchIndexCore {
         const slice = chunk.subarray(0, bytesRead);
         position += bytesRead;
         let start = 0;
+        let completedRecord = false;
         for (;;) {
           const nl = slice.indexOf(0x0a, start);
           if (nl === -1) break;
@@ -719,12 +732,14 @@ export class SearchIndexCore {
             lineOffset,
             { turnState, stepState },
           ));
+          completedRecord = true;
           start = nl + 1;
         }
         pending =
           pending.length > 0
             ? Buffer.concat([pending, slice.subarray(start)])
             : Buffer.from(slice.subarray(start));
+        if (finishing && completedRecord) break;
         if (ops.length >= WIRE_BATCH_OPS) {
           ops.push({ op: 'set', key: metaKey, value: fileMeta(byteCursor, turnState, stepState) });
           if (legacyKey !== null) {
@@ -739,10 +754,13 @@ export class SearchIndexCore {
       await handle.close();
     }
 
-    if (byteCursor === offset && legacyKey === null) return;
-    ops.push({ op: 'set', key: metaKey, value: fileMeta(byteCursor, turnState, stepState) });
-    if (legacyKey !== null) ops.push({ op: 'del', key: legacyKey });
-    await db.batch(ops);
+    const truncated = position < size && syncBudgetExhausted(budget);
+    if (byteCursor !== offset || legacyKey !== null) {
+      ops.push({ op: 'set', key: metaKey, value: fileMeta(byteCursor, turnState, stepState) });
+      if (legacyKey !== null) ops.push({ op: 'del', key: legacyKey });
+      await db.batch(ops);
+    }
+    return truncated;
   }
 
   private collectWireLine(

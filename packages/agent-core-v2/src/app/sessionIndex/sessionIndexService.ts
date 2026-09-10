@@ -46,7 +46,7 @@ import {
   listSessionIds,
   listWorkspaceIds,
   readSessionSummary,
-  scanSessionsMaxMtime,
+  scanSessionsFreshness,
   summaryMatchesChildOf,
 } from './sessionIndexSource';
 
@@ -182,9 +182,11 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
 
   private async manifestFresh(manifest: Checkpoint): Promise<boolean> {
     const published = manifest.sourceMaxMtimeMs;
-    if (published === undefined) return false;
+    const publishedCount = manifest.sourceSessionCount;
+    if (published === undefined || publishedCount === undefined) return false;
     try {
-      return (await scanSessionsMaxMtime(this.storage, this.sessionsScope, this.log)) <= published;
+      const scan = await scanSessionsFreshness(this.storage, this.sessionsScope, this.log);
+      return scan.maxMtimeMs <= published && scan.sessionCount === publishedCount;
     } catch (error) {
       this.log.warn('session index freshness check failed; treating the index as stale', {
         error: String(error),

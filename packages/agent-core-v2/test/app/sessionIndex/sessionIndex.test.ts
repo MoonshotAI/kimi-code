@@ -1281,7 +1281,11 @@ describe('FileSessionIndex (read model)', () => {
     await first.prepare();
     expect(first.status()).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
     const published = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
-    expect(published).toMatchObject({ seq: 1, sourceMaxMtimeMs: expect.any(Number) });
+    expect(published).toMatchObject({
+      seq: 1,
+      sourceMaxMtimeMs: expect.any(Number),
+      sourceSessionCount: 3,
+    });
     disposeHost?.();
     disposeHost = undefined;
     await drainSessionIndexMirror();
@@ -1373,6 +1377,15 @@ describe('FileSessionIndex (read model)', () => {
     );
     await internals.tick();
     expect(reconciles).toBe(1);
+
+    await fsp.rm(join(sessionsDir, workspaceId, 'b'), { recursive: true, force: true });
+    await internals.tick();
+    expect(reconciles).toBe(2);
+    const remaining = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(remaining.items.map((s) => s.id)).toEqual(['a']);
+
+    await internals.tick();
+    expect(reconciles).toBe(2);
   });
 
   it('treats a published checkpoint without sourceMaxMtimeMs as stale and re-projects', async () => {

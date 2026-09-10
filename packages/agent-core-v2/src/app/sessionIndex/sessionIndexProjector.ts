@@ -130,6 +130,7 @@ export class SessionIndexProjector {
     await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, {
       seq: generation,
       sourceMaxMtimeMs,
+      sourceSessionCount: summaries.length,
       schemaVersion: SESSION_INDEX_SCHEMA_VERSION,
     });
     log.info('session index generation published', {
@@ -190,6 +191,7 @@ export class SessionIndexProjector {
       await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, {
         ...manifest,
         sourceMaxMtimeMs: Math.max(manifest.sourceMaxMtimeMs ?? 0, sourceMaxMtimeMs),
+        sourceSessionCount: summaries.length,
       });
     }
     const result = { sessions: summaries.length, upserted: upserts.length, removed: removals.length };
