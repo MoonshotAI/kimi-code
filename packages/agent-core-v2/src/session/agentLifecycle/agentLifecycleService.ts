@@ -388,6 +388,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     managed.closing = true;
     this.onWillCloseEmitter.fire(agent);
     const handle = managed.handle;
+    await handle.accessor.get(IAgentTaskService).suppressAllTerminalNotifications();
     const loop = handle.accessor.get(IAgentLoopService);
     const compaction = handle.accessor.get(IAgentFullCompactionService).compacting;
     const compactionSettled = compaction?.promise.catch(() => undefined) ?? Promise.resolve();

@@ -200,6 +200,11 @@ class FakeTaskService implements IAgentTaskService {
     } as AgentTaskInfo;
   }
 
+  async suppressAllTerminalNotifications(): Promise<void> {
+    const active = this.list(true).filter((info) => info.detached === true);
+    await Promise.all(active.map((info) => this.suppressTerminalNotification(info.taskId)));
+  }
+
   markTasksDeliveredViaWait(tasks: readonly AgentTaskWaitDelivery[]): void {
     this.waitDeliveries.push(tasks);
   }

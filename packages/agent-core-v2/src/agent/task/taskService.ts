@@ -205,6 +205,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   declare readonly _serviceBrand: undefined;
 
   private readonly tasks = new Map<string, ManagedTask>();
+  private exitSuppressionArmed = false;
   private readonly buildingNotificationKeys = new Set<string>();
   private readonly pendingNotificationRequests = new Map<string, LoopNotifyHandle>();
   private readonly persistence: AgentTaskPersistence;
@@ -779,21 +780,16 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     return results.filter((info): info is AgentTaskInfo => info !== undefined);
   }
 
+  async suppressAllTerminalNotifications(): Promise<void> {
+    this.exitSuppressionArmed = true;
+    for (const [, request] of Array.from(this.pendingNotificationRequests)) {
+      request.drop();
+    }
+  }
+
   async stopAllOnExit(reason: string): Promise<readonly AgentTaskInfo[]> {
+    await this.suppressAllTerminalNotifications();
     if (this.keepAliveOnExit()) return [];
-    const active = this.list(true);
-    await Promise.allSettled(
-      active
-        .filter((task) => task.detached === true)
-        .map((task) =>
-          this.suppressTerminalNotification(task.taskId).catch((error: unknown) => {
-            this.log.error('terminal notification suppression failed', {
-              taskId: task.taskId,
-              error,
-            });
-          }),
-        ),
-    );
     return this.stopAll(reason);
   }
 
@@ -832,6 +828,10 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
 
   private lifecycleActive(): boolean {
     return this.sessionEventBus.isAgentActive(this.scopeContext.agentContext);
+  }
+
+  private marksTerminalNotificationSuppressed(entry: ManagedTask): boolean {
+    return this.exitSuppressionArmed && !this.keepAliveOnExit() && this.isDetached(entry);
   }
 
   async wait(
@@ -1035,11 +1035,21 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       entry.timeoutHandle = undefined;
     }
     const foregroundRelease = entry.foregroundRelease;
+    if (this.marksTerminalNotificationSuppressed(entry)) {
+      entry.terminalNotificationSuppressed = true;
+    }
     if (entry.outputPersistStarted) {
       await this.persistLive(entry);
     } else {
       entry.pendingOutput = [];
       entry.pendingOutputBytes = 0;
+    }
+    if (
+      this.marksTerminalNotificationSuppressed(entry) &&
+      entry.terminalNotificationSuppressed !== true
+    ) {
+      entry.terminalNotificationSuppressed = true;
+      await this.persistLive(entry);
     }
     this.fireTerminalEffects(entry);
     foregroundRelease?.resolve('terminal');
@@ -1095,7 +1105,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     if (!this.lifecycleActive()) return;
     const context = await this.buildAgentTaskNotificationContext(info);
     if (context === undefined) return;
-    if (!this.lifecycleActive()) return;
+    if (!this.lifecycleActive() || this.isTerminalNotificationSuppressed(info.taskId)) return;
     const key = notificationKey(context.origin);
     if (this.deliveredNotificationKeys.has(key)) return;
     const handle = this.loop.notify({
@@ -1302,6 +1312,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
 
   private isTerminalNotificationSuppressed(taskId: string): boolean {
     return (
+      this.exitSuppressionArmed ||
       this.tasks.get(taskId)?.terminalNotificationSuppressed === true ||
       this.ghosts.get(taskId)?.terminalNotificationSuppressed === true
     );
