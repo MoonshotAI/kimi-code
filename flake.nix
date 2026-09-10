@@ -75,7 +75,6 @@
         ./packages/pi-tui
         ./packages/remote-control
         ./packages/telemetry
-        ./packages/transcript
         ./packages/tree-sitter-bash
         ./apps/kimi-code
         ./apps/vscode
@@ -100,7 +99,6 @@
         "@moonshot-ai/pi-tui"
         "@moonshot-ai/remote-control"
         "@moonshot-ai/kimi-telemetry"
-        "@moonshot-ai/transcript"
         "@moonshot-ai/tree-sitter-bash"
         "@moonshot-ai/kimi-code"
         "kimi-code"

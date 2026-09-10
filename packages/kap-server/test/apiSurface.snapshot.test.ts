@@ -19,7 +19,7 @@ const HTTP_METHODS = new Set([
   'trace',
 ]);
 
-const META_ENDPOINTS = ['/openapi.json', '/asyncapi.json', '/'];
+const META_ENDPOINTS = ['/openapi.json', '/'];
 
 describe('API surface snapshot', () => {
   let home: string | undefined;

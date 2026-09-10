@@ -104,6 +104,6 @@ Web 支持的斜杠命令见上文 [常用斜杠命令](#常用斜杠命令)，�
 
 ## 下一步
 
-- [服务 API](../reference/server-api.md) — 面向脚本与第三方集成的 REST / WebSocket 接口（实验性）
+- [服务 API](../reference/server-api.md) — 面向脚本与第三方集成的 REST 接口（实验性）
 - [kimi 命令](../reference/kimi-command.md#kimi-web) — `kimi web` 的全部命令行选项
 - [远程控制](./remote-control.md) — 从公网任意设备远程查看和接管本机会话

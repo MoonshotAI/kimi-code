@@ -217,8 +217,8 @@ describe('server-v2 /api/v1 plugins', () => {
     expect(badSource.body.code).toBe(40001);
   });
 
-  it('fans out event.plugin.changed over WS on install and remove', async () => {
-    const ws = new WebSocket(`${base.replace('http', 'ws')}/api/v1/ws`, [
+  it('fans out plugin messages over WS on install and remove', async () => {
+    const ws = new WebSocket(`${base.replace('http', 'ws')}/api/v3/ws`, [
       `kimi-code.bearer.${bearerToken(server!)}`,
     ]);
     const types: string[] = [];
@@ -237,12 +237,12 @@ describe('server-v2 /api/v1 plugins', () => {
       const source = await makePluginDir('demo-plugin', '1.0.0');
       await call('POST', '/api/v1/plugins', { source });
       await vi.waitFor(() => {
-        expect(types).toContain('event.plugin.changed');
+        expect(types).toContain('plugin');
       });
 
       await call('POST', '/api/v1/plugins/demo-plugin:remove');
       await vi.waitFor(() => {
-        expect(types.filter((t) => t === 'event.plugin.changed').length).toBeGreaterThanOrEqual(2);
+        expect(types.filter((t) => t === 'plugin').length).toBeGreaterThanOrEqual(2);
       });
     } finally {
       ws.close();

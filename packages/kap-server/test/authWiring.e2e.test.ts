@@ -116,27 +116,13 @@ describe('production auth wiring', () => {
     expect(body.code).toBe(40101);
   });
 
-  it('gates /asyncapi.json: 200 with the token, 401 without', async () => {
+  it('gates WS: hello with the token, rejected without', async () => {
     const token = (await readFile(join(home as string, 'server.token'), 'utf8')).trim();
-
-    const ok = await fetch(`${base}/asyncapi.json`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    expect(ok.status).toBe(200);
-    const doc = (await ok.json()) as { asyncapi?: string };
-    expect(doc.asyncapi).toBeDefined();
-
-    const bad = await fetch(`${base}/asyncapi.json`);
-    expect(bad.status).toBe(401);
-  });
-
-  it('gates WS: server_hello with the token, rejected without', async () => {
-    const token = (await readFile(join(home as string, 'server.token'), 'utf8')).trim();
-    const wsUrl = `ws://127.0.0.1:${(server as RunningServer).port}/api/v1/ws`;
+    const wsUrl = `ws://127.0.0.1:${(server as RunningServer).port}/api/v3/ws`;
 
     const { ws, firstFrame } = await openConn(wsUrl, [`kimi-code.bearer.${token}`]);
     sockets.push(ws);
-    expect(firstFrame).toMatchObject({ type: 'server_hello' });
+    expect(firstFrame).toMatchObject({ type: 'hello' });
 
     await expectRejected(wsUrl);
   });

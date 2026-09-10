@@ -92,17 +92,17 @@ describe('WS upgrade auth', () => {
     }
   });
 
-  function v1Url(): string {
-    return `${sharedServer().base.replace(/^http/, 'ws')}/api/v1/ws`;
+  function v3Url(): string {
+    return `${sharedServer().base.replace(/^http/, 'ws')}/api/v3/ws`;
   }
 
   function token(): string {
     return sharedServer().token;
   }
 
-  describe('/api/v1/ws', () => {
-    const firstType = 'server_hello';
-    const url = (): string => v1Url();
+  describe('/api/v3/ws', () => {
+    const firstType = 'hello';
+    const url = (): string => v3Url();
 
     it('accepts a valid bearer subprotocol and echoes it', async () => {
       const { ws, firstFrame } = await openConn(url(), {
@@ -182,7 +182,9 @@ describe('WS upgrade auth', () => {
   });
 
   it('rejects upgrades to a non-WS path', async () => {
-    const badUrl = `${v1Url().replace('/api/v1/ws', '/api/v1/other')}`;
+    const badUrl = `${v3Url().replace('/api/v3/ws', '/api/v1/other')}`;
     await expectRejected(badUrl, { protocols: [`kimi-code.bearer.${token()}`] });
+    const goneUrl = `${v3Url().replace('/api/v3/ws', '/api/v1/ws')}`;
+    await expectRejected(goneUrl, { protocols: [`kimi-code.bearer.${token()}`] });
   });
 });

@@ -41,7 +41,7 @@ function defaultIsBypassed(req: FastifyRequest): boolean {
     return true;
   }
   const isApi = path.startsWith('/api/');
-  const isMeta = path === '/openapi.json' || path === '/asyncapi.json';
+  const isMeta = path === '/openapi.json';
   return !isApi && !isMeta;
 }
 
