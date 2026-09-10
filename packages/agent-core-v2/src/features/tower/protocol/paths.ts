@@ -14,6 +14,10 @@ export const MISSIONS_INDEX = `${COMMS_DIR}/MISSIONS.md`;
 export const TOWER_NAME = 'tower';
 export const BROADCAST_NAME = 'all';
 
+export function isReservedTowerAgentName(name: string): boolean {
+  return name === TOWER_NAME || name === BROADCAST_NAME;
+}
+
 export function dateStamp(now = new Date()): string {
   const y = now.getFullYear();
   const m = String(now.getMonth() + 1).padStart(2, '0');

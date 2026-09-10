@@ -1,12 +1,18 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { TowerProtocolError, TowerStore, parseFrontmatter } from '../../../src/features/tower/protocol';
+import {
+  STATE_FILE,
+  TowerProtocolError,
+  TowerStore,
+  parseFrontmatter,
+  worktreeAddNewBranch,
+} from '../../../src/features/tower/protocol';
 import type {
   TowerFindingType,
   TowerMission,
@@ -77,6 +83,13 @@ async function setupMission(input: {
 
 function worktreeOf(mission: TowerMission): string {
   return store.abs(join('.tower/worktrees', mission.worktree));
+}
+
+async function spliceMissionIntoState(mission: TowerMission): Promise<void> {
+  const file = store.abs(STATE_FILE);
+  const state = JSON.parse(await readFile(file, 'utf8')) as TowerState;
+  state.missions.push(mission);
+  await writeFile(file, `${JSON.stringify(state, null, 2)}\n`);
 }
 
 async function cleanReview(reviewer: string, target: string): Promise<void> {
@@ -208,6 +221,30 @@ describe('init', () => {
     expect(state.missions).toHaveLength(1);
     const log = await store.recentLog(5);
     expect(log.some((line) => line.includes(' adopt ') && line.includes('session=session-b') && line.includes('previous=session-a') && line.includes('retired=agent-build,reviewer-a'))).toBe(true);
+  });
+
+  it('rejects reserved protocol names on roster registration', async () => {
+    await store.init('session-a');
+
+    await expect(
+      store.registerAgent(rosterEntry({ name: 'tower', kind: 'worker', sessionId: 'session-a' })),
+    ).rejects.toThrow(/name "tower" is reserved/);
+    await expect(
+      store.registerAgent(rosterEntry({ name: 'all', kind: 'reviewer', sessionId: 'session-a' })),
+    ).rejects.toThrow(/name "all" is reserved/);
+    expect((await store.load()).roster.agents).toEqual([]);
+  });
+
+  it('rejects blank or whitespace-padded names on roster registration', async () => {
+    await store.init('session-a');
+
+    await expect(
+      store.registerAgent(rosterEntry({ name: ' tower ', kind: 'worker', sessionId: 'session-a' })),
+    ).rejects.toThrow(/whitespace/);
+    await expect(
+      store.registerAgent(rosterEntry({ name: 'w1 ', kind: 'worker', sessionId: 'session-a' })),
+    ).rejects.toThrow(/whitespace/);
+    expect((await store.load()).roster.agents).toEqual([]);
   });
 
   it('records an explicit local base branch instead of the checked-out one', async () => {
@@ -527,6 +564,35 @@ describe('plan', () => {
     await expect(
       store.plan([{ title: 'touch layers too', scope: ['src/layer/vulkan/shader/**'] }]),
     ).rejects.toThrow(/scopes overlap/);
+  });
+
+  it('rejects a new mission whose slugged branch collides with an existing mission, even a closed one', async () => {
+    await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    await store.updateMission('tower', 'M1', { status: 'abandoned' });
+
+    await expect(store.plan([{ title: 'Feature X', scope: ['src/y/**'] }])).rejects.toThrow(
+      /branch "feat\/feature-x" is already used by M1.*change the title/,
+    );
+    expect((await store.load()).missions).toHaveLength(1);
+  });
+
+  it('rejects duplicate slugged branches within a single plan batch', async () => {
+    await expect(
+      store.plan([
+        { title: 'feature x', scope: ['src/x/**'] },
+        { title: 'Feature X!', scope: ['src/y/**'] },
+      ]),
+    ).rejects.toThrow(/branch "feat\/feature-x" is already used by M1/);
+    expect((await store.load()).missions).toHaveLength(0);
+  });
+
+  it('rejects a new mission whose slugged branch exists in git without a mission record', async () => {
+    await git(repo, 'branch', 'feat/feature-x');
+
+    await expect(store.plan([{ title: 'feature x', scope: ['src/x/**'] }])).rejects.toThrow(
+      /branch "feat\/feature-x" already exists in git.*not owned by any tower mission/s,
+    );
+    expect((await store.load()).missions).toHaveLength(0);
   });
 });
 
@@ -967,6 +1033,371 @@ describe('merge gate', () => {
     const after = await store.merge(third!.branch);
     expect(after.conflictsWith.map((c) => c.branch)).not.toContain(second!.branch);
   });
+
+  it('flips the live mission when an abandoned mission shares its branch — never the abandoned record', async () => {
+    const [stale] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    await store.updateMission('tower', stale!.id, { status: 'abandoned' });
+    const live: TowerMission = {
+      ...stale!,
+      id: 'M2',
+      worktree: 'wt-2',
+      status: 'completed',
+      tasks: [],
+      notes: [],
+      blockers: [],
+    };
+    await spliceMissionIntoState(live);
+    const state = await store.load();
+    await store.addWorktree(live.worktree, live.branch, state.base);
+    await commitFile(worktreeOf(live), 'src/x/x.ts', 'x\n', 'work on M2');
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: live.branch, reviewMissionId: 'M2' }),
+    );
+    await cleanReview('rev', live.branch);
+
+    await store.merge(live.branch);
+
+    const after = await store.load();
+    expect(after.missions.find((m) => m.id === live.id)?.status).toBe('merged');
+    expect(after.missions.find((m) => m.id === stale!.id)?.status).toBe('abandoned');
+  });
+
+  it('stamps the resolved mission on tower-submitted reviews', async () => {
+    const [mission] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    const state = await store.load();
+    await store.addWorktree(mission!.worktree, mission!.branch, state.base);
+    await commitFile(worktreeOf(mission!), 'src/x/x.ts', 'x\n', 'work on M1');
+
+    await cleanReview('tower', mission!.branch);
+
+    expect((await store.latestReview(mission!.branch))?.mission).toBe(mission!.id);
+  });
+
+  it('stamps the mission recorded on the reviewer roster entry, not the mission resolved at submit time', async () => {
+    const [first] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    const state = await store.load();
+    await store.addWorktree(first!.worktree, first!.branch, state.base);
+    await commitFile(worktreeOf(first!), 'src/x/x.ts', 'x\n', 'work on M1');
+    const second: TowerMission = {
+      ...first!,
+      id: 'M2',
+      worktree: 'wt-2',
+      status: 'active',
+      tasks: [],
+      notes: [],
+      blockers: [],
+    };
+    await spliceMissionIntoState(second);
+    await store.registerAgent(
+      rosterEntry({
+        name: 'rev',
+        kind: 'reviewer',
+        reviewTarget: first!.branch,
+        reviewMissionId: 'M2',
+      }),
+    );
+    await store.updateMission('tower', second.id, { status: 'abandoned' });
+
+    await cleanReview('rev', first!.branch);
+
+    expect((await store.latestReview(first!.branch))?.mission).toBe('M2');
+    await expect(store.merge(first!.branch)).rejects.toThrow(/no review/);
+    expect((await store.load()).missions.find((m) => m.id === first!.id)?.status).not.toBe(
+      'merged',
+    );
+  });
+
+  it('refuses to merge on an unstamped legacy review when another mission shares the branch', async () => {
+    const [stale] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    const state = await store.load();
+    await store.addWorktree(stale!.worktree, stale!.branch, state.base);
+    await commitFile(worktreeOf(stale!), 'src/x/x.ts', 'x\n', 'work on M1');
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: stale!.branch }),
+    );
+    await store.updateMission('tower', stale!.id, { status: 'abandoned' });
+    await cleanReview('rev', stale!.branch);
+    expect((await store.latestReview(stale!.branch))?.mission).toBeUndefined();
+
+    const live: TowerMission = {
+      ...stale!,
+      id: 'M2',
+      worktree: 'wt-2',
+      status: 'completed',
+      tasks: [],
+      notes: [],
+      blockers: [],
+    };
+    await spliceMissionIntoState(live);
+
+    await expect(store.merge(stale!.branch)).rejects.toThrow(/predates mission-stamped reviews/);
+    const after = await store.load();
+    expect(after.missions.find((m) => m.id === live.id)?.status).toBe('completed');
+  });
+
+  it('leaves reviews by unpinned legacy reviewers unstamped and still merges an unshared branch', async () => {
+    const [mission] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    const state = await store.load();
+    await store.addWorktree(mission!.worktree, mission!.branch, state.base);
+    await commitFile(worktreeOf(mission!), 'src/x/x.ts', 'x\n', 'work on M1');
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: mission!.branch }),
+    );
+
+    await cleanReview('rev', mission!.branch);
+
+    expect((await store.latestReview(mission!.branch))?.mission).toBeUndefined();
+    await store.merge(mission!.branch);
+    expect((await store.load()).missions.find((m) => m.id === mission!.id)?.status).toBe('merged');
+  });
+
+  it('refuses to merge on an unpinned legacy reviewer review when another mission shares the branch', async () => {
+    const [stale] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    const state = await store.load();
+    await store.addWorktree(stale!.worktree, stale!.branch, state.base);
+    await commitFile(worktreeOf(stale!), 'src/x/x.ts', 'x\n', 'work on M1');
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: stale!.branch }),
+    );
+    const live: TowerMission = {
+      ...stale!,
+      id: 'M2',
+      worktree: 'wt-2',
+      status: 'completed',
+      tasks: [],
+      notes: [],
+      blockers: [],
+    };
+    await spliceMissionIntoState(live);
+
+    await cleanReview('rev', stale!.branch);
+
+    expect((await store.latestReview(stale!.branch))?.mission).toBeUndefined();
+    await expect(store.merge(stale!.branch)).rejects.toThrow(/predates mission-stamped reviews/);
+    expect((await store.load()).missions.find((m) => m.id === live.id)?.status).toBe('completed');
+  });
+
+  it('refuses to merge when the only review was stamped for a different mission', async () => {
+    const [stale] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    const state = await store.load();
+    await store.addWorktree(stale!.worktree, stale!.branch, state.base);
+    await commitFile(worktreeOf(stale!), 'src/x/x.ts', 'x\n', 'work on M1');
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: stale!.branch, reviewMissionId: 'M1' }),
+    );
+    await cleanReview('rev', stale!.branch);
+    expect((await store.latestReview(stale!.branch))?.mission).toBe('M1');
+
+    await store.updateMission('tower', stale!.id, { status: 'abandoned' });
+    const live: TowerMission = {
+      ...stale!,
+      id: 'M2',
+      worktree: 'wt-2',
+      status: 'completed',
+      tasks: [],
+      notes: [],
+      blockers: [],
+    };
+    await spliceMissionIntoState(live);
+
+    await expect(store.merge(stale!.branch)).rejects.toThrow(/no review/);
+    const after = await store.load();
+    expect(after.missions.find((m) => m.id === live.id)?.status).toBe('completed');
+  });
+
+  it('selects the review stamped for the mission being merged over higher-round reviews stamped for a closed sibling', async () => {
+    const [stale] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    const state = await store.load();
+    await store.addWorktree(stale!.worktree, stale!.branch, state.base);
+    await commitFile(worktreeOf(stale!), 'src/x/x.ts', 'x\n', 'work on M1');
+    await store.registerAgent(
+      rosterEntry({ name: 'rev-old', kind: 'reviewer', reviewTarget: stale!.branch, reviewMissionId: 'M1' }),
+    );
+    for (let round = 0; round < 5; round++) await cleanReview('rev-old', stale!.branch);
+
+    await store.updateMission('tower', stale!.id, { status: 'abandoned' });
+    const live: TowerMission = {
+      ...stale!,
+      id: 'M2',
+      worktree: 'wt-2',
+      status: 'completed',
+      tasks: [],
+      notes: [],
+      blockers: [],
+    };
+    await spliceMissionIntoState(live);
+    await store.registerAgent(
+      rosterEntry({ name: 'rev-new', kind: 'reviewer', reviewTarget: stale!.branch, reviewMissionId: 'M2' }),
+    );
+    await cleanReview('rev-new', stale!.branch);
+
+    await store.merge(stale!.branch);
+
+    const after = await store.load();
+    expect(after.missions.find((m) => m.id === live.id)?.status).toBe('merged');
+    expect(after.missions.find((m) => m.id === stale!.id)?.status).toBe('abandoned');
+  });
+
+  it('prefers a mission-stamped clean review over a higher-round unstamped legacy review', async () => {
+    const [stale] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    const state = await store.load();
+    await store.addWorktree(stale!.worktree, stale!.branch, state.base);
+    await commitFile(worktreeOf(stale!), 'src/x/x.ts', 'x\n', 'work on M1');
+    await store.registerAgent(
+      rosterEntry({ name: 'rev-old', kind: 'reviewer', reviewTarget: stale!.branch }),
+    );
+    for (let round = 0; round < 3; round++) await cleanReview('rev-old', stale!.branch);
+    expect((await store.latestReview(stale!.branch))?.mission).toBeUndefined();
+
+    await store.updateMission('tower', stale!.id, { status: 'abandoned' });
+    const live: TowerMission = {
+      ...stale!,
+      id: 'M2',
+      worktree: 'wt-2',
+      status: 'completed',
+      tasks: [],
+      notes: [],
+      blockers: [],
+    };
+    await spliceMissionIntoState(live);
+    await store.registerAgent(
+      rosterEntry({ name: 'rev-new', kind: 'reviewer', reviewTarget: stale!.branch, reviewMissionId: 'M2' }),
+    );
+    await cleanReview('rev-new', stale!.branch);
+
+    await store.merge(stale!.branch);
+
+    expect((await store.load()).missions.find((m) => m.id === live.id)?.status).toBe('merged');
+  });
+
+  it('blocks on a later unstamped legacy verdict on an unshared branch even after a stamped clean review', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/x.ts',
+      content: 'x\n',
+    });
+    await store.registerAgent(
+      rosterEntry({ name: 'rev-new', kind: 'reviewer', reviewTarget: mission.branch, reviewMissionId: mission.id }),
+    );
+    await store.registerAgent(
+      rosterEntry({ name: 'rev-old', kind: 'reviewer', reviewTarget: mission.branch }),
+    );
+    await cleanReview('rev-new', mission.branch);
+    await store.submitReview('rev-old', {
+      target: mission.branch,
+      status: 'p1-1items',
+      merge: 'hold',
+      findings: 'a real problem',
+      decision: 'do not merge',
+    });
+
+    await expect(store.merge(mission.branch)).rejects.toThrow(/clean round is required/);
+    expect((await store.load()).missions.find((m) => m.id === mission.id)?.status).not.toBe(
+      'merged',
+    );
+  });
+
+  it('merges an unshared branch when a stamped clean review is the latest verdict after a legacy p1', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/x.ts',
+      content: 'x\n',
+    });
+    await store.registerAgent(
+      rosterEntry({ name: 'rev-new', kind: 'reviewer', reviewTarget: mission.branch, reviewMissionId: mission.id }),
+    );
+    await store.registerAgent(
+      rosterEntry({ name: 'rev-old', kind: 'reviewer', reviewTarget: mission.branch }),
+    );
+    await store.submitReview('rev-old', {
+      target: mission.branch,
+      status: 'p1-1items',
+      merge: 'hold',
+      findings: 'a real problem',
+      decision: 'do not merge',
+    });
+    await cleanReview('rev-new', mission.branch);
+
+    await store.merge(mission.branch);
+
+    expect((await store.load()).missions.find((m) => m.id === mission.id)?.status).toBe('merged');
+  });
+
+  it('orders reviews by their recorded sequence, not filesystem mtime', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/x.ts',
+      content: 'x\n',
+    });
+    await store.registerAgent(
+      rosterEntry({ name: 'rev-z', kind: 'reviewer', reviewTarget: mission.branch, reviewMissionId: mission.id }),
+    );
+    await store.registerAgent(
+      rosterEntry({ name: 'rev-a', kind: 'reviewer', reviewTarget: mission.branch, reviewMissionId: mission.id }),
+    );
+    await cleanReview('rev-z', mission.branch);
+    await store.submitReview('rev-a', {
+      target: mission.branch,
+      status: 'p1-1items',
+      merge: 'hold',
+      findings: 'a real problem',
+      decision: 'do not merge',
+    });
+
+    const files = await store.reviewsFor(mission.branch);
+    const earlier = files.find((r) => r.reviewer === 'rev-z')!;
+    const later = files.find((r) => r.reviewer === 'rev-a')!;
+    const now = new Date();
+    await utimes(store.abs(earlier.file), now, now);
+    await utimes(store.abs(later.file), new Date(now.getTime() - 60_000), new Date(now.getTime() - 60_000));
+
+    await expect(store.merge(mission.branch)).rejects.toThrow(/clean round is required/);
+  });
+
+  it('stamps a monotonically increasing submission sequence on reviews', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/x.ts',
+      content: 'x\n',
+    });
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: mission.branch }),
+    );
+    await cleanReview('rev', mission.branch);
+    await store.submitReview('rev', {
+      target: mission.branch,
+      status: 'p2-1items',
+      merge: 'fix-then-merge',
+      findings: 'one nit',
+      decision: 'fix first',
+    });
+
+    const reviews = await store.reviewsFor(mission.branch);
+    expect(reviews.map((r) => r.seq)).toEqual([1, 2]);
+  });
+
+  it('refuses to merge a branch owned only by closed missions and leaves their records untouched', async () => {
+    const [stale] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    const state = await store.load();
+    await store.addWorktree(stale!.worktree, stale!.branch, state.base);
+    await commitFile(worktreeOf(stale!), 'src/x/x.ts', 'x\n', 'work on M1');
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: stale!.branch }),
+    );
+    await cleanReview('rev', stale!.branch);
+    await store.updateMission('tower', stale!.id, { status: 'abandoned' });
+
+    await expect(store.merge(stale!.branch)).rejects.toThrow(/closed mission/);
+
+    const after = await store.load();
+    expect(after.missions.find((m) => m.id === stale!.id)?.status).toBe('abandoned');
+    const log = await readFile(join(repo, '.tower/comms/log/activity.log'), 'utf8');
+    expect(log).toContain('merge.blocked');
+  });
 });
 
 describe('dirty base checkout', () => {
@@ -1336,6 +1767,104 @@ describe('teardown', () => {
     await expect(stat(wt)).rejects.toThrow();
   });
 
+  it('removes mission worktrees when the repository path contains a newline', async () => {
+    const nlRepo = await mkdtemp(join(tmpdir(), 'tower-store-nl\n-'));
+    try {
+      await git(nlRepo, 'init', '-b', 'main');
+      await git(nlRepo, 'config', 'user.email', 'tower-test@example.com');
+      await git(nlRepo, 'config', 'user.name', 'Tower Test');
+      await commitFile(nlRepo, 'README.md', '# fixture\n', 'initial');
+      const nlStore = new TowerStore(nlRepo);
+      await nlStore.init();
+      const [mission] = await nlStore.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+      const state = await nlStore.load();
+      await nlStore.addWorktree(mission!.worktree, mission!.branch, state.base);
+
+      const report = await nlStore.teardown();
+
+      expect(report).toEqual([`removed .tower/worktrees/${mission!.worktree}`]);
+    } finally {
+      await rm(nlRepo, { recursive: true, force: true });
+    }
+  });
+
+  it('removes mission worktrees when the tower runs inside a linked git worktree', async () => {
+    const linked = join(await mkdtemp(join(tmpdir(), 'tower-store-linked-')), 'linked');
+    await git(repo, 'worktree', 'add', linked, '-b', 'linked-checkout');
+    try {
+      const linkedStore = new TowerStore(linked);
+      await linkedStore.init();
+      const [mission] = await linkedStore.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+      const state = await linkedStore.load();
+      await linkedStore.addWorktree(mission!.worktree, mission!.branch, state.base);
+
+      const report = await linkedStore.teardown();
+
+      expect(report).toEqual([`removed .tower/worktrees/${mission!.worktree}`]);
+    } finally {
+      await git(repo, 'worktree', 'remove', '--force', linked).catch(() => {});
+      await git(repo, 'branch', '-D', 'linked-checkout').catch(() => {});
+    }
+  });
+
+  it('treats a worktree git no longer knows as already removed, not as a failure', async () => {
+    const mission = await setupMission({
+      title: 'feature gone',
+      scope: 'src/gone/**',
+      file: 'src/gone/gone.ts',
+      content: 'gone\n',
+    });
+    await git(repo, 'worktree', 'remove', '--force', worktreeOf(mission));
+
+    const report = await store.teardown();
+    expect(report.join('\n')).toContain(`already removed .tower/worktrees/${mission.worktree}`);
+    expect(report.join('\n')).not.toContain('failed');
+    const log = (await store.recentLog(20)).join('\n');
+    expect(log).not.toContain('worktree.remove.failed');
+  });
+
+  it('is idempotent across consecutive runs', async () => {
+    const clean = await setupMission({
+      title: 'feature idem clean',
+      scope: 'src/idem-clean/**',
+      file: 'src/idem-clean/c.ts',
+      content: 'c\n',
+    });
+    const dirty = await setupMission({
+      title: 'feature idem dirty',
+      scope: 'src/idem-dirty/**',
+      file: 'src/idem-dirty/d.ts',
+      content: 'd\n',
+    });
+    await writeFile(join(worktreeOf(dirty), 'uncommitted.txt'), 'dirty\n');
+
+    const first = await store.teardown();
+    expect(first.join('\n')).toContain(`removed .tower/worktrees/${clean.worktree}`);
+    expect(first.join('\n')).toContain(`kept .tower/worktrees/${dirty.worktree}`);
+
+    const second = await store.teardown();
+    expect(second.join('\n')).toContain(`already removed .tower/worktrees/${clean.worktree}`);
+    expect(second.join('\n')).toContain(`kept .tower/worktrees/${dirty.worktree}`);
+    expect(second.join('\n')).not.toContain('failed');
+    const log = (await store.recentLog(50)).join('\n');
+    expect(log).not.toContain('worktree.remove.failed');
+  });
+
+  it('still records a failure when git refuses to remove a known worktree', async () => {
+    const mission = await setupMission({
+      title: 'feature locked',
+      scope: 'src/locked/**',
+      file: 'src/locked/l.ts',
+      content: 'l\n',
+    });
+    await git(repo, 'worktree', 'lock', worktreeOf(mission));
+
+    const report = await store.teardown();
+    expect(report.join('\n')).toContain(`failed to remove .tower/worktrees/${mission.worktree}`);
+    const log = (await store.recentLog(20)).join('\n');
+    expect(log).toContain('worktree.remove.failed');
+  });
+
   it('removes clean worktrees that contain an initialized submodule', async () => {
     const subRepo = await mkdtemp(join(tmpdir(), 'tower-sub-test-'));
     try {
@@ -1361,5 +1890,78 @@ describe('teardown', () => {
     } finally {
       await rm(subRepo, { recursive: true, force: true });
     }
+  });
+});
+
+describe('addWorktree branch ownership', () => {
+  beforeEach(async () => {
+    await store.init();
+  });
+
+  it('refuses to build on a branch that appeared in git after planning without tower ownership', async () => {
+    const [mission] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    await git(repo, 'branch', mission!.branch);
+
+    const state = await store.load();
+    await expect(store.addWorktree(mission!.worktree, mission!.branch, state.base)).rejects.toThrow(
+      /not owned by any tower mission/,
+    );
+  });
+
+  it('creates the mission branch atomically, refusing an existing ref instead of checking it out', async () => {
+    await git(repo, 'branch', 'feat/taken');
+    const target = join(repo, 'wt-taken');
+
+    await expect(worktreeAddNewBranch(repo, target, 'feat/taken', 'main')).rejects.toThrow(
+      /already exists/,
+    );
+
+    const listed = await git(repo, 'worktree', 'list', '--porcelain');
+    expect(listed).not.toContain('wt-taken');
+  });
+
+  it('refuses to attach when an unowned branch exists and the worktree path is only a plain directory', async () => {
+    const [mission] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    await git(repo, 'branch', mission!.branch);
+    await mkdir(worktreeOf(mission!), { recursive: true });
+
+    const state = await store.load();
+    await expect(store.addWorktree(mission!.worktree, mission!.branch, state.base)).rejects.toThrow(
+      /not owned by any tower mission/,
+    );
+  });
+
+  it('does not apply the ownership refusal to a registered worktree left by an earlier spawn attempt', async () => {
+    const [mission] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    const state = await store.load();
+    await store.addWorktree(mission!.worktree, mission!.branch, state.base);
+
+    const retry = await store
+      .addWorktree(mission!.worktree, mission!.branch, state.base)
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+
+    expect(retry).toBeInstanceOf(Error);
+    expect((retry as Error).message).not.toMatch(/not owned by any tower mission/);
+  });
+
+  it('allows re-adding the worktree of a mission that already has an owner', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/x.ts',
+      content: 'x\n',
+    });
+    await store.updateMission('tower', mission.id, { owner: 'w1' });
+    const wt = worktreeOf(mission);
+    await git(repo, 'worktree', 'remove', '--force', wt);
+
+    const state = await store.load();
+    const added = await store.addWorktree(mission.worktree, mission.branch, state.base);
+
+    expect(added.spawnBase).toBeUndefined();
+    expect(await readFile(join(wt, 'src/x/x.ts'), 'utf8')).toBe('x\n');
   });
 });
