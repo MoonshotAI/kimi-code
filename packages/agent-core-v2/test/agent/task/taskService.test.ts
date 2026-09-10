@@ -645,6 +645,8 @@ describe('AgentTaskService', () => {
 
   it('scope disposal leaves a process running when keepAliveOnExit is set, and its late settle stays silent after deactivation', async () => {
     const { records } = capturingWire();
+    const track2 = vi.fn();
+    ix.stub(ITelemetryService, { track2 });
     stubTaskConfig({ keepAliveOnExit: true });
     const stdout = new Readable({ read() {} });
     const stderr = new Readable({ read() {} });
@@ -681,6 +683,10 @@ describe('AgentTaskService', () => {
 
     expect(svc.getTask(taskId)?.status).toBe('completed');
     expect(records.filter((record) => record['type'] === 'task.terminated')).toHaveLength(0);
+    expect(track2.mock.calls.map(([event]) => event)).toEqual([
+      'background_task_created',
+      'background_task_completed',
+    ]);
   });
 
   it('stop requests force-stop when killGracePeriodMs is zero', async () => {

@@ -1066,10 +1066,11 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private recordTaskStarted(info: AgentTaskInfo): void {
-    if (!this.lifecycleActive()) return;
-    void this.dispatcher.dispatch(
-      new TaskStarted({ agentId: this.scopeContext.agentId, info }),
-    );
+    if (this.lifecycleActive()) {
+      void this.dispatcher.dispatch(
+        new TaskStarted({ agentId: this.scopeContext.agentId, info }),
+      );
+    }
     this.telemetry.track2('background_task_created', {
       task_id: info.taskId,
       kind: info.kind === 'process' ? 'bash' : info.kind,
@@ -1077,10 +1078,11 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private recordTaskTerminated(info: AgentTaskInfo, outputTail?: string): void {
-    if (!this.lifecycleActive()) return;
-    void this.dispatcher.dispatch(
-      new TaskTerminated({ agentId: this.scopeContext.agentId, info, outputTail }),
-    );
+    if (this.lifecycleActive()) {
+      void this.dispatcher.dispatch(
+        new TaskTerminated({ agentId: this.scopeContext.agentId, info, outputTail }),
+      );
+    }
     this.telemetry.track2('background_task_completed', {
       task_id: info.taskId,
       kind: info.kind,
@@ -1093,6 +1095,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     if (!this.lifecycleActive()) return;
     const context = await this.buildAgentTaskNotificationContext(info);
     if (context === undefined) return;
+    if (!this.lifecycleActive()) return;
     const key = notificationKey(context.origin);
     if (this.deliveredNotificationKeys.has(key)) return;
     const handle = this.loop.notify({
