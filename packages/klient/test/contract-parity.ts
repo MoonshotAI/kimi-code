@@ -3,38 +3,47 @@
  * types they mirror. Plain `.ts` (not `.test.ts`) — vitest must not pick it
  * up; `tsc -p tsconfig.json --noEmit` is the check.
  *
- * Wire shapes the engine imports from `@moonshot-ai/protocol` are reached
- * through indexed access on the engine service interfaces, since klient does
- * not depend on the protocol package directly.
+ * Wire shapes are reached through indexed access on the engine service
+ * interfaces, so klient needs no direct dependency for most of them.
  */
 
 import type { z } from 'zod';
 
-import type {
-  ActivityLastTurnState,
-  ActivityRetryState,
-  ActivityTurnState,
-  ActivityViewLifecycle,
-  AgentActivityState,
-  ApprovalRef,
-  BackgroundRef,
-  ToolCallRef,
-  TurnPhase,
-} from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
 import type { AgentContextData } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import type { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
 import type { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/agent/runtimeBinding/runtimeBinding';
 import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
+import type { SessionActivityState } from '@moonshot-ai/agent-core-v2/session/sessionActivity/sessionActivity';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
 import type { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import type { IAgentPromptService } from '@moonshot-ai/agent-core-v2/agent/prompt/prompt';
 import type { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
-import type { IAgentSkillService } from '@moonshot-ai/agent-core-v2/agent/skill/skill';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
+import type { IAgentSkillService } from '@moonshot-ai/agent-core-v2/features/skill/skillService';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 import type { PlanData } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
-import type { SkillSummary } from '@moonshot-ai/agent-core-v2/app/skillCatalog/types';
+import type { SkillSummary } from '@moonshot-ai/agent-core-v2/features/skill/catalog/types';
 import type { McpServerEntry } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
+import type {
+  GlobalMcpServerConfig,
+  McpAuthStatusQuery,
+  McpManagedServer,
+  McpServerAuthBeginResult,
+  McpServerAuthFlowHandle,
+  McpServerAuthState,
+  McpServerAuthStatus,
+  McpServerInspection,
+  McpServerLocator,
+  McpServerTestResult,
+  McpServerTestTarget,
+} from '@moonshot-ai/agent-core-v2/app/mcpManagement/mcpManagement';
+import type {
+  McpRegistryPluginOrigin,
+  McpRegistryQuery,
+  McpServerSource,
+} from '@moonshot-ai/agent-core-v2/app/mcpRegistry/mcpRegistry';
+import type { McpServerConfig } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
+import type { McpServerConfigView } from '@moonshot-ai/agent-core-v2/mcpCore/configView';
 import type { FullCompactionInput } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/fullCompaction';
 import type { ISessionScopeHandle } from '@moonshot-ai/agent-core-v2/_base/di/scope';
 import type {
@@ -46,11 +55,11 @@ import type {
 import type {
   ApprovalRequest,
   ApprovalResponse,
-} from '@moonshot-ai/agent-core-v2/session/approval/approval';
+} from '@moonshot-ai/agent-core-v2/agent/interaction/approval';
 import type {
   Interaction,
   InteractionResolution,
-} from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
+} from '@moonshot-ai/agent-core-v2/human/interaction/interaction';
 import type {
   QuestionAnswers,
   QuestionItem,
@@ -58,7 +67,7 @@ import type {
   QuestionRequest,
   QuestionResponse,
   QuestionResult,
-} from '@moonshot-ai/agent-core-v2/session/question/question';
+} from '@moonshot-ai/agent-core-v2/agent/interaction/question';
 import type {
   AgentMeta,
   SessionMeta,
@@ -90,8 +99,8 @@ import type {
   FsBrowseResponse,
   FsHomeResponse,
 } from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
-import type { ModelRecord } from '@moonshot-ai/agent-core-v2/kosong/model/model';
-import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
+import type { ModelRecord } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
+import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
 import type {
   GetPluginInfoInput,
@@ -111,7 +120,7 @@ import type {
   PluginUpdateStatus,
   ReloadSummary,
 } from '@moonshot-ai/agent-core-v2/app/plugin/types';
-import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
+import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/llm-adapter/provider/provider';
 import type {
   SessionListQuery,
   SessionSummary,
@@ -120,39 +129,34 @@ import type {
   Workspace,
   WorkspaceUpdate,
 } from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
-// Test-only: `@moonshot-ai/protocol` is a devDependency; importing its types
-// here (never in `src/`) strengthens parity for the agent event stream.
+// Test-only: the v1 wire event types now live in agent-core-v2; importing
+// them here (never in `src/`) strengthens parity for the agent event stream.
+import type { ToolResultEvent } from '@moonshot-ai/agent-core-v2/events';
 import type {
-  AssistantDeltaEvent,
   CompactionBlockedEvent,
   CompactionCancelledEvent,
   CompactionCompletedEvent,
   CompactionStartedEvent,
+} from '@moonshot-ai/agent-core-v2/agent/fullCompaction/compactionOps';
+import type {
+  AssistantDeltaEvent,
+  ThinkingDeltaEvent,
+  TurnStartedEvent,
+} from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
+import type { TurnEndedEvent } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import type {
   PromptAbortedEvent,
   PromptCompletedEvent,
-  TaskInfo,
-  ThinkingDeltaEvent,
+} from '@moonshot-ai/agent-core-v2/agent/prompt/promptService';
+import type { TaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/types';
+import type {
   ToolCallDeltaEvent,
   ToolCallStartedEvent,
   ToolProgressEvent,
-  ToolResultEvent,
-  TurnEndedEvent,
-  TurnStartedEvent,
-  WarningEvent,
-} from '@moonshot-ai/protocol';
+} from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
+import type { WarningEvent } from '@moonshot-ai/agent-core-v2/errors';
 
-import {
-  activityLastTurnStateSchema,
-  activityRetryStateSchema,
-  activityTurnStateSchema,
-  activityViewLifecycleSchema,
-  agentActivityStateSchema,
-  approvalRefSchema,
-  backgroundRefSchema,
-  toolCallRefSchema,
-  turnEndReasonSchema,
-  turnPhaseSchema,
-} from '../src/contract/agent/activity.js';
+import { sessionActivityStateSchema } from '../src/contract/session/activity.js';
 import {
   agentCommandInfoSchema,
   agentContextDataSchema,
@@ -274,6 +278,23 @@ import {
 } from '../src/contract/global/hostFs.js';
 import { modelConfigSchema } from '../src/contract/global/models.js';
 import {
+  globalMcpServerConfigSchema,
+  mcpAuthStatusQuerySchema,
+  mcpManagedServerSchema,
+  mcpRegistryPluginOriginSchema,
+  mcpRegistryQuerySchema,
+  mcpServerAuthBeginResultSchema,
+  mcpServerAuthFlowHandleSchema,
+  mcpServerAuthStateSchema,
+  mcpServerAuthStatusSchema,
+  mcpServerConfigDataSchema,
+  mcpServerInspectionSchema,
+  mcpServerLocatorSchema,
+  mcpServerSourceSchema,
+  mcpServerTestResultSchema,
+  mcpServerTestTargetSchema,
+} from '../src/contract/global/mcpManagement.js';
+import {
   getPluginInfoInputSchema,
   installPluginInputSchema,
   pluginCommandDefSchema,
@@ -316,8 +337,7 @@ type AssertWireToEngine<TSchema extends z.ZodType, TEngine> = [z.infer<TSchema>]
   ? true
   : never;
 
-// Protocol wire shapes, derived from the engine interfaces (no direct
-// `@moonshot-ai/protocol` dependency in klient).
+// Wire shapes, derived from the engine interfaces.
 type OAuthFlowStart = Awaited<ReturnType<IOAuthService['startLogin']>>;
 type OAuthFlowSnapshot = NonNullable<ReturnType<IOAuthService['getFlow']>>;
 type OAuthLoginCancelResponse = Awaited<ReturnType<IOAuthService['cancelLogin']>>;
@@ -441,6 +461,50 @@ const _setPluginMcpServerEnabledInput: AssertWire<
 const _removePluginInput: AssertWire<typeof removePluginInputSchema, RemovePluginInput> = true;
 const _getPluginInfoInput: AssertWire<typeof getPluginInfoInputSchema, GetPluginInfoInput> = true;
 
+// global/mcpManagement.ts — the `McpServerConfig | McpServerConfigView` union
+// a managed server's `config` carries (full for mutable entries, redacted for
+// read-only ones) is mirrored by one schema covering both shapes; the
+// inspection's `config` is always the redacted view, and both assignability
+// directions hold against either engine type.
+const _mcpServerSource: AssertWire<typeof mcpServerSourceSchema, McpServerSource> = true;
+const _mcpRegistryPluginOrigin: AssertWire<
+  typeof mcpRegistryPluginOriginSchema,
+  McpRegistryPluginOrigin
+> = true;
+const _mcpRegistryQuery: AssertWire<typeof mcpRegistryQuerySchema, McpRegistryQuery> = true;
+const _mcpAuthStatusQuery: AssertWire<typeof mcpAuthStatusQuerySchema, McpAuthStatusQuery> = true;
+const _globalMcpServerConfig: AssertWire<
+  typeof globalMcpServerConfigSchema,
+  GlobalMcpServerConfig
+> = true;
+const _mcpServerConfigData: AssertWire<
+  typeof mcpServerConfigDataSchema,
+  McpServerConfig | McpServerConfigView
+> = true;
+const _mcpServerConfigViewData: AssertWire<
+  typeof mcpServerConfigDataSchema,
+  McpServerConfigView
+> = true;
+const _mcpManagedServer: AssertWire<typeof mcpManagedServerSchema, McpManagedServer> = true;
+const _mcpServerTestTarget: AssertWire<typeof mcpServerTestTargetSchema, McpServerTestTarget> =
+  true;
+const _mcpServerTestResult: AssertWire<typeof mcpServerTestResultSchema, McpServerTestResult> =
+  true;
+const _mcpServerLocator: AssertWire<typeof mcpServerLocatorSchema, McpServerLocator> = true;
+const _mcpServerAuthState: AssertWire<typeof mcpServerAuthStateSchema, McpServerAuthState> = true;
+const _mcpServerInspection: AssertWire<typeof mcpServerInspectionSchema, McpServerInspection> =
+  true;
+const _mcpServerAuthStatus: AssertWire<typeof mcpServerAuthStatusSchema, McpServerAuthStatus> =
+  true;
+const _mcpServerAuthBeginResult: AssertWire<
+  typeof mcpServerAuthBeginResultSchema,
+  McpServerAuthBeginResult
+> = true;
+const _mcpServerAuthFlowHandle: AssertWire<
+  typeof mcpServerAuthFlowHandleSchema,
+  McpServerAuthFlowHandle
+> = true;
+
 // env.ts has no named schemas; `platform` narrows to `NodeJS.Platform` in the
 // engine — assert the bootstrap properties are all strings instead. The
 // object-typed `clientIdentity` is intentionally not in this list.
@@ -520,24 +584,8 @@ const _generateTitleOutput: AssertWire<
   Awaited<ReturnType<ISessionTitleService['generateTitle']>>
 > = true;
 
-// agent/activity.ts
-const _turnPhase: AssertWire<typeof turnPhaseSchema, TurnPhase> = true;
-const _approvalRef: AssertWire<typeof approvalRefSchema, ApprovalRef> = true;
-const _toolCallRef: AssertWire<typeof toolCallRefSchema, ToolCallRef> = true;
-const _activityRetryState: AssertWire<typeof activityRetryStateSchema, ActivityRetryState> = true;
-// One-directional: `origin` is the deep `PromptOrigin` union mirrored as
-// `unknown`; the wire schema cannot be assignable back to the engine type.
-const _activityTurnState: AssertEngineToWire<typeof activityTurnStateSchema, ActivityTurnState> =
-  true;
-const _turnEndReason: AssertWire<typeof turnEndReasonSchema, TurnEndReason> = true;
-const _activityLastTurnState: AssertWire<
-  typeof activityLastTurnStateSchema,
-  ActivityLastTurnState
-> = true;
-const _backgroundRef: AssertWire<typeof backgroundRefSchema, BackgroundRef> = true;
-const _activityViewLifecycle: AssertWire<typeof activityViewLifecycleSchema, ActivityViewLifecycle> =
-  true;
-const _agentActivityState: AssertEngineToWire<typeof agentActivityStateSchema, AgentActivityState> =
+// session/activity.ts
+const _sessionActivityState: AssertWire<typeof sessionActivityStateSchema, SessionActivityState> =
   true;
 
 // ── agent scope (services.ts / schemas.ts) ──────────────────────────────────

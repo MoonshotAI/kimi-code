@@ -110,6 +110,7 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     expect(records).toEqual([
       {
         type: 'permission.record_approval_result',
+        agentId: 'test-agent',
         turnId: 1,
         toolCallId: 'call-1',
         toolName: 'Bash',

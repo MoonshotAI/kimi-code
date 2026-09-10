@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { fetchV2SessionsPage } from './api';
+import { fetchV2SessionGroups, fetchV2SessionsPage } from './api';
 
 function fakeFetch(status: number, body: unknown) {
   const calls: { url: string; init?: RequestInit }[] = [];
@@ -171,6 +171,70 @@ describe('fetchV2SessionsPage', () => {
   it('throws on a malformed success payload', async () => {
     const { fetchImpl } = fakeFetch(200, okBody({ has_more: false }));
     await expect(fetchV2SessionsPage({ baseUrl: 'http://h:1', fetchImpl })).rejects.toThrow(
+      /unexpected response shape/,
+    );
+  });
+});
+
+describe('fetchV2SessionGroups', () => {
+  const groupData = {
+    groups: [
+      {
+        workspace: { id: 'ws1', cwd: '/tmp/proj' },
+        sessions: [pageData.items[0]],
+        total: 7,
+      },
+      {
+        workspace: { id: 'ws2', cwd: null },
+        sessions: [],
+        total: 0,
+      },
+      // Malformed groups are dropped, not fatal.
+      { workspace: { cwd: '/x' }, sessions: [], total: 1 },
+      { id: 'nope' },
+    ],
+    total: 3,
+    has_more: true,
+    next_page_token: 'tok-groups',
+  };
+
+  it('requests the by_workspace view and parses groups with per-group totals', async () => {
+    const { calls, fetchImpl } = fakeFetch(200, okBody(groupData));
+    const page = await fetchV2SessionGroups({
+      baseUrl: 'http://h:1',
+      token: 'tok',
+      statuses: ['running'],
+      sort: 'meta.updated_at_asc',
+      pageSize: 10,
+      groupPageSize: 5,
+      pageToken: 'tok-prev',
+      fetchImpl,
+    });
+
+    const url = new URL(calls[0]!.url);
+    expect(url.searchParams.get('view')).toBe('by_workspace');
+    expect(url.searchParams.get('group.page_size')).toBe('5');
+    expect(url.searchParams.get('page_size')).toBe('10');
+    expect(url.searchParams.get('sort')).toBe('meta.updated_at_asc');
+    expect(url.searchParams.get('page_token')).toBe('tok-prev');
+
+    expect(page.groups).toHaveLength(2);
+    const first = page.groups[0]!;
+    expect(first.workspace).toEqual({ id: 'ws1', cwd: '/tmp/proj' });
+    expect(first.sessions.map((s) => s.id)).toEqual(['s1']);
+    expect(first.total).toBe(7);
+    expect(page.groups[1]!.workspace).toEqual({ id: 'ws2', cwd: null });
+    expect(page.hasMore).toBe(true);
+    expect(page.nextPageToken).toBe('tok-groups');
+  });
+
+  it('omits group.page_size when not set and throws on a malformed success payload', async () => {
+    const { calls, fetchImpl } = fakeFetch(200, okBody(groupData));
+    await fetchV2SessionGroups({ baseUrl: 'http://h:1', fetchImpl });
+    expect(new URL(calls[0]!.url).searchParams.get('group.page_size')).toBeNull();
+
+    const { fetchImpl: broken } = fakeFetch(200, okBody({ has_more: false }));
+    await expect(fetchV2SessionGroups({ baseUrl: 'http://h:1', fetchImpl: broken })).rejects.toThrow(
       /unexpected response shape/,
     );
   });

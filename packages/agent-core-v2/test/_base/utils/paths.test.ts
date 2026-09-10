@@ -4,7 +4,7 @@ import nodePath, { win32 } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { findUpwardRoot, subtreeWatchFilter } from '#/_base/utils/paths';
+import { canonicalWorkspaceRoot, findUpwardRoot, resolvePath, subtreeWatchFilter } from '#/_base/utils/paths';
 
 describe('subtree watch filtering', () => {
   const root = '/repo';
@@ -166,5 +166,51 @@ describe('findUpwardRoot', () => {
     );
 
     expect(found).toBe('E:/repo');
+  });
+});
+
+describe('resolvePath', () => {
+  it('resolves drive-letter absolute values without joining the base', () => {
+    expect(resolvePath('/repo', 'C:/tools')).toBe('C:/tools');
+    expect(resolvePath('/repo', 'C:\\tools\\bin')).toBe('C:/tools/bin');
+  });
+
+  it('resolves values against a Windows base with win32 semantics', () => {
+    expect(resolvePath('C:/repo', 'tools/mcp')).toBe('C:/repo/tools/mcp');
+    expect(resolvePath('C:\\repo', '.\\tools')).toBe('C:/repo/tools');
+    expect(resolvePath('C:/repo', 'D:/elsewhere')).toBe('D:/elsewhere');
+  });
+
+  it('keeps UNC bases and values intact', () => {
+    expect(resolvePath('//server/share/repo', 'tools')).toBe('//server/share/repo/tools');
+    expect(resolvePath('/repo', '//server/share/tools')).toBe('//server/share/tools');
+    expect(resolvePath('\\\\server\\share\\repo', 'tools')).toBe('//server/share/repo/tools');
+  });
+
+  it('keeps POSIX resolution identical to plain absolute/normalize semantics', () => {
+    expect(resolvePath('/repo', 'tools/../mcp')).toBe('/repo/mcp');
+    expect(resolvePath('/repo', '/abs/path')).toBe('/abs/path');
+  });
+});
+
+describe('canonicalWorkspaceRoot', () => {
+  it('case-folds drive-letter spellings and strips trailing separators', () => {
+    expect(canonicalWorkspaceRoot('C:\\Users\\Foo\\Repo')).toBe('c:/users/foo/repo');
+    expect(canonicalWorkspaceRoot('C:/Users/Foo/Repo/')).toBe('c:/users/foo/repo');
+  });
+
+  it('keeps the UNC share slash and case-folds', () => {
+    expect(canonicalWorkspaceRoot('//server/share/repo')).toBe('//server/share/repo');
+    expect(canonicalWorkspaceRoot('\\\\SERVER\\SHARE\\REPO')).toBe('//server/share/repo');
+  });
+
+  it('resolves dot segments in Windows spellings', () => {
+    expect(canonicalWorkspaceRoot('C:/Users/Foo/../Foo/Repo')).toBe('c:/users/foo/repo');
+  });
+
+  it('keeps POSIX roots untouched apart from trailing-slash and dot-segment cleanup', () => {
+    expect(canonicalWorkspaceRoot('/Repo/Sub')).toBe('/Repo/Sub');
+    expect(canonicalWorkspaceRoot('/Repo/Sub/')).toBe('/Repo/Sub');
+    expect(canonicalWorkspaceRoot('/Repo/Sub/../Other')).toBe('/Repo/Other');
   });
 });

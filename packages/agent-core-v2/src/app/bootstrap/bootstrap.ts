@@ -12,8 +12,10 @@ import {
   IFileSystemStorageService,
 } from '#/persistence/interface/storage';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
-import { FileSkillDiscovery } from '#/app/skillCatalog/fileSkillDiscovery';
-import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
+import { FileSkillDiscovery } from '#/features/skill/catalog/fileSkillDiscovery';
+import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
+
+export type HostUiCapability = 'update_panel';
 
 export interface HostArgs {
   readonly agentFiles?: readonly string[];
@@ -21,6 +23,8 @@ export interface HostArgs {
   readonly requestHeaders: Readonly<Record<string, string>>;
   readonly displayName?: string;
   readonly replyStyleGuide?: string;
+  readonly nonInteractive?: boolean;
+  readonly uiCapabilities?: readonly HostUiCapability[];
 }
 
 export interface HostArgsInput {
@@ -29,6 +33,8 @@ export interface HostArgsInput {
   readonly requestHeaders?: Readonly<Record<string, string>>;
   readonly displayName?: string;
   readonly replyStyleGuide?: string;
+  readonly nonInteractive?: boolean;
+  readonly uiCapabilities?: readonly HostUiCapability[];
 }
 
 export function resolveHostArgs(input: HostArgsInput | undefined): HostArgs {
@@ -38,6 +44,8 @@ export function resolveHostArgs(input: HostArgsInput | undefined): HostArgs {
     requestHeaders: input?.requestHeaders ?? {},
     displayName: input?.displayName,
     replyStyleGuide: input?.replyStyleGuide,
+    nonInteractive: input?.nonInteractive,
+    uiCapabilities: input?.uiCapabilities,
   };
 }
 

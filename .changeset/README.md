@@ -15,14 +15,11 @@ Current publishable packages:
 
 All other workspace packages are private internal packages, are not published to npm, and are excluded via `ignore` in `.changeset/config.json`:
 
-- `@moonshot-ai/acp-adapter`
-- `@moonshot-ai/agent-core`
 - `@moonshot-ai/kaos`
 - `@moonshot-ai/kimi-code-oauth`
 - `@moonshot-ai/kimi-telemetry`
 - `@moonshot-ai/kosong`
 - `@moonshot-ai/migration-legacy`
-- `@moonshot-ai/protocol`
 - `@moonshot-ai/vis`
 - `@moonshot-ai/vis-server`
 - `@moonshot-ai/vis-web`
@@ -146,7 +143,7 @@ The root-level `pnpm run publish` first runs typecheck, lint, sherif, test, buil
 - Changeset files must be committed to the repository — release PRs are only triggered after they're merged.
 - Release PRs require human review and merge; they will not publish automatically.
 - Do not add release changesets for private internal packages; only select `@moonshot-ai/kimi-code` and `@moonshot-ai/kimi-code-sdk`.
-- If a change in an underlying internal package alters user-visible behavior or public API of a publishable package, add a changeset to the affected publishable package. For example, when a bug fixed in `@moonshot-ai/agent-core` resolves an issue CLI users encounter, add a changeset to `@moonshot-ai/kimi-code` describing the user-visible fix.
+- If a change in an underlying internal package alters user-visible behavior or public API of a publishable package, add a changeset to the affected publishable package. For example, when a bug fixed in `@moonshot-ai/kosong` resolves an issue CLI users encounter, add a changeset to `@moonshot-ai/kimi-code` describing the user-visible fix.
 - `@moonshot-ai/kimi-code` is the official CLI package name; after a global install it provides the `kimi` command.
 - Make sure each publishable package on npm has a Trusted Publisher configured.
 

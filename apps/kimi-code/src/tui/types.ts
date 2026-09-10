@@ -6,6 +6,7 @@ import type {
   ProviderConfig,
   PromptPart,
   ThinkingEffort,
+  TokenUsage,
   ToolInputDisplay,
 } from '@moonshot-ai/kimi-code-sdk';
 
@@ -39,6 +40,7 @@ export interface AppState {
   /** 'bash' when the editor is in `!` shell-command mode. */
   inputMode: 'prompt' | 'bash';
   swarmMode: boolean;
+  towerMode: boolean;
   /** Live thinking effort of the active session (e.g. 'off', 'on', 'high');
    * mirrors the runtime. The single source of truth for the thinking state in
    * the TUI. */
@@ -60,6 +62,7 @@ export interface AppState {
   contextUsage: number;
   contextTokens: number;
   maxContextTokens: number;
+  cumulativeTokens?: number;
   isCompacting: boolean;
   isReplaying: boolean;
   streamingPhase: 'idle' | 'waiting' | 'thinking' | 'composing' | 'shell';
@@ -75,6 +78,7 @@ export interface AppState {
   renderLatex?: boolean;
   /** Mirrors the TUI config toggle; defaults to true when absent from older fixtures. */
   cacheExpiryHint?: boolean;
+  disableFeedbackSurvey?: boolean;
   notifications: NotificationsConfig;
   upgrade: UpgradePreferences;
   /** Footer status line customization from tui.toml; absent means the default layout. */
@@ -87,6 +91,10 @@ export interface AppState {
   mcpServersSummary: string | null;
   /** Optional banner shown below the welcome panel; null means no banner to render. */
   banner?: BannerState | null;
+}
+
+export function sumTokenUsage(total: TokenUsage): number {
+  return total.inputOther + total.output + total.inputCacheRead + total.inputCacheCreation;
 }
 
 export interface StepRetryState {

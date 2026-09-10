@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { PluginSummary } from '@moonshot-ai/kimi-code-sdk';
 
-import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
+import { kimiCodePluginMarketplaceUrl } from '#/constant/app';
 import {
   PluginUpdateNotifier,
   type PluginUpdateNotifierSession,
@@ -49,7 +49,7 @@ function makeMarketplaceEntry(
 
 function makeMarketplace(version = '3.4.0'): PluginMarketplace {
   return {
-    source: KIMI_CODE_PLUGIN_MARKETPLACE_URL,
+    source: kimiCodePluginMarketplaceUrl(),
     plugins: [makeMarketplaceEntry('kimi-datasource', 'Kimi Datasource', version)],
   };
 }
@@ -268,7 +268,7 @@ describe('PluginUpdateNotifier', () => {
   it('keeps every notified plugin when a turn uses two outdated plugins', async () => {
     const harness = makeHarness({
       marketplace: {
-        source: KIMI_CODE_PLUGIN_MARKETPLACE_URL,
+        source: kimiCodePluginMarketplaceUrl(),
         plugins: [
           makeMarketplaceEntry('kimi-datasource', 'Kimi Datasource', '3.4.0'),
           makeMarketplaceEntry('another-plugin', 'Another Plugin', '2.0.0'),

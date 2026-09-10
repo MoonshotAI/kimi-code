@@ -29,6 +29,9 @@ export function createMcpOAuthStore(docs: IAtomicDocumentStore): McpOAuthStore {
     remove(key) {
       return docs.delete(CREDENTIALS_SCOPE, key);
     },
+    list(prefix) {
+      return docs.list(CREDENTIALS_SCOPE, prefix);
+    },
   };
 }
 
@@ -51,6 +54,10 @@ export class McpOAuthStoreAdapter implements IMcpOAuthStore {
 
   remove(key: string): Promise<void> {
     return this.delegate.remove(key);
+  }
+
+  list(prefix?: string): Promise<readonly string[]> {
+    return this.delegate.list(prefix);
   }
 }
 

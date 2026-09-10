@@ -1,4 +1,4 @@
-import type { GoalSnapshot } from '#/agent/goal/types';
+import type { GoalSnapshot } from '#/features/goal/types';
 
 import type { SessionStatusResponse } from './sessionProtocol';
 import { LifecycleScope } from '#/app/scopes';
@@ -12,22 +12,26 @@ import {
   IInstantiationService,
   type ServicesAccessor,
 } from '#/_base/di/instantiation';
-import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
-import { IAgentGoalService } from '#/agent/goal/goal';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
+import { IAgentGoalService } from '#/features/goal/goalService';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
+import { IAgentTowerService } from '#/features/tower/tower';
+import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import {
   getLiveSessionById,
   resumeSessionById,
 } from '#/app/sessionManager/sessionLookup';
-import { IModelCatalog } from '#/kosong/model/catalog';
-import { IModelService } from '#/kosong/model/model';
+import { IModelCatalog } from '#/llm-adapter/model/catalog';
+import { IModelService } from '#/llm-adapter/model/model';
 import { ErrorCodes, Error2 } from '#/errors';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { IAgentActivityView } from '#/agent/activityView/activityView';
+import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 
 import { ISessionLegacyService } from './sessionLegacy';
 
@@ -51,7 +55,12 @@ export class SessionLegacyService implements ISessionLegacyService {
     if (session === undefined) {
       throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
     }
-    return ensureMainAgent(session);
+    const context = await ensureMainAgent(session);
+    const handle = session.accessor.get(IAgentLifecycleService).handleOf(context.agentId);
+    if (handle === undefined) {
+      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
+    }
+    return handle;
   }
 
   async status(sessionId: string): Promise<SessionStatusResponse> {
@@ -64,10 +73,11 @@ export class SessionLegacyService implements ISessionLegacyService {
     agent: IAgentScopeHandle,
   ): Promise<SessionStatusResponse> {
     const profile = agent.accessor.get(IAgentProfileService);
-    const tokenCounting = agent.accessor.get(IAgentTokenCountingService);
+    const tokenCounting = agent.accessor.get(ISessionTokenCountingService);
     const permission = agent.accessor.get(IAgentPermissionModeService);
     const plan = agent.accessor.get(IAgentPlanService);
     const swarm = agent.accessor.get(IAgentSwarmService);
+    const tower = agent.accessor.get(IAgentTowerService);
 
     const model = profile.getModel();
     const capabilities = profile.getModelCapabilities();
@@ -75,7 +85,7 @@ export class SessionLegacyService implements ISessionLegacyService {
     if (maxTokens === 0 && model === '') {
       maxTokens = resolveDefaultModelContextTokens(agent) ?? 0;
     }
-    const tokens = tokenCounting.statusSize();
+    const tokens = tokenCounting.statusSize(agentContextOf(agent));
     const planData = await plan.status();
 
     return {
@@ -85,6 +95,7 @@ export class SessionLegacyService implements ISessionLegacyService {
       permission: permission.mode,
       plan_mode: planData !== null,
       swarm_mode: swarm.isActive,
+      tower_mode: tower.isActive,
       context_tokens: tokens,
       max_context_tokens: maxTokens > 0 ? maxTokens : undefined,
       context_usage: maxTokens > 0 ? Math.min(1, tokens / maxTokens) : undefined,
@@ -94,9 +105,14 @@ export class SessionLegacyService implements ISessionLegacyService {
   private readBusy(sessionId: string): boolean {
     const handle = getLiveSessionById(this.services, sessionId);
     if (handle === undefined) return false;
-    for (const agent of handle.accessor.get(IAgentLifecycleService).list()) {
-      const state = agent.accessor.get(IAgentActivityView).state();
-      if (state.turn !== undefined || state.background.length > 0) return true;
+    const agents = handle.accessor.get(IAgentLifecycleService);
+    for (const agent of agents.list()) {
+      const agentHandle = agents.handleOf(agent.agentId);
+      if (agentHandle === undefined) continue;
+      if (agentHandle.accessor.get(IAgentLoopService).status().state === 'running') return true;
+      const tasks = agentHandle.accessor.get(IAgentTaskService);
+      if (tasks.list(true).length > 0) return true;
+      if (agentHandle.accessor.get(IAgentFullCompactionService).compacting !== null) return true;
     }
     return false;
   }

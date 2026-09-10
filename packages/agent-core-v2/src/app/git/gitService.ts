@@ -34,7 +34,7 @@ export class GitService implements IGitService {
       throw this.gitUnavailable(cwd, inside.stderr.trim() || `git rev-parse exit ${inside.exitCode}`);
     }
 
-    const porc = await this.runCommand('git', ['status', '--porcelain=v1', '--branch'], cwd);
+    const porc = await this.runCommand('git', ['status', '--porcelain=v1', '--branch', '-z'], cwd);
     if (porc.exitCode !== 0) {
       throw this.gitUnavailable(cwd, porc.stderr.trim() || `git status exit ${porc.exitCode}`);
     }
@@ -42,8 +42,8 @@ export class GitService implements IGitService {
     const result = parsePorcelain(porc.stdout, pathFilter);
 
     const dirty = porc.stdout
-      .split('\n')
-      .some((line) => line.length > 0 && !line.startsWith('## '));
+      .split('\0')
+      .some((record) => record.length > 0 && !record.startsWith('## '));
     if (dirty) {
       const head = await this.runCommand('git', ['rev-parse', '--verify', '--quiet', 'HEAD'], cwd);
       if (head.exitCode === 0) {

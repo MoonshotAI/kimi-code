@@ -2,44 +2,50 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 import { Service } from "#/_base/di/service";
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
-import { renderPrompt } from "#/_base/utils/render-prompt";
-import { estimateTokensForMessage } from "#/kosong/contract/tokens";
+import { estimateTokensForMessage } from "#/llm-adapter/contract/tokens";
 import { buildCompactionSummaryText, isRealUserInput } from '#/agent/contextMemory/compactionHandoff';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentLLMRequesterService, type AgentLLMRequestFinish } from '#/agent/llmRequester/llmRequester';
-import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
+import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import { retryBackoffDelays, sleepForRetry } from '#/_base/utils/retry';
 import { IAgentLoopService, type LoopErrorContext } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { isAbortError } from '#/_base/utils/abort';
 import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/profile';
+import {
+  agentContextOfScope,
+  IAgentScopeContext,
+} from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { stripDynamicToolContext } from '#/agent/toolSelect/dynamicTools';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
-import { ISessionTodoService } from '#/session/todo/sessionTodo';
-import { renderTodoList, type TodoItem } from '#/session/todo/todoItem';
+import { IAgentTodoService } from '#/features/todo/todoService';
+import { renderTodoList } from '#/features/todo/todoItem';
+import { onUnexpectedError } from '#/_base/errors/unexpectedError';
+import type { WireLineRange } from '#/wire/record';
+import { IWireService } from '#/wire/wire';
 import {
   APIContextOverflowError,
   APIEmptyResponseError,
   APIStatusError,
   isRetryableGenerateError,
-} from '#/kosong/contract/errors';
-import { createUserMessage, type Message } from '#/kosong/contract/message';
-import type { Tool } from '#/kosong/contract/tool';
-import { inputTotal, type TokenUsage } from '#/kosong/contract/usage';
+} from '#/llm-adapter/contract/errors';
+import { createUserMessage, type Message } from '#/llm-adapter/contract/message';
+import type { ToolDescription as Tool } from '#human/llm/message';
+import { inputTotal, type TokenUsage } from '#human/llm/usage';
 import { IEventBus } from '#/app/event/eventBus';
 import type { CompactionFailedEvent, CompactionFinishedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2, isCodedError, isError2, toKimiErrorPayload, unwrapErrorCause } from "#/errors";
 import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import compactionInstructionTemplate from './compaction-instruction.md?raw';
+import { renderCompactionInstruction } from './compactionInstruction';
+import { renderContextRecoveryPointer } from './contextRecovery';
 import {
   IAgentFullCompactionService,
   type FullCompactionInput,
@@ -54,6 +60,7 @@ import {
   CompactionCancelled,
   CompactionCompleted,
   fullCompactionKey,
+  fullCompactionWireRangesKey,
   FullCompactionBegin,
   FullCompactionCancel,
   FullCompactionComplete,
@@ -135,21 +142,23 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentTokenCountingService private readonly tokenCounting: IAgentTokenCountingService,
+    @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
     @IAgentLLMRequesterService private readonly llmRequester: IAgentLLMRequesterService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentToolSelectService private readonly toolSelect: IAgentToolSelectService,
-    @ISessionTodoService private readonly todo: ISessionTodoService,
+    @IAgentScopeContext private readonly agent: IAgentScopeContext,
+    @IAgentTodoService private readonly todo: IAgentTodoService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IEventBus private readonly eventBus: IEventBus,
-    @ILogService private readonly log: ILogService,
     @IAgentLoopService private readonly loopService: IAgentLoopService,
     @IAgentStateService private readonly states: IAgentStateService,
+    @IWireService private readonly wire: IWireService,
   ) {
     super();
     this.states.contributeState(fullCompactionKey);
+    this.states.contributeState(fullCompactionWireRangesKey);
     this.states.contributeState(fullCompactionCompactionCountInTurnKey);
     this.states.contributeState(fullCompactionObservedMaxContextTokensByModelKey);
     this.states.contributeState(fullCompactionLastCompactedTokenCountKey);
@@ -336,7 +345,9 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       );
     }
     try {
-      void this.dispatcher.dispatch(new FullCompactionBegin(data));
+      void this.dispatcher.dispatch(
+        new FullCompactionBegin({ ...data, agentId: this.agent.agentId }),
+      );
 
       const active = this.createActiveCompaction(
         data.source,
@@ -426,25 +437,25 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
   private cancelActive(active: ActiveCompaction): boolean {
     if (this._compacting !== active) return false;
-    void this.dispatcher.dispatch(new FullCompactionCancel({}));
+    void this.dispatcher.dispatch(new FullCompactionCancel({ agentId: this.agent.agentId }));
     this._compacting = null;
     if (!active.abortController.signal.aborted) {
       active.abortController.abort();
     }
-    void this.dispatcher.dispatch(new CompactionCancelled({}));
+    void this.dispatcher.dispatch(new CompactionCancelled({ agentId: this.agent.agentId }));
     return true;
   }
 
   private markCompleted(active: ActiveCompaction): boolean {
     if (this._compacting !== active) return false;
-    void this.dispatcher.dispatch(new FullCompactionComplete({}));
+    void this.dispatcher.dispatch(new FullCompactionComplete({ agentId: this.agent.agentId }));
     this._compacting = null;
     return true;
   }
 
   private normalizeAfterReplay(): void {
     if (this.states.get(fullCompactionKey).phase !== 'running') return;
-    void this.dispatcher.dispatch(new FullCompactionCancel({}));
+    void this.dispatcher.dispatch(new FullCompactionCancel({ agentId: this.agent.agentId }));
   }
 
   private resetForTurn(): void {
@@ -477,9 +488,8 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   }
 
   private retryFailedDriver(context: LoopErrorContext): boolean {
-    const driver = context.failedDriver;
-    if (driver === undefined || context.currentStep?.signal.aborted === true) return false;
-    context.retry(driver, { at: 'head' });
+    if (context.signal.aborted) return false;
+    context.retry();
     return true;
   }
 
@@ -529,7 +539,9 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     if (active === null) return;
     active.blockedByTurn = true;
     this.propagateBlockingAbort(active, signal);
-    void this.dispatcher.dispatch(new CompactionBlocked({ turnId }));
+    void this.dispatcher.dispatch(
+      new CompactionBlocked({ agentId: this.agent.agentId, turnId }),
+    );
     try {
       await active.promise;
     } catch (error) {
@@ -566,18 +578,15 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     try {
       const result = await this.compactionRound(active, data);
       if (this._compacting !== active) throw compactionCancelledReason(active);
-      try {
-        await this.profile.refreshSystemPrompt();
-      } catch (error) {
-        this.log.error('failed to refresh system prompt after compaction', { error });
-      }
       this.lastCompactedTokenCount = result.tokensAfter;
       if (!this.markCompleted(active)) {
         throw compactionCancelledReason(active);
       }
       const { contextSummary: _contextSummary, ...eventResult } = result;
       void _contextSummary;
-      void this.dispatcher.dispatch(new CompactionCompleted({ result: eventResult }));
+      void this.dispatcher.dispatch(
+        new CompactionCompleted({ agentId: this.agent.agentId, result: eventResult }),
+      );
       return result;
     } catch (error) {
       if (active.abortController.signal.aborted || isAbortError(error)) {
@@ -591,7 +600,9 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       if (blockedByTurn) {
         throw error;
       }
-      void this.dispatcher.dispatch(new AgentErrorEvent(toKimiErrorPayload(error)));
+      void this.dispatcher.dispatch(
+        new AgentErrorEvent({ ...toKimiErrorPayload(error), agentId: this.agent.agentId }),
+      );
       throw error;
     } finally {
       try {
@@ -627,11 +638,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
           : undefined;
       const compactionMaxOutputSize = resolvedModel.maxOutputSize ?? defaultCompactionCap;
 
-      const customInstruction = data.instruction?.trim() ?? '';
-      const instruction = renderPrompt(compactionInstructionTemplate, {
-        custom_instruction_block:
-          customInstruction.length > 0 ? `\nOptional user instruction:\n${customInstruction}\n` : '',
-      }).trimEnd();
+      const instruction = renderCompactionInstruction({ customInstruction: data.instruction });
 
       const delays = retryBackoffDelays(MAX_COMPACTION_RETRY_ATTEMPTS);
       let attempt: CompactionAttemptResult | undefined;
@@ -682,12 +689,16 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
               overflowShrinkCount,
               (message) => this.tokenCounting.estimateMessage(message),
             );
+            if (historyForModel.length === 0) throw error;
             droppedCount += before - historyForModel.length;
             retryCount = 0;
             continue;
           }
+          const unwrappedError = unwrapErrorCause(error);
           if (
-            (error instanceof CompactionTruncatedError || unwrapErrorCause(error) instanceof APIEmptyResponseError) &&
+            (error instanceof CompactionTruncatedError ||
+              (unwrappedError instanceof APIEmptyResponseError &&
+                unwrappedError.finishReason !== 'filtered')) &&
             messagesToCompact.length > 1
           ) {
             emptyOrTruncatedShrinkCount += 1;
@@ -700,7 +711,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             retryCount = 0;
             continue;
           }
-          if (!isRetryableGenerateError(unwrapErrorCause(error))) {
+          if (!isRetryableGenerateError(unwrappedError)) {
             throw error;
           }
           if (retryCount + 1 >= MAX_COMPACTION_RETRY_ATTEMPTS) {
@@ -725,15 +736,24 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         throw compactionCancelledReason(active);
       }
 
-      const summary = this.postProcessSummary(attempt.summary);
+      const summary = await this.postProcessSummary(attempt.summary);
+      const wireLines = await this.captureWireLines();
+      const recoveryFooter = this.renderRecoveryFooter(wireLines);
+      const summaryText = buildCompactionSummaryText(summary);
       const result = this.context.applyCompaction({
         summary,
-        contextSummary: buildCompactionSummaryText(summary),
+        contextSummary:
+          recoveryFooter === undefined ? summaryText : `${summaryText}\n\n${recoveryFooter}`,
         compactedCount: originalHistory.length,
         tokensBefore,
-        summaryOutputTokens: attempt.usage?.output,
+        summaryOutputTokens:
+          attempt.usage === null
+            ? undefined
+            : attempt.usage.output +
+              (recoveryFooter === undefined ? 0 : this.tokenCounting.estimateText(recoveryFooter)),
         requestOverheadTokens: this.requestTokens([]),
         droppedCount: droppedCount === 0 ? undefined : droppedCount,
+        wireLines,
       });
 
       const properties: CompactionFinishedEvent = {
@@ -777,20 +797,38 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     }
   }
 
-  private postProcessSummary(summary: string): string {
-    const todos = this.currentTodos();
+  private async postProcessSummary(summary: string): Promise<string> {
+    const todos = this.todo.get();
     if (todos.length === 0) {
       return summary;
     }
     return `${summary.trim()}\n\n${renderTodoList(todos, '## TODO List')}`;
   }
 
-  private currentTodos(): readonly TodoItem[] {
-    return this.todo.getTodos();
+  private async captureWireLines(): Promise<WireLineRange | undefined> {
+    try {
+      await this.wire.flush();
+    } catch (error) {
+      onUnexpectedError(error);
+      return undefined;
+    }
+    const end = this.wire.lineCount();
+    const previous = this.states.get(fullCompactionWireRangesKey).at(-1);
+    const start = Math.max(previous?.end ?? 0, this.wire.lastContextClearLine() ?? 0) + 1;
+    if (end < start) return undefined;
+    return { start, end };
+  }
+
+  private renderRecoveryFooter(wireLines: WireLineRange | undefined): string | undefined {
+    if (wireLines === undefined) return undefined;
+    const journalPath = this.wire.journalPath();
+    if (journalPath === undefined) return undefined;
+    const windows = [...this.states.get(fullCompactionWireRangesKey), wireLines];
+    return renderContextRecoveryPointer({ journalPath, windows });
   }
 
   private tokenCountWithPending(): number {
-    return this.tokenCounting.get().size;
+    return this.tokenCounting.get(agentContextOfScope(this.agent)).size;
   }
 }
 

@@ -77,15 +77,18 @@ import { nextTranscriptId } from '../utils/transcript-id';
 import type { BtwPanelController } from './btw-panel';
 import { isPluginMcpToolName, PluginUpdateNotifier } from './plugin-update-notifier';
 import type { StreamingUIController } from './streaming-ui';
+import type { SurveyController } from './survey-controller';
 import type { TasksBrowserController } from './tasks-browser';
 import { SubAgentEventHandler } from './subagent-event-handler';
-import type {
-  AppState,
-  LivePaneState,
-  QueuedMessage,
-  ToolCallBlockData,
-  ToolResultBlockData,
-  TranscriptEntry,
+import { NotifyController } from './notify';
+import {
+  sumTokenUsage,
+  type AppState,
+  type LivePaneState,
+  type QueuedMessage,
+  type ToolCallBlockData,
+  type ToolResultBlockData,
+  type TranscriptEntry,
 } from '../types';
 import type { TUIState } from '../tui-state';
 import { createGoal as startGoalCommand } from '../commands/goal';
@@ -123,9 +126,11 @@ export interface SessionEventHost {
   handleTurnEnded?(event: TurnEndedEvent): void;
   readonly btwPanelController: BtwPanelController;
   readonly tasksBrowserController: TasksBrowserController;
+  readonly surveyController: SurveyController;
 }
 
 export class SessionEventHandler {
+  readonly notifications: NotifyController;
   readonly subAgentEventHandler: SubAgentEventHandler;
   private readonly pluginUpdateNotifier: PluginUpdateNotifier;
 
@@ -133,6 +138,7 @@ export class SessionEventHandler {
     private readonly host: SessionEventHost,
     pluginUpdateNotifier?: PluginUpdateNotifier,
   ) {
+    this.notifications = new NotifyController(host.state);
     this.subAgentEventHandler = new SubAgentEventHandler(host, {
       backgroundTasks: this.backgroundTasks,
       backgroundTaskTranscriptedTerminal: this.backgroundTaskTranscriptedTerminal,
@@ -175,6 +181,7 @@ export class SessionEventHandler {
     this.backgroundTasks.clear();
     this.backgroundTaskTranscriptedTerminal.clear();
     this.subAgentEventHandler.resetRuntimeState();
+    this.notifications.reset();
     this.renderedSkillActivationIds.clear();
     this.renderedPluginCommandActivationIds.clear();
     this.renderedMcpServerStatusKeys.clear();
@@ -260,6 +267,7 @@ export class SessionEventHandler {
   }
 
   handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void {
+    this.notifications.handleEvent(event);
     if (this.subAgentEventHandler.routeChildAgentEvent(event)) return;
 
     if ('turnId' in event && event.turnId !== undefined) {
@@ -610,6 +618,7 @@ export class SessionEventHandler {
 
   private handleToolCall(event: ToolCallStartedEvent): void {
     const { streamingUI } = this.host;
+    this.host.surveyController.notifyToolCallStarted();
     streamingUI.flushNow();
     const { turnId, step } = streamingUI.getTurnContext();
     const toolCall: ToolCallBlockData = {
@@ -712,16 +721,31 @@ export class SessionEventHandler {
       this.host.state.appState.swarmMode &&
       this.host.state.swarmModeEntry === 'task';
     const patch: Partial<AppState> = {};
-    if (event.contextUsage !== undefined) patch.contextUsage = event.contextUsage;
     if (event.contextTokens !== undefined) patch.contextTokens = event.contextTokens;
     if (event.maxContextTokens !== undefined) patch.maxContextTokens = event.maxContextTokens;
+    if (event.contextUsage !== undefined) {
+      patch.contextUsage = event.contextUsage;
+    } else if (event.contextTokens !== undefined || event.maxContextTokens !== undefined) {
+      // v2 status events carry contextTokens/maxContextTokens but never
+      // contextUsage. Recompute the ratio from the post-patch token counts so
+      // it cannot go stale and drift from them — the footer and the /usage
+      // panel bar render this ratio while their texts recompute from the
+      // counts, so a stale ratio shows as a bar/percentage mismatch.
+      const tokens = patch.contextTokens ?? this.host.state.appState.contextTokens;
+      const max = patch.maxContextTokens ?? this.host.state.appState.maxContextTokens;
+      patch.contextUsage = max > 0 ? tokens / max : 0;
+    }
     if (event.planMode !== undefined) patch.planMode = event.planMode;
     if (event.swarmMode !== undefined) patch.swarmMode = event.swarmMode;
+    if (event.towerMode !== undefined) patch.towerMode = event.towerMode;
     if (event.permission !== undefined) {
       patch.permissionMode = event.permission;
     }
     if (event.model !== undefined) patch.model = event.model;
     if (event.thinkingEffort !== undefined) patch.thinkingEffort = event.thinkingEffort;
+    if (event.usage?.total !== undefined) {
+      patch.cumulativeTokens = sumTokenUsage(event.usage.total);
+    }
     if (Object.keys(patch).length > 0) this.host.setAppState(patch);
     if (event.swarmMode === false) {
       this.host.state.swarmModeEntry = undefined;
@@ -1118,6 +1142,7 @@ export class SessionEventHandler {
     // is expected). Cancellations do neither: the context was not cut.
     this.host.recordSessionActivity();
     this.host.noteCompactionFinished();
+    this.host.surveyController.notifyCompactionFinished();
     this.finishCompaction(sendQueued);
   }
 

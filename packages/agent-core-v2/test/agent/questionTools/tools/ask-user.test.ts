@@ -1,24 +1,38 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { CoreErrors } from '#/_base/errors/codes';
-import { Error2 } from '#/_base/errors/errors';
+import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
+import { createServices } from '#/_base/di/test';
 import {
   AskUserQuestionInputSchema,
+  IAskUserQuestionTool,
   type AskUserQuestionInput,
 } from '#/agent/tools/ask-user-question/ask-user-question';
 import { AskUserQuestionTool } from '#/agent/tools/ask-user-question/askUserQuestionTool';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import type {
-  ISessionQuestionService,
   QuestionRequest,
   QuestionResult,
-} from '#/session/question/question';
-import type { QuestionBackgroundTask } from '#/agent/tools/ask-user-question/question-background-task';
+} from '#/agent/interaction/question';
+import {
+  INTERACTION_TAG_AGENT_ID,
+  INTERACTION_TAG_TURN_ID,
+} from '#/human/interaction/interaction';
+import { interactions } from '#/human/interaction/facade';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import type {
+  QuestionBackgroundTask,
+  QuestionTaskInfo,
+} from '#/agent/tools/ask-user-question/question-background-task';
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 
 const signal = new AbortController().signal;
+const TASK_TOOLS = new Set(['TaskList', 'TaskOutput', 'TaskStop']);
+const TEST_SESSION_ID = 'ask-user-test';
+
+let disposables: DisposableStore;
 
 function input(
   overrides: Partial<AskUserQuestionInput['questions'][number]> = {},
@@ -41,13 +55,14 @@ function input(
 
 function makeTool(
   options: {
+    readonly activeTaskTools?: ReadonlySet<string>;
     readonly request?: (
       req: QuestionRequest,
-      requestOptions?: { readonly signal?: AbortSignal },
+      requestOptions?: { readonly agentId?: string; readonly detached?: boolean },
     ) => Promise<QuestionResult>;
   } = {},
 ): {
-  readonly tool: AskUserQuestionTool;
+  readonly tool: IAskUserQuestionTool;
   readonly request: ReturnType<typeof vi.fn>;
   readonly telemetryTrack: ReturnType<typeof vi.fn>;
   readonly registerTask: ReturnType<typeof vi.fn>;
@@ -56,23 +71,74 @@ function makeTool(
 } {
   const request = vi.fn(options.request ?? (async () => ({ Postgres: true }) as QuestionResult));
   const telemetryTrack = vi.fn();
-  const question = { request } as unknown as ISessionQuestionService;
-  const telemetry = { track2: telemetryTrack } as unknown as ITelemetryService;
   let lastTask: QuestionBackgroundTask | undefined;
   const registerTask = vi.fn((task: QuestionBackgroundTask) => {
     lastTask = task;
     return 'q_test_task_id';
   });
-  const getTask = vi.fn((id: string) =>
-    id === 'q_test_task_id' ? { status: 'running' } : undefined,
+  const getTask = vi.fn(
+    (id: string): QuestionTaskInfo | undefined =>
+      id === 'q_test_task_id'
+        ? {
+            taskId: id,
+            description: 'Which database?',
+            status: 'running',
+            detached: true,
+            startedAt: 0,
+            endedAt: null,
+            kind: 'question',
+            questionCount: 1,
+            toolCallId: 'call_bg',
+          }
+        : undefined,
   );
-  const tasks = { registerTask, getTask } as unknown as IAgentTaskService;
-  const scopeContext = { agentId: 'main' } as unknown as IAgentScopeContext;
-  const tool = new AskUserQuestionTool(question, telemetry, tasks, scopeContext);
+  const activeTaskTools = options.activeTaskTools ?? TASK_TOOLS;
+  const ix = createServices(disposables, {
+    additionalServices: (reg) => {
+      reg.definePartialInstance(ISessionContext, { sessionId: TEST_SESSION_ID });
+      reg.definePartialInstance(ITelemetryService, { track2: telemetryTrack });
+      reg.definePartialInstance(IAgentTaskService, { registerTask, getTask });
+      reg.definePartialInstance(IAgentScopeContext, { agentId: 'main' });
+      reg.definePartialInstance(IAgentToolPolicyService, {
+        isToolActive: (name: string) => activeTaskTools.has(name),
+      });
+      reg.define(IAskUserQuestionTool, AskUserQuestionTool);
+    },
+    strict: true,
+  });
+  const seen = new Set<string>();
+  const answerNewPending = (): void => {
+    for (const pending of interactions.findAll({
+      kind: 'question',
+      resolved: false,
+      tags: { sessionId: TEST_SESSION_ID },
+    })) {
+      if (seen.has(pending.id)) continue;
+      seen.add(pending.id);
+      const agentId = pending.tags[INTERACTION_TAG_AGENT_ID];
+      void request(pending.payload as QuestionRequest, {
+        agentId: typeof agentId === 'string' ? agentId : 'main',
+        detached: pending.tags[INTERACTION_TAG_TURN_ID] === undefined,
+      }).then((result) => {
+        interactions.respond(pending.id, result);
+      });
+    }
+  };
+  disposables.add(toDisposable(interactions.onDidChangePending(answerNewPending)));
+  const tool = ix.get(IAskUserQuestionTool);
   return { tool, request, telemetryTrack, registerTask, getTask, lastRegisteredTask: () => lastTask };
 }
 
 describe('AskUserQuestionTool', () => {
+  beforeEach(() => {
+    disposables = new DisposableStore();
+  });
+
+  afterEach(() => {
+    disposables.dispose();
+    interactions.purgeSession(TEST_SESSION_ID);
+  });
+
   it('exposes current metadata and schema', () => {
     const { tool } = makeTool();
 
@@ -167,7 +233,7 @@ describe('AskUserQuestionTool', () => {
     expect(request).toHaveBeenCalledOnce();
   });
 
-  it('builds the v1-aligned schema including an optional background flag', () => {
+  it('exposes background mode when all task controls are active', () => {
     const { tool } = makeTool();
     const params = tool.parameters as {
       properties: { background?: { type?: string; default?: boolean } };
@@ -175,6 +241,79 @@ describe('AskUserQuestionTool', () => {
 
     expect(params.properties.background?.type).toBe('boolean');
     expect(params.properties.background?.default).toBe(false);
+    expect(tool.description).toContain('background=true');
+    expect(tool.description).toContain('task_id');
+  });
+
+  it('hides and rejects background mode after a task control becomes inactive', async () => {
+    const activeTaskTools = new Set(TASK_TOOLS);
+    const { tool, request, registerTask } = makeTool({
+      activeTaskTools,
+    });
+
+    expect(tool.parameters).toHaveProperty('properties.background');
+    activeTaskTools.delete('TaskStop');
+
+    const params = tool.parameters as { properties: Record<string, unknown> };
+
+    expect(params.properties).not.toHaveProperty('background');
+    expect(tool.description.toLowerCase()).not.toContain('background');
+    expect(tool.description).not.toContain('task_id');
+    expect(tool.description).not.toContain('TaskOutput');
+
+    const result = await executeTool(tool, {
+      turnId: 0,
+      toolCallId: 'call_bg_disabled',
+      args: { ...input(), background: true },
+      signal,
+    });
+
+    expect(result).toEqual({
+      isError: true,
+      output:
+        'Background questions are not available for this agent because TaskList, TaskOutput, and TaskStop are not enabled.',
+    });
+    expect(registerTask).not.toHaveBeenCalled();
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it('preserves foreground answers when background mode is unavailable', async () => {
+    const { tool, request } = makeTool({ activeTaskTools: new Set() });
+
+    const result = await executeTool(tool, {
+      turnId: 0,
+      toolCallId: 'call_fg_disabled',
+      args: input(),
+      signal,
+    });
+
+    expect(result).toEqual({
+      isError: false,
+      output: JSON.stringify({ answers: { Postgres: true } }),
+    });
+    expect(request).toHaveBeenCalledOnce();
+  });
+
+  it('preserves foreground dismissal when background mode is unavailable', async () => {
+    const { tool } = makeTool({
+      activeTaskTools: new Set(),
+      request: async () => null,
+    });
+
+    const result = await executeTool(tool, {
+      turnId: 0,
+      toolCallId: 'call_fg_dismissed',
+      args: input(),
+      signal,
+    });
+
+    expect(result).toEqual({
+      isError: false,
+      output: JSON.stringify({
+        answers: {},
+        note: 'User dismissed the question without answering.',
+      }),
+    });
   });
 
   it('dispatches questions through the session question service', async () => {
@@ -205,7 +344,7 @@ describe('AskUserQuestionTool', () => {
           },
         ],
       },
-      { signal, agentId: 'main' },
+      { agentId: 'main', detached: false },
     );
     expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
       answered: 1,
@@ -241,7 +380,7 @@ describe('AskUserQuestionTool', () => {
           }),
         ],
       }),
-      { signal, agentId: 'main' },
+      { agentId: 'main', detached: false },
     );
   });
 
@@ -305,47 +444,9 @@ describe('AskUserQuestionTool', () => {
     expect(telemetryTrack).toHaveBeenCalledWith('question_dismissed', { trace_id: undefined });
   });
 
-  it('resolves question service error responses as dismissed answers', async () => {
-    const { tool } = makeTool({
-      request: async () => {
-        throw new Error2(CoreErrors.codes.INTERNAL, 'question broker error');
-      },
-    });
-
-    const result = await executeTool(tool, {
-      turnId: 0,
-      toolCallId: 'call_question',
-      args: input(),
-      signal,
-    });
-
-    expect(result).toMatchObject({ isError: false });
-    expect(result.output).toContain('dismissed');
-    expect(typeof result.output).toBe('string');
-    const output = typeof result.output === 'string' ? result.output : '';
-    expect(JSON.parse(output)).toEqual({
-      answers: {},
-      note: 'User dismissed the question without answering.',
-    });
-    expect(result.output).not.toContain('Do NOT call this tool again');
-  });
-
-  it('propagates aborts while waiting for the question service', async () => {
+  it('resolves dismissed when the waiting question is aborted', async () => {
     const controller = new AbortController();
-    const { tool } = makeTool({
-      request: async (_req, requestOptions) =>
-        new Promise<QuestionResult>((_resolve, reject) => {
-          requestOptions?.signal?.addEventListener(
-            'abort',
-            () => {
-              const error = new Error('Aborted');
-              error.name = 'AbortError';
-              reject(error);
-            },
-            { once: true },
-          );
-        }),
-    });
+    const { tool } = makeTool();
 
     const result = executeTool(tool, {
       turnId: 0,
@@ -355,31 +456,13 @@ describe('AskUserQuestionTool', () => {
     });
     controller.abort();
 
-    await expect(result).rejects.toHaveProperty('name', 'AbortError');
-  });
-
-  it('returns a distinct hard error when the host signals unsupported', async () => {
-    const { tool } = makeTool({
-      request: async () => {
-        throw new Error2(
-          CoreErrors.codes.NOT_IMPLEMENTED,
-          'Client does not support questions',
-        );
-      },
+    await expect(result).resolves.toMatchObject({ isError: false });
+    const settled = await result;
+    const output = typeof settled.output === 'string' ? settled.output : '';
+    expect(JSON.parse(output)).toEqual({
+      answers: {},
+      note: 'User dismissed the question without answering.',
     });
-
-    const result = await executeTool(tool, {
-      turnId: 0,
-      toolCallId: 'tc-ask-unsupported',
-      args: input(),
-      signal,
-    });
-
-    expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('connected client');
-    expect(result.output).toContain('does not support interactive questions');
-    expect(result.output).toContain('Do NOT call this tool again');
-    expect(result.output).toContain('Ask the user directly in your text response instead');
   });
 
   describe('background mode', () => {
@@ -409,9 +492,13 @@ describe('AskUserQuestionTool', () => {
       });
 
       expect(result.isError).toBe(false);
-      expect(result.output).toContain('task_id: q_test_task_id');
-      expect(result.output).toContain('automatic_notification: true');
-      expect(result.output).toContain('/tasks');
+      expect(result.output).toBe(
+        [
+          'task_id: q_test_task_id',
+          'status: running',
+          'next_step: Continue your work; the answer arrives automatically in a later message. Use TaskStop only to cancel the question.',
+        ].join('\n'),
+      );
       expect(registerTask).toHaveBeenCalledOnce();
       expect(registerTask.mock.calls[0]![1]).toMatchObject({ detached: true });
       expect(getTask).toHaveBeenCalledWith('q_test_task_id');
@@ -436,22 +523,31 @@ describe('AskUserQuestionTool', () => {
       expect(settlements).toEqual([{ status: 'completed' }]);
     });
 
-    it('settles killed when the background task is aborted', async () => {
-      const controller = new AbortController();
-      const { tool, lastRegisteredTask } = makeTool({
-        request: async (_req, requestOptions) =>
-          new Promise<QuestionResult>((_resolve, reject) => {
-            requestOptions?.signal?.addEventListener(
-              'abort',
-              () => {
-                const error = new Error('Aborted');
-                error.name = 'AbortError';
-                reject(error);
-              },
-              { once: true },
-            );
-          }),
+    it('detaches the background question from the asking turn', async () => {
+      const { tool, request, lastRegisteredTask } = makeTool();
+      await executeTool(tool, {
+        turnId: 4,
+        toolCallId: 'call_bg_detached',
+        args: { ...input(), background: true },
+        signal,
       });
+
+      const { sink } = makeSink();
+      await lastRegisteredTask()!.start(sink);
+
+      expect(request).toHaveBeenCalledOnce();
+      expect(request.mock.calls[0]![0]).toMatchObject({ turnId: 4, toolCallId: 'call_bg_detached' });
+      expect(request.mock.calls[0]![1]).toMatchObject({ detached: true });
+
+      await executeTool(tool, { turnId: 4, toolCallId: 'call_fg', args: input(), signal });
+
+      expect(request).toHaveBeenCalledTimes(2);
+      expect(request.mock.calls[1]![1]).not.toMatchObject({ detached: true });
+    });
+
+    it('settles completed with a dismissed result when the background task is aborted', async () => {
+      const controller = new AbortController();
+      const { tool, lastRegisteredTask } = makeTool();
       await executeTool(tool, {
         turnId: 0,
         toolCallId: 'call_bg_abort',
@@ -460,12 +556,18 @@ describe('AskUserQuestionTool', () => {
       });
 
       const task = lastRegisteredTask();
-      const { sink, settlements } = makeSink(controller.signal);
+      const { sink, outputs, settlements } = makeSink(controller.signal);
       const run = task!.start(sink);
       controller.abort();
       await run;
 
-      expect(settlements).toEqual([{ status: 'killed' }]);
+      expect(outputs).toEqual([
+        JSON.stringify({
+          answers: {},
+          note: 'User dismissed the question without answering.',
+        }),
+      ]);
+      expect(settlements).toEqual([{ status: 'completed' }]);
     });
   });
 });

@@ -4,6 +4,7 @@ import {
   Error2,
   ErrorCodes,
   EXTRA_SKILL_DIRS_SECTION,
+  IAgentRuntimeBindingService,
   IAgentSkillService,
   IBootstrapService,
   IConfigService,
@@ -33,6 +34,7 @@ import {
   type SkillDefinition,
   type ExtraSkillDirsConfig,
   type MergeAllAvailableSkillsConfig,
+  IAgentProfileService,
 } from '@moonshot-ai/agent-core-v2';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -40,15 +42,17 @@ import { z } from 'zod';
 import { errEnvelope, okEnvelope } from '../envelope';
 import {
   assertPromptFileRefs,
-  assertPromptSessionMediaRefs,
+  assertPromptPathRefs,
+  contentHasPathRefs,
   contentToCoreParts,
   resolvePromptMediaFiles,
+  resolvePromptSessionMediaRefs,
   type PromptMediaPreparation,
 } from '../lib/promptMedia';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
-import { ensureMainAgent } from '../transport/mainAgent';
 import { ErrorCode } from '../protocol/error-codes';
+import { ensureMainAgent as ensureMainAgentHandle } from '../transport/mainAgent';
 import {
   activateSkillRequestSchema,
   activateSkillResultSchema,
@@ -222,6 +226,15 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         const attachments = req.body.attachments ?? [];
         const attachmentParts: ContentPart[] = [];
         if (attachments.length > 0) {
+          if (contentHasPathRefs(attachments)) {
+            const mainAgent = await ensureMainAgentHandle(resolved.handle);
+            if (mainAgent.accessor.get(IAgentRuntimeBindingService).get().runtimeId !== 'local') {
+              throw new Error2(
+                ErrorCodes.REQUEST_INVALID,
+                'file attachments by server-local path require the local runtime',
+              );
+            }
+          }
           const catalog = resolved.handle.accessor.get(ISessionSkillCatalog);
           await catalog.ready;
           const skill = catalog.catalog.getSkill(parsed.id);
@@ -235,28 +248,39 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
             );
           }
           await assertPromptFileRefs(attachments, core.accessor.get(IFileService));
-          await assertPromptSessionMediaRefs(
+          await assertPromptPathRefs(attachments);
+          const resolvedSessionMedia = await resolvePromptSessionMediaRefs(
             attachments,
             resolved.handle.accessor.get(ISessionMediaStore),
           );
-          const telemetry = core.accessor.get(ITelemetryService).withContext({ sessionId: session_id });
+          const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
           const sessionDir = resolved.handle.accessor.get(ISessionContext).sessionDir;
           preparedMedia = await resolvePromptMediaFiles(
-            attachments,
+            resolvedSessionMedia,
             core.accessor.get(IFileService),
             core.accessor.get(IBootstrapService).cacheDir,
             {
               telemetry,
+              providerType: (await ensureMainAgentHandle(resolved.handle)).accessor
+                .get(IAgentProfileService)
+                .getModelProviderType(),
               resolveOriginalsDir: async () => sessionMediaOriginalsDir(sessionDir),
               resolveAttachmentsDir: async () => join(sessionDir, 'attachments'),
             },
           );
           attachmentParts.push(...contentToCoreParts(preparedMedia.content));
         }
-        const agent = await ensureMainAgent(resolved.handle);
-        await agent.accessor
-          .get(IAgentSkillService)
-          .activate({ name: parsed.id, args: req.body.args, content: attachmentParts });
+        const mainAgent = await ensureMainAgentHandle(resolved.handle);
+        const promptAttachments =
+          preparedMedia !== undefined && preparedMedia.attachments.length > 0
+            ? preparedMedia.attachments
+            : undefined;
+        await mainAgent.accessor.get(IAgentSkillService).activate({
+          name: parsed.id,
+          args: req.body.args,
+          content: attachmentParts,
+          attachments: promptAttachments,
+        });
         await preparedMedia?.discard();
         preparedMedia = undefined;
         requestLog(req)?.info({ session_id, skill_name: parsed.id }, 'skill activated');
@@ -363,6 +387,7 @@ function sendMappedError(
       case ErrorCodes.FILE_NOT_FOUND:
         reply.send(errEnvelope(ErrorCode.FILE_NOT_FOUND, err.message, requestId, err.stack));
         return;
+      case ErrorCodes.REQUEST_INVALID:
       case ErrorCodes.VALIDATION_FAILED:
         reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId, err.stack));
         return;

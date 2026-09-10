@@ -13,35 +13,30 @@
  *   dispatch to listeners inside the emitter's call stack).
  * 2. The approval / question / user-tool bridge: v1's engine calls the
  *   client's `requestApproval` / `requestQuestion` / `toolCall` callbacks
- *   (push), where v2 parks a pending interaction in the session's interaction
- *   kernel and waits for a response (pull). The bridge watches
- *   `onDidChangePending`, feeds each new pending interaction to the client
+ *   (push), where v2 parks a pending interaction in the process-global
+ *   interaction kernel and waits for a response (pull). The bridge watches
+ *   `onDidChangePending`, feeds each new pending interaction of this session
+ *   (matched by its `sessionId` tag) to the client
  *   callback — the base class's own public method, so the v1 semantics (the
  *   no-handler cancellation, the handler-failure error event) are inherited
- *   verbatim — and writes the outcome back through the typed session
- *   services. The kernel's `respond` no-ops on an id that is no longer
+ *   verbatim — and writes the outcome back through the kernel's `respond`.
+ *   The kernel's `respond` no-ops on an id that is no longer
  *   pending, so a late answer after a turn cancellation is safe.
  */
-import type {
-  ApprovalRequest,
-  ApprovalResponse,
-  Event,
-  QuestionRequest,
-  QuestionResult,
-  ToolCallRequest,
-  ToolCallResponse,
-  ToolInputDisplay,
-} from '@moonshot-ai/agent-core';
+import type { Event } from '@moonshot-ai/agent-core-v2/events';
+import type { ToolInputDisplay } from '@moonshot-ai/agent-core-v2/tool/toolInputDisplay';
 import {
+  agentContextOf,
+  INTERACTION_TAG_AGENT_ID,
+  INTERACTION_TAG_SESSION_ID,
   IAgentLifecycleService,
   IAgentProfileService,
-  IAgentTokenCountingService,
-  IAgentUsageService,
   IEventBus,
-  ISessionApprovalService,
-  ISessionInteractionService,
-  ISessionQuestionService,
+  interactions,
+  ISessionTokenCountingService,
+  ISessionUsageService,
   MAIN_AGENT_ID,
+  toDisposable,
   type Event2,
   type IAgentScopeHandle,
   type IDisposable,
@@ -49,6 +44,14 @@ import {
   type ISessionScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
 
+import type {
+  ApprovalRequest,
+  ApprovalResponse,
+  QuestionRequest,
+  QuestionResult,
+  ToolCallRequest,
+  ToolCallResponse,
+} from '#/interaction';
 import { translateDomainEvent } from '#/v2/event-mapper';
 
 /**
@@ -67,7 +70,7 @@ export interface SessionEventSink {
 }
 
 /**
- * The v2 approval payload (`agent-core-v2/src/session/approval/approval.ts` —
+ * The v2 approval payload (`agent-core-v2/src/agent/interaction/approval.ts` —
  * the package index exports only the service identifier, not the model). A
  * superset of v1's `ApprovalRequest`: the extra id/sessionId/agentId fields
  * are stripped when the handler is fed.
@@ -83,7 +86,7 @@ interface ApprovalInteractionPayload {
   readonly display: ToolInputDisplay;
 }
 
-/** The v2 question payload (`agent-core-v2/src/session/question/question.ts`). */
+/** The v2 question payload (`agent-core-v2/src/agent/interaction/question.ts`). */
 interface QuestionInteractionPayload {
   readonly id?: string;
   readonly turnId?: number;
@@ -110,23 +113,31 @@ export class SessionEventWiring {
     private readonly session: ISessionScopeHandle,
     private readonly sink: SessionEventSink,
   ) {
-    const interactions = session.accessor.get(ISessionInteractionService);
+    const manager = session.accessor.get(IAgentLifecycleService);
     this.disposables.push(
-      interactions.onDidChangePending(() => {
-        this.bridgeNewPendingInteractions();
+      toDisposable(
+        interactions.onDidChangePending(() => {
+          this.bridgeNewPendingInteractions();
+        }),
+      ),
+      toDisposable(
+        interactions.onDidResolve(({ id }) => {
+          this.bridgedInteractionIds.delete(id);
+        }),
+      ),
+    );
+    this.disposables.push(
+      manager.onDidCreate((context) => {
+        const handle = manager.handleOf(context.agentId);
+        if (handle !== undefined) this.attachAgent(handle);
+      }),
+      manager.onDidClose((context) => {
+        this.detachAgent(context.agentId);
       }),
     );
-    const lifecycle = session.accessor.get(IAgentLifecycleService);
-    this.disposables.push(
-      lifecycle.onDidCreate((agent) => {
-        this.attachAgent(agent);
-      }),
-      lifecycle.onDidDispose((agentId) => {
-        this.detachAgent(agentId);
-      }),
-    );
-    for (const agent of lifecycle.list()) {
-      this.attachAgent(agent);
+    for (const agent of manager.list()) {
+      const handle = manager.handleOf(agent.agentId);
+      if (handle !== undefined) this.attachAgent(handle);
     }
   }
 
@@ -166,7 +177,10 @@ export class SessionEventWiring {
 
   private bridgeNewPendingInteractions(): void {
     if (this.disposed) return;
-    const pending = this.session.accessor.get(ISessionInteractionService).listPending();
+    const pending = interactions.findAll({
+      resolved: false,
+      tags: { [INTERACTION_TAG_SESSION_ID]: this.session.id },
+    });
     for (const interaction of pending) {
       if (this.bridgedInteractionIds.has(interaction.id)) continue;
       this.bridgedInteractionIds.add(interaction.id);
@@ -201,9 +215,9 @@ export class SessionEventWiring {
         action: payload.action,
         display: payload.display,
         sessionId: this.session.id,
-        agentId: payload.agentId ?? interaction.origin.agentId ?? MAIN_AGENT_ID,
+        agentId: payload.agentId ?? interactionAgentId(interaction) ?? MAIN_AGENT_ID,
       });
-      this.session.accessor.get(ISessionApprovalService).decide(interaction.id, response);
+      interactions.respond(interaction.id, response);
     } catch {
       // The session scope died mid-bridge (close/reload): the parked engine
       // request died with it, and `respond` no-ops on an unknown id anyway.
@@ -224,14 +238,9 @@ export class SessionEventWiring {
         toolCallId: payload.toolCallId,
         questions: payload.questions,
         sessionId: this.session.id,
-        agentId: interaction.origin.agentId ?? MAIN_AGENT_ID,
+        agentId: interactionAgentId(interaction) ?? MAIN_AGENT_ID,
       });
-      const questions = this.session.accessor.get(ISessionQuestionService);
-      if (result === null) {
-        questions.dismiss(interaction.id);
-      } else {
-        questions.answer(interaction.id, result);
-      }
+      interactions.respond(interaction.id, result);
     } catch {
       // See bridgeApproval.
     }
@@ -250,11 +259,16 @@ export class SessionEventWiring {
         toolCallId: payload.toolCallId,
         args: payload.args,
       });
-      this.session.accessor.get(ISessionInteractionService).respond(interaction.id, result);
+      interactions.respond(interaction.id, result);
     } catch {
       // See bridgeApproval.
     }
   }
+}
+
+function interactionAgentId(interaction: Interaction): string | undefined {
+  const value = interaction.tags[INTERACTION_TAG_AGENT_ID];
+  return typeof value === 'string' ? value : undefined;
 }
 
 /**
@@ -270,22 +284,31 @@ export class SessionEventWiring {
  */
 function withStatusSnapshot(agent: IAgentScopeHandle, event: Event2<any>): Event2<any> {
   const profile = agent.accessor.get(IAgentProfileService) as IAgentProfileService | undefined;
-  const usageService = agent.accessor.get(IAgentUsageService) as IAgentUsageService | undefined;
-  const tokenCounting = agent.accessor.get(IAgentTokenCountingService) as
-    | IAgentTokenCountingService
+  const usageService = agent.accessor.get(ISessionUsageService) as ISessionUsageService | undefined;
+  const tokenCounting = agent.accessor.get(ISessionTokenCountingService) as
+    | ISessionTokenCountingService
     | undefined;
   if (profile === undefined || usageService === undefined || tokenCounting === undefined) {
     return event;
   }
   // Externally reported context size, resolved by the `[token_counting]`
-  // strategy inside the service (`IAgentTokenCountingService.statusSize`).
-  const contextTokens = tokenCounting.statusSize();
+  // strategy inside the service (`ISessionTokenCountingService.statusSize`).
+  const context = agentContextOf(agent);
+  const contextTokens = tokenCounting.statusSize(context);
   const capabilities = profile.getModelCapabilities();
   const maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
+  const contextUsage =
+    Number.isFinite(contextTokens) &&
+    maxContextTokens !== undefined &&
+    Number.isFinite(maxContextTokens) &&
+    maxContextTokens > 0
+      ? contextTokens / maxContextTokens
+      : undefined;
   return Object.assign({}, event, {
-    usage: usageService.status(),
+    usage: usageService.status(context),
     contextTokens,
     maxContextTokens,
+    contextUsage,
     model: profile.getModel(),
   }) as unknown as Event2<any>;
 }

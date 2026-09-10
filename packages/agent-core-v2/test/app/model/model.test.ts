@@ -10,11 +10,9 @@ import {
   modelsFromToml,
   modelsToToml,
 } from '#/app/kosongConfig/configSection';
-import { type ModelRecord } from '#/kosong/model/model';
-import { effectiveModelConfig } from '#/kosong/model/modelAuth';
+import { type ModelRecord } from '#/llm-adapter/model/model';
+import { effectiveModelConfig } from '#/llm-adapter/model/model-auth';
 
-import '#/kosong/provider/providers/kimi/kimi.contrib';
-import '#/kosong/provider/providers/standard.contrib';
 
 describe('effectiveModelConfig', () => {
   it('clamps the input cap to the effective total window without mutating the source', () => {

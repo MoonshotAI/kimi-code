@@ -1,4 +1,5 @@
-import type { ITelemetryAppender, TelemetryProperties } from './telemetry';
+import type { ITelemetryAppender, TelemetryAppenderRecord } from './telemetry';
+import type { TelemetryProperties } from './context';
 
 export interface ConsoleAppenderOptions {
   readonly prefix?: string;
@@ -19,10 +20,12 @@ export class ConsoleAppender implements ITelemetryAppender {
     this.log = options.log ?? defaultLog;
   }
 
-  track(event: string, properties?: TelemetryProperties): void {
+  track(record: TelemetryAppenderRecord): void {
     const payload =
-      properties === undefined ? '' : ` ${stringifyProperties(properties, this.pretty)}`;
-    this.log(`${this.prefix} ${event}${payload}`);
+      Object.keys(record.properties).length === 0
+        ? ''
+        : ` ${stringifyProperties(record.properties, this.pretty)}`;
+    this.log(`${this.prefix} ${record.event}${payload}`);
   }
 }
 

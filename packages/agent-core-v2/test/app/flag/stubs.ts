@@ -20,6 +20,7 @@ export function stubFlag(enabled: boolean | ((id: string) => boolean) = false): 
     enabled: isEnabled,
     snapshot: (): ExperimentalFlagMap => ({}),
     enabledIds: () => [],
+    exposedIds: () => [],
     explain: (): ExperimentalFeatureState | undefined => undefined,
     explainAll: () => [],
     setConfigOverrides: (_overrides: ExperimentalFlagConfig | undefined) => {},

@@ -50,11 +50,6 @@ export function makeCarriageReturnsVisible(text: string): string {
   return text.replaceAll('\r', '\\r');
 }
 
-/**
- * Split text into lines, keeping each line's trailing `\n` (the final line
- * may lack one). Same semantics as Python's `str.splitlines(keepends=True)`
- * restricted to `\n` boundaries.
- */
 export function splitLinesKeepingTerminator(text: string): string[] {
   if (text.length === 0) return [];
   const lines: string[] = [];

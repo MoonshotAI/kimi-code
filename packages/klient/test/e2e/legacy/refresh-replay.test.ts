@@ -188,13 +188,12 @@ describeLive('refresh-replay (live server required)', () => {
   it('phase 0: /auth returns AuthSummary shape', async () => {
     const log = createCaseLogger('refresh: auth');
     const auth = await getEnvelope<{
-      ready: boolean;
+      models_ready: boolean;
       providers_count: number;
-      default_model: string | null;
       managed_provider: { name: string; status: string } | null;
     }>('/auth', log);
     log('data', auth);
-    expect(typeof auth.ready).toBe('boolean');
+    expect(typeof auth.models_ready).toBe('boolean');
     expect(typeof auth.providers_count).toBe('number');
   });
 

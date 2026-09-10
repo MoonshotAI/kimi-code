@@ -20,8 +20,8 @@ kimi <subcommand> [options]
 | `--model <model>` | `-m` | 为本次启动指定模型别名。省略时新会话使用配置文件中的 `default_model` |
 | `--prompt <prompt>` | `-p` | 非交互执行单次 prompt，并把 Assistant 输出流式写到 stdout。该模式不会打开 TUI |
 | `--output-format <format>` | | 设置非交互输出格式，支持 `text` 与 `stream-json`。仅可与 `--prompt` 一起使用，默认 `text` |
-| `--yolo` | `-y` | 自动批准普通工具调用，跳过审批请求 |
-| `--auto` | | 以 auto 权限模式启动；工具审批自动处理，Agent 不会向用户提问 |
+| `--yolo` | `-y` | 以 "Ask When Needed" 模式启动：常规修改和命令自动完成；高危操作、提问和计划仍会问你 |
+| `--auto` | | 以 "Never Ask" 模式启动：完全不打断，所有操作和判断自动完成 |
 | `--plan` | | 以 Plan 模式启动新会话，AI 会优先使用只读工具进行探索和规划 |
 | `--skills-dir <dir>` | | 从指定目录加载 Skills，替换自动发现的用户和项目目录。可重复传入 |
 | `--agent <name>` | | 以指定 Agent 作为 main agent 启动新会话。不能与 `--session`/`--continue` 同时使用 |
@@ -43,7 +43,7 @@ kimi <subcommand> [options]
 - `--prompt` 不能与 `--yolo`、`--auto` 或 `--plan` 同时使用——非交互模式固定使用 `auto` 权限
 - `--output-format` 只能与 `--prompt` 一起使用
 
-恢复会话时，可以通过 `--auto`、`--yolo` 或 `--plan` 覆盖原会话保存的权限或计划模式。例如，`kimi --continue --auto` 会恢复最近会话并切换到 auto 权限模式。
+恢复会话时，可以通过 `--auto`、`--yolo` 或 `--plan` 覆盖原会话保存的权限或计划模式。例如，`kimi --continue --auto` 会恢复最近会话并切换到 "Never Ask" 模式。
 
 ## 典型用法
 
@@ -157,7 +157,7 @@ kimi acp
 
 在当前终端前台运行本地 Kimi 服务 —— 同一个进程同时挂载 REST + WebSocket API 与 web UI —— 并在服务就绪后用默认浏览器打开 web UI。命令会一直挂在终端，直到收到 `SIGINT` / `SIGTERM`（如 `Ctrl-C`）时干净退出。
 
-服务运行时，`GET /openapi.json` 会返回 REST OpenAPI 文档，`GET /asyncapi.json` 会返回本地 WebSocket 协议的 AsyncAPI 文档。用 API 驱动会话的完整流程见[本地服务与 API](../guides/server.md)，协议细节见[服务 API](./server-api.md)。
+服务运行时，`GET /openapi.json` 会返回 REST OpenAPI 文档，`GET /asyncapi.json` 会返回本地 WebSocket 协议的 AsyncAPI 文档。用 API 驱动会话的完整流程见[服务 API：用 API 驱动一个会话](./server-api.md#用-api-驱动一个会话)，协议细节见[服务 API](./server-api.md)。
 
 ```sh
 kimi web                 # 前台运行服务并打开浏览器
@@ -175,6 +175,7 @@ kimi web --port 58628    # 指定绑定端口
 | `--log-level <level>` | 按所选级别开启服务日志；默认不输出 |
 | `--debug-endpoints` | 挂载 `/api/v1/debug/*` 调试路由（默认关闭） |
 | `--dangerous-bypass-auth` | 关闭所有 REST 与 WebSocket 路由的 bearer token 鉴权，使 web UI 无需 token 即可连接；仅用于可信网络或自有鉴权代理之后 |
+| `--web-title <title>` | 自定义 web UI 的浏览器标签页标题；默认为工作区目录名 |
 | `--no-open` | 就绪后不自动打开浏览器 |
 
 `kimi web` 默认只绑定本机 loopback 地址，并在启动横幅中打印 bearer token；web UI 通过 URL 的 `#token=` 片段自动完成鉴权。

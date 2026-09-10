@@ -79,8 +79,7 @@ export function parseAgentFileText(options: ParseAgentFileOptions): AgentFileDef
     options.path,
   );
   const rawSubagents = parseStringList(frontmatter['subagents'], 'subagents', options.path);
-  const subagents =
-    rawSubagents?.length === 1 && rawSubagents[0] === '*' ? undefined : rawSubagents;
+  const subagents = rawSubagents;
 
   const prompt = parsed.body.trim();
   if (prompt.length === 0) {

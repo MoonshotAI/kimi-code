@@ -2,11 +2,17 @@ import { basename, isAbsolute } from 'pathe';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { encodeWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';
+import { IEventService } from '#/app/event/event';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
 import { IWorkspaceService, type Workspace, type WorkspaceUpdate } from './workspace';
+import {
+  WorkspaceCreated,
+  WorkspaceDeleted,
+  WorkspaceUpdated,
+} from './workspaceEvents';
 import {
   collectAliasIds,
   dedupeByRoot,
@@ -25,6 +31,7 @@ export class WorkspaceService implements IWorkspaceService {
     @IWorkspacePersistence private readonly store: IWorkspacePersistence,
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
+    @IEventService private readonly event: IEventService,
   ) {}
 
   list(): Promise<readonly Workspace[]> {
@@ -94,6 +101,11 @@ export class WorkspaceService implements IWorkspaceService {
       byId.set(ws.id, ws);
       deletedIds.delete(ws.id);
       await this.store.save({ workspaces: [...byId.values()], deletedIds: [...deletedIds] });
+      this.event.publish(
+        existing === undefined
+          ? new WorkspaceCreated({ payload: { workspace: ws } })
+          : new WorkspaceUpdated({ payload: { workspace: ws } }),
+      );
       return ws;
     });
   }
@@ -112,6 +124,7 @@ export class WorkspaceService implements IWorkspaceService {
         workspaces: catalog.workspaces.map((ws) => (ws.id === id ? updated : ws)),
         deletedIds: catalog.deletedIds,
       });
+      this.event.publish(new WorkspaceUpdated({ payload: { workspace: updated } }));
       return updated;
     });
   }
@@ -143,6 +156,7 @@ export class WorkspaceService implements IWorkspaceService {
         workspaces: catalog.workspaces.filter((ws) => workspaceRootKey(ws.root) !== rootKey),
         deletedIds: [...new Set([...catalog.deletedIds, ...aliasIds])],
       });
+      this.event.publish(new WorkspaceDeleted({ payload: { workspaceId: id, root } }));
     });
   }
 

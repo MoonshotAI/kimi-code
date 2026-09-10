@@ -8,15 +8,15 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import type { Event } from '@moonshot-ai/agent-core';
+import type { Event } from '#/index';
 import {
   IAgentLifecycleService,
   IAgentProfileService,
-  IAgentTokenCountingService,
-  IAgentUsageService,
+  IAgentScopeContext,
   IEventBus,
-  ISessionInteractionService,
-  type IAgentScopeHandle,
+  ISessionTokenCountingService,
+  ISessionUsageService,
+  makeAgentScopeContext,
   type ISessionScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
 
@@ -48,8 +48,12 @@ class FakeAgentHandle {
   readonly kind = 2;
   readonly bus = new FakeAgentBus();
   readonly accessor;
+  readonly context;
   private readonly services = new Map<unknown, unknown>();
   constructor(readonly id: string) {
+    const scopeContext = makeAgentScopeContext({ agentId: id, agentScope: `agents/${id}` });
+    this.context = scopeContext.agentContext;
+    this.services.set(IAgentScopeContext, scopeContext);
     this.services.set(IEventBus, this.bus);
     this.accessor = {
       get: (token: unknown) => this.services.get(token),
@@ -63,18 +67,15 @@ class FakeAgentHandle {
 
 function makeSession(agents: FakeAgentHandle[]): ISessionScopeHandle {
   const lifecycle = {
-    list: () => agents,
+    list: () => agents.map((agent) => agent.context),
+    get: (agentId: string) => agents.find((agent) => agent.id === agentId)?.context,
+    handleOf: (agentId: string) => agents.find((agent) => agent.id === agentId),
     onDidCreate: () => ({ dispose: () => {} }),
-    onDidDispose: () => ({ dispose: () => {} }),
-  };
-  const interactions = {
-    onDidChangePending: () => ({ dispose: () => {} }),
-    listPending: () => [],
+    onDidClose: () => ({ dispose: () => {} }),
   };
   const accessor = {
     get: (token: unknown): unknown => {
       if (token === IAgentLifecycleService) return lifecycle;
-      if (token === ISessionInteractionService) return interactions;
       return undefined;
     },
   };
@@ -101,12 +102,12 @@ const USAGE = {
 };
 
 function bindStatusServices(agent: FakeAgentHandle, model: string): void {
-  agent.set(IAgentTokenCountingService, { statusSize: () => 10 });
+  agent.set(ISessionTokenCountingService, { statusSize: () => 10 });
   agent.set(IAgentProfileService, {
     getModel: () => model,
     getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
   });
-  agent.set(IAgentUsageService, { status: () => USAGE });
+  agent.set(ISessionUsageService, { status: () => USAGE });
 }
 
 // ---------------------------------------------------------------------------
@@ -138,6 +139,7 @@ describe('SessionEventWiring status snapshot fold', () => {
       usage: USAGE,
       contextTokens: 10,
       maxContextTokens: 128_000,
+      contextUsage: 10 / 128_000,
       model: 'sub-model',
     });
     expect(events[1]).toMatchObject({

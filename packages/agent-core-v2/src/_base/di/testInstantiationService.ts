@@ -262,6 +262,14 @@ export class TestInstantiationService extends InstantiationService implements ID
       super.dispose();
     }
   }
+
+  public override disposeAsync(): Promise<void> {
+    sinon.restore();
+    if (this._properDispose) {
+      return super.disposeAsync();
+    }
+    return Promise.resolve();
+  }
 }
 
 interface SinonOptions {

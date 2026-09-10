@@ -5,6 +5,7 @@ import type { McpServerInfo, SessionStatus, SessionUsage } from '@moonshot-ai/ki
 import { buildMcpStatusReportLines } from '../components/messages/mcp-status-panel';
 import { buildStatusReportLines } from '../components/messages/status-panel';
 import { buildUsageReportLines, UsagePanelComponent, type ManagedUsageReport } from '../components/messages/usage-panel';
+import { isExperimentalFlagEnabled } from './experimental-flags';
 import {
   FEEDBACK_ISSUE_URL,
   FEEDBACK_STATUS_CANCELLED,
@@ -17,7 +18,7 @@ import {
   FEEDBACK_TELEMETRY_EVENT,
   feedbackIdLine,
   feedbackSessionLine,
-  KIMI_CODE_SIGNUP_URL,
+  kimiCodeSignupUrl,
   withFeedbackVersionPrefix,
 } from '../constant/feedback';
 import { DEFAULT_OAUTH_PROVIDER_NAME, isManagedUsageProvider } from '../constant/kimi-tui';
@@ -55,7 +56,7 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
   }
   if (!signedIn) {
     host.showStatus(FEEDBACK_STATUS_NOT_SIGNED_IN);
-    host.showStatus(KIMI_CODE_SIGNUP_URL);
+    host.showStatus(kimiCodeSignupUrl());
     host.showStatus(FEEDBACK_ISSUE_URL);
     return;
   }
@@ -176,6 +177,8 @@ export async function showStatusReport(host: SlashCommandHost): Promise<void> {
     thinkingEffort: appState.thinkingEffort,
     permissionMode: appState.permissionMode,
     planMode: appState.planMode,
+    towerMode: appState.towerMode,
+    towerAvailable: isExperimentalFlagEnabled('tower'),
     contextUsage: appState.contextUsage,
     contextTokens: appState.contextTokens,
     maxContextTokens: appState.maxContextTokens,
@@ -195,12 +198,10 @@ export async function showMcpServers(host: SlashCommandHost): Promise<void> {
   try {
     if (host.session !== undefined) {
       servers = await host.session.listMcpServers();
-    } else if (host.engineV2) {
+    } else {
       // v2 session-less: the MCP connection set is workspace-scoped, so it is
       // inspectable before the first session exists.
       servers = await host.harness.listWorkspaceMcpServers(host.state.appState.workDir);
-    } else {
-      servers = await host.requireSession().listMcpServers();
     }
   } catch (error) {
     host.showError(`Failed to load MCP servers: ${formatErrorMessage(error)}`);

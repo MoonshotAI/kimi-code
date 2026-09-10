@@ -13,7 +13,8 @@ import {
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IFlagService } from '#/app/flag/flag';
+import { IConfigService } from '#/app/config/config';
+import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import {
   SESSION_INDEX_MANIFEST,
@@ -26,10 +27,12 @@ import {
   SessionIndexMirror,
 } from '#/app/sessionIndex/sessionIndexMirrorService';
 import { drainQueryStoreDisposals, MiniDbQueryStore } from '#/persistence/backends/minidb/miniDbQueryStore';
+import { DATABASE_SECTION } from '#/persistence/configSection';
 import { IQueryStore } from '#/persistence/interface/queryStore';
 
 import { stubBootstrap } from '../bootstrap/stubs';
-import { stubFlag } from '../flag/stubs';
+import { stubConfigService } from '../config/stubs';
+import { recordingTelemetry, type TelemetryRecord } from '../telemetry/stubs';
 import { stubLog } from '../../_base/log/stubs';
 
 const WORKSPACE = 'wd_test';
@@ -83,11 +86,15 @@ describe('SessionIndexMirror', () => {
     await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, { seq: GENERATION });
   }
 
-  function build(flagEnabled = true): ISessionIndexMirror {
+  function build(
+    baseEnabled = true,
+    telemetry: ITelemetryService = noopTelemetryService,
+  ): ISessionIndexMirror {
     const host = createScopedTestHost([
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
-      stubPair(IFlagService, stubFlag(flagEnabled)),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: baseEnabled } })),
+      stubPair(ITelemetryService, telemetry),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -144,7 +151,7 @@ describe('SessionIndexMirror', () => {
     expect(counters.get(WORKSPACE)).toEqual({ active: 0, archived: 1 });
   });
 
-  it('is a no-op when the read-model flag is off', async () => {
+  it('is a no-op when the read model is disabled', async () => {
     build(false);
     mirror.record(summary('a'));
     expect(mirror.pending()).toEqual([]);
@@ -155,7 +162,8 @@ describe('SessionIndexMirror', () => {
     const host = createScopedTestHost([
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
-      stubPair(IFlagService, stubFlag(true)),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -206,6 +214,59 @@ describe('SessionIndexMirror', () => {
     expect(mirror.pending()).toEqual([]);
     expect(await queryStore.get(sessionCollection(GENERATION), 'a')).toMatchObject({
       id: 'a',
+    });
+  });
+
+  it('tracks the give-up event once per consecutive failure episode', async () => {
+    const records: TelemetryRecord[] = [];
+    build(true, recordingTelemetry(records));
+    await publishGeneration();
+
+    const realBatch = queryStore.batch.bind(queryStore);
+    queryStore.batch = async () => {
+      throw new Error('injected flush failure');
+    };
+    const giveUps = (): TelemetryRecord[] =>
+      records.filter((record) => record.event === 'session_index_mirror_give_up');
+
+    mirror.record(summary('a'));
+    for (let i = 0; i < 8; i++) await mirror.drain();
+    expect(giveUps()).toHaveLength(1);
+    expect(giveUps()[0]?.properties).toMatchObject({
+      pending_count: 1,
+      consecutive_failures: 5,
+    });
+
+    queryStore.batch = realBatch;
+    await mirror.drain();
+    expect(mirror.pending()).toEqual([]);
+
+    queryStore.batch = async () => {
+      throw new Error('injected flush failure');
+    };
+    mirror.record(summary('a', { updatedAt: 9 }));
+    for (let i = 0; i < 6; i++) await mirror.drain();
+    expect(giveUps()).toHaveLength(2);
+  });
+
+  it('tracks the give-up event when unpublished flushes precede a throwing one', async () => {
+    const records: TelemetryRecord[] = [];
+    build(true, recordingTelemetry(records));
+
+    mirror.record(summary('a'));
+    for (let i = 0; i < 5; i++) await mirror.drain();
+    expect(records).toEqual([]);
+
+    await publishGeneration();
+    queryStore.batch = async () => {
+      throw new Error('injected flush failure');
+    };
+    for (let i = 0; i < 3; i++) await mirror.drain();
+    const giveUps = records.filter((record) => record.event === 'session_index_mirror_give_up');
+    expect(giveUps).toHaveLength(1);
+    expect(giveUps[0]?.properties).toMatchObject({
+      pending_count: 1,
+      consecutive_failures: 6,
     });
   });
 });

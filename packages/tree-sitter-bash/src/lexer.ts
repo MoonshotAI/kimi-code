@@ -254,6 +254,19 @@ const CASE_ENABLING_WORDS: ReadonlySet<string> = new Set(['if', 'then', 'elif', 
  * keywords in CASE_ENABLING_WORDS — so `echo case` does not confuse the
  * scan. `esac` pops the innermost open case regardless of position (the
  * reference scanner emits the esac token even in argument position).
+ *
+ * Heredoc-aware: a `<<` / `<<-` operator queues its delimiter word, and the
+ * body lines of every pending heredoc are skipped wholesale right after
+ * the next newline — quotes, parens and substitutions inside a heredoc
+ * body must not affect the paren count. `((` opens an arithmetic region,
+ * skipped as one balanced unit so a left-shift `<<` is not mistaken for a
+ * heredoc operator. Comments (`#` at the start of a word, judged by the
+ * preceding character after looking through `\`+newline continuations)
+ * are skipped to end of line, `${ ... }` / `$[ ... ]` expansions,
+ * word-glued `[ ... ]` subscripts, and `[[ ... ]]` conditional regions
+ * are skipped as balanced units, so a `<<` inside any of these
+ * non-redirection contexts is likewise not mistaken for a heredoc
+ * operator.
  */
 export function scanBalancedStatements(
   source: string,
@@ -266,6 +279,8 @@ export function scanBalancedStatements(
   let nesting = 0;
   /** Paren depths at which each open case_statement started. */
   const caseDepths: number[] = [];
+  /** Heredoc delimiters queued since the last newline. */
+  const pendingHeredocs: { delimiter: string; stripTabs: boolean }[] = [];
   let j = i;
   /** What preceded the current position: 'start' | 'sep' | 'keyword' | 'word'. */
   let previous: 'start' | 'sep' | 'keyword' | 'word' = 'start';
@@ -299,7 +314,16 @@ export function scanBalancedStatements(
       j++;
       continue;
     }
-    if (ch === '\n' || ch === ';' || ch === '&' || ch === '|') {
+    if (ch === '\n') {
+      j++;
+      if (pendingHeredocs.length > 0) {
+        j = skipHeredocBodies(source, budget, j, end, pendingHeredocs);
+        pendingHeredocs.length = 0;
+      }
+      previous = 'sep';
+      continue;
+    }
+    if (ch === ';' || ch === '&' || ch === '|') {
       previous = 'sep';
       j++;
       continue;
@@ -309,7 +333,50 @@ export function scanBalancedStatements(
       j++;
       continue;
     }
+    if (ch === '#') {
+      let p = j - 1;
+      while (p - 1 >= i && source[p] === '\n' && source[p - 1] === '\\') p -= 2;
+      const prev = p >= i ? source[p] : undefined;
+      if (prev === undefined || isBlank(prev) || prev === '\n' || prev === ';' || prev === '&' || prev === '|' || prev === '(') {
+        while (j < end && source[j] !== '\n') j++;
+        continue;
+      }
+    }
+    if (ch === '$' && (source[j + 1] === '{' || source[j + 1] === '[')) {
+      const open = source[j + 1]!;
+      j = scanBalanced(source, budget, j + 1, end, open, open === '{' ? '}' : ']', depth + 1).end;
+      previous = 'word';
+      continue;
+    }
+    if (ch === '[' && source[j + 1] === '[' && previous !== 'word') {
+      j = scanBalanced(source, budget, j, end, '[', ']', depth + 1).end;
+      previous = 'word';
+      continue;
+    }
+    if (ch === '[' && j > i && isWordChar(source[j - 1])) {
+      j = scanBalanced(source, budget, j, end, '[', ']', depth + 1).end;
+      previous = 'word';
+      continue;
+    }
+    if (ch === '<') {
+      const heredoc = scanHeredocDelimiter(source, budget, j, end, depth);
+      if (heredoc !== null) {
+        pendingHeredocs.push(heredoc);
+        j = heredoc.end;
+      } else {
+        j++;
+      }
+      previous = 'word';
+      continue;
+    }
     if (ch === '(') {
+      if (source[j + 1] === '(') {
+        const arith = scanBalanced(source, budget, j, end, '(', ')', depth + 1);
+        if (j === i) return { end: arith.end, balanced: arith.balanced };
+        j = arith.end;
+        previous = 'word';
+        continue;
+      }
       nesting++;
       previous = 'sep';
       j++;
@@ -349,6 +416,149 @@ export function scanBalancedStatements(
     j++;
   }
   return { end, balanced: false };
+}
+
+/** Parse a heredoc operator (`<<` / `<<-`) and its delimiter word, starting
+ *  at `i` (which points at the first `<`). Returns the delimiter with quotes
+ *  and backslashes removed (mirroring the parser's extractHeredocSpec),
+ *  whether `<<-` strips leading tabs, and the index just past the delimiter
+ *  word — or null when this `<` does not open a heredoc with a non-empty
+ *  delimiter (`<<<` herestring, another redirect, or malformed input).
+ *  Substitution syntax inside the delimiter word (`$( )`, `${ }`, `$[ ]`,
+ *  backticks) is scanned wholesale as part of the word. */
+function scanHeredocDelimiter(
+  source: string,
+  budget: ParseBudget,
+  i: number,
+  end: number,
+  depth: number,
+): { delimiter: string; stripTabs: boolean; end: number } | null {
+  if (source[i + 1] !== '<') return null;
+  let j = i + 2;
+  if (source[j] === '<') return null;
+  let stripTabs = false;
+  if (source[j] === '-') {
+    stripTabs = true;
+    j++;
+  }
+  while (j < end && (source[j] === ' ' || source[j] === '\t' || source[j] === '\r')) j++;
+  let raw = '';
+  while (j < end) {
+    const ch = source[j]!;
+    if (ch === ' ' || ch === '\t' || ch === '\r' || ch === '\n') break;
+    if (ch === '&' || ch === '|' || ch === ';' || ch === '(' || ch === ')' || ch === '<' || ch === '>') break;
+    if (ch === '$' && (source[j + 1] === '(' || source[j + 1] === '{' || source[j + 1] === '[')) {
+      const open = source[j + 1]!;
+      const region =
+        open === '('
+          ? scanBalancedStatements(source, budget, j + 1, end, depth + 1)
+          : scanBalanced(source, budget, j + 1, end, open, open === '{' ? '}' : ']', depth + 1);
+      if (!region.balanced) return null;
+      raw += source.slice(j, region.end);
+      j = region.end;
+      continue;
+    }
+    if (ch === '`') {
+      const backtickEnd = skipBacktick(source, budget, j, end);
+      if (backtickEnd >= end) return null;
+      raw += source.slice(j, backtickEnd);
+      j = backtickEnd;
+      continue;
+    }
+    if (ch === '\\') {
+      if (j + 1 >= end || source[j + 1] === '\n') return null;
+      raw += ch + source[j + 1];
+      j += 2;
+      continue;
+    }
+    if (ch === "'") {
+      const close = source.indexOf("'", j + 1);
+      if (close === -1 || close >= end) return null;
+      raw += source.slice(j, close + 1);
+      j = close + 1;
+      continue;
+    }
+    if (ch === '"') {
+      let k = j + 1;
+      for (;;) {
+        if (k >= end) return null;
+        if (source[k] === '\\') {
+          k += 2;
+          continue;
+        }
+        if (source[k] === '"') break;
+        k++;
+      }
+      raw += source.slice(j, k + 1);
+      j = k + 1;
+      continue;
+    }
+    raw += ch;
+    j++;
+  }
+  let delimiter = '';
+  for (let k = 0; k < raw.length; k++) {
+    const ch = raw[k]!;
+    if (ch === '\\' && k + 1 < raw.length) {
+      delimiter += raw[k + 1];
+      k++;
+    } else if (ch !== '"' && ch !== "'") {
+      delimiter += ch;
+    }
+  }
+  if (delimiter.length === 0) return null;
+  return { delimiter, stripTabs, end: j };
+}
+
+/** Skip the body lines of each queued heredoc, starting at `i` (just past
+ *  the newline that ended the command line). Bodies are consumed in queue
+ *  order, each up to its delimiter line (`<<-` allows leading tabs before
+ *  the marker), mirroring readHeredocBody; a delimiter directly followed
+ *  by `)` also closes the body — the paren belongs to the enclosing
+ *  substitution and is left for the paren scan. A body whose delimiter
+ *  never appears swallows the rest of the range. */
+function skipHeredocBodies(
+  source: string,
+  budget: ParseBudget,
+  i: number,
+  end: number,
+  specs: readonly { delimiter: string; stripTabs: boolean }[],
+): number {
+  let j = i;
+  for (const spec of specs) {
+    let lineStart = j;
+    let closed = false;
+    while (lineStart < end) {
+      budget.progress();
+      let marker = lineStart;
+      if (spec.stripTabs) {
+        while (marker < end && source[marker] === '\t') marker++;
+      }
+      if (source.startsWith(spec.delimiter, marker)) {
+        const after = marker + spec.delimiter.length;
+        if (after >= end) {
+          j = end;
+          closed = true;
+          break;
+        }
+        if (source[after] === '\n') {
+          j = after + 1;
+          closed = true;
+          break;
+        }
+        if (source[after] === ')') {
+          j = after;
+          closed = true;
+          break;
+        }
+      }
+      const newline = source.indexOf('\n', lineStart);
+      if (newline === -1 || newline >= end) break;
+      lineStart = newline + 1;
+    }
+    if (!closed) return end;
+  }
+  return j;
 }
 
 /** Skip a $-construct starting at `i` (which points at the `$`). Handles

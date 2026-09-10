@@ -1,5 +1,10 @@
 import * as pathe from 'pathe';
 
+import {
+  getShellPathBridge,
+  translateShellDrivePath,
+  type ShellPathBridge,
+} from '#/_base/execEnv/shellPathBridge';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 
 export interface WorkspaceConfig {
@@ -118,29 +123,7 @@ function isWin32DriveRelative(path: string): boolean {
 }
 
 export function normalizeUserPath(path: string, pathClass: PathClass = DEFAULT_PATH_CLASS): string {
-  if (pathClass !== 'win32') return path;
-
-  if (path === '/') return '/';
-
-  if (path.startsWith('//')) {
-    return path;
-  }
-
-  const cygdriveMatch = /^\/cygdrive\/([A-Za-z])(?:\/|$)/.exec(path);
-  if (cygdriveMatch !== null) {
-    const drive = cygdriveMatch[1]!.toUpperCase();
-    const rest = path.slice(`/cygdrive/${cygdriveMatch[1]!}`.length);
-    return `${drive}:${rest === '' ? '/' : rest}`;
-  }
-
-  const driveMatch = /^\/([A-Za-z])(?:\/|$)/.exec(path);
-  if (driveMatch !== null) {
-    const drive = driveMatch[1]!.toUpperCase();
-    const rest = path.slice(2);
-    return `${drive}:${rest === '' ? '/' : rest}`;
-  }
-
-  return path;
+  return pathClass === 'win32' ? translateShellDrivePath(path) : path;
 }
 
 function expandUserPath(path: string, homeDir: string | undefined, pathClass: PathClass): string {
@@ -233,10 +216,14 @@ export interface ResolvePathAccessOptions {
   readonly policy?: WorkspaceAccessPolicy | undefined;
   readonly pathClass?: PathClass | undefined;
   readonly homeDir?: string;
+  readonly shellPathBridge?: ShellPathBridge;
 }
 
 export interface ResolvePathAccessPathOptions {
-  readonly env: Pick<IHostEnvironment, 'pathClass' | 'homeDir'>;
+  readonly env: Pick<
+    IHostEnvironment,
+    'pathClass' | 'homeDir' | 'osKind' | 'shellName' | 'shellPath'
+  >;
   readonly workspace: WorkspaceConfig;
   readonly operation: PathAccessOperation;
   readonly policy?: WorkspaceAccessPolicy;
@@ -263,7 +250,8 @@ export function resolvePathAccess(
   options: ResolvePathAccessOptions,
 ): PathAccess {
   const pathClass = options.pathClass ?? DEFAULT_PATH_CLASS;
-  const normalizedPath = normalizeUserPath(path, pathClass);
+  const normalizedPath =
+    options.shellPathBridge?.fromShellPath(path) ?? normalizeUserPath(path, pathClass);
   const expandedPath = expandUserPath(normalizedPath, options.homeDir, pathClass);
   const rawIsAbsolute = pathe.isAbsolute(expandedPath);
   const canonical = canonicalizePath(expandedPath, cwd, pathClass);
@@ -310,6 +298,7 @@ export function resolvePathAccessPath(
     policy,
     pathClass: env.pathClass,
     homeDir: expandHome ? env.homeDir : undefined,
+    shellPathBridge: env.pathClass === 'win32' ? getShellPathBridge(env) : undefined,
   }).path;
 }
 

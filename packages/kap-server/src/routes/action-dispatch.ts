@@ -17,11 +17,6 @@ export function actionNames<TAction extends string, TExtra>(
   return Object.keys(actions) as unknown as readonly TAction[];
 }
 
-/**
- * Parse an `{id}:{action}` path tail against the table's action names.
- * Returns the resolved target, or `{ message }` for the validation-failure
- * response when the tail is not a known action.
- */
 export function resolveActionTarget<TAction extends string, TExtra>(opts: {
   readonly tail: string;
   readonly actions: ActionTable<TAction, TExtra>;
@@ -40,11 +35,6 @@ export function resolveActionTarget<TAction extends string, TExtra>(opts: {
   return { id: parsed.id, action: parsed.action };
 }
 
-/**
- * Invoke the table entry for `action`, validating the raw body against the
- * entry's schema first when it declares one. Returns false when no entry
- * matches, leaving the unsupported-action response to the caller.
- */
 export async function runAction<TAction extends string, TExtra>(opts: {
   readonly action: string;
   readonly id: string;
@@ -61,12 +51,6 @@ export async function runAction<TAction extends string, TExtra>(opts: {
   return true;
 }
 
-/**
- * Resolve the tail and invoke the matching handler in one step, for routes
- * whose parse guard needs no site-specific logic. `onUnsupported` produces
- * the route's validation-failure response; the return value reports whether
- * a handler ran.
- */
 export async function dispatchAction<TAction extends string, TExtra>(opts: {
   readonly tail: string;
   readonly actions: ActionTable<TAction, TExtra>;

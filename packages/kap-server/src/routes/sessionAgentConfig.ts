@@ -6,7 +6,9 @@ import {
   IAgentPlanService,
   IAgentProfileService,
   IAgentSwarmService,
+  IAgentTowerService,
   resumeSessionById,
+  towerEnterFailureMessage,
   type PermissionMode,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
@@ -52,8 +54,24 @@ export async function applySessionAgentConfig(
       else swarm.exit();
     }
   }
+  if (agentConfig.tower_mode !== undefined) {
+    const tower = agent.accessor.get(IAgentTowerService);
+    if (agentConfig.tower_mode) {
+      const result = await tower.enter(agentConfig.tower_base);
+      if (!result.entered) {
+        throw new Error2(
+          ErrorCodes.SESSION_TOWER_MODE_INVALID,
+          towerEnterFailureMessage(result),
+        );
+      }
+    } else {
+      tower.exit();
+    }
+  }
   if (agentConfig.goal_objective !== undefined) {
-    await agent.accessor.get(IAgentGoalService).createGoal({ objective: agentConfig.goal_objective });
+    await agent.accessor
+      .get(IAgentGoalService)
+      .createGoal({ objective: agentConfig.goal_objective });
   }
   if (agentConfig.goal_control !== undefined) {
     const goal = agent.accessor.get(IAgentGoalService);

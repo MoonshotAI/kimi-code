@@ -1,15 +1,18 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { createDecorator } from '#/_base/di/instantiation';
 import { InstantiationService } from '#/_base/di/instantiationService';
 import { Service } from '#/_base/di/service';
 import { ServiceCollection } from '#/_base/di/serviceCollection';
-import { Event2 } from '#/app/event/event2';
+import { AgentEvent2, Event2 } from '#/app/event/event2';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import '#/app/event/fiberEventResolver';
+
+import { stubAgentContext } from '../../agent/agentContext/stubs';
 
 class TestA extends Event2<{ readonly x: number }> {
   static override readonly type = 'test.a';
@@ -23,6 +26,18 @@ class TestB extends Event2<{ readonly y: string }> {
 }
 interface TestB {
   readonly y: string;
+}
+
+const agentEventSchema = z.object({ agentId: z.string(), value: z.number() });
+
+class TestAgentEvent extends AgentEvent2<z.infer<typeof agentEventSchema>> {
+  static override readonly type = 'test.agent';
+  static override readonly durable = true;
+  static override readonly schema = agentEventSchema;
+}
+interface TestAgentEvent {
+  readonly agentId: string;
+  readonly value: number;
 }
 
 describe('event bus (full-stream and per-type delivery, dispose and empty-publish tolerance)', () => {
@@ -188,5 +203,28 @@ describe('fiberEventResolver — string on(...) resolved against the scope IEven
     bus.publish(new TestA({ x: 7 }));
     expect(seen).toEqual([7]);
     ix.dispose();
+  });
+});
+
+describe('session agent event routing', () => {
+  it('filters by payload identity and rejects stale contexts', () => {
+    const bus = new EventBusService();
+    const a = stubAgentContext('a', 1);
+    const b = stubAgentContext('b', 1);
+    const stale = stubAgentContext('a', 2);
+    bus.activateAgent(a);
+    bus.activateAgent(b);
+    const seenA: number[] = [];
+    bus.onAgent(a, TestAgentEvent, (event) => seenA.push(event.value));
+
+    bus.publish(new TestAgentEvent({ agentId: 'a', value: 1 }), a);
+    bus.publish(new TestAgentEvent({ agentId: 'b', value: 2 }), b);
+
+    expect(seenA).toEqual([1]);
+    expect(() => bus.onAgent(stale, TestAgentEvent, () => {})).toThrow('not the active');
+    bus.deactivateAgent(a);
+    expect(() => bus.publish(new TestAgentEvent({ agentId: 'a', value: 3 }), a)).toThrow(
+      'no active lifecycle context',
+    );
   });
 });

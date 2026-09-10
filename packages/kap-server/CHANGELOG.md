@@ -1,5 +1,13 @@
 # @moonshot-ai/kap-server
 
+## 0.2.3
+
+### Patch Changes
+
+- Updated dependencies [[`f143130`](https://github.com/MoonshotAI/kimi-code/commit/f143130c072e9dba8d60ef40c49d4305b93ab2fe)]:
+  - @moonshot-ai/agent-core-v2@0.4.2
+  - @moonshot-ai/transcript@0.0.2
+
 ## 0.2.2
 
 ### Patch Changes

@@ -4,7 +4,6 @@ import { WebSocketServer } from 'ws';
 import type { CredentialValidator } from '../../../services/auth/credentials';
 import { type IConnectionRegistry } from '../connectionRegistry';
 import type { SessionEventBroadcaster } from './sessionEventBroadcaster';
-import type { FsWatchBridge } from './fsWatchBridge';
 import type { JournalLogger } from './sessionEventJournal';
 import { WsConnectionV1 } from './wsConnectionV1';
 import { selectWsBearerProtocol } from '../bearerProtocol';
@@ -12,17 +11,14 @@ import { selectWsBearerProtocol } from '../bearerProtocol';
 export const WS_PATH = '/api/v1/ws';
 
 export interface RegisterWsV1Options {
-  /** Present-only credential validator forwarded to {@link WsConnectionV1}. */
   readonly validateCredential?: CredentialValidator;
   readonly registry: IConnectionRegistry;
   readonly broadcaster: SessionEventBroadcaster;
-  readonly fsWatchBridge: FsWatchBridge;
   readonly logger?: JournalLogger;
   readonly maxBufferSize?: number;
   readonly flushIntervalMs?: number;
   readonly maxBatchSize?: number;
   readonly highWaterMarkBytes?: number;
-  /** Heartbeat ping cadence override — tests inject small values. */
   readonly heartbeatIntervalMs?: number;
 }
 
@@ -35,7 +31,6 @@ export function registerWsV1(core: Scope, opts: RegisterWsV1Options): WebSocketS
     const conn = new WsConnectionV1({
       socket,
       broadcaster,
-      fsWatchBridge: opts.fsWatchBridge,
       connectionRegistry: registry,
       validateCredential: opts.validateCredential,
       remoteAddress: req.socket.remoteAddress ?? null,

@@ -171,20 +171,16 @@ describe('setSessionArchivedBatch', () => {
     expect(persisted['isCustomTitle']).toBe(true);
   });
 
-  it('fails the item when a concurrent resume failed instead of cold-classifying', async () => {
+  it('cold-classifies the item when a concurrent resume failed', async () => {
     const outcomes = await setSessionArchivedBatch(
       coldPathAccessor({
-        storeGet: async () => {
-          throw new Error('unreachable — the settle throws first');
-        },
+        storeGet: async () => ({ id: 's1', createdAt: 1, updatedAt: 2, archived: false }),
         resumeError: new Error('resume boom'),
       }),
       ['s1'],
       true,
     );
-    expect(outcomes).toEqual([
-      { id: 's1', ok: false, reason: 'error', message: 'resume boom' },
-    ]);
+    expect(outcomes).toEqual([{ id: 's1', ok: true }]);
   });
 
   it('reads and migrates the legacy session-meta location before answering not_found', async () => {

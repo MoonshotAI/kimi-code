@@ -81,15 +81,15 @@ describe('fullCompaction ops (wire-backed)', () => {
   it('begin/complete/cancel drive the phase and persist flat records', async () => {
     expect(agentState.get(fullCompactionKey).phase).toBe('idle');
 
-    void dispatcher.dispatch(new FullCompactionBegin({ source: 'manual', instruction: 'keep facts' }));
+    void dispatcher.dispatch(new FullCompactionBegin({ agentId: 'test-agent', source: 'manual', instruction: 'keep facts' }));
     expect(agentState.get(fullCompactionKey).phase).toBe('running');
 
-    void dispatcher.dispatch(new FullCompactionComplete({}));
+    void dispatcher.dispatch(new FullCompactionComplete({ agentId: 'test-agent' }));
     expect(agentState.get(fullCompactionKey).phase).toBe('idle');
 
-    void dispatcher.dispatch(new FullCompactionBegin({ source: 'auto' }));
+    void dispatcher.dispatch(new FullCompactionBegin({ agentId: 'test-agent', source: 'auto' }));
     expect(agentState.get(fullCompactionKey).phase).toBe('running');
-    void dispatcher.dispatch(new FullCompactionCancel({}));
+    void dispatcher.dispatch(new FullCompactionCancel({ agentId: 'test-agent' }));
     expect(agentState.get(fullCompactionKey).phase).toBe('idle');
 
     const records = await readRecords();
@@ -107,24 +107,28 @@ describe('fullCompaction ops (wire-backed)', () => {
         instruction: 'keep facts',
       }),
     );
-    expect(records[1]).toEqual({ type: 'full_compaction.complete', time: expect.any(Number) });
+    expect(records[1]).toEqual({
+      type: 'full_compaction.complete',
+      agentId: 'test-agent',
+      time: expect.any(Number),
+    });
   });
 
   it('fold keeps the same reference on a no-op (state stays quiet)', () => {
-    void dispatcher.dispatch(new FullCompactionCancel({}));
+    void dispatcher.dispatch(new FullCompactionCancel({ agentId: 'test-agent' }));
     const idle = agentState.get(fullCompactionKey);
-    void dispatcher.dispatch(new FullCompactionCancel({}));
+    void dispatcher.dispatch(new FullCompactionCancel({ agentId: 'test-agent' }));
     expect(agentState.get(fullCompactionKey)).toBe(idle);
 
-    void dispatcher.dispatch(new FullCompactionBegin({ source: 'manual' }));
+    void dispatcher.dispatch(new FullCompactionBegin({ agentId: 'test-agent', source: 'manual' }));
     const running = agentState.get(fullCompactionKey);
-    void dispatcher.dispatch(new FullCompactionBegin({ source: 'auto' }));
+    void dispatcher.dispatch(new FullCompactionBegin({ agentId: 'test-agent', source: 'auto' }));
     expect(agentState.get(fullCompactionKey)).toBe(running);
   });
 
   it('replay rebuilds the phase silently', async () => {
-    void dispatcher.dispatch(new FullCompactionBegin({ source: 'manual' }));
-    void dispatcher.dispatch(new FullCompactionComplete({}));
+    void dispatcher.dispatch(new FullCompactionBegin({ agentId: 'test-agent', source: 'manual' }));
+    void dispatcher.dispatch(new FullCompactionComplete({ agentId: 'test-agent' }));
     const records = await readRecords();
 
     const host = buildHost('full-compaction-replay');

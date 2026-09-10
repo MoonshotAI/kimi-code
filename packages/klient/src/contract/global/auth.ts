@@ -80,8 +80,15 @@ export const refreshOAuthProviderModelsResponseSchema = z.object({
   failed: z.array(z.object({ provider: z.string(), reason: z.string() })),
 });
 
+export const oAuthLoginOptionsSchema = z.object({
+  region: z.enum(['mainland-cn', 'global']).optional(),
+});
+
 export const authContract = {
-  startLogin: { input: z.tuple([z.string().optional()]), output: oAuthFlowStartSchema },
+  startLogin: {
+    input: z.tuple([z.string().optional(), oAuthLoginOptionsSchema.optional()]),
+    output: oAuthFlowStartSchema,
+  },
   getFlow: {
     input: z.tuple([z.string().optional()]),
     output: maybe(oAuthFlowSnapshotSchema),

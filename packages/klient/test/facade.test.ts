@@ -95,6 +95,29 @@ describe('facade routing', () => {
     });
   });
 
+  it('forwards the login region option through the wire contract', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+
+    channel.results.set('oauthService.startLogin', {
+      flow_id: 'f1',
+      provider: 'managed:kimi-code',
+      status: 'pending',
+      verification_uri: 'https://example.com/device',
+      verification_uri_complete: 'https://example.com/device?user_code=ABCD',
+      user_code: 'ABCD',
+      expires_in: 1800,
+      expires_at: '2026-08-19T15:00:00.000Z',
+      interval: 5,
+    });
+    await klient.global.auth.startLogin('managed:kimi-code', { region: 'global' });
+    expect(channel.calls[0]).toMatchObject({
+      service: 'oauthService',
+      method: 'startLogin',
+      args: ['managed:kimi-code', { region: 'global' }],
+    });
+  });
+
   it('routes capability calls through the registered app service contract', async () => {
     const channel = new FakeChannel();
     const klient = createKlientFromChannel(channel);

@@ -6,22 +6,29 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { type IAgentScopeHandle, type ISessionScopeHandle } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
-import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
+import {
+  IAgentScopeContext,
+  makeAgentScopeContext,
+} from '#/agent/scopeContext/scopeContext';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
-import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
-import { IModelCatalog } from '#/kosong/model/catalog';
-import { IModelService } from '#/kosong/model/model';
+import { IAgentTowerService } from '#/features/tower/tower';
+import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
+import { IModelCatalog } from '#/llm-adapter/model/catalog';
+import { IModelService } from '#/llm-adapter/model/model';
 import { ISessionLegacyService } from '#/app/sessionLegacy/sessionLegacy';
 import { SessionLegacyService } from '#/app/sessionLegacy/sessionLegacyService';
 import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
-import { IAgentActivityView } from '#/agent/activityView/activityView';
+import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionCronService } from '#/session/cron/sessionCronService';
+import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 
 function accessor(
   entries: ReadonlyArray<readonly [ServiceIdentifier<unknown>, unknown]>,
@@ -124,29 +131,32 @@ describe('Session legacy status (best-effort runtime state)', () => {
       kind: LifecycleScope.Agent,
       accessor: accessor([
         [IAgentLifecycleService, { main: () => Promise.resolve(agent) }],
+        [
+          IAgentScopeContext,
+          makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }),
+        ],
         [IAgentProfileService, profile],
-        [IAgentTokenCountingService, { get: () => ({ size: 25, measured: 20, estimated: 5 }), statusSize: () => 25 }],
+        [ISessionTokenCountingService, { get: () => ({ size: 25, measured: 20, estimated: 5 }), statusSize: () => 25 }],
         [IAgentPermissionModeService, { mode: 'manual' }],
         [IAgentPlanService, { status: () => Promise.resolve(null) }],
         [IAgentSwarmService, { isActive: false }],
-        [
-          IAgentActivityView,
-          { state: () => ({ lifecycle: 'ready', background: [] }) },
-        ],
+        [IAgentTowerService, { isActive: false }],
+        [IAgentLoopService, { status: () => ({ state: 'idle' }) }],
+        [IAgentTaskService, { list: () => [] }],
+        [IAgentFullCompactionService, { compacting: null }],
       ]),
       dispose: () => {},
     };
     const agents = {
-      create: () => Promise.resolve(agent),
-      whenReady: () => Promise.resolve(agent),
-      list: () => [agent],
+      create: () => Promise.resolve(agentContextOf(agent)),
+      handleOf: (agentId: string) => (agentId === 'main' ? agent : undefined),
+      list: () => [agentContextOf(agent)],
     } as unknown as IAgentLifecycleService;
     const session: ISessionScopeHandle = {
       id: 'session-test',
       kind: LifecycleScope.Session,
       accessor: accessor([
         [IAgentLifecycleService, agents],
-        [ISessionCronService, { _serviceBrand: undefined }],
       ]),
       dispose: () => {},
     };
@@ -182,30 +192,33 @@ describe('Session legacy status (best-effort runtime state)', () => {
       kind: LifecycleScope.Agent,
       accessor: accessor([
         [IAgentLifecycleService, { main: () => Promise.resolve(agent) }],
+        [
+          IAgentScopeContext,
+          makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }),
+        ],
         [IAgentProfileService, profile],
-        [IAgentTokenCountingService, { get: () => ({ size: 0, measured: 0, estimated: 0 }), statusSize: () => 0 }],
+        [ISessionTokenCountingService, { get: () => ({ size: 0, measured: 0, estimated: 0 }), statusSize: () => 0 }],
         [IAgentPermissionModeService, { mode: 'manual' }],
         [IAgentPlanService, { status: () => Promise.resolve(null) }],
         [IAgentSwarmService, { isActive: false }],
+        [IAgentTowerService, { isActive: false }],
         [IModelService, { getDefaultModel: () => undefined }],
-        [
-          IAgentActivityView,
-          { state: () => ({ lifecycle: 'ready', background: [] }) },
-        ],
+        [IAgentLoopService, { status: () => ({ state: 'idle' }) }],
+        [IAgentTaskService, { list: () => [] }],
+        [IAgentFullCompactionService, { compacting: null }],
       ]),
       dispose: () => {},
     };
     const agents = {
-      create: () => Promise.resolve(agent),
-      whenReady: () => Promise.resolve(agent),
-      list: () => [agent],
+      create: () => Promise.resolve(agentContextOf(agent)),
+      handleOf: (agentId: string) => (agentId === 'main' ? agent : undefined),
+      list: () => [agentContextOf(agent)],
     } as unknown as IAgentLifecycleService;
     const session: ISessionScopeHandle = {
       id: 'session-unbound',
       kind: LifecycleScope.Session,
       accessor: accessor([
         [IAgentLifecycleService, agents],
-        [ISessionCronService, { _serviceBrand: undefined }],
       ]),
       dispose: () => {},
     };
@@ -241,11 +254,16 @@ describe('Session legacy status (best-effort runtime state)', () => {
       kind: LifecycleScope.Agent,
       accessor: accessor([
         [IAgentLifecycleService, { main: () => Promise.resolve(agent) }],
+        [
+          IAgentScopeContext,
+          makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }),
+        ],
         [IAgentProfileService, profile],
-        [IAgentTokenCountingService, { get: () => ({ size: 0, measured: 0, estimated: 0 }), statusSize: () => 0 }],
+        [ISessionTokenCountingService, { get: () => ({ size: 0, measured: 0, estimated: 0 }), statusSize: () => 0 }],
         [IAgentPermissionModeService, { mode: 'manual' }],
         [IAgentPlanService, { status: () => Promise.resolve(null) }],
         [IAgentSwarmService, { isActive: false }],
+        [IAgentTowerService, { isActive: false }],
         [IModelService, { getDefaultModel: () => 'default-model' }],
         [
           IModelCatalog,
@@ -256,24 +274,22 @@ describe('Session legacy status (best-effort runtime state)', () => {
             },
           },
         ],
-        [
-          IAgentActivityView,
-          { state: () => ({ lifecycle: 'ready', background: [] }) },
-        ],
+        [IAgentLoopService, { status: () => ({ state: 'idle' }) }],
+        [IAgentTaskService, { list: () => [] }],
+        [IAgentFullCompactionService, { compacting: null }],
       ]),
       dispose: () => {},
     };
     const agents = {
-      create: () => Promise.resolve(agent),
-      whenReady: () => Promise.resolve(agent),
-      list: () => [agent],
+      create: () => Promise.resolve(agentContextOf(agent)),
+      handleOf: (agentId: string) => (agentId === 'main' ? agent : undefined),
+      list: () => [agentContextOf(agent)],
     } as unknown as IAgentLifecycleService;
     const session: ISessionScopeHandle = {
       id: 'session-draft',
       kind: LifecycleScope.Session,
       accessor: accessor([
         [IAgentLifecycleService, agents],
-        [ISessionCronService, { _serviceBrand: undefined }],
       ]),
       dispose: () => {},
     };
@@ -325,29 +341,32 @@ describe('Session legacy status (best-effort runtime state)', () => {
       kind: LifecycleScope.Agent,
       accessor: accessor([
         [IAgentLifecycleService, { main: () => Promise.resolve(agent) }],
+        [
+          IAgentScopeContext,
+          makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }),
+        ],
         [IAgentProfileService, profile],
-        [IAgentTokenCountingService, { get: () => ({ size: 120_000, measured: 110_000, estimated: 10_000 }), statusSize: () => 120_000 }],
+        [ISessionTokenCountingService, { get: () => ({ size: 120_000, measured: 110_000, estimated: 10_000 }), statusSize: () => 120_000 }],
         [IAgentPermissionModeService, { mode: 'manual' }],
         [IAgentPlanService, { status: () => Promise.resolve(null) }],
         [IAgentSwarmService, { isActive: false }],
-        [
-          IAgentActivityView,
-          { state: () => ({ lifecycle: 'ready', background: [] }) },
-        ],
+        [IAgentTowerService, { isActive: false }],
+        [IAgentLoopService, { status: () => ({ state: 'idle' }) }],
+        [IAgentTaskService, { list: () => [] }],
+        [IAgentFullCompactionService, { compacting: null }],
       ]),
       dispose: () => {},
     };
     const agents = {
-      create: () => Promise.resolve(agent),
-      whenReady: () => Promise.resolve(agent),
-      list: () => [agent],
+      create: () => Promise.resolve(agentContextOf(agent)),
+      handleOf: (agentId: string) => (agentId === 'main' ? agent : undefined),
+      list: () => [agentContextOf(agent)],
     } as unknown as IAgentLifecycleService;
     const session: ISessionScopeHandle = {
       id: 'session-capped',
       kind: LifecycleScope.Session,
       accessor: accessor([
         [IAgentLifecycleService, agents],
-        [ISessionCronService, { _serviceBrand: undefined }],
       ]),
       dispose: () => {},
     };

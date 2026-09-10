@@ -5,7 +5,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
 import { TurnEnded } from '#/agent/loop/turnOps';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventBus } from '#/app/event/eventBus';
 
@@ -27,7 +27,7 @@ export class AgentInterruptionReminderService
   constructor(
     @IEventBus eventBus: IEventBus,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
+    @IAgentReminderService private readonly reminder: IAgentReminderService,
     @IAgentStateService agentState: IAgentStateService,
   ) {
     super();
@@ -37,8 +37,7 @@ export class AgentInterruptionReminderService
         if (event.reason !== 'cancelled' || event.interruptReason !== 'user_cancelled') return;
         const origin = lastComparableMessage(this.context.get())?.origin;
         if (origin?.kind === 'injection' && origin.variant === INTERRUPTION_REMINDER_VARIANT) return;
-        this.reminders.appendSystemReminder(INTERRUPTION_REMINDER, {
-          kind: 'injection',
+        this.reminder.notify(INTERRUPTION_REMINDER, {
           variant: INTERRUPTION_REMINDER_VARIANT,
         });
       }),

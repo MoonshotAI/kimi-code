@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import {
@@ -12,47 +13,48 @@ import {
   type ProjectionPolicy,
 } from '#/agent/contextProjector/contextProjector';
 import { AgentContextProjectorService } from '#/agent/contextProjector/contextProjectorService';
-import { AgentLLMRequesterService } from '#/agent/llmRequester/llmRequesterService';
+import { AgentLLMRequesterService, KIMI_CODE_INFINITE_RETRY_ENV } from '#/agent/llmRequester/llmRequesterService';
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
-import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
-import { IAgentUsageService } from '#/agent/usage/usage';
+import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { IConfigService } from '#/app/config/config';
 import type { Event2 } from '#/app/event/event2';
 import { IEventBus } from '#/app/event/eventBus';
 import {
   APIConnectionError,
+  APIContextOverflowError,
   APIEmptyResponseError,
+  APIProviderQuotaExhaustedError,
+  APIProviderRateLimitError,
   APIRequestTooLargeError,
   APIStatusError,
-} from '#/kosong/contract/errors';
-import { emptyUsage, type TokenUsage } from '#/kosong/contract/usage';
-import {
-  isToolCall,
-  type Message,
-  type StreamedMessagePart,
-  type ToolCall,
-} from '#/kosong/contract/message';
-import type { ThinkingEffort } from '#/kosong/contract/provider';
-import type { ModelCapability } from '#/kosong/contract/capability';
-import { IModelCatalog, type Model } from '#/kosong/model/catalog';
-import { IModelService } from '#/kosong/model/model';
+} from '#/llm-adapter/contract/errors';
+import { emptyUsage, type TokenUsage } from '#human/llm/usage';
+import { type Message } from '#/llm-adapter/contract/message';
+import { isToolCall, type StreamedMessagePart, type ToolCall } from '#human/llm/message';
+import type { ThinkingEffort } from '#human/llm/thinking';
+import type { ModelCapability } from '#/llm-adapter/contract/capability';
+import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
+import { IModelService } from '#/llm-adapter/model/model';
 import {
   type ModelRequestEvent,
   type ModelRequestInput,
   type ModelRequester,
-} from '#/kosong/model/modelRequester';
+} from '#/llm-adapter/model/model-requester';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ILogService } from '#/_base/log/log';
 import { Error2, ErrorCodes } from '#/errors';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { WireRecord } from '#/wire/record';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
+import { stubBootstrap } from '../../app/bootstrap/stubs';
 
 import {
   recordingWireLog,
@@ -159,9 +161,11 @@ function createService(
     readonly thinkingLevel?: ThinkingEffort;
     readonly mediaResolver?: Partial<IAgentMediaResolverService>;
     readonly contextMessages?: Message[];
+    readonly env?: Record<string, string>;
   } = {},
 ) {
   const ix = disposables.add(new TestInstantiationService());
+  ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-code-llm-requester-test', options.env ?? {}));
   const thinkingLevel = options.thinkingLevel ?? 'off';
   const profile: Partial<IAgentProfileService> = {
     resolveModelContext: () => ({
@@ -186,11 +190,16 @@ function createService(
   const measuredCalls: { readonly messages: number; readonly usage: TokenUsage }[] = [];
   const tokenCounting = {
     get: () => ({ size: 0, measured: 0, estimated: 0 }),
-    measured: (input: readonly Message[], _output: readonly Message[], usage: TokenUsage) => {
+    measured: (
+      _agent: AgentContext,
+      input: readonly Message[],
+      _output: readonly Message[],
+      usage: TokenUsage,
+    ) => {
       measuredCalls.push({ messages: input.length, usage });
     },
   };
-  const usage = { record: () => undefined, status: () => ({}) };
+  const usage = { record: () => Promise.resolve(), status: () => ({}) };
   const context = {
     get: () => options.contextMessages ?? history,
   };
@@ -228,10 +237,10 @@ function createService(
       ...projector,
     });
   }
-  ix.stub(IAgentTokenCountingService, tokenCounting);
+  ix.stub(ISessionTokenCountingService, tokenCounting);
   ix.stub(IAgentToolRegistryService, tools);
   ix.stub(IAgentProfileService, profile);
-  ix.stub(IAgentUsageService, usage);
+  ix.stub(ISessionUsageService, usage);
   ix.stub(IConfigService, config);
   ix.stub(ILogService, log);
   ix.stub(ITelemetryService, telemetry);
@@ -258,6 +267,7 @@ function createService(
     dispatcher: ix.get(IEventDispatcher),
     records,
     events,
+    telemetry,
     telemetryRecords,
     measuredCalls,
   };
@@ -344,6 +354,121 @@ describe('AgentLLMRequesterService strict resend', () => {
       statusCode: 401,
     });
     expect(projection.calls).toEqual(['normal']);
+  });
+});
+
+describe('AgentLLMRequesterService infinite retry', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('retries every request error while KIMI_CODE_INFINITE_RETRY is set', async () => {
+    vi.useFakeTimers();
+    const calls = { value: 0 };
+    const requester = createRequester(calls, new APIStatusError(400, 'endpoint broken'), [
+      new APIStatusError(404, 'model not found'),
+      new APIConnectionError('socket hang up'),
+      new APIProviderQuotaExhaustedError('quota exhausted'),
+    ]);
+    const { service } = createService(requester, undefined, {
+      env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' },
+    });
+
+    const promise = service.request();
+    await vi.runAllTimersAsync();
+    const finish = await promise;
+
+    expect(calls.value).toBe(5);
+    expect(finish.message.content).toEqual([{ type: 'text', text: 'ok' }]);
+  });
+
+  it('honors the provider retry-after delay while retrying indefinitely', async () => {
+    const calls = { value: 0 };
+    const requester = createRequester(calls, new APIProviderRateLimitError('slow down', null, 1));
+    const { service } = createService(requester, undefined, {
+      env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' },
+    });
+
+    const startedAt = Date.now();
+    await service.request();
+
+    expect(calls.value).toBe(2);
+    expect(Date.now() - startedAt).toBeLessThan(500);
+  });
+
+  it('stops retrying when the caller aborts during the backoff wait', async () => {
+    vi.useFakeTimers();
+    const calls = { value: 0 };
+    const requester = createRequester(calls, new APIStatusError(400, 'endpoint broken'));
+    const { service } = createService(requester, undefined, {
+      env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' },
+    });
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(new Error('stop')), 100);
+
+    const promise = service.request({}, undefined, controller.signal);
+    const assertion = expect(promise).rejects.toThrow('stop');
+    await vi.runAllTimersAsync();
+    await assertion;
+
+    expect(calls.value).toBe(1);
+  });
+
+  it('keeps deterministic projection recovery ahead of infinite retry', async () => {
+    vi.useFakeTimers();
+    const calls = { value: 0 };
+    const requester = createRequester(calls, new APIRequestTooLargeError(413, 'Request Entity Too Large'));
+    const { service } = createService(requester, undefined, {
+      env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' },
+    });
+
+    await service.request();
+
+    expect(calls.value).toBe(2);
+  });
+
+  it('lets context overflow reach deterministic recovery instead of retrying', async () => {
+    vi.useFakeTimers();
+    const calls = { value: 0 };
+    const requester = createRequester(
+      calls,
+      new APIContextOverflowError(400, 'context length exceeded'),
+    );
+    const { service } = createService(requester, undefined, {
+      env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' },
+    });
+
+    await expect(service.request()).rejects.toBeInstanceOf(APIContextOverflowError);
+    expect(calls.value).toBe(1);
+  });
+
+  it('retries operation requests indefinitely', async () => {
+    vi.useFakeTimers();
+    const calls = { value: 0 };
+    const requester = createRequester(calls, new APIStatusError(400, 'endpoint broken'), [
+      new APIStatusError(404, 'model not found'),
+    ]);
+    const { service } = createService(requester, undefined, {
+      env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' },
+    });
+
+    const promise = service.request({
+      source: { type: 'operation', requestKind: 'full_compaction' },
+    });
+    await vi.runAllTimersAsync();
+    await promise;
+
+    expect(calls.value).toBe(3);
+  });
+
+  it('does not retry when the switch is unset', async () => {
+    vi.useFakeTimers();
+    const calls = { value: 0 };
+    const requester = createRequester(calls, new APIStatusError(400, 'endpoint broken'));
+    const { service } = createService(requester, undefined);
+
+    await expect(service.request()).rejects.toMatchObject({ statusCode: 400 });
+    expect(calls.value).toBe(1);
   });
 });
 
@@ -763,6 +888,75 @@ describe('AgentLLMRequesterService trace id', () => {
       telemetryRecords.find((record) => record.event === 'api_error')?.properties?.['trace_id'],
     ).toBeUndefined();
   });
+
+  it('mirrors the request trace into the ambient telemetry context', async () => {
+    const { service, telemetry } = createService(
+      createTracedRequester('trace-ambient-1'),
+      passthroughProjector,
+    );
+
+    await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
+
+    expect(telemetry.getContext()['trace_id']).toBe('trace-ambient-1');
+  });
+
+  it('clears the ambient trace when the next turn request starts without one', async () => {
+    let nextTrace: string | null = 'trace-ambient-2';
+    const requester = createTracedRequester(null);
+    Object.defineProperty(requester, 'request', {
+      value: async function* (_input: unknown, _signal: unknown, requestOptions: {
+        onTraceId?: (traceId: string | null) => void;
+      }) {
+        requestOptions?.onTraceId?.(nextTrace);
+        yield {
+          type: 'finish',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }], toolCalls: [] },
+          providerFinishReason: 'completed',
+          rawFinishReason: 'stop',
+          id: 'resp-1',
+          traceId: nextTrace ?? undefined,
+        } satisfies ModelRequestEvent;
+      },
+    });
+    const { service, telemetry } = createService(requester, passthroughProjector);
+
+    await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
+    expect(telemetry.getContext()['trace_id']).toBe('trace-ambient-2');
+
+    nextTrace = null;
+    await service.request({ source: { type: 'turn', turnId: 1, step: 2 } });
+    expect(telemetry.getContext()['trace_id']).toBeUndefined();
+  });
+
+  it('mirrors the failing request trace into the ambient telemetry context', async () => {
+    const requester = createTracedRequester(null);
+    Object.defineProperty(requester, 'request', {
+      value: async function* () {
+        const events: ModelRequestEvent[] = [];
+        for (const event of events) yield event;
+        throw new APIStatusError(500, 'boom', 'req-1', null, 'trace-fail-ambient');
+      },
+    });
+    const { service, telemetry } = createService(requester, passthroughProjector);
+
+    await expect(
+      service.request({ source: { type: 'turn', turnId: 1, step: 1 } }),
+    ).rejects.toMatchObject({ statusCode: 500 });
+
+    expect(telemetry.getContext()['trace_id']).toBe('trace-fail-ambient');
+  });
+
+  it('keeps the ambient trace untouched for operation requests', async () => {
+    const { service, telemetry } = createService(
+      createTracedRequester('trace-operation-1'),
+      passthroughProjector,
+    );
+    telemetry.setContext({ trace_id: 'trace-turn-1' });
+
+    await service.request({ source: { type: 'operation', requestKind: 'full_compaction' } });
+
+    expect(telemetry.getContext()['trace_id']).toBe('trace-turn-1');
+  });
 });
 
 describe('AgentLLMRequesterService media resolver wiring', () => {
@@ -858,8 +1052,11 @@ describe('AgentLLMRequesterService tool call id normalization', () => {
     });
 
     expect(first.message.toolCalls[0]!.id).toBe('Bash_0');
-    expect(second.message.toolCalls[0]!.id).toBe('Bash_0__2');
-    expect(parts.filter(isToolCall).map((p) => p.id)).toEqual(['Bash_0', 'Bash_0__2']);
+    expect(second.message.toolCalls[0]).toMatchObject({ id: 'Bash_0__2', rawId: 'Bash_0' });
+    expect(parts.filter(isToolCall).map((p) => [p.id, p.rawId])).toEqual([
+      ['Bash_0', undefined],
+      ['Bash_0__2', 'Bash_0'],
+    ]);
   });
 
   it('rewrites duplicates within a single response', async () => {
@@ -870,7 +1067,10 @@ describe('AgentLLMRequesterService tool call id normalization', () => {
 
     const result = await service.request();
 
-    expect(result.message.toolCalls.map((c) => c.id)).toEqual(['Bash_0', 'Bash_0__2']);
+    expect(result.message.toolCalls.map((c) => [c.id, c.rawId])).toEqual([
+      ['Bash_0', undefined],
+      ['Bash_0__2', 'Bash_0'],
+    ]);
   });
 
   it('rolls claims back when the attempt fails mid-stream', async () => {

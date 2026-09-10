@@ -219,6 +219,22 @@ function turnEnded(
 }
 
 describe("session runtime (adapts one SDK session for subscribed Webviews)", () => {
+  it("announces the current context usage to a subscribed Webview", async () => {
+    const { runtime, broadcasts } = createRuntime();
+
+    await runtime.announceStatus("view-1");
+
+    expect(streamData(broadcasts)).toContainEqual({
+      type: "StatusUpdate",
+      payload: {
+        thinking_effort: "off",
+        plan_mode: false,
+        context_usage: 0,
+      },
+      _sessionId: "session-1",
+    });
+  });
+
   it("renders a host-only command without making it a forkable core turn", () => {
     const { runtime, broadcasts } = createRuntime();
 

@@ -1,10 +1,11 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { userCancellationReason } from '#/_base/utils/abort';
-import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { isProviderRateLimitError } from '#/kosong/contract/errors';
-import { type TokenUsage } from '#/kosong/contract/usage';
+import { tryAgentContextOf } from '#/agent/scopeContext/scopeContext';
+import { isProviderRateLimitError } from '#/llm-adapter/contract/errors';
+import { type TokenUsage } from '#human/llm/usage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { SubagentCreatedEvent } from '#/app/telemetry/events';
 import { Event2 } from '#/app/event/event2';
@@ -12,7 +13,8 @@ import { isAbortError } from '#/_base/utils/abort';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
-import { type AgentRunHandle, ISessionSubagentService } from './subagent';
+import { type AgentRunCompletion, type AgentRunHandle, ISessionSubagentService } from './subagent';
+import type { SubagentModelSource } from './configSection';
 
 export interface SubagentSpawnedPayload {
   readonly subagentId: string;
@@ -69,6 +71,22 @@ export class SubagentFailed extends Event2<SubagentFailedPayload> {
 }
 export interface SubagentFailed extends SubagentFailedPayload {}
 
+export interface SubagentSpawnedEvent extends SubagentSpawnedPayload {
+  readonly type: 'subagent.spawned';
+}
+
+export interface SubagentStartedEvent extends SubagentStartedPayload {
+  readonly type: 'subagent.started';
+}
+
+export interface SubagentCompletedEvent extends SubagentCompletedPayload {
+  readonly type: 'subagent.completed';
+}
+
+export interface SubagentFailedEvent extends SubagentFailedPayload {
+  readonly type: 'subagent.failed';
+}
+
 export interface AgentRunSpawnedMeta {
   readonly profileName: string;
   readonly parentToolCallId?: string;
@@ -76,7 +94,9 @@ export interface AgentRunSpawnedMeta {
   readonly description?: string;
   readonly swarmIndex?: number;
   readonly runInBackground?: boolean;
+  readonly fork?: boolean;
   readonly model?: string;
+  readonly modelSource?: SubagentModelSource;
   readonly taskId?: string;
 }
 
@@ -96,7 +116,7 @@ export function emitAgentRunSpawned(
 ): void {
   const childProfile = requester.accessor
     .get(IAgentLifecycleService)
-    ?.get(targetAgentId)
+    .handleOf(targetAgentId)
     ?.accessor.get(IAgentProfileService);
   void requester.accessor.get(IEventDispatcher)?.dispatch(
     new SubagentSpawned({
@@ -118,10 +138,12 @@ export function emitAgentRunSpawned(
   const telemetryEvent: SubagentCreatedEvent = {
     subagent_name: meta.profileName,
     run_in_background: meta.runInBackground ?? false,
+    fork: meta.fork ?? false,
     agent_id: targetAgentId,
     parent_agent_id: requester.id,
     parent_tool_call_id: meta.parentToolCallId ?? '',
     model: meta.model,
+    model_source: meta.modelSource,
   };
   requester.accessor.get(ITelemetryService)?.track2('subagent_created', telemetryEvent);
 }
@@ -130,7 +152,7 @@ export async function mirrorAgentRun(
   requester: IAgentScopeHandle,
   run: AgentRunHandle,
   options: MirrorAgentRunOptions,
-): Promise<{ summary: string; usage?: TokenUsage }> {
+): Promise<AgentRunCompletion> {
   const dispatcher = requester.accessor.get(IEventDispatcher);
   const subagents = requester.accessor.get(ISessionSubagentService);
   const agentLifecycle = requester.accessor.get(IAgentLifecycleService);
@@ -199,6 +221,9 @@ function childContextTokens(
   agentLifecycle: IAgentLifecycleService,
   agentId: string,
 ): number | undefined {
-  const child = agentLifecycle.get(agentId);
-  return child?.accessor.get(IAgentTokenCountingService)?.statusSize();
+  const child = agentLifecycle.handleOf(agentId);
+  if (child === undefined) return undefined;
+  const context = tryAgentContextOf(child);
+  if (context === undefined) return undefined;
+  return child.accessor.get(ISessionTokenCountingService)?.statusSize(context);
 }

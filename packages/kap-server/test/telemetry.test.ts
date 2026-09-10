@@ -82,7 +82,7 @@ describe('server telemetry', () => {
     vi.stubGlobal('fetch', cloudFetch);
     const hostEvents: string[] = [];
     const hostAppender: ITelemetryAppender = {
-      track: (event) => hostEvents.push(event),
+      track: (record) => hostEvents.push(record.event),
     };
     const hostTelemetry = new TelemetryService();
     hostTelemetry.addAppender(hostAppender);
@@ -90,16 +90,16 @@ describe('server telemetry', () => {
     const telemetry = await initializeServerTelemetry(app, home as string);
     const service = app.accessor.get(ITelemetryService);
 
-    service.track('server_probe');
+    service.track2('session_ended', { reason: 'exit' });
 
-    expect(hostEvents).toEqual(['server_probe']);
+    expect(hostEvents).toEqual(['session_ended']);
 
     await shutdownServerTelemetry(telemetry);
-    service.track('host_after_server_shutdown');
+    service.track2('session_ended', { reason: 'archive' });
     await service.flush();
 
     expect(cloudFetch).toHaveBeenCalledOnce();
-    expect(hostEvents).toEqual(['server_probe', 'host_after_server_shutdown']);
+    expect(hostEvents).toEqual(['session_ended', 'session_ended']);
   });
 
   it('returns at the deadline when cloud delivery never settles', async () => {
@@ -109,7 +109,7 @@ describe('server telemetry', () => {
     } as unknown as IOAuthToolkit;
     const app = await bootCore(undefined, undefined, [[IOAuthToolkit, auth]]);
     const telemetry = await initializeServerTelemetry(app, home as string);
-    app.accessor.get(ITelemetryService).track('server_probe');
+    app.accessor.get(ITelemetryService).track2('session_ended', { reason: 'exit' });
 
     await expect(shutdownServerTelemetry(telemetry, Date.now())).resolves.toBeUndefined();
   });

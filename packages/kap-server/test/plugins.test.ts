@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { WebSocket } from 'ws';
 
@@ -83,10 +83,28 @@ describe('server-v2 /api/v1 plugins', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
   let base: string;
+  let custom = false;
   const createdDirs: string[] = [];
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-plugins-'));
+    await bootDefault();
+  });
+
+  async function bootDefault(): Promise<void> {
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home!,
+      logLevel: 'silent',
+      pluginMarketplaceUrl: CATALOG_URL,
+    });
+    base = `http://127.0.0.1:${server.port}`;
+    custom = false;
+  }
+
+  beforeEach(async () => {
     const realFetch = globalThis.fetch;
     vi.stubGlobal(
       'fetch',
@@ -106,26 +124,25 @@ describe('server-v2 /api/v1 plugins', () => {
         return realFetch(url as never, init);
       }),
     );
-    server = await startServer({
-      hostIdentity: TEST_HOST_IDENTITY,
-      host: '127.0.0.1',
-      port: 0,
-      homeDir: home,
-      logLevel: 'silent',
-      pluginMarketplaceUrl: CATALOG_URL,
-    });
-    base = `http://127.0.0.1:${server.port}`;
   });
 
   afterEach(async () => {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
-    if (server !== undefined) {
-      await server.close();
+    if (custom) {
+      await server?.close();
       server = undefined;
+      await bootDefault();
     }
     for (const dir of createdDirs.splice(0)) {
       await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  afterAll(async () => {
+    if (server !== undefined) {
+      await server.close();
+      server = undefined;
     }
     if (home !== undefined) {
       await rm(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 } as never);
@@ -365,6 +382,7 @@ describe('server-v2 /api/v1 plugins', () => {
       logLevel: 'silent',
     });
     base = `http://127.0.0.1:${server.port}`;
+    custom = true;
 
     const { body } = await call<{ entries: { id: string; capabilityId?: string }[] }>(
       'GET',
@@ -402,6 +420,8 @@ describe('server-v2 /api/v1 plugins', () => {
     expect(both.body.data.entries.find((e) => e.id === 'kimi-cu')?.installed?.version).toBe(
       expected,
     );
+    await call('POST', '/api/v1/plugins/kimi-cu-win:remove');
+    await call('POST', '/api/v1/plugins/kimi-cu:remove');
   });
 
   it('maps an unreachable marketplace to 50001', async () => {
@@ -443,6 +463,7 @@ describe('server-v2 /api/v1 plugins', () => {
       pluginMarketplaceUrl: join(catalogDir, 'marketplace.json'),
     });
     base = `http://127.0.0.1:${server.port}`;
+    custom = true;
 
     const { body } = await call<{ entries: { id: string; source: string }[] }>(
       'GET',
@@ -489,6 +510,7 @@ describe('server-v2 /api/v1 plugins', () => {
       logLevel: 'silent',
     });
     base = `http://127.0.0.1:${server.port}`;
+    custom = true;
 
     const { body } = await call<{
       entries: {
@@ -551,6 +573,7 @@ describe('server-v2 /api/v1 plugins', () => {
       pluginMarketplaceUrl: '~/marketplace.json',
     });
     base = `http://127.0.0.1:${server.port}`;
+    custom = true;
 
     const { body } = await call<{ entries: { id: string; source: string }[] }>(
       'GET',

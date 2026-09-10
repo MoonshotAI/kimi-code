@@ -24,11 +24,11 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@moonshot-ai/agent-core": "workspace:^",
+    "@moonshot-ai/agent-core-v2": "workspace:^",
     "smol-toml": "^1.6.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@moonshot-ai/kaos": "workspace:^"
+    "@moonshot-ai/transcript": "workspace:^"
   }
 }

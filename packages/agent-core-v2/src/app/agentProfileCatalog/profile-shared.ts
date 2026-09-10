@@ -1,11 +1,13 @@
 import { renderPrompt } from '#/_base/utils/render-prompt';
 
 import {
+  DEFAULT_AGENT_PROFILE_NAME,
   type AgentProfile,
   type AgentProfileContext,
   type EnvironmentDisclosureSnapshot,
   type SystemPromptRenderResult,
 } from './agentProfileCatalog';
+import { BUILTIN_AGENT_PROFILE_SOURCE_ID } from './builtinAgentProfileLoader';
 
 import SYSTEM_PROMPT_TEMPLATE from './system.md?raw';
 
@@ -27,8 +29,68 @@ export function subagentAllowlistFor(
     readonly profileName?: string;
     readonly subagents?: readonly string[];
   },
+  extras?: readonly string[],
 ): readonly string[] | undefined {
-  return caller.profileName === undefined ? catalog.getDefault().subagents : caller.subagents;
+  const declared = caller.subagents ?? catalog.getDefault().subagents;
+  if (declared?.length === 1 && declared[0] === '*') return undefined;
+  if (extras === undefined || extras.length === 0) return declared;
+  return [...new Set([...(declared ?? []), ...extras])];
+}
+
+export function isDiscoveredAgentProfileSource(sourceId: string | undefined): boolean {
+  return (
+    sourceId !== undefined &&
+    sourceId !== BUILTIN_AGENT_PROFILE_SOURCE_ID &&
+    !sourceId.startsWith('feature:')
+  );
+}
+
+export function rootDelegationExtras(
+  catalog: {
+    inspect(name: string): { readonly sourceId: string } | undefined;
+  },
+  caller: {
+    readonly profileName?: string;
+    readonly subagents?: readonly string[];
+  },
+  profiles: readonly { readonly name: string }[],
+): readonly string[] | undefined {
+  if (
+    caller.profileName !== undefined &&
+    caller.profileName !== DEFAULT_AGENT_PROFILE_NAME &&
+    caller.subagents !== undefined
+  ) {
+    return undefined;
+  }
+  const discovered = profiles
+    .filter(
+      (profile) =>
+        profile.name !== DEFAULT_AGENT_PROFILE_NAME &&
+        isDiscoveredAgentProfileSource(catalog.inspect(profile.name)?.sourceId),
+    )
+    .map((profile) => profile.name);
+  return discovered.length === 0 ? undefined : discovered;
+}
+
+export function profileCanDelegate(
+  profile: Pick<AgentProfile, 'tools' | 'disallowedTools'>,
+): boolean {
+  const possesses = (name: string) =>
+    (profile.tools === undefined || profile.tools.includes(name)) &&
+    !(profile.disallowedTools ?? []).includes(name);
+  return possesses('Agent') || possesses('AgentSwarm');
+}
+
+export function withoutDelegatingTargets(
+  catalog: {
+    get(name: string): Pick<AgentProfile, 'tools' | 'disallowedTools'> | undefined;
+  },
+  allowlist: readonly string[],
+): readonly string[] {
+  return allowlist.filter((name) => {
+    const target = catalog.get(name);
+    return target === undefined || !profileCanDelegate(target);
+  });
 }
 
 export function subagentTypeNotAllowedMessage(
@@ -45,7 +107,19 @@ const WINDOWS_NOTES =
 export const DEFAULT_PRODUCT_NAME = 'Kimi Code CLI';
 
 export const DEFAULT_REPLY_STYLE_GUIDE =
-  "Your text replies render as Markdown in the user's terminal. Use light Markdown that reads well there: short paragraphs, `-` bullets for lists, backticks for code, commands, paths, and identifiers, and fenced blocks for multi-line code. Keep structure shallow — avoid deep nesting, large tables, and heavy headings in ordinary replies. Do not use emoji unless the user does first or asks for it. Default to prose; reach for a list only when the content is genuinely a set of items or steps. When you point to a specific code location, cite it as `path/to/file.ts:42` — a precise, consistent reference the user can navigate to.";
+  "Your text replies render as Markdown in the user's terminal. Keep structure light and shallow — deep nesting, large tables, and heavy headings read poorly there. Cite code locations as `path/to/file.ts:42` so the user can navigate to them. Do not use emoji unless the user does first or asks for it.";
+
+export const NOTIFY_USER_GUIDANCE =
+  'When `NotifyUser` is available, use it proactively to keep the end user informed while you work. For a multi-step task, send an early update describing your approach, then report meaningful findings, phase conclusions, long waits, and blockers. Keep each update to one or two sentences in the end user\'s language; avoid repeating unchanged status. The UI adds the source label automatically. If you are working as a subagent, report only your own subtask\'s progress, do not present its completion as completion of the whole task, and do not ask the end user questions or request decisions. Updates do not automatically reach your parent agent: include every important finding in your final handoff. Updates remain visible until the main agent starts its next turn, so your final reply must still stand on its own.';
+
+export function renderAgentProfilePrompt(
+  profile: AgentProfile,
+  context: AgentProfileContext,
+): SystemPromptRenderResult {
+  const rendered = profile.renderSystemPrompt(context);
+  if (context.notifyUserActive !== true || rendered.text.includes(NOTIFY_USER_GUIDANCE)) return rendered;
+  return { ...rendered, text: `${rendered.text}\n\n${NOTIFY_USER_GUIDANCE}` };
+}
 
 const ADDITIONAL_DIRS_SECTION_PROSE =
   'The following directories have been added to the workspace. You can read, write, search, and glob files in these directories as part of your workspace scope.';
@@ -73,10 +147,10 @@ export function systemPromptVars(
     role_additional: '',
     product_name: context.productName ?? DEFAULT_PRODUCT_NAME,
     reply_style_guide: context.replyStyleGuide ?? DEFAULT_REPLY_STYLE_GUIDE,
+    notify_user_guidance: context.notifyUserActive === true ? ` ${NOTIFY_USER_GUIDANCE}` : '',
     os: context.osKind ?? '',
     windows_notes: context.osKind === 'Windows' ? `\n\n${WINDOWS_NOTES}\n\n` : '',
     shell: shellName.length > 0 ? `${shellName} (\`${shellPath}\`)` : '',
-    now: context.now ?? new Date().toISOString(),
     cwd: context.cwd ?? '',
     cwd_listing: context.cwdListing ?? '',
     agents_md: context.agentsMd ?? '',
@@ -109,10 +183,7 @@ export function renderPromptTemplateResult(
   }
   return {
     text: renderPrompt(template, vars),
-    environment: mergeEnvironmentDisclosure(
-      environmentForTemplate(template, context),
-      baseResult?.environment,
-    ),
+    environment: mergeEnvironmentDisclosure(environmentForTemplate(context), baseResult?.environment),
   };
 }
 
@@ -126,28 +197,12 @@ export function renderSystemPromptResult(
       ...systemPromptVars(context, options),
       role_additional: roleAdditional,
     }),
-    environment: environmentForTemplate(SYSTEM_PROMPT_TEMPLATE, context),
+    environment: environmentForTemplate(context),
   };
 }
 
-function environmentForTemplate(
-  template: string,
-  context: AgentProfileContext,
-): EnvironmentDisclosureSnapshot {
-  const usesNow = template.includes('${now}');
-  const timeZone = context.timeZone ?? localTimeZone();
-  return {
-    cwd: context.cwd ?? '',
-    date: usesNow
-      ? {
-          disclosed: true,
-          value: {
-            localDate: localDateKey(context.now, timeZone),
-            timeZone,
-          },
-        }
-      : { disclosed: false },
-  };
+function environmentForTemplate(context: AgentProfileContext): EnvironmentDisclosureSnapshot {
+  return { cwd: context.cwd ?? '' };
 }
 
 function mergeEnvironmentDisclosure(
@@ -155,26 +210,5 @@ function mergeEnvironmentDisclosure(
   base: EnvironmentDisclosureSnapshot | undefined,
 ): EnvironmentDisclosureSnapshot {
   if (base === undefined) return direct;
-  return {
-    cwd: direct.cwd || base.cwd,
-    date: direct.date.disclosed ? direct.date : base.date,
-  };
-}
-
-function localDateKey(now: string | undefined, timeZone: string): string {
-  const date = now === undefined ? new Date() : new Date(now);
-  if (Number.isNaN(date.getTime())) return localDateKey(undefined, timeZone);
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(date);
-  const part = (type: Intl.DateTimeFormatPartTypes): string =>
-    parts.find((candidate) => candidate.type === type)?.value ?? '';
-  return `${part('year')}-${part('month')}-${part('day')}`;
-}
-
-function localTimeZone(): string {
-  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  return { cwd: direct.cwd || base.cwd };
 }

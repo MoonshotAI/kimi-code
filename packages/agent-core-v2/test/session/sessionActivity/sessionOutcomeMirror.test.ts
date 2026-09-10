@@ -10,20 +10,25 @@ import {
   type Scope,
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair, type ScopedTestHost } from '#/_base/di/test';
-import { Emitter } from '#/_base/event';
+import { Emitter, Event } from '#/_base/event';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2, Event2Class } from '#/app/event/event2';
-import { AgentActivityUpdated } from '#/agent/activityView/activityView';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { TurnStarted } from '#/agent/loop/turnEvents';
-import { TurnEnded } from '#/agent/loop/turnOps';
+import { TurnEnded, turnKey, type TurnModelState } from '#/agent/loop/turnOps';
+import { ContextUndone } from '#/agent/undo/undoService';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import {
   IAgentLifecycleService,
   MAIN_AGENT_ID,
+  type AgentScopeCreatedEvent,
 } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionOutcomeMirror } from '#/session/sessionActivity/sessionOutcomeMirror';
 import { SessionOutcomeMirror } from '#/session/sessionActivity/sessionOutcomeMirrorService';
+import { stubAgentContext } from '../../agent/agentContext/stubs';
 
 class FakeBus {
   private readonly handlers = new Map<string, Array<(e: Event2) => void>>();
@@ -46,45 +51,85 @@ class FakeBus {
 class FakeAgentLifecycle implements IAgentLifecycleService {
   declare readonly _serviceBrand: undefined;
   readonly bus = new FakeBus();
-  private readonly createEmitter = new Emitter<IAgentScopeHandle>();
-  private readonly disposeEmitter = new Emitter<string>();
+  readonly restoreHooks: Array<(ctx: undefined, next: () => Promise<void>) => Promise<void>> = [];
+  lastEnded: TurnModelState['lastEnded'];
+  private readonly context: AgentContext = stubAgentContext(MAIN_AGENT_ID, 1);
+  private readonly createEmitter = new Emitter<AgentContext>();
+  private readonly willCloseEmitter = new Emitter<AgentContext>();
+  private readonly didCloseEmitter = new Emitter<AgentContext>();
   readonly onDidCreate = this.createEmitter.event;
-  readonly onDidDispose = this.disposeEmitter.event;
+  readonly onDidCreateScope = Event.None as Event<AgentScopeCreatedEvent>;
+  readonly onWillClose = this.willCloseEmitter.event;
+  readonly onDidClose = this.didCloseEmitter.event;
   private mainPresent = false;
+  private readonly dispatcher = {
+    hooks: {
+      onDidRestore: {
+        register: (_id: string, fn: (ctx: undefined, next: () => Promise<void>) => Promise<void>) => {
+          this.restoreHooks.push(fn);
+          return { dispose: () => {} };
+        },
+      },
+    },
+  };
+  private readonly agentStates = {
+    has: (key: unknown) => key === turnKey,
+    get: (key: unknown) =>
+      key === turnKey
+        ? { nextTurnId: 1, cancelledTurnIds: [], anchorTurnIds: [], lastEnded: this.lastEnded }
+        : undefined,
+  };
 
   private readonly mainHandle = {
     id: MAIN_AGENT_ID,
-    accessor: { get: (token: unknown) => (token === IEventBus ? this.bus : undefined) },
+    accessor: {
+      get: (token: unknown) =>
+        token === IEventBus
+          ? this.bus
+          : token === IEventDispatcher
+            ? this.dispatcher
+            : token === IAgentStateService
+              ? this.agentStates
+              : undefined,
+    },
   } as unknown as IAgentScopeHandle;
 
-  get(agentId: string): IAgentScopeHandle | undefined {
+  get(agentId: string): AgentContext | undefined {
+    return agentId === MAIN_AGENT_ID && this.mainPresent ? this.context : undefined;
+  }
+
+  handleOf(agentId: string): IAgentScopeHandle | undefined {
     return agentId === MAIN_AGENT_ID && this.mainPresent ? this.mainHandle : undefined;
   }
 
-  list(): readonly IAgentScopeHandle[] {
-    return this.mainPresent ? [this.mainHandle] : [];
+  list(): readonly AgentContext[] {
+    return this.mainPresent ? [this.context] : [];
   }
 
   addMain(): void {
     this.mainPresent = true;
-    this.createEmitter.fire(this.mainHandle);
+    this.createEmitter.fire(this.context);
   }
 
   removeMain(): void {
     this.mainPresent = false;
-    this.disposeEmitter.fire(MAIN_AGENT_ID);
+    this.willCloseEmitter.fire(this.context);
+    this.didCloseEmitter.fire(this.context);
   }
 
-  create(): Promise<IAgentScopeHandle> {
+  create(): Promise<AgentContext> {
     throw new Error('not implemented');
   }
-  fork(): Promise<IAgentScopeHandle> {
+  fork(): Promise<AgentContext> {
     throw new Error('not implemented');
   }
   remove(): Promise<void> {
     throw new Error('not implemented');
   }
   broadcastPermissionMode(): void {
+    throw new Error('not implemented');
+  }
+  adopt(): AgentContext {
     throw new Error('not implemented');
   }
 }
@@ -138,17 +183,9 @@ describe('SessionOutcomeMirror (Session scope)', () => {
   });
 
   const started = (turnId = 1) =>
-    lifecycle.bus.publish(new TurnStarted({ turnId, origin: { kind: 'user' } }));
+    lifecycle.bus.publish(new TurnStarted({ agentId: 'main', turnId, origin: { kind: 'user' } }));
   const ended = (reason: TurnEnded['reason'], interruptReason?: TurnEnded['interruptReason'], turnId = 1) =>
-    lifecycle.bus.publish(new TurnEnded({ turnId, reason, interruptReason }));
-  const activityBackfill = (turnId: number, reason: TurnEnded['reason']) =>
-    lifecycle.bus.publish(
-      new AgentActivityUpdated({
-        lifecycle: 'ready',
-        background: [],
-        lastTurn: { turnId, reason, at: 0 },
-      }),
-    );
+    lifecycle.bus.publish(new TurnEnded({ agentId: 'main', turnId, reason, interruptReason }));
 
   it('persists completed/failed/user-cancelled, never programmatic aborts', async () => {
     lifecycle.addMain();
@@ -199,9 +236,9 @@ describe('SessionOutcomeMirror (Session scope)', () => {
     second.accessor.get(ISessionOutcomeMirror);
     secondLifecycle.addMain();
     await tick();
-    secondLifecycle.bus.publish(new TurnEnded({ turnId: 1, reason: 'failed' }));
+    secondLifecycle.bus.publish(new TurnEnded({ agentId: 'main', turnId: 1, reason: 'failed' }));
     expect(writes).toEqual(['failed']);
-    secondLifecycle.bus.publish(new TurnEnded({ turnId: 2, reason: 'completed' }));
+    secondLifecycle.bus.publish(new TurnEnded({ agentId: 'main', turnId: 2, reason: 'completed' }));
     expect(writes).toEqual(['failed', 'completed']);
   });
 
@@ -210,24 +247,27 @@ describe('SessionOutcomeMirror (Session scope)', () => {
     await tick();
     started();
     ended('completed');
-    activityBackfill(1, 'completed');
+    lifecycle.lastEnded = { turnId: 1, reason: 'completed' };
+    lifecycle.removeMain();
+    lifecycle.addMain();
+    await tick();
     expect(writes).toEqual(['completed']);
     expect(touches).toEqual([true]);
   });
 
   it('backfills a restored outcome that never got a turn.ended fact', async () => {
+    lifecycle.lastEnded = { turnId: 3, reason: 'failed' };
     lifecycle.addMain();
     await tick();
-    activityBackfill(3, 'failed');
     expect(writes).toEqual(['failed']);
     ended('failed');
     expect(writes).toEqual(['failed']);
   });
 
   it('backfills a restored cancellation without touching recency', async () => {
+    lifecycle.lastEnded = { turnId: 4, reason: 'cancelled' };
     lifecycle.addMain();
     await tick();
-    activityBackfill(4, 'cancelled');
     expect(writes).toEqual(['cancelled']);
     expect(touches).toEqual([false]);
   });
@@ -236,8 +276,87 @@ describe('SessionOutcomeMirror (Session scope)', () => {
     lifecycle.addMain();
     await tick();
     ended('completed');
-    activityBackfill(9, 'failed');
+    lifecycle.lastEnded = { turnId: 9, reason: 'failed' };
+    lifecycle.removeMain();
+    lifecycle.addMain();
+    await tick();
     expect(writes).toEqual(['completed']);
+  });
+
+  it('clears the persisted outcome when an undo rewinds the turn', async () => {
+    lifecycle.addMain();
+    await tick();
+    ended('cancelled', 'user_cancelled');
+    expect(writes).toEqual(['cancelled']);
+    lifecycle.bus.publish(new ContextUndone({ agentId: 'main', turns: 1, fromTurnId: 1 }));
+    expect(writes).toEqual(['cancelled', undefined]);
+  });
+
+  it('an undo with no stored outcome writes nothing', async () => {
+    lifecycle.addMain();
+    await tick();
+    lifecycle.bus.publish(new ContextUndone({ agentId: 'main', turns: 1 }));
+    expect(writes).toEqual([]);
+  });
+
+  it('keeps the persisted outcome when an undo rewinds only a later turn', async () => {
+    lifecycle.addMain();
+    await tick();
+    ended('cancelled', 'user_cancelled', 1);
+    expect(writes).toEqual(['cancelled']);
+    lifecycle.bus.publish(new ContextUndone({ agentId: 'main', turns: 1, fromTurnId: 2 }));
+    expect(writes).toEqual(['cancelled']);
+  });
+
+  it('tracks the narrated turn across equal outcomes for the undo range check', async () => {
+    lifecycle.addMain();
+    await tick();
+    ended('completed', undefined, 1);
+    ended('completed', undefined, 2);
+    expect(writes).toEqual(['completed']);
+    lifecycle.bus.publish(new ContextUndone({ agentId: 'main', turns: 1, fromTurnId: 2 }));
+    expect(writes).toEqual(['completed', undefined]);
+  });
+
+  it('clears a stale persisted outcome when the replayed wire has no ended turn', async () => {
+    const stale = host.child(LifecycleScope.Session, 'session-stale', [
+      stubPair(ISessionMetadata, {
+        read: async () => ({ lastTurnReason: 'cancelled' }) as SessionMeta,
+        update: async (
+          patch: { lastTurnReason?: SessionMeta['lastTurnReason'] },
+          uopts?: { touchUpdatedAt?: boolean },
+        ) => {
+          writes.push(patch.lastTurnReason);
+          touches.push(uopts?.touchUpdatedAt !== false);
+        },
+      } as unknown as ISessionMetadata),
+    ]);
+    const staleLifecycle = stale.accessor.get(IAgentLifecycleService) as unknown as FakeAgentLifecycle;
+    stale.accessor.get(ISessionOutcomeMirror);
+    staleLifecycle.addMain();
+    await tick();
+    expect(writes).toEqual([]);
+    for (const hook of staleLifecycle.restoreHooks) await hook(undefined, async () => {});
+    expect(writes).toEqual([undefined]);
+    expect(touches).toEqual([false]);
+  });
+
+  it('keeps the adopted outcome when the replayed wire still has its ended turn', async () => {
+    const fresh = host.child(LifecycleScope.Session, 'session-fresh', [
+      stubPair(ISessionMetadata, {
+        read: async () => ({ lastTurnReason: 'cancelled' }) as SessionMeta,
+        update: async (patch: { lastTurnReason?: SessionMeta['lastTurnReason'] }) => {
+          writes.push(patch.lastTurnReason);
+        },
+      } as unknown as ISessionMetadata),
+    ]);
+    const freshLifecycle = fresh.accessor.get(IAgentLifecycleService) as unknown as FakeAgentLifecycle;
+    fresh.accessor.get(ISessionOutcomeMirror);
+    freshLifecycle.addMain();
+    freshLifecycle.lastEnded = { turnId: 3, reason: 'cancelled', durationMs: 5 };
+    await tick();
+    for (const hook of freshLifecycle.restoreHooks) await hook(undefined, async () => {});
+    expect(writes).toEqual([]);
   });
 
   it('reattaches when the main agent is disposed and recreated', async () => {

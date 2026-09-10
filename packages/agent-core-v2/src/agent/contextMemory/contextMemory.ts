@@ -1,4 +1,5 @@
 import { createDecorator } from "#/_base/di/instantiation";
+import type { WireLineRange } from '#/wire/record';
 
 import type { UndoCut } from './contextOps';
 import type { LoopRecordedEvent } from './loopEventFold';
@@ -10,18 +11,12 @@ export interface ContextCompactionInput {
   readonly compactedCount: number;
   readonly tokensBefore: number;
   readonly tokensAfter?: number;
-  /** Measured output tokens of the compaction LLM exchange (the REAL summary
-   *  size); preferred over the summary-text estimate in the `tokensAfter`
-   *  fallback when present. */
   readonly summaryOutputTokens?: number;
-  /** Estimated fixed request overhead (system prompt + non-deferred tool
-   *  schemas) that every post-compaction exchange still carries. Counted into
-   *  the `tokensAfter` fallback so the result stays on the same full-request
-   *  basis as the measured exchange anchors. */
   readonly requestOverheadTokens?: number;
   readonly keptUserMessageCount?: number;
   readonly keptHeadUserMessageCount?: number;
   readonly droppedCount?: number;
+  readonly wireLines?: WireLineRange;
 }
 
 export interface ContextCompactionResult {

@@ -43,7 +43,7 @@ const OPTIONS: readonly TrustPromptOption[] = [
 
 export class TrustPromptComponent implements Component, Focusable {
   focused = false;
-  private selectedIndex = 1;
+  private selectedIndex = 0;
 
   constructor(private readonly opts: TrustPromptOptions) {}
 

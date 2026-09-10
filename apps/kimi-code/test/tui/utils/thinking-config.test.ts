@@ -21,20 +21,85 @@ describe('thinkingEffortToConfig', () => {
   });
 
   it.each([
-    // The model's highest declared level (last support_efforts entry) is
+    // With no declared default effort, the historical rule applies: the
+    // model's highest declared level (last support_efforts entry) is
     // session-only; anything below it persists as the global default.
     ['low', { enabled: true, effort: 'low' }],
     ['high', { enabled: true, effort: 'high' }],
     ['max', { enabled: true }],
     // Undeclared values persist as-is (the provider validates them).
     ['ultra', { enabled: true, effort: 'ultra' }],
-  ] as const)('maps %s → %o for [low, high, max]', (effort, expected) => {
-    expect(thinkingEffortToConfig(effort, ['low', 'high', 'max'])).toEqual(expected);
+  ] as const)('maps %s → %o for [low, high, max] without a default', (effort, expected) => {
+    expect(thinkingEffortToConfig(effort, { supportEfforts: ['low', 'high', 'max'] })).toEqual(
+      expected,
+    );
   });
 
   it('treats a single declared level as the top tier', () => {
-    expect(thinkingEffortToConfig('max', ['max'])).toEqual({ enabled: true });
+    expect(thinkingEffortToConfig('max', { supportEfforts: ['max'] })).toEqual({ enabled: true });
   });
+
+  it.each([
+    ['low', { enabled: true, effort: 'low' }],
+    ['high', { enabled: true, effort: 'high' }],
+    // Above the delivered default: session-only.
+    ['max', { enabled: true }],
+  ] as const)('maps %s → %o for [low, high, max] with default high', (effort, expected) => {
+    expect(
+      thinkingEffortToConfig(effort, {
+        supportEfforts: ['low', 'high', 'max'],
+        defaultEffort: 'high',
+      }),
+    ).toEqual(expected);
+  });
+
+  it('persists the top tier when the delivered default is the top tier', () => {
+    expect(
+      thinkingEffortToConfig('max', {
+        supportEfforts: ['low', 'high', 'max'],
+        defaultEffort: 'max',
+      }),
+    ).toEqual({ enabled: true, effort: 'max' });
+  });
+
+  it('keeps a non-top pick above the delivered default session-only', () => {
+    expect(
+      thinkingEffortToConfig('high', {
+        supportEfforts: ['low', 'high', 'max'],
+        defaultEffort: 'low',
+      }),
+    ).toEqual({ enabled: true });
+  });
+
+  it('falls back to the top-tier rule when the declared default is not a listed level', () => {
+    expect(
+      thinkingEffortToConfig('max', {
+        supportEfforts: ['low', 'high', 'max'],
+        defaultEffort: 'ultra',
+      }),
+    ).toEqual({ enabled: true });
+  });
+
+  it.each([
+    ['low', { enabled: true, effort: 'low' }],
+    ['medium', { enabled: true, effort: 'medium' }],
+    ['high', { enabled: true, effort: 'high' }],
+    // Above the effective default: session-only.
+    ['xhigh', { enabled: true }],
+    ['max', { enabled: true }],
+  ] as const)(
+    // The shape the Anthropic profile inference hands the gate for the
+    // latest Claude models: five tiers with the default resolved to 'high'.
+    'maps %s → %o for [low, medium, high, xhigh, max] with default high',
+    (effort, expected) => {
+      expect(
+        thinkingEffortToConfig(effort, {
+          supportEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+          defaultEffort: 'high',
+        }),
+      ).toEqual(expected);
+    },
+  );
 });
 
 describe('isThinkingOn', () => {

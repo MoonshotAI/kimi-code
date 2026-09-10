@@ -1,15 +1,19 @@
+import { readFileSync } from 'node:fs';
+
+import { join, normalize } from 'pathe';
+import { parse as parseToml } from 'smol-toml';
+
 import { type CollectionView } from '#/_base/di/collection';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
-import { BugIndicatingError, onUnexpectedError } from '#/errors';
+import { TimeoutTimer } from '#/_base/utils/timer';
+import { BugIndicatingError, Error2, ErrorCodes, onUnexpectedError } from '#/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ILogService } from '#/_base/log/log';
-import {
-  IAtomicTomlDocumentStore,
-  type IAtomicDocumentStore,
-} from '#/persistence/interface/atomicDocumentStore';
+import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { watch } from '#human/utils/watch';
 
 import {
   type AnyEnvBindings,
@@ -39,7 +43,6 @@ import {
 } from './configSectionContributions';
 import { getConfigOverlayContributions } from './configOverlayContributions';
 import { collectKeyDeprecations } from './deprecations';
-import { migrateThinkingEffortMaxToHigh } from './migrations';
 import {
   applySectionToToml,
   camelToSnake,
@@ -48,8 +51,10 @@ import {
   TomlError,
   transformTomlData,
 } from './toml';
+import { planConfigWriteback } from './tomlWriteback';
 
 const CONFIG_SCOPE = '';
+const WATCH_DEBOUNCE_MS = 150;
 
 type GetEnv = (name: string) => string | undefined;
 
@@ -118,7 +123,7 @@ function applyEnvBindings(
   }
 }
 
-function applySectionEnv(
+export function applySectionEnv(
   base: unknown,
   env: AnyEnvBindings,
   getEnv: GetEnv,
@@ -146,7 +151,8 @@ function isSameSection(
     existing.fromToml === options.fromToml &&
     existing.toToml === options.toToml &&
     deepEqual(existing.defaultValue, options.defaultValue) &&
-    deepEqual(existing.deprecations, options.deprecations)
+    deepEqual(existing.deprecations, options.deprecations) &&
+    existing.collectDiagnostics === options.collectDiagnostics
   );
 }
 
@@ -244,6 +250,7 @@ export class ConfigRegistry extends Disposable implements IConfigRegistry {
       fromToml: options.fromToml,
       toToml: options.toToml,
       deprecations: options.deprecations,
+      collectDiagnostics: options.collectDiagnostics,
     });
     this._onDidRegisterSection.fire({ domain });
   }
@@ -299,6 +306,7 @@ export class ConfigService extends Disposable implements IConfigService {
   readonly ready: Promise<void>;
 
   private stateChain: Promise<unknown> = Promise.resolve();
+  private readonly watchDebounce = this._register(new TimeoutTimer());
 
   private rawSnake: ResolvedConfig = {};
   private raw: ResolvedConfig = {};
@@ -309,12 +317,13 @@ export class ConfigService extends Disposable implements IConfigService {
   private readonly diagnosticsList: ConfigDiagnostic[] = [];
   private lastDiagnosticsSnapshot = '[]';
   private readonly configKey: string;
+  private tainted = false;
 
   constructor(
     @IConfigRegistry private readonly registry: IConfigRegistry,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ILogService private readonly log: ILogService,
-    @IAtomicTomlDocumentStore private readonly documentStore: IAtomicDocumentStore,
+    @IAtomicTomlDocumentStore private readonly documentStore: IAtomicTomlDocumentStore,
   ) {
     super();
     this.configKey = this.bootstrap.configKey;
@@ -323,13 +332,17 @@ export class ConfigService extends Disposable implements IConfigService {
     this._register(this.registry.onDidRegisterOverlay(() => this.reapplyOverlays()));
     const { configKey } = this;
     const { homeDir } = this.bootstrap;
-    this.ready = (async () => {
-      await migrateThinkingEffortMaxToHigh(this.documentStore, configKey, homeDir);
-      await this.load('load');
-    })();
+    this.seedInitialLoad();
+    this.ready = this.load('load');
+    const configFile = join(homeDir, configKey);
+    const handle = watch(homeDir, { depth: 0 });
+    this._register(handle);
     this._register(
-      this.documentStore.watch(CONFIG_SCOPE, this.configKey)(() => {
-        void this.reload();
+      handle.onDidChange((change) => {
+        if (normalize(change.path) !== normalize(configFile)) return;
+        this.watchDebounce.cancelAndSet(() => {
+          void this.reload();
+        }, WATCH_DEBOUNCE_MS);
       }),
     );
   }
@@ -366,7 +379,6 @@ export class ConfigService extends Disposable implements IConfigService {
     return [...this.diagnosticsList];
   }
 
-  /** Append a diagnostic, skipping exact duplicates (rebuilds re-run the same checks). */
   private pushDiagnostic(diagnostic: ConfigDiagnostic): void {
     const duplicate = this.diagnosticsList.some(
       (existing) =>
@@ -402,17 +414,18 @@ export class ConfigService extends Disposable implements IConfigService {
       return;
     }
     await this.enqueueStateTransition(async () => {
-      const base = this.raw[domain];
-      const next = this.registry.merge(domain, base, patch);
-      const validated = this.registry.validate(domain, next);
-      const stripped = this.stripEnv(domain, validated);
-      if (stripped === undefined) {
-        delete this.raw[domain];
-      } else {
-        this.registry.validate(domain, stripped);
-        this.raw[domain] = stripped;
-      }
-      await this.persist(domain);
+      this.assertPersistable();
+      await this.persist(domain, (stagedRaw, stagedRawSnake) => {
+        const next = this.registry.merge(domain, stagedRaw[domain], patch);
+        const validated = this.registry.validate(domain, next);
+        const stripped = this.stripEnv(domain, validated, stagedRaw, stagedRawSnake);
+        if (stripped === undefined) {
+          delete stagedRaw[domain];
+        } else {
+          this.registry.validate(domain, stripped);
+          stagedRaw[domain] = stripped;
+        }
+      });
       this.rebuildEffective('set', [domain]);
     });
   }
@@ -434,13 +447,15 @@ export class ConfigService extends Disposable implements IConfigService {
       return;
     }
     await this.enqueueStateTransition(async () => {
-      const stripped = this.stripEnv(domain, effectiveValue);
-      if (stripped === undefined) {
-        delete this.raw[domain];
-      } else {
-        this.raw[domain] = this.registry.validate(domain, stripped);
-      }
-      await this.persist(domain);
+      this.assertPersistable();
+      await this.persist(domain, (stagedRaw, stagedRawSnake) => {
+        const stripped = this.stripEnv(domain, effectiveValue, stagedRaw, stagedRawSnake);
+        if (stripped === undefined) {
+          delete stagedRaw[domain];
+        } else {
+          stagedRaw[domain] = this.registry.validate(domain, stripped);
+        }
+      });
       this.rebuildEffective('set', [domain]);
     });
   }
@@ -467,33 +482,38 @@ export class ConfigService extends Disposable implements IConfigService {
       return;
     }
     await this.enqueueStateTransition(async () => {
-      const staged: ResolvedConfig = { ...this.raw };
-      for (const domain of domains) {
-        const value = sections[domain] === null ? undefined : sections[domain];
-        const stripped = this.stripEnv(domain, value);
-        if (stripped === undefined) {
-          delete staged[domain];
-        } else {
-          staged[domain] = this.registry.validate(domain, stripped);
+      this.assertPersistable();
+      await this.persistDomains(domains, (stagedRaw, stagedRawSnake) => {
+        for (const domain of domains) {
+          const value = sections[domain] === null ? undefined : sections[domain];
+          const stripped = this.stripEnv(domain, value, stagedRaw, stagedRawSnake);
+          if (stripped === undefined) {
+            delete stagedRaw[domain];
+          } else {
+            stagedRaw[domain] = this.registry.validate(domain, stripped);
+          }
         }
-      }
-      this.raw = staged;
-      await this.persistDomains(domains);
+      });
       this.rebuildEffective('set', domains);
     });
   }
 
-  private stripEnv(domain: string, value: unknown): unknown {
+  private stripEnv(
+    domain: string,
+    value: unknown,
+    raw: ResolvedConfig,
+    rawSnake: ResolvedConfig,
+  ): unknown {
     let result = value;
     const section = this.registry.getSection(domain);
     if (section?.stripEnv !== undefined) {
       const getEnv = (name: string): string | undefined => this.bootstrap.getEnv(name);
-      result = section.stripEnv(result, this.raw[domain], getEnv);
+      result = section.stripEnv(result, raw[domain], getEnv);
     }
     if (result === undefined) return result;
     for (const overlay of this.registry.listEffectiveOverlays()) {
       if (overlay.strip === undefined) continue;
-      result = overlay.strip(domain, result, this.rawSnake);
+      result = overlay.strip(domain, result, rawSnake);
       if (result === undefined) return result;
     }
     return result;
@@ -513,23 +533,57 @@ export class ConfigService extends Disposable implements IConfigService {
     return run;
   }
 
+  private seedInitialLoad(): void {
+    let fileData: ResolvedConfig;
+    try {
+      const text = readFileSync(this.bootstrap.configPath, 'utf8');
+      const data: unknown = text.trim().length === 0 ? {} : parseToml(text);
+      if (!isPlainObject(data)) return;
+      fileData = data;
+    } catch {
+      return;
+    }
+    this.rawSnake = cloneRecord(fileData);
+    this.raw = transformTomlData(fileData, this.registry);
+    this.validated = this.buildValidated(this.raw);
+    const next = { ...this.validated };
+    this.applySectionEnvBindings(next, true);
+    this.applyEnvOverlay(next);
+    this.effective = next;
+  }
+
   private async load(source: ConfigChangeSource): Promise<void> {
     this.diagnosticsList.length = 0;
     let fileData: ResolvedConfig = {};
+    let failed = false;
     try {
       const data = await this.documentStore.get<ResolvedConfig>(CONFIG_SCOPE, this.configKey);
       fileData = data !== undefined && isPlainObject(data) ? data : {};
     } catch (error) {
+      failed = true;
       const message =
         error instanceof TomlError
           ? `Failed to parse ${this.bootstrap.configPath}: ${describeTomlSyntaxError(error)}`
           : describeUnknownError(error);
       this.pushDiagnostic({ severity: 'error', message });
       this.log.warn('config load failed', { error: describeUnknownError(error) });
+      if (source !== 'load') {
+        this.tainted = true;
+        this.emitDiagnosticsIfChanged();
+        return;
+      }
     }
+    this.tainted = failed;
     const nextRawSnake = cloneRecord(fileData);
     for (const diagnostic of collectKeyDeprecations(nextRawSnake, this.registry.listSections())) {
       this.pushDiagnostic(diagnostic);
+    }
+    for (const section of this.registry.listSections()) {
+      if (section.collectDiagnostics === undefined) continue;
+      const rawSection = nextRawSnake[camelToSnake(section.domain)];
+      for (const diagnostic of section.collectDiagnostics(rawSection)) {
+        this.pushDiagnostic(diagnostic);
+      }
     }
     if (source !== 'load' && JSON.stringify(nextRawSnake) === JSON.stringify(this.rawSnake)) {
       const scratch = { ...this.validated };
@@ -732,15 +786,86 @@ export class ConfigService extends Disposable implements IConfigService {
     this.commit('reload', [domain]);
   }
 
-  private async persist(domain: string): Promise<void> {
-    await this.persistDomains([domain]);
+  private assertPersistable(): void {
+    if (!this.tainted) return;
+    throw new Error2(
+      ErrorCodes.CONFIG_PERSIST_BLOCKED,
+      `Refusing to persist config: ${this.bootstrap.configPath} could not be read; fix the file and reload before writing.`,
+    );
   }
 
-  private async persistDomains(domains: readonly string[]): Promise<void> {
-    for (const domain of domains) {
-      applySectionToToml(this.rawSnake, domain, this.raw[domain], this.registry);
+  private async persist(
+    domain: string,
+    rebase: (stagedRaw: ResolvedConfig, stagedRawSnake: ResolvedConfig) => void,
+  ): Promise<void> {
+    await this.persistDomains([domain], rebase);
+  }
+
+  private async persistDomains(
+    domains: readonly string[],
+    rebase: (stagedRaw: ResolvedConfig, stagedRawSnake: ResolvedConfig) => void,
+  ): Promise<void> {
+    this.assertPersistable();
+    let onDisk: ResolvedConfig = {};
+    try {
+      const data = await this.documentStore.get<ResolvedConfig>(CONFIG_SCOPE, this.configKey);
+      onDisk = data !== undefined && isPlainObject(data) ? data : {};
+    } catch (error) {
+      const message =
+        error instanceof TomlError
+          ? `Failed to parse ${this.bootstrap.configPath}: ${describeTomlSyntaxError(error)}`
+          : describeUnknownError(error);
+      this.pushDiagnostic({ severity: 'error', message });
+      this.emitDiagnosticsIfChanged();
+      this.log.warn('config persist aborted: re-read failed', {
+        error: describeUnknownError(error),
+      });
+      this.tainted = true;
+      throw new Error2(
+        ErrorCodes.CONFIG_PERSIST_BLOCKED,
+        `Refusing to persist config: ${this.bootstrap.configPath} could not be read; fix the file and reload before writing.`,
+        { cause: error },
+      );
     }
-    await this.documentStore.set(CONFIG_SCOPE, this.configKey, this.rawSnake);
+    let onDiskText: string | undefined;
+    try {
+      onDiskText = await this.documentStore.getText(CONFIG_SCOPE, this.configKey);
+    } catch {
+      onDiskText = undefined;
+    }
+    const stagedRawSnake = cloneRecord(onDisk);
+    const stagedRaw = transformTomlData(onDisk, this.registry);
+    const previousSnake: ResolvedConfig = {};
+    for (const domain of domains) {
+      const snakeKey = camelToSnake(domain);
+      previousSnake[snakeKey] = stagedRawSnake[snakeKey];
+    }
+    rebase(stagedRaw, stagedRawSnake);
+    for (const domain of domains) {
+      applySectionToToml(stagedRawSnake, domain, stagedRaw[domain], this.registry);
+    }
+    const plannedText =
+      onDiskText === undefined
+        ? undefined
+        : planConfigWriteback(
+            onDiskText,
+            domains.map((domain) => {
+              const snakeKey = camelToSnake(domain);
+              return {
+                snakeKey,
+                previousValue: previousSnake[snakeKey],
+                nextValue: stagedRawSnake[snakeKey],
+              };
+            }),
+            stagedRawSnake,
+          );
+    if (plannedText === undefined) {
+      await this.documentStore.set(CONFIG_SCOPE, this.configKey, stagedRawSnake);
+    } else if (plannedText !== onDiskText) {
+      await this.documentStore.setText(CONFIG_SCOPE, this.configKey, plannedText);
+    }
+    this.rawSnake = stagedRawSnake;
+    this.raw = stagedRaw;
   }
 }
 

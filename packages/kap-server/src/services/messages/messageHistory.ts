@@ -7,7 +7,6 @@ import {
   ISessionIndex,
   IWireService,
   createContextTranscriptReducer,
-  ensureMainAgent,
   resumeSessionById,
   type ContextMessage,
   type ContextTranscript,
@@ -16,13 +15,13 @@ import {
   type WireRecord,
 } from '@moonshot-ai/agent-core-v2';
 
+import { ensureMainAgent } from '../../transport/mainAgent';
 import type { Message, MessageRole } from '../../protocol/message';
 import { toProtocolMessage } from './messageProjection';
 
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
 
-/** Sentinel — the route maps it to 40401. */
 export class SessionNotFoundError extends Error {
   readonly sessionId: string;
   constructor(sessionId: string) {
@@ -32,7 +31,6 @@ export class SessionNotFoundError extends Error {
   }
 }
 
-/** Sentinel — the route maps it to 40403. */
 export class MessageNotFoundError extends Error {
   readonly sessionId: string;
   readonly messageId: string;
@@ -116,13 +114,6 @@ async function loadMessages(core: Scope, sessionId: string): Promise<Message[]> 
   return loadMessageHistory(core, agent, sessionId, summary.createdAt);
 }
 
-/**
- * One agent's full, ascending, projected message history: the persisted
- * journal (flushed first) folded by the transcript reducer, the unflushed
- * live tail merged in, blob references rehydrated, and timestamps clamped
- * strictly increasing. Shared by the `messages` routes and the `snapshot`
- * route so all history-serving surfaces agree.
- */
 export async function loadMessageHistory(
   core: Scope,
   agent: IAgentScopeHandle,
