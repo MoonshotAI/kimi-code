@@ -250,14 +250,14 @@ function isGzipCompressibleType(contentType: string): boolean {
 }
 
 function rewrittenResponseETag(body: Buffer): string {
-  return `"${createHash('sha256').update(body).digest('hex')}"`;
+  return `W/"${createHash('sha256').update(body).digest('hex')}"`;
 }
 
 function requestMatchesETag(
   headers: readonly [string, string][],
   etag: string,
 ): boolean {
-  const candidates = [etag, `W/${etag}`];
+  const candidates = [etag, etag.replace(/^W\//, '')];
   for (const [name, value] of headers) {
     if (name.toLowerCase() !== 'if-none-match') continue;
     for (const token of value.split(',')) {
@@ -879,7 +879,6 @@ function requestLocalHttp(
               const etag = rewrittenResponseETag(body);
               headers.push('Cache-Control', 'no-cache', 'ETag', etag);
               if (requestMatchesETag(parsed.headers, etag)) {
-                headers.push('Content-Length', '0');
                 return Buffer.from(`HTTP/1.1 304 Not Modified\r\n${headerLines(headers)}\r\n\r\n`);
               }
             }

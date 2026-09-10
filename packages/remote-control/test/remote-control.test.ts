@@ -456,7 +456,7 @@ describe('Remote Control tunnel', () => {
     expect(gzipHead).toContain('Content-Encoding: gzip');
     expect(gzipHead).toContain('Vary: Accept-Encoding');
     expect(gzipHead).toContain('Cache-Control: no-cache');
-    const rewrittenETag = /ETag: "([0-9a-f]{64})"/.exec(gzipHead)?.[0];
+    const rewrittenETag = /ETag: (W\/"[0-9a-f]{64}")/.exec(gzipHead)?.[0];
     expect(rewrittenETag).toBeDefined();
     expect(gzipHead).toContain(`Content-Length: ${gzipBody.length}`);
     expect(gunzipSync(gzipBody).toString()).toBe(
@@ -485,6 +485,7 @@ describe('Remote Control tunnel', () => {
     expect(revalidateHead).toContain('Cache-Control: no-cache');
     expect(revalidateHead).toContain(rewrittenETag!);
     expect(revalidateHead).not.toContain('Content-Encoding');
+    expect(revalidateHead).not.toContain('Content-Length');
 
     const binaryResponsePromise = nextJsonMessage(httpConnections[0]!);
     httpConnections[0]!.send(

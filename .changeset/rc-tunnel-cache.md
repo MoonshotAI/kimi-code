@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Cache rewritten Remote Control tunnel responses with ETag validation.
+Reuse unchanged Remote Control assets across page loads instead of retransferring them.
