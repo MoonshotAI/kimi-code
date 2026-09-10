@@ -2,7 +2,8 @@ import { hostname, platform } from 'node:os';
 import { join } from 'node:path';
 import { request as httpRequest, validateHeaderName, validateHeaderValue } from 'node:http';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { gzipSync } from 'node:zlib';
+import { promisify } from 'node:util';
+import { gzip } from 'node:zlib';
 
 import {
   createKimiDeviceId,
@@ -67,6 +68,7 @@ const GZIP_COMPRESSIBLE_TYPES = new Set([
   'application/xml',
   'image/svg+xml',
 ]);
+const gzipAsync = promisify(gzip);
 
 interface RelayMessage {
   readonly type: string;
@@ -845,44 +847,44 @@ function requestLocalHttp(
         response.on('data', (chunk: Buffer | string) => chunks.push(Buffer.from(chunk)));
         response.once('error', reject);
         response.once('end', () => {
-          const contentType = response.headers['content-type'] ?? '';
-          const receivedBody = Buffer.concat(chunks);
-          let body =
-            response.headers['content-encoding'] === undefined
-              ? rewriteRemoteControlResponse(contentType, receivedBody, publicPrefix)
-              : receivedBody;
-          const rewritten = body !== receivedBody;
-          const headers = filterResponseHeaders(response.rawHeaders, rewritten);
-          if (rewritten) headers.push('Cache-Control', 'no-cache');
-          if (
-            response.headers['content-encoding'] === undefined &&
-            response.statusCode !== 206 &&
-            body.length >= GZIP_MIN_BODY_BYTES &&
-            isGzipCompressibleType(contentType) &&
-            acceptsGzipEncoding(parsed.headers)
-          ) {
-            body = gzipSync(body);
-            headers.push('Content-Encoding', 'gzip');
-            let varyCovers = false;
-            for (let index = 0; index < headers.length; index += 2) {
-              if (headers[index]!.toLowerCase() !== 'vary') continue;
-              const tokens = headers[index + 1]!
-                .toLowerCase()
-                .split(',')
-                .map((token) => token.trim());
-              if (tokens.includes('*') || tokens.includes('accept-encoding')) varyCovers = true;
+          void (async (): Promise<Buffer> => {
+            const contentType = response.headers['content-type'] ?? '';
+            const receivedBody = Buffer.concat(chunks);
+            let body =
+              response.headers['content-encoding'] === undefined
+                ? rewriteRemoteControlResponse(contentType, receivedBody, publicPrefix)
+                : receivedBody;
+            const rewritten = body !== receivedBody;
+            const headers = filterResponseHeaders(response.rawHeaders, rewritten);
+            if (rewritten) headers.push('Cache-Control', 'no-cache');
+            if (
+              response.headers['content-encoding'] === undefined &&
+              response.statusCode !== 206 &&
+              body.length >= GZIP_MIN_BODY_BYTES &&
+              isGzipCompressibleType(contentType) &&
+              acceptsGzipEncoding(parsed.headers)
+            ) {
+              body = await gzipAsync(body);
+              headers.push('Content-Encoding', 'gzip');
+              let varyCovers = false;
+              for (let index = 0; index < headers.length; index += 2) {
+                if (headers[index]!.toLowerCase() !== 'vary') continue;
+                const tokens = headers[index + 1]!
+                  .toLowerCase()
+                  .split(',')
+                  .map((token) => token.trim());
+                if (tokens.includes('*') || tokens.includes('accept-encoding')) varyCovers = true;
+              }
+              if (!varyCovers) headers.push('Vary', 'Accept-Encoding');
             }
-            if (!varyCovers) headers.push('Vary', 'Accept-Encoding');
-          }
-          headers.push('Content-Length', String(body.length));
-          const statusCode = response.statusCode ?? 502;
-          const statusMessage = response.statusMessage ?? 'Bad Gateway';
-          resolve(
-            Buffer.concat([
+            headers.push('Content-Length', String(body.length));
+            const statusCode = response.statusCode ?? 502;
+            const statusMessage = response.statusMessage ?? 'Bad Gateway';
+            return Buffer.concat([
               Buffer.from(`HTTP/1.1 ${statusCode} ${statusMessage}\r\n${headerLines(headers)}\r\n\r\n`),
               body,
-            ]),
-          );
+            ]);
+          })().then(resolve, reject);
         });
       },
     );
