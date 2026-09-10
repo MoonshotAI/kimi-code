@@ -1022,7 +1022,7 @@ On success, `data` is `{ active, queued }`: `active` is the running prompt (`nul
 
 #### `POST /api/v1/sessions/{session_id}/prompts`
 
-Submits a user prompt to the session. Media references are validated first, then the optional overrides are applied to the target agent — `profile` (bound together with `model` / `thinking`), then `model`, `thinking`, `permission_mode`, and `disabled_tools` — and the prompt is enqueued; the response returns as soon as the prompt is accepted, without waiting for the turn. With `skills`, the prompt runs as a bundled skill activation instead of a plain user prompt.
+Submits a user prompt to the session. Media references are validated first, then the optional overrides are applied to the target agent — `profile` (bound together with `model` / `thinking`), then `model`, `thinking`, `permission_mode`, and `disabled_tools` — and the prompt is enqueued; the response returns as soon as the prompt is accepted, without waiting for the turn. With `steer: true`, a prompt submitted while the session is busy is steered directly into the running turn instead of waiting in the queue — the one-call form of submitting and then calling `POST /api/v1/sessions/{session_id}/prompts:steer`; on an idle session it starts a new turn as usual. With `skills`, the prompt runs as a bundled skill activation instead of a plain user prompt.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1030,6 +1030,7 @@ Submits a user prompt to the session. Media references are validated first, then
 | `content` | body | array | **Required.** Non-empty array of content parts; variants below |
 | `agent_id` | body | string | Target agent. Default the main agent |
 | `prompt_id` | body | string | Client-chosen prompt id for idempotent submission; an id already reserved by an in-flight prompt fails `40927`, one that has already completed fails `40903`. Cannot be combined with `skills` |
+| `steer` | body | boolean | When `true`, steer the prompt directly into the running turn on a busy session instead of queueing it; a no-op on an idle session, where the prompt starts a new turn as usual. Cannot be combined with `skills` |
 | `skills` | body | array | Bundled skill activations, at least 1 entry of `{ name, args? }`; every skill must exist and be user-activatable |
 | `profile` | body | string | Agent profile to bind before submitting |
 | `model` | body | string | Model alias to switch the agent to |
@@ -1049,7 +1050,7 @@ The schema also accepts the `tool_use`, `tool_result`, and `thinking` parts of t
 
 On success, `data` is the accepted prompt `{ prompt_id, user_message_id, status, content, created_at }`.
 
-- `40001`: validation failure — for example `prompt_id` combined with `skills`, or an unknown `profile`
+- `40001`: validation failure — for example `prompt_id` or `steer` combined with `skills`, or an unknown `profile`
 - `40110`: no provider configured yet — finish login first
 - `40111`: the resolved provider has no credential (`details.provider_id`)
 - `40112`: the provider's credential was rejected (`details.provider_id`)
