@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import { appendFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import fs, { appendFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
 import { Worker } from 'node:worker_threads';
@@ -116,6 +117,12 @@ async function writeWire(
   const file = join(dir, 'wire.jsonl');
   await writeFile(file, lines.map((l) => `${l}\n`).join(''), 'utf8');
   return file;
+}
+
+async function writeTitle(home: string, sessionId: string, title: string): Promise<void> {
+  const dir = join(home, 'sessions', WS, sessionId);
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, 'state.json'), JSON.stringify({ title }));
 }
 
 const noopLog = {
@@ -276,6 +283,7 @@ describe('GlobalSearchService', () => {
 
   it('indexes user and assistant text and finds Chinese and English terms', async () => {
     const s1 = summary('s1', '搜索重构讨论', T1);
+    await writeTitle(home!, s1.id, s1.title!);
     await writeWire(home!, 's1', 'main', [
       userLine('帮我看看苹果怎么挑', T1),
       assistantLine('Here is the apple picking guide.', T2),
@@ -303,8 +311,309 @@ describe('GlobalSearchService', () => {
     expect(injected.items).toEqual([]);
   });
 
+  it.each([makeService, makeInlineService])('filters deleted sources before pagination without waiting for a writer sync (%#)', async (make) => {
+    const removed = summary('removed', 'needle title', T3);
+    await writeTitle(home!, removed.id, removed.title!);
+    const retained = summary('retained', 'retained', T1);
+    await writeWire(home!, removed.id, 'main', [userLine('needle deleted', T3)]);
+    await writeWire(home!, retained.id, 'main', [userLine('needle first', T1), userLine('needle second', T2)]);
+    const writer = track(make(home!, staticIndex([removed, retained])));
+    await writer.reindex();
+    const reader = track(make(home!, staticIndex([removed, retained])));
+    await settleSync(reader);
+    expect((await reader.status()).lifecycle.state).toBe('ready');
+    expect((await reader.search({ query: 'needle' })).indexState.state).toBe('readonly');
+    await rm(join(home!, 'sessions', WS, removed.id), { recursive: true });
+    for (const mode of ['terms', 'literal'] as const) {
+      const first = await reader.search({ query: 'needle', mode, sort: 'time_desc', pageSize: 1 });
+      expect(first.items).toHaveLength(1);
+      expect(first.items[0]?.sessionId).toBe(retained.id);
+      expect(first.hasMore).toBe(true);
+      const second = await reader.search({ query: 'needle', mode, sort: 'time_desc', pageSize: 1, pageToken: first.pageToken });
+      expect(second.items).toHaveLength(1);
+      expect(second.items[0]?.sessionId).toBe(retained.id);
+      expect(second.items[0]?.time).not.toBe(first.items[0]?.time);
+      expect(second.hasMore).toBe(false);
+    }
+  });
+
+  it.each([makeService, makeInlineService])('does not serve an old incarnation after the same directory is recreated (%#)', async (make) => {
+    const s1 = summary('s1', 'original title', T1);
+    await writeTitle(home!, s1.id, s1.title!);
+    await writeWire(home!, s1.id, 'main', [userLine('original secret', T1)]);
+    const writer = track(make(home!, staticIndex([s1])));
+    await writer.reindex();
+    const reader = track(make(home!, staticIndex([s1])));
+    await settleSync(reader);
+    expect((await reader.search({ query: 'original' })).items.length).toBeGreaterThan(0);
+    await rm(join(home!, 'sessions', WS, s1.id), { recursive: true });
+    await writeWire(home!, s1.id, 'main', [userLine('replacement message', T2)]);
+    await writeTitle(home!, s1.id, 'replacement title');
+    expect((await reader.search({ query: 'original' })).items).toEqual([]);
+    await settleSync(writer);
+    await refreshNow(reader);
+    expect((await reader.search({ query: 'replacement', role: 'user' })).items).toHaveLength(1);
+    expect((await reader.search({ query: 'original' })).items).toEqual([]);
+    expect((await reader.search({ query: 'replacement', role: 'user' })).items[0]?.sessionTitle).toBe('replacement title');
+  });
+
+  it.each(['inode', 'birthtime', 'both'])('rejects matching stored identities with unavailable %s and recovers after reindexing', async (missing) => {
+    const s1 = summary('s1', 'one', T1);
+    await writeWire(home!, s1.id, 'main', [userLine('original secret', T1)]);
+    const dir = join(home!, 'sessions', WS, s1.id);
+    const writer = track(makeInlineService(home!, staticIndex([s1])));
+    await writer.reindex();
+    const info = await stat(dir, { bigint: true });
+    const ino = missing === 'birthtime' ? info.ino : 0n;
+    const birthtimeNs = missing === 'inode' ? info.birthtimeNs : 0n;
+    const identity = `${info.dev}:${ino}:${birthtimeNs}`;
+    const db = coreOf(writer).db!;
+    for (const row of db.query({ key: { prefix: 's1/' } })) {
+      await db.set(row.key, { ...row.value, sessionIdentity: identity });
+    }
+    await db.set('\0meta\\session\\s1', { kind: 'sessionMeta', dir, identity });
+    const original = fs.stat.bind(fs);
+    const intercept = vi.spyOn(fs, 'stat').mockImplementation((async (path, options) => {
+      const result = await original(path, options);
+      if (path === dir && options?.bigint === true) {
+        return Object.assign(result, { ino, birthtimeNs });
+      }
+      return result;
+    }) as typeof fs.stat);
+    syncBuiltinESMExports();
+    const reader = track(makeInlineService(home!, staticIndex([s1])));
+    try {
+      await settleSync(reader);
+      expect((await reader.search({ query: 'original' })).items).toEqual([]);
+      await rm(dir, { recursive: true });
+      await writeWire(home!, s1.id, 'main', [userLine('replacement message', T2)]);
+      expect((await reader.search({ query: 'original' })).items).toEqual([]);
+      await settleSync(writer);
+      await refreshNow(reader);
+      expect((await reader.search({ query: 'replacement' })).items).toEqual([]);
+      expect([...db.query({ key: { prefix: 's1/' } })]).toEqual([]);
+      expect(await writer.status()).toMatchObject({ sessions: 0, degraded: 'Skipped 1 session(s) during indexing' });
+      expect((await reader.search({ query: 'replacement' })).indexState).toMatchObject({
+        indexedSessions: 0, degraded: 'Skipped 1 session(s) during indexing',
+      });
+    } finally {
+      intercept.mockRestore();
+      syncBuiltinESMExports();
+    }
+    await settleSync(writer);
+    await refreshNow(reader);
+    expect((await reader.search({ query: 'replacement' })).items).toHaveLength(1);
+    expect(await writer.status()).toMatchObject({ sessions: 1, degraded: undefined });
+    expect((await reader.search({ query: 'replacement' })).indexState.degraded).toBeUndefined();
+    expect((await reader.search({ query: 'original' })).items).toEqual([]);
+  });
+
+  it('keeps a query valid when readonly refresh replaces its handle during source validation', async () => {
+    const s1 = summary('s1', 'one', T1);
+    await writeWire(home!, s1.id, 'main', [userLine('needle body', T1)]);
+    const writer = track(makeInlineService(home!, staticIndex([s1])));
+    await writer.reindex();
+    const reader = track(makeInlineService(home!, staticIndex([s1])));
+    await settleSync(reader);
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const original = fs.stat.bind(fs);
+    const intercept = vi.spyOn(fs, 'stat').mockImplementation((async (path, options) => {
+      const result = await original(path, options);
+      if (path === join(home!, 'sessions', WS, s1.id) && options?.bigint === true) {
+        enter();
+        await gate;
+      }
+      return result;
+    }) as typeof fs.stat);
+    syncBuiltinESMExports();
+    try {
+      const searching = reader.search({ query: 'needle' });
+      await entered;
+      await coreOf(writer).db!.compact();
+      await refreshNow(reader);
+      release();
+      expect((await searching).items).toHaveLength(1);
+    } finally {
+      release();
+      intercept.mockRestore();
+      syncBuiltinESMExports();
+    }
+  });
+
+  it.each(['resolve', 'reject'])('returns verified partial results when a source stat outlives the deadline and later %ss', async (outcome) => {
+    const slow = summary('slow', 'slow', T1);
+    const healthy = summary('healthy', 'healthy', T2);
+    await writeWire(home!, slow.id, 'main', [userLine('needle slow extra text', T1)]);
+    await writeWire(home!, healthy.id, 'main', [userLine('needle', T2)]);
+    const writer = track(makeInlineService(home!, staticIndex([slow, healthy])));
+    await writer.reindex();
+    const reader = track(makeInlineService(home!, staticIndex([slow, healthy])));
+    await settleSync(reader);
+    expect((await reader.search({ query: 'needle' })).items).toHaveLength(2);
+    let enter!: () => void;
+    let release!: () => void;
+    let finish!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const finished = new Promise<void>((resolve) => { finish = resolve; });
+    const original = fs.stat.bind(fs);
+    const intercept = vi.spyOn(fs, 'stat').mockImplementation((async (path, options) => {
+      const result = await original(path, options);
+      if (path === join(home!, 'sessions', WS, slow.id) && options?.bigint === true) {
+        enter();
+        try {
+          await gate;
+          if (outcome === 'reject') throw Object.assign(new Error('disconnected source'), { code: 'EIO' });
+        } finally {
+          finish();
+        }
+      }
+      return result;
+    }) as typeof fs.stat);
+    syncBuiltinESMExports();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    reader.queryDeadlineMs = 100;
+    let completed: Awaited<ReturnType<GlobalSearchService['search']>> | undefined;
+    const searching = reader.search({ query: 'needle', sort: 'time_desc' }).then((page) => { completed = page; });
+    try {
+      await entered;
+      await vi.advanceTimersByTimeAsync(100);
+      expect(completed).toMatchObject({ incomplete: 'deadline', items: [{ sessionId: healthy.id }] });
+      expect(completed?.items).toHaveLength(1);
+      release();
+      await finished;
+      await searching;
+      expect(completed?.items).toHaveLength(1);
+    } finally {
+      release();
+      await searching.catch(() => {});
+      intercept.mockRestore();
+      syncBuiltinESMExports();
+      vi.useRealTimers();
+    }
+    expect((await reader.search({ query: 'needle' })).items).toHaveLength(2);
+  });
+
+  it('bounds outstanding source checks across timed-out searches and verifies fresh state after recovery', async () => {
+    const s1 = summary('s1', 'one', T1);
+    await writeWire(home!, s1.id, 'main', [userLine('needle body', T1)]);
+    const writer = track(makeInlineService(home!, staticIndex([s1])));
+    await writer.reindex();
+    const reader = track(makeInlineService(home!, staticIndex([s1])));
+    await settleSync(reader);
+    writer.queryDeadlineMs = 30;
+    reader.queryDeadlineMs = 30;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let calls = 0;
+    const dir = join(home!, 'sessions', WS, s1.id);
+    const original = fs.stat.bind(fs);
+    const intercept = vi.spyOn(fs, 'stat').mockImplementation((async (path, options) => {
+      const result = await original(path, options);
+      if (path === dir && options?.bigint === true) {
+        calls++;
+        await gate;
+      }
+      return result;
+    }) as typeof fs.stat);
+    syncBuiltinESMExports();
+    try {
+      expect(await reader.search({ query: 'needle' })).toMatchObject({ incomplete: 'deadline', items: [] });
+      const pages = await Promise.all(Array.from({ length: 8 }, (_, i) =>
+        (i % 2 === 0 ? reader : writer).search({ query: 'needle' })));
+      for (const page of pages) expect(page).toMatchObject({ incomplete: 'deadline', items: [] });
+      expect(calls).toBe(1);
+      await rm(dir, { recursive: true });
+      release();
+      expect((await reader.search({ query: 'needle' })).items).toEqual([]);
+    } finally {
+      release();
+      intercept.mockRestore();
+      syncBuiltinESMExports();
+    }
+    expect((await writer.search({ query: 'needle' })).items).toEqual([]);
+  });
+
+  it('fails a query when its session source cannot be verified', async () => {
+    const s1 = summary('s1', 'one', T1);
+    await writeWire(home!, s1.id, 'main', [userLine('needle body', T1)]);
+    const writer = track(makeInlineService(home!, staticIndex([s1])));
+    await writer.reindex();
+    const reader = track(makeInlineService(home!, staticIndex([s1])));
+    await settleSync(reader);
+    const original = fs.stat.bind(fs);
+    const intercept = vi.spyOn(fs, 'stat').mockImplementation((async (path, options) => {
+      if (path === join(home!, 'sessions', WS, s1.id) && options?.bigint === true) {
+        throw Object.assign(new Error('source unavailable'), { code: 'EACCES' });
+      }
+      return original(path, options);
+    }) as typeof fs.stat);
+    syncBuiltinESMExports();
+    try {
+      await expect(reader.search({ query: 'needle' })).rejects.toMatchObject({ reason: 'index_unavailable' });
+    } finally {
+      intercept.mockRestore();
+      syncBuiltinESMExports();
+    }
+  });
+
+  it('updates the displayed title without rewriting unchanged message documents', async () => {
+    const s1 = summary('s1', 'stale summary', T1);
+    await writeWire(home!, s1.id, 'main', [userLine('needle body', T1)]);
+    await writeTitle(home!, s1.id, 'original title');
+    const service = track(makeInlineService(home!, staticIndex([s1])));
+    await service.reindex();
+    expect((await service.search({ query: 'needle' })).items[0]?.sessionTitle).toBe('original title');
+    await writeTitle(home!, s1.id, 'renamed title');
+    await settleSync(service);
+    expect((await service.search({ query: 'needle' })).items[0]?.sessionTitle).toBe('renamed title');
+    expect((await service.search({ query: 'original', role: 'title' })).items).toEqual([]);
+  });
+
+  it.each([false, true])('keeps indexing healthy messages when primary title metadata is damaged (legacy=%s)', async (legacy) => {
+    const s1 = summary('s1', 'cached title', T1);
+    const wire = await writeWire(home!, s1.id, 'main', [userLine('needle initial', T1)]);
+    await writeTitle(home!, s1.id, 'original title');
+    const service = track(makeInlineService(home!, staticIndex([s1])));
+    await service.reindex();
+    await writeFile(join(home!, 'sessions', WS, s1.id, 'state.json'), '{broken');
+    if (legacy) {
+      const dir = join(home!, 'sessions', WS, s1.id, 'session-meta');
+      await mkdir(dir);
+      await writeFile(join(dir, 'state.json'), JSON.stringify({ title: 'legacy title' }));
+    }
+    await appendFile(wire, `${userLine('needle appended', T2)}\n`);
+    await settleSync(service);
+    const page = await service.search({ query: 'appended' });
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]?.sessionTitle).toBe(legacy ? 'legacy title' : '');
+  });
+
+  it('rebuilds legacy indexed documents before trusting their session identity', async () => {
+    const s1 = summary('s1', 'one', T1);
+    await writeWire(home!, s1.id, 'main', [userLine('needle legacy', T1)]);
+    const writer = track(makeInlineService(home!, staticIndex([s1])));
+    await writer.reindex();
+    const db = coreOf(writer).db!;
+    for (const row of db.query({ key: { prefix: 's1/' } })) {
+      const { sessionIdentity: _identity, ...legacy } = row.value;
+      await db.set(row.key, legacy);
+    }
+    await db.set('\0meta\\session\\s1', { kind: 'sessionMeta' });
+    const reader = track(makeInlineService(home!, staticIndex([s1])));
+    await settleSync(reader);
+    expect((await reader.search({ query: 'needle' })).items).toEqual([]);
+    await settleSync(writer);
+    await refreshNow(reader);
+    expect((await reader.search({ query: 'needle' })).items).toHaveLength(1);
+  });
+
   it('hits session titles as title docs', async () => {
     const s1 = summary('s1', '季度总结报告', T1);
+    await writeTitle(home!, s1.id, s1.title!);
     await writeWire(home!, 's1', 'main', [userLine('随便说点什么', T1)]);
     const service = track(makeService(home!, staticIndex([s1])));
     await service.reindex();
@@ -426,6 +735,7 @@ describe('GlobalSearchService', () => {
 
   it('reports indexState building before the first full sync and ready after', async () => {
     const s1 = summary('s1', 'state', T1);
+    await writeTitle(home!, s1.id, s1.title!);
     await writeWire(home!, 's1', 'main', [userLine('苹果 state', T1)]);
 
     let release!: () => void;
@@ -557,6 +867,7 @@ describe('GlobalSearchService', () => {
 
   it('runs a second instance read-only and catches up from the WAL', async () => {
     const s1 = summary('s1', 'shared', T1);
+    await writeTitle(home!, s1.id, s1.title!);
     const file = await writeWire(home!, 's1', 'main', [userLine('苹果 base', T1)]);
     const index = staticIndex([s1]);
 
@@ -806,6 +1117,7 @@ describe('GlobalSearchService', () => {
 
   it('assigns transcript step ids to assistant hits; user and title hits carry none', async () => {
     const s1 = summary('s1', '苹果 steps', T1);
+    await writeTitle(home!, s1.id, s1.title!);
     await writeWire(home!, 's1', 'main', [
       userLine('苹果 question', T1),
       stepBeginLine('u1', 1, T1 + 100),
@@ -2032,6 +2344,7 @@ describe('GlobalSearchService', () => {
 
     it('returns identical literal results on both routes for equivalent data', async () => {
       const s1 = summary('s1', '无关标题', T1);
+    await writeTitle(home!, s1.id, s1.title!);
       await writeWire(home!, 's1', 'main', [
         userLine('帮我看看苹果怎么挑', T1),
         stepBeginLine('u1', 1, T1 + 100),
@@ -2999,4 +3312,3 @@ describe('search lifecycle diagnostics (stage 5)', () => {
     expect(status.degraded).toContain('worker');
   });
 });
-
