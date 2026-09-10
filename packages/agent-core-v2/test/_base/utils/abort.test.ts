@@ -23,6 +23,18 @@ describe('userCancellationReason', () => {
     expect(isUserCancellation(undefined)).toBe(false);
   });
 
+  it('recognises user cancellations flagged by another copy of the class', () => {
+    const foreign = new Error('Aborted by the user') as Error & { userCancelled: boolean };
+    foreign.name = 'AbortError';
+    foreign.userCancelled = true;
+    expect(isUserCancellation(foreign)).toBe(true);
+    expect(isAbortError(foreign)).toBe(true);
+
+    const flagged = new Error('boom') as Error & { userCancelled: boolean };
+    flagged.userCancelled = false;
+    expect(isUserCancellation(flagged)).toBe(false);
+  });
+
   it('keeps custom system abort messages classified as AbortError', () => {
     expect(abortError('Session closed')).toMatchObject({
       name: 'AbortError',
