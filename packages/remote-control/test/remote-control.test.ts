@@ -455,11 +455,36 @@ describe('Remote Control tunnel', () => {
     expect(gzipHead).toContain('HTTP/1.1 200 OK');
     expect(gzipHead).toContain('Content-Encoding: gzip');
     expect(gzipHead).toContain('Vary: Accept-Encoding');
-    expect(gzipHead).not.toContain('ETag');
+    expect(gzipHead).toContain('Cache-Control: no-cache');
+    const rewrittenETag = /ETag: "([0-9a-f]{64})"/.exec(gzipHead)?.[0];
+    expect(rewrittenETag).toBeDefined();
     expect(gzipHead).toContain(`Content-Length: ${gzipBody.length}`);
     expect(gunzipSync(gzipBody).toString()).toBe(
       assetJs.replaceAll('"/assets/', `"/coding-relay/devices/${handle.deviceId}/assets/`),
     );
+
+    const revalidateResponsePromise = nextJsonMessage(httpConnections[0]!);
+    httpConnections[0]!.send(
+      JSON.stringify({
+        request_id: 'request-3b',
+        type: 'request',
+        is_last: true,
+        body_base64: Buffer.from(
+          `GET /assets/index.js HTTP/1.1\r\nHost: relay.test\r\nAccept-Encoding: br, gzip\r\nIf-None-Match: ${rewrittenETag!.replace('ETag: ', '')}\r\n\r\n`,
+        ).toString('base64'),
+      }),
+    );
+    const revalidateResponse = Buffer.from(
+      (await revalidateResponsePromise)['body_base64'] as string,
+      'base64',
+    );
+    const revalidateHead = revalidateResponse
+      .subarray(0, revalidateResponse.indexOf('\r\n\r\n'))
+      .toString('latin1');
+    expect(revalidateHead).toContain('HTTP/1.1 304 Not Modified');
+    expect(revalidateHead).toContain('Cache-Control: no-cache');
+    expect(revalidateHead).toContain(rewrittenETag!);
+    expect(revalidateHead).not.toContain('Content-Encoding');
 
     const binaryResponsePromise = nextJsonMessage(httpConnections[0]!);
     httpConnections[0]!.send(
@@ -501,7 +526,8 @@ describe('Remote Control tunnel', () => {
     const excludedHead = excludedResponse.subarray(0, excludedSeparator).toString('latin1');
     expect(excludedHead).not.toContain('Content-Encoding');
     expect(excludedHead).toContain('Vary: Accept-Encoding');
-    expect(excludedHead).toContain('ETag: "v1"');
+    expect(excludedHead).toContain(rewrittenETag!);
+    expect(excludedHead).not.toContain('ETag: "v1"');
     expect(excludedResponse.subarray(excludedSeparator + 4).toString()).toBe(
       assetJs.replaceAll('"/assets/', `"/coding-relay/devices/${handle.deviceId}/assets/`),
     );
