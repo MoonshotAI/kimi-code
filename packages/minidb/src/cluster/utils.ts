@@ -4,7 +4,7 @@
 
 export const CLUSTER_META_FILE = 'cluster.meta.json';
 export const CLUSTER_INDEX_FILE = 'cluster.indexes.json';
-const SHARD_DIR_PREFIX = 'shard-';
+export const SHARD_DIR_PREFIX = 'shard-';
 
 /** Zero-padded shard directory name, e.g. shard-03 for shardCount <= 100. The
  *  width grows with the shard count so directory listings stay sorted. */
