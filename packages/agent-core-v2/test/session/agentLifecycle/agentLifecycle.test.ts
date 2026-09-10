@@ -709,6 +709,9 @@ describe('AgentLifecycleService', () => {
 
     expect(stopAllOnExit).toHaveBeenCalledWith('Session closed');
     expect(promptDrain).toHaveBeenCalledOnce();
+    expect(stopAllOnExit.mock.invocationCallOrder[0]).toBeGreaterThan(
+      promptDrain.mock.invocationCallOrder[0]!,
+    );
   });
 
   it('remove waits for prompt intake to drain before disposing the agent scope', async () => {
