@@ -40,7 +40,7 @@ export type SessionStateModes = z.infer<typeof sessionStateModesSchema>;
 export const sessionStateMessageSchema = z.object({
   type: z.literal('session.state'),
   ...sessionMessageBase,
-  status: z.enum(['idle', 'running', 'compacting']),
+  status: z.enum(['idle', 'running']),
   pending_interaction: z.enum(['none', 'approval', 'question']).optional(),
   model: z.string().optional(),
   thinking_effort: z.string().optional(),
