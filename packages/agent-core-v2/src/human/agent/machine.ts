@@ -43,6 +43,8 @@ export type AgentEvent =
   | { type: 'input.steer'; id: string }
   | { type: 'input.cancel'; id: string }
   | { type: 'input.abort' }
+  | { type: 'input.pause' }
+  | { type: 'input.continue' }
   | { type: 'turn.spawn_tools'; toolCalls: ToolCall[] }
   | { type: 'turn.drain' }
   | { type: 'turn.reminders_consumed'; reminders: HistoryMessage[] }
@@ -89,6 +91,7 @@ export interface AgentMachineContext {
   activeTurnId?: number;
   branchId: string;
   drainedId?: string;
+  paused: boolean;
 }
 
 function completionNotification(toolCall: ToolCall, output: ToolOutput): UserEntry {
@@ -167,6 +170,13 @@ function turnOutcomeEvent(context: AgentMachineContext, output: TurnOutput): Age
 
 function hasPendingWork(context: AgentMachineContext): boolean {
   return context.notifications.length > 0 || context.queue.length > 0;
+}
+
+function historyEndsMidToolChain(messages: readonly HistoryMessage[]): boolean {
+  const last = messages.at(-1);
+  if (last === undefined) return false;
+  if (last.message.role === 'tool') return true;
+  return last.message.role === 'assistant' && last.message.toolCalls.length > 0;
 }
 
 function hasBackgroundWork(context: AgentMachineContext): boolean {
@@ -336,6 +346,7 @@ export function createAgentMachine({
       queue: [],
       turnId: 0,
       branchId: 'main',
+      paused: false,
     }),
     invoke: [
       {
@@ -430,6 +441,12 @@ export function createAgentMachine({
         target: '.idle',
         actions: ['abortScope', 'resetMirror', 'emitReset', 'forwardToParent'],
       },
+      'input.pause': {
+        actions: assign({ paused: true }),
+      },
+      'input.continue': {
+        actions: assign({ paused: false }),
+      },
       'store.error': {
         actions: 'forwardToParent',
       },
@@ -469,7 +486,7 @@ export function createAgentMachine({
       idle: {
         initial: 'ready',
         always: {
-          guard: ({ context }) => hasPendingWork(context),
+          guard: ({ context }) => hasPendingWork(context) && !context.paused,
           target: 'running',
           actions: [
             sendTo('store', ({ context }) => {
@@ -490,6 +507,33 @@ export function createAgentMachine({
             }),
             assign(({ context }) => drainPendingPatch(context)),
           ],
+        },
+        on: {
+          'input.continue': {
+            guard: ({ context }) =>
+              !hasPendingWork(context) && historyEndsMidToolChain(context.messages),
+            target: 'running',
+            actions: [
+              assign({ paused: false }),
+              sendTo('store', ({ context }) => {
+                const head = context.queue[0];
+                return {
+                  type: 'store.append' as const,
+                  event: [
+                    ...context.notifications.map((entry) => messageAppended({ message: entry })),
+                    ...(head === undefined
+                      ? []
+                      : [
+                          messageAppended({ message: createUserEntry(head.message, { source: 'input' }) }),
+                          queueDrained({ id: head.id }),
+                        ]),
+                    ...(context.notifications.length === 0 ? [] : [notificationsDrained({})]),
+                  ],
+                };
+              }),
+              assign(({ context }) => drainPendingPatch(context)),
+            ],
+          },
         },
         states: {
           ready: {
@@ -580,6 +624,12 @@ export function createAgentMachine({
               'emitReset',
               'forwardToParent',
             ],
+          },
+          'input.pause': {
+            actions: [assign({ paused: true }), sendTo('turn', { type: 'turn.pause' as const })],
+          },
+          'input.continue': {
+            actions: [assign({ paused: false }), sendTo('turn', { type: 'turn.continue' as const })],
           },
           'turn.drain': {
             actions: enqueueActions(({ context, enqueue }) => {
