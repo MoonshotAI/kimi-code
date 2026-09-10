@@ -236,7 +236,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
           candidates.push(
             nextTimed.then(
               (result): ToolExecutionStreamEvent => ({ type: 'timed', result }),
-              (error): ToolExecutionStreamEvent => ({ type: 'timedRejected', error }),
+              (error): ToolExecutionStreamEvent => ({ type: 'timedRejected', reason: error }),
             ),
           );
         }
@@ -266,7 +266,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
             options,
           ).then(
             (value): SettledToolExecutionResult => ({ status: 'fulfilled', value }),
-            (error): SettledToolExecutionResult => ({ status: 'rejected', error }),
+            (error): SettledToolExecutionResult => ({ status: 'rejected', reason: error }),
           );
           finalizations.add(finalization);
           nextTimed = timedResults.next();
@@ -483,7 +483,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         index,
         pendingResult.then(
           (value): SettledTimedToolResult => ({ status: 'fulfilled', value }),
-          (error): SettledTimedToolResult => ({ status: 'rejected', index, error }),
+          (error): SettledTimedToolResult => ({ status: 'rejected', index, reason: error }),
         ),
       );
     }
