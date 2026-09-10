@@ -659,9 +659,6 @@ importers:
       '@moonshot-ai/remote-control':
         specifier: workspace:^
         version: link:../remote-control
-      '@moonshot-ai/transcript':
-        specifier: workspace:^
-        version: link:../transcript
       bcryptjs:
         specifier: ^2.4.3
         version: 2.4.3
@@ -708,19 +705,6 @@ importers:
       zod:
         specifier: 'catalog:'
         version: 4.3.6
-    devDependencies:
-      '@moonshot-ai/kap-server':
-        specifier: workspace:^
-        version: link:../kap-server
-      '@types/ws':
-        specifier: ^8.18.0
-        version: 8.18.1
-      ulid:
-        specifier: ^3.0.1
-        version: 3.0.2
-      ws:
-        specifier: ^8.18.0
-        version: 8.20.0
 
   packages/kosong:
     dependencies:
@@ -758,10 +742,6 @@ importers:
       zod:
         specifier: ^4.3.6
         version: 4.3.6
-    devDependencies:
-      '@moonshot-ai/transcript':
-        specifier: workspace:^
-        version: link:../transcript
 
   packages/minidb: {}
 
@@ -848,12 +828,6 @@ importers:
         version: 8.18.1
 
   packages/telemetry: {}
-
-  packages/transcript:
-    dependencies:
-      zod:
-        specifier: 'catalog:'
-        version: 4.3.6
 
   packages/tree-sitter-bash:
     devDependencies:

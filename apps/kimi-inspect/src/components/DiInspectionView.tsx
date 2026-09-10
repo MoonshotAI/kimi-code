@@ -21,9 +21,9 @@
  *   - Pending: the waiting area + sticky failures per scope
  *     (`IDebugCascadeService.pending`), with an `update` retry per failure.
  *
- * All five panels poll on a short interval and refresh eagerly when the
- * global `event.di.unit_changed` WS frame fires (`useDiQueryInvalidation`
- * invalidates the `['di']` query prefix).
+ * All five panels poll on a short interval over the `/api/v1/debug` RPC
+ * surface, and a settled unit trigger invalidates the `['di']` query prefix
+ * so every panel converges.
  */
 
 import type { UnitState } from '@moonshot-ai/agent-core-v2/_base/di/cascadeEngine';
@@ -46,7 +46,6 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
 
-import { useDiQueryInvalidation } from '../activity/di';
 import type { InspectClient } from '../channel';
 import { useConnection } from '../connection';
 import { ActionButton, Badge, ErrorLine } from '../ui';
@@ -66,7 +65,6 @@ const PANELS: readonly { id: DiPanel; title: string }[] = [
 const REFETCH_INTERVAL_MS = 3000;
 
 export function DiInspectionView() {
-  useDiQueryInvalidation();
   const [panel, setPanel] = useState<DiPanel>('units');
   return (
     <div className="flex min-h-0 min-w-0 flex-1">

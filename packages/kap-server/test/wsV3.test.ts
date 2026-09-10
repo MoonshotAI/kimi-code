@@ -128,6 +128,7 @@ class FakeGlobalSource {
   workspaces: Workspace[] = [];
   sessionInfoResult: unknown;
   private readonly cbs = new Set<(event: WsV3CoreEvent) => void>();
+  private readonly activityCbs = new Set<(sessionId: string) => void>();
 
   subscribe(cb: (event: WsV3CoreEvent) => void): IDisposable {
     this.cbs.add(cb);
@@ -140,6 +141,19 @@ class FakeGlobalSource {
 
   fire(event: WsV3CoreEvent): void {
     for (const cb of [...this.cbs]) cb(event);
+  }
+
+  watchSessionActivity(cb: (sessionId: string) => void): IDisposable {
+    this.activityCbs.add(cb);
+    return {
+      dispose: () => {
+        this.activityCbs.delete(cb);
+      },
+    };
+  }
+
+  fireActivity(sessionId: string): void {
+    for (const cb of [...this.activityCbs]) cb(sessionId);
   }
 
   async listWorkspaces(): Promise<readonly Workspace[]> {
@@ -259,7 +273,6 @@ function sessionInfoWire(id: string): Record<string, unknown> {
     },
     permission_rules: [],
     message_count: 0,
-    last_seq: 0,
   };
 }
 
@@ -695,6 +708,62 @@ describe('WsV3 global message fanout', () => {
     expect(frames[3]).toMatchObject({
       type: 'session',
       subtype: 'archived',
+      session: { id: 's1' },
+    });
+  });
+
+  it('emits session updated on session activity changes', async () => {
+    const { globalSource, hub } = makeHarness();
+    const socket = new FakeSocket();
+    makeConn(hub, socket);
+    await settle();
+
+    globalSource.sessionInfoResult = sessionInfoWire('s1');
+    globalSource.fire({
+      type: 'event.session.created',
+      payload: { sessionId: 's1', session: sessionInfoWire('s1') },
+    });
+    globalSource.fireActivity('s1');
+    await settle();
+
+    const frames = socket.frames();
+    expect(frames[2]).toMatchObject({
+      type: 'session',
+      subtype: 'updated',
+      session: { id: 's1' },
+    });
+
+    globalSource.sessionInfoResult = undefined;
+    globalSource.fireActivity('s9');
+    await settle();
+    expect(socket.frames()).toHaveLength(3);
+  });
+
+  it('emits session deleted only for sessions seen before', async () => {
+    const { globalSource, hub } = makeHarness();
+    const socket = new FakeSocket();
+    makeConn(hub, socket);
+    await settle();
+
+    globalSource.fire({
+      type: 'event.session.created',
+      payload: { sessionId: 's1', session: sessionInfoWire('s1') },
+    });
+    globalSource.fire({
+      type: 'event.session.deleted',
+      payload: { sessionId: 's1', workspaceId: WS_ID },
+    });
+    globalSource.fire({
+      type: 'event.session.deleted',
+      payload: { sessionId: 's2', workspaceId: WS_ID },
+    });
+    await settle();
+
+    const frames = socket.frames();
+    expect(frames).toHaveLength(3);
+    expect(frames[2]).toMatchObject({
+      type: 'session',
+      subtype: 'deleted',
       session: { id: 's1' },
     });
   });

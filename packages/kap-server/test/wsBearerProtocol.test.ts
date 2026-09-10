@@ -23,14 +23,14 @@ describe('server-v2 WS bearer subprotocol', () => {
 
   it('accepts a valid bearer subprotocol', async () => {
     const token = sharedServer().token;
-    const wsUrl = `${sharedServer().base.replace(/^http/, 'ws')}/api/v1/ws`;
+    const wsUrl = `${sharedServer().base.replace(/^http/, 'ws')}/api/v3/ws`;
     const ws = await openWs(wsUrl, `${WS_BEARER_PROTOCOL_PREFIX}${token}`);
     sockets.push(ws);
     expect(ws.protocol).toBe(`${WS_BEARER_PROTOCOL_PREFIX}${token}`);
   });
 
   it('rejects an invalid bearer subprotocol', async () => {
-    const wsUrl = `${sharedServer().base.replace(/^http/, 'ws')}/api/v1/ws`;
+    const wsUrl = `${sharedServer().base.replace(/^http/, 'ws')}/api/v3/ws`;
     await expect(openWs(wsUrl, `${WS_BEARER_PROTOCOL_PREFIX}wrong-token`)).rejects.toThrow();
   });
 });

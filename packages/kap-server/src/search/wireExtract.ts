@@ -1,5 +1,7 @@
 import { matchSingleMediaPathTag } from '@moonshot-ai/agent-core-v2/agent/media/mediaRef';
 
+import type { StepTrackerState, TurnCounterState } from './docs';
+
 export interface ExtractedWireMessage {
   readonly role: 'user' | 'assistant';
   readonly text: string;
@@ -225,4 +227,106 @@ export function analyzeWireLine(line: string): WireLineAnalysis {
 
 export function extractFromWireLine(line: string): ExtractedWireMessage[] {
   return analyzeWireLine(line).messages;
+}
+
+export interface WireDocDraft {
+  readonly role: 'user' | 'assistant';
+  readonly text: string;
+  readonly time?: number;
+  readonly turn?: number;
+  readonly stepId?: string;
+}
+
+export interface WireDocCounters {
+  readonly turnState: TurnCounterState;
+  readonly stepState: StepTrackerState;
+}
+
+const INITIAL_TURN_STATE: TurnCounterState = { next: 0, hasTurn: false, openers: [] };
+
+const INITIAL_STEP_STATE: StepTrackerState = { byUuid: {}, begins: 0 };
+
+export function initialWireDocCounters(): WireDocCounters {
+  return { turnState: INITIAL_TURN_STATE, stepState: INITIAL_STEP_STATE };
+}
+
+export function collectWireDocs(
+  counters: WireDocCounters,
+  line: string,
+): { counters: WireDocCounters; docs: WireDocDraft[] } {
+  const analysis = analyzeWireLine(line);
+  const advanced = advanceTurnCounter(counters.turnState, analysis.turn);
+  const resetSteps =
+    analysis.turn.kind === 'open' ||
+    analysis.turn.kind === 'undo' ||
+    (analysis.turn.kind === 'ensure' && !counters.turnState.hasTurn);
+  const stepState = advanceStepTracker(
+    resetSteps ? INITIAL_STEP_STATE : counters.stepState,
+    analysis.step,
+  );
+  const docs: WireDocDraft[] = [];
+  for (const e of analysis.messages) {
+    const stepOrdinal = e.stepUuid !== undefined ? stepState.byUuid[e.stepUuid] : undefined;
+    docs.push({
+      role: e.role,
+      text: e.text,
+      time: e.time,
+      turn: advanced.docTurn,
+      stepId:
+        advanced.docTurn !== undefined && stepOrdinal !== undefined
+          ? `t${advanced.docTurn}.${stepOrdinal}`
+          : undefined,
+    });
+  }
+  return { counters: { turnState: advanced.state, stepState }, docs };
+}
+
+function applyUndoToTurnState(state: TurnCounterState, count: number): TurnCounterState {
+  let found = 0;
+  for (let i = state.openers.length - 1; i >= 0; i--) {
+    if (state.openers[i]!.anchor) {
+      found++;
+      if (found === count) {
+        return {
+          next: state.openers[i]!.turn,
+          hasTurn: i > 0,
+          openers: state.openers.slice(0, i),
+        };
+      }
+    }
+  }
+  return state;
+}
+
+function advanceTurnCounter(
+  state: TurnCounterState,
+  effect: TurnEffect,
+): { docTurn: number | undefined; state: TurnCounterState } {
+  switch (effect.kind) {
+    case 'open':
+      return {
+        docTurn: state.next,
+        state: {
+          next: state.next + 1,
+          hasTurn: true,
+          openers: [...state.openers, { turn: state.next, anchor: effect.anchor }],
+        },
+      };
+    case 'ensure': {
+      const next = state.hasTurn ? state : { ...state, next: state.next + 1, hasTurn: true };
+      return { docTurn: next.next - 1, state: next };
+    }
+    case 'undo':
+      return { docTurn: undefined, state: applyUndoToTurnState(state, effect.count) };
+    case 'none':
+      return { docTurn: undefined, state };
+  }
+}
+
+function advanceStepTracker(state: StepTrackerState, effect: StepEffect): StepTrackerState {
+  if (effect.kind !== 'begin') return state;
+  const begins = state.begins + 1;
+  const ordinal = effect.ordinal ?? begins;
+  if (state.byUuid[effect.uuid] === ordinal) return state;
+  return { byUuid: { ...state.byUuid, [effect.uuid]: ordinal }, begins };
 }

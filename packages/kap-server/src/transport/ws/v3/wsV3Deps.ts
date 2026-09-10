@@ -29,4 +29,5 @@ export interface WsV3GlobalSource {
   listWorkspaces(): Promise<readonly Workspace[]>;
   workspaceInfo(workspace: Workspace): Promise<WorkspaceInfo>;
   sessionInfo(sessionId: string): Promise<unknown>;
+  watchSessionActivity?(listener: (sessionId: string) => void): IDisposable;
 }

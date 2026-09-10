@@ -81,7 +81,6 @@ const sessionInfo = {
   },
   permission_rules: [],
   message_count: 0,
-  last_seq: 0,
 };
 
 const turn = {

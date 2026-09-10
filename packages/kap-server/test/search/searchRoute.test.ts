@@ -274,8 +274,8 @@ describe('server-v2 session routes with the global search DB unavailable', () =>
     expect(coldList.data.items.map((item) => item.id)).toContain(id);
     const got = await getJson<{ id: string }>(`/api/v1/sessions/${id}`);
     expect(got.code).toBe(0);
-    const messages = await getJson<{ items: unknown[] }>(`/api/v1/sessions/${id}/messages`);
-    expect(messages.code).toBe(0);
+    const history = await getJson<{ messages: unknown[] }>(`/api/v1/sessions/${id}/history`);
+    expect(history.code).toBe(0);
 
     const probe = await stat(join(home as string, 'search-index'));
     expect(probe.isFile()).toBe(true);
