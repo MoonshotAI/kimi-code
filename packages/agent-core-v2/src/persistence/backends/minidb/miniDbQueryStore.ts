@@ -1,9 +1,7 @@
-import { promises as fsp } from 'node:fs';
-
 import { join } from 'pathe';
 
-import { classifyStorageError, LockError, type QueryOptions } from '@moonshot-ai/minidb';
-import { ClusterDb } from '@moonshot-ai/minidb/cluster';
+import { classifyStorageError, type QueryOptions } from '@moonshot-ai/minidb';
+import { ClusterDb, wipeCluster } from '@moonshot-ai/minidb/cluster';
 
 import { Disposable, toDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
@@ -104,21 +102,11 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
         const db = await previous.catch(() => undefined);
         await db?.close().catch(() => {});
       }
-      let probeError: unknown;
-      try {
-        const probe = await ClusterDb.open({
-          dir: this.dir,
-          shardCount: SHARD_COUNT,
-          valueCodec: 'json',
-          lockAcquireTimeoutMs: LOCK_ACQUIRE_TIMEOUT_MS,
-        });
-        await probe.close().catch(() => {});
-        probeError = undefined;
-      } catch (error) {
-        probeError = error;
-      }
-      if (probeError instanceof LockError) throw cause;
-      await fsp.rm(this.dir, { recursive: true, force: true });
+      const outcome = await wipeCluster({
+        dir: this.dir,
+        lockAcquireTimeoutMs: LOCK_ACQUIRE_TIMEOUT_MS,
+      });
+      if (outcome === 'locked') throw cause;
     })();
     const settled = this.rebuildPromise;
     return settled.then(

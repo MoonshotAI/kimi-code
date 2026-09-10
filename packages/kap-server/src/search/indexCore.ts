@@ -1,13 +1,13 @@
 import { createHash } from 'node:crypto';
-import { open, readFile, readdir, rm, stat } from 'node:fs/promises';
+import { open, readFile, readdir, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 
 import {
   classifyStorageError,
-  LockError,
   MiniDb,
   OpTracker,
   TextIndexBuildingError,
+  wipeStoreDir,
   type BatchInputOp,
 } from '@moonshot-ai/minidb';
 
@@ -348,22 +348,12 @@ export class SearchIndexCore {
       return await MiniDb.open<SearchDoc>(opts);
     } catch (error) {
       if (classifyStorageError(error) !== 'rebuild') throw error;
-      let probeError: unknown;
-      try {
-        const probe = await MiniDb.open<SearchDoc>({ dir: opts.dir, valueCodec: opts.valueCodec, valueMode: opts.valueMode });
-        await probe.close().catch(() => {});
-        probeError = undefined;
-      } catch (error) {
-        probeError = error;
-      }
-      if (probeError instanceof LockError) {
-        throw error;
-      }
+      const outcome = await wipeStoreDir({ dir: this.indexDir });
+      if (outcome === 'locked') throw error;
       this.log.warn('global search: search-index corruption detected; rebuilding from scratch', {
         dir: this.indexDir,
         error: errorMessage(error),
       });
-      await rm(this.indexDir, { recursive: true, force: true });
       return MiniDb.open<SearchDoc>(opts);
     }
   }
@@ -965,7 +955,13 @@ export class SearchIndexCore {
     this.openPromise = null;
     this.fullSyncDone = false;
     this.lockToken = undefined;
-    await rm(this.indexDir, { recursive: true, force: true });
+    const outcome = await wipeStoreDir({ dir: this.indexDir });
+    if (outcome === 'locked') {
+      throw new GlobalSearchError(
+        'readonly_index',
+        'another process holds the search-index write lock; reindex from that process',
+      );
+    }
     await this.ensureOpen();
   }
 

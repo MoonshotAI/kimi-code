@@ -193,6 +193,22 @@ describe('MiniDbQueryStore', () => {
     await store.put(COLLECTION, 'c', { id: 'c', v: 3 });
     expect(await store.get(COLLECTION, 'b')).toBeUndefined();
     expect(await store.get(COLLECTION, 'c')).toEqual({ id: 'c', v: 3 });
+
+    const storeDir = join(homeDir, 'cache', 'query-store');
+    const peer = await ClusterDb.open({ dir: storeDir, shardCount: 16, valueCodec: 'json', lockHoldMs: 0 });
+    await peer.set(`${COLLECTION}${SEP}peer`, { id: 'peer', v: 9 });
+    const db3 = await internal.dbPromise;
+    (db3 as unknown as { set: unknown }).set = () => Promise.reject(poisoned);
+    await expect(store.put(COLLECTION, 'd', { v: 4 })).rejects.toThrow('poisoned');
+    expect(await peer.get(`${COLLECTION}${SEP}peer`)).toEqual({ id: 'peer', v: 9 });
+    expect(await store.get(COLLECTION, 'c')).toEqual({ id: 'c', v: 3 });
+
+    const db4 = await internal.dbPromise;
+    (db4 as unknown as { set: unknown }).set = () => Promise.reject(poisoned);
+    await peer.close();
+    await store.put(COLLECTION, 'd', { v: 4 });
+    expect(await store.get(COLLECTION, 'c')).toBeUndefined();
+    expect(await store.get(COLLECTION, 'd')).toEqual({ v: 4 });
   });
 
   it('getMany returns present values and skips missing keys', async () => {
