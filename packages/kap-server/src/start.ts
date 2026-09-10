@@ -61,6 +61,7 @@ import { SessionEventBroadcaster } from './transport/ws/v1/sessionEventBroadcast
 import type { ConfigWarningItem } from './transport/ws/v1/events';
 import { registerWsV1, WS_PATH as WS_PATH_V1 } from './transport/ws/v1/registerWsV1';
 import { registerWsDebug, WS_DEBUG_PATH } from './transport/ws/debug/registerWsDebug';
+import { registerWsV3, WS_PATH_V3 } from './transport/ws/v3/registerWsV3';
 import { getServerVersion } from './version';
 import { classify } from './security/bindClassify';
 import {
@@ -78,6 +79,7 @@ import {
   shutdownServerTelemetry,
 } from './services/telemetry';
 import { TranscriptService } from './services/transcript/transcriptService';
+import { ProjectionService } from './services/projection';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
 import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
 import { createAuthFailureLimiter } from './middleware/rateLimit';
@@ -354,6 +356,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     logger,
     transcriptService,
   });
+  const projectionService = new ProjectionService({ homeDir, core, logger });
 
   const configService = core.accessor.get(IConfigService);
   const publishConfigWarnings = (diagnostics: readonly ConfigDiagnostic[]): void => {
@@ -465,6 +468,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     connectionRegistry,
     broadcaster,
     transcriptService,
+    homeDir,
+    projectionService,
     dangerousBypassAuth: opts.disableAuth === true,
     webTitle: opts.webTitle,
   });
@@ -479,6 +484,13 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   });
   const wssDebug = debugEndpoints ? registerWsDebug() : undefined;
 
+  const { wss: wssV3, hub: wsV3Hub } = registerWsV3(core, {
+    registry: connectionRegistry,
+    projection: projectionService,
+    serverId: registration.serverId,
+    logger,
+  });
+
   const handleUpgrade = async (
     req: IncomingMessage,
     socket: Duplex,
@@ -486,8 +498,9 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   ): Promise<void> => {
     const url = req.url ?? '';
     const isV1 = url === WS_PATH_V1 || url.startsWith(`${WS_PATH_V1}?`);
+    const isV3 = url === WS_PATH_V3 || url.startsWith(`${WS_PATH_V3}?`);
     const isDebug = url === WS_DEBUG_PATH || url.startsWith(`${WS_DEBUG_PATH}?`);
-    const wss = isV1 ? wssV1 : isDebug ? wssDebug : undefined;
+    const wss = isV1 ? wssV1 : isV3 ? wssV3 : isDebug ? wssDebug : undefined;
     if (wss === undefined) {
       socket.destroy();
       return;
@@ -562,6 +575,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     connectionRegistry.closeAll('server shutting down');
     wssV1.close();
     wssDebug?.close();
+    wssV3.close();
+    wsV3Hub.dispose();
     await broadcaster.close();
   });
 
