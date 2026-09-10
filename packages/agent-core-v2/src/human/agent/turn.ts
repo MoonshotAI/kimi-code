@@ -1,8 +1,9 @@
 import { assign, raise, setup } from '#/xstate2';
 
 import { emptyResponseError } from '#/llm/empty-response';
-import type { LlmErrorMessage, LlmRemoteErrorMessage } from '#/llm/errors';
+import type { LlmErrorMessage } from '#/llm/errors';
 import { NO_FINISH, type FinishInfo } from '#/llm/finish-reason';
+import { credentialsRecovery } from '#/credentials/credentials';
 import {
   createMessageAccumulator,
   createToolMessage,
@@ -187,7 +188,12 @@ export type TurnEvent =
   | LlmEvent
   | TurnToolEvent
   | { type: 'turn.notify'; messages: HistoryMessage[] }
-  | { type: 'turn.abort' };
+  | { type: 'turn.abort' }
+  | {
+      type: 'turn.failure.triaged';
+      cause: Extract<LlmEvent, { type: 'llm.failed.remote' }>;
+      proposal?: LlmRecoveryProposal & LlmRecoveryRecord;
+    };
 
 export type TurnLlmEvent =
   | Exclude<LlmEvent, { type: 'llm.done' }>
@@ -217,7 +223,7 @@ export interface TurnMachineContext {
   attempt: number;
   delayMs: number;
   appliedRecoveries: LlmRecoveryRecord[];
-  lastError?: LlmRemoteErrorMessage;
+  recoveryMessages?: readonly Message[];
   outcome?: 'done' | 'failed' | 'aborted';
   error?: unknown;
 }
@@ -280,30 +286,23 @@ function baseMessages(context: TurnMachineContext): readonly Message[] {
   return toInputMessages([...context.input.history, ...context.produced]);
 }
 
-function attemptMessages(
-  context: TurnMachineContext,
-  recovery: LlmRecovery | undefined,
-): readonly Message[] {
-  const base = baseMessages(context);
-  const lastError = context.lastError;
-  if (lastError === undefined || context.appliedRecoveries.length === 0) return base;
-  return (
-    proposeRecovery(recovery, {
-      error: lastError,
-      messages: base,
-      applied: context.appliedRecoveries.slice(0, -1),
-    })?.messages ?? base
-  );
+function attemptMessages(context: TurnMachineContext): readonly Message[] {
+  return context.recoveryMessages ?? baseMessages(context);
 }
 
 function proposeRecovery(
   recovery: LlmRecovery | undefined,
   ctx: LlmRecoveryContext,
 ): (LlmRecoveryProposal & LlmRecoveryRecord) | undefined {
+  const credentialProposal = credentialsRecovery.propose(ctx);
+  if (credentialProposal !== undefined) {
+    return { strategy: credentialsRecovery.id, ...credentialProposal };
+  }
   if (recovery === undefined) return undefined;
   const proposal = recovery.propose(ctx);
-  if (proposal === undefined || proposal.messages === ctx.messages) return undefined;
-  return { strategy: recovery.id, action: proposal.action, messages: proposal.messages };
+  if (proposal === undefined) return undefined;
+  if (proposal.messages !== undefined && proposal.messages === ctx.messages) return undefined;
+  return { strategy: recovery.id, ...proposal };
 }
 
 function llmRetryingEvent(
@@ -447,7 +446,7 @@ export function createTurnMachine(
               config: context.input.request,
               signal: context.llmScope.signal,
               content: {
-                messages: attemptMessages(context, recovery),
+                messages: attemptMessages(context),
                 usedContextTokens: estimateUsedContextTokens(entries, {
                   systemPrompt: context.input.request.systemPrompt,
                   tools: context.input.request.tools,
@@ -582,64 +581,38 @@ export function createTurnMachine(
               }),
             ],
           },
-          'llm.failed.remote': [
+          'llm.failed.remote': {
+            actions: raise(({ context, event }) => ({
+              type: 'turn.failure.triaged' as const,
+              cause: event,
+              proposal: proposeRecovery(recovery, {
+                error: event.error,
+                messages: baseMessages(context),
+                applied: context.appliedRecoveries,
+                credentials: context.input.request.credentials,
+              }),
+            })),
+          },
+          'turn.failure.triaged': [
             {
-              guard: ({ context, event }) =>
-                !context.appliedRecoveries.some((record) => record.strategy === 'credentials') &&
-                context.input.request.credentials?.canRecover?.(event.error) === true,
+              guard: ({ event }) => event.proposal !== undefined,
               target: 'thinking',
               reenter: true,
               actions: [
-                ({ context }) => {
+                ({ context, event }) => {
                   context.accumulator.rollback();
-                },
-                assign(({ context, event }) => ({
-                  lastError: event.error,
-                  attempt: 1,
-                  appliedRecoveries: [
-                    ...context.appliedRecoveries,
-                    { strategy: 'credentials', action: 'refresh' },
-                  ],
-                })),
-                ({ context }) => {
-                  context.input.request.credentials?.invalidate?.();
-                },
-                {
-                  type: 'sendToParent',
-                  params: ({ context, event }) =>
-                    llmRecoveringEvent(
-                      context.appliedRecoveries.at(-1) as LlmRecoveryRecord,
-                      event.error,
-                    ),
-                },
-              ],
-            },
-            {
-              guard: ({ context, event }) =>
-                proposeRecovery(recovery, {
-                  error: event.error,
-                  messages: baseMessages(context),
-                  applied: context.appliedRecoveries,
-                }) !== undefined,
-              target: 'thinking',
-              reenter: true,
-              actions: [
-                ({ context }) => {
-                  context.accumulator.rollback();
+                  if (event.proposal?.refreshCredentials === true) {
+                    context.input.request.credentials?.invalidate?.();
+                  }
                 },
                 assign(({ context, event }) => {
-                  const proposal = proposeRecovery(recovery, {
-                    error: event.error,
-                    messages: baseMessages(context),
-                    applied: context.appliedRecoveries,
-                  });
-                  if (proposal === undefined) return {};
+                  const proposal = event.proposal as LlmRecoveryProposal & LlmRecoveryRecord;
                   return {
-                    lastError: event.error,
                     appliedRecoveries: [
                       ...context.appliedRecoveries,
                       { strategy: proposal.strategy, action: proposal.action },
                     ],
+                    recoveryMessages: proposal.messages ?? context.recoveryMessages,
                     attempt: 1,
                   };
                 }),
@@ -648,14 +621,14 @@ export function createTurnMachine(
                   params: ({ context, event }) =>
                     llmRecoveringEvent(
                       context.appliedRecoveries.at(-1) as LlmRecoveryRecord,
-                      event.error,
+                      event.cause.error,
                     ),
                 },
               ],
             },
             {
               guard: ({ context, event }) =>
-                shouldRetry(retry, context.attempt, event.error),
+                shouldRetry(retry, context.attempt, event.cause.error),
               target: 'retrying',
               actions: [
                 ({ context }) => {
@@ -663,22 +636,23 @@ export function createTurnMachine(
                 },
                 assign({
                   delayMs: ({ context, event }) =>
-                    readRetryAfterMs(event.error) ?? retryBackoffDelay(context.attempt - 1),
+                    readRetryAfterMs(event.cause.error) ??
+                    retryBackoffDelay(context.attempt - 1),
                 }),
                 {
                   type: 'sendToParent',
                   params: ({ context, event }) =>
-                    llmRetryingEvent(retry, context.attempt, context.delayMs, event.error),
+                    llmRetryingEvent(retry, context.attempt, context.delayMs, event.cause.error),
                 },
               ],
             },
             {
               target: 'failed',
               actions: [
-                'forwardToParent',
+                { type: 'sendToParent', params: ({ event }) => event.cause },
                 assign({
                   outcome: 'failed' as const,
-                  error: ({ event }) => event.rawError ?? event.error,
+                  error: ({ event }) => event.cause.rawError ?? event.cause.error,
                 }),
               ],
             },
@@ -826,7 +800,7 @@ export function createTurnMachine(
                   steps: event.messages.length > 0 ? 1 : context.steps + 1,
                   attempt: 1,
                   appliedRecoveries: [],
-                  lastError: undefined,
+                  recoveryMessages: undefined,
                 })),
                 'signalRemindersConsumed',
               ],

@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import {
   applyCredential,
+  credentialsRecovery,
   oauthCredentials,
   resolveModelCredentials,
   staticCredentials,
 } from '#/credentials/credentials';
 import type { LlmModel } from '#/llm/model';
+import type { LlmRecoveryContext, LlmRecoveryRecord } from '#/llm/requester/recovery';
+import type { LlmCredentialProvider } from '#/llm/requester/requester';
 
 const MODEL: LlmModel = {
   provider: 'fake',
@@ -118,5 +121,44 @@ describe('applyCredential / resolveModelCredentials', () => {
   it('keeps the model api key when the credential carries none', () => {
     const applied = applyCredential(MODEL, { headers: { 'x-auth': 't' } });
     expect(applied.apiKey).toBe('base-key');
+  });
+});
+
+function recoveryContext(
+  error: unknown,
+  applied: readonly LlmRecoveryRecord[] = [],
+  credentials?: LlmCredentialProvider,
+): LlmRecoveryContext {
+  return { error: error as LlmRecoveryContext['error'], messages: [], applied, credentials };
+}
+
+const unauthorized = Object.assign(new Error('unauthorized'), { status: 401 });
+const forbidden = Object.assign(new Error('forbidden'), { status: 403 });
+
+describe('credentialsRecovery', () => {
+  it('proposes a credentials refresh on a recoverable error', () => {
+    const provider = oauthCredentials(() => Promise.resolve('tok'));
+    expect(credentialsRecovery.propose(recoveryContext(unauthorized, [], provider))).toEqual({
+      action: 'refresh',
+      refreshCredentials: true,
+    });
+  });
+
+  it('does not propose when the strategy was already applied', () => {
+    const provider = oauthCredentials(() => Promise.resolve('tok'));
+    const applied: LlmRecoveryRecord[] = [{ strategy: 'credentials', action: 'refresh' }];
+    expect(credentialsRecovery.propose(recoveryContext(unauthorized, applied, provider))).toBeUndefined();
+  });
+
+  it('does not propose without recoverable credentials', () => {
+    expect(credentialsRecovery.propose(recoveryContext(unauthorized))).toBeUndefined();
+    expect(
+      credentialsRecovery.propose(recoveryContext(unauthorized, [], staticCredentials('sk-1'))),
+    ).toBeUndefined();
+    expect(
+      credentialsRecovery.propose(
+        recoveryContext(forbidden, [], oauthCredentials(() => Promise.resolve('tok'))),
+      ),
+    ).toBeUndefined();
   });
 });

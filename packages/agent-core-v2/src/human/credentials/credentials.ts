@@ -1,5 +1,6 @@
 import { errorStatusCode } from '#/llm/errors';
 import type { LlmModel } from '#/llm/model';
+import type { LlmRecovery } from '#/llm/requester/recovery';
 import {
   mergeRequestHeaders,
   type LlmCredential,
@@ -54,3 +55,12 @@ export async function resolveModelCredentials(
 ): Promise<LlmModel> {
   return applyCredential(model, await credentials?.resolve());
 }
+
+export const credentialsRecovery: LlmRecovery = {
+  id: 'credentials',
+  propose: ({ error, applied, credentials }) =>
+    credentials?.canRecover?.(error) === true &&
+    !applied.some((record) => record.strategy === 'credentials')
+      ? { action: 'refresh', refreshCredentials: true }
+      : undefined,
+};

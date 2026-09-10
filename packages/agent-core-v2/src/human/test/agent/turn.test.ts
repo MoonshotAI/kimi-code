@@ -603,6 +603,36 @@ describe('turn machine credential recovery', () => {
     expect(failed).toHaveLength(0);
   });
 
+  it('keeps recovered messages when a credential refresh follows a message recovery', async () => {
+    let invalidations = 0;
+    const { provider } = createCredentials(() => (invalidations += 1));
+    const { requester, calls, seen } = createCapturingRequester([
+      tooLargeError(),
+      statusError(401, 'unauthorized'),
+      'ok',
+    ]);
+    const { actor, recovering } = startTurnActor(
+      requester,
+      { recovery: createMediaDegradeRecovery() },
+      {
+        ...mediaHistory([mediaMessage('a', 2), mediaMessage('b', 1), mediaMessage('c', 1)]),
+        request: { model, credentials: provider },
+      },
+    );
+
+    await drain();
+
+    expect(calls()).toBe(3);
+    expect(invalidations).toBe(1);
+    expect(recovering.map((event) => `${event.strategy}:${event.action}`)).toEqual([
+      'media-degrade:degraded',
+      'credentials:refresh',
+    ]);
+    expect(countImageParts(seen[1] ?? [])).toBe(2);
+    expect(countImageParts(seen[2] ?? [])).toBe(2);
+    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'done' });
+  });
+
   it('fails when the attempt after a credential refresh also fails', async () => {
     let invalidations = 0;
     const { provider } = createCredentials(() => (invalidations += 1));

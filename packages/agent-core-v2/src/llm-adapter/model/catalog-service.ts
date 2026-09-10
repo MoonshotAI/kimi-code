@@ -35,6 +35,10 @@ import {
   toProtocolProvider,
 } from './catalog';
 import { IProviderCatalogRuntime, rawRecordOf } from './catalog-runtime';
+import {
+  runWithCredentialRecovery,
+  streamWithCredentialRecovery,
+} from './credential-recovery';
 import { ModelCatalogErrors } from './errors';
 import { IHostRequestHeaders } from './host-request-headers';
 import { IModelService, type ModelRecord } from './model';
@@ -142,22 +146,11 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     params?: ModelRequestParams,
   ): AsyncIterable<ModelRequestEvent> {
     const { requester } = this.entry(id);
-    const credentials = requester.model.credentials;
-    let recovered = false;
-    let stream = requester.request(input, signal, params);
-    while (true) {
-      try {
-        yield* stream;
-        return;
-      } catch (error) {
-        if (recovered || signal?.aborted === true || credentials?.canRecover?.(error) !== true) {
-          throw error;
-        }
-        recovered = true;
-        credentials?.invalidate?.();
-        stream = requester.request(input, signal, params);
-      }
-    }
+    yield* streamWithCredentialRecovery(
+      requester.model.credentials,
+      () => requester.request(input, signal, params),
+      signal,
+    );
   }
 
   async ping(id: string): Promise<ModelPingResult> {
@@ -187,15 +180,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
         }
         return { text: text.trim(), usage, finishReason };
       };
-      const credentials = requester.model.credentials;
-      let result: Awaited<ReturnType<typeof consume>>;
-      try {
-        result = await consume();
-      } catch (error) {
-        if (credentials?.canRecover?.(error) !== true) throw error;
-        credentials?.invalidate?.();
-        result = await consume();
-      }
+      const result = await runWithCredentialRecovery(requester.model.credentials, consume);
       return {
         ok: true,
         durationMs: Date.now() - startedAt,
