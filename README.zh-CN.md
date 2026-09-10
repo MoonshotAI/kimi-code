@@ -87,6 +87,8 @@ Kimi Code CLI 支持 [Agent Client Protocol](https://agentclientprotocol.com/)�
 
 随后在 Zed 的 Agent 面板新建对话即可。JetBrains 配置与排障见[在 IDE 中使用](https://moonshotai.github.io/kimi-code/zh/guides/ides)，完整能力矩阵见 [`kimi acp` 参考](https://moonshotai.github.io/kimi-code/zh/reference/kimi-acp)。
 
+ACP 客户端不限于编辑器。例如 [qwen-audio-agent](https://github.com/QwenAudio/qwen-audio-agent) 是一个实时全双工语音前台，可以免提驱动 `kimi acp` 会话（支持插嘴打断、本地唤醒词）：在其通用 ACP 后台配置中设置 `ACP_COMMAND=kimi`、`ACP_ARGS=["acp"]` 即可接入。
+
 ## 文档
 
 - [快速上手](https://moonshotai.github.io/kimi-code/zh/guides/getting-started)
