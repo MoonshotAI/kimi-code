@@ -66,7 +66,6 @@ export type WriteOp =
 
 export interface Checkpoint {
   readonly seq: number;
-  readonly sourceMaxMtimeMs?: number;
   readonly sourceSessionCount?: number;
   readonly schemaVersion?: number;
 }

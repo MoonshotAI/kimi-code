@@ -31,6 +31,7 @@ import {
   type SessionListQuery,
   type SessionSummary,
 } from './sessionIndex';
+import { markSessionDirty } from './sessionIndexDirtyJournal';
 import {
   PARENT_INDEX_NAME,
   SESSION_INDEX_MANIFEST,
@@ -181,12 +182,10 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   }
 
   private async manifestFresh(manifest: Checkpoint): Promise<boolean> {
-    const published = manifest.sourceMaxMtimeMs;
-    const publishedCount = manifest.sourceSessionCount;
-    if (published === undefined || publishedCount === undefined) return false;
+    if (manifest.sourceSessionCount === undefined) return false;
     try {
-      const scan = await scanSessionsFreshness(this.storage, this.sessionsScope, this.log);
-      return scan.maxMtimeMs <= published && scan.sessionCount === publishedCount;
+      const scan = await scanSessionsFreshness(this.storage, this.sessionsScope);
+      return scan.dirtyMarkCount === 0 && scan.sessionCount === manifest.sourceSessionCount;
     } catch (error) {
       this.log.warn('session index freshness check failed; treating the index as stale', {
         error: String(error),
@@ -348,6 +347,11 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       },
       () => Promise.resolve(),
     );
+    try {
+      await markSessionDirty(this.storage, this.sessionsScope, id);
+    } catch (error) {
+      this.log.warn('session index dirty mark failed', { error: String(error) });
+    }
   }
 
   private async withReadModel<T>(

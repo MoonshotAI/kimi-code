@@ -27,6 +27,7 @@ import {
   recencyColumn,
   sessionCollection,
 } from '#/app/sessionIndex/sessionIndexModel';
+import { markSessionDirty } from '#/app/sessionIndex/sessionIndexDirtyJournal';
 import { FileSessionIndex } from '#/app/sessionIndex/sessionIndexService';
 import {
   drainSessionIndexMirror,
@@ -956,6 +957,7 @@ describe('FileSessionIndex (read model)', () => {
     expect(await store.count({ workspaceIds: [workspaceId] })).toBe(3);
 
     await seedSession('keep', { title: 'after', createdAt: 1, updatedAt: 4 });
+    await markSessionDirty(new FileStorageService(homeDir), 'sessions', 'keep');
     await fsp.rm(join(sessionsDir, workspaceId, 'gone'), { recursive: true, force: true });
     await store.reconcileNow();
 
@@ -1296,11 +1298,7 @@ describe('FileSessionIndex (read model)', () => {
     await first.prepare();
     expect(first.status()).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
     const published = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
-    expect(published).toMatchObject({
-      seq: 1,
-      sourceMaxMtimeMs: expect.any(Number),
-      sourceSessionCount: 3,
-    });
+    expect(published).toMatchObject({ seq: 1, sourceSessionCount: 3 });
     disposeHost?.();
     disposeHost = undefined;
     await drainSessionIndexMirror();
@@ -1351,12 +1349,6 @@ describe('FileSessionIndex (read model)', () => {
     await drainQueryStoreDisposals();
 
     await seedSession('c', { title: 'c', createdAt: 3, updatedAt: 4 });
-    const future = new Date(Date.now() + 60_000);
-    await fsp.utimes(
-      join(sessionsDir, workspaceId, 'c', 'session-meta', 'state.json'),
-      future,
-      future,
-    );
 
     const second = build();
     const status = await second.prepare();
@@ -1384,12 +1376,6 @@ describe('FileSessionIndex (read model)', () => {
     expect(reconciles).toBe(0);
 
     await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
-    const future = new Date(Date.now() + 60_000);
-    await fsp.utimes(
-      join(sessionsDir, workspaceId, 'b', 'session-meta', 'state.json'),
-      future,
-      future,
-    );
     await internals.tick();
     expect(reconciles).toBe(1);
 
@@ -1409,9 +1395,22 @@ describe('FileSessionIndex (read model)', () => {
     expect(withoutGhost.items.map((s) => s.id)).toEqual(['a']);
     await internals.tick();
     expect(reconciles).toBe(3);
+
+    await seedSession('a', { title: 'a-renamed', createdAt: 1, updatedAt: 4 });
+    await internals.tick();
+    expect(reconciles).toBe(3);
+    expect((await store.get('a'))?.title).toBe('a');
+
+    await markSessionDirty(new FileStorageService(homeDir), 'sessions', 'a');
+    await internals.tick();
+    expect(reconciles).toBe(4);
+    expect((await store.get('a'))?.title).toBe('a-renamed');
+    expect(await fsp.readdir(join(sessionsDir, '.index-dirty'))).toEqual([]);
+    await internals.tick();
+    expect(reconciles).toBe(4);
   });
 
-  it('treats a published checkpoint without sourceMaxMtimeMs as stale and re-projects', async () => {
+  it('re-projects when the published checkpoint predates the current schema version', async () => {
     await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
 
     const first = build();
@@ -1429,27 +1428,51 @@ describe('FileSessionIndex (read model)', () => {
     expect(page.items.map((s) => s.id)).toEqual(['a']);
   });
 
-  it('reconciliation refreshes the published source max mtime', async () => {
+  it('reconciliation reads only the journaled sessions and refreshes the checkpoint', async () => {
     await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
+    await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
+    await seedSession('c', { title: 'c', createdAt: 3, updatedAt: 4 });
 
-    const store = build();
+    class CountingDocs extends JsonAtomicDocumentStore {
+      gets = 0;
+      override async get<T>(scope: string, key: string): Promise<T | undefined> {
+        this.gets += 1;
+        return super.get<T>(scope, key);
+      }
+    }
+    const fileStorage = new FileStorageService(homeDir);
+    const docs = new CountingDocs(fileStorage);
+    const host = createScopedTestHost([
+      stubPair(IFileSystemStorageService, fileStorage),
+      stubPair(IAtomicDocumentStore, docs),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(ILogService, stubLog()),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ITelemetryService, noopTelemetryService),
+    ]);
+    disposeHost = () => {
+      host.dispose();
+    };
+    queryStore = host.app.accessor.get(IQueryStore);
+    mirror = host.app.accessor.get(ISessionIndexMirror);
+    const store = host.app.accessor.get(ISessionIndex) as FileSessionIndex;
+
     await store.prepare();
-    const published = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
-    expect(published).toMatchObject({ seq: 1, sourceMaxMtimeMs: expect.any(Number) });
+    expect(docs.gets).toBe(6);
+    docs.gets = 0;
 
     await seedSession('a', { title: 'a2', createdAt: 1, updatedAt: 5 });
-    const future = new Date((published?.sourceMaxMtimeMs ?? 0) + 60_000);
-    await fsp.utimes(
-      join(sessionsDir, workspaceId, 'a', 'session-meta', 'state.json'),
-      future,
-      future,
-    );
-
+    await markSessionDirty(fileStorage, 'sessions', 'a');
     await store.reconcileNow();
-    const refreshed = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
-    expect(refreshed?.seq).toBe(1);
-    expect(refreshed?.sourceMaxMtimeMs).toBeGreaterThan(published?.sourceMaxMtimeMs ?? 0);
+
+    expect(docs.gets).toBe(2);
     expect((await store.get('a'))?.title).toBe('a2');
+    expect(await store.listRecent({ workspaceIds: [workspaceId] })).toMatchObject({
+      items: [{ id: 'a' }, { id: 'c' }, { id: 'b' }],
+    });
+    const refreshed = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
+    expect(refreshed).toMatchObject({ seq: 1, sourceSessionCount: 3, schemaVersion: 2 });
+    expect(await fsp.readdir(join(sessionsDir, '.index-dirty'))).toEqual([]);
   });
 
   it('the resume-startup sequence pays one scan: point lookup, projection, then warm lists', async () => {
