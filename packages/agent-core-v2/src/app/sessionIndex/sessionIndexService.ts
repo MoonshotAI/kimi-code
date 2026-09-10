@@ -164,6 +164,10 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
               ]);
             }
           } catch (error) {
+            const published = await this.queryStore
+              .getCheckpoint(SESSION_INDEX_MANIFEST)
+              .catch(() => undefined);
+            if (published === undefined) throw error;
             this.log.warn('session index startup reconciliation failed; serving the published generation', {
               error: String(error),
             });

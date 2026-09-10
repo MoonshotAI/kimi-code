@@ -64,6 +64,7 @@ const SYNC_ROUND_BYTE_BUDGET = 64 << 20;
 const SYNC_ROUND_TIME_BUDGET_MS = 30_000;
 const SYNC_FAILURE_ESCALATION_LIMIT = 5;
 const SESSION_SYNC_FAILURE_SKIP_LIMIT = 5;
+const SESSION_SYNC_SKIP_COOLDOWN_MS = 300_000;
 const EMPTY_BUFFER = Buffer.alloc(0);
 
 interface SyncRoundBudget {
@@ -244,6 +245,7 @@ export class SearchIndexCore {
   private lastMaintenanceDetail: string | undefined;
   private consecutiveSyncFailures = 0;
   private readonly sessionSyncFailures = new Map<string, number>();
+  private readonly sessionSyncSkips = new Map<string, { at: number; updatedAt: number }>();
 
   db: MiniDb<SearchDoc> | null = null;
   openPromise: Promise<void> | null = null;
@@ -251,6 +253,7 @@ export class SearchIndexCore {
   fullSyncDone = false;
   syncRoundBytes = SYNC_ROUND_BYTE_BUDGET;
   syncRoundMs = SYNC_ROUND_TIME_BUDGET_MS;
+  syncSkipCooldownMs = SESSION_SYNC_SKIP_COOLDOWN_MS;
 
   constructor(private readonly options: SearchCoreOptions) {}
 
@@ -514,9 +517,15 @@ export class SearchIndexCore {
     let failures = 0;
     for (const summary of sessions) {
       if (this.disposed) return noop;
-      if ((this.sessionSyncFailures.get(summary.id) ?? 0) >= SESSION_SYNC_FAILURE_SKIP_LIMIT) {
+      const skip = this.sessionSyncSkips.get(summary.id);
+      if (
+        skip !== undefined &&
+        summary.updatedAt === skip.updatedAt &&
+        Date.now() - skip.at < this.syncSkipCooldownMs
+      ) {
         continue;
       }
+      this.sessionSyncSkips.delete(summary.id);
       if (syncBudgetExhausted(budget)) {
         truncated = true;
         break;
@@ -527,6 +536,8 @@ export class SearchIndexCore {
         const count = (this.sessionSyncFailures.get(summary.id) ?? 0) + 1;
         this.sessionSyncFailures.set(summary.id, count);
         if (count >= SESSION_SYNC_FAILURE_SKIP_LIMIT) {
+          this.sessionSyncFailures.delete(summary.id);
+          this.sessionSyncSkips.set(summary.id, { at: Date.now(), updatedAt: summary.updatedAt });
           this.log.warn(
             'global search: giving up on a session whose wire transcript stays unreadable',
             { sessionId: summary.id, error: result.error },
@@ -1015,6 +1026,7 @@ export class SearchIndexCore {
     this.openPromise = null;
     this.fullSyncDone = false;
     this.sessionSyncFailures.clear();
+    this.sessionSyncSkips.clear();
     this.lockToken = undefined;
     const outcome = await wipeStoreDir({ dir: this.indexDir });
     if (outcome === 'locked') {

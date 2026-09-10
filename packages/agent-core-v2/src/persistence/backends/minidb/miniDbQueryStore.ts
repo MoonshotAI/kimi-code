@@ -50,7 +50,8 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
   private readonly dir: string;
   private dbPromise: Promise<ClusterDb> | undefined;
   private rebuildPromise: Promise<void> | undefined;
-  private transientFailures = 0;
+  private transientReadFailures = 0;
+  private transientWriteFailures = 0;
   private storeEpochCounter = 0;
   private readonly ensuredIndexes = new Set<string>();
 
@@ -125,6 +126,7 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
 
   private async withDb<T>(
     op: (db: ClusterDb) => Promise<T>,
+    kind: 'read' | 'write',
     expectedStoreEpoch?: number,
   ): Promise<T> {
     const db = await this.openDb();
@@ -133,14 +135,19 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
     }
     try {
       const result = await op(db);
-      this.transientFailures = 0;
+      if (kind === 'write') this.transientWriteFailures = 0;
+      else this.transientReadFailures = 0;
       return result;
     } catch (error) {
       if (classifyStorageError(error) !== 'rebuild') {
-        this.transientFailures += 1;
-        if (this.transientFailures < TRANSIENT_ESCALATION_LIMIT) throw error;
+        const failures =
+          kind === 'write'
+            ? (this.transientWriteFailures += 1)
+            : (this.transientReadFailures += 1);
+        if (failures < TRANSIENT_ESCALATION_LIMIT) throw error;
       }
-      this.transientFailures = 0;
+      this.transientReadFailures = 0;
+      this.transientWriteFailures = 0;
       await this.rebuild(error);
       if (expectedStoreEpoch !== undefined) throw new QueryStoreRebuiltError();
       throw error;
@@ -153,41 +160,45 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
     value: T,
     options?: { columns?: Record<string, number> },
   ): Promise<void> {
-    await this.withDb((db) =>
-      db.set(physicalKey(collection, key), value, { dt: options?.columns }),
+    await this.withDb(
+      (db) => db.set(physicalKey(collection, key), value, { dt: options?.columns }),
+      'write',
     );
   }
 
   async batch(ops: readonly WriteOp[]): Promise<void> {
     if (ops.length === 0) return;
-    await this.withDb((db) =>
-      db.batch(
-        ops.map((op) =>
-          op.kind === 'put'
-            ? {
-                op: 'set' as const,
-                key: physicalKey(op.collection, op.key),
-                value: op.value,
-                dt: op.columns,
-              }
-            : { op: 'del' as const, key: physicalKey(op.collection, op.key) },
+    await this.withDb(
+      (db) =>
+        db.batch(
+          ops.map((op) =>
+            op.kind === 'put'
+              ? {
+                  op: 'set' as const,
+                  key: physicalKey(op.collection, op.key),
+                  value: op.value,
+                  dt: op.columns,
+                }
+              : { op: 'del' as const, key: physicalKey(op.collection, op.key) },
+          ),
         ),
-      ),
+      'write',
     );
   }
 
   async delete(collection: string, key: string): Promise<void> {
-    await this.withDb((db) => db.del(physicalKey(collection, key)));
+    await this.withDb((db) => db.del(physicalKey(collection, key)), 'write');
   }
 
   async get<T>(collection: string, key: string): Promise<T | undefined> {
-    return this.withDb((db) => db.get(physicalKey(collection, key)) as Promise<T | undefined>);
+    return this.withDb((db) => db.get(physicalKey(collection, key)) as Promise<T | undefined>, 'read');
   }
 
   async getMany<T>(collection: string, keys: readonly string[]): Promise<Map<string, T>> {
     if (keys.length === 0) return new Map();
-    const values = await this.withDb((db) =>
-      db.mget(keys.map((key) => physicalKey(collection, key))),
+    const values = await this.withDb(
+      (db) => db.mget(keys.map((key) => physicalKey(collection, key))),
+      'read',
     );
     const out = new Map<string, T>();
     values.forEach((value, index) => {
@@ -198,36 +209,39 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
 
   async pageByColumn<T>(collection: string, query: ColumnPageQuery): Promise<Page<T>> {
     const dir = query.dir ?? 'asc';
-    const rows = (await this.withDb((db) =>
-      db.query({
-        dt: { [query.column]: query.bounds ?? {} },
-        filter: query.filter as Record<string, unknown> | undefined,
-        sort: { [query.column]: dir === 'desc' ? -1 : 1 },
-        limit: query.limit,
-      }),
+    const rows = (await this.withDb(
+      (db) =>
+        db.query({
+          dt: { [query.column]: query.bounds ?? {} },
+          filter: query.filter as Record<string, unknown> | undefined,
+          sort: { [query.column]: dir === 'desc' ? -1 : 1 },
+          limit: query.limit,
+        }),
+      'read',
     )) as ReadonlyArray<{ value: T }>;
     return { items: rows.map((row) => row.value) };
   }
 
   async listKeys(collection: string): Promise<readonly string[]> {
     const prefix = `${collection}${SEP}`;
-    const entries = await this.withDb((db) => db.scan({ prefix }));
+    const entries = await this.withDb((db) => db.scan({ prefix }), 'read');
     return entries.map((entry) => entry.key.slice(prefix.length));
   }
 
   async dropCollection(collection: string): Promise<void> {
     const prefix = `${collection}${SEP}`;
-    const entries = await this.withDb((db) => db.scan({ prefix }));
+    const entries = await this.withDb((db) => db.scan({ prefix }), 'read');
     for (let start = 0; start < entries.length; start += DROP_BATCH_SIZE) {
       const chunk = entries.slice(start, start + DROP_BATCH_SIZE);
-      await this.withDb((db) =>
-        db.batch(chunk.map((entry) => ({ op: 'del' as const, key: entry.key }))),
+      await this.withDb(
+        (db) => db.batch(chunk.map((entry) => ({ op: 'del' as const, key: entry.key }))),
+        'write',
       );
     }
   }
 
   query<T>(collection: string): IQuery<T> {
-    return new MiniDbQuery<T>((op) => this.withDb(op), collection);
+    return new MiniDbQuery<T>((op) => this.withDb(op, 'read'), collection);
   }
 
   async ensureIndex(collection: string, def: IndexDef): Promise<void> {
@@ -249,7 +263,7 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
       } catch (error) {
         if (!(error instanceof Error) || !error.message.includes('already exists')) throw error;
       }
-    });
+    }, 'write');
     this.ensuredIndexes.add(guard);
   }
 
@@ -264,6 +278,7 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
   ): Promise<void> {
     await this.withDb(
       (db) => db.set(physicalKey(CHECKPOINT_COLLECTION, source), checkpoint),
+      'write',
       expectedStoreEpoch,
     );
   }

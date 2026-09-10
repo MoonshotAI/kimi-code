@@ -1355,6 +1355,28 @@ describe('FileSessionIndex (read model)', () => {
     expect(status).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
     const page = await second.listRecent({ workspaceIds: [workspaceId] });
     expect(page.items.map((s) => s.id)).toEqual(['c', 'b', 'a']);
+
+    const disposeSecond = disposeHost ?? (() => undefined);
+    disposeSecond();
+    disposeHost = undefined;
+    await drainSessionIndexMirror();
+    await drainQueryStoreDisposals();
+
+    await seedSession('d', { title: 'd', createdAt: 4, updatedAt: 5 });
+    const third = build();
+    expect(await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST)).toMatchObject({ seq: 1 });
+    const internal = queryStore as unknown as { dbPromise: Promise<{ batch: unknown }> };
+    const db = await internal.dbPromise;
+    db.batch = () =>
+      Promise.reject(Object.assign(new Error('poisoned'), { code: 'WAL_POISONED' }));
+    const degraded = await third.prepare();
+    expect(degraded.state).toBe('degraded');
+    expect(degraded.reason).toBe('prepare failed');
+
+    const recovered = await third.prepare();
+    expect(recovered.state).toBe('ready');
+    const republished = await third.listRecent({ workspaceIds: [workspaceId] });
+    expect(republished.items.map((s) => s.id)).toEqual(['d', 'c', 'b', 'a']);
   });
 
   it('the periodic tick skips reconciliation while the session directories are unchanged', async () => {

@@ -562,6 +562,44 @@ describe('GlobalSearchService', () => {
       expect(core.fullSyncDone).toBe(true);
       expect(messageCount('s1')).toBe(4);
       expect(messageCount('s2')).toBe(1);
+
+      if (process.platform !== 'win32') {
+        await appendFile(s2Wire, `${userLine('苹果 cooled', T2)}\n`, 'utf8');
+        await chmod(s2Wire, 0o000);
+        for (let round = 0; round < 4; round++) {
+          const outcome = await core.sync(input);
+          expect(outcome.failures).toBe(1);
+        }
+        const skipped = await core.sync(input);
+        expect(skipped.failures).toBe(0);
+        expect(messageCount('s2')).toBe(1);
+
+        await chmod(s2Wire, 0o644);
+        const cooling = await core.sync(input);
+        expect(cooling.failures).toBe(0);
+        expect(messageCount('s2')).toBe(1);
+
+        const changedInput = [syncInput(home!, s1), { ...syncInput(home!, s2), updatedAt: T1 + 1 }];
+        const changed = await core.sync(changedInput);
+        expect(changed.failures).toBe(0);
+        expect(messageCount('s2')).toBe(2);
+
+        await appendFile(s2Wire, `${userLine('苹果 retried', T3)}\n`, 'utf8');
+        await chmod(s2Wire, 0o000);
+        for (let round = 0; round < 4; round++) {
+          const outcome = await core.sync(changedInput);
+          expect(outcome.failures).toBe(1);
+        }
+        const reskipped = await core.sync(changedInput);
+        expect(reskipped.failures).toBe(0);
+        expect(messageCount('s2')).toBe(2);
+
+        core.syncSkipCooldownMs = 0;
+        await chmod(s2Wire, 0o644);
+        const retried = await core.sync(changedInput);
+        expect(retried.failures).toBe(0);
+        expect(messageCount('s2')).toBe(3);
+      }
     } finally {
       await chmod(s2Wire, 0o644).catch(() => {});
       core.beginClose();

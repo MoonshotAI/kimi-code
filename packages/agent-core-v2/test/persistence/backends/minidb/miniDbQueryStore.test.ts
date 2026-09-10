@@ -193,6 +193,7 @@ describe('MiniDbQueryStore', () => {
     (db2 as unknown as { set: unknown }).set = () => Promise.reject(locked);
     for (let i = 0; i < 4; i++) {
       await expect(store.put(COLLECTION, `t${i}`, { v: i })).rejects.toThrow('locked');
+      expect(await store.get(COLLECTION, 'b')).toEqual({ id: 'b', v: 2 });
     }
     await expect(store.put(COLLECTION, 'c', { id: 'c', v: 3 })).rejects.toThrow('locked');
     expect(await store.get(COLLECTION, 'b')).toBeUndefined();
