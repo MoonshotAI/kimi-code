@@ -227,7 +227,6 @@ export interface TurnMachineContext {
   appliedRecoveries: LlmRecoveryRecord[];
   recoveryMessages?: readonly Message[];
   paused: boolean;
-  lastError?: LlmRemoteErrorMessage;
   outcome?: 'done' | 'failed' | 'aborted';
   error?: unknown;
 }

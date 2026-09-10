@@ -10,11 +10,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/asyncapi.json",
-      200,
-    ],
-    [
-      "GET",
       "/openapi.json",
       200,
     ],
@@ -218,14 +213,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/sessions/{session_id}/messages",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/messages/{message_id}",
-    ],
-    [
-      "GET",
       "/api/v1/sessions/{session_id}/profile",
     ],
     [
@@ -246,10 +233,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/sessions/{session_id}/snapshot",
-    ],
-    [
-      "GET",
       "/api/v1/sessions/{session_id}/status",
     ],
     [
@@ -267,22 +250,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "GET",
       "/api/v1/sessions/{session_id}/terminals/{terminal_id}",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/transcript",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/transcript/ops",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/transcript/plan",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/transcript/user-messages",
     ],
     [
       "GET",
@@ -319,10 +286,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "GET",
       "/api/v2/sessions",
-    ],
-    [
-      "GET",
-      "/asyncapi.json",
     ],
     [
       "GET",

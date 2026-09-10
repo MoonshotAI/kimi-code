@@ -27,7 +27,7 @@ describe('server-v2 GET /api/v1/connections', () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-connections-'));
     server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
     base = `http://127.0.0.1:${server.port}`;
-    wsUrl = `ws://127.0.0.1:${server.port}/api/v1/ws`;
+    wsUrl = `ws://127.0.0.1:${server.port}/api/v3/ws`;
   });
 
   afterAll(async () => {
@@ -88,7 +88,7 @@ describe('server-v2 GET /api/v1/connections', () => {
     expect(connections).toEqual([]);
   });
 
-  it('lists a raw connection without hello', async () => {
+  it('lists a raw connection', async () => {
     const ws = await connect();
     const closed = new Promise<void>((res) => ws.on('close', () => res()));
     await waitForSize(1);
@@ -97,7 +97,7 @@ describe('server-v2 GET /api/v1/connections', () => {
     expect(connections).toHaveLength(1);
     const c = connections[0]!;
     expect(c.id).toMatch(/^conn_/);
-    expect(c.has_client_hello).toBe(false);
+    expect(c.has_client_hello).toBe(true);
     expect(c.subscriptions).toEqual([]);
     expect(c.connected_at).toMatch(/Z$/);
     expect(typeof c.remote_address).toBe('string');
@@ -107,15 +107,11 @@ describe('server-v2 GET /api/v1/connections', () => {
     await closed;
   });
 
-  it('reflects client_hello and session subscriptions', async () => {
+  it('reflects session subscriptions', async () => {
     const sessionId = await createSession(home as string);
     const ws = await connect();
     try {
-      send(ws, {
-        type: 'client_hello',
-        id: 'h1',
-        payload: { client_id: 'connections-test', subscriptions: [sessionId] },
-      });
+      send(ws, { type: 'subscribe', id: 1, session_id: sessionId });
       await new Promise((r) => setTimeout(r, 50));
 
       let connections = await listConnections();
@@ -124,7 +120,7 @@ describe('server-v2 GET /api/v1/connections', () => {
       expect(c.has_client_hello).toBe(true);
       expect(c.subscriptions).toContain(sessionId);
 
-      send(ws, { type: 'unsubscribe', id: 'u1', payload: { session_ids: [sessionId] } });
+      send(ws, { type: 'unsubscribe', id: 2, session_id: sessionId });
       await new Promise((r) => setTimeout(r, 50));
       connections = await listConnections();
       expect(connections[0]!.subscriptions).not.toContain(sessionId);
@@ -135,11 +131,6 @@ describe('server-v2 GET /api/v1/connections', () => {
 
   it('removes the connection after the socket closes', async () => {
     const ws = await connect();
-    send(ws, {
-      type: 'client_hello',
-      id: 'h1',
-      payload: { client_id: 'connections-test', subscriptions: [] },
-    });
     await waitForSize(1);
 
     ws.close();

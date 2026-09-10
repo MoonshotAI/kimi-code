@@ -15,8 +15,8 @@
  * name in the URL. Calls ride HTTP (`ProxyChannel`). There is no event
  * transport: the v2 socket (`/api/v2/ws`) that used to carry Service `onXxx`
  * emitters and scope event streams was removed server-side, so the UI reads
- * Service state on demand. (The transcript's own `/api/v1/ws` delta channel
- * lives in `src/transcript/` and is unrelated to this client.)
+ * Service state on demand. (The transcript's own `/api/v3/ws` message
+ * channel lives in `src/transcript/` and is unrelated to this client.)
  */
 
 import type { ServiceProxy, ServiceRef } from './channel';

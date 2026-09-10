@@ -579,7 +579,7 @@ describe('Remote Control tunnel', () => {
         type: 'open_ws',
         payload: {
           stream_id: 'stream-1',
-          path: '/api/v1/ws',
+          path: '/api/v3/ws',
           headers: { Cookie: 'relay-cookie', Origin: 'https://relay.test', 'X-Keep': 'yes' },
         },
       }),

@@ -76,17 +76,6 @@ ships with the transport: `serveKlientIpc({ scope, socketPath })`.
 The same conformance suite runs against both transports in this
 package's tests (`test/helpers/conformance.ts` — one test file per transport).
 
-This package also hosts the e2e suites (the retired `server-e2e` package was
-folded in here):
-
-- `test/e2e/legacy/` + `test/e2e/harness/` — the legacy `/api/v1` live suites
-  and their client harness (skip unless `KIMI_SERVER_URL` is set; the v1
-  surface has no in-memory equivalent, so these stay live-server-only).
-
-The docker e2e runner (`pnpm docker:e2e`) runs this whole vitest suite inside
-a container against a container-local server. See `AGENTS.md` for the testing
-rules.
-
 ## Scope
 
 The facade covers the global (app), session, and agent surfaces shown above.

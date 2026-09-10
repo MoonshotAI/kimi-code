@@ -15,13 +15,11 @@ export interface WireRecord {
   readonly [key: string]: unknown;
 }
 
-// Turn boundaries mirror the transcript projector's grouping rule (one turn
-// per user message, plus a fallback turn for a leading non-user run left over
-// from a compaction-truncated context). Keeping this in lockstep with
-// `groupMessagesIntoSnapshot` is what makes the restored turn clock line up
-// with the cold transcript grouping — one synthesized `turn.prompt` per
-// grouped turn, so the first live turn after resume never collides with an
-// imported one.
+// Turn boundaries: one turn per user message, plus a fallback turn for a
+// leading non-user run left over from a compaction-truncated context. One
+// synthesized `turn.prompt` per grouped turn makes the restored turn clock
+// line up with the imported history, so the first live turn after resume
+// never collides with an imported one.
 export function splitIntoTurns(messages: readonly TurnMessage[]): ImportedTurn[] {
   const turns: ImportedTurn[] = [];
   let current: TurnMessage[] = [];

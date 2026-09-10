@@ -265,18 +265,21 @@ describe('server-v2 /api/v1 skills', () => {
       expect(body.code).toBe(0);
       expect(body.data).toEqual({ activated: true, skill_name: 'update-config' });
 
-      const messages = await getJson<{
-        items: Array<{ role: string; content: Array<{ type: string; text?: string }> }>;
-      }>(`/api/v1/sessions/${id}/messages`);
-      const userMsg = messages.body.data.items.find(
+      const history = await getJson<{
+        messages: Array<{
+          type: string;
+          text?: Array<{ type: string; text?: string }>;
+        }>;
+      }>(`/api/v1/sessions/${id}/history`);
+      const userMsg = history.body.data.messages.find(
         (m) =>
-          m.role === 'user' &&
-          m.content.some((part) => part.text?.includes('User activated the skill')),
+          m.type === 'user' &&
+          (m.text ?? []).some((part) => part.text?.includes('User activated the skill')),
       );
       expect(userMsg).toBeDefined();
-      expect(userMsg!.content[0]?.type).toBe('text');
-      expect(userMsg!.content[0]?.text).toContain('User activated the skill "update-config"');
-      const notice = userMsg!.content[1];
+      expect(userMsg!.text?.[0]?.type).toBe('text');
+      expect(userMsg!.text?.[0]?.text).toContain('User activated the skill "update-config"');
+      const notice = userMsg!.text?.[1];
       expect(notice?.type).toBe('text');
       expect(notice?.text).toContain('Attached file "note.txt"');
       expect(notice?.text).toContain(`${noteBytes.length} bytes`);
@@ -315,41 +318,29 @@ describe('server-v2 /api/v1 skills', () => {
       expect(body.code).toBe(0);
       expect(body.data).toEqual({ activated: true, skill_name: 'update-config' });
 
-      const messages = await getJson<{
-        items: Array<{ role: string; content: Array<{ type: string; text?: string }> }>;
-      }>(`/api/v1/sessions/${id}/messages`);
-      const userMsg = messages.body.data.items.find(
+      const history = await getJson<{
+        messages: Array<{
+          type: string;
+          attachment_ids?: string[];
+          text?: Array<{ type: string; text?: string }>;
+        }>;
+      }>(`/api/v1/sessions/${id}/history`);
+      const userMsg = history.body.data.messages.find(
         (m) =>
-          m.role === 'user' &&
-          m.content.some((part) => part.text?.includes('User activated the skill')),
+          m.type === 'user' &&
+          (m.text ?? []).some((part) => part.text?.includes('User activated the skill')),
       );
       expect(userMsg).toBeDefined();
-      const notice = userMsg!.content[1];
+      const notice = userMsg!.text?.[1];
       expect(notice).toEqual({
         type: 'text',
         text: `Attached file "note.txt" (application/octet-stream, ${noteBytes.length} bytes): ${sourcePath} — open it with the Read tool`,
+        meta: {},
       });
 
-      const transcript = await getJson<{
-        items: Array<{ kind: string; attachmentIds?: string[] }>;
-        attachments: Array<{
-          attachmentId: string;
-          mediaType: string;
-          name?: string;
-          size?: number;
-          source?: unknown;
-        }>;
-      }>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
-      const transcriptAttachments = transcript.body.data.attachments;
-      expect(transcriptAttachments).toHaveLength(1);
-      expect(transcriptAttachments[0]).toMatchObject({
-        mediaType: 'application/octet-stream',
-        name: 'note.txt',
-        size: noteBytes.length,
-      });
-      expect(transcriptAttachments[0]).not.toHaveProperty('source');
-      const turn = transcript.body.data.items.find((item) => item.kind === 'turn');
-      expect(turn?.attachmentIds).toEqual([transcriptAttachments[0]!.attachmentId]);
+      const turn = history.body.data.messages.find((m) => m.type === 'turn');
+      expect(turn?.attachment_ids).toHaveLength(1);
+      expect(userMsg!.attachment_ids).toEqual(turn?.attachment_ids);
     });
 
     it('rejects a relative attachment path on skill activation (40001)', async () => {

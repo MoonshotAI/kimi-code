@@ -221,26 +221,23 @@ describe('server-v2 config changed WS notifications', () => {
   }
 
   interface ConfigChangedFrame {
-    type: 'event.config.changed';
-    payload: {
-      changedFields: string[];
-      config: Record<string, unknown>;
-    };
+    type: 'config';
+    config: Record<string, unknown>;
+    changed_fields?: string[];
   }
 
   async function openWs(): Promise<ConfigChangedFrame[]> {
     const live = server as RunningServer;
-    const ws = new WebSocket(`ws://127.0.0.1:${live.port}/api/v1/ws`, [
+    const ws = new WebSocket(`ws://127.0.0.1:${live.port}/api/v3/ws`, [
       `kimi-code.bearer.${bearerToken(live)}`,
     ]);
     sockets.push(ws);
     const frames: ConfigChangedFrame[] = [];
     ws.on('message', (data) => {
       const frame = JSON.parse((data as Buffer).toString()) as { type?: string };
-      if (frame.type === 'event.config.changed') frames.push(frame as ConfigChangedFrame);
+      if (frame.type === 'config') frames.push(frame as ConfigChangedFrame);
     });
     await new Promise((resolve) => ws.on('open', resolve));
-    ws.send(JSON.stringify({ type: 'client_hello', payload: { client_id: 'config-ws-test' } }));
     return frames;
   }
 
@@ -263,10 +260,10 @@ describe('server-v2 config changed WS notifications', () => {
 
     await vi.waitFor(() => expect(frames.length).toBeGreaterThanOrEqual(1));
     const last = frames.at(-1) as ConfigChangedFrame;
-    expect(last.payload.changedFields).toEqual(['defaultPermissionMode']);
-    expect(last.payload.config['default_permission_mode']).toBe('yolo');
-    expect(last.payload.config['yolo']).toBe(true);
-    expect(last.payload.config).toHaveProperty('providers');
+    expect(last.changed_fields).toEqual(['defaultPermissionMode']);
+    expect(last.config['default_permission_mode']).toBe('yolo');
+    expect(last.config['yolo']).toBe(true);
+    expect(last.config).toHaveProperty('providers');
   });
 
   it('publishes camelCase changedFields on the engine write path used by OAuth refreshes', async () => {
@@ -279,8 +276,8 @@ describe('server-v2 config changed WS notifications', () => {
 
     await vi.waitFor(() => expect(frames.length).toBeGreaterThanOrEqual(1));
     const last = frames.at(-1) as ConfigChangedFrame;
-    expect(last.payload.changedFields).toEqual(['defaultModel']);
-    expect(last.payload.config['default_model']).toBe('k2');
+    expect(last.changed_fields).toEqual(['defaultModel']);
+    expect(last.config['default_model']).toBe('k2');
   });
 
   it('publishes an event when config.toml is edited outside the process and reloaded', async () => {
@@ -298,8 +295,8 @@ describe('server-v2 config changed WS notifications', () => {
 
     await vi.waitFor(() => expect(frames.length).toBeGreaterThanOrEqual(1), { timeout: 10000 });
     const last = frames.at(-1) as ConfigChangedFrame;
-    expect(last.payload.changedFields).toContain('defaultPermissionMode');
-    expect(last.payload.config['default_permission_mode']).toBe('yolo');
+    expect(last.changed_fields).toContain('defaultPermissionMode');
+    expect(last.config['default_permission_mode']).toBe('yolo');
   });
 
   it('closes the config publisher before the app, so a pending change is never delivered during shutdown', async () => {

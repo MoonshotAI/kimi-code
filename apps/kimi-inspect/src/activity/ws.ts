@@ -1,84 +1,69 @@
 /**
- * Minimal `/api/v1/ws` client for GLOBAL session facts — no subscriptions.
+ * Minimal `/api/v3/ws` client for the GLOBAL messages — no subscriptions.
  *
- * The server pushes every global event (`event.session.*` /
- * `session.meta.updated` / `event.workspace.*` / `event.config.*`) to every
- * established connection, so this client subscribes to nothing: it sends a
- * `client_hello` with an empty subscription list (etiquette only — the
- * delivery set does not depend on it) and dispatches the coarse per-session
- * facts to the consumer:
+ * The server sends `hello` right after the upgrade and fans every global
+ * message (`session` / `workspace` / `config` / `config.warning` /
+ * `model_catalog` / `plugin` / `capability`) out to every established
+ * connection, so this client subscribes to nothing and sends nothing: it
+ * dispatches the coarse per-session facts to the consumer:
  *
- *   - `event.session.work_changed` → `{busy, main_turn_active,
- *     pending_interaction, last_turn_reason}` for one session;
- *   - `event.session.created` / `session.meta.updated` → list-level signals
- *     (a session appeared / retitled), forwarded for list invalidation;
- *   - `event.session.archived` (live or cold) / `event.workspace.*` →
- *     list-level signals, forwarded for list invalidation;
- *   - `event.di.unit_changed` → one DI unit state transition of the engine's
- *     scope tree (the debug-surface feed), forwarded for `['di']`
- *     invalidation. Global like the rest: it carries the `__global__`
- *     session watermark and fans out to every connection.
+ *   - `session` (created / updated / archived / deleted) → forwarded whole;
+ *     the embedded SessionInfo carries `busy` / `main_turn_active` /
+ *     `pending_interaction` / `last_turn_reason`, and the consumer maps the
+ *     subtype onto the activity map and the list invalidation;
+ *   - `workspace` (created / updated / deleted) → list-level signal.
  *
- * Session/agent-grained events never arrive here (they stay subscribe-gated
- * server-side); the transcript chat channel has its own socket. Global
- * frames are live-only — a drop loses whatever fired meanwhile, so the
- * consumer answers `onReconnected` with a REST re-seed.
+ * Session/agent-grained traffic (entities, deltas, `session.state`) stays
+ * subscribe-gated server-side and never arrives here; the transcript chat
+ * channel has its own socket (`src/transcript/ws.ts`). Global messages are
+ * live-only — a drop loses whatever fired meanwhile, so the consumer answers
+ * `onReconnected` with a REST re-seed. Heartbeat is the WS protocol-level
+ * ping/pong, handled by the WebSocket implementation itself.
+ *
+ * Every frame is validated against the shared `serverMessageSchema`: a frame
+ * whose `type` is not in the schema is a future message type and is ignored
+ * silently, while a frame naming a known global type but failing validation
+ * is a server bug and surfaces via `onInvalidFrame`.
  *
  * The bearer token is presented at the upgrade through the
  * `kimi-code.bearer.<token>` subprotocol (the only credential channel a
  * browser WebSocket has).
  */
 
+import { serverMessageSchema, type SessionMessage } from '@moonshot-ai/kap-server/protocol';
+
 import type { WsLike, WsLikeCtor } from '../channel/wsLike';
 
-export type SessionPendingInteraction = 'none' | 'approval' | 'question';
-export type SessionTurnOutcome = 'completed' | 'cancelled' | 'failed';
+const WS_BEARER_PROTOCOL_PREFIX = 'kimi-code.bearer.';
 
-export interface SessionWorkFacts {
-  readonly busy: boolean;
-  readonly mainTurnActive: boolean;
-  readonly pendingInteraction: SessionPendingInteraction;
-  readonly lastTurnReason?: SessionTurnOutcome | undefined;
-}
-
-export type DiUnitState = 'Pending' | 'Activating' | 'Active' | 'Unloading' | 'Failed';
-
-/** Wire payload of the `event.di.unit_changed` global event. */
-export interface DiUnitChangedPayload {
-  /** Scope path of the container owning the unit (`app` / `app/workspace:<id>` / …). */
-  readonly scope: string;
-  readonly token: string;
-  readonly state: DiUnitState;
-  /** Serialized sticky failure, present only on a Failed transition. */
-  readonly error?: string | undefined;
-}
+const KNOWN_GLOBAL_TYPES: ReadonlySet<string> = new Set([
+  'session',
+  'workspace',
+  'config',
+  'config.warning',
+  'model_catalog',
+  'plugin',
+  'capability',
+  'hello',
+  'ack',
+  'error',
+]);
 
 export interface GlobalEventsWsHandlers {
-  /** Coarse work-fact tuple for one session changed. */
-  onWorkChanged: (sessionId: string, facts: SessionWorkFacts) => void;
-  /** A session was created (list-level signal). */
-  onSessionCreated: (sessionId: string) => void;
-  /** A session's title/patch changed (list-level signal). */
-  onMetaUpdated: (sessionId: string) => void;
-  /** A session was archived, live or cold (list-level signal). The envelope
-   *  carries the `__global__` watermark; the real session id rides in the
-   *  payload. */
-  onSessionArchived?: ((sessionId: string) => void) | undefined;
-  /** A session was permanently deleted (list-level signal). Same envelope
-   *  shape as `event.session.archived`: the real session id rides in the
-   *  payload. */
-  onSessionDeleted?: (sessionId: string) => void;
-  /** A workspace was created / updated / deleted (list-level signal). */
+  /** A `session` global message arrived (created / updated / archived /
+   *  deleted); the embedded SessionInfo carries the coarse work facts. */
+  onSession: (message: SessionMessage) => void;
+  /** A `workspace` global message arrived (created / updated / deleted). */
   onWorkspaceChanged?: (() => void) | undefined;
-  /** A DI unit of the engine's scope tree changed state (debug feed). */
-  onDiUnitChanged?: ((payload: DiUnitChangedPayload) => void) | undefined;
   /** Socket established (initial connect and every reconnect) — the consumer
-   *  answers with a REST re-seed, since live facts are missed while down. */
+   *  answers with a REST re-seed, since live messages are missed while down. */
   onReconnected: () => void;
+  /** A frame naming a known global type failed schema validation (server bug). */
+  onInvalidFrame?: ((raw: unknown) => void) | undefined;
 }
 
 export interface GlobalEventsWsOptions {
-  /** Server base URL (`http(s)://host:port`) or a full `ws(s)://…/api/v1/ws` URL. */
+  /** Server base URL (`http(s)://host:port`) or a full `ws(s)://…/api/v3/ws` URL. */
   readonly url: string;
   readonly token?: string | undefined;
   readonly handlers: GlobalEventsWsHandlers;
@@ -87,15 +72,6 @@ export interface GlobalEventsWsOptions {
   /** Base delay (ms) for the reconnect backoff. Default `500`. */
   readonly reconnectDelayMs?: number;
 }
-
-interface ServerFrame {
-  readonly type: string;
-  readonly id?: string;
-  readonly session_id?: string;
-  readonly payload?: unknown;
-}
-
-const WS_BEARER_PROTOCOL_PREFIX = 'kimi-code.bearer.';
 
 export class GlobalEventsWs {
   private readonly wsUrl: string;
@@ -149,13 +125,8 @@ export class GlobalEventsWs {
     this.ws = ws;
     ws.addEventListener('open', () => {
       this.reconnectAttempt = 0;
-      this.send({
-        type: 'client_hello',
-        id: `kimi-inspect-global-${Date.now().toString(36)}`,
-        payload: { client_id: 'kimi-inspect', subscriptions: [] },
-      });
-      // Established (first connect and every reconnect alike): live facts may
-      // have been missed — the consumer re-seeds from REST.
+      // Established (first connect and every reconnect alike): live messages
+      // may have been missed — the consumer re-seeds from REST.
       this.handlers.onReconnected();
     });
     ws.addEventListener('message', (event: { data: unknown }) => {
@@ -173,58 +144,29 @@ export class GlobalEventsWs {
   }
 
   private onMessage(raw: unknown): void {
-    let frame: ServerFrame;
+    let frame: unknown;
     try {
-      frame = JSON.parse(typeof raw === 'string' ? raw : String(raw)) as ServerFrame;
+      frame = JSON.parse(typeof raw === 'string' ? raw : String(raw));
     } catch {
+      this.handlers.onInvalidFrame?.(raw);
       return;
     }
-    const sessionId = frame.session_id;
-    if (typeof sessionId !== 'string' || sessionId === '') return;
-    switch (frame.type) {
-      case 'event.session.work_changed': {
-        const facts = parseWorkFacts(frame.payload);
-        if (facts !== undefined) this.handlers.onWorkChanged(sessionId, facts);
+    const parsed = serverMessageSchema.safeParse(frame);
+    if (!parsed.success) {
+      const type = (frame as { readonly type?: unknown } | null)?.type;
+      if (typeof type === 'string' && KNOWN_GLOBAL_TYPES.has(type)) {
+        this.handlers.onInvalidFrame?.(frame);
+      }
+      return;
+    }
+    const message = parsed.data;
+    switch (message.type) {
+      case 'session': {
+        this.handlers.onSession(message);
         return;
       }
-      case 'event.session.created': {
-        this.handlers.onSessionCreated(sessionId);
-        return;
-      }
-      case 'event.session.archived': {
-        const payload = frame.payload as { sessionId?: unknown } | undefined;
-        const archivedId = payload?.sessionId;
-        if (typeof archivedId === 'string' && archivedId !== '') {
-          this.handlers.onSessionArchived?.(archivedId);
-        }
-        return;
-      }
-      case 'event.session.deleted': {
-        const payload = frame.payload as { sessionId?: unknown } | undefined;
-        const deletedId = payload?.sessionId;
-        if (typeof deletedId === 'string' && deletedId !== '') {
-          this.handlers.onSessionDeleted?.(deletedId);
-        }
-        return;
-      }
-      case 'event.workspace.created':
-      case 'event.workspace.updated':
-      case 'event.workspace.deleted': {
+      case 'workspace': {
         this.handlers.onWorkspaceChanged?.();
-        return;
-      }
-      case 'session.meta.updated': {
-        this.handlers.onMetaUpdated(sessionId);
-        return;
-      }
-      case 'event.di.unit_changed': {
-        const payload = parseDiUnitChangedPayload(frame.payload);
-        if (payload !== undefined) this.handlers.onDiUnitChanged?.(payload);
-        return;
-      }
-      case 'ping': {
-        const nonce = (frame.payload as { nonce?: unknown } | undefined)?.nonce;
-        this.send({ type: 'pong', payload: { nonce } });
         return;
       }
       default:
@@ -242,56 +184,9 @@ export class GlobalEventsWs {
     }, delay);
     this.reconnectTimer.unref?.();
   }
-
-  private send(frame: Record<string, unknown>): void {
-    const ws = this.ws;
-    if (ws === undefined || ws.readyState !== this.WsCtor.OPEN) return;
-    try {
-      ws.send(JSON.stringify(frame));
-    } catch {
-      // best-effort; the close handler handles teardown
-    }
-  }
 }
 
-function parseWorkFacts(payload: unknown): SessionWorkFacts | undefined {
-  if (typeof payload !== 'object' || payload === null) return undefined;
-  const p = payload as Record<string, unknown>;
-  if (typeof p['busy'] !== 'boolean') return undefined;
-  const pending = p['pending_interaction'];
-  const reason = p['last_turn_reason'];
-  return {
-    busy: p['busy'],
-    mainTurnActive: p['main_turn_active'] === true,
-    pendingInteraction: pending === 'approval' || pending === 'question' ? pending : 'none',
-    lastTurnReason:
-      reason === 'completed' || reason === 'cancelled' || reason === 'failed' ? reason : undefined,
-  };
-}
-
-const DI_UNIT_STATES: ReadonlySet<string> = new Set([
-  'Pending',
-  'Activating',
-  'Active',
-  'Unloading',
-  'Failed',
-]);
-
-function parseDiUnitChangedPayload(payload: unknown): DiUnitChangedPayload | undefined {
-  if (typeof payload !== 'object' || payload === null) return undefined;
-  const p = payload as Record<string, unknown>;
-  if (typeof p['scope'] !== 'string' || typeof p['token'] !== 'string') return undefined;
-  const state = p['state'];
-  if (typeof state !== 'string' || !DI_UNIT_STATES.has(state)) return undefined;
-  return {
-    scope: p['scope'],
-    token: p['token'],
-    state: state as DiUnitState,
-    error: typeof p['error'] === 'string' ? p['error'] : undefined,
-  };
-}
-
-/** Derive the `/api/v1/ws` WebSocket URL from a server base URL (or pass a full ws URL through). */
+/** Derive the `/api/v3/ws` WebSocket URL from a server base URL (or pass a full ws URL through). */
 function toWsUrl(base: string): string {
   const url = new URL(base);
   if (url.protocol === 'http:') url.protocol = 'ws:';
@@ -299,8 +194,8 @@ function toWsUrl(base: string): string {
   if (url.protocol !== 'ws:' && url.protocol !== 'wss:') {
     throw new Error(`unsupported URL scheme for WS transport: ${base}`);
   }
-  if (!url.pathname.endsWith('/api/v1/ws')) {
-    url.pathname = `${url.pathname.replace(/\/$/, '')}/api/v1/ws`;
+  if (!url.pathname.endsWith('/api/v3/ws')) {
+    url.pathname = `${url.pathname.replace(/\/$/, '')}/api/v3/ws`;
   }
   url.search = '';
   url.hash = '';
