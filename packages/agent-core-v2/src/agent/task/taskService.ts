@@ -14,7 +14,7 @@ import {
 } from '#/_base/utils/abort';
 import { setClampedTimeout } from '#/_base/utils/timer';
 import { escapeXml, escapeXmlAttr, escapeXmlTags } from '#/_base/utils/xml-escape';
-import { IEventBus } from '#/app/event/eventBus';
+import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { Error2, ErrorCodes } from '#/errors';
 import { z } from 'zod';
 import {
@@ -220,6 +220,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ITaskService private readonly taskService: ITaskService,
     @IEventBus private readonly eventBus: IEventBus,
+    @ISessionEventBus private readonly sessionEventBus: ISessionEventBus,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentReminderService private readonly reminder: IAgentReminderService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
@@ -829,6 +830,10 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     return resolveAgentTaskConfig(this.config)?.keepAliveOnExit === true;
   }
 
+  private lifecycleActive(): boolean {
+    return this.sessionEventBus.isAgentActive(this.scopeContext.agentContext);
+  }
+
   async wait(
     taskId: string,
     timeoutMs = 30_000,
@@ -1061,6 +1066,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private recordTaskStarted(info: AgentTaskInfo): void {
+    if (!this.lifecycleActive()) return;
     void this.dispatcher.dispatch(
       new TaskStarted({ agentId: this.scopeContext.agentId, info }),
     );
@@ -1071,6 +1077,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private recordTaskTerminated(info: AgentTaskInfo, outputTail?: string): void {
+    if (!this.lifecycleActive()) return;
     void this.dispatcher.dispatch(
       new TaskTerminated({ agentId: this.scopeContext.agentId, info, outputTail }),
     );
@@ -1083,6 +1090,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private async notifyAgentTask(info: AgentTaskInfo): Promise<void> {
+    if (!this.lifecycleActive()) return;
     const context = await this.buildAgentTaskNotificationContext(info);
     if (context === undefined) return;
     const key = notificationKey(context.origin);
@@ -1275,6 +1283,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private fireNotificationHook(notification: AgentTaskNotification): void {
+    if (!this.lifecycleActive()) return;
     void this.dispatcher.dispatch(
       new TaskNotified({
         agentId: this.scopeContext.agentId,

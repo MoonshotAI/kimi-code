@@ -643,7 +643,8 @@ describe('AgentTaskService', () => {
     expect(forceStop).not.toHaveBeenCalled();
   });
 
-  it('scope disposal leaves a process running when keepAliveOnExit is set', async () => {
+  it('scope disposal leaves a process running when keepAliveOnExit is set, and its late settle stays silent after deactivation', async () => {
+    const { records } = capturingWire();
     stubTaskConfig({ keepAliveOnExit: true });
     const stdout = new Readable({ read() {} });
     const stderr = new Readable({ read() {} });
@@ -662,7 +663,8 @@ describe('AgentTaskService', () => {
       dispose: vi.fn().mockResolvedValue(undefined),
     } as unknown as IHostProcess;
     const svc = ix.get(IAgentTaskService);
-    svc.registerTask(new ProcessTask(proc, 'keep-running', 'long-running process'));
+    const taskId = svc.registerTask(new ProcessTask(proc, 'keep-running', 'long-running process'));
+    const agentContext = ix.get(IAgentScopeContext).agentContext;
     await Promise.resolve();
 
     disposables.dispose();
@@ -671,10 +673,14 @@ describe('AgentTaskService', () => {
     expect(proc.kill).not.toHaveBeenCalled();
     expect(proc.dispose).not.toHaveBeenCalled();
 
+    eventBus.deactivateAgent(agentContext);
     stdout.push(null);
     stderr.push(null);
     resolveWait(0);
-    await Promise.resolve();
+    await waitForCondition(() => svc.getTask(taskId)?.status === 'completed');
+
+    expect(svc.getTask(taskId)?.status).toBe('completed');
+    expect(records.filter((record) => record['type'] === 'task.terminated')).toHaveLength(0);
   });
 
   it('stop requests force-stop when killGracePeriodMs is zero', async () => {
