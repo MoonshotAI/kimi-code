@@ -11,8 +11,12 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { IFlagService } from '@moonshot-ai/agent-core-v2';
-import { createServerLogger, startServer, type ServerLogger } from '@moonshot-ai/kap-server';
+import {
+  createServerLogger,
+  startServer,
+  type ExperimentalFlags,
+  type ServerLogger,
+} from '@moonshot-ai/kap-server';
 import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
 import chalk from 'chalk';
 import { type Command, Option } from 'commander';
@@ -79,7 +83,7 @@ export interface WebCliOptions extends ServerCliOptions {
 
 /** What the ready hook may ask of the listening server. */
 export interface ForegroundServer {
-  readonly flags: Pick<IFlagService, 'enabled'>;
+  readonly flags: ExperimentalFlags;
 }
 
 export interface StartForegroundHooks {
@@ -408,7 +412,7 @@ async function runServerInProcess(
   running.logger.info({ address: running.address }, 'server ready');
 
   try {
-    await hooks.onReady?.(running.address, { flags: v2.core.accessor.get(IFlagService) });
+    await hooks.onReady?.(running.address, { flags: v2.flags });
   } catch (error) {
     try {
       await hooks.onShutdown?.('startup_failed');

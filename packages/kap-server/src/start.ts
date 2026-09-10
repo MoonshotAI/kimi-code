@@ -9,6 +9,7 @@ import {
   IAppendLogStore,
   IConfigService,
   IEventService,
+  IFlagService,
   IMcpOAuthService,
   IOAuthService,
   IProviderDiscoveryService,
@@ -127,9 +128,14 @@ export interface ServerStartOptions {
   readonly telemetry?: boolean;
 }
 
+export interface ExperimentalFlags {
+  enabled(id: string): boolean;
+}
+
 export interface RunningServer {
   readonly app: FastifyInstance;
   readonly core: Scope;
+  readonly flags: ExperimentalFlags;
   readonly connectionRegistry: IConnectionRegistry;
   readonly authTokenService: IAuthTokenService;
   readonly host: string;
@@ -620,7 +626,16 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   process.on('unhandledRejection', onUnhandledRejection);
   process.on('uncaughtException', onUncaughtException);
 
-  return { app, core, connectionRegistry, authTokenService, host, port: boundPort, close };
+  return {
+    app,
+    core,
+    flags: core.accessor.get(IFlagService),
+    connectionRegistry,
+    authTokenService,
+    host,
+    port: boundPort,
+    close,
+  };
 }
 
 export const PORT_RETRY_LIMIT = 100;

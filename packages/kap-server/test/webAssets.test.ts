@@ -108,6 +108,17 @@ describe('web asset routes', () => {
       expect(response.headers['content-encoding']).toBe('gzip');
     });
 
+    it('prefers the encoding with the higher q value over the built-in order', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: HASHED_JS,
+        headers: { 'accept-encoding': 'gzip;q=1, br;q=0.1' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.headers['content-encoding']).toBe('gzip');
+    });
+
     it('serves identity with Vary when no Accept-Encoding header is sent', async () => {
       const response = await app.inject({ method: 'GET', url: HASHED_JS });
 

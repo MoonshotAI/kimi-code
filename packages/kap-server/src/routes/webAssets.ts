@@ -113,10 +113,13 @@ async function findEncodedVariant(
     return undefined;
   }
   const accepted = parseAcceptEncoding(acceptEncoding);
-  for (const candidate of PRECOMPRESSED_ENCODINGS) {
-    if (!isEncodingAccepted(accepted, candidate.encoding)) {
-      continue;
-    }
+  const candidates = PRECOMPRESSED_ENCODINGS.map((candidate) => ({
+    candidate,
+    weight: encodingWeight(accepted, candidate.encoding),
+  }))
+    .filter(({ weight }) => weight > 0)
+    .toSorted((a, b) => b.weight - a.weight);
+  for (const { candidate } of candidates) {
     const path = `${file.path}${candidate.extension}`;
     const stats = await stat(path).catch(() => undefined);
     if (stats?.isFile() === true && stats.mtimeMs >= file.stats.mtimeMs) {
@@ -141,13 +144,8 @@ function parseAcceptEncoding(header: string): Map<string, number> {
   return weights;
 }
 
-function isEncodingAccepted(weights: Map<string, number>, encoding: string): boolean {
-  const explicit = weights.get(encoding);
-  if (explicit !== undefined) {
-    return explicit > 0;
-  }
-  const wildcard = weights.get('*');
-  return wildcard !== undefined && wildcard > 0;
+function encodingWeight(weights: Map<string, number>, encoding: string): number {
+  return weights.get(encoding) ?? weights.get('*') ?? 0;
 }
 
 function weakEtag(stats: Stats, suffix: string): string {
