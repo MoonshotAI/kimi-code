@@ -521,6 +521,16 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     const media = policy?.media;
     let projection: LlmRequestProjectionFallbackEvent['projection'];
     let nextPolicy: ProjectionPolicy;
+    const reportMediaStripped = (message: string): void => {
+      const statusCode = raw instanceof APIStatusError ? raw.statusCode : undefined;
+      const errorMessage = (raw instanceof Error ? raw.message : String(raw)).slice(0, 300);
+      this.log.warn(message, {
+        model: request.model.name,
+        statusCode,
+        errorMessage,
+        ...request.logFields,
+      });
+    };
     if (
       raw instanceof APIRequestTooLargeError &&
       (media === undefined || media === 'degraded')
@@ -535,24 +545,16 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         projection = 'media-degraded';
         nextPolicy = { ...policy, media: 'degraded' };
       } else {
-        this.log.warn(
+        reportMediaStripped(
           'provider rejected degraded-media request as too large; resending with rejected media stripped',
-          {
-            model: request.model.name,
-            ...request.logFields,
-          },
         );
         projection = 'media-stripped';
         nextPolicy = { ...policy, media: captureMediaStripPolicy() };
       }
     } else if (typeof media !== 'object' && isImageFormatError(raw)) {
       signal?.throwIfAborted();
-      this.log.warn(
+      reportMediaStripped(
         'provider rejected an image in the request; resending with rejected media stripped',
-        {
-          model: request.model.name,
-          ...request.logFields,
-        },
       );
       projection = 'media-stripped';
       nextPolicy = { ...policy, media: captureMediaStripPolicy() };

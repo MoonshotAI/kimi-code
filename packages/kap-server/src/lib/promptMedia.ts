@@ -45,6 +45,21 @@ export async function assertPromptFileRefs(content: WireContent, store: IFileSer
     } else if ((part.type === 'image' || part.type === 'video') && part.source.kind === 'file') {
       const file = await store.get(part.source.file_id);
       assertMediaFile(file, part.type);
+      if (part.type === 'image' && file.meta.size === 0) {
+        throw new Error2(
+          'validation.failed',
+          `"${file.meta.name}" contained no image data (0 bytes) — the clipboard or upload ` +
+            'captured nothing. Re-paste or re-upload the image and try again.',
+        );
+      }
+    } else if (part.type === 'image' && part.source.kind === 'base64') {
+      if (decodeBase64Prefix(part.source.data).length === 0) {
+        throw new Error2(
+          'validation.failed',
+          'The attached image contained no image data (0 bytes) — the clipboard or upload ' +
+            'captured nothing. Re-paste or re-upload the image and try again.',
+        );
+      }
     }
   }
 }

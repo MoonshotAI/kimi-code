@@ -596,6 +596,7 @@ export {
 } from '#/agent/media/image-compress';
 export { providerImagePolicy, type ProviderImagePolicy } from '#human/llm/media/image-formats';
 export {
+  buildEmptyImageNotice,
   buildImageConversionGuidance,
   buildUnsupportedImageNotice,
   decodeBase64Prefix,

@@ -3,6 +3,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { scrubEmptyImageParts } from '#/agent/media/image-format-policy';
 import { IAgentStateService } from '#/agent/state/agentState';
 import type { Message } from '#/llm-adapter/contract/message';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -74,7 +75,7 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
     const anomalies: ProjectionAnomaly[] = [];
     const result = fn(messages, (anomaly) => anomalies.push(anomaly));
     this.reportProjectionRepairs(anomalies);
-    return result;
+    return scrubEmptyImageMessages(result);
   }
 
   private reportProjectionRepairs(anomalies: readonly ProjectionAnomaly[]): void {
@@ -141,3 +142,10 @@ registerScopedService(
   ScopeActivation.OnScopeCreated,
   'contextProjector',
 );
+
+function scrubEmptyImageMessages(messages: readonly Message[]): readonly Message[] {
+  return messages.map((message) => {
+    const content = scrubEmptyImageParts(message.content);
+    return content === message.content ? message : { ...message, content };
+  });
+}
