@@ -857,15 +857,12 @@ function requestLocalHttp(
             const rewritten = body !== receivedBody;
             const headers = filterResponseHeaders(response.rawHeaders, rewritten);
             if (rewritten) headers.push('Cache-Control', 'no-cache');
-            if (
+            const negotiated =
               response.headers['content-encoding'] === undefined &&
               response.statusCode !== 206 &&
               body.length >= GZIP_MIN_BODY_BYTES &&
-              isGzipCompressibleType(contentType) &&
-              acceptsGzipEncoding(parsed.headers)
-            ) {
-              body = await gzipAsync(body);
-              headers.push('Content-Encoding', 'gzip');
+              isGzipCompressibleType(contentType);
+            if (negotiated) {
               let varyCovers = false;
               for (let index = 0; index < headers.length; index += 2) {
                 if (headers[index]!.toLowerCase() !== 'vary') continue;
@@ -876,6 +873,15 @@ function requestLocalHttp(
                 if (tokens.includes('*') || tokens.includes('accept-encoding')) varyCovers = true;
               }
               if (!varyCovers) headers.push('Vary', 'Accept-Encoding');
+            }
+            if (negotiated && acceptsGzipEncoding(parsed.headers)) {
+              body = await gzipAsync(body);
+              headers.push('Content-Encoding', 'gzip');
+              for (let index = 0; index < headers.length; index += 2) {
+                if (headers[index]!.toLowerCase() === 'etag') {
+                  headers[index + 1] = headers[index + 1]!.replace(/"$/, '-gzip"');
+                }
+              }
             }
             headers.push('Content-Length', String(body.length));
             const statusCode = response.statusCode ?? 502;

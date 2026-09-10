@@ -282,7 +282,7 @@ describe('Remote Control tunnel', () => {
     const localServer = createServer((request, response) => {
       localHttpRequest = request;
       if (request.url === '/assets/index.js') {
-        response.writeHead(200, { 'Content-Type': 'text/javascript' });
+        response.writeHead(200, { 'Content-Type': 'text/javascript', ETag: '"v1"' });
         response.end(assetJs);
         return;
       }
@@ -416,6 +416,7 @@ describe('Remote Control tunnel', () => {
     expect(response).not.toContain('X-Remove');
     expect(response).not.toContain('immutable');
     expect(response).not.toContain('Content-Encoding');
+    expect(response).not.toContain('Vary');
     expect(localHttpRequest?.headers['accept-encoding']).toBeUndefined();
     expect(response).toContain('Cache-Control: no-cache');
     expect(response).toContain(`/coding-relay/devices/${handle.deviceId}/boot.js`);
@@ -454,6 +455,7 @@ describe('Remote Control tunnel', () => {
     expect(gzipHead).toContain('HTTP/1.1 200 OK');
     expect(gzipHead).toContain('Content-Encoding: gzip');
     expect(gzipHead).toContain('Vary: Accept-Encoding');
+    expect(gzipHead).toContain('ETag: "v1-gzip"');
     expect(gzipHead).toContain(`Content-Length: ${gzipBody.length}`);
     expect(gunzipSync(gzipBody).toString()).toBe(
       assetJs.replaceAll('"/assets/', `"/coding-relay/devices/${handle.deviceId}/assets/`),
@@ -496,9 +498,11 @@ describe('Remote Control tunnel', () => {
       'base64',
     );
     const excludedSeparator = excludedResponse.indexOf('\r\n\r\n');
-    expect(excludedResponse.subarray(0, excludedSeparator).toString('latin1')).not.toContain(
-      'Content-Encoding',
-    );
+    const excludedHead = excludedResponse.subarray(0, excludedSeparator).toString('latin1');
+    expect(excludedHead).not.toContain('Content-Encoding');
+    expect(excludedHead).toContain('Vary: Accept-Encoding');
+    expect(excludedHead).toContain('ETag: "v1"');
+    expect(excludedHead).not.toContain('v1-gzip');
     expect(excludedResponse.subarray(excludedSeparator + 4).toString()).toBe(
       assetJs.replaceAll('"/assets/', `"/coding-relay/devices/${handle.deviceId}/assets/`),
     );
