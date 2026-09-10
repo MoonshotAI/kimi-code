@@ -10,7 +10,10 @@ Structure the tree around context ownership and lifecycle: keep each body of
 working context in the lowest node whose scope spans all work that needs its
 exact detail, and decompose into direct children along boundaries where a
 body's exact detail can be replaced by compact continuation memory once its
-result is stable. Treat \`spine_open\` as a checkpoint: open a child
+result is stable. Decomposition is recursive: solve each node the same way,
+breaking it into its own children along the same boundaries whenever its work
+spans independently compactable bodies of context. Treat \`spine_open\` as a
+checkpoint: open a child
 proactively before each distinct phase or divergent exploration, as soon as its
 ownership scope is clear and before its detail accumulates in the parent. For
 hard or long-horizon work, plan node placement up front so working context and
