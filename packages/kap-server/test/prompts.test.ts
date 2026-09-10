@@ -9,6 +9,7 @@ import {
   IAgentTitlePromptSource,
   IAgentContextMemoryService,
   IAgentLifecycleService,
+  IAgentLoopService,
   IAgentPermissionModeService,
   IAgentProfileService,
   IAgentStateService,
@@ -305,6 +306,55 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(Array.isArray(list.body.data.queued)).toBe(true);
   });
 
+  it('steers a submission directly into the running turn when steer is true', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    await setSessionModel(id, 'stub');
+    const session = getLiveSessionById(server!.core.accessor, id)!;
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    const loop = agent.accessor.get(IAgentLoopService);
+
+    let releaseStep!: () => void;
+    const stepGate = new Promise<void>((resolve) => {
+      releaseStep = resolve;
+    });
+    let stepHeld = false;
+    const hook = loop.hooks.onWillBeginStep.register('test-hold-step', async (_context, next) => {
+      stepHeld = true;
+      await stepGate;
+      await next();
+    });
+    try {
+      const first = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'text', text: 'first' }],
+      });
+      expect(first.body.code).toBe(0);
+      expect(first.body.data.status).toBe('running');
+      await vi.waitFor(() => {
+        expect(stepHeld).toBe(true);
+      }, { timeout: 10_000 });
+
+      const steered = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'text', text: 'steer me' }],
+        steer: true,
+      });
+      expect(steered.body.code).toBe(0);
+      expect(steered.body.data.status).toBe('running');
+      expect(steered.body.data.prompt_id).not.toBe(first.body.data.prompt_id);
+
+      const list = await call<{ active: PromptItemWire | null; queued: PromptItemWire[] }>(
+        'GET',
+        `/api/v1/sessions/${id}/prompts`,
+      );
+      expect(list.body.code).toBe(0);
+      expect(list.body.data.active?.prompt_id).toBe(first.body.data.prompt_id);
+      expect(list.body.data.queued).toEqual([]);
+    } finally {
+      releaseStep();
+      hook.dispose();
+    }
+  });
+
   it('accepts a prompt-carried model when default_model is not configured', async () => {
     await writeConfigToml(home as string, PROMPT_TOML_NO_DEFAULT);
     const id = await createSession(home as string);
@@ -566,7 +616,7 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(session!.accessor.get(IAgentLifecycleService).handleOf('main')).toBeUndefined();
   });
 
-  it('rejects a bundled prompt_id combination before any override or agent materialization', async () => {
+  it('rejects a bundled prompt_id or steer combination before any override or agent materialization', async () => {
     const id = await createSession(home as string);
 
     const submitted = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
@@ -576,6 +626,14 @@ describe('server-v2 /api/v1 prompts', () => {
       skills: [{ name: 'update-config' }],
     });
     expect(submitted.body.code).toBe(40001);
+
+    const steered = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'Review this change.' }],
+      permission_mode: 'yolo',
+      steer: true,
+      skills: [{ name: 'update-config' }],
+    });
+    expect(steered.body.code).toBe(40001);
 
     const session = getLiveSessionById(server!.core.accessor, id);
     expect(session!.accessor.get(IAgentLifecycleService).handleOf('main')).toBeUndefined();
@@ -1568,7 +1626,7 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(body.code).toBe(40001);
   });
 
-  it('returns 40402 when aborting a prompt that already settled', async () => {
+  it('returns 40402 when aborting a prompt that already settled or never existed', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
 
@@ -1582,17 +1640,12 @@ describe('server-v2 /api/v1 prompts', () => {
       `/api/v1/sessions/${id}/prompts/${promptId}:abort`,
     );
     expect(aborted.body.code).toBe(40402);
-  });
 
-  it('returns 40402 when aborting an unknown prompt', async () => {
-    const id = await createSession(home as string);
-    await createMainAgent(id);
-
-    const { body } = await call<null>(
+    const unknown = await call<null>(
       'POST',
       `/api/v1/sessions/${id}/prompts/prompt_does_not_exist:abort`,
     );
-    expect(body.code).toBe(40402);
+    expect(unknown.body.code).toBe(40402);
   });
 
   it('returns 40401 for an unknown session', async () => {
