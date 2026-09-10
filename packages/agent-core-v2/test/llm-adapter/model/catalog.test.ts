@@ -300,7 +300,7 @@ describe('Model assembly (pure data)', () => {
     try {
       const kimi = catalog.get('k1');
       expect(kimi.baseUrl).toBe('https://kimi-env.example.test/v1');
-      return expect(await kimi.credentials.resolve()).toEqual({ apiKey: 'env-token' });
+      return expect(await kimi.credentials?.resolve()).toEqual({ apiKey: 'env-token' });
     } finally {
       host.dispose();
     }
@@ -486,10 +486,10 @@ describe('Model assembly (pure data)', () => {
     );
     try {
       const model = catalog.get('k1');
-      expect(model.credentials.canRecover?.(Object.assign(new Error('x'), { status: 401 }))).toBe(
+      expect(model.credentials?.canRecover?.(Object.assign(new Error('x'), { status: 401 }))).toBe(
         true,
       );
-      await expect(model.credentials.resolve()).resolves.toEqual({ apiKey: 'tok-1' });
+      await expect(model.credentials?.resolve()).resolves.toEqual({ apiKey: 'tok-1' });
     } finally {
       host.dispose();
     }

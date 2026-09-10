@@ -157,7 +157,7 @@ export class ModelRequesterImpl implements ModelRequester {
       usedContextTokens: params?.usedContextTokens,
     };
 
-    const credential = await this.model.credentials.resolve();
+    const credential = await this.model.credentials?.resolve();
     await requester.generate(
       { ...config, model: applyCredential(resolved.model, credential) },
       content,

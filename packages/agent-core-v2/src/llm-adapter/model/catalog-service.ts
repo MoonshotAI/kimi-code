@@ -150,11 +150,11 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
         yield* stream;
         return;
       } catch (error) {
-        if (recovered || signal?.aborted === true || credentials.canRecover?.(error) !== true) {
+        if (recovered || signal?.aborted === true || credentials?.canRecover?.(error) !== true) {
           throw error;
         }
         recovered = true;
-        credentials.invalidate?.();
+        credentials?.invalidate?.();
         stream = requester.request(input, signal, params);
       }
     }
@@ -192,8 +192,8 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       try {
         result = await consume();
       } catch (error) {
-        if (credentials.canRecover?.(error) !== true) throw error;
-        credentials.invalidate?.();
+        if (credentials?.canRecover?.(error) !== true) throw error;
+        credentials?.invalidate?.();
         result = await consume();
       }
       return {

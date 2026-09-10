@@ -147,7 +147,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
               } catch (error) {
                 if (
                   options?.signal?.aborted === true ||
-                  credentials.canRecover?.(error) !== true
+                  credentials?.canRecover?.(error) !== true
                 ) {
                   throw error;
                 }

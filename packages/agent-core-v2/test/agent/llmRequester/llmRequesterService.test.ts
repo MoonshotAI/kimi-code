@@ -36,7 +36,6 @@ import {
   APIRequestTooLargeError,
   APIStatusError,
 } from '#/llm-adapter/contract/errors';
-import { staticCredentials } from '#human/credentials/credentials';
 import { emptyUsage, type TokenUsage } from '#human/llm/usage';
 import { type Message } from '#/llm-adapter/contract/message';
 import { isToolCall, type StreamedMessagePart, type ToolCall } from '#human/llm/message';
@@ -118,7 +117,6 @@ function createRequester(
     maxContextSize: 1000,
     alwaysThinking: false,
     providerName: 'p',
-    credentials: staticCredentials(undefined),
   };
   return {
     model,
@@ -756,7 +754,6 @@ describe('AgentLLMRequesterService trace id', () => {
       maxContextSize: 1000,
       alwaysThinking: false,
       providerName: 'p',
-      credentials: staticCredentials(undefined),
     };
     return {
       model,

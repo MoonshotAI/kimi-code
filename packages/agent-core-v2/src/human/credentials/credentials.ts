@@ -18,17 +18,18 @@ export function staticCredentials(apiKey?: string): LlmCredentialProvider {
 }
 
 export function oauthCredentials(getToken: CredentialTokenSource): LlmCredentialProvider {
-  let forceNext = false;
+  let refreshed: Promise<string | undefined> | undefined;
   return {
     resolve: async () => {
-      const force = forceNext ? true : undefined;
-      forceNext = false;
-      const apiKey = await getToken({ force });
+      const pending = refreshed;
+      refreshed = undefined;
+      const apiKey = pending === undefined ? await getToken() : await pending;
       return apiKey === undefined ? undefined : { apiKey };
     },
     canRecover: (error) => errorStatusCode(error) === 401,
     invalidate: () => {
-      forceNext = true;
+      refreshed ??= getToken({ force: true });
+      refreshed.catch(() => {});
     },
   };
 }

@@ -1,6 +1,6 @@
 import { assign, emit, fromCallback, setup } from '#/xstate2';
 
-import { toLlmErrorMessage, type LlmErrorMessage } from '#/llm/errors';
+import { isAbortError, toLlmErrorMessage, type LlmErrorMessage } from '#/llm/errors';
 import type { Message } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
 import { applyCredential } from '#/credentials/credentials';
@@ -95,6 +95,7 @@ function createRequestActor(
           },
         );
       } catch (error) {
+        if (isAbortError(error) || input.signal.aborted) return;
         sendBack({ type: 'llm.failed.remote', error: toLlmErrorMessage(error), rawError: error });
       }
     })();

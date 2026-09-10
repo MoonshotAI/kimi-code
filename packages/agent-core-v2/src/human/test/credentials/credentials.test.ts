@@ -30,7 +30,7 @@ describe('staticCredentials', () => {
 });
 
 describe('oauthCredentials', () => {
-  it('forces a refresh only on the resolve immediately after invalidate', async () => {
+  it('refreshes with force on invalidate and consumes the refresh on the next resolve', async () => {
     const calls: (boolean | undefined)[] = [];
     const provider = oauthCredentials((options) => {
       calls.push(options?.force);
@@ -44,6 +44,49 @@ describe('oauthCredentials', () => {
     await provider.resolve();
 
     expect(calls).toEqual([undefined, undefined, true, undefined]);
+  });
+
+  it('starts the forced refresh eagerly on invalidate, before the next resolve', async () => {
+    const calls: (boolean | undefined)[] = [];
+    const provider = oauthCredentials((options) => {
+      calls.push(options?.force);
+      return Promise.resolve('tok');
+    });
+
+    provider.invalidate?.();
+
+    expect(calls).toEqual([true]);
+
+    await provider.resolve();
+
+    expect(calls).toEqual([true]);
+  });
+
+  it('coalesces repeated invalidates into a single refresh', async () => {
+    const calls: (boolean | undefined)[] = [];
+    const provider = oauthCredentials((options) => {
+      calls.push(options?.force);
+      return Promise.resolve('tok');
+    });
+
+    provider.invalidate?.();
+    provider.invalidate?.();
+    await provider.resolve();
+
+    expect(calls).toEqual([true]);
+  });
+
+  it('propagates a failed refresh to the consuming resolve and recovers afterwards', async () => {
+    let calls = 0;
+    const provider = oauthCredentials(() => {
+      calls += 1;
+      return calls === 1 ? Promise.reject(new Error('login required')) : Promise.resolve('tok');
+    });
+
+    provider.invalidate?.();
+
+    await expect(provider.resolve()).rejects.toThrow('login required');
+    await expect(provider.resolve()).resolves.toEqual({ apiKey: 'tok' });
   });
 
   it('recovers only from 401 errors', () => {

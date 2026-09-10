@@ -651,4 +651,48 @@ describe('turn machine credential recovery', () => {
     expect(failed).toHaveLength(1);
     expect((failed[0] as { message?: string }).message).toContain('login required');
   });
+
+  it('does not report llm.failed.remote when the request aborts', async () => {
+    const requester: LlmRequester = {
+      generate: () => Promise.reject(new DOMException('The operation was aborted.', 'AbortError')),
+    };
+    const actor = createActor(createLlmMachine({ requester }), {
+      input: {
+        config: { model },
+        content: { messages: [] },
+        signal: new AbortController().signal,
+      },
+    });
+    const failed: unknown[] = [];
+    actor.on('llm.failed.remote', (event) => failed.push(event));
+    actor.start();
+
+    await drain();
+
+    expect(failed).toHaveLength(0);
+  });
+
+  it('does not report llm.failed.remote when the signal is already aborted', async () => {
+    const controller = new AbortController();
+    const requester: LlmRequester = {
+      generate: () => {
+        controller.abort();
+        return Promise.reject(new Error('boom'));
+      },
+    };
+    const actor = createActor(createLlmMachine({ requester }), {
+      input: {
+        config: { model },
+        content: { messages: [] },
+        signal: controller.signal,
+      },
+    });
+    const failed: unknown[] = [];
+    actor.on('llm.failed.remote', (event) => failed.push(event));
+    actor.start();
+
+    await drain();
+
+    expect(failed).toHaveLength(0);
+  });
 });

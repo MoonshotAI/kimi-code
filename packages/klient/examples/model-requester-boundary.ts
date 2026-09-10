@@ -220,8 +220,8 @@ async function collectWithRecovery(requester: ModelRequester): Promise<Collected
   try {
     return await collect(requester);
   } catch (error) {
-    if (credentials.canRecover?.(error) !== true) throw error;
-    credentials.invalidate?.();
+    if (credentials?.canRecover?.(error) !== true) throw error;
+    credentials?.invalidate?.();
     return collect(requester);
   }
 }

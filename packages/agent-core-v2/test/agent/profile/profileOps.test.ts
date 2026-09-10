@@ -15,7 +15,6 @@ import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMd
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
-import { staticCredentials } from '#human/credentials/credentials';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { IProtocolAdapterRegistry, type Protocol } from '#/llm-adapter/protocol/protocol';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -93,7 +92,6 @@ function createTestModel(
     alwaysThinking: false,
     providerType,
     providerName: 'kimi',
-    credentials: staticCredentials(undefined),
   };
 }
 
