@@ -3,6 +3,7 @@ import type { ExternalEvent } from '#/eventStore/events';
 import { journalFromBranch } from '#/eventStore/journal';
 import { agentSlices, type AgentEventStore } from '#/agent/slices';
 import type { StoreBackend } from '#/store/backend/backend';
+import type { Branch } from '#/store/branch';
 import { StoreError, type BranchRef } from '#/store/types';
 import type { Tree } from '#/store/tree';
 
@@ -74,17 +75,26 @@ export class SessionStores {
     if (existing !== undefined) {
       return existing;
     }
-    const existed = this.tree.has(agentId);
-    const branch = existed
-      ? this.tree.openBranch(agentId)
-      : this.tree.createBranch(agentId, opts?.from !== undefined ? { from: opts.from } : undefined);
+    const session = await this.session();
+    const registered = session.getState().roster.agents[agentId];
+    let branch: Branch;
+    if (registered !== undefined) {
+      branch = this.tree.openBranch(registered);
+    } else if (this.tree.has(agentId)) {
+      branch = this.tree.openBranch(agentId);
+    } else {
+      branch = this.tree.createBranch(
+        agentId,
+        opts?.from !== undefined ? { from: opts.from } : undefined,
+      );
+    }
     const engine = await createEventStore({
       journal: journalFromBranch(branch, this.tree),
       slices: agentSlices,
     });
     this.agents.set(agentId, engine);
-    if (!existed) {
-      await (await this.session()).dispatch(agentOpened({ agentId, branch: branch.name }));
+    if (registered === undefined) {
+      await session.dispatch(agentOpened({ agentId, branch: branch.name }));
     }
     return engine;
   }

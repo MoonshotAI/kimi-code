@@ -185,16 +185,18 @@ describe('SessionStores reopen', () => {
     await runTurn(forkActor, fork, 'fork-hi', 6);
     forkActor.stop();
     actor.stop();
+    await env.stores.undo('main', 1);
 
     const restored = await reopen(env);
 
     expect((await restored.stores.session()).getState().roster.agents).toEqual({
       fork: 'fork',
-      main: 'main',
+      main: 'main~2',
     });
     const restoredMain = await restored.stores.open('main');
-    expect(historyTexts(restoredMain)).toEqual(['first', 'echo:first', 'second', 'echo:second']);
-    expect(restoredMain.getState().turnIndex.nextTurnId).toBe(2);
+    expect(restoredMain.ref.branch).toBe('main~2');
+    expect(historyTexts(restoredMain)).toEqual(['first', 'echo:first', 'second']);
+    expect(restoredMain.getState().turnIndex.nextTurnId).toBe(1);
     const restoredFork = await restored.stores.open('fork');
     expect(historyTexts(restoredFork)).toEqual([
       'first',
@@ -207,16 +209,15 @@ describe('SessionStores reopen', () => {
     expect(restoredFork.getState().turnIndex.nextTurnId).toBe(3);
 
     const actor2 = startAgent(restoredMain);
-    await runTurn(actor2, restoredMain, 'again', 6);
+    await runTurn(actor2, restoredMain, 'again', 5);
     expect(historyTexts(restoredMain)).toEqual([
       'first',
       'echo:first',
       'second',
-      'echo:second',
       'again',
       'echo:again',
     ]);
-    expect(restoredMain.getState().turnIndex.nextTurnId).toBe(3);
+    expect(restoredMain.getState().turnIndex.nextTurnId).toBe(2);
 
     actor2.stop();
   });
