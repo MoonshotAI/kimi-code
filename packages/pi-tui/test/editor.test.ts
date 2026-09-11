@@ -3,6 +3,7 @@ import { describe, it, mock } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import { type AutocompleteProvider, CombinedAutocompleteProvider } from "../src/autocomplete.ts";
 import { Editor, wordWrapLine } from "../src/components/editor.ts";
+import { setKittyProtocolActive } from "../src/keys.ts";
 import { PasteBurst } from "../src/paste-burst.ts";
 import type { TUI } from "../src/tui.ts";
 import { TuiMainScreen } from "../src/tui-main-screen.ts";
@@ -136,48 +137,225 @@ describe("Editor component", () => {
 		});
 
 		it("jumps to start before entering history from a non-empty draft", () => {
-			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			// Mocked clock: the second Up must read as a discrete press, not a
+			// held-key repeat (repeats are barred from entering history).
+			mock.timers.enable({ apis: ["Date"] });
+			mock.timers.setTime(1000);
+			try {
+				const editor = new Editor(createTestTUI(), defaultEditorTheme);
 
-			editor.addToHistory("prompt");
-			editor.setText("draft");
-			editor.handleInput("\x1b[D");
-			editor.handleInput("\x1b[D");
+				editor.addToHistory("prompt");
+				editor.setText("draft");
+				editor.handleInput("\x1b[D");
+				editor.handleInput("\x1b[D");
 
-			editor.handleInput("\x1b[A"); // Up - jumps to start before history browsing
-			assert.strictEqual(editor.getText(), "draft");
-			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 0 });
+				editor.handleInput("\x1b[A"); // Up - jumps to start before history browsing
+				assert.strictEqual(editor.getText(), "draft");
+				assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 0 });
 
-			editor.handleInput("\x1b[A"); // Up at start - shows "prompt"
-			assert.strictEqual(editor.getText(), "prompt");
+				mock.timers.tick(200);
+				editor.handleInput("\x1b[A"); // Up at start - shows "prompt"
+				assert.strictEqual(editor.getText(), "prompt");
 
-			editor.handleInput("\x1b[B"); // Down - restores draft
-			assert.strictEqual(editor.getText(), "draft");
-			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 0 });
+				editor.handleInput("\x1b[B"); // Down - restores draft
+				assert.strictEqual(editor.getText(), "draft");
+				assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 0 });
+			} finally {
+				mock.timers.reset();
+			}
+		});
+
+		it("keeps a held Up key from crossing into history (repeat guard)", () => {
+			mock.timers.enable({ apis: ["Date"] });
+			mock.timers.setTime(1000);
+			try {
+				const editor = new Editor(createTestTUI(), defaultEditorTheme);
+				editor.addToHistory("older");
+				editor.addToHistory("newer");
+				editor.setText("line one\nline two\nline three");
+
+				// Held key: repeats arrive every ~30ms. The cursor climbs to the
+				// top and stops there instead of entering history.
+				for (let i = 0; i < 8; i++) {
+					editor.handleInput("\x1b[A");
+					mock.timers.tick(30);
+				}
+				assert.strictEqual(editor.getText(), "line one\nline two\nline three");
+				assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 0 });
+
+				// Releasing and pressing again is a discrete press: it enters history.
+				mock.timers.tick(200);
+				editor.handleInput("\x1b[A");
+				assert.strictEqual(editor.getText(), "newer");
+			} finally {
+				mock.timers.reset();
+			}
+		});
+
+		it("keeps browsing history while Up is held once history was entered discretely", () => {
+			mock.timers.enable({ apis: ["Date"] });
+			mock.timers.setTime(1000);
+			try {
+				const editor = new Editor(createTestTUI(), defaultEditorTheme);
+				editor.addToHistory("first");
+				editor.addToHistory("second");
+				editor.addToHistory("third");
+
+				editor.handleInput("\x1b[A"); // discrete press - shows "third"
+				assert.strictEqual(editor.getText(), "third");
+
+				mock.timers.tick(200);
+				editor.handleInput("\x1b[A"); // discrete press - shows "second"
+				assert.strictEqual(editor.getText(), "second");
+
+				// The user then holds the key: the first autorepeat outruns the
+				// repeat threshold (initial delay), but browsing continues —
+				// navigation past the first entry is already deliberate.
+				mock.timers.tick(500);
+				editor.handleInput("\x1b[A");
+				assert.strictEqual(editor.getText(), "first");
+
+				mock.timers.tick(30); // held-key repeat - no snap-back, keeps browsing
+				editor.handleInput("\x1b[A");
+				assert.strictEqual(editor.getText(), "first");
+			} finally {
+				mock.timers.reset();
+			}
+		});
+
+		it("snaps back out of history when a held Up key's initial repeat delay outruns the threshold", () => {
+			mock.timers.enable({ apis: ["Date"] });
+			mock.timers.setTime(1000);
+			try {
+				const editor = new Editor(createTestTUI(), defaultEditorTheme);
+				editor.addToHistory("older");
+				editor.addToHistory("newer");
+				editor.setText("one line draft");
+
+				editor.handleInput("\x1b[A"); // discrete press - jumps to line start
+				assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 0 });
+
+				// First autorepeat after the keyboard's initial repeat delay:
+				// too slow for the repeat threshold, so it still crosses...
+				mock.timers.tick(500);
+				editor.handleInput("\x1b[A");
+				assert.strictEqual(editor.getText(), "newer");
+
+				// ...but the next repeat arrives fast and proves the hold:
+				// snap back out to the draft.
+				mock.timers.tick(30);
+				editor.handleInput("\x1b[A");
+				assert.strictEqual(editor.getText(), "one line draft");
+
+				// Still held: further repeats stay on the draft.
+				mock.timers.tick(30);
+				editor.handleInput("\x1b[A");
+				assert.strictEqual(editor.getText(), "one line draft");
+
+				// Released and pressed again: a discrete press enters history.
+				mock.timers.tick(200);
+				editor.handleInput("\x1b[A");
+				assert.strictEqual(editor.getText(), "newer");
+			} finally {
+				mock.timers.reset();
+			}
+		});
+
+		it("treats an Up after an intervening key as a fresh press", () => {
+			mock.timers.enable({ apis: ["Date"] });
+			mock.timers.setTime(1000);
+			try {
+				const editor = new Editor(createTestTUI(), defaultEditorTheme);
+				editor.addToHistory("entry");
+
+				editor.handleInput("\x1b[A"); // discrete press - enters history
+				assert.strictEqual(editor.getText(), "entry");
+
+				mock.timers.tick(30);
+				editor.handleInput("\x1b[B"); // Down restores the empty draft
+
+				mock.timers.tick(30); // quick, but the Down broke the repeat stream
+				editor.handleInput("\x1b[A");
+				assert.strictEqual(editor.getText(), "entry");
+			} finally {
+				mock.timers.reset();
+			}
+		});
+
+		it("bars Kitty protocol repeat events from entering history", () => {
+			setKittyProtocolActive(true);
+			try {
+				const editor = new Editor(createTestTUI(), defaultEditorTheme);
+				editor.addToHistory("prompt");
+				editor.setText("draft");
+
+				editor.handleInput("\x1b[A"); // discrete press - jumps to line start
+				assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 0 });
+
+				editor.handleInput("\x1b[1;1:2A"); // held-key repeat - stays on the draft
+				assert.strictEqual(editor.getText(), "draft");
+
+				editor.handleInput("\x1b[A"); // discrete press - enters history
+				assert.strictEqual(editor.getText(), "prompt");
+			} finally {
+				setKittyProtocolActive(false);
+			}
+		});
+
+		it("lets a held key keep browsing after a deliberate Kitty press crossing", () => {
+			setKittyProtocolActive(true);
+			try {
+				const editor = new Editor(createTestTUI(), defaultEditorTheme);
+				editor.addToHistory("older");
+				editor.addToHistory("newer");
+				editor.setText("draft");
+
+				editor.handleInput("\x1b[A"); // press - jumps to line start
+				editor.handleInput("\x1b[A"); // deliberate press - enters history
+				assert.strictEqual(editor.getText(), "newer");
+
+				// Holding that same key sends explicit repeat events: they must
+				// keep browsing, not snap back — the press crossing was exact,
+				// so no legacy snap-back is ever armed under Kitty.
+				editor.handleInput("\x1b[1;1:2A");
+				assert.strictEqual(editor.getText(), "older");
+			} finally {
+				setKittyProtocolActive(false);
+			}
 		});
 
 		it("navigates forward through history with Down arrow", () => {
-			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			mock.timers.enable({ apis: ["Date"] });
+			mock.timers.setTime(1000);
+			try {
+				const editor = new Editor(createTestTUI(), defaultEditorTheme);
 
-			editor.addToHistory("first");
-			editor.addToHistory("second");
-			editor.addToHistory("third");
-			editor.setText("draft");
+				editor.addToHistory("first");
+				editor.addToHistory("second");
+				editor.addToHistory("third");
+				editor.setText("draft");
 
-			// Go to oldest
-			editor.handleInput("\x1b[A"); // start of draft
-			editor.handleInput("\x1b[A"); // third
-			editor.handleInput("\x1b[A"); // second
-			editor.handleInput("\x1b[A"); // first
+				// Go to oldest (each Up spaced out so it reads as a discrete press)
+				editor.handleInput("\x1b[A"); // start of draft
+				mock.timers.tick(200);
+				editor.handleInput("\x1b[A"); // third
+				mock.timers.tick(200);
+				editor.handleInput("\x1b[A"); // second
+				mock.timers.tick(200);
+				editor.handleInput("\x1b[A"); // first
 
-			// Navigate back
-			editor.handleInput("\x1b[B"); // second
-			assert.strictEqual(editor.getText(), "second");
+				// Navigate back
+				editor.handleInput("\x1b[B"); // second
+				assert.strictEqual(editor.getText(), "second");
 
-			editor.handleInput("\x1b[B"); // third
-			assert.strictEqual(editor.getText(), "third");
+				editor.handleInput("\x1b[B"); // third
+				assert.strictEqual(editor.getText(), "third");
 
-			editor.handleInput("\x1b[B"); // draft
-			assert.strictEqual(editor.getText(), "draft");
+				editor.handleInput("\x1b[B"); // draft
+				assert.strictEqual(editor.getText(), "draft");
+			} finally {
+				mock.timers.reset();
+			}
 		});
 
 		it("exits history mode when typing a character", () => {
@@ -192,17 +370,24 @@ describe("Editor component", () => {
 		});
 
 		it("exits history mode on setText", () => {
-			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			mock.timers.enable({ apis: ["Date"] });
+			mock.timers.setTime(1000);
+			try {
+				const editor = new Editor(createTestTUI(), defaultEditorTheme);
 
-			editor.addToHistory("first");
-			editor.addToHistory("second");
+				editor.addToHistory("first");
+				editor.addToHistory("second");
 
-			editor.handleInput("\x1b[A"); // Up - shows "second"
-			editor.setText(""); // External clear
+				editor.handleInput("\x1b[A"); // Up - shows "second"
+				editor.setText(""); // External clear - also breaks the ↑ repeat stream
 
-			// Up should start fresh from most recent
-			editor.handleInput("\x1b[A");
-			assert.strictEqual(editor.getText(), "second");
+				// Up should start fresh from most recent; no clock advance is
+				// needed because setText reset the repeat chain.
+				editor.handleInput("\x1b[A");
+				assert.strictEqual(editor.getText(), "second");
+			} finally {
+				mock.timers.reset();
+			}
 		});
 
 		it("does not add empty strings to history", () => {
@@ -394,19 +579,26 @@ describe("Editor component", () => {
 		});
 
 		it("still restores the draft with a filter active", () => {
-			const editor = new Editor(createTestTUI(), defaultEditorTheme);
-			editor.addToHistory("!cmd");
-			editor.setHistoryFilter((entry) => entry.startsWith("!"));
-			editor.setText("draft");
-			editor.handleInput("\x1b[D");
-			editor.handleInput("\x1b[D");
+			mock.timers.enable({ apis: ["Date"] });
+			mock.timers.setTime(1000);
+			try {
+				const editor = new Editor(createTestTUI(), defaultEditorTheme);
+				editor.addToHistory("!cmd");
+				editor.setHistoryFilter((entry) => entry.startsWith("!"));
+				editor.setText("draft");
+				editor.handleInput("\x1b[D");
+				editor.handleInput("\x1b[D");
 
-			editor.handleInput("\x1b[A"); // to line start
-			editor.handleInput("\x1b[A"); // recall "!cmd"
-			assert.strictEqual(editor.getText(), "!cmd");
+				editor.handleInput("\x1b[A"); // to line start
+				mock.timers.tick(200); // discrete press, not a held-key repeat
+				editor.handleInput("\x1b[A"); // recall "!cmd"
+				assert.strictEqual(editor.getText(), "!cmd");
 
-			editor.handleInput("\x1b[B"); // restore draft
-			assert.strictEqual(editor.getText(), "draft");
+				editor.handleInput("\x1b[B"); // restore draft
+				assert.strictEqual(editor.getText(), "draft");
+			} finally {
+				mock.timers.reset();
+			}
 		});
 	});
 
@@ -480,19 +672,27 @@ describe("Editor component", () => {
 		});
 
 		it("saves and restores host state across multiple browse sessions", () => {
-			const editor = new Editor(createTestTUI(), defaultEditorTheme);
-			editor.addToHistory("entry");
-			let count = 0;
-			editor.onHistoryDraftSave = () => "state";
-			editor.onHistoryDraftRestore = () => {
-				count++;
-			};
+			mock.timers.enable({ apis: ["Date"] });
+			mock.timers.setTime(1000);
+			try {
+				const editor = new Editor(createTestTUI(), defaultEditorTheme);
+				editor.addToHistory("entry");
+				let count = 0;
+				editor.onHistoryDraftSave = () => "state";
+				editor.onHistoryDraftRestore = () => {
+					count++;
+				};
 
-			editor.handleInput("\x1b[A"); // recall
-			editor.handleInput("\x1b[B"); // restore draft (count=1)
-			editor.handleInput("\x1b[A"); // recall again
-			editor.handleInput("\x1b[B"); // restore draft again (count=2)
-			assert.strictEqual(count, 2);
+				editor.handleInput("\x1b[A"); // recall
+				editor.handleInput("\x1b[B"); // restore draft (count=1)
+				// No clock advance needed: the intervening Down broke the ↑
+				// repeat stream, so the next Up reads as a fresh press.
+				editor.handleInput("\x1b[A"); // recall again
+				editor.handleInput("\x1b[B"); // restore draft again (count=2)
+				assert.strictEqual(count, 2);
+			} finally {
+				mock.timers.reset();
+			}
 		});
 	});
 
