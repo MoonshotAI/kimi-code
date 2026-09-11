@@ -120,7 +120,12 @@ export function supportsOsc9Notification(env: NodeJS.ProcessEnv = process.env): 
  * always safe.
  */
 export function supportsTerminalProgress(env: NodeJS.ProcessEnv = process.env): boolean {
-  if ((env['WT_SESSION'] ?? '').length > 0) return true;
+  const isWindowsTerminal = (env['WT_SESSION'] ?? '').length > 0;
+  const isWsl = env['WSL_DISTRO_NAME'] !== undefined || env['WSL_INTEROP'] !== undefined;
+  // Windows Terminal forwards OSC 9;4 from WSL to the Windows taskbar, where
+  // an active progress state blocks the auto-hidden taskbar's edge trigger.
+  if (isWindowsTerminal && isWsl) return false;
+  if (isWindowsTerminal) return true;
   if (env['ConEmuANSI'] === 'ON') return true;
   const termProgram = env['TERM_PROGRAM'] ?? '';
   if (termProgram === 'ghostty' || termProgram === 'WezTerm') return true;

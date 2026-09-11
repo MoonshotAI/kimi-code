@@ -222,6 +222,50 @@ describe('supportsTerminalProgress', () => {
     expect(supportsTerminalProgress({ ConEmuANSI: 'ON' })).toBe(true);
   });
 
+  it('does not enable Windows Terminal progress inside WSL', () => {
+    expect(supportsTerminalProgress({ WT_SESSION: 'abc-123', WSL_DISTRO_NAME: 'Ubuntu' })).toBe(
+      false,
+    );
+    expect(
+      supportsTerminalProgress({ WT_SESSION: 'abc-123', WSL_INTEROP: '/run/WSL/123_interop' }),
+    ).toBe(false);
+  });
+
+  it.each([
+    { ConEmuANSI: 'ON' },
+    { TERM_PROGRAM: 'WezTerm' },
+    { TERM_PROGRAM: 'ghostty' },
+    { TERM: 'xterm-ghostty' },
+  ])('keeps WSL Windows Terminal disabled when other progress markers are present', (marker) => {
+    expect(
+      supportsTerminalProgress({
+        WT_SESSION: 'abc-123',
+        WSL_DISTRO_NAME: 'Ubuntu',
+        ...marker,
+      }),
+    ).toBe(false);
+    expect(
+      supportsTerminalProgress({
+        WT_SESSION: 'abc-123',
+        WSL_INTEROP: '/run/WSL/123_interop',
+        ...marker,
+      }),
+    ).toBe(false);
+  });
+
+  it('preserves progress support for non-Windows-Terminal sessions inside WSL', () => {
+    expect(supportsTerminalProgress({ WSL_DISTRO_NAME: 'Ubuntu', ConEmuANSI: 'ON' })).toBe(true);
+    expect(
+      supportsTerminalProgress({ WSL_INTEROP: '/run/WSL/123_interop', TERM_PROGRAM: 'WezTerm' }),
+    ).toBe(true);
+    expect(supportsTerminalProgress({ WSL_DISTRO_NAME: 'Ubuntu', TERM_PROGRAM: 'ghostty' })).toBe(
+      true,
+    );
+    expect(
+      supportsTerminalProgress({ WSL_INTEROP: '/run/WSL/123_interop', TERM: 'xterm-ghostty' }),
+    ).toBe(true);
+  });
+
   it('detects Ghostty / WezTerm via TERM_PROGRAM and TERM', () => {
     expect(supportsTerminalProgress({ TERM_PROGRAM: 'ghostty' })).toBe(true);
     expect(supportsTerminalProgress({ TERM: 'xterm-ghostty' })).toBe(true);
