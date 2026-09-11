@@ -15,7 +15,7 @@ import type { LlmErrorMessage } from '#human/llm/errors';
 import type { FinishInfo } from '#human/llm/finish-reason';
 import type { StreamedMessagePart, UserMessage } from '#human/llm/message';
 import type { LlmModel } from '#human/llm/model';
-import { chainRecoveries, type LlmRecovery, type LlmRecoveryRecord } from '#human/llm/requester/recovery';
+import type { LlmRecovery, LlmRecoveryRecord } from '#human/llm/requester/recovery';
 import type { LlmCredentialProvider } from '#human/llm/requester/requester';
 import { resolveMaxAttempts } from '#human/llm/requester/retry';
 import type { ToolResult as MachineToolResult, ToolUpdate } from '#human/tool/executor';
@@ -297,7 +297,9 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
       tools: tools.tools,
       turnActor: createTurnMachine(requester.requester, {
         retry: { maxAttemptsPerStep: options.maxAttemptsPerStep },
-        recovery: chainRecoveries(credentialsRecovery, options.recovery),
+        recovery: {
+          propose: (ctx) => credentialsRecovery.propose(ctx) ?? options.recovery?.propose(ctx),
+        },
       }),
       abortTimeoutMs: options.abortTimeoutMs,
     }),

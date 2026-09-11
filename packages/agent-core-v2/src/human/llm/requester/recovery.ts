@@ -23,17 +23,3 @@ export interface LlmRecoveryProposal {
 export interface LlmRecovery {
   propose(ctx: LlmRecoveryContext): (LlmRecoveryProposal & LlmRecoveryRecord) | undefined;
 }
-
-export function chainRecoveries(
-  ...strategies: readonly (LlmRecovery | undefined)[]
-): LlmRecovery {
-  return {
-    propose: (ctx) => {
-      for (const strategy of strategies) {
-        const proposal = strategy?.propose(ctx);
-        if (proposal !== undefined) return proposal;
-      }
-      return undefined;
-    },
-  };
-}

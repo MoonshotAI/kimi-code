@@ -8,7 +8,7 @@ import type { ContentPart, Message, UserMessage } from '#/llm/message';
 import { createMediaDegradeRecovery } from '#/llm/media/degrade';
 import type { LlmModel } from '#/llm/model';
 import { createRequestActor, type LlmEvent } from '#/llm/requester/actor';
-import { chainRecoveries, type LlmRecovery } from '#/llm/requester/recovery';
+import type { LlmRecovery } from '#/llm/requester/recovery';
 import type { LlmCredentialProvider, LlmRequester } from '#/llm/requester/requester';
 import type { LlmRetryOptions } from '#/llm/requester/retry';
 import {
@@ -654,9 +654,14 @@ describe('turn machine credential recovery', () => {
       statusError(401, 'unauthorized'),
       'ok',
     ]);
+    const mediaDegrade = createMediaDegradeRecovery();
     const { actor, recovering } = startTurnActor(
       requester,
-      { recovery: chainRecoveries(credentialsRecovery, createMediaDegradeRecovery()) },
+      {
+        recovery: {
+          propose: (ctx) => credentialsRecovery.propose(ctx) ?? mediaDegrade.propose(ctx),
+        },
+      },
       {
         ...mediaHistory([mediaMessage('a', 2), mediaMessage('b', 1), mediaMessage('c', 1)]),
         request: { model, credentials: provider },
