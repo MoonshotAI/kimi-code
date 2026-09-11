@@ -316,6 +316,31 @@ describe('acp-server session lifecycle', () => {
   );
 
   it(
+    'session/new preserves MCP server names that match object prototype properties',
+    async () => {
+      const c = await boot();
+      const created = (await c.send('session/new', {
+        cwd: homeDir,
+        mcpServers: [
+          {
+            name: '__proto__',
+            command: process.execPath,
+            args: [STDIO_MCP_FIXTURE],
+            env: [{ name: 'KIMI_TEST_MCP_START_DELAY_MS', value: '0' }],
+          },
+        ],
+      })) as { sessionId: string };
+
+      const entries = await sessionMcpEntries(c, created.sessionId);
+      expect(entries.find((e) => e.name === '__proto__')).toMatchObject({
+        name: '__proto__',
+        status: 'connected',
+      });
+    },
+    30_000,
+  );
+
+  it(
     'session/load forwards mcpServers to the re-materialized session',
     async () => {
       const c = await boot();

@@ -57,6 +57,47 @@ describe('MCP timeout contract validation', () => {
     });
   });
 
+  it('session creation options preserve prototype-named mcpServers', () => {
+    const parsed = createSessionOptionsSchema.safeParse({
+      workDir: '/tmp/example',
+      mcpServers: {
+        ['__proto__']: { transport: 'stdio', command: 'node', runtime_id: 'local' },
+      },
+    });
+    expect(parsed.success).toBe(true);
+    expect(Object.keys(parsed.data?.mcpServers ?? {})).toEqual(['__proto__']);
+    expect(parsed.data?.mcpServers?.['__proto__']).toEqual({
+      transport: 'stdio',
+      command: 'node',
+      runtime_id: 'local',
+    });
+  });
+
+  it('session creation options validate every own mcpServers key', () => {
+    const hiddenServers = {} as Record<string, unknown>;
+    Object.defineProperty(hiddenServers, 'hidden', {
+      value: { transport: 'stdio', command: 'node' },
+    });
+    const hidden = createSessionOptionsSchema.safeParse({
+      workDir: '/tmp/example',
+      mcpServers: hiddenServers,
+    });
+    expect(hidden.success).toBe(true);
+    expect(Object.keys(hidden.data?.mcpServers ?? {})).toEqual(['hidden']);
+
+    const symbol = Symbol('server');
+    const symbolServers = { [symbol]: { transport: 'stdio', command: 'node' } };
+    const invalid = createSessionOptionsSchema.safeParse({
+      workDir: '/tmp/example',
+      mcpServers: symbolServers,
+    });
+    expect(invalid.success).toBe(false);
+    expect(invalid.error?.issues[0]).toMatchObject({
+      code: 'invalid_key',
+      path: ['mcpServers', symbol],
+    });
+  });
+
   it('session creation options reject malformed mcpServers entries', () => {
     const parsed = createSessionOptionsSchema.safeParse({
       workDir: '/tmp/example',

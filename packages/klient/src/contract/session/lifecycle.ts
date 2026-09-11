@@ -9,9 +9,46 @@
 import { z } from 'zod';
 
 import { maybe, noResult } from '../helpers.js';
-import { mcpServerConfigSchema } from '../mcp.js';
+import { mcpServerConfigSchema, type McpServerConfig } from '../mcp.js';
 import type { ServiceContract } from '../types.js';
 import { sessionMetaSchema } from './metadata.js';
+
+function isPlainRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  if (value === null || typeof value !== 'object') return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+const mcpServerConfigRecordSchema = z
+  .custom<Readonly<Record<string, McpServerConfig>>>(isPlainRecord)
+  .transform((servers, ctx): Record<string, McpServerConfig> => {
+    const out: Record<string, McpServerConfig> = Object.create(null);
+    let valid = true;
+    for (const name of Reflect.ownKeys(servers)) {
+      const parsedName = z.string().safeParse(name);
+      if (!parsedName.success) {
+        valid = false;
+        ctx.addIssue({
+          code: 'invalid_key',
+          origin: 'record',
+          issues: parsedName.error.issues,
+          path: [name],
+        });
+        continue;
+      }
+      const config = servers[parsedName.data];
+      const parsed = mcpServerConfigSchema.safeParse(config);
+      if (!parsed.success) {
+        valid = false;
+        for (const issue of parsed.error.issues) {
+          ctx.addIssue({ ...issue, path: [parsedName.data, ...issue.path] });
+        }
+        continue;
+      }
+      out[parsedName.data] = parsed.data;
+    }
+    return valid ? out : z.NEVER;
+  });
 
 export const createSessionOptionsSchema = z.object({
   sessionId: z.string().optional(),
@@ -21,7 +58,7 @@ export const createSessionOptionsSchema = z.object({
    * Ephemeral per-session MCP servers (engine `CreateSessionOptions.mcpServers`):
    * connected only for the created session, never persisted.
    */
-  mcpServers: z.record(z.string(), mcpServerConfigSchema).optional(),
+  mcpServers: mcpServerConfigRecordSchema.optional(),
 });
 
 /** Same fields as `ResumeSessionOptions` in the engine — keep in sync. */
@@ -31,7 +68,7 @@ export const resumeSessionOptionsSchema = z.object({
    * Ephemeral per-session MCP servers, applied when resume re-materializes a
    * cold session (ignored when the session is already live).
    */
-  mcpServers: z.record(z.string(), mcpServerConfigSchema).optional(),
+  mcpServers: mcpServerConfigRecordSchema.optional(),
 });
 
 /** Same fields as `ForkSessionOptions` in the engine — keep in sync. */
