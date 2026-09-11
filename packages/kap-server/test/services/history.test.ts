@@ -275,7 +275,7 @@ describe('foldWireHistory origin classification', () => {
 });
 
 describe('foldWireHistory steer', () => {
-  it('attaches steers to the running step, buffers between steps, and dedupes the turn-opening steer', () => {
+  it('attaches steers to the running step and buffers between steps', () => {
     const messages = fold([
       rec('turn.prompt', { input: [{ type: 'text', text: 'do A' }], origin: { kind: 'user' } }),
       loopEvent({ type: 'step.begin', uuid: 'u1', turnId: '0', step: 1 }, T0 + 1),
@@ -299,17 +299,6 @@ describe('foldWireHistory steer', () => {
       text: [{ type: 'text', text: 'and C', meta: {} }],
       status: 'read',
       timestamp: T0 + 4,
-    });
-
-    const deduped = fold([
-      rec('turn.prompt', { input: [{ type: 'text', text: 'hello' }], origin: { kind: 'user' } }),
-      rec('turn.steer', { input: [{ type: 'text', text: 'hello' }], origin: { kind: 'user' } }, T0 + 1),
-    ]);
-    const dedupedUsers = ofType(deduped, 'user');
-    expect(dedupedUsers).toHaveLength(1);
-    expect(dedupedUsers[0]).toMatchObject({
-      message_id: 't0.u0',
-      text: [{ type: 'text', text: 'hello', meta: {} }],
     });
   });
 

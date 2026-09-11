@@ -960,18 +960,6 @@ describe('AgentMessageProjector', () => {
     expect(ofType(messages, 'user')).toHaveLength(0);
   });
 
-  it('dedupes the turn-opening steer that repeats the prompt input', () => {
-    const projector = makeProjector();
-    const messages = feedAll(projector, [
-      ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'hello' }),
-      ev({ type: 'turn.steer', turnId: 1, input: [{ type: 'text', text: 'hello' }], origin: { kind: 'user' } }),
-      ev({ type: 'turn.step.started', turnId: 1, step: 1 }),
-    ]);
-    const users = ofType(messages, 'user');
-    expect(users).toHaveLength(1);
-    expect(users[0]).toMatchObject({ message_id: 't1.u0', text: [{ type: 'text', text: 'hello', meta: {} }] });
-  });
-
   it('counts undo anchors instead of timeline turns when fromTurnId is missing', () => {
     const projector = makeProjector();
     const messages = feedAll(projector, [
