@@ -492,7 +492,7 @@ export class AgentPromptService implements IAgentPromptService {
       id: ownerPromptId,
       content: gateImageFormatParts(rerouted.content, this.profile.getModelProviderType()),
     };
-    const request = {
+    const steered = this.loop.steer({
       message: gated,
       promptId: ownerPromptId,
       onMaterialize: () => {
@@ -505,8 +505,13 @@ export class AgentPromptService implements IAgentPromptService {
         );
         this.notifyCaptions(captions, ownerPromptId);
       },
-    };
-    return this.loop.steer(request) ?? this.loop.submit(request).turn;
+    });
+    if (steered !== undefined) return steered;
+    return this.loop.submit({
+      message: gated,
+      promptId: ownerPromptId,
+      onMaterialize: () => this.notifyCaptions(captions, ownerPromptId),
+    }).turn;
   }
 
   async retry(): Promise<Turn | undefined> {
