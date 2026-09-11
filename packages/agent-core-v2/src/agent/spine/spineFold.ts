@@ -2,26 +2,18 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { ContentPart } from '#human/llm/message';
 
 import type { SpineNode, SpineSpawnEvidence, SpineState } from './spineOps';
-import type { SpineTrimProjection } from './spineTrimDerive';
-import { applySpineTrim } from './spineTrimFold';
 
 export interface SpineFoldStatus {
   readonly cursorId: string;
   readonly summary: string;
   readonly parentId: string | null;
   readonly parentSummary: string | null;
-  readonly cursorContext: number;
-  readonly contextLeft: number | undefined;
-  readonly rawContext: number;
-  readonly projectedContext: number;
-  readonly projectedMeasured: boolean;
 }
 
 export interface SpineFoldInput {
   readonly state: SpineState;
   readonly anchors: readonly number[];
   readonly epochSummaryMessage?: ContextMessage;
-  readonly trim?: SpineTrimProjection;
 }
 
 export function foldSpine(
@@ -34,7 +26,6 @@ export function foldSpine(
     state,
     anchors: input.anchors,
     epochStartAt: state.epochStartAt,
-    trim: input.trim,
   };
   const out: ContextMessage[] = [];
 
@@ -55,7 +46,6 @@ interface FoldContext {
   readonly state: SpineState;
   readonly anchors: readonly number[];
   readonly epochStartAt: number;
-  readonly trim: SpineTrimProjection | undefined;
 }
 
 type SpanSink = (ctx: FoldContext, index: number, out: ContextMessage[]) => void;
@@ -105,8 +95,7 @@ function pushRaw(ctx: FoldContext, index: number, out: ContextMessage[]): void {
   const message = ctx.messages[index];
   if (message === undefined) return;
   const anchor = ctx.anchors[index] ?? 0;
-  const surviving = anchor > 0 ? annotateUserRequest(message, anchor) : message;
-  out.push(ctx.trim === undefined ? surviving : applySpineTrim(ctx.trim, index, surviving));
+  out.push(anchor > 0 ? annotateUserRequest(message, anchor) : message);
 }
 
 function pushSurvivingUserRequest(ctx: FoldContext, index: number, out: ContextMessage[]): void {
@@ -176,27 +165,13 @@ export function buildSpineTranStatusMessage(status: SpineFoldStatus): ContextMes
   const parent = status.parentId === null ? '' : ` parent="${status.parentId}"`;
   const parentSummary =
     status.parentSummary === null ? '' : ` parent_summary="${escapeAttr(status.parentSummary)}"`;
-  const cursorContext = ` cursor_context="~${formatTokens(status.cursorContext)}"`;
-  const contextLeft =
-    status.contextLeft === undefined ? '' : ` context_left="~${formatTokens(status.contextLeft)}"`;
-  const rawContext = ` raw_context="~${formatTokens(status.rawContext)}"`;
-  const projectedPrefix = status.projectedMeasured ? '' : '~';
-  const projectedContext = ` projected_context="${projectedPrefix}${formatTokens(
-    status.projectedContext,
-  )}"`;
-  const text = `<spine_tran_status cursor="${status.cursorId}" summary="${escapeAttr(status.summary)}"${parent}${parentSummary}${cursorContext}${contextLeft}${rawContext}${projectedContext} />`;
+  const text = `<spine_tran_status cursor="${status.cursorId}" summary="${escapeAttr(status.summary)}"${parent}${parentSummary} />`;
   return {
     role: 'user',
     content: [{ type: 'text', text }],
     toolCalls: [],
     origin: { kind: 'injection', variant: 'spine_tran_status' },
   };
-}
-
-function formatTokens(tokens: number): string {
-  const safe = Math.max(0, tokens);
-  if (safe >= 1000) return `${(safe / 1000).toFixed(safe >= 10000 ? 0 : 1)}K`;
-  return String(safe);
 }
 
 function escapeAttr(value: string): string {

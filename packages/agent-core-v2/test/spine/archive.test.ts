@@ -64,11 +64,9 @@ describe('Spine archive + resume', () => {
     expect(content).toContain('did A');
     expect(content).toContain('task A');
     expect(content).toContain('## Trajectory');
-
-    expect(ctx.get(IAgentSpineService).renderTree()).toContain(archivePath!);
   });
 
-  it('replays the tree (with memory and archive path) from persisted wire records', async () => {
+  it('replays the tree (with memory) from persisted wire records', async () => {
     const persistence = new InMemoryWireRecordPersistence();
     const ctx = testAgent(
       execEnvServices({ hostFs: recordingHostFs(new Map()) }),
@@ -98,7 +96,6 @@ describe('Spine archive + resume', () => {
     expect(spineNode(after, '1.1.1')?.summary).toBe('task A');
     expect(spineNode(after, '1.1.1')?.closedAt).toBe(spineNode(before, '1.1.1')?.closedAt);
     expect(spineNode(after, '1.1.1')?.memory).toContain('did A');
-    expect(resumed.get(IAgentSpineService).renderTree()).toContain('1-1-1.md');
   });
 });
 

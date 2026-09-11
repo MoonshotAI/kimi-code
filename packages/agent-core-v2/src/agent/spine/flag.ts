@@ -16,22 +16,6 @@ export const spineFlag: FlagDefinitionInput = {
 
 registerFlagDefinition(spineFlag);
 
-export const SPINE_TRIM_FLAG_ID = 'spine_trim';
-export const SPINE_TRIM_FLAG_ENV = 'KIMI_CODE_SPINE_TRIM';
-
-export const spineTrimFlag: FlagDefinitionInput = {
-  id: SPINE_TRIM_FLAG_ID,
-  title: 'Spine trim (tool-response trimming)',
-  description:
-    'Tag oversized tool results with a stable TRIM_ID and let the model conservatively trim them from the projected context (spine_trim); the stored history is never rewritten. Works standalone or inside the spine fold.',
-  env: SPINE_TRIM_FLAG_ENV,
-  default: false,
-  surface: 'core',
-  ignoreMaster: true,
-};
-
-registerFlagDefinition(spineTrimFlag);
-
 export const SPINE_SPAWN_FLAG_ID = 'spine_spawn';
 export const SPINE_SPAWN_FLAG_ENV = 'KIMI_CODE_SPINE_SPAWN';
 

@@ -31,8 +31,6 @@ const DEFAULT_APPROVE_TOOLS = new Set([
   'spine_open',
   'spine_close',
   'spine_next',
-  'spine_tree',
-  'spine_trim',
   'spine_spawn',
   'select_tools',
 ]);

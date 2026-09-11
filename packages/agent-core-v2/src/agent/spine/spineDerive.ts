@@ -9,24 +9,15 @@ import {
   SPINE_TOOL_NEXT,
   SPINE_TOOL_OPEN,
   SPINE_TOOL_SPAWN,
-  SPINE_TOOL_TRIM,
 } from './spine';
 import type { SpineNodeKind, SpineSpawnEvidence, SpineState } from './spineOps';
 import { SPINE_VOID_OPENED_AT, spineChildId } from './spineOps';
-import {
-  parseSpineTrimCallArgs,
-  SPINE_TRIM_THRESHOLD_BYTES,
-  type SpineTrimCallArgs,
-  type SpineTrimOp,
-  type SpineTrimProjection,
-} from './spineTrimDerive';
-import { ACCEPTED_OUTPUT, TRIM_ACCEPTED_OUTPUT } from './tools/controlResult';
+import { ACCEPTED_OUTPUT } from './tools/controlResult';
 
 const LEGACY_ACCEPTED_RECEIPT = 'accepted';
 
 export interface SpineProjection {
   readonly state: SpineState;
-  readonly trim: SpineTrimProjection;
   readonly anchors: readonly number[];
 }
 
@@ -34,7 +25,6 @@ export function deriveSpineProjection(messages: readonly ContextMessage[]): Spin
   const evidence = scanSpineEvidence(messages);
   return {
     state: buildSpineState(messages, evidence),
-    trim: evidence.trim,
     anchors: evidence.anchors,
   };
 }
@@ -50,24 +40,14 @@ export function isUserRequest(message: ContextMessage): boolean {
 interface SpineEvidence {
   readonly accepted: ReadonlySet<string>;
   readonly spawns: ReadonlyMap<string, SpawnReceiptInfo>;
-  readonly trim: SpineTrimProjection;
   readonly anchors: readonly number[];
 }
 
 function scanSpineEvidence(messages: readonly ContextMessage[]): SpineEvidence {
   const callNames = new Map<string, string>();
   const spawnCalls = new Map<string, readonly SpawnTask[]>();
-  const trimCalls = new Map<string, SpineTrimCallArgs>();
   const accepted = new Set<string>();
   const spawns = new Map<string, SpawnReceiptInfo>();
-  const labels = new Map<number, string>();
-  const tagIndex = new Map<string, number>();
-  const masks = new Map<number, SpineTrimOp>();
-  const consumed = new Set<string>();
-  let eligible = new Set<string>();
-  let pendingCalls = new Set<string>();
-  let batchTags: string[] = [];
-  let tagCounter = 0;
   const anchors: number[] = Array.from({ length: messages.length }, () => 0);
   let anchor = 0;
 
@@ -80,18 +60,11 @@ function scanSpineEvidence(messages: readonly ContextMessage[]): SpineEvidence {
     }
     if (message.role === 'assistant') {
       if (message.toolCalls.length === 0) continue;
-      if (pendingCalls.size === 0) eligible = new Set(batchTags);
-      pendingCalls = new Set<string>();
-      batchTags = [];
       for (const call of message.toolCalls) {
         callNames.set(call.id, call.name);
-        pendingCalls.add(call.id);
         if (call.name === SPINE_TOOL_SPAWN) {
           const tasks = parseSpawnArgs(call.arguments);
           if (tasks !== undefined) spawnCalls.set(call.id, tasks);
-        } else if (call.name === SPINE_TOOL_TRIM) {
-          const args = parseSpineTrimCallArgs(call.arguments);
-          if (args !== undefined) trimCalls.set(call.id, args);
         }
       }
       continue;
@@ -99,7 +72,6 @@ function scanSpineEvidence(messages: readonly ContextMessage[]): SpineEvidence {
     if (message.role !== 'tool') continue;
     const callId = message.toolCallId;
     if (callId === undefined) continue;
-    pendingCalls.delete(callId);
     const name = callNames.get(callId);
     if (name !== undefined && isSpineTransitionTool(name)) {
       if (message.isError === true) continue;
@@ -113,36 +85,10 @@ function scanSpineEvidence(messages: readonly ContextMessage[]): SpineEvidence {
       if (tasks === undefined) continue;
       const validated = validateSpawnReceipt(tasks, messageText(message), i);
       if (validated !== undefined) spawns.set(callId, validated);
-      continue;
     }
-    if (name === SPINE_TOOL_TRIM) {
-      if (message.isError === true) continue;
-      if (messageText(message) !== TRIM_ACCEPTED_OUTPUT) continue;
-      const args = trimCalls.get(callId);
-      const target = args === undefined ? undefined : tagIndex.get(args.trimId);
-      if (args === undefined || target === undefined || consumed.has(args.trimId)) continue;
-      masks.set(target, args.op);
-      consumed.add(args.trimId);
-      continue;
-    }
-    if (name === undefined || name.startsWith('spine_')) continue;
-    if (!message.content.every((part) => part.type === 'text')) continue;
-    const text = messageText(message);
-    if (utf8Length(text) <= SPINE_TRIM_THRESHOLD_BYTES) continue;
-    tagCounter += 1;
-    const tag = `trim_${String(tagCounter)}`;
-    labels.set(i, tag);
-    tagIndex.set(tag, i);
-    batchTags.push(tag);
   }
-  if (pendingCalls.size === 0) eligible = new Set(batchTags);
 
-  return {
-    accepted,
-    spawns,
-    trim: { labels, tagIndex, masks, eligible, consumed },
-    anchors,
-  };
+  return { accepted, spawns, anchors };
 }
 
 interface MutableSpineNode {
@@ -457,10 +403,4 @@ function isEpochBoundary(message: ContextMessage): boolean {
 
 function messageText(message: ContextMessage): string {
   return message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
-}
-
-const encoder = new TextEncoder();
-
-function utf8Length(text: string): number {
-  return encoder.encode(text).length;
 }

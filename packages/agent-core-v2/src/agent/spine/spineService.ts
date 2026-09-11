@@ -4,7 +4,6 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { registerScopedService, ScopeActivation } from '#/_base/di/scope';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
-import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
 import { COMPACTION_SUMMARY_PREFIX } from '#/agent/contextMemory/compactionHandoff';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
@@ -12,8 +11,7 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentContextProjectorService } from '#/agent/contextProjector/contextProjector';
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentProfileService } from '#/agent/profile/profile';
-import { agentContextOfScope, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -27,7 +25,6 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
-import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import {
@@ -35,7 +32,7 @@ import {
   SPINE_SPAWN_SECTION,
   type SpineSpawnConfig,
 } from './configSection';
-import { SPINE_FLAG_ID, SPINE_SPAWN_FLAG_ID, SPINE_TRIM_FLAG_ID } from './flag';
+import { SPINE_FLAG_ID, SPINE_SPAWN_FLAG_ID } from './flag';
 import { appendSpineView, loadSpineViewOverride } from './instructions';
 import {
   IAgentSpineService,
@@ -54,18 +51,14 @@ import {
   type SpineEpochArchiveInput,
 } from './spineArchive';
 import { deriveSpineProjection, type SpineProjection } from './spineDerive';
-import { type SpineTrimOp, type SpineTrimProjection } from './spineTrimDerive';
 import { buildSpineTranStatusMessage, foldSpine, type SpineFoldStatus } from './spineFold';
-import { applySpineTrim } from './spineTrimFold';
 import {
   findSpineNode,
-  spineChildId,
   spineCursor,
   type SpineNode,
   type SpineState,
   walkSpineNodes,
 } from './spineOps';
-import { renderTree, spineTreeViewFromState, type SpineTreeViewInput } from './spineTree';
 import {
   executeSpawnBranches,
   maxSpawnBranchCount,
@@ -88,11 +81,6 @@ const REJECT_ROOT_EPOCH: SpineTransitionResult = {
     'Root-epoch nodes cannot be closed. Use open to start a child node under the current scope.',
 };
 
-const REJECT_TRIM_DISABLED: SpineTransitionResult = {
-  accepted: false,
-  reason: 'Spine trim is disabled. Set KIMI_CODE_SPINE_TRIM=1 to enable it.',
-};
-
 const REJECT_SPAWN_DISABLED: SpineTransitionResult = {
   accepted: false,
   reason: 'Spine spawn is disabled. Set KIMI_CODE_SPINE_SPAWN=1 to enable it.',
@@ -106,8 +94,6 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
 
   private cachedMessages: readonly ContextMessage[] | undefined;
   private cachedProjection: SpineProjection | undefined;
-  private readonly baselines = new Map<string, number>();
-  private readonly finals = new Map<string, number>();
   private readonly archivedIds = new Set<string>();
   private readonly failedArchiveIds = new Set<string>();
   private spineViewOverride: string | undefined;
@@ -117,8 +103,6 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IHostEnvironment private readonly hostEnv: IHostEnvironment,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
@@ -142,8 +126,6 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
           this.spineViewOverride = override;
         },
       );
-    }
-    if (this.enabled || this.trimEnabled) {
       this._register(projector.registerContextFold('spine', (messages) => this.fold(messages)));
     }
     this._register(
@@ -174,8 +156,6 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
       this.dispatcher.hooks.onDidRestore.register('spine', async (_ctx, next) => {
         this.cachedMessages = undefined;
         this.cachedProjection = undefined;
-        this.baselines.clear();
-        this.finals.clear();
         this.archivedIds.clear();
         this.failedArchiveIds.clear();
         this.activeSpawnBranches = 0;
@@ -197,10 +177,6 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
 
   get enabled(): boolean {
     return this.flags.enabled(SPINE_FLAG_ID);
-  }
-
-  get trimEnabled(): boolean {
-    return this.flags.enabled(SPINE_TRIM_FLAG_ID);
   }
 
   get spawnEnabled(): boolean {
@@ -272,13 +248,7 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
   acceptOpen(summary: string): SpineTransitionResult {
     const guard = this.guard();
     if (guard !== null) return guard;
-    const trimmed = summary.trim();
-    if (trimmed.length === 0) return reject('open summary must not be empty.');
-    const parent = spineCursor(this.derivedState());
-    this.baselines.set(
-      spineChildId(parent.id, parent.children.length),
-      this.tokenCounting.get(agentContextOfScope(this.agentScope)).size,
-    );
+    if (summary.trim().length === 0) return reject('open summary must not be empty.');
     return { accepted: true };
   }
 
@@ -289,7 +259,6 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     if (trimmed.length === 0) return reject('close memory must not be empty.');
     const cursor = spineCursor(this.derivedState());
     if (cursor.kind === 'epoch') return REJECT_ROOT_EPOCH;
-    this.finals.set(cursor.id, this.tokenCounting.get(agentContextOfScope(this.agentScope)).size);
     return { accepted: true };
   }
 
@@ -300,62 +269,18 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     const trimmedMemory = memory.trim();
     if (trimmedSummary.length === 0) return reject('next summary must not be empty.');
     if (trimmedMemory.length === 0) return reject('next memory must not be empty.');
-    const state = this.derivedState();
-    const cursor = spineCursor(state);
+    const cursor = spineCursor(this.derivedState());
     if (cursor.kind === 'epoch') return REJECT_ROOT_EPOCH;
-    const parent = state.openPath.at(-2);
-    const sizeNow = this.tokenCounting.get(agentContextOfScope(this.agentScope)).size;
-    this.finals.set(cursor.id, sizeNow);
-    if (parent !== undefined) {
-      this.baselines.set(spineChildId(parent.id, parent.children.length), sizeNow);
-    }
     return { accepted: true };
-  }
-
-  acceptTrim(trimId: string, op: SpineTrimOp): SpineTransitionResult {
-    if (!this.trimEnabled) return REJECT_TRIM_DISABLED;
-    if (this.planModeActive) return REJECT_PLAN_MODE;
-    const projection = this.trimProjection();
-    const index = projection.tagIndex.get(trimId);
-    if (index === undefined) {
-      return reject(`Unknown TRIM_ID "${trimId}"; it is not attached to a tool result. Do not retry it.`);
-    }
-    if (projection.consumed.has(trimId)) {
-      return reject(`TRIM_ID "${trimId}" was already trimmed. Do not retry it.`);
-    }
-    if (!projection.eligible.has(trimId)) {
-      return reject(
-        `TRIM_ID "${trimId}" is outside the immediately preceding tool-result batch. Do not retry it.`,
-      );
-    }
-    if (op.kind === 'slice' && op.shape.type === 'anchor') {
-      const target = this.context.get()[index];
-      if (target === undefined || !messageText(target).includes(op.shape.anchor)) {
-        return reject(`Anchor text not found in "${trimId}". Do not retry it.`);
-      }
-    }
-    return { accepted: true };
-  }
-
-  renderTree(): string {
-    return renderTree(
-      spineTreeViewFromState(this.state(), this.treeViewInput()),
-      this.cursorId(),
-    );
   }
 
   fold(messages: readonly ContextMessage[]): readonly ContextMessage[] {
-    if (!this.enabled) {
-      if (!this.trimEnabled) return messages;
-      const trim = this.trimProjection();
-      return messages.map((message, index) => applySpineTrim(trim, index, message));
-    }
+    if (!this.enabled) return messages;
     const projection = this.projection();
     const state = this.state();
     const epochSummaryMessage =
       state.epochMemoryAt === undefined ? undefined : messages[state.epochMemoryAt];
-    const trim = this.trimEnabled ? projection.trim : undefined;
-    return foldSpine(messages, { state, anchors: projection.anchors, epochSummaryMessage, trim });
+    return foldSpine(messages, { state, anchors: projection.anchors, epochSummaryMessage });
   }
 
   currentState(): SpineState {
@@ -373,28 +298,12 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
   private buildStatus(): SpineFoldStatus {
     const state = this.state();
     const cursor = spineCursor(state);
-    const cursorId = cursor.id;
-    const summary = cursor.summary;
     const parent = state.openPath.at(-2);
-    const parentId = parent?.id ?? null;
-    const parentSummary = parent?.summary ?? null;
-    const maxContextTokens = this.profile.getEffectiveMaxContextTokens();
-    const agent = agentContextOfScope(this.agentScope);
-    const used = this.tokenCounting.get(agent).size;
-    const contextLeft =
-      maxContextTokens !== undefined && maxContextTokens > 0
-        ? Math.max(0, maxContextTokens - used)
-        : undefined;
     return {
-      cursorId,
-      summary,
-      parentId,
-      parentSummary,
-      cursorContext: Math.max(0, used - (this.baselines.get(cursorId) ?? 0)),
-      contextLeft,
-      rawContext: estimateTokensForMessages(this.context.get()),
-      projectedContext: used,
-      projectedMeasured: this.tokenCounting.latestMeasurement(agent)?.measured === true,
+      cursorId: cursor.id,
+      summary: cursor.summary,
+      parentId: parent?.id ?? null,
+      parentSummary: parent?.summary ?? null,
     };
   }
 
@@ -472,29 +381,6 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
 
   private derivedState(): SpineState {
     return this.projection().state;
-  }
-
-  private trimProjection(): SpineTrimProjection {
-    return this.projection().trim;
-  }
-
-  private cursorId(): string {
-    return spineCursor(this.derivedState()).id;
-  }
-
-  private treeViewInput(): SpineTreeViewInput {
-    return {
-      currentUsed: this.tokenCounting.get(agentContextOfScope(this.agentScope)).size,
-      baselines: this.baselines,
-      finals: this.finals,
-      resolveArchivePath: (id, epoch, closed) => this.nodeArchivePath(id, epoch, closed),
-    };
-  }
-
-  private nodeArchivePath(id: string, epoch: boolean, closed: boolean): string | undefined {
-    if (this.failedArchiveIds.has(id)) return undefined;
-    if (epoch) return Number(id) > 1 ? this.archivePath(id) : undefined;
-    return closed ? this.archivePath(id) : undefined;
   }
 
   private async archiveNewlyClosed(): Promise<void> {

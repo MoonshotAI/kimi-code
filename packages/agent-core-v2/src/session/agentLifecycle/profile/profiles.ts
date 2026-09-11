@@ -44,8 +44,6 @@ const AGENT_TOOLS = [
   'spine_open',
   'spine_close',
   'spine_next',
-  'spine_tree',
-  'spine_trim',
   'spine_spawn',
 ] as const;
 

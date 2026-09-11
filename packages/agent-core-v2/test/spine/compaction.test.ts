@@ -6,7 +6,7 @@ import {
 } from '#/agent/contextMemory/compactionHandoff';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { MASTER_ENV } from '#/app/flag/flagService';
-import { ACCEPTED_OUTPUT, IAgentSpineService, type SpineState } from '#/index';
+import { ACCEPTED_OUTPUT, findSpineNode, IAgentSpineService, type SpineState } from '#/index';
 
 import {
   execEnvServices,
@@ -108,8 +108,6 @@ describe('Spine / compaction interaction', () => {
     expect(content).toContain('old assistant');
     expect(content).toContain('recent user');
     expect(content).toContain('recent assistant');
-
-    expect(ctx.get(IAgentSpineService).renderTree()).toContain(archivePath!);
   });
 
   it('completes the root compaction without an archive path when the archive write fails', async () => {
@@ -133,9 +131,7 @@ describe('Spine / compaction interaction', () => {
     const recordTypes = (await ctx.wireHistory()).map((record) => record.type);
     expect(recordTypes).not.toContain('spine.root_compact');
     expect(recordTypes).toContain('full_compaction.complete');
-    const tree = ctx.get(IAgentSpineService).renderTree();
-    expect(tree).toContain('2 [open]');
-    expect(tree).not.toContain('2.md');
+    expect(ctx.get(IAgentSpineService).currentState().rootEpoch).toBe(2);
     expect(
       logEntries.some(
         (entry) => entry.level === 'warn' && entry.message.toLowerCase().includes('archive'),
@@ -143,7 +139,7 @@ describe('Spine / compaction interaction', () => {
     ).toBe(true);
   });
 
-  it('keeps previous epochs and their archive paths reachable in the tree after a root compaction', () => {
+  it('keeps previous epochs reachable in the state after a root compaction', () => {
     const ctx = testAgent();
     append(ctx, assistantToolCall('c_open', 'spine_open', JSON.stringify({ summary: 'task A' })));
     append(ctx, spineAcceptedReceipt('c_open'));
@@ -151,14 +147,14 @@ describe('Spine / compaction interaction', () => {
     append(ctx, spineAcceptedReceipt('c_close'));
     append(ctx, createCompactionSummaryMessage(buildCompactionSummaryText('epoch summary')));
 
-    const tree = ctx.get(IAgentSpineService).renderTree();
+    const state = ctx.get(IAgentSpineService).currentState();
 
-    expect(tree).toContain('1 [closed]');
-    expect(tree).toContain('1.1.1');
-    expect(tree).toContain('task A');
-    expect(tree).toContain('archive:');
-    expect(tree).toContain('1-1-1.md');
-    expect(tree).toContain('2 [open, archive:');
+    expect(state.rootEpoch).toBe(2);
+    expect(state.epochs).toHaveLength(2);
+    const closed = findSpineNode(state, '1.1.1');
+    expect(closed?.summary).toBe('task A');
+    expect(closed?.closedAt).toBeDefined();
+    expect(closed?.memory).toBe('did A');
   });
 
   it('summarizes only the current epoch and chains the previous epoch summary', async () => {

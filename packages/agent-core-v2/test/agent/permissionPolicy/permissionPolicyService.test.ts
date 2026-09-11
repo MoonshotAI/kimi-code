@@ -154,7 +154,7 @@ describe('AgentPermissionPolicyService chain', () => {
   });
 
   it('approves spine control tools in manual mode', async () => {
-    for (const toolName of ['spine_open', 'spine_close', 'spine_next', 'spine_tree']) {
+    for (const toolName of ['spine_open', 'spine_close', 'spine_next']) {
       await expect(evaluate({ toolName, args: {} })).resolves.toMatchObject({
         policyName: 'default-tool-approve',
         result: { kind: 'approve' },

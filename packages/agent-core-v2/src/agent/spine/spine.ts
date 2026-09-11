@@ -3,21 +3,16 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 
 import type { SpineEpochArchiveInput } from './spineArchive';
 import type { SpineState } from './spineOps';
-import type { SpineTrimOp } from './spineTrimDerive';
 
 export const SPINE_TOOL_OPEN = 'spine_open';
 export const SPINE_TOOL_CLOSE = 'spine_close';
 export const SPINE_TOOL_NEXT = 'spine_next';
-export const SPINE_TOOL_TREE = 'spine_tree';
-export const SPINE_TOOL_TRIM = 'spine_trim';
 export const SPINE_TOOL_SPAWN = 'spine_spawn';
 
 export const SPINE_TOOL_NAMES = [
   SPINE_TOOL_OPEN,
   SPINE_TOOL_CLOSE,
   SPINE_TOOL_NEXT,
-  SPINE_TOOL_TREE,
-  SPINE_TOOL_TRIM,
   SPINE_TOOL_SPAWN,
 ] as const;
 
@@ -51,16 +46,12 @@ export interface IAgentSpineService {
   acceptClose(memory: string): SpineTransitionResult;
   acceptNext(summary: string, memory: string): SpineTransitionResult;
 
-  acceptTrim(trimId: string, op: SpineTrimOp): SpineTransitionResult;
-
   executeSpawn(
     tasks: readonly SpineSpawnTaskInput[],
     signal: AbortSignal,
   ): Promise<SpineTransitionResult & { readonly receipt?: string }>;
 
   archiveEpochRoot(input: SpineEpochArchiveInput): Promise<string | undefined>;
-
-  renderTree(): string;
 
   fold(messages: readonly ContextMessage[]): readonly ContextMessage[];
 

@@ -14,8 +14,6 @@ import { SpineCloseTool } from '#/agent/spine/tools/spine-close';
 import { SpineNextTool } from '#/agent/spine/tools/spine-next';
 import { SpineOpenTool } from '#/agent/spine/tools/spine-open';
 import { SpineSpawnTool } from '#/agent/spine/tools/spine-spawn';
-import { SpineTreeTool } from '#/agent/spine/tools/spine-tree';
-import { SpineTrimTool } from '#/agent/spine/tools/spine-trim';
 import { agentContextOf, IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
@@ -99,13 +97,13 @@ describe('Spine control tools', () => {
     vi.unstubAllEnvs();
   });
 
-  it('registers the four core spine tools when enabled', () => {
+  it('registers the three core spine tools when enabled', () => {
     const ctx = testAgent();
     const names = spineToolNames(ctx);
     expect(names).toEqual(
-      expect.arrayContaining(['spine_open', 'spine_close', 'spine_next', 'spine_tree']),
+      expect.arrayContaining(['spine_open', 'spine_close', 'spine_next']),
     );
-    expect(names).toHaveLength(4);
+    expect(names).toHaveLength(3);
   });
 
   it('registers spine_spawn when the spawn flag is also on', () => {
@@ -119,41 +117,21 @@ describe('Spine control tools', () => {
     expect(spineToolNames(ctx)).not.toContain('spine_spawn');
   });
 
-  it('registers spine_trim when the trim flag is also on', () => {
-    vi.stubEnv('KIMI_CODE_SPINE_TRIM', '1');
-    const ctx = testAgent();
-    expect(spineToolNames(ctx)).toContain('spine_trim');
-  });
-
-  it('registers spine_trim standalone with the spine flag off', () => {
-    vi.stubEnv(SPINE_ENV, '0');
-    vi.stubEnv('KIMI_CODE_SPINE_TRIM', '1');
-    const ctx = testAgent();
-    const names = spineToolNames(ctx);
-    expect(names).toContain('spine_trim');
-    expect(names).not.toContain('spine_open');
-  });
-
-  it('does not register spine_trim without the trim flag', () => {
-    const ctx = testAgent();
-    expect(spineToolNames(ctx)).not.toContain('spine_trim');
-  });
-
   it('default agent profile whitelists the spine tools', () => {
     const ctx = testAgent();
     const profile = ctx.get(ISessionAgentProfileCatalog).getDefault();
     expect(profile.tools).toEqual(
-      expect.arrayContaining(['spine_open', 'spine_close', 'spine_next', 'spine_tree', 'spine_trim', 'spine_spawn']),
+      expect.arrayContaining(['spine_open', 'spine_close', 'spine_next', 'spine_spawn']),
     );
   });
 
   it('keeps spine tools active under a whitelist that lists them', () => {
     const ctx = testAgent();
     ctx.configure({
-      tools: ['Read', 'spine_open', 'spine_close', 'spine_next', 'spine_tree', 'spine_trim', 'spine_spawn'],
+      tools: ['Read', 'spine_open', 'spine_close', 'spine_next', 'spine_spawn'],
     });
     const spine = ctx.toolsData().filter((tool) => tool.name.startsWith('spine_'));
-    expect(spine).toHaveLength(4);
+    expect(spine).toHaveLength(3);
     expect(spine.every((tool) => tool.active)).toBe(true);
   });
 
@@ -161,7 +139,7 @@ describe('Spine control tools', () => {
     const ctx = testAgent();
     ctx.configure({ tools: ['Read'] });
     const spine = ctx.toolsData().filter((tool) => tool.name.startsWith('spine_'));
-    expect(spine).toHaveLength(4);
+    expect(spine).toHaveLength(3);
     expect(spine.some((tool) => tool.active)).toBe(false);
   });
 
@@ -589,25 +567,6 @@ describe('Spine control tools', () => {
     expect(receipt?.isError).not.toBe(true);
   });
 
-  it('renders the current tree through spine.tree', async () => {
-    const ctx = loopContext();
-    await configureLoop(ctx);
-    ctx.mockNextResponse(toolCallPart('call_open', 'spine_open', { summary: 'task A' }));
-    ctx.mockNextResponse(toolCallPart('call_tree', 'spine_tree', {}));
-    ctx.mockNextResponse({ type: 'text', text: 'finished' });
-
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start' }] });
-    await ctx.untilTurnEnd();
-
-    const treeMessage = ctx.context
-      .get()
-      .find((m) => m.role === 'tool' && m.toolCallId === 'call_tree');
-    const output = textOf(treeMessage);
-    expect(output).toContain('1.1.1');
-    expect(output).toContain('task A');
-    expect(output).toContain('cursor');
-  });
-
   it('maps an accepted transition to the delayed-commit receipt', () => {
     const result = toControlResult({ accepted: true });
     expect(result.isError).toBe(false);
@@ -675,15 +634,11 @@ describe('spine control tool host gating', () => {
     ['spine_close', SpineCloseTool],
     ['spine_next', SpineNextTool],
   ] as const;
-  const mainOnlyTools = [
-    ['spine_tree', SpineTreeTool],
-    ['spine_trim', SpineTrimTool],
-    ['spine_spawn', SpineSpawnTool],
-  ] as const;
+  const mainOnlyTools = [['spine_spawn', SpineSpawnTool]] as const;
 
   function accessorFor(
     agentId: string,
-    flags: { spine: boolean; trim: boolean; spawn: boolean },
+    flags: { spine: boolean; spawn: boolean },
     maxThreads?: number,
     labels: Record<string, string> = {},
   ): ServicesAccessor {
@@ -695,7 +650,6 @@ describe('spine control tool host gating', () => {
     const flagService = {
       enabled: (id: string) => {
         if (id === SPINE_FLAG_ID) return flags.spine;
-        if (id === 'spine_trim') return flags.trim;
         if (id === 'spine_spawn') return flags.spawn;
         return false;
       },
@@ -723,13 +677,13 @@ describe('spine control tool host gating', () => {
     expect(contribution, `${name} contribution`).toBeDefined();
     const when = contribution?.options.when;
     expect(when, `${name} must gate on the spine flag + control-host identity`).toBeDefined();
-    expect(when?.(accessorFor('main', { spine: true, trim: false, spawn: false }))).toBe(true);
-    expect(when?.(accessorFor('sub-1', { spine: true, trim: false, spawn: false }))).toBe(false);
+    expect(when?.(accessorFor('main', { spine: true, spawn: false }))).toBe(true);
+    expect(when?.(accessorFor('sub-1', { spine: true, spawn: false }))).toBe(false);
     expect(
-      when?.(accessorFor('sub-1', { spine: true, trim: false, spawn: false }, undefined, branchLabels)),
+      when?.(accessorFor('sub-1', { spine: true, spawn: false }, undefined, branchLabels)),
     ).toBe(true);
     expect(
-      when?.(accessorFor('sub-1', { spine: false, trim: false, spawn: false }, undefined, branchLabels)),
+      when?.(accessorFor('sub-1', { spine: false, spawn: false }, undefined, branchLabels)),
     ).toBe(false);
   });
 
@@ -739,21 +693,18 @@ describe('spine control tool host gating', () => {
     const when = contribution?.options.when;
     expect(when, `${name} must gate on flags + main-agent identity`).toBeDefined();
     const needsSpawn = name === 'spine_spawn';
-    const needsTrim = name === 'spine_trim';
-    expect(when?.(accessorFor('main', { spine: true, trim: needsTrim, spawn: needsSpawn }))).toBe(true);
-    expect(when?.(accessorFor('sub-1', { spine: true, trim: needsTrim, spawn: needsSpawn }))).toBe(false);
+    expect(when?.(accessorFor('main', { spine: true, spawn: needsSpawn }))).toBe(true);
+    expect(when?.(accessorFor('sub-1', { spine: true, spawn: needsSpawn }))).toBe(false);
     expect(
-      when?.(accessorFor('sub-1', { spine: true, trim: needsTrim, spawn: needsSpawn }, undefined, branchLabels)),
+      when?.(accessorFor('sub-1', { spine: true, spawn: needsSpawn }, undefined, branchLabels)),
     ).toBe(false);
-    expect(when?.(accessorFor('main', { spine: false, trim: needsTrim, spawn: needsSpawn }))).toBe(
-      needsTrim,
-    );
+    expect(when?.(accessorFor('main', { spine: false, spawn: needsSpawn }))).toBe(false);
   });
 
   it('spine_spawn requires capacity for at least two branches', () => {
     const contribution = getAgentToolContributions().find((c) => c.ctor === SpineSpawnTool);
     const when = contribution?.options.when;
-    expect(when?.(accessorFor('main', { spine: true, trim: false, spawn: true }, 2))).toBe(false);
+    expect(when?.(accessorFor('main', { spine: true, spawn: true }, 2))).toBe(false);
   });
 });
 
@@ -855,18 +806,6 @@ describe('Spine plan-mode gating', () => {
       ],
       new AbortController().signal,
     );
-    expect(result.accepted).toBe(false);
-    if (!result.accepted) {
-      expect(result.reason).toContain('Spine transitions are not allowed in Plan mode');
-    }
-  });
-
-  it('rejects trim in plan mode', async () => {
-    vi.stubEnv('KIMI_CODE_SPINE_TRIM', '1');
-    const ctx = testAgent();
-    const spine = ctx.get(IAgentSpineService);
-    await ctx.dispatcher.dispatch(new PlanModeEnter({ agentId: 'main', id: 'plan-1' }));
-    const result = spine.acceptTrim('trim_1', { kind: 'snip' });
     expect(result.accepted).toBe(false);
     if (!result.accepted) {
       expect(result.reason).toContain('Spine transitions are not allowed in Plan mode');
