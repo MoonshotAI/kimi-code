@@ -191,6 +191,10 @@ class Bridge {
     return this.call<{ aborted: boolean }>(Methods.AbortChat);
   }
 
+  compactContext() {
+    return this.call<{ ok: boolean }>(Methods.CompactContext);
+  }
+
   resetSession() {
     return this.call<{ ok: boolean }>(Methods.ResetSession);
   }
