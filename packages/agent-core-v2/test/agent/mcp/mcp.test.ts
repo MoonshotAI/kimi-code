@@ -15,6 +15,7 @@ import type { Event2 } from '#/app/event/event2';
 import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { McpConnectionManager, McpServerEntry } from '#/mcpCore/connection-manager';
+import type { McpServerConfig } from '#/mcpCore/config-schema';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { AgentMcpService } from '#/agent/mcp/mcpService';
@@ -57,10 +58,12 @@ interface ResolvedServer {
   readonly tools: readonly KosongTool[];
   readonly rawTools: readonly MCPToolDefinition[];
   readonly enabledNames: ReadonlySet<string>;
+  readonly deferred: boolean;
 }
 
 class FakeMcpManager {
   private readonly entries = new Map<string, McpServerEntry>();
+  private readonly configs = new Map<string, McpServerConfig>();
   private readonly resolvedEntries = new Map<string, ResolvedServer>();
   private readonly listeners = new Set<(entry: McpServerEntry) => void>();
   readonly oauthService: McpOAuthService | undefined;
@@ -75,6 +78,10 @@ class FakeMcpManager {
 
   get(name: string): McpServerEntry | undefined {
     return this.entries.get(name);
+  }
+
+  configOf(name: string): McpServerConfig | undefined {
+    return this.configs.get(name);
   }
 
   resolved(name: string): ResolvedServer | undefined {
@@ -125,6 +132,7 @@ class FakeMcpManager {
     tools: readonly KosongTool[],
     enabledNames = new Set(tools.map((tool) => tool.name)),
     rawTools?: readonly MCPToolDefinition[],
+    deferred = true,
   ): void {
     const resolvedRawTools =
       rawTools ??
@@ -138,6 +146,7 @@ class FakeMcpManager {
       tools,
       rawTools: resolvedRawTools,
       enabledNames,
+      deferred,
     });
   }
 
@@ -153,7 +162,10 @@ class FakeMcpManager {
     this.emit(entry);
   }
 
-  needsAuth(name = 'needs-auth'): void {
+  needsAuth(name = 'needs-auth', options: { readonly deferred?: boolean } = {}): void {
+    if (options.deferred !== undefined) {
+      this.configs.set(name, { deferred: options.deferred } as unknown as McpServerConfig);
+    }
     const entry: McpServerEntry = {
       name,
       transport: 'http',
@@ -321,6 +333,7 @@ describe('AgentMcpService', () => {
       'mcp__local_server__echo',
       'mcp__local_server__noop',
     ]);
+    expect(infos.every((info) => info.disclosure === 'deferred')).toBe(true);
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'tool.list.updated',
@@ -362,6 +375,19 @@ describe('AgentMcpService', () => {
     } finally {
       await rm(home, { recursive: true, force: true });
     }
+  });
+
+  it('registers tools of a deferred=false server with inline disclosure', async () => {
+    const manager = new FakeMcpManager();
+    const client = fakeMcpClient();
+    manager.setResolved('s', client, await discoverTools(client), undefined, undefined, false);
+    createService(manager);
+
+    manager.connect('s');
+
+    const infos = ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp');
+    expect(infos.length).toBeGreaterThan(0);
+    expect(infos.every((info) => info.disclosure === 'inline')).toBe(true);
   });
 
   it('ignores status changes from servers outside the session baseline', async () => {
@@ -1223,7 +1249,7 @@ describe('AgentMcpService', () => {
     expect(receivedSignal).toBe(controller.signal);
   });
 
-  it('registers a synthetic authenticate tool when a server needs auth', () => {
+  it('registers a synthetic authenticate tool inline when the server declares deferred: false', () => {
     const oauthService = {
       beginAuthorization: async () => ({
         authorizationUrl: new URL('https://example.com/authorize'),
@@ -1234,13 +1260,14 @@ describe('AgentMcpService', () => {
     const manager = new FakeMcpManager({ oauthService });
     createService(manager);
 
-    manager.needsAuth();
+    manager.needsAuth('needs-auth', { deferred: false });
 
     const tools = ix.get(IAgentToolRegistryService).list();
     expect(tools).toEqual([
       expect.objectContaining({
         name: 'mcp__needs-auth__authenticate',
         source: 'mcp',
+        disclosure: 'inline',
       }),
     ]);
   });
@@ -1263,6 +1290,7 @@ describe('AgentMcpService', () => {
       expect.objectContaining({
         name: 'mcp__needs-auth__authenticate',
         source: 'mcp',
+        disclosure: 'deferred',
       }),
     ]);
     expect(events).toContainEqual(

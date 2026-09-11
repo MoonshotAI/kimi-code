@@ -212,6 +212,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
       resolved.client,
       resolved.tools,
       resolved.enabledNames,
+      resolved.deferred,
     );
     this.emitMcpToolCollisions(entry.name, result.collisions);
     this.recordDiscovery(entry.name, resolved.rawTools, resolved.enabledNames, result.collisions);
@@ -235,7 +236,13 @@ export class AgentMcpService extends Service implements IAgentMcpService {
       oauthService,
       reconnect: (signal) => this.reconnect(entry.name, signal),
     });
-    const disposable = this._register(this.registry.register(tool, { source: 'mcp' }));
+    const deferred = this.mcpHandle.connectionManager.configOf(entry.name)?.deferred !== false;
+    const disposable = this._register(
+      this.registry.register(tool, {
+        source: 'mcp',
+        disclosure: deferred ? 'deferred' : 'inline',
+      }),
+    );
     this.mcpTools.set(tool.name, { disposable, serverName: entry.name });
     this.mcpToolsByServer.set(entry.name, [tool.name]);
     void this.dispatcher.dispatch(
@@ -252,6 +259,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     client: MCPClient,
     tools: readonly KosongTool[],
     enabledTools: ReadonlySet<string>,
+    deferred: boolean,
   ): {
     readonly registered: readonly string[];
     readonly collisions: readonly McpToolCollision[];
@@ -292,7 +300,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
             isRemoved: () =>
               this.mcpHandle.connectionManager.get(serverName)?.status === 'removed',
           }),
-          { source: 'mcp' },
+          { source: 'mcp', disclosure: deferred ? 'deferred' : 'inline' },
         ),
       );
       this.mcpTools.set(qualified, { disposable, serverName });
