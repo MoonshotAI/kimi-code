@@ -604,6 +604,13 @@ describe('migrateV2Session', () => {
     const roster = (await second.stores.session()).getState().roster.agents;
     expect(Object.keys(roster)).toEqual([MAIN]);
     expect(roster[MAIN]).toBe('main~2');
+    const reopenedAgent = await second.stores.open(MAIN);
+    expect(reopenedAgent.ref.branch).toBe('main~2');
+    expect(reopenedAgent.getState().history.map((entry) => extractText(entry.message))).toEqual([
+      'first',
+      'first-reply',
+      'again',
+    ]);
     const names = await readdir(dir);
     expect(names.filter((name) => name.startsWith('.migrate'))).toEqual([]);
     expect(names).toContain('state.json');
