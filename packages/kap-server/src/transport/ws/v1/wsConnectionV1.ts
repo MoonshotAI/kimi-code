@@ -145,7 +145,7 @@ export class WsConnectionV1 implements BroadcastTarget {
   }
 
   send(envelope: EventEnvelope, delivery: BroadcastDelivery = 'subscription'): void {
-    if (delivery === 'immediate') this.sendImmediateFrame(envelope);
+    if (delivery === 'immediate') this.sendImmediateEnvelope(envelope);
     else this.sendSubscribedFrame(envelope);
   }
 
@@ -419,6 +419,13 @@ export class WsConnectionV1 implements BroadcastTarget {
       return;
     }
     this.scheduleFlush();
+  }
+
+  private sendImmediateEnvelope(envelope: EventEnvelope): void {
+    if (this.closed) return;
+    this.flush();
+    if (this.outbound.length > 0) this.outbound.push(envelope);
+    else this.sendFrame(envelope);
   }
 
   private sendImmediateFrame(msg: unknown): void {

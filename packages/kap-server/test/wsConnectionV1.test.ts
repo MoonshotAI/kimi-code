@@ -788,25 +788,42 @@ describe('WsConnectionV1 outbound buffer', () => {
     conn.close();
   });
 
-  it('sends a control frame above the high-water mark without flushing the backlog', async () => {
+  it('queues an immediate event behind a deferred backlog so seqs stay in order', async () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { flushIntervalMs: 16, highWaterMarkBytes: 100 });
     socket.sent = [];
 
     socket.bufferedAmount = 200;
-    conn.send(delta('s1', 'main', 1, 'stuck', 0));
+    conn.send(durable('turn.ended', 's1', 7));
     await vi.advanceTimersByTimeAsync(16);
     expect(socket.sent).toHaveLength(0);
 
-    conn.send(durable('session.work_changed', 's1', 7), 'immediate');
-    let frames = socket.frames() as Array<{ type: string }>;
-    expect(frames.map((f) => f.type)).toEqual(['session.work_changed']);
+    conn.send(durable('session.meta.updated', 's1', 8), 'immediate');
+    expect(socket.sent).toHaveLength(0);
     expect(socket.closeCalls).toHaveLength(0);
 
     socket.bufferedAmount = 0;
     await vi.advanceTimersByTimeAsync(5);
-    frames = socket.frames() as Array<{ type: string }>;
-    expect(frames.map((f) => f.type)).toEqual(['session.work_changed', 'assistant.delta']);
+    const frames = socket.frames() as Array<{ type: string; seq: number }>;
+    expect(frames.map((f) => [f.type, f.seq])).toEqual([
+      ['turn.ended', 7],
+      ['session.meta.updated', 8],
+    ]);
+    conn.close();
+  });
+
+  it('still sends an immediate event straight away when nothing is deferred', async () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { flushIntervalMs: 16, highWaterMarkBytes: 100 });
+    socket.sent = [];
+
+    conn.send(durable('turn.ended', 's1', 7));
+    conn.send(durable('session.meta.updated', 's1', 8), 'immediate');
+    const frames = socket.frames() as Array<{ type: string; seq: number }>;
+    expect(frames.map((f) => [f.type, f.seq])).toEqual([
+      ['turn.ended', 7],
+      ['session.meta.updated', 8],
+    ]);
     conn.close();
   });
 
