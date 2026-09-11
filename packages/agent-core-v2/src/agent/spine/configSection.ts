@@ -2,7 +2,6 @@ import { z } from 'zod';
 
 import { type EnvBindings, envBindings, stripEnvBoundFields } from '#/app/config/config';
 import { registerConfigSection } from '#/app/config/configSectionContributions';
-import { plainObjectToToml, transformPlainObject } from '#/app/config/toml';
 
 export const SPINE_SPAWN_SECTION = 'spineSpawn';
 
@@ -32,19 +31,7 @@ export const spineSpawnEnvBindings: EnvBindings<SpineSpawnConfig> = envBindings(
 
 export const stripSpineSpawnEnv = stripEnvBoundFields(spineSpawnEnvBindings);
 
-export const spineSpawnFromToml = (rawSnake: unknown): unknown => {
-  if (rawSnake === null || typeof rawSnake !== 'object' || Array.isArray(rawSnake)) return rawSnake;
-  return transformPlainObject(rawSnake as Record<string, unknown>);
-};
-
-export const spineSpawnToToml = (value: unknown, rawSnake: unknown): unknown => {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
-  return plainObjectToToml(value as Record<string, unknown>, rawSnake);
-};
-
 registerConfigSection(SPINE_SPAWN_SECTION, SpineSpawnConfigSchema, {
-  fromToml: spineSpawnFromToml,
-  toToml: spineSpawnToToml,
   env: spineSpawnEnvBindings,
   stripEnv: stripSpineSpawnEnv,
 });

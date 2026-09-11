@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 import {
   COMPACTION_SUMMARY_PREFIX,
   isCompactionSummaryMessage,
@@ -266,22 +268,29 @@ interface SpineTransitionArgs {
   readonly memory: string;
 }
 
+const lenientString = z.preprocess((value) => (typeof value === 'string' ? value : ''), z.string());
+
+const transitionArgsSchema = z.object({
+  summary: lenientString,
+  memory: lenientString,
+});
+
 function parseTransitionArgs(raw: string | null | undefined): SpineTransitionArgs | undefined {
   if (raw === undefined || raw === null) return undefined;
-  let parsed: unknown;
+  const parsed = parseJsonObject(raw);
+  if (parsed === undefined) return undefined;
+  const result = transitionArgsSchema.safeParse(parsed);
+  return result.success ? result.data : { summary: '', memory: '' };
+}
+
+function parseJsonObject(raw: string): unknown {
   try {
-    parsed = JSON.parse(raw);
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null) return undefined;
+    return parsed;
   } catch {
     return undefined;
   }
-  if (typeof parsed !== 'object' || parsed === null) return undefined;
-  const record = parsed as Record<string, unknown>;
-  const summary = record['summary'];
-  const memory = record['memory'];
-  return {
-    summary: typeof summary === 'string' ? summary : '',
-    memory: typeof memory === 'string' ? memory : '',
-  };
 }
 
 function isSpineTransitionTool(name: string): boolean {
@@ -314,80 +323,65 @@ interface SpawnReceiptInfo {
   readonly results: readonly SpawnResult[];
 }
 
+const spawnArgsSchema = z.object({
+  tasks: z
+    .array(
+      z.object({
+        summary: z.string(),
+        prompt: z.string(),
+      }),
+    )
+    .min(2),
+});
+
 function parseSpawnArgs(raw: string | null | undefined): readonly SpawnTask[] | undefined {
   if (raw === undefined || raw === null) return undefined;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
-  if (typeof parsed !== 'object' || parsed === null) return undefined;
-  const record = parsed as Record<string, unknown>;
-  const tasksRaw = record['tasks'];
-  if (!Array.isArray(tasksRaw) || tasksRaw.length < 2) return undefined;
-  const tasks: SpawnTask[] = [];
-  for (const item of tasksRaw) {
-    if (typeof item !== 'object' || item === null) return undefined;
-    const itemRecord = item as Record<string, unknown>;
-    const summary = itemRecord['summary'];
-    const prompt = itemRecord['prompt'];
-    if (typeof summary !== 'string' || typeof prompt !== 'string') return undefined;
-    tasks.push({ summary, prompt });
-  }
-  return tasks;
+  const parsed = parseJsonObject(raw);
+  if (parsed === undefined) return undefined;
+  const result = spawnArgsSchema.safeParse(parsed);
+  return result.success ? result.data.tasks : undefined;
 }
+
+const spawnReceiptResultSchema = z
+  .object({
+    ordinal: z.number().int(),
+    outcome: z.enum(['completed', 'errored', 'aborted']),
+    memory_body: z.string().min(1),
+    diagnostic: z.string().min(1).optional(),
+    execution_ref: z.string().min(1).optional(),
+  })
+  .refine((result) => result.outcome === 'completed' || result.diagnostic !== undefined);
+
+const spawnReceiptSchema = z.object({
+  schema: z.literal('spine.spawn.result.v1'),
+  results: z.array(spawnReceiptResultSchema).min(2),
+});
 
 function validateSpawnReceipt(
   tasks: readonly SpawnTask[],
   receiptText: string,
   receiptAt: number,
 ): SpawnReceiptInfo | undefined {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(receiptText);
-  } catch {
-    return undefined;
-  }
-  if (typeof parsed !== 'object' || parsed === null) return undefined;
-  const record = parsed as Record<string, unknown>;
-  if (record['schema'] !== 'spine.spawn.result.v1') return undefined;
-  const resultsRaw = record['results'];
-  if (!Array.isArray(resultsRaw) || resultsRaw.length < 2 || resultsRaw.length !== tasks.length) {
-    return undefined;
-  }
+  const parsed = parseJsonObject(receiptText);
+  if (parsed === undefined) return undefined;
+  const receipt = spawnReceiptSchema.safeParse(parsed);
+  if (!receipt.success) return undefined;
+  const rawResults = receipt.data.results;
+  if (rawResults.length !== tasks.length) return undefined;
   const results: SpawnResult[] = [];
   const seenOrdinals = new Set<number>();
-  for (const item of resultsRaw) {
-    if (typeof item !== 'object' || item === null) return undefined;
-    const itemRecord = item as Record<string, unknown>;
-    const ordinal = itemRecord['ordinal'];
-    if (typeof ordinal !== 'number' || !Number.isInteger(ordinal)) return undefined;
-    if (ordinal < 0 || ordinal >= tasks.length || seenOrdinals.has(ordinal)) return undefined;
-    seenOrdinals.add(ordinal);
-    const outcome = itemRecord['outcome'];
-    if (outcome !== 'completed' && outcome !== 'errored' && outcome !== 'aborted') return undefined;
-    const memoryBody = itemRecord['memory_body'];
-    if (typeof memoryBody !== 'string' || memoryBody.length === 0) return undefined;
-    const diagnostic = itemRecord['diagnostic'];
-    if (diagnostic !== undefined && (typeof diagnostic !== 'string' || diagnostic.length === 0)) {
+  for (const item of rawResults) {
+    if (item.ordinal < 0 || item.ordinal >= tasks.length || seenOrdinals.has(item.ordinal)) {
       return undefined;
     }
-    const executionRef = itemRecord['execution_ref'];
-    if (
-      executionRef !== undefined &&
-      (typeof executionRef !== 'string' || executionRef.length === 0)
-    ) {
-      return undefined;
-    }
-    if (outcome !== 'completed' && diagnostic === undefined) return undefined;
-    const task = tasks[ordinal];
+    seenOrdinals.add(item.ordinal);
+    const task = tasks[item.ordinal];
     if (task === undefined || task.summary.trim().length === 0) return undefined;
-    results[ordinal] = {
+    results[item.ordinal] = {
       summary: task.summary,
-      outcome,
-      memoryBody,
-      diagnostic,
+      outcome: item.outcome,
+      memoryBody: item.memory_body,
+      diagnostic: item.diagnostic,
     };
   }
   if (seenOrdinals.size !== tasks.length) return undefined;

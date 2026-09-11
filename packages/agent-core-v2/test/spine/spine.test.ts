@@ -600,7 +600,7 @@ describe('Spine durability', () => {
     vi.unstubAllEnvs();
   });
 
-  it('closes the node, marks its memory, and reports when the archive write fails', async () => {
+  it('closes the node and reports when the archive write fails', async () => {
     const reported: unknown[] = [];
     setUnexpectedErrorHandler((err) => {
       reported.push(err);
@@ -622,7 +622,7 @@ describe('Spine durability', () => {
 
     const node = spineNode(readSpine(ctx), '1.1.1');
     expect(node?.closedAt).toBeDefined();
-    expect(node?.memory).toContain('could not be written');
+    expect(node?.memory).toBe('did A');
     expect(reported.some((err) => String(err).includes('disk full'))).toBe(true);
   });
 

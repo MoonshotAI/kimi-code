@@ -408,7 +408,7 @@ merge_all_available_skills = true
 # spineSpawn (config.toml: spine_spawn)
 #   owner: src/agent/spine/configSection.ts
 #   scope: core
-#   hooks: custom fromToml · custom toToml · stripEnv
+#   hooks: stripEnv
 #   env:
 #     max_concurrent_threads_per_session <- KIMI_CODE_SPINE_SPAWN_MAX_THREADS (custom parse)
 # ##########################################################################

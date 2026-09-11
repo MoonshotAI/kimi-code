@@ -52,13 +52,7 @@ import {
 } from './spineArchive';
 import { deriveSpineProjection, type SpineProjection } from './spineDerive';
 import { buildSpineTranStatusMessage, foldSpine, type SpineFoldStatus } from './spineFold';
-import {
-  findSpineNode,
-  spineCursor,
-  type SpineNode,
-  type SpineState,
-  walkSpineNodes,
-} from './spineOps';
+import { spineCursor, type SpineState, walkSpineNodes } from './spineOps';
 import {
   executeSpawnBranches,
   maxSpawnBranchCount,
@@ -86,16 +80,12 @@ const REJECT_SPAWN_DISABLED: SpineTransitionResult = {
   reason: 'Spine spawn is disabled. Set KIMI_CODE_SPINE_SPAWN=1 to enable it.',
 };
 
-const ARCHIVE_FAILURE_NOTE =
-  '[spine: the trajectory archive for this node could not be written; its detailed history was not persisted.]';
-
 export class AgentSpineService extends Disposable implements IAgentSpineService {
   declare readonly _serviceBrand: undefined;
 
   private cachedMessages: readonly ContextMessage[] | undefined;
   private cachedProjection: SpineProjection | undefined;
   private readonly archivedIds = new Set<string>();
-  private readonly failedArchiveIds = new Set<string>();
   private spineViewOverride: string | undefined;
   private spineViewReady: Promise<void> = Promise.resolve();
   private activeSpawnBranches = 0;
@@ -157,7 +147,6 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
         this.cachedMessages = undefined;
         this.cachedProjection = undefined;
         this.archivedIds.clear();
-        this.failedArchiveIds.clear();
         this.activeSpawnBranches = 0;
         this.statusSignature = transitionSignature(this.derivedState());
         await next();
@@ -168,7 +157,6 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
         if (!this.enabled) return;
         if (event.deleteCount === 0) return;
         this.archivedIds.clear();
-        this.failedArchiveIds.clear();
         this.statusSignature = transitionSignature(this.derivedState());
       }),
     );
@@ -183,14 +171,7 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     return this.flags.enabled(SPINE_SPAWN_FLAG_ID);
   }
 
-  executeSpawn(
-    tasks: readonly SpineSpawnTaskInput[],
-    signal: AbortSignal,
-  ): Promise<SpineTransitionResult & { readonly receipt?: string }> {
-    return this.doExecuteSpawn(tasks, signal);
-  }
-
-  private async doExecuteSpawn(
+  async executeSpawn(
     tasks: readonly SpineSpawnTaskInput[],
     signal: AbortSignal,
   ): Promise<SpineTransitionResult & { readonly receipt?: string }> {
@@ -277,14 +258,19 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
   fold(messages: readonly ContextMessage[]): readonly ContextMessage[] {
     if (!this.enabled) return messages;
     const projection = this.projection();
-    const state = this.state();
     const epochSummaryMessage =
-      state.epochMemoryAt === undefined ? undefined : messages[state.epochMemoryAt];
-    return foldSpine(messages, { state, anchors: projection.anchors, epochSummaryMessage });
+      projection.state.epochMemoryAt === undefined
+        ? undefined
+        : messages[projection.state.epochMemoryAt];
+    return foldSpine(messages, {
+      state: projection.state,
+      anchors: projection.anchors,
+      epochSummaryMessage,
+    });
   }
 
   currentState(): SpineState {
-    return this.state();
+    return this.derivedState();
   }
 
   private appendTransitionStatus(): void {
@@ -296,7 +282,7 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
   }
 
   private buildStatus(): SpineFoldStatus {
-    const state = this.state();
+    const state = this.derivedState();
     const cursor = spineCursor(state);
     const parent = state.openPath.at(-2);
     return {
@@ -342,32 +328,6 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     }
   }
 
-  private state(): SpineState {
-    const derived = this.derivedState();
-    if (this.failedArchiveIds.size === 0) return derived;
-    const patch = (node: SpineNode): SpineNode => {
-      const children = node.children.map(patch);
-      const memory =
-        this.failedArchiveIds.has(node.id) && node.memory !== undefined
-          ? `${node.memory}\n\n${ARCHIVE_FAILURE_NOTE}`
-          : node.memory;
-      if (
-        memory === node.memory &&
-        children.every((child, index) => child === node.children[index])
-      ) {
-        return node;
-      }
-      return { ...node, children, memory };
-    };
-    const epochs = derived.epochs.map(patch);
-    if (epochs.every((epoch, index) => epoch === derived.epochs[index])) return derived;
-    const patched: SpineState = { ...derived, epochs };
-    return {
-      ...patched,
-      openPath: derived.openPath.map((node) => findSpineNode(patched, node.id) ?? node),
-    };
-  }
-
   private projection(): SpineProjection {
     const messages = this.context.get();
     if (this.cachedProjection !== undefined && this.cachedMessages === messages) {
@@ -389,17 +349,16 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     const messages = this.context.get();
     for (const node of walkSpineNodes(state)) {
       if (node.closedAt === undefined || node.openedAt < 0) continue;
-      if (this.archivedIds.has(node.id) || this.failedArchiveIds.has(node.id)) continue;
+      if (this.archivedIds.has(node.id)) continue;
       const path = this.archivePath(node.id);
       const span = messages.slice(Math.max(0, node.openedAt), node.closedAt + 1);
       const content = buildArchiveContent({ node, messages: span });
       try {
         await writeNodeArchive(this.hostFs, path, content);
-        this.archivedIds.add(node.id);
       } catch (error) {
         onUnexpectedError(error);
-        this.failedArchiveIds.add(node.id);
       }
+      this.archivedIds.add(node.id);
     }
     await this.archiveCurrentEpochBoundary(state, messages);
   }
@@ -411,7 +370,7 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     const epoch = state.rootEpoch;
     if (epoch <= 1) return;
     const id = String(epoch);
-    if (this.archivedIds.has(id) || this.failedArchiveIds.has(id)) return;
+    if (this.archivedIds.has(id)) return;
     const memoryAt = state.epochMemoryAt;
     if (memoryAt === undefined) return;
     const summaryMessage = messages[memoryAt];
@@ -425,11 +384,10 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     });
     try {
       await writeNodeArchive(this.hostFs, this.archivePath(id), content);
-      this.archivedIds.add(id);
     } catch (error) {
       onUnexpectedError(error);
-      this.failedArchiveIds.add(id);
     }
+    this.archivedIds.add(id);
   }
 
   async archiveEpochRoot(input: SpineEpochArchiveInput): Promise<string | undefined> {
@@ -442,7 +400,7 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
       return path;
     } catch (error) {
       onUnexpectedError(error);
-      this.failedArchiveIds.add(String(input.epoch));
+      this.archivedIds.add(String(input.epoch));
       return undefined;
     }
   }

@@ -7,7 +7,6 @@ export interface SpineTreeNodeView {
   readonly closed: boolean;
   readonly memory: string | undefined;
   readonly archivePath: string | undefined;
-  readonly tokenCost: number | undefined;
   readonly children: readonly SpineTreeNodeView[];
 }
 
@@ -16,9 +15,6 @@ export interface SpineTreeView {
 }
 
 export interface SpineTreeViewInput {
-  readonly currentUsed?: number;
-  readonly baselines?: ReadonlyMap<string, number>;
-  readonly finals?: ReadonlyMap<string, number>;
   readonly resolveArchivePath?: (id: string, epoch: boolean, closed: boolean) => string | undefined;
 }
 
@@ -45,15 +41,6 @@ function spineNodeView(
     closed,
     memory: node.memory,
     archivePath: input.resolveArchivePath?.(node.id, node.kind === 'epoch', closed),
-    tokenCost: nodeTokenCost(node, input),
     children: node.children.map((child) => spineNodeView(child, false, input)),
   };
-}
-
-function nodeTokenCost(node: SpineNode, input: SpineTreeViewInput): number | undefined {
-  const baseline = input.baselines?.get(node.id);
-  if (baseline === undefined) return undefined;
-  const end = node.closedAt === undefined ? input.currentUsed : input.finals?.get(node.id);
-  if (end === undefined) return undefined;
-  return Math.max(0, end - baseline);
 }

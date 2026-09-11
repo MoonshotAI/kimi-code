@@ -238,7 +238,7 @@ export function deriveSpineTree(
           parent_id: parentId,
           title: node.summary,
           memory: node.memory ?? '',
-          token_cost: node.tokenCost ?? 0,
+          token_cost: 0,
           status: node.closed ? 'closed' : 'active',
           error: null,
         });

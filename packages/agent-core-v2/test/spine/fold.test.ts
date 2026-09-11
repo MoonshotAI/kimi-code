@@ -552,7 +552,7 @@ describe('Spine tree view projection', () => {
     ]);
   });
 
-  it('prices nodes and resolves archive paths only from the optional gauges input', () => {
+  it('resolves archive paths only from the optional resolveArchivePath input', () => {
     const ctx = testAgent();
     append(ctx, userMessage('start'));
     append(ctx, assistantToolCall('o1', 'spine_open', JSON.stringify({ summary: 'task A' })));
@@ -565,32 +565,19 @@ describe('Spine tree view projection', () => {
 
     const bare = spineTreeViewFromState(state);
     for (const id of ['1', '1.1', '1.1.1', '1.1.2']) {
-      const node = findViewNode(bare, id);
-      expect(node?.tokenCost).toBeUndefined();
-      expect(node?.archivePath).toBeUndefined();
+      expect(findViewNode(bare, id)?.archivePath).toBeUndefined();
     }
 
     const view = spineTreeViewFromState(state, {
-      currentUsed: 1_000,
-      baselines: new Map([
-        ['1.1', 100],
-        ['1.1.1', 200],
-        ['1.1.2', 1_600],
-      ]),
-      finals: new Map([['1.1.1', 800]]),
       resolveArchivePath: (id, epoch, closed) =>
         epoch || !closed ? undefined : `archive-${id}.md`,
     });
 
     expect(findViewNode(view, '1.1.1')).toMatchObject({
       closed: true,
-      tokenCost: 600,
       archivePath: 'archive-1.1.1.md',
     });
-    expect(findViewNode(view, '1.1.2')).toMatchObject({ closed: false, tokenCost: 0 });
     expect(findViewNode(view, '1.1.2')?.archivePath).toBeUndefined();
-    expect(findViewNode(view, '1.1')?.tokenCost).toBe(900);
-    expect(findViewNode(view, '1')?.tokenCost).toBeUndefined();
   });
 });
 
@@ -1400,7 +1387,6 @@ function nodeView(
     closed,
     memory,
     archivePath: undefined,
-    tokenCost: undefined,
     children,
   };
 }

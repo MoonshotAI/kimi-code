@@ -235,16 +235,12 @@ function extractReason(reason: unknown): RejectionReason {
 }
 
 function isAbortReason(reason: unknown): boolean {
-  if (reason instanceof Error && reason.name === 'AbortError') return true;
-  if (
+  return (
     typeof reason === 'object' &&
     reason !== null &&
     'name' in reason &&
     reason.name === 'AbortError'
-  ) {
-    return true;
-  }
-  return false;
+  );
 }
 
 class AbortError extends Error {

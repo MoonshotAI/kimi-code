@@ -9,8 +9,6 @@ export function toControlResult(result: SpineTransitionResult): ExecutableToolRe
   return { isError: true, output: result.reason };
 }
 
-export const TRIM_ACCEPTED_OUTPUT = 'trim accepted';
-
 export function toSpawnResult(
   result: SpineTransitionResult & { readonly receipt?: string },
 ): ExecutableToolResult {

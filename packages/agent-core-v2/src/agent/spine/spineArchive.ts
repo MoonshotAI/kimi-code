@@ -23,41 +23,46 @@ export interface SpineEpochArchiveInput {
 }
 
 export function buildEpochArchiveContent(input: SpineEpochArchiveInput): string {
-  const lines: string[] = [
-    `# Spine Root Epoch ${String(input.epoch)}`,
-    '',
-    `- epoch_start_at: ${String(input.epochStartAt)}`,
-    `- epoch_memory_at: ${String(input.epochMemoryAt)}`,
-    '',
-    '## Epoch Summary',
-    '',
-    input.summary,
-    '',
-    '## Trajectory',
-    '',
-  ];
-  for (const message of input.messages) {
-    lines.push(...renderMessage(message));
-  }
-  return lines.join('\n');
+  return buildArchiveDocument(
+    [
+      `# Spine Root Epoch ${String(input.epoch)}`,
+      '',
+      `- epoch_start_at: ${String(input.epochStartAt)}`,
+      `- epoch_memory_at: ${String(input.epochMemoryAt)}`,
+      '',
+      '## Epoch Summary',
+      '',
+      input.summary,
+      '',
+    ],
+    input.messages,
+  );
 }
 
 export function buildArchiveContent(input: SpineArchiveContentInput): string {
-  const { node, messages } = input;
-  const lines: string[] = [
-    `# Spine Node ${node.id}`,
-    '',
-    `- summary: ${node.summary}`,
-    `- opened_at: ${String(node.openedAt)}`,
-    `- closed_at: ${String(node.closedAt ?? '')}`,
-    '',
-    '## Memory',
-    '',
-    node.memory ?? '',
-    '',
-    '## Trajectory',
-    '',
-  ];
+  const { node } = input;
+  return buildArchiveDocument(
+    [
+      `# Spine Node ${node.id}`,
+      '',
+      `- summary: ${node.summary}`,
+      `- opened_at: ${String(node.openedAt)}`,
+      `- closed_at: ${String(node.closedAt ?? '')}`,
+      '',
+      '## Memory',
+      '',
+      node.memory ?? '',
+      '',
+    ],
+    input.messages,
+  );
+}
+
+function buildArchiveDocument(
+  header: readonly string[],
+  messages: readonly ContextMessage[],
+): string {
+  const lines: string[] = [...header, '## Trajectory', ''];
   for (const message of messages) {
     lines.push(...renderMessage(message));
   }
