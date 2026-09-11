@@ -228,6 +228,8 @@ export function foldWireHistory(
   let currentTurn: number | undefined;
 
   let nextTurnId = 0;
+  const SEED_TURN_RAW_ID = -1;
+  let seedEnded = false;
   let phantomUserSeq = 0;
   const cancelledTurnIds = new Set<number>();
   const hiddenTurnIds = new Set<number>();
@@ -293,6 +295,17 @@ export function foldWireHistory(
       hiddenTurnIds.add(nextTurnId);
       nextTurnId += 1;
     }
+  };
+
+  const endSeedZone = (record: ContextRecord): void => {
+    if (seedEnded) return;
+    seedEnded = true;
+    const seedTurn = turns.get(turnIdOf(SEED_TURN_RAW_ID));
+    if (seedTurn === undefined || seedTurn.status !== 'running') return;
+    const recordAtMs = atMs(record);
+    seedTurn.status = 'completed';
+    seedTurn.endedAt = new Date(recordAtMs).toISOString();
+    seedTurn.durationMs = Math.max(0, recordAtMs - seedTurn.at);
   };
 
   const createTextDraft = (
@@ -437,6 +450,7 @@ export function foldWireHistory(
   };
 
   const onTurnPrompt = (record: ContextRecord): void => {
+    endSeedZone(record);
     skipCancelledTurnIds();
     const recordTurnId = record['turnId'];
     const rawId =
@@ -863,26 +877,28 @@ export function foldWireHistory(
       const recordAtIso = new Date(recordAtMs).toISOString();
       let rawId = currentTurn;
       if (rawId === undefined || hiddenTurnIds.has(rawId) || !turns.has(turnIdOf(rawId))) {
-        rawId = nextTurnId;
-        nextTurnId += 1;
-        const turnId = turnIdOf(rawId);
-        const draft: TurnDraft = {
-          turnId,
-          rawId,
-          origin: { kind: 'other' },
-          status: 'running',
-          startedAt: recordAtIso,
-          at: recordAtMs,
-        };
-        turns.set(turnId, draft);
-        order.push(`turn:${turnId}`);
-        timelineIds.push(turnId);
+        rawId = seedEnded ? nextTurnId : SEED_TURN_RAW_ID;
+        if (!turns.has(turnIdOf(rawId))) {
+          if (seedEnded) nextTurnId += 1;
+          const turnId = turnIdOf(rawId);
+          const draft: TurnDraft = {
+            turnId,
+            rawId,
+            origin: { kind: 'other' },
+            status: 'running',
+            startedAt: recordAtIso,
+            at: recordAtMs,
+          };
+          turns.set(turnId, draft);
+          order.push(`turn:${turnId}`);
+          timelineIds.push(turnId);
+          scratchByTurn.set(rawId, {
+            serverUserSeq: 0,
+            attachmentSeq: 0,
+            openingSteerDeduped: false,
+          });
+        }
         currentTurn = rawId;
-        scratchByTurn.set(rawId, {
-          serverUserSeq: 0,
-          attachmentSeq: 0,
-          openingSteerDeduped: false,
-        });
       }
       const entry = scratch(rawId);
       const ordinal = (entry.currentStep ?? 0) + 1;
@@ -1163,6 +1179,10 @@ export function foldWireHistory(
         break;
       case 'context.append_message':
         onAppendMessage(record);
+        break;
+      case 'agent.fork':
+        endSeedZone(record);
+        pushSystem('fork.boundary', { forked_from: record['forkedFrom'] }, record);
         break;
       case 'turn.ended':
         onTurnEnded(record);
