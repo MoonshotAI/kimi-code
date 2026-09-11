@@ -548,15 +548,15 @@ describe("Webview mid-turn warnings", () => {
 
     useChatStore.getState().processEvent({
       type: "error",
-      code: "internal",
-      message: "Internal error occurred.",
+      code: "turn.agent_busy",
+      message: "A message is being sent. Please wait.",
       detail: "A response is already being generated for this session.",
       phase: "runtime",
       terminal: false,
     });
 
     // The turn is still running: nothing unlocks, nothing flushes, nothing is retried.
-    expect(boundary.toastWarning).toHaveBeenCalledWith("Internal error occurred.");
+    expect(boundary.toastWarning).toHaveBeenCalledWith("A message is being sent. Please wait.");
     const state = useChatStore.getState();
     expect(state.isStreaming).toBe(true);
     expect(state.queue).toHaveLength(1);
