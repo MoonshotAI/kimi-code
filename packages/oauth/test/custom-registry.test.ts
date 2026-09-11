@@ -330,6 +330,31 @@ describe('applyCustomRegistryProvider', () => {
     expect(alias.capabilities).not.toContain('image_out');
   });
 
+  it('maps limit.output onto the model alias maxOutputSize', () => {
+    const config: ManagedKimiConfigShape = { providers: {} };
+
+    applyCustomRegistryProvider(
+      config,
+      {
+        id: 'registry_chat-completions',
+        name: 'Sample Registry (chat completions)',
+        api: 'https://registry.example.test/v1',
+        type: 'openai_responses',
+        models: {
+          'deepseek-flash': {
+            id: 'deepseek-flash',
+            name: 'DeepSeek Flash',
+            limit: { context: 1000000, output: 393216 },
+          },
+        },
+      },
+      KOKUB_SOURCE,
+    );
+
+    const alias = config.models?.['registry_chat-completions/deepseek-flash'];
+    expect(alias?.['maxOutputSize']).toBe(393216);
+  });
+
   it('clears stale aliases for the same provider before re-populating', () => {
     const config: ManagedKimiConfigShape = {
       providers: {
@@ -460,6 +485,37 @@ describe('applyCustomRegistryProvider', () => {
     const alias = config.models?.['rich/rich-effort-only'] as Record<string, unknown>;
     expect(alias['capabilities']).toContain('thinking');
     expect(alias['supportEfforts']).toEqual(['low', 'high', 'max']);
+  });
+
+  it('drops a stale maxOutputSize when a refresh no longer declares limit.output', () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {},
+      models: {
+        'registry_chat-completions/gpt-5.5': {
+          provider: 'registry_chat-completions',
+          model: 'gpt-5.5',
+          maxContextSize: 131072,
+          maxOutputSize: 8192,
+        } as Record<string, unknown>,
+      },
+    };
+
+    applyCustomRegistryProvider(
+      config,
+      {
+        id: 'registry_chat-completions',
+        name: 'Sample Registry (chat completions)',
+        api: 'https://registry.example.test/v1',
+        type: 'openai',
+        models: {
+          'gpt-5.5': { id: 'gpt-5.5', name: 'GPT 5.5' },
+        },
+      },
+      KOKUB_SOURCE,
+    );
+
+    const alias = config.models?.['registry_chat-completions/gpt-5.5'];
+    expect(alias?.['maxOutputSize']).toBeUndefined();
   });
 
   it('drops stale effort fields when a refresh no longer declares them', () => {
