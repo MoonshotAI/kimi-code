@@ -35,8 +35,8 @@ there is no fallback data source.
   workspace handlers materialize on demand).
 - **DI** — the engine's Service × Effect × DI debug surface, four panels fed
   by the App-scope debug Services (`IDebugLedgerService` / `IDebugGraphService`
-  / `IDebugCascadeService`) and refreshed eagerly off the `event.di.unit_changed`
-  WS frame:
+  / `IDebugCascadeService`) over the `/api/v1/debug` RPC, polling on a short
+  interval:
   - **Unit tree** — scope → unit → ledger entries (label, five-state
     `Pending / Activating / Active / Unloading / Failed`, uid, `pinned` flag,
     unit error object), with **unprovide / update / dispose** triggers.
@@ -53,5 +53,5 @@ there is no fallback data source.
   `GET /api/v1/debug/channels` enumerates every scoped Service — there is no
   whitelist; new Services appear automatically.
 - There is no Service-event push channel besides the global events listed
-  above; panels fetch/refresh on demand (react-query, 15 s poll) plus the
-  `event.di.unit_changed` invalidation for the DI view.
+  above; panels fetch/refresh on demand (react-query, 15 s poll — the DI view
+  polls on its own short interval).

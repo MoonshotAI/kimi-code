@@ -1,11 +1,11 @@
 # Server API
 
-The local server started by `kimi web` exposes two programmatic surfaces: a REST API (`/api/v1`, plus `/api/v2/sessions` and `/api/v2/mcp`) and a WebSocket event stream (`/api/v1/ws`). This page is the protocol reference for both. For how to start the server and its command-line options, see the [kimi command](./kimi-command.md#kimi-web) reference; for an end-to-end walkthrough, see [Drive a session over the API](#drive-a-session-over-the-api) below.
+The local server started by `kimi web` exposes a REST API (`/api/v1`, plus `/api/v2/sessions` and `/api/v2/mcp`). This page is its protocol reference. For how to start the server and its command-line options, see the [kimi command](./kimi-command.md#kimi-web) reference; for an end-to-end walkthrough, see [Drive a session over the API](#drive-a-session-over-the-api) below.
 
-This page is a curated, human-readable reference: it documents every endpoint's parameters, request bodies, and response shapes below. The precise machine-readable schema of every endpoint is owned by the server's live specification documents: `GET /openapi.json` (OpenAPI) and `GET /asyncapi.json` (AsyncAPI), both generated from the same validation schemas the server enforces at runtime. Both require authentication; when this page and the live spec ever disagree, the live spec wins.
+This page is a curated, human-readable reference: it documents every endpoint's parameters, request bodies, and response shapes below. The precise machine-readable schema of every endpoint is owned by the server's live specification document: `GET /openapi.json` (OpenAPI), generated from the same validation schemas the server enforces at runtime. It requires authentication; when this page and the live spec ever disagree, the live spec wins.
 
 ::: warning
-The REST and WebSocket APIs described on this page are experimental: interface stability is not guaranteed, and endpoints, fields, and event types may change in any release. When integrating, rely on the `/openapi.json` and `/asyncapi.json` documents served by your version.
+The REST API described on this page is experimental: interface stability is not guaranteed, and endpoints and fields may change in any release. When integrating, rely on the `/openapi.json` document served by your version.
 :::
 
 ## Conventions
@@ -16,7 +16,7 @@ The default address is `http://127.0.0.1:58627`. When the port is taken, the ser
 
 ### Authentication
 
-All `/api/*` paths (including `/openapi.json` and `/asyncapi.json`) require the bearer token, except:
+All `/api/*` paths (including `/openapi.json`) require the bearer token, except:
 
 - `OPTIONS` preflight requests
 - `GET /api/v1/healthz` (liveness probe)
@@ -76,12 +76,12 @@ Error codes are grouped by band:
 
 List endpoints come in two styles:
 
-- **Cursor style**: `before_id` / `after_id` (mutually exclusive) plus `page_size` (1–100), responding with `{ items, has_more }`. Used by the session list, message list, transcript, and others.
+- **Cursor style**: `before_id` / `after_id` (mutually exclusive) plus `page_size` (1–100), responding with `{ items, has_more }`. Used by the session list and others.
 - **`page_token`**: an opaque token (bound to a fingerprint of the query conditions), used by `POST /api/v1/search` and `GET /api/v2/sessions`. Changing any query condition mid-pagination invalidates the token: v2 returns `40922`, search returns `40001`. `GET /api/v2/sessions` also offers a stateless `page` page-number mode as an alternative.
 
 ## Drive a session over the API
 
-The minimal flow with curl: check the server → create a session → subscribe to events → submit a prompt → read history back. The examples assume the server runs at the default address and the token is stored in the shell variable `TOKEN`.
+The minimal flow with curl: check the server → create a session → submit a prompt → read the session state back. The examples assume the server runs at the default address and the token is stored in the shell variable `TOKEN`.
 
 1. Check server status:
 
@@ -102,25 +102,7 @@ curl -s -X POST http://127.0.0.1:58627/api/v1/sessions \
 
 The returned `data.id` (shaped like `session_...`) is the session id used by every subsequent request.
 
-3. Connect to the WebSocket and subscribe to session events. Any WebSocket client works; below is a dependency-free Node.js script (Node.js 22+ ships a built-in `WebSocket` client):
-
-```js
-// subscribe.mjs — usage: TOKEN=... node subscribe.mjs session_...
-const ws = new WebSocket('ws://127.0.0.1:58627/api/v1/ws', [
-  `kimi-code.bearer.${process.env.TOKEN}`,
-]);
-ws.onmessage = (e) => console.log(e.data);
-ws.onopen = () =>
-  ws.send(
-    JSON.stringify({
-      type: 'subscribe',
-      id: '1',
-      payload: { session_ids: [process.argv[2]] },
-    }),
-  );
-```
-
-4. Submit a prompt:
+3. Submit a prompt:
 
 ```sh
 curl -s -X POST http://127.0.0.1:58627/api/v1/sessions/<session_id>/prompts \
@@ -129,14 +111,14 @@ curl -s -X POST http://127.0.0.1:58627/api/v1/sessions/<session_id>/prompts \
   -d '{"content": [{"type": "text", "text": "Introduce this repository in one sentence"}]}'
 ```
 
-The subscriber sees, in order: `turn.started` (turn begins) → `assistant.delta` (streaming text increments) → `tool.call.started` / `tool.result` when tool calls happen → `turn.ended` (turn finishes).
-
-5. Read history back over REST at any time:
+4. Read the session's realtime status back over REST at any time:
 
 ```sh
 curl -s -H "Authorization: Bearer $TOKEN" \
-  "http://127.0.0.1:58627/api/v1/sessions/<session_id>/messages?page_size=20"
+  "http://127.0.0.1:58627/api/v1/sessions/<session_id>/status"
 ```
+
+The rollup reports `busy` while the turn runs, together with the effective model and context usage.
 
 ## REST endpoints
 
@@ -274,7 +256,7 @@ On success, `data` is `{ region }` with `region` one of `mainland-cn` / `global`
 | Method and path | Description |
 | --- | --- |
 | `GET /api/v1/config` | Read the global config (secret fields redacted) |
-| `POST /api/v1/config` | Merge-patch the config; broadcasts `event.config.changed` |
+| `POST /api/v1/config` | Merge-patch the config |
 
 #### `GET /api/v1/config`
 
@@ -309,8 +291,6 @@ On success, `data` is the config object; its fields mirror the top-level domains
 #### `POST /api/v1/config`
 
 Merge-patches the global configuration: each top-level domain in the body is deep-merged into that domain, and domains absent from the body are left untouched. Setting `yolo` to `true` is shorthand for `default_permission_mode: "yolo"`; a rejected patch (invalid value or persistence failure) returns `40001` with the underlying message.
-
-Every config change — a successful update through this endpoint, an external edit of `config.toml`, or a server-side write such as an OAuth login refresh — is broadcast as the global `event.config.changed` event. Changes inside a short window are merged into one event carrying the affected domain names in `changedFields` (camelCase config domains, for example `defaultModel`) and the full current config projection in `config` (same shape as the `GET /api/v1/config` response).
 
 The body is a partial config object — any subset of the response domains above except `raw`, all optional:
 
@@ -469,7 +449,7 @@ On success the server answers 204 with no body — the status line itself report
 
 #### `POST /api/v1/providers/{provider_id}:refresh`
 
-Re-discovers one provider's model metadata from its upstream source and rewrites the provider's aliases. Providers with a static model source are reported `unchanged` without any network call. When at least one provider's aliases change, the server broadcasts the global `event.model_catalog.changed` event.
+Re-discovers one provider's model metadata from its upstream source and rewrites the provider's aliases. Providers with a static model source are reported `unchanged` without any network call.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -568,7 +548,6 @@ These endpoints create, list, and inspect sessions, drive session-level actions 
 | `GET /api/v1/sessions/{session_id}/runtime` | Read the main agent's runtime binding |
 | `POST /api/v1/sessions/{session_id}/runtime` | Switch the main agent's runtime binding |
 | `POST /api/v1/sessions/{session_id}/export` | Export the session with diagnostics (zip stream, not enveloped) |
-| `GET /api/v1/sessions/{session_id}/snapshot` | Full snapshot for client rebuilds (with `as_of_seq` and `epoch`) |
 | `GET /api/v1/sessions/{session_id}/media/{file_id}` | Download prompt media by file id (binary) |
 
 #### The session object
@@ -589,15 +568,14 @@ Every endpoint that returns a session uses this wire shape. The live facts (`bus
 | `last_turn_reason` | string | Main agent's latest turn outcome: `completed` / `cancelled` / `failed` |
 | `last_prompt` | string | Most recent user prompt text, when present |
 | `metadata` | object | Custom metadata; always carries `cwd` (the session's working directory) |
-| `agent_config` | object | Projected as `{ model }`; `model` is `""` in most responses and only filled with the live model by `GET /api/v1/sessions/{session_id}/snapshot` |
-| `usage` | object | Token rollup `{ input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, context_tokens, context_limit?, total_cost_usd?, turn_count? }`; all zeros outside the snapshot endpoint |
+| `agent_config` | object | Projected as `{ model }`; `model` is currently always `""` |
+| `usage` | object | Token rollup `{ input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, context_tokens, context_limit?, total_cost_usd?, turn_count? }`; currently all zeros |
 | `permission_rules` | array | Session permission rules; currently always `[]` |
 | `message_count` | integer | Message count; currently always `0` |
-| `last_seq` | integer | Last event sequence number; currently always `0` |
 
 #### `POST /api/v1/sessions`
 
-Creates a session and returns it. The target directory comes from `workspace_id` (an already-registered workspace) or from `metadata.cwd` (the workspace is registered on first use); passing both requires them to agree. Creation broadcasts the global `event.session.created` event.
+Creates a session and returns it. The target directory comes from `workspace_id` (an already-registered workspace) or from `metadata.cwd` (the workspace is registered on first use); passing both requires them to agree.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -658,7 +636,7 @@ On success, `data` is [the session object](#the-session-object).
 
 #### `POST /api/v1/sessions/{session_id}/profile`
 
-Updates the session's profile: title, custom metadata, and the main agent's config. A title set here becomes a custom title, which wins over generated titles; setting one broadcasts the global `session.meta.updated` event.
+Updates the session's profile: title, custom metadata, and the main agent's config. A title set here becomes a custom title, which wins over generated titles.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -687,7 +665,7 @@ On success, `data` is the updated [session object](#the-session-object).
 
 #### `POST /api/v1/sessions/{session_id}/title/generate`
 
-Generates a title from the session's prompts through the managed provider's `chat_title` tool and applies it, broadcasting `session.meta.updated`. Generation requires the managed OAuth login and the `auto_session_title` experimental flag; without `force`, a session that already has a custom or generated title is reported unavailable instead of being overwritten.
+Generates a title from the session's prompts through the managed provider's `chat_title` tool and applies it. Generation requires the managed OAuth login and the `auto_session_title` experimental flag; without `force`, a session that already has a custom or generated title is reported unavailable instead of being overwritten.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -706,7 +684,7 @@ Session actions are dispatched through one route: the path tail is parsed as `{s
 
 #### `POST /api/v1/sessions/{session_id}:fork`
 
-Copies the session — its transcript, agent state, and files — into a new session in the same workspace, and broadcasts `event.session.created`. Forking is rejected while any of the session's agents has an active turn.
+Copies the session — its transcript, agent state, and files — into a new session in the same workspace. Forking is rejected while any of the session's agents has an active turn.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -719,7 +697,7 @@ On success, `data` is [the session object](#the-session-object) of the new sessi
 
 #### `POST /api/v1/sessions/{session_id}:compact`
 
-Starts a manual full compaction of the main agent's context. The call returns immediately; progress and completion are delivered as the `compaction.*` WebSocket events.
+Starts a manual full compaction of the main agent's context. The call returns immediately.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -757,7 +735,7 @@ On success, `data` is `{ agent_id }` — the id of the new child agent.
 
 #### `POST /api/v1/sessions/{session_id}:archive`
 
-Marks the session archived: it disappears from the default session list (it stays listed with `include_archive` or `archived_only`), and the server broadcasts the global `event.session.archived` event.
+Marks the session archived: it disappears from the default session list (it stays listed with `include_archive` or `archived_only`).
 
 On success, `data` is `{ archived: true }`.
 
@@ -793,7 +771,7 @@ Creates a child session: a fork of this session recorded as its child, so it sho
 | `title` | body | string | Title for the child (at least 1 character). Default `Child: <source title>` |
 | `metadata` | body | object | Custom metadata for the child |
 
-On success, `data` is [the session object](#the-session-object) of the new session, and the server broadcasts `event.session.created`.
+On success, `data` is [the session object](#the-session-object) of the new session.
 
 - `40901`: the session has an active turn and cannot be forked
 
@@ -869,18 +847,6 @@ Exports the session together with diagnostic logs as a zip attachment (`kimi-ses
 | `web_log` | body | string | Client log text to include in the archive, at most 256 KB UTF-8 |
 | `desktop` | body | boolean | Also include the desktop host's log. Default `false` |
 
-#### `GET /api/v1/sessions/{session_id}/snapshot`
-
-Assembles an atomic snapshot for rebuilding a client after a resync: the session, recent messages, the in-flight turn, live subagents, and pending interactions, all stamped with the `as_of_seq` watermark and `epoch` used to resubscribe — see [Reconnect and recovery](#reconnect-and-recovery). Unlike the plain session endpoints, the embedded session carries the live `agent_config.model` and real `usage` totals.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-
-On success, `data` is `{ as_of_seq, epoch, session, messages, in_flight_turn, subagents?, pending_approvals, pending_questions }`: `session` is [the session object](#the-session-object), `messages` is the newest 100 messages as `{ items, has_more }`, `in_flight_turn` is the partially streamed turn (`null` when idle, with `current_prompt_id` when known), `subagents` lists live subagent tasks, and `pending_approvals` / `pending_questions` carry the unanswered interactions.
-
-- `40401`: session not found
-
 #### `GET /api/v1/sessions/{session_id}/media/{file_id}`
 
 Downloads a prompt media file (an image or other attachment referenced by the session's prompts) by file id; an id not yet committed to the session falls back to the staged uploads. The response is binary with `Range` support (206 on ranged requests) — see [Binary and streaming endpoints](#binary-and-streaming-endpoints) for the shared conventions; unlike the enveloped endpoints there, a missing session or file answers with a real 404 status carrying an envelope body.
@@ -890,115 +856,9 @@ Downloads a prompt media file (an image or other attachment referenced by the se
 | `session_id` | path | string | **Required.** Session id |
 | `file_id` | path | string | **Required.** Media file id |
 
-### Messages and transcript
-
-The `messages` endpoints page the main agent's flattened message history, while the `transcript` endpoints serve the structured per-agent transcript — turns, tasks, interactions, attachments — that the WebSocket [Transcript protocol](#transcript-protocol) streams live. Use these endpoints for history paging and catch-up, and the WebSocket subscription for the live tail.
-
-| Method and path | Description |
-| --- | --- |
-| `GET /api/v1/sessions/{session_id}/messages` | Page messages (`before_id` / `after_id` / `role`) |
-| `GET /api/v1/sessions/{session_id}/messages/{message_id}` | Read one message |
-| `GET /api/v1/sessions/{session_id}/transcript` | Turn-paged transcript (requires `agent_id`); global state rides along unpaginated |
-| `GET /api/v1/sessions/{session_id}/transcript/ops` | Op-batch catch-up (`since_seq`); `complete: false` means a full refresh is needed |
-| `GET /api/v1/sessions/{session_id}/transcript/user-messages` | Turn-opening user inputs, unpaginated |
-| `GET /api/v1/sessions/{session_id}/transcript/plan` | ExitPlanMode plan content, path, and review outcome |
-
-#### `GET /api/v1/sessions/{session_id}/messages`
-
-Pages the main agent's message history — the flattened context transcript shared with the session snapshot — newest first. Cursor pagination follows [Pagination](#pagination); reading the history resumes the session when it is cold.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-| `before_id` | query | string | Only messages older than this message id; mutually exclusive with `after_id` |
-| `after_id` | query | string | Only messages newer than this message id; mutually exclusive with `before_id` |
-| `page_size` | query | integer | 1–100. Default `50` |
-| `role` | query | string | Keep only one role: `user` / `assistant` / `tool` / `system`. The filter applies after the page is sliced, so a filtered page can hold fewer than `page_size` items while `has_more` is still `true` — keep paging until `has_more` is `false` |
-
-On success, `data` is `{ items, has_more }` where each item is a message object `{ id, session_id, role, content, created_at, prompt_id?, parent_message_id?, metadata? }`; `content` is an array of content parts in the wire format documented under [Prompts](#prompts) (`text`, `tool_use`, `tool_result`, `image`, `video`, `file`, `thinking`).
-
-- `40001`: validation failure — for example `before_id` combined with `after_id`
-- `40401`: session not found
-
-#### `GET /api/v1/sessions/{session_id}/messages/{message_id}`
-
-Reads one message from the same history by id.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-| `message_id` | path | string | **Required.** Message id |
-
-On success, `data` is the message object in the item shape documented under `GET /api/v1/sessions/{session_id}/messages` above.
-
-- `40401`: session not found
-- `40403`: no message with that id in this session
-
-#### `GET /api/v1/sessions/{session_id}/transcript`
-
-Returns one page of an agent's structured transcript: turns (with their steps and frames) plus the markers and task references between them. Live sessions answer from the in-memory store (the requested agent's persisted history is backfilled first); cold sessions rebuild the agent from the persisted wire records. This is the history half of the transcript surface — the live streaming half is the [Transcript protocol](#transcript-protocol) subscription.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-| `agent_id` | query | string | **Required.** Agent whose transcript to read; must be a plain agent id (letters, digits, `.`, `_`, `-` — no path separators) |
-| `before_turn` | query | string | Only turns older than this turn id; mutually exclusive with `after_turn` |
-| `after_turn` | query | string | Only turns newer than this turn id; mutually exclusive with `before_turn` |
-| `page_size` | query | integer | 1–100 turns. Default `20` |
-
-The page unit is the turn: without a cursor the newest page is returned, and `has_more` reports that older turns remain. On success, `data` is `{ agent_id, items, has_more, tasks, interactions, attachments, todos, meta, agents, pending_interactions, seq? }` — `items` is the paged turn slice, `tasks` / `interactions` / `attachments` / `todos` / `meta` / `agents` / `pending_interactions` are global agent state that ships unpaginated with every response, and `seq` is the agent's op-batch watermark for resuming the stream (live sessions only).
-
-- `40001`: validation failure — `before_turn` combined with `after_turn`, or a non-plain `agent_id`
-- `40401`: session not found
-
-#### `GET /api/v1/sessions/{session_id}/transcript/ops`
-
-Serves point-to-point catch-up from the server's op journal: the journaled op batches with `seq > since_seq` for one agent, oldest first. It is the REST counterpart of the `transcript_since` resume cursor described in [Transcript protocol](#transcript-protocol) and shares the same bounded journal, so the same fallback rule applies.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-| `agent_id` | query | string | **Required.** Agent id (plain id, same constraint as the transcript endpoint) |
-| `since_seq` | query | integer | **Required.** The caller's last applied op-batch seq, minimum `0`; batches above it are returned |
-
-On success, `data` is `{ agent_id, batches, latest_seq, complete }`, each batch `{ seq, ops }`. `complete: true` means every batch up to `latest_seq` is present; `complete: false` means the journal no longer reaches back to `since_seq` (or the session is not live at all), and the caller must fall back to a full `GET .../transcript` refresh.
-
-- `40001`: validation failure
-- `40401`: session not found
-
-#### `GET /api/v1/sessions/{session_id}/transcript/user-messages`
-
-Lists every turn-opening input of the session, grouped per agent and unpaginated: real user text, user-slash skill and plugin commands, and cron prompts — distinguishable via `origin` — plus attachment-only prompts projected with an empty `prompt`. Attachment entities referenced by the listed messages ride along (metadata only, never bytes).
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-| `agent_id` | query | string | Read one agent only (plain id). Default reads every rostered agent |
-
-On success, `data` is `{ agents }` where each entry is `{ agent_id, messages, attachments }`; a message is `{ turn_id, ordinal, state, origin, prompt, attachment_ids?, started_at? }` with `state` the turn state (`queued` / `running` / `completed` / `failed` / `cancelled`).
-
-- `40001`: validation failure — a non-plain `agent_id`
-- `40401`: session not found
-
-#### `GET /api/v1/sessions/{session_id}/transcript/plan`
-
-Reads the plan information of an agent's `ExitPlanMode` tool calls — plan content, plan file path, offered options, and the review outcome — in timeline order. Content is projected from the first available fact: the linked approval interaction (interactive reviews), the live tool frame's display (auto mode), or the tool result output text; each entry records which one in `source`.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-| `agent_id` | query | string | **Required.** Agent id (plain id) |
-| `tool_call_id` | query | string | Narrow the read to one `ExitPlanMode` call; absent lists every call with recoverable plan content |
-
-On success, `data` is `{ agent_id, plans }` where each plan is `{ tool_call_id, turn_id, source, plan, path?, options?, review? }`: `source` is `interaction` / `display` / `output`, `options` are the review choices as `{ label, description? }`, and `review` (present only for interactive reviews) is `{ state, selected_option?, feedback? }` with `state` one of `pending` / `approved` / `rejected` / `cancelled`.
-
-- `40001`: validation failure
-- `40401`: session not found
-- `40416`: `tool_call_id` given, but no `ExitPlanMode` call with that id exists
-
 ### Prompts
 
-A prompt is one unit of user input: submitting one enqueues it on the session's main agent (or a named agent), a queued prompt can be steered into the active turn, and a running prompt can be aborted. Turn progress itself streams over the WebSocket [events](#events), not these endpoints.
+A prompt is one unit of user input: submitting one enqueues it on the session's main agent (or a named agent), a queued prompt can be steered into the active turn, and a running prompt can be aborted.
 
 | Method and path | Description |
 | --- | --- |
@@ -1022,7 +882,7 @@ On success, `data` is `{ active, queued }`: `active` is the running prompt (`nul
 
 #### `POST /api/v1/sessions/{session_id}/prompts`
 
-Submits a user prompt to the session. Media references are validated first, then the optional overrides are applied to the target agent — `profile` (bound together with `model` / `thinking`), then `model`, `thinking`, `permission_mode`, and `disabled_tools` — and the prompt is enqueued; the response returns as soon as the prompt is accepted, without waiting for the turn. With `skills`, the prompt runs as a bundled skill activation instead of a plain user prompt.
+Submits a user prompt to the session. Media references are validated first, then the optional overrides are applied to the target agent — `profile` (bound together with `model` / `thinking`), then `model`, `thinking`, `permission_mode`, and `disabled_tools` — and the prompt is enqueued; the response returns as soon as the prompt is accepted, without waiting for the turn. With `steer: true`, a prompt submitted while the session is busy is steered directly into the running turn instead of waiting in the queue — the one-call form of submitting and then calling `POST /api/v1/sessions/{session_id}/prompts:steer`; on an idle session it starts a new turn as usual. With `skills`, the prompt runs as a bundled skill activation instead of a plain user prompt.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1030,6 +890,7 @@ Submits a user prompt to the session. Media references are validated first, then
 | `content` | body | array | **Required.** Non-empty array of content parts; variants below |
 | `agent_id` | body | string | Target agent. Default the main agent |
 | `prompt_id` | body | string | Client-chosen prompt id for idempotent submission; an id already reserved by an in-flight prompt fails `40927`, one that has already completed fails `40903`. Cannot be combined with `skills` |
+| `steer` | body | boolean | When `true`, steer the prompt directly into the running turn on a busy session instead of queueing it; a no-op on an idle session, where the prompt starts a new turn as usual. Cannot be combined with `skills` |
 | `skills` | body | array | Bundled skill activations, at least 1 entry of `{ name, args? }`; every skill must exist and be user-activatable |
 | `profile` | body | string | Agent profile to bind before submitting |
 | `model` | body | string | Model alias to switch the agent to |
@@ -1049,7 +910,7 @@ The schema also accepts the `tool_use`, `tool_result`, and `thinking` parts of t
 
 On success, `data` is the accepted prompt `{ prompt_id, user_message_id, status, content, created_at }`.
 
-- `40001`: validation failure — for example `prompt_id` combined with `skills`, or an unknown `profile`
+- `40001`: validation failure — for example `prompt_id` or `steer` combined with `skills`, or an unknown `profile`
 - `40110`: no provider configured yet — finish login first
 - `40111`: the resolved provider has no credential (`details.provider_id`)
 - `40112`: the provider's credential was rejected (`details.provider_id`)
@@ -1107,7 +968,7 @@ On success, `data` is `{ steered: true, prompt_ids: [prompt_id] }`.
 
 ### Approvals and questions
 
-Approvals and questions are the session's two pending-interaction kinds: an approval asks permission for a tool call, a question asks for structured input with labeled options. These endpoints list and resolve them; new requests arrive over the WebSocket as `event.approval.requested` and `event.question.requested`.
+Approvals and questions are the session's two pending-interaction kinds: an approval asks permission for a tool call, a question asks for structured input with labeled options. These endpoints list and resolve them.
 
 | Method and path | Description |
 | --- | --- |
@@ -1482,7 +1343,7 @@ On success, `data` is `{ ok: true }`.
 
 ### Terminals
 
-PTY terminal endpoints; mounted only on loopback binds (a non-loopback bind skips them unless `--allow-remote-terminals` is passed). Terminal input, output, and resize flow over WebSocket `terminal_*` frames — the REST surface manages the terminal lifecycle only.
+PTY terminal endpoints; mounted only on loopback binds (a non-loopback bind skips them unless `--allow-remote-terminals` is passed). The REST surface manages the terminal lifecycle only.
 
 | Method and path | Description |
 | --- | --- |
@@ -1499,7 +1360,7 @@ Lists the session's terminals. Reading the list resumes the session when it is c
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 
-On success, `data` is `{ items }` where each item is a terminal object `{ id, session_id, cwd, shell, cols, rows, status, created_at, exited_at?, exit_code? }`: `status` is `running` / `exited`, and an exited terminal carries `exited_at` plus `exit_code` (`null` when the process reported none, for example after a signal). Scrollback is not part of the object — output replays and streams over the WebSocket.
+On success, `data` is `{ items }` where each item is a terminal object `{ id, session_id, cwd, shell, cols, rows, status, created_at, exited_at?, exit_code? }`: `status` is `running` / `exited`, and an exited terminal carries `exited_at` plus `exit_code` (`null` when the process reported none, for example after a signal). Scrollback is not part of the object.
 
 - `40401`: session not found
 
@@ -1568,7 +1429,7 @@ Workspaces are the registered project directories sessions live in. These endpoi
 
 #### The workspace object
 
-Every endpoint that returns a workspace uses this wire shape. Registration and rename broadcast the global `event.workspace.created` / `event.workspace.updated` events.
+Every endpoint that returns a workspace uses this wire shape.
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -1587,7 +1448,7 @@ On success, `data` is `{ items }` where each item is [the workspace object](#the
 
 #### `POST /api/v1/workspaces`
 
-Registers a workspace and returns it. Registration is idempotent on the root path: registering an already-registered root returns the existing workspace with only `last_opened_at` refreshed (the stored name is kept), broadcasting `event.workspace.updated` instead of `event.workspace.created`.
+Registers a workspace and returns it. Registration is idempotent on the root path: registering an already-registered root returns the existing workspace with only `last_opened_at` refreshed (the stored name is kept).
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -2333,68 +2194,6 @@ The OAuth flow lifecycle for remote servers. `auth:begin` takes a locator body (
 - `40001`: validation failure — including an unknown `flowId` on `:complete`, or a server that cannot do OAuth (stdio transport, a static bearer token, or static headers without `auth: "oauth"`) on `:begin`
 - `40408`: (`:begin` / `:reset`) the locator matches nothing
 - `40929`: the OAuth flow itself failed
-
-## WebSocket protocol
-
-### Connect
-
-The only endpoint is `ws://<host>:<port>/api/v1/ws`; authentication happens at the upgrade request (see [Authentication](#authentication) above). Once connected, the server immediately sends `server_hello`:
-
-```json
-{
-  "type": "server_hello",
-  "timestamp": "2026-01-01T00:00:00.000Z",
-  "payload": {
-    "ws_connection_id": "conn_01JZX4...",
-    "protocol_version": 2,
-    "max_event_buffer_size": 1000,
-    "capabilities": { "event_batching": false, "compression": false }
-  }
-}
-```
-
-Note that the server never sends heartbeats and never disconnects an idle connection — keepalive and reconnection are the client's job.
-
-### Control frames
-
-Clients send JSON frames `{ "type", "id"?, "payload" }`; every request frame gets an acknowledgement `{ "type": "ack", "id", "code", "msg", "payload" }`, where `code` 0 means success.
-
-| Frame | payload | Description |
-| --- | --- | --- |
-| `subscribe` | `{ session_ids, cursors?, agent_filter? }` | Subscribe to session events; with `cursors` (per-session `{seq, epoch}`) the server replays missed durable events |
-| `unsubscribe` | `{ session_ids }` | Drop session subscriptions |
-| `subscribe_v2` | `{ session_id, transcript, transcript_since? }` | Subscribe to transcript streams (the only transcript channel); `transcript` sets per-agent grades |
-| `unsubscribe_v2` | `{ session_id, agent_ids? }` | Detach transcript streams; omitting `agent_ids` means the whole session |
-| `client_hello` | `{ client_id }` | Handshake frame; the remaining fields are legacy compatibility |
-
-### Events
-
-Event frames look like `{ "type", "seq", "epoch"?, "volatile"?, "offset"?, "session_id"?, "timestamp", "payload" }`, where `type` is the event type itself. Two delivery scopes:
-
-- **Global events**: sent to every established connection, no subscription needed — `session.meta.updated`, `event.session.created`, `event.session.archived`, `event.session.work_changed`, `event.session.status_changed`, `event.workspace.*`, `event.config.*`, `event.model_catalog.*`.
-- **Session events**: sent only to connections subscribed to that session, subject to `agent_filter`. Main families:
-
-| Family | Main events |
-| --- | --- |
-| Turns | `turn.started`, `turn.ended`, `turn.step.started` / `completed` / `interrupted` / `retrying` |
-| Streaming text | `assistant.delta`, `thinking.delta` (carry `offset` for alignment) |
-| Tool calls | `tool.call.started`, `tool.call.delta`, `tool.progress`, `tool.result` |
-| Interactions | `event.approval.requested` / `resolved`, `event.question.requested` / `answered` / `dismissed` |
-| Subagents | `subagent.spawned` / `started` / `suspended` / `completed` / `failed` |
-| Background | `task.started` / `terminated`, `shell.started` / `output` / `completed` |
-| Misc | `compaction.*`, `skill.activated`, `goal.updated`, `prompt.*`, `error`, `warning` |
-
-Three global lifecycle events keep a cross-workspace overview fresh without polling per workspace. `event.session.archived` fires on both the live and the cold archive path; its envelope `session_id` is the global watermark `__global__` and the real session id rides in the payload: `{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }` (payload keys `workspace_id` / `sessionId`). `event.workspace.created` / `updated` carry the full workspace object (`{ id, root, name, created_at, last_opened_at, session_count }` — an `updated` also fires when a session creation touches the workspace), and `event.workspace.deleted` carries `{ "workspace_id", "root" }`. These events only cover changes made inside this server process; changes from other processes (for example a CLI writing to the same home) surface through the index reconciliation (about a minute), so overview clients should keep a low-frequency fallback poll. There is no session-deleted event.
-
-Events also split into durable and volatile: durable events carry a strictly increasing `seq`, are journaled, and can be replayed; volatile events (the `*.delta` family, `tool.progress`, `shell.*`, and similar) are marked `volatile: true` and never replayed. When consuming a volatile text stream, compare `offset` (the cumulative character offset within the turn) against your locally accumulated text: below the local length means a duplicate frame; above means a gap that needs snapshot recovery.
-
-### Reconnect and recovery
-
-After reconnecting, pass each session's last applied `{seq, epoch}` in `subscribe`'s `cursors`; the server replays the gap. If you fall more than the buffer (1000 events) behind, or the cursor is no longer valid, you get `resync_required` instead. In that case, call `GET /api/v1/sessions/{session_id}/snapshot` for a full snapshot (with `as_of_seq` and `epoch`), then subscribe again with the fresh cursor.
-
-### Transcript protocol
-
-`subscribe_v2`'s `transcript` field sets a per-agent grade: `off` / `turn` / `block` / `delta` (the `"*"` key sets the default grade), with higher grades pushing finer detail. An agent with a non-`off` grade receives two frame types: `transcript.reset` (a baseline snapshot; history pages in over REST) and `transcript.ops` (incremental op batches with a per-agent strictly increasing `seq`). The agent's legacy events are suppressed on that connection and carried by transcript frames instead. After a disconnect, resume with `transcript_since`; when the server's op journal cannot cover the gap (REST catch-up returns `complete: false`), do a full refresh. The REST counterparts are `GET .../transcript` (turn-paged) and `GET .../transcript/ops?since_seq=` (op-batch catch-up).
 
 ## Binary and streaming endpoints
 

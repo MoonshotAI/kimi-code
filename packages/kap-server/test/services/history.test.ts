@@ -731,7 +731,7 @@ describe('foldWireHistory interactions, facts and modes', () => {
     });
   });
 
-  it('links subagent tasks to their parent tool call with agent refs', () => {
+  it('links subagent and swarm member tasks to their parent tool call with agent refs', () => {
     const messages = fold([
       rec('turn.prompt', { input: [{ type: 'text', text: 'go' }], origin: { kind: 'user' } }),
       loopEvent({ type: 'step.begin', uuid: 'u1', turnId: '0', step: 1 }, T0 + 1),
@@ -767,6 +767,75 @@ describe('foldWireHistory interactions, facts and modes', () => {
     expect(tool).toMatchObject({
       task_id: 'task-2',
       agent_refs: [{ agent_id: 'sub-1', role: 'child' }],
+    });
+
+    const swarmOutput = [
+      '<agent_swarm_result>',
+      '<summary>completed: 2, failed: 1</summary>',
+      '<subagent mode="resume" agent_id="agent-9" item="old item" outcome="completed">resume report</subagent>',
+      '<subagent agent_id="agent-11" item="alpha" outcome="completed">alpha report</subagent>',
+      '<subagent agent_id="agent-12" item="beta" outcome="failed" stop_reason="rate_limit">beta blew up</subagent>',
+      '</agent_swarm_result>',
+    ].join('\n');
+    const swarmMessages = fold([
+      rec('turn.prompt', { input: [{ type: 'text', text: 'go' }], origin: { kind: 'user' } }),
+      loopEvent({ type: 'step.begin', uuid: 'u1', turnId: '0', step: 1 }, T0 + 1),
+      loopEvent(
+        {
+          type: 'tool.call',
+          stepUuid: 'u1',
+          toolCallId: 'call_s',
+          name: 'AgentSwarm',
+          args: JSON.stringify({
+            description: 'team',
+            items: ['alpha', 'beta'],
+            prompt_template: 'do {{item}}',
+            model: 'k2',
+            thinking: 'high',
+            resume_agent_ids: { 'agent-9': 'resume work' },
+          }),
+        },
+        T0 + 2,
+      ),
+      loopEvent(
+        {
+          type: 'tool.result',
+          stepUuid: 'u1',
+          toolCallId: 'call_s',
+          result: { output: swarmOutput },
+        },
+        T0 + 3,
+      ),
+    ]);
+    const swarmTool = ofType(swarmMessages, 'tool_call')[0]!;
+    expect(swarmTool.task_id).toBeUndefined();
+    expect(swarmTool.agent_refs).toEqual([
+      { agent_id: 'agent-9', role: 'member' },
+      { agent_id: 'agent-11', role: 'member' },
+      { agent_id: 'agent-12', role: 'member' },
+    ]);
+    const memberTasks = ofType(swarmMessages, 'task');
+    expect(memberTasks.map((t) => t.task_id)).toEqual(['agent-9', 'agent-11', 'agent-12']);
+    expect(memberTasks[0]).toMatchObject({
+      kind: 'subagent',
+      status: 'completed',
+      detached: false,
+      child_agent_id: 'agent-9',
+      description: 'team #1',
+      result_summary: 'resume report',
+      model: 'k2',
+      thinking_effort: 'high',
+    });
+    expect(memberTasks[1]).toMatchObject({
+      status: 'completed',
+      description: 'team #2',
+      result_summary: 'alpha report',
+    });
+    expect(memberTasks[2]).toMatchObject({
+      status: 'failed',
+      description: 'team #3',
+      error: 'beta blew up',
+      state_reason: 'rate_limit',
     });
   });
 });

@@ -1,3 +1,7 @@
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import {
   IAgentGoalService,
   IAgentLifecycleService,
@@ -11,6 +15,7 @@ import {
   IAgentTodoService,
   IEventBus,
   ISessionActivityView,
+  ISessionIndex,
   ISessionTokenCountingService,
   ISessionUsageService,
   interactions,
@@ -628,6 +633,78 @@ describe('AgentMessageProjector', () => {
     });
     const toolC = ofType(sink, 'tool_call').at(-1)!;
     expect(toolC.task_id).toBe('task-c');
+
+    feed(
+      projector,
+      ev({
+        type: 'tool.call.started',
+        turnId: 1,
+        toolCallId: 'call_d',
+        name: 'AgentSwarm',
+        args: '{"items":["a","b"],"prompt_template":"do {{item}}"}',
+      }),
+      sink,
+    );
+    feed(
+      projector,
+      ev({
+        type: 'subagent.spawned',
+        subagentId: 'sub-d1',
+        parentToolCallId: 'call_d',
+        swarmIndex: 1,
+        runInBackground: false,
+        description: 'team #1 (coder)',
+        model: 'k2',
+        thinkingEffort: 'high',
+      }),
+      sink,
+    );
+    feed(
+      projector,
+      ev({
+        type: 'subagent.spawned',
+        subagentId: 'sub-d2',
+        parentToolCallId: 'call_d',
+        swarmIndex: 2,
+        runInBackground: false,
+      }),
+      sink,
+    );
+    const toolD = ofType(sink, 'tool_call').at(-1)!;
+    expect(toolD.agent_refs).toEqual([
+      { agent_id: 'sub-d1', role: 'member' },
+      { agent_id: 'sub-d2', role: 'member' },
+    ]);
+    expect(toolD.task_id).toBeUndefined();
+    const memberTasks = ofType(sink, 'task').filter((t) => t.task_id.startsWith('sub-d'));
+    expect(memberTasks).toHaveLength(2);
+    expect(memberTasks[0]).toMatchObject({
+      task_id: 'sub-d1',
+      kind: 'subagent',
+      status: 'running',
+      detached: false,
+      child_agent_id: 'sub-d1',
+      description: 'team #1 (coder)',
+      model: 'k2',
+      thinking_effort: 'high',
+    });
+    expect(memberTasks[1]).toMatchObject({ task_id: 'sub-d2', child_agent_id: 'sub-d2' });
+    feed(
+      projector,
+      ev({
+        type: 'subagent.completed',
+        subagentId: 'sub-d1',
+        resultSummary: 'member report',
+        usage: { inputOther: 3, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+      }),
+      sink,
+    );
+    expect(ofType(sink, 'task').at(-1)).toMatchObject({
+      task_id: 'sub-d1',
+      status: 'completed',
+      result_summary: 'member report',
+      usage: { input_other: 3, output: 1, input_cache_read: 0, input_cache_creation: 0 },
+    });
   });
 
   it('drives todo entities from the todo emitter and links TodoList tool calls', () => {
@@ -686,7 +763,7 @@ describe('AgentMessageProjector', () => {
     expect(projector.healTurn(1, fold).length).toBeGreaterThan(0);
   });
 
-  it('settles a full-cut splice as system(clear) unless a context.undone follows', () => {
+  it('settles a full-cut splice as system(clear) on new events, on timeout, or as undo', () => {
     const projector = makeProjector();
     const before = feedAll(projector, [
       ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'one' }),
@@ -711,6 +788,30 @@ describe('AgentMessageProjector', () => {
     ]);
     expect(ofType(undoOnly, 'system').some((m) => m.subtype === 'clear')).toBe(false);
     expect(ofType(undoOnly, 'system').some((m) => m.subtype === 'undo')).toBe(true);
+
+    vi.useFakeTimers();
+    try {
+      const deferred: ServerMessage[] = [];
+      const projector3 = new AgentMessageProjector('main', SESSION, new Map(), undefined, {
+        onDeferred: (messages) => deferred.push(...messages),
+      });
+      const pending = feedAll(projector3, [
+        ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'one' }),
+        ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }),
+        ev({ type: 'context.spliced', start: 0, deleteCount: 4, messages: [] }),
+      ]);
+      expect(ofType(pending, 'system')).toHaveLength(0);
+      expect(deferred).toHaveLength(0);
+      vi.advanceTimersByTime(150);
+      const timedClear = ofType(deferred, 'system').find((m) => m.subtype === 'clear');
+      expect(serverMessageSchema.parse(timedClear)).toMatchObject({
+        subtype: 'clear',
+        payload: { removed_ids: ['t1'] },
+      });
+      projector3.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('replays in-flight entities plus state entities as recovery payload', () => {
@@ -869,32 +970,6 @@ describe('AgentMessageProjector', () => {
     const users = ofType(messages, 'user');
     expect(users).toHaveLength(1);
     expect(users[0]).toMatchObject({ message_id: 't1.u0', text: [{ type: 'text', text: 'hello', meta: {} }] });
-  });
-
-  it('settles a full-cut splice as system(clear) after a bounded wait when no undo follows', () => {
-    vi.useFakeTimers();
-    try {
-      const deferred: ServerMessage[] = [];
-      const projector = new AgentMessageProjector('main', SESSION, new Map(), undefined, {
-        onDeferred: (messages) => deferred.push(...messages),
-      });
-      const before = feedAll(projector, [
-        ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'one' }),
-        ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }),
-        ev({ type: 'context.spliced', start: 0, deleteCount: 4, messages: [] }),
-      ]);
-      expect(ofType(before, 'system')).toHaveLength(0);
-      expect(deferred).toHaveLength(0);
-      vi.advanceTimersByTime(150);
-      const clear = ofType(deferred, 'system').find((m) => m.subtype === 'clear');
-      expect(serverMessageSchema.parse(clear)).toMatchObject({
-        subtype: 'clear',
-        payload: { removed_ids: ['t1'] },
-      });
-      projector.dispose();
-    } finally {
-      vi.useRealTimers();
-    }
   });
 
   it('counts undo anchors instead of timeline turns when fromTurnId is missing', () => {
@@ -1124,7 +1199,10 @@ describe('SessionProjection', () => {
     return agent;
   }
 
-  function makeSession(...agents: FakeAgent[]): {
+  function makeSession(
+    agents: readonly FakeAgent[],
+    opts?: { sessionIndex?: unknown },
+  ): {
     session: ISessionScopeHandle;
     core: Scope;
     activityEmitter: Emitter<{ state: { busy: boolean; mainTurnActive: boolean; pendingInteraction: 'none' | 'approval' | 'question' }; cause: string }>;
@@ -1166,6 +1244,7 @@ describe('SessionProjection', () => {
           if (token === IAgentLifecycleService) {
             throw new Error('strict DI: IAgentLifecycleService is not registered at app scope');
           }
+          if (token === ISessionIndex) return opts?.sessionIndex;
           return undefined;
         },
       },
@@ -1173,17 +1252,20 @@ describe('SessionProjection', () => {
     return { session, core, activityEmitter };
   }
 
-  function makeProjection(...agents: FakeAgent[]): {
+  function makeProjection(
+    agents: readonly FakeAgent[],
+    opts?: { homeDir?: string; sessionIndex?: unknown },
+  ): {
     projection: SessionProjection;
     received: ServerMessage[];
     logger: { warn: ReturnType<typeof vi.fn> };
     activityEmitter: Emitter<{ state: { busy: boolean; mainTurnActive: boolean; pendingInteraction: 'none' | 'approval' | 'question' }; cause: string }>;
   } {
-    const { session, core, activityEmitter } = makeSession(...agents);
+    const { session, core, activityEmitter } = makeSession(agents, opts);
     const received: ServerMessage[] = [];
     const logger = { warn: vi.fn() };
     const projection = new SessionProjection(SESSION, session, {
-      homeDir: '/nonexistent',
+      homeDir: opts?.homeDir ?? '/nonexistent',
       core,
       logger,
     });
@@ -1195,7 +1277,7 @@ describe('SessionProjection', () => {
     const agent = makeAgent('main');
     const child = makeAgent('agent-1');
     const swarmChild = makeAgent('agent-2');
-    const { projection, received, logger } = makeProjection(agent, child, swarmChild);
+    const { projection, received, logger } = makeProjection([agent, child, swarmChild]);
     const bindMainState = ofType(projection.recoveryMessages(), 'agent.state').find(
       (m) => m.agent_id === 'main',
     )!;
@@ -1228,6 +1310,14 @@ describe('SessionProjection', () => {
       },
     };
     agent.bus.emit(ev({ type: 'tool.call.started', turnId: 1, toolCallId: 'call_1', name: 'Bash', args: '{}' }) as Event2<any>);
+    agent.bus.emit(ev({ type: 'compaction.blocked', turnId: 1 }) as Event2<any>);
+    agent.bus.emit(ev({ type: 'compaction.started', trigger: 'auto' }) as Event2<any>);
+    agent.bus.emit(
+      ev({
+        type: 'compaction.completed',
+        result: { summary: 'compacted', compactedCount: 3, tokensBefore: 10, tokensAfter: 5 },
+      }) as Event2<any>,
+    );
     agent.activity = {};
     agent.bus.emit(ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }) as Event2<any>);
     agent.bus.emit(
@@ -1282,6 +1372,11 @@ describe('SessionProjection', () => {
         ),
       ).toBe(true);
     });
+    const mainStates = ofType(received, 'agent.state').filter((m) => m.agent_id === 'main');
+    const compactingStates = mainStates.filter((m) => m.turn?.status === 'compacting');
+    expect(compactingStates).toHaveLength(1);
+    const lastActingIndex = mainStates.findLastIndex((m) => m.turn?.status === 'acting');
+    expect(lastActingIndex).toBeGreaterThan(mainStates.indexOf(compactingStates[0]!));
     const mainIdle = ofType(received, 'agent.state')
       .filter((m) => m.agent_id === 'main')
       .at(-1)!;
@@ -1335,7 +1430,7 @@ describe('SessionProjection', () => {
 
   it('emits the interaction lifecycle and drops outbound messages that fail schema validation', () => {
     const agent = makeAgent('main');
-    const { projection, received, logger } = makeProjection(agent);
+    const { projection, received, logger } = makeProjection([agent]);
     interactions.enqueue({
       id: 'q-1',
       kind: 'question',
@@ -1375,7 +1470,7 @@ describe('SessionProjection', () => {
     const agent = makeAgent('main');
     agent.planActive = true;
     agent.swarmTrigger = 'tool';
-    const { projection, received } = makeProjection(agent);
+    const { projection, received } = makeProjection([agent]);
     const recovery = projection.recoveryMessages();
     const state = ofType(recovery, 'session.state')[0]!;
     expect(state.modes).toEqual({ plan: {}, swarm: {} });
@@ -1417,5 +1512,51 @@ describe('SessionProjection', () => {
     agent.bus.emit(ev({ type: 'agent.status.updated', agentId: 'main', planMode: false }) as Event2<any>);
     expect(ofType(received, 'system').map((m) => m.subtype)).toContain('plan.exit');
     projection.dispose();
+  });
+
+  it('seeds tool-swarm origins for pre-existing members from the wire at bind', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'projection-swarm-bind-'));
+    try {
+      const wireDir = join(homeDir, 'sessions', 'ws1', SESSION, 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      await writeFile(
+        join(wireDir, 'wire.jsonl'),
+        `${JSON.stringify({
+          type: 'loop.event',
+          time: T0,
+          event: {
+            type: 'tool.call',
+            stepUuid: 'u1',
+            toolCallId: 'call_swarm',
+            name: 'AgentSwarm',
+            args: JSON.stringify({ resume_agent_ids: { 'agent-2': 'continue the fix' } }),
+          },
+        })}\n`,
+      );
+      const agent = makeAgent('main');
+      const member = makeAgent('agent-2');
+      const { projection, received } = makeProjection([agent, member], {
+        homeDir,
+        sessionIndex: { get: async () => ({ workspaceId: 'ws1' }) },
+      });
+      expect(ofType(received, 'agent.state').some((m) => m.agent_id === 'agent-2')).toBe(false);
+      await vi.waitFor(() => {
+        const state = ofType(projection.recoveryMessages(), 'agent.state').find(
+          (m) => m.agent_id === 'agent-2',
+        );
+        expect(state).toMatchObject({
+          profile: { kind: 'coder' },
+          origin: {
+            kind: 'tool-swarm',
+            tool_call_id: 'call_swarm',
+            swarm_index: 1,
+            parent_agent_id: 'main',
+          },
+        });
+      });
+      projection.dispose();
+    } finally {
+      await rm(homeDir, { recursive: true, force: true });
+    }
   });
 });

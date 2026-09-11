@@ -5,19 +5,30 @@
  * Two data sources converge into one store: the initial / reconnect
  * baseline comes from a single `GET /api/v1/sessions` page (every wire
  * session carries `busy` / `main_turn_active` / `pending_interaction` /
- * `last_turn_reason`), and live updates arrive as
- * `event.session.work_changed` frames over the global WS channel (no
- * subscription needed server-side). List-level facts (session created /
- * retitled) are forwarded to the consumer as `onListChanged` so the
- * react-query session list invalidates instead of waiting out its slow poll.
- * The store is a plain subscribe/version store so React binds through
+ * `last_turn_reason`), and live updates arrive as `session` global messages
+ * over the `/api/v3/ws` channel (no subscription needed server-side — the
+ * embedded SessionInfo carries the same four facts). List-level facts
+ * (session created / retitled / archived / deleted, workspace changed) are
+ * forwarded to the consumer as `onListChanged` so the react-query session
+ * list invalidates instead of waiting out its slow poll. The store is a
+ * plain subscribe/version store so React binds through
  * `useSyncExternalStore`.
  */
 
-import type { WsLikeCtor } from '../channel/wsLike';
-import { GlobalEventsWs, type SessionWorkFacts } from './ws';
+import type { SessionInfo, SessionMessage } from '@moonshot-ai/kap-server/protocol';
 
-export type { SessionWorkFacts };
+import type { WsLikeCtor } from '../channel/wsLike';
+import { GlobalEventsWs } from './ws';
+
+export type SessionPendingInteraction = 'none' | 'approval' | 'question';
+export type SessionTurnOutcome = 'completed' | 'cancelled' | 'failed';
+
+export interface SessionWorkFacts {
+  readonly busy: boolean;
+  readonly mainTurnActive: boolean;
+  readonly pendingInteraction: SessionPendingInteraction;
+  readonly lastTurnReason?: SessionTurnOutcome | undefined;
+}
 
 export class SessionActivityStore {
   private activities = new Map<string, SessionWorkFacts>();
@@ -58,8 +69,8 @@ export class SessionActivityStore {
     this.bump();
   }
 
-  /** Drop one session's live facts (e.g. it was archived — no further
-   *  work_changed frames will arrive to correct a stale badge). */
+  /** Drop one session's live facts (e.g. it was archived or deleted — no
+   *  further messages will arrive to correct a stale badge). */
   remove(sessionId: string): void {
     if (this.activities.delete(sessionId)) this.bump();
   }
@@ -99,17 +110,7 @@ export class SessionActivityHub {
       token: opts.token,
       WebSocketImpl: opts.WebSocketImpl,
       handlers: {
-        onWorkChanged: (sessionId, facts) => this.store.applyWorkChanged(sessionId, facts),
-        onSessionCreated: () => opts.onListChanged(),
-        onMetaUpdated: () => opts.onListChanged(),
-        onSessionArchived: (sessionId) => {
-          this.store.remove(sessionId);
-          opts.onListChanged();
-        },
-        onSessionDeleted: (sessionId) => {
-          this.store.remove(sessionId);
-          opts.onListChanged();
-        },
+        onSession: (message) => this.onSession(message, opts.onListChanged),
         onWorkspaceChanged: () => opts.onListChanged(),
         onReconnected: () => void this.seed(),
       },
@@ -118,6 +119,16 @@ export class SessionActivityHub {
 
   close(): void {
     this.ws.close();
+  }
+
+  private onSession(message: SessionMessage, onListChanged: () => void): void {
+    const { subtype, session } = message;
+    if (subtype === 'archived' || subtype === 'deleted') {
+      this.store.remove(session.id);
+    } else {
+      this.store.applyWorkChanged(session.id, workFactsOf(session));
+    }
+    onListChanged();
   }
 
   private async seed(): Promise<void> {
@@ -153,8 +164,18 @@ export class SessionActivityHub {
       }
       this.store.seed(entries);
     } catch {
-      // Seed is best-effort: live frames keep flowing, and the next reconnect
-      // re-seeds. A dead server surfaces through the connection layer anyway.
+      // Seed is best-effort: live messages keep flowing, and the next
+      // reconnect re-seeds. A dead server surfaces through the connection
+      // layer anyway.
     }
   }
+}
+
+function workFactsOf(session: SessionInfo): SessionWorkFacts {
+  return {
+    busy: session.busy,
+    mainTurnActive: session.main_turn_active === true,
+    pendingInteraction: session.pending_interaction ?? 'none',
+    lastTurnReason: session.last_turn_reason,
+  };
 }

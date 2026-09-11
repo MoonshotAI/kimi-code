@@ -20,6 +20,24 @@ function rawToString(data: RawData): string {
   return Buffer.from(data as ArrayBuffer).toString('utf8');
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForFrame(
+  received: Record<string, unknown>[],
+  match: (frame: Record<string, unknown>) => boolean,
+  timeoutMs = 5000,
+): Promise<Record<string, unknown>> {
+  const start = Date.now();
+  for (;;) {
+    const found = received.find(match);
+    if (found !== undefined) return found;
+    if (Date.now() - start > timeoutMs) throw new Error('no matching frame within timeout');
+    await sleep(20);
+  }
+}
+
 interface ConnectOptions {
   readonly protocols?: string[];
   readonly headers?: Record<string, string>;
@@ -74,17 +92,17 @@ describe('WS upgrade auth', () => {
     }
   });
 
-  function v1Url(): string {
-    return `${sharedServer().base.replace(/^http/, 'ws')}/api/v1/ws`;
+  function v3Url(): string {
+    return `${sharedServer().base.replace(/^http/, 'ws')}/api/v3/ws`;
   }
 
   function token(): string {
     return sharedServer().token;
   }
 
-  describe('/api/v1/ws', () => {
-    const firstType = 'server_hello';
-    const url = (): string => v1Url();
+  describe('/api/v3/ws', () => {
+    const firstType = 'hello';
+    const url = (): string => v3Url();
 
     it('accepts a valid bearer subprotocol and echoes it', async () => {
       const { ws, firstFrame } = await openConn(url(), {
@@ -105,7 +123,7 @@ describe('WS upgrade auth', () => {
   });
 
   describe('/api/v1/debug/ws', () => {
-    it('streams xstate inspection envelopes to an authorized client', async () => {
+    it('streams xstate inspection envelopes to an authorized client only after subscribe', async () => {
       const home = await mkdtemp(join(tmpdir(), 'kimi-kap-debug-ws-'));
       const server = await startServer({
         hostIdentity: TEST_HOST_IDENTITY,
@@ -113,7 +131,6 @@ describe('WS upgrade auth', () => {
         port: 0,
         homeDir: home,
         logLevel: 'silent',
-        debugEndpoints: true,
         authTokenService: fixedTokenAuth(),
         seeds: [[IModelCatalog, fakeModelCatalog()]],
       });
@@ -122,34 +139,41 @@ describe('WS upgrade auth', () => {
       });
       sockets.push(ws);
       try {
-        const envelope = await new Promise<Record<string, unknown>>((resolve, reject) => {
-          const timer = setTimeout(
-            () => reject(new Error('no inspection envelope within timeout')),
-            5000,
-          );
-          ws.on('message', (data) => {
-            const frame = JSON.parse(rawToString(data)) as Record<string, unknown>;
-            if (frame['eventType'] === 'debug.probe') {
-              clearTimeout(timer);
-              resolve(frame);
-            }
-          });
-          ws.on('error', reject);
-          ws.once('open', () => {
-            const machine = setup({}).createMachine({
-              id: 'debugWsProbe',
-              initial: 'idle',
-              states: { idle: { on: { 'debug.probe': 'done' } }, done: {} },
-            });
-            const actor = createActor(machine);
-            actor.start();
-            actor.send({ type: 'debug.probe' });
-          });
+        const received: Record<string, unknown>[] = [];
+        ws.on('message', (data) => {
+          received.push(JSON.parse(rawToString(data)) as Record<string, unknown>);
         });
+        await new Promise<void>((resolve) => ws.once('open', resolve));
+        const probe = (): void => {
+          const machine = setup({}).createMachine({
+            id: 'debugWsProbe',
+            initial: 'idle',
+            states: { idle: { on: { 'debug.probe': 'done' } }, done: {} },
+          });
+          const actor = createActor(machine);
+          actor.start();
+          actor.send({ type: 'debug.probe' });
+        };
+        probe();
+        await sleep(200);
+        expect(received).toHaveLength(0);
+        ws.send(JSON.stringify({ type: 'subscribe' }));
+        await sleep(100);
+        probe();
+        const envelope = await waitForFrame(
+          received,
+          (frame) => frame['eventType'] === 'debug.probe',
+        );
         expect(envelope['type']).toBe('@xstate.event');
         expect(envelope['logicId']).toBe('debugWsProbe');
-        expect(typeof envelope['actorSessionId']).toBe('string');
+        expect(typeof envelope['actorId']).toBe('string');
         expect(typeof envelope['timestamp']).toBe('number');
+        ws.send(JSON.stringify({ type: 'unsubscribe' }));
+        await sleep(100);
+        received.length = 0;
+        probe();
+        await sleep(200);
+        expect(received).toHaveLength(0);
       } finally {
         await server.close();
         await rm(home, { recursive: true, force: true });
@@ -158,9 +182,9 @@ describe('WS upgrade auth', () => {
   });
 
   it('rejects upgrades to a non-WS path', async () => {
-    const badUrl = `${v1Url().replace('/api/v1/ws', '/api/v1/other')}`;
+    const badUrl = `${v3Url().replace('/api/v3/ws', '/api/v1/other')}`;
     await expectRejected(badUrl, { protocols: [`kimi-code.bearer.${token()}`] });
-    const debugUrl = `${v1Url().replace('/api/v1/ws', '/api/v1/debug/ws')}`;
-    await expectRejected(debugUrl, { protocols: [`kimi-code.bearer.${token()}`] });
+    const goneUrl = `${v3Url().replace('/api/v3/ws', '/api/v1/ws')}`;
+    await expectRejected(goneUrl, { protocols: [`kimi-code.bearer.${token()}`] });
   });
 });

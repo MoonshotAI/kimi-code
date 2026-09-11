@@ -6,11 +6,22 @@ import { fileURLToPath } from 'node:url';
 
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { reduceContextTranscript } from '@moonshot-ai/agent-core-v2';
-import { groupMessagesIntoSnapshot } from '@moonshot-ai/transcript';
 
 import { migrateOneSession, type MigrateOneResult } from '../src/sessions/migrate-one.js';
 import { computeWorkdirBucket } from '../src/sessions/workdir-bucket.js';
 import { listSessionsV2, readSessionSummaryV2 } from './v2-session-scan.js';
+
+// Turn-grouping rule for imported (origin-less) messages: one turn per user
+// message, plus one fallback turn for a leading non-user run left over from a
+// compaction-truncated context. Mirrors splitIntoTurns in src/sessions.
+const countGroupedTurns = (messages: readonly { role?: unknown }[]): number => {
+  let turns = 0;
+  for (const message of messages) {
+    if (message.role === 'user') turns += 1;
+    else if (message.role === 'assistant' && turns === 0) turns += 1;
+  }
+  return turns;
+};
 
 const FIXTURES = fileURLToPath(new URL('./fixtures', import.meta.url));
 const WORK_DIR = '/Users/example/proj';
@@ -100,7 +111,7 @@ describe('migrated session is discoverable by agent-core-v2', () => {
     expect(wire).toContain('汇报结论');
   });
 
-  it('turn structure survives a v2 context-transcript round trip and aligns with transcript grouping', async () => {
+  it('turn structure survives a v2 context-transcript round trip and aligns with imported-message grouping', async () => {
     const result = await migrateFixture('turn-structure', 'with-tool-calls');
 
     const wire = await readFile(join(result.targetDir, 'agents', 'main', 'wire.jsonl'), 'utf-8');
@@ -129,12 +140,10 @@ describe('migrated session is discoverable by agent-core-v2', () => {
     // The invariant that keeps a live turn from hijacking an imported one:
     // every turn.prompt advances the restored turn clock by one, so the number
     // of synthesized turn.prompt records must equal the number of turns the
-    // transcript grouping derives from the same messages. The first live turn
-    // after resume then gets an id past every imported turn.
+    // imported messages group into. The first live turn after resume then gets
+    // an id past every imported turn.
     const promptCount = records.filter((r) => r.type === 'turn.prompt').length;
-    const groupedTurns = groupMessagesIntoSnapshot([...transcript.entries]).items.filter(
-      (item) => item.kind === 'turn',
-    ).length;
+    const groupedTurns = countGroupedTurns([...transcript.entries]);
     expect(promptCount).toBe(groupedTurns);
     expect(promptCount).toBeGreaterThan(0);
 
