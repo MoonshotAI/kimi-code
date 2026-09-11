@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { toStorageIoError } from '#/persistence/interface/storage';
+
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 
 const isWin = process.platform === 'win32';
@@ -85,6 +87,29 @@ describe('FileStorageService — error translation', () => {
       code: 'storage.io_failed',
       details: { op: 'write', errno: expect.any(String) },
     });
+  });
+
+  it('maps ENOTDIR to storage.not_found instead of io_failed', () => {
+    const error = toStorageIoError(
+      Object.assign(new Error('not a directory'), { code: 'ENOTDIR' }),
+      { path: join(dir, 'scope', 'entry', 'state.json'), op: 'stat' },
+    );
+    expect(error.code).toBe('storage.not_found');
+    expect(error.details).toMatchObject({
+      path: join(dir, 'scope', 'entry', 'state.json'),
+      op: 'stat',
+      errno: 'ENOTDIR',
+    });
+  });
+
+  it('treats a path through a regular file as missing for read/mtime/size', async () => {
+    const svc = new FileStorageService(dir);
+    await mkdir(join(dir, 'scope'), { recursive: true });
+    await writeFile(join(dir, 'scope', '.DS_Store'), 'junk');
+
+    expect(await svc.read('scope/.DS_Store', 'state.json')).toBeUndefined();
+    expect(await svc.mtime('scope/.DS_Store', 'state.json')).toBeUndefined();
+    expect(await svc.size('scope/.DS_Store', 'state.json')).toBeUndefined();
   });
 });
 
