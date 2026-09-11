@@ -213,6 +213,13 @@ export class ModelRequesterImpl implements ModelRequester {
               failed = event.error;
               return;
             }
+            case 'llm.request.retrying': {
+              accumulator = createMessageAccumulator();
+              usage = undefined;
+              finish = undefined;
+              messageId = undefined;
+              return;
+            }
             case 'llm.done': {
               streamEndedAt = Date.now();
               if (firstChunkAt !== undefined) {

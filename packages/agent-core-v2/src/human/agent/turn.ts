@@ -377,6 +377,13 @@ export function createTurnMachine(
       sendToParent: ({ self }, params: TurnLlmEvent) => {
         self._parent?.send(params);
       },
+      discardAttemptStream: ({ context }) => {
+        context.accumulator.rollback();
+        context.accumulator = createHistoryAccumulator(
+          modelMeta(context.input.request.model),
+          context.toolCallIds,
+        );
+      },
       salvageAborted: assign(({ context }) => {
         const partial = context.accumulator.finish({ source: 'salvaged' });
         const salvaged = salvageInterruptedMessage(partial.message);
@@ -468,14 +475,11 @@ export function createTurnMachine(
                   recovery: context.appliedRecoveries.at(-1),
                 }),
               },
-              ({ context }) => {
-                context.accumulator.rollback();
-                context.accumulator = createHistoryAccumulator(
-                  modelMeta(context.input.request.model),
-                  context.toolCallIds,
-                );
-              },
+              'discardAttemptStream',
             ],
+          },
+          'llm.request.retrying': {
+            actions: ['discardAttemptStream'],
           },
           'llm.streaming.headers': {
             actions: [
