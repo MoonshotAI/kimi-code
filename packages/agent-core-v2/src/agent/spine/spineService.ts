@@ -53,25 +53,19 @@ import {
   writeNodeArchive,
   type SpineEpochArchiveInput,
 } from './spineArchive';
-import { deriveSpineState } from './spineDerive';
-import {
-  deriveSpineTrimProjection,
-  type SpineTrimOp,
-  type SpineTrimProjection,
-} from './spineTrimDerive';
+import { deriveSpineProjection, type SpineProjection } from './spineDerive';
+import { type SpineTrimOp, type SpineTrimProjection } from './spineTrimDerive';
 import { buildSpineTranStatusMessage, foldSpine, type SpineFoldStatus } from './spineFold';
 import { applySpineTrim } from './spineTrimFold';
-import { type SpineNode, type SpineState } from './spineOps';
 import {
-  childNodeId,
-  epochRootIds,
-  isRootEpoch,
-  nextChildIndex,
-  parentNodeId,
-  renderTree,
-  spineNodeViewFromState,
-  type SpineTreeViewInput,
-} from './spineTree';
+  findSpineNode,
+  spineChildId,
+  spineCursor,
+  type SpineNode,
+  type SpineState,
+  walkSpineNodes,
+} from './spineOps';
+import { renderTree, spineTreeViewFromState, type SpineTreeViewInput } from './spineTree';
 import {
   executeSpawnBranches,
   maxSpawnBranchCount,
@@ -111,9 +105,7 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
   declare readonly _serviceBrand: undefined;
 
   private cachedMessages: readonly ContextMessage[] | undefined;
-  private cachedState: SpineState | undefined;
-  private cachedTrimMessages: readonly ContextMessage[] | undefined;
-  private cachedTrimProjection: SpineTrimProjection | undefined;
+  private cachedProjection: SpineProjection | undefined;
   private readonly baselines = new Map<string, number>();
   private readonly finals = new Map<string, number>();
   private readonly archivedIds = new Set<string>();
@@ -181,9 +173,7 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     this._register(
       this.dispatcher.hooks.onDidRestore.register('spine', async (_ctx, next) => {
         this.cachedMessages = undefined;
-        this.cachedState = undefined;
-        this.cachedTrimMessages = undefined;
-        this.cachedTrimProjection = undefined;
+        this.cachedProjection = undefined;
         this.baselines.clear();
         this.finals.clear();
         this.archivedIds.clear();
@@ -284,15 +274,11 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     if (guard !== null) return guard;
     const trimmed = summary.trim();
     if (trimmed.length === 0) return reject('open summary must not be empty.');
-    const state = this.derivedState();
-    const parentId = topOf(state);
-    const parent = state.nodes[parentId];
-    if (parent !== undefined) {
-      this.baselines.set(
-        childNodeId(parentId, nextChildIndex(parent.children)),
-        this.tokenCounting.get(agentContextOfScope(this.agentScope)).size,
-      );
-    }
+    const parent = spineCursor(this.derivedState());
+    this.baselines.set(
+      spineChildId(parent.id, parent.children.length),
+      this.tokenCounting.get(agentContextOfScope(this.agentScope)).size,
+    );
     return { accepted: true };
   }
 
@@ -301,9 +287,9 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     if (guard !== null) return guard;
     const trimmed = memory.trim();
     if (trimmed.length === 0) return reject('close memory must not be empty.');
-    const cursorId = this.cursorId();
-    if (isRootEpoch(cursorId)) return REJECT_ROOT_EPOCH;
-    this.finals.set(cursorId, this.tokenCounting.get(agentContextOfScope(this.agentScope)).size);
+    const cursor = spineCursor(this.derivedState());
+    if (cursor.kind === 'epoch') return REJECT_ROOT_EPOCH;
+    this.finals.set(cursor.id, this.tokenCounting.get(agentContextOfScope(this.agentScope)).size);
     return { accepted: true };
   }
 
@@ -314,15 +300,14 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     const trimmedMemory = memory.trim();
     if (trimmedSummary.length === 0) return reject('next summary must not be empty.');
     if (trimmedMemory.length === 0) return reject('next memory must not be empty.');
-    const cursorId = this.cursorId();
-    if (isRootEpoch(cursorId)) return REJECT_ROOT_EPOCH;
     const state = this.derivedState();
-    const parentId = parentNodeId(cursorId);
-    const parent = parentId === null ? undefined : state.nodes[parentId];
+    const cursor = spineCursor(state);
+    if (cursor.kind === 'epoch') return REJECT_ROOT_EPOCH;
+    const parent = state.openPath.at(-2);
     const sizeNow = this.tokenCounting.get(agentContextOfScope(this.agentScope)).size;
-    this.finals.set(cursorId, sizeNow);
-    if (parentId !== null && parent !== undefined) {
-      this.baselines.set(childNodeId(parentId, nextChildIndex(parent.children)), sizeNow);
+    this.finals.set(cursor.id, sizeNow);
+    if (parent !== undefined) {
+      this.baselines.set(spineChildId(parent.id, parent.children.length), sizeNow);
     }
     return { accepted: true };
   }
@@ -353,13 +338,10 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
   }
 
   renderTree(): string {
-    const state = this.state();
-    const input = this.treeViewInput();
-    return renderTree({
-      cursorId: this.cursorId(),
-      rootIds: epochRootIds(state),
-      resolve: (id) => spineNodeViewFromState(state, id, input),
-    });
+    return renderTree(
+      spineTreeViewFromState(this.state(), this.treeViewInput()),
+      this.cursorId(),
+    );
   }
 
   fold(messages: readonly ContextMessage[]): readonly ContextMessage[] {
@@ -368,11 +350,12 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
       const trim = this.trimProjection();
       return messages.map((message, index) => applySpineTrim(trim, index, message));
     }
+    const projection = this.projection();
     const state = this.state();
     const epochSummaryMessage =
       state.epochMemoryAt === undefined ? undefined : messages[state.epochMemoryAt];
-    const trim = this.trimEnabled ? this.trimProjection() : undefined;
-    return foldSpine(messages, { state, epochSummaryMessage, trim });
+    const trim = this.trimEnabled ? projection.trim : undefined;
+    return foldSpine(messages, { state, anchors: projection.anchors, epochSummaryMessage, trim });
   }
 
   currentState(): SpineState {
@@ -389,10 +372,12 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
 
   private buildStatus(): SpineFoldStatus {
     const state = this.state();
-    const cursorId = topOf(state);
-    const summary = state.nodes[cursorId]?.summary ?? '';
-    const parentId = parentNodeId(cursorId);
-    const parentSummary = parentId === null ? null : (state.nodes[parentId]?.summary ?? null);
+    const cursor = spineCursor(state);
+    const cursorId = cursor.id;
+    const summary = cursor.summary;
+    const parent = state.openPath.at(-2);
+    const parentId = parent?.id ?? null;
+    const parentSummary = parent?.summary ?? null;
     const maxContextTokens = this.profile.getEffectiveMaxContextTokens();
     const agent = agentContextOfScope(this.agentScope);
     const used = this.tokenCounting.get(agent).size;
@@ -451,40 +436,50 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
   private state(): SpineState {
     const derived = this.derivedState();
     if (this.failedArchiveIds.size === 0) return derived;
-    let nodes: Record<string, SpineNode> | undefined;
-    for (const id of this.failedArchiveIds) {
-      const node = derived.nodes[id];
-      if (node?.memory === undefined) continue;
-      nodes ??= { ...derived.nodes };
-      nodes[id] = { ...node, memory: `${node.memory}\n\n${ARCHIVE_FAILURE_NOTE}` };
-    }
-    return nodes === undefined ? derived : { ...derived, nodes };
+    const patch = (node: SpineNode): SpineNode => {
+      const children = node.children.map(patch);
+      const memory =
+        this.failedArchiveIds.has(node.id) && node.memory !== undefined
+          ? `${node.memory}\n\n${ARCHIVE_FAILURE_NOTE}`
+          : node.memory;
+      if (
+        memory === node.memory &&
+        children.every((child, index) => child === node.children[index])
+      ) {
+        return node;
+      }
+      return { ...node, children, memory };
+    };
+    const epochs = derived.epochs.map(patch);
+    if (epochs.every((epoch, index) => epoch === derived.epochs[index])) return derived;
+    const patched: SpineState = { ...derived, epochs };
+    return {
+      ...patched,
+      openPath: derived.openPath.map((node) => findSpineNode(patched, node.id) ?? node),
+    };
   }
 
-  private derivedState(): SpineState {
+  private projection(): SpineProjection {
     const messages = this.context.get();
-    if (this.cachedState !== undefined && this.cachedMessages === messages) {
-      return this.cachedState;
+    if (this.cachedProjection !== undefined && this.cachedMessages === messages) {
+      return this.cachedProjection;
     }
-    const state = deriveSpineState(messages);
+    const projection = deriveSpineProjection(messages);
     this.cachedMessages = messages;
-    this.cachedState = state;
-    return state;
-  }
-
-  private trimProjection(): SpineTrimProjection {
-    const messages = this.context.get();
-    if (this.cachedTrimProjection !== undefined && this.cachedTrimMessages === messages) {
-      return this.cachedTrimProjection;
-    }
-    const projection = deriveSpineTrimProjection(messages);
-    this.cachedTrimMessages = messages;
-    this.cachedTrimProjection = projection;
+    this.cachedProjection = projection;
     return projection;
   }
 
+  private derivedState(): SpineState {
+    return this.projection().state;
+  }
+
+  private trimProjection(): SpineTrimProjection {
+    return this.projection().trim;
+  }
+
   private cursorId(): string {
-    return topOf(this.derivedState());
+    return spineCursor(this.derivedState()).id;
   }
 
   private treeViewInput(): SpineTreeViewInput {
@@ -506,7 +501,7 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     if (!this.enabled) return;
     const state = this.derivedState();
     const messages = this.context.get();
-    for (const node of Object.values(state.nodes)) {
+    for (const node of walkSpineNodes(state)) {
       if (node.closedAt === undefined || node.openedAt < 0) continue;
       if (this.archivedIds.has(node.id) || this.failedArchiveIds.has(node.id)) continue;
       const path = this.archivePath(node.id);
@@ -571,16 +566,8 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
   }
 }
 
-function topOf(state: SpineState): string {
-  const top = state.openStack.at(-1);
-  if (top === undefined) {
-    throw new Error('Spine openStack is empty; the tree must always contain a root epoch.');
-  }
-  return top;
-}
-
 function transitionSignature(state: SpineState): string {
-  return `${String(state.rootEpoch)}|${state.openStack.join('.')}`;
+  return `${String(state.rootEpoch)}|${state.openPath.map((node) => node.id).join('.')}`;
 }
 
 function messageText(message: ContextMessage): string {

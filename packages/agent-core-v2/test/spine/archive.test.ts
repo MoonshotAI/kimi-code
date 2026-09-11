@@ -3,8 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MASTER_ENV } from '#/app/flag/flagService';
 import {
   WIRE_PROTOCOL_VERSION,
+  findSpineNode,
   IAgentSpineService,
   IWireService,
+  type SpineState,
   type WireRecord,
 } from '#/index';
 
@@ -53,7 +55,7 @@ describe('Spine archive + resume', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start' }] });
     await ctx.untilTurnEnd();
 
-    expect(readSpine(ctx).nodes['1.1.1']?.closedAt).toBeDefined();
+    expect(spineNode(readSpine(ctx), '1.1.1')?.closedAt).toBeDefined();
     const archivePath = [...writes.keys()].find((path) =>
       path.endsWith('/agents/main/spine/1-1-1.md'),
     );
@@ -91,11 +93,11 @@ describe('Spine archive + resume', () => {
     await resumed.restorePersisted();
 
     const after = readSpine(resumed);
-    expect(after.openStack).toEqual(before.openStack);
+    expect(openIds(after)).toEqual(openIds(before));
     expect(after.rootEpoch).toBe(before.rootEpoch);
-    expect(after.nodes['1.1.1']?.summary).toBe('task A');
-    expect(after.nodes['1.1.1']?.closedAt).toBe(before.nodes['1.1.1']?.closedAt);
-    expect(after.nodes['1.1.1']?.memory).toContain('did A');
+    expect(spineNode(after, '1.1.1')?.summary).toBe('task A');
+    expect(spineNode(after, '1.1.1')?.closedAt).toBe(spineNode(before, '1.1.1')?.closedAt);
+    expect(spineNode(after, '1.1.1')?.memory).toContain('did A');
     expect(resumed.get(IAgentSpineService).renderTree()).toContain('1-1-1.md');
   });
 });
@@ -103,6 +105,14 @@ describe('Spine archive + resume', () => {
 async function configureLoop(ctx: TestAgentContext): Promise<void> {
   ctx.configure({ provider: CATALOGUED_PROVIDER, modelCapabilities: CATALOGUED_MODEL_CAPABILITIES });
   await ctx.rpc.setPermission({ mode: 'yolo' });
+}
+
+function spineNode(state: SpineState, id: string) {
+  return findSpineNode(state, id);
+}
+
+function openIds(state: SpineState): string[] {
+  return state.openPath.map((node) => node.id);
 }
 
 function readSpine(ctx: TestAgentContext) {

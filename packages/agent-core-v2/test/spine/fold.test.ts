@@ -15,12 +15,15 @@ import {
   WIRE_PROTOCOL_VERSION,
   appendSpineView,
   deriveSpineState,
+  findSpineNode,
   IAgentLLMRequesterService,
   IAgentProfileService,
   IAgentSpineService,
   ISessionTokenCountingService,
   loadSpineViewOverride,
   spineTreeViewFromState,
+  type SpineNodeKind,
+  type SpineState,
   type SpineTreeNodeView,
   type SpineTreeView,
   type WireRecord,
@@ -590,8 +593,8 @@ describe('Spine tree view projection', () => {
       nodes: [
         nodeView('1', 'root epoch 1', false, [
           nodeView('1.1', 'startup', false, [
-            nodeView('1.1.1', 'task A', true),
-            nodeView('1.1.2', 'task B', true),
+            nodeView('1.1.1', 'task A', true, [], 'did A'),
+            nodeView('1.1.2', 'task B', true, [], 'did B'),
             nodeView('1.1.3', 'task C', false),
           ]),
         ]),
@@ -768,7 +771,7 @@ describe('Spine derivation from the message stream', () => {
   it('derives the initial state from an empty history', () => {
     const state = deriveSpineState([]);
     expect(state.rootEpoch).toBe(1);
-    expect(state.openStack).toEqual(['1', '1.1']);
+    expect(openIds(state)).toEqual(['1', '1.1']);
     expect(state.epochStartAt).toBe(0);
     expect(state.epochMemoryAt).toBeUndefined();
   });
@@ -779,8 +782,8 @@ describe('Spine derivation from the message stream', () => {
       assistantToolCall('c1', 'spine_open', JSON.stringify({ summary: 'task' })),
       toolReceipt('c1', `${ACCEPTED_OUTPUT}.`),
     ]);
-    expect(state.openStack).toEqual(['1', '1.1']);
-    expect(state.nodes['1.1.1']).toBeUndefined();
+    expect(openIds(state)).toEqual(['1', '1.1']);
+    expect(spineNode(state, '1.1.1')).toBeUndefined();
   });
 
   it('honors the legacy bare-accepted receipt from older sessions', () => {
@@ -789,8 +792,8 @@ describe('Spine derivation from the message stream', () => {
       assistantToolCall('c1', 'spine_open', JSON.stringify({ summary: 'task' })),
       toolReceipt('c1', 'accepted'),
     ]);
-    expect(state.openStack).toEqual(['1', '1.1', '1.1.1']);
-    expect(state.nodes['1.1.1']?.summary).toBe('task');
+    expect(openIds(state)).toEqual(['1', '1.1', '1.1.1']);
+    expect(spineNode(state, '1.1.1')?.summary).toBe('task');
   });
 
   it('ignores a transition whose receipt is an error', () => {
@@ -799,7 +802,7 @@ describe('Spine derivation from the message stream', () => {
       assistantToolCall('c1', 'spine_open', JSON.stringify({ summary: 'task' })),
       { ...toolReceipt('c1', ACCEPTED_OUTPUT), isError: true },
     ]);
-    expect(state.nodes['1.1.1']).toBeUndefined();
+    expect(spineNode(state, '1.1.1')).toBeUndefined();
   });
 
   it('applies only the spine call from a carrier batched with other tool calls', () => {
@@ -821,8 +824,8 @@ describe('Spine derivation from the message stream', () => {
       toolReceipt('c_read', 'file contents'),
       toolReceipt('c_spine', ACCEPTED_OUTPUT),
     ]);
-    expect(state.openStack).toEqual(['1', '1.1', '1.1.1']);
-    expect(state.nodes['1.1.1']?.summary).toBe('task');
+    expect(openIds(state)).toEqual(['1', '1.1', '1.1.1']);
+    expect(spineNode(state, '1.1.1')?.summary).toBe('task');
   });
 
   it('ignores a transition with malformed call arguments', () => {
@@ -831,7 +834,7 @@ describe('Spine derivation from the message stream', () => {
       assistantToolCall('c1', 'spine_open', '{not json'),
       toolReceipt('c1', ACCEPTED_OUTPUT),
     ]);
-    expect(state.nodes['1.1.1']).toBeUndefined();
+    expect(spineNode(state, '1.1.1')).toBeUndefined();
   });
 
   it('ignores a transition with an empty summary', () => {
@@ -840,7 +843,7 @@ describe('Spine derivation from the message stream', () => {
       assistantToolCall('c1', 'spine_open', JSON.stringify({ summary: '   ' })),
       toolReceipt('c1', ACCEPTED_OUTPUT),
     ]);
-    expect(state.nodes['1.1.1']).toBeUndefined();
+    expect(spineNode(state, '1.1.1')).toBeUndefined();
   });
 
   it('derives undo truncation from the surviving messages alone', () => {
@@ -853,16 +856,16 @@ describe('Spine derivation from the message stream', () => {
       toolReceipt('c2', ACCEPTED_OUTPUT),
     ];
     const full = deriveSpineState(messages);
-    expect(full.nodes['1.1.1']?.closedAt).toBe(3);
-    expect(full.openStack).toEqual(['1', '1.1']);
+    expect(spineNode(full, '1.1.1')?.closedAt).toBe(3);
+    expect(openIds(full)).toEqual(['1', '1.1']);
 
     const beforeClose = deriveSpineState(messages.slice(0, 4));
-    expect(beforeClose.nodes['1.1.1']?.closedAt).toBeUndefined();
-    expect(beforeClose.openStack).toEqual(['1', '1.1', '1.1.1']);
+    expect(spineNode(beforeClose, '1.1.1')?.closedAt).toBeUndefined();
+    expect(openIds(beforeClose)).toEqual(['1', '1.1', '1.1.1']);
 
     const beforeOpen = deriveSpineState(messages.slice(0, 1));
-    expect(beforeOpen.nodes['1.1.1']).toBeUndefined();
-    expect(beforeOpen.openStack).toEqual(['1', '1.1']);
+    expect(spineNode(beforeOpen, '1.1.1')).toBeUndefined();
+    expect(openIds(beforeOpen)).toEqual(['1', '1.1']);
   });
 
   it('derives multiple root epochs from summary messages', () => {
@@ -874,11 +877,11 @@ describe('Spine derivation from the message stream', () => {
       userMessage('now'),
     ]);
     expect(state.rootEpoch).toBe(3);
-    expect(state.openStack).toEqual(['3', '3.1']);
+    expect(openIds(state)).toEqual(['3', '3.1']);
     expect(state.epochStartAt).toBe(4);
     expect(state.epochMemoryAt).toBe(3);
-    expect(state.nodes['1']).toBeDefined();
-    expect(state.nodes['2']).toBeDefined();
+    expect(spineNode(state, '1')).toBeDefined();
+    expect(spineNode(state, '2')).toBeDefined();
   });
 
   it('detects an epoch boundary from the summary prefix when the origin is absent', () => {
@@ -926,10 +929,10 @@ describe('Spine spawn projection', () => {
       ]),
     ]);
 
-    expect(state.openStack).toEqual(['1', '1.1']);
-    expect(state.nodes['1.1']?.children).toEqual(['1.1.1', '1.1.2']);
-    const a = state.nodes['1.1.1'];
-    const b = state.nodes['1.1.2'];
+    expect(openIds(state)).toEqual(['1', '1.1']);
+    expect(childIds(state, '1.1')).toEqual(['1.1.1', '1.1.2']);
+    const a = spineNode(state, '1.1.1');
+    const b = spineNode(state, '1.1.2');
     expect(a).toMatchObject({
       summary: 'task A',
       openedAt: 2,
@@ -961,13 +964,13 @@ describe('Spine spawn projection', () => {
       ]),
     ]);
 
-    expect(state.nodes['1.1']?.children).toEqual(['1.1.1', '1.1.2', '1.1.3']);
-    expect(state.nodes['1.1.1']?.summary).toBe('A');
-    expect(state.nodes['1.1.2']?.summary).toBe('B');
-    expect(state.nodes['1.1.3']?.summary).toBe('C');
-    expect(state.nodes['1.1.1']?.memory).toBe('mem A');
-    expect(state.nodes['1.1.2']?.memory).toBe('mem B');
-    expect(state.nodes['1.1.3']?.memory).toBe('mem C');
+    expect(childIds(state, '1.1')).toEqual(['1.1.1', '1.1.2', '1.1.3']);
+    expect(spineNode(state, '1.1.1')?.summary).toBe('A');
+    expect(spineNode(state, '1.1.2')?.summary).toBe('B');
+    expect(spineNode(state, '1.1.3')?.summary).toBe('C');
+    expect(spineNode(state, '1.1.1')?.memory).toBe('mem A');
+    expect(spineNode(state, '1.1.2')?.memory).toBe('mem B');
+    expect(spineNode(state, '1.1.3')?.memory).toBe('mem C');
   });
 
   it('records errored/aborted outcomes and diagnostics on spawned nodes', () => {
@@ -983,9 +986,9 @@ describe('Spine spawn projection', () => {
       ]),
     ]);
 
-    expect(state.nodes['1.1']?.children).toEqual(['1.1.1', '1.1.2']);
-    expect(state.nodes['1.1.1']?.spawn).toEqual({ summary: 'ok', outcome: 'completed' });
-    expect(state.nodes['1.1.2']?.spawn).toEqual({
+    expect(childIds(state, '1.1')).toEqual(['1.1.1', '1.1.2']);
+    expect(spineNode(state, '1.1.1')?.spawn).toEqual({ summary: 'ok', outcome: 'completed' });
+    expect(spineNode(state, '1.1.2')?.spawn).toEqual({
       summary: 'bad',
       outcome: 'errored',
       diagnostic: 'disk full',
@@ -1006,14 +1009,14 @@ describe('Spine spawn projection', () => {
         results: [spawnResult(0, 'completed', 'a'), spawnResult(1, 'completed', 'b')],
       }),
     ]);
-    expect(badSchema.nodes['1.1']?.children).toEqual([]);
+    expect(childIds(badSchema, '1.1')).toEqual([]);
 
     const gapOrdinal = deriveSpineState([
       userMessage('start'),
       spawnCall('s1', tasks),
       spawnReceipt('s1', [spawnResult(0, 'completed', 'a')]),
     ]);
-    expect(gapOrdinal.nodes['1.1']?.children).toEqual([]);
+    expect(childIds(gapOrdinal, '1.1')).toEqual([]);
 
     const emptyMemory = deriveSpineState([
       userMessage('start'),
@@ -1023,7 +1026,7 @@ describe('Spine spawn projection', () => {
         spawnResult(1, 'completed', ''),
       ]),
     ]);
-    expect(emptyMemory.nodes['1.1']?.children).toEqual([]);
+    expect(childIds(emptyMemory, '1.1')).toEqual([]);
 
     const mismatchCount = deriveSpineState([
       userMessage('start'),
@@ -1034,7 +1037,7 @@ describe('Spine spawn projection', () => {
         spawnResult(2, 'completed', 'c'),
       ]),
     ]);
-    expect(mismatchCount.nodes['1.1']?.children).toEqual([]);
+    expect(childIds(mismatchCount, '1.1')).toEqual([]);
 
     const missingDiagnostic = deriveSpineState([
       userMessage('start'),
@@ -1044,7 +1047,7 @@ describe('Spine spawn projection', () => {
         spawnResult(1, 'errored', 'b'),
       ]),
     ]);
-    expect(missingDiagnostic.nodes['1.1']?.children).toEqual([]);
+    expect(childIds(missingDiagnostic, '1.1')).toEqual([]);
   });
 
   it('keeps child indices contiguous when spawn is mixed with open/close/next', () => {
@@ -1072,11 +1075,11 @@ describe('Spine spawn projection', () => {
     append(ctx, spineAcceptedReceipt('o2'));
 
     const state = deriveSpineState(ctx.context.get());
-    expect(state.nodes['1.1']?.children).toEqual(['1.1.1', '1.1.2', '1.1.3', '1.1.4']);
-    expect(state.nodes['1.1.1']?.summary).toBe('task A');
-    expect(state.nodes['1.1.2']?.summary).toBe('spawn 1');
-    expect(state.nodes['1.1.3']?.summary).toBe('spawn 2');
-    expect(state.nodes['1.1.4']?.summary).toBe('task B');
+    expect(childIds(state, '1.1')).toEqual(['1.1.1', '1.1.2', '1.1.3', '1.1.4']);
+    expect(spineNode(state, '1.1.1')?.summary).toBe('task A');
+    expect(spineNode(state, '1.1.2')?.summary).toBe('spawn 1');
+    expect(spineNode(state, '1.1.3')?.summary).toBe('spawn 2');
+    expect(spineNode(state, '1.1.4')?.summary).toBe('task B');
   });
 
   it('renders spawn evidence followed by memory and keeps the carrier visible', () => {
@@ -1142,10 +1145,10 @@ describe('Spine spawn projection', () => {
     );
 
     const state = deriveSpineState(ctx.context.get());
-    expect(state.openStack).toEqual(['1', '1.1', '1.1.1']);
-    expect(state.nodes['1.1.1']?.children).toEqual(['1.1.1.1', '1.1.1.2']);
-    expect(state.nodes['1.1.1.1']?.summary).toBe('child A');
-    expect(state.nodes['1.1.1.2']?.summary).toBe('child B');
+    expect(openIds(state)).toEqual(['1', '1.1', '1.1.1']);
+    expect(childIds(state, '1.1.1')).toEqual(['1.1.1.1', '1.1.1.2']);
+    expect(spineNode(state, '1.1.1.1')?.summary).toBe('child A');
+    expect(spineNode(state, '1.1.1.2')?.summary).toBe('child B');
   });
 
   it('spawns nodes under the root epoch when the startup node is closed', () => {
@@ -1172,12 +1175,12 @@ describe('Spine spawn projection', () => {
     );
 
     const state = deriveSpineState(ctx.context.get());
-    expect(state.openStack).toEqual(['1']);
-    expect(state.nodes['1']?.children).toEqual(['1.1', '1.2', '1.3']);
-    expect(state.nodes['1.2']?.summary).toBe('branch A');
-    expect(state.nodes['1.3']?.summary).toBe('branch B');
-    expect(state.nodes['1.2']?.closedAt).toBe(4);
-    expect(state.nodes['1.3']?.closedAt).toBe(4);
+    expect(openIds(state)).toEqual(['1']);
+    expect(childIds(state, '1')).toEqual(['1.1', '1.2', '1.3']);
+    expect(spineNode(state, '1.2')?.summary).toBe('branch A');
+    expect(spineNode(state, '1.3')?.summary).toBe('branch B');
+    expect(spineNode(state, '1.2')?.closedAt).toBe(4);
+    expect(spineNode(state, '1.3')?.closedAt).toBe(4);
   });
 });
 
@@ -1448,13 +1451,40 @@ function buildNextChainHistory(ctx: TestAgentContext): void {
   append(ctx, spineRejectedReceipt('c2'));
 }
 
+function spineNode(state: SpineState, id: string) {
+  return findSpineNode(state, id);
+}
+
+function openIds(state: SpineState): string[] {
+  return state.openPath.map((node) => node.id);
+}
+
+function childIds(state: SpineState, id: string): string[] | undefined {
+  return spineNode(state, id)?.children.map((child) => child.id);
+}
+
 function nodeView(
   id: string,
   summary: string,
   closed: boolean,
   children: readonly SpineTreeNodeView[] = [],
+  memory: string | undefined = undefined,
 ): SpineTreeNodeView {
-  return { id, summary, closed, archivePath: undefined, tokenCost: undefined, children };
+  const kind: SpineNodeKind = /^\d+$/.test(id)
+    ? 'epoch'
+    : /^\d+\.1$/.test(id)
+      ? 'startup'
+      : 'task';
+  return {
+    id,
+    kind,
+    summary,
+    closed,
+    memory,
+    archivePath: undefined,
+    tokenCost: undefined,
+    children,
+  };
 }
 
 function flattenViewNodes(view: SpineTreeView): SpineTreeNodeView[] {

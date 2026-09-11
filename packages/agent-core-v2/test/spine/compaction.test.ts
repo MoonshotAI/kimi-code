@@ -6,7 +6,7 @@ import {
 } from '#/agent/contextMemory/compactionHandoff';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { MASTER_ENV } from '#/app/flag/flagService';
-import { ACCEPTED_OUTPUT, IAgentSpineService } from '#/index';
+import { ACCEPTED_OUTPUT, IAgentSpineService, type SpineState } from '#/index';
 
 import {
   execEnvServices,
@@ -67,7 +67,7 @@ describe('Spine / compaction interaction', () => {
 
     const state = readSpine(ctx);
     expect(state.rootEpoch).toBe(2);
-    expect(state.openStack).toEqual(['2', '2.1']);
+    expect(openIds(state)).toEqual(['2', '2.1']);
     expect(state.epochMemoryAt).toBeDefined();
 
     const lastMessage = ctx.context.get().at(-1);
@@ -195,6 +195,10 @@ describe('Spine / compaction interaction', () => {
     expect(input).not.toContain('EPOCH-ONE-MARKER');
   });
 });
+
+function openIds(state: SpineState): string[] {
+  return state.openPath.map((node) => node.id);
+}
 
 function readSpine(ctx: TestAgentContext) {
   return ctx.get(IAgentSpineService).currentState();

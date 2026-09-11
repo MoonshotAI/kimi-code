@@ -11,9 +11,7 @@ import {
   IWorkspaceService,
   createContextTranscriptReducer,
   deriveSpineState,
-  epochStartupNodeId,
   interactions,
-  isRootEpoch,
   resumeSessionById,
   spineTreeViewFromState,
   type ContextMessage,
@@ -227,12 +225,11 @@ export function deriveSpineTree(
   items: readonly { id: string }[],
 ): SpineTreeView | undefined {
   try {
-    const state = deriveSpineState(messages);
-    const view = spineTreeViewFromState(state);
+    const view = spineTreeViewFromState(deriveSpineState(messages));
     const nodes: SpineTreeNode[] = [];
     const walk = (views: readonly SpineTreeNodeView[], parentId: string | null): void => {
       for (const node of views) {
-        if (isRootEpoch(node.id) || node.id === epochStartupNodeId(epochOf(node.id))) {
+        if (node.kind !== 'task') {
           walk(node.children, parentId);
           continue;
         }
@@ -240,7 +237,7 @@ export function deriveSpineTree(
           id: node.id,
           parent_id: parentId,
           title: node.summary,
-          memory: state.nodes[node.id]?.memory ?? '',
+          memory: node.memory ?? '',
           token_cost: node.tokenCost ?? 0,
           status: node.closed ? 'closed' : 'active',
           error: null,
@@ -253,8 +250,4 @@ export function deriveSpineTree(
   } catch {
     return undefined;
   }
-}
-
-function epochOf(id: string): number {
-  return Number(id.split('.')[0]);
 }

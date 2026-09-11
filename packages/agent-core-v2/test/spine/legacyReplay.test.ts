@@ -11,8 +11,10 @@ import type { SpineState } from '#/agent/spine/spineOps';
 import type { WireRecord } from '#/wire/record';
 import {
   deriveSpineState,
+  findSpineNode,
   IAgentContextMemoryService,
   SPINE_VOID_OPENED_AT,
+  walkSpineNodes,
 } from '#/index';
 
 import {
@@ -64,8 +66,16 @@ function expectOnlyLegacySkips(unexpected: readonly unknown[], expectedCount: nu
   }
 }
 
+function spineNode(state: SpineState, id: string) {
+  return findSpineNode(state, id);
+}
+
+function openIds(state: SpineState): string[] {
+  return state.openPath.map((node) => node.id);
+}
+
 function expectSpanInvariants(state: SpineState, messageCount: number): void {
-  for (const node of Object.values(state.nodes)) {
+  for (const node of walkSpineNodes(state)) {
     if (node.openedAt === SPINE_VOID_OPENED_AT) continue;
     expect(node.openedAt, `${node.id} openedAt`).toBeGreaterThanOrEqual(0);
     expect(node.openedAt, `${node.id} openedAt`).toBeLessThan(messageCount);
@@ -75,16 +85,20 @@ function expectSpanInvariants(state: SpineState, messageCount: number): void {
       expect(node.closedAt, `${node.id} span`).toBeGreaterThanOrEqual(node.openedAt);
     }
   }
-  expect(state.openStack.length).toBeGreaterThan(0);
-  expect(state.openStack[0]).toBe(String(state.rootEpoch));
-  for (let i = 0; i < state.openStack.length; i++) {
-    const id = state.openStack[i]!;
-    const node = state.nodes[id];
-    expect(node, `openStack id ${id}`).toBeDefined();
-    expect(node?.closedAt, `openStack id ${id} stays open`).toBeUndefined();
+  const path = openIds(state);
+  expect(path.length).toBeGreaterThan(0);
+  expect(path[0]).toBe(String(state.rootEpoch));
+  for (let i = 0; i < path.length; i++) {
+    const id = path[i]!;
+    const node = spineNode(state, id);
+    expect(node, `openPath id ${id}`).toBeDefined();
+    expect(node?.closedAt, `openPath id ${id} stays open`).toBeUndefined();
     if (i > 0) {
-      const parent = state.nodes[state.openStack[i - 1]!];
-      expect(parent?.children, `openStack ${state.openStack[i - 1]!} → ${id}`).toContain(id);
+      const parent = spineNode(state, path[i - 1]!);
+      expect(
+        parent?.children.map((child) => child.id),
+        `openPath ${path[i - 1]!} → ${id}`,
+      ).toContain(id);
     }
   }
 }
@@ -95,17 +109,19 @@ interface Span {
 }
 
 function expectSpans(state: SpineState, spans: Readonly<Record<string, Span>>): void {
-  expect(Object.keys(state.nodes).sort()).toEqual(Object.keys(spans).sort());
+  expect(walkSpineNodes(state).map((node) => node.id).toSorted()).toEqual(
+    Object.keys(spans).toSorted(),
+  );
   for (const [id, span] of Object.entries(spans)) {
-    const node = state.nodes[id];
+    const node = spineNode(state, id);
     expect(node?.openedAt, `${id} openedAt`).toBe(span.openedAt);
     expect(node?.closedAt, `${id} closedAt`).toBe(span.closedAt);
   }
 }
 
 function parentOf(state: SpineState, id: string): string | null {
-  for (const [candidate, node] of Object.entries(state.nodes)) {
-    if (node.children.includes(id)) return candidate;
+  for (const candidate of walkSpineNodes(state)) {
+    if (candidate.children.some((child) => child.id === id)) return candidate.id;
   }
   return null;
 }
@@ -115,7 +131,7 @@ describe('Spine legacy wire replay (exact-match group)', () => {
     const { derived, messages, unexpected } = await restoreFixture('legacy-open-close');
     expectOnlyLegacySkips(unexpected, 6);
     expect(messages.length).toBe(34);
-    expect(Object.keys(derived.nodes).length).toBe(5);
+    expect(walkSpineNodes(derived).length).toBe(5);
     expectSpanInvariants(derived, messages.length);
   });
 
@@ -123,9 +139,9 @@ describe('Spine legacy wire replay (exact-match group)', () => {
     const { derived, messages, unexpected } = await restoreFixture('legacy-next');
     expectOnlyLegacySkips(unexpected, 3);
     expect(messages.length).toBe(41);
-    expect(Object.keys(derived.nodes).length).toBe(5);
-    expect(derived.openStack).toEqual(['1', '1.1', '1.1.3']);
-    expect(derived.nodes['1.1.3']?.closedAt).toBeUndefined();
+    expect(walkSpineNodes(derived).length).toBe(5);
+    expect(openIds(derived)).toEqual(['1', '1.1', '1.1.3']);
+    expect(spineNode(derived, '1.1.3')?.closedAt).toBeUndefined();
     expectSpanInvariants(derived, messages.length);
   });
 });
@@ -135,15 +151,15 @@ describe('Spine legacy wire replay (receipt-anchor group)', () => {
     const { derived, messages, unexpected } = await restoreFixture('legacy-receipt-anchor');
     expectOnlyLegacySkips(unexpected, 218);
     expect(messages.length).toBe(278);
-    expect(Object.keys(derived.nodes).length).toBe(49);
+    expect(walkSpineNodes(derived).length).toBe(49);
 
     let closedCount = 0;
-    for (const node of Object.values(derived.nodes)) {
+    for (const node of walkSpineNodes(derived)) {
       if (node.closedAt === undefined) continue;
       closedCount++;
     }
     expect(closedCount).toBe(47);
-    expect(derived.openStack).toEqual(['1', '1.1']);
+    expect(openIds(derived)).toEqual(['1', '1.1']);
     expectSpanInvariants(derived, messages.length);
   });
 
@@ -155,7 +171,7 @@ describe('Spine legacy wire replay (receipt-anchor group)', () => {
     expect(derived.rootEpoch).toBe(2);
     expect(derived.epochStartAt).toBe(71);
     expect(derived.epochMemoryAt).toBe(70);
-    expect(derived.openStack).toEqual(['2', '2.1']);
+    expect(openIds(derived)).toEqual(['2', '2.1']);
 
     expectSpans(derived, {
       1: { openedAt: SPINE_VOID_OPENED_AT },
@@ -169,9 +185,9 @@ describe('Spine legacy wire replay (receipt-anchor group)', () => {
       '2.1': { openedAt: 71 },
     });
 
-    expect(derived.nodes['1.1.1']?.memory).toBe('memory_87');
+    expect(spineNode(derived, '1.1.1')?.memory).toBe('memory_87');
     for (const id of ['1.1.1.1', '1.1.1.2', '1.1.1.3', '1.1.1.4']) {
-      expect(derived.nodes[id]?.memory?.length, `${id} memory`).toBeGreaterThan(0);
+      expect(spineNode(derived, id)?.memory?.length, `${id} memory`).toBeGreaterThan(0);
     }
 
     expectSpanInvariants(derived, messages.length);
@@ -215,26 +231,26 @@ describe('Spine legacy wire replay (undo-divergence group)', () => {
       '1.18': { parent: '1', openedAt: 571, closedAt: 580 },
       '1.19': { parent: '1', openedAt: 590 },
     };
-    expect(Object.keys(derived.nodes).sort()).toEqual(Object.keys(DERIVED_TOPOLOGY).sort());
+    expect(walkSpineNodes(derived).map((node) => node.id).toSorted()).toEqual(Object.keys(DERIVED_TOPOLOGY).toSorted());
     for (const [id, expected] of Object.entries(DERIVED_TOPOLOGY)) {
-      const node = derived.nodes[id];
+      const node = spineNode(derived, id);
       expect(node?.openedAt, `${id} openedAt`).toBe(expected.openedAt);
       expect(node?.closedAt, `${id} closedAt`).toBe(expected.closedAt);
       expect(parentOf(derived, id), `${id} parent`).toBe(expected.parent);
     }
-    expect(derived.openStack).toEqual(['1', '1.19']);
+    expect(openIds(derived)).toEqual(['1', '1.19']);
     expect(derived.rootEpoch).toBe(1);
     expect(derived.epochStartAt).toBe(0);
     expect(derived.epochMemoryAt).toBeUndefined();
 
-    expect(derived.nodes['1.1.9']).toBeUndefined();
-    expect(derived.nodes['1.1.8.1']).toBeUndefined();
-    expect(derived.nodes['1.1.27']).toBeUndefined();
-    expect(derived.nodes['1.1']?.memory).toBe('memory_64');
-    expect(derived.nodes['1.2']?.summary).toBe('summary_62');
-    expect(derived.nodes['1.1.2']?.summary).toBe('summary_54');
-    expect(derived.nodes['1.1.7']?.summary).toBe('summary_59');
-    expect(derived.nodes['1.1.8']?.summary).toBe('summary_60');
-    expect(derived.nodes['1.19']?.summary).toBe('summary_80');
+    expect(spineNode(derived, '1.1.9')).toBeUndefined();
+    expect(spineNode(derived, '1.1.8.1')).toBeUndefined();
+    expect(spineNode(derived, '1.1.27')).toBeUndefined();
+    expect(spineNode(derived, '1.1')?.memory).toBe('memory_64');
+    expect(spineNode(derived, '1.2')?.summary).toBe('summary_62');
+    expect(spineNode(derived, '1.1.2')?.summary).toBe('summary_54');
+    expect(spineNode(derived, '1.1.7')?.summary).toBe('summary_59');
+    expect(spineNode(derived, '1.1.8')?.summary).toBe('summary_60');
+    expect(spineNode(derived, '1.19')?.summary).toBe('summary_80');
   });
 });

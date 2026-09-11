@@ -1,8 +1,3 @@
-import type { ContextMessage } from '#/agent/contextMemory/types';
-
-import { SPINE_TOOL_TRIM } from './spine';
-import { TRIM_ACCEPTED_OUTPUT } from './tools/controlResult';
-
 export const SPINE_TRIM_THRESHOLD_BYTES = 10 * 1024;
 
 export type SpineTrimSliceShape =
@@ -25,67 +20,6 @@ export interface SpineTrimProjection {
   readonly masks: ReadonlyMap<number, SpineTrimOp>;
   readonly eligible: ReadonlySet<string>;
   readonly consumed: ReadonlySet<string>;
-}
-
-export function deriveSpineTrimProjection(
-  messages: readonly ContextMessage[],
-): SpineTrimProjection {
-  const callNames = new Map<string, string>();
-  const trimCalls = new Map<string, SpineTrimCallArgs>();
-  const labels = new Map<number, string>();
-  const tagIndex = new Map<string, number>();
-  const masks = new Map<number, SpineTrimOp>();
-  const consumed = new Set<string>();
-  let eligible = new Set<string>();
-  let pendingCalls = new Set<string>();
-  let batchTags: string[] = [];
-  let tagCounter = 0;
-
-  for (let i = 0; i < messages.length; i++) {
-    const message = messages[i];
-    if (message === undefined) continue;
-    if (message.role === 'assistant' && message.toolCalls.length > 0) {
-      if (pendingCalls.size === 0) eligible = new Set(batchTags);
-      pendingCalls = new Set<string>();
-      batchTags = [];
-      for (const call of message.toolCalls) {
-        callNames.set(call.id, call.name);
-        pendingCalls.add(call.id);
-        if (call.name === SPINE_TOOL_TRIM) {
-          const args = parseTrimCallArgs(call.arguments);
-          if (args !== undefined) trimCalls.set(call.id, args);
-        }
-      }
-      continue;
-    }
-    if (message.role !== 'tool') continue;
-    const callId = message.toolCallId;
-    if (callId === undefined) continue;
-    pendingCalls.delete(callId);
-    const name = callNames.get(callId);
-    if (name === SPINE_TOOL_TRIM) {
-      if (message.isError === true) continue;
-      if (messageText(message) !== TRIM_ACCEPTED_OUTPUT) continue;
-      const args = trimCalls.get(callId);
-      const target = args === undefined ? undefined : tagIndex.get(args.trimId);
-      if (args === undefined || target === undefined || consumed.has(args.trimId)) continue;
-      masks.set(target, args.op);
-      consumed.add(args.trimId);
-      continue;
-    }
-    if (name === undefined || name.startsWith('spine_')) continue;
-    if (!message.content.every((part) => part.type === 'text')) continue;
-    const text = messageText(message);
-    if (utf8Length(text) <= SPINE_TRIM_THRESHOLD_BYTES) continue;
-    tagCounter += 1;
-    const tag = `trim_${String(tagCounter)}`;
-    labels.set(i, tag);
-    tagIndex.set(tag, i);
-    batchTags.push(tag);
-  }
-  if (pendingCalls.size === 0) eligible = new Set(batchTags);
-
-  return { labels, tagIndex, masks, eligible, consumed };
 }
 
 export function normalizeTrimOp(
@@ -117,13 +51,15 @@ export function normalizeTrimOp(
   return { kind: 'slice', shape: slice };
 }
 
-interface SpineTrimCallArgs {
+export interface SpineTrimCallArgs {
   readonly trimId: string;
   readonly op: SpineTrimOp;
 }
 
-function parseTrimCallArgs(raw: string | null): SpineTrimCallArgs | undefined {
-  if (raw === null) return undefined;
+export function parseSpineTrimCallArgs(
+  raw: string | null | undefined,
+): SpineTrimCallArgs | undefined {
+  if (raw === undefined || raw === null) return undefined;
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -157,14 +93,4 @@ function nonNegativeInt(value: unknown): number | undefined {
 
 function nonEmptyString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
-
-const encoder = new TextEncoder();
-
-function utf8Length(text: string): number {
-  return encoder.encode(text).length;
-}
-
-function messageText(message: ContextMessage): string {
-  return message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
 }

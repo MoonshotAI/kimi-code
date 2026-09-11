@@ -19,6 +19,7 @@ export interface SpineFoldStatus {
 
 export interface SpineFoldInput {
   readonly state: SpineState;
+  readonly anchors: readonly number[];
   readonly epochSummaryMessage?: ContextMessage;
   readonly trim?: SpineTrimProjection;
 }
@@ -31,7 +32,7 @@ export function foldSpine(
   const ctx: FoldContext = {
     messages,
     state,
-    anchors: userRequestAnchors(messages),
+    anchors: input.anchors,
     epochStartAt: state.epochStartAt,
     trim: input.trim,
   };
@@ -41,11 +42,9 @@ export function foldSpine(
     out.push(input.epochSummaryMessage);
   }
 
-  const root = state.nodes[String(state.rootEpoch)];
+  const root = state.epochs.at(-1);
   if (root !== undefined) {
     walkChildren(ctx, root.children, state.epochStartAt, messages.length - 1, out, pushRaw);
-  } else {
-    for (let i = state.epochStartAt; i < messages.length; i++) pushRaw(ctx, i, out);
   }
 
   return out;
@@ -63,16 +62,14 @@ type SpanSink = (ctx: FoldContext, index: number, out: ContextMessage[]) => void
 
 function walkChildren(
   ctx: FoldContext,
-  childIds: readonly string[],
+  children: readonly SpineNode[],
   lo: number,
   hi: number,
   out: ContextMessage[],
   sink: SpanSink,
 ): void {
   let i = lo;
-  for (const id of childIds) {
-    const child = ctx.state.nodes[id];
-    if (child === undefined || child.openedAt < 0) continue;
+  for (const child of children) {
     if (child.closedAt !== undefined && child.closedAt < ctx.epochStartAt) continue;
     const childLo = Math.max(child.openedAt, ctx.epochStartAt);
     if (childLo > hi) break;
@@ -119,25 +116,8 @@ function pushSurvivingUserRequest(ctx: FoldContext, index: number, out: ContextM
   if (anchor > 0) out.push(annotateUserRequest(message, anchor));
 }
 
-export function isUserRequest(message: ContextMessage): boolean {
-  return message.role === 'user' && message.origin?.kind === 'user';
-}
-
-function userRequestAnchors(messages: readonly ContextMessage[]): readonly number[] {
-  const anchors: number[] = Array.from({ length: messages.length }, () => 0);
-  let anchor = 0;
-  for (let i = 0; i < messages.length; i++) {
-    const message = messages[i];
-    if (message !== undefined && isUserRequest(message)) {
-      anchor += 1;
-      anchors[i] = anchor;
-    }
-  }
-  return anchors;
-}
-
 function spineNodeMessage(node: SpineNode, state: SpineState): ContextMessage {
-  const status = state.openStack.at(-1) === node.id ? 'live' : 'opened';
+  const status = state.openPath.at(-1)?.id === node.id ? 'live' : 'opened';
   const text = `<spine_node id="${node.id}" summary="${escapeAttr(node.summary)}" status="${status}" />`;
   return {
     role: 'user',

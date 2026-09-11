@@ -4,119 +4,250 @@ import {
 } from '#/agent/contextMemory/compactionHandoff';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 
-import { SPINE_TOOL_CLOSE, SPINE_TOOL_NEXT, SPINE_TOOL_OPEN } from './spine';
-import type { SpineNode, SpineSpawnEvidence, SpineState } from './spineOps';
 import {
-  childNodeId,
-  epochStartupNodeId,
-  isRootEpoch,
-  nextChildIndex,
-  parentNodeId,
-  SPINE_VOID_OPENED_AT,
-} from './spineTree';
-import { ACCEPTED_OUTPUT } from './tools/controlResult';
+  SPINE_TOOL_CLOSE,
+  SPINE_TOOL_NEXT,
+  SPINE_TOOL_OPEN,
+  SPINE_TOOL_SPAWN,
+  SPINE_TOOL_TRIM,
+} from './spine';
+import type { SpineNodeKind, SpineSpawnEvidence, SpineState } from './spineOps';
+import { SPINE_VOID_OPENED_AT, spineChildId } from './spineOps';
+import {
+  parseSpineTrimCallArgs,
+  SPINE_TRIM_THRESHOLD_BYTES,
+  type SpineTrimCallArgs,
+  type SpineTrimOp,
+  type SpineTrimProjection,
+} from './spineTrimDerive';
+import { ACCEPTED_OUTPUT, TRIM_ACCEPTED_OUTPUT } from './tools/controlResult';
 
 const LEGACY_ACCEPTED_RECEIPT = 'accepted';
 
-const SPINE_TOOL_SPAWN = 'spine_spawn';
+export interface SpineProjection {
+  readonly state: SpineState;
+  readonly trim: SpineTrimProjection;
+  readonly anchors: readonly number[];
+}
+
+export function deriveSpineProjection(messages: readonly ContextMessage[]): SpineProjection {
+  const evidence = scanSpineEvidence(messages);
+  return {
+    state: buildSpineState(messages, evidence),
+    trim: evidence.trim,
+    anchors: evidence.anchors,
+  };
+}
 
 export function deriveSpineState(messages: readonly ContextMessage[]): SpineState {
-  const accepted = collectAcceptedCallIds(messages);
-  const spawnReceipts = collectSpawnReceipts(messages);
-  const nodes: Record<string, SpineNode> = {};
-  let openStack: readonly string[] = [];
+  return deriveSpineProjection(messages).state;
+}
+
+export function isUserRequest(message: ContextMessage): boolean {
+  return message.role === 'user' && message.origin?.kind === 'user';
+}
+
+interface SpineEvidence {
+  readonly accepted: ReadonlySet<string>;
+  readonly spawns: ReadonlyMap<string, SpawnReceiptInfo>;
+  readonly trim: SpineTrimProjection;
+  readonly anchors: readonly number[];
+}
+
+function scanSpineEvidence(messages: readonly ContextMessage[]): SpineEvidence {
+  const callNames = new Map<string, string>();
+  const spawnCalls = new Map<string, readonly SpawnTask[]>();
+  const trimCalls = new Map<string, SpineTrimCallArgs>();
+  const accepted = new Set<string>();
+  const spawns = new Map<string, SpawnReceiptInfo>();
+  const labels = new Map<number, string>();
+  const tagIndex = new Map<string, number>();
+  const masks = new Map<number, SpineTrimOp>();
+  const consumed = new Set<string>();
+  let eligible = new Set<string>();
+  let pendingCalls = new Set<string>();
+  let batchTags: string[] = [];
+  let tagCounter = 0;
+  const anchors: number[] = Array.from({ length: messages.length }, () => 0);
+  let anchor = 0;
+
+  for (let i = 0; i < messages.length; i++) {
+    const message = messages[i];
+    if (message === undefined) continue;
+    if (isUserRequest(message)) {
+      anchor += 1;
+      anchors[i] = anchor;
+    }
+    if (message.role === 'assistant') {
+      if (message.toolCalls.length === 0) continue;
+      if (pendingCalls.size === 0) eligible = new Set(batchTags);
+      pendingCalls = new Set<string>();
+      batchTags = [];
+      for (const call of message.toolCalls) {
+        callNames.set(call.id, call.name);
+        pendingCalls.add(call.id);
+        if (call.name === SPINE_TOOL_SPAWN) {
+          const tasks = parseSpawnArgs(call.arguments);
+          if (tasks !== undefined) spawnCalls.set(call.id, tasks);
+        } else if (call.name === SPINE_TOOL_TRIM) {
+          const args = parseSpineTrimCallArgs(call.arguments);
+          if (args !== undefined) trimCalls.set(call.id, args);
+        }
+      }
+      continue;
+    }
+    if (message.role !== 'tool') continue;
+    const callId = message.toolCallId;
+    if (callId === undefined) continue;
+    pendingCalls.delete(callId);
+    const name = callNames.get(callId);
+    if (name !== undefined && isSpineTransitionTool(name)) {
+      if (message.isError === true) continue;
+      const text = messageText(message);
+      if (text === ACCEPTED_OUTPUT || text === LEGACY_ACCEPTED_RECEIPT) accepted.add(callId);
+      continue;
+    }
+    if (name === SPINE_TOOL_SPAWN) {
+      if (message.isError === true) continue;
+      const tasks = spawnCalls.get(callId);
+      if (tasks === undefined) continue;
+      const validated = validateSpawnReceipt(tasks, messageText(message), i);
+      if (validated !== undefined) spawns.set(callId, validated);
+      continue;
+    }
+    if (name === SPINE_TOOL_TRIM) {
+      if (message.isError === true) continue;
+      if (messageText(message) !== TRIM_ACCEPTED_OUTPUT) continue;
+      const args = trimCalls.get(callId);
+      const target = args === undefined ? undefined : tagIndex.get(args.trimId);
+      if (args === undefined || target === undefined || consumed.has(args.trimId)) continue;
+      masks.set(target, args.op);
+      consumed.add(args.trimId);
+      continue;
+    }
+    if (name === undefined || name.startsWith('spine_')) continue;
+    if (!message.content.every((part) => part.type === 'text')) continue;
+    const text = messageText(message);
+    if (utf8Length(text) <= SPINE_TRIM_THRESHOLD_BYTES) continue;
+    tagCounter += 1;
+    const tag = `trim_${String(tagCounter)}`;
+    labels.set(i, tag);
+    tagIndex.set(tag, i);
+    batchTags.push(tag);
+  }
+  if (pendingCalls.size === 0) eligible = new Set(batchTags);
+
+  return {
+    accepted,
+    spawns,
+    trim: { labels, tagIndex, masks, eligible, consumed },
+    anchors,
+  };
+}
+
+interface MutableSpineNode {
+  id: string;
+  kind: SpineNodeKind;
+  summary: string;
+  openedAt: number;
+  closedAt?: number;
+  memory?: string;
+  spawn?: SpineSpawnEvidence;
+  children: MutableSpineNode[];
+}
+
+function buildSpineState(
+  messages: readonly ContextMessage[],
+  evidence: SpineEvidence,
+): SpineState {
+  const epochs: MutableSpineNode[] = [];
+  let openPath: MutableSpineNode[] = [];
   let rootEpoch = 0;
   let epochStartAt = 0;
   let epochMemoryAt: number | undefined;
 
   function openEpoch(epoch: number, startupOpenedAt: number): void {
-    const epochId = String(epoch);
-    const startupId = epochStartupNodeId(epoch);
-    nodes[epochId] = {
-      id: epochId,
+    const root: MutableSpineNode = {
+      id: String(epoch),
+      kind: 'epoch',
       summary: `root epoch ${String(epoch)}`,
       openedAt: SPINE_VOID_OPENED_AT,
-      children: [startupId],
+      children: [],
     };
-    nodes[startupId] = {
-      id: startupId,
+    const startup: MutableSpineNode = {
+      id: spineChildId(root.id, 0),
+      kind: 'startup',
       summary: 'startup',
       openedAt: startupOpenedAt,
       children: [],
     };
-    openStack = [epochId, startupId];
+    root.children.push(startup);
+    epochs.push(root);
+    openPath = [root, startup];
     rootEpoch = epoch;
   }
 
   function openNode(summary: string, openedAt: number): void {
-    const parentId = openStack.at(-1);
-    if (parentId === undefined) return;
-    const parent = nodes[parentId];
+    const parent = openPath.at(-1);
     if (parent === undefined || parent.closedAt !== undefined) return;
     const trimmed = summary.trim();
     if (trimmed.length === 0) return;
-    const id = childNodeId(parentId, nextChildIndex(parent.children));
-    nodes[id] = { id, summary: trimmed, openedAt, children: [] };
-    nodes[parentId] = { ...parent, children: [...parent.children, id] };
-    openStack = [...openStack, id];
+    const child: MutableSpineNode = {
+      id: spineChildId(parent.id, parent.children.length),
+      kind: 'task',
+      summary: trimmed,
+      openedAt,
+      children: [],
+    };
+    parent.children.push(child);
+    openPath.push(child);
   }
 
   function closeNode(memory: string, carrierAt: number): void {
-    const id = openStack.at(-1);
-    if (id === undefined || isRootEpoch(id)) return;
-    const node = nodes[id];
-    if (node === undefined || node.closedAt !== undefined) return;
+    const node = openPath.at(-1);
+    if (node === undefined || openPath.length <= 1) return;
+    if (node.closedAt !== undefined) return;
     const trimmed = memory.trim();
     if (trimmed.length === 0) return;
-    const closedAt = Math.max(carrierAt - 1, node.openedAt);
-    nodes[id] = { ...node, closedAt, memory: trimmed };
-    openStack = openStack.slice(0, -1);
+    node.closedAt = Math.max(carrierAt - 1, node.openedAt);
+    node.memory = trimmed;
+    openPath.pop();
   }
 
   function nextNode(summary: string, memory: string, carrierAt: number): void {
-    const closedId = openStack.at(-1);
-    if (closedId === undefined || isRootEpoch(closedId)) return;
-    const closing = nodes[closedId];
-    if (closing === undefined || closing.closedAt !== undefined) return;
+    const closing = openPath.at(-1);
+    if (closing === undefined || openPath.length <= 1) return;
+    if (closing.closedAt !== undefined) return;
     const trimmedSummary = summary.trim();
     const trimmedMemory = memory.trim();
     if (trimmedSummary.length === 0 || trimmedMemory.length === 0) return;
-    const parentId = parentNodeId(closedId);
-    if (parentId === null) return;
-    const parent = nodes[parentId];
+    const parent = openPath.at(-2);
     if (parent === undefined) return;
     const closedAt = Math.max(carrierAt - 1, closing.openedAt);
-    const openedId = childNodeId(parentId, nextChildIndex(parent.children));
-    nodes[closedId] = {
-      ...closing,
-      closedAt,
-      memory: trimmedMemory,
-    };
-    nodes[openedId] = {
-      id: openedId,
+    closing.closedAt = closedAt;
+    closing.memory = trimmedMemory;
+    const opened: MutableSpineNode = {
+      id: spineChildId(parent.id, parent.children.length),
+      kind: 'task',
       summary: trimmedSummary,
       openedAt: closedAt + 1,
       children: [],
     };
-    nodes[parentId] = { ...parent, children: [...parent.children, openedId] };
-    openStack = [...openStack.slice(0, -1), openedId];
+    parent.children.push(opened);
+    openPath = [...openPath.slice(0, -1), opened];
   }
 
-  function spawnNodes(parentId: string, spawn: SpawnReceiptInfo): void {
-    const parent = nodes[parentId];
-    if (parent === undefined || parent.closedAt !== undefined) return;
+  function spawnNodes(parent: MutableSpineNode, spawn: SpawnReceiptInfo): void {
+    if (parent.closedAt !== undefined) return;
     const receiptAt = spawn.receiptAt;
-    let childIndex = nextChildIndex(parent.children);
-    const newChildren: string[] = [];
-    const newNodes: Record<string, SpineNode> = {};
     for (const result of spawn.results) {
-      const id = childNodeId(parentId, childIndex);
       const spawnEvidence: SpineSpawnEvidence = {
         summary: result.summary,
         outcome: result.outcome,
       };
-      newNodes[id] = {
-        id,
+      parent.children.push({
+        id: spineChildId(parent.id, parent.children.length),
+        kind: 'task',
         summary: result.summary,
         openedAt: receiptAt,
         closedAt: receiptAt,
@@ -126,12 +257,8 @@ export function deriveSpineState(messages: readonly ContextMessage[]): SpineStat
             ? spawnEvidence
             : { ...spawnEvidence, diagnostic: result.diagnostic },
         children: [],
-      };
-      newChildren.push(id);
-      childIndex += 1;
+      });
     }
-    nodes[parentId] = { ...parent, children: [...parent.children, ...newChildren] };
-    Object.assign(nodes, newNodes);
   }
 
   openEpoch(1, 0);
@@ -153,13 +280,13 @@ export function deriveSpineState(messages: readonly ContextMessage[]): SpineStat
     for (const call of message.toolCalls) {
       if (call.name === SPINE_TOOL_SPAWN) {
         hasSpawnCall = true;
-        const spawn = spawnReceipts.get(call.id);
+        const spawn = evidence.spawns.get(call.id);
         if (spawn !== undefined) spawns.push(spawn);
         continue;
       }
       if (!isSpineTransitionTool(call.name)) continue;
       hasControlCall = true;
-      if (!accepted.has(call.id)) continue;
+      if (!evidence.accepted.has(call.id)) continue;
       const args = parseTransitionArgs(call.arguments);
       if (args === undefined) continue;
       if (!hasTransitionBody(call.name, args)) continue;
@@ -167,9 +294,9 @@ export function deriveSpineState(messages: readonly ContextMessage[]): SpineStat
     }
     if (hasSpawnCall) {
       if (hasControlCall) continue;
-      const parentId = openStack.at(-1);
-      if (parentId !== undefined) {
-        for (const spawn of spawns) spawnNodes(parentId, spawn);
+      const parent = openPath.at(-1);
+      if (parent !== undefined) {
+        for (const spawn of spawns) spawnNodes(parent, spawn);
       }
       continue;
     }
@@ -185,7 +312,7 @@ export function deriveSpineState(messages: readonly ContextMessage[]): SpineStat
     }
   }
 
-  return { nodes, openStack, rootEpoch, epochStartAt, epochMemoryAt };
+  return { epochs, openPath, rootEpoch, epochStartAt, epochMemoryAt };
 }
 
 interface SpineTransitionArgs {
@@ -211,26 +338,6 @@ function parseTransitionArgs(raw: string | null | undefined): SpineTransitionArg
   };
 }
 
-function collectAcceptedCallIds(messages: readonly ContextMessage[]): ReadonlySet<string> {
-  const spineCallIds = new Set<string>();
-  for (const message of messages) {
-    if (message === undefined || message.role !== 'assistant') continue;
-    for (const call of message.toolCalls) {
-      if (isSpineTransitionTool(call.name)) spineCallIds.add(call.id);
-    }
-  }
-  const accepted = new Set<string>();
-  for (const message of messages) {
-    if (message === undefined || message.role !== 'tool') continue;
-    const callId = message.toolCallId;
-    if (callId === undefined || !spineCallIds.has(callId)) continue;
-    if (message.isError === true) continue;
-    const text = messageText(message);
-    if (text === ACCEPTED_OUTPUT || text === LEGACY_ACCEPTED_RECEIPT) accepted.add(callId);
-  }
-  return accepted;
-}
-
 function isSpineTransitionTool(name: string): boolean {
   return name === SPINE_TOOL_OPEN || name === SPINE_TOOL_CLOSE || name === SPINE_TOOL_NEXT;
 }
@@ -247,11 +354,6 @@ function hasTransitionBody(name: string, args: SpineTransitionArgs): boolean {
 interface SpawnTask {
   readonly summary: string;
   readonly prompt: string;
-}
-
-interface SpawnCallInfo {
-  readonly carrierAt: number;
-  readonly tasks: readonly SpawnTask[];
 }
 
 interface SpawnResult {
@@ -288,34 +390,6 @@ function parseSpawnArgs(raw: string | null | undefined): readonly SpawnTask[] | 
     tasks.push({ summary, prompt });
   }
   return tasks;
-}
-
-function collectSpawnReceipts(
-  messages: readonly ContextMessage[],
-): ReadonlyMap<string, SpawnReceiptInfo> {
-  const calls = new Map<string, SpawnCallInfo>();
-  for (let i = 0; i < messages.length; i++) {
-    const message = messages[i];
-    if (message === undefined || message.role !== 'assistant') continue;
-    for (const call of message.toolCalls) {
-      if (call.name !== SPINE_TOOL_SPAWN) continue;
-      const tasks = parseSpawnArgs(call.arguments);
-      if (tasks !== undefined) calls.set(call.id, { carrierAt: i, tasks });
-    }
-  }
-  const receipts = new Map<string, SpawnReceiptInfo>();
-  for (let i = 0; i < messages.length; i++) {
-    const message = messages[i];
-    if (message === undefined || message.role !== 'tool') continue;
-    const callId = message.toolCallId;
-    if (callId === undefined) continue;
-    const call = calls.get(callId);
-    if (call === undefined) continue;
-    if (message.isError === true) continue;
-    const validated = validateSpawnReceipt(call.tasks, messageText(message), i);
-    if (validated !== undefined) receipts.set(callId, validated);
-  }
-  return receipts;
 }
 
 function validateSpawnReceipt(
@@ -383,4 +457,10 @@ function isEpochBoundary(message: ContextMessage): boolean {
 
 function messageText(message: ContextMessage): string {
   return message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+}
+
+const encoder = new TextEncoder();
+
+function utf8Length(text: string): number {
+  return encoder.encode(text).length;
 }

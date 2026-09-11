@@ -26,9 +26,11 @@ import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import {
+  findSpineNode,
   IAgentSpineService,
   PlanModeEnter,
   PlanModeExit,
+  type SpineState,
 } from '#/index';
 import type { Message } from '#/llm-adapter/contract/message';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -180,10 +182,10 @@ describe('Spine control tools', () => {
     await ctx.untilTurnEnd();
 
     const state = readSpine(ctx);
-    expect(state.nodes['1.1.1']?.summary).toBe('task A');
-    expect(state.nodes['1.1.1']?.closedAt).toBeDefined();
-    expect(state.nodes['1.1.1']?.memory).toBe('did A');
-    expect(state.openStack).toEqual(['1', '1.1']);
+    expect(spineNode(state, '1.1.1')?.summary).toBe('task A');
+    expect(spineNode(state, '1.1.1')?.closedAt).toBeDefined();
+    expect(spineNode(state, '1.1.1')?.memory).toBe('did A');
+    expect(openIds(state)).toEqual(['1', '1.1']);
   });
 
   function textOf(message: ContextMessage | undefined): string {
@@ -219,8 +221,8 @@ describe('Spine control tools', () => {
     expect(openResult?.isError).not.toBe(true);
     expect(textOf(openResult)).toBe(ACCEPTED_OUTPUT);
     const state = readSpine(ctx);
-    expect(state.openStack).toEqual(['1', '1.1']);
-    expect(state.nodes['1.1.1']).toBeUndefined();
+    expect(openIds(state)).toEqual(['1', '1.1']);
+    expect(spineNode(state, '1.1.1')).toBeUndefined();
   });
 
   it('vetoes a second spine_spawn in one response', async () => {
@@ -258,7 +260,7 @@ describe('Spine control tools', () => {
         'spine_spawn may be called at most once in one model response',
       );
     }
-    expect(readSpine(ctx).nodes['1.1.1']).toBeUndefined();
+    expect(spineNode(readSpine(ctx), '1.1.1')).toBeUndefined();
   });
 
   it('commits a spine transition after an undo shrank the history', async () => {
@@ -269,7 +271,7 @@ describe('Spine control tools', () => {
     ctx.mockNextResponse({ type: 'text', text: 'done' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start' }] });
     await ctx.untilTurnEnd();
-    expect(readSpine(ctx).nodes['1.1.1']?.summary).toBe('task A');
+    expect(spineNode(readSpine(ctx), '1.1.1')?.summary).toBe('task A');
 
     ctx.mockNextResponse({ type: 'text', text: 'work' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'work a bit' }] });
@@ -282,8 +284,8 @@ describe('Spine control tools', () => {
     await ctx.untilTurnEnd();
 
     const state = readSpine(ctx);
-    expect(state.nodes['1.1.1.1']?.summary).toBe('task B');
-    expect(state.openStack).toEqual(['1', '1.1', '1.1.1', '1.1.1.1']);
+    expect(spineNode(state, '1.1.1.1')?.summary).toBe('task B');
+    expect(openIds(state)).toEqual(['1', '1.1', '1.1.1', '1.1.1.1']);
   });
 
   it('reopens a closed span when an undo truncates its close evidence', async () => {
@@ -303,7 +305,7 @@ describe('Spine control tools', () => {
     for (let i = 4; i < 10; i++) ctx.appendExchange(i + 1, `u${String(i)}`, `a${String(i)}`, 100);
 
     await ctx.rpc.undoHistory({ count: 7 });
-    expect(readSpine(ctx).nodes['1.1.1']?.closedAt).toBeUndefined();
+    expect(spineNode(readSpine(ctx), '1.1.1')?.closedAt).toBeUndefined();
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'FRESH-PROMPT-MARKER' }] });
     await ctx.untilTurnEnd();
@@ -329,7 +331,7 @@ describe('Spine control tools', () => {
     expect(state.rootEpoch).toBe(1);
     expect(state.epochStartAt).toBe(0);
     expect(state.epochMemoryAt).toBeUndefined();
-    expect(state.nodes['2']).toBeUndefined();
+    expect(spineNode(state, '2')).toBeUndefined();
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'AFTER-CLEAR-MARKER' }] });
     await ctx.untilTurnEnd();
@@ -374,7 +376,7 @@ describe('Spine control tools', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'MID-SPAN-REQUEST' }] });
     await ctx.untilTurnEnd();
 
-    const memory = readSpine(ctx).nodes['1.1.1']?.memory ?? '';
+    const memory = spineNode(readSpine(ctx), '1.1.1')?.memory ?? '';
     expect(memory).toBe('did A per [U2]');
 
     const projected = historyText(ctx.project());
@@ -425,9 +427,9 @@ describe('Spine control tools', () => {
     await ctx.untilTurnEnd();
 
     const state = readSpine(ctx);
-    expect(state.nodes['1.1.1']?.memory).toBe('did A');
-    expect(state.nodes['1.1.2']?.summary).toBe('task B');
-    expect(state.openStack.at(-1)).toBe('1.1.2');
+    expect(spineNode(state, '1.1.1')?.memory).toBe('did A');
+    expect(spineNode(state, '1.1.2')?.summary).toBe('task B');
+    expect(openIds(state).at(-1)).toBe('1.1.2');
   });
 
   it('keeps batched tool results visible and paired after a close', async () => {
@@ -454,7 +456,7 @@ describe('Spine control tools', () => {
       (m) => m.role === 'assistant' && m.toolCalls.some((call) => call.id === 'call_close'),
     );
     expect(carrierIndex).toBeGreaterThan(0);
-    expect(readSpine(ctx).nodes['1.1.1']?.closedAt).toBe(carrierIndex - 1);
+    expect(spineNode(readSpine(ctx), '1.1.1')?.closedAt).toBe(carrierIndex - 1);
 
     const folded = ctx.get(IAgentSpineService).fold(history) as readonly ContextMessage[];
     expect(folded.some((m) => m.role === 'tool' && m.toolCallId === 'call_bash')).toBe(true);
@@ -493,8 +495,8 @@ describe('Spine control tools', () => {
       (m) => m.role === 'assistant' && m.toolCalls.some((call) => call.id === 'call_next'),
     );
     const state = readSpine(ctx);
-    expect(state.nodes['1.1.1']?.closedAt).toBe(carrierIndex - 1);
-    expect(state.nodes['1.1.2']?.openedAt).toBe(carrierIndex);
+    expect(spineNode(state, '1.1.1')?.closedAt).toBe(carrierIndex - 1);
+    expect(spineNode(state, '1.1.2')?.openedAt).toBe(carrierIndex);
 
     const folded = ctx.get(IAgentSpineService).fold(history) as readonly ContextMessage[];
     expect(folded.some((m) => m.role === 'tool' && m.toolCallId === 'call_bash')).toBe(false);
@@ -517,8 +519,8 @@ describe('Spine control tools', () => {
     await ctx.untilTurnEnd();
 
     const state = readSpine(ctx);
-    expect(state.openStack).toEqual(['1', '1.1']);
-    expect(state.nodes['1.1.1']).toBeUndefined();
+    expect(openIds(state)).toEqual(['1', '1.1']);
+    expect(spineNode(state, '1.1.1')).toBeUndefined();
 
     const receipts = ctx.context
       .get()
@@ -546,7 +548,7 @@ describe('Spine control tools', () => {
     await ctx.untilTurnEnd();
 
     const state = readSpine(ctx);
-    expect(state.nodes['1.1.1']?.closedAt).toBeDefined();
+    expect(spineNode(state, '1.1.1')?.closedAt).toBeDefined();
     const receipt = ctx.context.get().find((m) => m.role === 'tool' && m.toolCallId === 'call_close');
     expect(receipt?.isError).not.toBe(true);
   });
@@ -564,8 +566,8 @@ describe('Spine control tools', () => {
     await ctx.untilTurnEnd();
 
     const state = readSpine(ctx);
-    expect(state.nodes['1.1.1']?.closedAt).toBeDefined();
-    expect(state.nodes['1.1.1']?.memory).toContain('wrapped up per [U1]');
+    expect(spineNode(state, '1.1.1')?.closedAt).toBeDefined();
+    expect(spineNode(state, '1.1.1')?.memory).toContain('wrapped up per [U1]');
   });
 
   it('accepts next memory that references an unknown [U#] anchor', async () => {
@@ -581,8 +583,8 @@ describe('Spine control tools', () => {
     await ctx.untilTurnEnd();
 
     const state = readSpine(ctx);
-    expect(state.nodes['1.1.1']?.closedAt).toBeDefined();
-    expect(state.nodes['1.1.2']?.summary).toBe('task B');
+    expect(spineNode(state, '1.1.1')?.closedAt).toBeDefined();
+    expect(spineNode(state, '1.1.2')?.summary).toBe('task B');
     const receipt = ctx.context.get().find((m) => m.role === 'tool' && m.toolCallId === 'call_next');
     expect(receipt?.isError).not.toBe(true);
   });
@@ -659,9 +661,8 @@ describe('Spine durability', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start' }] });
     await ctx.untilTurnEnd();
 
-    const node = readSpine(ctx).nodes['1.1.1'];
+    const node = spineNode(readSpine(ctx), '1.1.1');
     expect(node?.closedAt).toBeDefined();
-    expect(node?.archivePath).toBeUndefined();
     expect(node?.memory).toContain('could not be written');
     expect(reported.some((err) => String(err).includes('disk full'))).toBe(true);
   });
@@ -756,6 +757,18 @@ describe('spine control tool host gating', () => {
   });
 });
 
+function spineNode(state: SpineState, id: string) {
+  return findSpineNode(state, id);
+}
+
+function openIds(state: SpineState): string[] {
+  return state.openPath.map((node) => node.id);
+}
+
+function childIds(state: SpineState, id: string): string[] | undefined {
+  return spineNode(state, id)?.children.map((child) => child.id);
+}
+
 function readSpine(ctx: TestAgentContext) {
   return ctx.get(IAgentSpineService).currentState();
 }
@@ -773,9 +786,9 @@ describe('Spine derivation basics', () => {
     const ctx = testAgent();
     const state = ctx.get(IAgentSpineService).currentState();
     expect(state.rootEpoch).toBe(1);
-    expect(state.openStack).toEqual(['1', '1.1']);
-    expect(state.nodes['1']?.children).toEqual(['1.1']);
-    expect(state.nodes['1.1']?.closedAt).toBeUndefined();
+    expect(openIds(state)).toEqual(['1', '1.1']);
+    expect(childIds(state, '1')).toEqual(['1.1']);
+    expect(spineNode(state, '1.1')?.closedAt).toBeUndefined();
   });
 
   it('rejects closing the root epoch', () => {
@@ -914,8 +927,8 @@ describe('Spine carrier-group classification', () => {
       spineReceipt('call_close'),
     );
     const state = readSpine(ctx);
-    expect(state.openStack).toEqual(['1', '1.1']);
-    expect(state.nodes['1.1.1']).toBeUndefined();
+    expect(openIds(state)).toEqual(['1', '1.1']);
+    expect(spineNode(state, '1.1.1')).toBeUndefined();
   });
 
   it('applies the lone accepted control when its sibling control failed', () => {
@@ -929,8 +942,8 @@ describe('Spine carrier-group classification', () => {
       errorReceipt('call_close', 'close rejected'),
     );
     const state = readSpine(ctx);
-    expect(state.nodes['1.1.1']?.summary).toBe('task A');
-    expect(state.openStack).toEqual(['1', '1.1', '1.1.1']);
+    expect(spineNode(state, '1.1.1')?.summary).toBe('task A');
+    expect(openIds(state)).toEqual(['1', '1.1', '1.1.1']);
   });
 
   it('voids spawn nodes and the control when one response mixes them', () => {
@@ -966,9 +979,9 @@ describe('Spine carrier-group classification', () => {
       spineReceipt('call_open'),
     );
     const state = readSpine(ctx);
-    expect(state.openStack).toEqual(['1', '1.1']);
-    expect(state.nodes['1.1.1']).toBeUndefined();
-    expect(state.nodes['1.1.2']).toBeUndefined();
+    expect(openIds(state)).toEqual(['1', '1.1']);
+    expect(spineNode(state, '1.1.1')).toBeUndefined();
+    expect(spineNode(state, '1.1.2')).toBeUndefined();
   });
 });
 
@@ -1291,12 +1304,12 @@ describe('spine_spawn service', () => {
       } as ContextMessage,
     );
     const state = readSpine(ctx);
-    expect(state.nodes['1.1.1']?.summary).toBe('branch C');
-    expect(state.nodes['1.1.1']?.spawn?.outcome).toBe('errored');
-    expect(state.nodes['1.1.1']?.closedAt).toBeDefined();
-    expect(state.nodes['1.1.2']?.summary).toBe('branch D');
-    expect(state.nodes['1.1.2']?.spawn?.outcome).toBe('errored');
-    expect(state.nodes['1.1.2']?.closedAt).toBeDefined();
+    expect(spineNode(state, '1.1.1')?.summary).toBe('branch C');
+    expect(spineNode(state, '1.1.1')?.spawn?.outcome).toBe('errored');
+    expect(spineNode(state, '1.1.1')?.closedAt).toBeDefined();
+    expect(spineNode(state, '1.1.2')?.summary).toBe('branch D');
+    expect(spineNode(state, '1.1.2')?.spawn?.outcome).toBe('errored');
+    expect(spineNode(state, '1.1.2')?.closedAt).toBeDefined();
 
     completions.forEach((c) => c.resolve({ summary: 'done' }));
     await firstPromise;
@@ -1345,11 +1358,11 @@ describe('spine_spawn service', () => {
     );
 
     const state = readSpine(ctx);
-    expect(state.nodes['1.1.1']?.summary).toBe('branch A');
-    expect(state.nodes['1.1.1']?.memory).toBe('memory A');
-    expect(state.nodes['1.1.1']?.closedAt).toBeDefined();
-    expect(state.nodes['1.1.2']?.summary).toBe('branch B');
-    expect(state.nodes['1.1.2']?.memory).toBe('memory B');
-    expect(state.nodes['1.1.2']?.closedAt).toBeDefined();
+    expect(spineNode(state, '1.1.1')?.summary).toBe('branch A');
+    expect(spineNode(state, '1.1.1')?.memory).toBe('memory A');
+    expect(spineNode(state, '1.1.1')?.closedAt).toBeDefined();
+    expect(spineNode(state, '1.1.2')?.summary).toBe('branch B');
+    expect(spineNode(state, '1.1.2')?.memory).toBe('memory B');
+    expect(spineNode(state, '1.1.2')?.closedAt).toBeDefined();
   });
 });
