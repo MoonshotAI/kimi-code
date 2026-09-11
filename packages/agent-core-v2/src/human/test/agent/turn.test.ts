@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { assign, createActor, emit, setup } from '#/xstate2';
 
+import { credentialsRecovery } from '#/credentials/credentials';
 import { UNKNOWN_CAPABILITY } from '#/llm/capability';
 import type { LlmErrorMessage } from '#/llm/errors';
 import type { ContentPart, Message, UserMessage } from '#/llm/message';
@@ -622,9 +623,13 @@ describe('turn machine credential recovery', () => {
         return Promise.resolve();
       },
     };
-    const { actor, recovering, sent, failed } = startTurnActor(requester, undefined, {
-      request: { model, credentials: provider },
-    });
+    const { actor, recovering, sent, failed } = startTurnActor(
+      requester,
+      { recovery: credentialsRecovery },
+      {
+        request: { model, credentials: provider },
+      },
+    );
 
     await drain();
 
@@ -649,9 +654,14 @@ describe('turn machine credential recovery', () => {
       statusError(401, 'unauthorized'),
       'ok',
     ]);
+    const mediaDegrade = createMediaDegradeRecovery();
     const { actor, recovering } = startTurnActor(
       requester,
-      { recovery: createMediaDegradeRecovery() },
+      {
+        recovery: {
+          propose: (ctx) => credentialsRecovery.propose(ctx) ?? mediaDegrade.propose(ctx),
+        },
+      },
       {
         ...mediaHistory([mediaMessage('a', 2), mediaMessage('b', 1), mediaMessage('c', 1)]),
         request: { model, credentials: provider },
@@ -678,9 +688,13 @@ describe('turn machine credential recovery', () => {
       statusError(401, 'unauthorized'),
       statusError(401, 'still unauthorized'),
     ]);
-    const { actor, recovering, failed } = startTurnActor(requester, undefined, {
-      request: { model, credentials: provider },
-    });
+    const { actor, recovering, failed } = startTurnActor(
+      requester,
+      { recovery: credentialsRecovery },
+      {
+        request: { model, credentials: provider },
+      },
+    );
 
     await drain();
 

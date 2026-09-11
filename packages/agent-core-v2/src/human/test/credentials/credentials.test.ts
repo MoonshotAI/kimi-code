@@ -139,9 +139,24 @@ describe('credentialsRecovery', () => {
   it('proposes a credentials refresh on a recoverable error', () => {
     const provider = oauthCredentials(() => Promise.resolve('tok'));
     expect(credentialsRecovery.propose(recoveryContext(unauthorized, [], provider))).toEqual({
+      strategy: 'credentials',
       action: 'refresh',
-      refreshCredentials: true,
+      prepare: expect.any(Function),
     });
+  });
+
+  it('invalidates the credentials when the proposal prepares', () => {
+    let invalidations = 0;
+    const provider: LlmCredentialProvider = {
+      resolve: () => ({ apiKey: 'tok' }),
+      canRecover: () => true,
+      invalidate: () => {
+        invalidations += 1;
+      },
+    };
+    const proposal = credentialsRecovery.propose(recoveryContext(unauthorized, [], provider));
+    proposal?.prepare?.();
+    expect(invalidations).toBe(1);
   });
 
   it('does not propose when the strategy was already applied', () => {
