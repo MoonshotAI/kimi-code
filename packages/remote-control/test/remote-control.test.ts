@@ -894,7 +894,7 @@ describe('Remote Control stream bridge', () => {
     expect(socket.isPaused).toBe(false);
   });
 
-  it('pauses the source while the sink is above the high-water mark and resumes below the low one', () => {
+  it('pauses the source while the sink is above the high-water mark and resumes once it is back at it', () => {
     vi.useFakeTimers();
     const local = new FakeSocket();
     const tunnel = new FakeSocket();
@@ -912,10 +912,7 @@ describe('Remote Control stream bridge', () => {
 
     vi.advanceTimersByTime(40);
     expect(local.isPaused).toBe(true);
-    tunnel.bufferedAmount = 256 * 1024;
-    vi.advanceTimersByTime(20);
-    expect(local.isPaused).toBe(true);
-    tunnel.bufferedAmount = 256 * 1024 - 1;
+    tunnel.bufferedAmount = 1024 * 1024;
     vi.advanceTimersByTime(20);
     expect(local.isPaused).toBe(false);
 
@@ -932,6 +929,33 @@ describe('Remote Control stream bridge', () => {
     expect(local.closes).toEqual([1001]);
     expect(local.isPaused).toBe(false);
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('resumes the source as soon as a slowly draining sink is back at the high-water mark', () => {
+    vi.useFakeTimers();
+    const local = new FakeSocket();
+    const tunnel = new FakeSocket();
+    bridgeSockets(local, tunnel, () => {});
+
+    tunnel.bufferedAmount = 1024 * 1024 + 64 * 1024;
+    local.emit('message', Buffer.from('one'), false);
+    expect(local.isPaused).toBe(true);
+
+    // A slow link drains a little per poll; the source must be released as soon as the sink
+    // is back at the mark, not after a further deep drain the local server would time out on.
+    for (let polls = 0; polls < 63; polls += 1) {
+      tunnel.bufferedAmount -= 1024;
+      vi.advanceTimersByTime(20);
+      expect(local.isPaused).toBe(true);
+    }
+    tunnel.bufferedAmount -= 1024;
+    vi.advanceTimersByTime(20);
+    expect(local.isPaused).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+
+    local.emit('message', Buffer.from('two'), false);
+    expect(tunnel.sent).toEqual(['one', 'two']);
+    expect(local.isPaused).toBe(false);
   });
 
   it('resumes a source paused by back-pressure before closing it', () => {

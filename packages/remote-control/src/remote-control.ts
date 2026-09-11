@@ -35,7 +35,6 @@ const MAX_RECONNECT_DELAY_MS = 30_000;
 const MAX_EARLY_FRAME_BYTES = 1024 * 1024;
 const MAX_EARLY_FRAMES = 256;
 const BRIDGE_HIGH_WATER_MARK_BYTES = 1024 * 1024;
-const BRIDGE_LOW_WATER_MARK_BYTES = 256 * 1024;
 const BRIDGE_DRAIN_POLL_MS = 20;
 const RESPONSE_CHUNK_BYTES = 256 * 1024;
 const RELAY_PING_INTERVAL_MS = 30_000;
@@ -1093,7 +1092,9 @@ export function bridgeSockets(
 }
 
 // One direction of the bridge: pauses the source while the sink's send buffer is above the
-// high-water mark and polls it back below the low-water mark before resuming.
+// high-water mark and resumes as soon as a poll sees it back at the mark. There is no lower
+// resume threshold on purpose: the local server closes a peer whose socket makes no progress
+// for 15 s, so each pause must stay short even when the relay link drains slowly.
 function createPump(
   from: BridgeSocket,
   to: BridgeSocket,
@@ -1118,7 +1119,7 @@ function createPump(
     if (drain !== undefined || to.bufferedAmount <= BRIDGE_HIGH_WATER_MARK_BYTES) return;
     from.pause();
     drain = setInterval(() => {
-      if (to.bufferedAmount < BRIDGE_LOW_WATER_MARK_BYTES) dispose();
+      if (to.bufferedAmount <= BRIDGE_HIGH_WATER_MARK_BYTES) dispose();
     }, BRIDGE_DRAIN_POLL_MS);
   };
   return { forward, throttled: () => drain !== undefined, dispose };
