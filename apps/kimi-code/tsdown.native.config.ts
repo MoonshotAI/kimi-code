@@ -16,7 +16,21 @@ const builtins = new Set([
   ...builtinModules,
   ...builtinModules.map((name) => `node:${name}`),
 ]);
-const optionalNativeDependencies = new Set(['cpu-features']);
+const optionalNativeDependencies = new Set(['cpu-features', 'node-pty']);
+
+function nodePtyImportPlugin() {
+  return {
+    name: 'kimi-node-pty-import',
+    transform(code: string) {
+      const next = code.replaceAll(
+        /await\s+import\(\s*['"]node-pty['"]\s*\)/g,
+        'await globalThis.__kimiImportNodePty()',
+      );
+      if (next === code) return null;
+      return next;
+    },
+  };
+}
 
 function shouldAlwaysBundle(id: string): boolean {
   if (builtins.has(id) || id.startsWith('node:')) return false;
@@ -42,7 +56,7 @@ export default defineConfig({
   platform: 'node',
   target: 'node24',
   banner: { js: '#!/usr/bin/env node' },
-  plugins: [rawTextPlugin()],
+  plugins: [rawTextPlugin(), nodePtyImportPlugin()],
   alias: {
     '@': resolve(appRoot, 'src'),
   },

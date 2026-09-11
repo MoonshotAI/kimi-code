@@ -22,6 +22,8 @@ let installed = false;
 // Path shape: native/<darwin|win32>/prebuilds/<arch>/<file>.node — note the
 // two path segments after "prebuilds", so ".+" (not "[^/]+") is required.
 const PI_TUI_NATIVE_PATTERN = /native[\\/](?:win32|darwin)[\\/]prebuilds[\\/].+\.node$/;
+const NODE_PTY_PREBUILD_PATTERN =
+  /(?:^|[\\/])prebuilds[\\/](?:darwin|linux|win32)-[^\\/]+[\\/](?:pty|conpty|conpty_console_list)\.node$/;
 
 export function installNativeModuleHook(): void {
   if (installed) return;
@@ -51,6 +53,33 @@ export function installNativeModuleHook(): void {
         }
       }
     }
+
+    if (typeof request === 'string' && (request === 'node-pty' || request.startsWith('node-pty/'))) {
+      const pkgRoot = getNativePackageRoot('node-pty');
+      if (pkgRoot !== null) {
+        const redirected =
+          request === 'node-pty'
+            ? join(pkgRoot, 'lib', 'index.js')
+            : join(pkgRoot, request.slice('node-pty/'.length));
+        return originalLoad.call(this, redirected, parent, isMain);
+      }
+    }
+
+    if (
+      typeof request === 'string' &&
+      NODE_PTY_PREBUILD_PATTERN.test(request) &&
+      !existsSync(request)
+    ) {
+      const pkgRoot = getNativePackageRoot('node-pty');
+      if (pkgRoot !== null) {
+        const match = request.match(NODE_PTY_PREBUILD_PATTERN);
+        if (match !== null) {
+          const redirected = join(pkgRoot, match[0].replace(/^[\\/]/, ''));
+          return originalLoad.call(this, redirected, parent, isMain);
+        }
+      }
+    }
+
     return originalLoad.call(this, request, parent, isMain);
   };
 }
