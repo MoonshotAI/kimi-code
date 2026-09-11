@@ -14,7 +14,7 @@ const scriptDir = import.meta.dirname;
 const outFile = resolveOutputFile(process.argv.slice(2));
 const modelsUrl = process.env.MODELS_DEV_URL || "https://models.dev/api.json";
 
-const KEEP_PROVIDER = new Set(["id", "name", "api", "env", "npm", "type", "models"]);
+const KEEP_PROVIDER = new Set(["id", "name", "api", "env", "npm", "models"]);
 const KEEP_MODEL = new Set([
   "id",
   "name",
@@ -24,10 +24,6 @@ const KEEP_MODEL = new Set([
   "reasoning",
   "interleaved",
   "modalities",
-  // Message-level tool declarations capability — kosong's
-  // catalogModelToCapability reads it; stripping it here would silently
-  // disable tool-select for catalog-imported aliases.
-  "dynamically_loaded_tools",
 ]);
 
 function resolveOutputFile(args) {

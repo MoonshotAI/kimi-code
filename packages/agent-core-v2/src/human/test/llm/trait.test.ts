@@ -1441,7 +1441,7 @@ describe('anthropic thinking kwargs', () => {
       {
         messages: [
           createAssistantMessage(
-            [{ type: 'think', think: 'reasoning', encrypted: 'sig_1' }],
+            [{ type: 'think', think: 'reasoning', meta: { encrypted: 'sig_1' } }],
             [{ type: 'function', id: 'call_1', name: 'get_weather', arguments: '{}' }],
           ),
           createToolMessage('call_1', 'sunny'),
@@ -1455,7 +1455,7 @@ describe('anthropic thinking kwargs', () => {
         },
       },
     );
-    expect(parts).toContainEqual({ type: 'think', think: '', encrypted: 'enc_data_1' });
+    expect(parts).toContainEqual({ type: 'think', think: '', meta: { encrypted: 'enc_data_1' } });
     let body = client.body();
     expect(body['thinking']).toEqual({ type: 'enabled' });
     expect(body['output_config']).toEqual({ effort: 'high' });
@@ -1747,7 +1747,7 @@ describe('openai responses base', () => {
           createUserMessage('hi'),
           createAssistantMessage(
             [
-              { type: 'think', think: 'hmm', encrypted: 'enc_0' },
+              { type: 'think', think: 'hmm', meta: { encrypted: 'enc_0' } },
               { type: 'text', text: 'checking' },
             ],
             [{ type: 'function', id: 'call|abc', name: 'get_weather', arguments: '{"city":"sf"}' }],
@@ -1815,7 +1815,7 @@ describe('openai responses base', () => {
       raw: { input_tokens: 12, output_tokens: 7, input_tokens_details: { cached_tokens: 5 } },
     });
     expect(parts).toContainEqual({ type: 'think', think: 'thinking' });
-    expect(parts).toContainEqual({ type: 'think', think: '', encrypted: 'enc_1' });
+    expect(parts).toContainEqual({ type: 'think', think: '', meta: { encrypted: 'enc_1' } });
     expect(parts).toContainEqual({
       type: 'function',
       id: 'call_1',
@@ -1880,7 +1880,7 @@ describe('google genai base', () => {
           createUserMessage('hi'),
           createAssistantMessage(
             [
-              { type: 'think', think: 'hmm', encrypted: 'sig_0' },
+              { type: 'think', think: 'hmm', meta: { encrypted: 'sig_0' } },
               { type: 'text', text: 'checking' },
             ],
             [
@@ -1946,7 +1946,7 @@ describe('google genai base', () => {
       inputCacheCreation: 0,
       raw: { promptTokenCount: 10, candidatesTokenCount: 5, cachedContentTokenCount: 4 },
     });
-    expect(parts).toContainEqual({ type: 'think', think: 'hmm', encrypted: 'sig_1' });
+    expect(parts).toContainEqual({ type: 'think', think: 'hmm', meta: { encrypted: 'sig_1' } });
     expect(parts).toContainEqual({ type: 'text', text: 'sunny' });
     const functionPart = parts.find(isToolCall);
     expect(functionPart?.name).toBe('get_weather');

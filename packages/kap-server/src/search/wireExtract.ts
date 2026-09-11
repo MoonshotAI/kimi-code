@@ -193,7 +193,7 @@ export function analyzeWireLine(line: string): WireLineAnalysis {
     if (e.type === 'content.part') {
       const part = e.part;
       if (part !== null && typeof part === 'object') {
-        const p = part as ContentPartLike & { think?: unknown; encrypted?: unknown };
+        const p = part as ContentPartLike & { think?: unknown; encrypted?: unknown; meta?: unknown };
         if (p.type === 'text' && typeof p.text === 'string') {
           const text = p.text.trim();
           if (text.length > 0) {
@@ -201,7 +201,13 @@ export function analyzeWireLine(line: string): WireLineAnalysis {
             turn = ENSURE;
           }
         } else if (p.type === 'think' && typeof p.think === 'string') {
-          if (p.think.trim().length > 0 || p.encrypted !== undefined) turn = ENSURE;
+          const metaEncrypted =
+            p.meta !== null && typeof p.meta === 'object'
+              ? (p.meta as { encrypted?: unknown }).encrypted
+              : undefined;
+          if (p.think.trim().length > 0 || p.encrypted !== undefined || metaEncrypted !== undefined) {
+            turn = ENSURE;
+          }
         } else {
           turn = ENSURE;
         }

@@ -2,24 +2,43 @@ import { z } from 'zod';
 
 import type { HistoryMessage } from './turn';
 
-const textPartSchema = z.object({ type: z.literal('text'), text: z.string() });
+const contentPartMetaSchema = z.record(z.string(), z.unknown());
+const thinkPartMetaSchema = z.looseObject({
+  encrypted: z.string().optional(),
+  detailsIndex: z.number().optional(),
+  reasoningKey: z.string().optional(),
+});
+const textPartSchema = z.object({
+  type: z.literal('text'),
+  text: z.string(),
+  meta: contentPartMetaSchema.optional(),
+});
+const reasoningDetailsElementSchema = z.object({
+  type: z.string().optional(),
+  index: z.number(),
+  summary: z.string().optional(),
+  encrypted: z.string().optional(),
+});
 const thinkPartSchema = z.object({
   type: z.literal('think'),
   think: z.string(),
-  encrypted: z.string().optional(),
-  detailsIndex: z.number().optional(),
+  details: z.array(reasoningDetailsElementSchema).optional(),
+  meta: thinkPartMetaSchema.optional(),
 });
 const imageUrlPartSchema = z.object({
   type: z.literal('image_url'),
   imageUrl: z.object({ url: z.string(), id: z.string().optional(), name: z.string().optional() }),
+  meta: contentPartMetaSchema.optional(),
 });
 const audioUrlPartSchema = z.object({
   type: z.literal('audio_url'),
   audioUrl: z.object({ url: z.string(), id: z.string().optional() }),
+  meta: contentPartMetaSchema.optional(),
 });
 const videoUrlPartSchema = z.object({
   type: z.literal('video_url'),
   videoUrl: z.object({ url: z.string(), id: z.string().optional(), name: z.string().optional() }),
+  meta: contentPartMetaSchema.optional(),
 });
 
 export const contentPartSchema = z.discriminatedUnion('type', [

@@ -67,6 +67,8 @@ const kimiAcceptedImageMimes = (): ReadonlySet<string> => providerImagePolicy('k
 export const kimiOpenAITrait: OpenAITrait = {
   strictThinkingValidation: true,
 
+  reasoningDisplay: 'content',
+
   toolMessageConversion: 'keep_parts',
 
   cacheKey: (key) => ({ prompt_cache_key: key }),

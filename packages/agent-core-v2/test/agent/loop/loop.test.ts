@@ -1669,7 +1669,7 @@ describe('interruption reminder', () => {
     expect(interruptionReminders()).toHaveLength(1);
 
     ctx.mockNextResponse(
-      { type: 'think', think: 'seg', encrypted: 'sig' },
+      { type: 'think', think: 'seg', meta: { encrypted: 'sig' } },
       { type: 'text', text: 'partial answer' },
     );
     const second = ctx.get(IEventBus).subscribe(AssistantDelta, () => {
@@ -1682,7 +1682,7 @@ describe('interruption reminder', () => {
     expect(ctx.contextData().history).toContainEqual({
       role: 'assistant',
       content: [
-        { type: 'think', think: 'seg', encrypted: 'sig' },
+        { type: 'think', think: 'seg', meta: { encrypted: 'sig' } },
         { type: 'text', text: 'partial answer' },
       ],
       toolCalls: [],

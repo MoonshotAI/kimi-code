@@ -63,7 +63,6 @@ function modelWith(spec: {
   readonly protocol: Model['protocol'];
   readonly providerType?: string;
   readonly providerOptions?: Model['providerOptions'];
-  readonly reasoningKey?: string;
   readonly supportEfforts?: readonly string[];
 }): Model {
   return {
@@ -84,7 +83,6 @@ function modelWith(spec: {
     alwaysThinking: false,
     providerType: spec.providerType,
     providerName: spec.providerType ?? spec.protocol,
-    reasoningKey: spec.reasoningKey,
     supportEfforts: spec.supportEfforts,
     providerOptions: spec.providerOptions,
   };

@@ -282,7 +282,7 @@ describe('reduceContextTranscript', () => {
       loopEvent({
         type: 'content.part',
         stepUuid: 's2',
-        part: { type: 'think', think: '', encrypted: 'sig' },
+        part: { type: 'think', think: '', meta: { encrypted: 'sig' } },
       }),
       loopEvent({ type: 'step.end', uuid: 's2' }),
       loopEvent({ type: 'step.begin', uuid: 's3' }),

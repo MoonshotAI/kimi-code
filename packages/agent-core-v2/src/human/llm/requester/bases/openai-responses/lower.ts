@@ -180,7 +180,7 @@ export function lowerMessage(
       if (part === undefined) break;
       if (part.type === 'think') {
         flushPendingParts();
-        const encryptedValue = part.encrypted;
+        const encryptedValue = part.meta?.encrypted;
         const summaries: { type: 'summary_text'; text: string }[] = [
           { type: 'summary_text', text: part.think },
         ];
@@ -189,7 +189,7 @@ export function lowerMessage(
           const nextPart = message.content[i];
           if (nextPart === undefined) break;
           if (nextPart.type !== 'think') break;
-          if (nextPart.encrypted !== encryptedValue) break;
+          if (nextPart.meta?.encrypted !== encryptedValue) break;
           summaries.push({ type: 'summary_text', text: nextPart.think });
           i += 1;
         }

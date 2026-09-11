@@ -161,7 +161,7 @@ function shapeOutput(
       continue;
     }
     if (part.type === 'think') {
-      textChars += part.think.length + (part.encrypted?.length ?? 0);
+      textChars += part.think.length + (part.meta?.encrypted?.length ?? 0);
     } else {
       hasMedia = true;
     }

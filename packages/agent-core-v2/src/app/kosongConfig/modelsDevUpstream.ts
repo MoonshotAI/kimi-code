@@ -196,7 +196,6 @@ export function modelsDevModelToRecord(providerId: string, model: ModelsDevModel
   if (model.maxOutputSize !== undefined) record.maxOutputSize = model.maxOutputSize;
   if (capabilities !== undefined) record.capabilities = capabilities;
   if (model.name !== undefined) record.displayName = model.name;
-  if (model.reasoningKey !== undefined) record.reasoningKey = model.reasoningKey;
   if (model.supportEfforts !== undefined) record.supportEfforts = [...model.supportEfforts];
   if (model.offEffort !== undefined) record.offEffort = model.offEffort;
   if (model.protocol !== undefined) record.protocol = model.protocol;

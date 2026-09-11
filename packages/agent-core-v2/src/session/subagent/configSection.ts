@@ -35,7 +35,6 @@ export const SecondaryModelConfigSchema = z.object({
   maxOutputSize: z.number().int().min(1).optional(),
   capabilities: z.array(z.string()).optional(),
   displayName: z.string().optional(),
-  reasoningKey: z.string().optional(),
   adaptiveThinking: z.boolean().optional(),
   supportEfforts: z.array(z.string()).optional(),
   defaultEffort: z.string().optional(),

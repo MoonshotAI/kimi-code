@@ -34,18 +34,6 @@ describe('resolveModelsDevImport', () => {
       kind: 'ok',
       wire: 'google-genai',
     });
-    expect(resolveModelsDevImport({ id: 'x', type: 'openai_responses' })).toEqual({
-      kind: 'needs-base-url',
-      wire: 'openai_responses',
-      guessed: false,
-    });
-    expect(resolveModelsDevImport({ id: 'x', type: 'not-a-wire' })).toEqual({
-      kind: 'invalid',
-      reason: 'unknown-explicit-type',
-    });
-    expect(
-      resolveModelsDevImport({ id: 'x', type: 'kokub', npm: '@ai-sdk/openai-compatible' }),
-    ).toEqual({ kind: 'invalid', reason: 'unknown-explicit-type' });
     expect(
       resolveModelsDevImport({ id: 'amazon-bedrock', npm: '@ai-sdk/amazon-bedrock' }),
     ).toEqual({ kind: 'invalid', reason: 'proprietary-sdk' });
@@ -114,12 +102,12 @@ describe('resolveModelsDevImport', () => {
       guessed: false,
       baseUrl: 'https://proxy.example.test/v1',
     });
-    expect(resolveModelsDevImport({ id: 'x', type: 'openai' }, '   ')).toEqual({
+    expect(resolveModelsDevImport({ id: 'x' }, '   ')).toEqual({
       kind: 'invalid',
       reason: 'empty-base-url',
     });
     expect(
-      resolveModelsDevImport({ id: 'x', type: 'openai' }, 'https://${HOST}.example.test'),
+      resolveModelsDevImport({ id: 'x' }, 'https://${HOST}.example.test'),
     ).toEqual({ kind: 'invalid', reason: 'placeholder-base-url' });
   });
 });
@@ -181,7 +169,6 @@ describe('modelsDevProviderModels', () => {
       audio_in: true,
       thinking: true,
       tool_use: true,
-      dynamically_loaded_tools: false,
     });
     expect(gpt5?.maxContextSize).toBe(400000);
     expect(gpt5?.maxInputSize).toBe(272000);
@@ -189,7 +176,6 @@ describe('modelsDevProviderModels', () => {
     expect(gpt5?.supportEfforts).toEqual(['low', 'medium', 'high']);
     expect(gpt5?.offEffort).toBeUndefined();
     expect(gpt5?.alwaysThinking).toBe(true);
-    expect(gpt5?.reasoningKey).toBe('reasoning_details');
     const grok = models.get('grok-4');
     expect(grok?.supportEfforts).toEqual(['low', 'high']);
     expect(grok?.offEffort).toBe('none');

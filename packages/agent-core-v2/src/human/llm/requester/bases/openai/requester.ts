@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 import { assign, shake } from 'radashi';
 
 import { headersToRecord } from '#/llm/errors';
-import { modelKey, type LlmModel } from '#/llm/model';
+import type { LlmModel } from '#/llm/model';
 import { toLlmSyntaxErrorMessage } from '#/llm/syntax-errors';
 import type { ProtocolBase, ProtocolRequesterOptions, TraitContext } from '#/llm/protocol/base';
 import { resolveModelConnection } from '#/llm/protocol/connection';
@@ -42,7 +42,6 @@ import {
   responseFormatToOpenAI,
   type OpenAIRequestParams,
 } from './format';
-import { DEFAULT_REASONING_KEY, ReasoningKeyDialect } from './reasoning-key';
 
 const OPENAI_CHAT_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
   normalize: (id) => sanitizeToolCallId(id, 64),
@@ -64,7 +63,6 @@ export interface OpenAIRequesterOptions
 
 export interface OpenAIRequestPlanOptions {
   readonly trait?: OpenAITrait;
-  readonly reasoningKey?: string;
 }
 
 export function planOpenAIRequest(
@@ -107,7 +105,6 @@ export function planOpenAIRequest(
   kwargs = shake(assign(kwargs, input.extraParams?.openai ?? {}));
 
   const lowered = lowerOpenAIRequest(input, {
-    reasoningKey: options?.reasoningKey ?? DEFAULT_REASONING_KEY,
     preserveThinking,
     toolMessageConversion: input.toolMessageConversion ?? trait?.toolMessageConversion,
   });
@@ -135,7 +132,6 @@ interface OpenAITransport {
   readonly trait: OpenAITrait | undefined;
   readonly ctx: TraitContext;
   readonly format: ReturnType<typeof createOpenAIFormat>;
-  readonly reasoning: ReasoningKeyDialect;
   readonly resolveClient: (request: LlmClientContext) => OpenAI;
   readonly signal: AbortSignal;
   readonly onEvent?: (event: LlmRequestEvent) => void;
@@ -145,7 +141,7 @@ async function internalGenerate(
   request: OpenAIRequestParams,
   transport: OpenAITransport,
 ): Promise<void> {
-  const { connection, trait, ctx, format, reasoning, resolveClient, signal, onEvent } = transport;
+  const { connection, trait, ctx, format, resolveClient, signal, onEvent } = transport;
   const client = resolveClient({
     model: ctx.model,
     headers: mergeRequestHeaders(
@@ -159,7 +155,7 @@ async function internalGenerate(
     .withResponse();
   onEvent?.({ type: 'llm.streaming.headers', headers: headersToRecord(response.headers) ?? {} });
   const parse = format.createStreamParser({
-    reasoningKey: trait?.reasoningKey,
+    reasoningDisplay: trait?.reasoningDisplay,
     resolveUsage:
       trait?.extractUsage === undefined
         ? undefined
@@ -170,7 +166,6 @@ async function internalGenerate(
   });
   let messageId: string | undefined;
   for await (const chunk of stream) {
-    reasoning.observe(chunk.choices?.[0]?.delta);
     let failed = false;
     parse(chunk, {
       onDelta: (part) => onEvent?.({ type: 'llm.streaming.part', part }),
@@ -201,16 +196,6 @@ export function createOpenAIRequester(options?: OpenAIRequesterOptions): LlmRequ
   const resolveClient =
     options?.clientFactory ??
     ((request: LlmClientContext) => createClient(request.model, request.headers));
-  const reasoningByModel = new Map<string, ReasoningKeyDialect>();
-  const reasoningFor = (ctx: TraitContext): ReasoningKeyDialect => {
-    const key = modelKey(ctx.model);
-    let reasoning = reasoningByModel.get(key);
-    if (reasoning === undefined) {
-      reasoning = new ReasoningKeyDialect(trait?.reasoningKey);
-      reasoningByModel.set(key, reasoning);
-    }
-    return reasoning;
-  };
   return {
     async generate(
       config: LlmRequestConfig,
@@ -222,10 +207,8 @@ export function createOpenAIRequester(options?: OpenAIRequesterOptions): LlmRequ
       const { messages } = content;
       const { signal, onEvent } = control;
       const ctx: TraitContext = { model };
-      let reasoning: ReasoningKeyDialect;
       let request: OpenAIRequestParams;
       try {
-        reasoning = reasoningFor(ctx);
         const policy = trait?.toolCallIdPolicy ?? OPENAI_CHAT_TOOL_CALL_ID_POLICY;
         request = planOpenAIRequest(
           {
@@ -235,7 +218,7 @@ export function createOpenAIRequester(options?: OpenAIRequesterOptions): LlmRequ
             tools,
             usedContextTokens: content.usedContextTokens,
           },
-          { trait, reasoningKey: reasoning.outboundKey() },
+          { trait },
         );
       } catch (error) {
         onEvent?.({ type: 'llm.failed.syntax', error: toLlmSyntaxErrorMessage(error) });
@@ -247,7 +230,6 @@ export function createOpenAIRequester(options?: OpenAIRequesterOptions): LlmRequ
           trait,
           ctx,
           format,
-          reasoning,
           resolveClient,
           signal,
           onEvent,

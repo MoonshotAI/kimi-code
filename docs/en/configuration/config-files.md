@@ -155,7 +155,6 @@ Each entry in the `models` table defines a model alias (the name used in `defaul
 | `off_effort` | `string` | No | Effort value sent on the wire to disable thinking (e.g. `none` for xai grok); the only way to actually stop reasoning on models that reason by default |
 | `base_url` | `string` | No | Per-model endpoint override (written by catalog imports); takes precedence over the provider's `base_url`, only effective together with `protocol` |
 | `display_name` | `string` | No | Name shown in the UI; falls back to `model` when unset |
-| `reasoning_key` | `string` | No | `openai` provider only; set when the gateway returns reasoning content under a non-standard field name (`reasoning_content` and friends are auto-detected) |
 | `adaptive_thinking` | `boolean` | No | `anthropic` provider only; force adaptive thinking on or off, omit to infer from the model name (Claude ≥ 4.6 uses adaptive) |
 
 When an alias contains `.`, use a quoted key:
@@ -182,7 +181,7 @@ max_context_size = 131072
 display_name = "Kimi for Coding (custom)"
 ```
 
-`[models."<alias>".overrides]` accepts ordinary model fields such as `max_context_size`, `max_input_size`, `max_output_size`, `capabilities`, `display_name`, `reasoning_key`, `adaptive_thinking`, `support_efforts`, `default_effort`, and `off_effort`. It does not accept identity / routing fields: `provider`, `model`, `protocol`, `beta_api`, and `base_url`.
+`[models."<alias>".overrides]` accepts ordinary model fields such as `max_context_size`, `max_input_size`, `max_output_size`, `capabilities`, `display_name`, `adaptive_thinking`, `support_efforts`, `default_effort`, and `off_effort`. It does not accept identity / routing fields: `provider`, `model`, `protocol`, `beta_api`, and `base_url`.
 
 You can also switch models temporarily without touching the config file: setting `KIMI_MODEL_*` environment variables synthesizes a temporary provider in memory that does not persist after restart. See [Define a model from environment variables](./env-vars.md#define-a-model-from-environment-variables-kimi_model_).
 

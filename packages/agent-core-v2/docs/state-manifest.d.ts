@@ -710,11 +710,24 @@ export interface AgentStateSnapshot {
     readonly content: (/* ContentPart — packages/agent-core-v2/src/human/llm/message.ts */ /* TextPart — packages/agent-core-v2/src/human/llm/message.ts */ {
       type: 'text';
       text: string;
+      meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
+        [key: string]: unknown;
+      };
     } | /* ThinkPart — packages/agent-core-v2/src/human/llm/message.ts */ {
       type: 'think';
       think: string;
-      encrypted?: string;
-      detailsIndex?: number;
+      details?: /* ReasoningDetailsElement — packages/agent-core-v2/src/human/llm/message.ts */ {
+        readonly type?: string;
+        readonly index: number;
+        readonly summary?: string;
+        readonly encrypted?: string;
+      }[];
+      meta?: /* ThinkPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
+        encrypted?: string;
+        detailsIndex?: number;
+        reasoningKey?: string;
+        [key: string]: unknown;
+      };
     } | /* ImageURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
       type: 'image_url';
       imageUrl: {
@@ -722,11 +735,17 @@ export interface AgentStateSnapshot {
         id?: string;
         name?: string;
       };
+      meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
+        [key: string]: unknown;
+      };
     } | /* AudioURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
       type: 'audio_url';
       audioUrl: {
         url: string;
         id?: string;
+      };
+      meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
+        [key: string]: unknown;
       };
     } | /* VideoURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
       type: 'video_url';
@@ -734,6 +753,9 @@ export interface AgentStateSnapshot {
         url: string;
         id?: string;
         name?: string;
+      };
+      meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
+        [key: string]: unknown;
       };
     })[];
     readonly toolCalls: /* ToolCall — packages/agent-core-v2/src/human/llm/message.ts */ {
@@ -999,11 +1021,24 @@ export interface AgentStateSnapshot {
   'media.resolved': Map<string, /* ContentPart — packages/agent-core-v2/src/human/llm/message.ts */ /* TextPart — packages/agent-core-v2/src/human/llm/message.ts */ {
     type: 'text';
     text: string;
+    meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
+      [key: string]: unknown;
+    };
   } | /* ThinkPart — packages/agent-core-v2/src/human/llm/message.ts */ {
     type: 'think';
     think: string;
-    encrypted?: string;
-    detailsIndex?: number;
+    details?: /* ReasoningDetailsElement — packages/agent-core-v2/src/human/llm/message.ts */ {
+      readonly type?: string;
+      readonly index: number;
+      readonly summary?: string;
+      readonly encrypted?: string;
+    }[];
+    meta?: /* ThinkPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
+      encrypted?: string;
+      detailsIndex?: number;
+      reasoningKey?: string;
+      [key: string]: unknown;
+    };
   } | /* ImageURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
     type: 'image_url';
     imageUrl: {
@@ -1011,11 +1046,17 @@ export interface AgentStateSnapshot {
       id?: string;
       name?: string;
     };
+    meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
+      [key: string]: unknown;
+    };
   } | /* AudioURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
     type: 'audio_url';
     audioUrl: {
       url: string;
       id?: string;
+    };
+    meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
+      [key: string]: unknown;
     };
   } | /* VideoURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
     type: 'video_url';
@@ -1023,6 +1064,9 @@ export interface AgentStateSnapshot {
       url: string;
       id?: string;
       name?: string;
+    };
+    meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
+      [key: string]: unknown;
     };
   }>;
   // src/agent/media/mediaToolsRegistrar.ts

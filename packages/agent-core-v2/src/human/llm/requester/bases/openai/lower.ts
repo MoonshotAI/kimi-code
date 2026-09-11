@@ -61,20 +61,20 @@ function convertToolMessageMediaText(message: Message): string {
 }
 
 export interface OpenAILowerContext {
-  readonly reasoningKey: string;
   readonly preserveThinking: boolean;
   readonly toolMessageConversion: ToolMessageConversion | undefined;
 }
 
 export function lowerMessage(message: Message, lower: OpenAILowerContext): OpenAIWireMessage[] {
-  const { reasoningKey, preserveThinking } = lower;
-  let reasoningContent = '';
+  const { preserveThinking } = lower;
+  const reasoningTextByKey = new Map<string, string>();
   let hasReasoningPart = false;
   const nonThinkParts: ContentPart[] = [];
   for (const part of message.content) {
     if (part.type === 'think') {
       hasReasoningPart = true;
-      reasoningContent += part.think;
+      const key = part.meta?.reasoningKey ?? DEFAULT_REASONING_KEY;
+      reasoningTextByKey.set(key, (reasoningTextByKey.get(key) ?? '') + part.think);
     } else {
       nonThinkParts.push(part);
     }
@@ -120,19 +120,40 @@ export function lowerMessage(message: Message, lower: OpenAILowerContext): OpenA
   }
   const reasoningDetails: Record<string, unknown>[] = [];
   for (const part of message.content) {
-    if (part.type !== 'think' || part.detailsIndex === undefined) continue;
+    if (part.type !== 'think') continue;
+    if (part.details !== undefined) {
+      for (const element of part.details) {
+        if (element.summary !== undefined) {
+          reasoningDetails.push({ type: 'summary', summary: element.summary });
+        }
+        if (element.encrypted !== undefined) {
+          reasoningDetails.push({ type: 'encrypted', encrypted: element.encrypted });
+        }
+      }
+    }
+    if (part.meta?.detailsIndex === undefined) continue;
     if (part.think.length > 0) {
       reasoningDetails.push({ type: 'summary', summary: part.think });
     }
-    if (part.encrypted !== undefined) {
-      reasoningDetails.push({ type: 'encrypted', encrypted: part.encrypted });
+    if (part.meta?.encrypted !== undefined) {
+      reasoningDetails.push({ type: 'encrypted', encrypted: part.meta.encrypted });
     }
   }
   if (reasoningDetails.length > 0) {
     (converted as Record<string, unknown>)[REASONING_DETAILS_KEY] = reasoningDetails;
-    (converted as Record<string, unknown>)[DEFAULT_REASONING_KEY] = reasoningContent;
+    for (const [key, text] of reasoningTextByKey) {
+      (converted as Record<string, unknown>)[key] = text;
+    }
+    if (!reasoningTextByKey.has(DEFAULT_REASONING_KEY)) {
+      (converted as Record<string, unknown>)[DEFAULT_REASONING_KEY] = '';
+    }
   } else if (hasReasoningPart || (preserveThinking && message.role === 'assistant')) {
-    (converted as Record<string, unknown>)[reasoningKey] = reasoningContent;
+    for (const [key, text] of reasoningTextByKey) {
+      (converted as Record<string, unknown>)[key] = text;
+    }
+    if (!hasReasoningPart) {
+      (converted as Record<string, unknown>)[DEFAULT_REASONING_KEY] = '';
+    }
   }
   return [converted];
 }

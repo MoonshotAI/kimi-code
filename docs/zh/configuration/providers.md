@@ -83,7 +83,7 @@ max_context_size = 200000
 
 用于对接 OpenAI Chat Completions 协议，也可连接任何兼容该协议的第三方服务（覆盖 `base_url` 即可）。
 
-第三方推理模型（DeepSeek、Qwen、One API 等）开箱即用：CLI 自动处理 `reasoning_content` 字段和 `reasoning_effort` 注入。如果你的网关用非标准字段名返回推理内容，在模型别名上设 `reasoning_key` 覆盖。
+第三方推理模型（DeepSeek、Qwen、One API 等）开箱即用：CLI 自动识别响应中的推理字段（`reasoning_content`、`reasoning_details` 或 `reasoning`），在历史包含 Thinking 时注入 `reasoning_effort`，并按推理内容实际到达时的字段原样回传。
 
 - 默认 `base_url`：`https://api.openai.com/v1`
 - 凭证键名：`OPENAI_API_KEY`、`OPENAI_BASE_URL`

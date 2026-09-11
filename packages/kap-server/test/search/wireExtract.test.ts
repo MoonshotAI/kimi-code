@@ -356,7 +356,7 @@ describe('analyzeWireLine turn effects', () => {
       turnOf(
         line({
           type: 'context.append_loop_event',
-          event: { type: 'content.part', part: { type: 'think', think: '', encrypted: 'sig' } },
+          event: { type: 'content.part', part: { type: 'think', think: '', meta: { encrypted: 'sig' } } },
         }),
       ),
     ).toEqual({ kind: 'ensure' });

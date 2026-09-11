@@ -126,7 +126,6 @@ export const kimiModelEnvOverlay: ConfigEffectiveOverlay = {
         : parsePositiveInt(maxOutputRaw, 'KIMI_MODEL_MAX_OUTPUT_SIZE');
     const capabilities = parseCapabilities(getEnv('KIMI_MODEL_CAPABILITIES')) ?? DEFAULT_CAPABILITIES;
     const displayName = trimmed(getEnv('KIMI_MODEL_DISPLAY_NAME'));
-    const reasoningKey = trimmed(getEnv('KIMI_MODEL_REASONING_KEY'));
     const adaptiveThinking = parseBooleanVar(
       getEnv('KIMI_MODEL_ADAPTIVE_THINKING'),
       'KIMI_MODEL_ADAPTIVE_THINKING',
@@ -140,7 +139,6 @@ export const kimiModelEnvOverlay: ConfigEffectiveOverlay = {
     };
     if (displayName !== undefined) alias['displayName'] = displayName;
     if (maxOutputSize !== undefined) alias['maxOutputSize'] = maxOutputSize;
-    if (reasoningKey !== undefined) alias['reasoningKey'] = reasoningKey;
     if (adaptiveThinking !== undefined) alias['adaptiveThinking'] = adaptiveThinking;
 
     const models = asRecord(effective['models']);
