@@ -198,10 +198,25 @@ describe('IModelsDevImportService', () => {
   });
 
   it('throws provider.catalog_unavailable when the fetch fails without a snapshot', async () => {
-    setModelsDevUpstreamForTest({ fetchImpl: fetchFail() });
+    setModelsDevUpstreamForTest({ fetchImpl: fetchFail(), builtInCatalog: undefined });
     const { imports } = createHost();
     const err = await expectError2(imports.listModelsDevProviders(), codes.CATALOG_UNAVAILABLE);
     expect(err.message).toContain('models.dev catalog unavailable');
+  });
+
+  it('falls back to the checked-in snapshot when the fetch fails', async () => {
+    setModelsDevUpstreamForTest({ fetchImpl: fetchFail() });
+    const { imports } = createHost();
+    const items = await imports.listModelsDevProviders();
+    const byId = new Map(items.map((item) => [item.id, item]));
+
+    expect(items.length).toBeGreaterThan(0);
+    expect(byId.get('openai')).toMatchObject({
+      wire_type: 'openai',
+      rejected: false,
+      env_key: 'OPENAI_API_KEY',
+    });
+    expect(byId.get('openai')?.models.length).toBeGreaterThan(0);
   });
 
   it('imports a catalog entry as provider + aliases without touching the default pointers', async () => {
