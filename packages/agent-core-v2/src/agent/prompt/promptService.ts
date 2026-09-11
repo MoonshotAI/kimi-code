@@ -605,7 +605,8 @@ export class AgentPromptService implements IAgentPromptService {
         ownerPromptId,
       });
     }
-    if (message.content.length > 0) this.context.append({ ...message, id: ownerPromptId });
+    const content = gateImageFormatParts(message.content);
+    if (content.length > 0) this.context.append({ ...message, id: ownerPromptId, content });
   }
   private notifyCaptions(captions: readonly string[], ownerPromptId: string): void {
     for (const caption of captions) {
