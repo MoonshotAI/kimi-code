@@ -1,4 +1,4 @@
-import type { StreamedMessagePart, ThinkPart } from '#/llm/message';
+import type { ReasoningDetailsElement, StreamedMessagePart, ThinkPart } from '#/llm/message';
 
 export const KNOWN_REASONING_KEYS = [
   'reasoning_content',
@@ -24,33 +24,7 @@ export function extractReasoning(
   return undefined;
 }
 
-export class ReasoningKeyDialect {
-  private _detected: string | undefined;
-
-  constructor(private readonly _explicitKey?: string) {}
-
-  observe(source: unknown): string | undefined {
-    const found = extractReasoning(source, this._explicitKey);
-    if (found === undefined) return undefined;
-    if (this._explicitKey === undefined) {
-      this._detected = found.key;
-    }
-    return found.value;
-  }
-
-  outboundKey(): string {
-    return this._explicitKey ?? this._detected ?? DEFAULT_REASONING_KEY;
-  }
-}
-
 export const REASONING_DETAILS_KEY = 'reasoning_details';
-
-export interface ReasoningDetailsElement {
-  readonly type?: string;
-  readonly index: number;
-  readonly summary?: string;
-  readonly encrypted?: string;
-}
 
 function toReasoningDetailsElement(
   value: unknown,
@@ -82,20 +56,37 @@ export function extractReasoningDetails(
 
 export function convertReasoningDetails(
   elements: readonly ReasoningDetailsElement[],
+  hiddenSummary = false,
 ): StreamedMessagePart[] {
   const parts: StreamedMessagePart[] = [];
+  const summaries: ReasoningDetailsElement[] = [];
   for (const element of elements) {
     if (element.type !== 'encrypted' && element.summary !== undefined && element.summary.length > 0) {
-      parts.push({ type: 'think', think: element.summary, detailsIndex: element.index } satisfies ThinkPart);
+      if (hiddenSummary) {
+        summaries.push(element);
+      } else {
+        parts.push({
+          type: 'think',
+          think: element.summary,
+          meta: { detailsIndex: element.index },
+        } satisfies ThinkPart);
+      }
     }
     if (element.type !== 'summary' && element.encrypted !== undefined && element.encrypted.length > 0) {
       parts.push({
         type: 'think',
         think: '',
-        encrypted: element.encrypted,
-        detailsIndex: element.index,
+        meta: { encrypted: element.encrypted, detailsIndex: element.index },
       } satisfies ThinkPart);
     }
+  }
+  if (summaries.length > 0) {
+    parts.unshift({
+      type: 'think',
+      think: '',
+      details: summaries,
+      meta: { reasoningKey: DEFAULT_REASONING_KEY },
+    } satisfies ThinkPart);
   }
   return parts;
 }

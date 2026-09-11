@@ -7,31 +7,52 @@ export interface ToolDescription {
 
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
 
+export interface ContentPartMeta {
+  [key: string]: unknown;
+}
+
+export interface ThinkPartMeta extends ContentPartMeta {
+  encrypted?: string;
+  detailsIndex?: number;
+  reasoningKey?: string;
+}
+
 export interface TextPart {
   type: 'text';
   text: string;
+  meta?: ContentPartMeta;
+}
+
+export interface ReasoningDetailsElement {
+  readonly type?: string;
+  readonly index: number;
+  readonly summary?: string;
+  readonly encrypted?: string;
 }
 
 export interface ThinkPart {
   type: 'think';
   think: string;
-  encrypted?: string;
-  detailsIndex?: number;
+  details?: ReasoningDetailsElement[];
+  meta?: ThinkPartMeta;
 }
 
 export interface ImageURLPart {
   type: 'image_url';
   imageUrl: { url: string; id?: string; name?: string };
+  meta?: ContentPartMeta;
 }
 
 export interface AudioURLPart {
   type: 'audio_url';
   audioUrl: { url: string; id?: string };
+  meta?: ContentPartMeta;
 }
 
 export interface VideoURLPart {
   type: 'video_url';
   videoUrl: { url: string; id?: string; name?: string };
+  meta?: ContentPartMeta;
 }
 
 export type ContentPart = TextPart | ThinkPart | ImageURLPart | AudioURLPart | VideoURLPart;
@@ -101,15 +122,21 @@ export function mergeInPlace(target: StreamedMessagePart, source: StreamedMessag
   }
 
   if (target.type === 'think' && source.type === 'think') {
-    if (target.encrypted !== undefined) {
+    if (target.meta?.encrypted !== undefined) {
       return false;
     }
-    if (target.detailsIndex !== source.detailsIndex) {
+    if (target.meta?.detailsIndex !== source.meta?.detailsIndex) {
+      return false;
+    }
+    if (target.meta?.reasoningKey !== source.meta?.reasoningKey) {
       return false;
     }
     target.think += source.think;
-    if (source.encrypted !== undefined) {
-      target.encrypted = source.encrypted;
+    if (source.meta?.encrypted !== undefined) {
+      target.meta = { ...target.meta, encrypted: source.meta.encrypted };
+    }
+    if (source.details !== undefined) {
+      target.details = [...(target.details ?? []), ...source.details];
     }
     return true;
   }
@@ -171,7 +198,11 @@ export function isVacuousContentPart(part: ContentPart): boolean {
     case 'text':
       return part.text.trim().length === 0;
     case 'think':
-      return part.encrypted === undefined && part.think.trim().length === 0;
+      return (
+        part.meta?.encrypted === undefined &&
+        part.details === undefined &&
+        part.think.trim().length === 0
+      );
     case 'image_url':
     case 'audio_url':
     case 'video_url':

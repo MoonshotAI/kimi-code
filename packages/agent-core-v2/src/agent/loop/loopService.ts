@@ -898,8 +898,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
             this.accumulateMachinePart(turn, {
               type: 'think',
               think: delta.delta,
-              encrypted: delta.encrypted,
-              detailsIndex: delta.detailsIndex,
+              details: delta.details,
+              meta: delta.meta,
             });
             void this.dispatcher.dispatch(
               new ThinkingDelta({ agentId: this.scopeContext.agentId, turnId: turn.id, delta: delta.delta }),
@@ -1189,7 +1189,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const drained = turn.partials.splice(0).filter((entry) => !isVacuousContentPart(entry));
     let lastCompleteThink = -1;
     for (const [index, part] of drained.entries()) {
-      if (part.type === 'think' && part.encrypted !== undefined) {
+      if (part.type === 'think' && part.meta?.encrypted !== undefined) {
         lastCompleteThink = index;
       }
     }

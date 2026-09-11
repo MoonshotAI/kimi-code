@@ -5,7 +5,7 @@ export function isVacuousContentPart(part: ContentPart): boolean {
     case 'text':
       return part.text.trim().length === 0;
     case 'think':
-      return part.encrypted === undefined && part.think.trim().length === 0;
+      return part.meta?.encrypted === undefined && part.think.trim().length === 0;
     case 'image_url':
     case 'audio_url':
     case 'video_url':

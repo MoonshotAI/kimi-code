@@ -86,7 +86,6 @@ describe('kimiModelEnvOverlay.apply', () => {
       KIMI_MODEL_MAX_OUTPUT_SIZE: '4096',
       KIMI_MODEL_CAPABILITIES: 'image_in, tool_use',
       KIMI_MODEL_DISPLAY_NAME: 'Mine',
-      KIMI_MODEL_REASONING_KEY: 'reasoning_content',
       KIMI_MODEL_ADAPTIVE_THINKING: 'true',
     });
     expect((effective['models'] as Record<string, unknown>)[ENV_MODEL_ALIAS_KEY]).toEqual({
@@ -96,7 +95,6 @@ describe('kimiModelEnvOverlay.apply', () => {
       maxOutputSize: 4096,
       capabilities: ['image_in', 'tool_use'],
       displayName: 'Mine',
-      reasoningKey: 'reasoning_content',
       adaptiveThinking: true,
     });
 

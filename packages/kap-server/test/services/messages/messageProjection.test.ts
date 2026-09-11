@@ -17,7 +17,7 @@ describe('toProtocolMessage', () => {
       role: 'user',
       content: [
         { type: 'text', text: 'hello' },
-        { type: 'think', think: 'hmm', encrypted: 'sig-1' },
+        { type: 'think', think: 'hmm', meta: { encrypted: 'sig-1' } },
         { type: 'image_url', imageUrl: { url: 'https://example.com/a.png' } },
         { type: 'audio_url', audioUrl: { url: 'https://example.com/a.mp3' } },
         { type: 'video_url', videoUrl: { url: 'https://example.com/a.mp4' } },

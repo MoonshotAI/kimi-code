@@ -614,10 +614,12 @@ describe('projector tool-exchange normalization', () => {
     it('keeps a signed think block even when its text is empty', () => {
       const history = [
         user('u1'),
-        thinkingAssistant([{ type: 'think', think: '', encrypted: 'sig' }]),
+        thinkingAssistant([{ type: 'think', think: '', meta: { encrypted: 'sig' } }]),
       ];
       expect(shape(history)).toEqual(['user', 'assistant']);
-      expect(project(history)[1]?.content).toEqual([{ type: 'think', think: '', encrypted: 'sig' }]);
+      expect(project(history)[1]?.content).toEqual([
+        { type: 'think', think: '', meta: { encrypted: 'sig' } },
+      ]);
     });
 
     it('drops a message whose think block is whitespace-only', () => {

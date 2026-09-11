@@ -196,7 +196,6 @@ describe('SessionMediaStoreService', () => {
     const message: ToolMessage = { role: 'tool', toolCallId: 'audio', content };
     const wire = provider === 'openai'
       ? lowerOpenAI(message, {
-          reasoningKey: 'reasoning_content',
           preserveThinking: false,
           toolMessageConversion: undefined,
         })

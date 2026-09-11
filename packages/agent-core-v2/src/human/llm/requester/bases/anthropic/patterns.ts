@@ -11,7 +11,7 @@ export function stripUnsignedThinking(options: { readonly preserve: boolean }): 
       if (message === undefined) return null;
       const content = message.content.filter((part) => {
         if (part.type !== 'think') return true;
-        if (part.encrypted !== undefined) return true;
+        if (part.meta?.encrypted !== undefined) return true;
         return options.preserve;
       });
       if (content.length === message.content.length) return null;

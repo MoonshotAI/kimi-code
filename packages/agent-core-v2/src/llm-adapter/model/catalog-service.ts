@@ -380,7 +380,6 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       maxInputSize: model.maxInputSize,
       maxOutputSize: model.maxOutputSize,
       displayName: model.displayName,
-      reasoningKey: model.reasoningKey,
       supportEfforts: model.supportEfforts,
       defaultEffort: model.defaultEffort,
       alwaysThinking: declared.has('always_thinking'),
@@ -511,7 +510,6 @@ function effectiveRecordOf(definition: CatalogModel): ModelRecord {
     maxInputSize: definition.maxInputSize,
     maxOutputSize: definition.maxOutputSize,
     displayName: definition.displayName,
-    reasoningKey: definition.reasoningKey,
     adaptiveThinking: definition.adaptiveThinking,
     supportEfforts:
       definition.supportEfforts === undefined ? undefined : [...definition.supportEfforts],
@@ -536,8 +534,6 @@ function buildProtocolProviderOptions(
       if (model.betaApi !== undefined) options.betaApi = model.betaApi;
       break;
     case 'openai': {
-      const reasoningKey = nonEmpty(model.reasoningKey);
-      if (reasoningKey !== undefined) options.reasoningKey = reasoningKey;
       if (model.offEffort !== undefined) options.offEffort = model.offEffort;
       break;
     }

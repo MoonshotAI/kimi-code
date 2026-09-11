@@ -6,7 +6,7 @@ import type { ToolCallIdPolicy, ToolMessageConversion } from '#/llm/requester/re
 import type { OpenAIRawChunk, OpenAIRawUsage, OpenAIWireMessage } from './contract';
 
 export interface OpenAITrait {
-  readonly reasoningKey?: string;
+  readonly reasoningDisplay?: 'content' | 'details';
   readonly toolCallIdPolicy?: ToolCallIdPolicy;
   readonly toolMessageConversion?: ToolMessageConversion;
   readonly strictThinkingValidation?: boolean;

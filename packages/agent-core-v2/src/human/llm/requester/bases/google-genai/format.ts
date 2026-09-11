@@ -116,7 +116,7 @@ function extractChunkParts(response: Record<string, unknown>): StreamedMessagePa
         const thoughtSignature = p['thoughtSignature'] ?? p['thought_signature'];
         const thinkPart: ThinkPart = { type: 'think', think: p['text'] };
         if (typeof thoughtSignature === 'string' && thoughtSignature.length > 0) {
-          thinkPart.encrypted = thoughtSignature;
+          thinkPart.meta = { ...thinkPart.meta, encrypted: thoughtSignature };
         }
         parts.push(thinkPart);
       } else if (p['text']) {

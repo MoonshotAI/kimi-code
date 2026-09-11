@@ -18,7 +18,6 @@ export interface CatalogModelOverrides {
   readonly maxOutputSize?: number;
   readonly capability?: ModelCapability;
   readonly displayName?: string;
-  readonly reasoningKey?: string;
   readonly adaptiveThinking?: boolean;
   readonly supportEfforts?: readonly string[];
   readonly defaultEffort?: string;
@@ -29,7 +28,6 @@ export interface CatalogModelOverrides {
 export interface CatalogModelDefinition extends LlmModel {
   readonly displayName?: string;
   readonly maxOutputSize?: number;
-  readonly reasoningKey?: string;
   readonly supportEfforts?: readonly string[];
   readonly offEffort?: string;
   readonly alwaysThinking?: boolean;
@@ -635,7 +633,6 @@ function mergeModel(
     defaultHeaders: record.defaultHeaders ?? discovered?.defaultHeaders,
     displayName: record.displayName,
     maxOutputSize: record.maxOutputSize,
-    reasoningKey: record.reasoningKey,
     supportEfforts: record.supportEfforts,
     offEffort: record.offEffort,
     alwaysThinking: record.alwaysThinking,

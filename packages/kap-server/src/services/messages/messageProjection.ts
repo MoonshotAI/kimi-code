@@ -16,7 +16,7 @@ function mapContentPart(part: ContextMessage['content'][number]): MessageContent
     case 'text':
       return { type: 'text', text: part.text };
     case 'think': {
-      const sig = part.encrypted;
+      const sig = part.meta?.encrypted;
       return sig !== undefined
         ? { type: 'thinking', thinking: part.think, signature: sig }
         : { type: 'thinking', thinking: part.think };

@@ -156,7 +156,7 @@ describe('Agent context', () => {
       },
       {
         role: 'assistant',
-        content: [{ type: 'think', think: '', encrypted: 'enc_empty_thinking' }],
+        content: [{ type: 'think', think: '', meta: { encrypted: 'enc_empty_thinking' } }],
         toolCalls: [],
       },
       {
@@ -185,7 +185,7 @@ describe('Agent context', () => {
       },
       {
         role: 'assistant',
-        content: [{ type: 'think', think: '', encrypted: 'enc_empty_thinking' }],
+        content: [{ type: 'think', think: '', meta: { encrypted: 'enc_empty_thinking' } }],
         toolCalls: [],
       },
     ]);

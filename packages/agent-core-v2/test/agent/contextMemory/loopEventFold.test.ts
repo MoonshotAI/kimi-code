@@ -327,12 +327,12 @@ describe('loop-event fold parity', () => {
       {
         type: 'content.part',
         stepUuid: 's1',
-        part: { type: 'think', think: '', encrypted: 'sig' },
+        part: { type: 'think', think: '', meta: { encrypted: 'sig' } },
       },
       { type: 'step.end', uuid: 's1' },
     ]);
 
-    expect(folded.at(-1)?.content).toEqual([{ type: 'think', think: '', encrypted: 'sig' }]);
+    expect(folded.at(-1)?.content).toEqual([{ type: 'think', think: '', meta: { encrypted: 'sig' } }]);
   });
 
   it('seals a step that pairs an empty thinking block with real text', () => {

@@ -554,7 +554,7 @@ export function createOpenAIResponsesFormat(): ProtocolFormat {
             const item = readResponseOutputItem(event['item'], `${type}.item`);
             const outputIndex = readNumberField(event, 'output_index');
             if (item.type === 'reasoning') {
-              sink.onDelta({ type: 'think', think: '', encrypted: item.encryptedContent });
+              sink.onDelta({ type: 'think', think: '', meta: { encrypted: item.encryptedContent } });
               return;
             }
             if (item.type === 'function_call' && typeof item.arguments === 'string') {

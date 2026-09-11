@@ -123,8 +123,8 @@ export function lowerMessage(
   } else {
     for (const part of message.content) {
       if (part.type === 'think') {
-        if (part.encrypted !== undefined) {
-          content.push({ type: 'thinking', thinking: part.think, signature: part.encrypted });
+        if (part.meta?.encrypted !== undefined) {
+          content.push({ type: 'thinking', thinking: part.think, signature: part.meta.encrypted });
         } else {
           content.push({ type: 'thinking', thinking: part.think });
         }

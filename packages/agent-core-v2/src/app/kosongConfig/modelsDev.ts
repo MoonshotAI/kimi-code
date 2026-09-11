@@ -13,7 +13,6 @@ export interface ModelsDevModelEntry {
   readonly reasoning_options?: readonly ModelsDevReasoningOption[];
   readonly status?: string;
   readonly provider?: ModelsDevModelProviderOverride;
-  readonly dynamically_loaded_tools?: boolean;
   readonly interleaved?: boolean | { readonly field?: string };
   readonly modalities?: {
     readonly input?: readonly string[];
@@ -37,7 +36,6 @@ export interface ModelsDevProviderEntry {
   readonly api?: string;
   readonly env?: readonly string[];
   readonly npm?: string;
-  readonly type?: string;
   readonly models?: Record<string, ModelsDevModelEntry>;
 }
 
@@ -47,28 +45,12 @@ export interface ModelsDevModel {
   readonly id: string;
   readonly name?: string;
   readonly maxOutputSize?: number;
-  readonly reasoningKey?: string;
   readonly supportEfforts?: readonly string[];
   readonly offEffort?: string;
   readonly alwaysThinking?: boolean;
   readonly protocol?: 'anthropic';
   readonly baseUrl?: string;
   readonly capability: ModelCapability;
-}
-
-const KNOWN_WIRE_TYPES = [
-  'anthropic',
-  'openai',
-  'kimi',
-  'google-genai',
-  'openai_responses',
-  'vertexai',
-] as const satisfies readonly ProviderType[];
-
-type KnownWireType = (typeof KNOWN_WIRE_TYPES)[number];
-
-function isWireType(value: unknown): value is KnownWireType {
-  return typeof value === 'string' && (KNOWN_WIRE_TYPES as readonly string[]).includes(value);
 }
 
 function hasEmbeddingMarker(value: string | undefined): boolean {
@@ -89,7 +71,6 @@ function isUsableChatModel(model: ModelsDevModelEntry): boolean {
 }
 
 export type ModelsDevImportInvalidReason =
-  | 'unknown-explicit-type'
   | 'proprietary-sdk'
   | 'empty-base-url'
   | 'placeholder-base-url';
@@ -117,13 +98,7 @@ export function resolveModelsDevImport(
 ): ModelsDevImportResolution {
   const wire = resolveModelsDevWire(entry);
   if (wire === undefined) {
-    return {
-      kind: 'invalid',
-      reason:
-        typeof entry.type === 'string' && entry.type.length > 0
-          ? 'unknown-explicit-type'
-          : 'proprietary-sdk',
-    };
+    return { kind: 'invalid', reason: 'proprietary-sdk' };
   }
   const guessed = inferDeclaredWireType(entry) === undefined;
 
@@ -141,8 +116,6 @@ export function resolveModelsDevImport(
 }
 
 function resolveModelsDevWire(entry: ModelsDevProviderEntry): ProviderType | undefined {
-  if (isWireType(entry.type)) return entry.type;
-  if (typeof entry.type === 'string' && entry.type.length > 0) return undefined;
   const declared = inferDeclaredWireType(entry);
   if (declared !== undefined) return declared;
   const npm = (entry.npm ?? '').toLowerCase();
@@ -151,7 +124,6 @@ function resolveModelsDevWire(entry: ModelsDevProviderEntry): ProviderType | und
 }
 
 function inferDeclaredWireType(entry: ModelsDevProviderEntry): ProviderType | undefined {
-  if (isWireType(entry.type)) return entry.type;
   const npm = (entry.npm ?? '').toLowerCase();
   const id = (entry.id ?? '').toLowerCase();
   if (npm.includes('anthropic') || id.includes('anthropic') || id.includes('claude')) {
@@ -203,7 +175,6 @@ export function modelsDevModelToCapability(model: ModelsDevModelEntry): ModelsDe
     id: model.id,
     name: typeof model.name === 'string' && model.name.length > 0 ? model.name : undefined,
     maxOutputSize: typeof output === 'number' && output > 0 ? output : undefined,
-    reasoningKey: modelsDevReasoningKey(model.interleaved),
     supportEfforts: thinking.efforts,
     offEffort: thinking.offEffort,
     alwaysThinking: thinking.alwaysThinking,
@@ -216,7 +187,6 @@ export function modelsDevModelToCapability(model: ModelsDevModelEntry): ModelsDe
       tool_use: model.tool_call ?? true,
       max_context_tokens: context,
       max_input_tokens: maxInputTokens,
-      dynamically_loaded_tools: model.dynamically_loaded_tools === true,
     },
   };
 }
@@ -252,12 +222,6 @@ function modelsDevThinkingOptions(options: ModelsDevModelEntry['reasoning_option
   const alwaysThinking =
     efforts !== undefined && offEffort === undefined && !hasToggle ? true : undefined;
   return { efforts, offEffort, hasToggle, alwaysThinking };
-}
-
-function modelsDevReasoningKey(interleaved: ModelsDevModelEntry['interleaved']): string | undefined {
-  if (typeof interleaved !== 'object' || interleaved === null) return undefined;
-  const field = interleaved.field?.trim();
-  return field !== undefined && field.length > 0 ? field : undefined;
 }
 
 export function modelsDevProviderModels(entry: ModelsDevProviderEntry): ModelsDevModel[] {

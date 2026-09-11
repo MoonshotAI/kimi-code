@@ -309,7 +309,7 @@ export function createAnthropicFormat(): ProtocolFormat<AnthropicRawStreamEvent>
             return;
           }
           if (block.type === 'redacted_thinking' && typeof block.data === 'string' && block.data) {
-            sink.onDelta({ type: 'think', think: '', encrypted: block.data });
+            sink.onDelta({ type: 'think', think: '', meta: { encrypted: block.data } });
             return;
           }
           if (block.type === 'text' && typeof block.text === 'string' && block.text) {
@@ -333,7 +333,7 @@ export function createAnthropicFormat(): ProtocolFormat<AnthropicRawStreamEvent>
             return;
           }
           if (delta.type === 'signature_delta' && delta.signature) {
-            sink.onDelta({ type: 'think', think: '', encrypted: delta.signature });
+            sink.onDelta({ type: 'think', think: '', meta: { encrypted: delta.signature } });
           }
           return;
         }

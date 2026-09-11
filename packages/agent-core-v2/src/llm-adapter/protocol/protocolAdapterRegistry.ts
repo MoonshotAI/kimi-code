@@ -14,7 +14,6 @@ import {
   createGoogleGenAIBase,
   googleGenAIBase,
 } from '#human/llm/requester/bases/google-genai/requester';
-import type { OpenAITrait } from '#human/llm/requester/bases/openai/trait';
 import { openAIBase } from '#human/llm/requester/bases/openai/requester';
 import { openAIResponsesBase } from '#human/llm/requester/bases/openai-responses/requester';
 import { KimiFiles } from '#human/llm-kimi/files';
@@ -53,11 +52,6 @@ interface AdapterRoute {
   readonly media?: ProviderMediaContribution;
 }
 
-function openAIReasoningTraitFor(model: Model): OpenAITrait | undefined {
-  const reasoningKey = model.providerOptions?.reasoningKey ?? model.reasoningKey;
-  return reasoningKey === undefined ? undefined : { reasoningKey };
-}
-
 function routeFor(model: Model): AdapterRoute {
   const definition =
     model.providerType === undefined
@@ -84,7 +78,6 @@ function routeFor(model: Model): AdapterRoute {
           }
         : {
             base: openAIBase,
-            trait: openAIReasoningTraitFor(model),
             connection: openAIConnection,
             providerId: 'openai',
           };

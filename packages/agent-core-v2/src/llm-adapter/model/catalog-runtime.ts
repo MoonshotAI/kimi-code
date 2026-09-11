@@ -72,7 +72,6 @@ export function toCatalogModelDefinition(
     apiKey: record.apiKey,
     displayName: record.displayName,
     maxOutputSize: record.maxOutputSize,
-    reasoningKey: record.reasoningKey,
     supportEfforts: record.supportEfforts,
     offEffort: record.offEffort,
     alwaysThinking: declaresAlwaysThinking(record.capabilities),
@@ -97,7 +96,6 @@ function toCatalogOverrides(overrides: ModelOverride | undefined): CatalogModelO
   if (overrides.maxInputSize !== undefined) out.maxInputSize = overrides.maxInputSize;
   if (overrides.maxOutputSize !== undefined) out.maxOutputSize = overrides.maxOutputSize;
   if (overrides.displayName !== undefined) out.displayName = overrides.displayName;
-  if (overrides.reasoningKey !== undefined) out.reasoningKey = overrides.reasoningKey;
   if (overrides.adaptiveThinking !== undefined) out.adaptiveThinking = overrides.adaptiveThinking;
   if (overrides.supportEfforts !== undefined) out.supportEfforts = overrides.supportEfforts;
   if (overrides.defaultEffort !== undefined) out.defaultEffort = overrides.defaultEffort;

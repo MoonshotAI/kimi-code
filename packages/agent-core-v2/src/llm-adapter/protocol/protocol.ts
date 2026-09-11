@@ -13,7 +13,6 @@ export const ProtocolSchema = z.enum(['anthropic', 'openai', 'openai_responses',
 export type Protocol = z.infer<typeof ProtocolSchema>;
 
 export interface ProtocolProviderOptions {
-  readonly reasoningKey?: string;
   readonly defaultMaxTokens?: number;
   readonly supportEfforts?: readonly string[];
   readonly offEffort?: string;

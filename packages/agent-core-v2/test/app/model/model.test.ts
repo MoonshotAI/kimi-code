@@ -422,7 +422,6 @@ describe('kimiModelEnvOverlay', () => {
       KIMI_MODEL_MAX_OUTPUT_SIZE: '8192',
       KIMI_MODEL_CAPABILITIES: 'Image_In, thinking , tool_use',
       KIMI_MODEL_DISPLAY_NAME: 'Custom Model',
-      KIMI_MODEL_REASONING_KEY: 'reasoning',
       KIMI_MODEL_ADAPTIVE_THINKING: 'true',
       KIMI_MODEL_TEMPERATURE: '0.3',
       KIMI_MODEL_TOP_P: ' 0.95 ',
@@ -441,7 +440,6 @@ describe('kimiModelEnvOverlay', () => {
       maxOutputSize: 8192,
       capabilities: ['image_in', 'thinking', 'tool_use'],
       displayName: 'Custom Model',
-      reasoningKey: 'reasoning',
       adaptiveThinking: true,
     });
     expect(effective['modelOverrides']).toEqual({

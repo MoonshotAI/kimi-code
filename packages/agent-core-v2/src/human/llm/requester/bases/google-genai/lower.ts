@@ -124,8 +124,8 @@ export function lowerMessage(message: Message, lower: GoogleGenAILowerContext): 
         break;
       case 'think': {
         const thoughtPart: GooglePart = { text: part.think, thought: true };
-        if (part.encrypted !== undefined && part.encrypted.length > 0) {
-          thoughtPart.thoughtSignature = part.encrypted;
+        if (part.meta?.encrypted !== undefined && part.meta.encrypted.length > 0) {
+          thoughtPart.thoughtSignature = part.meta.encrypted;
         }
         parts.push(thoughtPart);
         break;

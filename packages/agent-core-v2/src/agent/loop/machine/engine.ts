@@ -13,7 +13,12 @@ import { createEventStoreSync } from '#human/eventStore/eventStore';
 import { memoryJournal } from '#human/eventStore/journal';
 import type { LlmErrorMessage } from '#human/llm/errors';
 import type { FinishInfo } from '#human/llm/finish-reason';
-import type { StreamedMessagePart, UserMessage } from '#human/llm/message';
+import type {
+  ReasoningDetailsElement,
+  StreamedMessagePart,
+  ThinkPartMeta,
+  UserMessage,
+} from '#human/llm/message';
 import type { LlmModel } from '#human/llm/model';
 import type { LlmRecovery, LlmRecoveryRecord } from '#human/llm/requester/recovery';
 import type { LlmCredentialProvider } from '#human/llm/requester/requester';
@@ -30,8 +35,8 @@ export type MachineEngineDelta =
   | {
       readonly kind: 'thinking';
       readonly delta: string;
-      readonly encrypted?: string;
-      readonly detailsIndex?: number;
+      readonly details?: ReasoningDetailsElement[];
+      readonly meta?: ThinkPartMeta;
     }
   | {
       readonly kind: 'toolCall';
@@ -205,8 +210,8 @@ function createDeltaSplitter(): (part: StreamedMessagePart) => MachineEngineDelt
         return {
           kind: 'thinking',
           delta: part.think,
-          encrypted: part.encrypted,
-          detailsIndex: part.detailsIndex,
+          details: part.details,
+          meta: part.meta,
         };
       case 'image_url':
       case 'audio_url':

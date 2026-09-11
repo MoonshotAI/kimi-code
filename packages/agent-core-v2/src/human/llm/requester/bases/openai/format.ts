@@ -39,6 +39,7 @@ import { lowerMessage } from './lower';
 import { extractToolMedia } from './patterns';
 import {
   convertReasoningDetails,
+  DEFAULT_REASONING_KEY,
   extractReasoning,
   extractReasoningDetails,
 } from './reasoning-key';
@@ -143,7 +144,6 @@ export interface OpenAIRequestParams {
 }
 
 export interface OpenAILowerOptions {
-  readonly reasoningKey: string;
   readonly preserveThinking: boolean;
   readonly toolMessageConversion: ToolMessageConversion | undefined;
 }
@@ -168,7 +168,6 @@ export function lowerOpenAIRequest(
     mediaPattern === undefined ? input.messages : applyPatterns(input.messages, [mediaPattern]);
   return normalized.flatMap((message) =>
     lowerMessage(message, {
-      reasoningKey: options.reasoningKey,
       preserveThinking: options.preserveThinking,
       toolMessageConversion: conversion,
     }).map((wire) => ({ source: message, message: wire })),
@@ -200,7 +199,7 @@ export function encodeOpenAIRequest(params: Record<string, unknown>): OpenAIRequ
 }
 
 export interface OpenAIStreamParserOptions extends StreamParserOptions<OpenAIRawChunk> {
-  readonly reasoningKey?: string;
+  readonly reasoningDisplay?: 'content' | 'details';
 }
 
 export interface OpenAIProtocolFormat extends ProtocolFormat<OpenAIRawChunk> {
@@ -211,6 +210,8 @@ export function createOpenAIFormat(): OpenAIProtocolFormat {
   return {
     createStreamParser(options?: OpenAIStreamParserOptions) {
       const bufferedToolCalls = new Map<number | string, BufferedStreamToolCall>();
+      const contentFirst = options?.reasoningDisplay === 'content';
+      let seenReasoningContent = false;
 
       function convertStreamToolCall(
         toolCall: OpenAIRawStreamToolCallDelta,
@@ -296,16 +297,35 @@ export function createOpenAIFormat(): OpenAIProtocolFormat {
         if (!delta) {
           return;
         }
-        const reasoningDetails =
-          options?.reasoningKey === undefined ? extractReasoningDetails(delta) : undefined;
+        const reasoningDetails = extractReasoningDetails(delta);
         if (reasoningDetails !== undefined) {
-          for (const part of convertReasoningDetails(reasoningDetails)) {
-            sink.onDelta(part);
+          const reasoningContent = contentFirst
+            ? extractReasoning(delta, DEFAULT_REASONING_KEY)
+            : undefined;
+          if (reasoningContent !== undefined) {
+            seenReasoningContent = true;
+            sink.onDelta({
+              type: 'think',
+              think: reasoningContent.value,
+              meta: { reasoningKey: reasoningContent.key },
+            });
+            for (const part of convertReasoningDetails(reasoningDetails, true)) {
+              sink.onDelta(part);
+            }
+          } else {
+            for (const part of convertReasoningDetails(reasoningDetails, seenReasoningContent)) {
+              sink.onDelta(part);
+            }
           }
         } else {
           const reasoning = extractReasoning(delta);
           if (reasoning !== undefined) {
-            sink.onDelta({ type: 'think', think: reasoning.value });
+            if (reasoning.key === DEFAULT_REASONING_KEY) seenReasoningContent = true;
+            sink.onDelta({
+              type: 'think',
+              think: reasoning.value,
+              meta: { reasoningKey: reasoning.key },
+            });
           }
         }
         if (typeof delta.content === 'string' && delta.content.length > 0) {

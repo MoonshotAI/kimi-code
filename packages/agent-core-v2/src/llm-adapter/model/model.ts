@@ -10,7 +10,6 @@ export interface ModelOverride {
   maxOutputSize?: number;
   capabilities?: string[];
   displayName?: string;
-  reasoningKey?: string;
   adaptiveThinking?: boolean;
   supportEfforts?: string[];
   defaultEffort?: string;
@@ -36,7 +35,6 @@ export interface ModelRecord {
   maxOutputSize?: number;
   capabilities?: string[];
   displayName?: string;
-  reasoningKey?: string;
   adaptiveThinking?: boolean;
   betaApi?: boolean;
   supportEfforts?: string[];

@@ -14,7 +14,6 @@ export interface ModelsDevModelEntry {
   readonly family?: string;
   readonly limit?: { readonly context?: number; readonly input?: number; readonly output?: number };
   readonly tool_call?: boolean;
-  readonly dynamically_loaded_tools?: boolean;
   readonly reasoning?: boolean;
   readonly reasoning_options?: readonly ModelsDevReasoningOption[];
   readonly status?: string;
@@ -40,12 +39,10 @@ export interface ModelsDevProviderEntry {
   readonly id?: string;
   readonly api?: string;
   readonly npm?: string;
-  readonly type?: string;
   readonly models?: Record<string, ModelsDevModelEntry>;
 }
 
 export type ModelsDevImportInvalidReason =
-  | 'unknown-explicit-type'
   | 'proprietary-sdk'
   | 'empty-base-url'
   | 'placeholder-base-url';
@@ -59,19 +56,6 @@ export type ModelsDevImportResolution =
     }
   | { readonly kind: 'needs-base-url'; readonly wire: ModelsDevWire; readonly guessed: boolean }
   | { readonly kind: 'invalid'; readonly reason: ModelsDevImportInvalidReason };
-
-const KNOWN_WIRES = [
-  'anthropic',
-  'openai',
-  'openai_responses',
-  'google-genai',
-  'google-vertex',
-  'kimi',
-] as const satisfies readonly ModelsDevWire[];
-
-function isModelsDevWire(value: unknown): value is ModelsDevWire {
-  return typeof value === 'string' && (KNOWN_WIRES as readonly string[]).includes(value);
-}
 
 function hasEmbeddingMarker(value: string | undefined): boolean {
   if (value === undefined) return false;
@@ -96,13 +80,7 @@ export function resolveModelsDevImport(
 ): ModelsDevImportResolution {
   const wire = resolveModelsDevWire(entry);
   if (wire === undefined) {
-    return {
-      kind: 'invalid',
-      reason:
-        typeof entry.type === 'string' && entry.type.length > 0
-          ? 'unknown-explicit-type'
-          : 'proprietary-sdk',
-    };
+    return { kind: 'invalid', reason: 'proprietary-sdk' };
   }
   const guessed = inferDeclaredWire(entry) === undefined;
 
@@ -120,8 +98,6 @@ export function resolveModelsDevImport(
 }
 
 function resolveModelsDevWire(entry: ModelsDevProviderEntry): ModelsDevWire | undefined {
-  if (isModelsDevWire(entry.type)) return entry.type;
-  if (typeof entry.type === 'string' && entry.type.length > 0) return undefined;
   const declared = inferDeclaredWire(entry);
   if (declared !== undefined) return declared;
   const npm = (entry.npm ?? '').toLowerCase();
@@ -130,7 +106,6 @@ function resolveModelsDevWire(entry: ModelsDevProviderEntry): ModelsDevWire | un
 }
 
 function inferDeclaredWire(entry: ModelsDevProviderEntry): ModelsDevWire | undefined {
-  if (isModelsDevWire(entry.type)) return entry.type;
   const npm = (entry.npm ?? '').toLowerCase();
   const id = (entry.id ?? '').toLowerCase();
   if (npm.includes('anthropic') || id.includes('anthropic') || id.includes('claude')) {
@@ -185,7 +160,6 @@ function normalizeModelsDevModel(
     maxContextSize: context,
     maxInputSize: maxInputTokens,
     maxOutputSize: typeof output === 'number' && output > 0 ? output : undefined,
-    reasoningKey: modelsDevReasoningKey(model.interleaved),
     supportEfforts: thinking.efforts,
     offEffort: thinking.offEffort,
     alwaysThinking: thinking.alwaysThinking,
@@ -196,7 +170,6 @@ function normalizeModelsDevModel(
       thinking:
         Boolean(model.reasoning) || thinking.efforts !== undefined || thinking.hasToggle,
       tool_use: model.tool_call ?? true,
-      dynamically_loaded_tools: model.dynamically_loaded_tools === true,
     },
   };
 }
@@ -237,12 +210,6 @@ function modelsDevThinkingOptions(options: ModelsDevModelEntry['reasoning_option
   const alwaysThinking =
     efforts !== undefined && offEffort === undefined && !hasToggle ? true : undefined;
   return { efforts, offEffort, hasToggle, alwaysThinking };
-}
-
-function modelsDevReasoningKey(interleaved: ModelsDevModelEntry['interleaved']): string | undefined {
-  if (typeof interleaved !== 'object' || interleaved === null) return undefined;
-  const field = interleaved.field?.trim();
-  return field !== undefined && field.length > 0 ? field : undefined;
 }
 
 export function modelsDevProviderModels(
