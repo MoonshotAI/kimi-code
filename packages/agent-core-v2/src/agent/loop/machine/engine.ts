@@ -8,6 +8,7 @@ import { createAgentMachine } from '#human/agent/machine';
 import { createTurnMachine, type AssistantEntry, type HistoryMessage } from '#human/agent/turn';
 import { messageAppended, turnEnded } from '#human/agent/events';
 import { agentSlices, type AgentEventStore } from '#human/agent/slices';
+import { credentialsRecovery } from '#human/credentials/credentials';
 import { createEventStoreSync } from '#human/eventStore/eventStore';
 import { memoryJournal } from '#human/eventStore/journal';
 import type { LlmErrorMessage } from '#human/llm/errors';
@@ -296,7 +297,9 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
       tools: tools.tools,
       turnActor: createTurnMachine(requester.requester, {
         retry: { maxAttemptsPerStep: options.maxAttemptsPerStep },
-        recovery: options.recovery,
+        recovery: {
+          propose: (ctx) => credentialsRecovery.propose(ctx) ?? options.recovery?.propose(ctx),
+        },
       }),
       abortTimeoutMs: options.abortTimeoutMs,
     }),

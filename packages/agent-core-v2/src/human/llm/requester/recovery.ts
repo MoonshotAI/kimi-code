@@ -17,10 +17,9 @@ export interface LlmRecoveryContext {
 export interface LlmRecoveryProposal {
   readonly action: string;
   readonly messages?: readonly Message[];
-  readonly refreshCredentials?: boolean;
+  readonly prepare?: () => void;
 }
 
 export interface LlmRecovery {
-  readonly id: string;
-  propose(ctx: LlmRecoveryContext): LlmRecoveryProposal | undefined;
+  propose(ctx: LlmRecoveryContext): (LlmRecoveryProposal & LlmRecoveryRecord) | undefined;
 }

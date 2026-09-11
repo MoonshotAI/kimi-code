@@ -356,7 +356,8 @@ export class GlobalSearchService implements IGlobalSearchService {
     }
     this.summaries = new Map(sessions.map((s) => [s.id, s]));
     this.lastSyncStartedAt = Date.now();
-    await backend.sync(sessions.map((s) => this.toSyncInput(s)));
+    const outcome = await backend.sync(sessions.map((s) => this.toSyncInput(s)));
+    if (outcome.truncated || outcome.failures > 0) this.requestSync();
   }
 
   private async listAllSessions(): Promise<SessionSummary[]> {
@@ -439,7 +440,7 @@ export class GlobalSearchService implements IGlobalSearchService {
       items: pageRows.map((row) => this.projectHit(q, row)),
       hasMore,
       pageToken: hasMore
-        ? encodePageToken(q, 'live', boundaryOf(q, pageRows[pageRows.length - 1]!), undefined)
+        ? encodePageToken(q, 'live', boundaryOf(q, pageRows.at(-1)!), undefined)
         : undefined,
       incomplete: matched.incomplete,
       indexState: {
@@ -605,7 +606,7 @@ export class GlobalSearchService implements IGlobalSearchService {
         ? encodePageToken(
             q,
             'index',
-            boundaryOf(q, result.rows[result.rows.length - 1]!),
+            boundaryOf(q, result.rows.at(-1)!),
             result.generation,
           )
         : undefined,

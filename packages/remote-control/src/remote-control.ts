@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { hostname, platform } from 'node:os';
 import { join } from 'node:path';
 import { request as httpRequest, validateHeaderName, validateHeaderValue } from 'node:http';
@@ -39,12 +40,6 @@ const BRIDGE_DRAIN_POLL_MS = 20;
 const RESPONSE_CHUNK_BYTES = 256 * 1024;
 const RELAY_PING_INTERVAL_MS = 30_000;
 const RELAY_SILENCE_TIMEOUT_MS = 300_000;
-// Bump whenever the `rewriteRemoteControlResponse` rules change. Rewritten bodies are stored by
-// the browser under an ETag carrying this version and revalidated on every load, so a bump makes
-// the stored validator miss and forces a fresh rewrite instead of serving year-old bytes.
-export const REMOTE_CONTROL_REWRITE_VERSION = 1;
-const REWRITE_ETAG_SUFFIX = `-rc${REMOTE_CONTROL_REWRITE_VERSION}`;
-const REWRITTEN_CACHE_CONTROL = 'public, no-cache';
 const BLOCKED_REQUEST_HEADERS = new Set([
   'authorization',
   'cookie',
@@ -244,36 +239,6 @@ export function filterForwardRequestHeaders(
   return result;
 }
 
-// Drops the rewrite-version suffix from entity tags in an `If-None-Match` value so the local
-// server's weak comparison matches its own tag and answers 304. Only the current version is
-// stripped: a tag from an older rewrite must miss so the browser fetches a fresh rewrite.
-export function stripRewriteVersion(ifNoneMatch: string): string {
-  return ifNoneMatch.replaceAll(/-rc\d+"/g, (match) =>
-    match === `${REWRITE_ETAG_SUFFIX}"` ? '"' : match,
-  );
-}
-
-// Marks a response whose body was rewritten (or a 304 validating such a body): the browser may
-// store it but must revalidate on every load, and its ETag carries the rewrite version.
-export function applyRewrittenCacheHeaders(headers: string[]): void {
-  const etagIndex = findHeaderIndex(headers, 'etag');
-  if (etagIndex >= 0) {
-    const tag = /^(?:W\/)?("[^"]*)"$/.exec(headers[etagIndex + 1]!);
-    if (tag !== null) headers[etagIndex + 1] = `W/${tag[1]}${REWRITE_ETAG_SUFFIX}"`;
-  }
-  const cacheControlIndex = findHeaderIndex(headers, 'cache-control');
-  if (cacheControlIndex < 0) headers.push('Cache-Control', REWRITTEN_CACHE_CONTROL);
-  else headers[cacheControlIndex + 1] = REWRITTEN_CACHE_CONTROL;
-}
-
-// Index of a header name in a flat `[name, value, name, value]` list, or -1 when absent.
-function findHeaderIndex(headers: readonly string[], name: string): number {
-  for (let index = 0; index < headers.length; index += 2) {
-    if (headers[index]!.toLowerCase() === name) return index;
-  }
-  return -1;
-}
-
 export function rewriteRemoteControlResponse(
   contentType: string,
   body: Buffer,
@@ -327,6 +292,26 @@ function acceptsGzipEncoding(headers: readonly [string, string][]): boolean {
 function isGzipCompressibleType(contentType: string): boolean {
   const mime = contentType.split(';', 1)[0]!.trim().toLowerCase();
   return mime.startsWith('text/') || GZIP_COMPRESSIBLE_TYPES.has(mime);
+}
+
+function rewrittenResponseETag(body: Buffer): string {
+  return `W/"${createHash('sha256').update(body).digest('hex')}"`;
+}
+
+function requestMatchesETag(
+  headers: readonly [string, string][],
+  etag: string,
+): boolean {
+  const candidates = new Set([etag, etag.replace(/^W\//, '')]);
+  for (const [name, value] of headers) {
+    if (name.toLowerCase() !== 'if-none-match') continue;
+    for (const token of value.split(',')) {
+      const candidate = token.trim();
+      if (candidate === '*') return true;
+      if (candidates.has(candidate)) return true;
+    }
+  }
+  return false;
 }
 
 export async function startRemoteControl(
@@ -620,7 +605,12 @@ class RemoteControlClient {
       ) {
         throw new SyntaxError('invalid HTTP tunnel request message');
       }
-      const chunk = decodeBase64(parsed['body_base64']);
+      const bodyBase64 = parsed['body_base64'];
+      const minDecodedBytes = Math.floor(bodyBase64.length / 4) * 3 - 2;
+      if (this.pendingHttpBytes + minDecodedBytes > MAX_HTTP_REQUEST_BYTES) {
+        throw new SyntaxError('HTTP tunnel request exceeds 10 MiB');
+      }
+      const chunk = decodeBase64(bodyBase64);
       const pending = this.pendingHttpRequests.get(requestId) ?? { chunks: [], size: 0 };
       if (this.pendingHttpBytes + chunk.length > MAX_HTTP_REQUEST_BYTES) {
         throw new SyntaxError('HTTP tunnel request exceeds 10 MiB');
@@ -636,7 +626,8 @@ class RemoteControlClient {
     } catch (error) {
       if (requestId !== undefined) {
         this.clearPendingHttpRequest(requestId);
-        this.sendHttpResponse(requestId, buildErrorResponse(400));
+        const status = error instanceof SyntaxError ? 400 : 502;
+        this.sendHttpResponse(requestId, buildErrorResponse(status));
       }
       this.stderr.write(`Remote Control HTTP message error: ${errorMessage(error)}\n`);
     }
@@ -934,16 +925,6 @@ function requestLocalHttp(
 ): Promise<Buffer> {
   const origin = new URL(localOrigin);
   const forwardHeaders = filterForwardRequestHeaders(parsed.headers, serverToken);
-  // A versioned tag means the browser holds a rewritten copy; strip the suffix so the local
-  // server can answer 304 and remember to describe the 304 as the rewritten representation.
-  let validatesRewrite = false;
-  const ifNoneMatchIndex = findHeaderIndex(forwardHeaders, 'if-none-match');
-  if (ifNoneMatchIndex >= 0) {
-    const received = forwardHeaders[ifNoneMatchIndex + 1]!;
-    const stripped = stripRewriteVersion(received);
-    validatesRewrite = stripped !== received;
-    forwardHeaders[ifNoneMatchIndex + 1] = stripped;
-  }
   const headRequest = parsed.method === 'HEAD';
   return new Promise((resolve, reject) => {
     const request = httpRequest(
@@ -973,10 +954,21 @@ function requestLocalHttp(
               !bodiless && identityEncoded
                 ? rewriteRemoteControlResponse(contentType, receivedBody, publicPrefix)
                 : receivedBody;
+            // Rewritten bodies get a content-hash validator and must revalidate on every load: the
+            // local server's validators describe the original bytes, so they are dropped, and a
+            // matching `If-None-Match` short-circuits into a bodiless 304 before compression.
             const rewritten = !body.equals(receivedBody);
-            const headers = filterResponseHeaders(response.rawHeaders);
-            if (rewritten || (statusCode === 304 && validatesRewrite)) {
-              applyRewrittenCacheHeaders(headers);
+            const headers = filterResponseHeaders(response.rawHeaders, rewritten);
+            if (rewritten) {
+              const etag = rewrittenResponseETag(body);
+              headers.push('Cache-Control', 'no-cache', 'ETag', etag);
+              const revalidatable =
+                (parsed.method === 'GET' || parsed.method === 'HEAD') &&
+                statusCode >= 200 &&
+                statusCode < 300;
+              if (revalidatable && requestMatchesETag(parsed.headers, etag)) {
+                return Buffer.from(`HTTP/1.1 304 Not Modified\r\n${headerLines(headers)}\r\n\r\n`);
+              }
             }
             const negotiated =
               !bodiless &&
@@ -1000,9 +992,9 @@ function requestLocalHttp(
               body = await gzipAsync(body);
               headers.push('Content-Encoding', 'gzip');
               // A strong validator names exact bytes, so it cannot describe the gzip
-              // representation; drop it. Weak validators (including the versioned tag that
-              // `applyRewrittenCacheHeaders` assigns to rewritten bodies) cover semantically
-              // equivalent encodings and keep 304 revalidation working through the tunnel.
+              // representation; drop it. Weak validators (including the content-hash tag
+              // assigned to rewritten bodies above) cover semantically equivalent encodings
+              // and keep 304 revalidation working through the tunnel.
               for (let index = headers.length - 2; index >= 0; index -= 2) {
                 if (headers[index]!.toLowerCase() !== 'etag') continue;
                 if (!headers[index + 1]!.startsWith('W/')) headers.splice(index, 2);
@@ -1025,7 +1017,7 @@ function requestLocalHttp(
   });
 }
 
-function filterResponseHeaders(rawHeaders: readonly string[]): string[] {
+function filterResponseHeaders(rawHeaders: readonly string[], blockCacheValidators = false): string[] {
   const connectionHeaders = new Set<string>();
   for (let index = 0; index < rawHeaders.length; index += 2) {
     if (rawHeaders[index]!.toLowerCase() === 'connection') {
@@ -1039,6 +1031,12 @@ function filterResponseHeaders(rawHeaders: readonly string[]): string[] {
     const name = rawHeaders[index]!;
     const lower = name.toLowerCase();
     if (BLOCKED_RESPONSE_HEADERS.has(lower) || connectionHeaders.has(lower)) {
+      continue;
+    }
+    if (
+      blockCacheValidators &&
+      (lower === 'cache-control' || lower === 'etag' || lower === 'last-modified')
+    ) {
       continue;
     }
     result.push(name, rawHeaders[index + 1]!);
@@ -1187,7 +1185,30 @@ function stringField(
 }
 
 function decodeBase64(value: string): Buffer {
-  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
+  if (value.length % 4 !== 0) {
+    throw new SyntaxError('invalid HTTP tunnel request base64');
+  }
+  let paddingStart = -1;
+  for (let i = 0; i < value.length; i++) {
+    const c = value.codePointAt(i)!;
+    if (c === 0x3d) {
+      if (paddingStart === -1) paddingStart = i;
+      continue;
+    }
+    if (paddingStart !== -1) {
+      throw new SyntaxError('invalid HTTP tunnel request base64');
+    }
+    const ok =
+      (c >= 0x41 && c <= 0x5a) ||
+      (c >= 0x61 && c <= 0x7a) ||
+      (c >= 0x30 && c <= 0x39) ||
+      c === 0x2b ||
+      c === 0x2f;
+    if (!ok) {
+      throw new SyntaxError('invalid HTTP tunnel request base64');
+    }
+  }
+  if (paddingStart !== -1 && value.length - paddingStart > 2) {
     throw new SyntaxError('invalid HTTP tunnel request base64');
   }
   return Buffer.from(value, 'base64');

@@ -220,7 +220,8 @@ export interface GenerationBuilderDeps<V> {
   /** Called when a build fails for ANY reason (abort included), so the
    *  owner's runtime WAL-growth trigger can back off instead of re-kicking
    *  a build every interval on a hopelessly churning writer. */
-  noteBuildFailure?: () => void;
+  noteBuildFailure?: (error?: unknown) => void;
+  noteBuildSuccess?: () => void;
 }
 
 export class GenerationBuilder<V> {
@@ -337,7 +338,7 @@ export class GenerationBuilder<V> {
 
     const drainQueue = (): void => {
       if (gb.queue.length === 0) return;
-      const ops = gb.queue.splice(0, gb.queue.length);
+      const ops = gb.queue.splice(0);
       gb.bytes = 0;
       for (const op of ops) {
         if (op.type === TYPE_SET) {
@@ -487,8 +488,8 @@ export class GenerationBuilder<V> {
         let snapAnchor: fsSync.Stats | null = null;
         try {
           snapAnchor = fsSync.statSync(snapPath);
-        } catch (e) {
-          if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
         }
         // Host the bounded build in a worker thread when its entry file
         // exists; otherwise run the SAME bounded core inline on the main
@@ -504,9 +505,9 @@ export class GenerationBuilder<V> {
         if (workerAvailable) {
           try {
             workerSlotRelease = await defaultWorkerSlots.acquireBounded(this.deps.textBuildSlotWaitMs(), aborter.signal);
-          } catch (e) {
-            if (e instanceof MaintenanceCancelledError) throw new GenerationBuildAborted('worker slot wait cancelled');
-            throw e;
+          } catch (error) {
+            if (error instanceof MaintenanceCancelledError) throw new GenerationBuildAborted('worker slot wait cancelled');
+            throw error;
           }
           if (workerSlotRelease === null) inlineReason = 'slot-pressure';
         } else {
@@ -570,7 +571,7 @@ export class GenerationBuilder<V> {
       // The store image is written in ascending key order (the load path
       // bulk-builds the ordered index from file order): the walk's keys were
       // already sorted, but queue-applied keys appended out of order.
-      const sortedImageKeys = [...imageRecords.keys()].sort();
+      const sortedImageKeys = [...imageRecords.keys()].toSorted();
       const storeRes = await writeStoreImage(
         path.join(tmpDir, STORE_IMAGE_FILE),
         (function* (): Generator<StoreImageRecord> {
@@ -598,12 +599,12 @@ export class GenerationBuilder<V> {
         let result: TextBuildCoreResult;
         try {
           result = await workerHandle.promise;
-        } catch (e) {
-          if (e instanceof WorkerTextBuildError && e.aborted) {
-            throw new GenerationBuildAborted(`worker build cancelled: ${e.message}`);
+        } catch (error) {
+          if (error instanceof WorkerTextBuildError && error.aborted) {
+            throw new GenerationBuildAborted(`worker build cancelled: ${error.message}`);
           }
           if (!workerHandle.inline) this.deps.stats.textWorkerErrors++;
-          throw e;
+          throw error;
         }
         checkAlive();
         if (result.scannedLiveKeys > imageRecords.size) {
@@ -703,8 +704,8 @@ export class GenerationBuilder<V> {
       let snapshotLinked = false;
       try {
         snapSt = await fs.stat(snapSrc);
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       }
       if (snapSt) {
         try {
@@ -804,6 +805,7 @@ export class GenerationBuilder<V> {
       this.generationInfo = { id, createdAt: manifest.createdAt, walCheckpoint: sealedOffset, records: imageRecords.size };
       this.deps.stats.generationBuilds++;
       this.deps.stats.generationBuildDurationMs += performance.now() - t0;
+      this.deps.noteBuildSuccess?.();
 
       // Retention: keep the new and the previously-published generation; sweep
       // everything else (stray tmp dirs included). Best-effort, async.
@@ -820,7 +822,7 @@ export class GenerationBuilder<V> {
       for (const name of workerResults.keys()) {
         await fs.rm(path.join(generationDir(this.deps.dir(), id), `${textDocsFile(name)}.base`), { force: true }).catch(() => {});
       }
-    } catch (e) {
+    } catch (error) {
       if (this.genBuild === gb) this.genBuild = null;
       // Uncommitted staged builds only disarm their queues (the live indexes
       // stay authoritative); committed ones keep their new base — its
@@ -833,14 +835,14 @@ export class GenerationBuilder<V> {
       // dir, never in the live generation).
       for (const [, { ti }] of workerTargets) ti.abortRebase();
       if (workerHandle) await workerHandle.cancel();
-      if (e instanceof GenerationBuildAborted) {
+      if (error instanceof GenerationBuildAborted) {
         this.deps.stats.generationBuildAborts++;
         this.deps.noteBuildFailure?.();
         return;
       }
       this.deps.stats.generationBuildErrors++;
-      this.deps.noteBuildFailure?.();
-      throw e;
+      this.deps.noteBuildFailure?.(error);
+      throw error;
     } finally {
       if (this.genBuild === gb) this.genBuild = null;
       workerSlotRelease?.();

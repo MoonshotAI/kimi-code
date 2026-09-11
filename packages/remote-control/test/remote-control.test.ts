@@ -17,18 +17,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 
 import {
-  applyRewrittenCacheHeaders,
   bridgeSockets,
   bufferEarlyFrame,
   buildRemoteControlUrl,
   filterForwardRequestHeaders,
   parseRawHttpRequest,
   reconnectDelayMs,
-  REMOTE_CONTROL_REWRITE_VERSION,
   resolveRemoteControlRelayOrigin,
   rewriteRemoteControlResponse,
   startRemoteControl,
-  stripRewriteVersion,
   type BridgeSocket,
   type EarlyFrameBuffer,
   type RemoteControlHandle,
@@ -165,28 +162,6 @@ describe('Remote Control HTTP forwarding', () => {
       prefix,
     ).toString();
     expect(css).toBe(`.x{background:url(${prefix}/assets/x.png)}`);
-  });
-
-  it('strips only the current rewrite version from If-None-Match entity tags', () => {
-    const suffix = `-rc${REMOTE_CONTROL_REWRITE_VERSION}`;
-    expect(stripRewriteVersion(`W/"asset-1${suffix}"`)).toBe('W/"asset-1"');
-    expect(stripRewriteVersion(`"asset-1${suffix}", W/"asset-2${suffix}"`)).toBe(
-      '"asset-1", W/"asset-2"',
-    );
-    expect(stripRewriteVersion('W/"asset-1-rc0"')).toBe('W/"asset-1-rc0"');
-    expect(stripRewriteVersion('W/"asset-1"')).toBe('W/"asset-1"');
-    expect(stripRewriteVersion('*')).toBe('*');
-  });
-
-  it('marks rewritten responses as revalidate-always with a versioned weak ETag', () => {
-    const suffix = `-rc${REMOTE_CONTROL_REWRITE_VERSION}`;
-    const weak = ['ETag', 'W/"asset-1"', 'Cache-Control', 'public, max-age=31536000, immutable'];
-    applyRewrittenCacheHeaders(weak);
-    expect(weak).toEqual(['ETag', `W/"asset-1${suffix}"`, 'Cache-Control', 'public, no-cache']);
-
-    const strong = ['etag', '"asset-1"'];
-    applyRewrittenCacheHeaders(strong);
-    expect(strong).toEqual(['etag', `W/"asset-1${suffix}"`, 'Cache-Control', 'public, no-cache']);
   });
 });
 
@@ -328,6 +303,7 @@ describe('Remote Control tunnel', () => {
     );
 
     let localHttpRequest: IncomingMessage | undefined;
+    let localHttpBodyBytes = 0;
     let localWsRequest: IncomingMessage | undefined;
     const localWsServer = new WebSocketServer({ noServer: true });
     const assetJs = `const boot = "/assets/boot.js";\n${'const chunk = "/assets/chunk.js";\n'.repeat(120)}`;
@@ -377,23 +353,30 @@ describe('Remote Control tunnel', () => {
         response.end(assetText);
         return;
       }
-      if (request.headers['if-none-match'] === 'W/"asset-1"') {
-        response.writeHead(304, {
+      let bodyBytes = 0;
+      request.on('data', (chunk: Buffer) => {
+        bodyBytes += chunk.length;
+      });
+      request.on('end', () => {
+        localHttpBodyBytes = bodyBytes;
+        if (request.headers['if-none-match'] === 'W/"asset-1"') {
+          response.writeHead(304, {
+            'Content-Type': 'text/html',
+            ETag: 'W/"asset-1"',
+            'Cache-Control': 'public, max-age=31536000, immutable',
+          });
+          response.end();
+          return;
+        }
+        response.writeHead(200, {
           'Content-Type': 'text/html',
           ETag: 'W/"asset-1"',
           'Cache-Control': 'public, max-age=31536000, immutable',
+          Connection: 'X-Remove',
+          'X-Remove': 'gone',
         });
-        response.end();
-        return;
-      }
-      response.writeHead(200, {
-        'Content-Type': 'text/html',
-        ETag: 'W/"asset-1"',
-        'Cache-Control': 'public, max-age=31536000, immutable',
-        Connection: 'X-Remove',
-        'X-Remove': 'gone',
+        response.end('<html><head></head><script src="/boot.js"></script></html>');
       });
-      response.end('<html><head></head><script src="/boot.js"></script></html>');
     });
     localServer.on('upgrade', (request, socket, head) => {
       localWsRequest = request;
@@ -494,11 +477,13 @@ describe('Remote Control tunnel', () => {
     expect(localHttpRequest?.headers['x-hop']).toBeUndefined();
     expect(localHttpRequest?.headers['x-keep']).toBe('yes');
     expect(response).not.toContain('X-Remove');
-    // Rewritten bodies are stored but revalidated per load under a versioned validator.
-    const rewriteSuffix = `-rc${REMOTE_CONTROL_REWRITE_VERSION}`;
-    expect(response).toContain('Cache-Control: public, no-cache');
+    // Rewritten bodies are stored but revalidated per load under a content-hash validator;
+    // the local server's own validators describe the original bytes and are dropped.
+    expect(response).toContain('Cache-Control: no-cache');
     expect(response).not.toContain('immutable');
-    expect(response).toContain(`ETag: W/"asset-1${rewriteSuffix}"`);
+    expect(response).not.toContain('ETag: W/"asset-1"');
+    const htmlETag = /ETag: (W\/"[0-9a-f]{64}")/.exec(response)?.[1];
+    expect(htmlETag).toBeDefined();
     // Below the gzip threshold: neither compressed nor marked as negotiable.
     expect(response).not.toContain('Content-Encoding');
     expect(response).not.toContain('Vary');
@@ -518,27 +503,28 @@ describe('Remote Control tunnel', () => {
       return Buffer.from((await reply)['body_base64'] as string, 'base64').toString();
     };
 
+    // The browser revalidates the rewritten copy with the tunnel's hash: the local server sees
+    // the unknown tag and answers 200, and the tunnel collapses the match into a bodiless 304.
     const notModified = await tunnelRequest(
       'request-304',
-      `GET / HTTP/1.1\r\nHost: relay.test\r\nIf-None-Match: W/"asset-1${rewriteSuffix}"\r\n\r\n`,
+      `GET / HTTP/1.1\r\nHost: relay.test\r\nIf-None-Match: ${htmlETag}\r\n\r\n`,
     );
-    expect(localHttpRequest?.headers['if-none-match']).toBe('W/"asset-1"');
+    expect(localHttpRequest?.headers['if-none-match']).toBe(htmlETag);
     expect(notModified).toMatch(/^HTTP\/1\.1 304 Not Modified\r\n/);
-    expect(notModified).toContain(`ETag: W/"asset-1${rewriteSuffix}"`);
-    expect(notModified).toContain('Cache-Control: public, no-cache');
+    expect(notModified).toContain(`ETag: ${htmlETag}`);
+    expect(notModified).toContain('Cache-Control: no-cache');
     expect(notModified).not.toContain('immutable');
     expect(notModified).not.toContain('Content-Length');
     expect(notModified).not.toContain('<script');
     expect(notModified.endsWith('\r\n\r\n')).toBe(true);
 
-    // A validator from an older rewrite must miss so the browser gets a fresh rewrite.
+    // A validator for different rewritten bytes must miss so the browser gets a fresh rewrite.
     const staleRewrite = await tunnelRequest(
       'request-stale',
-      'GET / HTTP/1.1\r\nHost: relay.test\r\nIf-None-Match: W/"asset-1-rc0"\r\n\r\n',
+      `GET / HTTP/1.1\r\nHost: relay.test\r\nIf-None-Match: W/"${'0'.repeat(64)}"\r\n\r\n`,
     );
-    expect(localHttpRequest?.headers['if-none-match']).toBe('W/"asset-1-rc0"');
     expect(staleRewrite).toMatch(/^HTTP\/1\.1 200 OK\r\n/);
-    expect(staleRewrite).toContain(`ETag: W/"asset-1${rewriteSuffix}"`);
+    expect(staleRewrite).toContain(`ETag: ${htmlETag}`);
     expect(staleRewrite).toContain(`/coding-relay/devices/${handle.deviceId}/boot.js`);
 
     // Untouched assets keep the upstream validator and long-lived caching verbatim.
@@ -595,9 +581,12 @@ describe('Remote Control tunnel', () => {
     expect(gzipHead).toContain('HTTP/1.1 200 OK');
     expect(gzipHead).toContain('Content-Encoding: gzip');
     expect(gzipHead).toContain('Vary: Accept-Encoding');
-    // Rewritten, so the validator is weak and versioned; weak tags survive compression.
-    expect(gzipHead).toContain(`ETag: W/"v1${rewriteSuffix}"`);
-    expect(gzipHead).toContain('Cache-Control: public, no-cache');
+    // Rewritten, so the validator is a weak content hash; weak tags survive compression and
+    // the local server's strong tag is dropped.
+    expect(gzipHead).toContain('Cache-Control: no-cache');
+    expect(gzipHead).not.toContain('ETag: "v1"');
+    const rewrittenETag = /ETag: (W\/"[0-9a-f]{64}")/.exec(gzipHead)?.[0];
+    expect(rewrittenETag).toBeDefined();
     expect(gzipHead).toContain(`Content-Length: ${gzipBody.length}`);
     expect(gunzipSync(gzipBody).toString()).toBe(
       assetJs.replaceAll('"/assets/', `"/coding-relay/devices/${handle.deviceId}/assets/`),
@@ -606,12 +595,11 @@ describe('Remote Control tunnel', () => {
     // A gzip-capable browser revalidates the compressed copy with a bodiless 304.
     const gzipNotModified = await tunnelRequest(
       'request-3-304',
-      `GET /assets/index.js HTTP/1.1\r\nHost: relay.test\r\nAccept-Encoding: gzip\r\nIf-None-Match: W/"v1${rewriteSuffix}"\r\n\r\n`,
+      `GET /assets/index.js HTTP/1.1\r\nHost: relay.test\r\nAccept-Encoding: br, gzip\r\nIf-None-Match: ${rewrittenETag!.replace('ETag: ', '')}\r\n\r\n`,
     );
-    expect(localHttpRequest?.headers['if-none-match']).toBe('W/"v1"');
     expect(gzipNotModified).toMatch(/^HTTP\/1\.1 304 Not Modified\r\n/);
-    expect(gzipNotModified).toContain(`ETag: W/"v1${rewriteSuffix}"`);
-    expect(gzipNotModified).toContain('Cache-Control: public, no-cache');
+    expect(gzipNotModified).toContain(rewrittenETag!);
+    expect(gzipNotModified).toContain('Cache-Control: no-cache');
     expect(gzipNotModified).not.toContain('Content-Encoding');
     expect(gzipNotModified).not.toContain('Content-Length');
     expect(gzipNotModified.endsWith('\r\n\r\n')).toBe(true);
@@ -656,8 +644,9 @@ describe('Remote Control tunnel', () => {
     const excludedHead = excludedResponse.subarray(0, excludedSeparator).toString('latin1');
     expect(excludedHead).not.toContain('Content-Encoding');
     expect(excludedHead).toContain('Vary: Accept-Encoding');
-    expect(excludedHead).toContain(`ETag: W/"v1${rewriteSuffix}"`);
-    expect(excludedHead).toContain('Cache-Control: public, no-cache');
+    expect(excludedHead).toContain(rewrittenETag!);
+    expect(excludedHead).not.toContain('ETag: "v1"');
+    expect(excludedHead).toContain('Cache-Control: no-cache');
     expect(excludedResponse.subarray(excludedSeparator + 4).toString()).toBe(
       assetJs.replaceAll('"/assets/', `"/coding-relay/devices/${handle.deviceId}/assets/`),
     );
@@ -704,6 +693,25 @@ describe('Remote Control tunnel', () => {
     expect(rangeHead).toContain('Content-Range: bytes 0-2047/4096');
     expect(rangeHead).not.toContain('Content-Encoding');
     expect(rangeResponse.subarray(rangeSeparator + 4).toString()).toBe(assetText);
+
+    const largeBody = Buffer.alloc(4 * 1024 * 1024 + 512 * 1024, 0x61);
+    const largeRequest = Buffer.concat([
+      Buffer.from(`POST /upload HTTP/1.1\r\nHost: relay.test\r\nContent-Length: ${largeBody.length}\r\n\r\n`),
+      largeBody,
+    ]);
+    const largeResponsePromise = nextJsonMessage(httpConnections[0]!);
+    httpConnections[0]!.send(
+      JSON.stringify({
+        request_id: 'request-8',
+        type: 'request',
+        is_last: true,
+        body_base64: largeRequest.toString('base64'),
+      }),
+    );
+    const largeResponseMessage = await largeResponsePromise;
+    const largeResponse = Buffer.from(largeResponseMessage['body_base64'] as string, 'base64').toString();
+    expect(largeResponse).toContain('HTTP/1.1 200 OK');
+    expect(localHttpBodyBytes).toBe(largeBody.length);
 
     managementConnections[0]!.send(
       JSON.stringify({
