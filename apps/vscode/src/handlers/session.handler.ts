@@ -41,6 +41,10 @@ export const sessionHandlers: Record<string, Handler<any, any>> = {
       .map(toSessionInfo);
   },
 
+  [Methods.IsSessionBusy]: async (params: { sessionId: string }, ctx): Promise<{ busy: boolean }> => {
+    return { busy: ctx.runtime.getSession(params.sessionId)?.isBusy ?? false };
+  },
+
   [Methods.GetRegisteredWorkDirs]: async (_, ctx): Promise<string[]> => {
     if (!ctx.workspaceRoot) return [];
     const sessions = await ctx.harness.listSessions();
@@ -170,6 +174,12 @@ export const sessionHandlers: Record<string, Handler<any, any>> = {
         .catch((noticeError: unknown) => {
           ctx.logError("Unable to show the file change warning", noticeError);
         });
+    }
+    if (runtime.isBusy) {
+      // The session has an in-flight turn (e.g. started by another view, or
+      // still running while this webview reloaded): tell the store, so the
+      // composer queues new input instead of bouncing off the busy runtime.
+      history.push({ type: "turn_active", payload: {}, _sessionId: runtime.id });
     }
     return history;
   },
