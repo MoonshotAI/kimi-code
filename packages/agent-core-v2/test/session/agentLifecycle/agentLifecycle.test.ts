@@ -268,6 +268,7 @@ describe('AgentLifecycleService', () => {
       _serviceBrand: undefined,
       homeDir: '/tmp/kimi-agentLifecycle-home',
       cwd: '/tmp/kimi-agentLifecycle-home',
+      getEnv: () => undefined,
     } as unknown as IBootstrapService);
     ix.stub(IFlagService, {
       _serviceBrand: undefined,
