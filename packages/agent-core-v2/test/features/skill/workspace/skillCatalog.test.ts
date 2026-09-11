@@ -230,6 +230,8 @@ async function withSkillCatalogWorkspace(
 
 describe('WorkspaceSkillCatalogService', () => {
   beforeEach(() => {
+    vi.unstubAllEnvs();
+    vi.stubEnv('KIMI_CODE_SKILL_ROOT_WATCH', '1');
     watchMockState.calls = [];
     watchMockState.factory = undefined;
     _clearScopedRegistryForTests();
@@ -976,7 +978,7 @@ describe('WorkspaceSkillCatalogService', () => {
       await catalog.reloadSources(['user', 'explicit', 'extra', 'plugin']);
       sub.dispose();
 
-      expect([...fired].sort()).toEqual(['explicit', 'extra', 'plugin', 'user']);
+      expect([...fired].toSorted()).toEqual(['explicit', 'extra', 'plugin', 'user']);
       expect(catalog.catalog.getSkill('user-skill')?.description).toBe('v2');
       expect(catalog.catalog.getSkill('extra-skill')?.description).toBe('v2');
       expect(catalog.catalog.getPluginSkill('demo', 'demo-skill')).toBeUndefined();
@@ -1086,6 +1088,63 @@ describe('WorkspaceSkillCatalogService', () => {
       expect(watchedPaths).not.toContain('/os-home');
     } finally {
       host.dispose();
+    }
+  });
+
+  it('does not watch the user skill roots when the watch env flag is off', async () => {
+    vi.stubEnv('KIMI_CODE_SKILL_ROOT_WATCH', '0');
+    const host = createScopedTestHost([
+      stubPair(IFlagService, stubFlag(true)),
+      stubPair(IBootstrapService, stubBootstrap('/home', {}, {}, '/os-home')),
+      stubPair(IConfigService, configStub()),
+      stubPair(IPluginService, pluginStub()),
+      stubPair(ILogService, stubLog()),
+      stubPair(ISkillDiscovery, new FileSkillDiscovery(stubLog())),
+    ]);
+    const workspace = host.child('program', 'w1', [
+      stubPair(IWorkspaceContext, workspaceContextStub('/work')),
+    ]);
+
+    try {
+      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+      await catalog.load();
+
+      const watchedPaths = watchMockState.calls.map((call) => call.path);
+      expect(watchedPaths).not.toContain('/home');
+      expect(watchedPaths).not.toContain('/os-home');
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('does not watch the project skill root when the watch env flag is off', async () => {
+    vi.stubEnv('KIMI_CODE_SKILL_ROOT_WATCH', '0');
+    const workDir = await mkdtemp(join(tmpdir(), 'skill-watch-disabled-'));
+    const skillRoot = join(workDir, '.agents', 'skills');
+    await mkdir(skillRoot, { recursive: true });
+    const watchedRoot = await realpath(workDir);
+    const host = createScopedTestHost([
+      stubPair(IFlagService, stubFlag(true)),
+      stubPair(IBootstrapService, bootstrapStub),
+      stubPair(IConfigService, configStub()),
+      stubPair(IPluginService, pluginStub()),
+      stubPair(ILogService, stubLog()),
+      stubPair(ISkillDiscovery, new FileSkillDiscovery(stubLog())),
+    ]);
+    const workspace = host.child('program', 'w1', [
+      stubPair(IWorkspaceContext, workspaceContextStub(workDir)),
+    ]);
+
+    try {
+      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+      await catalog.load();
+
+      const watchedPaths = watchMockState.calls.map((call) => call.path);
+      expect(watchedPaths).not.toContain(workDir);
+      expect(watchedPaths).not.toContain(watchedRoot);
+    } finally {
+      host.dispose();
+      await rm(workDir, { recursive: true, force: true });
     }
   });
 
