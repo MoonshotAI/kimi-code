@@ -1,3 +1,5 @@
+import { execFile } from 'node:child_process';
+
 import type { Terminal } from '@moonshot-ai/pi-tui';
 
 import { BEL, ESC, MAX_TERMINAL_NOTIFICATION_MESSAGE_LENGTH, ST } from '#/tui/constant/terminal';
@@ -11,6 +13,7 @@ export interface TerminalNotification {
 export interface EmitOptions {
   readonly supportsOsc9?: boolean;
   readonly insideTmux?: boolean;
+  readonly windowsTerminal?: boolean;
 }
 
 export interface BuildOptions {
@@ -39,12 +42,22 @@ export function emitTerminalNotification(
   notification: TerminalNotification,
   options: EmitOptions = {},
 ): void {
+  const supportsOsc9 = options.supportsOsc9 ?? supportsOsc9Notification();
   const sequences = buildTerminalNotificationSequences(notification, {
-    supportsOsc9: options.supportsOsc9 ?? supportsOsc9Notification(),
+    supportsOsc9,
     insideTmux: options.insideTmux ?? isInsideTmux(),
   });
   for (const sequence of sequences) {
     terminal.write(sequence);
+  }
+  // Windows Terminal does not support OSC 9 (its OSC 9 is taken by ConEmu
+  // progress semantics), so on the BEL fallback path we additionally pop a
+  // native toast. The BEL stays as a generic audible fallback.
+  if (!supportsOsc9 && (options.windowsTerminal ?? isWindowsTerminalSession())) {
+    const message = formatNotification(notification);
+    if (message.length > 0) {
+      sendWindowsToast(message);
+    }
   }
 }
 
@@ -132,6 +145,59 @@ export function supportsTerminalProgress(env: NodeJS.ProcessEnv = process.env): 
 export function isInsideTmux(env: NodeJS.ProcessEnv = process.env): boolean {
   const tmux = env['TMUX'] ?? '';
   return tmux.length > 0;
+}
+
+/**
+ * Detect Windows Terminal via the `WT_SESSION` variable it always sets.
+ * Deliberately env-only: under WSL `process.platform` is `linux` but
+ * `WT_SESSION` is still inherited and `powershell.exe` works via interop.
+ */
+export function isWindowsTerminalSession(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env['WT_SESSION'] ?? '').length > 0;
+}
+
+const WINDOWS_TOAST_NOTIFIER_ID = 'Kimi Code';
+
+/**
+ * Build the `powershell.exe` invocation that pops a native WinRT toast.
+ *
+ * Ported from pi-notify (MIT, https://github.com/ferologics/pi-notify),
+ * with two fixes over the original: the message is single-quote escaped
+ * before being interpolated into the script, and the caller swallows all
+ * spawn errors (see `sendWindowsToast`). The toast uses the single-text
+ * ToastText01 template; `CreateTextNode` escapes XML for us. The notifier
+ * id (AUMID) is the fixed string 'Kimi Code', so toasts carry no app
+ * registration and no click callback.
+ */
+export function buildWindowsToastCommand(message: string): { file: string; args: string[] } {
+  const type = 'Windows.UI.Notifications';
+  const mgr = `[${type}.ToastNotificationManager, ${type}, ContentType = WindowsRuntime]`;
+  const template = `[${type}.ToastTemplateType]::ToastText01`;
+  const escaped = message.replaceAll("'", "''");
+  const script = [
+    `${mgr} > $null`,
+    `$xml = [${type}.ToastNotificationManager]::GetTemplateContent(${template})`,
+    `$xml.GetElementsByTagName('text')[0].AppendChild($xml.CreateTextNode('${escaped}')) > $null`,
+    `[${type}.ToastNotificationManager]::CreateToastNotifier('${WINDOWS_TOAST_NOTIFIER_ID}').Show([${type}.ToastNotification]::new($xml))`,
+  ].join('; ');
+  return { file: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-Command', script] };
+}
+
+/**
+ * Fire-and-forget toast delivery: spawn without waiting, swallow every
+ * error (a missing `powershell.exe` must never crash the TUI), and unref
+ * the child so it can't keep the process alive.
+ */
+export function sendWindowsToast(message: string): void {
+  try {
+    const { file, args } = buildWindowsToastCommand(message);
+    const child = execFile(file, args, () => {
+      // Intentionally empty: delivery errors are not actionable here.
+    });
+    child.unref();
+  } catch {
+    // Notification delivery must never take down the TUI.
+  }
 }
 
 function sanitizeNotificationText(value: string): string {
