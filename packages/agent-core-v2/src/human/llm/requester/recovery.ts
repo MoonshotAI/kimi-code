@@ -17,10 +17,23 @@ export interface LlmRecoveryContext {
 export interface LlmRecoveryProposal {
   readonly action: string;
   readonly messages?: readonly Message[];
-  readonly refreshCredentials?: boolean;
+  readonly prepare?: () => void;
 }
 
 export interface LlmRecovery {
-  readonly id: string;
-  propose(ctx: LlmRecoveryContext): LlmRecoveryProposal | undefined;
+  propose(ctx: LlmRecoveryContext): (LlmRecoveryProposal & LlmRecoveryRecord) | undefined;
+}
+
+export function chainRecoveries(
+  ...strategies: readonly (LlmRecovery | undefined)[]
+): LlmRecovery {
+  return {
+    propose: (ctx) => {
+      for (const strategy of strategies) {
+        const proposal = strategy?.propose(ctx);
+        if (proposal !== undefined) return proposal;
+      }
+      return undefined;
+    },
+  };
 }

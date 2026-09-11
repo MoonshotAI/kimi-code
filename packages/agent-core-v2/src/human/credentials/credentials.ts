@@ -56,11 +56,20 @@ export async function resolveModelCredentials(
   return applyCredential(model, await credentials?.resolve());
 }
 
+const CREDENTIALS_RECOVERY_ID = 'credentials';
+
 export const credentialsRecovery: LlmRecovery = {
-  id: 'credentials',
-  propose: ({ error, applied, credentials }) =>
-    credentials?.canRecover?.(error) === true &&
-    !applied.some((record) => record.strategy === 'credentials')
-      ? { action: 'refresh', refreshCredentials: true }
-      : undefined,
+  propose: ({ error, applied, credentials }) => {
+    if (
+      credentials?.canRecover?.(error) !== true ||
+      applied.some((record) => record.strategy === CREDENTIALS_RECOVERY_ID)
+    ) {
+      return undefined;
+    }
+    return {
+      strategy: CREDENTIALS_RECOVERY_ID,
+      action: 'refresh',
+      prepare: () => credentials?.invalidate?.(),
+    };
+  },
 };
