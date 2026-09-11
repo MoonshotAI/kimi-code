@@ -63,10 +63,13 @@ const transcriptQueryCoercion = z
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
+const MAX_TRANSCRIPT_OPS_LIMIT = 500;
+
 const transcriptOpsQueryCoercion = z
   .object({
     agent_id: z.string().min(1),
     since_seq: z.coerce.number().int().min(0),
+    limit: z.coerce.number().int().min(1).max(MAX_TRANSCRIPT_OPS_LIMIT).optional(),
   })
   .superRefine((value, ctx) => {
     if (!isPlainAgentId(value.agent_id)) {
@@ -222,14 +225,19 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
         [ErrorCode.SESSION_NOT_FOUND]: {},
       },
       description:
-        'Point-to-point transcript catch-up: journaled op batches with seq > since_seq for one agent, oldest first. complete:false means the session is not live or the journal no longer reaches back to since_seq — the caller must fall back to a full transcript refresh',
+        'Point-to-point transcript catch-up: journaled op batches with seq > since_seq for one agent, oldest first, at most limit batches per response when limit is given (every batch when it is omitted). latest_seq is the newest seq covered by the response (the last returned batch when capped); has_more:true means newer batches remain — page again with since_seq=latest_seq. complete:false means the session is not live or the journal no longer reaches back to since_seq — the caller must fall back to a full transcript refresh',
       tags: ['transcript'],
     },
     async (req, reply) => {
       const { session_id } = req.params;
       const query = req.query;
 
-      const catchup = transcriptService.getOpsSince(session_id, query.agent_id, query.since_seq);
+      const catchup = transcriptService.getOpsSince(
+        session_id,
+        query.agent_id,
+        query.since_seq,
+        query.limit,
+      );
       if (catchup === undefined) {
         const roster = await transcriptService.readColdRoster(session_id);
         if (roster === undefined) {
@@ -238,7 +246,13 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
         }
         reply.send(
           okEnvelope(
-            { agent_id: query.agent_id, batches: [], latest_seq: 0, complete: false },
+            {
+              agent_id: query.agent_id,
+              batches: [],
+              latest_seq: 0,
+              complete: false,
+              has_more: false,
+            },
             req.id,
           ),
         );
@@ -251,6 +265,7 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
             batches: catchup.batches,
             latest_seq: catchup.latestSeq,
             complete: catchup.complete,
+            has_more: catchup.hasMore,
           },
           req.id,
         ),

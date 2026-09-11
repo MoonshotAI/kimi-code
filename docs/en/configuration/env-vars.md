@@ -138,6 +138,14 @@ Switches that control the behavior of subsystems such as telemetry, background t
 | --- | --- | --- |
 | `KIMI_DISABLE_TELEMETRY` | Disable anonymous telemetry reporting | `1`, `true`, `yes`, `y` (case-insensitive) |
 | `KIMI_CODE_PASSWORD` | Parallel auth credential for `kimi web`, recommended when binding beyond loopback (see [Security notes](../guides/web.md#security-notes)) | Any non-empty string; when unset, only the token is valid |
+| `KIMI_CODE_WS_COMPRESSION` | Offer `permessage-deflate` on `kimi web` WebSocket connections (default on) | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off`; anything else is ignored |
+| `KIMI_CODE_WS_MAX_PAYLOAD_BYTES` | Max inbound WebSocket message size (default `16777216`) | Positive integer; invalid values are ignored |
+| `KIMI_CODE_WS_HEARTBEAT_MS` | Server `ping` interval (ms); the connection closes after two silent intervals (default `10000`) | Positive integer; invalid values are ignored |
+| `KIMI_CODE_WS_FLUSH_INTERVAL_MS` | Batching window (ms) for subscribed event frames (default `16`) | Positive integer; invalid values are ignored |
+| `KIMI_CODE_WS_MAX_BATCH_SIZE` | Buffered subscribed frames that trigger an immediate flush (default `64`) | Positive integer; invalid values are ignored |
+| `KIMI_CODE_WS_HIGH_WATER_MARK_BYTES` | Socket `bufferedAmount` above which outbound frames are held back (default `1048576`) | Positive integer; invalid values are ignored |
+| `KIMI_CODE_WS_MAX_BUFFER_SIZE` | Per-session replay window, also advertised as `server_hello.max_event_buffer_size` (default `1000`) | Positive integer; invalid values are ignored |
+| `KIMI_CODE_TRANSCRIPT_OPS_BATCH_MS` | Window (ms) for merging consecutive streamed text appends into one `transcript.ops` batch before its sequence number is assigned (default `16`; `0` forwards every append immediately) | Non-negative integer; invalid values are ignored |
 | `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` | Keep background tasks when the session closes; higher priority than `config.toml` (default: stop them on exit) | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off` |
 | `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS` | Cap on concurrently running background tasks; higher priority than `[background] max_running_tasks` (unset = no cap) | Positive integer; invalid values are ignored |
 | `KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S` | Default timeout (seconds) for background `Bash` tasks, also used to re-arm foreground commands moved to the background; higher priority than `[task] bash_task_timeout_s` (`0` = no timeout) | Non-negative integer; invalid values are ignored |
@@ -155,6 +163,7 @@ Switches that control the behavior of subsystems such as telemetry, background t
 | `KIMI_CODE_BUILTIN_PRODUCT_SKILLS` | Offer the built-in skills documenting Kimi Code itself to the model; higher priority than `builtin_product_skills` | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off` |
 | `KIMI_CODE_TUI_FULL_SCREEN` | Experimental fullscreen UI: scrollable transcript, mouse selection, clickable links, Ctrl-Shift-F search | `1` enables it; anything else keeps the regular inline UI |
 | `KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK` | Experimental `fork` parameter on `Agent`/`AgentSwarm`: start the subagent from a snapshot of the caller's history instead of an empty context; `KIMI_CODE_EXPERIMENTAL_FLAG=1` also enables it | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off` |
+| `KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL_CHUNKED_RESPONSES` | Experimental: split Remote Control HTTP responses into 256 KiB tunnel frames instead of one frame per response; `KIMI_CODE_EXPERIMENTAL_FLAG=1` also enables it | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off` |
 | `KIMI_CODE_SEARCH_WORKER` | Run the global search index in a dedicated worker thread; higher priority than `[database] search` (default `true`) | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off` |
 | `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` | Use the minidb-backed read model for session indexing; higher priority than `[database] base` (default `true`) | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off` |
 | `KIMI_MCP_STARTUP_TIMEOUT_MS` | Global default connection timeout (ms) for MCP servers; overrides the config file, but `mcp.json` `startupTimeoutMs` still wins | Integer from `1` to `2147483647`; invalid values are ignored |

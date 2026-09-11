@@ -3,8 +3,8 @@
  * coarse activity map behind the Sidebar's status badges.
  *
  * Two data sources converge into one store: the initial / reconnect
- * baseline comes from a single `GET /api/v1/sessions` page (every wire
- * session carries `busy` / `main_turn_active` / `pending_interaction` /
+ * baseline drains the `GET /api/v1/sessions` pages (every wire session
+ * carries `busy` / `main_turn_active` / `pending_interaction` /
  * `last_turn_reason`), and live updates arrive as
  * `event.session.work_changed` frames over the global WS channel (no
  * subscription needed server-side). List-level facts (session created /
@@ -18,6 +18,9 @@ import type { WsLikeCtor } from '../channel/wsLike';
 import { GlobalEventsWs, type SessionWorkFacts } from './ws';
 
 export type { SessionWorkFacts };
+
+/** `GET /api/v1/sessions` page size used while draining the seed baseline (server max). */
+const SEED_PAGE_SIZE = 100;
 
 export class SessionActivityStore {
   private activities = new Map<string, SessionWorkFacts>();
@@ -126,14 +129,38 @@ export class SessionActivityHub {
       headers['authorization'] = `Bearer ${this.token}`;
     }
     try {
-      const res = await this.fetchImpl(`${this.baseUrl}/api/v1/sessions`, { headers });
-      const envelope = (await res.json()) as {
-        code: number;
-        data?: { items?: Record<string, unknown>[] };
-      };
-      if (envelope.code !== 0 || envelope.data?.items === undefined) return;
+      // An unsized request returns every session in one response today; the
+      // before_id drain only kicks in should the server ever report has_more.
+      // A page that fails after the first one still seeds what was collected.
+      const items: Record<string, unknown>[] = [];
+      let before: string | undefined;
+      for (;;) {
+        const query =
+          before === undefined
+            ? ''
+            : `?${new URLSearchParams({ page_size: String(SEED_PAGE_SIZE), before_id: before })}`;
+        let envelope: {
+          code: number;
+          data?: { items?: Record<string, unknown>[]; has_more?: boolean };
+        };
+        try {
+          const res = await this.fetchImpl(`${this.baseUrl}/api/v1/sessions${query}`, { headers });
+          envelope = (await res.json()) as typeof envelope;
+        } catch {
+          if (items.length === 0) return;
+          break;
+        }
+        if (envelope.code !== 0 || envelope.data?.items === undefined) {
+          if (items.length === 0) return;
+          break;
+        }
+        items.push(...envelope.data.items);
+        const lastId = envelope.data.items.at(-1)?.['id'];
+        if (envelope.data.has_more !== true || typeof lastId !== 'string') break;
+        before = lastId;
+      }
       const entries: [string, SessionWorkFacts][] = [];
-      for (const item of envelope.data.items) {
+      for (const item of items) {
         const id = item['id'];
         if (typeof id !== 'string' || typeof item['busy'] !== 'boolean') continue;
         const pending = item['pending_interaction'];

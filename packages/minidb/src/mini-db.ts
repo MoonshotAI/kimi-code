@@ -649,8 +649,8 @@ export class MiniDb<V = unknown> {
         const snapAnchor = fsSync.statSync(path.join(this.dir, SNAPSHOT_FILE));
         snapshotDev = snapAnchor.dev;
         snapshotIno = snapAnchor.ino;
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       }
       const checkpoint: TextBuildCheckpoint = {
         walOffset: walAnchor.size,
@@ -832,8 +832,8 @@ export class MiniDb<V = unknown> {
           const snapAnchor = fsSync.statSync(path.join(this.dir, SNAPSHOT_FILE));
           snapDev = snapAnchor.dev;
           snapIno = snapAnchor.ino;
-        } catch (e) {
-          if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
         }
       } else {
         sealedOffset = checkpoint.walOffset;
@@ -842,9 +842,9 @@ export class MiniDb<V = unknown> {
         snapDev = checkpoint.snapshotDev;
         snapIno = checkpoint.snapshotIno;
       }
-    } catch (e) {
+    } catch (error) {
       ti.abortRebase();
-      throw e;
+      throw error;
     }
 
     // In-place builds land artifacts in a per-index tmp dir inside the db
@@ -947,9 +947,9 @@ export class MiniDb<V = unknown> {
       });
       if (!handle.inline) this.stats.textWorkerBuilds++;
       return handle.inline ? 'inline' : 'worker';
-    } catch (e) {
+    } catch (error) {
       ti.abortRebase();
-      throw e;
+      throw error;
     } finally {
       slotRelease?.();
       if (tmpDir !== null) {
@@ -1006,7 +1006,7 @@ export class MiniDb<V = unknown> {
     this.access.delete(k);
     this.dt.del(k);
     this.compound.remove(k);
-    if (this.indexes.size) this.indexes.remove(k, undefined);
+    if (this.indexes.size > 0) this.indexes.remove(k, undefined);
     for (const ti of this.text.values()) ti.remove(k);
   }
 
@@ -1097,8 +1097,8 @@ export class MiniDb<V = unknown> {
         const st = await fs.stat(this.walPath);
         if (poison.failedAtOffset <= st.size) await fs.truncate(this.walPath, poison.failedAtOffset);
       });
-    } catch (err) {
-      this.writeDisabled = err;
+    } catch (error) {
+      this.writeDisabled = error;
       return;
     }
     await this.wal.refreshSize();
@@ -1178,7 +1178,7 @@ export class MiniDb<V = unknown> {
     return this.store.size;
   }
   async mset(entries: readonly (readonly [string, V])[]): Promise<void> {
-    if (!entries.length) return;
+    if (entries.length === 0) return;
     await this.batch(entries.map(([key, value]) => ({ op: 'set' as const, key, value })));
   }
   mget(keys: readonly string[]): (V | undefined)[] {
@@ -1357,9 +1357,9 @@ export class MiniDb<V = unknown> {
     } else {
       try {
         const existing = await fs.readdir(destDir);
-        if (existing.length) throw new Error(`restore destination is not empty: ${destDir}`);
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+        if (existing.length > 0) throw new Error(`restore destination is not empty: ${destDir}`);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       }
     }
     await fs.mkdir(destDir, { recursive: true });

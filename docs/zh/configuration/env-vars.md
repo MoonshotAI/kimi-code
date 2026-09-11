@@ -138,6 +138,14 @@ kimi
 | --- | --- | --- |
 | `KIMI_DISABLE_TELEMETRY` | 关闭匿名遥测上报 | `1`、`true`、`yes`、`y`（不区分大小写） |
 | `KIMI_CODE_PASSWORD` | 为 `kimi web` 本地服务设置并列鉴权密码；绑到非本机地址时建议设置，见 [安全注意](../guides/web.md#安全注意) | 任意非空字符串；未设置时仅 token 有效 |
+| `KIMI_CODE_WS_COMPRESSION` | `kimi web` WebSocket 连接是否提供 `permessage-deflate`（默认开启） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off`；其他值被忽略 |
+| `KIMI_CODE_WS_MAX_PAYLOAD_BYTES` | 入站 WebSocket 消息大小上限（默认 `16777216`） | 正整数；非法值被忽略 |
+| `KIMI_CODE_WS_HEARTBEAT_MS` | 服务端 `ping` 间隔（毫秒）；连续两个周期无入站帧即关闭连接（默认 `10000`） | 正整数；非法值被忽略 |
+| `KIMI_CODE_WS_FLUSH_INTERVAL_MS` | 订阅事件帧的合并发送窗口（毫秒，默认 `16`） | 正整数；非法值被忽略 |
+| `KIMI_CODE_WS_MAX_BATCH_SIZE` | 缓冲多少条订阅帧后立即发送（默认 `64`） | 正整数；非法值被忽略 |
+| `KIMI_CODE_WS_HIGH_WATER_MARK_BYTES` | socket `bufferedAmount` 超过该值时暂缓发送（默认 `1048576`） | 正整数；非法值被忽略 |
+| `KIMI_CODE_WS_MAX_BUFFER_SIZE` | 每个会话的事件回放窗口，同时作为 `server_hello.max_event_buffer_size` 下发（默认 `1000`） | 正整数；非法值被忽略 |
+| `KIMI_CODE_TRANSCRIPT_OPS_BATCH_MS` | 将连续的流式文本追加合并为一个 `transcript.ops` 批次的时间窗口（毫秒），合并在分配序号之前完成（默认 `16`；`0` 表示每次追加立即转发） | 非负整数；非法值被忽略 |
 | `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` | 会话关闭时是否保留后台任务，优先级高于 `config.toml`。默认会在退出时停止后台任务 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS` | 同时运行的后台任务数上限，优先级高于 `config.toml` 的 `[background] max_running_tasks`；不设置表示无上限 | 正整数；非法值被忽略 |
 | `KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S` | 后台 `Bash` 任务的默认超时（秒），也用于前台命令转入后台后的重新计时，优先级高于 `[task] bash_task_timeout_s`；`0` 表示无超时 | 非负整数；非法值被忽略 |
@@ -155,6 +163,7 @@ kimi
 | `KIMI_CODE_BUILTIN_PRODUCT_SKILLS` | 是否向模型提供介绍 Kimi Code 自身的内置 Skills，优先级高于 `config.toml` 的 `builtin_product_skills` | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_TUI_FULL_SCREEN` | 启用实验性的 fullscreen 界面：可滚动 transcript、鼠标选择、可点击链接、Ctrl-Shift-F 搜索 | `1` 开启；其他值保持常规内联界面 |
 | `KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK` | 在 `Agent`/`AgentSwarm` 上启用实验性 `fork` 参数：以调用方对话历史快照而非空上下文启动 subagent | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
+| `KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL_CHUNKED_RESPONSES` | 实验性：将远程控制的 HTTP 响应拆成 256 KiB 的中转帧发送，而不是每个响应一帧；`KIMI_CODE_EXPERIMENTAL_FLAG=1` 也会启用它 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_SEARCH_WORKER` | 在独立 worker 线程中运行全局搜索索引，优先级高于 `[database] search`（默认 `true`） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` | 会话索引使用基于 minidb 的读模型，优先级高于 `[database] base`（默认 `true`） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_MCP_STARTUP_TIMEOUT_MS` | MCP server 全局默认连接超时（毫秒）；优先级高于配置文件，低于 `mcp.json` 的 `startupTimeoutMs` | `1` 到 `2147483647` 的整数；非法值被忽略 |

@@ -2288,7 +2288,7 @@ describe('SessionEventBroadcaster', () => {
         eventsDir: dir,
         core,
         maxBufferSize: 3,
-        transcriptService: new TranscriptService({ homeDir: dir, core }),
+        transcriptService: new TranscriptService({ homeDir: dir, core, opsBatchMs: 0 }),
       });
     }
 
@@ -2479,7 +2479,7 @@ describe('SessionEventBroadcaster', () => {
       const ids = transcriptEnvelopes(view.envelopes)
         .filter((e) => e.type === 'transcript.reset')
         .map((e) => (e.payload as { agent_id: string }).agent_id)
-        .sort();
+        .toSorted();
       expect(ids).toEqual(['main', 'sub-1']);
     });
 
@@ -2504,7 +2504,7 @@ describe('SessionEventBroadcaster', () => {
       lc.addAgent('main');
       sessions.set('s1', lc);
       const core = makeCore(sessions, eventBus, { 'sub-1': { type: 'sub' } });
-      const service = new TranscriptService({ homeDir: dir, core });
+      const service = new TranscriptService({ homeDir: dir, core, opsBatchMs: 0 });
       let releaseBackfill!: () => void;
       const gate = new Promise<void>((resolve) => {
         releaseBackfill = resolve;
@@ -2539,7 +2539,7 @@ describe('SessionEventBroadcaster', () => {
       const main = lc.addAgent('main');
       sessions.set('s1', lc);
       const core = makeCore(sessions, eventBus);
-      const service = new TranscriptService({ homeDir: dir, core });
+      const service = new TranscriptService({ homeDir: dir, core, opsBatchMs: 0 });
       bc = new SessionEventBroadcaster({
         eventsDir: dir,
         core,

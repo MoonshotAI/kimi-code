@@ -58,7 +58,7 @@ const WORK_DIR = '/home/user/repo';
 
 function canonicalIds(summaries: readonly SessionSummary[]): string[] {
   return [...summaries]
-    .sort((a, b) => (a.updatedAt !== b.updatedAt ? b.updatedAt - a.updatedAt : a.id < b.id ? 1 : -1))
+    .toSorted((a, b) => (a.updatedAt !== b.updatedAt ? b.updatedAt - a.updatedAt : a.id < b.id ? 1 : -1))
     .map((s) => s.id);
 }
 

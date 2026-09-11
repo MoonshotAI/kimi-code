@@ -1,8 +1,11 @@
-import { createReadStream } from 'node:fs';
+import { createReadStream, type Stats } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { extname, join, normalize, relative, resolve, sep } from 'node:path';
 
+import { buildEtag } from '@moonshot-ai/agent-core-v2/_base/utils/fileMeta';
 import type { FastifyReply, FastifyRequest } from 'fastify';
+
+import { pickHeader } from '../lib/httpRange';
 
 interface WebAssetRouteHost {
   get(
@@ -10,6 +13,33 @@ interface WebAssetRouteHost {
     handler: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>,
   ): unknown;
 }
+
+interface StaticFile {
+  path: string;
+  stats: Stats;
+}
+
+interface EncodedVariant extends StaticFile {
+  encoding: string;
+  etagSuffix: string;
+}
+
+const COMPRESSIBLE_EXTENSIONS = new Set([
+  '.html',
+  '.js',
+  '.mjs',
+  '.css',
+  '.svg',
+  '.json',
+  '.map',
+  '.wasm',
+  '.txt',
+]);
+
+const PRECOMPRESSED_ENCODINGS = [
+  { encoding: 'br', extension: '.br', etagSuffix: '-br' },
+  { encoding: 'gzip', extension: '.gz', etagSuffix: '-gz' },
+];
 
 export async function registerWebAssetRoutes(
   app: WebAssetRouteHost,
@@ -44,21 +74,101 @@ async function serveWebAsset(
     return reply.callNotFound();
   }
 
-  const filePath = await resolveStaticFile(assetsDir, requestUrl.pathname);
-  if (filePath === undefined) {
+  const file = await resolveStaticFile(assetsDir, requestUrl.pathname);
+  if (file === undefined) {
     return reply.code(404).type('text/plain; charset=utf-8').send('Not found');
   }
 
-  const fileInfo = await stat(filePath).catch(() => undefined);
-  if (fileInfo === undefined || !fileInfo.isFile()) {
-    return reply.code(404).type('text/plain; charset=utf-8').send('Not found');
+  const compressible = COMPRESSIBLE_EXTENSIONS.has(extname(file.path));
+  const variant = compressible
+    ? await findEncodedVariant(file, pickHeader(req.headers, 'accept-encoding'))
+    : undefined;
+  const source = variant ?? file;
+  const etag = `W/"${buildEtag(source.stats)}${variant?.etagSuffix ?? ''}"`;
+
+  reply.header('ETag', etag).header('Cache-Control', cacheControl(assetsDir, file.path));
+  if (compressible) {
+    reply.header('Vary', 'Accept-Encoding');
+  }
+  if (matchesIfNoneMatch(pickHeader(req.headers, 'if-none-match'), etag)) {
+    return reply.code(304).send();
   }
 
-  return reply
-    .type(mimeType(filePath))
-    .header('Cache-Control', cacheControl(assetsDir, filePath))
-    .header('Content-Length', String(fileInfo.size))
-    .send(createReadStream(filePath));
+  reply
+    .type(mimeType(file.path))
+    .header('Last-Modified', source.stats.mtime.toUTCString())
+    .header('Content-Length', String(source.stats.size));
+  if (variant !== undefined) {
+    reply.header('Content-Encoding', variant.encoding);
+  }
+  return reply.send(createReadStream(source.path));
+}
+
+async function findEncodedVariant(
+  file: StaticFile,
+  acceptEncoding: string | undefined,
+): Promise<EncodedVariant | undefined> {
+  if (acceptEncoding === undefined) {
+    return undefined;
+  }
+  const accepted = parseAcceptEncoding(acceptEncoding);
+  const candidates = PRECOMPRESSED_ENCODINGS.map((candidate) => ({
+    candidate,
+    weight: encodingWeight(accepted, candidate.encoding),
+  }))
+    .filter(({ weight }) => weight > 0)
+    .toSorted((a, b) => b.weight - a.weight);
+  if (candidates.length === 0) {
+    return undefined;
+  }
+  const siblings = await Promise.all(
+    candidates.map(async ({ candidate }) => {
+      const path = `${file.path}${candidate.extension}`;
+      const stats = await stat(path).catch(() => undefined);
+      return { path, stats, encoding: candidate.encoding, etagSuffix: candidate.etagSuffix };
+    }),
+  );
+  for (const sibling of siblings) {
+    const { stats } = sibling;
+    if (stats?.isFile() === true && stats.mtimeMs >= file.stats.mtimeMs) {
+      return { ...sibling, stats };
+    }
+  }
+  return undefined;
+}
+
+function parseAcceptEncoding(header: string): Map<string, number> {
+  const weights = new Map<string, number>();
+  for (const entry of header.split(',')) {
+    const [name = '', ...params] = entry.trim().split(';');
+    const coding = name.trim().toLowerCase();
+    if (coding === '') {
+      continue;
+    }
+    const qParam = params.map((p) => p.trim()).find((p) => p.toLowerCase().startsWith('q='));
+    const q = qParam === undefined ? 1 : Number.parseFloat(qParam.slice(2));
+    weights.set(coding, Number.isNaN(q) ? 0 : q);
+  }
+  return weights;
+}
+
+function encodingWeight(weights: Map<string, number>, encoding: string): number {
+  return weights.get(encoding) ?? weights.get('*') ?? 0;
+}
+
+function matchesIfNoneMatch(header: string | undefined, etag: string): boolean {
+  if (header === undefined) {
+    return false;
+  }
+  const opaque = stripWeakPrefix(etag);
+  return header.split(',').some((tag) => {
+    const trimmed = tag.trim();
+    return trimmed === '*' || stripWeakPrefix(trimmed) === opaque;
+  });
+}
+
+function stripWeakPrefix(tag: string): string {
+  return tag.startsWith('W/') ? tag.slice(2) : tag;
 }
 
 function cacheControl(assetsDir: string, filePath: string): string {
@@ -73,7 +183,7 @@ function cacheControl(assetsDir: string, filePath: string): string {
 async function resolveStaticFile(
   assetsDir: string,
   pathname: string,
-): Promise<string | undefined> {
+): Promise<StaticFile | undefined> {
   let decoded: string;
   try {
     decoded = decodeURIComponent(pathname);
@@ -92,14 +202,19 @@ async function resolveStaticFile(
     return undefined;
   }
 
-  const info = await stat(candidate).catch(() => undefined);
-  if (info?.isFile() === true) {
-    return candidate;
+  const stats = await stat(candidate).catch(() => undefined);
+  if (stats?.isFile() === true) {
+    return { path: candidate, stats };
   }
   if (extname(pathname) !== '') {
     return undefined;
   }
-  return join(root, 'index.html');
+  const indexPath = join(root, 'index.html');
+  const indexStats = await stat(indexPath).catch(() => undefined);
+  if (indexStats?.isFile() !== true) {
+    return undefined;
+  }
+  return { path: indexPath, stats: indexStats };
 }
 
 function isReservedPath(pathname: string): boolean {
@@ -121,7 +236,10 @@ function mimeType(filePath: string): string {
     case '.css':
       return 'text/css; charset=utf-8';
     case '.json':
+    case '.map':
       return 'application/json; charset=utf-8';
+    case '.txt':
+      return 'text/plain; charset=utf-8';
     case '.svg':
       return 'image/svg+xml';
     case '.png':
@@ -135,6 +253,12 @@ function mimeType(filePath: string): string {
       return 'image/x-icon';
     case '.woff2':
       return 'font/woff2';
+    case '.woff':
+      return 'font/woff';
+    case '.ttf':
+      return 'font/ttf';
+    case '.wasm':
+      return 'application/wasm';
     default:
       return 'application/octet-stream';
   }

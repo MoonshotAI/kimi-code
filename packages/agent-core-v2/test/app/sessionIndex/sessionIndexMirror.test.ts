@@ -114,7 +114,7 @@ describe('SessionIndexMirror', () => {
     mirror.record(summary('a', { title: 'first', updatedAt: 1 }));
     mirror.record(summary('a', { title: 'latest', updatedAt: 5 }));
     mirror.record(summary('b', { archived: true, updatedAt: 3 }));
-    expect(mirror.pending().map((s) => s.id).sort()).toEqual(['a', 'b']);
+    expect(mirror.pending().map((s) => s.id).toSorted()).toEqual(['a', 'b']);
 
     await mirror.drain();
     expect(mirror.pending()).toEqual([]);
