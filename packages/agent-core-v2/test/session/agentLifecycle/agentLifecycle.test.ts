@@ -1261,6 +1261,29 @@ describe('AgentLifecycleService', () => {
     });
   });
 
+  it('fork marks the seeded context messages as inherited without touching the source', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const source = await svc.create({ agentId: 'main' });
+    const sourceHandle = svc.handleOf('main')!;
+    const history: ContextMessage[] = [
+      { role: 'user', content: [{ type: 'text', text: 'analyze this repo' }], toolCalls: [] },
+      { role: 'assistant', content: [{ type: 'text', text: 'done' }], toolCalls: [] },
+    ];
+    sourceHandle.accessor.get(IAgentContextMemoryService).append(...history);
+
+    const child = await svc.fork(agentContextOf(sourceHandle), { agentId: 'forked' });
+
+    const seeded = svc.handleOf(child.agentId)!.accessor.get(IAgentContextMemoryService).get();
+    expect(seeded).toHaveLength(2);
+    expect(seeded.every((message) => message.inherited === true)).toBe(true);
+    expect(
+      sourceHandle.accessor
+        .get(IAgentContextMemoryService)
+        .get()
+        .every((message) => message.inherited === undefined),
+    ).toBe(true);
+  });
+
   it('fork leaves the child context empty when the source history is empty', async () => {
     const svc = ix.get(IAgentLifecycleService);
     const source = await svc.create({ agentId: 'main' });

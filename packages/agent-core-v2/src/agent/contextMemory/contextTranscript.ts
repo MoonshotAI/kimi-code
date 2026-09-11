@@ -30,6 +30,7 @@ interface MutableMessage {
   isError?: boolean;
   note?: string;
   origin?: ContextMessage['origin'];
+  inherited?: boolean;
 }
 
 interface MutableEntry {
@@ -175,6 +176,7 @@ function toMutableEntry(message: ContextMessage, time: number | undefined): Muta
       ...(message.toolCallId !== undefined ? { toolCallId: message.toolCallId } : {}),
       ...(message.isError !== undefined ? { isError: message.isError } : {}),
       ...(message.origin !== undefined ? { origin: message.origin } : {}),
+      inherited: message.inherited,
     },
     time,
   };

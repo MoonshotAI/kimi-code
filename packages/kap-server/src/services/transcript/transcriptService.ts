@@ -425,19 +425,26 @@ export class TranscriptService {
   async readColdRoster(sessionId: string): Promise<AgentDescriptor[] | undefined> {
     const summary = await this.deps.core.accessor.get(ISessionIndex).get(sessionId);
     if (summary === undefined) return undefined;
-    let meta: SessionMeta;
-    try {
-      const raw = await readFile(
-        join(this.deps.homeDir, SESSIONS_ROOT, summary.workspaceId, sessionId, STATE_FILE),
-        'utf-8',
-      );
-      meta = JSON.parse(raw) as SessionMeta;
-    } catch {
-      return [];
-    }
+    const meta = await this.readSessionMeta(summary.workspaceId, sessionId);
+    if (meta === undefined) return [];
     return Object.entries(meta.agents ?? {}).map(([agentId, agentMeta]) =>
       descriptorFromMeta(agentId, agentMeta),
     );
+  }
+
+  private async readSessionMeta(
+    workspaceId: string,
+    sessionId: string,
+  ): Promise<SessionMeta | undefined> {
+    try {
+      const raw = await readFile(
+        join(this.deps.homeDir, SESSIONS_ROOT, workspaceId, sessionId, STATE_FILE),
+        'utf-8',
+      );
+      return JSON.parse(raw) as SessionMeta;
+    } catch {
+      return undefined;
+    }
   }
 
   async readColdSnapshot(
@@ -467,13 +474,20 @@ export class TranscriptService {
       }
       throw error;
     }
-    const messages = [...reduceContextTranscript(records).entries];
+    const meta = await this.readSessionMeta(summary.workspaceId, sessionId);
+    const forkedFrom = meta?.agents?.[agentId]?.forkedFrom;
+    const projectionRecords = stripLegacyInheritedRecords(records, forkedFrom);
+    const messages = [...reduceContextTranscript(projectionRecords).entries].filter(
+      (message) =>
+        message.inherited !== true &&
+        (forkedFrom === undefined || message.origin?.kind !== 'compaction_summary'),
+    );
     const taskOriginTurnTaskIds = new Set<string>();
     const steeredContents = new Map<string, Map<string, number>>();
     const anchorStack: { taskIdsSnapshot: Set<string> }[] = [];
     let anchorFloor = 0;
     let sawTurnPrompt = false;
-    for (const record of records) {
+    for (const record of projectionRecords) {
       if (record.type === 'context.undo') {
         const count = typeof record['count'] === 'number' ? (record['count'] as number) : 0;
         for (let i = 0; i < count && anchorStack.length > anchorFloor; i++) {
@@ -521,7 +535,7 @@ export class TranscriptService {
       messages,
       sawTurnPrompt || steeredContents.size > 0 ? { taskOriginTurnTaskIds, steeredContents } : undefined,
     );
-    const folded = foldWireRecordFacts(projectQuestionInteractionRecords(records, sessionId), base, {
+    const folded = foldWireRecordFacts(projectQuestionInteractionRecords(projectionRecords, sessionId), base, {
       resolvePlanRevisionKey: (key) =>
         join(SESSIONS_ROOT, summary.workspaceId, sessionId, AGENTS_DIR, agentId, key),
     });
@@ -628,6 +642,24 @@ const TERMINAL_TURN_STATES: ReadonlySet<TranscriptTurn['state']> = new Set([
   'failed',
   'cancelled',
 ]);
+
+function stripLegacyInheritedRecords(
+  records: readonly ContextRecord[],
+  forkedFrom: string | undefined,
+): readonly ContextRecord[] {
+  if (forkedFrom === undefined) return records;
+  const marked = records.some(
+    (record) =>
+      record.type === 'context.append_message' &&
+      (record as { message?: ContextMessage }).message?.inherited === true,
+  );
+  if (marked) return records;
+  const firstPrompt = records.findIndex((record) => record.type === 'turn.prompt');
+  const cutoff = firstPrompt === -1 ? records.length : firstPrompt;
+  return records.filter(
+    (record, index) => index >= cutoff || record.type !== 'context.append_message',
+  );
+}
 
 function projectQuestionInteractionRecords(
   records: readonly ContextRecord[],

@@ -2397,6 +2397,308 @@ describe('AgentTranscriptProjector', () => {
     }
   });
 
+  it('readColdSnapshot excludes fork-inherited messages from the fork transcript', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-fork-inherited-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'agent-1');
+      await mkdir(wireDir, { recursive: true });
+      const records = [
+        {
+          type: 'context.append_message',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'main question' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+            inherited: true,
+          },
+          time: 1000,
+        },
+        {
+          type: 'context.append_message',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'main answer' }],
+            toolCalls: [],
+            inherited: true,
+          },
+          time: 2000,
+        },
+        {
+          type: 'turn.prompt',
+          promptId: 'prompt-side',
+          origin: { kind: 'user' },
+          input: [{ type: 'text', text: 'side question' }],
+          time: 3000,
+        },
+        {
+          type: 'context.append_message',
+          message: {
+            id: 'msg-side',
+            role: 'user',
+            content: [{ type: 'text', text: 'side question' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+          time: 3001,
+        },
+        {
+          type: 'context.append_message',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'side answer' }],
+            toolCalls: [],
+          },
+          time: 4000,
+        },
+      ];
+      await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+
+      const snapshot = await coldTranscriptService(home).readColdSnapshot('s1', 'agent-1');
+
+      expect(snapshot).toBeDefined();
+      const turns = snapshot!.items.filter((item) => item.kind === 'turn');
+      expect(turns).toHaveLength(1);
+      expect(turns[0]).toMatchObject({
+        turnId: 't0',
+        ordinal: 0,
+        state: 'completed',
+        prompt: 'side question',
+        origin: { kind: 'user' },
+      });
+      const frames = turns[0]!.kind === 'turn' ? turns[0]!.steps.flatMap((step) => step.frames) : [];
+      expect(frames).toContainEqual(
+        expect.objectContaining({ kind: 'text', role: 'assistant', text: 'side answer' }),
+      );
+      expect(JSON.stringify(snapshot!.items)).not.toContain('main question');
+      expect(JSON.stringify(snapshot!.items)).not.toContain('main answer');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('readColdSnapshot drops the unmarked inherited prefix of a legacy fork transcript', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-fork-legacy-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'agent-1');
+      await mkdir(wireDir, { recursive: true });
+      const records = [
+        {
+          type: 'context.append_message',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'main question' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+          time: 1000,
+        },
+        {
+          type: 'context.append_message',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'main answer' }],
+            toolCalls: [],
+          },
+          time: 2000,
+        },
+        {
+          type: 'turn.prompt',
+          promptId: 'prompt-side',
+          origin: { kind: 'user' },
+          input: [{ type: 'text', text: 'side question' }],
+          time: 3000,
+        },
+        {
+          type: 'context.append_message',
+          message: {
+            id: 'msg-side',
+            role: 'user',
+            content: [{ type: 'text', text: 'side question' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+          time: 3001,
+        },
+        {
+          type: 'context.append_message',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'side answer' }],
+            toolCalls: [],
+          },
+          time: 4000,
+        },
+      ];
+      await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+      await writeFile(
+        join(home, 'sessions', 'ws', 's1', 'state.json'),
+        JSON.stringify({
+          id: 's1',
+          createdAt: 1,
+          updatedAt: 1,
+          archived: false,
+          agents: { 'agent-1': { type: 'sub', forkedFrom: 'main' } },
+        }),
+      );
+
+      const snapshot = await coldTranscriptService(home).readColdSnapshot('s1', 'agent-1');
+
+      expect(snapshot).toBeDefined();
+      const turns = snapshot!.items.filter((item) => item.kind === 'turn');
+      expect(turns).toHaveLength(1);
+      expect(turns[0]).toMatchObject({
+        turnId: 't0',
+        ordinal: 0,
+        state: 'completed',
+        prompt: 'side question',
+        origin: { kind: 'user' },
+      });
+      const frames = turns[0]!.kind === 'turn' ? turns[0]!.steps.flatMap((step) => step.frames) : [];
+      expect(frames).toContainEqual(
+        expect.objectContaining({ kind: 'text', role: 'assistant', text: 'side answer' }),
+      );
+      expect(JSON.stringify(snapshot!.items)).not.toContain('main question');
+      expect(JSON.stringify(snapshot!.items)).not.toContain('main answer');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('readColdSnapshot excludes compaction summaries from a fork transcript', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-fork-compaction-'));
+    try {
+      const records = [
+        {
+          type: 'context.append_message',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'main question' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+            inherited: true,
+          },
+          time: 1000,
+        },
+        {
+          type: 'turn.prompt',
+          promptId: 'prompt-side',
+          origin: { kind: 'user' },
+          input: [{ type: 'text', text: 'side question' }],
+          time: 3000,
+        },
+        {
+          type: 'context.append_message',
+          message: {
+            id: 'msg-side',
+            role: 'user',
+            content: [{ type: 'text', text: 'side question' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+          time: 3001,
+        },
+        {
+          type: 'context.apply_compaction',
+          summary: 'compacted: the user asked main question and then side question',
+          compactedCount: 2,
+          time: 4000,
+        },
+      ];
+      for (const agentId of ['agent-1', 'main']) {
+        const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', agentId);
+        await mkdir(wireDir, { recursive: true });
+        await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+      }
+      await writeFile(
+        join(home, 'sessions', 'ws', 's1', 'state.json'),
+        JSON.stringify({
+          id: 's1',
+          createdAt: 1,
+          updatedAt: 1,
+          archived: false,
+          agents: { 'agent-1': { type: 'sub', forkedFrom: 'main' } },
+        }),
+      );
+
+      const service = coldTranscriptService(home);
+      const forkSnapshot = await service.readColdSnapshot('s1', 'agent-1');
+      expect(forkSnapshot).toBeDefined();
+      expect(JSON.stringify(forkSnapshot!.items)).not.toContain('compacted:');
+      expect(JSON.stringify(forkSnapshot!.items)).not.toContain('main question');
+      expect(
+        forkSnapshot!.items.some((item) => item.kind === 'marker' && item.marker === 'compaction'),
+      ).toBe(false);
+      const forkTurns = forkSnapshot!.items.filter((item) => item.kind === 'turn');
+      expect(forkTurns).toHaveLength(1);
+      expect(forkTurns[0]).toMatchObject({ prompt: 'side question' });
+
+      const mainSnapshot = await service.readColdSnapshot('s1', 'main');
+      expect(mainSnapshot).toBeDefined();
+      expect(
+        mainSnapshot!.items.some((item) => item.kind === 'marker' && item.marker === 'compaction'),
+      ).toBe(true);
+      expect(JSON.stringify(mainSnapshot!.items)).toContain('compacted:');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('readColdSnapshot keeps unmarked leading messages when the agent is not a fork', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-fork-legacy-main-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const records = [
+        {
+          type: 'context.append_message',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'main question' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+          time: 1000,
+        },
+        {
+          type: 'turn.prompt',
+          promptId: 'prompt-main',
+          origin: { kind: 'user' },
+          input: [{ type: 'text', text: 'main question' }],
+          time: 2000,
+        },
+        {
+          type: 'context.append_message',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'main answer' }],
+            toolCalls: [],
+          },
+          time: 3000,
+        },
+      ];
+      await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+      await writeFile(
+        join(home, 'sessions', 'ws', 's1', 'state.json'),
+        JSON.stringify({
+          id: 's1',
+          createdAt: 1,
+          updatedAt: 1,
+          archived: false,
+          agents: { main: { type: 'main' } },
+        }),
+      );
+
+      const snapshot = await coldTranscriptService(home).readColdSnapshot('s1', 'main');
+
+      expect(snapshot).toBeDefined();
+      expect(JSON.stringify(snapshot!.items)).toContain('main question');
+      expect(JSON.stringify(snapshot!.items)).toContain('main answer');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('readColdSnapshot folds task/todo/goal/plan/interaction records into the cold snapshot', async () => {
     const home = await mkdtemp(join(tmpdir(), 'transcript-cold-facts-'));
     try {
@@ -3792,6 +4094,90 @@ describe('bindSessionTranscript', () => {
         output: 'a.txt',
         display: { kind: 'command', command: 'ls' },
       });
+      service.dropSession('s1');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('backfills a fork transcript with only its own turns, keeping prompt and answer paired', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-fork-backfill-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'agent-1');
+      await mkdir(wireDir, { recursive: true });
+      const records = [
+        {
+          type: 'context.append_message',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'main question' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+            inherited: true,
+          },
+          time: 1000,
+        },
+        {
+          type: 'context.append_message',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'main answer' }],
+            toolCalls: [],
+            inherited: true,
+          },
+          time: 2000,
+        },
+        {
+          type: 'context.append_message',
+          message: {
+            id: 'msg-side',
+            role: 'user',
+            content: [{ type: 'text', text: 'side question' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+          time: 3000,
+        },
+        {
+          type: 'context.append_message',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'side answer' }],
+            toolCalls: [],
+          },
+          time: 4000,
+        },
+      ];
+      await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+
+      const agents = new FakeAgents();
+      agents.add('main');
+      const fork = agents.add('agent-1', { loopStatus: { state: 'running', activeTurnId: 0 } });
+      const service = new TranscriptService({
+        homeDir: home,
+        core: fakeCoreWithAgents(agents),
+      });
+      const store = service.forSessionLive('s1');
+      fork.bus.emit(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' }, prompt: 'side question' }));
+      fork.bus.emit(ev({ type: 'turn.step.started', turnId: 0, step: 1 }));
+      fork.bus.emit(ev({ type: 'assistant.delta', turnId: 0, delta: 'side answer' }));
+      await service.whenReady('s1');
+      await service.ensureAgentHistory('s1', 'agent-1');
+
+      const items = store?.getAgent('agent-1')?.getItems() ?? [];
+      const turns = items.filter((item) => item.kind === 'turn');
+      expect(turns).toHaveLength(1);
+      expect(turns[0]).toMatchObject({
+        turnId: 't0',
+        ordinal: 0,
+        prompt: 'side question',
+        origin: { kind: 'user' },
+      });
+      expect(turns.map((turn) => turn.ordinal)).toEqual([0]);
+      const serialized = JSON.stringify(items);
+      expect(serialized).toContain('side answer');
+      expect(serialized).not.toContain('main question');
+      expect(serialized).not.toContain('main answer');
       service.dropSession('s1');
     } finally {
       await rm(home, { recursive: true, force: true });
