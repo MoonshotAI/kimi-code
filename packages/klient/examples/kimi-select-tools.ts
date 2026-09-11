@@ -63,7 +63,7 @@ import { renderLoadableToolsAnnouncement } from '@moonshot-ai/agent-core-v2/agen
 import { UNKNOWN_CAPABILITY } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/capability';
 import type { Message } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/message';
 import type { ToolDescription as Tool } from '@moonshot-ai/agent-core-v2/human/llm/message';
-import { staticCredentials } from '@moonshot-ai/agent-core-v2/human/credentials/credentials';
+import { createStaticCredentialProvider } from '@moonshot-ai/agent-core-v2/human/credentials/credentials';
 import type { Model } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import type {
@@ -295,7 +295,7 @@ async function probeWireEncoding(): Promise<void> {
       alwaysThinking: false,
       providerType,
       providerName: providerType ?? 'probe',
-      credentials: staticCredentials('sk-probe'),
+      credentials: createStaticCredentialProvider('sk-probe'),
     };
     return new ModelRequesterImpl(model, registry);
   };

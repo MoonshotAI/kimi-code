@@ -7,18 +7,20 @@ import {
   type LlmCredentialProvider,
 } from '#/llm/requester/requester';
 
-export interface CredentialTokenSource {
+export interface AccessTokenResolver {
   (options?: { readonly force?: boolean }): Promise<string | undefined>;
 }
 
-export function staticCredentials(apiKey?: string): LlmCredentialProvider {
+export function createStaticCredentialProvider(apiKey?: string): LlmCredentialProvider {
   return {
     resolve: () =>
       apiKey === undefined || apiKey.trim().length === 0 ? undefined : { apiKey },
   };
 }
 
-export function oauthCredentials(getToken: CredentialTokenSource): LlmCredentialProvider {
+export function createOAuthCredentialProvider(
+  getToken: AccessTokenResolver,
+): LlmCredentialProvider {
   let refreshed: Promise<string | undefined> | undefined;
   return {
     resolve: async () => {
@@ -69,7 +71,7 @@ export const credentialsRecovery: LlmRecovery = {
     return {
       strategy: CREDENTIALS_RECOVERY_ID,
       action: 'refresh',
-      prepare: () => credentials?.invalidate?.(),
+      beforeRetry: () => credentials?.invalidate?.(),
     };
   },
 };

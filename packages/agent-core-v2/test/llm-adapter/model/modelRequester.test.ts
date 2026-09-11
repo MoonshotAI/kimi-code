@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { isError2 } from '#/_base/errors/errors';
-import { oauthCredentials, staticCredentials } from '#human/credentials/credentials';
+import {
+  createOAuthCredentialProvider,
+  createStaticCredentialProvider,
+} from '#human/credentials/credentials';
 import type { ProviderMediaContribution } from '#human/llm/media/upload';
 import type { LlmModel } from '#human/llm/model';
 import type {
@@ -119,7 +122,10 @@ describe('ModelRequesterImpl request execution', () => {
   it('maps ModelRequestParams onto LlmRequestConfig, content and control', async () => {
     const requester = new FakeLlmRequester();
     requester.handler = (_i, emit) => textStream(emit);
-    const impl = new ModelRequesterImpl(modelWith(staticCredentials('sk-1')), gatewayReturning(requester));
+    const impl = new ModelRequesterImpl(
+      modelWith(createStaticCredentialProvider('sk-1')),
+      gatewayReturning(requester),
+    );
     const signal = AbortSignal.timeout(1000);
     const messages: Message[] = [
       {
@@ -194,7 +200,10 @@ describe('ModelRequesterImpl request execution', () => {
   it('omits the thinking intent when no effort is requested', async () => {
     const requester = new FakeLlmRequester();
     requester.handler = (_i, emit) => textStream(emit);
-    const impl = new ModelRequesterImpl(modelWith(staticCredentials()), gatewayReturning(requester));
+    const impl = new ModelRequesterImpl(
+      modelWith(createStaticCredentialProvider()),
+      gatewayReturning(requester),
+    );
     await collect(impl.request(INPUT));
     expect(requester.calls[0]?.config.thinking).toBeUndefined();
     expect(requester.calls[0]?.config.extraParams).toBeUndefined();
@@ -221,7 +230,10 @@ describe('ModelRequesterImpl request execution', () => {
         { type: 'llm.done' },
       ]);
     const traceIds: Array<string | null> = [];
-    const impl = new ModelRequesterImpl(modelWith(staticCredentials()), gatewayReturning(requester));
+    const impl = new ModelRequesterImpl(
+      modelWith(createStaticCredentialProvider()),
+      gatewayReturning(requester),
+    );
     const events = await collect(
       impl.request(INPUT, undefined, { onTraceId: (id) => traceIds.push(id) }),
     );
@@ -272,7 +284,7 @@ describe('ModelRequesterImpl request execution', () => {
         },
       });
     const impl = new ModelRequesterImpl(
-      modelWith(oauthCredentials(() => Promise.resolve('tok'))),
+      modelWith(createOAuthCredentialProvider(() => Promise.resolve('tok'))),
       gatewayReturning(requester),
     );
 
@@ -298,7 +310,7 @@ describe('ModelRequesterImpl request execution', () => {
         },
       });
     const impl = new ModelRequesterImpl(
-      modelWith(staticCredentials('sk-bad')),
+      modelWith(createStaticCredentialProvider('sk-bad')),
       gatewayReturning(requester),
     );
 
@@ -321,7 +333,10 @@ describe('ModelRequesterImpl request execution', () => {
           headers: null,
         },
       });
-    const impl = new ModelRequesterImpl(modelWith(staticCredentials()), gatewayReturning(requester));
+    const impl = new ModelRequesterImpl(
+      modelWith(createStaticCredentialProvider()),
+      gatewayReturning(requester),
+    );
     const failure = await collect(impl.request(INPUT)).catch((error: unknown) => error);
     expect((failure as { code: string }).code).toBe(PROVIDER_API_ERROR_CODE);
 
@@ -348,7 +363,7 @@ describe('ModelRequesterImpl request execution', () => {
   it('uploadVideo presence is the capability declaration', async () => {
     const requester = new FakeLlmRequester();
     const impl = new ModelRequesterImpl(
-      modelWith(staticCredentials('sk-1')),
+      modelWith(createStaticCredentialProvider('sk-1')),
       gatewayReturning(requester),
     );
     await expect(impl.uploadVideo('file-id')).rejects.toThrow(/does not support video upload/);
@@ -364,7 +379,7 @@ describe('ModelRequesterImpl request execution', () => {
       },
     };
     const withMedia = new ModelRequesterImpl(
-      modelWith(staticCredentials('sk-1')),
+      modelWith(createStaticCredentialProvider('sk-1')),
       gatewayReturning(requester, media),
     );
     const part = await withMedia.uploadVideo({ data: new Uint8Array([1]), mimeType: 'video/mp4' });
@@ -383,7 +398,10 @@ describe('ModelRequesterImpl request execution', () => {
       emit({ type: 'llm.streaming.finish', finish: { finishReason: 'completed', rawFinishReason: 'stop' } });
       emit({ type: 'llm.done' });
     };
-    const impl = new ModelRequesterImpl(modelWith(staticCredentials()), gatewayReturning(requester));
+    const impl = new ModelRequesterImpl(
+      modelWith(createStaticCredentialProvider()),
+      gatewayReturning(requester),
+    );
     const events = await collect(impl.request(INPUT));
     const timing = events.find((event) => event.type === 'timing');
     expect(timing).toBeDefined();

@@ -191,7 +191,7 @@ export type TurnEvent =
   | { type: 'turn.continue' }
   | { type: 'turn.abort' }
   | {
-      type: 'turn.failure.triaged';
+      type: 'turn.failure.classified';
       cause: Extract<LlmEvent, { type: 'llm.failed.remote' }>;
       proposal?: LlmRecoveryProposal & LlmRecoveryRecord;
     };
@@ -224,7 +224,7 @@ export interface TurnMachineContext {
   attempt: number;
   delayMs: number;
   appliedRecoveries: LlmRecoveryRecord[];
-  recoveryMessages?: readonly Message[];
+  attemptMessageOverride?: readonly Message[];
   paused: boolean;
   outcome?: 'done' | 'failed' | 'aborted';
   error?: unknown;
@@ -289,7 +289,7 @@ function baseMessages(context: TurnMachineContext): readonly Message[] {
 }
 
 function attemptMessages(context: TurnMachineContext): readonly Message[] {
-  return context.recoveryMessages ?? baseMessages(context);
+  return context.attemptMessageOverride ?? baseMessages(context);
 }
 
 function proposeRecovery(
@@ -624,7 +624,7 @@ export function createTurnMachine(
           },
           'llm.failed.remote': {
             actions: raise(({ context, event }) => ({
-              type: 'turn.failure.triaged' as const,
+              type: 'turn.failure.classified' as const,
               cause: event,
               proposal: proposeRecovery(recovery, {
                 error: event.error,
@@ -634,7 +634,7 @@ export function createTurnMachine(
               }),
             })),
           },
-          'turn.failure.triaged': [
+          'turn.failure.classified': [
             {
               guard: ({ event }) => event.proposal !== undefined,
               target: 'thinking',
@@ -642,7 +642,7 @@ export function createTurnMachine(
               actions: [
                 ({ context, event }) => {
                   context.accumulator.rollback();
-                  event.proposal?.prepare?.();
+                  event.proposal?.beforeRetry?.();
                 },
                 assign(({ context, event }) => {
                   const proposal = event.proposal as LlmRecoveryProposal & LlmRecoveryRecord;
@@ -651,7 +651,7 @@ export function createTurnMachine(
                       ...context.appliedRecoveries,
                       { strategy: proposal.strategy, action: proposal.action },
                     ],
-                    recoveryMessages: proposal.messages ?? context.recoveryMessages,
+                    attemptMessageOverride: proposal.messages ?? context.attemptMessageOverride,
                     attempt: 1,
                   };
                 }),
@@ -849,7 +849,7 @@ export function createTurnMachine(
                   steps: event.messages.length > 0 ? 1 : context.steps + 1,
                   attempt: 1,
                   appliedRecoveries: [],
-                  recoveryMessages: undefined,
+                  attemptMessageOverride: undefined,
                 })),
                 'signalRemindersConsumed',
               ],

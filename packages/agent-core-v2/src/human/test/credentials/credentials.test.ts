@@ -3,9 +3,9 @@ import { describe, expect, it } from 'vitest';
 import {
   applyCredential,
   credentialsRecovery,
-  oauthCredentials,
+  createOAuthCredentialProvider,
   resolveModelCredentials,
-  staticCredentials,
+  createStaticCredentialProvider,
 } from '#/credentials/credentials';
 import type { LlmModel } from '#/llm/model';
 import type { LlmRecoveryContext, LlmRecoveryRecord } from '#/llm/requester/recovery';
@@ -18,24 +18,24 @@ const MODEL: LlmModel = {
   defaultHeaders: { 'x-base': '1' },
 };
 
-describe('staticCredentials', () => {
+describe('createStaticCredentialProvider', () => {
   it('resolves the static api key and never recovers', async () => {
-    const provider = staticCredentials('sk-1');
+    const provider = createStaticCredentialProvider('sk-1');
     expect(await provider.resolve()).toEqual({ apiKey: 'sk-1' });
     expect(provider.canRecover).toBeUndefined();
     expect(provider.invalidate).toBeUndefined();
   });
 
   it('resolves undefined for missing or blank keys', async () => {
-    expect(await staticCredentials(undefined).resolve()).toBeUndefined();
-    expect(await staticCredentials('   ').resolve()).toBeUndefined();
+    expect(await createStaticCredentialProvider(undefined).resolve()).toBeUndefined();
+    expect(await createStaticCredentialProvider('   ').resolve()).toBeUndefined();
   });
 });
 
-describe('oauthCredentials', () => {
+describe('createOAuthCredentialProvider', () => {
   it('refreshes with force on invalidate and consumes the refresh on the next resolve', async () => {
     const calls: (boolean | undefined)[] = [];
-    const provider = oauthCredentials((options) => {
+    const provider = createOAuthCredentialProvider((options) => {
       calls.push(options?.force);
       return Promise.resolve('tok');
     });
@@ -51,7 +51,7 @@ describe('oauthCredentials', () => {
 
   it('starts the forced refresh eagerly on invalidate, before the next resolve', async () => {
     const calls: (boolean | undefined)[] = [];
-    const provider = oauthCredentials((options) => {
+    const provider = createOAuthCredentialProvider((options) => {
       calls.push(options?.force);
       return Promise.resolve('tok');
     });
@@ -67,7 +67,7 @@ describe('oauthCredentials', () => {
 
   it('coalesces repeated invalidates into a single refresh', async () => {
     const calls: (boolean | undefined)[] = [];
-    const provider = oauthCredentials((options) => {
+    const provider = createOAuthCredentialProvider((options) => {
       calls.push(options?.force);
       return Promise.resolve('tok');
     });
@@ -81,7 +81,7 @@ describe('oauthCredentials', () => {
 
   it('propagates a failed refresh to the consuming resolve and recovers afterwards', async () => {
     let calls = 0;
-    const provider = oauthCredentials(() => {
+    const provider = createOAuthCredentialProvider(() => {
       calls += 1;
       return calls === 1 ? Promise.reject(new Error('login required')) : Promise.resolve('tok');
     });
@@ -93,7 +93,7 @@ describe('oauthCredentials', () => {
   });
 
   it('recovers only from 401 errors', () => {
-    const provider = oauthCredentials(() => Promise.resolve('tok'));
+    const provider = createOAuthCredentialProvider(() => Promise.resolve('tok'));
     expect(provider.canRecover?.(Object.assign(new Error('x'), { status: 401 }))).toBe(true);
     expect(provider.canRecover?.(Object.assign(new Error('x'), { statusCode: 401 }))).toBe(true);
     expect(provider.canRecover?.(Object.assign(new Error('x'), { statusCode: 403 }))).toBe(false);
@@ -101,7 +101,7 @@ describe('oauthCredentials', () => {
   });
 
   it('resolves undefined when the token source has no token', async () => {
-    const provider = oauthCredentials(() => Promise.resolve(undefined));
+    const provider = createOAuthCredentialProvider(() => Promise.resolve(undefined));
     await expect(provider.resolve()).resolves.toBeUndefined();
   });
 });
@@ -137,15 +137,15 @@ const forbidden = Object.assign(new Error('forbidden'), { status: 403 });
 
 describe('credentialsRecovery', () => {
   it('proposes a credentials refresh on a recoverable error', () => {
-    const provider = oauthCredentials(() => Promise.resolve('tok'));
+    const provider = createOAuthCredentialProvider(() => Promise.resolve('tok'));
     expect(credentialsRecovery.propose(recoveryContext(unauthorized, [], provider))).toEqual({
       strategy: 'credentials',
       action: 'refresh',
-      prepare: expect.any(Function),
+      beforeRetry: expect.any(Function),
     });
   });
 
-  it('invalidates the credentials when the proposal prepares', () => {
+  it('invalidates the credentials before retrying', () => {
     let invalidations = 0;
     const provider: LlmCredentialProvider = {
       resolve: () => ({ apiKey: 'tok' }),
@@ -155,24 +155,32 @@ describe('credentialsRecovery', () => {
       },
     };
     const proposal = credentialsRecovery.propose(recoveryContext(unauthorized, [], provider));
-    proposal?.prepare?.();
+    proposal?.beforeRetry?.();
     expect(invalidations).toBe(1);
   });
 
   it('does not propose when the strategy was already applied', () => {
-    const provider = oauthCredentials(() => Promise.resolve('tok'));
+    const provider = createOAuthCredentialProvider(() => Promise.resolve('tok'));
     const applied: LlmRecoveryRecord[] = [{ strategy: 'credentials', action: 'refresh' }];
-    expect(credentialsRecovery.propose(recoveryContext(unauthorized, applied, provider))).toBeUndefined();
+    expect(
+      credentialsRecovery.propose(recoveryContext(unauthorized, applied, provider)),
+    ).toBeUndefined();
   });
 
   it('does not propose without recoverable credentials', () => {
     expect(credentialsRecovery.propose(recoveryContext(unauthorized))).toBeUndefined();
     expect(
-      credentialsRecovery.propose(recoveryContext(unauthorized, [], staticCredentials('sk-1'))),
+      credentialsRecovery.propose(
+        recoveryContext(unauthorized, [], createStaticCredentialProvider('sk-1')),
+      ),
     ).toBeUndefined();
     expect(
       credentialsRecovery.propose(
-        recoveryContext(forbidden, [], oauthCredentials(() => Promise.resolve('tok'))),
+        recoveryContext(
+          forbidden,
+          [],
+          createOAuthCredentialProvider(() => Promise.resolve('tok')),
+        ),
       ),
     ).toBeUndefined();
   });

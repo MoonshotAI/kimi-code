@@ -7,7 +7,7 @@ import type { ProviderMediaContribution } from '#human/llm/media/upload';
 import type { LlmModel } from '#human/llm/model';
 import type { ProtocolBase } from '#human/llm/protocol/base';
 import type { ProviderConnection } from '#human/llm/protocol/connection';
-import type { AnyProtocolTrait } from '#human/llm/provider/definition';
+import type { ProtocolTraitFor } from '#human/llm/provider/definition';
 import type { LlmErrorClassifier } from '#human/llm/requester/requester';
 import { anthropicBase, anthropicBetaBase } from '#human/llm/requester/bases/anthropic/requester';
 import {
@@ -45,8 +45,8 @@ const kimiMedia: ProviderMediaContribution = {
 };
 
 interface AdapterRoute {
-  readonly base: ProtocolBase<AnyProtocolTrait>;
-  readonly trait?: AnyProtocolTrait;
+  readonly base: ProtocolBase<ProtocolTraitFor<Protocol>>;
+  readonly trait?: ProtocolTraitFor<Protocol>;
   readonly connection?: ProviderConnection;
   readonly convertError?: LlmErrorClassifier;
   readonly providerId: string;

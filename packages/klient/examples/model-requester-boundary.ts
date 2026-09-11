@@ -60,8 +60,8 @@ import {
   isToolExchangeAdjacencyError,
 } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/errors';
 import {
-  oauthCredentials,
-  staticCredentials,
+  createOAuthCredentialProvider,
+  createStaticCredentialProvider,
 } from '@moonshot-ai/agent-core-v2/human/credentials/credentials';
 import type {
   ToolCall,
@@ -389,7 +389,7 @@ async function probeBoundaries(): Promise<void> {
     // 1) happy path — the requester's event envelope on top of the raw stream.
     resetCounts();
     handler = (_req, res) => writePong(res);
-    const ok = await collect(makeRequester(staticCredentials('sk-probe')));
+    const ok = await collect(makeRequester(createStaticCredentialProvider('sk-probe')));
     assert(ok.text === 'pong', 'happy path assembles streamed text');
     assert(ok.events.includes('usage'), 'happy path emits a usage event');
     assert(ok.events.includes('finish'), 'happy path emits a finish event');
@@ -402,7 +402,7 @@ async function probeBoundaries(): Promise<void> {
     resetCounts();
     handler = (_req, res) => writeJsonError(res, 401, 'invalid api key');
     try {
-      await collect(makeRequester(staticCredentials('sk-bad')));
+      await collect(makeRequester(createStaticCredentialProvider('sk-bad')));
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -420,7 +420,7 @@ async function probeBoundaries(): Promise<void> {
       else writeJsonError(res, 401, 'token expired');
     };
     let resolveCalls = 0;
-    const refreshable = oauthCredentials((options) => {
+    const refreshable = createOAuthCredentialProvider((options) => {
       resolveCalls += 1;
       return Promise.resolve(options?.force === true ? 'sk-good' : 'sk-stale');
     });
@@ -448,7 +448,7 @@ async function probeBoundaries(): Promise<void> {
     resetCounts();
     handler = (_req, res) => writeJsonError(res, 429, 'too many requests', { 'retry-after': '2' });
     try {
-      await collect(makeRequester(staticCredentials('sk-probe')));
+      await collect(makeRequester(createStaticCredentialProvider('sk-probe')));
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -463,7 +463,7 @@ async function probeBoundaries(): Promise<void> {
     handler = (_req, res) =>
       writeJsonError(res, 400, 'This model\'s maximum context length is 8192 tokens.');
     try {
-      await collect(makeRequester(staticCredentials('sk-probe')));
+      await collect(makeRequester(createStaticCredentialProvider('sk-probe')));
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -479,7 +479,7 @@ async function probeBoundaries(): Promise<void> {
       res.end('<html><head><title>500 Internal Server Error</title></head><body>oops</body></html>');
     };
     try {
-      await collect(makeRequester(staticCredentials('sk-probe')));
+      await collect(makeRequester(createStaticCredentialProvider('sk-probe')));
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -500,7 +500,7 @@ async function probeBoundaries(): Promise<void> {
   });
     handler = (_req, res) => writePong(res); // unused — nothing listens there
     try {
-      await collect(makeRequester(staticCredentials('sk-probe'), `http://127.0.0.1:${String(deadPort)}`));
+      await collect(makeRequester(createStaticCredentialProvider('sk-probe'), `http://127.0.0.1:${String(deadPort)}`));
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -512,7 +512,7 @@ async function probeBoundaries(): Promise<void> {
     resetCounts();
     handler = (_req, res) => writeSse(res, []);
     try {
-      await collect(makeRequester(staticCredentials('sk-probe')));
+      await collect(makeRequester(createStaticCredentialProvider('sk-probe')));
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -528,7 +528,7 @@ async function probeBoundaries(): Promise<void> {
       res.end('data: {this is not json}\n\ndata: [DONE]\n\n');
     };
     try {
-      await collect(makeRequester(staticCredentials('sk-probe')));
+      await collect(makeRequester(createStaticCredentialProvider('sk-probe')));
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -545,7 +545,7 @@ async function probeBoundaries(): Promise<void> {
       });
     };
     try {
-      await collect(makeRequester(staticCredentials('sk-probe')));
+      await collect(makeRequester(createStaticCredentialProvider('sk-probe')));
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -578,7 +578,7 @@ async function probeBoundaries(): Promise<void> {
         sseToolDelta([], 'tool_calls'),
         SSE_USAGE,
       ]);
-    const toolOk = await collect(makeRequester(staticCredentials('sk-probe')), undefined, TOOL_INPUT);
+    const toolOk = await collect(makeRequester(createStaticCredentialProvider('sk-probe')), undefined, TOOL_INPUT);
     const wireTools = (lastRequestBody as { tools?: { function?: { name?: string } }[] }).tools;
     assert(
       wireTools?.some((t) => t.function?.name === 'get_weather') === true,
@@ -617,7 +617,7 @@ async function probeBoundaries(): Promise<void> {
         sseToolDelta([], 'tool_calls'),
         SSE_USAGE,
       ]);
-    const parallel = await collect(makeRequester(staticCredentials('sk-probe')), undefined, TOOL_INPUT);
+    const parallel = await collect(makeRequester(createStaticCredentialProvider('sk-probe')), undefined, TOOL_INPUT);
     assert(parallel.toolCalls.length === 2, 'two parallel tool calls assembled');
     assert(
       parallel.toolCalls[0]?.name === 'tool_a' && parallel.toolCalls[0]?.arguments === '{"a":1}',
@@ -651,7 +651,7 @@ async function probeBoundaries(): Promise<void> {
         sseToolDelta([], 'tool_calls'),
         SSE_USAGE,
       ]);
-    const malformedArgs = await collect(makeRequester(staticCredentials('sk-probe')), undefined, TOOL_INPUT);
+    const malformedArgs = await collect(makeRequester(createStaticCredentialProvider('sk-probe')), undefined, TOOL_INPUT);
     assert(
       malformedArgs.toolCalls[0]?.arguments === '{not json',
       'malformed arguments pass through untouched',
@@ -676,7 +676,7 @@ async function probeBoundaries(): Promise<void> {
         sseToolDelta([], 'tool_calls'),
         SSE_USAGE,
       ]);
-    const indexless = await collect(makeRequester(staticCredentials('sk-probe')), undefined, TOOL_INPUT);
+    const indexless = await collect(makeRequester(createStaticCredentialProvider('sk-probe')), undefined, TOOL_INPUT);
     assert(
       indexless.toolCalls[0]?.arguments === '{"location":"HZ"}',
       'index-less fragments merge into the pending call',
@@ -694,7 +694,7 @@ async function probeBoundaries(): Promise<void> {
     handler = (_req, res) =>
       writeJsonError(res, 400, 'tool_call_id "call_1" is not found');
     try {
-      await collect(makeRequester(staticCredentials('sk-probe')), undefined, TOOL_HISTORY_INPUT);
+      await collect(makeRequester(createStaticCredentialProvider('sk-probe')), undefined, TOOL_HISTORY_INPUT);
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -710,7 +710,7 @@ async function probeBoundaries(): Promise<void> {
     // the tool result must hit the wire in the provider's shape.
     resetCounts();
     handler = (_req, res) => writePong(res);
-    await collect(makeRequester(staticCredentials('sk-probe')), undefined, TOOL_HISTORY_INPUT);
+    await collect(makeRequester(createStaticCredentialProvider('sk-probe')), undefined, TOOL_HISTORY_INPUT);
     const wireMessages = (lastRequestBody as { messages?: Record<string, unknown>[] }).messages;
     assert(
       wireMessages?.some(
@@ -740,7 +740,7 @@ async function probeBoundaries(): Promise<void> {
     };
     const ac = new AbortController();
     try {
-      for await (const event of makeRequester(staticCredentials('sk-probe')).request(PING_INPUT, ac.signal)) {
+      for await (const event of makeRequester(createStaticCredentialProvider('sk-probe')).request(PING_INPUT, ac.signal)) {
         if (event.type === 'part') ac.abort();
       }
       throw new Error('expected an abort');
