@@ -195,6 +195,11 @@ async function parseAndRegister(input: {
         reason: `unsupported skill type "${error.skillType}"`,
       });
     } else if (error instanceof SkillParseError) {
+      input.skipped.push({
+        path: input.skillMdPath,
+        type: 'invalid',
+        reason: error.message,
+      });
       input.warn?.(`Skipping invalid skill at ${input.skillMdPath}: ${error.message}`, error);
     } else {
       input.warn?.(`Skipping skill at ${input.skillMdPath} due to unexpected error`, error);
