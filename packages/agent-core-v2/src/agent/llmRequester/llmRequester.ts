@@ -1,6 +1,7 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import type { FinishReason } from '#human/llm/finish-reason';
+import type { LlmCredentialProvider } from '#human/llm/requester/requester';
 import type { ThinkingEffort } from '#human/llm/thinking';
 import type { Message } from '#/llm-adapter/contract/message';
 import type { StreamedMessagePart, ToolDescription as Tool } from '#human/llm/message';
@@ -97,6 +98,10 @@ export interface IAgentLLMRequesterService {
   readonly _serviceBrand: undefined;
 
   prepareTurnConfig(turnId: number): PreparedTurnRequestConfig | undefined;
+
+  currentCredentials(): LlmCredentialProvider | undefined;
+
+  credentialsForTurn(turnId: number): LlmCredentialProvider | undefined;
 
   request(
     overrides?: AgentLLMRequestOverrides,

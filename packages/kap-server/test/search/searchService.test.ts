@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { appendFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
@@ -17,7 +17,7 @@ import { MiniDb } from '@moonshot-ai/minidb';
 import { TranscriptStore, type TranscriptOperation } from '@moonshot-ai/transcript';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { SyncSessionInput } from '../../src/search/indexCore';
+import { SearchIndexCore, type SyncSessionInput } from '../../src/search/indexCore';
 import {
   GlobalSearchError,
   GlobalSearchService,
@@ -411,19 +411,6 @@ describe('GlobalSearchService', () => {
     );
   });
 
-  it('picks up appended wire lines on the next sync pass', async () => {
-    const s1 = summary('s1', 'incremental', T1);
-    const file = await writeWire(home!, 's1', 'main', [userLine('苹果 initial', T1)]);
-    const service = track(makeService(home!, staticIndex([s1])));
-    await service.reindex();
-
-    await appendFile(file, `${userLine('苹果 appended', T2)}\n`, 'utf8');
-    await settleSync(service);
-    const page = await service.search({ query: '苹果' });
-    expect(page.items.length).toBe(2);
-    expect(page.items.some((h) => h.snippet.includes('appended'))).toBe(true);
-  });
-
   it('reports indexState building before the first full sync and ready after', async () => {
     const s1 = summary('s1', 'state', T1);
     await writeWire(home!, 's1', 'main', [userLine('苹果 state', T1)]);
@@ -505,6 +492,119 @@ describe('GlobalSearchService', () => {
     const page = await service.search({ query: 'partial' });
     expect(page.items.length).toBe(1);
     expect(page.items[0]?.role).toBe('user');
+  });
+
+  it('sync rounds account truncation, session-local wire failures, and escalating storage failures', async () => {
+    const s1 = summary('s1', 'budget', T1);
+    const lines = [
+      userLine('苹果 head', T1),
+      userLine(`苹果 giant ${'x'.repeat(1_700_000)}`, T2),
+      userLine(`苹果 tail ${'y'.repeat(400_000)}`, T3),
+    ];
+    const s1Wire = await writeWire(home!, 's1', 'main', lines);
+    const s2 = summary('s2', 'wirefail', T1);
+    const s2Wire = await writeWire(home!, 's2', 'main', [userLine('苹果 unreachable', T1)]);
+    const core = new SearchIndexCore({
+      indexDir: join(home!, 'search-index'),
+      log: noopLog,
+      bootSalt: 'budget-test',
+    });
+    core.syncRoundBytes = 1 << 20;
+    const input = [syncInput(home!, s1), syncInput(home!, s2)];
+    const messageCount = (id: string): number =>
+      core.db?.query({ key: { prefix: `${id}/` }, project: ['kind'] }).filter((row) => row.value.kind === 'message')
+        .length ?? 0;
+    try {
+      const first = await core.sync(input);
+      expect(first.truncated).toBe(true);
+      expect(first.failures).toBe(0);
+      expect(core.fullSyncDone).toBe(false);
+      expect(messageCount('s1')).toBe(2);
+      expect(messageCount('s2')).toBe(0);
+
+      const second = await core.sync(input);
+      expect(second.truncated).toBe(false);
+      expect(second.failures).toBe(0);
+      expect(core.fullSyncDone).toBe(true);
+      expect(messageCount('s1')).toBe(3);
+      expect(messageCount('s2')).toBe(1);
+
+      core.syncRoundBytes = 64 << 20;
+      if (process.platform !== 'win32') {
+        await core.reindex();
+        await chmod(s2Wire, 0o000);
+        for (let round = 0; round < 4; round++) {
+          const outcome = await core.sync(input);
+          expect(outcome.failures).toBe(1);
+          expect(outcome.truncated).toBe(false);
+          expect(core.fullSyncDone).toBe(false);
+        }
+        const skipped = await core.sync(input);
+        expect(skipped.failures).toBe(0);
+        expect(core.fullSyncDone).toBe(true);
+        expect(messageCount('s2')).toBe(0);
+        expect(messageCount('s1')).toBe(3);
+        await chmod(s2Wire, 0o644);
+      }
+
+      await appendFile(s1Wire, `${userLine('苹果 extra', T3 + 1)}\n`, 'utf8');
+      (core.db as unknown as { batch: unknown }).batch = () =>
+        Promise.reject(new Error('injected io'));
+      for (let round = 0; round < 4; round++) {
+        await expect(core.sync(input)).rejects.toThrow('injected io');
+      }
+      const rebuilt = await core.sync(input);
+      expect(rebuilt.truncated).toBe(true);
+      expect(rebuilt.failures).toBe(0);
+      const converged = await core.sync(input);
+      expect(converged.truncated).toBe(false);
+      expect(converged.failures).toBe(0);
+      expect(core.fullSyncDone).toBe(true);
+      expect(messageCount('s1')).toBe(4);
+      expect(messageCount('s2')).toBe(1);
+
+      if (process.platform !== 'win32') {
+        await appendFile(s2Wire, `${userLine('苹果 cooled', T2)}\n`, 'utf8');
+        await chmod(s2Wire, 0o000);
+        for (let round = 0; round < 4; round++) {
+          const outcome = await core.sync(input);
+          expect(outcome.failures).toBe(1);
+        }
+        const skipped = await core.sync(input);
+        expect(skipped.failures).toBe(0);
+        expect(messageCount('s2')).toBe(1);
+
+        await chmod(s2Wire, 0o644);
+        const cooling = await core.sync(input);
+        expect(cooling.failures).toBe(0);
+        expect(messageCount('s2')).toBe(1);
+
+        const changedInput = [syncInput(home!, s1), { ...syncInput(home!, s2), updatedAt: T1 + 1 }];
+        const changed = await core.sync(changedInput);
+        expect(changed.failures).toBe(0);
+        expect(messageCount('s2')).toBe(2);
+
+        await appendFile(s2Wire, `${userLine('苹果 retried', T3)}\n`, 'utf8');
+        await chmod(s2Wire, 0o000);
+        for (let round = 0; round < 4; round++) {
+          const outcome = await core.sync(changedInput);
+          expect(outcome.failures).toBe(1);
+        }
+        const reskipped = await core.sync(changedInput);
+        expect(reskipped.failures).toBe(0);
+        expect(messageCount('s2')).toBe(2);
+
+        core.syncSkipCooldownMs = 0;
+        await chmod(s2Wire, 0o644);
+        const retried = await core.sync(changedInput);
+        expect(retried.failures).toBe(0);
+        expect(messageCount('s2')).toBe(3);
+      }
+    } finally {
+      await chmod(s2Wire, 0o644).catch(() => {});
+      core.beginClose();
+      await core.close();
+    }
   });
 
   it('indexes legacy root and v2 agents layouts of one session without key collisions', async () => {

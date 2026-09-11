@@ -9,7 +9,6 @@ import { createActor, waitFor } from '#/xstate2';
 import { UNKNOWN_CAPABILITY } from '#/llm/capability';
 import { createUserMessage, extractText } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
-import { createLlmMachine } from '#/llm/requester/machine';
 import type { LlmRequester } from '#/llm/requester/requester';
 import { createAgentMachine } from '#/agent/machine';
 import type { StateUpdated } from '#/agent/events';
@@ -44,7 +43,7 @@ function createTestSession() {
     createSessionMachine({
       agent: createAgentMachine({
         tools: [],
-        turnActor: createTurnMachine(createLlmMachine({ requester: createEchoRequester() })),
+        turnActor: createTurnMachine(createEchoRequester()),
       }),
     }),
     { input: { request: { model } } },

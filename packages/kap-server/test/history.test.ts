@@ -122,6 +122,9 @@ describe('server /api/v1/sessions/{sid}/history', () => {
       getRequester: () => {
         throw new Error('modelCatalog.getRequester not exercised in this test');
       },
+      generate: () => {
+        throw new Error('modelCatalog.generate not exercised in this test');
+      },
       ping: () => {
         throw new Error('modelCatalog.ping not exercised in this test');
       },

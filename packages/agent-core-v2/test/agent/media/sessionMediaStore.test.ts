@@ -15,7 +15,7 @@ import { detectFileType } from '#/agent/media/file-type';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { lowerMessage as lowerOpenAI } from '#human/llm/requester/bases/openai/lower';
 import { lowerMessage as lowerAnthropic } from '#human/llm/requester/bases/anthropic/lower';
-import { UNKNOWN_CAPABILITY } from '#human/llm/capability';
+import { providerImagePolicy } from '#human/llm/media/image-formats';
 import type { ToolMessage } from '#human/llm/message';
 import { degradeOlderMediaParts } from '#/agent/contextProjector/mediaProjection';
 import { parseDaemonFileUrl } from '#/agent/media/mediaRef';
@@ -194,10 +194,13 @@ describe('SessionMediaStoreService', () => {
     const path = JSON.parse(encodedPath!) as string;
     expect((await readFile(path)).equals(bytes)).toBe(true);
     const message: ToolMessage = { role: 'tool', toolCallId: 'audio', content };
-    const ctx = { model: { provider, model: 'example', capability: UNKNOWN_CAPABILITY } };
     const wire = provider === 'openai'
-      ? lowerOpenAI(message, { trait: undefined, ctx, reasoningKey: 'reasoning_content', preserveThinking: false })
-      : lowerAnthropic(message, { trait: undefined, ctx });
+      ? lowerOpenAI(message, {
+          reasoningKey: 'reasoning_content',
+          preserveThinking: false,
+          toolMessageConversion: undefined,
+        })
+      : lowerAnthropic(message, providerImagePolicy().acceptedMimes);
     expect(JSON.stringify(wire)).toContain(JSON.stringify(encodedPath!).slice(1, -1));
     expect(JSON.stringify(wire)).not.toContain(bytes.toString('base64'));
   });

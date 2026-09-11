@@ -473,9 +473,9 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
     },
 
     stream(scope, service, method, args): AsyncIterable<unknown> {
-      // Special case: modelResolver.generate routes to
-      // getRequester(modelId).request(input, signal, params) because the
-      // catalog has no `generate` method — the facade synthesises the call.
+      // Special case: modelResolver.generate routes to IModelCatalog.generate
+      // (which owns credential recovery); the dispatcher only supplies the
+      // abort signal so client cancellation still reaches the request.
       if (service === 'modelResolver' && method === 'generate') {
         return {
           [Symbol.asyncIterator]() {
@@ -488,9 +488,17 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
                 const resolved = await resolveScope(scope);
                 const catalog = resolveService(resolved, 'modelResolver');
                 const [modelId, input, params] = args;
-                const requester = (catalog as { getRequester(id: string): { request(...a: unknown[]): AsyncIterable<unknown> } })
-                  .getRequester(modelId as string);
-                const iterable = requester.request(
+                const iterable = (
+                  catalog as {
+                    generate(
+                      id: string,
+                      input: unknown,
+                      signal: AbortSignal,
+                      params: unknown,
+                    ): AsyncIterable<unknown>;
+                  }
+                ).generate(
+                  modelId as string,
                   wireClone(input),
                   controller.signal,
                   wireClone(params),
