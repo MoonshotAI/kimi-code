@@ -37,6 +37,7 @@ import type { Tree } from '#/store/tree';
 import { waitForTool } from '#/tool/wait-for';
 import { defineTool, type ToolDefinition } from '#/tool/tool';
 import type { ToolResult } from '#/tool/executor';
+import { UserCancellationError } from '#/utils/abort';
 
 const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
 
@@ -1171,6 +1172,34 @@ describe('agent machine input.abort', () => {
       'assistant:',
       'tool:aborted',
     ]);
+  });
+
+  it('aborts turn tools with the user cancellation reason', async () => {
+    const requester = createStubRequester([
+      createAssistantMessage([], [toolCall('call-1', 'slow_tool')]),
+    ]);
+    const signals: AbortSignal[] = [];
+    const tools = stubTools(({ signal }) => {
+      signals.push(signal);
+      return new Promise((_, reject) => {
+        signal.addEventListener('abort', () => reject(new Error('tool stopped')));
+      });
+    }, 'slow_tool');
+    const store = await testStore();
+    const actor = createActor(createTestAgentMachine(tools, requester), {
+      input: { request: { model }, store },
+    });
+    actor.start();
+    actor.send({ type: 'input.submit', message: createUserMessage('hi') });
+
+    await vi.waitFor(() => {
+      expect(signals).toHaveLength(1);
+    });
+    actor.send({ type: 'input.abort' });
+    await waitFor(actor, (s) => s.matches('idle'), { timeout: 5000 });
+
+    expect(signals[0]?.aborted).toBe(true);
+    expect(signals[0]?.reason).toBeInstanceOf(UserCancellationError);
   });
 
   it('waits for the real outcome of a tool that settles after the abort signal', async () => {

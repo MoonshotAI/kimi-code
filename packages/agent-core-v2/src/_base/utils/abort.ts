@@ -22,7 +22,11 @@ export function userCancellationReason(): UserCancellationError {
 }
 
 export function isUserCancellation(value: unknown): value is UserCancellationError {
-  return value instanceof UserCancellationError;
+  if (value instanceof UserCancellationError) return true;
+  return (
+    value instanceof Error &&
+    (value as { readonly userCancelled?: unknown }).userCancelled === true
+  );
 }
 
 export function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {

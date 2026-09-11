@@ -97,10 +97,12 @@ export class SessionSwarmService implements ISessionSwarmService {
     };
     const maxConcurrency = resolveSwarmMaxConcurrency();
     const promise = new AgentRunBatch(launcher, linkedTasks, { maxConcurrency }).run();
-    void promise.finally(() => {
-      for (const unlink of unlinks) unlink();
-      if (this.inFlight.get(callerAgentId) === controller) this.inFlight.delete(callerAgentId);
-    });
+    void promise
+      .finally(() => {
+        for (const unlink of unlinks) unlink();
+        if (this.inFlight.get(callerAgentId) === controller) this.inFlight.delete(callerAgentId);
+      })
+      .catch(() => {});
     return promise;
   }
 

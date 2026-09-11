@@ -22,7 +22,7 @@ import {
   turnStarted,
 } from './events';
 import { createSystemEntry, createUserEntry } from './turn';
-import { createAbortScope, withAbort, type AbortScope } from '#/utils/abort';
+import { createAbortScope, withAbort, userCancellationReason, type AbortScope } from '#/utils/abort';
 import type { createTurnMachine, HistoryMessage, TurnLlmEvent, TurnOutput, UserEntry } from './turn';
 import { storeActor } from '#/eventStore/actor';
 import type { AgentEventStore, AgentStoreState, QueuedPrompt } from './slices';
@@ -300,7 +300,7 @@ export function createAgentMachine({
         for (const toolCall of event.toolCalls) {
           const entry = context.turnTools[toolCall.id];
           if (entry !== undefined) {
-            entry.scope.abort();
+            entry.scope.abort(userCancellationReason());
             enqueue.sendTo(entry.ref, { type: 'tool.abort' as const });
           }
         }
@@ -312,9 +312,21 @@ export function createAgentMachine({
           enqueue.sendTo(entry.ref, { type: 'tool.abort' as const });
         }
       }),
+      abortTurnToolsUserCancelled: enqueueActions(({ context, enqueue }) => {
+        for (const entry of Object.values(context.turnTools)) {
+          entry.scope.abort(userCancellationReason());
+          enqueue.sendTo(entry.ref, { type: 'tool.abort' as const });
+        }
+      }),
       stopTurnTools: enqueueActions(({ context, enqueue }) => {
         for (const [toolCallId, entry] of Object.entries(context.turnTools)) {
           entry.scope.abort();
+          enqueue.stopChild(toolCallId);
+        }
+      }),
+      stopTurnToolsUserCancelled: enqueueActions(({ context, enqueue }) => {
+        for (const [toolCallId, entry] of Object.entries(context.turnTools)) {
+          entry.scope.abort(userCancellationReason());
           enqueue.stopChild(toolCallId);
         }
       }),
@@ -677,20 +689,24 @@ export function createAgentMachine({
               },
               'input.abort': {
                 target: 'aborting',
-                actions: ['abortTurn', 'abortTurnTools', emit({ type: 'turn.aborting' as const })],
+                actions: [
+                  'abortTurn',
+                  'abortTurnToolsUserCancelled',
+                  emit({ type: 'turn.aborting' as const }),
+                ],
               },
             },
           },
           aborting: {
             after: {
-              abortTimeout: { actions: ['abortTurn', 'stopTurnTools'] },
+              abortTimeout: { actions: ['abortTurn', 'stopTurnToolsUserCancelled'] },
             },
             on: {
               'turn.spawn_tools': {
                 actions: ['spawnTurnTools', 'abortSpawnedTools'],
               },
               'input.abort': {
-                actions: ['abortTurn', 'stopTurnTools'],
+                actions: ['abortTurn', 'stopTurnToolsUserCancelled'],
               },
             },
           },
