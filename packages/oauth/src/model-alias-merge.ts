@@ -18,6 +18,7 @@ export const CUSTOM_REGISTRY_MODEL_FIELDS: ReadonlySet<string> = new Set([
   'provider',
   'model',
   'maxContextSize',
+  'maxOutputSize',
   'capabilities',
   'displayName',
   'supportEfforts',
