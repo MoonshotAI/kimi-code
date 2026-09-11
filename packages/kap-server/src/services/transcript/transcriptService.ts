@@ -747,6 +747,17 @@ export function healTurnOps(
       ) {
         continue;
       }
+      if (
+        liveStep.frames.some((entry) => {
+          if (entry.frameId === frame.frameId || entry.kind !== frame.kind) return false;
+          if (entry.text.length < frame.text.length || !entry.text.includes(frame.text)) {
+            return false;
+          }
+          return frame.kind !== 'text' || entry.kind !== 'text' || entry.role === frame.role;
+        })
+      ) {
+        continue;
+      }
       ops.push({ op: 'frame.upsert', turnId: snapshotTurn.turnId, stepId: step.stepId, frame });
     }
   }
