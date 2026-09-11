@@ -6,7 +6,10 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
 
 import type { CatalogModel, CatalogProviderInfo } from '#human/llm/provider-catalog';
-import { oauthCredentials, staticCredentials } from '#human/credentials/credentials';
+import {
+  createOAuthCredentialProvider,
+  createStaticCredentialProvider,
+} from '#human/credentials/credentials';
 import type { LlmCredentialProvider } from '#human/llm/requester/requester';
 import type { ModelCapability } from '../contract/capability';
 import { CONFIG_INVALID_ERROR_CODE } from '../contract/errors';
@@ -450,17 +453,17 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     auth: ResolvedModelAuthMaterial,
   ): LlmCredentialProvider {
     if (auth.apiKey !== undefined) {
-      return staticCredentials(auth.apiKey);
+      return createStaticCredentialProvider(auth.apiKey);
     }
     if (auth.oauth !== undefined) {
       const oauthRef = auth.oauth;
       const providerKey = auth.oauthProviderKey ?? providerName;
       const tokens = this.oauth;
-      return oauthCredentials((options) =>
+      return createOAuthCredentialProvider((options) =>
         tokens.getAccessToken(providerKey, oauthRef, { force: options?.force === true }),
       );
     }
-    return staticCredentials(undefined);
+    return createStaticCredentialProvider(undefined);
   }
 }
 

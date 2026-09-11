@@ -17,7 +17,7 @@ export interface LlmRecoveryContext {
 export interface LlmRecoveryProposal {
   readonly action: string;
   readonly messages?: readonly Message[];
-  readonly prepare?: () => void;
+  readonly beforeRetry?: () => void;
 }
 
 export interface LlmRecovery {
