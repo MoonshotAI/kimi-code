@@ -8,7 +8,8 @@ import {
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
 import { ContextApplyCompaction } from '#/agent/contextMemory/contextEvents';
-import type { TaskOrigin } from '#/agent/contextMemory/types';
+import { isPromptOwnedInjection, isUndoAnchor } from '#/agent/contextMemory/conversationTime';
+import type { ContextMessage, TaskOrigin } from '#/agent/contextMemory/types';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { turnKey } from '#/agent/loop/turnOps';
@@ -272,24 +273,6 @@ describe('AgentConversationUndoService', () => {
     expect(persisted[edgeIndex + 2]).toMatchObject({ type: 'context.undone', turns: 2 });
   });
 
-  it('restores todos to their pre-turn value', async () => {
-    await setup();
-    const undo = ctx.get(IAgentConversationUndoService);
-    expect(ctx.get(IAgentTodoService).get()).toEqual([]);
-    ctx.appendTurnExchange('u1', 'a1');
-    await ctx.dispatcher.dispatch(
-      new ToolsUpdateStore({ agentId: 'main', key: 'todo', value: [{ title: 'kept', status: 'pending' }] }),
-    );
-    ctx.appendTurnExchange('u2', 'a2');
-    await ctx.dispatcher.dispatch(
-      new ToolsUpdateStore({ agentId: 'main', key: 'todo', value: [{ title: 'doomed', status: 'pending' }] }),
-    );
-
-    await undo.undo(1);
-
-    expect(ctx.get(IAgentTodoService).get()).toEqual([{ title: 'kept', status: 'pending' }]);
-  });
-
   it('restores plan mode and its telemetry mirror to their pre-turn value', async () => {
     await setup();
     const undo = ctx.get(IAgentConversationUndoService);
@@ -312,16 +295,66 @@ describe('AgentConversationUndoService', () => {
     }
   });
 
-  it('does not roll back world-time turn bookkeeping', async () => {
+  it('keeps machine and wire turn ids aligned across undo, a continued turn, and a restart', async () => {
     await setup();
     const undo = ctx.get(IAgentConversationUndoService);
-    ctx.appendTurnExchange('u1', 'a1');
-    ctx.appendTurnExchange('u2', 'a2');
+
+    const runTurn = async (
+      target: TestAgentContext,
+      text: string,
+    ): Promise<number | undefined> => {
+      target.mockNextResponse({ type: 'text', text: `answer to ${text}` });
+      const { turn } = target.get(IAgentLoopService).submit({
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      });
+      await expect(turn.result).resolves.toMatchObject({ type: 'completed' });
+      return turn.id;
+    };
+
+    await runTurn(ctx, 'u1');
+    await runTurn(ctx, 'u2');
     expect(ctx.agentState.get(turnKey).nextTurnId).toBe(2);
 
     await undo.undo(1);
 
     expect(ctx.agentState.get(turnKey).nextTurnId).toBe(2);
+
+    await expect(runTurn(ctx, 'u3')).resolves.toBe(1);
+
+    const persisted = await ctx.persistedWireRecords();
+    expect(
+      persisted.filter((record) => record.type === 'turn.prompt').map((record) => record['turnId']),
+    ).toEqual([0, 1, 1]);
+    expect(
+      persisted
+        .filter((record) => record.type === 'human.agent.turn.started')
+        .map((record) => record['turnId']),
+    ).toEqual([0, 1, 1]);
+
+    const resumed = createTestAgent(
+      { autoConfigure: false, persistence: new InMemoryWireRecordPersistence(persisted) },
+      telemetryServices(recordingTelemetry(records)),
+      execEnvServices({ hostFs: createFakeHostFs({ mkdir: async () => {} }) }),
+    );
+    try {
+      resumed.get(IAgentContextMemoryService);
+      await resumed.restorePersisted();
+      expect(resumed.agentState.get(turnKey).nextTurnId).toBe(2);
+      await expect(runTurn(resumed, 'u4')).resolves.toBe(2);
+      const repersisted = await resumed.persistedWireRecords();
+      expect(
+        repersisted
+          .filter((record) => record.type === 'human.agent.turn.started')
+          .map((record) => record['turnId']),
+      ).toEqual([0, 1, 1, 2]);
+    } finally {
+      await resumed.dispose();
+    }
   });
 
   it('reports the removed turn id only when context anchors were opened by engine turns', async () => {
@@ -630,26 +663,6 @@ describe('AgentConversationUndoService', () => {
     }
   });
 
-  it('persists the paired undo switch triple without introducing a wire-level cut record', async () => {
-    await setup();
-    ctx.appendTurnExchange('u1', 'a1');
-
-    await ctx.get(IAgentConversationUndoService).undo(1);
-    await ctx.get(IWireService).flush();
-
-    const wireEvents = ctx.allEvents
-      .filter((event) => event.type === '[wire]')
-      .map((event) => event.event);
-    const edgeIndex = wireEvents.indexOf('agent.switched');
-    expect(edgeIndex).toBeGreaterThanOrEqual(0);
-    expect(wireEvents.slice(edgeIndex, edgeIndex + 3)).toEqual([
-      'agent.switched',
-      'context.undo',
-      'context.undone',
-    ]);
-    expect(wireEvents).not.toContain('log.cut');
-  });
-
   it('re-delivers wait-reported task notifications after conversation undo', async () => {
     await setup();
     const undo = ctx.get(IAgentConversationUndoService);
@@ -776,4 +789,228 @@ describe('AgentConversationUndoService', () => {
       flush.mockRestore();
     }
   });
+
+  it('keeps terminal state equivalent across a legacy record-level downgrade round trip, and documents the orphan-edge crash window', async () => {
+    records = [];
+    const persistence = new InMemoryWireRecordPersistence();
+    ctx = createTestAgent(
+      { persistence },
+      telemetryServices(recordingTelemetry(records)),
+      execEnvServices({ hostFs: createFakeHostFs({ mkdir: async () => {} }) }),
+    );
+    ctx.get(IAgentContextMemoryService);
+    await ctx.restorePersisted();
+
+    ctx.appendTurnExchange('u1', 'a1');
+    await ctx.dispatcher.dispatch(
+      new ToolsUpdateStore({ agentId: 'main', key: 'todo', value: [{ title: 'kept', status: 'pending' }] }),
+    );
+    ctx.appendTurnExchange('u2', 'a2');
+    await ctx.dispatcher.dispatch(
+      new ToolsUpdateStore({ agentId: 'main', key: 'todo', value: [{ title: 'doomed', status: 'pending' }] }),
+    );
+    ctx.get(IWireService).append({
+      type: 'human.agent.turn.ended',
+      kind: 'event',
+      turnId: 0,
+      outcome: 'done',
+      time: 100,
+    });
+    await ctx.get(IAgentConversationUndoService).undo(1);
+
+    expect(ctx.context.get().map(messageText)).toEqual(['user:u1', 'assistant:a1']);
+    expect(ctx.get(IAgentTodoService).get().map((item) => item.title)).toEqual(['kept']);
+    const afterNew = await ctx.persistedWireRecords();
+    const legacyAfterNew = legacyWireFold(afterNew);
+    expect(legacyAfterNew.context).toEqual(['user:u1', 'assistant:a1']);
+    expect(legacyAfterNew.todo).toEqual(['kept']);
+    expect(legacyAfterNew.skippedUnknownTypes).toEqual([
+      'human.agent.turn.ended',
+      'agent.switched',
+    ]);
+
+    persistence.records.push(
+      {
+        type: 'context.append_message',
+        agentId: 'main',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'u3' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+        time: 200,
+      },
+      {
+        type: 'context.append_message',
+        agentId: 'main',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'a3' }], toolCalls: [] },
+        time: 201,
+      },
+      { type: 'context.undo', agentId: 'main', count: 1, time: 202 },
+    );
+    const finalRecords = [...persistence.records];
+    const legacyFinal = legacyWireFold(finalRecords);
+    expect(legacyFinal.context).toEqual(['user:u1', 'assistant:a1']);
+    expect(legacyFinal.todo).toEqual(['kept']);
+    expect(legacyFinal.skippedUnknownTypes).toEqual([
+      'human.agent.turn.ended',
+      'agent.switched',
+    ]);
+
+    const reopened = createTestAgent(
+      { autoConfigure: false, persistence: new InMemoryWireRecordPersistence(finalRecords) },
+      telemetryServices(recordingTelemetry([])),
+      execEnvServices({ hostFs: createFakeHostFs({ mkdir: async () => {} }) }),
+    );
+    try {
+      reopened.get(IAgentContextMemoryService);
+      await reopened.restorePersisted();
+      expect(reopened.context.get().map(messageText)).toEqual(legacyFinal.context);
+      expect(reopened.get(IAgentTodoService).get().map((item) => item.title)).toEqual(
+        legacyFinal.todo,
+      );
+    } finally {
+      await reopened.dispose();
+    }
+    await ctx.dispose();
+
+    const orphanRecords: WireRecord[] = [
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      {
+        type: 'context.append_message',
+        agentId: 'main',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'u1' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+        time: 1,
+      },
+      {
+        type: 'context.append_message',
+        agentId: 'main',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'a1' }], toolCalls: [] },
+        time: 2,
+      },
+      {
+        type: 'context.append_message',
+        agentId: 'main',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'u2' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+        time: 3,
+      },
+      {
+        type: 'context.append_message',
+        agentId: 'main',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'a2' }], toolCalls: [] },
+        time: 4,
+      },
+      {
+        type: 'agent.switched',
+        agentId: 'main',
+        branch: 'b1',
+        reason: 'undo',
+        base: { branch: 'main', line: 3 },
+        turns: 1,
+        legacyUndoLine: 7,
+        time: 5,
+      },
+    ];
+    const legacyOrphan = legacyWireFold(orphanRecords);
+    expect(legacyOrphan.context).toEqual(['user:u1', 'assistant:a1', 'user:u2', 'assistant:a2']);
+    expect(legacyOrphan.skippedUnknownTypes).toEqual(['agent.switched']);
+
+    ctx = createTestAgent(
+      { autoConfigure: false, persistence: new InMemoryWireRecordPersistence(orphanRecords) },
+      telemetryServices(recordingTelemetry([])),
+      execEnvServices({ hostFs: createFakeHostFs({ mkdir: async () => {} }) }),
+    );
+    ctx.get(IAgentContextMemoryService);
+    await ctx.restorePersisted();
+    expect(ctx.context.get().map(messageText)).toEqual(['user:u1', 'assistant:a1']);
+  });
 });
+
+function messageText(message: ContextMessage): string {
+  return `${message.role}:${message.content
+    .map((part) => (part.type === 'text' ? part.text : ''))
+    .join('')}`;
+}
+
+function legacyWireFold(records: readonly WireRecord[]): {
+  readonly context: readonly string[];
+  readonly todo: readonly string[];
+  readonly skippedUnknownTypes: readonly string[];
+} {
+  const transcript: ContextMessage[] = [];
+  const todoCheckpoints: string[][] = [];
+  let todo: string[] = [];
+  const skippedUnknownTypes: string[] = [];
+  let clearFloor = 0;
+  const applyUndo = (count: number): void => {
+    let removedUserCount = 0;
+    for (let i = transcript.length - 1; i >= clearFloor; i--) {
+      const message = transcript[i]!;
+      if (message.origin?.kind === 'injection') continue;
+      if (message.origin?.kind === 'compaction_summary') break;
+      transcript.splice(i, 1);
+      if (!isUndoAnchor(message)) continue;
+      removedUserCount++;
+      while (i > clearFloor && isPromptOwnedInjection(transcript[i - 1]!, message)) {
+        transcript.splice(i - 1, 1);
+        i--;
+      }
+      if (removedUserCount >= count) break;
+    }
+    const targetIndex = todoCheckpoints.length - count;
+    const target = todoCheckpoints[targetIndex];
+    if (target === undefined) return;
+    todo = [...target];
+    todoCheckpoints.length = targetIndex;
+  };
+  for (const record of records) {
+    switch (record.type) {
+      case 'metadata':
+        break;
+      case 'context.append_message': {
+        const message = record['message'] as ContextMessage;
+        transcript.push(message);
+        if (isUndoAnchor(message)) todoCheckpoints.push([...todo]);
+        break;
+      }
+      case 'context.undo': {
+        const count = record['count'];
+        if (typeof count === 'number') applyUndo(count);
+        break;
+      }
+      case 'context.clear':
+        clearFloor = transcript.length;
+        todoCheckpoints.length = 0;
+        break;
+      case 'tools.update_store': {
+        if (record['key'] === 'todo') {
+          todo = (record['value'] as { title: string }[]).map((item) => item.title);
+        }
+        break;
+      }
+      case 'context.undone':
+        break;
+      default:
+        if (record.type === 'agent.switched' || record.type.startsWith('human.')) {
+          skippedUnknownTypes.push(record.type);
+        }
+        break;
+    }
+  }
+  return {
+    context: transcript.slice(clearFloor).map(messageText),
+    todo,
+    skippedUnknownTypes,
+  };
+}

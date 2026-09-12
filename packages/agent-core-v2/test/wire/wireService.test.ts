@@ -1135,7 +1135,7 @@ describe('WireService tree projection', () => {
     expect(journal.nextSeq()).toBe(12);
   });
 
-  it('retries the branch switch when a concurrent append lands mid-read, then gives up after repeated interference', async () => {
+  it('retries the branch switch on read interference, then rejects when the switch triple is interleaved', async () => {
     const records: WireRecord[] = [
       { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
       { type: 'context.append_message', message: userPrompt('first', 'p1'), time: 1 },
@@ -1178,5 +1178,37 @@ describe('WireService tree projection', () => {
     await expect(concurrent.switchBranch({ turns: 1 })).rejects.toMatchObject({
       code: WireErrors.codes.RECORDS_WRITE_FAILED,
     });
+
+    const tailRecords: WireRecord[] = [
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'context.append_message', message: userPrompt('first', 'p1'), time: 1 },
+      {
+        type: 'context.append_message',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] },
+        time: 2,
+      },
+    ];
+    const tailLog = recordingWireLog(tailRecords);
+    const baseAppend = tailLog.append.bind(tailLog);
+    tailLog.append = (scope, key, record, options) => {
+      if ((record as WireRecord).type === 'context.undo') {
+        baseAppend(scope, key, { type: 'wire.test.interleaved', time: 9 }, options);
+      }
+      baseAppend(scope, key, record, options);
+    };
+    const tail = wireOverLog(tailLog, 'tail');
+
+    await expect(tail.switchBranch({ turns: 1 })).rejects.toMatchObject({
+      code: WireErrors.codes.RECORDS_WRITE_FAILED,
+    });
+    expect(tailRecords.map((record) => record.type)).toEqual([
+      'metadata',
+      'context.append_message',
+      'context.append_message',
+      'agent.switched',
+      'wire.test.interleaved',
+      'context.undo',
+      'context.undone',
+    ]);
   });
 });

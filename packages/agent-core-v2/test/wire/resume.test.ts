@@ -1064,15 +1064,9 @@ describe('Agent resume', () => {
       const skipped = unexpected.filter(
         (error) => (error as { code?: unknown }).code === 'wire.unknown_record',
       );
-      expect(
-        skipped.map((error) => (error as { details?: { type?: unknown } }).details?.type),
-      ).toEqual([
-        'agent.switched',
-        'agent.switched',
-        'agent.switched',
-        'agent.switched',
-        'context.undone',
-        'agent.switched',
+      expect(skipped.map((error) => (error as Error).message)).toEqual([
+        'Malformed agent.switched record ignored during tree projection',
+        "Duplicate agent.switched branch 'b1' ignored during tree projection",
       ]);
     } finally {
       resetUnexpectedErrorHandler();

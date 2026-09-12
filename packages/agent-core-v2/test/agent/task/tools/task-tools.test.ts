@@ -1408,6 +1408,7 @@ describe('WaitForTool (harness)', () => {
       expect(output).toContain(`task_id: ${taskA}`);
       expect(output).not.toContain(taskB);
       expect(output).not.toContain('[completed_during_wait]');
+      await ctx.persistedWireRecords();
       expect(ctx.allEvents.filter((event) => event.event === 'task.waitDelivered')).toHaveLength(1);
     } finally {
       await ctx.dispose();

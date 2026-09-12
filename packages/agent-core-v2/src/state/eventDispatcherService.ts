@@ -22,6 +22,8 @@ import type { ContentPart } from '#human/llm/message';
 import { OrderedHookSlot } from '#/hooks';
 import { IWireService } from '#/wire/wire';
 import { WireError, WireErrors } from '#/wire/errors';
+import { isHumanRecordType } from '#/wire/human';
+import { AGENT_SWITCHED_TYPE } from '#/wire/tree/index';
 import type { PartsTransformer } from '#/wire/record';
 
 import {
@@ -49,9 +51,11 @@ import {
 
 const MAX_DRAIN = 100;
 
-const RETIRED_WIRE_RECORD_TYPES: ReadonlySet<string> = new Set([
+const UNREPORTED_WIRE_RECORD_TYPES: ReadonlySet<string> = new Set([
   'staleGuard.recorded',
   'staleGuard.cleared',
+  AGENT_SWITCHED_TYPE,
+  'context.undone',
 ]);
 
 export class CycleError extends StateError {
@@ -278,6 +282,9 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
   }
 
   private async attachLateNow(participant: DurableAgentRuntimeParticipant): Promise<IDisposable> {
+    if (this.disposed) {
+      throw new Error(`Agent runtime participant '${participant.id}' late-attached to a disposed event dispatcher`);
+    }
     const attachment = this.buildParticipantAttachment(participant);
     this.dispatching = true;
     try {
@@ -617,6 +624,11 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
 
   override dispose(): void {
     this.disposed = true;
+    const pending = this.lateAttachments.splice(0);
+    if (pending.length > 0) {
+      const error = new Error('Event dispatcher disposed while a late attach was pending');
+      for (const entry of pending) entry.reject(error);
+    }
     this.space()?._detachHost(this.spaceHost);
     super.dispose();
   }
@@ -744,7 +756,11 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
       if (record.type === 'metadata') continue;
       const cls = this.folded.events.get(record.type);
       if (cls === undefined) {
-        if (!undoable && !RETIRED_WIRE_RECORD_TYPES.has(record.type)) {
+        if (
+          !undoable &&
+          !UNREPORTED_WIRE_RECORD_TYPES.has(record.type) &&
+          !isHumanRecordType(record.type)
+        ) {
           this.reportSkippedRecord(record.type, recordIndex, false);
         }
         recordIndex++;

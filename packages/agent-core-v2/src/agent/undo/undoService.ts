@@ -128,9 +128,11 @@ export class AgentConversationUndoService
       }
       try {
         await this.dispatcher.restore();
-      } catch {
+      } catch (error) {
+        this.log.warn('undo state restore failed; retrying once', { error });
         await this.dispatcher.restore();
       }
+      this.loop.resetMachineEngine();
       this.tokenCounting.recordTruncation(
         this.agentCtx.agentContext,
         this.context.get().length,

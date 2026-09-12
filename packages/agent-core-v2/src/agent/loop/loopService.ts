@@ -76,7 +76,9 @@ import { TurnCancel, TurnEnded, turnKey, TurnPrompt } from './turnOps';
 import {
   createMachineEngine,
   EMPTY_MACHINE_PROMPT,
+  ENGINE_JOURNAL_DOMAIN,
   historyFromContext,
+  wireStoreJournal,
   type MachineEngine,
   type MachineEngineEvent,
   type MachineTurnOutcome,
@@ -161,6 +163,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         toolInfos: this.toolRegistry.list(),
         maxAttemptsPerStep: this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxAttemptsPerStep,
         initialTurnId: this.states.get(turnKey).nextTurnId,
+        journal: wireStoreJournal(this.wire, ENGINE_JOURNAL_DOMAIN),
         trace: () => this.activeRequestTrace,
         toolTurnId: () => this.active?.id,
         steerSignal: () => this.active?.steerController.signal,
@@ -397,6 +400,15 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       }
     }
     this.maybeSettle();
+  }
+
+  resetMachineEngine(): void {
+    if (this.disposing) return;
+    if (this.active !== undefined || this.pendingMachineTurn !== undefined) {
+      throw new BugIndicatingError('Machine engine reset requires a quiescent loop');
+    }
+    this.engine?.stop();
+    this.engine = undefined;
   }
 
   private cancelActiveTurn(turnId: number | undefined, cancellation: unknown): boolean {

@@ -92,6 +92,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
     cancelQueued() { return false; },
     cancelFromUser(turnId) { stub.cancel(turnId); },
     tryAcquireQuiescence: () => toDisposable(() => {}),
+    resetMachineEngine: () => {},
     hasPendingRequests: hasPending,
     registerLoopErrorHandler: errorHandlers.register,
     settled: () => Promise.resolve(),

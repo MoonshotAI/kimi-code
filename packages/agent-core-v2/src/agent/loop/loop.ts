@@ -156,6 +156,8 @@ export interface IAgentLoopService {
 
   tryAcquireQuiescence(): IDisposable | undefined;
 
+  resetMachineEngine(): void;
+
   settled(): Promise<void>;
 
   hasPendingRequests(): boolean;

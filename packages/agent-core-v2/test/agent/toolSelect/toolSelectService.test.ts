@@ -241,6 +241,8 @@ class FakeLoopService implements IAgentLoopService {
     return toDisposable(() => {});
   }
 
+  resetMachineEngine(): void {}
+
   hasPendingRequests(): boolean {
     return false;
   }

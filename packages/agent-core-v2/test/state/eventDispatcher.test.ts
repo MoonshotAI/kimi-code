@@ -48,6 +48,7 @@ function stubWireJournal(journal: WireRecord[]): IWireService {
     readRestorable: async function* () {
       for (const record of journal) yield record;
     },
+    readHumanChain: () => [],
     read: async function* () {
       for (const record of journal) yield record;
     },
@@ -588,7 +589,7 @@ describe('EventDispatcherService', () => {
     expect(state.items).toEqual(['history', 'live']);
   });
 
-  it('rejects late attach before restore and keeps sync attach rejected after restore', async () => {
+  it('rejects late attach before restore, attaches after restore, and rejects a pending late attach on dispose', async () => {
     const participant = {
       id: 'runtime.test.late-phase',
       events: [] as const,
@@ -608,6 +609,28 @@ describe('EventDispatcherService', () => {
       /must attach before restore/,
     );
     await expect(dispatcher.attachLate({ ...participant })).resolves.toBeDefined();
+
+    const wire = ix.get(IWireService);
+    let releaseRead!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    wire.readRestorable = async function* () {
+      await gate;
+      yield* [];
+    };
+    wire.readJournal = async function* () {
+      await gate;
+      yield* [];
+    };
+    const rerun = dispatcher.restore();
+    const pending = dispatcher.attachLate({ ...participant, id: 'runtime.test.late-dispose' });
+    (dispatcher as EventDispatcherService).dispose();
+
+    await expect(pending).rejects.toThrow(/disposed while a late attach was pending/);
+
+    releaseRead();
+    await rerun;
   });
 
   it('does not own AgentSpace teardown', () => {
