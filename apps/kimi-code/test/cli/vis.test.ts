@@ -9,7 +9,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 
-import { handleVis, type VisDeps } from '#/cli/sub/vis';
+import { handleVis, parseVisPort, type VisDeps } from '#/cli/sub/vis';
 
 function makeDeps(over: Partial<VisDeps> = {}): {
   deps: VisDeps;
@@ -110,5 +110,15 @@ describe('handleVis', () => {
     // Nothing past the failed start should run.
     expect(opened).toEqual([]);
     expect(deps.waitForShutdown).not.toHaveBeenCalled();
+  });
+});
+
+describe('parseVisPort', () => {
+  it('rejects malformed port values', () => {
+    expect(parseVisPort(undefined)).toBeUndefined();
+    expect(parseVisPort('8080')).toBe(8080);
+    expect(() => parseVisPort('123abc')).toThrow(/invalid --port/);
+    expect(() => parseVisPort('1.5')).toThrow(/invalid --port/);
+    expect(() => parseVisPort('99999')).toThrow(/invalid --port/);
   });
 });
