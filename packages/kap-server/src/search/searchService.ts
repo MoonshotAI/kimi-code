@@ -440,7 +440,7 @@ export class GlobalSearchService implements IGlobalSearchService {
       items: pageRows.map((row) => this.projectHit(q, row)),
       hasMore,
       pageToken: hasMore
-        ? encodePageToken(q, 'live', boundaryOf(q, pageRows[pageRows.length - 1]!), undefined)
+        ? encodePageToken(q, 'live', boundaryOf(q, pageRows.at(-1)!), undefined)
         : undefined,
       incomplete: matched.incomplete,
       indexState: {
@@ -606,7 +606,7 @@ export class GlobalSearchService implements IGlobalSearchService {
         ? encodePageToken(
             q,
             'index',
-            boundaryOf(q, result.rows[result.rows.length - 1]!),
+            boundaryOf(q, result.rows.at(-1)!),
             result.generation,
           )
         : undefined,

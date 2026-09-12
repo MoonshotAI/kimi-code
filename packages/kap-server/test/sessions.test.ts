@@ -23,6 +23,7 @@ import {
   IAgentLifecycleService,
   IEventBus,
   IEventService,
+  ISessionActivityView,
   ISessionManager,
   IWorkspaceService,
   MAIN_AGENT_ID,
@@ -532,17 +533,17 @@ describe('server-v2 /api/v1/sessions', () => {
 
     const page1 = await getJson<PageWire>('/api/v1/sessions?page_size=3');
     expect(page1.body.code).toBe(0);
-    expect(page1.body.data.items.map((s) => s.id)).toEqual(ids.slice(4).reverse());
+    expect(page1.body.data.items.map((s) => s.id)).toEqual(ids.slice(4).toReversed());
     expect(page1.body.data.has_more).toBe(true);
 
-    const cursor1 = page1.body.data.items[page1.body.data.items.length - 1]!.id;
+    const cursor1 = page1.body.data.items.at(-1)!.id;
     const page2 = await getJson<PageWire>(
       `/api/v1/sessions?page_size=3&before_id=${encodeURIComponent(cursor1)}`,
     );
-    expect(page2.body.data.items.map((s) => s.id)).toEqual(ids.slice(1, 4).reverse());
+    expect(page2.body.data.items.map((s) => s.id)).toEqual(ids.slice(1, 4).toReversed());
     expect(page2.body.data.has_more).toBe(true);
 
-    const cursor2 = page2.body.data.items[page2.body.data.items.length - 1]!.id;
+    const cursor2 = page2.body.data.items.at(-1)!.id;
     const page3 = await getJson<PageWire>(
       `/api/v1/sessions?page_size=3&before_id=${encodeURIComponent(cursor2)}`,
     );
@@ -573,6 +574,54 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(body.code).toBe(0);
     expect(body.data.items).toEqual([]);
     expect(body.data.has_more).toBe(false);
+  });
+
+  it('returns every session with has_more false when page_size is omitted', async () => {
+    await restartWithFreshHome();
+    const cwd = home as string;
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const { body } = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+      expect(body.code).toBe(0);
+      ids.push(body.data.id);
+    }
+
+    const { body } = await getJson<PageWire>('/api/v1/sessions');
+    expect(body.code).toBe(0);
+    expect(new Set(body.data.items.map((s) => s.id))).toEqual(new Set(ids));
+    expect(body.data.has_more).toBe(false);
+  });
+
+  it('keeps an unsized listing unbounded and pages only when page_size is given', async () => {
+    await restartWithFreshHome();
+    const cwd = home as string;
+    const ids: string[] = [];
+    for (let i = 0; i < 51; i++) {
+      const { body } = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+      expect(body.code).toBe(0);
+      ids.push(body.data.id);
+    }
+
+    const all = await getJson<PageWire>('/api/v1/sessions');
+    expect(all.body.code).toBe(0);
+    expect(all.body.data.items).toHaveLength(51);
+    expect(all.body.data.has_more).toBe(false);
+
+    const first = await getJson<PageWire>('/api/v1/sessions?page_size=50');
+    expect(first.body.code).toBe(0);
+    expect(first.body.data.items).toHaveLength(50);
+    expect(first.body.data.has_more).toBe(true);
+
+    const cursor = first.body.data.items.at(-1)!.id;
+    const rest = await getJson<PageWire>(
+      `/api/v1/sessions?before_id=${encodeURIComponent(cursor)}&page_size=50`,
+    );
+    expect(rest.body.code).toBe(0);
+    expect(rest.body.data.items).toHaveLength(1);
+    expect(rest.body.data.has_more).toBe(false);
+
+    const seen = [...first.body.data.items, ...rest.body.data.items].map((s) => s.id);
+    expect(new Set(seen)).toEqual(new Set(ids));
   });
 
   it('gets a session by id and 404s for unknown', async () => {
@@ -1709,6 +1758,37 @@ describe('server-v2 /api/v1/sessions', () => {
     const running = await getJson<PageWire>('/api/v1/sessions?busy=true');
     expect(running.body.code).toBe(0);
     expect(running.body.data.items.some((s) => s.id === id)).toBe(false);
+  });
+
+  it('fills a busy-filtered page across idle sessions newer than the busy one', async () => {
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const cwd = home as string;
+    const busy = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const busyId = busy.body.data.id;
+    const live = getLiveSessionById((server as RunningServer).core.accessor, busyId);
+    if (live === undefined) throw new Error('expected a live session');
+    vi.spyOn(live.accessor.get(ISessionActivityView), 'state').mockReturnValue({
+      busy: true,
+      mainTurnActive: true,
+      pendingInteraction: 'none',
+    });
+    await sleep(5);
+    for (let i = 0; i < 4; i++) {
+      const { body } = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+      expect(body.code).toBe(0);
+      await sleep(5);
+    }
+
+    const page = await getJson<PageWire>('/api/v1/sessions?busy=true&page_size=2');
+    expect(page.body.code).toBe(0);
+    expect(page.body.data.items.map((s) => s.id)).toEqual([busyId]);
+    expect(page.body.data.items[0]?.busy).toBe(true);
+    expect(page.body.data.has_more).toBe(false);
+
+    const idle = await getJson<PageWire>('/api/v1/sessions?busy=false&page_size=2');
+    expect(idle.body.data.items).toHaveLength(2);
+    expect(idle.body.data.items.every((s) => !s.busy)).toBe(true);
+    expect(idle.body.data.has_more).toBe(true);
   });
 
   it('filters child sessions by the busy query', async () => {

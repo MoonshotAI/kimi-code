@@ -22,6 +22,15 @@ if (!['local', 'release'].includes(profile)) {
   process.exit(1);
 }
 
+// The SEA blob embeds apps/kimi-code/dist-web; make sure the `.br`/`.gz`
+// siblings kap-server serves for `Accept-Encoding` are present and fresh
+// before the assets are collected, whether the build runs in CI or locally.
+async function runPrecompressWebAssetsStep() {
+  const script = resolve(appRoot, 'scripts/precompress-web-assets.mjs');
+  await run(process.execPath, [script]);
+  await run(process.execPath, [script, '--check']);
+}
+
 function ensureNodeVersion() {
   const [major, minor] = process.versions.node.split('.').map(Number);
   if (major < 24 || (major === 24 && minor < 15)) {
@@ -42,6 +51,7 @@ if (profile === 'release' && process.env[BUILT_IN_CATALOG_ENV] === undefined) {
 }
 
 await runBundleStep();
+await runPrecompressWebAssetsStep();
 await runSeaBlobStep();
 await runInjectStep();
 

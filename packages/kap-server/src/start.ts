@@ -9,6 +9,7 @@ import {
   IAppendLogStore,
   IConfigService,
   IEventService,
+  IFlagService,
   IMcpOAuthService,
   IOAuthService,
   IProviderDiscoveryService,
@@ -26,6 +27,7 @@ import {
   type Scope,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
+import { parseNonNegativeIntEnv } from '@moonshot-ai/agent-core-v2/_base/utils/env';
 import {
   createKimiDefaultHeaders,
   kimiRegionProfile,
@@ -59,7 +61,7 @@ import {
 import { extractWsBearerToken } from './transport/ws/bearerProtocol';
 import { SessionEventBroadcaster } from './transport/ws/v1/sessionEventBroadcaster';
 import type { ConfigWarningItem } from './transport/ws/v1/events';
-import { registerWsV1, WS_PATH as WS_PATH_V1 } from './transport/ws/v1/registerWsV1';
+import { parseWsTuning, registerWsV1, WS_PATH as WS_PATH_V1 } from './transport/ws/v1/registerWsV1';
 import { registerWsDebug, WS_DEBUG_PATH } from './transport/ws/debug/registerWsDebug';
 import { registerWsV3, WS_PATH_V3 } from './transport/ws/v3/registerWsV3';
 import { getServerVersion } from './version';
@@ -83,7 +85,10 @@ import { ProjectionService } from './services/projection';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
 import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
 import { createAuthFailureLimiter } from './middleware/rateLimit';
-import { createRemoteControlManager } from '@moonshot-ai/remote-control';
+import {
+  createRemoteControlManager,
+  REMOTE_CONTROL_CHUNKED_RESPONSES_FLAG_ID,
+} from '@moonshot-ai/remote-control';
 
 import { createAuthTokenService, type IAuthTokenService } from './services/auth/authTokenService';
 import { createCredentialValidator } from './services/auth/credentials';
@@ -126,9 +131,14 @@ export interface ServerStartOptions {
   readonly telemetry?: boolean;
 }
 
+export interface ExperimentalFlags {
+  enabled(id: string): boolean;
+}
+
 export interface RunningServer {
   readonly app: FastifyInstance;
   readonly core: Scope;
+  readonly flags: ExperimentalFlags;
   readonly connectionRegistry: IConnectionRegistry;
   readonly authTokenService: IAuthTokenService;
   readonly host: string;
@@ -196,18 +206,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const logging = resolveLoggingConfig({ homeDir, env: process.env });
   let boundPort = port;
   const localOriginHost = host.includes(':') ? `[${host}]` : host;
-  const remoteControlManager = createRemoteControlManager({
-    homeDir,
-    localOrigin: () => `http://${localOriginHost}:${boundPort}`,
-    localServerToken: () => authTokenService.getToken(),
-    clientVersion: `kimi-code/${serverVersion}`,
-    stderr: {
-      write: (text) => {
-        logger.warn(String(text).trimEnd());
-        return true;
-      },
-    },
-  });
   const { app: core } = bootstrap(
     {
       homeDir,
@@ -223,6 +221,20 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     },
     [...logSeed(logging), ...(opts.seeds ?? [])],
   );
+  const remoteControlManager = createRemoteControlManager({
+    homeDir,
+    localOrigin: () => `http://${localOriginHost}:${boundPort}`,
+    localServerToken: () => authTokenService.getToken(),
+    clientVersion: `kimi-code/${serverVersion}`,
+    chunkedResponses: () =>
+      core.accessor.get(IFlagService).enabled(REMOTE_CONTROL_CHUNKED_RESPONSES_FLAG_ID),
+    stderr: {
+      write: (text) => {
+        logger.warn(String(text).trimEnd());
+        return true;
+      },
+    },
+  });
 
   let telemetry: ServerTelemetry = {};
   if (opts.telemetry === true) {
@@ -348,12 +360,19 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   };
 
   const connectionRegistry = new ConnectionRegistry();
-  const transcriptService = new TranscriptService({ homeDir, core, logger });
+  const transcriptService = new TranscriptService({
+    homeDir,
+    core,
+    logger,
+    opsBatchMs: parseNonNegativeIntEnv(process.env['KIMI_CODE_TRANSCRIPT_OPS_BATCH_MS']),
+  });
   core.accessor.get(IGlobalSearchService).setLiveTranscriptSource(transcriptService);
+  const wsTuning = parseWsTuning(process.env);
   const broadcaster = new SessionEventBroadcaster({
     eventsDir: join(homeDir, 'server', 'events'),
     core,
     logger,
+    maxBufferSize: wsTuning.maxBufferSize,
     transcriptService,
   });
   const projectionService = new ProjectionService({ homeDir, core, logger });
@@ -463,7 +482,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
             : undefined,
     },
     onShutdown: () => {
-      void close().catch((err: unknown) => logger.error({ err }, 'server close failed'));
+      void close().catch((error: unknown) => logger.error({ error }, 'server close failed'));
     },
     connectionRegistry,
     broadcaster,
@@ -481,6 +500,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     registry: connectionRegistry,
     broadcaster,
     logger,
+    ...wsTuning,
   });
   const wssDebug = debugEndpoints ? registerWsDebug() : undefined;
 
@@ -624,7 +644,16 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   process.on('unhandledRejection', onUnhandledRejection);
   process.on('uncaughtException', onUncaughtException);
 
-  return { app, core, connectionRegistry, authTokenService, host, port: boundPort, close };
+  return {
+    app,
+    core,
+    flags: core.accessor.get(IFlagService),
+    connectionRegistry,
+    authTokenService,
+    host,
+    port: boundPort,
+    close,
+  };
 }
 
 export const PORT_RETRY_LIMIT = 100;

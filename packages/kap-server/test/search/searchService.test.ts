@@ -1836,7 +1836,7 @@ describe('GlobalSearchService', () => {
       });
       expect(page.source).toBe('live');
       expect(page.items.length).toBe(3);
-      expect(page.items.map((h) => h.role).sort()).toEqual(['assistant', 'title', 'user']);
+      expect(page.items.map((h) => h.role).toSorted()).toEqual(['assistant', 'title', 'user']);
 
       await expect(service.search({ query: '苹', mode: 'literal' })).rejects.toMatchObject({
         reason: 'invalid_query',

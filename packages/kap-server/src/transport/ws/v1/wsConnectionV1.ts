@@ -43,7 +43,8 @@ const DEFAULT_FLUSH_INTERVAL_MS = 16;
 const DEFAULT_MAX_BATCH_SIZE = 64;
 const DEFAULT_HIGH_WATER_MARK_BYTES = 1 << 20;
 const DEFAULT_BACKPRESSURE_RETRY_MS = 5;
-const DEFAULT_BACKPRESSURE_MAX_DELAY_MS = 100;
+export const MAX_OUTBOUND_FRAMES = 4096;
+export const MAX_BACKPRESSURE_STALL_MS = 15_000;
 
 interface InboundFrame {
   type: string;
@@ -91,6 +92,7 @@ export class WsConnectionV1 implements BroadcastTarget {
   private flushTimer?: ReturnType<typeof setTimeout>;
   private backpressureRetryTimer?: ReturnType<typeof setTimeout>;
   private backpressureSince?: number;
+  private backpressureBufferedAmount = 0;
 
   private heartbeatTimer?: ReturnType<typeof setInterval>;
   private lastInboundAt = Date.now();
@@ -122,7 +124,10 @@ export class WsConnectionV1 implements BroadcastTarget {
         protocol_version: WS_PROTOCOL_VERSION,
         heartbeat_ms: this.heartbeatIntervalMs,
         max_event_buffer_size: this.maxBufferSize,
-        capabilities: { event_batching: false, compression: false },
+        capabilities: {
+          event_batching: false,
+          compression: this.socket.extensions.includes('permessage-deflate'),
+        },
       }),
     );
     this.heartbeatTimer = setInterval(() => {
@@ -136,11 +141,11 @@ export class WsConnectionV1 implements BroadcastTarget {
   }
 
   get subscriptionSessionIds(): readonly string[] {
-    return Array.from(this.subscriptions.keys()).sort();
+    return Array.from(this.subscriptions.keys()).toSorted();
   }
 
   send(envelope: EventEnvelope, delivery: BroadcastDelivery = 'subscription'): void {
-    if (delivery === 'immediate') this.sendImmediateFrame(envelope);
+    if (delivery === 'immediate') this.sendImmediateEnvelope(envelope);
     else this.sendSubscribedFrame(envelope);
   }
 
@@ -416,10 +421,25 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.scheduleFlush();
   }
 
+  private sendImmediateEnvelope(envelope: EventEnvelope): void {
+    if (this.closed) return;
+    this.flush();
+    if (this.outbound.length > 0) this.outbound.push(envelope);
+    else this.sendFrame(envelope);
+  }
+
   private sendImmediateFrame(msg: unknown): void {
     if (this.closed) return;
-    this.outbound.push(msg);
     this.flush();
+    this.sendFrame(msg);
+  }
+
+  private sendFrame(frame: unknown): void {
+    if (this.closed || this.socket.readyState !== this.socket.OPEN) return;
+    try {
+      this.socket.send(JSON.stringify(frame));
+    } catch {
+    }
   }
 
   private scheduleFlush(): void {
@@ -442,36 +462,70 @@ export class WsConnectionV1 implements BroadcastTarget {
       return;
     }
 
-    if (!force && this.socket.bufferedAmount > this.highWaterMarkBytes) {
+    const aboveHighWaterMark = this.socket.bufferedAmount > this.highWaterMarkBytes;
+    if (aboveHighWaterMark && !force) {
       this.deferForBackpressure();
       return;
     }
-    this.backpressureSince = undefined;
+    if (!aboveHighWaterMark) this.backpressureSince = undefined;
 
     const frames = coalesceFrames(this.outbound);
     this.outbound = [];
-    for (const frame of frames) {
-      if (this.closed || this.socket.readyState !== this.socket.OPEN) return;
-      try {
-        this.socket.send(JSON.stringify(frame));
-      } catch {
+    for (let i = 0; i < frames.length; i++) {
+      if (!force && i > 0 && this.socket.bufferedAmount > this.highWaterMarkBytes) {
+        this.outbound = frames.slice(i);
+        this.deferForBackpressure();
+        return;
       }
+      this.sendFrame(frames[i]);
     }
   }
 
   private deferForBackpressure(): void {
     const now = Date.now();
-    if (this.backpressureSince === undefined) this.backpressureSince = now;
-    if (now - this.backpressureSince >= DEFAULT_BACKPRESSURE_MAX_DELAY_MS) {
-      this.flush(true);
+    const buffered = this.socket.bufferedAmount;
+    if (this.backpressureSince === undefined || buffered < this.backpressureBufferedAmount) {
+      this.backpressureSince = now;
+    }
+    this.backpressureBufferedAmount = buffered;
+    if (now - this.backpressureSince >= MAX_BACKPRESSURE_STALL_MS) {
+      this.closeSlowConsumer();
       return;
     }
     if (this.backpressureRetryTimer !== undefined) return;
     this.backpressureRetryTimer = setTimeout(() => {
-      this.backpressureRetryTimer = undefined;
-      this.flush();
+      this.retryAfterBackpressure();
     }, DEFAULT_BACKPRESSURE_RETRY_MS);
     this.backpressureRetryTimer.unref?.();
+  }
+
+  private retryAfterBackpressure(): void {
+    this.backpressureRetryTimer = undefined;
+    if (
+      this.outbound.length > MAX_OUTBOUND_FRAMES &&
+      this.socket.bufferedAmount > this.highWaterMarkBytes
+    ) {
+      this.closeSlowConsumer();
+      return;
+    }
+    this.flush();
+  }
+
+  private closeSlowConsumer(): void {
+    if (this.closed) return;
+    this.outbound = [];
+    if (this.flushTimer !== undefined) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = undefined;
+    }
+    if (this.backpressureRetryTimer !== undefined) {
+      clearTimeout(this.backpressureRetryTimer);
+      this.backpressureRetryTimer = undefined;
+    }
+    try {
+      this.socket.close(1013, 'slow consumer');
+    } catch {
+    }
   }
 
   close(code = 1000, reason?: string): void {

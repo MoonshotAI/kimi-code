@@ -403,6 +403,7 @@ export class SessionEventBroadcaster {
     transcript: AgentTranscript,
     grade: TranscriptGrade,
   ): void {
+    this.opts.transcriptService?.flushPendingOps(state.sessionId, transcript.agentId);
     const snapshot = redactSnapshotForGrade(
       grade,
       transcript.snapshot({ tailTurns: TRANSCRIPT_RESET_TAIL_TURNS }),
@@ -546,6 +547,7 @@ export class SessionEventBroadcaster {
 
   private async purgeSession(sessionId: string): Promise<void> {
     await this.pendingStates.get(sessionId);
+    this.opts.transcriptService?.flushPendingOps(sessionId);
     const state = this.sessions.get(sessionId);
     if (state !== undefined) {
       this.sessions.delete(sessionId);

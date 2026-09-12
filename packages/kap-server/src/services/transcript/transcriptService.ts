@@ -26,6 +26,7 @@ import {
 } from '@moonshot-ai/agent-core-v2/features/tower/protocol/index';
 import {
   TranscriptStore,
+  coalesceAppendOps,
   foldWireRecordFacts,
   groupMessagesIntoSnapshot,
   isPlainAgentId,
@@ -33,6 +34,7 @@ import {
   type ActivityMeta,
   type AgentTranscript,
   type AgentTranscriptSnapshot,
+  type AppendOp,
   type TranscriptChangeEvent,
   type TranscriptMarker,
   type TranscriptOperation,
@@ -60,7 +62,18 @@ export interface TranscriptServiceDeps {
   readonly homeDir: string;
   readonly core: Scope;
   readonly logger?: TranscriptBindingLogger;
+  readonly opsBatchMs?: number;
 }
+
+interface PendingAppends {
+  readonly ops: AppendOp[];
+  textBytes: number;
+  timer?: NodeJS.Timeout;
+}
+
+export const DEFAULT_TRANSCRIPT_OPS_BATCH_MS = 16;
+export const TRANSCRIPT_OPS_BATCH_MAX_OPS = 256;
+export const TRANSCRIPT_OPS_BATCH_MAX_TEXT_BYTES = 64 * 1024;
 
 interface LiveEntry {
   readonly store: TranscriptStore;
@@ -81,6 +94,7 @@ export interface TranscriptOpsCatchup {
   readonly batches: readonly { seq: number; ops: readonly TranscriptOperation[] }[];
   readonly latestSeq: number;
   readonly complete: boolean;
+  readonly hasMore: boolean;
 }
 
 export class TranscriptService {
@@ -90,8 +104,11 @@ export class TranscriptService {
     Set<(event: TranscriptChangeEvent, seq: number) => void>
   >();
   private readonly healTimers = new Map<string, { ordinals: Set<number>; timer: NodeJS.Timeout }>();
+  private readonly pendingAppends = new Map<string, Map<string, PendingAppends>>();
+  private readonly opsBatchMs: number;
 
   constructor(private readonly deps: TranscriptServiceDeps) {
+    this.opsBatchMs = deps.opsBatchMs ?? DEFAULT_TRANSCRIPT_OPS_BATCH_MS;
     followSessionLifecycles(deps.core.accessor, (service) => {
       const d1 = service.onDidCloseSession(({ sessionId }) => this.dropSession(sessionId));
       const d2 = service.onDidArchiveSession(({ sessionId }) => this.dropSession(sessionId));
@@ -239,6 +256,11 @@ export class TranscriptService {
   }
 
   private dispatchOps(sessionId: string, event: TranscriptChangeEvent): void {
+    this.flushPendingOps(sessionId, event.agentId);
+    this.emitOps(sessionId, event);
+  }
+
+  private emitOps(sessionId: string, event: TranscriptChangeEvent): void {
     const seq = this.journalOps(sessionId, event);
     const listeners = this.opsListeners.get(sessionId);
     if (listeners === undefined) return;
@@ -248,6 +270,54 @@ export class TranscriptService {
       } catch {
       }
     }
+  }
+
+  private bufferAppends(sessionId: string, agentId: string, appends: readonly AppendOp[]): void {
+    let perAgent = this.pendingAppends.get(sessionId);
+    if (perAgent === undefined) {
+      perAgent = new Map();
+      this.pendingAppends.set(sessionId, perAgent);
+    }
+    let pending = perAgent.get(agentId);
+    if (pending === undefined) {
+      const timer = setTimeout(() => {
+        this.flushPendingOps(sessionId, agentId);
+      }, this.opsBatchMs);
+      timer.unref();
+      pending = { ops: [], textBytes: 0, timer };
+      perAgent.set(agentId, pending);
+    }
+    for (const op of appends) {
+      pending.ops.push(op);
+      pending.textBytes += Buffer.byteLength(op.text);
+    }
+    if (
+      pending.ops.length >= TRANSCRIPT_OPS_BATCH_MAX_OPS ||
+      pending.textBytes >= TRANSCRIPT_OPS_BATCH_MAX_TEXT_BYTES
+    ) {
+      this.flushPendingOps(sessionId, agentId);
+    }
+  }
+
+  flushPendingOps(sessionId: string, agentId?: string): void {
+    const perAgent = this.pendingAppends.get(sessionId);
+    if (perAgent === undefined) return;
+    for (const [aid, pending] of perAgent) {
+      if (agentId !== undefined && aid !== agentId) continue;
+      this.flushOnePending(sessionId, aid, perAgent, pending);
+    }
+  }
+
+  private flushOnePending(
+    sessionId: string,
+    agentId: string,
+    perAgent: Map<string, PendingAppends>,
+    pending: PendingAppends,
+  ): void {
+    clearTimeout(pending.timer);
+    perAgent.delete(agentId);
+    if (perAgent.size === 0) this.pendingAppends.delete(sessionId);
+    this.emitOps(sessionId, { agentId, ops: coalesceAppendOps(pending.ops) });
   }
 
   private journalOps(sessionId: string, event: TranscriptChangeEvent): number {
@@ -265,6 +335,7 @@ export class TranscriptService {
   }
 
   getSeqWatermark(sessionId: string, agentId: string): number {
+    this.flushPendingOps(sessionId, agentId);
     const journal = this.live.get(sessionId)?.opsJournals.get(agentId);
     return journal === undefined ? 0 : journal.nextSeq - 1;
   }
@@ -273,18 +344,33 @@ export class TranscriptService {
     sessionId: string,
     agentId: string,
     sinceSeq: number,
+    limit?: number,
   ): TranscriptOpsCatchup | undefined {
     if (this.forSessionLive(sessionId) === undefined) return undefined;
+    this.flushPendingOps(sessionId, agentId);
     const journal = this.live.get(sessionId)?.opsJournals.get(agentId);
     const latestSeq = journal === undefined ? 0 : journal.nextSeq - 1;
-    if (sinceSeq > latestSeq) return { batches: [], latestSeq, complete: false };
-    const batches = journal?.batches.filter((batch) => batch.seq > sinceSeq) ?? [];
+    if (sinceSeq > latestSeq) return { batches: [], latestSeq, complete: false, hasMore: false };
+    const newer = journal?.batches.filter((batch) => batch.seq > sinceSeq) ?? [];
     const oldest = journal?.batches[0]?.seq;
-    const complete = batches.length === 0 || (oldest !== undefined && oldest <= sinceSeq + 1);
-    return { batches, latestSeq, complete };
+    const complete = newer.length === 0 || (oldest !== undefined && oldest <= sinceSeq + 1);
+    const hasMore = limit !== undefined && newer.length > limit;
+    const batches = hasMore ? newer.slice(0, limit) : newer;
+    const lastReturned = batches.at(-1)?.seq;
+    return {
+      batches,
+      latestSeq: hasMore && lastReturned !== undefined ? lastReturned : latestSeq,
+      complete,
+      hasMore,
+    };
   }
 
   private handleLiveOps(sessionId: string, event: TranscriptChangeEvent): void {
+    const appends = this.opsBatchMs > 0 ? onlyAppends(event.ops) : undefined;
+    if (appends !== undefined) {
+      this.bufferAppends(sessionId, event.agentId, appends);
+      return;
+    }
     this.dispatchOps(sessionId, event);
     for (const op of event.ops) {
       if (op.op === 'turn.upsert' && TERMINAL_TURN_STATES.has(op.turn.state)) {
@@ -557,6 +643,7 @@ export class TranscriptService {
   }
 
   dropSession(sessionId: string): void {
+    this.flushPendingOps(sessionId);
     this.opsListeners.delete(sessionId);
     for (const [key, pending] of this.healTimers) {
       if (key.startsWith(`${sessionId}:`)) {
@@ -628,6 +715,16 @@ const TERMINAL_TURN_STATES: ReadonlySet<TranscriptTurn['state']> = new Set([
   'failed',
   'cancelled',
 ]);
+
+function onlyAppends(ops: readonly TranscriptOperation[]): AppendOp[] | undefined {
+  if (ops.length === 0) return undefined;
+  const appends: AppendOp[] = [];
+  for (const op of ops) {
+    if (op.op !== 'append') return undefined;
+    appends.push(op);
+  }
+  return appends;
+}
 
 function projectQuestionInteractionRecords(
   records: readonly ContextRecord[],

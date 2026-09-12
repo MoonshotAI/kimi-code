@@ -1,5 +1,5 @@
 export { startServer } from './start';
-export type { ServerHostIdentity, ServerStartOptions, RunningServer } from './start';
+export type { ExperimentalFlags, ServerHostIdentity, ServerStartOptions, RunningServer } from './start';
 export { okEnvelope, errEnvelope } from './envelope';
 export type { Envelope } from './envelope';
 export { classify } from './security/bindClassify';
