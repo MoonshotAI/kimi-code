@@ -18,6 +18,13 @@ function catalogResponse(body: unknown, status = 200): Response {
   });
 }
 
+function rawCatalogResponse(body: string, status = 200): Response {
+  return new Response(body, {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
 const model: CatalogModel = {
   id: 'm1',
   name: 'M1',
@@ -51,6 +58,13 @@ describe('fetchCatalog', () => {
 
   it('throws on a non-object payload', async () => {
     const fetchMock = vi.fn(async () => catalogResponse([1, 2]));
+    await expect(
+      fetchCatalog('https://x', { fetchImpl: fetchMock as unknown as typeof fetch }),
+    ).rejects.toThrow(/Unexpected catalog response/);
+  });
+
+  it('throws on invalid JSON', async () => {
+    const fetchMock = vi.fn(async () => rawCatalogResponse('{'));
     await expect(
       fetchCatalog('https://x', { fetchImpl: fetchMock as unknown as typeof fetch }),
     ).rejects.toThrow(/Unexpected catalog response/);
@@ -90,6 +104,11 @@ describe('loadBuiltInCatalog', () => {
     expect(loadBuiltInCatalog(undefined)).toBeUndefined();
     expect(loadBuiltInCatalog('')).toBeUndefined();
     expect(loadBuiltInCatalog('not-json')).toBeUndefined();
+    expect(loadBuiltInCatalog('{')).toBeUndefined();
+  });
+
+  it('returns undefined for non-object payloads', () => {
+    expect(loadBuiltInCatalog('[1, 2]')).toBeUndefined();
   });
 });
 

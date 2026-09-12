@@ -49,10 +49,13 @@ export async function fetchCatalog(
   if (!res.ok) {
     throw new CatalogFetchError(`Failed to fetch catalog (HTTP ${res.status}).`, res.status);
   }
-  const payload: unknown = await res.json();
-  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+  let payload: unknown;
+  try {
+    payload = await res.json();
+  } catch {
     throw new Error(`Unexpected catalog response from ${url}.`);
   }
+  if (!isCatalogPayload(payload)) throw new Error(`Unexpected catalog response from ${url}.`);
   return payload as Catalog;
 }
 
@@ -109,10 +112,15 @@ export interface ApplyCatalogProviderOptions {
 export function loadBuiltInCatalog(text?: string): Catalog | undefined {
   if (typeof text !== 'string' || text.length === 0) return undefined;
   try {
-    return JSON.parse(text) as Catalog;
+    const payload: unknown = JSON.parse(text);
+    return isCatalogPayload(payload) ? (payload as Catalog) : undefined;
   } catch {
     return undefined;
   }
+}
+
+function isCatalogPayload(payload: unknown): boolean {
+  return typeof payload === 'object' && payload !== null && !Array.isArray(payload);
 }
 
 /**
