@@ -69,7 +69,9 @@ function isSessionSummaryShape(value: unknown): value is SessionSummary {
     typeof summary['workspaceId'] === 'string' &&
     typeof summary['createdAt'] === 'number' &&
     typeof summary['updatedAt'] === 'number' &&
-    typeof summary['archived'] === 'boolean'
+    typeof summary['archived'] === 'boolean' &&
+    (summary['cwd'] === undefined ||
+      (typeof summary['cwd'] === 'string' && summary['cwd'].length > 0))
   );
 }
 
