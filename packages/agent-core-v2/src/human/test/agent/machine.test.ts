@@ -11,7 +11,7 @@ import {
   type ToolCall,
 } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
-import { createLlmMachine, type LlmEvent } from '#/llm/requester/machine';
+import type { LlmEvent } from '#/llm/requester/actor';
 import type { LlmRequester, LlmRequestEvent } from '#/llm/requester/requester';
 import type { LlmRetryOptions } from '#/llm/requester/retry';
 import { emptyUsage, type TokenUsage } from '#/llm/usage';
@@ -79,7 +79,7 @@ function createTestAgentMachine(
 ) {
   return createAgentMachine({
     tools,
-    turnActor: createTurnMachine(createLlmMachine({ requester }), { retry }),
+    turnActor: createTurnMachine(requester, { retry }),
     abortTimeoutMs,
   });
 }
@@ -712,6 +712,31 @@ describe('agent machine lifecycle', () => {
       'user:retry',
       'assistant:recovered',
     ]);
+  });
+
+  it('persists turn events without reporting unhandled store.changed', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const requester = createStubRequester([
+        createAssistantMessage([{ type: 'text', text: 'hi' }]),
+      ]);
+      const store = await testStore();
+      const actor = createActor(createTestAgentMachine([], requester), {
+        input: { request: { model }, store },
+      });
+      actor.start();
+      actor.send({ type: 'input.submit', message: createUserMessage('hello') });
+      await waitFor(actor, (s) => s.matches('idle') && store.getState().history.length === 2, {
+        timeout: 5000,
+      });
+      await store.flush();
+      const unhandled = warn.mock.calls.filter(([message]) =>
+        String(message).includes('unhandled event "store.changed"'),
+      );
+      expect(unhandled).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
@@ -1377,7 +1402,7 @@ describe('agent machine max steps', () => {
     const actor = createActor(
       createAgentMachine({
         tools,
-        turnActor: createTurnMachine(createLlmMachine({ requester })),
+        turnActor: createTurnMachine(requester),
         maxStepsPerTurn: 2,
       }),
       { input: { request: { model }, store } },

@@ -3,7 +3,6 @@ import Anthropic, {
   APIConnectionTimeoutError as RawAnthropicSDKConnectionTimeoutError,
   APIError as RawAnthropicSDKAPIError,
 } from '@anthropic-ai/sdk';
-import { assign, shake } from 'radashi';
 
 import {
   headersToRecord,
@@ -18,32 +17,25 @@ import { NO_FINISH, type FinishInfo, type FinishReason } from '#/llm/finish-reas
 import type { FormatRequestInput, ProtocolFormat } from '#/llm/protocol/format';
 import type { ResponseFormat } from '#/llm/response-format';
 import { SyntaxRequestFormatError } from '#/llm/syntax-errors';
-import type { ToolDescription } from '#/llm/message';
-import { applyThinking } from '#/llm/protocol/trait';
+import type { Message, ToolDescription } from '#/llm/message';
 import { mergeConsecutiveUsers } from '#/llm/protocol/patterns';
 import { applyPatterns } from '#/llm/protocol/rewrite';
 import type { TokenUsage } from '#/llm/usage';
 
-import { lowerMessage, messageContent, type AnthropicWireMessage } from './lower';
+import { CONTEXT_MANAGEMENT_BETA } from './contract';
+import type {
+  AnthropicRawStreamEvent,
+  AnthropicRawUsage,
+  AnthropicWireMessage,
+} from './contract';
+import { lowerMessage, messageContent } from './lower';
 import { audioToPlaceholder, stripUnsignedThinking } from './patterns';
 import {
-  encodeThinking,
-  INTERLEAVED_THINKING_BETA,
   resolveDefaultMaxTokens,
   shouldPreserveUnsignedThinking,
 } from './profile';
 
-export { INTERLEAVED_THINKING_BETA } from './profile';
-export const CONTEXT_MANAGEMENT_BETA = 'context-management-2025-06-27';
-
 const CLEAR_THINKING_EDIT = 'clear_thinking_20251015';
-
-type RawUsage = {
-  input_tokens?: number | null;
-  output_tokens?: number | null;
-  cache_read_input_tokens?: number | null;
-  cache_creation_input_tokens?: number | null;
-};
 
 const CACHE_CONTROL = { type: 'ephemeral' as const };
 
@@ -57,8 +49,6 @@ const CACHEABLE_TYPES = new Set([
   'server_tool_use',
   'web_search_tool_result',
 ]);
-
-export type { AnthropicWireContentBlock, AnthropicWireMessage } from './lower';
 
 function injectCacheControlOnLastBlock(messages: AnthropicWireMessage[]): void {
   const lastMessage = messages.at(-1);
@@ -77,38 +67,6 @@ function isToolResultOnly(message: AnthropicWireMessage): boolean {
   if (content.length === 0) return false;
   return content.every((block) => block.type === 'tool_result');
 }
-
-interface RawContentBlock {
-  type: string;
-  text?: string;
-  thinking?: string;
-  signature?: string;
-  data?: string;
-  id?: string;
-  name?: string;
-  input?: unknown;
-}
-
-interface RawStreamDelta {
-  type?: string;
-  text?: string;
-  thinking?: string;
-  partial_json?: string;
-  signature?: string;
-  stop_reason?: string | null;
-  stop_sequence?: string | null;
-}
-
-interface RawStreamEvent {
-  type: string;
-  index?: number;
-  content_block?: RawContentBlock;
-  delta?: RawStreamDelta;
-  message?: { id?: string; usage?: RawUsage };
-  usage?: RawUsage;
-}
-
-type RawResponse = { content?: RawContentBlock[]; usage?: RawUsage };
 
 function normalizeStopReason(raw: string | null | undefined): FinishInfo {
   if (raw === null || raw === undefined) {
@@ -134,7 +92,7 @@ function normalizeStopReason(raw: string | null | undefined): FinishInfo {
   return { finishReason, rawFinishReason: raw };
 }
 
-function parseRawUsage(usage: RawUsage | undefined): Partial<TokenUsage> | undefined {
+function parseRawUsage(usage: AnthropicRawUsage | undefined): Partial<TokenUsage> | undefined {
   if (usage === undefined) {
     return undefined;
   }
@@ -154,7 +112,7 @@ function parseRawUsage(usage: RawUsage | undefined): Partial<TokenUsage> | undef
   return patch;
 }
 
-function applyResponseFormat(
+export function applyAnthropicResponseFormat(
   kwargs: Record<string, unknown>,
   format: ResponseFormat,
 ): Record<string, unknown> {
@@ -172,7 +130,10 @@ function applyResponseFormat(
   return { ...kwargs, output_config: outputConfig };
 }
 
-function applyThinkingKeep(kwargs: Record<string, unknown>, keep: string): Record<string, unknown> {
+export function applyAnthropicThinkingKeep(
+  kwargs: Record<string, unknown>,
+  keep: string,
+): Record<string, unknown> {
   const betaFeatures = kwargs['betaFeatures'];
   const existing = kwargs['context_management'] as
     | { edits?: Array<{ type: string }> }
@@ -193,50 +154,49 @@ function applyThinkingKeep(kwargs: Record<string, unknown>, keep: string): Recor
   };
 }
 
-function resolveRequestKwargs(input: FormatRequestInput): Record<string, unknown> {
-  const {
-    trait,
-    ctx,
-    thinking,
-    responseFormat,
-    maxCompletionTokens,
-    usedContextTokens,
-    maxContextTokens,
-    extraParams,
-  } = input;
-  let kwargs: Record<string, unknown> = { betaFeatures: [INTERLEAVED_THINKING_BETA] };
-  if (thinking !== undefined) {
-    kwargs = applyThinking(kwargs, thinking, trait, ctx, (t, c) =>
-      encodeThinking(t, c.model),
-    ).kwargs;
-  }
-  if (responseFormat !== undefined) {
-    kwargs = applyResponseFormat(kwargs, responseFormat);
-  }
-  if (maxCompletionTokens !== undefined) {
-    let cap = maxCompletionTokens;
-    if (
-      usedContextTokens !== undefined &&
-      maxContextTokens !== undefined &&
-      maxContextTokens > 0
-    ) {
-      cap = Math.min(cap, maxContextTokens - usedContextTokens);
-    }
-    cap = Math.max(1, cap);
-    cap = resolveDefaultMaxTokens(ctx.model.model, cap);
-    const hooked = trait?.withMaxCompletionTokens?.(cap, ctx);
-    if (hooked !== undefined) {
-      kwargs = { ...kwargs, ...hooked };
-    } else {
-      kwargs = { ...kwargs, max_tokens: cap };
-    }
-  }
-  kwargs = assign(kwargs, extraParams?.anthropic ?? {});
-  if (thinking?.keep !== undefined) {
-    kwargs = applyThinkingKeep(kwargs, thinking.keep);
-  }
-  kwargs = shake(kwargs);
-  return kwargs;
+export function encodeAnthropicMaxTokens(cap: number): Record<string, unknown> {
+  return { max_tokens: cap };
+}
+
+export function defaultAnthropicTool(tool: ToolDescription): Record<string, unknown> {
+  return {
+    name: tool.name,
+    description: tool.description,
+    input_schema: tool.parameters,
+  };
+}
+
+export function defaultAnthropicMergeHistory(
+  messages: readonly AnthropicWireMessage[],
+): AnthropicWireMessage[] {
+  return applyPatterns(messages, [
+    mergeConsecutiveUsers({
+      isUser: (param) => param.role === 'user',
+      isToolResultOnly,
+      merge: (last, next) => ({
+        ...last,
+        content: [...messageContent(last), ...messageContent(next)],
+      }),
+    }),
+  ]);
+}
+
+export interface AnthropicLoweredMessage {
+  readonly source: Message;
+  readonly message: AnthropicWireMessage;
+}
+
+export function lowerAnthropicRequest(
+  input: FormatRequestInput,
+  acceptedMimes: ReadonlySet<string>,
+): AnthropicLoweredMessage[] {
+  const normalized = applyPatterns(input.messages, [
+    stripUnsignedThinking({ preserve: shouldPreserveUnsignedThinking(input.model.model) }),
+    audioToPlaceholder,
+  ]);
+  return normalized.flatMap((message) =>
+    lowerMessage(message, acceptedMimes).map((wire) => ({ source: message, message: wire })),
+  );
 }
 
 export interface AnthropicRequestParams {
@@ -249,63 +209,62 @@ export interface AnthropicFormatOptions {
   readonly betaApi?: boolean;
 }
 
-export function createAnthropicFormat(
-  options?: AnthropicFormatOptions,
-): ProtocolFormat<AnthropicRequestParams, RawResponse, RawStreamEvent> {
-  const betaApi = options?.betaApi === true;
-  return {
-    formatRequest(input) {
-      const { messages, systemPrompt, tools, trait, ctx, cacheKey, thinking } = input;
-      const kwargs = resolveRequestKwargs(input);
-      const normalized = applyPatterns(messages, [
-        stripUnsignedThinking({ preserve: shouldPreserveUnsignedThinking(ctx.model.model) }),
-        audioToPlaceholder,
-      ]);
-      const converted = normalized.flatMap((message) => lowerMessage(message, { trait, ctx }));
-      const merged =
-        (trait?.mergeHistory?.(converted, ctx) as AnthropicWireMessage[] | undefined) ??
-        applyPatterns(converted, [
-          mergeConsecutiveUsers({
-            isUser: (param) => param.role === 'user',
-            isToolResultOnly,
-            merge: (last, next) => ({
-              ...last,
-              content: [...messageContent(last), ...messageContent(next)],
-            }),
-          }),
-        ]);
-      injectCacheControlOnLastBlock(merged);
-      const formattedTools: Record<string, unknown>[] = tools.map(
-        (tool) => trait?.convertTool?.(tool, ctx) ?? defaultConvertTool(tool),
-      );
-      const lastTool = formattedTools.at(-1);
-      if (lastTool !== undefined) {
-        lastTool['cache_control'] = CACHE_CONTROL;
-      }
-      const { betaFeatures, ...restKwargs } = kwargs;
-      const betas = Array.isArray(betaFeatures) ? (betaFeatures as string[]) : [];
-      const useBetaApi = betaApi || ctx.model.betaApi === true || thinking?.keep !== undefined;
-      const createParams: Record<string, unknown> = {
-        model: ctx.model.model,
-        max_tokens: resolveDefaultMaxTokens(ctx.model.model),
-        metadata: cacheKey === undefined ? undefined : { user_id: cacheKey },
-        ...restKwargs,
-        system: systemPrompt
-          ? [{ type: 'text', text: systemPrompt, cache_control: CACHE_CONTROL }]
-          : undefined,
-        messages: merged,
-        tools: formattedTools.length === 0 ? undefined : formattedTools,
-        betas: useBetaApi && betas.length > 0 ? betas : undefined,
-        stream: true,
-      };
-      const finalParams = trait?.buildParams?.(createParams, ctx) ?? createParams;
-      return {
-        params: finalParams as unknown as Anthropic.MessageCreateParamsStreaming,
-        betas,
-        useBetaApi,
-      };
-    },
+export interface AnthropicRequestParts {
+  readonly messages: readonly AnthropicWireMessage[];
+  readonly tools: readonly Record<string, unknown>[];
+  readonly kwargs: Readonly<Record<string, unknown>>;
+  readonly betaApi: boolean;
+}
 
+export interface AnthropicRequestAssembly {
+  readonly params: Record<string, unknown>;
+  readonly betas: readonly string[];
+  readonly useBetaApi: boolean;
+}
+
+export function assembleAnthropicRequest(
+  input: FormatRequestInput,
+  parts: AnthropicRequestParts,
+): AnthropicRequestAssembly {
+  const messages = [...parts.messages];
+  injectCacheControlOnLastBlock(messages);
+  const tools = parts.tools.map((tool) => ({ ...tool }));
+  const lastTool = tools.at(-1);
+  if (lastTool !== undefined) {
+    lastTool['cache_control'] = CACHE_CONTROL;
+  }
+  const { betaFeatures, ...restKwargs } = parts.kwargs;
+  const betas = Array.isArray(betaFeatures) ? (betaFeatures as string[]) : [];
+  const useBetaApi =
+    parts.betaApi || input.model.betaApi === true || input.thinking?.keep !== undefined;
+  const params: Record<string, unknown> = {
+    model: input.model.model,
+    max_tokens: resolveDefaultMaxTokens(input.model.model),
+    metadata: input.cacheKey === undefined ? undefined : { user_id: input.cacheKey },
+    ...restKwargs,
+    system: input.systemPrompt
+      ? [{ type: 'text', text: input.systemPrompt, cache_control: CACHE_CONTROL }]
+      : undefined,
+    messages,
+    tools: tools.length === 0 ? undefined : tools,
+    betas: useBetaApi && betas.length > 0 ? betas : undefined,
+    stream: true,
+  };
+  return { params, betas, useBetaApi };
+}
+
+export function encodeAnthropicRequest(
+  assembly: AnthropicRequestAssembly,
+): AnthropicRequestParams {
+  return {
+    params: assembly.params as unknown as Anthropic.MessageCreateParamsStreaming,
+    betas: assembly.betas,
+    useBetaApi: assembly.useBetaApi,
+  };
+}
+
+export function createAnthropicFormat(): ProtocolFormat<AnthropicRawStreamEvent> {
+  return {
     createStreamParser() {
       return (chunk, sink) => {
         if (chunk.type === 'message_start') {
@@ -383,16 +342,7 @@ export function createAnthropicFormat(
   };
 }
 
-export const anthropicFormat: ProtocolFormat<AnthropicRequestParams, RawResponse, RawStreamEvent> =
-  createAnthropicFormat();
-
-function defaultConvertTool(tool: ToolDescription): Record<string, unknown> {
-  return {
-    name: tool.name,
-    description: tool.description,
-    input_schema: tool.parameters,
-  };
-}
+export const anthropicFormat: ProtocolFormat<AnthropicRawStreamEvent> = createAnthropicFormat();
 
 export function convertAnthropicError(
   error: unknown,

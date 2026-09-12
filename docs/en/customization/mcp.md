@@ -4,6 +4,10 @@
 
 MCP tool results can include text (`content`) and structured data (`structuredContent`). Kimi Code CLI makes both available to the agent and omits the structured copy only when it can confirm that a text block already contains the same complete JSON value. Text summaries and media do not replace structured records.
 
+Kimi Code CLI preserves embedded MCP attachments that cannot be delivered directly because of format or size limits. Embedded images, audio, and video are saved even when they can be delivered unchanged, because provider conversion or later history reduction may omit them. Session-attachment readers remain available without workspace filesystem access when the model supports the corresponding content. Originals are retained in the session's media storage instead of an evictable image cache. Saved originals, including images preserved during compression, have absolute paths and stable `kimi-file://` references. Pass a reference as the `path` to `Read` or `ReadMediaFile`; bytes are read from the current session's storage even when the workspace runtime cannot access it. Pagination keeps the reference, including after a fork. For binary formats that `Read` cannot open, its error includes a server-local path when available; an external converter must have access to that filesystem. Text attachments such as CSV, HTML, JSON, and plain SVG use readable extensions.
+
+Attachment paths and compression details share the tool-output budget. Large lists are saved to a text file, with a short pointer that remains visible when accompanying text is shortened; the agent can pass the list’s `kimi-file://` reference to `Read` and page through it. Canceling the tool stops subsequent attachment processing and signals active writes. If decoding or saving fails, the result explicitly reports that the original could not be preserved while retaining other usable output. Resource links are not automatically downloaded.
+
 ## Connection Methods
 
 Kimi Code CLI supports three MCP server connection methods:

@@ -24,6 +24,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
 import type { Message } from '#/llm-adapter/contract/message';
 import type { ContentPart, VideoURLPart } from '#human/llm/message';
+import type { LlmCredentialProvider } from '#human/llm/requester/requester';
 import type { ModelRequester } from '#/llm-adapter/model/model-requester';
 import type { Protocol } from '#/llm-adapter/protocol/protocol';
 import { IBlobStore } from '#/persistence/interface/blobStore';
@@ -161,6 +162,7 @@ function requester(opts: {
   protocol?: Protocol;
   providerType?: string;
   uploadVideo?: ModelRequester['uploadVideo'];
+  credentials?: LlmCredentialProvider;
 }): ModelRequester {
   return {
     model: {
@@ -177,7 +179,7 @@ function requester(opts: {
       alwaysThinking: false,
       providerName: 'p',
       providerType: opts.providerType ?? 'kimi',
-      authProvider: {} as never,
+      credentials: opts.credentials,
     },
     request: () => {
       throw new Error('unused');
@@ -337,6 +339,29 @@ describe('AgentMediaResolverService video strategy', () => {
     await expect(
       res.resolve([videoMessage(buildKimiFileUrl(FILE_ID))], requester({ uploadVideo: upload })),
     ).rejects.toThrow('unauthorized');
+  });
+
+  it('invalidates recoverable credentials and retries the upload once on a 401', async () => {
+    let invalidations = 0;
+    const credentials: LlmCredentialProvider = {
+      resolve: () => ({ apiKey: 'tok' }),
+      canRecover: (error) => (error as { statusCode?: number }).statusCode === 401,
+      invalidate: () => {
+        invalidations += 1;
+      },
+    };
+    const upload = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-9'));
+    upload.mockRejectedValueOnce(Object.assign(new Error('unauthorized'), { statusCode: 401 }));
+    const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]));
+
+    const out = await res.resolve(
+      [videoMessage(buildKimiFileUrl(FILE_ID))],
+      requester({ uploadVideo: upload, credentials }),
+    );
+
+    expect(firstPart(out)).toEqual(msPart('prov-9'));
+    expect(upload).toHaveBeenCalledTimes(2);
+    expect(invalidations).toBe(1);
   });
 
   it('rethrows a cancelled upload without memoizing the fallback', async () => {

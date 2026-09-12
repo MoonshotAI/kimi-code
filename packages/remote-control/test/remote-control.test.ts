@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { gunzipSync } from 'node:zlib';
 
 import {
   FileTokenStorage,
@@ -272,17 +273,55 @@ describe('Remote Control tunnel', () => {
     );
 
     let localHttpRequest: IncomingMessage | undefined;
+    let localHttpBodyBytes = 0;
     let localWsRequest: IncomingMessage | undefined;
     const localWsServer = new WebSocketServer({ noServer: true });
+    const assetJs = `const boot = "/assets/boot.js";\n${'const chunk = "/assets/chunk.js";\n'.repeat(120)}`;
+    const assetPng = Buffer.alloc(4096, 7);
+    const assetSvg = `<svg xmlns="http://www.w3.org/2000/svg">${'<rect width="100" height="100"/>'.repeat(100)}</svg>`;
+    const assetText = 'chunk of text\n'.repeat(160);
     const localServer = createServer((request, response) => {
       localHttpRequest = request;
-      response.writeHead(200, {
-        'Content-Type': 'text/html',
-        'Cache-Control': 'public, max-age=31536000, immutable',
-        Connection: 'X-Remove',
-        'X-Remove': 'gone',
+      if (request.url === '/assets/index.js') {
+        response.writeHead(200, { 'Content-Type': 'text/javascript', ETag: '"v1"' });
+        response.end(assetJs);
+        return;
+      }
+      if (request.url === '/assets/logo.png') {
+        response.writeHead(200, { 'Content-Type': 'image/png' });
+        response.end(assetPng);
+        return;
+      }
+      if (request.url === '/assets/logo.svg') {
+        response.writeHead(200, {
+          'Content-Type': 'image/svg+xml',
+          'Cache-Control': 'public, max-age=31536000, immutable',
+        });
+        response.end(assetSvg);
+        return;
+      }
+      if (request.url === '/assets/partial.txt' && request.headers.range !== undefined) {
+        response.writeHead(206, {
+          'Content-Type': 'text/plain',
+          'Content-Range': 'bytes 0-2047/4096',
+        });
+        response.end(assetText);
+        return;
+      }
+      let bodyBytes = 0;
+      request.on('data', (chunk: Buffer) => {
+        bodyBytes += chunk.length;
       });
-      response.end('<html><head></head><script src="/boot.js"></script></html>');
+      request.on('end', () => {
+        localHttpBodyBytes = bodyBytes;
+        response.writeHead(200, {
+          'Content-Type': 'text/html',
+          'Cache-Control': 'public, max-age=31536000, immutable',
+          Connection: 'X-Remove',
+          'X-Remove': 'gone',
+        });
+        response.end('<html><head></head><script src="/boot.js"></script></html>');
+      });
     });
     localServer.on('upgrade', (request, socket, head) => {
       localWsRequest = request;
@@ -352,7 +391,7 @@ describe('Remote Control tunnel', () => {
     expect(handle.url).toContain('?rc=1&from=kimi_code_cli');
 
     const rawRequest = Buffer.from(
-      'GET / HTTP/1.1\r\nHost: relay.test\r\nAuthorization: Bearer relay-token\r\nCookie: sid=1\r\nOrigin: https://relay.test\r\nConnection: X-Hop\r\nX-Hop: remove\r\nX-Keep: yes\r\n\r\n',
+      'GET / HTTP/1.1\r\nHost: relay.test\r\nAuthorization: Bearer relay-token\r\nCookie: sid=1\r\nOrigin: https://relay.test\r\nAccept-Encoding: gzip\r\nConnection: X-Hop\r\nX-Hop: remove\r\nX-Keep: yes\r\n\r\n',
     );
     const splitAt = Math.floor(rawRequest.length / 2);
     httpConnections[0]!.send(
@@ -384,6 +423,9 @@ describe('Remote Control tunnel', () => {
     expect(localHttpRequest?.headers['x-keep']).toBe('yes');
     expect(response).not.toContain('X-Remove');
     expect(response).not.toContain('immutable');
+    expect(response).not.toContain('Content-Encoding');
+    expect(response).not.toContain('Vary');
+    expect(localHttpRequest?.headers['accept-encoding']).toBeUndefined();
     expect(response).toContain('Cache-Control: no-cache');
     expect(response).toContain(`/coding-relay/devices/${handle.deviceId}/boot.js`);
 
@@ -399,6 +441,165 @@ describe('Remote Control tunnel', () => {
     );
     await rotatedResponsePromise;
     await waitFor(() => localHttpRequest?.headers.authorization === 'Bearer rotated-server-token');
+
+    const gzipResponsePromise = nextJsonMessage(httpConnections[0]!);
+    httpConnections[0]!.send(
+      JSON.stringify({
+        request_id: 'request-3',
+        type: 'request',
+        is_last: true,
+        body_base64: Buffer.from(
+          'GET /assets/index.js HTTP/1.1\r\nHost: relay.test\r\nAccept-Encoding: br, gzip\r\n\r\n',
+        ).toString('base64'),
+      }),
+    );
+    const gzipResponse = Buffer.from(
+      (await gzipResponsePromise)['body_base64'] as string,
+      'base64',
+    );
+    const gzipSeparator = gzipResponse.indexOf('\r\n\r\n');
+    const gzipHead = gzipResponse.subarray(0, gzipSeparator).toString('latin1');
+    const gzipBody = gzipResponse.subarray(gzipSeparator + 4);
+    expect(gzipHead).toContain('HTTP/1.1 200 OK');
+    expect(gzipHead).toContain('Content-Encoding: gzip');
+    expect(gzipHead).toContain('Vary: Accept-Encoding');
+    expect(gzipHead).toContain('Cache-Control: no-cache');
+    const rewrittenETag = /ETag: (W\/"[0-9a-f]{64}")/.exec(gzipHead)?.[0];
+    expect(rewrittenETag).toBeDefined();
+    expect(gzipHead).toContain(`Content-Length: ${gzipBody.length}`);
+    expect(gunzipSync(gzipBody).toString()).toBe(
+      assetJs.replaceAll('"/assets/', `"/coding-relay/devices/${handle.deviceId}/assets/`),
+    );
+
+    const revalidateResponsePromise = nextJsonMessage(httpConnections[0]!);
+    httpConnections[0]!.send(
+      JSON.stringify({
+        request_id: 'request-3b',
+        type: 'request',
+        is_last: true,
+        body_base64: Buffer.from(
+          `GET /assets/index.js HTTP/1.1\r\nHost: relay.test\r\nAccept-Encoding: br, gzip\r\nIf-None-Match: ${rewrittenETag!.replace('ETag: ', '')}\r\n\r\n`,
+        ).toString('base64'),
+      }),
+    );
+    const revalidateResponse = Buffer.from(
+      (await revalidateResponsePromise)['body_base64'] as string,
+      'base64',
+    );
+    const revalidateHead = revalidateResponse
+      .subarray(0, revalidateResponse.indexOf('\r\n\r\n'))
+      .toString('latin1');
+    expect(revalidateHead).toContain('HTTP/1.1 304 Not Modified');
+    expect(revalidateHead).toContain('Cache-Control: no-cache');
+    expect(revalidateHead).toContain(rewrittenETag!);
+    expect(revalidateHead).not.toContain('Content-Encoding');
+    expect(revalidateHead).not.toContain('Content-Length');
+
+    const binaryResponsePromise = nextJsonMessage(httpConnections[0]!);
+    httpConnections[0]!.send(
+      JSON.stringify({
+        request_id: 'request-4',
+        type: 'request',
+        is_last: true,
+        body_base64: Buffer.from(
+          'GET /assets/logo.png HTTP/1.1\r\nHost: relay.test\r\nAccept-Encoding: gzip\r\n\r\n',
+        ).toString('base64'),
+      }),
+    );
+    const binaryResponse = Buffer.from(
+      (await binaryResponsePromise)['body_base64'] as string,
+      'base64',
+    );
+    const binarySeparator = binaryResponse.indexOf('\r\n\r\n');
+    expect(binaryResponse.subarray(0, binarySeparator).toString('latin1')).not.toContain(
+      'Content-Encoding',
+    );
+    expect(binaryResponse.subarray(binarySeparator + 4).equals(assetPng)).toBe(true);
+
+    const excludedResponsePromise = nextJsonMessage(httpConnections[0]!);
+    httpConnections[0]!.send(
+      JSON.stringify({
+        request_id: 'request-5',
+        type: 'request',
+        is_last: true,
+        body_base64: Buffer.from(
+          'GET /assets/index.js HTTP/1.1\r\nHost: relay.test\r\nAccept-Encoding: gzip;q=0, *;q=1\r\n\r\n',
+        ).toString('base64'),
+      }),
+    );
+    const excludedResponse = Buffer.from(
+      (await excludedResponsePromise)['body_base64'] as string,
+      'base64',
+    );
+    const excludedSeparator = excludedResponse.indexOf('\r\n\r\n');
+    const excludedHead = excludedResponse.subarray(0, excludedSeparator).toString('latin1');
+    expect(excludedHead).not.toContain('Content-Encoding');
+    expect(excludedHead).toContain('Vary: Accept-Encoding');
+    expect(excludedHead).toContain(rewrittenETag!);
+    expect(excludedHead).not.toContain('ETag: "v1"');
+    expect(excludedResponse.subarray(excludedSeparator + 4).toString()).toBe(
+      assetJs.replaceAll('"/assets/', `"/coding-relay/devices/${handle.deviceId}/assets/`),
+    );
+
+    const svgResponsePromise = nextJsonMessage(httpConnections[0]!);
+    httpConnections[0]!.send(
+      JSON.stringify({
+        request_id: 'request-6',
+        type: 'request',
+        is_last: true,
+        body_base64: Buffer.from(
+          'GET /assets/logo.svg HTTP/1.1\r\nHost: relay.test\r\nAccept-Encoding: gzip\r\n\r\n',
+        ).toString('base64'),
+      }),
+    );
+    const svgResponse = Buffer.from((await svgResponsePromise)['body_base64'] as string, 'base64');
+    const svgSeparator = svgResponse.indexOf('\r\n\r\n');
+    const svgHead = svgResponse.subarray(0, svgSeparator).toString('latin1');
+    expect(svgHead).toContain('Content-Encoding: gzip');
+    expect(svgHead).toContain('Vary: Accept-Encoding');
+    expect(svgHead).toContain('immutable');
+    expect(gunzipSync(svgResponse.subarray(svgSeparator + 4)).toString()).toBe(assetSvg);
+
+    const rangeResponsePromise = nextJsonMessage(httpConnections[0]!);
+    httpConnections[0]!.send(
+      JSON.stringify({
+        request_id: 'request-7',
+        type: 'request',
+        is_last: true,
+        body_base64: Buffer.from(
+          'GET /assets/partial.txt HTTP/1.1\r\nHost: relay.test\r\nAccept-Encoding: gzip\r\nRange: bytes=0-2047\r\n\r\n',
+        ).toString('base64'),
+      }),
+    );
+    const rangeResponse = Buffer.from(
+      (await rangeResponsePromise)['body_base64'] as string,
+      'base64',
+    );
+    const rangeSeparator = rangeResponse.indexOf('\r\n\r\n');
+    const rangeHead = rangeResponse.subarray(0, rangeSeparator).toString('latin1');
+    expect(rangeHead).toContain('206');
+    expect(rangeHead).toContain('Content-Range: bytes 0-2047/4096');
+    expect(rangeHead).not.toContain('Content-Encoding');
+    expect(rangeResponse.subarray(rangeSeparator + 4).toString()).toBe(assetText);
+
+    const largeBody = Buffer.alloc(4 * 1024 * 1024 + 512 * 1024, 0x61);
+    const largeRequest = Buffer.concat([
+      Buffer.from(`POST /upload HTTP/1.1\r\nHost: relay.test\r\nContent-Length: ${largeBody.length}\r\n\r\n`),
+      largeBody,
+    ]);
+    const largeResponsePromise = nextJsonMessage(httpConnections[0]!);
+    httpConnections[0]!.send(
+      JSON.stringify({
+        request_id: 'request-8',
+        type: 'request',
+        is_last: true,
+        body_base64: largeRequest.toString('base64'),
+      }),
+    );
+    const largeResponseMessage = await largeResponsePromise;
+    const largeResponse = Buffer.from(largeResponseMessage['body_base64'] as string, 'base64').toString();
+    expect(largeResponse).toContain('HTTP/1.1 200 OK');
+    expect(localHttpBodyBytes).toBe(largeBody.length);
 
     managementConnections[0]!.send(
       JSON.stringify({

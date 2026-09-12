@@ -106,6 +106,8 @@ A goal can stop in three ways:
 
 Write stop conditions into the objective. `/goal` does not have a separate stop-limit flag.
 
+Time budgets count only while the goal is active and its session is open. Closing the session saves the elapsed time and pauses the goal. After reopening the session, use `/goal resume` to continue with the remaining budget; time spent closed or paused does not count.
+
 ## Manage goals in the web UI
 
 The web UI shows the current goal in a strip below the conversation. Select the strip to expand or collapse its details. When a token budget is configured, the header shows its progress; goals without a token budget do not show a progress bar.

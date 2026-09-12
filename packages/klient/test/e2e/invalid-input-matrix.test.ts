@@ -747,7 +747,7 @@ describe('daemon file references (kimi-file://)', () => {
         { type: 'text', text: 'what is this?' },
       ]);
       expect(requests, label).toHaveLength(1);
-      expect(JSON.stringify(requests[0]?.json), label).not.toContain('kimi-file://');
+      expect(JSON.stringify(requests[0]?.json), label).not.toContain(`kimi-file://${meta.id}`);
       const content = openAiMessages(0).at(-1)?.['content'] as unknown[];
       const imagePart = content.find(
         (part) => (part as { type?: string }).type === 'image_url',

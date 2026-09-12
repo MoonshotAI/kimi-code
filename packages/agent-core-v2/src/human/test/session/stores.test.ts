@@ -4,7 +4,6 @@ import { createActor, waitFor, type ActorRefFrom } from '#/xstate2';
 import { UNKNOWN_CAPABILITY } from '#/llm/capability';
 import { createUserMessage, extractText } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
-import { createLlmMachine } from '#/llm/requester/machine';
 import type { LlmRequester } from '#/llm/requester/requester';
 import { createAgentMachine } from '#/agent/machine';
 import { createTurnMachine } from '#/agent/turn';
@@ -55,7 +54,7 @@ function startAgent(store: AgentEventStore, requester: LlmRequester = createEcho
   const actor = createActor(
     createAgentMachine({
       tools: [],
-      turnActor: createTurnMachine(createLlmMachine({ requester })),
+      turnActor: createTurnMachine(requester),
     }),
     { input: { request: { model }, store } },
   );
