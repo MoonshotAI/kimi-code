@@ -537,6 +537,17 @@ describe('FileSessionIndex (read model)', () => {
     expect(fileStorage.listCalls).toBe(0);
   });
 
+  it('coalesces a workspace-scoped miss onto the authoritative directory', async () => {
+    const store = build();
+    await store.prepare();
+    store.stopReconcileLoop();
+    await seedSession('legacy', { workDir: WORK_DIR, createdAt: 1, updatedAt: 2 });
+
+    const page = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items.map((s) => s.id)).toEqual(['legacy']);
+    expect(page.items[0]).toMatchObject({ cwd: WORK_DIR });
+  });
+
   it('paginates exactly through same-millisecond ties', async () => {
     const specs: [string, number][] = [
       ['a', 100],
