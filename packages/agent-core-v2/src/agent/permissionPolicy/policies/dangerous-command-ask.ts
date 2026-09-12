@@ -104,6 +104,15 @@ const DD_SAFE_DEVICE_TARGETS: ReadonlySet<string> = new Set([
   '/dev/stderr',
 ]);
 
+const RM_SAFE_TEMP_ROOTS: readonly string[] = ['/tmp', '/temp'];
+
+function isSafeTempRmOperand(operand: string): boolean {
+  for (const segment of operand.split('/')) {
+    if (segment === '..') return false;
+  }
+  return RM_SAFE_TEMP_ROOTS.some((root) => operand === root || operand.startsWith(`${root}/`));
+}
+
 type DangerousVerdict =
   | { readonly kind: 'dangerous'; readonly command: string }
   | { readonly kind: 'unanalyzable' };
@@ -273,8 +282,17 @@ function analyzeInvocation(
   if (name === 'rm') {
     let recursive = false;
     let force = false;
+    const operands: string[] = [];
+    let optionsEnded = false;
     for (const arg of args) {
-      if (arg === '--') break;
+      if (!optionsEnded && arg === '--') {
+        optionsEnded = true;
+        continue;
+      }
+      if (optionsEnded) {
+        operands.push(arg);
+        continue;
+      }
       if (arg === '--recursive') {
         recursive = true;
       } else if (arg === '--force') {
@@ -282,9 +300,16 @@ function analyzeInvocation(
       } else if (/^-[a-zA-Z]+$/.test(arg)) {
         if (/[rR]/.test(arg)) recursive = true;
         if (arg.includes('f')) force = true;
+      } else {
+        operands.push(arg);
       }
     }
-    if (recursive && force) return { kind: 'dangerous', command: 'rm -rf' };
+    if (recursive && force) {
+      if (!dropped && operands.length > 0 && operands.every(isSafeTempRmOperand)) {
+        return undefined;
+      }
+      return { kind: 'dangerous', command: 'rm -rf' };
+    }
     return dropped ? { kind: 'unanalyzable' } : undefined;
   }
   return undefined;

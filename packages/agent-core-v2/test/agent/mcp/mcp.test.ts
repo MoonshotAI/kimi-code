@@ -2,6 +2,9 @@ import type { ContentPart, ToolDescription as KosongTool } from '#human/llm/mess
 import { Jimp } from 'jimp';
 import { CallToolResultSchema, ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
@@ -13,9 +16,14 @@ import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { McpConnectionManager, McpServerEntry } from '#/mcpCore/connection-manager';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
+import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { AgentMcpService } from '#/agent/mcp/mcpService';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
+import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
+import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
+import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
 import type { MCPClient, MCPToolDefinition } from '#/mcpCore/types';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -320,6 +328,40 @@ describe('AgentMcpService', () => {
         serverName: 'local server',
       }),
     );
+  });
+
+  it('connects registered MCP tools to the session attachment store', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'mcp-session-attachments-'));
+    try {
+      const storage = new FileStorageService(home);
+      const context = makeSessionContext({
+        sessionId: 'session', workspaceId: 'workspace', cwd: home,
+        sessionDir: join(home, 'sessions/session'), sessionScope: 'sessions/session',
+      });
+      ix.stub(ISessionMediaStore, new SessionMediaStoreService(context, storage, new JsonAtomicDocumentStore(storage)));
+      const bytes = Buffer.from('%PDF-1.4\nexample\n%%EOF');
+      const client: MCPClient = {
+        async listTools() { return [{ name: 'report', description: 'Example report', inputSchema: { type: 'object' } }]; },
+        async callTool() { return { isError: false, content: [{ type: 'resource', resource: {
+          uri: 'example://report', mimeType: 'application/pdf', blob: bytes.toString('base64'),
+        } }] }; },
+        async ping() {},
+      };
+      const manager = new FakeMcpManager();
+      manager.setResolved('example', client, await discoverTools(client));
+      createService(manager);
+      manager.connect('example');
+      const tool = ix.get(IAgentToolRegistryService).resolve('mcp__example__report');
+      const output = await executeTool(tool!, {
+        turnId: 1, toolCallId: 'report', args: {}, signal: new AbortController().signal,
+      });
+      const text = renderToolResultForModel(output).map((part) => part.type === 'text' ? part.text : '').join('\n');
+      const path = /Original attachment saved at: ("[^\n]+")/.exec(text)?.[1];
+      expect(path).toBeDefined();
+      expect((await readFile(JSON.parse(path!) as string)).equals(bytes)).toBe(true);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 
   it('ignores status changes from servers outside the session baseline', async () => {

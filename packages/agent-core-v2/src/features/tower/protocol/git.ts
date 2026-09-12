@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process';
+import { realpath } from 'node:fs/promises';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 
 const GIT_TIMEOUT_MS = 60_000;
 
@@ -120,21 +122,35 @@ export async function isAncestor(cwd: string, ancestor: string, ref: string): Pr
   return (await tryGit(cwd, ['merge-base', '--is-ancestor', ancestor, ref])) !== null;
 }
 
-export async function worktreeAdd(
+export async function worktreeAdd(cwd: string, path: string, branch: string): Promise<void> {
+  await git(cwd, ['worktree', 'add', path, branch]);
+}
+
+export async function worktreeAddNewBranch(
   cwd: string,
   path: string,
   branch: string,
   base: string,
 ): Promise<void> {
-  if (await branchExists(cwd, branch)) {
-    await git(cwd, ['worktree', 'add', path, branch]);
-    return;
-  }
   await git(cwd, ['worktree', 'add', path, '-b', branch, base]);
 }
 
 export async function worktreeRemove(cwd: string, path: string): Promise<void> {
   await git(cwd, ['worktree', 'remove', '--force', path]);
+}
+
+export async function isRegisteredWorktree(repoRoot: string, path: string): Promise<boolean> {
+  const gitDir = await tryGit(path, ['rev-parse', '--git-dir']);
+  if (gitDir === null) return false;
+  const commonDir = await tryGit(repoRoot, ['rev-parse', '--git-common-dir']);
+  if (commonDir === null) return false;
+  const adminRoot = join(
+    await realpath(resolve(await realpath(repoRoot), commonDir.trim())),
+    'worktrees',
+  );
+  const resolved = resolve(await realpath(path), gitDir.trim());
+  const inside = relative(adminRoot, resolved);
+  return inside.length > 0 && !inside.startsWith('..') && !isAbsolute(inside);
 }
 
 export async function isWorktreeDirty(path: string): Promise<boolean> {

@@ -25,6 +25,10 @@ export class EventBusService extends Service implements ISessionEventBus {
     if (this.agents.get(agent.agentId) === agent) this.agents.delete(agent.agentId);
   }
 
+  isAgentActive(agent: AgentContext): boolean {
+    return this.agents.get(agent.agentId) === agent;
+  }
+
   publish(event: Event2<any>, agent?: AgentContext): void {
     const cls = event.constructor as Event2Class;
     if (cls.agentDomain) {

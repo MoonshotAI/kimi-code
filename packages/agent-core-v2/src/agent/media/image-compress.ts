@@ -327,16 +327,20 @@ export async function compressImageContentParts(
   options: CompressImageOptions & {
     readonly annotate?: CompressAnnotateOptions;
     readonly providerType?: string;
+    readonly signal?: AbortSignal;
   } = {},
 ): Promise<CompressedContentParts> {
-  const { annotate, providerType, ...compressOptions } = options;
+  const { annotate, providerType, signal, ...compressOptions } = options;
+  signal?.throwIfAborted();
   const out: ContentPart[] = [];
   const captions: string[] = [];
   for (const part of gateImageFormatParts(parts, providerType)) {
+    signal?.throwIfAborted();
     if (part.type === 'image_url') {
       const parsed = parseImageDataUrl(part.imageUrl.url);
       if (parsed !== null) {
         const result = await compressBase64ForModel(parsed.base64, parsed.mimeType, compressOptions);
+        signal?.throwIfAborted();
         if (result.changed) {
           if (annotate !== undefined) {
             let originalPath: string | null = null;
@@ -347,6 +351,7 @@ export async function compressImageContentParts(
                   parsed.mimeType,
                 );
               } catch {
+                signal?.throwIfAborted();
                 originalPath = null;
               }
             }

@@ -9,6 +9,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { Message } from '#/llm-adapter/contract/message';
 import type { ContentPart } from '#human/llm/message';
 import type { ModelRequester } from '#/llm-adapter/model/model-requester';
+import { runWithCredentialRecovery } from '#/llm-adapter/model/credential-recovery';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 
 import { detectFileType, MEDIA_SNIFF_BYTES } from './file-type';
@@ -271,7 +272,11 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     }
 
     try {
-      const uploaded = await uploader({ data: bytes, mimeType, filename }, { signal });
+      const uploaded = await runWithCredentialRecovery(
+        requester.model.credentials,
+        () => uploader({ data: bytes, mimeType, filename }, { signal }),
+        signal,
+      );
       const llmFileId = uploaded.videoUrl.id ?? msFileIdFromUrl(uploaded.videoUrl.url);
       if (llmFileId !== undefined) await this.writeCachedUpload(cacheKey, llmFileId);
       return { part: uploaded, memoize: true };

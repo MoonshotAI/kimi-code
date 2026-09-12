@@ -18,6 +18,7 @@ export const IEventBus: ServiceIdentifier<IEventBus> = createDecorator<IEventBus
 export interface ISessionEventBus extends IEventBus {
   activateAgent(agent: AgentContext): void;
   deactivateAgent(agent: AgentContext): void;
+  isAgentActive(agent: AgentContext): boolean;
   sourceOf(event: Event2<any>): AgentContext | undefined;
   onAgent<P extends AgentDomainTrait, E extends Event2<P>>(
     agent: AgentContext,

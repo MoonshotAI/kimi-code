@@ -7,17 +7,23 @@ import { IAgentReminderService } from '#/features/reminder/reminderService';
 import type { ContextInjectionProvider } from '#/features/reminder/types';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { PermissionModeInjection } from '#/agent/permissionMode/injection/permissionModeInjection';
-import { AgentPermissionModeService } from '#/agent/permissionMode/permissionModeService';
+import {
+  AgentPermissionModeService,
+  PERMISSION_MODE_REMINDER_ENV,
+} from '#/agent/permissionMode/permissionModeService';
 import { permissionModeKey } from '#/agent/permissionMode/permissionModeOps';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
+
+import { stubBootstrap } from '../../app/bootstrap/stubs';
 
 import {
   registerTestAgentWire,
@@ -55,15 +61,18 @@ let log: IAppendLogStore;
 let dispatcher: IEventDispatcher;
 let svc: IAgentPermissionModeService;
 let reminderLive = false;
+let bootstrapEnv: NodeJS.ProcessEnv;
 
 beforeEach(() => {
   registeredInjection = undefined;
   reminderLive = false;
+  bootstrapEnv = {};
   disposables = new DisposableStore();
   ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.stub(IAgentReminderService, injectorStub);
+  ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-home', bootstrapEnv));
   ix.set(IAgentStateService, new AgentStateService());
   ix.set(IAgentPermissionModeService, new SyncDescriptor(AgentPermissionModeService));
   log = ix.get(IAppendLogStore);
@@ -240,5 +249,52 @@ describe('AgentPermissionModeService (wire-backed)', () => {
     }
     expect(written[0]).toMatchObject({ type: 'metadata' });
     expect(written.slice(1)).toEqual([{ type: 'permission.set_mode', mode: 'auto' }]);
+  });
+
+  it('skips the auto-mode reminder injection when KIMI_CODE_PERMISSION_MODE_REMINDER is disabled', () => {
+    registeredInjection = undefined;
+    const ix2 = disposables.add(new TestInstantiationService());
+    ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    ix2.stub(IAgentReminderService, injectorStub);
+    ix2.stub(
+      IBootstrapService,
+      stubBootstrap('/tmp/kimi-home', { [PERMISSION_MODE_REMINDER_ENV]: '0' }),
+    );
+    ix2.set(IAgentStateService, new AgentStateService());
+    ix2.set(IAgentPermissionModeService, new SyncDescriptor(AgentPermissionModeService));
+    registerTestAgentWire(ix2, testWireScope(SCOPE, 'permission-mode-no-reminder'), {
+      log: ix2.get(IAppendLogStore),
+    });
+    registerTestEventDispatcher(ix2);
+
+    const svc2 = ix2.get(IAgentPermissionModeService);
+
+    expect(registeredInjection).toBeUndefined();
+    svc2.setMode('auto');
+    expect(svc2.mode).toBe('auto');
+    expect(registeredInjection).toBeUndefined();
+  });
+
+  it('keeps the auto-mode reminder injection when the env override enables it explicitly', () => {
+    registeredInjection = undefined;
+    const ix2 = disposables.add(new TestInstantiationService());
+    ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    ix2.stub(IAgentReminderService, injectorStub);
+    ix2.stub(
+      IBootstrapService,
+      stubBootstrap('/tmp/kimi-home', { [PERMISSION_MODE_REMINDER_ENV]: '1' }),
+    );
+    ix2.set(IAgentStateService, new AgentStateService());
+    ix2.set(IAgentPermissionModeService, new SyncDescriptor(AgentPermissionModeService));
+    registerTestAgentWire(ix2, testWireScope(SCOPE, 'permission-mode-reminder-on'), {
+      log: ix2.get(IAppendLogStore),
+    });
+    registerTestEventDispatcher(ix2);
+
+    ix2.get(IAgentPermissionModeService);
+
+    expect((registeredInjection as { readonly name: string } | undefined)?.name).toBe('permission_mode');
   });
 });

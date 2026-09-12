@@ -31,9 +31,11 @@ import {
   type SessionListQuery,
   type SessionSummary,
 } from './sessionIndex';
+import { markSessionDirty } from './sessionIndexDirtyJournal';
 import {
   PARENT_INDEX_NAME,
   SESSION_INDEX_MANIFEST,
+  SESSION_INDEX_SCHEMA_VERSION,
   recencyColumn,
   sessionCollection,
   sessionCountersCollection,
@@ -45,7 +47,7 @@ import {
   listSessionIds,
   listWorkspaceIds,
   readSessionSummary,
-  scanSessionsMaxMtime,
+  scanSessionsFreshness,
   summaryMatchesChildOf,
 } from './sessionIndexSource';
 
@@ -79,6 +81,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   private statusReason: string | undefined;
   private degradedCount = 0;
   private nextPrepareRetryAt = 0;
+  private lastDegradedKey: string | undefined;
   private prepareFlight: Promise<SessionIndexStatus> | undefined;
   private projectFlight: Promise<void> | undefined;
   private readonly reconcileTimer = this._register(new IntervalTimer({ unref: true }));
@@ -132,7 +135,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     this.state = 'preparing';
     try {
       const manifest = await this.queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
-      if (manifest === undefined || !(await this.manifestFresh(manifest))) {
+      if (manifest === undefined || manifest.schemaVersion !== SESSION_INDEX_SCHEMA_VERSION) {
         const projection = this.ensureProjection();
         if (deadlineMs === undefined) {
           await projection;
@@ -147,6 +150,29 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       } else {
         this.generation = manifest.seq;
         await this.ensureSchema(manifest.seq);
+        if (!(await this.manifestFresh(manifest))) {
+          try {
+            const reconciliation = this.projector.reconcile(manifest.seq);
+            if (deadlineMs === undefined) {
+              await reconciliation;
+            } else {
+              await Promise.race([
+                reconciliation,
+                new Promise((resolve) => {
+                  setTimeout(resolve, deadlineMs);
+                }),
+              ]);
+            }
+          } catch (error) {
+            const published = await this.queryStore
+              .getCheckpoint(SESSION_INDEX_MANIFEST)
+              .catch(() => undefined);
+            if (published === undefined) throw error;
+            this.log.warn('session index startup reconciliation failed; serving the published generation', {
+              error: String(error),
+            });
+          }
+        }
       }
       const published = await this.queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
       if (published !== undefined) {
@@ -160,12 +186,12 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   }
 
   private async manifestFresh(manifest: Checkpoint): Promise<boolean> {
-    const published = manifest.sourceMaxMtimeMs;
-    if (published === undefined) return false;
+    if (manifest.sourceSessionCount === undefined) return false;
     try {
-      return (await scanSessionsMaxMtime(this.storage, this.sessionsScope, this.log)) <= published;
+      const scan = await scanSessionsFreshness(this.storage, this.sessionsScope);
+      return scan.dirtyMarkCount === 0 && scan.sessionCount === manifest.sourceSessionCount;
     } catch (error) {
-      this.log.warn('session index freshness check failed; re-projecting', {
+      this.log.warn('session index freshness check failed; treating the index as stale', {
         error: String(error),
       });
       return false;
@@ -241,6 +267,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
         return;
       }
       this.generation = manifest.seq;
+      if (await this.manifestFresh(manifest)) return;
       await this.projector.reconcile(manifest.seq);
     } catch (error) {
       this.log.warn('session index reconciliation failed', { error: String(error) });
@@ -248,8 +275,12 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   }
 
   private markReady(): void {
+    if (this.state === 'degraded') {
+      this.log.info('session index read model recovered', { degradedCount: this.degradedCount });
+    }
     this.state = 'ready';
     this.statusReason = undefined;
+    this.lastDegradedKey = undefined;
     this.ensureReconcileTimer();
   }
 
@@ -261,6 +292,9 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     this.ensureReconcileTimer();
     const detail =
       error instanceof Error ? error.message : typeof error === 'string' ? error : undefined;
+    const episodeKey = `${reason}:${detail ?? ''}`;
+    if (episodeKey === this.lastDegradedKey) return;
+    this.lastDegradedKey = episodeKey;
     this.log.warn('session index read model degraded; serving authoritative reads', {
       reason,
       ...(detail !== undefined ? { error: detail } : {}),
@@ -317,6 +351,11 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       },
       () => Promise.resolve(),
     );
+    try {
+      await markSessionDirty(this.storage, this.sessionsScope, id);
+    } catch (error) {
+      this.log.warn('session index dirty mark failed', { error: String(error) });
+    }
   }
 
   private async withReadModel<T>(

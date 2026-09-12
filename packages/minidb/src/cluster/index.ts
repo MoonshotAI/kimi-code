@@ -57,6 +57,8 @@ export type {
 export { Router } from './router.js';
 export { Topology } from './topology.js';
 export { LockError } from '../lockfile.js';
+export { wipeCluster } from './wipe.js';
+export type { WipeOutcome } from '../wipe.js';
 export type { ShardOpenOptions } from './shard.js';
 export { shardDirName, shardFor, stableHash32 } from './utils.js';
 

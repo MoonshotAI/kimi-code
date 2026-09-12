@@ -27,8 +27,10 @@ import {
   SessionIndexMirror,
 } from '#/app/sessionIndex/sessionIndexMirrorService';
 import { drainQueryStoreDisposals, MiniDbQueryStore } from '#/persistence/backends/minidb/miniDbQueryStore';
+import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { DATABASE_SECTION } from '#/persistence/configSection';
 import { IQueryStore } from '#/persistence/interface/queryStore';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubConfigService } from '../config/stubs';
@@ -92,6 +94,7 @@ describe('SessionIndexMirror', () => {
   ): ISessionIndexMirror {
     const host = createScopedTestHost([
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(IFileSystemStorageService, new FileStorageService(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: baseEnabled } })),
       stubPair(ITelemetryService, telemetry),
@@ -161,6 +164,7 @@ describe('SessionIndexMirror', () => {
   it('never blocks record on the query store', async () => {
     const host = createScopedTestHost([
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(IFileSystemStorageService, new FileStorageService(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
       stubPair(ITelemetryService, noopTelemetryService),

@@ -24,6 +24,7 @@ import {
   type AfterStepContext,
 } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionMode, PermissionPolicyResult } from '#/agent/permissionPolicy/types';
@@ -1709,7 +1710,7 @@ describe('goal error catalog metadata', () => {
 
 describe('AgentGoalService API boundary', () => {
   it('exposes only goal commands, queries, and observations', () => {
-    expect(Object.getOwnPropertyNames(AgentGoalService.prototype).sort()).toEqual([
+    expect(Object.getOwnPropertyNames(AgentGoalService.prototype).toSorted()).toEqual([
       'cancelGoal',
       'constructor',
       'createGoal',
@@ -1889,6 +1890,59 @@ describe('goal pause classification on provider errors', () => {
 });
 
 describe('AgentGoalService hard wall-clock deadline', () => {
+  it('saves elapsed time on close and resumes only the remaining budget', async () => {
+    const clock = new ManualGoalDeadlineScheduler();
+    const persistence = new InMemoryWireRecordPersistence();
+    const ctx = createTestAgent(
+      appService(IGoalDeadlineScheduler, clock),
+      wireRecordPersistenceServices(persistence),
+    );
+    let restored: TestAgentContext | undefined;
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    try {
+      ctx.configure();
+      await ctx.restorePersisted();
+      const lifecycle = ctx.get(IAgentLifecycleService);
+      const agent = ctx.get(IAgentScopeContext).agentContext;
+      const goals = ctx.get(IAgentGoalService);
+      await goals.createGoal({ objective: 'finish bounded work' });
+      await goals.setBudgetLimits({ budgetLimits: { wallClockBudgetMs: 10_000 } });
+      clock.advanceBy(3_000);
+      await lifecycle.remove(agent);
+
+      now.mockReturnValue(100_000);
+      const restoredClock = new ManualGoalDeadlineScheduler();
+      restored = createTestAgent(appService(IGoalDeadlineScheduler, restoredClock));
+      restored.configure();
+      await restored.restore([...persistence.records]);
+      const resumedGoals = restored.get(IAgentGoalService);
+      expect(resumedGoals.getGoal().goal).toMatchObject({
+        status: 'paused',
+        wallClockMs: 3_000,
+        budget: { remainingWallClockMs: 7_000, overBudget: false },
+      });
+
+      restoredClock.advanceBy(50_000);
+      await resumedGoals.resumeGoal();
+      restoredClock.advanceBy(6_999);
+      expect(resumedGoals.getGoal().goal).toMatchObject({
+        status: 'active',
+        wallClockMs: 9_999,
+        budget: { remainingWallClockMs: 1, overBudget: false },
+      });
+      restoredClock.advanceBy(1);
+      expect(resumedGoals.getGoal().goal).toMatchObject({
+        status: 'blocked',
+        wallClockMs: 10_000,
+        budget: { remainingWallClockMs: 0, wallClockBudgetReached: true },
+      });
+    } finally {
+      now.mockRestore();
+      await restored?.dispose();
+      await ctx.dispose();
+    }
+  });
+
   it('aborts an in-flight LLM request when the wall-clock budget expires', async () => {
     const clock = new ManualGoalDeadlineScheduler();
     const llm = blockingGenerate();

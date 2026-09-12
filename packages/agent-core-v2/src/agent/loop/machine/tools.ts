@@ -34,6 +34,7 @@ export interface CreateMachineToolsOptions {
   readonly toolExecutor: IAgentToolExecutorService;
   readonly toolInfos: readonly ToolInfo[];
   readonly turnId: () => number;
+  readonly steerSignal?: () => AbortSignal | undefined;
   readonly trace?: () => LLMRequestTrace | undefined;
   readonly onToolCall?: (payload: ToolCallStartedPayload) => void;
   readonly onToolResult?: (toolCallId: string, result: AgentToolResult) => void;
@@ -81,9 +82,6 @@ export function createMachineTools(options: CreateMachineToolsOptions): MachineT
   const runBatch = async (entries: readonly PendingEntry[]): Promise<void> => {
     batchInFlight = true;
     const inFlight = new Map<string, PendingEntry>();
-    for (const entry of entries) inFlight.set(entry.input.toolCall.id, entry);
-    const signal = AbortSignal.any(entries.map((entry) => entry.input.signal));
-    const calls = entries.map((entry) => entry.input.toolCall);
     const settleRemaining = (error?: unknown): void => {
       for (const entry of inFlight.values()) {
         settleEntry(entry, {
@@ -102,8 +100,12 @@ export function createMachineTools(options: CreateMachineToolsOptions): MachineT
       inFlight.clear();
     };
     try {
+      for (const entry of entries) inFlight.set(entry.input.toolCall.id, entry);
+      const signal = AbortSignal.any(entries.map((entry) => entry.input.signal));
+      const calls = entries.map((entry) => entry.input.toolCall);
       const stream = options.toolExecutor.execute(calls, {
         signal,
+        steerSignal: options.steerSignal?.(),
         turnId: options.turnId(),
         trace: options.trace?.(),
         onToolCall: options.onToolCall,
@@ -138,6 +140,12 @@ export function createMachineTools(options: CreateMachineToolsOptions): MachineT
     }
   };
 
+  const startBatch = (entries: readonly PendingEntry[]): void => {
+    void runBatch(entries).catch((error: unknown) => {
+      options.onBatchError?.(error);
+    });
+  };
+
   const applyResult = (entry: PendingEntry, matched: ToolExecutionResult): void => {
     const id = entry.input.toolCall.id;
     const { result } = matched;
@@ -162,23 +170,38 @@ export function createMachineTools(options: CreateMachineToolsOptions): MachineT
     if (!expectedIds.every((id) => pending.has(id))) return;
     const entries: PendingEntry[] = [];
     for (const id of expectedIds) {
-      const entry = pending.get(id)!;
+      const entry = pending.get(id);
+      if (entry === undefined) continue;
       pending.delete(id);
       entries.push(entry);
     }
     if (entries.length === 0) return;
-    void runBatch(entries);
+    startBatch(entries);
   };
 
   const execute = (input: ToolExecuteInput): Promise<ToolResult> => {
-    progressHandlers.set(input.toolCall.id, input.onUpdate);
     if (expectedIds === undefined || batchInFlight) {
+      progressHandlers.set(input.toolCall.id, input.onUpdate);
       return new Promise<ToolResult>((resolve) => {
         const entry: PendingEntry = { input, resolve, removeAbortListener: () => {} };
-        void runBatch([entry]);
+        startBatch([entry]);
       });
     }
     return new Promise<ToolResult>((resolve) => {
+      const previous = pending.get(input.toolCall.id);
+      if (previous !== undefined) {
+        pending.delete(input.toolCall.id);
+        settleEntry(previous, {
+          content: [
+            {
+              type: 'text',
+              text: `Tool "${previous.input.toolCall.name}" superseded by a duplicate tool call id.`,
+            },
+          ],
+          isError: true,
+        });
+      }
+      progressHandlers.set(input.toolCall.id, input.onUpdate);
       const onAbort = (): void => {
         if (!pending.delete(input.toolCall.id)) return;
         const stale = [...pending.values()];
@@ -215,7 +238,9 @@ export function createMachineTools(options: CreateMachineToolsOptions): MachineT
         for (const entry of stale) settleAborted(entry);
         return;
       }
-      expectedIds = expectedCalls.filter((call) => knownNames.has(call.name)).map((call) => call.id);
+      expectedIds = [
+        ...new Set(expectedCalls.filter((call) => knownNames.has(call.name)).map((call) => call.id)),
+      ];
       flushIfReady();
     },
     handleProgress: (toolCallId, update) => {

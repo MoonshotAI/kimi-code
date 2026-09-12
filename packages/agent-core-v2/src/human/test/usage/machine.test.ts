@@ -5,7 +5,6 @@ import { connectPlugins } from '#/plugin';
 import { UNKNOWN_CAPABILITY } from '#/llm/capability';
 import { createUserMessage } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
-import { createLlmMachine } from '#/llm/requester/machine';
 import type { LlmRequester } from '#/llm/requester/requester';
 import type { TokenUsage } from '#/llm/usage';
 import { createAgentMachine } from '#/agent/machine';
@@ -133,7 +132,7 @@ describe('usage plugin', () => {
     const store = await testStore();
     const actor = createActor(
       createAgentMachine({
-        turnActor: createTurnMachine(createLlmMachine({ requester })),
+        turnActor: createTurnMachine(requester),
       }),
       { input: { request: { model }, store } },
     );

@@ -1,5 +1,5 @@
 import type { Message } from '#/llm/message';
-import type { MessageResolver } from '#/llm/requester/machine';
+import type { MessageResolver } from '#/llm/requester/actor';
 
 import type { ToolSelectState } from './state';
 
