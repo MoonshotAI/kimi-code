@@ -15,7 +15,22 @@ import { IFileSystemStorageService, StorageError, StorageErrors } from '#/persis
 
 import { IWireService } from './wire';
 import { WireError, WireErrors } from './errors';
+import {
+  type AgentJournalRef,
+  type IAgentJournal,
+  type SwitchedBranch,
+  type SwitchBranchInput,
+} from './journal';
 import { repairWireJournal } from './repair';
+import {
+  activeChain,
+  buildUndoSwitchRecords,
+  computeForkLine,
+  MAIN_BRANCH,
+  parseTree,
+  type WireLine,
+  type WireTree,
+} from './tree';
 import {
   WIRE_PROTOCOL_VERSION,
   isNewerWireVersion,
@@ -34,7 +49,7 @@ import {
   type WireRecord,
 } from './record';
 
-export class WireService extends Service implements IWireService {
+export class WireService extends Service implements IWireService, IAgentJournal {
   declare readonly _serviceBrand: undefined;
 
   private readonly wireScope: string;
@@ -46,6 +61,7 @@ export class WireService extends Service implements IWireService {
     | { readonly records: WireRecord[]; readonly truncation: AppendLogTruncation }
     | undefined;
   private persistError: Error | undefined;
+  private treeSnapshot: WireTree | undefined;
 
   constructor(
     @IAgentScopeContext scopeContext: IAgentScopeContext,
@@ -103,6 +119,83 @@ export class WireService extends Service implements IWireService {
   }
 
   async *readJournal(): AsyncIterable<WireRecord> {
+    for await (const { record } of this.readEntries()) {
+      yield record;
+    }
+  }
+
+  get journalRef(): AgentJournalRef {
+    return { tree: this.wireScope, branch: this.treeSnapshot?.activeBranch ?? MAIN_BRANCH };
+  }
+
+  append(record: WireRecord, dehydrate?: RecordDehydrator): void {
+    this.appendRecord(record, dehydrate);
+  }
+
+  async *read(): AsyncIterable<WireRecord> {
+    const entries: WireLine[] = [];
+    for await (const entry of this.readEntries()) {
+      entries.push(entry);
+    }
+    const tree = parseTree(entries, entries.at(-1)?.line ?? 0);
+    this.treeSnapshot = tree;
+    for (const { record } of activeChain(entries, tree)) {
+      yield record;
+    }
+  }
+
+  readRaw(): AsyncIterable<WireRecord> {
+    return this.readJournal();
+  }
+
+  async switchBranch(input: SwitchBranchInput): Promise<SwitchedBranch> {
+    await this.drainPersisted();
+    const entries: WireLine[] = [];
+    for await (const entry of this.readEntries()) {
+      entries.push(entry);
+    }
+    const tree = parseTree(entries, entries.at(-1)?.line ?? 0);
+    const forkLine = computeForkLine(activeChain(entries, tree), input.turns);
+    const base = { branch: tree.activeBranch, line: forkLine };
+    const branch = `b${tree.edges.length + 1}`;
+    const edgeLine = this.lines + 1;
+    const records = buildUndoSwitchRecords({
+      agentId: this.agentId,
+      branch,
+      reason: input.reason ?? 'undo',
+      base,
+      turns: input.turns,
+      edgeLine,
+      fromTurnId: input.fromTurnId,
+      time: Date.now(),
+    });
+    this.appendRecord(records.switched);
+    this.appendRecord(records.legacyUndo);
+    this.appendRecord(records.undone);
+    const appended: WireLine[] = [
+      { record: records.switched, line: edgeLine },
+      { record: records.legacyUndo, line: edgeLine + 1 },
+      { record: records.undone, line: edgeLine + 2 },
+    ];
+    this.treeSnapshot = parseTree([...entries, ...appended], edgeLine + 2);
+    return { branch, base, edgeLine, forkLine };
+  }
+
+  branches(): readonly string[] {
+    const tree = this.treeSnapshot;
+    if (tree === undefined) return [MAIN_BRANCH];
+    return tree.segments.map((segment) => segment.branch);
+  }
+
+  nextSeq(): number {
+    return this.lines + 1;
+  }
+
+  settled(): Promise<void> {
+    return this.drainPersisted();
+  }
+
+  private async *readEntries(): AsyncIterable<WireLine> {
     let truncation: AppendLogTruncation | undefined;
     const source = this.log.read<WireRecord>(this.wireScope, AGENT_WIRE_RECORD_KEY, {
       onTruncate: (info) => {
@@ -169,7 +262,7 @@ export class WireService extends Service implements IWireService {
         continue;
       }
       rewrittenRecords?.push(normalized);
-      yield normalized;
+      yield { record: normalized, line: lineCount };
       if (normalized.type !== 'metadata') {
         recordIndex++;
       }

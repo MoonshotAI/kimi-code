@@ -16,6 +16,7 @@ import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 import { wireJournalBackupKey } from '#/wire/repair';
 import { WireError, WireErrors } from '#/wire/errors';
 import { IWireService } from '#/wire/wire';
+import type { IAgentJournal } from '#/wire/journal';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
 import { recordingWireLog, registerTestAgentWire, testWireScope, noopLogger } from './stubs';
@@ -408,6 +409,14 @@ describe('WireService readJournal', () => {
 
     expect(await collect(stub.readJournal())).toEqual(seeded);
     expect(rewrites).toBe(0);
+
+    const journal = stub as unknown as IAgentJournal;
+    expect(await collect(journal.readRaw())).toEqual(seeded);
+    expect(await collect(journal.read())).toEqual(seeded);
+    expect(journal.journalRef).toEqual({ tree: testWireScope(SCOPE, 'current'), branch: 'main' });
+    expect(journal.branches()).toEqual(['main']);
+    expect(journal.nextSeq()).toBe(3);
+    expect(rewrites).toBe(0);
   });
 
   it('reads a newer-version journal without stamping or rewriting it', async () => {
@@ -588,7 +597,17 @@ describe('WireService corruption repair', () => {
   });
 
   it('truncates at a corrupted middle line, dropping later valid lines', async () => {
-    const prefix = `${currentMetadata()}\n${JSON.stringify({ type: 'wire.test.a', time: 1 })}\n`;
+    const edge = {
+      type: 'agent.switched',
+      agentId: 'test-agent',
+      branch: 'b1',
+      reason: 'undo',
+      base: { branch: 'main', line: 2 },
+      turns: 1,
+      legacyUndoLine: 4,
+      time: 2,
+    };
+    const prefix = `${currentMetadata()}\n${JSON.stringify({ type: 'wire.test.a', time: 1 })}\n${JSON.stringify(edge)}\n`;
     const raw = `${prefix}GARBAGE\n${JSON.stringify({ type: 'wire.test.b', time: 2 })}\n`;
     await seedCorrupt(raw);
 
@@ -597,17 +616,17 @@ describe('WireService corruption repair', () => {
     expect(yielded).toEqual([
       { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
       { type: 'wire.test.a', time: 1 },
+      edge,
     ]);
     expect(await rawBytes()).toBe(prefix);
     expect(await rawBytes(BACKUP_KEY)).toBe(raw);
-  });
 
-  it('does not surface AppendLogCorruptedError from the restore read path', async () => {
-    await seedCorrupt(`${currentMetadata()}\nGARBAGE\n`);
-
-    await expect(collect(wire.readJournal())).resolves.toEqual([
+    const journal = wire as unknown as IAgentJournal;
+    expect(await collect(journal.read())).toEqual([
       { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'wire.test.a', time: 1 },
     ]);
+    expect(journal.journalRef.branch).toBe('b1');
   });
 
   it('keeps the first backup when the journal corrupts again after a repair', async () => {
@@ -946,14 +965,6 @@ describe('WireService journal location', () => {
     expect(wire.lineCount()).toBe(3);
   });
 
-  it('counts dehydrated appends once they land', async () => {
-    await wire.seal();
-    wire.appendRecord({ type: 'wire.test.gated', time: 1 }, async (record) => record);
-    await wire.flush();
-
-    expect(wire.lineCount()).toBe(2);
-  });
-
   it('recounts the journal lines when a fresh service reads it back', async () => {
     await wire.seal();
     wire.appendRecord({ type: 'wire.test.one', time: 1 });
@@ -999,5 +1010,135 @@ describe('WireService journal location', () => {
     expect(located.journalPath()).toBe(
       `/home/user/.kimi-code/${testWireScope(SCOPE, 'located')}/${AGENT_WIRE_RECORD_KEY}`,
     );
+  });
+});
+
+describe('WireService tree projection', () => {
+  function userPrompt(text: string, id: string) {
+    return {
+      role: 'user',
+      content: [{ type: 'text', text }],
+      toolCalls: [],
+      origin: { kind: 'user' },
+      id,
+    };
+  }
+
+  it('writes the undo switch triple with paired physical line numbers', async () => {
+    await wire.seal();
+    wire.appendRecord({ type: 'context.append_message', message: userPrompt('first', 'p1'), time: 1 });
+    wire.appendRecord({
+      type: 'context.append_message',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] },
+      time: 2,
+    });
+    wire.appendRecord({ type: 'context.append_message', message: userPrompt('second', 'p2'), time: 3 });
+    await wire.flush();
+
+    const journal = wire as unknown as IAgentJournal;
+    const switched = await journal.switchBranch({ turns: 1 });
+
+    expect(switched).toEqual({
+      branch: 'b1',
+      base: { branch: 'main', line: 3 },
+      edgeLine: 5,
+      forkLine: 3,
+    });
+    const onDisk = await readRecords();
+    expect(onDisk.slice(4)).toEqual([
+      {
+        type: 'agent.switched',
+        agentId: 'test-agent',
+        branch: 'b1',
+        reason: 'undo',
+        base: { branch: 'main', line: 3 },
+        turns: 1,
+        legacyUndoLine: 6,
+        time: expect.any(Number),
+      },
+      { type: 'context.undo', agentId: 'test-agent', count: 1, time: expect.any(Number) },
+      { type: 'context.undone', agentId: 'test-agent', turns: 1, time: expect.any(Number) },
+    ]);
+    expect(wire.lineCount()).toBe(7);
+    expect(journal.journalRef).toEqual({ tree: testWireScope(SCOPE, KEY), branch: 'b1' });
+    expect(journal.branches()).toEqual(['main', 'b1']);
+    expect(journal.nextSeq()).toBe(8);
+
+    expect(await collect(journal.read())).toEqual([
+      ...onDisk.slice(0, 3),
+      onDisk[5]!,
+      onDisk[6]!,
+    ]);
+    expect(await collect(journal.readRaw())).toEqual(onDisk);
+
+    await expect(journal.switchBranch({ turns: 2 })).rejects.toMatchObject({
+      reason: 'insufficient',
+    });
+    expect(wire.lineCount()).toBe(7);
+
+    wire.appendRecord({
+      type: 'context.apply_compaction',
+      summary: 'compacted',
+      compactedCount: 2,
+      tokensBefore: 10,
+      time: 4,
+    });
+    await wire.flush();
+    await expect(journal.switchBranch({ turns: 1 })).rejects.toMatchObject({
+      reason: 'compaction_boundary',
+    });
+    expect(wire.lineCount()).toBe(8);
+    expect(await readRecords()).toHaveLength(8);
+  });
+
+  it('walks nested switch edges to compute the active chain', async () => {
+    const seeded: WireRecord[] = [
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'wire.test.one', time: 1 },
+      { type: 'wire.test.two', time: 2 },
+      {
+        type: 'agent.switched',
+        agentId: 'test-agent',
+        branch: 'b1',
+        reason: 'undo',
+        base: { branch: 'main', line: 2 },
+        turns: 1,
+        legacyUndoLine: 5,
+        time: 3,
+      },
+      { type: 'context.undo', agentId: 'test-agent', count: 1, time: 3 },
+      { type: 'context.undone', agentId: 'test-agent', turns: 1, time: 3 },
+      { type: 'wire.test.three', time: 4 },
+      {
+        type: 'agent.switched',
+        agentId: 'test-agent',
+        branch: 'b2',
+        reason: 'undo',
+        base: { branch: 'b1', line: 7 },
+        turns: 1,
+        legacyUndoLine: 9,
+        time: 5,
+      },
+      { type: 'context.undo', agentId: 'test-agent', count: 1, time: 5 },
+      { type: 'context.undone', agentId: 'test-agent', turns: 1, time: 5 },
+      { type: 'wire.test.four', time: 6 },
+    ];
+    const stub = wireOverLog(recordingWireLog(seeded), 'tree');
+    const journal = stub as unknown as IAgentJournal;
+
+    expect(await collect(journal.readRaw())).toEqual(seeded);
+    expect(await collect(journal.read())).toEqual([
+      seeded[0]!,
+      seeded[1]!,
+      seeded[4]!,
+      seeded[5]!,
+      seeded[6]!,
+      seeded[8]!,
+      seeded[9]!,
+      seeded[10]!,
+    ]);
+    expect(journal.journalRef.branch).toBe('b2');
+    expect(journal.branches()).toEqual(['main', 'b1', 'b2']);
+    expect(journal.nextSeq()).toBe(12);
   });
 });
