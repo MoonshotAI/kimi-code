@@ -43,13 +43,20 @@ export function runStatusLineCommand(
     const isWin = process.platform === 'win32';
     let child;
     try {
-      child = spawn(isWin ? (process.env['ComSpec'] ?? 'cmd.exe') : 'sh', isWin ? ['/d', '/s', '/c', command] : ['-c', command], {
-        stdio: ['pipe', 'pipe', 'ignore'],
-        env: { ...process.env, KIMI_CODE_STATUS_LINE: '1' },
-        // Own process group on POSIX so a timeout can drop the whole tree,
-        // not just the shell wrapper.
-        detached: !isWin,
-      });
+      child = spawn(
+        isWin ? (process.env['ComSpec'] ?? 'cmd.exe') : 'sh',
+        isWin ? ['/d', '/s', '/c', `"${command}"`] : ['-c', command],
+        {
+          stdio: ['pipe', 'pipe', 'ignore'],
+          env: { ...process.env, KIMI_CODE_STATUS_LINE: '1' },
+          // Own process group on POSIX so a timeout can drop the whole tree,
+          // not just the shell wrapper.
+          detached: !isWin,
+          // Preserve the nested quotes in cmd /s /c "<command>" instead of
+          // letting libuv escape them as literal backslashes.
+          windowsVerbatimArguments: isWin,
+        },
+      );
     } catch {
       finish(null);
       return;
