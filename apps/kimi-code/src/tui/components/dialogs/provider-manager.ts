@@ -14,6 +14,7 @@
  *   - ↑ / ↓             move highlight
  *   - ← / → · PgUp/PgDn page
  *   - Enter             on `[ Add New Platform ]` → `onAdd()`
+ *   - R                 refresh provider models via `onRefresh()`
  *   - D                 delete with inline `[y/N]` confirmation
  *                         on a source row → `onDeleteSource(providerIds)`
  *                         on `[ Add New Platform ]` → ignored
@@ -61,6 +62,7 @@ export interface ProviderManagerOptions {
   /** Provider id of the currently active model. */
   readonly activeProviderId?: string;
   readonly onAdd: () => void;
+  readonly onRefresh: () => void;
   /** Delete all providers under a source (Open Platform / custom-registry
    *  fetch / standalone). Passed the full provider-id list so the host
    *  doesn't have to re-derive the source grouping. */
@@ -91,7 +93,7 @@ type Row = SourceRow | AddRow;
 
 const ADD_ROW_LABEL = '[ Add New Platform ]';
 const PAGE_SIZE = 8;
-const HEADER_HINT = '↑↓ navigate · D delete · Esc cancel';
+const HEADER_HINT = '↑↓ navigate · R refresh · D delete · Esc cancel';
 
 // Narrows a `ProviderConfig` blob to a `CustomRegistrySource` payload.
 // Mirrors `readCustomRegistrySource` in `kimi-tui.ts`. We can't import
@@ -312,8 +314,13 @@ export class ProviderManagerComponent extends Container implements Focusable {
       return;
     }
 
-    // Delete the highlighted provider with the D key.
     const ch = printableChar(data);
+    if (ch === 'r' || ch === 'R') {
+      this.opts.onRefresh();
+      return;
+    }
+
+    // Delete the highlighted provider with the D key.
     if (ch === 'd' || ch === 'D') {
       this.armDeleteConfirm();
     }
