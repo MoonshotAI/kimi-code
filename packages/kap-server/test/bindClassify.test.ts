@@ -4,7 +4,7 @@ import { classify } from '../src/security/bindClassify';
 
 describe('classify', () => {
   describe('loopback', () => {
-    it.each([['127.0.0.1'], ['127.255.255.255'], ['::1'], ['localhost']])(
+    it.each([['127.0.0.1'], ['127.255.255.255'], ['::1'], ['localhost'], ['LOCALHOST']])(
       '%s → loopback',
       (host) => {
         expect(classify(host)).toBe('loopback');
