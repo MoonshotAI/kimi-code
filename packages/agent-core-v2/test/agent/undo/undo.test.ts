@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { type IDisposable } from '#/_base/di/lifecycle';
+import {
+  resetUnexpectedErrorHandler,
+  setUnexpectedErrorHandler,
+} from '#/_base/errors/unexpectedError';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
 import { ContextApplyCompaction } from '#/agent/contextMemory/contextEvents';
@@ -19,7 +24,9 @@ import { IEventBus } from '#/app/event/eventBus';
 import { ErrorCodes } from '#/errors';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ToolsUpdateStore } from '#/features/todo/todoOps';
+import type { TodoItem } from '#/features/todo/todoItem';
 import { IAgentTodoService } from '#/features/todo/todoService';
+import type { DurableAgentRuntimeParticipant } from '#/state/eventDispatcher';
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 import type { WireRecord } from '#/wire/record';
 import { IWireService } from '#/wire/wire';
@@ -317,7 +324,7 @@ describe('AgentConversationUndoService', () => {
     expect(ctx.agentState.get(turnKey).nextTurnId).toBe(2);
   });
 
-  it('reports the earliest removed turn id when a trailing non-anchor turn follows the anchor', async () => {
+  it('reports the removed turn id only when context anchors were opened by engine turns', async () => {
     await setup();
     const undo = ctx.get(IAgentConversationUndoService);
     const loop = ctx.get(IAgentLoopService);
@@ -363,34 +370,30 @@ describe('AgentConversationUndoService', () => {
     } finally {
       subscription.dispose();
     }
-  });
 
-  it('omits the removed turn id when context anchors were not opened by engine turns', async () => {
-    await setup();
-    const undo = ctx.get(IAgentConversationUndoService);
     ctx.get(IAgentContextMemoryService).append(
       {
         role: 'user',
-        content: [{ type: 'text', text: 'u1' }],
+        content: [{ type: 'text', text: 'u2' }],
         toolCalls: [],
         origin: { kind: 'user' },
       },
       {
         role: 'assistant',
-        content: [{ type: 'text', text: 'a1' }],
+        content: [{ type: 'text', text: 'a2' }],
         toolCalls: [],
       },
     );
 
-    let fromTurnId: number | undefined = Number.NaN;
-    const subscription = ctx.get(IEventBus).subscribe(ContextUndone, (event) => {
-      fromTurnId = event.fromTurnId;
+    let absentTurnId: number | undefined = Number.NaN;
+    const second = ctx.get(IEventBus).subscribe(ContextUndone, (event) => {
+      absentTurnId = event.fromTurnId;
     });
     try {
       await undo.undo(1);
-      expect(fromTurnId).toBeUndefined();
+      expect(absentTurnId).toBeUndefined();
     } finally {
-      subscription.dispose();
+      second.dispose();
     }
   });
 
@@ -419,7 +422,7 @@ describe('AgentConversationUndoService', () => {
     try {
       await ctx.get(IAgentConversationUndoService).undo(1);
 
-      expect(order).toEqual(['flush', 'state', 'flush', 'context.undone']);
+      expect(order).toEqual(['flush', 'flush', 'state', 'flush', 'context.undone']);
     } finally {
       subscription.dispose();
       flush.mockRestore();
@@ -428,7 +431,7 @@ describe('AgentConversationUndoService', () => {
 
   it.each([
     [1, []],
-    [2, ['state']],
+    [3, ['state']],
   ] as const)(
     'rejects the undo when wire flush %i fails',
     async (failureCall, expectedReconciled) => {
@@ -554,7 +557,7 @@ describe('AgentConversationUndoService', () => {
     expect(ctx.context.get().map((m) => m.role)).toEqual(['user', 'assistant']);
   });
 
-  it('clears lastPrompt when undo removes the only prompt', async () => {
+  it('reconciles lastPrompt after undo', async () => {
     await setup();
     const metadata = ctx.get(ISessionMetadata);
     await metadata.ready;
@@ -562,16 +565,10 @@ describe('AgentConversationUndoService', () => {
     ctx.appendTurnExchange('u1', 'a1');
 
     await ctx.get(IAgentConversationUndoService).undo(1);
-
     await expect(metadata.read()).resolves.toMatchObject({ lastPrompt: undefined });
-  });
 
-  it('uses the newest pending prompt as lastPrompt after undo', async () => {
-    await setup();
-    const metadata = ctx.get(ISessionMetadata);
-    await metadata.ready;
-    ctx.appendTurnExchange('u1', 'a1');
     ctx.appendTurnExchange('u2', 'a2');
+    ctx.appendTurnExchange('u3', 'a3');
     const list = vi.spyOn(ctx.get(IAgentPromptService), 'list').mockReturnValue({
       active: undefined,
       launching: false,
@@ -688,5 +685,95 @@ describe('AgentConversationUndoService', () => {
     expect(redelivered.map((message) => (message.origin as TaskOrigin).taskId).sort()).toEqual(
       [taskA, taskB].sort(),
     );
+  });
+
+  it('registers a participant that late-attaches inside the undo rerun window', async () => {
+    await setup();
+    const unexpected: unknown[] = [];
+    setUnexpectedErrorHandler((error) => unexpected.push(error));
+    try {
+      const dispatcher = ctx.dispatcher;
+      const box: { todos: readonly TodoItem[] } = { todos: [] };
+      const folded: TodoItem[][] = [];
+      const participant: DurableAgentRuntimeParticipant<{ todos: readonly TodoItem[] }> = {
+        id: 'runtime.test.rerun-late',
+        events: [ToolsUpdateStore],
+        undoable: true,
+        transition: (draft, event) => {
+          if (event instanceof ToolsUpdateStore && event.key === 'todo') {
+            const value = event.value as TodoItem[];
+            draft.todos = value;
+            folded.push(value);
+          }
+        },
+        getState: () => box,
+        commit: (next) => {
+          box.todos = next.todos;
+        },
+      };
+      const update = (title: string) =>
+        new ToolsUpdateStore({ agentId: 'main', key: 'todo', value: [{ title, status: 'pending' }] });
+      await dispatcher.dispatch(update('kept'));
+      ctx.appendTurnExchange('u1', 'a1');
+      await dispatcher.dispatch(update('doomed'));
+
+      let lateAttach: Promise<IDisposable> | undefined;
+      let liveDispatch: Promise<void> | undefined;
+      const originalRestore = dispatcher.restore.bind(dispatcher);
+      const restoreSpy = vi.spyOn(dispatcher, 'restore').mockImplementation(async () => {
+        const restored = originalRestore();
+        lateAttach = dispatcher.attachLate(participant);
+        liveDispatch = dispatcher.dispatch(update('live'));
+        await restored;
+      });
+      try {
+        await ctx.get(IAgentConversationUndoService).undo(1);
+
+        await expect(lateAttach!).resolves.toBeDefined();
+        await liveDispatch;
+        expect(folded).toEqual([
+          [{ title: 'kept', status: 'pending' }],
+          [{ title: 'live', status: 'pending' }],
+        ]);
+        expect(box.todos).toEqual([{ title: 'live', status: 'pending' }]);
+
+        await dispatcher.dispatch(update('after'));
+        expect(box.todos).toEqual([{ title: 'after', status: 'pending' }]);
+        expect(ctx.get(IAgentTodoService).get()).toEqual([{ title: 'after', status: 'pending' }]);
+        expect(
+          unexpected.filter((error) => String((error as Error)?.message).includes('late-attached')),
+        ).toEqual([]);
+      } finally {
+        restoreSpy.mockRestore();
+      }
+    } finally {
+      resetUnexpectedErrorHandler();
+    }
+  });
+
+  it('recovers the undo when the rerun restore fails transiently', async () => {
+    await setup();
+    ctx.appendTurnExchange('u1', 'a1');
+    const wire = ctx.get(IWireService);
+    const originalFlush = wire.flush.bind(wire);
+    const failure = new Error('transient storage failure');
+    let flushCalls = 0;
+    const flush = vi.spyOn(wire, 'flush').mockImplementation(async () => {
+      flushCalls += 1;
+      if (flushCalls === 2) throw failure;
+      await originalFlush();
+    });
+
+    try {
+      await expect(ctx.get(IAgentConversationUndoService).undo(1)).resolves.toBe(1);
+
+      expect(ctx.context.get()).toEqual([]);
+      expect(ctx.dispatcher.restorePhase).toBe('ready');
+      const persisted = await ctx.persistedWireRecords();
+      expect(persisted.filter((record) => record.type === 'agent.switched')).toHaveLength(1);
+      expect(records.filter((record) => record.event === 'conversation_undo')).toHaveLength(1);
+    } finally {
+      flush.mockRestore();
+    }
   });
 });

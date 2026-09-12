@@ -101,27 +101,22 @@ const EXACT_COMPACTION_PROFILE: ResolvedAgentProfile = normalizeAgentProfile({
 });
 
 describe('FullCompaction', () => {
-  it('keeps an oversized trailing user message as recent', () => {
+  it('keeps oversized trailing user messages as recent', () => {
     const strategy = testCompactionStrategy();
-    const messages = [
+    const single = [
       textMessage('user', 'old user'),
       textMessage('assistant', 'old assistant'),
       textMessage('user', `pending user ${'x'.repeat(1_200)}`),
     ];
+    expect(strategy.computeCompactCount(single, 'auto')).toBe(2);
 
-    expect(strategy.computeCompactCount(messages, 'auto')).toBe(2);
-  });
-
-  it('keeps consecutive trailing user messages as recent', () => {
-    const strategy = testCompactionStrategy();
-    const messages = [
+    const consecutive = [
       textMessage('user', 'old user'),
       textMessage('assistant', 'old assistant'),
       textMessage('user', `pending user one ${'x'.repeat(1_200)}`),
       textMessage('user', `pending user two ${'x'.repeat(1_200)}`),
     ];
-
-    expect(strategy.computeCompactCount(messages, 'auto')).toBe(2);
+    expect(strategy.computeCompactCount(consecutive, 'auto')).toBe(2);
   });
 
   it('compacts the prefix when the trailing exchange itself is oversized', () => {
@@ -3425,6 +3420,26 @@ describe('FullCompaction context recovery pointer', () => {
       `window 2: lines ${String(secondLines.start)}–${String(secondLines.end)}   ← the conversation this note summarizes`,
     );
     expect(note).toContain(`window 3 (the one you are in now) starts at line ${String(secondLines.end + 1)}`);
+    await ctx.expectResumeMatches();
+  });
+
+  it('renders recovery windows over a journal carrying undo switch edges', async () => {
+    const ctx = recoveryAgent(appService(IFileSystemStorageService, locatedStorage(JOURNAL_HOME)));
+    await ctx.restorePersisted();
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'doomed user two', 'doomed assistant two', 40);
+    await ctx.rpc.undoHistory({ count: 1 });
+    ctx.appendExchange(3, 'recent user three', 'recent assistant three', 40);
+
+    await compactOnce(ctx, 'Summary after undo.');
+
+    const [record] = applyCompactionRecords(ctx);
+    expect(record?.wireLines).toEqual({ start: 1, end: expect.any(Number) });
+    const note = noteText(ctx);
+    expect(note).toContain('## Context Recovery');
+    expect(note).toContain('agent.switched');
+    expect(note).toContain('base:{branch,line}');
+    expect(note).not.toContain('doomed user two');
     await ctx.expectResumeMatches();
   });
 

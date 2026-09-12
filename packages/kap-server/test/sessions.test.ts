@@ -17,6 +17,7 @@ import {
   IOAuthService,
   type Event2,
   type IOAuthService as IOAuthServiceType,
+  IAgentContextMemoryService,
   IAgentGoalService,
   IAgentConversationUndoService,
   IAgentCronService,
@@ -24,12 +25,14 @@ import {
   IEventBus,
   IEventService,
   ISessionManager,
+  IWireService,
   IWorkspaceService,
   MAIN_AGENT_ID,
   closeSessionById,
   getLiveSessionById,
   resumeSessionById,
   sessionDirOf,
+  type ContextMessage,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
@@ -1084,9 +1087,14 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
-  it('returns 40401 when deleting a missing session', async () => {
+  it('rejects a missing session delete and an unsupported action suffix with their error codes', async () => {
     const { body } = await postJson<null>('/api/v1/sessions/sess_missing:delete');
     expect(body.code).toBe(40401);
+
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const suffix = await postJson<null>(`/api/v1/sessions/${created.body.data.id}:restart`);
+    expect(suffix.body.code).toBe(40001);
   });
 
   it('cold-loads a persisted session on :undo instead of 40401', async () => {
@@ -1126,13 +1134,6 @@ describe('server-v2 /api/v1/sessions', () => {
     } finally {
       undo.mockRestore();
     }
-  });
-
-  it('rejects an unsupported action suffix (40001)', async () => {
-    const cwd = home as string;
-    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
-    const { body } = await postJson<null>(`/api/v1/sessions/${created.body.data.id}:restart`);
-    expect(body.code).toBe(40001);
   });
 
   it('creates a child session tagged with parent_session_id and child_session_kind', async () => {
@@ -1226,6 +1227,73 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(forkedCron.list().map((t) => ({ id: t.id, prompt: t.prompt }))).toEqual([
       { id: task.id, prompt: 'fork me' },
     ]);
+  });
+
+  it('forks an undo-branched wire self-contained and replays it equivalently', async () => {
+    const cwd = home as string;
+    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const parentId = parent.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, parentId);
+    expect(session).toBeDefined();
+    await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    const agent = session!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    const context = agent.accessor.get(IAgentContextMemoryService);
+    const user = (text: string): ContextMessage => ({
+      role: 'user',
+      content: [{ type: 'text', text }],
+      toolCalls: [],
+      origin: { kind: 'user' },
+    });
+    const assistant = (text: string): ContextMessage => ({
+      role: 'assistant',
+      content: [{ type: 'text', text }],
+      toolCalls: [],
+    });
+    context.append(user('first prompt'), assistant('first answer'));
+    context.append(user('second prompt'), assistant('second answer'));
+    await agent.accessor.get(IAgentConversationUndoService).undo(1);
+    await agent.accessor.get(IWireService).flush();
+    const messageText = (messages: readonly ContextMessage[]) =>
+      messages.map((message) =>
+        message.content.map((part) => (part.type === 'text' ? part.text : '')).join(''),
+      );
+    const sourceText = messageText(context.get());
+    expect(sourceText).toEqual(['first prompt', 'first answer']);
+
+    const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {});
+    expect(forked.body.code).toBe(0);
+    const forkedId = forked.body.data.id;
+
+    const wireFiles = (await readdir(home as string, { recursive: true })).filter(
+      (path) =>
+        path.endsWith(join('agents', 'main', 'wire.jsonl')) &&
+        (path.includes(parentId) || path.includes(forkedId)),
+    );
+    const sourceLines = (await readFile(
+      join(home as string, wireFiles.find((path) => path.includes(parentId))!),
+      'utf8',
+    ))
+      .trimEnd()
+      .split('\n');
+    const forkedLines = (await readFile(
+      join(home as string, wireFiles.find((path) => path.includes(forkedId))!),
+      'utf8',
+    ))
+      .trimEnd()
+      .split('\n');
+    const recordType = (line: string) => (JSON.parse(line) as { type: string }).type;
+    expect(forkedLines.some((line) => recordType(line) === 'agent.switched')).toBe(true);
+    expect(forkedLines.some((line) => line.includes('second prompt'))).toBe(true);
+    expect(forkedLines.slice(0, sourceLines.length)).toEqual(sourceLines);
+    expect(recordType(forkedLines.at(-1)!)).toBe('forked');
+
+    const resumed = await resumeSessionById((server as RunningServer).core.accessor, forkedId);
+    expect(resumed).toBeDefined();
+    const forkedContext = resumed!.accessor
+      .get(IAgentLifecycleService)
+      .handleOf(MAIN_AGENT_ID)!
+      .accessor.get(IAgentContextMemoryService);
+    expect(messageText(forkedContext.get())).toEqual(sourceText);
   });
 
   it('continues a paginated attachment read after forking and removing the source file', async () => {

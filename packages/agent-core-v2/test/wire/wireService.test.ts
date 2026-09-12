@@ -955,20 +955,13 @@ describe('WireService flush', () => {
 });
 
 describe('WireService journal location', () => {
-  it('counts every line written to the journal, including the metadata envelope', async () => {
+  it('counts journal lines across appends and a fresh read-back', async () => {
     await wire.seal();
     wire.appendRecord({ type: 'wire.test.one', time: 1 });
     wire.appendRecord({ type: 'wire.test.two', time: 2 });
     await wire.flush();
 
     expect(wire.lineCount()).toBe(3);
-  });
-
-  it('recounts the journal lines when a fresh service reads it back', async () => {
-    await wire.seal();
-    wire.appendRecord({ type: 'wire.test.one', time: 1 });
-    wire.appendRecord({ type: 'wire.test.two', time: 2 });
-    await wire.flush();
 
     const reopened = wireOverLog(log, KEY);
     expect(reopened.lineCount()).toBe(0);
@@ -1140,5 +1133,50 @@ describe('WireService tree projection', () => {
     expect(journal.journalRef.branch).toBe('b2');
     expect(journal.branches()).toEqual(['main', 'b1', 'b2']);
     expect(journal.nextSeq()).toBe(12);
+  });
+
+  it('retries the branch switch when a concurrent append lands mid-read, then gives up after repeated interference', async () => {
+    const records: WireRecord[] = [
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'context.append_message', message: userPrompt('first', 'p1'), time: 1 },
+      {
+        type: 'context.append_message',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] },
+        time: 2,
+      },
+    ];
+    let concurrent: IWireService | undefined;
+    let interferences = 0;
+    let maxInterferences = 1;
+    const log = recordingWireLog(records);
+    log.read = function <R>(): AsyncIterable<R> {
+      const snapshot = [...records];
+      const interfere = interferences < maxInterferences;
+      if (interfere) interferences += 1;
+      return (async function* () {
+        try {
+          for (const record of snapshot) {
+            yield record as R;
+          }
+        } finally {
+          if (interfere) {
+            concurrent!.appendRecord({ type: 'wire.test.concurrent', time: 9 });
+          }
+        }
+      })();
+    };
+    concurrent = wireOverLog(log, 'concurrent');
+
+    const switched = await concurrent.switchBranch({ turns: 1 });
+
+    expect(switched).toMatchObject({ branch: 'b1', base: { branch: 'main', line: 1 }, forkLine: 1 });
+    expect(records[3]).toEqual({ type: 'wire.test.concurrent', time: 9 });
+    expect(records[4]?.type).toBe('agent.switched');
+
+    interferences = 0;
+    maxInterferences = Number.MAX_SAFE_INTEGER;
+    await expect(concurrent.switchBranch({ turns: 1 })).rejects.toMatchObject({
+      code: WireErrors.codes.RECORDS_WRITE_FAILED,
+    });
   });
 });

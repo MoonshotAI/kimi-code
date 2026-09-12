@@ -162,9 +162,13 @@ export class WireService extends Service implements IWireService, IAgentJournal 
   }
 
   async switchBranch(input: SwitchBranchInput): Promise<SwitchedBranch> {
-    await this.drainPersisted();
-    const entries = await this.readStableEntries();
-    if (this.lines !== this.lastReadLineCount) {
+    let entries: WireLine[] | undefined;
+    for (let attempt = 0; attempt < 2 && entries === undefined; attempt++) {
+      await this.drainPersisted();
+      const read = await this.readStableEntries();
+      if (this.lines === this.lastReadLineCount) entries = read;
+    }
+    if (entries === undefined) {
       throw new WireError(
         WireErrors.codes.RECORDS_WRITE_FAILED,
         'Wire journal changed while switching branches',

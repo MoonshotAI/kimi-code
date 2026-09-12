@@ -6,7 +6,7 @@ import {
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { WireRecord } from '#/wire/record';
 
-import { activeChain, AGENT_SWITCHED_TYPE, type WireLine, type WireTree } from './tree';
+import { activeChain, AGENT_SWITCHED_TYPE, parseTree, type WireLine, type WireTree } from './tree';
 
 export type ForkLineFailure = 'compaction_boundary' | 'insufficient';
 
@@ -130,6 +130,11 @@ export function restorableChain(
     }
   }
   return [...chain, ...reIncluded].toSorted((a, b) => a.line - b.line);
+}
+
+export function flattenChain(records: readonly WireRecord[]): WireRecord[] {
+  const entries: WireLine[] = records.map((record, index) => ({ record, line: index + 1 }));
+  return restorableChain(entries, parseTree(entries, entries.length)).map(({ record }) => record);
 }
 
 export interface UndoSwitchRecords {

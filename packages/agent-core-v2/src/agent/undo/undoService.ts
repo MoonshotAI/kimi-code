@@ -126,7 +126,11 @@ export class AgentConversationUndoService
       } catch (error) {
         throw this.forkError(error, turns);
       }
-      await this.dispatcher.restore();
+      try {
+        await this.dispatcher.restore();
+      } catch {
+        await this.dispatcher.restore();
+      }
       this.tokenCounting.recordTruncation(
         this.agentCtx.agentContext,
         this.context.get().length,
