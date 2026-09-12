@@ -72,7 +72,7 @@ export class AgentStateTracker {
 
   seedToolFromTask(profileKind: string, createdAt: string, info: AgentTaskInfo | undefined): boolean {
     const agentInfo = info === undefined ? undefined : agentInfoOfTask(info);
-    const toolCallId = agentInfo?.parentToolCallId;
+    const toolCallId = agentInfo === undefined ? undefined : (agentInfo.parentToolCallId ?? agentInfo.taskId);
     if (toolCallId === undefined || toolCallId.length === 0) return false;
     this.origin = {
       kind: 'tool-agent',
@@ -181,7 +181,7 @@ export class AgentStateTracker {
   }
 }
 
-function agentInfoOfTask(info: AgentTaskInfo): { parentToolCallId?: string } | undefined {
+function agentInfoOfTask(info: AgentTaskInfo): { taskId: string; parentToolCallId?: string } | undefined {
   if (info.kind !== 'agent') return undefined;
-  return info as { parentToolCallId?: string };
+  return info;
 }

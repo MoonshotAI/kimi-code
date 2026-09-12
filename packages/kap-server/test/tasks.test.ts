@@ -139,9 +139,15 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 
-  function fakeTask(kind: 'process' | 'agent' | 'question', output?: string): AgentTask {
+  let fakeTaskSeq = 0;
+
+  function fakeTask(
+    kind: 'process' | 'agent' | 'question',
+    output?: string,
+    parentToolCallId?: string,
+  ): AgentTask {
     return {
-      idPrefix: 'test',
+      taskId: `call_test_${++fakeTaskSeq}`,
       kind,
       description: `fake ${kind} task`,
       start: (sink) => {
@@ -157,9 +163,9 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
               kind: 'agent',
               agentId: 'sub-1',
               subagentType: 'explore',
-              parentToolCallId: 'call-parent-1',
               model: 'provider/secondary',
               thinkingEffort: 'low',
+              parentToolCallId,
             };
           case 'question':
             return { ...base, kind: 'question', questionCount: 1 };
@@ -189,12 +195,13 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     const processId = tasks.registerTask(fakeTask('process'));
     const agentId = tasks.registerTask(fakeTask('agent'));
     const questionId = tasks.registerTask(fakeTask('question'));
+    const legacyAgentId = tasks.registerTask(fakeTask('agent', undefined, 'call_legacy_parent'));
     await flush();
 
     const { body } = await getJson<ListWire>(`/api/v1/sessions/${id}/tasks`);
     expect(body.code).toBe(0);
     const byId = new Map(body.data.items.map((t) => [t.id, t]));
-    expect(byId.size).toBe(3);
+    expect(byId.size).toBe(4);
 
     const process = byId.get(processId);
     expect(process).toMatchObject({
@@ -216,7 +223,7 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
       thinking_effort: 'low',
       agent_id: 'sub-1',
       subagent_type: 'explore',
-      parent_tool_call_id: 'call-parent-1',
+      parent_tool_call_id: agentId,
     });
     expect(byId.get(agentId)?.command).toBeUndefined();
 
@@ -230,8 +237,9 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     expect(byId.get(questionId)?.agent_id).toBeUndefined();
     expect(byId.get(processId)?.subagent_type).toBeUndefined();
     expect(byId.get(questionId)?.subagent_type).toBeUndefined();
-    expect(byId.get(processId)?.parent_tool_call_id).toBeUndefined();
+    expect(byId.get(processId)?.parent_tool_call_id).toBe(processId);
     expect(byId.get(questionId)?.parent_tool_call_id).toBeUndefined();
+    expect(byId.get(legacyAgentId)?.parent_tool_call_id).toBe('call_legacy_parent');
   });
 
   it('reports run_in_background from the task detached flag', async () => {
@@ -287,7 +295,6 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
       kind: 'subagent',
       agent_id: 'sub-1',
       subagent_type: 'explore',
-      parent_tool_call_id: 'call-parent-1',
     });
 
     const missing = await getJson<null>(`/api/v1/sessions/${id}/tasks/nope`);

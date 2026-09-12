@@ -24,12 +24,14 @@ import {
   type TaskServiceTestManager,
 } from './stubs';
 
+let agentTaskSeq = 0;
+
 function agentTask(
   completion: Promise<{ result: string }>,
   description: string,
 ): SubagentTask {
   return new SubagentTask(
-    { agentId: 'agent-child', profileName: 'coder', completion },
+    { agentId: 'agent-child', profileName: 'coder', parentToolCallId: `call_agent_${++agentTaskSeq}`, completion },
     description,
     new AbortController(),
   );
@@ -280,7 +282,7 @@ describe('task notification → main agent (real Agent instance)', () => {
         const background = main.get(IAgentTaskService);
         const taskId = background.registerTask(
           new SubagentTask(
-            { agentId: 'agent-child', profileName: 'coder', completion },
+            { agentId: 'agent-child', profileName: 'coder', parentToolCallId: 'call_agent', completion },
             'kill-order repro',
             controller,
           ),

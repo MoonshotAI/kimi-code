@@ -752,7 +752,7 @@ export function foldWireHistory(
 
   const taskIdByToolCall = (toolCallId: string): string | undefined => {
     for (const link of agentTaskLinks) {
-      if (link.parentToolCallId === toolCallId) return link.taskId;
+      if ((link.parentToolCallId ?? link.taskId) === toolCallId) return link.taskId;
     }
     return undefined;
   };
@@ -760,7 +760,7 @@ export function foldWireHistory(
   const agentRefsOf = (toolCallId: string): { agent_id: string; role?: 'child' | 'member' }[] => {
     const refs: { agent_id: string; role?: 'child' | 'member' }[] = [];
     for (const link of agentTaskLinks) {
-      if (link.parentToolCallId === toolCallId) refs.push({ agent_id: link.agentId, role: 'child' });
+      if ((link.parentToolCallId ?? link.taskId) === toolCallId) refs.push({ agent_id: link.agentId, role: 'child' });
     }
     return refs;
   };
@@ -1390,7 +1390,7 @@ export function foldWireHistory(
         }
         continue;
       }
-      const agentTaskId = `agent_${tool.toolCallId}`;
+      const agentTaskId = tool.toolCallId;
       if (tasks.has(agentTaskId)) continue;
       const args = (tool.input ?? {}) as Record<string, unknown>;
       const summary =

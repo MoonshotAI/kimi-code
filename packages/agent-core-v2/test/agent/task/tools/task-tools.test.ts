@@ -8,10 +8,8 @@ import {
   type AgentTask,
   type AgentTaskInfo,
   type AgentTaskOutputSnapshot,
-  type AgentTaskTrackOptions,
   type AgentTaskWaitDelivery,
   type ForegroundTaskReleaseReason,
-  type IAgentTaskEntry,
   type RegisterAgentTaskOptions,
 } from '#/agent/task/task';
 import { type AgentTaskStatus, TERMINAL_STATUSES } from '#/agent/task/types';
@@ -25,7 +23,6 @@ import { TaskStopTool } from '#/agent/tools/task/task-stop/taskStopTool';
 import { WaitForInputSchema } from '#/agent/tools/task/task-wait/task-wait';
 import { WaitForTool, startWaitProgress, waitForProgressUpdate } from '#/agent/tools/task/task-wait/taskWaitTool';
 import { abortError } from '#/_base/utils/abort';
-import type { ITaskHandle } from '#/app/task/task';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import { compileToolArgsValidator, validateToolArgs } from '#/tool/args-validator';
 import { ProcessTask, type ProcessTaskInfo } from '#/agent/tools/os/bash/process-task';
@@ -46,11 +43,11 @@ import { stubLoopWithHooks } from '../../loop/stubs';
 const signal = new AbortController().signal;
 
 function context<Input>(
-  toolCallId: string,
+  taskId: string,
   args: Input,
   executionSignal: AbortSignal = signal,
 ) {
-  return { turnId: 0, toolCallId, args, signal: executionSignal };
+  return { turnId: 0, toolCallId: taskId, args, signal: executionSignal };
 }
 
 function outputString(result: { readonly output: string | readonly unknown[] }): string {
@@ -146,10 +143,6 @@ class FakeTaskService implements IAgentTaskService {
       status,
       endedAt: entry.info.endedAt ?? 1_700_000_002_000,
     } as AgentTaskInfo;
-  }
-
-  track(_handle: ITaskHandle, _options: AgentTaskTrackOptions): IAgentTaskEntry {
-    throw new Error('track is not implemented in FakeTaskService.');
   }
 
   registerTask(_task: AgentTask, _options?: RegisterAgentTaskOptions): string {
@@ -1151,7 +1144,7 @@ describe('WaitForTool (harness)', () => {
       await ctx.restorePersisted();
       ctx.get(IAgentProfileService).update({ activeToolNames: ['TaskList', 'WaitFor'] });
       const tasks = ctx.get(IAgentTaskService);
-      const taskId = tasks.registerTask(new ProcessTask(slow.proc, 'sleep 60', 'background work'));
+      const taskId = tasks.registerTask(new ProcessTask(slow.proc, 'sleep 60', 'background work', undefined, undefined, 'call_background_work'));
       ctx.mockNextResponse(
         { type: 'function', id: 'list-before-wait', name: 'TaskList', arguments: '{}' },
         { type: 'function', id: 'wait-for-task', name: 'WaitFor', arguments: JSON.stringify({ timeout: 600, task_id: target === 'specific' ? taskId : undefined }) },
@@ -1203,7 +1196,7 @@ describe('WaitForTool (harness)', () => {
       await ctx.restorePersisted();
       ctx.get(IAgentProfileService).update({ activeToolNames: ['WaitFor'] });
       const tasks = ctx.get(IAgentTaskService);
-      const taskId = tasks.registerTask(new ProcessTask(slow.proc, 'sleep 60', 'background work'));
+      const taskId = tasks.registerTask(new ProcessTask(slow.proc, 'sleep 60', 'background work', undefined, undefined, 'call_background_work'));
       ctx.mockNextResponse(
         { type: 'function', id: 'wait-specific', name: 'WaitFor', arguments: JSON.stringify({ timeout: 600, task_id: taskId }) },
         { type: 'function', id: 'wait-any', name: 'WaitFor', arguments: '{"timeout":600}' },
@@ -1265,7 +1258,7 @@ describe('WaitForTool (harness)', () => {
       await ctx.restorePersisted();
       ctx.get(IAgentProfileService).update({ activeToolNames: ['WaitFor'] });
       const tasks = ctx.get(IAgentTaskService);
-      const taskId = tasks.registerTask(new ProcessTask(slow.proc, 'sleep 60', 'background work'));
+      const taskId = tasks.registerTask(new ProcessTask(slow.proc, 'sleep 60', 'background work', undefined, undefined, 'call_background_work'));
       ctx.mockNextResponse({
         type: 'function', id: 'racing-wait', name: 'WaitFor',
         arguments: JSON.stringify({ timeout: 600, task_id: taskId }),
@@ -1312,7 +1305,7 @@ describe('WaitForTool (harness)', () => {
     const slow = controllableProcess();
     try {
       const tasks = ctx.get(IAgentTaskService);
-      const taskId = tasks.registerTask(new ProcessTask(slow.proc, 'sleep 60', 'background work'));
+      const taskId = tasks.registerTask(new ProcessTask(slow.proc, 'sleep 60', 'background work', undefined, undefined, 'call_background_work'));
       const cancelled = new AbortController();
       const steered = new AbortController();
       const pending = executeTool(ctx.get(IWaitForTool), {
@@ -1343,7 +1336,7 @@ describe('WaitForTool (harness)', () => {
       expect(tool).toBeDefined();
 
       const slow = controllableProcess();
-      const taskId = tasks.registerTask(new ProcessTask(slow.proc, 'echo done', 'wait target'));
+      const taskId = tasks.registerTask(new ProcessTask(slow.proc, 'echo done', 'wait target', undefined, undefined, 'call_wait_target'));
       const pending = executeTool(tool!, context('wait_e2e', { timeout: 30, task_id: taskId }));
       await new Promise((resolve) => setTimeout(resolve, 10));
 
@@ -1380,11 +1373,11 @@ describe('WaitForTool (harness)', () => {
       expect(tool).toBeDefined();
 
       const slow = controllableProcess();
-      const taskA = tasks.registerTask(new ProcessTask(slow.proc, 'sleep 30', 'slow'));
+      const taskA = tasks.registerTask(new ProcessTask(slow.proc, 'sleep 30', 'slow', undefined, undefined, 'call_slow'));
       const pending = executeTool(tool!, context('wait_race', { timeout: 30 }));
 
       const late = controllableProcess();
-      const taskB = tasks.registerTask(new ProcessTask(late.proc, 'echo b', 'late comer'));
+      const taskB = tasks.registerTask(new ProcessTask(late.proc, 'echo b', 'late comer', undefined, undefined, 'call_late_comer'));
       await tasks.suppressTerminalNotification(taskB);
       late.pushOutput('B-OUT\n');
       late.resolveWait(0);
@@ -1424,6 +1417,7 @@ describe('WaitForTool (harness)', () => {
           {
             agentId: 'agent-hang',
             profileName: 'coder',
+            parentToolCallId: 'call_hang',
             completion: new Promise<{ result: string }>(() => {}),
           },
           'hung work',

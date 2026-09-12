@@ -213,7 +213,6 @@ export const agentTaskInfoSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('question'),
     questionCount: z.number(),
-    toolCallId: z.string().optional(),
     ...taskInfoBaseFields,
   }),
 ]);

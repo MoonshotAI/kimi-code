@@ -138,8 +138,8 @@ describe('AgentTaskPersistence', () => {
   it('listTasks silently skips non-validating task id files', async () => {
     await persistence.writeTask(sample());
     await writeFile(
-      join(sessionDir, SESSION_SCOPE, 'tasks', 'BAD-ID!!!.json'),
-      JSON.stringify(sample({ taskId: 'BAD-ID!!!' })),
+      join(sessionDir, SESSION_SCOPE, 'tasks', '...json'),
+      JSON.stringify(sample({ taskId: '..' })),
       'utf-8',
     );
     const all = await persistence.listTasks();

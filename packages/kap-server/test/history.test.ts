@@ -66,10 +66,9 @@ const MAIN_WIRE = [
     'task.started',
     {
       info: {
-        taskId: 'task-2',
+        taskId: 'call_1',
         kind: 'agent',
         agentId: 'sub-1',
-        parentToolCallId: 'call_1',
         status: 'running',
       },
     },
@@ -265,7 +264,7 @@ describe('server /api/v1/sessions/{sid}/history', () => {
       't0.1',
       't0.1.a1',
       'call_1',
-      'task-2',
+      'call_1',
       't1',
       'p1',
       't1.1',
@@ -283,7 +282,7 @@ describe('server /api/v1/sessions/{sid}/history', () => {
     const assistant = all.body.data.messages.find((m) => m['message_id'] === 't0.1.a1')!;
     expect(assistant).toMatchObject({ type: 'assistant', status: 'completed', text: 'Hi there' });
     const tool = all.body.data.messages.find((m) => m['tool_call_id'] === 'call_1')!;
-    expect(tool).toMatchObject({ type: 'tool_call', status: 'done', output: 'file.txt', task_id: 'task-2' });
+    expect(tool).toMatchObject({ type: 'tool_call', status: 'done', output: 'file.txt', tool_call_id: 'call_1' });
     const task = all.body.data.messages.find((m) => m['type'] === 'task')!;
     expect(task).toMatchObject({ type: 'task', kind: 'subagent', child_agent_id: 'sub-1' });
 
@@ -298,12 +297,12 @@ describe('server /api/v1/sessions/{sid}/history', () => {
       't0.1',
       't0.1.a1',
       'call_1',
-      'task-2',
+      'call_1',
     ]);
     expect(older.body.data.has_more).toBe(false);
 
     const newer = await getJson<HistoryWire>(`/api/v1/sessions/${id}/history?after_step=t0.1`);
-    expect(newer.body.data.messages.map(entityId)).toEqual(['task-2', 't1', 'p1', 't1.1', 't1.1.a1']);
+    expect(newer.body.data.messages.map(entityId)).toEqual(['call_1', 't1', 'p1', 't1.1', 't1.1.a1']);
     expect(newer.body.data.has_more).toBe(false);
 
     const missing = await getJson<HistoryWire>(`/api/v1/sessions/${id}/history?before_turn=t99`);
@@ -327,7 +326,7 @@ describe('server /api/v1/sessions/{sid}/history', () => {
       type: 'turn',
       turn_id: 't0',
       agent_id: 'sub-1',
-      origin: { kind: 'task', task_id: 'task-2' },
+      origin: { kind: 'task', task_id: 'call_1' },
     });
     const user = sub.body.data.messages.find((m) => m['type'] === 'user')!;
     expect(user).toMatchObject({

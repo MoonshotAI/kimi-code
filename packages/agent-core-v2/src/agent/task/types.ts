@@ -46,7 +46,7 @@ export interface AgentTaskSink {
 }
 
 export interface AgentTask {
-  readonly idPrefix: string;
+  readonly taskId: string;
   readonly kind: AgentTaskKind;
   readonly description: string;
   readonly timeoutMs?: number;
@@ -87,7 +87,6 @@ export type TaskInfo = TaskInfoBase &
     | {
         readonly kind: 'question';
         readonly questionCount: number;
-        readonly toolCallId?: string;
       }
   );
 

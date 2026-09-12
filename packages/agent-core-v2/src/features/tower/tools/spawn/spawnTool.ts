@@ -362,6 +362,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     return {
       agentId,
       profileName: TOWER_WORKER_PROFILE,
+      parentToolCallId: toolCallId,
       model: binding?.model,
       thinkingEffort: created.accessor.get(IAgentProfileService).getEffectiveThinkingLevel(),
       completion: mirrored.then((r) => ({ result: r.summary, usage: r.usage })),

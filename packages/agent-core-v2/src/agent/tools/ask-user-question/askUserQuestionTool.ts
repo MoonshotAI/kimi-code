@@ -136,7 +136,7 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
         new QuestionBackgroundTask(
           (taskSignal) => this.executeQuestion(args, { toolCallId, turnId, signal: taskSignal, trace }),
           description,
-          { questionCount: args.questions.length, toolCallId },
+          { questionCount: args.questions.length, taskId: toolCallId },
         ),
         { detached: true },
       );
