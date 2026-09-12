@@ -8,14 +8,15 @@ import { createAgentMachine } from '#human/agent/machine';
 import { createTurnMachine, type AssistantEntry, type HistoryMessage } from '#human/agent/turn';
 import { messageAppended, turnEnded } from '#human/agent/events';
 import { agentSlices, type AgentEventStore } from '#human/agent/slices';
+import { credentialsRecovery } from '#human/credentials/credentials';
 import { createEventStoreSync } from '#human/eventStore/eventStore';
 import { memoryJournal } from '#human/eventStore/journal';
 import type { LlmErrorMessage } from '#human/llm/errors';
 import type { FinishInfo } from '#human/llm/finish-reason';
 import type { StreamedMessagePart, UserMessage } from '#human/llm/message';
 import type { LlmModel } from '#human/llm/model';
-import { createLlmMachine } from '#human/llm/requester/machine';
 import type { LlmRecovery, LlmRecoveryRecord } from '#human/llm/requester/recovery';
+import type { LlmCredentialProvider } from '#human/llm/requester/requester';
 import { resolveMaxAttempts } from '#human/llm/requester/retry';
 import type { ToolResult as MachineToolResult, ToolUpdate } from '#human/tool/executor';
 import type { TokenUsage } from '#human/llm/usage';
@@ -114,6 +115,7 @@ export interface CreateMachineEngineOptions {
   readonly trace?: () => LLMRequestTrace | undefined;
   readonly source?: () => AgentLLMRequestSource | undefined;
   readonly toolTurnId?: () => number | undefined;
+  readonly steerSignal?: () => AbortSignal | undefined;
   readonly gate?: (signal: AbortSignal) => Promise<MachineRequesterGateDecision>;
   readonly onTrace?: (trace: LLMRequestTrace) => void;
   readonly onEvent?: (event: MachineEngineEvent) => void;
@@ -253,6 +255,7 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
     toolExecutor: options.toolExecutor,
     toolInfos: options.toolInfos,
     turnId: () => options.toolTurnId?.() ?? 0,
+    steerSignal: options.steerSignal,
     trace: options.trace,
     onToolCall: (payload) => {
       publish({
@@ -268,6 +271,17 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
       publish({ type: 'toolBatchFailed', error });
     },
   });
+  const current = (): LlmCredentialProvider | undefined => {
+    const source = options.source?.();
+    return source?.type === 'turn'
+      ? options.llmRequester.credentialsForTurn(source.turnId)
+      : options.llmRequester.currentCredentials();
+  };
+  const credentials: LlmCredentialProvider = {
+    resolve: () => current()?.resolve(),
+    canRecover: (error) => current()?.canRecover?.(error) === true,
+    invalidate: () => current()?.invalidate?.(),
+  };
   const journal = memoryJournal();
   const initialTurnId = options.initialTurnId ?? 0;
   if (initialTurnId > 0) {
@@ -281,18 +295,20 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
   const actor = createActor(
     createAgentMachine({
       tools: tools.tools,
-      turnActor: createTurnMachine(
-        createLlmMachine({
-          requester: requester.requester,
-        }),
-        {
-          retry: { maxAttemptsPerStep: options.maxAttemptsPerStep },
-          recovery: options.recovery,
+      turnActor: createTurnMachine(requester.requester, {
+        retry: { maxAttemptsPerStep: options.maxAttemptsPerStep },
+        recovery: {
+          propose: (ctx) => credentialsRecovery.propose(ctx) ?? options.recovery?.propose(ctx),
         },
-      ),
+      }),
       abortTimeoutMs: options.abortTimeoutMs,
     }),
-    { input: { request: { model: options.model, systemPrompt: options.systemPrompt }, store } },
+    {
+      input: {
+        request: { model: options.model, systemPrompt: options.systemPrompt, credentials },
+        store,
+      },
+    },
   );
   const subscriptions: Subscription[] = [
     actor.on('turn.started', (event) => {

@@ -15,7 +15,19 @@ import {
 import { AgentContextProjectorService } from '#/agent/contextProjector/contextProjectorService';
 import { AgentLLMRequesterService, KIMI_CODE_INFINITE_RETRY_ENV } from '#/agent/llmRequester/llmRequesterService';
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
+import { createMachineRequester } from '#/agent/loop/machine/requester';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import {
+  createTurnMachine,
+  type AssistantEntry,
+  type TurnEvent,
+  type TurnInput,
+  type TurnLlmEvent,
+} from '#human/agent/turn';
+import { UNKNOWN_CAPABILITY } from '#human/llm/capability';
+import type { LlmModel } from '#human/llm/model';
+import type { LlmRequester } from '#human/llm/requester/requester';
+import { createActor, emit, setup } from '#human/xstate2';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -61,6 +73,43 @@ import {
   registerTestAgentWire,
   registerTestEventDispatcher,
 } from '../../wire/stubs';
+
+const turnHarnessModel: LlmModel = {
+  provider: 'test',
+  model: 'test-model',
+  capability: UNKNOWN_CAPABILITY,
+};
+
+function createTurnHarness(requester: LlmRequester) {
+  return setup({
+    types: {
+      input: {} as TurnInput,
+      context: {} as { turnInput: TurnInput },
+      events: {} as TurnEvent,
+      emitted: {} as TurnLlmEvent,
+    },
+    actors: { turn: createTurnMachine(requester) },
+  }).createMachine({
+    id: 'turn-harness',
+    initial: 'running',
+    context: ({ input }) => ({ turnInput: input }),
+    states: {
+      running: {
+        invoke: {
+          src: 'turn',
+          input: ({ context }) => context.turnInput,
+          onDone: { target: 'completed' },
+        },
+        on: {
+          '*': {
+            actions: emit(({ event }) => event as TurnLlmEvent),
+          },
+        },
+      },
+      completed: { type: 'final' },
+    },
+  });
+}
 
 const capabilities: ModelCapability = {
   image_in: false,
@@ -117,7 +166,6 @@ function createRequester(
     maxContextSize: 1000,
     alwaysThinking: false,
     providerName: 'p',
-    authProvider: { getAuth: async () => undefined },
   };
   return {
     model,
@@ -168,6 +216,7 @@ function createService(
   ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-code-llm-requester-test', options.env ?? {}));
   const thinkingLevel = options.thinkingLevel ?? 'off';
   const profile: Partial<IAgentProfileService> = {
+    hasProvider: () => true,
     resolveModelContext: () => ({
       modelAlias: 'm',
       modelCapabilities: capabilities,
@@ -754,7 +803,6 @@ describe('AgentLLMRequesterService trace id', () => {
       maxContextSize: 1000,
       alwaysThinking: false,
       providerName: 'p',
-      authProvider: { getAuth: async () => undefined },
     };
     return {
       model,
@@ -974,54 +1022,54 @@ describe('AgentLLMRequesterService media resolver wiring', () => {
   });
 });
 
-describe('AgentLLMRequesterService tool call id normalization', () => {
-  function createScriptedRequester(
-    script: { ids: string[]; error?: Error }[],
-  ): ModelRequester {
-    const base = createRequester({ value: 0 });
-    let callIndex = 0;
-    return {
-      model: base.model,
-      request: async function* () {
-        const step = script[Math.min(callIndex++, script.length - 1)]!;
-        if (step.error !== undefined) {
-          if (step.ids.length > 0) {
-            yield {
-              type: 'part',
-              part: {
-                type: 'function',
-                id: step.ids[0]!,
-                name: 'Bash',
-                arguments: null,
-                _streamIndex: 0,
-              },
-            } satisfies ModelRequestEvent;
-          }
-          throw step.error;
-        }
-        const toolCalls: ToolCall[] = [];
-        for (const [index, id] of step.ids.entries()) {
+function createScriptedRequester(
+  script: { ids: string[]; error?: Error }[],
+): ModelRequester {
+  const base = createRequester({ value: 0 });
+  let callIndex = 0;
+  return {
+    model: base.model,
+    request: async function* () {
+      const step = script[Math.min(callIndex++, script.length - 1)]!;
+      if (step.error !== undefined) {
+        if (step.ids.length > 0) {
           yield {
             type: 'part',
-            part: { type: 'function', id, name: 'Bash', arguments: null, _streamIndex: index },
+            part: {
+              type: 'function',
+              id: step.ids[0]!,
+              name: 'Bash',
+              arguments: null,
+              _streamIndex: 0,
+            },
           } satisfies ModelRequestEvent;
-          yield {
-            type: 'part',
-            part: { type: 'tool_call_part', argumentsPart: '{"command":"ls"}', index },
-          } satisfies ModelRequestEvent;
-          toolCalls.push({ type: 'function', id, name: 'Bash', arguments: '{"command":"ls"}' });
         }
+        throw step.error;
+      }
+      const toolCalls: ToolCall[] = [];
+      for (const [index, id] of step.ids.entries()) {
         yield {
-          type: 'finish',
-          message: { role: 'assistant', content: [], toolCalls },
-          providerFinishReason: 'completed',
-          rawFinishReason: 'stop',
-          id: 'resp-1',
+          type: 'part',
+          part: { type: 'function', id, name: 'Bash', arguments: null, _streamIndex: index },
         } satisfies ModelRequestEvent;
-      },
-    };
-  }
+        yield {
+          type: 'part',
+          part: { type: 'tool_call_part', argumentsPart: '{"command":"ls"}', index },
+        } satisfies ModelRequestEvent;
+        toolCalls.push({ type: 'function', id, name: 'Bash', arguments: '{"command":"ls"}' });
+      }
+      yield {
+        type: 'finish',
+        message: { role: 'assistant', content: [], toolCalls },
+        providerFinishReason: 'completed',
+        rawFinishReason: 'stop',
+        id: 'resp-1',
+      } satisfies ModelRequestEvent;
+    },
+  };
+}
 
+describe('AgentLLMRequesterService tool call id normalization', () => {
   it('passes provider-unique ids through unchanged', async () => {
     const parts: StreamedMessagePart[] = [];
     const { service } = createService(
@@ -1104,5 +1152,87 @@ describe('AgentLLMRequesterService tool call id normalization', () => {
 
     const result = await service.request();
     expect(result.message.toolCalls[0]!.id).toBe('Bash_0__2');
+  });
+});
+
+describe('AgentLLMRequesterService attempt retry notification', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('notifies before resending with a repaired projection', async () => {
+    const calls = { value: 0 };
+    const { service } = createService(createRequester(calls), undefined);
+    const onAttemptRetry = vi.fn();
+
+    const result = await service.request({ onAttemptRetry });
+
+    expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
+    expect(calls.value).toBe(2);
+    expect(onAttemptRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('notifies before each indefinite-retry backoff', async () => {
+    vi.useFakeTimers();
+    const calls = { value: 0 };
+    const requester = createRequester(calls, new APIConnectionError('socket hang up'), [
+      new APIConnectionError('socket hang up again'),
+    ]);
+    const { service } = createService(requester, undefined, {
+      env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' },
+    });
+    const onAttemptRetry = vi.fn();
+
+    const promise = service.request({ onAttemptRetry });
+    await vi.runAllTimersAsync();
+    await promise;
+
+    expect(calls.value).toBe(3);
+    expect(onAttemptRetry).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not notify when the error is final', async () => {
+    const calls = { value: 0 };
+    const { service } = createService(
+      createRequester(calls, new APIStatusError(400, 'max_tokens must be positive')),
+      undefined,
+    );
+    const onAttemptRetry = vi.fn();
+
+    await expect(service.request({ onAttemptRetry })).rejects.toMatchObject({ statusCode: 400 });
+    expect(onAttemptRetry).not.toHaveBeenCalled();
+  });
+});
+
+describe('turn machine stream state across service-internal retries', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('discards the interrupted attempt stream when the service retries below the turn', async () => {
+    vi.useFakeTimers();
+    const { service } = createService(
+      createScriptedRequester([
+        { ids: ['call_a'], error: new APIConnectionError('terminated') },
+        { ids: ['call_b'] },
+      ]),
+      undefined,
+      { env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' } },
+    );
+    const machineRequester = createMachineRequester(service);
+    const doneEntries: AssistantEntry[] = [];
+    const actor = createActor(createTurnHarness(machineRequester.requester), {
+      input: { request: { model: turnHarnessModel }, history: [] },
+    });
+    actor.on('llm.done', (event) => doneEntries.push(event.entry));
+    actor.start();
+
+    await vi.runAllTimersAsync();
+    for (let index = 0; index < 10; index += 1) {
+      await vi.advanceTimersByTimeAsync(0);
+    }
+
+    expect(doneEntries).toHaveLength(1);
+    expect(doneEntries[0]?.message.toolCalls.map((toolCall) => toolCall.id)).toEqual(['call_b']);
   });
 });

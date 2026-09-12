@@ -233,6 +233,7 @@ export async function handleWebCommand(
           formatRemoteControlOutput({
             url: remoteControl.url,
             localOrigin: origin,
+            localServerToken: token,
             deviceName: remoteControl.deviceName,
             qrCode: qrCode.terminal,
             pngPath: qrCode.pngPath,

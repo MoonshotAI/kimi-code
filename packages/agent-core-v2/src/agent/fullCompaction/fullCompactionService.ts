@@ -11,6 +11,7 @@ import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTok
 import { IAgentLLMRequesterService, type AgentLLMRequestFinish } from '#/agent/llmRequester/llmRequester';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import { retryBackoffDelays, sleepForRetry } from '#/_base/utils/retry';
+import { runWithCredentialRecovery } from '#/llm-adapter/model/credential-recovery';
 import { IAgentLoopService, type LoopErrorContext } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
@@ -652,22 +653,30 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         const estimatedCompactionRequestTokens = this.requestTokens(messages);
 
         try {
-          const request = this.llmRequester.start(
-            {
-              messages,
-              maxOutputSize: compactionMaxOutputSize,
-              source: {
-                type: 'operation',
-                turnId: active.originTurnId,
-                requestKind: 'full_compaction',
-                logFields: { droppedCount },
+          const runRequest = async () => {
+            const request = this.llmRequester.start(
+              {
+                messages,
+                maxOutputSize: compactionMaxOutputSize,
+                source: {
+                  type: 'operation',
+                  turnId: active.originTurnId,
+                  requestKind: 'full_compaction',
+                  logFields: { droppedCount },
+                },
               },
-            },
-            undefined,
+              undefined,
+              signal,
+            );
+            active.trace = request.trace;
+            return request.result;
+          };
+          const result = await runWithCredentialRecovery(
+            this.llmRequester.currentCredentials(),
+            runRequest,
             signal,
           );
-          active.trace = request.trace;
-          attempt = collectSummary(await request.result);
+          attempt = collectSummary(result);
           break;
         } catch (error) {
           const isContextOverflow = this.shouldRecoverFromContextOverflow(

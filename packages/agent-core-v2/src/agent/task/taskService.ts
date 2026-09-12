@@ -14,7 +14,7 @@ import {
 } from '#/_base/utils/abort';
 import { setClampedTimeout } from '#/_base/utils/timer';
 import { escapeXml, escapeXmlAttr, escapeXmlTags } from '#/_base/utils/xml-escape';
-import { IEventBus } from '#/app/event/eventBus';
+import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { Error2, ErrorCodes } from '#/errors';
 import { z } from 'zod';
 import {
@@ -205,6 +205,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   declare readonly _serviceBrand: undefined;
 
   private readonly tasks = new Map<string, ManagedTask>();
+  private exitSuppressionArmed = false;
   private readonly buildingNotificationKeys = new Set<string>();
   private readonly pendingNotificationRequests = new Map<string, LoopNotifyHandle>();
   private readonly persistence: AgentTaskPersistence;
@@ -220,6 +221,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ITaskService private readonly taskService: ITaskService,
     @IEventBus private readonly eventBus: IEventBus,
+    @ISessionEventBus private readonly sessionEventBus: ISessionEventBus,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentReminderService private readonly reminder: IAgentReminderService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
@@ -778,21 +780,16 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     return results.filter((info): info is AgentTaskInfo => info !== undefined);
   }
 
+  async suppressAllTerminalNotifications(): Promise<void> {
+    this.exitSuppressionArmed = true;
+    for (const [, request] of Array.from(this.pendingNotificationRequests)) {
+      request.drop();
+    }
+  }
+
   async stopAllOnExit(reason: string): Promise<readonly AgentTaskInfo[]> {
+    await this.suppressAllTerminalNotifications();
     if (this.keepAliveOnExit()) return [];
-    const active = this.list(true);
-    await Promise.allSettled(
-      active
-        .filter((task) => task.detached === true)
-        .map((task) =>
-          this.suppressTerminalNotification(task.taskId).catch((error: unknown) => {
-            this.log.error('terminal notification suppression failed', {
-              taskId: task.taskId,
-              error,
-            });
-          }),
-        ),
-    );
     return this.stopAll(reason);
   }
 
@@ -827,6 +824,14 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
 
   private keepAliveOnExit(): boolean {
     return resolveAgentTaskConfig(this.config)?.keepAliveOnExit === true;
+  }
+
+  private lifecycleActive(): boolean {
+    return this.sessionEventBus.isAgentActive(this.scopeContext.agentContext);
+  }
+
+  private marksTerminalNotificationSuppressed(entry: ManagedTask): boolean {
+    return this.exitSuppressionArmed && !this.keepAliveOnExit() && this.isDetached(entry);
   }
 
   async wait(
@@ -1030,11 +1035,21 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       entry.timeoutHandle = undefined;
     }
     const foregroundRelease = entry.foregroundRelease;
+    if (this.marksTerminalNotificationSuppressed(entry)) {
+      entry.terminalNotificationSuppressed = true;
+    }
     if (entry.outputPersistStarted) {
       await this.persistLive(entry);
     } else {
       entry.pendingOutput = [];
       entry.pendingOutputBytes = 0;
+    }
+    if (
+      this.marksTerminalNotificationSuppressed(entry) &&
+      entry.terminalNotificationSuppressed !== true
+    ) {
+      entry.terminalNotificationSuppressed = true;
+      await this.persistLive(entry);
     }
     this.fireTerminalEffects(entry);
     foregroundRelease?.resolve('terminal');
@@ -1061,9 +1076,11 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private recordTaskStarted(info: AgentTaskInfo): void {
-    void this.dispatcher.dispatch(
-      new TaskStarted({ agentId: this.scopeContext.agentId, info }),
-    );
+    if (this.lifecycleActive()) {
+      void this.dispatcher.dispatch(
+        new TaskStarted({ agentId: this.scopeContext.agentId, info }),
+      );
+    }
     this.telemetry.track2('background_task_created', {
       task_id: info.taskId,
       kind: info.kind === 'process' ? 'bash' : info.kind,
@@ -1071,9 +1088,11 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private recordTaskTerminated(info: AgentTaskInfo, outputTail?: string): void {
-    void this.dispatcher.dispatch(
-      new TaskTerminated({ agentId: this.scopeContext.agentId, info, outputTail }),
-    );
+    if (this.lifecycleActive()) {
+      void this.dispatcher.dispatch(
+        new TaskTerminated({ agentId: this.scopeContext.agentId, info, outputTail }),
+      );
+    }
     this.telemetry.track2('background_task_completed', {
       task_id: info.taskId,
       kind: info.kind,
@@ -1083,8 +1102,10 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private async notifyAgentTask(info: AgentTaskInfo): Promise<void> {
+    if (!this.lifecycleActive()) return;
     const context = await this.buildAgentTaskNotificationContext(info);
     if (context === undefined) return;
+    if (!this.lifecycleActive() || this.isTerminalNotificationSuppressed(info.taskId)) return;
     const key = notificationKey(context.origin);
     if (this.deliveredNotificationKeys.has(key)) return;
     const handle = this.loop.notify({
@@ -1275,6 +1296,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private fireNotificationHook(notification: AgentTaskNotification): void {
+    if (!this.lifecycleActive()) return;
     void this.dispatcher.dispatch(
       new TaskNotified({
         agentId: this.scopeContext.agentId,
@@ -1290,6 +1312,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
 
   private isTerminalNotificationSuppressed(taskId: string): boolean {
     return (
+      this.exitSuppressionArmed ||
       this.tasks.get(taskId)?.terminalNotificationSuppressed === true ||
       this.ghosts.get(taskId)?.terminalNotificationSuppressed === true
     );

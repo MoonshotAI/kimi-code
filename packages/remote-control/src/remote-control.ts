@@ -1,7 +1,10 @@
+import { createHash } from 'node:crypto';
 import { hostname, platform } from 'node:os';
 import { join } from 'node:path';
 import { request as httpRequest, validateHeaderName, validateHeaderValue } from 'node:http';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { promisify } from 'node:util';
+import { gzip } from 'node:zlib';
 
 import {
   createKimiDeviceId,
@@ -59,6 +62,14 @@ const BLOCKED_RESPONSE_HEADERS = new Set([
   'transfer-encoding',
   'upgrade',
 ]);
+const GZIP_MIN_BODY_BYTES = 1024;
+const GZIP_COMPRESSIBLE_TYPES = new Set([
+  'application/javascript',
+  'application/json',
+  'application/xml',
+  'image/svg+xml',
+]);
+const gzipAsync = promisify(gzip);
 
 interface RelayMessage {
   readonly type: string;
@@ -215,6 +226,47 @@ export function rewriteRemoteControlResponse(
     return Buffer.from(text);
   }
   return body;
+}
+
+function acceptsGzipEncoding(headers: readonly [string, string][]): boolean {
+  let wildcard = false;
+  for (const [name, value] of headers) {
+    if (name.toLowerCase() !== 'accept-encoding') continue;
+    for (const token of value.split(',')) {
+      const [encoding, ...params] = token.trim().toLowerCase().split(';');
+      if (encoding !== 'gzip' && encoding !== '*') continue;
+      const quality = params.map((param) => param.trim()).find((param) => param.startsWith('q='));
+      const acceptable = quality === undefined || Number(quality.slice(2)) > 0;
+      if (encoding === 'gzip') return acceptable;
+      wildcard = wildcard || acceptable;
+    }
+  }
+  return wildcard;
+}
+
+function isGzipCompressibleType(contentType: string): boolean {
+  const mime = contentType.split(';', 1)[0]!.trim().toLowerCase();
+  return mime.startsWith('text/') || GZIP_COMPRESSIBLE_TYPES.has(mime);
+}
+
+function rewrittenResponseETag(body: Buffer): string {
+  return `W/"${createHash('sha256').update(body).digest('hex')}"`;
+}
+
+function requestMatchesETag(
+  headers: readonly [string, string][],
+  etag: string,
+): boolean {
+  const candidates = [etag, etag.replace(/^W\//, '')];
+  for (const [name, value] of headers) {
+    if (name.toLowerCase() !== 'if-none-match') continue;
+    for (const token of value.split(',')) {
+      const candidate = token.trim();
+      if (candidate === '*') return true;
+      if (candidates.includes(candidate)) return true;
+    }
+  }
+  return false;
 }
 
 export async function startRemoteControl(
@@ -510,7 +562,12 @@ class RemoteControlClient {
       ) {
         throw new SyntaxError('invalid HTTP tunnel request message');
       }
-      const chunk = decodeBase64(parsed['body_base64']);
+      const bodyBase64 = parsed['body_base64'];
+      const minDecodedBytes = Math.floor(bodyBase64.length / 4) * 3 - 2;
+      if (this.pendingHttpBytes + minDecodedBytes > MAX_HTTP_REQUEST_BYTES) {
+        throw new SyntaxError('HTTP tunnel request exceeds 10 MiB');
+      }
+      const chunk = decodeBase64(bodyBase64);
       const pending = this.pendingHttpRequests.get(requestId) ?? { chunks: [], size: 0 };
       if (this.pendingHttpBytes + chunk.length > MAX_HTTP_REQUEST_BYTES) {
         throw new SyntaxError('HTTP tunnel request exceeds 10 MiB');
@@ -526,7 +583,8 @@ class RemoteControlClient {
     } catch (error) {
       if (requestId !== undefined) {
         this.clearPendingHttpRequest(requestId);
-        this.sendHttpResponse(requestId, buildErrorResponse(400));
+        const status = error instanceof SyntaxError ? 400 : 502;
+        this.sendHttpResponse(requestId, buildErrorResponse(status));
       }
       this.stderr.write(`Remote Control HTTP message error: ${errorMessage(error)}\n`);
     }
@@ -816,24 +874,56 @@ function requestLocalHttp(
         response.on('data', (chunk: Buffer | string) => chunks.push(Buffer.from(chunk)));
         response.once('error', reject);
         response.once('end', () => {
-          const contentType = response.headers['content-type'] ?? '';
-          const receivedBody = Buffer.concat(chunks);
-          const body =
-            response.headers['content-encoding'] === undefined
-              ? rewriteRemoteControlResponse(contentType, receivedBody, publicPrefix)
-              : receivedBody;
-          const rewritten = body !== receivedBody;
-          const headers = filterResponseHeaders(response.rawHeaders, rewritten);
-          if (rewritten) headers.push('Cache-Control', 'no-cache');
-          headers.push('Content-Length', String(body.length));
-          const statusCode = response.statusCode ?? 502;
-          const statusMessage = response.statusMessage ?? 'Bad Gateway';
-          resolve(
-            Buffer.concat([
+          void (async (): Promise<Buffer> => {
+            const contentType = response.headers['content-type'] ?? '';
+            const receivedBody = Buffer.concat(chunks);
+            let body =
+              response.headers['content-encoding'] === undefined
+                ? rewriteRemoteControlResponse(contentType, receivedBody, publicPrefix)
+                : receivedBody;
+            const rewritten = body !== receivedBody;
+            const headers = filterResponseHeaders(response.rawHeaders, rewritten);
+            if (rewritten) {
+              const etag = rewrittenResponseETag(body);
+              headers.push('Cache-Control', 'no-cache', 'ETag', etag);
+              const statusCode = response.statusCode ?? 502;
+              const revalidatable =
+                (parsed.method === 'GET' || parsed.method === 'HEAD') &&
+                statusCode >= 200 &&
+                statusCode < 300;
+              if (revalidatable && requestMatchesETag(parsed.headers, etag)) {
+                return Buffer.from(`HTTP/1.1 304 Not Modified\r\n${headerLines(headers)}\r\n\r\n`);
+              }
+            }
+            const negotiated =
+              response.headers['content-encoding'] === undefined &&
+              response.statusCode !== 206 &&
+              body.length >= GZIP_MIN_BODY_BYTES &&
+              isGzipCompressibleType(contentType);
+            if (negotiated) {
+              let varyCovers = false;
+              for (let index = 0; index < headers.length; index += 2) {
+                if (headers[index]!.toLowerCase() !== 'vary') continue;
+                const tokens = headers[index + 1]!
+                  .toLowerCase()
+                  .split(',')
+                  .map((token) => token.trim());
+                if (tokens.includes('*') || tokens.includes('accept-encoding')) varyCovers = true;
+              }
+              if (!varyCovers) headers.push('Vary', 'Accept-Encoding');
+            }
+            if (negotiated && acceptsGzipEncoding(parsed.headers)) {
+              body = await gzipAsync(body);
+              headers.push('Content-Encoding', 'gzip');
+            }
+            headers.push('Content-Length', String(body.length));
+            const statusCode = response.statusCode ?? 502;
+            const statusMessage = response.statusMessage ?? 'Bad Gateway';
+            return Buffer.concat([
               Buffer.from(`HTTP/1.1 ${statusCode} ${statusMessage}\r\n${headerLines(headers)}\r\n\r\n`),
               body,
-            ]),
-          );
+            ]);
+          })().then(resolve, reject);
         });
       },
     );
@@ -843,7 +933,7 @@ function requestLocalHttp(
   });
 }
 
-function filterResponseHeaders(rawHeaders: readonly string[], blockCacheControl = false): string[] {
+function filterResponseHeaders(rawHeaders: readonly string[], blockCacheValidators = false): string[] {
   const connectionHeaders = new Set<string>();
   for (let index = 0; index < rawHeaders.length; index += 2) {
     if (rawHeaders[index]!.toLowerCase() === 'connection') {
@@ -859,7 +949,12 @@ function filterResponseHeaders(rawHeaders: readonly string[], blockCacheControl 
     if (BLOCKED_RESPONSE_HEADERS.has(lower) || connectionHeaders.has(lower)) {
       continue;
     }
-    if (blockCacheControl && lower === 'cache-control') continue;
+    if (
+      blockCacheValidators &&
+      (lower === 'cache-control' || lower === 'etag' || lower === 'last-modified')
+    ) {
+      continue;
+    }
     result.push(name, rawHeaders[index + 1]!);
   }
   return result;
@@ -968,7 +1063,30 @@ function stringField(
 }
 
 function decodeBase64(value: string): Buffer {
-  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
+  if (value.length % 4 !== 0) {
+    throw new SyntaxError('invalid HTTP tunnel request base64');
+  }
+  let paddingStart = -1;
+  for (let i = 0; i < value.length; i++) {
+    const c = value.codePointAt(i)!;
+    if (c === 0x3d) {
+      if (paddingStart === -1) paddingStart = i;
+      continue;
+    }
+    if (paddingStart !== -1) {
+      throw new SyntaxError('invalid HTTP tunnel request base64');
+    }
+    const ok =
+      (c >= 0x41 && c <= 0x5a) ||
+      (c >= 0x61 && c <= 0x7a) ||
+      (c >= 0x30 && c <= 0x39) ||
+      c === 0x2b ||
+      c === 0x2f;
+    if (!ok) {
+      throw new SyntaxError('invalid HTTP tunnel request base64');
+    }
+  }
+  if (paddingStart !== -1 && value.length - paddingStart > 2) {
     throw new SyntaxError('invalid HTTP tunnel request base64');
   }
   return Buffer.from(value, 'base64');

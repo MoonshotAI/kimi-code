@@ -14,7 +14,9 @@ import {
   TowerProtocolError,
   TowerStore,
   WORKTREES_DIR,
+  isReservedTowerAgentName,
   missionFileName,
+  resolveMissionByBranch,
   resolveTowerRepoRoot,
   type TowerMission,
   type TowerState,
@@ -107,12 +109,26 @@ export class TowerSpawnTool implements ITowerSpawnTool {
       const store = this.newStore();
       const state = await store.load();
 
+      if (args.name.trim().length === 0 || args.name.trim() !== args.name) {
+        return {
+          output: `tower agent name "${args.name}" must not be blank or carry surrounding whitespace`,
+          isError: true,
+        };
+      }
+
+      if (isReservedTowerAgentName(args.name)) {
+        return {
+          output: `tower agent name "${args.name}" is reserved by the tower protocol — pick a different name`,
+          isError: true,
+        };
+      }
+
       const existing = store.findByName(state, args.name);
       if (existing !== undefined) {
         return {
           output:
             `tower agent "${args.name}" is already registered (agent_id: ${existing.agentId}, kind: ${existing.kind}) — ` +
-            `resume it instead of spawning a duplicate: Agent(resume="${existing.agentId}", prompt="...")`,
+            `resume it instead of spawning a duplicate: Agent(resume="${existing.agentId}", run_in_background=true, prompt="...") — never foreground: its output flows back through the tower protocol files`,
           isError: true,
         };
       }
@@ -143,6 +159,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
             );
           }
         } catch (error) {
+          if (error instanceof TowerProtocolError) throw error;
           notes.push(
             `worktree setup warning (continuing): ${error instanceof Error ? error.message : String(error)}`,
           );
@@ -217,6 +234,10 @@ export class TowerSpawnTool implements ITowerSpawnTool {
           kind: args.kind,
           missionId: mission?.id,
           reviewTarget,
+          reviewMissionId:
+            reviewTarget !== undefined
+              ? resolveMissionByBranch(state, reviewTarget)?.id
+              : undefined,
           worktree: mission?.worktree,
           branch: mission?.branch,
           spawnedAt: new Date().toISOString(),
@@ -270,7 +291,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
               : [`review_target: ${reviewTarget ?? ''}`]),
             ...notes,
             '',
-            `The ${args.kind} runs detached in the background; its completion arrives as a notification. Track progress with TowerStatus / TowerInbox; recover a dead agent with Agent(resume="${handle.agentId}", prompt="...").`,
+            `The ${args.kind} runs detached in the background; its completion arrives as a notification. Track progress with TowerStatus / TowerInbox; recover a dead agent with Agent(resume="${handle.agentId}", run_in_background=true, prompt="...") — never foreground: its output flows back through the tower protocol files.`,
           ].join('\n'),
         };
       } finally {
@@ -413,7 +434,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
       );
     }
     const target = reviewTarget ?? '';
-    const targetMission = state.missions.find((m) => m.branch === target);
+    const targetMission = resolveMissionByBranch(state, target);
     const author = targetMission?.owner;
     const reviewBase =
       targetMission !== undefined ? await store.diffBase(state, targetMission) : state.base;
