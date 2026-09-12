@@ -8,6 +8,7 @@ import { FakeRuntime } from '@moonshot-ai/agent-core-v2/runtime/fakeRuntime';
 import { ErrorCode } from '../src/protocol/error-codes';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { sanitizeFilename } from '../src/routes/fs';
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
@@ -352,6 +353,10 @@ describe('server-v2 /api/v1 fs routes', () => {
     } finally {
       await rm(link, { force: true });
     }
+  });
+
+  it('sanitizeFilename strips control characters and path separators', async () => {
+    expect(sanitizeFilename('bad"name\\.txt')).toBe('bad_name_.txt');
   });
 
   async function postWorkspaceSearch<T>(body: unknown): Promise<Envelope<T>> {

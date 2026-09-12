@@ -963,8 +963,9 @@ function buildValidationEnvelope(
   };
 }
 
-function sanitizeFilename(rel: string): string {
+export function sanitizeFilename(rel: string): string {
   const segs = rel.split('/');
-  const base = segs[segs.length - 1] ?? rel;
-  return base.replace(/"/g, '\\"');
+  const base = segs.at(-1) ?? rel;
+  const sanitized = base.replaceAll(/[\u0000-\u001F\u007F"\\]/g, '_');
+  return sanitized.length > 0 ? sanitized : 'download';
 }
