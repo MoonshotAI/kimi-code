@@ -105,8 +105,11 @@ function derefJsonSchema(schema: JsonRecord): JsonRecord {
         const nextActive = new Set(activeRefs);
         nextActive.add(ref);
         const target = traverse(resolvePointer(ref), nextActive);
+        if (typeof target === 'boolean') {
+          return target;
+        }
         if (typeof target !== 'object' || target === null || Array.isArray(target)) {
-          throw new Error('Local $ref must resolve to a JSON object');
+          throw new Error('Local $ref must resolve to a JSON object or boolean');
         }
         const { $ref: _, ...rest } = record;
         const traversedRest: JsonRecord = {};
@@ -160,6 +163,43 @@ function inferTypeFromStructure(node: JsonRecord): string {
 function normalizeProperty(node: Json): void {
   if (typeof node !== 'object' || node === null || Array.isArray(node)) return;
   const record = node as JsonRecord;
+
+  if (Array.isArray(record['type'])) {
+    const types = record['type'] as Json[];
+    if (types.length === 1) {
+      record['type'] = types[0] as Json;
+    } else if (types.length > 1) {
+      if (!('anyOf' in record) && !('oneOf' in record)) {
+        record['anyOf'] = types.map((t) => (typeof t === 'string' ? { type: t } : (t as Json)));
+      }
+      delete record['type'];
+    }
+  }
+
+  if (('anyOf' in record || 'oneOf' in record) && 'type' in record) {
+    const parentType = record['type'];
+    delete record['type'];
+    if (typeof parentType === 'string') {
+      for (const key of ['anyOf', 'oneOf'] as const) {
+        const branches = record[key];
+        if (Array.isArray(branches)) {
+          for (const branch of branches) {
+            if (typeof branch === 'object' && branch !== null && !Array.isArray(branch)) {
+              const branchRecord = branch as JsonRecord;
+              if (
+                !('type' in branchRecord) &&
+                !('enum' in branchRecord) &&
+                !('const' in branchRecord) &&
+                !COMBINATOR_KEYS.some((k) => k in branchRecord)
+              ) {
+                branchRecord['type'] = parentType;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 
   if (!('type' in record) && !COMBINATOR_KEYS.some((key) => key in record)) {
     const enumValues = record['enum'];
@@ -232,6 +272,6 @@ export function sanitizeMcpSchema(schema: unknown): Record<string, unknown> {
   }
   const dereffed = derefJsonSchema(schema as JsonRecord);
   const cloned = structuredClone(dereffed);
-  recurseSchema(cloned);
+  normalizeProperty(cloned);
   return cloned;
 }

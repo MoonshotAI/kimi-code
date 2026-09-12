@@ -213,4 +213,90 @@ describe('sanitizeMcpSchema — recursive and circular schemas', () => {
     expect(nestedSelf['type']).toBe('object');
     expect(nestedSelf['description']).toBe('Circular reference');
   });
+
+  it('preserves boolean schemas referenced by $ref', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        anything: { $ref: '#/$defs/anyVal' },
+        nothing: { $ref: '#/$defs/noVal' },
+      },
+      $defs: {
+        anyVal: true,
+        noVal: false,
+      },
+    };
+    const result = sanitizeMcpSchema(schema);
+    expect('$defs' in result).toBe(false);
+    expect(prop(result, 'anything')).toBe(true);
+    expect(prop(result, 'nothing')).toBe(false);
+  });
 });
+
+describe('sanitizeMcpSchema — coexisting type with unions', () => {
+  it('removes type when anyOf is present and leaves branch types intact', () => {
+    const result = sanitizeMcpSchema({
+      type: 'object',
+      properties: {
+        val: {
+          type: 'string',
+          anyOf: [{ type: 'string' }, { type: 'null' }],
+        },
+      },
+    });
+    const valProp = prop(result, 'val');
+    expect(valProp['type']).toBeUndefined();
+    expect(valProp['anyOf']).toEqual([{ type: 'string' }, { type: 'null' }]);
+  });
+
+  it('propagates parent type to union branches that lack type', () => {
+    const result = sanitizeMcpSchema({
+      type: 'object',
+      properties: {
+        val: {
+          type: 'string',
+          anyOf: [{ maxLength: 5 }, { minLength: 10 }],
+        },
+      },
+    });
+    const valProp = prop(result, 'val');
+    expect(valProp['type']).toBeUndefined();
+    expect(valProp['anyOf']).toEqual([
+      { type: 'string', maxLength: 5 },
+      { type: 'string', minLength: 10 },
+    ]);
+  });
+
+  it('removes type when oneOf is present and propagates type to branches', () => {
+    const result = sanitizeMcpSchema({
+      type: 'object',
+      properties: {
+        score: {
+          type: 'integer',
+          oneOf: [{ maximum: 10 }, { minimum: 100 }],
+        },
+      },
+    });
+    const scoreProp = prop(result, 'score');
+    expect(scoreProp['type']).toBeUndefined();
+    expect(scoreProp['oneOf']).toEqual([
+      { type: 'integer', maximum: 10 },
+      { type: 'integer', minimum: 100 },
+    ]);
+  });
+
+  it('converts array type to anyOf', () => {
+    const result = sanitizeMcpSchema({
+      type: 'object',
+      properties: {
+        val: {
+          type: ['string', 'null'],
+        },
+      },
+    });
+    const valProp = prop(result, 'val');
+    expect(valProp['type']).toBeUndefined();
+    expect(valProp['anyOf']).toEqual([{ type: 'string' }, { type: 'null' }]);
+  });
+});
+
