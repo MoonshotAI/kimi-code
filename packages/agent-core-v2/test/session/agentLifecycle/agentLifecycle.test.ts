@@ -158,6 +158,7 @@ function recordingAppendLog(initial: readonly WireRecord[] = []): {
   const store: IAppendLogStore = {
     _serviceBrand: undefined,
     onDidWrite: Event.None as IAppendLogStore['onDidWrite'],
+    onDidRecover: Event.None as IAppendLogStore['onDidRecover'],
     append: <R>(_scope: string, _key: string, record: R) => {
       const persisted = record as unknown as WireRecord;
       records.push(persisted);

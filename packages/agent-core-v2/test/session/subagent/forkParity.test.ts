@@ -43,6 +43,7 @@ class ScopedAppendLogStore implements IAppendLogStore {
   declare readonly _serviceBrand: undefined;
   private readonly logs = new Map<string, WireRecord[]>();
   readonly onDidWrite: IAppendLogStore['onDidWrite'] = Event.None as IAppendLogStore['onDidWrite'];
+  readonly onDidRecover: IAppendLogStore['onDidRecover'] = Event.None as IAppendLogStore['onDidRecover'];
 
   recordsFor(scope: string, key: string): WireRecord[] {
     return structuredClone(this.logs.get(`${scope}/${key}`) ?? []);

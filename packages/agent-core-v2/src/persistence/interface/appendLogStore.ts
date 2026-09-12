@@ -41,6 +41,7 @@ export interface IAppendLogStore {
   readonly _serviceBrand: undefined;
 
   readonly onDidWrite: Event<AppendLogWrite>;
+  readonly onDidRecover: Event<AppendLogWrite>;
 
   append<R>(scope: string, key: string, record: R, options?: AppendLogOptions): void;
   read<R>(scope: string, key: string, options?: AppendLogReadOptions): AsyncIterable<R>;
