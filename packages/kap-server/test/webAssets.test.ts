@@ -119,6 +119,75 @@ describe('web asset routes', () => {
       expect(response.headers['content-encoding']).toBe('gzip');
     });
 
+    it('serves identity when the client weights it above every encoded sibling', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: HASHED_JS,
+        headers: { 'accept-encoding': 'identity;q=1, gzip;q=0.1, br;q=0.1' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.headers['content-encoding']).toBeUndefined();
+      expect(response.headers.vary).toBe('Accept-Encoding');
+      expect(response.body).toBe(HASHED_JS_SOURCE);
+    });
+
+    it('treats an unlisted identity as q=1 when only lower-weighted encodings are offered', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: HASHED_JS,
+        headers: { 'accept-encoding': 'gzip;q=0.1' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.headers['content-encoding']).toBeUndefined();
+      expect(response.body).toBe(HASHED_JS_SOURCE);
+    });
+
+    it('prefers an encoded sibling when it ties with identity', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: HASHED_JS,
+        headers: { 'accept-encoding': 'identity, br' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.headers['content-encoding']).toBe('br');
+    });
+
+    it('applies the wildcard weight to identity', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: HASHED_JS,
+        headers: { 'accept-encoding': 'gzip;q=0.5, *;q=0' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.headers['content-encoding']).toBe('gzip');
+    });
+
+    it('replies 406 when identity is excluded and no acceptable sibling exists', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/favicon.svg',
+        headers: { 'accept-encoding': 'identity;q=0, br' },
+      });
+
+      expect(response.statusCode).toBe(406);
+      expect(response.headers['content-encoding']).toBeUndefined();
+      expect(response.headers.vary).toBe('Accept-Encoding');
+    });
+
+    it('replies 406 when the client excludes every encoding', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: HASHED_JS,
+        headers: { 'accept-encoding': '*;q=0' },
+      });
+
+      expect(response.statusCode).toBe(406);
+    });
+
     it('serves identity with Vary when no Accept-Encoding header is sent', async () => {
       const response = await app.inject({ method: 'GET', url: HASHED_JS });
 

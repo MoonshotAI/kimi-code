@@ -471,7 +471,14 @@ export class WsConnectionV1 implements BroadcastTarget {
 
     const frames = coalesceFrames(this.outbound);
     this.outbound = [];
-    for (const frame of frames) this.sendFrame(frame);
+    for (let i = 0; i < frames.length; i++) {
+      if (!force && i > 0 && this.socket.bufferedAmount > this.highWaterMarkBytes) {
+        this.outbound = frames.slice(i);
+        this.deferForBackpressure();
+        return;
+      }
+      this.sendFrame(frames[i]);
+    }
   }
 
   private deferForBackpressure(): void {

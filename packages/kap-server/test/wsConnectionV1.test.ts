@@ -53,6 +53,13 @@ class FakeSocket {
   }
 }
 
+class DrainingSocket extends FakeSocket {
+  override send(data: string): void {
+    super.send(data);
+    this.bufferedAmount += data.length;
+  }
+}
+
 function makeBroadcaster(): SessionEventBroadcaster {
   return {
     subscribe: async () => true,
@@ -736,6 +743,53 @@ describe('WsConnectionV1 outbound buffer', () => {
     await vi.advanceTimersByTimeAsync(200);
     expect(socket.sent).toHaveLength(0);
     expect(socket.closeCalls).toHaveLength(0);
+    conn.close();
+  });
+
+  it('stops releasing a queued backlog at the high-water mark and resumes on drain', async () => {
+    const socket = new DrainingSocket();
+    const conn = makeConn(socket, { flushIntervalMs: 16, highWaterMarkBytes: 100 });
+    socket.sent = [];
+    socket.bufferedAmount = 0;
+
+    const total = 40;
+    for (let i = 0; i < total; i++) conn.send(durable('turn.ended', 's1', i));
+    await vi.advanceTimersByTimeAsync(16);
+    const released = socket.sent.length;
+    expect(released).toBeGreaterThan(0);
+    expect(released).toBeLessThan(total);
+    expect(socket.bufferedAmount).toBeGreaterThan(100);
+
+    await vi.advanceTimersByTimeAsync(200);
+    expect(socket.sent).toHaveLength(released);
+    expect(socket.closeCalls).toHaveLength(0);
+
+    socket.bufferedAmount = 0;
+    await vi.advanceTimersByTimeAsync(5);
+    expect(socket.sent.length).toBeGreaterThan(released);
+    expect(socket.sent.length).toBeLessThan(total);
+
+    for (let guard = 0; guard < total && socket.sent.length < total; guard++) {
+      socket.bufferedAmount = 0;
+      await vi.advanceTimersByTimeAsync(5);
+    }
+    expect(socket.sent).toHaveLength(total);
+    expect(socket.frames().map((f) => (f as { seq: number }).seq)).toEqual(
+      Array.from({ length: total }, (_, i) => i),
+    );
+    expect(socket.closeCalls).toHaveLength(0);
+    conn.close();
+  });
+
+  it('still drains the whole backlog in one pass when the peer keeps up', async () => {
+    const socket = new DrainingSocket();
+    const conn = makeConn(socket, { flushIntervalMs: 16, highWaterMarkBytes: 1 << 20 });
+    socket.sent = [];
+    socket.bufferedAmount = 0;
+
+    for (let i = 0; i < 40; i++) conn.send(durable('turn.ended', 's1', i));
+    await vi.advanceTimersByTimeAsync(16);
+    expect(socket.sent).toHaveLength(40);
     conn.close();
   });
 

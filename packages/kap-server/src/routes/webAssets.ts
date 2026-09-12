@@ -24,6 +24,11 @@ interface EncodedVariant extends StaticFile {
   etagSuffix: string;
 }
 
+interface EncodingNegotiation {
+  variant?: EncodedVariant;
+  acceptable: boolean;
+}
+
 const COMPRESSIBLE_EXTENSIONS = new Set([
   '.html',
   '.js',
@@ -36,7 +41,13 @@ const COMPRESSIBLE_EXTENSIONS = new Set([
   '.txt',
 ]);
 
-const PRECOMPRESSED_ENCODINGS = [
+interface PrecompressedEncoding {
+  encoding: string;
+  extension: string;
+  etagSuffix: string;
+}
+
+const PRECOMPRESSED_ENCODINGS: readonly PrecompressedEncoding[] = [
   { encoding: 'br', extension: '.br', etagSuffix: '-br' },
   { encoding: 'gzip', extension: '.gz', etagSuffix: '-gz' },
 ];
@@ -80,9 +91,17 @@ async function serveWebAsset(
   }
 
   const compressible = COMPRESSIBLE_EXTENSIONS.has(extname(file.path));
-  const variant = compressible
-    ? await findEncodedVariant(file, pickHeader(req.headers, 'accept-encoding'))
+  const negotiation = compressible
+    ? await negotiateEncoding(file, pickHeader(req.headers, 'accept-encoding'))
     : undefined;
+  if (negotiation?.acceptable === false) {
+    return reply
+      .code(406)
+      .header('Vary', 'Accept-Encoding')
+      .type('text/plain; charset=utf-8')
+      .send('Not acceptable');
+  }
+  const variant = negotiation?.variant;
   const source = variant ?? file;
   const etag = `W/"${buildEtag(source.stats)}${variant?.etagSuffix ?? ''}"`;
 
@@ -104,25 +123,35 @@ async function serveWebAsset(
   return reply.send(createReadStream(source.path));
 }
 
-async function findEncodedVariant(
+async function negotiateEncoding(
   file: StaticFile,
   acceptEncoding: string | undefined,
-): Promise<EncodedVariant | undefined> {
+): Promise<EncodingNegotiation> {
   if (acceptEncoding === undefined) {
-    return undefined;
+    return { acceptable: true };
   }
   const accepted = parseAcceptEncoding(acceptEncoding);
+  const identityWeight = encodingWeight(accepted, 'identity', 1);
   const candidates = PRECOMPRESSED_ENCODINGS.map((candidate) => ({
     candidate,
-    weight: encodingWeight(accepted, candidate.encoding),
+    weight: encodingWeight(accepted, candidate.encoding, 0),
   }))
-    .filter(({ weight }) => weight > 0)
-    .toSorted((a, b) => b.weight - a.weight);
+    .filter(({ weight }) => weight > 0 && weight >= identityWeight)
+    .toSorted((a, b) => b.weight - a.weight)
+    .map(({ candidate }) => candidate);
+  const variant = await findEncodedVariant(file, candidates);
+  return { variant, acceptable: variant !== undefined || identityWeight > 0 };
+}
+
+async function findEncodedVariant(
+  file: StaticFile,
+  candidates: readonly PrecompressedEncoding[],
+): Promise<EncodedVariant | undefined> {
   if (candidates.length === 0) {
     return undefined;
   }
   const siblings = await Promise.all(
-    candidates.map(async ({ candidate }) => {
+    candidates.map(async (candidate) => {
       const path = `${file.path}${candidate.extension}`;
       const stats = await stat(path).catch(() => undefined);
       return { path, stats, encoding: candidate.encoding, etagSuffix: candidate.etagSuffix };
@@ -152,8 +181,12 @@ function parseAcceptEncoding(header: string): Map<string, number> {
   return weights;
 }
 
-function encodingWeight(weights: Map<string, number>, encoding: string): number {
-  return weights.get(encoding) ?? weights.get('*') ?? 0;
+function encodingWeight(
+  weights: Map<string, number>,
+  encoding: string,
+  fallback: number,
+): number {
+  return weights.get(encoding) ?? weights.get('*') ?? fallback;
 }
 
 function matchesIfNoneMatch(header: string | undefined, etag: string): boolean {
