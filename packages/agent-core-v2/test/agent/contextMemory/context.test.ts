@@ -31,12 +31,13 @@ describe('Agent context', () => {
   let profile: IAgentProfileService;
   let wire: IWireService;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     ctx = createTestAgent();
     context = ctx.get(IAgentContextMemoryService);
     tokenCounting = ctx.tokenCounting;
     profile = ctx.get(IAgentProfileService);
     wire = ctx.get(IWireService);
+    await ctx.restorePersisted();
   });
 
   afterEach(async () => {
@@ -645,7 +646,7 @@ describe('Agent context', () => {
     expect(context.get().map((m) => m.role)).toEqual(['user', 'assistant']);
   });
 
-  it('removes injection messages inside the undone turn', async () => {
+  it('keeps un-owned injection messages from the undone turn in the rebuilt context', async () => {
     ctx.appendUserTurn('earlier question');
     ctx.appendUserTurn('do the work');
     context.append(
@@ -670,6 +671,11 @@ describe('Agent context', () => {
         role: 'user',
         content: [{ type: 'text', text: 'earlier question' }],
         origin: { kind: 'user' },
+      }),
+      expect.objectContaining({
+        role: 'user',
+        content: [{ type: 'text', text: 'Plan mode is active' }],
+        origin: { kind: 'injection', variant: 'plan_mode' },
       }),
     ]);
   });

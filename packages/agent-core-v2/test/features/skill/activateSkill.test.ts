@@ -168,6 +168,7 @@ describe('promptWithSkills', () => {
 
   it('undoes the bundled prompt as a single anchor', async () => {
     ctx = agentWithSkills();
+    await ctx.restorePersisted();
     ctx.mockNextResponse({ type: 'text', text: 'done' });
     await ctx.rpc.promptWithSkills({
       input: [{ type: 'text', text: 'Review this change.' }],

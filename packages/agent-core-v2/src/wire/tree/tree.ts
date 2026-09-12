@@ -23,11 +23,17 @@ export interface TreeSegment {
   readonly toLine: number;
 }
 
+export interface TreeDiagnostics {
+  readonly malformedSwitchLines: readonly number[];
+  readonly duplicateBranches: readonly string[];
+}
+
 export interface WireTree {
   readonly edges: readonly SwitchEdge[];
   readonly segments: readonly TreeSegment[];
   readonly pairedLegacyUndoLines: ReadonlySet<number>;
   readonly activeBranch: string;
+  readonly diagnostics: TreeDiagnostics;
 }
 
 function readSwitchEdge(record: WireRecord, line: number): SwitchEdge | undefined {
@@ -50,27 +56,53 @@ function readSwitchEdge(record: WireRecord, line: number): SwitchEdge | undefine
   };
 }
 
+export function branchForLine(tree: WireTree, line: number): string {
+  let owner = MAIN_BRANCH;
+  for (const segment of tree.segments) {
+    if (segment.fromLine > line) break;
+    owner = segment.branch;
+  }
+  return owner;
+}
+
 export function parseTree(entries: readonly WireLine[], lastLine: number): WireTree {
   const edges: SwitchEdge[] = [];
   const pairedLegacyUndoLines = new Set<number>();
+  const malformedSwitchLines: number[] = [];
   for (const { record, line } of entries) {
+    if (record.type !== AGENT_SWITCHED_TYPE) continue;
     const edge = readSwitchEdge(record, line);
-    if (edge === undefined) continue;
+    if (edge === undefined) {
+      malformedSwitchLines.push(line);
+      continue;
+    }
     edges.push(edge);
     if (edge.legacyUndoLine !== undefined) pairedLegacyUndoLines.add(edge.legacyUndoLine);
   }
   const segments: TreeSegment[] = [];
+  const duplicateBranches: string[] = [];
+  const seenBranches = new Set<string>([MAIN_BRANCH]);
   let branch = MAIN_BRANCH;
   let fromLine = 1;
   let opening: SwitchEdge | undefined;
   for (const edge of edges) {
     segments.push({ branch, edge: opening, fromLine, toLine: edge.line });
+    if (seenBranches.has(edge.branch)) {
+      if (!duplicateBranches.includes(edge.branch)) duplicateBranches.push(edge.branch);
+    }
+    seenBranches.add(edge.branch);
     branch = edge.branch;
     opening = edge;
     fromLine = edge.line + 1;
   }
   segments.push({ branch, edge: opening, fromLine, toLine: Math.max(lastLine, fromLine - 1) });
-  return { edges, segments, pairedLegacyUndoLines, activeBranch: branch };
+  return {
+    edges,
+    segments,
+    pairedLegacyUndoLines,
+    activeBranch: branch,
+    diagnostics: { malformedSwitchLines, duplicateBranches },
+  };
 }
 
 export function activeChain(entries: readonly WireLine[], tree: WireTree): WireLine[] {

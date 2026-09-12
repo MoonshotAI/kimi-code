@@ -1416,9 +1416,10 @@ describe('interruption reminder', () => {
   let ctx: TestAgentContext;
   let loop: IAgentLoopService;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     ctx = createTestAgent();
     loop = ctx.get(IAgentLoopService);
+    await ctx.restorePersisted();
   });
 
   afterEach(async () => {
@@ -1644,12 +1645,22 @@ describe('interruption reminder', () => {
 
     await ctx.undoHistory(1);
 
-    expect(ctx.contextData().history).toEqual([]);
+    expect(
+      ctx.contextData().history.map((message) => ({
+        role: message.role,
+        origin: message.origin,
+      })),
+    ).toEqual([
+      {
+        role: 'user',
+        origin: { kind: 'injection', variant: 'interruption', ownerPromptId: undefined },
+      },
+    ]);
 
     ctx.mockNextResponse({ type: 'text', text: 'second answer' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Next' }] });
     await ctx.untilTurnEnd();
-    expect(interruptionReminders()).toHaveLength(0);
+    expect(interruptionReminders()).toHaveLength(1);
   });
 
   it('drops unsigned thinking but keeps signed thinking on user cancel', async () => {

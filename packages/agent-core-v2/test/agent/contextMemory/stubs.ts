@@ -18,6 +18,7 @@ import { stubAgentContext } from '../agentContext/stubs';
 
 export interface StubContextMemory extends IAgentContextMemoryService {
   readonly messages: readonly ContextMessage[];
+  undo(count: number): UndoCut;
 }
 
 function publishSplice(
@@ -110,9 +111,6 @@ class StubContextMemoryService implements IAgentContextMemoryService {
   }
   publishTrailingRemoval(previous: readonly ContextMessage[]): boolean {
     return this.impl.publishTrailingRemoval(previous);
-  }
-  undo(count: number): UndoCut {
-    return this.impl.undo(count);
   }
   applyCompaction(input: ContextCompactionInput): ContextCompactionResult {
     return this.impl.applyCompaction(input);

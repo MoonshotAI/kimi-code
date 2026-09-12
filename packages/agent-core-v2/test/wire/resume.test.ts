@@ -1017,9 +1017,18 @@ describe('Agent resume', () => {
         agentId: 'main',
         branch: 'b1',
         reason: 'undo',
+        base: { branch: 'main', line: 1 },
+        turns: 1,
+        time: 3,
+      },
+      {
+        type: 'agent.switched',
+        agentId: 'main',
+        branch: 'b1',
+        reason: 'undo',
         base: { branch: 'main', line: 5 },
         turns: 1,
-        legacyUndoLine: 11,
+        legacyUndoLine: 12,
         time: 3,
       },
       { type: 'context.undo', count: 1 },
@@ -1032,6 +1041,13 @@ describe('Agent resume', () => {
           toolCalls: [],
           origin: { kind: 'user' },
         },
+      },
+      {
+        type: 'agent.switched',
+        agentId: 'main',
+        reason: 'undo',
+        turns: 1,
+        time: 4,
       },
     ] as unknown as WireRecord[]);
     const ctx = testAgent({ persistence, autoConfigure: false });
@@ -1050,7 +1066,14 @@ describe('Agent resume', () => {
       );
       expect(
         skipped.map((error) => (error as { details?: { type?: unknown } }).details?.type),
-      ).toEqual(['agent.switched', 'context.undone']);
+      ).toEqual([
+        'agent.switched',
+        'agent.switched',
+        'agent.switched',
+        'agent.switched',
+        'context.undone',
+        'agent.switched',
+      ]);
     } finally {
       resetUnexpectedErrorHandler();
     }

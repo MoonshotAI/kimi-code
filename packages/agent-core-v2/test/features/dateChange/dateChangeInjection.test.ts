@@ -8,6 +8,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import {
   AgentDateChangeService,
@@ -284,7 +285,7 @@ describe('AgentDateChangeService', () => {
     expect(dateReminders(context)).toHaveLength(2);
   });
 
-  it('re-injects after undo removes the structured reminder metadata', async () => {
+  it('keeps the structured reminder metadata exactly once across undo and the next step', async () => {
     updateSystemPrompt(
       profile,
       'You are a deterministic test agent.',
@@ -299,8 +300,8 @@ describe('AgentDateChangeService', () => {
     await runWillBeginStepHooks(loop);
     expect(dateReminders(context)).toHaveLength(1);
 
-    expect(context.undo(1)).toMatchObject({ removedCount: 1 });
-    expect(dateReminders(context)).toHaveLength(0);
+    await ctx.get(IAgentConversationUndoService).undo(1);
+    expect(dateReminders(context)).toHaveLength(1);
     context.append({
       role: 'user',
       content: [{ type: 'text', text: 'replacement turn' }],
@@ -313,7 +314,7 @@ describe('AgentDateChangeService', () => {
     expect(dateReminders(context)).toHaveLength(1);
   });
 
-  it('re-discloses after undo removes the initial disclosure', async () => {
+  it('keeps the initial date disclosure across undo and the next step', async () => {
     updateSystemPrompt(
       profile,
       'You are a deterministic test agent.',
@@ -328,8 +329,8 @@ describe('AgentDateChangeService', () => {
     await runWillBeginStepHooks(loop);
     expect(dateReminders(context)).toHaveLength(1);
 
-    expect(context.undo(1)).toMatchObject({ removedCount: 1 });
-    expect(dateReminders(context)).toHaveLength(0);
+    await ctx.get(IAgentConversationUndoService).undo(1);
+    expect(dateReminders(context)).toHaveLength(1);
     context.append({
       role: 'user',
       content: [{ type: 'text', text: 'replacement turn' }],

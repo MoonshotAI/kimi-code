@@ -351,9 +351,6 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
               publishedEvents.push(event);
               return Promise.resolve();
             },
-            history: () => [],
-            checkpointDepth: () => 0,
-            undo: () => {},
             restore: () => Promise.resolve(),
             flush: () => Promise.resolve(),
           } as never;

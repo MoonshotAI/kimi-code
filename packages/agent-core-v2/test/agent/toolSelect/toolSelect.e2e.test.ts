@@ -206,7 +206,7 @@ describe('progressive tool disclosure end-to-end', () => {
     );
   });
 
-  it('re-injects a selected schema after undo slices the tail of the loaded exchange', async () => {
+  it('keeps the selected schema across undo and reports it as already available on reselect', async () => {
     ctx.get(IAgentContextMemoryService).append({
       role: 'user',
       content: [{ type: 'text', text: 'earlier question' }],
@@ -222,7 +222,7 @@ describe('progressive tool disclosure end-to-end', () => {
     await ctx.get(IAgentConversationUndoService).undo(1);
     const afterUndo = ctx.get(IAgentContextMemoryService).get();
     expect(afterUndo.some((message) => message.tools?.some((tool) => tool.name === MCP_ALPHA))).toBe(
-      false,
+      true,
     );
 
     ctx.mockNextResponse(selectToolsCall('call_select_2', [MCP_ALPHA]));
@@ -234,7 +234,7 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(
       afterReload.some((message) => message.tools?.some((tool) => tool.name === MCP_ALPHA)),
     ).toBe(true);
-    expect(historyText(afterReload)).toContain('Loaded: mcp__srv__alpha');
-    expect(historyText(afterReload)).not.toContain('Already available: mcp__srv__alpha');
+    expect(historyText(afterReload)).toContain('Already available: mcp__srv__alpha');
+    expect(historyText(afterReload)).not.toContain('Loaded: mcp__srv__alpha');
   });
 });

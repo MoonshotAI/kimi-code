@@ -16,7 +16,6 @@ import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 import { wireJournalBackupKey } from '#/wire/repair';
 import { WireError, WireErrors } from '#/wire/errors';
 import { IWireService } from '#/wire/wire';
-import type { IAgentJournal } from '#/wire/journal';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
 import { recordingWireLog, registerTestAgentWire, testWireScope, noopLogger } from './stubs';
@@ -410,7 +409,7 @@ describe('WireService readJournal', () => {
     expect(await collect(stub.readJournal())).toEqual(seeded);
     expect(rewrites).toBe(0);
 
-    const journal = stub as unknown as IAgentJournal;
+    const journal = stub;
     expect(await collect(journal.readRaw())).toEqual(seeded);
     expect(await collect(journal.read())).toEqual(seeded);
     expect(journal.journalRef).toEqual({ tree: testWireScope(SCOPE, 'current'), branch: 'main' });
@@ -621,7 +620,7 @@ describe('WireService corruption repair', () => {
     expect(await rawBytes()).toBe(prefix);
     expect(await rawBytes(BACKUP_KEY)).toBe(raw);
 
-    const journal = wire as unknown as IAgentJournal;
+    const journal = wire;
     expect(await collect(journal.read())).toEqual([
       { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
       { type: 'wire.test.a', time: 1 },
@@ -1024,19 +1023,20 @@ describe('WireService tree projection', () => {
     };
   }
 
-  it('writes the undo switch triple with paired physical line numbers', async () => {
-    await wire.seal();
-    wire.appendRecord({ type: 'context.append_message', message: userPrompt('first', 'p1'), time: 1 });
-    wire.appendRecord({
-      type: 'context.append_message',
-      message: { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] },
-      time: 2,
-    });
-    wire.appendRecord({ type: 'context.append_message', message: userPrompt('second', 'p2'), time: 3 });
-    await wire.flush();
+  it('writes the undo switch triple with paired physical line numbers after re-reading a rewritten journal', async () => {
+    const enc = new TextEncoder();
+    const seed = [
+      JSON.stringify({ type: 'context.append_message', message: userPrompt('first', 'p1'), time: 1 }),
+      JSON.stringify({
+        type: 'context.append_message',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] },
+        time: 2,
+      }),
+      JSON.stringify({ type: 'context.append_message', message: userPrompt('second', 'p2'), time: 3 }),
+    ];
+    await storage.write(testWireScope(SCOPE, KEY), AGENT_WIRE_RECORD_KEY, enc.encode(`${seed.join('\n')}\n`));
 
-    const journal = wire as unknown as IAgentJournal;
-    const switched = await journal.switchBranch({ turns: 1 });
+    const switched = await wire.switchBranch({ turns: 1 });
 
     expect(switched).toEqual({
       branch: 'b1',
@@ -1060,18 +1060,18 @@ describe('WireService tree projection', () => {
       { type: 'context.undone', agentId: 'test-agent', turns: 1, time: expect.any(Number) },
     ]);
     expect(wire.lineCount()).toBe(7);
-    expect(journal.journalRef).toEqual({ tree: testWireScope(SCOPE, KEY), branch: 'b1' });
-    expect(journal.branches()).toEqual(['main', 'b1']);
-    expect(journal.nextSeq()).toBe(8);
+    expect(wire.journalRef).toEqual({ tree: testWireScope(SCOPE, KEY), branch: 'b1' });
+    expect(wire.branches()).toEqual(['main', 'b1']);
+    expect(wire.nextSeq()).toBe(8);
 
-    expect(await collect(journal.read())).toEqual([
+    expect(await collect(wire.read())).toEqual([
       ...onDisk.slice(0, 3),
       onDisk[5]!,
       onDisk[6]!,
     ]);
-    expect(await collect(journal.readRaw())).toEqual(onDisk);
+    expect(await collect(wire.readRaw())).toEqual(onDisk);
 
-    await expect(journal.switchBranch({ turns: 2 })).rejects.toMatchObject({
+    await expect(wire.switchBranch({ turns: 2 })).rejects.toMatchObject({
       reason: 'insufficient',
     });
     expect(wire.lineCount()).toBe(7);
@@ -1084,7 +1084,7 @@ describe('WireService tree projection', () => {
       time: 4,
     });
     await wire.flush();
-    await expect(journal.switchBranch({ turns: 1 })).rejects.toMatchObject({
+    await expect(wire.switchBranch({ turns: 1 })).rejects.toMatchObject({
       reason: 'compaction_boundary',
     });
     expect(wire.lineCount()).toBe(8);
@@ -1124,7 +1124,7 @@ describe('WireService tree projection', () => {
       { type: 'wire.test.four', time: 6 },
     ];
     const stub = wireOverLog(recordingWireLog(seeded), 'tree');
-    const journal = stub as unknown as IAgentJournal;
+    const journal = stub;
 
     expect(await collect(journal.readRaw())).toEqual(seeded);
     expect(await collect(journal.read())).toEqual([

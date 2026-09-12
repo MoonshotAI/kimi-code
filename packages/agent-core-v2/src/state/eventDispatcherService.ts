@@ -1,4 +1,4 @@
-import { applyPatches, produceWithPatches } from 'immer';
+import { produce } from 'immer';
 
 import { BugIndicatingError } from '#/_base/errors/errors';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
@@ -30,16 +30,14 @@ import {
   type AgentModel,
   type AgentModelDefinition,
 } from './agentModel';
-import { IEventDispatcher, type DurableAgentRuntimeParticipant, type ModelCheckpointDepth, type RestorePhase } from './eventDispatcher';
+import { IEventDispatcher, type DurableAgentRuntimeParticipant, type RestorePhase } from './eventDispatcher';
 import { StateError, StateErrors } from './errors';
 import {
   expandedModelAppliers,
   expandedRuntimeFolds,
-  keepsUndoCheckpoints,
   type EventApplier,
   type StateFold,
   type FoldContext,
-  type PatchEntry,
   type ReplayableStateKey,
 } from './state';
 import {
@@ -50,7 +48,6 @@ import {
 } from './stateContribution';
 
 const MAX_DRAIN = 100;
-const HISTORY_TAIL = 500;
 
 const RETIRED_WIRE_RECORD_TYPES: ReadonlySet<string> = new Set([
   'staleGuard.recorded',
@@ -69,9 +66,7 @@ export class CycleError extends StateError {
 }
 
 interface StateMeta {
-  history: PatchEntry[];
-  checkpoints: number[];
-  nextPatchId: number;
+  checkpoints: unknown[];
 }
 
 interface QueuedEvent {
@@ -85,8 +80,6 @@ interface PreparedFold {
   readonly meta: StateMeta;
   readonly ctx: FoldContextImpl;
   readonly next: any;
-  readonly patches: PatchEntry['patches'];
-  readonly inversePatches: PatchEntry['inversePatches'];
 }
 
 type ParticipantApplier = (
@@ -100,7 +93,7 @@ interface ParticipantAttachment {
   readonly appliers: ReadonlyMap<Event2Class<any, any>, ParticipantApplier>;
   readonly meta: StateMeta;
   readonly undoable: boolean;
-  readonly keepsCheckpoints: boolean;
+  readonly initial: unknown;
   readonly getState: () => any;
   readonly commit: (state: any) => void;
 }
@@ -109,8 +102,6 @@ interface PreparedParticipant {
   readonly attachment: ParticipantAttachment;
   readonly ctx: FoldContextImpl;
   readonly next: any;
-  readonly patches: PatchEntry['patches'];
-  readonly inversePatches: PatchEntry['inversePatches'];
 }
 
 class FoldContextImpl implements FoldContext {
@@ -124,14 +115,17 @@ class FoldContextImpl implements FoldContext {
   ) {}
 
   checkpoint(): void {
+    if (!this.silent) return;
     this.pendingCheckpoint = true;
   }
 
   clearCheckpoints(): void {
+    if (!this.silent) return;
     this.pendingClear = true;
   }
 
   undoToCheckpoint(count: number): void {
+    if (!this.silent) return;
     this.pendingUndo = count;
   }
 
@@ -273,7 +267,10 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     this.dispatching = true;
     try {
       await this.wire.flush();
-      for await (const record of this.wire.readJournal()) {
+      const stream = participant.undoable
+        ? this.wire.readRestorable()
+        : this.wire.readJournal();
+      for await (const record of stream) {
         if (record.type === 'metadata') continue;
         const cls = this.folded.events.get(record.type);
         if (cls === undefined) continue;
@@ -289,17 +286,17 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
         const applier = attachment.appliers.get(event.constructor as Event2Class);
         if (applier === undefined) continue;
         const ctx = new FoldContextImpl(this, true);
-        const [next, patches, inversePatches] = produceWithPatches<any>(
+        const next = produce(
           attachment.getState(),
-          (draft: any) => applier(draft, event, ctx) as any,
+          (draft: any) => applier(draft, event, ctx),
         );
-        if (ctx.pendingUndo !== undefined && patches.length > 0) {
+        if (ctx.pendingUndo !== undefined && next !== attachment.getState()) {
           throw new BugIndicatingError(
             `Fold of event '${event.type}' on durable participant '${attachment.id}' both mutates and undoes to a checkpoint`,
           );
         }
         sanitizePendingUndo(ctx, attachment.meta);
-        this.commitParticipant(attachment, ctx, event, next, patches, inversePatches);
+        this.commitParticipant(attachment, ctx, next);
       }
       this.attachParticipant(attachment);
       this.drainQueue();
@@ -327,9 +324,9 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     return {
       id: participant.id,
       appliers,
-      meta: { history: [], checkpoints: [], nextPatchId: 1 },
+      meta: { checkpoints: [] },
       undoable: participant.undoable,
-      keepsCheckpoints: participant.undoable,
+      initial: participant.getState(),
       getState: () => participant.getState(),
       commit: (state) => { participant.commit(state); },
     };
@@ -441,9 +438,9 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     const attachment: ParticipantAttachment = {
       id: definition.id,
       appliers,
-      meta: { history: [], checkpoints: [], nextPatchId: 1 },
+      meta: { checkpoints: [] },
       undoable: definition.undoable,
-      keepsCheckpoints: definition.undoable && customUndo === undefined,
+      initial: model._state(),
       getState: () => model._state(),
       commit: (state) => { model._commitState(state); },
     };
@@ -465,42 +462,6 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
       throw new BugIndicatingError(`Agent model '${definition.id}' failed to attach`);
     }
     return attachment;
-  }
-
-  history<S>(key: ReplayableStateKey<S>): readonly PatchEntry[] {
-    return this.ensureMeta(key).history;
-  }
-
-  checkpointDepth(key: ReplayableStateKey<any>): number {
-    const meta = this.metas.get(key);
-    return meta?.checkpoints.length ?? 0;
-  }
-
-  modelCheckpointDepths(): readonly ModelCheckpointDepth[] {
-    const depths: ModelCheckpointDepth[] = [];
-    for (const attachment of this.participantAttachments.values()) {
-      if (!attachment.keepsCheckpoints) continue;
-      depths.push({ id: attachment.id, depth: attachment.meta.checkpoints.length });
-    }
-    return depths;
-  }
-
-  undo<S>(key: ReplayableStateKey<S>, patchId: number): void {
-    const meta = this.ensureMeta(key);
-    const head = meta.history.at(-1);
-    if (head === undefined || patchId > head.id || patchId <= 0) {
-      throw new BugIndicatingError(
-        `undo patch id ${patchId} is outside the retained history of state '${key.name}'`,
-      );
-    }
-    const firstRetained = meta.history[0]!.id;
-    if (patchId < firstRetained) {
-      throw new BugIndicatingError(
-        `undo patch id ${patchId} has been trimmed from the history of state '${key.name}'`,
-      );
-    }
-    this.rollback(key, meta, patchId - 1);
-    meta.checkpoints = meta.checkpoints.filter((id) => id < patchId);
   }
 
   dispatch(event: Event2<any>): Promise<void> {
@@ -567,29 +528,36 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     this.executeEvent(event, false);
   }
 
-  private executeEvent(event: Event2<any>, silent: boolean): void {
+  private executeEvent(event: Event2<any>, silent: boolean, replayUndoable?: boolean): void {
     const folds = this.folded.folds.get(event.type);
     const prepared: PreparedFold[] = [];
     if (folds !== undefined) {
       for (const { key, fold } of folds) {
+        if (
+          replayUndoable !== undefined &&
+          (key.replayable.undoable !== undefined) !== replayUndoable
+        ) {
+          continue;
+        }
         const meta = this.ensureMeta(key);
         const ctx = new FoldContextImpl(this, silent);
-        const [next, patches, inversePatches] = produceWithPatches<any>(
+        const next = produce(
           this.agentState.get(key),
-          (draft: any) => fold(draft, event, ctx) as any,
+          (draft: any) => fold(draft, event, ctx),
         );
-        if (ctx.pendingUndo !== undefined && patches.length > 0) {
+        if (ctx.pendingUndo !== undefined && next !== this.agentState.get(key)) {
           throw new BugIndicatingError(
             `Fold of event '${event.type}' on state '${key.name}' both mutates and undoes to a checkpoint`,
           );
         }
         sanitizePendingUndo(ctx, meta);
-        prepared.push({ key, meta, ctx, next, patches, inversePatches });
+        prepared.push({ key, meta, ctx, next });
       }
     }
     const modelTargets = this.modelTargets.get(event.type);
     if (modelTargets !== undefined) {
       for (const definition of modelTargets) {
+        if (replayUndoable !== undefined && definition.undoable !== replayUndoable) continue;
         if (!this.modelAttachments.has(definition)) this.materializeModel(definition);
       }
     }
@@ -597,27 +565,28 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     const preparedParticipants: PreparedParticipant[] = [];
     if (participantTargets !== undefined) {
       for (const attachment of participantTargets) {
+        if (replayUndoable !== undefined && attachment.undoable !== replayUndoable) continue;
         const applier = attachment.appliers.get(event.constructor as Event2Class);
         if (applier === undefined) continue;
         const ctx = new FoldContextImpl(this, silent);
-        const [next, patches, inversePatches] = produceWithPatches<any>(
+        const next = produce(
           attachment.getState(),
-          (draft: any) => applier(draft, event, ctx) as any,
+          (draft: any) => applier(draft, event, ctx),
         );
-        if (ctx.pendingUndo !== undefined && patches.length > 0) {
+        if (ctx.pendingUndo !== undefined && next !== attachment.getState()) {
           throw new BugIndicatingError(
             `Fold of event '${event.type}' on durable participant '${attachment.id}' both mutates and undoes to a checkpoint`,
           );
         }
         sanitizePendingUndo(ctx, attachment.meta);
-        preparedParticipants.push({ attachment, ctx, next, patches, inversePatches });
+        preparedParticipants.push({ attachment, ctx, next });
       }
     }
     for (const p of prepared) {
-      this.commit(p.key, p.meta, p.ctx, event, p.next, p.patches, p.inversePatches);
+      this.commit(p.key, p.meta, p.ctx, p.next);
     }
     for (const p of preparedParticipants) {
-      this.commitParticipant(p.attachment, p.ctx, event, p.next, p.patches, p.inversePatches);
+      this.commitParticipant(p.attachment, p.ctx, p.next);
     }
     if (silent) return;
     const cls = event.constructor as Event2Class;
@@ -641,188 +610,138 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     key: ReplayableStateKey<any>,
     meta: StateMeta,
     ctx: FoldContextImpl,
-    event: Event2<any>,
     next: any,
-    patches: PatchEntry['patches'],
-    inversePatches: PatchEntry['inversePatches'],
   ): void {
     if (ctx.pendingUndo !== undefined) {
       const targetIndex = meta.checkpoints.length - ctx.pendingUndo;
-      const targetId = meta.checkpoints[targetIndex]!;
-      this.rollback(key, meta, targetId);
-      meta.checkpoints = meta.checkpoints.slice(0, targetIndex);
+      const snapshot = meta.checkpoints[targetIndex]!;
+      this.agentState.set(key, snapshot);
+      meta.checkpoints.length = targetIndex;
       return;
     }
     this.agentState.set(key, next);
     if (ctx.pendingClear) {
-      meta.history = [];
-      meta.checkpoints = [];
-    }
-    let markerId = meta.history.at(-1)?.id ?? 0;
-    if (patches.length > 0 || inversePatches.length > 0) {
-      const entry: PatchEntry = {
-        id: meta.nextPatchId++,
-        eventType: event.type,
-        patches,
-        inversePatches,
-      };
-      meta.history.push(entry);
-      markerId = entry.id;
+      meta.checkpoints.length = 0;
     }
     if (ctx.pendingCheckpoint) {
-      meta.checkpoints.push(markerId);
+      meta.checkpoints.push(next);
     }
-    this.trimHistory(key, meta);
   }
 
   private commitParticipant(
     attachment: ParticipantAttachment,
     ctx: FoldContextImpl,
-    event: Event2<any>,
     next: any,
-    patches: PatchEntry['patches'],
-    inversePatches: PatchEntry['inversePatches'],
   ): void {
     const meta = attachment.meta;
     if (ctx.pendingUndo !== undefined) {
       const targetIndex = meta.checkpoints.length - ctx.pendingUndo;
-      const targetId = meta.checkpoints[targetIndex]!;
-      this.rollbackParticipant(attachment, targetId);
-      meta.checkpoints = meta.checkpoints.slice(0, targetIndex);
+      const snapshot = meta.checkpoints[targetIndex]!;
+      attachment.commit(snapshot);
+      meta.checkpoints.length = targetIndex;
       return;
     }
     attachment.commit(next);
     if (ctx.pendingClear) {
-      meta.history = [];
-      meta.checkpoints = [];
+      meta.checkpoints.length = 0;
     }
-    let markerId = meta.history.at(-1)?.id ?? 0;
-    if (patches.length > 0 || inversePatches.length > 0) {
-      const entry: PatchEntry = {
-        id: meta.nextPatchId++,
-        eventType: event.type,
-        patches,
-        inversePatches,
-      };
-      meta.history.push(entry);
-      markerId = entry.id;
-    }
-    if (ctx.pendingCheckpoint) meta.checkpoints.push(markerId);
-    this.trimParticipantHistory(attachment);
-  }
-
-  private rollback(key: ReplayableStateKey<any>, meta: StateMeta, targetEntryId: number): void {
-    let i = meta.history.length - 1;
-    let current = this.agentState.get(key);
-    while (i >= 0 && meta.history[i]!.id > targetEntryId) {
-      current = applyPatches(current, [...meta.history[i]!.inversePatches]);
-      i--;
-    }
-    this.agentState.set(key, current);
-    meta.history = meta.history.slice(0, i + 1);
-  }
-
-  private rollbackParticipant(
-    attachment: ParticipantAttachment,
-    targetEntryId: number,
-  ): void {
-    const meta = attachment.meta;
-    let i = meta.history.length - 1;
-    let current = attachment.getState();
-    while (i >= 0 && meta.history[i]!.id > targetEntryId) {
-      current = applyPatches(current, [...meta.history[i]!.inversePatches]);
-      i--;
-    }
-    attachment.commit(current);
-    meta.history = meta.history.slice(0, i + 1);
-  }
-
-  private trimHistory(key: ReplayableStateKey<any>, meta: StateMeta): void {
-    const oldest = meta.checkpoints[0];
-    if (oldest !== undefined) {
-      const firstRetained = meta.history.findIndex((entry) => entry.id >= oldest);
-      if (firstRetained > 0) {
-        meta.history.splice(0, firstRetained);
-      }
-      return;
-    }
-    if (!keepsUndoCheckpoints(key) && meta.history.length > HISTORY_TAIL) {
-      meta.history.splice(0, meta.history.length - HISTORY_TAIL);
-    }
-  }
-
-  private trimParticipantHistory(attachment: ParticipantAttachment): void {
-    const meta = attachment.meta;
-    const oldest = meta.checkpoints[0];
-    if (oldest !== undefined) {
-      const firstRetained = meta.history.findIndex((entry) => entry.id >= oldest);
-      if (firstRetained > 0) meta.history.splice(0, firstRetained);
-      return;
-    }
-    if (!attachment.keepsCheckpoints && meta.history.length > HISTORY_TAIL) {
-      meta.history.splice(0, meta.history.length - HISTORY_TAIL);
+    if (ctx.pendingCheckpoint) {
+      meta.checkpoints.push(next);
     }
   }
 
   private ensureMeta(key: ReplayableStateKey<any>): StateMeta {
     let meta = this.metas.get(key);
     if (meta === undefined) {
-      meta = { history: [], checkpoints: [], nextPatchId: 1 };
+      meta = { checkpoints: [] };
       this.metas.set(key, meta);
     }
     return meta;
   }
 
   async restore(): Promise<void> {
-    if (this.restorePhase !== 'new') {
+    if (this.restorePhase !== 'new' && this.restorePhase !== 'ready') {
       throw new BugIndicatingError(
         `Agent state restore called while phase is ${this.restorePhase}`,
       );
     }
+    const rerun = this.restorePhase === 'ready';
     this.restorePhase = 'restoring';
+    if (rerun) this.dispatching = true;
     try {
-      let recordIndex = 0;
-      for await (const record of this.wire.readJournal()) {
-        if (record.type === 'metadata') continue;
-        const cls = this.folded.events.get(record.type);
-        if (cls === undefined) {
-          if (!RETIRED_WIRE_RECORD_TYPES.has(record.type)) {
-            this.reportSkippedRecord(record.type, recordIndex, false);
-          }
-          recordIndex++;
-          continue;
-        }
-        let eventRecord = record;
-        if (cls.agentDomain) {
-          if (this.agentScope === undefined) {
-            this.reportSkippedRecord(record.type, recordIndex, true);
-            recordIndex++;
-            continue;
-          }
-          const recordAgentId = record['agentId'];
-          if (recordAgentId === undefined) {
-            eventRecord = { ...record, agentId: this.agentScope.agentId };
-          } else if (recordAgentId !== this.agentScope.agentId) {
-            this.reportSkippedRecord(record.type, recordIndex, true);
-            recordIndex++;
-            continue;
-          }
-        }
-        const event = event2FromRecord(cls, eventRecord);
-        if (event === undefined) {
-          this.reportSkippedRecord(record.type, recordIndex, true);
-          recordIndex++;
-          continue;
-        }
-        this.executeEvent(event, true);
-        recordIndex++;
-      }
+      if (rerun) this.resetReplayState();
+      await this.replayRecords(true);
+      await this.replayRecords(false);
       await this.rehydrateStates();
       this.restorePhase = 'ready';
-      await this.hooks.onDidRestore.run({});
+      if (rerun) {
+        this.drainQueue();
+      } else {
+        await this.hooks.onDidRestore.run({});
+      }
     } catch (error) {
       this.restorePhase = 'failed';
+      if (rerun) {
+        for (const entry of this.queue.splice(0)) entry.reject(error);
+      }
       throw error;
+    } finally {
+      if (rerun) {
+        this.queue.length = 0;
+        this.dispatching = false;
+        this.drainDepth = 0;
+      }
+    }
+  }
+
+  private resetReplayState(): void {
+    for (const key of this.agentState.replayableKeys()) {
+      this.agentState.set(key, key.initial());
+    }
+    for (const attachment of this.participantAttachments.values()) {
+      attachment.commit(attachment.initial);
+      attachment.meta.checkpoints.length = 0;
+    }
+    this.metas.clear();
+  }
+
+  private async replayRecords(undoable: boolean): Promise<void> {
+    const stream = undoable ? this.wire.readRestorable() : this.wire.readJournal();
+    let recordIndex = 0;
+    for await (const record of stream) {
+      if (record.type === 'metadata') continue;
+      const cls = this.folded.events.get(record.type);
+      if (cls === undefined) {
+        if (!undoable && !RETIRED_WIRE_RECORD_TYPES.has(record.type)) {
+          this.reportSkippedRecord(record.type, recordIndex, false);
+        }
+        recordIndex++;
+        continue;
+      }
+      let eventRecord = record;
+      if (cls.agentDomain) {
+        if (this.agentScope === undefined) {
+          if (!undoable) this.reportSkippedRecord(record.type, recordIndex, true);
+          recordIndex++;
+          continue;
+        }
+        const recordAgentId = record['agentId'];
+        if (recordAgentId === undefined) {
+          eventRecord = { ...record, agentId: this.agentScope.agentId };
+        } else if (recordAgentId !== this.agentScope.agentId) {
+          if (!undoable) this.reportSkippedRecord(record.type, recordIndex, true);
+          recordIndex++;
+          continue;
+        }
+      }
+      const event = event2FromRecord(cls, eventRecord);
+      if (event === undefined) {
+        if (!undoable) this.reportSkippedRecord(record.type, recordIndex, true);
+        recordIndex++;
+        continue;
+      }
+      this.executeEvent(event, true, undoable);
+      recordIndex++;
     }
   }
 

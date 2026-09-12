@@ -8,6 +8,8 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { createHooks } from '#/hooks';
 import type { IWireService } from '#/wire/wire';
 
+import { stubAgentWire } from '../../wire/stubs';
+
 export interface StubLoopOptions { readonly hasActiveTurn?: boolean; readonly currentId?: string | number; readonly pendingTurnResult?: boolean; readonly manualTurnResult?: boolean }
 export type StubTurn = Turn & { readonly id: number };
 export type StubLoop = IAgentLoopService & {
@@ -116,5 +118,5 @@ export async function runWillBeginStepHooks(
     signal: new AbortController().signal,
   });
 }
-export function stubWire(): IWireService { return { _serviceBrand: undefined, seal: async () => {}, appendRecord: () => {}, readJournal: async function* () {}, flush: async () => {}, drainPersisted: async () => {}, lineCount: () => 0, lastContextClearLine: () => undefined, journalPath: () => undefined }; }
+export function stubWire(): IWireService { return stubAgentWire(); }
 export function stubToolExecutor(): IAgentToolExecutorService { return { _serviceBrand: undefined, execute: async function* () {}, onBeforeExecuteTool: Event.None as Event<BeforeToolExecuteEvent>, onWillExecuteTool: Event.None as Event<WillExecuteToolEvent>, hooks: { onDidExecuteTool: new OrderedHookSlot<ToolDidExecuteContext>() }, recordDupType: () => {}, registerToolCallGuard: () => ({ dispose() {} }), registerUnavailableToolDescriber: () => ({ dispose() {} }), registerMissingToolDescriber: () => ({ dispose() {} }) }; }

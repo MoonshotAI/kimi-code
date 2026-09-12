@@ -24,10 +24,13 @@ import {
 import { repairWireJournal } from './repair';
 import {
   activeChain,
+  AGENT_SWITCHED_TYPE,
+  branchForLine,
   buildUndoSwitchRecords,
   computeForkLine,
   MAIN_BRANCH,
   parseTree,
+  restorableChain,
   type WireLine,
   type WireTree,
 } from './tree';
@@ -62,6 +65,8 @@ export class WireService extends Service implements IWireService, IAgentJournal 
     | undefined;
   private persistError: Error | undefined;
   private treeSnapshot: WireTree | undefined;
+  private writeGeneration = 0;
+  private lastReadLineCount = 0;
 
   constructor(
     @IAgentScopeContext scopeContext: IAgentScopeContext,
@@ -133,12 +138,10 @@ export class WireService extends Service implements IWireService, IAgentJournal 
   }
 
   async *read(): AsyncIterable<WireRecord> {
-    const entries: WireLine[] = [];
-    for await (const entry of this.readEntries()) {
-      entries.push(entry);
-    }
+    const entries = await this.readStableEntries();
     const tree = parseTree(entries, entries.at(-1)?.line ?? 0);
     this.treeSnapshot = tree;
+    this.reportTreeDiagnostics(tree);
     for (const { record } of activeChain(entries, tree)) {
       yield record;
     }
@@ -148,15 +151,35 @@ export class WireService extends Service implements IWireService, IAgentJournal 
     return this.readJournal();
   }
 
+  async *readRestorable(): AsyncIterable<WireRecord> {
+    const entries = await this.readStableEntries();
+    const tree = parseTree(entries, entries.at(-1)?.line ?? 0);
+    this.treeSnapshot = tree;
+    this.reportTreeDiagnostics(tree);
+    for (const { record } of restorableChain(entries, tree)) {
+      yield record;
+    }
+  }
+
   async switchBranch(input: SwitchBranchInput): Promise<SwitchedBranch> {
     await this.drainPersisted();
-    const entries: WireLine[] = [];
-    for await (const entry of this.readEntries()) {
-      entries.push(entry);
+    const entries = await this.readStableEntries();
+    if (this.lines !== this.lastReadLineCount) {
+      throw new WireError(
+        WireErrors.codes.RECORDS_WRITE_FAILED,
+        'Wire journal changed while switching branches',
+        { details: { scope: this.wireScope, lines: this.lines, read: this.lastReadLineCount } },
+      );
     }
-    const tree = parseTree(entries, entries.at(-1)?.line ?? 0);
-    const forkLine = computeForkLine(activeChain(entries, tree), input.turns);
-    const base = { branch: tree.activeBranch, line: forkLine };
+    const lastLine = entries.at(-1)?.line ?? 0;
+    const tree = parseTree(entries, lastLine);
+    this.reportTreeDiagnostics(tree);
+    const forkLine = computeForkLine(
+      activeChain(entries, tree),
+      tree.pairedLegacyUndoLines,
+      input.turns,
+    );
+    const base = { branch: branchForLine(tree, forkLine), line: forkLine };
     const branch = `b${tree.edges.length + 1}`;
     const edgeLine = this.lines + 1;
     const records = buildUndoSwitchRecords({
@@ -172,6 +195,7 @@ export class WireService extends Service implements IWireService, IAgentJournal 
     this.appendRecord(records.switched);
     this.appendRecord(records.legacyUndo);
     this.appendRecord(records.undone);
+    await this.flush();
     const appended: WireLine[] = [
       { record: records.switched, line: edgeLine },
       { record: records.legacyUndo, line: edgeLine + 1 },
@@ -179,6 +203,43 @@ export class WireService extends Service implements IWireService, IAgentJournal 
     ];
     this.treeSnapshot = parseTree([...entries, ...appended], edgeLine + 2);
     return { branch, base, edgeLine, forkLine };
+  }
+
+  private async readStableEntries(): Promise<WireLine[]> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const generation = this.writeGeneration;
+      const entries: WireLine[] = [];
+      for await (const entry of this.readEntries()) {
+        entries.push(entry);
+      }
+      if (this.writeGeneration === generation) return entries;
+    }
+    throw new WireError(
+      WireErrors.codes.RECORDS_WRITE_FAILED,
+      'Wire journal kept rewriting while being read',
+      { details: { scope: this.wireScope } },
+    );
+  }
+
+  private reportTreeDiagnostics(tree: WireTree): void {
+    for (const line of tree.diagnostics.malformedSwitchLines) {
+      onUnexpectedError(
+        new WireError(
+          WireErrors.codes.WIRE_UNKNOWN_RECORD,
+          'Malformed agent.switched record ignored during tree projection',
+          { details: { scope: this.wireScope, type: AGENT_SWITCHED_TYPE, line } },
+        ),
+      );
+    }
+    for (const branch of tree.diagnostics.duplicateBranches) {
+      onUnexpectedError(
+        new WireError(
+          WireErrors.codes.WIRE_UNKNOWN_RECORD,
+          `Duplicate agent.switched branch '${branch}' ignored during tree projection`,
+          { details: { scope: this.wireScope, type: AGENT_SWITCHED_TYPE, branch } },
+        ),
+      );
+    }
   }
 
   branches(): readonly string[] {
@@ -251,6 +312,7 @@ export class WireService extends Service implements IWireService, IAgentJournal 
         : this.normalizePlanRevisionRecord(record, recordIndex);
       if (
         !newerWireVersion &&
+        record.type === 'plan.revision' &&
         normalized !== undefined &&
         'path' in record &&
         !('key' in record)
@@ -278,9 +340,11 @@ export class WireService extends Service implements IWireService, IAgentJournal 
       await this.repairJournal(truncation, rewrittenRecords);
     } else if (rewrittenRecords !== undefined) {
       await this.log.rewrite(this.wireScope, AGENT_WIRE_RECORD_KEY, rewrittenRecords);
+      this.writeGeneration += 1;
       this.lines = rewrittenRecords.length;
       this.lastClearLine = lastContextClearLineOf(rewrittenRecords);
     }
+    this.lastReadLineCount = lineCount;
   }
 
   lineCount(): number {
@@ -324,6 +388,7 @@ export class WireService extends Service implements IWireService, IAgentJournal 
     );
     this.pendingRepair = outcome === 'failed' ? { records, truncation } : undefined;
     if (outcome !== 'failed') {
+      this.writeGeneration += 1;
       this.lines = records.length;
       this.lastClearLine = lastContextClearLineOf(records);
     }
