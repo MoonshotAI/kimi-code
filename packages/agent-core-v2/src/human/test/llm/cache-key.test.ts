@@ -11,7 +11,7 @@ const model: LlmModel = {
   provider: 'test',
   model: 'test-model',
   capability: UNKNOWN_CAPABILITY,
-  baseUrl: 'https://example.test/v1',
+  baseUrl: 'https://api.openai.com/v1',
 };
 const messages: readonly Message[] = [createUserMessage('hi')];
 
@@ -119,6 +119,20 @@ describe('openai requester cacheKey', () => {
     expect(client.body()['stop']).toEqual(['END']);
     expect(client.body()['presence_penalty']).toBe(0.5);
     expect(client.body()['extra_body']).toEqual({ trace_id: 't1' });
+  });
+
+  it('omits prompt_cache_key for third-party OpenAI endpoints', async () => {
+    const client = stubOpenAIClient(chatCompletionChunks);
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
+    await requester.generate(
+      {
+        model: { ...model, baseUrl: 'https://integrate.api.nvidia.com/v1' },
+        cacheKey: 'session-1',
+      },
+      { messages },
+      { signal: new AbortController().signal },
+    );
+    expect(client.body()['prompt_cache_key']).toBeUndefined();
   });
 
   it('lets a trait override the cache key params', async () => {

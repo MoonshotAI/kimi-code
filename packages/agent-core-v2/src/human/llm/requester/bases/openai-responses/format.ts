@@ -12,6 +12,7 @@ import type { ResponseFormat } from '#/llm/response-format';
 import type { TokenUsage } from '#/llm/usage';
 
 import { isContextOverflowErrorCode, isOpenAIInsufficientQuotaCode } from '../openai/format';
+import { isOfficialOpenAIBaseUrl } from '../openai-base-url';
 import type { ResponsesInputItem } from './contract';
 import { lowerMessage } from './lower';
 
@@ -325,8 +326,11 @@ export function defaultOpenAIResponsesTool(tool: ToolDescription): Record<string
   };
 }
 
-export function encodeOpenAIResponsesCacheKey(cacheKey: string): Record<string, unknown> {
-  return { prompt_cache_key: cacheKey };
+export function encodeOpenAIResponsesCacheKey(
+  cacheKey: string,
+  baseUrl?: string,
+): Record<string, unknown> {
+  return isOfficialOpenAIBaseUrl(baseUrl) ? { prompt_cache_key: cacheKey } : {};
 }
 
 export function encodeOpenAIResponsesMaxCompletionTokens(cap: number): Record<string, unknown> {

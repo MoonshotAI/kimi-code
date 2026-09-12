@@ -195,6 +195,22 @@ describe('openai requester responseFormat', () => {
 });
 
 describe('openai-responses requester responseFormat', () => {
+  it('omits prompt_cache_key for third-party endpoints', async () => {
+    const client = stubResponsesClient(responsesStreamEvents);
+    const requester = createOpenAIResponsesRequester({
+      clientFactory: client.clientFactory,
+    });
+    await requester.generate(
+      {
+        model: { ...model, baseUrl: 'https://integrate.api.nvidia.com/v1' },
+        cacheKey: 'session-1',
+      },
+      { messages },
+      { signal: new AbortController().signal },
+    );
+    expect(client.body()['prompt_cache_key']).toBeUndefined();
+  });
+
   it('maps json_schema to text.format', async () => {
     const client = stubResponsesClient(responsesStreamEvents);
     const requester = createOpenAIResponsesRequester({
