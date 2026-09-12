@@ -889,6 +889,7 @@ describe('AgentTaskService — notification delivery', () => {
         new Error('output unavailable'),
       );
 
+      await ctx.restorePersisted();
       await ctx.get(IAgentConversationUndoService).undo(1);
 
       expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(2);

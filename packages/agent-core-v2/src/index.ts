@@ -58,6 +58,8 @@ export * from '#/_base/log/fileLog';
 export * from '#/_base/log/logService';
 export * from '#/wire/wire';
 export * from '#/wire/wireService';
+export * from '#/wire/journal';
+export * from '#/wire/tree/index';
 export * from '#/wire/record';
 export * from '#/wire/migration/migration';
 export * from '#/session/sessionLog/sessionLogService';

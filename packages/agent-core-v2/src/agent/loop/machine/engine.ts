@@ -10,7 +10,8 @@ import { messageAppended, turnEnded } from '#human/agent/events';
 import { agentSlices, type AgentEventStore } from '#human/agent/slices';
 import { credentialsRecovery } from '#human/credentials/credentials';
 import { createEventStoreSync } from '#human/eventStore/eventStore';
-import { memoryJournal } from '#human/eventStore/journal';
+import type { ExternalEvent } from '#human/eventStore/events';
+import { memoryJournal, type SyncStoreJournal } from '#human/eventStore/journal';
 import type { LlmErrorMessage } from '#human/llm/errors';
 import type { FinishInfo } from '#human/llm/finish-reason';
 import type { StreamedMessagePart, UserMessage } from '#human/llm/message';
@@ -24,6 +25,7 @@ import { createActor, type Subscription } from '#human/xstate2';
 
 import { createMachineRequester, type MachineRequesterGateDecision } from './requester';
 import { createMachineTools, type ToolResultExtras } from './tools';
+import { seededStoreJournal } from './storeJournal';
 
 export type MachineEngineDelta =
   | { readonly kind: 'assistant'; readonly delta: string }
@@ -112,6 +114,7 @@ export interface CreateMachineEngineOptions {
   readonly recovery?: LlmRecovery;
   readonly abortTimeoutMs?: number;
   readonly initialTurnId?: number;
+  readonly journal?: SyncStoreJournal;
   readonly trace?: () => LLMRequestTrace | undefined;
   readonly source?: () => AgentLLMRequestSource | undefined;
   readonly toolTurnId?: () => number | undefined;
@@ -282,15 +285,9 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
     canRecover: (error) => current()?.canRecover?.(error) === true,
     invalidate: () => current()?.invalidate?.(),
   };
-  const journal = memoryJournal();
+  const baseJournal = options.journal;
   const initialTurnId = options.initialTurnId ?? 0;
-  if (initialTurnId > 0) {
-    void journal.append({
-      type: turnEnded.type,
-      kind: 'event',
-      data: turnEnded({ turnId: initialTurnId - 1, outcome: 'done' }),
-    });
-  }
+  const journal = engineJournal(baseJournal, initialTurnId);
   const store: AgentEventStore = createEventStoreSync({ journal, slices: agentSlices });
   const actor = createActor(
     createAgentMachine({
@@ -463,19 +460,14 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
       actor.send({ type: 'input.abort' });
     },
     resetHistory: (history) => {
-      const journal = memoryJournal();
-      for (const message of history) {
-        void journal.append({ type: messageAppended.type, kind: 'event', data: messageAppended({ message }) });
-      }
+      const events: ExternalEvent[] = history.map((message) => messageAppended({ message }));
       const nextTurnId = (actor.getSnapshot() as unknown as MachineSnapshotLike).context.turnId;
       if (nextTurnId > 0) {
-        void journal.append({
-          type: turnEnded.type,
-          kind: 'event',
-          data: turnEnded({ turnId: nextTurnId - 1, outcome: 'done' }),
-        });
+        events.push(turnEnded({ turnId: nextTurnId - 1, outcome: 'done' }));
       }
-      return store.reset(journal);
+      const seed = seedRecords(events);
+      const next = baseJournal === undefined ? seed : seededStoreJournal(baseJournal, seed.readSync());
+      return store.reset(next);
     },
     stop: () => {
       for (const subscription of subscriptions) subscription.unsubscribe();
@@ -536,4 +528,24 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
       tools.handleProgress(toolCallId, update);
     },
   };
+}
+
+function seedRecords(events: readonly ExternalEvent[]): SyncStoreJournal {
+  const journal = memoryJournal();
+  for (const event of events) {
+    void journal.append({ type: event.type, kind: 'event', data: event });
+  }
+  return journal;
+}
+
+function engineJournal(base: SyncStoreJournal | undefined, initialTurnId: number): SyncStoreJournal {
+  if (base === undefined) {
+    if (initialTurnId <= 0) return memoryJournal();
+    return seedRecords([turnEnded({ turnId: initialTurnId - 1, outcome: 'done' })]);
+  }
+  if (initialTurnId <= 0 || base.readSync().length > 0) return base;
+  return seededStoreJournal(
+    base,
+    seedRecords([turnEnded({ turnId: initialTurnId - 1, outcome: 'done' })]).readSync(),
+  );
 }

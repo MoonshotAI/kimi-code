@@ -143,6 +143,12 @@ describe('wire.jsonl round-trip', () => {
     const replayTarget = makeContainer(storage, 'replay-target');
     const withUnknown: WireRecord[] = [
       ...records,
+      {
+        type: 'human.agent.message.appended',
+        kind: 'event',
+        message: { role: 'user', content: [{ type: 'text', text: 'machine mirror' }] },
+        time: 1700000000006,
+      },
       { type: 'compat.unknown.nope', foo: 1 },
     ];
     const unexpected: unknown[] = [];

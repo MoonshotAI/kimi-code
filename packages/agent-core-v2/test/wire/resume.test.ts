@@ -1012,15 +1012,65 @@ describe('Agent resume', () => {
           step: 1,
         },
       },
+      {
+        type: 'agent.switched',
+        agentId: 'main',
+        branch: 'b1',
+        reason: 'undo',
+        base: { branch: 'main', line: 1 },
+        turns: 1,
+        time: 3,
+      },
+      {
+        type: 'agent.switched',
+        agentId: 'main',
+        branch: 'b1',
+        reason: 'undo',
+        base: { branch: 'main', line: 5 },
+        turns: 1,
+        legacyUndoLine: 12,
+        time: 3,
+      },
       { type: 'context.undo', count: 1 },
+      { type: 'context.undone', agentId: 'main', turns: 1, time: 3 },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'third prompt' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'agent.switched',
+        agentId: 'main',
+        reason: 'undo',
+        turns: 1,
+        time: 4,
+      },
     ] as unknown as WireRecord[]);
     const ctx = testAgent({ persistence, autoConfigure: false });
 
-    await ctx.restorePersisted();
+    const unexpected: unknown[] = [];
+    setUnexpectedErrorHandler((error) => unexpected.push(error));
+    try {
+      await ctx.restorePersisted();
 
-    expect(ctx.context.get()).toHaveLength(2);
-    expect(ctx.context.get()[0]?.role).toBe('user');
-    expect(ctx.context.get()[1]?.role).toBe('assistant');
+      expect(ctx.context.get()).toHaveLength(3);
+      expect(ctx.context.get()[0]?.role).toBe('user');
+      expect(ctx.context.get()[1]?.role).toBe('assistant');
+      expect(ctx.context.get()[2]?.role).toBe('user');
+      const skipped = unexpected.filter(
+        (error) => (error as { code?: unknown }).code === 'wire.unknown_record',
+      );
+      expect(skipped.map((error) => (error as Error).message)).toEqual([
+        'Malformed agent.switched record ignored during tree projection',
+        "Duplicate agent.switched branch 'b1' ignored during tree projection",
+      ]);
+    } finally {
+      resetUnexpectedErrorHandler();
+    }
   });
 
   it('skips a fractional undo record on resume without corrupting checkpointed state', async () => {

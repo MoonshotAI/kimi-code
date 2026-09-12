@@ -76,6 +76,7 @@ import {
   type WireRecord,
 } from '#/wire/record';
 import { repairWireJournal } from '#/wire/repair';
+import { flattenChain } from '#/wire/tree/index';
 import { IModelService } from '#/llm-adapter/model/model';
 import { IProviderService } from '#/llm-adapter/provider/provider';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
@@ -569,7 +570,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         opts.turnIndex === undefined
           ? undefined
           : sliceMainRecordsAtTurn(
-              await this.readSourceWireRecords(sourceHandle, sourceId, MAIN_AGENT_ID),
+              flattenChain(await this.readSourceWireRecords(sourceHandle, sourceId, MAIN_AGENT_ID)),
               sourceId,
               opts.turnIndex,
             );
@@ -592,7 +593,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             slicedRecords = turnSlice.records;
           } else {
             const subagentRecords = sliceSubagentRecordsAtTime(
-              await this.readSourceWireRecords(sourceHandle, sourceId, agentId),
+              flattenChain(await this.readSourceWireRecords(sourceHandle, sourceId, agentId)),
               turnSlice.cutoffTime,
             );
             if (subagentRecords.length === 0) continue;

@@ -15,7 +15,27 @@ import { IFileSystemStorageService, StorageError, StorageErrors } from '#/persis
 
 import { IWireService } from './wire';
 import { WireError, WireErrors } from './errors';
+import { isHumanRecordType } from './human';
+import {
+  type AgentJournalRef,
+  type IAgentJournal,
+  type SwitchedBranch,
+  type SwitchBranchInput,
+} from './journal';
 import { repairWireJournal } from './repair';
+import {
+  activeChain,
+  AGENT_SWITCHED_TYPE,
+  branchForLine,
+  buildUndoSwitchRecords,
+  computeForkLine,
+  MAIN_BRANCH,
+  parseTree,
+  restorableChain,
+  type UndoSwitchRecords,
+  type WireLine,
+  type WireTree,
+} from './tree';
 import {
   WIRE_PROTOCOL_VERSION,
   isNewerWireVersion,
@@ -34,7 +54,7 @@ import {
   type WireRecord,
 } from './record';
 
-export class WireService extends Service implements IWireService {
+export class WireService extends Service implements IWireService, IAgentJournal {
   declare readonly _serviceBrand: undefined;
 
   private readonly wireScope: string;
@@ -46,6 +66,10 @@ export class WireService extends Service implements IWireService {
     | { readonly records: WireRecord[]; readonly truncation: AppendLogTruncation }
     | undefined;
   private persistError: Error | undefined;
+  private treeSnapshot: WireTree | undefined;
+  private writeGeneration = 0;
+  private lastReadLineCount = 0;
+  private modeTwoEntries: WireLine[] = [];
 
   constructor(
     @IAgentScopeContext scopeContext: IAgentScopeContext,
@@ -103,6 +127,178 @@ export class WireService extends Service implements IWireService {
   }
 
   async *readJournal(): AsyncIterable<WireRecord> {
+    for await (const { record } of this.readEntries()) {
+      yield record;
+    }
+  }
+
+  get journalRef(): AgentJournalRef {
+    return { tree: this.wireScope, branch: this.treeSnapshot?.activeBranch ?? MAIN_BRANCH };
+  }
+
+  append(record: WireRecord, dehydrate?: RecordDehydrator): void {
+    this.appendRecord(record, dehydrate);
+  }
+
+  async *read(): AsyncIterable<WireRecord> {
+    const entries = await this.readStableEntries();
+    const tree = parseTree(entries, entries.at(-1)?.line ?? 0);
+    this.treeSnapshot = tree;
+    this.reportTreeDiagnostics(tree);
+    for (const { record } of activeChain(entries, tree)) {
+      yield record;
+    }
+  }
+
+  readRaw(): AsyncIterable<WireRecord> {
+    return this.readJournal();
+  }
+
+  readHumanChain(): readonly WireLine[] {
+    const tree = parseTree(this.modeTwoEntries, this.lines);
+    return activeChain(this.modeTwoEntries, tree);
+  }
+
+  async *readRestorable(): AsyncIterable<WireRecord> {
+    const entries = await this.readStableEntries();
+    const tree = parseTree(entries, entries.at(-1)?.line ?? 0);
+    this.treeSnapshot = tree;
+    this.reportTreeDiagnostics(tree);
+    for (const { record } of restorableChain(entries, tree)) {
+      yield record;
+    }
+  }
+
+  async switchBranch(input: SwitchBranchInput): Promise<SwitchedBranch> {
+    let entries: WireLine[] | undefined;
+    for (let attempt = 0; attempt < 2 && entries === undefined; attempt++) {
+      await this.drainPersisted();
+      const read = await this.readStableEntries();
+      if (this.lines === this.lastReadLineCount) entries = read;
+    }
+    if (entries === undefined) {
+      throw new WireError(
+        WireErrors.codes.RECORDS_WRITE_FAILED,
+        'Wire journal changed while switching branches',
+        { details: { scope: this.wireScope, lines: this.lines, read: this.lastReadLineCount } },
+      );
+    }
+    const lastLine = entries.at(-1)?.line ?? 0;
+    const tree = parseTree(entries, lastLine);
+    this.reportTreeDiagnostics(tree);
+    const forkLine = computeForkLine(
+      activeChain(entries, tree),
+      tree.pairedLegacyUndoLines,
+      input.turns,
+    );
+    const base = { branch: branchForLine(tree, forkLine), line: forkLine };
+    const branch = `b${tree.edges.length + 1}`;
+    const edgeLine = this.lines + 1;
+    const records = buildUndoSwitchRecords({
+      agentId: this.agentId,
+      branch,
+      reason: input.reason ?? 'undo',
+      base,
+      turns: input.turns,
+      edgeLine,
+      fromTurnId: input.fromTurnId,
+      time: Date.now(),
+    });
+    this.appendRecord(records.switched);
+    this.appendRecord(records.legacyUndo);
+    this.appendRecord(records.undone);
+    await this.flush();
+    await this.assertSwitchTripleAppended(records, edgeLine);
+    const appended: WireLine[] = [
+      { record: records.switched, line: edgeLine },
+      { record: records.legacyUndo, line: edgeLine + 1 },
+      { record: records.undone, line: edgeLine + 2 },
+    ];
+    this.treeSnapshot = parseTree([...entries, ...appended], edgeLine + 2);
+    return { branch, base, edgeLine, forkLine };
+  }
+
+  private async assertSwitchTripleAppended(
+    records: UndoSwitchRecords,
+    edgeLine: number,
+  ): Promise<void> {
+    const tail: WireRecord[] = [];
+    let total = 0;
+    const tolerate = { onTruncate: () => {} };
+    for await (const record of this.log.read<WireRecord>(
+      this.wireScope,
+      AGENT_WIRE_RECORD_KEY,
+      tolerate,
+    )) {
+      total += 1;
+      tail.push(record);
+      if (tail.length > 3) tail.shift();
+    }
+    const expected = [records.switched, records.legacyUndo, records.undone];
+    const matches =
+      total === edgeLine + 2 &&
+      tail.length === 3 &&
+      tail.every((record, index) => recordsMatch(record, expected[index]!));
+    if (matches) return;
+    throw new WireError(
+      WireErrors.codes.RECORDS_WRITE_FAILED,
+      'Wire journal changed while the undo switch triple was appended',
+      { details: { scope: this.wireScope, lines: total, edgeLine } },
+    );
+  }
+
+  private async readStableEntries(): Promise<WireLine[]> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const generation = this.writeGeneration;
+      const entries: WireLine[] = [];
+      for await (const entry of this.readEntries()) {
+        entries.push(entry);
+      }
+      if (this.writeGeneration === generation) return entries;
+    }
+    throw new WireError(
+      WireErrors.codes.RECORDS_WRITE_FAILED,
+      'Wire journal kept rewriting while being read',
+      { details: { scope: this.wireScope } },
+    );
+  }
+
+  private reportTreeDiagnostics(tree: WireTree): void {
+    for (const line of tree.diagnostics.malformedSwitchLines) {
+      onUnexpectedError(
+        new WireError(
+          WireErrors.codes.WIRE_UNKNOWN_RECORD,
+          'Malformed agent.switched record ignored during tree projection',
+          { details: { scope: this.wireScope, type: AGENT_SWITCHED_TYPE, line } },
+        ),
+      );
+    }
+    for (const branch of tree.diagnostics.duplicateBranches) {
+      onUnexpectedError(
+        new WireError(
+          WireErrors.codes.WIRE_UNKNOWN_RECORD,
+          `Duplicate agent.switched branch '${branch}' ignored during tree projection`,
+          { details: { scope: this.wireScope, type: AGENT_SWITCHED_TYPE, branch } },
+        ),
+      );
+    }
+  }
+
+  branches(): readonly string[] {
+    const tree = this.treeSnapshot;
+    if (tree === undefined) return [MAIN_BRANCH];
+    return tree.segments.map((segment) => segment.branch);
+  }
+
+  nextSeq(): number {
+    return this.lines + 1;
+  }
+
+  settled(): Promise<void> {
+    return this.drainPersisted();
+  }
+
+  private async *readEntries(): AsyncIterable<WireLine> {
     let truncation: AppendLogTruncation | undefined;
     const source = this.log.read<WireRecord>(this.wireScope, AGENT_WIRE_RECORD_KEY, {
       onTruncate: (info) => {
@@ -116,6 +312,8 @@ export class WireService extends Service implements IWireService {
     let lineCount = 0;
     let hasRecords = false;
     let legacyPlanRevisionMigrated = false;
+    const modeTwoEntries: WireLine[] = [];
+    const modeTwoLengthAtStart = this.modeTwoEntries.length;
 
     for await (const candidate of source) {
       lineCount++;
@@ -158,6 +356,7 @@ export class WireService extends Service implements IWireService {
         : this.normalizePlanRevisionRecord(record, recordIndex);
       if (
         !newerWireVersion &&
+        record.type === 'plan.revision' &&
         normalized !== undefined &&
         'path' in record &&
         !('key' in record)
@@ -169,7 +368,10 @@ export class WireService extends Service implements IWireService {
         continue;
       }
       rewrittenRecords?.push(normalized);
-      yield normalized;
+      if (isHumanRecordType(normalized.type) || normalized.type === AGENT_SWITCHED_TYPE) {
+        modeTwoEntries.push({ record: normalized, line: lineCount });
+      }
+      yield { record: normalized, line: lineCount };
       if (normalized.type !== 'metadata') {
         recordIndex++;
       }
@@ -185,9 +387,27 @@ export class WireService extends Service implements IWireService {
       await this.repairJournal(truncation, rewrittenRecords);
     } else if (rewrittenRecords !== undefined) {
       await this.log.rewrite(this.wireScope, AGENT_WIRE_RECORD_KEY, rewrittenRecords);
+      this.writeGeneration += 1;
       this.lines = rewrittenRecords.length;
       this.lastClearLine = lastContextClearLineOf(rewrittenRecords);
     }
+    this.mergeModeTwoEntries(modeTwoEntries, this.modeTwoEntries.slice(modeTwoLengthAtStart), lineCount);
+    this.lastReadLineCount = lineCount;
+  }
+
+  private mergeModeTwoEntries(
+    fresh: WireLine[],
+    appended: readonly WireLine[],
+    lineCount: number,
+  ): void {
+    let line = lineCount;
+    const merged = [...fresh];
+    for (const entry of appended) {
+      if (fresh.some((candidate) => recordsMatch(candidate.record, entry.record))) continue;
+      line += 1;
+      merged.push({ record: entry.record, line });
+    }
+    this.modeTwoEntries = merged;
   }
 
   lineCount(): number {
@@ -231,6 +451,7 @@ export class WireService extends Service implements IWireService {
     );
     this.pendingRepair = outcome === 'failed' ? { records, truncation } : undefined;
     if (outcome !== 'failed') {
+      this.writeGeneration += 1;
       this.lines = records.length;
       this.lastClearLine = lastContextClearLineOf(records);
     }
@@ -346,8 +567,15 @@ export class WireService extends Service implements IWireService {
       onError: onUnexpectedError,
     });
     this.lines += 1;
+    if (isHumanRecordType(record.type) || record.type === AGENT_SWITCHED_TYPE) {
+      this.modeTwoEntries.push({ record, line: this.lines });
+    }
     if (record.type === 'context.clear') this.lastClearLine = this.lines;
   }
+}
+
+function recordsMatch(a: WireRecord, b: WireRecord): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 function lastContextClearLineOf(records: readonly WireRecord[]): number | undefined {

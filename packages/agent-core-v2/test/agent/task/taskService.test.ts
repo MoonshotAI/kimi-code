@@ -51,6 +51,7 @@ import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 
 import { stubLog } from '../../_base/log/stubs';
+import { stubAgentWire } from '../../wire/stubs';
 import { stubContextMemory, type StubContextMemory } from '../contextMemory/stubs';
 import { stubLoopWithHooks, type StubLoop } from '../loop/stubs';
 import { stubFlag } from '../../app/flag/stubs';
@@ -77,16 +78,7 @@ const noopBlob: IAgentBlobService = {
 };
 
 function stubWireService(): IWireService {
-  return {
-    _serviceBrand: undefined,
-    seal: async () => {},
-    appendRecord: () => {},
-    readJournal: async function* () {},
-    flush: async () => {}, drainPersisted: async () => {},
-    lineCount: () => 0,
-    lastContextClearLine: () => undefined,
-    journalPath: () => undefined,
-  };
+  return stubAgentWire();
 }
 
 function registerAgentEventBus(
