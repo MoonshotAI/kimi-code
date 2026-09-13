@@ -5,6 +5,7 @@ import type { InstantiationService } from '#/_base/di/instantiationService';
 import { Disposable, toDisposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
+import { ILogService } from '#/_base/log/log';
 import { Error2, ErrorCodes } from '#/errors';
 import { LifecycleScope } from '#/app/scopes';
 import {
@@ -53,6 +54,12 @@ import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompacti
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IWireService } from '#/wire/wire';
+import { WireService } from '#/wire/wireService';
+import { IAgentBlobService } from '#/agent/blob/agentBlobService';
+import { AgentBlobServiceImpl } from '#/agent/blob/agentBlobServiceImpl';
+import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { IBlobStore } from '#/persistence/interface/blobStore';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -118,6 +125,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     @IConfigService private readonly config: IConfigService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ISessionEventBus bus: ISessionEventBus,
+    @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
+    @IBlobStore private readonly blobStore: IBlobStore,
+    @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
+    @ILogService private readonly logger: ILogService,
   ) {
     super();
     this.sessionActor.start();
@@ -251,11 +262,22 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     let stage = 'scope';
     let containerRef: InstantiationService | undefined;
     let createdHandle: IAgentScopeHandle | undefined;
+    let wireView: WireService | undefined;
     const telemetryBinding = bindTelemetryScope(this.telemetry, {
       agent_id: agentId,
       mode: 'agent',
     });
     try {
+      const blobView = new AgentBlobServiceImpl(this.blobStore, scopeContext);
+      const wire = new WireService(
+        scopeContext,
+        this.appendLogStore,
+        blobView,
+        this.storage,
+        this.logger,
+        telemetryBinding.telemetry,
+      );
+      wireView = wire;
       const handle = createScopedChildHandle(
         this.instantiation,
         LifecycleScope.Agent,
@@ -268,12 +290,17 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
               _serviceBrand: undefined,
               binding: { workspaceId: this.ctx.workspaceId, runtimeId: opts.runtimeId ?? 'local' },
             }],
+            [IAgentBlobService, blobView],
+            [IWireService, wire],
           ],
           configureContainer: (container) => {
             container.anchorKernelEntry(
               () => telemetryBinding.dispose(),
               'telemetry:agent-context',
             );
+            container.anchorKernelEntry(() => {
+              wire.dispose();
+            }, 'wire-view-dispose');
             container.anchorKernelFinalizer(() => {
               eventBus?.deactivateAgent(agent);
             }, 'agent-event-bus-deactivate');
@@ -350,6 +377,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
             await createdHandle.dispose();
           } catch { }
         }
+        wireView?.dispose();
         telemetryBinding.dispose();
       }
       if (!finalizerArmed) eventBus?.deactivateAgent(agent);

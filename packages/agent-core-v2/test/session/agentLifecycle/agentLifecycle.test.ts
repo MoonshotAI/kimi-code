@@ -58,7 +58,6 @@ import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
 import '#/agent/mcp/mcpService';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import '#/wire/wireService';
 import '#/state/eventDispatcherService';
 import { IAgentTaskService } from '#/agent/task/task';
 import { AgentCronService, IAgentCronService } from '#/features/cron/cronService';
@@ -78,17 +77,19 @@ import { ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import '#/app/event/eventBusService';
 import { TurnStarted } from '#/agent/loop/turnEvents';
-import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
 import { ILogService } from '#/_base/log/log';
 import { IPluginService } from '#/app/plugin/plugin';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { BlobStoreService } from '#/persistence/backends/node-fs/blobStoreService';
+import { IBlobStore } from '#/persistence/interface/blobStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { createWireMetadataRecord, type WireRecord } from '#/wire/record';
+import { IWireService } from '#/wire/wire';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import type {
@@ -247,15 +248,6 @@ function recordingAppendLog(initial: readonly WireRecord[] = []): {
   };
 }
 
-function stubBlobPassThrough(ix: TestInstantiationService): void {
-  ix.stub(IAgentBlobService, {
-    _serviceBrand: undefined,
-    offloadParts: async (parts) => parts,
-    loadParts: async (parts) => parts,
-    isBlobRef: () => false,
-  } satisfies IAgentBlobService);
-}
-
 describe('AgentLifecycleService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
@@ -284,8 +276,8 @@ describe('AgentLifecycleService', () => {
     ix.get(IAgentStateService).contributeState(permissionModeConfiguredKey);
     ix.stub(IAppendLogStore, recordingAppendLog().store);
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.stub(IBlobStore, new BlobStoreService(new InMemoryStorageService()));
     ix.set(ISessionMediaStore, new SyncDescriptor(SessionMediaStoreService));
-    stubBlobPassThrough(ix);
     registerAgent = vi.fn<ISessionMetadata['registerAgent']>().mockResolvedValue(undefined);
     atomicDocs = new Map();
     ix.stub(ISessionContext, {
@@ -597,7 +589,11 @@ describe('AgentLifecycleService', () => {
   it('remove flushes the agent wire journal before disposal', async () => {
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'main' });
-    const dispatcher = svc.handleOf('main')!.accessor.get(IEventDispatcher);
+    const handle = svc.handleOf('main')!;
+    const dispatcher = handle.accessor.get(IEventDispatcher);
+    expect((dispatcher as unknown as { wire: IWireService }).wire).toBe(
+      handle.accessor.get(IWireService),
+    );
     const flush = vi.spyOn(dispatcher, 'flush');
     await svc.remove(svc.get('main')!);
     expect(flush).toHaveBeenCalled();

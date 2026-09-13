@@ -1,8 +1,6 @@
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { Service } from '#/_base/di/service';
 import { ILogService } from '#/_base/log/log';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -600,11 +598,3 @@ function extractLegacyPlanRevisionKey(path: string, agentId: string): string | u
   const key = segments.slice(5).join('/');
   return /^plan\/[^/]+\/v[0-9]+\.md$/.test(key) ? key : undefined;
 }
-
-registerScopedService(
-  LifecycleScope.Agent,
-  IWireService,
-  WireService,
-  ScopeActivation.OnScopeCreated,
-  'wire',
-);
