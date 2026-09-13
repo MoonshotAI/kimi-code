@@ -381,6 +381,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       userMessageId: '',
       promptLaunched: createControlledPromise<Turn | undefined>(),
       promptCompletion: createControlledPromise<PromptCompletion>(),
+      steeredChildren: [],
     };
     return reservation;
   }
@@ -561,7 +562,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       reservation.promptState = 'steered';
       reservation.promptLaunched.resolve(turn);
     }
-    active.steered.push(...selected);
+    active.reservation.steeredChildren.push(...selected);
     void this.dispatcher.dispatch(
       new PromptSteered({
         agentId: this.scopeContext.agentId,
@@ -828,6 +829,28 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     reservation.promptState = 'running';
     reservation.promptLaunched.resolve(reservation.turn);
     this.publishPromptStarted(reservation);
+    void reservation.result.then((result) => this.settlePromptCompletion(reservation, result));
+  }
+
+  private settlePromptCompletion(reservation: TurnReservation, result: TurnResult): void {
+    const state =
+      result.type === 'cancelled' ? 'cancelled' : result.type === 'failed' ? 'failed' : 'completed';
+    reservation.promptState = state;
+    reservation.promptCompletion.resolve({
+      promptId: reservation.machineQueueId,
+      result,
+      state,
+    });
+    for (const child of reservation.steeredChildren) {
+      child.promptState = state;
+      child.promptCompletion.resolve({
+        promptId: child.machineQueueId,
+        result,
+        state,
+      });
+    }
+    if (state === 'cancelled') this.publishPromptAborted(reservation.machineQueueId);
+    else this.publishPromptCompleted(reservation.machineQueueId, state);
   }
 
   private async updatePromptMetadata(text: string | undefined): Promise<void> {
@@ -1388,6 +1411,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       userMessageId: '',
       promptLaunched: createControlledPromise<Turn | undefined>(),
       promptCompletion: createControlledPromise<PromptCompletion>(),
+      steeredChildren: [],
     };
     return reservation;
   }
@@ -1402,7 +1426,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       steerController: new AbortController(),
       turn,
       startedAt: Date.now(),
-      steered: [],
       steps: 0,
       gatedSteps: 0,
       nudgeCursor: this.nudgeCursor,
@@ -2229,26 +2252,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.activeRequestTrace = undefined;
     this.lastRequestTraceId = undefined;
     reservation.result.resolve(result);
-    if (reservation.promptTracked) {
-      const state =
-        result.type === 'cancelled' ? 'cancelled' : result.type === 'failed' ? 'failed' : 'completed';
-      reservation.promptState = state;
-      reservation.promptCompletion.resolve({
-        promptId: reservation.machineQueueId,
-        result,
-        state,
-      });
-      for (const child of turn.steered) {
-        child.promptState = state;
-        child.promptCompletion.resolve({
-          promptId: child.machineQueueId,
-          result,
-          state,
-        });
-      }
-      if (state === 'cancelled') this.publishPromptAborted(reservation.machineQueueId);
-      else this.publishPromptCompleted(reservation.machineQueueId, state);
-    }
     for (const pending of this.reservations) {
       if (!pending.cancelled && !pending.promptTracked) this.launchReservation(pending);
     }
@@ -2317,6 +2320,7 @@ interface TurnReservation {
   userMessageId: string;
   readonly promptLaunched: ReturnType<typeof createControlledPromise<Turn | undefined>>;
   readonly promptCompletion: ReturnType<typeof createControlledPromise<PromptCompletion>>;
+  readonly steeredChildren: TurnReservation[];
   promptHandle?: PromptHandle;
   originalMessage?: ContextMessage;
 }
@@ -2365,7 +2369,6 @@ interface ActiveTurn {
   steerController: AbortController;
   readonly turn: MutableTurn;
   readonly startedAt: number;
-  readonly steered: TurnReservation[];
   steps: number;
   gatedSteps: number;
   nudgeCursor: number;
