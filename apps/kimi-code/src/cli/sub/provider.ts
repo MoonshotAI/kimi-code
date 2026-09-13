@@ -118,6 +118,10 @@ export async function handleProviderAdd(
   // persisted. Drop every stale id up front in a single batch instead, then
   // apply against the resulting fresh config.
   let config = await harness.getConfig();
+  // Capture the default before the batch removal: removing a stale provider
+  // clears `defaultModel` when it dangles, and a re-import that still lists
+  // the model must not lose the user's saved default (#3739).
+  const previousDefaultModel = config.defaultModel;
   const staleIds = entryList
     .filter((entry) => config.providers[entry.id] !== undefined)
     .map((entry) => entry.id);
@@ -133,9 +137,18 @@ export async function handleProviderAdd(
     modelCount += Object.keys(entry.models).length;
   }
 
+  // Restore the previous default only when its alias still resolves after the
+  // refresh; the registry may have dropped the old model, in which case
+  // restoring would point default_model at a non-existent alias.
+  const stillResolves =
+    previousDefaultModel !== undefined &&
+    config.models?.[previousDefaultModel] !== undefined;
+  config.defaultModel = stillResolves ? previousDefaultModel : undefined;
+
   await harness.setConfig({
     providers: config.providers,
     models: config.models,
+    defaultModel: config.defaultModel,
   });
 
   deps.stdout.write(
