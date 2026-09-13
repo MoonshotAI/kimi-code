@@ -161,6 +161,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private activeRequestTrace: LLMRequestTrace | undefined;
   private engine: MachineEngine | undefined;
   private promptLaunching = false;
+  private promptLaunchingReservation: TurnReservation | undefined;
   private readonly reservedPromptIds = new Set<string>();
   private fullCompactionService: IAgentFullCompactionService | undefined;
 
@@ -498,12 +499,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active prompt to steer into');
     }
     const ids = new Set(promptIds);
-    const selected = this.reservations.filter(
-      (reservation) =>
-        reservation.promptTracked &&
-        !reservation.cancelled &&
-        reservation.launched !== true &&
-        ids.has(reservation.machineQueueId),
+    const selected = this.promptPendingReservations().filter((reservation) =>
+      ids.has(reservation.machineQueueId),
     );
     if (ids.size !== promptIds.length || selected.length !== ids.size) {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are not pending');
@@ -588,9 +585,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       active.turn.cancel(reason);
       return true;
     }
-    const reservation = this.reservations.find(
-      (entry) =>
-        entry.promptTracked && entry.machineQueueId === promptId && !entry.cancelled,
+    const reservation = this.promptPendingReservations().find(
+      (entry) => entry.machineQueueId === promptId,
     );
     if (reservation === undefined) {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, `prompt ${promptId} not found`);
@@ -600,10 +596,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   async drainPrompts(reason: Error = userCancellationReason()): Promise<void> {
-    for (const reservation of this.reservations.slice()) {
-      if (reservation.promptTracked && !reservation.cancelled) {
-        this.abortPrompt(reservation.machineQueueId, reason);
-      }
+    for (const reservation of this.promptPendingReservations()) {
+      this.abortPrompt(reservation.machineQueueId, reason);
     }
     const active = this.active;
     if (active !== undefined && active.reservation.promptTracked) {
@@ -650,12 +644,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         active !== undefined && active.reservation.promptTracked
           ? promptSnapshotOf(active.reservation)
           : undefined,
-      pending: this.reservations
-        .filter(
-          (reservation) =>
-            reservation.promptTracked && !reservation.cancelled && reservation.launched !== true,
-        )
-        .map(promptSnapshotOf),
+      pending: this.promptPendingReservations().map(promptSnapshotOf),
       launching: this.promptLaunchInFlight(),
     };
   }
@@ -773,6 +762,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     );
     if (reservation === undefined) return;
     this.promptLaunching = true;
+    this.promptLaunchingReservation = reservation;
     try {
       if (this.compactionBlocksPromptLaunch()) return;
       const { message, captions } = this.extractCompressionCaptions(reservation.message);
@@ -812,10 +802,21 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       this.publishPromptCompleted(reservation.machineQueueId, 'failed');
     } finally {
       this.promptLaunching = false;
+      this.promptLaunchingReservation = undefined;
       if (this.active === undefined && !this.compactionBlocksPromptLaunch()) {
         void this.drainPromptQueue();
       }
     }
+  }
+
+  private promptPendingReservations(): TurnReservation[] {
+    return this.reservations.filter(
+      (reservation) =>
+        reservation.promptTracked &&
+        !reservation.cancelled &&
+        reservation.launched !== true &&
+        reservation !== this.promptLaunchingReservation,
+    );
   }
 
   private removeReservation(reservation: TurnReservation): void {
@@ -917,9 +918,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         agentId: this.scopeContext.agentId,
         promptId: reservation.machineQueueId,
         content: stripBundledSkillBlocks(reservation.message),
-        queueLength: this.reservations.filter(
-          (entry) => entry.promptTracked && !entry.cancelled && entry.launched !== true,
-        ).length,
+        queueLength: this.promptPendingReservations().length,
       }),
     );
   }

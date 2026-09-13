@@ -179,7 +179,9 @@ describe('server-v2 /api/v1/debug RPC', () => {
     expect(meta?.methods.map((m) => m.name)).not.toContain('dispose');
 
     const prompts = byName.get('agentPromptService');
-    expect(prompts?.methods.map((m) => m.name)).toContain('enqueue');
+    expect(prompts?.methods.map((m) => m.name)).toEqual(
+      expect.arrayContaining(['submit', 'submitSteer']),
+    );
     expect(prompts?.methods.map((m) => m.name)).not.toContain('reserve');
   });
 

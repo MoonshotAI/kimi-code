@@ -45,9 +45,9 @@ function handleWith(
           return { launched: Promise.resolve(turn) };
         },
         retryPrompt: async () => turn,
+        cancel: () => true,
       },
     ],
-    [IAgentLoopService, { cancel: () => true }],
     [IAgentContextMemoryService, { get: () => messages }],
   ]);
   const handle: IAgentScopeHandle = {
