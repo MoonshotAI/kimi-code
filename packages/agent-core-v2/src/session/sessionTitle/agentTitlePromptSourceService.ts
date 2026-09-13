@@ -2,7 +2,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import {
   promptMetadataTextFromContentParts,
   promptMetadataTextFromText,
@@ -21,7 +21,7 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentPromptService private readonly prompt: IAgentPromptService,
+    @IAgentLoopService private readonly loop: IAgentLoopService,
   ) {}
 
   async firstUserPrompts(limit: number): Promise<readonly string[]> {
@@ -83,7 +83,7 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
   }
 
   private combinedMessages(): ContextMessage[] {
-    const queue = this.prompt.list();
+    const queue = this.loop.promptQueue();
     const all = [...this.context.get()];
     if (queue.active !== undefined) all.push(queue.active.message);
     for (const item of queue.pending) all.push(item.message);

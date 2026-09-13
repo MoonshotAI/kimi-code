@@ -23,7 +23,6 @@ import {
   IAgentLoopService,
   IAgentPermissionModeService,
   IAgentProfileService,
-  IAgentPromptService,
   IAgentTaskService,
   IAuthSummaryService,
   IBootstrapService,
@@ -563,7 +562,7 @@ async function runNativeTurn(
     if (event.type === 'turn.ended') turnEndings.push(event as TurnEnded);
   });
   try {
-    const handle = await agent.accessor.get(IAgentPromptService).enqueue({
+    const handle = await agent.accessor.get(IAgentLoopService).enqueuePrompt({
       message: {
         role: 'user',
         content: [{ type: 'text', text: prompt }],
@@ -984,14 +983,6 @@ async function quiesceSessionAgents(
   mainAgent: IAgentScopeHandle,
 ): Promise<(() => void) | undefined> {
   const handles = collectSessionAgentHandles(session, mainAgent);
-  const promptServices = handles.flatMap((handle) => {
-    try {
-      return [handle.accessor.get(IAgentPromptService)];
-    } catch {
-      // A torn-down agent scope has no prompt service to drain or observe.
-      return [];
-    }
-  });
   const loops = handles.flatMap((handle) => {
     try {
       return [handle.accessor.get(IAgentLoopService)];
@@ -1014,7 +1005,7 @@ async function quiesceSessionAgents(
   // Repeat until every queue is empty and every loop freezable: a prompt can
   // still surface from the launch window or a cancelled turn's settle chain.
   for (;;) {
-    await Promise.allSettled(promptServices.map((service) => service.drain()));
+    await Promise.allSettled(loops.map((loop) => loop.drainPrompts()));
     for (const loop of loops) {
       for (const queueId of loop.status().pendingPromptIds) loop.cancelQueued(queueId);
       loop.cancel();
@@ -1036,9 +1027,9 @@ async function quiesceSessionAgents(
       }
       guards.push(guard);
     }
-    const busy = promptServices.some((service) => {
+    const busy = loops.some((loop) => {
       try {
-        const snapshot = service.list();
+        const snapshot = loop.promptQueue();
         return (
           snapshot.launching ||
           snapshot.active !== undefined ||

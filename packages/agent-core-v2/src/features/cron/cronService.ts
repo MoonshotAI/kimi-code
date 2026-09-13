@@ -5,7 +5,6 @@ import { createDecorator, IInstantiationService } from '#/_base/di/instantiation
 import { IntervalTimer } from '#/_base/utils/timer';
 import type { CronJobOrigin, CronMissedOrigin, ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
 import {
   AgentActorService,
   type AgentActorContext,
@@ -182,7 +181,7 @@ function deliverFire(
   const buffered = runtime.get(IAgentLoopService).status().state === 'running';
   let launched: Promise<unknown>;
   try {
-    launched = runtime.get(IAgentPromptService).inject(message);
+    launched = runtime.get(IAgentLoopService).injectPrompt(message);
   } catch (error) {
     debugLog(runtime, `steer threw for task ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
     return Promise.resolve(false);
@@ -541,7 +540,7 @@ export class AgentCronService extends AgentActorService<CronModelState> implemen
       toolCalls: [],
       origin,
     };
-    void this.actor.get(IAgentPromptService).inject(message).catch(() => {});
+    void this.actor.get(IAgentLoopService).injectPrompt(message).catch(() => {});
     telemetryOf(this.actor).track2(CRON_MISSED, { count: tasks.length });
     return undefined;
   }

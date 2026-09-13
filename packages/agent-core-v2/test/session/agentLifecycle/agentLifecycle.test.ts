@@ -97,7 +97,6 @@ import type {
   MachineEngineAttachBundle,
 } from '#/agent/loop/machine/engine';
 import type { AgentEventStore } from '#human/agent/slices';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -261,7 +260,7 @@ describe('AgentLifecycleService', () => {
   let loopCancel: ReturnType<typeof vi.fn<IAgentLoopService['cancel']>>;
   let loopCancelQueued: ReturnType<typeof vi.fn<IAgentLoopService['cancelQueued']>>;
   let loopSettled: ReturnType<typeof vi.fn<IAgentLoopService['settled']>>;
-  let promptDrain: ReturnType<typeof vi.fn<IAgentPromptService['drain']>>;
+  let promptDrain: ReturnType<typeof vi.fn<IAgentLoopService['drainPrompts']>>;
   let beforeExecuteListeners: number;
   let didExecuteHookIds: string[];
 
@@ -403,6 +402,7 @@ describe('AgentLifecycleService', () => {
         throw new Error('Agent loop did not settle');
       }
     });
+    promptDrain = vi.fn<IAgentLoopService['drainPrompts']>(async () => {});
     ix.stub(IAgentLoopService, {
       _serviceBrand: undefined,
       hooks: {
@@ -419,16 +419,12 @@ describe('AgentLifecycleService', () => {
       cancel: loopCancel,
       cancelQueued: loopCancelQueued,
       settled: loopSettled,
+      drainPrompts: promptDrain,
+      promptQueue: () => ({ launching: false, active: undefined, pending: [] }),
       tryAcquireQuiescence: vi.fn(() => ({ dispose: vi.fn() })),
       buildAttachBundle: () => stubAttachBundle(),
       attachEngine: () => stubAttachEngine(),
     } as unknown as IAgentLoopService);
-    promptDrain = vi.fn<IAgentPromptService['drain']>(async () => {});
-    ix.stub(IAgentPromptService, {
-      _serviceBrand: undefined,
-      drain: promptDrain,
-      list: () => ({ launching: false, active: undefined, pending: [] }),
-    } as unknown as IAgentPromptService);
     ix.stub(ITelemetryService, {
       _serviceBrand: undefined,
       track2: () => {},

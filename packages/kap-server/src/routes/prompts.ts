@@ -3,11 +3,11 @@ import { join } from 'node:path';
 import {
   IBootstrapService,
   IAgentLifecycleService,
+  IAgentLoopService,
   IAgentPermissionModeService,
   IAgentProfileService,
   IAgentRuntimeBindingService,
   IAgentToolPolicyService,
-  IAgentPromptService,
   IAgentSkillService,
   IAuthSummaryService,
   IEventBus,
@@ -111,7 +111,7 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     throw new Error2('agent.not_found', `agent ${agentId} does not exist`);
   }
   return {
-    prompt: agent.accessor.get(IAgentPromptService),
+    prompt: agent.accessor.get(IAgentLoopService),
     skill: agent.accessor.get(IAgentSkillService),
     events: agent.accessor.get(IEventBus),
     auth: agent.accessor.get(IAuthSummaryService),
@@ -179,7 +179,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     async (req, reply) => {
       try {
         const { session_id } = req.params;
-        const result = projectPromptList((await resolvePrompt(core, session_id)).prompt.list());
+        const result = projectPromptList((await resolvePrompt(core, session_id)).prompt.promptQueue());
         reply.send(okEnvelope(result, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
@@ -206,7 +206,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.FILE_NOT_FOUND]: {},
         [ErrorCode.PROMPT_ID_CONFLICT]: {},
-        [ErrorCode.PROMPT_ALREADY_COMPLETED]: { dataSchema: z.object({ aborted: z.literal(false) }) },
       },
       description: 'Submit a prompt to a session',
       tags: ['prompts'],
@@ -390,7 +389,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
       try {
         const { session_id } = req.params;
         const resolved = await resolvePrompt(core, session_id);
-        await resolved.prompt.steer(req.body.prompt_ids);
+        await resolved.prompt.steerPrompts(req.body.prompt_ids);
         reply.send(okEnvelope({ steered: true, prompt_ids: [...req.body.prompt_ids] }, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
@@ -408,7 +407,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.VALIDATION_FAILED]: {},
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.PROMPT_NOT_FOUND]: {},
-        [ErrorCode.PROMPT_ALREADY_COMPLETED]: { dataSchema: z.object({ aborted: z.literal(false) }) },
       },
       description: 'Abort a running prompt or steer a queued prompt',
       tags: ['prompts'],
@@ -457,14 +455,14 @@ const promptActions: ActionTable<'abort' | 'steer', PromptActionExtra> = {
 
 async function abortPromptAction(ctx: PromptActionCtx): Promise<void> {
   const { resolved, session_id, req, reply, id } = ctx;
-  resolved.prompt.abort(id);
+  resolved.prompt.abortPrompt(id);
   requestLog(req)?.info({ session_id, prompt_id: id }, 'prompt aborted');
   reply.send(okEnvelope({ aborted: true }, req.id));
 }
 
 async function steerPromptAction(ctx: PromptActionCtx): Promise<void> {
   const { resolved, req, reply, id } = ctx;
-  await resolved.prompt.steer([id]);
+  await resolved.prompt.steerPrompts([id]);
   reply.send(okEnvelope({ steered: true, prompt_ids: [id] }, req.id));
 }
 
@@ -569,15 +567,6 @@ function sendMappedError(
         return;
       case 'session.busy':
         reply.send(errEnvelope(ErrorCode.SESSION_BUSY, err.message, requestId, err.stack));
-        return;
-      case 'prompt.already_completed':
-        reply.send({
-          code: ErrorCode.PROMPT_ALREADY_COMPLETED,
-          msg: err.message,
-          data: { aborted: false },
-          request_id: requestId,
-          stack: err.stack,
-        });
         return;
       case 'request.invalid':
       case 'validation.failed':

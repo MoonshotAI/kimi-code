@@ -28,7 +28,7 @@ import type {
   PromptStarted,
   PromptSteered,
   PromptSubmitted,
-} from '@moonshot-ai/agent-core-v2/agent/prompt/promptService';
+} from '@moonshot-ai/agent-core-v2/agent/prompt/promptEvents';
 import type { PromptAccepted } from '@moonshot-ai/agent-core-v2/agent/prompt/promptOps';
 import type {
   ShellCompleted,

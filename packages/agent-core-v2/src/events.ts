@@ -2,7 +2,7 @@ import type { CompactionBlockedEvent, CompactionCancelledEvent, CompactionComple
 import type { TurnStartedEvent, TurnStepCompletedEvent, TurnStepInterruptedEvent, TurnStepRetryingEvent, TurnStepStartedEvent, AssistantDeltaEvent, ThinkingDeltaEvent } from '#/agent/loop/turnEvents';
 import type { TurnEndedEvent } from '#/agent/loop/turnOps';
 import type { PluginCommandActivatedEvent } from '#/agent/pluginCommand/pluginCommand';
-import type { PromptAbortedEvent, PromptCompletedEvent, PromptSteeredEvent, PromptSubmittedEvent } from '#/agent/prompt/promptService';
+import type { PromptAbortedEvent, PromptCompletedEvent, PromptSteeredEvent, PromptSubmittedEvent } from '#/agent/prompt/promptEvents';
 import type { BackgroundTaskStartedEvent, BackgroundTaskTerminatedEvent, TaskStartedEvent, TaskTerminatedEvent } from '#/agent/task/types';
 import type { McpServerStatusEvent, ShellCompletedEvent, ShellOutputEvent, ShellStartedEvent, ToolCallDeltaEvent, ToolCallStartedEvent, ToolListUpdatedEvent, ToolProgressEvent } from '#/agent/toolExecutor/toolExecutorEvents';
 import type { ToolResultEventPayload } from '#/agent/toolExecutor/toolExecutorEvents';

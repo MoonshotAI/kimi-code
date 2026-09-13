@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events';
 import { createControlledPromise } from '@antfu/utils';
 
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
+import { IInstantiationService } from '#/_base/di/instantiation';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
@@ -16,6 +17,8 @@ import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { ModelRequestTiming } from '#/llm-adapter/model/model-requester';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { abortedToolOutput } from '#/agent/toolExecutor/toolExecutorService';
+import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
+import type { ExecutableToolResult } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IConfigService } from '#/app/config/config';
 import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
@@ -28,9 +31,19 @@ import { OrderedHookSlot } from '#/hooks';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
-import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
+import { newMessageId } from '#/agent/contextMemory/messageId';
+import { USER_PROMPT_ORIGIN, type ContextMessage, type PromptOrigin } from '#/agent/contextMemory/types';
+import { extractImageCompressionCaptions, gateImageFormatParts } from '#/agent/media/image-compress';
+import { daemonFileRefFromPart } from '#/agent/media/mediaRef';
+import { materializePromptDaemonRefs } from '#/agent/media/promptMediaIntake';
+import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
+import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
+import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
+import { IFileService } from '#/app/file/fileService';
+import { IEventService } from '#/app/event/event';
 import type {
   TurnEndedEvent as TurnEndedTelemetryEvent,
   TurnInterruptedEvent,
@@ -39,11 +52,26 @@ import type {
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IWireService } from '#/wire/wire';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+import { applyPromptMetadataUpdate } from '#/session/sessionMetadata/promptMetadata';
+import {
+  PromptAborted,
+  PromptCompleted,
+  PromptQueued,
+  PromptStarted,
+  PromptSteered,
+  PromptSubmitted,
+} from '#/agent/prompt/promptEvents';
+import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
+import { PromptAccepted, promptAdmissionKey } from '#/agent/prompt/promptOps';
 import { LOOP_CONTROL_SECTION, type LoopControl } from './configSection';
 import {
   createMaxStepsExceededError,
   IAgentLoopService,
   isMaxStepsExceededError,
+  promptAdmission,
   type AfterStepContext,
   type AgentActivitySnapshot,
   type AgentLoopStatus,
@@ -55,9 +83,21 @@ import {
   type LoopNotifyHandle,
   type LoopPromptSubmit,
   type LoopRunResult,
+  type PromptCompletion,
+  type PromptHandle,
+  type PromptInput,
+  type PromptLaunchResult,
+  type PromptPayload,
+  type PromptQueueSnapshot,
+  type PromptReservation,
+  type PromptSnapshot,
+  type PromptState,
+  type PromptSubmitContext,
+  type SteerPayload,
   type Turn,
   type TurnResult,
 } from './loop';
+import { launchedTurnId, mergeSteerMessages, stripBundledSkillBlocks } from './promptQueue';
 import {
   AssistantDelta,
   isDisplayablePromptOrigin,
@@ -72,7 +112,7 @@ import {
   TurnStepStarted,
   type TurnInterruptReason,
 } from './turnEvents';
-import { TurnCancel, TurnEnded, turnKey, TurnPrompt } from './turnOps';
+import { TurnCancel, TurnEnded, turnKey, TurnPrompt, TurnSteer } from './turnOps';
 import {
   attachMachineEngine,
   EMPTY_MACHINE_PROMPT,
@@ -106,6 +146,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   readonly hooks: IAgentLoopService['hooks'] = {
     onWillBeginStep: new OrderedHookSlot(),
     onDidFinishStep: new OrderedHookSlot(),
+    onBeforeSubmitPrompt: new OrderedHookSlot(),
   };
 
   private readonly errorHandlers: LoopErrorHandler[] = [];
@@ -119,6 +160,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private quiescenceDepth = 0;
   private activeRequestTrace: LLMRequestTrace | undefined;
   private engine: MachineEngine | undefined;
+  private promptLaunching = false;
+  private readonly reservedPromptIds = new Set<string>();
+  private fullCompactionService: IAgentFullCompactionService | undefined;
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
@@ -131,11 +175,22 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly states: IAgentStateService,
     @IWireService private readonly wire: IWireService,
+    @IInstantiationService private readonly instantiation: IInstantiationService,
+    @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IAgentReminderService private readonly reminder: IAgentReminderService,
+    @IEventService private readonly eventService: IEventService,
+    @ISessionMetadata private readonly metadata: ISessionMetadata,
+    @ISessionContext private readonly sessionContext: ISessionContext,
   ) {
     super();
     this.states.contributeState(turnKey);
     this.states.contributeState(loopLastRequestTraceIdKey);
     this.states.contributeState(loopDisposingKey);
+    this.states.contributeState(promptAdmissionKey);
+    this.toolExecutor.hooks.onDidExecuteTool.register('prompt-service-delivery', async (ctx, next) => {
+      await this.deliverToolResult(ctx);
+      await next();
+    });
   }
 
   private get lastRequestTraceId(): string | undefined {
@@ -320,6 +375,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       ready,
       result,
       turn,
+      promptTracked: false,
+      promptState: 'pending',
+      createdAt: '',
+      userMessageId: '',
+      promptLaunched: createControlledPromise<Turn | undefined>(),
+      promptCompletion: createControlledPromise<PromptCompletion>(),
     };
     return reservation;
   }
@@ -366,6 +427,537 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     };
   }
 
+  async submitPrompt(payload: PromptPayload): Promise<PromptLaunchResult | undefined> {
+    const reservation = this[promptAdmission](payload.promptId);
+    try {
+      await this.updatePromptMetadata(promptMetadataTextFromContentParts(payload.input));
+      const handle = await reservation.submit({
+        role: 'user',
+        content: [...payload.input],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      });
+      if (handle.state === 'pending') return undefined;
+      return await launchedTurnId(handle.launched);
+    } finally {
+      reservation.dispose();
+    }
+  }
+
+  async submitSteerPrompt(payload: SteerPayload): Promise<PromptLaunchResult | undefined> {
+    this.telemetry.track2('input_steer', { parts: payload.input.length });
+    await this.updatePromptMetadata(promptMetadataTextFromContentParts(payload.input));
+    const queued = await this.enqueuePrompt({
+      message: {
+        role: 'user',
+        content: [...payload.input],
+        toolCalls: [],
+      },
+    });
+    if (queued.state !== 'pending') {
+      return launchedTurnId(queued.launched);
+    }
+    try {
+      const [steered] = await this.steerPrompts([queued.id]);
+      return await launchedTurnId(steered?.launched ?? Promise.resolve(undefined));
+    } catch (error) {
+      if (isError2(error) && error.code === ErrorCodes.PROMPT_NOT_FOUND) return undefined;
+      throw error;
+    }
+  }
+
+  async enqueuePrompt(input: PromptInput): Promise<PromptHandle> {
+    if (this.disposing) throw abortError('Agent loop disposed');
+    const id = input.id ?? input.message.id ?? newMessageId();
+    const message = { ...input.message, id };
+    const reservation = this.createPromptReservation(message, id);
+    this.reservations.push(reservation);
+    const queued =
+      this.active !== undefined ||
+      this.promptLaunchInFlight() ||
+      this.compactionBlocksPromptLaunch();
+    this.publishPromptSubmitted(reservation, queued ? 'queued' : 'running');
+    if (queued) {
+      this.publishPromptQueued(reservation);
+      return reservation.promptHandle!;
+    }
+    void this.drainPromptQueue();
+    await Promise.race([
+      reservation.promptLaunched,
+      reservation.promptCompletion,
+    ]);
+    return reservation.promptHandle!;
+  }
+
+  async steerPrompts(promptIds: readonly string[]): Promise<readonly PromptHandle[]> {
+    if (promptIds.length === 0) {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, 'prompt_ids must not be empty');
+    }
+    const active = this.active;
+    if (active === undefined || !active.reservation.promptTracked) {
+      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active prompt to steer into');
+    }
+    const ids = new Set(promptIds);
+    const selected = this.reservations.filter(
+      (reservation) =>
+        reservation.promptTracked &&
+        !reservation.cancelled &&
+        reservation.launched !== true &&
+        ids.has(reservation.machineQueueId),
+    );
+    if (ids.size !== promptIds.length || selected.length !== ids.size) {
+      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are not pending');
+    }
+    const { message: rerouted, captions } = this.extractCompressionCaptions(
+      mergeSteerMessages(selected.map((reservation) => reservation.message)),
+    );
+    await this.materializeDaemonRefs(rerouted);
+    if (
+      selected.some(
+        (reservation) =>
+          !this.reservations.includes(reservation) ||
+          reservation.cancelled ||
+          reservation.launched === true,
+      ) ||
+      this.active !== active
+    ) {
+      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are no longer pending');
+    }
+    const removed: { readonly reservation: TurnReservation; readonly index: number }[] = [];
+    for (const reservation of selected) {
+      const index = this.reservations.indexOf(reservation);
+      removed.push({ reservation, index });
+      this.reservations.splice(index, 1);
+    }
+    const ownerPromptId = rerouted.id ?? newMessageId();
+    const message = {
+      ...rerouted,
+      id: ownerPromptId,
+      content: gateImageFormatParts(rerouted.content, this.profile.getModelProviderType()),
+    };
+    let turn: Turn | undefined;
+    try {
+      turn = this.steer({
+        message,
+        promptId: ownerPromptId,
+        onMaterialize: () => {
+          void this.dispatcher.dispatch(
+            new TurnSteer({
+              agentId: this.scopeContext.agentId,
+              input: message.content,
+              origin: message.origin ?? USER_PROMPT_ORIGIN,
+            }),
+          );
+          this.notifyCaptions(captions, ownerPromptId);
+        },
+      });
+    } catch {
+      turn = undefined;
+    }
+    if (turn === undefined || this.active !== active) {
+      for (const { reservation, index } of removed.reverse()) {
+        this.reservations.splice(index, 0, reservation);
+      }
+      if (this.active === undefined) void this.drainPromptQueue();
+      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active turn to steer into');
+    }
+    for (const reservation of selected) {
+      reservation.promptState = 'steered';
+      reservation.promptLaunched.resolve(turn);
+    }
+    active.steered.push(...selected);
+    void this.dispatcher.dispatch(
+      new PromptSteered({
+        agentId: this.scopeContext.agentId,
+        activePromptId: active.reservation.machineQueueId,
+        promptIds: selected.map((reservation) => reservation.machineQueueId),
+        content: selected.flatMap((reservation) => stripBundledSkillBlocks(reservation.message)),
+        steeredAt: new Date().toISOString(),
+      }),
+    );
+    return selected.map((reservation) => reservation.promptHandle!);
+  }
+
+  abortPrompt(promptId: string, reason: Error = userCancellationReason()): boolean {
+    const active = this.active;
+    if (
+      active !== undefined &&
+      active.reservation.promptTracked &&
+      active.reservation.machineQueueId === promptId
+    ) {
+      active.turn.cancel(reason);
+      return true;
+    }
+    const reservation = this.reservations.find(
+      (entry) =>
+        entry.promptTracked && entry.machineQueueId === promptId && !entry.cancelled,
+    );
+    if (reservation === undefined) {
+      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, `prompt ${promptId} not found`);
+    }
+    this.cancelReservation(reservation, reason);
+    return true;
+  }
+
+  async drainPrompts(reason: Error = userCancellationReason()): Promise<void> {
+    for (const reservation of this.reservations.slice()) {
+      if (reservation.promptTracked && !reservation.cancelled) {
+        this.abortPrompt(reservation.machineQueueId, reason);
+      }
+    }
+    const active = this.active;
+    if (active !== undefined && active.reservation.promptTracked) {
+      this.abortPrompt(active.reservation.machineQueueId, reason);
+    }
+  }
+
+  async injectPrompt(message: ContextMessage): Promise<Turn | undefined> {
+    const { message: rerouted, captions } = this.extractCompressionCaptions(message);
+    await this.materializeDaemonRefs(rerouted);
+    const ownerPromptId = rerouted.id ?? newMessageId();
+    const gated = {
+      ...rerouted,
+      id: ownerPromptId,
+      content: gateImageFormatParts(rerouted.content, this.profile.getModelProviderType()),
+    };
+    const request = {
+      message: gated,
+      promptId: ownerPromptId,
+      onMaterialize: () => {
+        void this.dispatcher.dispatch(
+          new TurnSteer({
+            agentId: this.scopeContext.agentId,
+            input: gated.content,
+            origin: gated.origin ?? USER_PROMPT_ORIGIN,
+          }),
+        );
+        this.notifyCaptions(captions, ownerPromptId);
+      },
+    };
+    return this.steer(request) ?? this.submit(request).turn;
+  }
+
+  async retryPrompt(): Promise<Turn | undefined> {
+    return this.submit({
+      message: { role: 'user', content: [], toolCalls: [], origin: { kind: 'retry' } },
+    }).turn;
+  }
+
+  promptQueue(): PromptQueueSnapshot {
+    const active = this.active;
+    return {
+      active:
+        active !== undefined && active.reservation.promptTracked
+          ? promptSnapshotOf(active.reservation)
+          : undefined,
+      pending: this.reservations
+        .filter(
+          (reservation) =>
+            reservation.promptTracked && !reservation.cancelled && reservation.launched !== true,
+        )
+        .map(promptSnapshotOf),
+      launching: this.promptLaunchInFlight(),
+    };
+  }
+
+  [promptAdmission](promptId?: string): PromptReservation {
+    if (promptId !== undefined && promptId.length === 0) {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, 'prompt_id must not be empty');
+    }
+    const accepted = this.states.get(promptAdmissionKey);
+    let id = promptId ?? newMessageId();
+    while (accepted.has(id) || this.reservedPromptIds.has(id)) {
+      if (promptId !== undefined) {
+        throw new Error2(ErrorCodes.PROMPT_ID_CONFLICT, `prompt_id '${id}' is already in use`);
+      }
+      id = newMessageId();
+    }
+    this.reservedPromptIds.add(id);
+    let submitted = false;
+    return {
+      id,
+      submit: async (message) => {
+        if (submitted) {
+          throw new Error2(ErrorCodes.REQUEST_INVALID, 'prompt reservation already submitted');
+        }
+        submitted = true;
+        this.reservedPromptIds.delete(id);
+        await this.dispatcher.dispatch(
+          new PromptAccepted({
+            agentId: this.scopeContext.agentId,
+            promptId: id,
+            content: stripBundledSkillBlocks(message),
+          }),
+        );
+        return this.enqueuePrompt({ id, message });
+      },
+      dispose: () => {
+        this.reservedPromptIds.delete(id);
+      },
+    };
+  }
+
+  private createPromptReservation(message: ContextMessage, id: string): TurnReservation {
+    const reservation = this.createReservation({ message, promptId: id });
+    reservation.promptTracked = true;
+    reservation.createdAt = new Date().toISOString();
+    reservation.userMessageId = id;
+    reservation.promptHandle = {
+      get id() {
+        return reservation.machineQueueId;
+      },
+      get userMessageId() {
+        return reservation.userMessageId;
+      },
+      get createdAt() {
+        return reservation.createdAt;
+      },
+      get state() {
+        return reservation.promptState;
+      },
+      get message() {
+        return reservation.originalMessage ?? reservation.message;
+      },
+      launched: reservation.promptLaunched,
+      completion: reservation.promptCompletion,
+    };
+    return reservation;
+  }
+
+  private promptLaunchInFlight(): boolean {
+    return (
+      this.promptLaunching ||
+      this.reservations.some(
+        (reservation) =>
+          reservation.promptTracked && reservation.launched === true && !reservation.cancelled,
+      )
+    );
+  }
+
+  private compactionBlocksPromptLaunch(): boolean {
+    return this.fullCompaction.compacting !== null && this.active === undefined;
+  }
+
+  private get fullCompaction(): IAgentFullCompactionService {
+    if (this.fullCompactionService === undefined) {
+      this.fullCompactionService = this.instantiation.invokeFunction((accessor) =>
+        accessor.get(IAgentFullCompactionService),
+      );
+      this.fullCompactionService.onDidFinishCompaction(() => {
+        void this.drainPromptQueue();
+      });
+    }
+    return this.fullCompactionService;
+  }
+
+  private async drainPromptQueue(): Promise<void> {
+    if (this.promptLaunching) return;
+    if (
+      this.active !== undefined ||
+      this.disposing ||
+      this.quiescenceDepth > 0 ||
+      this.engine === undefined
+    ) {
+      return;
+    }
+    if (
+      this.reservations.some(
+        (reservation) =>
+          reservation.promptTracked && reservation.launched === true && !reservation.cancelled,
+      )
+    ) {
+      return;
+    }
+    const reservation = this.reservations.find(
+      (entry) => entry.promptTracked && !entry.cancelled && entry.launched !== true,
+    );
+    if (reservation === undefined) return;
+    this.promptLaunching = true;
+    try {
+      if (this.compactionBlocksPromptLaunch()) return;
+      const { message, captions } = this.extractCompressionCaptions(reservation.message);
+      await this.materializeDaemonRefs(message);
+      if (!this.reservations.includes(reservation) || reservation.cancelled) return;
+      if (await this.blockedByPromptHook(message, false)) {
+        this.removeReservation(reservation);
+        this.appendBlockedPrompt(message, captions);
+        reservation.promptState = 'blocked';
+        reservation.promptLaunched.resolve(undefined);
+        reservation.promptCompletion.resolve({
+          promptId: reservation.machineQueueId,
+          result: undefined,
+          state: 'blocked',
+        });
+        this.publishPromptCompleted(reservation.machineQueueId, 'blocked');
+        return;
+      }
+      reservation.onMaterialize = () => {
+        this.notifyCaptions(captions, reservation.machineQueueId);
+      };
+      reservation.originalMessage = reservation.message;
+      reservation.message = {
+        ...message,
+        content: gateImageFormatParts(message.content, this.profile.getModelProviderType()),
+      };
+      this.launchReservation(reservation);
+    } catch {
+      this.removeReservation(reservation);
+      reservation.promptState = 'failed';
+      reservation.promptLaunched.resolve(undefined);
+      reservation.promptCompletion.resolve({
+        promptId: reservation.machineQueueId,
+        result: undefined,
+        state: 'failed',
+      });
+      this.publishPromptCompleted(reservation.machineQueueId, 'failed');
+    } finally {
+      this.promptLaunching = false;
+      if (this.active === undefined && !this.compactionBlocksPromptLaunch()) {
+        void this.drainPromptQueue();
+      }
+    }
+  }
+
+  private removeReservation(reservation: TurnReservation): void {
+    const index = this.reservations.indexOf(reservation);
+    if (index >= 0) this.reservations.splice(index, 1);
+  }
+
+  private settlePromptLaunched(reservation: TurnReservation): void {
+    if (!reservation.promptTracked) return;
+    reservation.promptState = 'running';
+    reservation.promptLaunched.resolve(reservation.turn);
+    this.publishPromptStarted(reservation);
+  }
+
+  private async updatePromptMetadata(text: string | undefined): Promise<void> {
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
+    await applyPromptMetadataUpdate(
+      {
+        metadata: this.metadata,
+        eventService: this.eventService,
+        sessionId: this.sessionContext.sessionId,
+      },
+      text,
+    );
+  }
+
+  private async materializeDaemonRefs(message: ContextMessage): Promise<void> {
+    if (!message.content.some((part) => daemonFileRefFromPart(part) !== undefined)) return;
+    const files = this.instantiation.invokeFunction((accessor) => accessor.get(IFileService));
+    const mediaStore = this.instantiation.invokeFunction((accessor) =>
+      accessor.get(ISessionMediaStore),
+    );
+    await materializePromptDaemonRefs(message.content, { files, mediaStore });
+  }
+
+  private async blockedByPromptHook(promptMessage: ContextMessage, isSteer: boolean): Promise<boolean> {
+    const ctx = { promptMessage, isSteer, block: false };
+    await this.hooks.onBeforeSubmitPrompt.run(ctx);
+    return ctx.block;
+  }
+
+  private extractCompressionCaptions(message: ContextMessage): {
+    message: ContextMessage;
+    captions: readonly string[];
+  } {
+    if ((message.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') return { message, captions: [] };
+    const captions: string[] = [];
+    const parts: ContentPart[] = [];
+    for (const part of message.content) {
+      if (part.type !== 'text') {
+        parts.push(part);
+        continue;
+      }
+      const extracted = extractImageCompressionCaptions(part.text);
+      captions.push(...extracted.captions);
+      if (extracted.text.trim().length > 0) parts.push({ type: 'text', text: extracted.text });
+    }
+    return { message: captions.length === 0 ? message : { ...message, content: parts }, captions };
+  }
+
+  private appendBlockedPrompt(message: ContextMessage, captions: readonly string[]): void {
+    const ownerPromptId = message.id ?? newMessageId();
+    this.notifyCaptions(captions, ownerPromptId);
+    if (message.content.length > 0) this.context.append({ ...message, id: ownerPromptId });
+  }
+
+  private notifyCaptions(captions: readonly string[], ownerPromptId: string): void {
+    for (const caption of captions) {
+      this.reminder.notify(caption, {
+        variant: 'image_compression',
+        ownerPromptId,
+      });
+    }
+  }
+
+  private async deliverToolResult(ctx: ToolDidExecuteContext): Promise<void> {
+    const delivery = ctx.result.delivery;
+    if (delivery === undefined) return;
+    const { delivery: _delivery, ...rest } = ctx.result;
+    ctx.result = rest as ExecutableToolResult;
+    if (delivery.kind === 'steer') await this.injectPrompt(delivery.message as ContextMessage);
+  }
+
+  private publishPromptCompleted(promptId: string, reason: 'completed' | 'failed' | 'blocked'): void {
+    void this.dispatcher.dispatch(
+      new PromptCompleted({
+        agentId: this.scopeContext.agentId,
+        promptId,
+        finishedAt: new Date().toISOString(),
+        reason,
+      }),
+    );
+  }
+
+  private publishPromptQueued(reservation: TurnReservation): void {
+    if (reservation.origin.kind !== 'user') return;
+    void this.dispatcher.dispatch(
+      new PromptQueued({
+        agentId: this.scopeContext.agentId,
+        promptId: reservation.machineQueueId,
+        content: stripBundledSkillBlocks(reservation.message),
+        queueLength: this.reservations.filter(
+          (entry) => entry.promptTracked && !entry.cancelled && entry.launched !== true,
+        ).length,
+      }),
+    );
+  }
+
+  private publishPromptSubmitted(reservation: TurnReservation, status: 'running' | 'queued'): void {
+    if (reservation.origin.kind !== 'user') return;
+    void this.dispatcher.dispatch(
+      new PromptSubmitted({
+        agentId: this.scopeContext.agentId,
+        promptId: reservation.machineQueueId,
+        userMessageId: reservation.userMessageId,
+        status,
+        content: stripBundledSkillBlocks(reservation.message),
+        createdAt: reservation.createdAt,
+      }),
+    );
+  }
+
+  private publishPromptStarted(reservation: TurnReservation): void {
+    if (reservation.origin.kind !== 'user') return;
+    void this.dispatcher.dispatch(
+      new PromptStarted({
+        agentId: this.scopeContext.agentId,
+        promptId: reservation.machineQueueId,
+      }),
+    );
+  }
+
+  private publishPromptAborted(promptId: string): void {
+    void this.dispatcher.dispatch(
+      new PromptAborted({
+        agentId: this.scopeContext.agentId,
+        promptId,
+        abortedAt: new Date().toISOString(),
+      }),
+    );
+  }
+
   cancel(turnId?: number, reason?: unknown): boolean {
     const cancellation = reason ?? userCancellationReason();
     return this.cancelActiveTurn(turnId, cancellation);
@@ -392,6 +984,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       this.machineEngine().cancelQueueItem(reservation.machineQueueId);
     }
     this.settleReservationCancelled(reservation, cancellation);
+    if (reservation.promptTracked) {
+      this.publishPromptAborted(reservation.machineQueueId);
+    }
     return true;
   }
 
@@ -432,7 +1027,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (this.engine === undefined) return;
     // oxlint-disable-next-line unicorn/no-useless-spread -- launchReservation re-enters synchronously via gate→bindMachineTurn and splices this.reservations mid-iteration
     for (const reservation of [...this.reservations]) {
-      if (!reservation.cancelled) this.launchReservation(reservation);
+      if (!reservation.cancelled && !reservation.promptTracked) this.launchReservation(reservation);
     }
     for (const nudge of this.nudges.slice(this.nudgeCursor)) {
       if (!nudge.dropped && !nudge.sentToMachine) {
@@ -440,6 +1035,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         this.machineEngine().notify(machineUserMessage(nudge.contextMessage));
       }
     }
+    void this.drainPromptQueue();
   }
 
   async resetMachineEngine(): Promise<void> {
@@ -485,6 +1081,15 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       cancellation instanceof Error ? cancellation : abortError('Turn cancelled'),
     );
     reservation.result.resolve({ type: 'cancelled', steps: 0, reason: cancellation });
+    if (reservation.promptTracked) {
+      reservation.promptState = 'cancelled';
+      reservation.promptLaunched.resolve(undefined);
+      reservation.promptCompletion.resolve({
+        promptId: reservation.machineQueueId,
+        result: undefined,
+        state: 'cancelled',
+      });
+    }
     this.maybeSettle();
   }
 
@@ -526,6 +1131,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.beginActiveTurn(reservation, pending.id);
     reservation.onMaterialize?.();
     this.materializeMessage(reservation.message);
+    this.settlePromptLaunched(reservation);
     const turn = this.active;
     if (turn === undefined) return;
     this.endPreGateTurn(turn, outcome);
@@ -736,6 +1342,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       this.beginActiveTurn(reservation, pending.id);
       reservation.onMaterialize?.();
       this.materializeMessage(reservation.message);
+      this.settlePromptLaunched(reservation);
       return true;
     }
     const seeded = this.nudges.slice(this.nudgeCursor).find(
@@ -777,6 +1384,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       ready,
       result,
       turn,
+      promptTracked: false,
+      promptState: 'pending',
+      createdAt: '',
+      userMessageId: '',
+      promptLaunched: createControlledPromise<Turn | undefined>(),
+      promptCompletion: createControlledPromise<PromptCompletion>(),
     };
     return reservation;
   }
@@ -791,6 +1404,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       steerController: new AbortController(),
       turn,
       startedAt: Date.now(),
+      steered: [],
       steps: 0,
       gatedSteps: 0,
       nudgeCursor: this.nudgeCursor,
@@ -1617,9 +2231,30 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.activeRequestTrace = undefined;
     this.lastRequestTraceId = undefined;
     reservation.result.resolve(result);
-    for (const pending of this.reservations) {
-      if (!pending.cancelled) this.launchReservation(pending);
+    if (reservation.promptTracked) {
+      const state =
+        result.type === 'cancelled' ? 'cancelled' : result.type === 'failed' ? 'failed' : 'completed';
+      reservation.promptState = state;
+      reservation.promptCompletion.resolve({
+        promptId: reservation.machineQueueId,
+        result,
+        state,
+      });
+      for (const child of turn.steered) {
+        child.promptState = state;
+        child.promptCompletion.resolve({
+          promptId: child.machineQueueId,
+          result,
+          state,
+        });
+      }
+      if (state === 'cancelled') this.publishPromptAborted(reservation.machineQueueId);
+      else this.publishPromptCompleted(reservation.machineQueueId, state);
     }
+    for (const pending of this.reservations) {
+      if (!pending.cancelled && !pending.promptTracked) this.launchReservation(pending);
+    }
+    void this.drainPromptQueue();
     this.maybeSettle();
   }
 
@@ -1668,16 +2303,24 @@ type MutableTurn = {
 
 interface TurnReservation {
   readonly machineQueueId: string;
-  readonly message: ContextMessage;
+  message: ContextMessage;
   readonly origin: PromptOrigin;
   readonly promptId?: string;
-  readonly onMaterialize?: () => void;
+  onMaterialize?: () => void;
   cancelled: boolean;
   launched?: boolean;
   readonly controller: AbortController;
   readonly ready: ReturnType<typeof createControlledPromise<void>>;
   readonly result: ReturnType<typeof createControlledPromise<TurnResult>>;
   readonly turn: MutableTurn;
+  promptTracked: boolean;
+  promptState: PromptState;
+  createdAt: string;
+  userMessageId: string;
+  readonly promptLaunched: ReturnType<typeof createControlledPromise<Turn | undefined>>;
+  readonly promptCompletion: ReturnType<typeof createControlledPromise<PromptCompletion>>;
+  promptHandle?: PromptHandle;
+  originalMessage?: ContextMessage;
 }
 
 interface Nudge {
@@ -1724,6 +2367,7 @@ interface ActiveTurn {
   steerController: AbortController;
   readonly turn: MutableTurn;
   readonly startedAt: number;
+  readonly steered: TurnReservation[];
   steps: number;
   gatedSteps: number;
   nudgeCursor: number;
@@ -1745,6 +2389,16 @@ interface ActiveTurn {
   mode: 'agent' | 'plan' | undefined;
   providerType: string | undefined;
   protocol: string | undefined;
+}
+
+function promptSnapshotOf(reservation: TurnReservation): PromptSnapshot {
+  return {
+    id: reservation.machineQueueId,
+    userMessageId: reservation.userMessageId,
+    createdAt: reservation.createdAt,
+    state: reservation.promptState,
+    message: reservation.originalMessage ?? reservation.message,
+  };
 }
 
 function cancelReasonFor(cancellation: unknown): 'user_cancelled' | 'aborted' {

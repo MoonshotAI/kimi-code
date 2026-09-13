@@ -45,12 +45,11 @@ import type { PermissionRule } from '#/agent/permissionRules/permissionRules';
 import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
 import { IAgentProfileService, type AgentConfigData } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
 import type {
   PromptLaunchResult,
   PromptPayload,
   SteerPayload,
-} from '#/agent/prompt/prompt';
+} from '#/agent/loop/loop';
 import type { AgentCommandInfo } from '#/agent/command/agentCommand';
 import { IAgentCommandService } from '#/agent/command/agentCommand';
 import type { AgentContextData } from '#/agent/contextMemory/types';
@@ -1769,7 +1768,8 @@ export class AgentTestContext {
   }
 
   clearContext(): void {
-    this.get(IAgentPromptService).clear();
+    void this.get(IAgentLoopService).drainPrompts();
+    this.get(IAgentContextMemoryService).clear();
   }
 
   async undoHistory(count: number): Promise<number> {
@@ -2175,9 +2175,9 @@ export class AgentTestContext {
 
   private createRpcPassthroughAdapters(): AgentRpcPassthroughAPI {
     return {
-      prompt: (payload) => this.get(IAgentPromptService).submit(payload),
+      prompt: (payload) => this.get(IAgentLoopService).submitPrompt(payload),
       promptWithSkills: (payload) => this.get(IAgentSkillService).promptWithSkills(payload),
-      steer: (payload) => this.get(IAgentPromptService).submitSteer(payload),
+      steer: (payload) => this.get(IAgentLoopService).submitSteerPrompt(payload),
       cancel: (payload) => this.get(IAgentLoopService).cancelFromUser(payload.turnId),
       undoHistory: (payload) => this.get(IAgentConversationUndoService).undo(payload.count),
       setPermission: (payload) =>
@@ -2224,7 +2224,10 @@ export class AgentTestContext {
         void tasks.stop(payload.taskId, payload.reason);
       },
       detachTask: (payload) => this.get(IAgentTaskService).detach(payload.taskId),
-      clearContext: () => this.get(IAgentPromptService).clear(),
+      clearContext: () => {
+        void this.get(IAgentLoopService).drainPrompts();
+        this.get(IAgentContextMemoryService).clear();
+      },
       createGoal: (payload) => this.get(IAgentGoalService).createGoal(payload),
       getGoal: () => this.get(IAgentGoalService).getGoal(),
       pauseGoal: () => this.get(IAgentGoalService).pauseGoal(),

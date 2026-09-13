@@ -9,7 +9,6 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import { Error2, ErrorCodes } from '#/errors';
 import { ILogService } from '#/_base/log/log';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentLoopService } from '#/agent/loop/loop';
 
 import { IRestGateway, IWSGateway } from './gateway';
@@ -48,7 +47,7 @@ export class RestGateway implements IRestGateway {
     agentId: string,
     input: string,
   ): Promise<{ readonly turn_id: number } | undefined> {
-    const handle = await this.agent(sessionId, agentId).accessor.get(IAgentPromptService).enqueue({
+    const handle = await this.agent(sessionId, agentId).accessor.get(IAgentLoopService).enqueuePrompt({
       message: {
         role: 'user',
         content: [{ type: 'text', text: input }],
@@ -66,14 +65,14 @@ export class RestGateway implements IRestGateway {
     agentId: string,
     content: string,
   ): Promise<{ readonly turn_id: number } | undefined> {
-    const service = this.agent(sessionId, agentId).accessor.get(IAgentPromptService);
-    const queued = await service.enqueue({ message: {
+    const service = this.agent(sessionId, agentId).accessor.get(IAgentLoopService);
+    const queued = await service.enqueuePrompt({ message: {
       role: 'user',
       content: [{ type: 'text', text: content }],
       toolCalls: [],
       origin: { kind: 'user' },
     } });
-    const [steered] = await service.steer([queued.id]);
+    const [steered] = await service.steerPrompts([queued.id]);
     const turn = await steered?.launched;
     if (turn === undefined) return undefined;
     await turn.ready.catch(() => undefined);

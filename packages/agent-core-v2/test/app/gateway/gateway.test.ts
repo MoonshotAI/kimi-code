@@ -13,12 +13,10 @@ import { IRestGateway } from '#/app/gateway/gateway';
 import { RestGateway } from '#/app/gateway/gatewayService';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
 import { ILogService } from '#/_base/log/log';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { createHooks } from '#/hooks';
 import { stubLog } from '../../_base/log/stubs';
 import { stubLoopWithHooks, type StubLoop } from '../../agent/loop/stubs';
 
@@ -52,27 +50,12 @@ describe('RestGateway', () => {
     ix = disposables.add(new TestInstantiationService());
     promptCalls = [];
     turnService = stubLoopWithHooks({ hasActiveTurn: true });
-
-    const promptService: IAgentPromptService = {
-      _serviceBrand: undefined,
-      enqueue: ({ message }: { message: ContextMessage }) => { promptCalls.push(message); return Promise.resolve({ id: 'p', launched: Promise.resolve(undefined) } as never); },
-      submit: () => Promise.resolve(undefined),
-      submitSteer: () => Promise.resolve(undefined),
-      steer: () => Promise.resolve([]),
-      list: () => ({ active: undefined, pending: [], launching: false }),
-      abort: () => true,
-      drain: () => Promise.resolve(),
-      inject: () => Promise.resolve(undefined),
-      retry: () => Promise.resolve(undefined),
-      clear: () => {},
-      hooks: createHooks(['onBeforeSubmitPrompt']) as IAgentPromptService['hooks'],
-    };
+    turnService.enqueuePrompt = ({ message }: { message: ContextMessage }) => { promptCalls.push(message); return Promise.resolve({ id: 'p', launched: Promise.resolve(undefined) } as never); };
 
     const agentHandle: IAgentScopeHandle = {
       id: 'main',
       kind: LifecycleScope.Agent,
       accessor: makeAccessor([
-        [IAgentPromptService, promptService],
         [IAgentLoopService, turnService],
       ]),
       dispose: () => {},

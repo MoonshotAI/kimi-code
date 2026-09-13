@@ -11,7 +11,6 @@ import {
   IAgentLoopService,
   IAgentPermissionModeService,
   IAgentProfileService,
-  IAgentPromptService,
   IAgentScopeContext,
   IAgentTaskService,
   IAuthSummaryService,
@@ -185,10 +184,14 @@ function makeFakeHarness() {
         }),
       },
     ],
+    [IAgentTaskService, { list: vi.fn(() => []), stopAllOnExit: vi.fn(async () => []) }],
+    [IAgentCronService, { getNextFireTime: vi.fn(() => null) }],
+    [IAgentGoalService, goal],
+    [IEventDispatcher, { flush: vi.fn(async () => {}) }],
     [
-      IAgentPromptService,
+      IAgentLoopService,
       {
-        enqueue: vi.fn(async () => {
+        enqueuePrompt: vi.fn(async () => {
           // Emit a native assistant delta on the main agent bus, then complete.
           for (const listener of [...eventListeners]) {
             listener({ type: 'assistant.delta', turnId: 1, delta: 'hello world' } as unknown as Event2<any>);
@@ -200,17 +203,8 @@ function makeFakeHarness() {
             }),
           };
         }),
-        drain: vi.fn(async () => {}),
-        list: vi.fn(() => ({ launching: false, active: undefined, pending: [] })),
-      },
-    ],
-    [IAgentTaskService, { list: vi.fn(() => []), stopAllOnExit: vi.fn(async () => []) }],
-    [IAgentCronService, { getNextFireTime: vi.fn(() => null) }],
-    [IAgentGoalService, goal],
-    [IEventDispatcher, { flush: vi.fn(async () => {}) }],
-    [
-      IAgentLoopService,
-      {
+        drainPrompts: vi.fn(async () => {}),
+        promptQueue: vi.fn(() => ({ launching: false, active: undefined, pending: [] })),
         status: vi.fn(() => ({ state: 'idle', pendingPromptIds: [] })),
         cancel: vi.fn(() => false),
         settled: vi.fn(async () => {}),
@@ -346,8 +340,8 @@ describe('runV2Print', () => {
 
     await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
 
-    const promptService = agentServices.get(IAgentPromptService) as { enqueue: ReturnType<typeof vi.fn> };
-    expect(promptService.enqueue).toHaveBeenCalledWith({
+    const promptService = agentServices.get(IAgentLoopService) as { enqueuePrompt: ReturnType<typeof vi.fn> };
+    expect(promptService.enqueuePrompt).toHaveBeenCalledWith({
       message: {
         role: 'user',
         content: [{ type: 'text', text: 'say hello' }],
@@ -685,10 +679,10 @@ describe('runV2Print', () => {
     const stderr = writer();
     const { app, agentServices } = makeFakeHarness();
 
-    const promptService = agentServices.get(IAgentPromptService) as {
-      enqueue: ReturnType<typeof vi.fn>;
+    const promptService = agentServices.get(IAgentLoopService) as {
+      enqueuePrompt: ReturnType<typeof vi.fn>;
     };
-    promptService.enqueue.mockResolvedValueOnce({
+    promptService.enqueuePrompt.mockResolvedValueOnce({
       launched: Promise.resolve({
         id: 1,
         result: Promise.resolve({
@@ -719,10 +713,10 @@ describe('runV2Print', () => {
     const stderr = writer();
     const { app, agentServices } = makeFakeHarness();
 
-    const promptService = agentServices.get(IAgentPromptService) as {
-      enqueue: ReturnType<typeof vi.fn>;
+    const promptService = agentServices.get(IAgentLoopService) as {
+      enqueuePrompt: ReturnType<typeof vi.fn>;
     };
-    promptService.enqueue.mockResolvedValueOnce({
+    promptService.enqueuePrompt.mockResolvedValueOnce({
       launched: Promise.resolve({
         id: 1,
         result: Promise.resolve({
@@ -783,13 +777,13 @@ describe('runV2Print', () => {
 
     // A turn still in flight when the signal arrives: the prompt queue reports
     // the launch window, then the running prompt, then goes empty.
-    const promptService = agentServices.get(IAgentPromptService) as {
-      enqueue: ReturnType<typeof vi.fn>;
-      drain: ReturnType<typeof vi.fn>;
-      list: ReturnType<typeof vi.fn>;
+    const promptService = agentServices.get(IAgentLoopService) as {
+      enqueuePrompt: ReturnType<typeof vi.fn>;
+      drainPrompts: ReturnType<typeof vi.fn>;
+      promptQueue: ReturnType<typeof vi.fn>;
     };
     let settleTurn!: (result: unknown) => void;
-    promptService.enqueue.mockResolvedValueOnce({
+    promptService.enqueuePrompt.mockResolvedValueOnce({
       launched: Promise.resolve({
         id: 1,
         result: new Promise((resolve) => {
@@ -798,7 +792,7 @@ describe('runV2Print', () => {
       }),
     });
     let promptPhase: 'launching' | 'active' | 'empty' = 'launching';
-    promptService.list = vi.fn(() => {
+    promptService.promptQueue = vi.fn(() => {
       if (promptPhase === 'launching') {
         return { launching: true, active: undefined, pending: [] };
       }
@@ -839,7 +833,7 @@ describe('runV2Print', () => {
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
     await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(promptService.drain).toHaveBeenCalled();
+    expect(promptService.drainPrompts).toHaveBeenCalled();
     expect(order).toEqual(['stop', 'cancel', 'settled']);
     promptPhase = 'active';
     await new Promise((resolve) => setTimeout(resolve, 30));

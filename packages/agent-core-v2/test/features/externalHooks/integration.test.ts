@@ -38,8 +38,7 @@ import { IAgentLoopService, type AfterStepContext } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
-import { PromptQueued } from '#/agent/prompt/promptService';
+import { PromptQueued } from '#/agent/prompt/promptEvents';
 import { IAgentTaskService } from '#/agent/task/task';
 import { TaskStarted } from '#/agent/task/taskOps';
 import {
@@ -352,9 +351,6 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(IAgentContextMemoryService, context);
           reg.defineInstance(IAgentLoopService, loop);
           registerAgentEventBus(reg);
-          reg.definePartialInstance(IAgentPromptService, {
-            hooks: createHooks(['onBeforeSubmitPrompt']),
-          });
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
           reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, {
@@ -460,9 +456,6 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(IAgentContextMemoryService, stubContextMemory());
           reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
           registerAgentEventBus(reg);
-          reg.definePartialInstance(IAgentPromptService, {
-            hooks: createHooks(['onBeforeSubmitPrompt']),
-          });
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
           reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, {
@@ -667,9 +660,6 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(IAgentContextMemoryService, context);
           reg.defineInstance(IAgentLoopService, loop);
           registerAgentEventBus(reg);
-          reg.definePartialInstance(IAgentPromptService, {
-            hooks: createHooks(['onBeforeSubmitPrompt']),
-          });
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
           reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, {
@@ -1203,9 +1193,6 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(IAgentContextMemoryService, stubContextMemory());
           reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
           registerAgentEventBus(reg);
-          reg.definePartialInstance(IAgentPromptService, {
-            hooks: createHooks(['onBeforeSubmitPrompt']),
-          });
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
           reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, {

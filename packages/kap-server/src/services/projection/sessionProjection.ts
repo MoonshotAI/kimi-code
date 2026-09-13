@@ -6,7 +6,6 @@ import {
   IAgentLoopService,
   IAgentPermissionModeService,
   IAgentProfileService,
-  IAgentPromptService,
   IAgentScopeContext,
   IAgentStateService,
   IAgentTaskService,
@@ -236,8 +235,8 @@ export class SessionProjection {
     for (const info of tasks?.list() ?? []) projector.seedTask(info);
     const status = loop?.status();
     if (status?.state === 'running' && status.activeTurnId !== undefined) {
-      const prompts = handle.accessor.get(IAgentPromptService) as IAgentPromptService | undefined;
-      const active = prompts?.list().active;
+      const prompts = handle.accessor.get(IAgentLoopService) as IAgentLoopService | undefined;
+      const active = prompts?.promptQueue().active;
       const rawOrigin = active?.message.origin;
       projector.seedActiveTurn({
         turnId: status.activeTurnId,

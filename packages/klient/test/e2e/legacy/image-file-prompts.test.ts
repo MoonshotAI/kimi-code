@@ -119,8 +119,7 @@ describeLive('legacy: image file prompts', () => {
       } catch (error) {
         if (
           error instanceof EnvelopeError &&
-          (error.code === ErrorCode.PROMPT_ALREADY_COMPLETED ||
-            error.code === ErrorCode.PROMPT_NOT_FOUND)
+          error.code === ErrorCode.PROMPT_NOT_FOUND
         ) {
           log('prompt already terminal before abort', { prompt_id: submit.prompt_id });
         } else {

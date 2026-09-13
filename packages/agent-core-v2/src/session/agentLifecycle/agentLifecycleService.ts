@@ -52,7 +52,6 @@ import { IAgentRuntimeBindingSeed, IAgentRuntimeBindingService } from '#/agent/r
 import '#/agent/runtimeBinding/runtimeBindingService';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IWireService } from '#/wire/wire';
 import { WireService } from '#/wire/wireService';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
@@ -569,7 +568,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const compaction = handle.accessor.get(IAgentFullCompactionService).compacting;
     const compactionSettled = compaction?.promise.catch(() => undefined) ?? Promise.resolve();
     const reason = abortError('Agent removed');
-    const prompt = handle.accessor.get(IAgentPromptService);
     if (compaction !== null && !compaction.abortController.signal.aborted) {
       compaction.abortController.abort(reason);
     }
@@ -580,10 +578,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         loop.cancelQueued(queueId, reason);
       }
       loop.cancel(undefined, reason);
-      await Promise.all([loop.settled(), compactionSettled, prompt.drain(reason)]);
+      await Promise.all([loop.settled(), compactionSettled, loop.drainPrompts(reason)]);
       let idle = true;
       try {
-        const snapshot = prompt.list();
+        const snapshot = loop.promptQueue();
         idle =
           !snapshot.launching && snapshot.active === undefined && snapshot.pending.length === 0;
       } catch {

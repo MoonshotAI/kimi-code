@@ -8,7 +8,7 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { expandCommandArguments } from '#/app/plugin/commands';
 import { IPluginService } from '#/app/plugin/plugin';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { promptMetadataTextFromText } from '#/agent/prompt/promptMetadataText';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -26,7 +26,7 @@ export class AgentPluginCommandService implements IAgentPluginCommandService {
 
   constructor(
     @IPluginService private readonly plugins: IPluginService,
-    @IAgentPromptService private readonly promptService: IAgentPromptService,
+    @IAgentLoopService private readonly loop: IAgentLoopService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @IEventService private readonly eventService: IEventService,
@@ -65,7 +65,7 @@ export class AgentPluginCommandService implements IAgentPluginCommandService {
         trigger: origin.trigger,
       }),
     );
-    await this.promptService.enqueue({ message: {
+    await this.loop.enqueuePrompt({ message: {
       role: 'user',
       content: [{ type: 'text', text: expanded }],
       toolCalls: [],

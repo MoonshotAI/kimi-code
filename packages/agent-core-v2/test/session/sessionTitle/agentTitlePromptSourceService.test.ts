@@ -4,7 +4,7 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import type { ContentPart } from '#human/llm/message';
 import { IAgentTitlePromptSource } from '#/session/sessionTitle/agentTitlePromptSource';
 import { AgentTitlePromptSourceService } from '#/session/sessionTitle/agentTitlePromptSourceService';
@@ -37,7 +37,7 @@ describe('AgentTitlePromptSource', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let liveMessages: readonly ContextMessage[];
-  let queue: ReturnType<IAgentPromptService['list']>;
+  let queue: ReturnType<IAgentLoopService['promptQueue']>;
 
   beforeEach(() => {
     liveMessages = [];
@@ -46,7 +46,7 @@ describe('AgentTitlePromptSource', () => {
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.definePartialInstance(IAgentContextMemoryService, { get: () => liveMessages });
-        reg.definePartialInstance(IAgentPromptService, { list: () => queue });
+        reg.definePartialInstance(IAgentLoopService, { promptQueue: () => queue });
         reg.define(IAgentTitlePromptSource, AgentTitlePromptSourceService);
       },
     });

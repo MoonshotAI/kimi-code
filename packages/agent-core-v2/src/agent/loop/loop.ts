@@ -3,6 +3,7 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 import { Error2, isError2, type Error2Options } from '#/_base/errors/errors';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import type { FinishReason } from '#human/llm/finish-reason';
+import type { ContentPart } from '#human/llm/message';
 import type { TokenUsage } from '#human/llm/usage';
 import type { Hooks } from '#/hooks';
 import { LoopErrors } from './errors';
@@ -128,6 +129,79 @@ export interface LoopPromptSubmit {
   readonly onMaterialize?: () => void;
 }
 
+export type PromptState =
+  | 'pending'
+  | 'running'
+  | 'steered'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'blocked';
+
+export interface PromptCompletion {
+  readonly promptId: string;
+  readonly result: TurnResult | undefined;
+  readonly state: Extract<PromptState, 'completed' | 'failed' | 'cancelled' | 'blocked'>;
+}
+
+export interface PromptSnapshot {
+  readonly id: string;
+  readonly userMessageId: string;
+  readonly createdAt: string;
+  readonly state: PromptState;
+  readonly message: ContextMessage;
+}
+
+export interface PromptHandle extends PromptSnapshot {
+  readonly launched: Promise<Turn | undefined>;
+  readonly completion: Promise<PromptCompletion>;
+}
+
+export interface PromptQueueSnapshot {
+  readonly active: PromptSnapshot | undefined;
+  readonly pending: readonly PromptSnapshot[];
+  readonly launching: boolean;
+}
+
+export interface PromptPayload {
+  readonly input: readonly ContentPart[];
+  readonly promptId?: string;
+}
+
+export interface SteerPayload {
+  readonly input: readonly ContentPart[];
+}
+
+export interface PromptLaunchResult {
+  readonly turn_id: number;
+}
+
+export interface PromptInput {
+  readonly id?: string;
+  readonly message: ContextMessage;
+}
+
+export interface PromptSubmitContext {
+  readonly promptMessage: ContextMessage;
+  readonly isSteer: boolean;
+  block: boolean;
+}
+
+export interface PromptReservation extends IDisposable {
+  readonly id: string;
+  submit(message: ContextMessage): Promise<PromptHandle>;
+}
+
+export const promptAdmission = Symbol('promptAdmission');
+
+type PromptAdmissionHook = (promptId?: string) => PromptReservation;
+
+export function reservePrompt(service: IAgentLoopService, promptId?: string): PromptReservation {
+  return (service as IAgentLoopService & { [promptAdmission]: PromptAdmissionHook })[
+    promptAdmission
+  ](promptId);
+}
+
 export interface LoopNotify {
   readonly message?: ContextMessage;
   readonly turnScoped?: boolean;
@@ -160,6 +234,24 @@ export interface IAgentLoopService {
 
   activitySnapshot(): AgentActivitySnapshot;
 
+  submitPrompt(payload: PromptPayload): Promise<PromptLaunchResult | undefined>;
+
+  submitSteerPrompt(payload: SteerPayload): Promise<PromptLaunchResult | undefined>;
+
+  enqueuePrompt(input: PromptInput): Promise<PromptHandle>;
+
+  steerPrompts(promptIds: readonly string[]): Promise<readonly PromptHandle[]>;
+
+  abortPrompt(promptId: string, reason?: Error): boolean;
+
+  drainPrompts(reason?: Error): Promise<void>;
+
+  injectPrompt(message: ContextMessage): Promise<Turn | undefined>;
+
+  retryPrompt(): Promise<Turn | undefined>;
+
+  promptQueue(): PromptQueueSnapshot;
+
   tryAcquireQuiescence(): IDisposable | undefined;
 
   buildAttachBundle(): MachineEngineAttachBundle;
@@ -180,6 +272,7 @@ export interface IAgentLoopService {
   readonly hooks: Hooks<{
     onWillBeginStep: BeforeStepContext;
     onDidFinishStep: AfterStepContext;
+    onBeforeSubmitPrompt: PromptSubmitContext;
   }>;
 }
 

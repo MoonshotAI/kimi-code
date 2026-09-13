@@ -6,8 +6,7 @@ import type {
   ContextMessage,
   SkillActivationOrigin,
 } from '#/agent/contextMemory/types';
-import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
-import { IAgentPromptService, reservePrompt, type PromptLaunchResult } from '#/agent/prompt/prompt';
+import { IAgentLoopService, reservePrompt, type PromptLaunchResult, type Turn } from '#/agent/loop/loop';
 import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventService } from '#/app/event/event';
@@ -45,7 +44,6 @@ export class AgentSkillService implements IAgentSkillService {
 
   constructor(
     @ISessionSkillCatalog private readonly catalog: ISessionSkillCatalog,
-    @IAgentPromptService private readonly prompt: IAgentPromptService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @IEventService private readonly eventService: IEventService,
@@ -148,7 +146,7 @@ export class AgentSkillService implements IAgentSkillService {
     for (const activation of prepared) {
       void this.recordActivation(activation.origin);
     }
-    const reservation = reservePrompt(this.prompt);
+    const reservation = reservePrompt(this.loop);
     try {
       const handle = await reservation.submit({
         role: 'user',
@@ -260,9 +258,9 @@ export class AgentSkillService implements IAgentSkillService {
       origin,
     };
     if (this.loop.status().state === 'running') {
-      return this.prompt.inject(message);
+      return this.loop.injectPrompt(message);
     }
-    return (await this.prompt.enqueue({ message })).launched;
+    return (await this.loop.enqueuePrompt({ message })).launched;
   }
 
   private renderSkillPrompt(skill: SkillDefinition, rawArgs: string): string {

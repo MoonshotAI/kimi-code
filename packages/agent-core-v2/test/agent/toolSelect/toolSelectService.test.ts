@@ -22,6 +22,8 @@ import {
   type BeforeStepContext,
   type LoopNotifyHandle,
   type LoopPromptSubmit,
+  type PromptQueueSnapshot,
+  type PromptSubmitContext,
   type Turn,
 } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
@@ -205,7 +207,42 @@ class FakeLoopService implements IAgentLoopService {
   readonly hooks: IAgentLoopService['hooks'] = {
     onWillBeginStep: new OrderedHookSlot<BeforeStepContext>(),
     onDidFinishStep: new OrderedHookSlot<AfterStepContext>(),
+    onBeforeSubmitPrompt: new OrderedHookSlot<PromptSubmitContext>(),
   };
+
+  submitPrompt(): never {
+    throw new Error('unused in this suite');
+  }
+
+  submitSteerPrompt(): never {
+    throw new Error('unused in this suite');
+  }
+
+  enqueuePrompt(): never {
+    throw new Error('unused in this suite');
+  }
+
+  steerPrompts(): never {
+    throw new Error('unused in this suite');
+  }
+
+  abortPrompt(): never {
+    throw new Error('unused in this suite');
+  }
+
+  async drainPrompts(): Promise<void> {}
+
+  injectPrompt(): never {
+    throw new Error('unused in this suite');
+  }
+
+  retryPrompt(): never {
+    throw new Error('unused in this suite');
+  }
+
+  promptQueue(): PromptQueueSnapshot {
+    return { active: undefined, pending: [], launching: false };
+  }
 
   cancelFromUser(): void {}
 

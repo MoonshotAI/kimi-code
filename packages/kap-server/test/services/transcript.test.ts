@@ -8,7 +8,6 @@ import {
   INTERACTION_TAG_SESSION_ID,
   IAgentLifecycleService,
   IAgentLoopService,
-  IAgentPromptService,
   IAgentScopeContext,
   IAgentTaskService,
   IEventBus,
@@ -3150,11 +3149,7 @@ describe('bindSessionTranscript', () => {
                 status: () =>
                   opts?.loopStatus ?? { state: activity.turn === undefined ? 'idle' : 'running' },
                 activitySnapshot: () => activity,
-              };
-            }
-            if (token === IAgentPromptService) {
-              return {
-                list: () => ({
+                promptQueue: () => ({
                   active: opts?.activePromptId === undefined
                     ? undefined
                     : {
@@ -3170,6 +3165,7 @@ describe('bindSessionTranscript', () => {
                         },
                       },
                   pending: [],
+                  launching: false,
                 }),
               };
             }

@@ -1,7 +1,6 @@
 import {
   IAgentLifecycleService,
   IAgentLoopService,
-  IAgentPromptService,
   IAgentScopeContext,
   IAgentTaskService,
   IEventBus,
@@ -144,7 +143,7 @@ export function bindSessionTranscript(
     );
     const loopStatus = handle.accessor.get(IAgentLoopService)?.status();
     if (loopStatus?.state === 'running' && loopStatus.activeTurnId !== undefined) {
-      const promptId = handle.accessor.get(IAgentPromptService)?.list().active?.id;
+      const promptId = handle.accessor.get(IAgentLoopService)?.promptQueue().active?.id;
       projector.seedActiveTurn({ turnId: loopStatus.activeTurnId, promptId });
     }
     const list = agentDisposables.get(handle.id) ?? [];

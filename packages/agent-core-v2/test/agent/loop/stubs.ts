@@ -1,6 +1,6 @@
 import { toDisposable } from '#/_base/di/lifecycle';
 import { Event } from '#/_base/event';
-import type { IAgentLoopService, LoopErrorHandler, LoopErrorHandlerRegistrationOptions, LoopNotify, LoopNotifyHandle, LoopPromptSubmit, Turn, TurnResult } from '#/agent/loop/loop';
+import type { IAgentLoopService, LoopErrorHandler, LoopErrorHandlerRegistrationOptions, LoopNotify, LoopNotifyHandle, LoopPromptSubmit, PromptHandle, Turn, TurnResult } from '#/agent/loop/loop';
 import type { MachineEngine, MachineEngineAttachBundle } from '#/agent/loop/machine/engine';
 import type { AgentEventStore } from '#human/agent/slices';
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -74,7 +74,7 @@ function stubAttachEngine(): MachineEngine {
   };
 }
 export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
-  const hooks = createHooks(['onWillBeginStep', 'onDidFinishStep']) as IAgentLoopService['hooks'];
+  const hooks = createHooks(['onWillBeginStep', 'onDidFinishStep', 'onBeforeSubmitPrompt']) as IAgentLoopService['hooks'];
   const errorHandlers = registry(); const launches: number[] = []; const cancels: { turnId?: number; reason?: unknown }[] = [];
   const pending: PendingEntry[] = [];
   let active: Turn | undefined; let nextId = typeof options.currentId === 'number' ? options.currentId : 0;
@@ -123,6 +123,26 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
     },
     status() { return { state: active !== undefined ? 'running' : 'idle', activeTurnId: active?.id, pendingPromptIds: [], hasPendingRequests: hasPending() }; },
     activitySnapshot() { return {}; },
+    submitPrompt: () => Promise.resolve(undefined),
+    submitSteerPrompt: () => Promise.resolve(undefined),
+    enqueuePrompt: ({ message }: { message: ContextMessage }) => {
+      pending.push({ kind: 'prompt', message });
+      return Promise.resolve({
+        id: 'p',
+        userMessageId: 'p',
+        createdAt: '',
+        state: 'pending',
+        message,
+        launched: Promise.resolve(undefined),
+        completion: new Promise(() => {}),
+      } as unknown as PromptHandle);
+    },
+    steerPrompts: () => Promise.resolve([]),
+    abortPrompt: () => true,
+    drainPrompts: () => Promise.resolve(),
+    injectPrompt: () => Promise.resolve(undefined),
+    retryPrompt: () => Promise.resolve(undefined),
+    promptQueue: () => ({ active: undefined, pending: [], launching: false }),
     cancel(turnId, reason) { cancels.push({ turnId, reason }); if (active === undefined || (turnId !== undefined && active.id !== turnId)) return false; active.cancel(reason); return true; },
     cancelQueued() { return false; },
     cancelFromUser(turnId) { stub.cancel(turnId); },
