@@ -858,30 +858,27 @@ describe('Agent loop', () => {
     ctx.mockNextResponse({ type: 'text', text: 'one' });
     ctx.mockNextResponse({ type: 'text', text: 'two' });
     ctx.mockNextResponse({ type: 'text', text: 'three' });
-    ctx.mockNextResponse({ type: 'text', text: 'four' });
 
     const first = submitTurn(loop, 'first').turn;
     const second = submitTurn(loop, 'second').turn;
     const third = submitTurn(loop, 'third').turn;
     loop.notify();
-    const launchedStates = [first.state, second.state, third.state];
 
     await Promise.all([first.result, second.result, third.result]);
     subscription.dispose();
 
-    expect(launchedStates).toEqual(['running', 'queued', 'queued']);
     await expect(first.result).resolves.toMatchObject({ type: 'completed' });
     await expect(second.result).resolves.toMatchObject({ type: 'completed' });
     await expect(third.result).resolves.toMatchObject({ type: 'completed' });
     expect(events).toEqual([
       'turn.started:0',
       'turn.ended:0',
+      'turn.started:1',
+      'turn.ended:1',
       'turn.started:2',
       'turn.ended:2',
-      'turn.started:3',
-      'turn.ended:3',
     ]);
-    expect(ctx.llmCalls).toHaveLength(4);
+    expect(ctx.llmCalls).toHaveLength(3);
   });
 
   it('refuses a quiescence lease while a turn is active without cancelling it', async () => {

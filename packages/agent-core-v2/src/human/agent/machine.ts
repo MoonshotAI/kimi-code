@@ -55,6 +55,11 @@ export type ScopeFactory = (
   signal: AbortSignal,
 ) => Promise<ScopeFactoryOutput>;
 
+export type PromptGate = (
+  queueItemId: string | undefined,
+  message: UserMessage,
+) => Promise<boolean>;
+
 export interface ScopeFactoryOutput {
   handle?: AgentScopeHandle;
   store: AgentEventStore;
@@ -62,6 +67,7 @@ export interface ScopeFactoryOutput {
   toolLogic: ToolLogic;
   tools: readonly ToolDefinition[];
   request?: LlmRequestConfig;
+  promptGate?: PromptGate;
 }
 
 type TurnLogic = ReturnType<typeof createTurnMachine>;
@@ -111,6 +117,8 @@ export type AgentEmitted =
       branchId: string;
     }
   | { type: 'turn.aborted'; messages: HistoryMessage[]; branchId: string }
+  | { type: 'prompt.blocked'; queueItemId?: string }
+  | { type: 'prompt.gate_failed'; queueItemId?: string; error: unknown }
   | { type: 'context.reset'; branchId: string }
   | { type: 'agent.attached' }
   | { type: 'agent.failed'; error: unknown };
@@ -129,6 +137,7 @@ export interface AgentMachineContext {
   turnLogic?: TurnLogic;
   toolLogic?: ToolLogic;
   tools?: readonly ToolDefinition[];
+  promptGate?: PromptGate;
   messages: HistoryMessage[];
   turnTools: Record<string, ToolEntry>;
   background: Record<string, ToolEntry>;
@@ -308,6 +317,18 @@ export function createAgentMachine({
       scopeFactoryActor: fromPromise<ScopeFactoryOutput, AgentInput & { self: AgentMachineSelf }>(
         ({ input, signal }) => input.scopeFactory(input.self, signal),
       ),
+      promptGateActor: fromPromise<
+        { id?: string; block: boolean; error?: unknown },
+        { gate?: PromptGate; head?: QueuedPrompt }
+      >(async ({ input }) => {
+        const { gate, head } = input;
+        if (gate === undefined || head === undefined) return { id: head?.id, block: false };
+        try {
+          return { id: head.id, block: await gate(head.id, head.message) };
+        } catch (error) {
+          return { id: head.id, block: false, error };
+        }
+      }),
       disposeScopeActor: fromPromise<void, { handle?: AgentScopeHandle }>(async ({ input }) => {
         await input.handle?.disposeAsync();
       }),
@@ -316,6 +337,19 @@ export function createAgentMachine({
       forwardToParent: ({ self, event }) => {
         self._parent?.send(event);
       },
+      commitPendingToHistory: enqueueActions(({ context, enqueue }) => {
+        const head = context.queue[0];
+        enqueue.sendTo('store', {
+          type: 'store.append' as const,
+          event: [
+            ...context.notifications.map((entry) => messageAppended({ message: entry })),
+            ...(head === undefined
+              ? []
+              : [messageAppended({ message: createUserEntry(head.message, { source: 'input' }) })]),
+          ],
+        });
+        enqueue.assign(drainPendingPatch(context));
+      }),
       resetMirror: assign(({ event }) => {
         if (event.type !== 'store.reset') return {};
         return {
@@ -506,6 +540,7 @@ export function createAgentMachine({
                   toolLogic: output.toolLogic,
                   tools: output.tools,
                   request: output.request ?? context.request,
+                  promptGate: output.promptGate,
                 };
               }),
               emit({ type: 'agent.attached' as const }),
@@ -545,60 +580,98 @@ export function createAgentMachine({
       },
       idle: {
         initial: 'ready',
-        always: {
-          guard: ({ context }) => hasPendingWork(context) && !context.paused,
-          target: 'running',
-          actions: [
-            sendTo('store', ({ context }) => {
-              const head = context.queue[0];
-              return {
-                type: 'store.append' as const,
-                event: [
-                  ...context.notifications.map((entry) => messageAppended({ message: entry })),
-                  ...(head === undefined
-                    ? []
-                    : [
-                        messageAppended({ message: createUserEntry(head.message, { source: 'input' }) }),
-                      ]),
-                ],
-              };
-            }),
-            assign(({ context }) => drainPendingPatch(context)),
-          ],
-        },
         on: {
           'input.continue': {
             guard: ({ context }) =>
               !hasPendingWork(context) && historyEndsMidToolChain(context.messages),
             target: 'running',
-            actions: [
-              assign({ paused: false }),
-              sendTo('store', ({ context }) => {
-                const head = context.queue[0];
-                return {
-                  type: 'store.append' as const,
-                  event: [
-                    ...context.notifications.map((entry) => messageAppended({ message: entry })),
-                    ...(head === undefined
-                      ? []
-                      : [
-                          messageAppended({ message: createUserEntry(head.message, { source: 'input' }) }),
-                        ]),
-                  ],
-                };
-              }),
-              assign(({ context }) => drainPendingPatch(context)),
-            ],
+            actions: [assign({ paused: false }), 'commitPendingToHistory'],
           },
         },
         states: {
           ready: {
-            always: {
-              guard: ({ context }) => hasBackgroundWork(context),
-              target: 'waiting',
+            always: [
+              {
+                guard: ({ context }) =>
+                  context.promptGate !== undefined && context.queue.length > 0 && !context.paused,
+                target: 'gating',
+              },
+              {
+                guard: ({ context }) => hasPendingWork(context) && !context.paused,
+                target: '#agent.running',
+                actions: ['commitPendingToHistory'],
+              },
+              {
+                guard: ({ context }) => hasBackgroundWork(context),
+                target: 'waiting',
+              },
+            ],
+          },
+          waiting: {
+            always: [
+              {
+                guard: ({ context }) =>
+                  context.promptGate !== undefined && context.queue.length > 0 && !context.paused,
+                target: 'gating',
+              },
+              {
+                guard: ({ context }) => hasPendingWork(context) && !context.paused,
+                target: '#agent.running',
+                actions: ['commitPendingToHistory'],
+              },
+            ],
+          },
+          gating: {
+            invoke: {
+              src: 'promptGateActor',
+              input: ({ context }) => ({ gate: context.promptGate, head: context.queue[0] }),
+              onDone: [
+                {
+                  guard: ({ context, event }) =>
+                    context.paused || context.queue[0]?.id !== event.output.id,
+                  target: 'ready',
+                },
+                {
+                  guard: ({ event }) => event.output.error !== undefined,
+                  target: 'ready',
+                  actions: [
+                    emit(({ context, event }) => ({
+                      type: 'prompt.gate_failed' as const,
+                      queueItemId: context.queue[0]?.id,
+                      error: event.output.error,
+                    })),
+                    assign(({ context }) => ({ queue: context.queue.slice(1) })),
+                  ],
+                },
+                {
+                  guard: ({ event }) => event.output.block,
+                  target: 'ready',
+                  actions: [
+                    emit(({ context }) => ({
+                      type: 'prompt.blocked' as const,
+                      queueItemId: context.queue[0]?.id,
+                    })),
+                    assign(({ context }) => ({ queue: context.queue.slice(1) })),
+                  ],
+                },
+                {
+                  target: '#agent.running',
+                  actions: ['commitPendingToHistory'],
+                },
+              ],
+              onError: {
+                target: 'ready',
+                actions: [
+                  emit(({ context, event }) => ({
+                    type: 'prompt.gate_failed' as const,
+                    queueItemId: context.queue[0]?.id,
+                    error: event.error,
+                  })),
+                  assign(({ context }) => ({ queue: context.queue.slice(1) })),
+                ],
+              },
             },
           },
-          waiting: {},
         },
       },
       running: {

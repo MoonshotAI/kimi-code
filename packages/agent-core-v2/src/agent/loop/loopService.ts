@@ -92,6 +92,7 @@ import {
   type PromptReservation,
   type PromptSnapshot,
   type PromptState,
+  type PromptSubmitContext,
   type SteerPayload,
   type Turn,
   type TurnResult,
@@ -230,6 +231,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
               step: this.active.gatedSteps,
             },
       gate: (signal) => this.gate(signal),
+      promptGate: (queueItemId) => this.runPromptGate(queueItemId),
       onTrace: (trace) => {
         this.activeRequestTrace = trace;
       },
@@ -296,7 +298,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (this.disposing) throw abortError('Agent loop disposed');
     const reservation = this.createReservation(prompt);
     this.reservations.push(reservation);
-    if (this.quiescenceDepth === 0 && this.active === undefined) {
+    if (
+      this.quiescenceDepth === 0 &&
+      this.active === undefined &&
+      !this.reservations.some((entry) => entry.launched === true && !entry.cancelled)
+    ) {
       this.launchReservation(reservation);
     }
     return { turn: reservation.turn };
@@ -768,19 +774,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       const { message, captions } = this.extractCompressionCaptions(reservation.message);
       await this.materializeDaemonRefs(message);
       if (!this.reservations.includes(reservation) || reservation.cancelled) return;
-      if (await this.blockedByPromptHook(message, false)) {
-        this.removeReservation(reservation);
-        this.appendBlockedPrompt(message, captions);
-        reservation.promptState = 'blocked';
-        reservation.promptLaunched.resolve(undefined);
-        reservation.promptCompletion.resolve({
-          promptId: reservation.machineQueueId,
-          result: undefined,
-          state: 'blocked',
-        });
-        this.publishPromptCompleted(reservation.machineQueueId, 'blocked');
-        return;
-      }
+      reservation.gateMessage = message;
+      reservation.gateCaptions = captions;
       reservation.onMaterialize = () => {
         this.notifyCaptions(captions, reservation.machineQueueId);
       };
@@ -874,10 +869,41 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     await materializePromptDaemonRefs(message.content, { files, mediaStore });
   }
 
-  private async blockedByPromptHook(promptMessage: ContextMessage, isSteer: boolean): Promise<boolean> {
-    const ctx = { promptMessage, isSteer, block: false };
+  private async runPromptGate(queueItemId: string | undefined): Promise<boolean> {
+    const reservation = this.reservations.find((entry) => entry.machineQueueId === queueItemId);
+    if (reservation === undefined || !reservation.promptTracked || reservation.cancelled) {
+      return false;
+    }
+    const ctx: PromptSubmitContext = {
+      promptMessage: reservation.gateMessage ?? reservation.message,
+      isSteer: false,
+      block: false,
+    };
     await this.hooks.onBeforeSubmitPrompt.run(ctx);
     return ctx.block;
+  }
+
+  private settleGateRejectedPrompt(queueItemId: string | undefined, state: 'blocked' | 'failed'): void {
+    const reservation = this.reservations.find(
+      (entry) => entry.machineQueueId === queueItemId && !entry.cancelled,
+    );
+    if (reservation === undefined) return;
+    this.removeReservation(reservation);
+    if (state === 'blocked') {
+      this.appendBlockedPrompt(
+        reservation.gateMessage ?? reservation.message,
+        reservation.gateCaptions ?? [],
+      );
+    }
+    reservation.promptState = state;
+    reservation.promptLaunched.resolve(undefined);
+    reservation.promptCompletion.resolve({
+      promptId: reservation.machineQueueId,
+      result: undefined,
+      state,
+    });
+    this.publishPromptCompleted(reservation.machineQueueId, state);
+    void this.drainPromptQueue();
   }
 
   private extractCompressionCaptions(message: ContextMessage): {
@@ -1007,6 +1033,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.settleReservationCancelled(reservation, cancellation);
     if (reservation.promptTracked) {
       this.publishPromptAborted(reservation.machineQueueId);
+      if (reservation.launched) void this.drainPromptQueue();
     }
     return true;
   }
@@ -1046,7 +1073,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   private drainPendingToMachine(): void {
     if (this.engine === undefined) return;
-    // oxlint-disable-next-line unicorn/no-useless-spread -- launchReservation re-enters synchronously via gate→bindMachineTurn and splices this.reservations mid-iteration
+    // oxlint-disable-next-line unicorn/no-useless-spread -- launchReservation starts the machine prompt gate synchronously, and a hook callback can re-enter and splice this.reservations mid-iteration
     for (const reservation of [...this.reservations]) {
       if (!reservation.cancelled && !reservation.promptTracked) this.launchReservation(reservation);
     }
@@ -1528,6 +1555,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       case 'turnStarted': {
         this.pendingMachineTurn = { id: event.machineTurnId, queueItemId: event.queueItemId };
         this.machineTurnSuppressed = false;
+        return;
+      }
+      case 'promptBlocked': {
+        this.settleGateRejectedPrompt(event.queueItemId, 'blocked');
+        return;
+      }
+      case 'promptGateFailed': {
+        this.settleGateRejectedPrompt(event.queueItemId, 'failed');
         return;
       }
       case 'turnSettled': {
@@ -2316,6 +2351,8 @@ interface TurnReservation {
   readonly turn: MutableTurn;
   promptTracked: boolean;
   promptState: PromptState;
+  gateMessage?: ContextMessage;
+  gateCaptions?: readonly string[];
   createdAt: string;
   userMessageId: string;
   readonly promptLaunched: ReturnType<typeof createControlledPromise<Turn | undefined>>;

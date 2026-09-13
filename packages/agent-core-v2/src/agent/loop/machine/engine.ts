@@ -4,7 +4,7 @@ import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { ModelRequestTiming } from '#/llm-adapter/model/model-requester';
 import type { ToolInfo, ToolResult as AgentToolResult, ToolUpdate as AgentToolUpdate } from '#/tool/toolContract';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
-import { createAgentMachine } from '#human/agent/machine';
+import { createAgentMachine, type PromptGate } from '#human/agent/machine';
 import { createTurnMachine, type AssistantEntry, type HistoryMessage } from '#human/agent/turn';
 import { messageAppended, turnEnded } from '#human/agent/events';
 import { agentSlices, type AgentEventStore } from '#human/agent/slices';
@@ -105,6 +105,8 @@ export type MachineEngineEvent =
   | { readonly type: 'toolAborted'; readonly toolCallId: string }
   | { readonly type: 'toolBatchFailed'; readonly error: unknown }
   | { readonly type: 'remindersConsumed'; readonly reminders: HistoryMessage[] }
+  | { readonly type: 'promptBlocked'; readonly queueItemId?: string }
+  | { readonly type: 'promptGateFailed'; readonly queueItemId?: string; readonly error: unknown }
   | { readonly type: 'aborting' };
 
 export interface CreateMachineEngineOptions {
@@ -123,6 +125,7 @@ export interface CreateMachineEngineOptions {
   readonly toolTurnId?: () => number | undefined;
   readonly steerSignal?: () => AbortSignal | undefined;
   readonly gate?: (signal: AbortSignal) => Promise<MachineRequesterGateDecision>;
+  readonly promptGate?: PromptGate;
   readonly onTrace?: (trace: LLMRequestTrace) => void;
   readonly onEvent?: (event: MachineEngineEvent) => void;
   readonly onToolResult?: (toolCallId: string, result: AgentToolResult) => void;
@@ -263,6 +266,7 @@ export interface MachineEngineAttachBundle {
   readonly request: LlmRequestConfig;
   readonly requester: MachineRequester;
   readonly machineTools: MachineTools;
+  readonly promptGate?: PromptGate;
 }
 
 export function machineEngineAttachBundle(options: CreateMachineEngineOptions): MachineEngineAttachBundle {
@@ -323,6 +327,7 @@ export function machineEngineAttachBundle(options: CreateMachineEngineOptions): 
     request: { model: options.model, systemPrompt: options.systemPrompt, credentials },
     requester,
     machineTools: tools,
+    promptGate: options.promptGate,
   };
 }
 
@@ -446,6 +451,12 @@ export function attachMachineEngine(
     }),
     ref.on('turn.reminders_consumed', (event) => {
       publish({ type: 'remindersConsumed', reminders: event.reminders });
+    }),
+    ref.on('prompt.blocked', (event) => {
+      publish({ type: 'promptBlocked', queueItemId: event.queueItemId });
+    }),
+    ref.on('prompt.gate_failed', (event) => {
+      publish({ type: 'promptGateFailed', queueItemId: event.queueItemId, error: event.error });
     }),
     ref.on('turn.aborting', () => {
       publish({ type: 'aborting' });

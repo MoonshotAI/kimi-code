@@ -356,6 +356,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         toolLogic: bundle.toolLogic,
         tools: bundle.tools,
         request: bundle.request,
+        promptGate: bundle.promptGate,
       };
     } catch (error) {
       this.telemetry.track2('agent_create_failed', {
@@ -530,6 +531,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         toolLogic: bundle.toolLogic,
         tools: bundle.tools,
         request: bundle.request,
+        promptGate: bundle.promptGate,
       });
     } catch (error) {
       const managed = this.roster.get(agent.agentId);
