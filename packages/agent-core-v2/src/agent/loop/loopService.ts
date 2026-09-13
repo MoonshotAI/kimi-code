@@ -92,7 +92,6 @@ import {
   type PromptReservation,
   type PromptSnapshot,
   type PromptState,
-  type PromptSubmitContext,
   type SteerPayload,
   type Turn,
   type TurnResult,
@@ -552,7 +551,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       turn = undefined;
     }
     if (turn === undefined || this.active !== active) {
-      for (const { reservation, index } of removed.reverse()) {
+      for (const { reservation, index } of removed.toReversed()) {
         this.reservations.splice(index, 0, reservation);
       }
       if (this.active === undefined) void this.drainPromptQueue();

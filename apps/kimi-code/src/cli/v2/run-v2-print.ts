@@ -8,7 +8,7 @@
  *   - creates / resumes a session and its main agent via native services,
  *   - subscribes to the main agent's per-agent `IEventBus` and renders the
  *     native `Event2` stream (payloads are already v1-protocol-shaped),
- *   - drives a turn through `IAgentPromptService.enqueue()` and awaits
+ *   - drives a turn through `IAgentLoopService.enqueuePrompt()` and awaits
  *     `Turn.result` for authoritative completion,
  *   - applies the print-mode background policy (config-driven, v1-aligned:
  *     `exit` / `drain` / `steer`) before exiting.
