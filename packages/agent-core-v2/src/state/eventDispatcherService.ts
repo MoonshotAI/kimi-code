@@ -2,6 +2,7 @@ import { produce } from 'immer';
 
 import { BugIndicatingError } from '#/_base/errors/errors';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
+import { ILogService } from '#/_base/log/log';
 import { Service } from '#/_base/di/service';
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { type CollectionView } from '#/_base/di/collection';
@@ -196,6 +197,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     @IAgentScopeContext private readonly agentScope: IAgentScopeContext | undefined,
     @IAgentBlobService private readonly blobService: IAgentBlobService,
     @IAgentStateService private readonly agentState: IAgentStateService,
+    @ILogService private readonly logger: ILogService,
     @EventStateContribution view: CollectionView<EventStateContributionRecord>,
     @AgentModelContribution modelView: CollectionView<AgentModelDefinition<any, any>>,
   ) {
@@ -794,15 +796,16 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
   }
 
   private reportSkippedRecord(type: string, index: number, malformed: boolean): void {
-    onUnexpectedError(
-      new WireError(
-        WireErrors.codes.WIRE_UNKNOWN_RECORD,
-        malformed
-          ? `Malformed wire record type '${type}' skipped during restore`
-          : `Unknown wire record type '${type}' skipped during restore`,
-        { details: { type, index } },
-      ),
-    );
+    const message = malformed
+      ? `Malformed wire record type '${type}' skipped during restore`
+      : `Unknown wire record type '${type}' skipped during restore`;
+    if (malformed) {
+      onUnexpectedError(
+        new WireError(WireErrors.codes.WIRE_UNKNOWN_RECORD, message, { details: { type, index } }),
+      );
+      return;
+    }
+    this.logger.warn(message, { code: WireErrors.codes.WIRE_UNKNOWN_RECORD, type, index });
   }
 
   private async rehydrateStates(): Promise<void> {

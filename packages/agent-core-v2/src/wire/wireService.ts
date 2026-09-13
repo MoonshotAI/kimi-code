@@ -366,7 +366,7 @@ export class WireService extends Service implements IWireService, IAgentJournal 
         continue;
       }
       rewrittenRecords?.push(normalized);
-      if (isHumanRecordType(normalized.type) || normalized.type === AGENT_SWITCHED_TYPE) {
+      if (isHumanRecordType(normalized.type)) {
         modeTwoEntries.push({ record: normalized, line: lineCount });
       }
       yield { record: normalized, line: lineCount };
@@ -565,7 +565,7 @@ export class WireService extends Service implements IWireService, IAgentJournal 
       onError: onUnexpectedError,
     });
     this.lines += 1;
-    if (isHumanRecordType(record.type) || record.type === AGENT_SWITCHED_TYPE) {
+    if (isHumanRecordType(record.type)) {
       this.modeTwoEntries.push({ record, line: this.lines });
     }
     if (record.type === 'context.clear') this.lastClearLine = this.lines;

@@ -332,7 +332,7 @@ describe('AgentConversationUndoService', () => {
     ).toEqual([0, 1, 1]);
     expect(
       persisted
-        .filter((record) => record.type === 'human.agent.turn.started')
+        .filter((record) => record.type === 'agent.turn.started')
         .map((record) => record['turnId']),
     ).toEqual([0, 1, 1]);
 
@@ -349,7 +349,7 @@ describe('AgentConversationUndoService', () => {
       const repersisted = await resumed.persistedWireRecords();
       expect(
         repersisted
-          .filter((record) => record.type === 'human.agent.turn.started')
+          .filter((record) => record.type === 'agent.turn.started')
           .map((record) => record['turnId']),
       ).toEqual([0, 1, 1, 2]);
     } finally {
@@ -1002,7 +1002,7 @@ function legacyWireFold(records: readonly WireRecord[]): {
       case 'context.undone':
         break;
       default:
-        if (record.type === 'agent.switched' || record.type.startsWith('human.')) {
+        if (record.type.startsWith('agent.') || record.type.startsWith('human.')) {
           skippedUnknownTypes.push(record.type);
         }
         break;

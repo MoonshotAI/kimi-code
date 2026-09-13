@@ -10,6 +10,7 @@ import {
   setUnexpectedErrorHandler,
 } from '#/_base/errors/unexpectedError';
 import { BugIndicatingError } from '#/_base/errors/errors';
+import { ILogService } from '#/_base/log/log';
 import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
 import '#/agent/contextMemory/conversationTime';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
@@ -419,6 +420,19 @@ describe('EventDispatcherService', () => {
         ]),
       );
       ix2.set(IAgentStateService, new AgentStateService());
+      const restoreLog: { level: string; message: string; payload?: unknown }[] = [];
+      const capturingLogger: ILogService = {
+        _serviceBrand: undefined,
+        level: 'debug',
+        error: () => {},
+        warn: (message, payload) => restoreLog.push({ level: 'warn', message, payload }),
+        info: () => {},
+        debug: () => {},
+        child: () => capturingLogger,
+        setLevel: () => {},
+        flush: async () => {},
+      };
+      ix2.stub(ILogService, capturingLogger);
       ix2.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
       const replayed = ix2.get(IEventDispatcher);
       const replayedState = ix2.get(IAgentStateService);
@@ -427,7 +441,15 @@ describe('EventDispatcherService', () => {
       await replayed.restore();
 
       expect(replayedState.get(checkpointedKey).items).toEqual(['ok']);
-      expect(errors).toHaveLength(2);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatchObject({ code: 'wire.unknown_record' });
+      expect(restoreLog.map((entry) => entry.message)).toEqual([
+        "Unknown wire record type 'state.test.unknown' skipped during restore",
+      ]);
+      expect(restoreLog[0]?.payload).toMatchObject({
+        code: 'wire.unknown_record',
+        type: 'state.test.unknown',
+      });
     } finally {
       resetUnexpectedErrorHandler();
     }

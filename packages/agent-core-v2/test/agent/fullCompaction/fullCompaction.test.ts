@@ -3437,8 +3437,6 @@ describe('FullCompaction context recovery pointer', () => {
     expect(record?.wireLines).toEqual({ start: 1, end: expect.any(Number) });
     const note = noteText(ctx);
     expect(note).toContain('## Context Recovery');
-    expect(note).toContain('agent.switched');
-    expect(note).toContain('base:{branch,line}');
     expect(note).not.toContain('doomed user two');
     await ctx.expectResumeMatches();
   });
