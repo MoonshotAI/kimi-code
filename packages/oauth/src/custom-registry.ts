@@ -18,6 +18,25 @@ export interface CustomRegistrySource {
   readonly apiKey: string;
 }
 
+/**
+ * Parses the `source` blob parked on a provider record back into a
+ * {@link CustomRegistrySource}, returning undefined when the record did not
+ * come from a custom registry (manual providers, managed login, other kinds).
+ * Used both to rediscover refresh candidates and to check whether a provider
+ * is owned by a given registry URL.
+ */
+export function readCustomRegistrySource(provider: unknown): CustomRegistrySource | undefined {
+  if (!isRecord(provider)) return undefined;
+  const candidate = provider['source'];
+  if (!isRecord(candidate)) return undefined;
+  if (candidate['kind'] !== 'apiJson') return undefined;
+  const url = candidate['url'];
+  const apiKey = candidate['apiKey'];
+  if (typeof url !== 'string' || url.length === 0) return undefined;
+  if (typeof apiKey !== 'string') return undefined;
+  return { kind: 'apiJson', url, apiKey };
+}
+
 export interface FetchCustomRegistryOptions {
   readonly signal?: AbortSignal;
   readonly fetchImpl?: typeof fetch;
@@ -313,7 +332,11 @@ function resolveCapabilities(model: CustomRegistryModelEntry): string[] {
  * controls both the variable name and the endpoint the credential is sent to,
  * so the binding is left for the user to declare explicitly. A hand-edited
  * `apiKeyEnv` on the existing record is preserved instead, without
- * resurrecting an inline `apiKey` that would conflict with it.
+ * resurrecting an inline `apiKey` that would conflict with it — but only when
+ * the existing record is owned by the same registry (`source.url` matches).
+ * Without that provenance check, an entry whose id collides with a manual or
+ * other-registry provider would graft the victim's env binding onto the
+ * registry-controlled `entry.api` endpoint.
  */
 export function applyCustomRegistryProvider(
   config: ManagedKimiConfigShape,
@@ -322,7 +345,10 @@ export function applyCustomRegistryProvider(
 ): void {
   const providerKey = entry.id;
   const existing = config.providers[providerKey];
-  const existingApiKeyEnv = nonEmptyString(existing?.['apiKeyEnv']);
+  const existingApiKeyEnv =
+    existing !== undefined && readCustomRegistrySource(existing)?.url === source.url
+      ? nonEmptyString(existing?.['apiKeyEnv'])
+      : undefined;
   config.providers[providerKey] =
     existingApiKeyEnv === undefined
       ? {
@@ -419,15 +445,20 @@ export function removeCustomRegistryProvider(
  * explicit re-import deletes their records, so {@link restoreProviderApiKeyEnvs}
  * can re-attach the declarations afterwards (mirroring how
  * `registryKeyFromExisting` preserves the registry key across re-imports).
+ * Only records owned by the registry being re-imported (`source.url` matches
+ * `registryUrl`) are captured — a colliding manual or other-registry provider
+ * must not have its binding grafted onto the re-imported record.
  */
 export function captureProviderApiKeyEnvs(
   providers: Readonly<Record<string, unknown>>,
   providerIds: ReadonlySet<string>,
+  registryUrl: string,
 ): Record<string, string> {
   const preserved: Record<string, string> = {};
   for (const id of providerIds) {
     const provider = providers[id];
     if (!isRecord(provider)) continue;
+    if (readCustomRegistrySource(provider)?.url !== registryUrl) continue;
     const apiKeyEnv = nonEmptyString(provider['apiKeyEnv']);
     if (apiKeyEnv !== undefined) preserved[id] = apiKeyEnv;
   }
@@ -477,7 +508,7 @@ export function applyCustomRegistryEntries(
   source: CustomRegistrySource,
 ): void {
   const surviving = new Set(Object.values(entries).map((entry) => entry.id));
-  const preservedApiKeyEnv = captureProviderApiKeyEnvs(config.providers, surviving);
+  const preservedApiKeyEnv = captureProviderApiKeyEnvs(config.providers, surviving, source.url);
   for (const [providerId, provider] of Object.entries(config.providers)) {
     if (surviving.has(providerId)) continue;
     if (!isRecord(provider)) continue;

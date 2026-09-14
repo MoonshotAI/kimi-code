@@ -1,6 +1,7 @@
 import {
   applyCustomRegistryProvider,
   fetchCustomRegistry,
+  readCustomRegistrySource,
   removeCustomRegistryProvider,
   type CustomRegistrySource,
 } from './custom-registry';
@@ -154,18 +155,6 @@ function readModel(
   const model = config.models?.[alias];
   if (model === undefined) return undefined;
   return model as ManagedKimiModelAlias;
-}
-
-function readCustomRegistrySource(provider: ProviderView): CustomRegistrySource | undefined {
-  const source = provider.source;
-  if (typeof source !== 'object' || source === null) return undefined;
-  const candidate = source as Record<string, unknown>;
-  if (candidate['kind'] !== 'apiJson') return undefined;
-  const url = candidate['url'];
-  const apiKey = candidate['apiKey'];
-  if (typeof url !== 'string' || url.length === 0) return undefined;
-  if (typeof apiKey !== 'string') return undefined;
-  return { kind: 'apiJson', url, apiKey };
 }
 
 function customRegistrySourceKey(source: CustomRegistrySource): string {

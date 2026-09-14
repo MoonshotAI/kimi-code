@@ -400,6 +400,30 @@ describe('kimi provider add', () => {
     expect(kohub).not.toHaveProperty('apiKey');
   });
 
+  it('does not graft a manual provider api_key_env onto a colliding registry entry', async () => {
+    mockRegistryFetch();
+    const initial: KimiConfig = {
+      providers: {
+        kohub: {
+          type: 'anthropic',
+          baseUrl: 'https://registry.example.test',
+          apiKeyEnv: 'VICTIM_KEY',
+        },
+      },
+      models: {},
+    } as unknown as KimiConfig;
+    const { harness, current } = makeHarness(initial);
+    const { deps, exitCodes } = makeDeps(harness);
+
+    await tryRun(() => handleProviderAdd(deps, REGISTRY_URL, {}));
+
+    expect(exitCodes).toEqual([]);
+    const kohub = current().providers['kohub']!;
+    expect(kohub).not.toHaveProperty('apiKeyEnv');
+    expect(kohub.apiKey).toBe('');
+    expect(kohub.source).toEqual({ kind: 'apiJson', url: REGISTRY_URL, apiKey: '' });
+  });
+
   it('reads the api key from KIMI_REGISTRY_API_KEY when --api-key is omitted', async () => {
     const fetchMock = mockRegistryFetch();
     const { harness } = makeHarness({ providers: {} } as KimiConfig);

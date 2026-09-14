@@ -457,6 +457,21 @@ describe('IModelsDevImportService', () => {
     expect(providers['acme-gpt']).not.toHaveProperty('apiKey');
   });
 
+  it('does not graft a manual provider apiKeyEnv onto a colliding registry entry', async () => {
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJson(REGISTRY_DOC) });
+    const { config, imports } = createHost({
+      providers: {
+        'acme-gpt': { type: 'openai', apiKeyEnv: 'VICTIM_KEY' },
+      },
+    });
+
+    await imports.importCustomRegistry({ url: REGISTRY_URL });
+
+    const providers = config.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue ?? {};
+    expect(providers['acme-gpt']).not.toHaveProperty('apiKeyEnv');
+    expect(providers['acme-gpt']).toMatchObject({ apiKey: '' });
+  });
+
   it('rejects a registry import that would rewrite an OAuth-managed provider', async () => {
     setModelsDevUpstreamForTest({ fetchImpl: fetchJson(REGISTRY_DOC) });
     const { imports } = createHost({

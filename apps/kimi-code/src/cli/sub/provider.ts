@@ -124,6 +124,7 @@ export async function handleProviderAdd(
   const preservedApiKeyEnv = captureProviderApiKeyEnvs(
     asManaged(config).providers,
     new Set(staleIds),
+    source.url,
   );
   for (const id of staleIds) {
     config = await harness.removeProvider(id);

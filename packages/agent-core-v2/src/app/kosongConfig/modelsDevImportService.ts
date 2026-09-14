@@ -227,7 +227,7 @@ export class ModelsDevImportService implements IModelsDevImportService {
       },
     } as ManagedKimiConfigShape;
     const surviving = new Set(Object.values(entries).map((entry) => entry.id));
-    const preservedApiKeyEnv = captureProviderApiKeyEnvs(removed.providers, surviving);
+    const preservedApiKeyEnv = captureProviderApiKeyEnvs(removed.providers, surviving, url);
     for (const [providerId, provider] of Object.entries(removed.providers)) {
       if (surviving.has(providerId)) continue;
       if (!isRecord(provider)) continue;
