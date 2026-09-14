@@ -8,7 +8,7 @@
  *   - creates / resumes a session and its main agent via native services,
  *   - subscribes to the main agent's per-agent `IEventBus` and renders the
  *     native `Event2` stream (payloads are already v1-protocol-shaped),
- *   - drives a turn through `IAgentPromptService.enqueue()` and awaits
+ *   - drives a turn through `IAgentLoopService.enqueuePrompt()` and awaits
  *     `Turn.result` for authoritative completion,
  *   - applies the print-mode background policy (config-driven, v1-aligned:
  *     `exit` / `drain` / `steer`) before exiting.
@@ -23,7 +23,6 @@ import {
   IAgentLoopService,
   IAgentPermissionModeService,
   IAgentProfileService,
-  IAgentPromptService,
   IAgentTaskService,
   IAuthSummaryService,
   IBootstrapService,
@@ -563,14 +562,12 @@ async function runNativeTurn(
     if (event.type === 'turn.ended') turnEndings.push(event as TurnEnded);
   });
   try {
-    const handle = await agent.accessor.get(IAgentPromptService).enqueue({
-      message: {
-        role: 'user',
-        content: [{ type: 'text', text: prompt }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
+    const loop = agent.accessor.get(IAgentLoopService);
+    const { id } = loop.submit({
+      message: { role: 'user', content: [{ type: 'text', text: prompt }] },
+      meta: { origin: { kind: 'user' }, tracked: true },
     });
+    const handle = loop.promptHandle(id)!;
     const turn = await handle.launched;
     if (turn === undefined) {
       // A prompt blocked by an onBeforeSubmitPrompt hook never launches a turn.
@@ -984,14 +981,6 @@ async function quiesceSessionAgents(
   mainAgent: IAgentScopeHandle,
 ): Promise<(() => void) | undefined> {
   const handles = collectSessionAgentHandles(session, mainAgent);
-  const promptServices = handles.flatMap((handle) => {
-    try {
-      return [handle.accessor.get(IAgentPromptService)];
-    } catch {
-      // A torn-down agent scope has no prompt service to drain or observe.
-      return [];
-    }
-  });
   const loops = handles.flatMap((handle) => {
     try {
       return [handle.accessor.get(IAgentLoopService)];
@@ -1014,9 +1003,10 @@ async function quiesceSessionAgents(
   // Repeat until every queue is empty and every loop freezable: a prompt can
   // still surface from the launch window or a cancelled turn's settle chain.
   for (;;) {
-    await Promise.allSettled(promptServices.map((service) => service.drain()));
     for (const loop of loops) {
-      for (const queueId of loop.status().pendingPromptIds) loop.cancelQueued(queueId);
+      for (const queueId of loop.snapshot().queue.map((item) => item.meta?.promptId)) {
+        if (queueId !== undefined) loop.cancel({ promptId: queueId });
+      }
       loop.cancel();
     }
     await Promise.allSettled(loops.map((loop) => loop.settled()));
@@ -1036,14 +1026,10 @@ async function quiesceSessionAgents(
       }
       guards.push(guard);
     }
-    const busy = promptServices.some((service) => {
+    const busy = loops.some((loop) => {
       try {
-        const snapshot = service.list();
-        return (
-          snapshot.launching ||
-          snapshot.active !== undefined ||
-          snapshot.pending.length > 0
-        );
+        const snapshot = loop.snapshot();
+        return snapshot.state === 'running' || snapshot.queue.length > 0;
       } catch {
         return false;
       }

@@ -45,12 +45,11 @@ import type { PermissionRule } from '#/agent/permissionRules/permissionRules';
 import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
 import { IAgentProfileService, type AgentConfigData } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
 import type {
   PromptLaunchResult,
   PromptPayload,
   SteerPayload,
-} from '#/agent/prompt/prompt';
+} from '#/agent/loop/loop';
 import type { AgentCommandInfo } from '#/agent/command/agentCommand';
 import { IAgentCommandService } from '#/agent/command/agentCommand';
 import type { AgentContextData } from '#/agent/contextMemory/types';
@@ -189,7 +188,11 @@ import {
   type SessionCreatedEvent,
   type SessionWillCloseEvent,
 } from '#/workspace/sessionLifecycle/sessionLifecycle';
+import { IEventService } from '#/app/event/event';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { applyPromptMetadataUpdate } from '#/session/sessionMetadata/promptMetadata';
+import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IWireService } from '#/wire/wire';
 import { WireService } from '#/wire/wireService';
@@ -1769,7 +1772,8 @@ export class AgentTestContext {
   }
 
   clearContext(): void {
-    this.get(IAgentPromptService).clear();
+    drainPrompts(this.get(IAgentLoopService));
+    this.get(IAgentContextMemoryService).clear();
   }
 
   async undoHistory(count: number): Promise<number> {
@@ -2175,10 +2179,13 @@ export class AgentTestContext {
 
   private createRpcPassthroughAdapters(): AgentRpcPassthroughAPI {
     return {
-      prompt: (payload) => this.get(IAgentPromptService).submit(payload),
+      prompt: (payload) => submitPromptFacade(this, payload),
       promptWithSkills: (payload) => this.get(IAgentSkillService).promptWithSkills(payload),
-      steer: (payload) => this.get(IAgentPromptService).submitSteer(payload),
-      cancel: (payload) => this.get(IAgentLoopService).cancelFromUser(payload.turnId),
+      steer: (payload) => submitSteerPromptFacade(this, payload),
+      cancel: (payload) =>
+        this.get(IAgentLoopService).cancel(
+          payload.turnId === undefined ? undefined : { turnId: payload.turnId },
+        ),
       undoHistory: (payload) => this.get(IAgentConversationUndoService).undo(payload.count),
       setPermission: (payload) =>
         this.get(IAgentPermissionModeService).setModeAndBroadcast(payload.mode),
@@ -2224,7 +2231,10 @@ export class AgentTestContext {
         void tasks.stop(payload.taskId, payload.reason);
       },
       detachTask: (payload) => this.get(IAgentTaskService).detach(payload.taskId),
-      clearContext: () => this.get(IAgentPromptService).clear(),
+      clearContext: () => {
+        drainPrompts(this.get(IAgentLoopService));
+        this.get(IAgentContextMemoryService).clear();
+      },
       createGoal: (payload) => this.get(IAgentGoalService).createGoal(payload),
       getGoal: () => this.get(IAgentGoalService).getGoal(),
       pauseGoal: () => this.get(IAgentGoalService).pauseGoal(),
@@ -2825,4 +2835,71 @@ function withMetadata(events: readonly WireRecord[]): readonly WireRecord[] {
     },
     ...events,
   ];
+}
+
+async function submitPromptFacade(
+  ctx: TestAgentContext,
+  payload: PromptPayload,
+): Promise<PromptLaunchResult | undefined> {
+  const loop = ctx.get(IAgentLoopService);
+  if (ctx.get(IAgentScopeContext).agentId === MAIN_AGENT_ID) {
+    await applyPromptMetadataUpdate(
+      {
+        metadata: ctx.get(ISessionMetadata),
+        eventService: ctx.get(IEventService),
+        sessionId: ctx.get(ISessionContext).sessionId,
+      },
+      promptMetadataTextFromContentParts(payload.input),
+    );
+  }
+  const status = loop.snapshot();
+  const { id } = loop.submit({
+    message: { role: 'user', content: [...payload.input] },
+    meta: { promptId: payload.promptId, origin: { kind: 'user' }, tracked: true },
+  });
+  if (status.state === 'running' || status.paused || status.queue.length > 0) return undefined;
+  const turn = await loop.promptHandle(id)?.launched;
+  if (turn === undefined) return undefined;
+  await turn.ready.catch(() => undefined);
+  return turn.id === undefined ? undefined : { turn_id: turn.id };
+}
+
+async function submitSteerPromptFacade(
+  ctx: TestAgentContext,
+  payload: SteerPayload,
+): Promise<PromptLaunchResult | undefined> {
+  const loop = ctx.get(IAgentLoopService);
+  if (ctx.get(IAgentScopeContext).agentId === MAIN_AGENT_ID) {
+    await applyPromptMetadataUpdate(
+      {
+        metadata: ctx.get(ISessionMetadata),
+        eventService: ctx.get(IEventService),
+        sessionId: ctx.get(ISessionContext).sessionId,
+      },
+      promptMetadataTextFromContentParts(payload.input),
+    );
+  }
+  const status = loop.snapshot();
+  const { id } = loop.submit(
+    {
+      message: { role: 'user', content: [...payload.input] },
+      meta: { origin: { kind: 'user' }, tracked: true },
+    },
+    { steerIfActive: true },
+  );
+  if (status.state === 'running' && status.activePromptId === undefined) return undefined;
+  const turn = await loop.promptHandle(id)?.launched;
+  if (turn === undefined) return undefined;
+  await turn.ready.catch(() => undefined);
+  return turn.id === undefined ? undefined : { turn_id: turn.id };
+}
+
+function drainPrompts(loop: IAgentLoopService): void {
+  const snapshot = loop.snapshot();
+  for (const item of snapshot.queue) {
+    if (item.meta?.promptId !== undefined) loop.cancel({ promptId: item.meta.promptId });
+  }
+  if (snapshot.activePromptId !== undefined) {
+    loop.cancel({ promptId: snapshot.activePromptId });
+  }
 }

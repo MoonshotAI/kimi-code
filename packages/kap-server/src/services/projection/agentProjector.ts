@@ -314,7 +314,6 @@ export class AgentMessageProjector {
             event.time,
           ),
         ];
-      case 'prompt.accepted':
       case 'cron.fired':
       case 'permission.approval.requested':
       case 'permission.approval.resolved':

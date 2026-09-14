@@ -1,7 +1,6 @@
 import {
   IAgentLifecycleService,
   IAgentLoopService,
-  IAgentPromptService,
   IAgentScopeContext,
   IAgentTaskService,
   IEventBus,
@@ -95,11 +94,11 @@ export function bindSessionTranscript(
         stepOrdinal: (turnId) => {
           const agentHandle = agents.handleOf(agentId);
           if (agentHandle === undefined) return undefined;
-          const turn = agentHandle.accessor.get(IAgentLoopService)?.activitySnapshot().turn;
+          const turn = agentHandle.accessor.get(IAgentLoopService)?.snapshot().turn;
           return turn === undefined || `t${turn.turnId}` !== turnId ? undefined : turn.step;
         },
         activitySnapshot: () =>
-          agents.handleOf(agentId)?.accessor.get(IAgentLoopService)?.activitySnapshot() ?? {},
+          agents.handleOf(agentId)?.accessor.get(IAgentLoopService)?.snapshot() ?? {},
         pendingApprovals: () => {
           const agentHandle = agents.handleOf(agentId);
           return agentHandle === undefined ? [] : legacyApprovalsOf(agentHandle);
@@ -142,9 +141,9 @@ export function bindSessionTranscript(
     const busD = bus.subscribe((event) =>
       applyOps(handle.id, projector.map(event as ProjectorBusEvent)),
     );
-    const loopStatus = handle.accessor.get(IAgentLoopService)?.status();
+    const loopStatus = handle.accessor.get(IAgentLoopService)?.snapshot();
     if (loopStatus?.state === 'running' && loopStatus.activeTurnId !== undefined) {
-      const promptId = handle.accessor.get(IAgentPromptService)?.list().active?.id;
+      const promptId = loopStatus.activePromptId;
       projector.seedActiveTurn({ turnId: loopStatus.activeTurnId, promptId });
     }
     const list = agentDisposables.get(handle.id) ?? [];

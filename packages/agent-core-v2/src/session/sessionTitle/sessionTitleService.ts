@@ -9,7 +9,6 @@ import {
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
-import { IFlagService } from '#/app/flag/flag';
 import { ILogService } from '#/_base/log/log';
 import { IOAuthService } from '#/app/auth/auth';
 import { IEventService } from '#/app/event/event';
@@ -22,7 +21,6 @@ import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { SessionMetaUpdated } from '#/session/sessionMetadata/sessionMetaEvents';
 
 import { IAgentTitlePromptSource } from './agentTitlePromptSource';
-import { AUTO_SESSION_TITLE_FLAG_ID } from './flag';
 import { ISessionTitleService, type SessionTitleSource } from './sessionTitle';
 
 const MAX_GENERATED_TITLE_LENGTH = 200;
@@ -54,7 +52,6 @@ export class SessionTitleService implements ISessionTitleService {
     @IProviderService private readonly providers: IProviderService,
     @IOAuthService private readonly oauth: IOAuthService,
     @IHostRequestHeaders private readonly hostHeaders: IHostRequestHeaders,
-    @IFlagService private readonly flags: IFlagService,
     @ILogService private readonly log: ILogService,
   ) {}
 
@@ -77,7 +74,6 @@ export class SessionTitleService implements ISessionTitleService {
     force: boolean,
     source: SessionTitleSource,
   ): Promise<string | undefined> {
-    if (!this.flags.enabled(AUTO_SESSION_TITLE_FLAG_ID)) return undefined;
     const current = await this.metadata.read();
     if (!force) {
       if (current.titleKind === 'custom') return undefined;

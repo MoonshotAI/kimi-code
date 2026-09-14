@@ -6,7 +6,6 @@ import {
   IAgentLoopService,
   IAgentPermissionModeService,
   IAgentProfileService,
-  IAgentPromptService,
   IAgentScopeContext,
   IAgentStateService,
   IAgentTaskService,
@@ -183,7 +182,7 @@ export class SessionProjection {
       this.subagentTaskIds,
       {
         stepOrdinal: (turnId) => {
-          const turn = loop?.activitySnapshot().turn;
+          const turn = loop?.snapshot().turn;
           return turn === undefined || `t${turn.turnId}` !== turnId ? undefined : turn.step;
         },
         resolvePlanRevisionKey: (key) =>
@@ -234,10 +233,11 @@ export class SessionProjection {
     }
     const tasks = handle.accessor.get(IAgentTaskService) as IAgentTaskService | undefined;
     for (const info of tasks?.list() ?? []) projector.seedTask(info);
-    const status = loop?.status();
+    const status = loop?.snapshot();
     if (status?.state === 'running' && status.activeTurnId !== undefined) {
-      const prompts = handle.accessor.get(IAgentPromptService) as IAgentPromptService | undefined;
-      const active = prompts?.list().active;
+      const prompts = handle.accessor.get(IAgentLoopService) as IAgentLoopService | undefined;
+      const active =
+        status.activePromptId === undefined ? undefined : prompts?.promptHandle(status.activePromptId);
       const rawOrigin = active?.message.origin;
       projector.seedActiveTurn({
         turnId: status.activeTurnId,
@@ -301,7 +301,7 @@ export class SessionProjection {
     if (this.agentStates.has(agentId)) return;
     const tracker = new AgentStateTracker(agentId, new Date().toISOString());
     this.agentStates.set(agentId, tracker);
-    const running = loop?.status().state === 'running';
+    const running = loop?.snapshot().state === 'running';
     const createdAt = new Date().toISOString();
     if (agentId === MAIN_AGENT_ID) {
       const profile = handle.accessor.get(IAgentProfileService) as IAgentProfileService | undefined;
@@ -462,7 +462,7 @@ export class SessionProjection {
       | IAgentLoopService
       | undefined;
     if (loop === undefined) return;
-    const snapshot = loop.activitySnapshot();
+    const snapshot = loop.snapshot();
     if (tracker.recompute(snapshot)) this.emitAgentState(agentId);
   }
 

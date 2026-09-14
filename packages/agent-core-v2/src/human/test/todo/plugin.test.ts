@@ -188,7 +188,7 @@ describe('connectPlugins notify channel', () => {
     expect(sent).toEqual([
       {
         type: 'input.notify',
-        message: { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+        entry: { message: { role: 'user', content: [{ type: 'text', text: 'hello' }] } },
       },
     ]);
   });

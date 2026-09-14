@@ -263,6 +263,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         onPart,
         signal,
         setTrace,
+        overrides.onAttemptRetry,
       );
     } catch (error) {
       this.logRequestFailure(error, overrides, signal);
@@ -335,6 +336,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     onPart: AgentLLMRequestPartHandler,
     signal: AbortSignal | undefined,
     onRequestTrace: (traceId: string | undefined) => void,
+    onAttemptRetry: (() => void) | undefined,
   ): Promise<AgentLLMRequestFinish> {
     this.toolCallIdNormalizer.seedFrom(this.context.get());
     const shaped = this.toolSelect.shapeHistory(request.messages);
@@ -477,6 +479,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           captureMediaStripPolicy,
         );
         if (nextPolicy !== undefined) {
+          onAttemptRetry?.();
           policy = nextPolicy;
           continue;
         }
@@ -500,6 +503,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           delayMs,
           ...retryErrorFields(error),
         });
+        onAttemptRetry?.();
         await sleepForRetry(delayMs, signal);
       }
     }

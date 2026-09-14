@@ -1520,7 +1520,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         for (const agent of agentLifecycle.list()) {
           const agentHandle = agentLifecycle.handleOf(agent.agentId);
           if (agentHandle === undefined) continue;
-          if (agentHandle.accessor.get(IAgentLoopService).status().state === 'running') {
+          if (agentHandle.accessor.get(IAgentLoopService).snapshot().state === 'running') {
             throw new KimiError(
               ErrorCodes.TURN_AGENT_BUSY,
               `Session "${sessionId}" cannot be reloaded while a turn is running`,
@@ -1934,7 +1934,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async importContext(input: ImportContextRpcInput): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
     if (
-      agent.accessor.get(IAgentLoopService).status().state === 'running' ||
+      agent.accessor.get(IAgentLoopService).snapshot().state === 'running' ||
       agent.accessor.get(IAgentFullCompactionService).compacting !== null
     ) {
       throw new KimiError(

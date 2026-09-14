@@ -2303,7 +2303,7 @@ describe('AgentTowerService', () => {
       await flushWake();
 
       expect(drainWakeMessages()).toEqual([]);
-      expect(loop.hasPendingRequests()).toBe(false);
+      expect(loop.snapshot().hasPendingRequests).toBe(false);
     });
 
     it('does not wake while tower mode is inactive', async () => {
@@ -2313,7 +2313,7 @@ describe('AgentTowerService', () => {
       await flushWake();
 
       expect(drainWakeMessages()).toEqual([]);
-      expect(loop.hasPendingRequests()).toBe(false);
+      expect(loop.snapshot().hasPendingRequests).toBe(false);
     });
 
     it('drops a queued wake when tower mode exits before it is consumed', async () => {
@@ -2322,11 +2322,11 @@ describe('AgentTowerService', () => {
 
       publishInbox({ from: 'w1', to: 'tower', subject: 'need wider scope' });
       await flushWake();
-      expect(loop.hasPendingRequests()).toBe(true);
+      expect(loop.snapshot().hasPendingRequests).toBe(true);
 
       tower.exit();
 
-      expect(loop.hasPendingRequests()).toBe(false);
+      expect(loop.snapshot().hasPendingRequests).toBe(false);
       expect(drainWakeMessages()).toEqual([]);
     });
 
@@ -2336,13 +2336,13 @@ describe('AgentTowerService', () => {
 
       publishInbox({ from: 'w1', to: 'tower', subject: 'need wider scope' });
       await flushWake();
-      expect(loop.hasPendingRequests()).toBe(true);
+      expect(loop.snapshot().hasPendingRequests).toBe(true);
 
       _setTowerFeatureAssembledForTests(false);
       try {
         fireUnitsChanged();
 
-        expect(loop.hasPendingRequests()).toBe(false);
+        expect(loop.snapshot().hasPendingRequests).toBe(false);
         expect(drainWakeMessages()).toEqual([]);
       } finally {
         _setTowerFeatureAssembledForTests(true);
@@ -2374,7 +2374,7 @@ describe('AgentTowerService', () => {
       await flushWake();
 
       expect(drainWakeMessages()).toEqual([]);
-      expect(loop.hasPendingRequests()).toBe(false);
+      expect(loop.snapshot().hasPendingRequests).toBe(false);
     });
   });
 

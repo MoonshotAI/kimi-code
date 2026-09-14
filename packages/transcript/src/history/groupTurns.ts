@@ -13,7 +13,7 @@ export type HistoryMediaSource =
 
 export type HistoryContentPart =
   | { readonly type: 'text'; readonly text: string }
-  | { readonly type: 'think'; readonly think: string }
+  | { readonly type: 'think'; readonly think: string; readonly hidden?: boolean }
   | { readonly type: 'image' | 'video' | 'audio'; readonly source: HistoryMediaSource; readonly name?: string }
   | {
       readonly type: 'file';
@@ -341,7 +341,7 @@ export function groupMessagesIntoSnapshot(
       for (const part of message.content ?? []) {
         if (part.type === 'text' && 'text' in part && typeof part.text === 'string' && part.text.length > 0) {
           step.frames.push({ kind: 'text', frameId: nextFrameId(), role: 'assistant', text: part.text });
-        } else if (part.type === 'think' && 'think' in part && typeof part.think === 'string' && part.think.length > 0) {
+        } else if (part.type === 'think' && 'think' in part && typeof part.think === 'string' && part.think.length > 0 && part.hidden !== true) {
           step.frames.push({ kind: 'thinking', frameId: nextFrameId(), text: part.think });
         }
       }

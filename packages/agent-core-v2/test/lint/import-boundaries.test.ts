@@ -77,7 +77,7 @@ describe('check-import-boundaries', () => {
       at('agent', 'loop.ts'),
     );
     expect(violations).toHaveLength(1);
-    expect(violations[0]?.message).toMatch(/only llm-adapter and agent\/loop\/machine may import the human implementation/);
+    expect(violations[0]?.message).toMatch(/only llm-adapter, agent\/loop\/machine and session\/agentLifecycle may import the human implementation/);
   });
 
   it('allows a non-adapter v2 file importing human vocabulary', () => {
@@ -102,7 +102,7 @@ describe('check-import-boundaries', () => {
       at('agent', 'loop.ts'),
     );
     expect(violations).toHaveLength(1);
-    expect(violations[0]?.message).toMatch(/only llm-adapter and agent\/loop\/machine may import the human implementation/);
+    expect(violations[0]?.message).toMatch(/only llm-adapter, agent\/loop\/machine and session\/agentLifecycle may import the human implementation/);
   });
 
   it('flags a trait importing a protocol format module', () => {

@@ -687,7 +687,7 @@ On success, `data` is the updated [session object](#the-session-object).
 
 #### `POST /api/v1/sessions/{session_id}/title/generate`
 
-Generates a title from the session's prompts through the managed provider's `chat_title` tool and applies it, broadcasting `session.meta.updated`. Generation requires the managed OAuth login and the `auto_session_title` experimental flag; without `force`, a session that already has a custom or generated title is reported unavailable instead of being overwritten.
+Generates a title from the session's prompts through the managed provider's `chat_title` tool and applies it, broadcasting `session.meta.updated`. Generation requires the managed OAuth login; without `force`, a session that already has a custom or generated title is reported unavailable instead of being overwritten.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |

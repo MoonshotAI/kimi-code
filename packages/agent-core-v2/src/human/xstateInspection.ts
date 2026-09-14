@@ -10,6 +10,7 @@ export interface XstateInspectionEnvelope {
   readonly logicId?: string;
   readonly eventType?: string;
   readonly stateValue?: unknown;
+  readonly unhandled?: boolean;
 }
 
 export type XstateInspectionListener = (envelope: XstateInspectionEnvelope) => void;
@@ -27,6 +28,10 @@ function toEnvelope(event: InspectionEvent, now: () => number): XstateInspection
   const actorRef = event.actorRef as { id?: unknown; logic?: unknown };
   const logic = actorRef.logic as { id?: unknown } | undefined;
   const snapshot = 'snapshot' in event ? (event.snapshot as { value?: unknown }) : undefined;
+  const unhandled =
+    event.type === '@xstate.microstep' &&
+    event._transitions.length === 0 &&
+    !event.event.type.startsWith('xstate.');
   return {
     type: event.type,
     timestamp: now(),
@@ -40,6 +45,7 @@ function toEnvelope(event: InspectionEvent, now: () => number): XstateInspection
           ? event.action.type
           : undefined,
     stateValue: snapshot?.value,
+    unhandled: unhandled || undefined,
   };
 }
 

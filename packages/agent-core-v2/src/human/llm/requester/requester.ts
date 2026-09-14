@@ -31,6 +31,7 @@ export type LlmRequestEvent =
   | { type: 'llm.streaming.message_id'; messageId: string }
   | { type: 'llm.failed.syntax'; error: LlmErrorMessage<'syntax'> }
   | { type: 'llm.failed.remote'; error: LlmRemoteErrorMessage; rawError?: unknown }
+  | { type: 'llm.request.retrying' }
   | { type: 'llm.done' };
 
 export interface ExtraParams {

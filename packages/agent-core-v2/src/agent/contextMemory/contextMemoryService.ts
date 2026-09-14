@@ -18,15 +18,9 @@ import {
   ContextAppendMessage,
   ContextClear,
   ContextSpliced,
-  ContextUndo,
   type ContextSplicedPayload,
 } from './contextEvents';
-import {
-  computeUndoCut,
-  contextMemoryKey,
-  isFullyUndoable,
-  type UndoCut,
-} from './contextOps';
+import { contextMemoryKey } from './contextOps';
 import type { LoopRecordedEvent } from './loopEventFold';
 import type { ContextMessage } from './types';
 
@@ -97,23 +91,6 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
       measured: true,
     });
     this.publishSplice({ start: 0, deleteCount, messages: [] });
-  }
-
-  undo(count: number): UndoCut {
-    const history = this.get();
-    const cut = computeUndoCut(history, count);
-    if (isFullyUndoable(cut, count)) {
-      void this.dispatcher.dispatch(
-        new ContextUndo({ agentId: this.scopeContext.agentId, count }),
-      );
-      this.dispatchCutEvents(cut.cutIndex);
-      this.publishSplice({
-        start: cut.cutIndex,
-        deleteCount: history.length - cut.cutIndex,
-        messages: [],
-      });
-    }
-    return cut;
   }
 
   applyCompaction(input: ContextCompactionInput): ContextCompactionResult {
