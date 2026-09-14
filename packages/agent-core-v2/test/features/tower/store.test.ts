@@ -1812,6 +1812,14 @@ describe('adopt', () => {
     expect(await store.adopt('session-b')).toEqual([]);
     expect(await store.isInitialized()).toBe(false);
   });
+
+  it('propagates an unreadable state file instead of treating it as uninitialized', async () => {
+    await store.init('session-a');
+    await rm(store.abs(STATE_FILE), { recursive: true, force: true });
+    await mkdir(store.abs(STATE_FILE));
+
+    await expect(store.adopt('session-b')).rejects.toThrow();
+  });
 });
 
 describe('teardown', () => {

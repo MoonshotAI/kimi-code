@@ -303,7 +303,12 @@ export class TowerStore {
   }
 
   async adopt(sessionId: string): Promise<readonly string[]> {
-    if (!(await this.isInitialized())) return [];
+    try {
+      await readFile(this.abs(STATE_FILE), 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    }
     const state = await this.load();
     return this.adoptForeignRoster(state, sessionId);
   }
