@@ -8,6 +8,7 @@ import { isInlineSkillType } from '#/features/skill/catalog/types';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { renderPrompt } from '#/_base/utils/render-prompt';
+import { createHistoryMessageBuilder } from '#human/agent/historyBuilder';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
 
@@ -107,17 +108,18 @@ export async function executeModelSkill(
   const message: ToolDeliveryMessage = {
     role: 'user',
     content: [
-      {
-        type: 'text',
-        text: renderModelToolSkillPrompt({
-          skillName: skill.name,
-          skillArgs,
-          skillContent,
-          skillSource: skill.source,
-          skillDir: skill.dir,
-          trigger,
-        }),
-      },
+      ...createHistoryMessageBuilder()
+        .xml(
+          renderModelToolSkillPrompt({
+            skillName: skill.name,
+            skillArgs,
+            skillContent,
+            skillSource: skill.source,
+            skillDir: skill.dir,
+            trigger,
+          }),
+        )
+        .parts(),
     ],
     toolCalls: [],
     origin,

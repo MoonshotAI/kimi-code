@@ -4,6 +4,7 @@ import { Service } from '#/_base/di/service';
 import { defineState } from '#/state/state';
 import { isPlainRecord } from '#/_base/utils/canonical-args';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { createHistoryMessageBuilder } from '#human/agent/historyBuilder';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentTaskService, type AgentTaskInfo, type AgentTaskNotificationContext } from '#/agent/task/task';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
@@ -248,7 +249,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
           this.stopHookContinuationUsed = true;
           this.context.append({
             role: 'user',
-            content: [{ type: 'text', text: reason }],
+            content: [...createHistoryMessageBuilder().plain(reason).parts()],
             toolCalls: [],
             origin: { kind: 'system_trigger', name: 'stop_hook' },
           });
@@ -352,7 +353,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     if (block !== undefined) {
       this.context.append({
         role: 'assistant',
-        content: [{ type: 'text', text: block.text }],
+        content: [...createHistoryMessageBuilder().xml(block.text).parts()],
         toolCalls: [],
         origin: { kind: 'hook_result', event: block.event, blocked: true },
       });
@@ -371,7 +372,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     if (append !== undefined) {
       this.context.append({
         role: 'user',
-        content: [{ type: 'text', text: append.text }],
+        content: [...createHistoryMessageBuilder().xml(append.text).parts()],
         toolCalls: [],
         origin: { kind: 'hook_result', event: append.event },
       });

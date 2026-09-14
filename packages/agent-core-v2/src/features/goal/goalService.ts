@@ -52,6 +52,7 @@ import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ExecutableToolResult } from '#/tool/toolContract';
+import { createHistoryMessageBuilder } from '#human/agent/historyBuilder';
 
 import type { GoalReasonInput, ResumeGoalInput } from './goal';
 import { IGoalDeadlineScheduler } from './goalDeadlineScheduler';
@@ -716,23 +717,11 @@ function launchContinuationTurn(context: GoalOperationContext, goalId: string, s
   if (!isActiveGoal(context, goalId)) return;
   if (context.effects.pendingContinuation !== undefined) return;
   const prompt = stepCapped ? GOAL_STEP_CAP_CONTINUATION_PROMPT : GOAL_CONTINUATION_PROMPT;
-  const message: ContextMessage = {
-    role: 'user',
-    content: [
-      {
-        type: 'text',
-        text: isWaitForAvailable(context)
-          ? `${prompt} ${GOAL_WAIT_FOR_GUIDANCE}`
-          : prompt,
-      },
-    ],
-    toolCalls: [],
-    origin: GOAL_CONTINUATION_ORIGIN,
-  };
+  const text = isWaitForAvailable(context) ? `${prompt} ${GOAL_WAIT_FOR_GUIDANCE}` : prompt;
   const loop = context.runtime.get(IAgentLoopService);
   const { id } = loop.submit({
-    message: { role: 'user', content: message.content },
-    meta: { origin: message.origin },
+    message: createHistoryMessageBuilder().plain(text).userMessage(),
+    meta: { origin: GOAL_CONTINUATION_ORIGIN },
   });
   const handle = loop.promptHandle(id)!;
   const pending: PendingContinuation = { promptId: id, goalId };

@@ -13,6 +13,7 @@ import type {
 } from '#/features/goal/types';
 import { createToolMessage } from '#/llm-adapter/contract/message';
 import { estimateTokens, estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
+import { createHistoryMessageBuilder } from '#human/agent/historyBuilder';
 import {
   isNewerWireVersion,
   migrateV1_4ToV1_5,
@@ -313,7 +314,7 @@ class WireReplayFoldState {
     this.patchLastCompaction({ result });
     const summaryMessage: ContextMessage = {
       role: 'user',
-      content: [{ type: 'text', text: contextSummary }],
+      content: [...createHistoryMessageBuilder().plain(contextSummary).parts()],
       toolCalls: [],
       origin: { kind: 'compaction_summary' },
     };
@@ -420,9 +421,7 @@ class WireReplayFoldState {
     this.appendMessage(
       {
         role: 'user',
-        content: [
-          { type: 'text', text: `<system-reminder>\n${GOAL_FORK_CLEARED_REMINDER}\n</system-reminder>` },
-        ],
+        content: [...createHistoryMessageBuilder().systemReminder(GOAL_FORK_CLEARED_REMINDER).parts()],
         toolCalls: [],
         origin: { kind: 'system_trigger', name: 'goal_fork_cleared' },
       },

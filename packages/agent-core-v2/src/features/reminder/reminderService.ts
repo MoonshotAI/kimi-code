@@ -16,8 +16,8 @@ import { IAgentLoopService, type BeforeStepContext } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventBus } from '#/app/event/eventBus';
 import { IEventDispatcher } from '#/state/eventDispatcher';
+import { createHistoryMessageBuilder } from '#human/agent/historyBuilder';
 
-import { wrapSystemReminder } from './systemReminder';
 import type {
   ContextInjectionContent,
   ContextInjectionContext,
@@ -63,7 +63,7 @@ function appendReminder(
 ): void {
   runtime.get(IAgentContextMemoryService).append({
     role: 'user',
-    content: [{ type: 'text', text: wrapSystemReminder(content) }],
+    content: [...createHistoryMessageBuilder().systemReminder(content).parts()],
     toolCalls: [],
     origin: {
       kind: 'injection',
@@ -132,7 +132,7 @@ function appendResult(
     if (resolved.trim().length === 0) return;
     runtime.get(IAgentContextMemoryService).append({
       role: 'user',
-      content: [{ type: 'text', text: wrapSystemReminder(resolved) }],
+      content: [...createHistoryMessageBuilder().systemReminder(resolved).parts()],
       toolCalls: [],
       origin,
     });

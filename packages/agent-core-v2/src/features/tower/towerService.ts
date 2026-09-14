@@ -5,6 +5,7 @@ import { ScopeActivation, registerScopedService, type ISessionScopeHandle } from
 import { ILogService } from '#/_base/log/log';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { createHistoryMessageBuilder } from '#human/agent/historyBuilder';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentLoopService, type LoopNotifyHandle } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -478,10 +479,9 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       message: {
         role: 'user',
         content: [
-          {
-            type: 'text',
-            text: `${countText} — latest from ${latest.from}: "${subject}". Read and route with TowerInbox.`,
-          },
+          ...createHistoryMessageBuilder()
+            .plain(`${countText} — latest from ${latest.from}: "${subject}". Read and route with TowerInbox.`)
+            .parts(),
         ],
         toolCalls: [],
         origin: { kind: 'injection', variant: TOWER_INBOX_WAKE_VARIANT },

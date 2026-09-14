@@ -13,6 +13,7 @@ import { IEventService } from '#/app/event/event';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2 } from '#/errors';
 import type { ContentPart } from '#human/llm/message';
+import { createHistoryMessageBuilder } from '#human/agent/historyBuilder';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -70,16 +71,17 @@ export class AgentSkillService implements IAgentSkillService {
     const skillArgs = input.args ?? '';
     const skillContent = this.renderSkillPrompt(skill, skillArgs);
     const content: ContentPart[] = [
-      {
-        type: 'text',
-        text: renderUserSlashSkillPrompt({
-          skillName: skill.name,
-          skillArgs,
-          skillContent,
-          skillSource: skill.source,
-          skillDir: skill.dir,
-        }),
-      },
+      ...createHistoryMessageBuilder()
+        .xml(
+          renderUserSlashSkillPrompt({
+            skillName: skill.name,
+            skillArgs,
+            skillContent,
+            skillSource: skill.source,
+            skillDir: skill.dir,
+          }),
+        )
+        .parts(),
       ...(input.content ?? []),
     ];
 
@@ -214,16 +216,17 @@ export class AgentSkillService implements IAgentSkillService {
     };
     return {
       origin,
-      part: {
-        type: 'text',
-        text: renderUserSlashSkillPrompt({
-          skillName: skill.name,
-          skillArgs,
-          skillContent,
-          skillSource: skill.source,
-          skillDir: skill.dir,
-        }),
-      },
+      part: createHistoryMessageBuilder()
+        .xml(
+          renderUserSlashSkillPrompt({
+            skillName: skill.name,
+            skillArgs,
+            skillContent,
+            skillSource: skill.source,
+            skillDir: skill.dir,
+          }),
+        )
+        .parts()[0]!,
       entry: {
         activationId: origin.activationId,
         skillName: origin.skillName,

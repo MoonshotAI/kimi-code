@@ -1587,6 +1587,7 @@ describe('interruption reminder', () => {
       {
         type: 'text',
         text: '<system-reminder>\nThe previous turn was interrupted by the user before completion; any partial output shown above is incomplete. The user\'s next message continues the conversation.\n</system-reminder>',
+        contentType: 'text/xml',
       },
     ]);
     expect(ctx.contextData().history.indexOf(interruptionReminders()[0]!)).toBe(2);

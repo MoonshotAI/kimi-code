@@ -381,7 +381,7 @@ describe('IExternalHooksRunnerService integration', () => {
       expect(context.messages.at(-1)).toEqual(
         expect.objectContaining({
           role: 'user',
-          content: [{ type: 'text', text: 'continue 1' }],
+          content: [{ type: 'text', text: 'continue 1', contentType: 'text/plain' }],
           origin: { kind: 'system_trigger', name: 'stop_hook' },
         }),
       );
@@ -407,7 +407,7 @@ describe('IExternalHooksRunnerService integration', () => {
       expect(context.messages.at(-1)).toEqual(
         expect.objectContaining({
           role: 'user',
-          content: [{ type: 'text', text: 'continue 2' }],
+          content: [{ type: 'text', text: 'continue 2', contentType: 'text/plain' }],
           origin: { kind: 'system_trigger', name: 'stop_hook' },
         }),
       );
@@ -694,7 +694,7 @@ describe('IExternalHooksRunnerService integration', () => {
       expect(context.messages.at(-1)).toEqual(
         expect.objectContaining({
           role: 'user',
-          content: [{ type: 'text', text: 'loaded stop hook' }],
+          content: [{ type: 'text', text: 'loaded stop hook', contentType: 'text/plain' }],
           origin: { kind: 'system_trigger', name: 'stop_hook' },
         }),
       );
