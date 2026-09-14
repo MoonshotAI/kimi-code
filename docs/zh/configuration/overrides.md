@@ -38,8 +38,11 @@ Kimi Code CLI 有三个地方可以影响运行参数：配置文件、命令行
 对单个供应商，凭证按以下顺序解析：
 
 1. `[providers.<name>].api_key`：配置文件里直接写的密钥，优先级最高
-2. `[providers.<name>.env]` 子表里的对应键（`KIMI_API_KEY`、`ANTHROPIC_API_KEY` 等）：`api_key` 为空时才读这里
-3. 两者都缺 → 启动报错，提示该供应商缺少凭证
+2. `[providers.<name>].api_key_env`：指定一个 shell 环境变量名，从该变量读取密钥；`api_key` 为空时才读这里
+3. `[providers.<name>.env]` 子表里的对应键（`KIMI_API_KEY`、`ANTHROPIC_API_KEY` 等）：上面两个字段都为空时才读这里
+4. 三者都缺 → 启动报错，提示该供应商缺少凭证
+
+`api_key_env` 是「不从 shell 环境变量取凭证」唯一有意开放的例外：变量在每次请求时重新读取，轮换密钥只需重新 `export`，不用重启，密钥也不写进 `config.toml`。声明了 `api_key_env` 但变量未设置或为空时，请求会报错并指明变量名。这不是启动错误，CLI 也不会静默回退到其他凭证来源。同时设置 `api_key` 和 `api_key_env`，或同时设置 `api_key_env` 和 `oauth`，会被判为配置冲突而拒绝。
 
 `base_url` 的解析方式相同：先读 `[providers.<name>].base_url`，再读 `[providers.<name>.env]` 里的 `*_BASE_URL` 键。
 

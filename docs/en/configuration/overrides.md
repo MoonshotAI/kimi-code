@@ -38,8 +38,11 @@ Provider credentials (`api_key`, `base_url`) follow their own resolution rules, 
 For a single provider, credentials are resolved in this order:
 
 1. `[providers.<name>].api_key`: key written directly in the config file; highest priority
-2. The matching key inside the `[providers.<name>.env]` sub-table (`KIMI_API_KEY`, `ANTHROPIC_API_KEY`, etc.): consulted only when `api_key` is empty
-3. If both are absent, startup fails with an error indicating the provider is missing credentials
+2. `[providers.<name>].api_key_env`: name of a shell environment variable to read the key from; consulted only when `api_key` is empty
+3. The matching key inside the `[providers.<name>.env]` sub-table (`KIMI_API_KEY`, `ANTHROPIC_API_KEY`, etc.): consulted only when both fields above are empty
+4. If all are absent, startup fails with an error indicating the provider is missing credentials
+
+`api_key_env` is the one deliberate exception to "no shell environment variables for credentials": the variable is re-read on every request, so rotating the key only takes a fresh `export` — no restart, and no secret in `config.toml`. Declaring `api_key_env` while the variable is unset or empty fails the request with an error naming the variable; it is not a startup error, and the CLI never silently falls back to another credential source. Setting `api_key` together with `api_key_env`, or `api_key_env` together with `oauth`, is rejected as a configuration conflict.
 
 `base_url` is resolved the same way: first `[providers.<name>].base_url`, then the `*_BASE_URL` key in `[providers.<name>.env]`.
 
