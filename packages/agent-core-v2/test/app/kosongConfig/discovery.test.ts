@@ -736,6 +736,30 @@ describe('refreshProviderModels api_key_env credentials', () => {
     }
   });
 
+  it('treats a whitespace-only apiKey as empty instead of conflicting with api_key_env', async () => {
+    vi.stubEnv('KIMI_CODE_BASE_URL', managedBaseUrl);
+    vi.stubEnv('KIMI_TEST_REFRESH_ENV_KEY', 'sk-from-env');
+    const fetchMock = stubManagedModelsFetch();
+    const { host, discovery } = await createHost({
+      providers: {
+        'my-kimi': { type: 'kimi', baseUrl: managedBaseUrl, apiKey: '   ', apiKeyEnv: 'KIMI_TEST_REFRESH_ENV_KEY' },
+      },
+      models: {},
+    });
+    try {
+      const result = await discovery.refreshProviderModels({ scope: 'all' });
+      expect(result.failed).toEqual([]);
+      expect(fetchMock).toHaveBeenCalledWith(
+        `${managedBaseUrl}/models`,
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Bearer sk-from-env' }),
+        }),
+      );
+    } finally {
+      host.dispose();
+    }
+  });
+
   it('fails only the provider whose declared environment variable is unset', async () => {
     vi.stubEnv('KIMI_CODE_BASE_URL', managedBaseUrl);
     const fetchMock = vi.fn(async (input: unknown) => {
@@ -850,6 +874,31 @@ describe('refreshProviderModels api_key_env credentials', () => {
         apiKeyEnv: 'KIMI_TEST_OPEN_PLATFORM_KEY',
         customHeaders: { 'X-Team': 'infra' },
       });
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('fails the managed OAuth provider when it also declares api_key_env', async () => {
+    vi.stubEnv('KIMI_TEST_REFRESH_ENV_KEY', 'sk-from-env');
+    const fetchMock = stubManagedModelsFetch();
+    const { host, discovery } = await createHost({
+      providers: {
+        [KIMI_CODE_PROVIDER_NAME]: {
+          type: 'kimi',
+          baseUrl: 'https://api.example.test/v1',
+          oauth: { storage: 'file', key: 'oauth/kimi-code' },
+          apiKeyEnv: 'KIMI_TEST_REFRESH_ENV_KEY',
+        },
+      },
+      models: {},
+    });
+    try {
+      const result = await discovery.refreshProviderModels({ scope: 'all' });
+      expect(result.failed).toHaveLength(1);
+      expect(result.failed[0]).toMatchObject({ provider: KIMI_CODE_PROVIDER_NAME });
+      expect(result.failed[0]?.reason).toContain('mutually exclusive');
+      expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       host.dispose();
     }

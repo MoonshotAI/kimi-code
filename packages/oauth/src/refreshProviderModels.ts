@@ -97,8 +97,8 @@ interface ProviderView {
  */
 function resolveProviderApiKey(provider: ProviderView): string | undefined {
   const inlineApiKey =
-    typeof provider.apiKey === 'string' && provider.apiKey.length > 0
-      ? provider.apiKey
+    typeof provider.apiKey === 'string' && provider.apiKey.trim().length > 0
+      ? provider.apiKey.trim()
       : undefined;
   const apiKeyEnv = declaredApiKeyEnv(provider);
   if (inlineApiKey !== undefined && apiKeyEnv !== undefined) {
@@ -107,9 +107,7 @@ function resolveProviderApiKey(provider: ProviderView): string | undefined {
     );
   }
   if (apiKeyEnv !== undefined && provider.oauth !== undefined) {
-    throw new Error(
-      'Provider has both apiKeyEnv and oauth set in config.toml - they are mutually exclusive. Remove one.',
-    );
+    throw apiKeyEnvOauthConflictError();
   }
   if (inlineApiKey !== undefined) {
     return inlineApiKey;
@@ -132,6 +130,12 @@ function declaredApiKeyEnv(provider: ProviderView): string | undefined {
   if (typeof provider.apiKeyEnv !== 'string') return undefined;
   const trimmed = provider.apiKeyEnv.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function apiKeyEnvOauthConflictError(): Error {
+  return new Error(
+    'Provider has both apiKeyEnv and oauth set in config.toml - they are mutually exclusive. Remove one.',
+  );
 }
 
 function readProvider(
@@ -450,6 +454,9 @@ export async function refreshProviderModels(
     managedProvider.oauth !== undefined
   ) {
     try {
+      if (declaredApiKeyEnv(managedProvider) !== undefined) {
+        throw apiKeyEnvOauthConflictError();
+      }
       const auth = resolveKimiCodeRuntimeAuth({
         configuredBaseUrl: managedProvider.baseUrl,
         configuredOAuthRef: managedProvider.oauth,
