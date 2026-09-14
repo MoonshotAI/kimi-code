@@ -60,6 +60,11 @@ function buildProviderManagerOptions(host: SlashCommandHost): ProviderManagerOpt
         host.showError(`Add provider failed: ${formatErrorMessage(error)}`);
       });
     },
+    onRefresh: () => {
+      void handleProviderManagerRefresh(host).catch((error: unknown) => {
+        host.showError(`Refresh providers failed: ${formatErrorMessage(error)}`);
+      });
+    },
     onDeleteSource: (providerIds) => {
       void handleProviderManagerDeleteSource(host, providerIds).catch((error: unknown) => {
         host.showError(`Remove provider failed: ${formatErrorMessage(error)}`);
@@ -69,6 +74,29 @@ function buildProviderManagerOptions(host: SlashCommandHost): ProviderManagerOpt
       host.restoreEditor();
     },
   };
+}
+
+async function handleProviderManagerRefresh(host: SlashCommandHost): Promise<void> {
+  const managerAtRefreshStart = host.state.editorContainer.children[0];
+  const spinner = host.showProgressSpinner('Refreshing provider models...');
+  try {
+    const result = await host.authFlow.refreshProviderModels();
+    const ok = result.failed.length === 0;
+    spinner.stop({
+      ok,
+      label: ok ? 'Provider refresh finished.' : 'Provider refresh finished with warnings.',
+    });
+    for (const failure of result.failed) {
+      host.showStatus(`Skipped refreshing ${failure.provider}: ${failure.reason}`, 'warning');
+    }
+  } catch (error) {
+    spinner.stop({ ok: false, label: 'Provider refresh failed.' });
+    throw error;
+  } finally {
+    if (host.state.editorContainer.children[0] === managerAtRefreshStart) {
+      reopenProviderManager(host);
+    }
+  }
 }
 
 async function handleProviderManagerDeleteSource(
