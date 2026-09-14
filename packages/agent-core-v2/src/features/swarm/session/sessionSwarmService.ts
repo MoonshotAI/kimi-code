@@ -237,6 +237,7 @@ export class SessionSwarmService implements ISessionSwarmService {
       prompt: request.kind === 'prompt' ? request.prompt : undefined,
       suppressRateLimitFailureEvent: options.suppressRateLimitFailureEvent,
       signal: options.signal,
+      terminalize,
     });
     return {
       agentId,

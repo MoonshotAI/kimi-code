@@ -357,8 +357,8 @@ export class SubagentTool implements ISubagentTool {
   }
 
   private async resolveResumeTarget(agentId: string): Promise<IAgentScopeHandle> {
-    const live = this.agentLifecycle.handleOf(agentId);
     const meta = (await this.sessionMetadata.read()).agents?.[agentId];
+    const live = this.agentLifecycle.handleOf(agentId);
     if (meta === undefined && live === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent instance "${agentId}" does not exist`, {
         details: { agentId },

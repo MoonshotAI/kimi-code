@@ -120,6 +120,7 @@ export interface MirrorAgentRunOptions {
   readonly signal: AbortSignal;
   readonly cancel?: (reason?: unknown) => void;
   readonly deferStarted?: boolean;
+  readonly terminalize?: (agentId: string, event: Event2) => void;
 }
 
 export function emitAgentRunSpawned(
@@ -176,6 +177,8 @@ export async function mirrorAgentRun(
     const cancelAndRethrow = (reason: unknown): never => {
       options.cancel?.(reason);
       void run.completion.catch(() => {});
+      const event = terminalEventFor(run.agentId, reason, options);
+      if (event !== undefined) emitTerminal(dispatcher, options, run.agentId, event);
       throw reason;
     };
     try {
@@ -208,20 +211,37 @@ export async function mirrorAgentRun(
     });
     return result;
   } catch (error) {
-    const aborted = isAbortError(error) || options.signal.aborted;
-    const userCancelled = isUserCancellation(error) || isUserCancellation(options.signal.reason);
-    if (aborted && userCancelled) {
-      void dispatcher?.dispatch(new SubagentCancelled({ subagentId: run.agentId }));
-    } else if (!suppressesRateLimitFailure(options, error)) {
-      void dispatcher?.dispatch(
-        new SubagentFailed({
-          subagentId: run.agentId,
-          error: errorMessage(error),
-        }),
-      );
-    }
+    const event = terminalEventFor(run.agentId, error, options);
+    if (event !== undefined) void dispatcher?.dispatch(event);
     throw error;
   }
+}
+
+function emitTerminal(
+  dispatcher: IEventDispatcher | undefined,
+  options: MirrorAgentRunOptions,
+  agentId: string,
+  event: Event2,
+): void {
+  if (options.terminalize !== undefined) {
+    options.terminalize(agentId, event);
+    return;
+  }
+  void dispatcher?.dispatch(event);
+}
+
+function terminalEventFor(
+  agentId: string,
+  error: unknown,
+  options: MirrorAgentRunOptions,
+): Event2 | undefined {
+  const aborted = isAbortError(error) || options.signal.aborted;
+  const userCancelled = isUserCancellation(error) || isUserCancellation(options.signal.reason);
+  if (aborted && userCancelled) {
+    return new SubagentCancelled({ subagentId: agentId });
+  }
+  if (suppressesRateLimitFailure(options, error)) return undefined;
+  return new SubagentFailed({ subagentId: agentId, error: errorMessage(error) });
 }
 
 function suppressesRateLimitFailure(options: MirrorAgentRunOptions, error: unknown): boolean {

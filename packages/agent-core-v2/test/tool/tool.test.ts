@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable, type Writable } from 'node:stream';
+import { createControlledPromise } from '@antfu/utils';
 import { LifecycleScope } from '#/app/scopes';
 import { type IAgentScopeHandle } from '#/_base/di/scope';
 import { Event, type Event as KimiEvent } from '#/_base/event';
@@ -2421,6 +2422,49 @@ describe('Agent tool execution contract', () => {
     expect(result.isError).not.toBe(true);
     expect(result.output).toContain('agent_id: agent-existing');
     expect(result.output).toContain('resumed after restart');
+  });
+
+  it('re-acquires the resume target after the metadata read and rebuilds it when it was evicted meanwhile', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      runCompletion: async () => ({ summary: 'resumed after eviction' }),
+    });
+    const metadata = sessionMetadataStub({ 'agent-existing': subagentMeta() });
+    const snapshot = await metadata.read();
+    const readGate = createControlledPromise<typeof snapshot>();
+    let armGate = false;
+    let gatedReadStarted = false;
+    metadata.read = vi.fn(async () => {
+      if (!armGate) return snapshot;
+      gatedReadStarted = true;
+      return readGate;
+    });
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(ISessionMetadata, metadata),
+    );
+    lifecycle.addHandle('agent-existing', 'explore');
+
+    armGate = true;
+    const resultPromise = executeAgentTool(context, {
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+    });
+    await vi.waitFor(() => {
+      expect(gatedReadStarted).toBe(true);
+    });
+    await lifecycle.remove(stubAgentContext('agent-existing', 1));
+    readGate.resolve(snapshot);
+    const result = await resultPromise;
+
+    expect(lifecycle.create).toHaveBeenCalledTimes(1);
+    expect(lifecycle.create).toHaveBeenCalledWith({
+      agentId: 'agent-existing',
+      labels: { parentAgentId: 'main' },
+      forkedFrom: undefined,
+    });
+    expect(result.isError).not.toBe(true);
+    expect(result.output).toContain('resumed after eviction');
   });
 
   it('keeps rejecting resume of an agent id that was never persisted', async () => {
