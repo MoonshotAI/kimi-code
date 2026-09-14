@@ -1,16 +1,16 @@
 import { ErrorCodes, isError2 } from '#/errors';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
+import { resolveSubagentScopeEvictTimeoutMs } from '#/session/subagent/subagentScopeCache';
 
 import type { CreateAgentOptions, IAgentLifecycleService } from './agentLifecycle';
 
-const CLOSE_WAIT_TIMEOUT_MS = 15_000;
 const CLOSE_WAIT_POLL_MS = 50;
 
 export async function createAgentAwaitingClose(
   lifecycle: IAgentLifecycleService,
   opts: CreateAgentOptions,
 ): Promise<AgentContext> {
-  const deadline = Date.now() + CLOSE_WAIT_TIMEOUT_MS;
+  const deadline = Date.now() + resolveSubagentScopeEvictTimeoutMs();
   for (;;) {
     try {
       return await lifecycle.create(opts);

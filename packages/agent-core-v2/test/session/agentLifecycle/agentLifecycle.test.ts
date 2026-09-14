@@ -780,6 +780,19 @@ describe('AgentLifecycleService', () => {
     );
   });
 
+  it('remove rolls back the closing flag when scope teardown fails', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const main = await svc.create({ agentId: 'main' });
+    stopAllOnExit.mockRejectedValueOnce(new Error('stop failed'));
+
+    await expect(svc.remove(main)).rejects.toThrow('stop failed');
+    expect(svc.get('main')).toBe(main);
+
+    await svc.remove(main);
+    expect(stopAllOnExit).toHaveBeenCalledTimes(2);
+    expect(svc.get('main')).toBeUndefined();
+  });
+
   it('remove waits for prompt intake to drain before disposing the agent scope', async () => {
     let releaseDrain!: () => void;
     let markDrainStarted!: () => void;

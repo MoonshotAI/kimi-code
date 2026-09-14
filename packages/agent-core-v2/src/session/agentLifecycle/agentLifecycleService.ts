@@ -562,6 +562,15 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const managed = this.roster.get(agent.agentId);
     if (managed === undefined || managed.context !== agent || managed.closing) return;
     managed.closing = true;
+    try {
+      await this.removeManaged(agent, managed);
+    } catch (error) {
+      managed.closing = false;
+      throw error;
+    }
+  }
+
+  private async removeManaged(agent: AgentContext, managed: ManagedAgent): Promise<void> {
     this.onWillCloseEmitter.fire(agent);
     const handle = managed.handle;
     await handle.accessor.get(IAgentTaskService).suppressAllTerminalNotifications();

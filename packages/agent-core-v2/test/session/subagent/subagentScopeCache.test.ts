@@ -784,6 +784,34 @@ describe('SessionSubagentScopeCacheService', () => {
     expect(svc.handleOf('agent-1')).toBeDefined();
   });
 
+  it('rebuild gives up waiting once the configured eviction timeout elapses', async () => {
+    vi.stubEnv(SUBAGENT_SCOPE_EVICT_TIMEOUT_ENV, '50');
+    cacheService('1');
+    const stopAll = createControlledPromise<never[]>();
+    let stopAllCalls = 0;
+    ix.stub(IAgentTaskService, {
+      _serviceBrand: undefined,
+      list: () => [],
+      stopAllOnExit: () => (stopAllCalls++ === 0 ? stopAll : Promise.resolve([])),
+      suppressAllTerminalNotifications: async () => {},
+    } as unknown as IAgentTaskService);
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'agent-1' });
+    await svc.create({ agentId: 'agent-2' });
+
+    completed('agent-1');
+    completed('agent-2');
+    await vi.waitFor(() => {
+      expect(svc.handleOf('agent-2')).toBeUndefined();
+    });
+
+    const started = Date.now();
+    await expect(createAgentAwaitingClose(svc, { agentId: 'agent-1' })).rejects.toThrow(
+      /already exists/,
+    );
+    expect(Date.now() - started).toBeLessThan(DEFAULT_SUBAGENT_SCOPE_EVICT_TIMEOUT_MS);
+  });
+
   it('flush during eviction touches only the evicted agent scope log', async () => {
     cacheService('1');
     const svc = ix.get(IAgentLifecycleService);
