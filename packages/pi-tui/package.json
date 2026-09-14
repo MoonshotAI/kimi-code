@@ -58,7 +58,7 @@
 	},
 	"dependencies": {
 		"get-east-asian-width": "1.6.0",
-		"marked": "18.0.5"
+		"marked": "18.0.11"
 	},
 	"devDependencies": {
 		"@xterm/headless": "5.5.0",
