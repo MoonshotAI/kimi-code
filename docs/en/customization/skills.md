@@ -23,9 +23,8 @@ skills/
 
 How the Skill name is derived:
 
-- Directory form: from the subdirectory name — `review-pr/SKILL.md` registers as `review-pr`.
-- Flat form: from the filename without the `.md` extension — `commit.md` registers as `commit`. The extension is stripped only from the registered Skill name; the file on disk must keep its `.md` extension to be picked up by the scanner, so don't actually create an extensionless `commit` file.
-- Both forms can override the derived name with an explicit `name` field in the frontmatter (required for the directory form; see below).
+- Directory form: from the required frontmatter `name` field (see the table below); by convention the subdirectory carries the same name — `review-pr/SKILL.md` with `name: review-pr` registers as `review-pr`.
+- Flat form: `name` may be omitted, falling back to the filename without the `.md` extension — `commit.md` registers as `commit`. The extension is stripped only from the registered Skill name; the file on disk must keep its `.md` extension to be picked up by the scanner, so don't actually create an extensionless `commit` file.
 - When both `<name>/SKILL.md` and `<name>.md` exist in the same directory, the directory form wins and the flat file is ignored.
 
 Two limitations of the flat form:

@@ -23,9 +23,8 @@ skills/
 
 Skill 名的推导规则：
 
-- 目录形式取子目录名：`review-pr/SKILL.md` 注册为 `review-pr`。
-- 扁平形式取文件名去掉 `.md` 扩展名：`commit.md` 注册为 `commit`。注意「去掉 `.md`」只发生在注册后的 Skill 名上——磁盘上的文件必须带 `.md` 扩展名才会被扫描到，不要真的创建一个没有扩展名的 `commit` 文件。
-- 两种形式都可以在 frontmatter 里用 `name` 字段显式指定名称（目录形式必须显式填写，见下文）。
+- 目录形式取 frontmatter 的 `name` 字段（必填，见下文表格）；惯例让子目录名与 `name` 保持一致——`review-pr/SKILL.md` 里写 `name: review-pr`，注册为 `review-pr`。
+- 扁平形式的 `name` 可省略，省略时取文件名去掉 `.md` 扩展名：`commit.md` 注册为 `commit`。注意「去掉 `.md`」只发生在注册后的 Skill 名上——磁盘上的文件必须带 `.md` 扩展名才会被扫描到，不要真的创建一个没有扩展名的 `commit` 文件。
 - 同一目录下 `<name>/SKILL.md` 与 `<name>.md` 同时存在时，以目录形式为准，扁平文件被忽略。
 
 扁平形式还有两点限制：
