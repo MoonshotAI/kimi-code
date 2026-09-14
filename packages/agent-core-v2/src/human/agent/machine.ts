@@ -108,6 +108,7 @@ export type AgentEmitted =
   | { type: 'turn.started'; turnId: number; branchId: string; queueItemId?: string; entry?: UserEntry }
   | { type: 'step.started'; step: number }
   | { type: 'turn.aborting' }
+  | { type: 'turn.spawn_tools'; toolCalls: ToolCall[] }
   | { type: 'turn.reminders_consumed'; reminders: HistoryMessage[] }
   | { type: 'turn.done'; messages: HistoryMessage[]; branchId: string }
   | {
@@ -888,7 +889,7 @@ export function createAgentMachine({
           active: {
             on: {
               'turn.spawn_tools': {
-                actions: 'spawnTurnTools',
+                actions: ['spawnTurnTools', emit(({ event }) => event)],
               },
               'input.abort': {
                 target: 'aborting',
@@ -902,7 +903,7 @@ export function createAgentMachine({
             },
             on: {
               'turn.spawn_tools': {
-                actions: ['spawnTurnTools', 'abortSpawnedTools'],
+                actions: ['spawnTurnTools', 'abortSpawnedTools', emit(({ event }) => event)],
               },
               'input.abort': {
                 actions: ['abortTurn', 'stopTurnTools'],
