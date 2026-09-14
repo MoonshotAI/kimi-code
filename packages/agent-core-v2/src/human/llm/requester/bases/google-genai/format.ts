@@ -288,12 +288,12 @@ const TIMEOUT_RE = /timed?\s*out|timeout|deadline/i;
 
 export function convertGoogleGenAIError(
   error: unknown,
-  convertErrorHook?: (error: unknown) => LlmRemoteErrorMessage | undefined,
+  classifyErrorHook?: (error: unknown) => LlmRemoteErrorMessage | undefined,
 ): LlmRemoteErrorMessage {
   if (isAbortError(error)) {
     return toLlmErrorMessage(error);
   }
-  const hooked = convertErrorHook?.(error);
+  const hooked = classifyErrorHook?.(error);
   if (hooked !== undefined) {
     return hooked;
   }
