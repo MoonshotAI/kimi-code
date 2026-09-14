@@ -105,7 +105,7 @@ export type AgentEvent =
 export type AgentEmitted =
   | TurnLlmEvent
   | ToolEvent
-  | { type: 'turn.started'; turnId: number; branchId: string; queueItemId?: string }
+  | { type: 'turn.started'; turnId: number; branchId: string; queueItemId?: string; entry?: UserEntry }
   | { type: 'step.started'; step: number }
   | { type: 'turn.aborting' }
   | { type: 'turn.reminders_consumed'; reminders: HistoryMessage[] }
@@ -118,9 +118,9 @@ export type AgentEmitted =
       branchId: string;
     }
   | { type: 'turn.aborted'; messages: HistoryMessage[]; branchId: string }
-  | { type: 'prompt.blocked'; queueItemId?: string }
-  | { type: 'prompt.gate_failed'; queueItemId?: string; error: unknown }
-  | { type: 'prompt.steered'; queueItemIds: string[] }
+  | { type: 'prompt.blocked'; queueItemId?: string; entry?: UserEntry }
+  | { type: 'prompt.gate_failed'; queueItemId?: string; error: unknown; entry?: UserEntry }
+  | { type: 'prompt.steered'; queueItemIds: string[]; entries: UserEntry[] }
   | { type: 'context.reset'; branchId: string }
   | { type: 'agent.attached' }
   | { type: 'agent.failed'; error: unknown };
@@ -151,6 +151,7 @@ export interface AgentMachineContext {
   activeTurnId?: number;
   branchId: string;
   drainedId?: string;
+  drainedEntry?: UserEntry;
   paused: boolean;
 }
 
@@ -245,7 +246,7 @@ function hasBackgroundWork(context: AgentMachineContext): boolean {
 
 function drainPendingPatch(
   context: AgentMachineContext,
-): Pick<AgentMachineContext, 'messages' | 'notifications' | 'queue' | 'drainedId'> {
+): Pick<AgentMachineContext, 'messages' | 'notifications' | 'queue' | 'drainedId' | 'drainedEntry'> {
   const [head, ...rest] = context.queue;
   return {
     messages: [
@@ -256,6 +257,7 @@ function drainPendingPatch(
     notifications: [],
     queue: rest,
     drainedId: head?.meta?.promptId,
+    drainedEntry: head,
   };
 }
 
@@ -499,6 +501,7 @@ export function createAgentMachine({
           enqueue.emit({
             type: 'prompt.steered' as const,
             queueItemIds: steered.map((item) => item.meta?.promptId as string),
+            entries: steered,
           });
         }),
       },
@@ -659,6 +662,7 @@ export function createAgentMachine({
                       type: 'prompt.gate_failed' as const,
                       queueItemId: context.queue[0]?.meta?.promptId,
                       error: event.output.error,
+                      entry: context.queue[0],
                     })),
                     assign(({ context }) => ({ queue: context.queue.slice(1) })),
                   ],
@@ -670,6 +674,7 @@ export function createAgentMachine({
                     emit(({ context }) => ({
                       type: 'prompt.blocked' as const,
                       queueItemId: context.queue[0]?.meta?.promptId,
+                      entry: context.queue[0],
                     })),
                     assign(({ context }) => ({ queue: context.queue.slice(1) })),
                   ],
@@ -694,6 +699,7 @@ export function createAgentMachine({
                     type: 'prompt.gate_failed' as const,
                     queueItemId: context.queue[0]?.meta?.promptId,
                     error: event.error,
+                    entry: context.queue[0],
                   })),
                   assign(({ context }) => ({ queue: context.queue.slice(1) })),
                 ],
@@ -710,6 +716,7 @@ export function createAgentMachine({
             turnId: context.turnId,
             branchId: context.branchId,
             queueItemId: context.drainedId,
+            entry: context.drainedEntry,
           })),
           sendTo('store', ({ context }) => ({
             type: 'store.append' as const,

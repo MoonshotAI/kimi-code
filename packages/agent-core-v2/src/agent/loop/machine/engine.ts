@@ -51,7 +51,7 @@ export type MachineEngineDelta =
 export type MachineTurnOutcome = 'done' | 'failed' | 'aborted';
 
 export type MachineEngineEvent =
-  | { readonly type: 'turnStarted'; readonly machineTurnId: number; readonly queueItemId?: string }
+  | { readonly type: 'turnStarted'; readonly machineTurnId: number; readonly queueItemId?: string; readonly entry?: UserEntry }
   | {
       readonly type: 'turnSettled';
       readonly outcome: MachineTurnOutcome;
@@ -107,9 +107,9 @@ export type MachineEngineEvent =
   | { readonly type: 'toolAborted'; readonly toolCallId: string }
   | { readonly type: 'toolBatchFailed'; readonly error: unknown }
   | { readonly type: 'remindersConsumed'; readonly reminders: HistoryMessage[] }
-  | { readonly type: 'promptBlocked'; readonly queueItemId?: string }
-  | { readonly type: 'promptGateFailed'; readonly queueItemId?: string; readonly error: unknown }
-  | { readonly type: 'promptSteered'; readonly queueItemIds: readonly string[] }
+  | { readonly type: 'promptBlocked'; readonly queueItemId?: string; readonly entry?: UserEntry }
+  | { readonly type: 'promptGateFailed'; readonly queueItemId?: string; readonly error: unknown; readonly entry?: UserEntry }
+  | { readonly type: 'promptSteered'; readonly queueItemIds: readonly string[]; readonly entries: readonly UserEntry[] }
   | { readonly type: 'aborting' };
 
 export interface CreateMachineEngineOptions {
@@ -362,7 +362,7 @@ export function attachMachineEngine(
       split = createDeltaSplitter();
       pendingFailure = undefined;
       lastRetry = undefined;
-      publish({ type: 'turnStarted', machineTurnId: event.turnId, queueItemId: event.queueItemId });
+      publish({ type: 'turnStarted', machineTurnId: event.turnId, queueItemId: event.queueItemId, entry: event.entry });
     }),
     ref.on('step.started', (event) => {
       currentStep = event.step;
@@ -461,13 +461,13 @@ export function attachMachineEngine(
       publish({ type: 'remindersConsumed', reminders: event.reminders });
     }),
     ref.on('prompt.blocked', (event) => {
-      publish({ type: 'promptBlocked', queueItemId: event.queueItemId });
+      publish({ type: 'promptBlocked', queueItemId: event.queueItemId, entry: event.entry });
     }),
     ref.on('prompt.gate_failed', (event) => {
-      publish({ type: 'promptGateFailed', queueItemId: event.queueItemId, error: event.error });
+      publish({ type: 'promptGateFailed', queueItemId: event.queueItemId, error: event.error, entry: event.entry });
     }),
     ref.on('prompt.steered', (event) => {
-      publish({ type: 'promptSteered', queueItemIds: event.queueItemIds });
+      publish({ type: 'promptSteered', queueItemIds: event.queueItemIds, entries: event.entries });
     }),
     ref.on('turn.aborting', () => {
       publish({ type: 'aborting' });
