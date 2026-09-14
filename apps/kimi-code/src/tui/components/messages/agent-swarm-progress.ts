@@ -6,6 +6,10 @@ import {
   type AgentSwarmProgressEstimate,
   type AgentSwarmProgressEstimatorPhase,
 } from '#/tui/components/messages/agent-swarm-progress-estimator';
+import {
+  MAX_FINAL_OUTPUT_LABEL_CHARS,
+  MAX_FINAL_OUTPUT_LABEL_CODE_UNITS,
+} from '#/tui/constant/rendering';
 import { FAILURE_MARK, SUCCESS_MARK } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
@@ -23,8 +27,6 @@ const BRAILLE_LEVELS = ['⣀', '⣄', '⣤', '⣦', '⣶', '⣷', '⣿'] as cons
 const PHASE_LABEL_WIDTH = 'Completed'.length;
 const MIN_LABEL_WIDTH = PHASE_LABEL_WIDTH;
 const MAX_LATEST_MODEL_CHARS = 2_000;
-const MAX_FINAL_OUTPUT_LABEL_CHARS = 400;
-const MAX_FINAL_OUTPUT_LABEL_CODE_UNITS = 2_000;
 const COMPLETE_FILL_MS = 360;
 const FAILED_PLACEHOLDER_RED_FACTOR = 0.75;
 const FAILED_PLACEHOLDER_NON_RED_FACTOR = 0.25;
@@ -992,46 +994,48 @@ function capFinalOutputLabel(text: string): string {
 function capCodeUnits(text: string, maxCodeUnits: number): string {
   if (text.length <= maxCodeUnits) return text;
   let end = maxCodeUnits;
-  let index = text.indexOf('\x1B');
+  let index = text.indexOf('\u001B');
   while (index >= 0 && index < end) {
     const sequenceEnd = ansiSequenceEnd(text, index);
     if (sequenceEnd === undefined || sequenceEnd > end) {
       end = index;
       break;
     }
-    index = text.indexOf('\x1B', sequenceEnd);
+    index = text.indexOf('\u001B', sequenceEnd);
   }
-  const code = text.codePointAt(end - 1);
-  if (code >= 0xd800 && code <= 0xdbff) end -= 1;
+  // A cut landing on a lead surrogate reads as the astral code point; back
+  // off so the retained label never ends in an unpaired surrogate.
+  const codePoint = text.codePointAt(end - 1);
+  if (codePoint !== undefined && codePoint > 0xffff) end -= 1;
   return text.slice(0, end);
 }
 
 function ansiSequenceEnd(text: string, start: number): number | undefined {
-  if (text[start] !== '\x1B') return undefined;
+  if (text[start] !== '\u001B') return undefined;
   const kind = text[start + 1];
   if (kind === undefined) return undefined;
   if (kind === '[') {
     for (let index = start + 2; index < text.length; index += 1) {
-      const code = text.codePointAt(index);
-      if (code >= 0x40 && code <= 0x7e) return index + 1;
+      const ch = text.charAt(index);
+      if (ch >= '@' && ch <= '~') return index + 1;
     }
     return undefined;
   }
   if (kind === ']' || kind === '_') {
     for (let index = start + 2; index < text.length; index += 1) {
       if (text[index] === '\u0007') return index + 1;
-      if (text[index] === '\x1B' && text[index + 1] === '\\') return index + 2;
+      if (text[index] === '\u001B' && text[index + 1] === '\\') return index + 2;
     }
     return undefined;
   }
   let index = start + 1;
   while (index < text.length) {
-    const code = text.codePointAt(index);
-    if (code >= 0x20 && code <= 0x2f) {
+    const ch = text.charAt(index);
+    if (ch >= ' ' && ch <= '/') {
       index += 1;
       continue;
     }
-    return code >= 0x30 && code <= 0x7e ? index + 1 : undefined;
+    return ch >= '0' && ch <= '~' ? index + 1 : undefined;
   }
   return undefined;
 }

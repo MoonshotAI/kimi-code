@@ -1120,13 +1120,13 @@ describe('AgentSwarmProgressComponent terminal state memory', () => {
     const component = createComponent();
     registerSubagents(component, 1);
 
-    component.markCompleted('agent-1', `ok${'\x1B[31m'.repeat(10_000)}`);
+    component.markCompleted('agent-1', `ok${'\u001B[31m'.repeat(10_000)}`);
 
     const text = membersOf(component)[0]?.completedText ?? '';
     expect(text.length).toBeLessThanOrEqual(2_000);
     expect(text.startsWith('ok')).toBe(true);
-    const escapeCount = text.match(/\x1B/g)?.length ?? 0;
-    const completeSequenceCount = text.match(/\x1B\[[0-9;]*m/g)?.length ?? 0;
+    const escapeCount = text.match(/\u001B/g)?.length ?? 0;
+    const completeSequenceCount = text.match(/\u001B\[[0-9;]*m/g)?.length ?? 0;
     expect(escapeCount).toBe(completeSequenceCount);
   });
 
@@ -1139,6 +1139,20 @@ describe('AgentSwarmProgressComponent terminal state memory', () => {
     const text = membersOf(component)[0]?.completedText ?? '';
     expect(text.length).toBeLessThanOrEqual(2_000);
     expect(text.startsWith('x')).toBe(true);
+  });
+
+  it('does not split a surrogate pair at the retained label storage limit', () => {
+    const component = createComponent();
+    registerSubagents(component, 1);
+
+    component.markCompleted(
+      'agent-1',
+      `x${'\u0301'.repeat(1_998)}\u{1F600}${'\u0301'.repeat(5_000)}`,
+    );
+
+    const text = membersOf(component)[0]?.completedText ?? '';
+    expect(text.length).toBeLessThanOrEqual(2_000);
+    expect(text).not.toMatch(/[\uD800-\uDBFF]$/);
   });
 });
 
