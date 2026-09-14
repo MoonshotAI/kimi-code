@@ -1524,6 +1524,143 @@ describe('SessionSwarmService metadata compatibility', () => {
     }
   });
 
+  it('emits subagent.cancelled for a child whose spawn finishes after the batch is cancelled', async () => {
+    vi.useFakeTimers();
+    try {
+      const spawnDeferred = createControlledPromise<{
+        readonly agentId: string;
+        readonly profileName: string;
+        readonly model: string;
+        readonly promptText: string;
+      }>();
+      handles.set(
+        'agent-new',
+        agentHandle('agent-new', lifecycle, eventBus, {
+          profileName: 'coder',
+          modelAlias: 'kimi-test',
+        }),
+      );
+      spawnAgent.mockReturnValueOnce(spawnDeferred);
+      runAgent.mockImplementationOnce((agent: AgentContext, _request: unknown, options) => {
+        options?.signal.throwIfAborted();
+        return {
+          agentId: agent.agentId,
+          turn: {} as never,
+          completion: Promise.resolve({ summary: 'late summary' }),
+        };
+      });
+      const published: Event2[] = [];
+      (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: Event2) => {
+        published.push(event);
+      });
+      const service = ix.get(ISessionSwarmService);
+      const controller = new AbortController();
+
+      const running = service.run({
+        callerAgentId: 'main',
+        tasks: [{ ...spawnSessionTask('src/a.ts'), signal: controller.signal }],
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(spawnAgent).toHaveBeenCalledTimes(1);
+
+      controller.abort(userCancellationReason());
+      await expect(running).resolves.toMatchObject([{ status: 'aborted', state: 'not_started' }]);
+      expect(published.some((event) => event.type === 'subagent.spawned')).toBe(false);
+
+      spawnDeferred.resolve({
+        agentId: 'agent-new',
+        profileName: 'coder',
+        model: 'kimi-test',
+        promptText: 'Review the file',
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      const subagentIdsOf = (type: string) =>
+        published
+          .filter((event) => event.type === type)
+          .map((event) => (event as Event2 & { readonly subagentId: string }).subagentId);
+      expect(subagentIdsOf('subagent.spawned')).toEqual(['agent-new']);
+      expect(subagentIdsOf('subagent.cancelled')).toEqual(['agent-new']);
+      expect(subagentIdsOf('subagent.failed')).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('emits subagent.failed when the child run cannot start', async () => {
+    runAgent.mockRejectedValueOnce(new Error('enqueue boom'));
+    const published: Event2[] = [];
+    (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: Event2) => {
+      published.push(event);
+    });
+    const service = ix.get(ISessionSwarmService);
+
+    await expect(
+      service.run({
+        callerAgentId: 'main',
+        tasks: [spawnSessionTask('src/a.ts')],
+      }),
+    ).resolves.toMatchObject([
+      { status: 'failed', state: 'not_started', error: 'enqueue boom' },
+    ]);
+
+    const failedEvents = published.filter((event) => event.type === 'subagent.failed');
+    expect(failedEvents).toHaveLength(1);
+    expect(failedEvents[0]).toMatchObject({ subagentId: 'agent-new', error: 'enqueue boom' });
+    expect(published.some((event) => event.type === 'subagent.cancelled')).toBe(false);
+  });
+
+  it('emits subagent.failed (not subagent.cancelled) when a child times out', async () => {
+    vi.useFakeTimers();
+    try {
+      agents['agent-slow'] = {
+        labels: { parentAgentId: 'main' },
+      };
+      handles.set('agent-slow', agentHandle('agent-slow', lifecycle, eventBus));
+      runAgent.mockImplementation((agent, _request, options) => {
+        const agentId = (agent as AgentContext).agentId;
+        return {
+          agentId,
+          turn: {} as never,
+          completion: new Promise((_, reject) => {
+            options?.signal.addEventListener(
+              'abort',
+              () => {
+                reject(options.signal.reason);
+              },
+              { once: true },
+            );
+          }),
+        };
+      });
+      const published: Event2[] = [];
+      (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: Event2) => {
+        published.push(event);
+      });
+      const service = ix.get(ISessionSwarmService);
+
+      const running = service.run({
+        callerAgentId: 'main',
+        tasks: [{ ...resumeSessionTask('agent-slow'), timeout: 1000 }],
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(1000);
+
+      await expect(running).resolves.toMatchObject([
+        { status: 'failed', agentId: 'agent-slow', error: 'Subagent timed out.' },
+      ]);
+      const failedEvents = published.filter((event) => event.type === 'subagent.failed');
+      expect(failedEvents).toHaveLength(1);
+      expect(failedEvents[0]).toMatchObject({
+        subagentId: 'agent-slow',
+        error: 'Subagent timed out.',
+      });
+      expect(published.some((event) => event.type === 'subagent.cancelled')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('rejects resume of an already running child before launching or emitting spawned', async () => {
     agents['agent-existing'] = {
       labels: { parentAgentId: 'main' },

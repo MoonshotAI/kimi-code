@@ -1,7 +1,7 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import type { TokenUsage } from '#human/llm/usage';
 import { Error2, ErrorCodes } from '#/errors';
-import { linkAbortSignal } from '#/_base/utils/abort';
+import { isUserCancellation, linkAbortSignal } from '#/_base/utils/abort';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -24,7 +24,7 @@ import {
   SubagentCancelled,
   SubagentFailed,
 } from '#/session/subagent/mirrorAgentRun';
-import { ISessionSubagentService } from '#/session/subagent/subagent';
+import { type AgentRunHandle, ISessionSubagentService } from '#/session/subagent/subagent';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
@@ -210,10 +210,16 @@ export class SessionSwarmService implements ISessionSwarmService {
     options: AgentRunAttemptOptions,
   ): Promise<AgentRunAttemptHandle> {
     const agentId = child.id;
-    const run = await this.subagents.run(agentContextOf(child), request, {
-      signal: options.signal,
-      onReady: options.onReady,
-    });
+    let run: AgentRunHandle;
+    try {
+      run = await this.subagents.run(agentContextOf(child), request, {
+        signal: options.signal,
+        onReady: options.onReady,
+      });
+    } catch (error) {
+      this.dispatchSubagentEvent(caller.id, runStartTerminalEvent(agentId, error, options.signal));
+      throw error;
+    }
     const mirrored = mirrorAgentRun(caller, run, {
       profileName,
       prompt: request.kind === 'prompt' ? request.prompt : undefined,
@@ -299,3 +305,13 @@ export class SessionSwarmService implements ISessionSwarmService {
 }
 
 export type _AgentRunUsage = TokenUsage;
+
+function runStartTerminalEvent(agentId: string, error: unknown, signal: AbortSignal): Event2 {
+  if (isUserCancellation(error) || isUserCancellation(signal.reason)) {
+    return new SubagentCancelled({ subagentId: agentId });
+  }
+  return new SubagentFailed({
+    subagentId: agentId,
+    error: error instanceof Error ? error.message : String(error),
+  });
+}

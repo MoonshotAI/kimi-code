@@ -1,6 +1,6 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import type { IAgentScopeHandle } from '#/_base/di/scope';
-import { userCancellationReason } from '#/_base/utils/abort';
+import { isAbortError, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { tryAgentContextOf } from '#/agent/scopeContext/scopeContext';
@@ -9,7 +9,6 @@ import { type TokenUsage } from '#human/llm/usage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { SubagentCreatedEvent } from '#/app/telemetry/events';
 import { Event2 } from '#/app/event/event2';
-import { isAbortError } from '#/_base/utils/abort';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
@@ -209,7 +208,9 @@ export async function mirrorAgentRun(
     });
     return result;
   } catch (error) {
-    if (isAbortError(error) || options.signal.aborted) {
+    const aborted = isAbortError(error) || options.signal.aborted;
+    const userCancelled = isUserCancellation(error) || isUserCancellation(options.signal.reason);
+    if (aborted && userCancelled) {
       void dispatcher?.dispatch(new SubagentCancelled({ subagentId: run.agentId }));
     } else if (!suppressesRateLimitFailure(options, error)) {
       void dispatcher?.dispatch(

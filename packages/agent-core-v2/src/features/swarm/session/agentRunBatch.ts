@@ -627,7 +627,7 @@ export class AgentRunBatch<T> {
         ? undefined
         : setClampedTimeout(() => {
             attempt.timedOut = true;
-            attempt.controller.abort(new Error('Aborted'));
+            attempt.controller.abort(new Error('Subagent timed out.'));
           }, task.timeout);
 
     if (this.controller.signal.aborted) {
