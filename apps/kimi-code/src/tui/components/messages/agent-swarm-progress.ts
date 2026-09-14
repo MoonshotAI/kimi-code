@@ -746,12 +746,14 @@ export class AgentSwarmProgressComponent implements Component {
       Math.min(snapshot.phaseElapsedMs, COMPLETE_FILL_MS),
     ];
     const cached = member.cellCache;
-    if (cached !== undefined && cellCacheKeyEquals(cached.key, key)) return cached.value;
+    if (isRenderCacheEnabled() && cached !== undefined && cellCacheKeyEquals(cached.key, key)) {
+      return cached.value;
+    }
     const value = padAnsi(
       this.renderCellContent(member, snapshot, layout, estimate),
       layout.cellWidth,
     );
-    member.cellCache = { key, value };
+    if (isRenderCacheEnabled()) member.cellCache = { key, value };
     return value;
   }
 

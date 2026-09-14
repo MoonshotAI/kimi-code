@@ -14,6 +14,7 @@ import {
 } from '#/tui/components/messages/agent-swarm-progress';
 import { AgentSwarmProgressEstimator } from '#/tui/components/messages/agent-swarm-progress-estimator';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
+import { setRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 const DEFAULT_DESCRIPTION = 'Review changed files';
 
@@ -942,6 +943,23 @@ describe('AgentSwarmProgressComponent render caching', () => {
 
     expect(after).not.toBe(before);
     expect(after.map(strip)).toEqual(before.map(strip));
+  });
+
+  it('bypasses both component and cell caches when the render cache is disabled', () => {
+    const component = createTerminalComponent();
+    const before = component.render(100);
+
+    setRenderCacheEnabled(false);
+    try {
+      const after = component.render(100);
+      expect(after).not.toBe(before);
+      expect(after.map(strip)).toEqual(before.map(strip));
+      const third = component.render(100);
+      expect(third).not.toBe(after);
+      expect(third.map(strip)).toEqual(after.map(strip));
+    } finally {
+      setRenderCacheEnabled(true);
+    }
   });
 
   it('repaints member cells from the active palette when the theme changes', () => {
