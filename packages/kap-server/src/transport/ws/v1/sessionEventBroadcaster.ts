@@ -956,8 +956,6 @@ export class SessionEventBroadcaster {
     const state = this.sessions.get(sessionId);
     if (state === undefined) return;
 
-    if (event.type === 'prompt.accepted') return;
-
     if (
       event.type === 'agent.status.updated' &&
       (event as { phase?: unknown }).phase !== undefined

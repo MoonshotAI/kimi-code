@@ -674,7 +674,7 @@ describe('Session.prompt events', () => {
       const retractedTypes = forkedLines
         .filter((line) => line.includes('retracted'))
         .map((line) => (JSON.parse(line) as { type: string }).type);
-      expect(retractedTypes).toEqual(['prompt.accepted']);
+      expect(retractedTypes).toEqual([]);
     } finally {
       await harness.close();
     }

@@ -64,13 +64,11 @@ import {
   PromptSubmitted,
 } from '#/agent/prompt/promptEvents';
 import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
-import { PromptAccepted, promptAdmissionKey } from '#/agent/prompt/promptOps';
 import { LOOP_CONTROL_SECTION, type LoopControl } from './configSection';
 import {
   createMaxStepsExceededError,
   IAgentLoopService,
   isMaxStepsExceededError,
-  promptAdmission,
   type AfterStepContext,
   type AgentActivitySnapshot,
   type AgentLoopStatus,
@@ -88,7 +86,6 @@ import {
   type PromptLaunchResult,
   type PromptPayload,
   type PromptQueueSnapshot,
-  type PromptReservation,
   type PromptSnapshot,
   type PromptState,
   type PromptSubmitContext,
@@ -161,7 +158,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private engine: MachineEngine | undefined;
   private promptLaunching = false;
   private promptLaunchingReservation: TurnReservation | undefined;
-  private readonly reservedPromptIds = new Set<string>();
   private fullCompactionService: IAgentFullCompactionService | undefined;
 
   constructor(
@@ -185,7 +181,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.states.contributeState(turnKey);
     this.states.contributeState(loopLastRequestTraceIdKey);
     this.states.contributeState(loopDisposingKey);
-    this.states.contributeState(promptAdmissionKey);
     this.toolExecutor.hooks.onDidExecuteTool.register('prompt-service-delivery', async (ctx, next) => {
       await this.deliverToolResult(ctx);
       await next();
@@ -444,20 +439,18 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   async submitPrompt(payload: PromptPayload): Promise<PromptLaunchResult | undefined> {
-    const reservation = this[promptAdmission](payload.promptId);
-    try {
-      await this.updatePromptMetadata(promptMetadataTextFromContentParts(payload.input));
-      const handle = await reservation.submit({
+    await this.updatePromptMetadata(promptMetadataTextFromContentParts(payload.input));
+    const handle = await this.enqueuePrompt({
+      id: payload.promptId,
+      message: {
         role: 'user',
         content: [...payload.input],
         toolCalls: [],
         origin: { kind: 'user' },
-      });
-      if (handle.state === 'pending') return undefined;
-      return await launchedTurnId(handle.launched);
-    } finally {
-      reservation.dispose();
-    }
+      },
+    });
+    if (handle.state === 'pending') return undefined;
+    return await launchedTurnId(handle.launched);
   }
 
   async submitSteerPrompt(payload: SteerPayload): Promise<PromptLaunchResult | undefined> {
@@ -656,43 +649,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           : undefined,
       pending: this.promptPendingReservations().map(promptSnapshotOf),
       launching: this.promptLaunchInFlight(),
-    };
-  }
-
-  [promptAdmission](promptId?: string): PromptReservation {
-    if (promptId !== undefined && promptId.length === 0) {
-      throw new Error2(ErrorCodes.REQUEST_INVALID, 'prompt_id must not be empty');
-    }
-    const accepted = this.states.get(promptAdmissionKey);
-    let id = promptId ?? newMessageId();
-    while (accepted.has(id) || this.reservedPromptIds.has(id)) {
-      if (promptId !== undefined) {
-        throw new Error2(ErrorCodes.PROMPT_ID_CONFLICT, `prompt_id '${id}' is already in use`);
-      }
-      id = newMessageId();
-    }
-    this.reservedPromptIds.add(id);
-    let submitted = false;
-    return {
-      id,
-      submit: async (message) => {
-        if (submitted) {
-          throw new Error2(ErrorCodes.REQUEST_INVALID, 'prompt reservation already submitted');
-        }
-        submitted = true;
-        this.reservedPromptIds.delete(id);
-        await this.dispatcher.dispatch(
-          new PromptAccepted({
-            agentId: this.scopeContext.agentId,
-            promptId: id,
-            content: stripBundledSkillBlocks(message),
-          }),
-        );
-        return this.enqueuePrompt({ id, message });
-      },
-      dispose: () => {
-        this.reservedPromptIds.delete(id);
-      },
     };
   }
 

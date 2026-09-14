@@ -2964,12 +2964,12 @@ describe('AgentTranscriptProjector', () => {
     expect(turnOps('t0', tx.getItems()).state).toBe('failed');
   });
 
-  it('tracks the prompt queue from accepted/queued through terminal', () => {
+  it('tracks the prompt queue from submitted/queued through terminal', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
-    feed(ev({ type: 'prompt.accepted', promptId: 'p1' }));
+    feed(ev({ type: 'prompt.submitted', promptId: 'p1', userMessageId: 'p1', status: 'running', content: [{ type: 'text', text: 'now' }], createdAt: '2026-08-20T00:00:00.000Z' }));
     expect(tx.getPrompt('p1')).toMatchObject({ status: 'running' });
     feed(ev({ type: 'prompt.queued', promptId: 'p2', content: [{ type: 'text', text: 'later' }], queueLength: 1 }));
     expect(tx.getPrompt('p2')).toMatchObject({ status: 'queued' });

@@ -6,7 +6,7 @@ import type {
   ContextMessage,
   SkillActivationOrigin,
 } from '#/agent/contextMemory/types';
-import { IAgentLoopService, reservePrompt, type PromptLaunchResult, type Turn } from '#/agent/loop/loop';
+import { IAgentLoopService, type PromptLaunchResult, type Turn } from '#/agent/loop/loop';
 import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventService } from '#/app/event/event';
@@ -146,9 +146,8 @@ export class AgentSkillService implements IAgentSkillService {
     for (const activation of prepared) {
       void this.recordActivation(activation.origin);
     }
-    const reservation = reservePrompt(this.loop);
-    try {
-      const handle = await reservation.submit({
+    const handle = await this.loop.enqueuePrompt({
+      message: {
         role: 'user',
         content: [...prepared.map((activation) => activation.part), ...input.input],
         toolCalls: [],
@@ -157,24 +156,22 @@ export class AgentSkillService implements IAgentSkillService {
           skillActivations: prepared.map((activation) => activation.entry),
           attachments: input.attachments,
         },
-      });
-      if (handle.state === 'pending') {
-        return { prompt_id: handle.id, created_at: handle.createdAt, state: 'queued' };
-      }
-      const turn = await handle.launched;
-      if (turn === undefined && handle.state !== 'blocked') {
-        throw new Error2(ErrorCodes.INTERNAL, 'promptWithSkills failed to launch a turn');
-      }
-      if (turn !== undefined) await turn.ready.catch(() => undefined);
-      return {
-        turn_id: turn?.id,
-        prompt_id: handle.id,
-        created_at: handle.createdAt,
-        state: handle.state === 'blocked' ? 'blocked' : 'running',
-      };
-    } finally {
-      reservation.dispose();
+      },
+    });
+    if (handle.state === 'pending') {
+      return { prompt_id: handle.id, created_at: handle.createdAt, state: 'queued' };
     }
+    const turn = await handle.launched;
+    if (turn === undefined && handle.state !== 'blocked') {
+      throw new Error2(ErrorCodes.INTERNAL, 'promptWithSkills failed to launch a turn');
+    }
+    if (turn !== undefined) await turn.ready.catch(() => undefined);
+    return {
+      turn_id: turn?.id,
+      prompt_id: handle.id,
+      created_at: handle.createdAt,
+      state: handle.state === 'blocked' ? 'blocked' : 'running',
+    };
   }
 
   recordModelToolActivation(origin: SkillActivationOrigin): void {

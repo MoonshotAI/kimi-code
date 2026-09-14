@@ -187,21 +187,6 @@ export interface PromptSubmitContext {
   block: boolean;
 }
 
-export interface PromptReservation extends IDisposable {
-  readonly id: string;
-  submit(message: ContextMessage): Promise<PromptHandle>;
-}
-
-export const promptAdmission = Symbol('promptAdmission');
-
-type PromptAdmissionHook = (promptId?: string) => PromptReservation;
-
-export function reservePrompt(service: IAgentLoopService, promptId?: string): PromptReservation {
-  return (service as IAgentLoopService & { [promptAdmission]: PromptAdmissionHook })[
-    promptAdmission
-  ](promptId);
-}
-
 export interface LoopNotify {
   readonly message?: ContextMessage;
   readonly turnScoped?: boolean;

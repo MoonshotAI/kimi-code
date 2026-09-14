@@ -29,7 +29,6 @@ import type {
   PromptSteered,
   PromptSubmitted,
 } from '@moonshot-ai/agent-core-v2/agent/prompt/promptEvents';
-import type { PromptAccepted } from '@moonshot-ai/agent-core-v2/agent/prompt/promptOps';
 import type {
   ShellCompleted,
   ShellOutput,
@@ -87,7 +86,6 @@ export type ProjectionBusEvent =
   | ({ readonly type: 'subagent.suspended' } & SubagentSuspended)
   | ({ readonly type: 'goal.updated' } & GoalUpdated)
   | ({ readonly type: 'agent.status.updated' } & AgentStatusUpdated)
-  | ({ readonly type: 'prompt.accepted' } & PromptAccepted)
   | ({ readonly type: 'prompt.queued' } & PromptQueued)
   | ({ readonly type: 'prompt.submitted' } & PromptSubmitted)
   | ({ readonly type: 'prompt.started' } & PromptStarted)

@@ -264,7 +264,6 @@ describe('Agent resume', () => {
 
       await vi.waitFor(() => {
         const types = persistence.appended.map((record) => record.type);
-        expect(types).toContain('prompt.accepted');
         expect(types).toContain('prompt.completed');
       });
     } finally {

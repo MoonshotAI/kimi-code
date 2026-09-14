@@ -24,7 +24,7 @@
 // cross-reducers), blobs (the folding states whose blob codec offloads inline
 // media to blob storage), owner (the source file declaring the class).
 
-// Index (60 record types)
+// Index (59 record types)
 //   config.update                      profile                                               src/agent/profile/profileOps.ts
 //   context.append_loop_event          contextMemory, turn                                   src/agent/contextMemory/contextEvents.ts
 //   context.append_message             contextMemory, plan, task.notificationDelivery        src/agent/contextMemory/contextEvents.ts
@@ -58,7 +58,6 @@
 //   plugin.session_start               pluginSessionStartSnapshot                            src/agent/plugin/agentPluginOps.ts
 //   profile.bind                       profile, profile.activeTools                          src/agent/profile/profileOps.ts
 //   prompt.aborted                     (none)                                                src/agent/prompt/promptEvents.ts
-//   prompt.accepted                    promptAdmission                                       src/agent/prompt/promptOps.ts
 //   prompt.completed                   (none)                                                src/agent/prompt/promptEvents.ts
 //   prompt.steered                     (none)                                                src/agent/prompt/promptEvents.ts
 //   runtime.set_binding                runtimeBinding                                        src/agent/runtimeBinding/runtimeBindingOps.ts
@@ -535,17 +534,6 @@ interface PromptAbortedPayload {
 }
 
 /**
- * states: promptAdmission
- * owner: src/agent/prompt/promptOps.ts
- */
-interface PromptAcceptedPayload {
-  _name: 'prompt.accepted';
-  agentId: string;
-  promptId: string;
-  content?: any;
-}
-
-/**
  * states: (none)
  * owner: src/agent/prompt/promptEvents.ts
  */
@@ -929,7 +917,6 @@ interface WirePayloadMap {
   "plugin.session_start": PluginSessionStartPayload;
   "profile.bind": ProfileBindPayload;
   "prompt.aborted": PromptAbortedPayload;
-  "prompt.accepted": PromptAcceptedPayload;
   "prompt.completed": PromptCompletedPayload;
   "prompt.steered": PromptSteeredPayload;
   "runtime.set_binding": RuntimeSetBindingPayload;

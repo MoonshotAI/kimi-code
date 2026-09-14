@@ -21,9 +21,8 @@ import {
   ProfileError,
   type PromptHandle,
   type PromptQueueSnapshot,
-  type PromptReservation,
   type PromptWithSkillsResult,
-  reservePrompt,
+  newMessageId,
   ISessionContext,
   resumeSessionById,
   ITelemetryService,
@@ -214,7 +213,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     async (req, reply) => {
       const { session_id } = req.params;
       let preparedMedia: PromptMediaPreparation | undefined;
-      let reservation: PromptReservation | undefined;
+      let reservation: PromptIdReservation | undefined;
       let enqueued = false;
       try {
         const session = await resolveSession(core, session_id);
@@ -247,7 +246,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           session.accessor.get(ISessionMediaStore),
         );
         resolved ??= await resolvePromptFromSession(session, req.body.agent_id);
-        reservation = reservePrompt(resolved.prompt, req.body.prompt_id);
+        reservation = reservePromptId(session_id, req.body.prompt_id);
         const sessionModel = resolved.profile.getModel();
         const switchingProfile =
           req.body.profile !== undefined &&
@@ -346,12 +345,16 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           eventService: core.accessor.get(IEventService),
           sessionId: session_id,
         }, promptMetadataTextFromContentParts(parts));
-        const handle = await reservation.submit({
-          role: 'user',
-          content: parts,
-          toolCalls: [],
-          origin: { kind: 'user', attachments: promptAttachments },
+        const handle = await resolved.prompt.enqueuePrompt({
+          id: reservation.id,
+          message: {
+            role: 'user',
+            content: parts,
+            toolCalls: [],
+            origin: { kind: 'user', attachments: promptAttachments },
+          },
         });
+        reservation.submit();
         enqueued = true;
         const staging = preparedMedia;
         void Promise.race([handle.launched, handle.completion]).then(
@@ -490,6 +493,40 @@ export function projectPromptSnapshot(prompt: PromptQueueSnapshot['pending'][num
     status,
     content: projectPromptContentParts(content),
     created_at: prompt.createdAt,
+  };
+}
+
+interface PromptIdReservation {
+  readonly id: string;
+  submit(): void;
+  dispose(): void;
+}
+
+const reservedPromptIds = new Map<string, Set<string>>();
+
+function reservePromptId(sessionId: string, promptId?: string): PromptIdReservation {
+  if (promptId !== undefined && promptId.length === 0) {
+    throw new Error2(ErrorCodes.REQUEST_INVALID, 'prompt_id must not be empty');
+  }
+  let reserved = reservedPromptIds.get(sessionId);
+  if (reserved === undefined) {
+    reserved = new Set<string>();
+    reservedPromptIds.set(sessionId, reserved);
+  }
+  if (promptId !== undefined && reserved.has(promptId)) {
+    throw new Error2(ErrorCodes.PROMPT_ID_CONFLICT, `prompt_id '${promptId}' is already in use`);
+  }
+  const id = promptId ?? newMessageId();
+  reserved.add(id);
+  let submitted = false;
+  return {
+    id,
+    submit: () => {
+      submitted = true;
+    },
+    dispose: () => {
+      if (!submitted) reserved.delete(id);
+    },
   };
 }
 
