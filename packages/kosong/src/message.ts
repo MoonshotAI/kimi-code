@@ -5,6 +5,7 @@ export type Role = 'system' | 'user' | 'assistant' | 'tool';
 export interface TextPart {
   type: 'text';
   text: string;
+  contentType?: string;
 }
 
 export interface ThinkPart {

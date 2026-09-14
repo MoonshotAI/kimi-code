@@ -188,6 +188,7 @@ export class AgentMessageProjector {
   private readonly interactions = new Map<string, InteractionRecord>();
   private readonly users = new Map<string, UserRecord>();
   private readonly prompts = new Map<string, PromptRecord>();
+  private readonly turnPromptInputs = new Map<string, readonly ContentPart[]>();
   private readonly stepOrdinals = new Map<string, number>();
   private readonly stepUsageByTurn = new Map<string, StepUsage[]>();
   private mergedSteers: { text: string; promptIds: string[] }[] = [];
@@ -218,6 +219,8 @@ export class AgentMessageProjector {
         return this.onPlanRevision(event);
       case 'turn.started':
         return this.onTurnStarted(event);
+      case 'turn.prompt':
+        return this.onTurnPrompt(event);
       case 'turn.ended':
         return this.onTurnEnded(event);
       case 'turn.step.started':
@@ -623,6 +626,16 @@ export class AgentMessageProjector {
     return ops;
   }
 
+  private onTurnPrompt(event: {
+    turnId?: number;
+    input: readonly ContentPart[];
+  }): ServerMessage[] {
+    if (typeof event.turnId === 'number') {
+      this.turnPromptInputs.set(turnIdOf(event.turnId), event.input);
+    }
+    return [];
+  }
+
   private onTurnStarted(event: {
     time: number;
     turnId: number;
@@ -644,6 +657,8 @@ export class AgentMessageProjector {
     const attachmentIds = attachments.map((_, index) => attachmentIdOf(turnId, index + 1));
     this.attachmentSeq = attachmentIds.length;
     const promptRecord = event.promptId === undefined ? undefined : this.prompts.get(event.promptId);
+    const promptInput = this.turnPromptInputs.get(turnId);
+    this.turnPromptInputs.delete(turnId);
     const promptText =
       event.prompt ??
       (promptRecord === undefined ? undefined : promptTextOf(promptRecord.content));
@@ -677,9 +692,11 @@ export class AgentMessageProjector {
         messageId: turn.userMessageId,
         turnId,
         text:
-          promptRecord === undefined
-            ? textPartsOf(promptText ?? '')
-            : wireContentParts(promptRecord.content),
+          promptInput === undefined
+            ? promptRecord === undefined
+              ? textPartsOf(promptText ?? '')
+              : wireContentParts(promptRecord.content)
+            : wireContentParts(promptInput.slice(bundledSkillCount(event.origin))),
         status: 'read',
         timestamp: event.time,
         origin: userOriginOf(event.origin),
@@ -2306,6 +2323,15 @@ export function promptTextOf(content: readonly ContentPart[]): string {
     .join('');
 }
 
+function bundledSkillCount(origin: unknown): number {
+  const candidate = origin as
+    | { kind?: unknown; skillActivations?: readonly unknown[] }
+    | null
+    | undefined;
+  if (candidate?.kind !== 'user') return 0;
+  return candidate.skillActivations?.length ?? 0;
+}
+
 export function steerKeyOf(
   input: readonly ContentPart[],
   skipBlocks: number,
@@ -2327,7 +2353,11 @@ export function wireContentParts(content: readonly ContentPart[]): WireContentPa
   for (const part of content) {
     switch (part.type) {
       case 'text':
-        out.push({ type: 'text', text: part.text, meta: {} });
+        out.push({
+          type: 'text',
+          text: part.text,
+          meta: part.contentType === undefined ? {} : { contentType: part.contentType },
+        });
         break;
       case 'think':
         out.push({ type: 'think', text: part.think, meta: {} });

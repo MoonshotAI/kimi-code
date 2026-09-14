@@ -5,7 +5,7 @@ import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { IAgentLoopService } from '#/agent/loop/loop';
 import type { IEventBus } from '#/app/event/eventBus';
 import type { IAgentReminderService } from '#/features/reminder/reminderService';
-import { wrapSystemReminder } from '#/features/reminder/systemReminder';
+import { createHistoryMessageBuilder } from '#human/agent/historyBuilder';
 import type {
   ContextInjectionContent,
   ContextInjectionMessage,
@@ -67,7 +67,7 @@ export function createReminderHarness(
         if (content.trim().length === 0) continue;
         context.append({
           role: 'user',
-          content: [{ type: 'text', text: wrapSystemReminder(content) }],
+          content: [...createHistoryMessageBuilder().systemReminder(content).parts()],
           toolCalls: [],
           origin,
         });

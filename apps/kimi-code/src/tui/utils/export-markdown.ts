@@ -108,7 +108,9 @@ const INTERNAL_ORIGINS = new Set<PromptOrigin['kind']>([
 export function isInternalMessage(msg: ContextMessage): boolean {
   const origin = msg.origin;
   if (origin === undefined) return false;
-  return INTERNAL_ORIGINS.has(origin.kind);
+  if (INTERNAL_ORIGINS.has(origin.kind)) return true;
+  if (origin.kind === 'user') return false;
+  return msg.content.some((part) => part.type === 'text' && part.contentType === 'text/xml');
 }
 
 export function groupIntoTurns(history: readonly ContextMessage[]): ContextMessage[][] {

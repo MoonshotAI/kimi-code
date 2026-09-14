@@ -1,10 +1,12 @@
 import type {
   AgentReplayRecord,
+  ContentPart,
   ContextMessage,
   GoalChange,
   PermissionMode,
   ResumedAgentState,
   Session,
+  TextPromptPart,
   ToolCall,
 } from '@moonshot-ai/kimi-code-sdk';
 
@@ -659,7 +661,7 @@ export class SessionReplayRenderer {
       ...replayEntry(
         context,
         'cron',
-        extractCronPrompt(contentPartsToText(message.content)),
+        cronPromptText(message.content),
         'plain',
       ),
       cronData: {
@@ -676,7 +678,7 @@ export class SessionReplayRenderer {
     if (message.origin?.kind !== 'cron_missed') return;
     this.flushAssistant(context);
     this.host.appendTranscriptEntry({
-      ...replayEntry(context, 'cron', stripCronEnvelope(contentPartsToText(message.content)), 'plain'),
+      ...replayEntry(context, 'cron', cronPromptText(message.content), 'plain'),
       cronData: {
         missedCount: message.origin.count,
       },
@@ -875,25 +877,18 @@ function isModelBlockedGoalLifecycle(change: GoalReplayLifecycleChange): boolean
   return change.status === 'blocked' && change.actor === 'model';
 }
 
-function extractCronPrompt(text: string): string {
+function cronPromptText(content: readonly ContentPart[]): string {
+  const envelope = content
+    .filter((part): part is TextPromptPart => part.type === 'text' && part.contentType === 'text/xml')
+    .map((part) => part.text)
+    .join('');
+  if (envelope.length === 0) return contentPartsToText(content);
   const open = '<prompt>\n';
   const close = '\n</prompt>';
-  const start = text.indexOf(open);
-  const end = text.lastIndexOf(close);
+  const start = envelope.indexOf(open);
+  const end = envelope.lastIndexOf(close);
   if (start >= 0 && end >= start + open.length) {
-    return text.slice(start + open.length, end);
+    return envelope.slice(start + open.length, end);
   }
-  return stripCronEnvelope(text);
-}
-
-function stripCronEnvelope(text: string): string {
-  const lines = text.split('\n');
-  if (
-    lines.length >= 2 &&
-    lines[0]?.startsWith('<cron-fire ') &&
-    lines.at(-1) === '</cron-fire>'
-  ) {
-    return lines.slice(1, -1).join('\n');
-  }
-  return text;
+  return envelope;
 }

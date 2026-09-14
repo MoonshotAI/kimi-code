@@ -1,3 +1,4 @@
+import { createHistoryMessageBuilder } from '#/agent/historyBuilder';
 import type { ContentPart, ToolCall } from '#/llm/message';
 import type { TokenUsage } from '#/llm/usage';
 import { readTodoItems, type TodoItem } from '#/todo/todoItem';
@@ -212,14 +213,10 @@ function replaceMessageText(message: V2ContextMessage, text: string): V2ContextM
   return { ...message, content: [{ type: 'text', text }], toolCalls: [] };
 }
 
-function wrapSystemReminder(content: string): string {
-  return `<system-reminder>\n${content.trim()}\n</system-reminder>`;
-}
-
 function createCompactionSummaryMessage(text: string): V2ContextMessage {
   return {
     role: 'user',
-    content: [{ type: 'text', text }],
+    content: [...createHistoryMessageBuilder().plain(text).parts()],
     toolCalls: [],
     origin: { kind: 'compaction_summary' },
   };
@@ -229,12 +226,11 @@ function createCompactionElisionMessage(omittedTokens: number): V2ContextMessage
   return {
     role: 'user',
     content: [
-      {
-        type: 'text',
-        text: wrapSystemReminder(
+      ...createHistoryMessageBuilder()
+        .systemReminder(
           `Some of this conversation's user messages were omitted here during compaction: the messages above this note are the oldest user input, the messages below are the most recent, and roughly ${String(omittedTokens)} tokens in between were dropped. The omitted content is covered by the compaction summary at the end of the conversation.`,
-        ),
-      },
+        )
+        .parts(),
     ],
     toolCalls: [],
     origin: { kind: 'injection', variant: 'compaction_elision' },

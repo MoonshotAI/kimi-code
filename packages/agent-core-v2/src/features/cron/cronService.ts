@@ -23,6 +23,7 @@ import type { CronDeletedEvent, CronScheduledEvent } from '#/app/telemetry/event
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { BugIndicatingError } from '#/errors';
 import type { ContentPart } from '#human/llm/message';
+import { createHistoryMessageBuilder } from '#human/agent/historyBuilder';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
@@ -176,7 +177,7 @@ function deliverFire(
   try {
     runtime.get(IAgentLoopService).submit(
       {
-        message: { role: 'user', content: [{ type: 'text', text: renderCronFireXml(origin, task.prompt) }] },
+        message: createHistoryMessageBuilder().xml(renderCronFireXml(origin, task.prompt)).userMessage(),
         meta: { origin },
       },
       { steerIfActive: true },

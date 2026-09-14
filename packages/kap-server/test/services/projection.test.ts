@@ -317,6 +317,12 @@ describe('AgentMessageProjector', () => {
     const projector = makeProjector();
     const messages = feedAll(projector, [
       ev({
+        type: 'turn.prompt',
+        turnId: 1,
+        input: [{ type: 'text', text: 'check the queue', contentType: 'text/xml' }],
+        origin: { kind: 'cron_job', jobId: 'job-1', cron: '*/5 * * * *', recurring: true, coalescedCount: 0, stale: false },
+      }),
+      ev({
         type: 'turn.started',
         turnId: 1,
         origin: { kind: 'cron_job', jobId: 'job-1', cron: '*/5 * * * *', recurring: true, coalescedCount: 0, stale: false },
@@ -327,7 +333,7 @@ describe('AgentMessageProjector', () => {
     expect(turn.origin).toEqual({ kind: 'cron' });
     const user = ofType(messages, 'user')[0]!;
     expect(user).toMatchObject({
-      text: [{ type: 'text', text: 'check the queue', meta: {} }],
+      text: [{ type: 'text', text: 'check the queue', meta: { contentType: 'text/xml' } }],
       status: 'read',
       origin: { kind: 'cron', cron_id: 'job-1', schedule: '*/5 * * * *' },
     });
@@ -338,7 +344,7 @@ describe('AgentMessageProjector', () => {
       ev({
         type: 'turn.steer',
         turnId: 1,
-        input: [{ type: 'text', text: 'fire now' }],
+        input: [{ type: 'text', text: 'fire now', contentType: 'text/xml' }],
         origin: { kind: 'cron_job', jobId: 'job-2', cron: '0 * * * *', recurring: false, coalescedCount: 1, stale: false },
       }),
       messages,
@@ -346,6 +352,7 @@ describe('AgentMessageProjector', () => {
     const steered = ofType(messages, 'user').at(-1)!;
     expect(steered).toMatchObject({
       message_id: 't1.u1',
+      text: [{ type: 'text', text: 'fire now', meta: { contentType: 'text/xml' } }],
       status: 'read',
       timestamp: T0,
       origin: { kind: 'cron', cron_id: 'job-2', schedule: '0 * * * *' },

@@ -14,6 +14,7 @@ import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { applyPromptMetadataUpdate } from '#/session/sessionMetadata/promptMetadata';
 import { IEventDispatcher } from '#/state/eventDispatcher';
+import { createHistoryMessageBuilder } from '#human/agent/historyBuilder';
 
 import {
   IAgentPluginCommandService,
@@ -66,7 +67,7 @@ export class AgentPluginCommandService implements IAgentPluginCommandService {
       }),
     );
     this.loop.submit({
-      message: { role: 'user', content: [{ type: 'text', text: expanded }] },
+      message: createHistoryMessageBuilder().plain(expanded).userMessage(),
       meta: { origin, tracked: true },
     });
     if (this.scopeContext.agentId === MAIN_AGENT_ID) {

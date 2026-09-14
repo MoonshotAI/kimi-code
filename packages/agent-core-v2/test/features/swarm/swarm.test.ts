@@ -24,7 +24,7 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import { ISessionSwarmService, type SessionSwarmRunResult, type SessionSwarmTask } from '#/features/swarm/session/sessionSwarm';import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
-import { wrapSystemReminder } from '#/features/reminder/systemReminder';
+import { createHistoryMessageBuilder } from '#human/agent/historyBuilder';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import { AgentSwarmService } from '#/features/swarm/agent/swarmService';
 import SWARM_MODE_ENTER_REMINDER from '../../../src/features/swarm/agent/enter-reminder.md?raw';
@@ -94,7 +94,7 @@ function swarmReminder(
 ): ContextMessage {
   return {
     role: 'user',
-    content: [{ type: 'text', text: wrapSystemReminder(content) }],
+    content: [...createHistoryMessageBuilder().systemReminder(content).parts()],
     toolCalls: [],
     origin: { kind: 'injection', variant: 'swarm_mode', disclosure },
   };
@@ -331,7 +331,7 @@ describe('AgentSwarmService', () => {
         if (typeof result.content === 'string') {
           context.append({
             role: 'user',
-            content: [{ type: 'text', text: wrapSystemReminder(result.content) }],
+            content: [...createHistoryMessageBuilder().systemReminder(result.content).parts()],
             toolCalls: [],
             origin: { kind: 'injection', variant: 'swarm_mode', disclosure: result.disclosure },
           });

@@ -216,7 +216,14 @@ describe('foldWireHistory origin classification', () => {
       [11, { kind: 'background_task', taskId: 'task-7' }],
     ];
     const records: ContextRecord[] = prompts.map(([ordinal, origin]) =>
-      rec('turn.prompt', { input: [{ type: 'text', text: `p${ordinal}` }], origin }, T0 + ordinal),
+      rec('turn.prompt', {
+        input: [
+          ordinal === 1
+            ? { type: 'text', text: `p${ordinal}`, contentType: 'text/xml' }
+            : { type: 'text', text: `p${ordinal}` },
+        ],
+        origin,
+      }, T0 + ordinal),
     );
     const messages = fold(records);
     const turns = ofType(messages, 'turn');
@@ -244,6 +251,7 @@ describe('foldWireHistory origin classification', () => {
     ]);
     const cronUser = ofType(messages, 'user').find((u) => u.turn_id === 't1')!;
     expect(cronUser.origin).toEqual({ kind: 'cron', cron_id: 'j1', schedule: '*/5 * * * *' });
+    expect(cronUser.text[0]?.meta).toEqual({ contentType: 'text/xml' });
     expect(ofType(messages, 'user').some((u) => u.turn_id === 't4')).toBe(false);
     const skillUser = ofType(messages, 'user').find((u) => u.turn_id === 't9')!;
     expect(skillUser.origin).toEqual({ kind: 'skill', skill_name: 'review', trigger: 'user-slash' });

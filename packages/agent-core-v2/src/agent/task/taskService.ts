@@ -43,6 +43,7 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { createHistoryMessageBuilder } from '#human/agent/historyBuilder';
 import {
   IAgentTaskService,
   type AgentTaskLoadOptions,
@@ -1274,12 +1275,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       if (this.hasDeliveredNotification(key)) return undefined;
       this.scheduledNotificationKeys.add(key);
       const notification = buildAgentTaskNotification(info, output);
-      const content = [
-        {
-          type: 'text',
-          text: renderNotificationXml(notification),
-        },
-      ] as const;
+      const content = createHistoryMessageBuilder().xml(renderNotificationXml(notification)).parts();
       return { content, origin, notification };
     } finally {
       this.buildingNotificationKeys.delete(key);
