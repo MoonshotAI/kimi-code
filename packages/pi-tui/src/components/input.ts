@@ -461,14 +461,9 @@ export class Input implements Component, Focusable {
 				// Strict slicing drops a grapheme straddling startCol, so the
 				// displayed slice actually begins at the next grapheme boundary.
 				let alignedStart = 0;
-				let column = 0;
 				for (const grapheme of segmenter.segment(this.value)) {
-					if (column >= startCol) {
-						alignedStart = column;
-						break;
-					}
-					column += visibleWidth(grapheme.segment);
-					alignedStart = column;
+					if (alignedStart >= startCol) break;
+					alignedStart += visibleWidth(grapheme.segment);
 				}
 				this.renderedStartColumn = alignedStart;
 				visibleText = sliceByColumn(this.value, startCol, scrollWidth, true);

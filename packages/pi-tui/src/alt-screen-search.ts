@@ -262,7 +262,7 @@ export class AltScreenSearchComponent implements Component, Focusable {
 			...event,
 			x: event.x - 1,
 			y: 0,
-			width: Math.max(1, this.inputAreaWidth),
+			width: this.inputAreaWidth,
 			height: 1,
 		});
 	}
