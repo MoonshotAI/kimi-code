@@ -19,6 +19,9 @@
  */
 
 import {
+  type ErrorCode,
+  Error2,
+  type FinishReason,
   IProtocolAdapterRegistry,
   type IProtocolAdapterRegistry as IProtocolAdapterRegistryType,
   type Message,
@@ -37,6 +40,15 @@ interface ScriptedResponse {
   readonly parts: readonly StreamedMessagePart[];
   readonly finishReason?: FinishReason | null;
   readonly rawFinishReason?: string | null;
+}
+
+/**
+ * A scripted `generate()` rejection. `throwError` lets the test pick the
+ * concrete class (`Error2` to carry a typed code, plain `Error` to simulate
+ * an un-coded engine failure).
+ */
+interface ScriptedError {
+  readonly throwError: Error;
 }
 
 const ZERO_USAGE: TokenUsage = {
@@ -84,7 +96,7 @@ class ScriptedChatProvider {
   readonly thinkingEffort = null;
 
   constructor(
-    private readonly queue: ScriptedResponse[],
+    private readonly queue: Array<ScriptedResponse | ScriptedError>,
     private readonly calls: Array<readonly Message[]>,
   ) {}
 
@@ -101,6 +113,10 @@ class ScriptedChatProvider {
         `scriptedProvider: unexpected generate() call #${String(this.calls.length + 1)} — ` +
           `queue exhausted. Push another response via mockNextResponse().`,
       );
+    }
+    if ('throwError' in response) {
+      this.calls.push(history);
+      throw response.throwError;
     }
     this.calls.push(history);
     return new ScriptedStream(response.parts, response, this.calls.length);
@@ -128,6 +144,13 @@ export interface ScriptedProvider {
     readonly finishReason?: FinishReason | null;
     readonly rawFinishReason?: string | null;
   }): void;
+  /**
+   * Push a coded provider error for the next `generate()` call. The thrown
+   * error is an `Error2` so the engine translates it into a `turn.ended`
+   * event carrying `error.code` verbatim, letting the ACP layer branch on
+   * `isProviderError` / `isAuthError` without extra wiring.
+   */
+  mockNextProviderError(code: ErrorCode, message: string): void;
   /** Number of `generate()` calls the engine has made so far. */
   callCount(): number;
   /** The `history` argument of every `generate()` call so far, in order. */
@@ -135,7 +158,7 @@ export interface ScriptedProvider {
 }
 
 export function createScriptedProvider(): ScriptedProvider {
-  const queue: ScriptedResponse[] = [];
+  const queue: Array<ScriptedResponse | ScriptedError> = [];
   const calls: Array<readonly Message[]> = [];
   // Single shared provider so every ModelImpl in the process (main agent,
   // sub-agents) draws from the same FIFO queue.
@@ -208,6 +231,9 @@ export function createScriptedProvider(): ScriptedProvider {
         finishReason: response.finishReason,
         rawFinishReason: response.rawFinishReason,
       });
+    },
+    mockNextProviderError: (code, message) => {
+      queue.push({ throwError: new Error2(code, message) });
     },
     callCount: () => calls.length,
     callHistory: () => calls,
