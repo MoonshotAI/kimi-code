@@ -358,9 +358,10 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         }
 
         const provider: ProviderConfig = { ...target, type: req.body.type };
-        provider.apiKey = req.body.api_key ?? target.apiKey;
+        const submittedApiKey = req.body.api_key?.trim();
+        provider.apiKey = submittedApiKey ?? target.apiKey;
         provider.apiKeyEnv =
-          req.body.api_key !== undefined && req.body.api_key.length > 0
+          submittedApiKey !== undefined && submittedApiKey.length > 0
             ? undefined
             : target.apiKeyEnv;
         provider.baseUrl = req.body.base_url;

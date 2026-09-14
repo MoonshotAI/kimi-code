@@ -650,6 +650,32 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     }
   });
 
+  it('treats a whitespace-only api_key as empty instead of dropping api_key_env', async () => {
+    await boot(ENV_KEY_TOML);
+    vi.stubEnv('KIMI_TEST_REPLACE_ROUTE_KEY', 'sk-env');
+    try {
+      const { status, body } = await putJson<{ provider: { has_api_key: boolean } }>(
+        '/api/v1/providers/openai',
+        { ...REPLACE_BODY, api_key: '   ' },
+      );
+      expect(status).toBe(200);
+      expect(body.data.provider.has_api_key).toBe(true);
+
+      const onDisk = await readConfigToml();
+      expect(onDisk['providers']).toEqual({
+        openai: {
+          type: 'openai',
+          api_key: '',
+          api_key_env: 'KIMI_TEST_REPLACE_ROUTE_KEY',
+          base_url: 'https://api.openai.example/v1',
+          default_model: 'openai/gpt-4.1',
+        },
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('merges onto existing model records: unknown fields preserved, form fields authoritative', async () => {
     const RICH_TOML = [
       '[providers.openai]',
