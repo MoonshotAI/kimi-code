@@ -79,8 +79,6 @@ export interface SubagentActivitySpawn {
   readonly agentName: string;
   readonly description?: string;
   readonly parentToolCallId: string;
-  readonly model?: string;
-  readonly effort?: string;
 }
 
 const LIVE_OUTPUT_TAIL_CHARS = 200;
@@ -125,8 +123,6 @@ export class SubagentActivityStore {
       agentName: spawn.agentName,
       description: spawn.description,
       parentToolCallId: spawn.parentToolCallId,
-      model: spawn.model,
-      effort: spawn.effort,
       steps: [],
       totalSteps: 0,
       status: 'running',
@@ -134,6 +130,14 @@ export class SubagentActivityStore {
     };
     this.records.set(spawn.agentId, record);
     return record;
+  }
+
+  setDisplayMeta(agentId: string, meta: { model?: string; effort?: string }): void {
+    const record = this.records.get(agentId);
+    if (record === undefined) return;
+    if (meta.model !== undefined) record.model = meta.model;
+    if (meta.effort !== undefined) record.effort = meta.effort;
+    this.bump(record);
   }
 
   get(agentId: string): SubagentActivityRecord | undefined {

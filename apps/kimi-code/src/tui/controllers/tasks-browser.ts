@@ -6,7 +6,6 @@ import { TaskOutputViewer } from '../components/dialogs/task-output-viewer';
 import { TasksBrowserApp, type TasksFilter } from '../components/dialogs/tasks-browser';
 import type { Theme } from '#/tui/theme';
 import type { CustomEditor } from '../components/editor/custom-editor';
-import type { AppState } from '../types';
 import {
   beginScreenTakeover,
   endScreenTakeover,
@@ -22,7 +21,6 @@ export interface TasksBrowserHost {
     readonly terminal: ProcessTerminal;
     readonly ui: TUI;
     readonly editor: CustomEditor;
-    readonly appState: Pick<AppState, 'availableModels'>;
   };
   readonly backgroundTasks: ReadonlyMap<string, BackgroundTaskInfo>;
   readonly sessionEventHandler: SessionEventHandler;
@@ -88,7 +86,7 @@ export class TasksBrowserController {
         tailOutput: undefined,
         tailLoading: false,
         flashMessage: undefined,
-        availableModels: state.appState.availableModels,
+        ...this.detailMeta(selectedTaskId),
         ...this.buildCallbacks(),
       },
       state.terminal,
@@ -253,10 +251,23 @@ export class TasksBrowserController {
       tailOutput: browser.tailOutput,
       tailLoading: browser.tailLoading,
       flashMessage: browser.flashMessage,
-      availableModels: this.host.state.appState.availableModels,
+      ...this.detailMeta(browser.selectedTaskId),
       ...this.buildCallbacks(),
     });
     this.host.state.ui.requestRender();
+  }
+
+  private detailMeta(taskId: string | undefined): {
+    detailModel?: string;
+    detailEffort?: string;
+  } {
+    const info = taskId === undefined ? undefined : this.host.backgroundTasks.get(taskId);
+    const agentId = info?.kind === 'agent' ? info.agentId : undefined;
+    const record =
+      agentId === undefined
+        ? undefined
+        : this.host.sessionEventHandler.subAgentEventHandler.activityStore.get(agentId);
+    return { detailModel: record?.model, detailEffort: record?.effort };
   }
 
   private buildCallbacks(): {

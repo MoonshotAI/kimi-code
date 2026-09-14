@@ -39,6 +39,8 @@ export const agentStateMessageSchema = z.object({
   ended_at: isoDateTimeSchema.optional(),
   status: agentStatusSchema,
   finish_reason: agentFinishReasonSchema.optional(),
+  model: z.string().optional(),
+  thinking_effort: z.string().optional(),
 });
 
 export type AgentStateMessage = z.infer<typeof agentStateMessageSchema>;

@@ -81,8 +81,6 @@ export type TaskInfo = TaskInfoBase &
         readonly kind: 'agent';
         readonly agentId?: string;
         readonly subagentType?: string;
-        readonly model?: string;
-        readonly thinkingEffort?: string;
       }
     | {
         readonly kind: 'question';

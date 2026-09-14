@@ -344,9 +344,6 @@ export class SubagentTool implements ISubagentTool {
       parentToolCallId: toolCallId,
       model: displayModel,
       modelSource: displayModelSource,
-      thinkingEffort: this.agentLifecycle.handleOf(agentId)
-        ?.accessor.get(IAgentProfileService)
-        .getEffectiveThinkingLevel(),
       completion: mirrored.then((r) => ({
         result: r.summary,
         usage: r.usage,

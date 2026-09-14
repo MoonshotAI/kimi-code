@@ -376,7 +376,7 @@ describe('TowerSpawnTool', () => {
     expect(createdSetMode).toHaveBeenCalledWith('auto');
   });
 
-  it('carries the bound model and the spawned agent thinking effort into the registered task info', async () => {
+  it('registers the spawned worker as an agent task with its identity fields', async () => {
     createdThinkingEffort = 'high';
 
     const result = await execute(WORKER_ARGS);
@@ -394,19 +394,9 @@ describe('TowerSpawnTool', () => {
       kind: 'agent',
       agentId: 'agent-7',
       subagentType: 'tower-worker',
-      model: 'kimi-code',
-      thinkingEffort: 'high',
     });
-  });
-
-  it('carries the configured secondary model into the registered task info', async () => {
-    secondaryModel = { model: 'cheap/fast' };
-
-    const result = await execute(WORKER_ARGS);
-
-    expect(result.isError).toBeUndefined();
-    const task = registerTask.mock.calls[0]?.[0] as SubagentTask;
-    expect(task.model).toBe('cheap/fast');
+    expect(info).not.toHaveProperty('model');
+    expect(info).not.toHaveProperty('thinkingEffort');
   });
 
   it('binds the configured secondary model and reports it in the output and activity log', async () => {

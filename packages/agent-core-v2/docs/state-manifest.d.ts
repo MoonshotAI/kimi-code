@@ -1108,8 +1108,6 @@ export interface AgentStateSnapshot {
     readonly kind: 'agent';
     readonly agentId?: string;
     readonly subagentType?: string;
-    readonly model?: string;
-    readonly thinkingEffort?: string;
     readonly stopCode?: string;
     readonly parentToolCallId?: string;
     readonly taskId: string;
@@ -1159,8 +1157,6 @@ export interface AgentStateSnapshot {
     readonly kind: 'agent';
     readonly agentId?: string;
     readonly subagentType?: string;
-    readonly model?: string;
-    readonly thinkingEffort?: string;
     readonly stopCode?: string;
     readonly parentToolCallId?: string;
     readonly taskId: string;

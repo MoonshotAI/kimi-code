@@ -83,6 +83,15 @@ export class SubAgentEventHandler {
     // below swallows events whose parent card is gone (Ctrl+B) or never
     // existed (run_in_background) — that data is the background detail view.
     this.activityStore.applyEvent(event);
+    if (event.type === 'agent.status.updated') {
+      this.activityStore.setDisplayMeta(childAgentId, {
+        model:
+          event.model === undefined
+            ? undefined
+            : modelDisplayName(event.model, this.host.state.appState.availableModels[event.model]),
+        effort: this.subagentEffortDisplay(event.thinkingEffort),
+      });
+    }
 
     const info = this.subagentInfo.get(childAgentId);
     if (info === undefined || info.parentToolCallId.length === 0) return true;
@@ -417,8 +426,6 @@ export class SubAgentEventHandler {
       parentToolCallId: event.parentToolCallId,
       agentName: event.subagentName,
       description: typeof description === 'string' ? description : undefined,
-      model: this.spawnedModelDisplay(event),
-      effort: this.subagentEffortDisplay(event.thinkingEffort),
     };
   }
 
@@ -454,27 +461,17 @@ export class SubAgentEventHandler {
       agentName: event.subagentName,
       description: event.description,
       parentToolCallId: event.parentToolCallId,
-      model: this.spawnedModelDisplay(event),
-      effort: this.subagentEffortDisplay(event.thinkingEffort),
     });
   }
 
   private handleForegroundSubagentSpawned(
     event: SubagentLifecycleEventOf<'subagent.spawned'>,
   ): void {
-    // The spawned event carries the display-normalized bound alias (newer
-    // cores) — show it at spawn instead of waiting for the child's first
-    // status frame. The `agent.status.updated` channel below stays as the
-    // in-run update/fallback path.
-    const modelDisplay = this.spawnedModelDisplay(event);
-    const effortDisplay = this.subagentEffortDisplay(event.thinkingEffort);
     if (this.updateAgentSwarmProgress(event.parentToolCallId, (progress) => {
       progress.registerSubagent({
         agentId: event.subagentId,
         swarmIndex: event.swarmIndex,
       });
-      if (modelDisplay !== undefined) progress.setModelDisplay(modelDisplay);
-      if (effortDisplay !== undefined) progress.setEffortDisplay(effortDisplay);
     })) {
       return;
     }
@@ -487,18 +484,6 @@ export class SubAgentEventHandler {
       agentName: event.subagentName,
       runInBackground: event.runInBackground,
     });
-    if (modelDisplay !== undefined || effortDisplay !== undefined) {
-      tc.updateSubagentMetrics({ modelDisplay, effortDisplay });
-    }
-  }
-
-  /** Map the spawned event's bound alias to a display name via the loaded
-   *  model catalog; falls back to the alias itself for unknown entries. */
-  private spawnedModelDisplay(
-    event: SubagentLifecycleEventOf<'subagent.spawned'>,
-  ): string | undefined {
-    if (event.model === undefined) return undefined;
-    return modelDisplayName(event.model, this.host.state.appState.availableModels[event.model]);
   }
 
   /** Concrete effort levels are always shown; the boolean states carry no

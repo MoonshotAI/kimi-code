@@ -744,8 +744,6 @@ describe('foldWireHistory interactions, facts and modes', () => {
             kind: 'agent',
             agentId: 'sub-1',
             status: 'running',
-            model: 'k2',
-            thinkingEffort: 'high',
             parentToolCallId: 'call_9',
           },
         },
@@ -757,8 +755,6 @@ describe('foldWireHistory interactions, facts and modes', () => {
       task_id: 'task_legacy_9',
       kind: 'subagent',
       child_agent_id: 'sub-1',
-      model: 'k2',
-      thinking_effort: 'high',
     });
     const tool = ofType(messages, 'tool_call')[0]!;
     expect(tool).toMatchObject({
@@ -821,8 +817,6 @@ describe('foldWireHistory interactions, facts and modes', () => {
       child_agent_id: 'agent-9',
       description: 'team #1',
       result_summary: 'resume report',
-      model: 'k2',
-      thinking_effort: 'high',
     });
     expect(memberTasks[1]).toMatchObject({
       status: 'completed',

@@ -1483,44 +1483,17 @@ describe('replayBackgroundProjection', () => {
     } as BackgroundTaskInfo;
   }
 
-  it('threads the persisted model (catalog-mapped) and concrete effort into the metadata', () => {
-    const projection = replayBackgroundProjection(
-      [agentTask({ model: 'k2-cheap', thinkingEffort: 'low' })],
-      {
-        'k2-cheap': {
-          provider: 'managed:kimi-code',
-          model: 'kimi-k2-cheap',
-          displayName: 'Kimi K2 Cheap',
-        },
-      } as never,
-    );
-    expect(projection.backgroundAgentMetadata.get('agent-1')).toMatchObject({
-      model: 'Kimi K2 Cheap',
-      effort: 'low',
-    });
-  });
-
-  it('falls back to the raw alias and drops boolean effort states', () => {
+  it('keeps running agent tasks keyed by agent id and skips terminal or non-agent rows', () => {
     const projection = replayBackgroundProjection([
-      agentTask({ model: 'k2-cheap', thinkingEffort: 'on' }),
-      agentTask({
-        taskId: 'agent-task2',
-        agentId: 'agent-2',
-        model: 'k2-cheap',
-        thinkingEffort: 'off',
-      }),
+      agentTask(),
+      agentTask({ taskId: 'agent-task2', agentId: 'agent-2', status: 'completed' }),
+      { taskId: 'proc-1', kind: 'process', status: 'running', startedAt: 1, endedAt: null } as BackgroundTaskInfo,
     ]);
+    expect([...projection.backgroundAgentMetadata.keys()]).toEqual(['agent-1']);
     expect(projection.backgroundAgentMetadata.get('agent-1')).toMatchObject({
-      model: 'k2-cheap',
-      effort: undefined,
+      agentId: 'agent-1',
+      parentToolCallId: 'agent-task1',
+      description: 'background job',
     });
-    expect(projection.backgroundAgentMetadata.get('agent-2')?.effort).toBeUndefined();
-  });
-
-  it('omits model and effort for records that predate the fields', () => {
-    const projection = replayBackgroundProjection([agentTask()]);
-    const meta = projection.backgroundAgentMetadata.get('agent-1');
-    expect(meta?.model).toBeUndefined();
-    expect(meta?.effort).toBeUndefined();
   });
 });

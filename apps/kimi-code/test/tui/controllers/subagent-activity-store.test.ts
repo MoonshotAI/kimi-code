@@ -23,8 +23,6 @@ function spawn(overrides: Partial<SubagentActivitySpawn> = {}): SubagentActivity
     agentName: 'explore',
     description: 'find things',
     parentToolCallId: 'tc-1',
-    model: 'K3',
-    effort: 'high',
     ...overrides,
   };
 }

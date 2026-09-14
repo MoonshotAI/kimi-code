@@ -26,8 +26,6 @@ export interface SubagentSpawnedPayload {
   readonly description?: string;
   readonly swarmIndex?: number;
   readonly runInBackground: boolean;
-  readonly model?: string;
-  readonly thinkingEffort?: string;
   readonly taskId?: string;
 }
 
@@ -129,8 +127,6 @@ export function emitAgentRunSpawned(
       description: meta.description,
       swarmIndex: meta.swarmIndex,
       runInBackground: meta.runInBackground ?? false,
-      model: meta.model,
-      thinkingEffort: childProfile?.getEffectiveThinkingLevel(),
       taskId: meta.taskId,
     }),
   );

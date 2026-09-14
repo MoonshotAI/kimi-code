@@ -36,7 +36,7 @@ describe('task-store', () => {
       taskId: 'call_agent', kind: 'agent', description: 'explore repo',
       agentId: 'agent-1', subagentType: 'Explore', status: 'running',
       detached: true, startedAt: 3000, endedAt: null,
-      model: 'kimi-for-coding', thinkingEffort: 'high', stopCode: 'end_turn',
+      stopCode: 'end_turn',
     });
     await writeTask(sessionDir, 'call_question.json', {
       taskId: 'call_question', kind: 'question', description: 'ask user',
@@ -64,8 +64,6 @@ describe('task-store', () => {
     expect(agent).toMatchObject({
       agentId: 'agent-1',
       subagentType: 'Explore',
-      model: 'kimi-for-coding',
-      thinkingEffort: 'high',
       stopCode: 'end_turn',
     });
     const question = tasks.find((t) => t.kind === 'question');
