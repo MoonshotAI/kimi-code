@@ -15,10 +15,10 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function userMsg(text: string, origin?: PromptOrigin): ContextMessage {
+function userMsg(text: string, origin?: PromptOrigin, contentType?: string): ContextMessage {
   return {
     role: 'user',
-    content: [{ type: 'text', text }],
+    content: [{ type: 'text', text, contentType }],
     toolCalls: [],
     origin,
   };
@@ -194,6 +194,9 @@ describe('isInternalMessage', () => {
         }),
       ),
     ).toBe(true);
+    expect(
+      isInternalMessage(userMsg('x', { kind: 'shell_command', phase: 'input' }, 'text/xml')),
+    ).toBe(true);
   });
 
   it('marks cron_missed origin as internal', () => {
@@ -204,6 +207,22 @@ describe('isInternalMessage', () => {
 
   it('keeps real user messages', () => {
     expect(isInternalMessage(userMsg('hello', { kind: 'user' }))).toBe(false);
+    expect(isInternalMessage(userMsg('hello', { kind: 'user' }, 'text/xml'))).toBe(false);
+    expect(
+      isInternalMessage(
+        userMsg(
+          'hello',
+          {
+            kind: 'plugin_command',
+            activationId: 'a1',
+            pluginId: 'p1',
+            commandName: 'c1',
+            trigger: 'user-slash',
+          },
+          'text/plain',
+        ),
+      ),
+    ).toBe(false);
   });
 
   it('keeps assistant messages', () => {

@@ -15,6 +15,7 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentEvent2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { Error2, ErrorCodes } from '#/errors';
+import { createHistoryMessageBuilder } from '#human/agent/historyBuilder';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import {
@@ -230,20 +231,18 @@ export class AgentShellCommandService implements IAgentShellCommandService {
   }
 
   private appendShellInput(command: string): void {
-    const text = `<bash-input>\n${escapeXml(command)}\n</bash-input>`;
     this.context.append({
       role: 'user',
-      content: [{ type: 'text', text }],
+      content: [...createHistoryMessageBuilder().xml(`<bash-input>\n${escapeXml(command)}\n</bash-input>`).parts()],
       toolCalls: [],
       origin: { kind: 'shell_command', phase: 'input' },
     });
   }
 
   private appendShellOutput(stdout: string, stderr: string, isError?: boolean): void {
-    const text = `<bash-stdout>${escapeXml(stdout)}</bash-stdout><bash-stderr>${escapeXml(stderr)}</bash-stderr>`;
     this.context.append({
       role: 'user',
-      content: [{ type: 'text', text }],
+      content: [...createHistoryMessageBuilder().xml(`<bash-stdout>${escapeXml(stdout)}</bash-stdout><bash-stderr>${escapeXml(stderr)}</bash-stderr>`).parts()],
       toolCalls: [],
       origin:
         isError === true
@@ -255,7 +254,7 @@ export class AgentShellCommandService implements IAgentShellCommandService {
   private notifyBackgrounded(output: string): void {
     this.loop.submit(
       {
-        message: { role: 'user', content: [{ type: 'text', text: output }] },
+        message: createHistoryMessageBuilder().plain(output).userMessage(),
         meta: { origin: { kind: 'injection', variant: 'shell_command_backgrounded' } as PromptOrigin },
       },
       { steerIfActive: true },

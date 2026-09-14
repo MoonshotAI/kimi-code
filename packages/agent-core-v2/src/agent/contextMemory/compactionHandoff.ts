@@ -1,6 +1,6 @@
 import { estimateTokens, estimateTokensForMessage, estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
 import type { ContentPart } from '#human/llm/message';
-import { wrapSystemReminder } from '#/features/reminder/systemReminder';
+import { createHistoryMessageBuilder, systemReminderText } from '#human/agent/historyBuilder';
 import summaryPrefixTemplate from './compaction-summary-prefix.md?raw';
 import type { ContextMessage, PromptOrigin } from './types';
 
@@ -131,7 +131,7 @@ export function buildCompactionSummaryText(summary: string): string {
 export function createCompactionSummaryMessage(text: string): ContextMessage {
   return {
     role: 'user',
-    content: [{ type: 'text', text }],
+    content: [...createHistoryMessageBuilder().plain(text).parts()],
     toolCalls: [],
     origin: { kind: 'compaction_summary' },
   };
@@ -140,31 +140,35 @@ export function createCompactionSummaryMessage(text: string): ContextMessage {
 export function createCompactionElisionMessage(omittedTokens: number): ContextMessage {
   return {
     role: 'user',
-    content: [{ type: 'text', text: buildCompactionElisionText(omittedTokens) }],
+    content: [...createHistoryMessageBuilder().systemReminder(compactionElisionContent(omittedTokens)).parts()],
     toolCalls: [],
     origin: { kind: 'injection', variant: COMPACTION_ELISION_VARIANT },
   };
 }
 
 export function buildCompactionElisionText(omittedTokens: number): string {
-  return wrapSystemReminder(
-    `Some of this conversation's user messages were omitted here during compaction: the messages above this note are the oldest user input, the messages below are the most recent, and roughly ${String(omittedTokens)} tokens in between were dropped. The omitted content is covered by the compaction summary at the end of the conversation.`,
-  );
+  return systemReminderText(compactionElisionContent(omittedTokens));
+}
+
+function compactionElisionContent(omittedTokens: number): string {
+  return `Some of this conversation's user messages were omitted here during compaction: the messages above this note are the oldest user input, the messages below are the most recent, and roughly ${String(omittedTokens)} tokens in between were dropped. The omitted content is covered by the compaction summary at the end of the conversation.`;
 }
 
 export function createCompactionContinuationMessage(): ContextMessage {
   return {
     role: 'user',
-    content: [{ type: 'text', text: buildCompactionContinuationText() }],
+    content: [...createHistoryMessageBuilder().systemReminder(compactionContinuationContent()).parts()],
     toolCalls: [],
     origin: { kind: 'injection', variant: COMPACTION_CONTINUATION_VARIANT },
   };
 }
 
 export function buildCompactionContinuationText(): string {
-  return wrapSystemReminder(
-    'Context compaction is complete — continue the work that was in progress when it began.',
-  );
+  return systemReminderText(compactionContinuationContent());
+}
+
+function compactionContinuationContent(): string {
+  return 'Context compaction is complete — continue the work that was in progress when it began.';
 }
 
 export function collectCompactableUserMessages<T extends MessageLike>(messages: readonly T[]): T[] {

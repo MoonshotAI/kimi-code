@@ -674,7 +674,7 @@ describe('Agent resume', () => {
     expect(ctx.context.get()).toEqual([
       expect.objectContaining({
         role: 'user',
-        content: [{ type: 'text', text: 'Compacted implementation notes.' }],
+        content: [{ type: 'text', text: 'Compacted implementation notes.', contentType: 'text/plain' }],
         origin: { kind: 'compaction_summary' },
       }),
     ]);

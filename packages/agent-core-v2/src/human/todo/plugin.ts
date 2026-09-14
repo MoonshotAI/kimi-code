@@ -1,5 +1,5 @@
 import type { AgentEventStore } from '#/agent/slices';
-import { createUserMessage } from '#/llm/message';
+import { createHistoryMessageBuilder } from '#/agent/historyBuilder';
 import type { Plugin } from '#/plugin';
 
 import { readTodoState } from './slice';
@@ -26,9 +26,11 @@ export function createTodoPlugin(store: AgentEventStore): TodoPlugin {
         if (todos.every((todo) => todo.status === 'done')) return;
         if (currentTurn - lastWriteTurn !== STALE_TURNS) return;
         target.notify(
-          createUserMessage(
-            `<system-reminder>\nThe todo list has not been updated recently. If the work is still in progress, update the list to reflect the current progress.\n${renderTodoList(todos)}\n</system-reminder>`,
-          ),
+          createHistoryMessageBuilder()
+            .systemReminder(
+              `The todo list has not been updated recently. If the work is still in progress, update the list to reflect the current progress.\n${renderTodoList(todos)}`,
+            )
+            .userMessage(),
         );
       });
     },

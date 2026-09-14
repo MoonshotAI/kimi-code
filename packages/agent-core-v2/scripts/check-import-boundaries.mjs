@@ -41,6 +41,7 @@ function basesInternalViolation(absFile, targetAbs, specifier) {
 }
 
 const HUMAN_VOCABULARY = new Set([
+  'agent/historyBuilder',
   'agent/origin',
   'llm/message',
   'llm/usage',

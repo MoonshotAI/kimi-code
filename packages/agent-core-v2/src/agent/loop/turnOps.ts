@@ -44,6 +44,7 @@ const turnPromptSchema = z.object({
 export class TurnPrompt extends AgentEvent2<z.infer<typeof turnPromptSchema>> {
   static override readonly type = 'turn.prompt';
   static override readonly durable = true;
+  static override readonly observable = true;
   static override readonly schema = turnPromptSchema;
 }
 export interface TurnPrompt {
