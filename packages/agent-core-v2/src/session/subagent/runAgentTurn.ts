@@ -38,15 +38,16 @@ export async function runAgentTurn(
 ): Promise<AgentRunHandle> {
   options.signal.throwIfAborted();
   const loop = target.accessor.get(IAgentLoopService);
-  const turn =
-    request.kind === 'prompt'
-      ? await (await loop.enqueuePrompt({ message: {
-          role: 'user',
-          content: [{ type: 'text', text: request.prompt }],
-          toolCalls: [],
-          origin: AGENT_RUN_PROMPT_ORIGIN,
-        } })).launched
-      : await loop.retryPrompt();
+  const { id } = request.kind === 'prompt'
+    ? loop.submit({
+        message: { role: 'user', content: [{ type: 'text', text: request.prompt }] },
+        meta: { origin: AGENT_RUN_PROMPT_ORIGIN, tracked: true },
+      })
+    : loop.submit({
+        message: { role: 'user', content: [] },
+        meta: { origin: { kind: 'retry' } },
+      });
+  const turn = await loop.promptHandle(id)?.launched;
   if (turn === undefined) throw new Error2(ErrorCodes.INTERNAL, 'Agent turn could not be started');
 
   if (options.onReady !== undefined) {

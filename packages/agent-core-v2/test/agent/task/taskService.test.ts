@@ -300,8 +300,8 @@ describe('AgentTaskService', () => {
 
     await svc.wait(taskId, 1000);
     const loop = stubLoop();
-    await waitForCondition(() => loop.hasPendingRequests());
-    expect(loop.hasPendingRequests()).toBe(true);
+    await waitForCondition(() => loop.snapshot().hasPendingRequests);
+    expect(loop.snapshot().hasPendingRequests).toBe(true);
 
     loop.drainNextBatch({ append: () => {} });
     armOnRead = true;
@@ -309,7 +309,7 @@ describe('AgentTaskService', () => {
     await svc.wait(second, 1000);
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    expect(loop.hasPendingRequests()).toBe(false);
+    expect(loop.snapshot().hasPendingRequests).toBe(false);
   });
 
   it('markTasksDeliveredViaWait suppresses the automatic terminal notification', async () => {
@@ -319,10 +319,10 @@ describe('AgentTaskService', () => {
 
     await svc.wait(taskId, 1000);
     const loop = stubLoop();
-    await waitForCondition(() => loop.hasPendingRequests());
+    await waitForCondition(() => loop.snapshot().hasPendingRequests);
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    expect(loop.hasPendingRequests()).toBe(false);
+    expect(loop.snapshot().hasPendingRequests).toBe(false);
     expect(loop.launches).toEqual([]);
 
     const deliveryKey = `${taskId}\0completed\0task:${taskId}:completed`;
@@ -337,21 +337,21 @@ describe('AgentTaskService', () => {
 
     await svc.wait(taskId, 1000);
     const loop = stubLoop();
-    await waitForCondition(() => loop.hasPendingRequests());
-    expect(loop.hasPendingRequests()).toBe(true);
+    await waitForCondition(() => loop.snapshot().hasPendingRequests);
+    expect(loop.snapshot().hasPendingRequests).toBe(true);
 
     svc.markTasksDeliveredViaWait([{ taskId, status: 'completed' }]);
 
-    expect(loop.hasPendingRequests()).toBe(false);
+    expect(loop.snapshot().hasPendingRequests).toBe(false);
 
     const second = svc.registerTask(outputtingTask('done\n'));
     await svc.wait(second, 1000);
-    await waitForCondition(() => loop.hasPendingRequests());
-    expect(loop.hasPendingRequests()).toBe(true);
+    await waitForCondition(() => loop.snapshot().hasPendingRequests);
+    expect(loop.snapshot().hasPendingRequests).toBe(true);
 
     await svc.suppressAllTerminalNotifications();
 
-    expect(loop.hasPendingRequests()).toBe(false);
+    expect(loop.snapshot().hasPendingRequests).toBe(false);
   });
 
   it('suppresses only the notification whose status was reported via wait', async () => {
@@ -361,9 +361,9 @@ describe('AgentTaskService', () => {
 
     await svc.wait(taskId, 1000);
     const loop = stubLoop();
-    await waitForCondition(() => loop.hasPendingRequests());
+    await waitForCondition(() => loop.snapshot().hasPendingRequests);
 
-    expect(loop.hasPendingRequests()).toBe(true);
+    expect(loop.snapshot().hasPendingRequests).toBe(true);
   });
 
   it('keeps the automatic notification of tasks that were not reported via wait', async () => {
@@ -375,7 +375,7 @@ describe('AgentTaskService', () => {
     await svc.wait(taskA, 1000);
     await svc.wait(taskB, 1000);
     const loop = stubLoop();
-    await waitForCondition(() => loop.hasPendingRequests());
+    await waitForCondition(() => loop.snapshot().hasPendingRequests);
 
     const context = ix.get(IAgentContextMemoryService) as StubContextMemory;
     loop.drainNextBatch(context);
@@ -548,7 +548,7 @@ describe('AgentTaskService', () => {
         terminalNotificationSuppressed: true,
       });
     }
-    expect(stubLoop().hasPendingRequests()).toBe(false);
+    expect(stubLoop().snapshot().hasPendingRequests).toBe(false);
   });
 
   it('stopAllOnExit does not persist a foreground-only task', async () => {
@@ -602,7 +602,7 @@ describe('AgentTaskService', () => {
 
     expect(svc.getTask(taskId)?.status).toBe('killed');
     expect(svc.getTask(taskId)?.terminalNotificationSuppressed).toBeUndefined();
-    expect(stubLoop().hasPendingRequests()).toBe(false);
+    expect(stubLoop().snapshot().hasPendingRequests).toBe(false);
   });
 
   it('dispose aborts live tasks as a last resort', async () => {

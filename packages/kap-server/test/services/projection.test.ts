@@ -1087,9 +1087,17 @@ describe('SessionProjection', () => {
           }
           if (token === IAgentLoopService) {
             return {
-              status: () => ({ state: 'idle' }),
-              activitySnapshot: () => agent.activity,
-              promptQueue: () => ({ active: undefined, pending: [], launching: false }),
+              snapshot: () => ({
+                state: 'idle' as const,
+                activeTurnId: undefined,
+                activePromptId: undefined,
+                queue: [],
+                notificationCount: 0,
+                paused: false,
+                hasPendingRequests: false,
+                turn: agent.activity.turn,
+                activeTraceId: undefined,
+              }),
             };
           }
           if (token === IAgentTaskService) {

@@ -1,12 +1,11 @@
 import type { IAgentLLMRequesterService, AgentLLMRequestFinish, AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import type { PromptOrigin } from '#/agent/contextMemory/types';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { ModelRequestTiming } from '#/llm-adapter/model/model-requester';
 import type { ToolInfo, ToolResult as AgentToolResult, ToolUpdate as AgentToolUpdate } from '#/tool/toolContract';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
-import { createAgentMachine, type PromptGate } from '#human/agent/machine';
-import { createTurnMachine, type AssistantEntry, type HistoryMessage } from '#human/agent/turn';
+import { createAgentMachine, type PromptGate, type PromptGateVerdict } from '#human/agent/machine';
+import { createTurnMachine, type AssistantEntry, type HistoryMessage, type SystemEntry, type UserEntry } from '#human/agent/turn';
 import { messageAppended, turnEnded } from '#human/agent/events';
 import { agentSlices, type AgentEventStore } from '#human/agent/slices';
 import { credentialsRecovery } from '#human/credentials/credentials';
@@ -15,7 +14,7 @@ import type { ExternalEvent } from '#human/eventStore/events';
 import { memoryJournal, type SyncStoreJournal } from '#human/eventStore/journal';
 import type { LlmErrorMessage } from '#human/llm/errors';
 import type { FinishInfo } from '#human/llm/finish-reason';
-import type { StreamedMessagePart, UserMessage } from '#human/llm/message';
+import type { StreamedMessagePart } from '#human/llm/message';
 import { UNKNOWN_CAPABILITY } from '#human/llm/capability';
 import type { LlmModel } from '#human/llm/model';
 import type { LlmRecovery, LlmRecoveryRecord } from '#human/llm/requester/recovery';
@@ -24,12 +23,14 @@ import { resolveMaxAttempts } from '#human/llm/requester/retry';
 import type { ToolResult as MachineToolResult, ToolUpdate } from '#human/tool/executor';
 import { createToolMachine } from '#human/tool/machine';
 import type { ToolDefinition } from '#human/tool/tool';
-import type { TokenUsage } from '#human/llm/usage';
+import { emptyUsage, type TokenUsage } from '#human/llm/usage';
 import type { Actor, Subscription } from '#human/xstate2';
 
 import { createMachineRequester, type MachineRequester, type MachineRequesterGateDecision } from './requester';
 import { createMachineTools, type MachineTools, type ToolResultExtras } from './tools';
 import { seededStoreJournal } from './storeJournal';
+
+export type { PromptGateVerdict };
 
 export type MachineEngineDelta =
   | { readonly kind: 'assistant'; readonly delta: string }
@@ -160,6 +161,7 @@ export interface MachineEngineSnapshot {
   readonly aborting: boolean;
   readonly waitingForBackground: boolean;
   readonly paused: boolean;
+  readonly queue: readonly UserEntry[];
   readonly queueLength: number;
   readonly queueIds: readonly (string | undefined)[];
   readonly notificationCount: number;
@@ -169,17 +171,10 @@ export interface MachineEngineSnapshot {
 }
 
 export interface MachineEngine {
-  submit(input: {
-    readonly id?: string;
-    readonly message: UserMessage;
-    readonly origin?: PromptOrigin;
-    readonly tracked?: boolean;
-    readonly createdAt?: string;
-    readonly userMessageId?: string;
-  }): void;
+  submit(entry: UserEntry): void;
   steer(id: string | readonly string[]): void;
-  notify(message: UserMessage): void;
-  remind(key: string, message: UserMessage): void;
+  notify(entry: UserEntry): void;
+  remind(key: string, entry: SystemEntry | UserEntry): void;
   cancelQueueItem(id: string): void;
   abort(): void;
   pause(): void;
@@ -210,7 +205,7 @@ interface MachineSnapshotLike {
   readonly children: Record<string, { getSnapshot(): TurnSnapshotLike } | undefined>;
   readonly context: {
     readonly turnId: number;
-    readonly queue: readonly { readonly id?: string }[];
+    readonly queue: readonly UserEntry[];
     readonly notifications: readonly unknown[];
     readonly reminders: readonly unknown[];
     readonly background: Record<string, unknown>;
@@ -427,16 +422,16 @@ export function attachMachineEngine(
         type: 'stepCompleted',
         step: currentStep,
         entry: event.entry,
-        usage: finish?.usage ?? meta.usage,
+        usage: finish?.usage ?? meta?.usage ?? emptyUsage(),
         finish:
           finish !== undefined
             ? {
                 finishReason: finish.providerFinishReason ?? null,
                 rawFinishReason: finish.rawFinishReason ?? null,
               }
-            : meta.finish,
-        messageId: finish?.providerMessageId ?? meta.messageId,
-        model: finish?.model ?? meta.model?.model,
+            : meta?.finish,
+        messageId: finish?.providerMessageId ?? meta?.messageId,
+        model: finish?.model ?? meta?.model?.model,
         timing: finish?.timing,
         traceId: finish?.traceId,
       });
@@ -503,29 +498,21 @@ export function attachMachineEngine(
   ];
 
   return {
-    submit: (input) => {
+    submit: (entry) => {
       tools.sync();
-      ref.send({
-        type: 'input.submit',
-        id: input.id,
-        message: input.message,
-        origin: input.origin,
-        tracked: input.tracked,
-        createdAt: input.createdAt,
-        userMessageId: input.userMessageId,
-      });
+      ref.send({ type: 'input.submit', entry });
     },
     steer: (id) => {
       tools.sync();
       ref.send({ type: 'input.steer', id });
     },
-    notify: (message) => {
+    notify: (entry) => {
       tools.sync();
-      ref.send({ type: 'input.notify', message });
+      ref.send({ type: 'input.notify', entry });
     },
-    remind: (key, message) => {
+    remind: (key, entry) => {
       tools.sync();
-      ref.send({ type: 'input.remind', key, message });
+      ref.send({ type: 'input.remind', key, entry });
     },
     cancelQueueItem: (id) => {
       ref.send({ type: 'input.cancel', id });
@@ -597,8 +584,9 @@ export function attachMachineEngine(
           typeof value === 'object' && value !== null && 'idle' in value &&
           (value as { idle?: unknown }).idle === 'waiting',
         paused: snapshot.context.paused,
+        queue: snapshot.context.queue,
         queueLength: snapshot.context.queue.length,
-        queueIds: snapshot.context.queue.map((entry) => entry.id),
+        queueIds: snapshot.context.queue.map((entry) => entry.meta?.promptId),
         notificationCount: snapshot.context.notifications.length,
         reminderCount: snapshot.context.reminders.length,
         backgroundCount: Object.keys(snapshot.context.background).length,

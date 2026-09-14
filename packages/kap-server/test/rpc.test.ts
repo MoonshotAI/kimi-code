@@ -357,7 +357,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
     await createMainAgent(id);
     const { body } = await call<{ turn?: unknown }>(
       'POST',
-      rpc('agent', IAgentLoopService, 'activitySnapshot', { sid: id, aid: 'main' }),
+      rpc('agent', IAgentLoopService, 'snapshot', { sid: id, aid: 'main' }),
     );
     expect(body.code).toBe(0);
     expect(body.data.turn).toBeUndefined();

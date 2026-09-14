@@ -107,7 +107,7 @@ function submit(session: SessionActor, agentId: string, text: string): void {
   session.send({
     type: 'agent.send',
     agentId,
-    event: { type: 'input.submit', message: createUserMessage(text) },
+    event: { type: 'input.submit', entry: { message: createUserMessage(text) } },
   });
 }
 

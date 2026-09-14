@@ -6,8 +6,7 @@ import {
   inputSteered,
   inputSubmitted,
 } from '#/agent/events';
-import type { QueuedPrompt } from '#/agent/slices';
-import type { HistoryMessage, UserEntry } from '#/agent/turn';
+import { createUserEntry, type HistoryMessage, type SystemEntry, type UserEntry } from '#/agent/turn';
 import type { ExternalEvent } from '#/eventStore/events';
 import type { UserMessage } from '#/llm/message';
 import type { AgentActorRef } from '#/session/machine';
@@ -93,7 +92,7 @@ interface PendingSnapshot {
 }
 
 interface QuiesceSnapshot extends PendingSnapshot {
-  queue: QueuedPrompt[];
+  queue: UserEntry[];
   history: HistoryMessage[];
   nextTurnId: number;
   branch: string;
@@ -180,14 +179,14 @@ function replayPendingDelta(
   const snapNotifications = new Set(snap.notifications);
   for (const entry of pending.notifications) {
     if (!snapNotifications.has(entry)) {
-      deps.actor.send({ type: 'input.notify', message: entry.message });
+      deps.actor.send({ type: 'input.notify', entry });
     }
   }
   const snapReminders = new Set(snap.reminders);
   for (const entry of pending.reminders) {
-    if (snapReminders.has(entry) || entry.meta.key === undefined) continue;
+    if (snapReminders.has(entry) || entry.meta?.key === undefined) continue;
     if (entry.message.role !== 'system' && entry.message.role !== 'user') continue;
-    deps.actor.send({ type: 'input.remind', key: entry.meta.key, message: entry.message });
+    deps.actor.send({ type: 'input.remind', key: entry.meta.key, entry: entry as SystemEntry | UserEntry });
   }
 }
 
@@ -318,7 +317,7 @@ export function createCompactionMachine(deps: CompactionMachineDeps) {
           replayPendingDelta(deps, input.snap, input.pending);
           const continuation = (deps.continuation ?? defaultContinuation)(input.reason);
           if (continuation !== undefined) {
-            deps.actor.send({ type: 'input.submit', message: continuation });
+            deps.actor.send({ type: 'input.submit', entry: createUserEntry(continuation) });
           }
           deps.actor.send({ type: 'input.continue' });
         },

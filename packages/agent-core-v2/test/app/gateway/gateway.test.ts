@@ -8,7 +8,7 @@ import { type IAgentScopeHandle, type ISessionScopeHandle } from '#/_base/di/sco
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { IRestGateway } from '#/app/gateway/gateway';
 import { RestGateway } from '#/app/gateway/gatewayService';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
@@ -17,6 +17,7 @@ import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import type { UserEntry } from '#human/agent/turn';
 import { stubLog } from '../../_base/log/stubs';
 import { stubLoopWithHooks, type StubLoop } from '../../agent/loop/stubs';
 
@@ -50,7 +51,7 @@ describe('RestGateway', () => {
     ix = disposables.add(new TestInstantiationService());
     promptCalls = [];
     turnService = stubLoopWithHooks({ hasActiveTurn: true });
-    turnService.enqueuePrompt = ({ message }: { message: ContextMessage }) => { promptCalls.push(message); return Promise.resolve({ id: 'p', launched: Promise.resolve(undefined) } as never); };
+    turnService.submit = (input: UserEntry) => { promptCalls.push({ ...input.message, toolCalls: [], origin: input.meta?.origin as PromptOrigin | undefined }); return { id: 'p' }; };
 
     const agentHandle: IAgentScopeHandle = {
       id: 'main',

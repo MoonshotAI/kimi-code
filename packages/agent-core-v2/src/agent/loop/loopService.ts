@@ -32,17 +32,15 @@ import { OrderedHookSlot } from '#/hooks';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
 import { newMessageId } from '#/agent/contextMemory/messageId';
-import { USER_PROMPT_ORIGIN, type ContextMessage, type PromptOrigin } from '#/agent/contextMemory/types';
+import { type ContextMessage, type PromptOrigin } from '#/agent/contextMemory/types';
 import { gateImageFormatParts } from '#/agent/media/image-compress';
 import { daemonFileRefFromPart } from '#/agent/media/mediaRef';
 import { materializePromptDaemonRefs } from '#/agent/media/promptMediaIntake';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
-import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IFileService } from '#/app/file/fileService';
-import { IEventService } from '#/app/event/event';
 import type {
   TurnEndedEvent as TurnEndedTelemetryEvent,
   TurnInterruptedEvent,
@@ -51,10 +49,6 @@ import type {
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IWireService } from '#/wire/wire';
-import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
-import { applyPromptMetadataUpdate } from '#/session/sessionMetadata/promptMetadata';
 import {
   PromptAborted,
   PromptCompleted,
@@ -63,38 +57,32 @@ import {
   PromptSteered,
   PromptSubmitted,
 } from '#/agent/prompt/promptEvents';
-import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
 import { LOOP_CONTROL_SECTION, type LoopControl } from './configSection';
 import {
   createMaxStepsExceededError,
   IAgentLoopService,
   isMaxStepsExceededError,
   type AfterStepContext,
-  type AgentActivitySnapshot,
-  type AgentLoopStatus,
+  type LoopCancelTarget,
   type LoopError,
   type LoopErrorContext,
   type LoopErrorHandler,
   type LoopErrorHandlerRegistrationOptions,
   type LoopNotify,
   type LoopNotifyHandle,
-  type LoopPromptSubmit,
   type LoopRunResult,
+  type LoopSnapshot,
+  type LoopSubmitOptions,
+  type LoopSubmitResult,
   type PromptCompletion,
   type PromptHandle,
-  type PromptInput,
-  type PromptLaunchResult,
-  type PromptPayload,
-  type PromptQueueSnapshot,
-  type PromptSnapshot,
   type PromptState,
   type PromptSubmitContext,
-  type SteerPayload,
   type Turn,
   type TurnResult,
 } from './loop';
-import { launchedTurnId } from './promptQueue';
 import { mergeSteerMessages, stripBundledSkillBlocks } from '#human/agent/origin';
+import { createUserEntry, type UserEntry } from '#human/agent/turn';
 import {
   AssistantDelta,
   isDisplayablePromptOrigin,
@@ -125,6 +113,7 @@ import {
   type MachineEngineAttachRef,
   type MachineEngineEvent,
   type MachineTurnOutcome,
+  type PromptGateVerdict,
 } from './machine';
 
 export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error';
@@ -147,7 +136,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   };
 
   private readonly errorHandlers: LoopErrorHandler[] = [];
-  private readonly reservations: TurnReservation[] = [];
+  private readonly promptRecords = new Map<string, PromptRecord>();
+  private readonly pendingSubmissions: PromptRecord[] = [];
   private readonly nudges: Nudge[] = [];
   private nudgeCursor = 0;
   private active: ActiveTurn | undefined;
@@ -157,9 +147,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private quiescenceDepth = 0;
   private activeRequestTrace: LLMRequestTrace | undefined;
   private engine: MachineEngine | undefined;
-  private promptLaunching = false;
-  private promptLaunchingReservation: TurnReservation | undefined;
-  private fullCompactionService: IAgentFullCompactionService | undefined;
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
@@ -174,9 +161,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IWireService private readonly wire: IWireService,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
-    @IEventService private readonly eventService: IEventService,
-    @ISessionMetadata private readonly metadata: ISessionMetadata,
-    @ISessionContext private readonly sessionContext: ISessionContext,
   ) {
     super();
     this.states.contributeState(turnKey);
@@ -225,7 +209,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
               step: this.active.gatedSteps,
             },
       gate: (signal) => this.gate(signal),
-      promptGate: (queueItemId) => this.runPromptGate(queueItemId),
+      promptGate: (queueItemId, message) => this.runPromptGate(queueItemId, message),
       onTrace: (trace) => {
         this.activeRequestTrace = trace;
       },
@@ -256,11 +240,37 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         await next();
       });
     }
-    if (this.quiescenceDepth === 0 && !this.disposing) {
+    this.rebuildRestoredRecords();
+    if (this.quiescenceDepth > 0) {
+      this.machineEngine().pause();
+    }
+    if (!this.disposing) {
       this.drainPendingToMachine();
       this.maybeSettle();
     }
     return this.engine;
+  }
+
+  private rebuildRestoredRecords(): void {
+    if (this.engine === undefined) return;
+    for (const item of this.engine.snapshot().queue) {
+      const promptId = item.meta?.promptId;
+      if (promptId === undefined || this.promptRecords.has(promptId)) continue;
+      const record = this.createPromptRecord({
+        message: {
+          role: 'user',
+          content: [...item.message.content],
+          toolCalls: [],
+          origin: item.meta?.origin as PromptOrigin | undefined,
+        },
+        promptId: item.meta?.tracked === true ? promptId : undefined,
+        origin: item.meta?.origin as PromptOrigin | undefined,
+        tracked: item.meta?.tracked,
+        createdAt: item.meta?.createdAt,
+        userMessageId: item.meta?.userMessageId,
+      });
+      this.promptRecords.set(promptId, record);
+    }
   }
 
   private machineEngine(): MachineEngine {
@@ -274,9 +284,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (this.disposing) return;
     this.disposing = true;
     const reason = abortError('Agent loop disposed');
-    for (const reservation of this.reservations.splice(0)) {
-      this.settleReservationCancelled(reservation, reason);
+    for (const record of this.promptRecords.values()) {
+      this.settleRecordCancelled(record, reason);
     }
+    this.promptRecords.clear();
+    this.pendingSubmissions.length = 0;
     this.active?.turn.cancel(reason);
     this.engine?.stop();
     const active = this.active;
@@ -288,38 +300,101 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     super.dispose();
   }
 
-  submit(prompt: LoopPromptSubmit): { readonly turn: Turn } {
+  submit(input: UserEntry, options?: LoopSubmitOptions): LoopSubmitResult {
     if (this.disposing) throw abortError('Agent loop disposed');
-    const reservation = this.createReservation(prompt);
-    this.reservations.push(reservation);
-    if (
-      this.quiescenceDepth === 0 &&
-      this.active === undefined &&
-      !this.reservations.some((entry) => entry.launched === true && !entry.cancelled)
-    ) {
-      this.launchReservation(reservation);
+    const meta = input.meta;
+    const id = meta?.promptId ?? newMessageId();
+    const record = this.createPromptRecord({
+      message: {
+        ...input.message,
+        id,
+        toolCalls: [],
+        origin: meta?.origin as PromptOrigin | undefined,
+      },
+      promptId: meta?.promptId,
+      origin: meta?.origin as PromptOrigin | undefined,
+      tracked: meta?.tracked,
+      createdAt: meta?.createdAt,
+      userMessageId: meta?.userMessageId,
+      onMaterialize: options?.onMaterialize,
+    });
+    this.promptRecords.set(id, record);
+    if (record.tracked) {
+      const queued =
+        this.active !== undefined ||
+        this.machinePaused() ||
+        (this.engine !== undefined && this.engine.snapshot().queue.length > 0);
+      this.publishPromptSubmitted(record, queued ? 'queued' : 'running');
+      if (queued) this.publishPromptQueued(record);
     }
-    return { turn: reservation.turn };
+    if (this.engine !== undefined) {
+      try {
+        this.machineEngine().submit(queueEntryOf(record, machineUserMessage(record.message)));
+      } catch {
+        record.state = 'failed';
+        record.launched.resolve(undefined);
+        record.completion.resolve({
+          promptId: record.id,
+          result: undefined,
+          state: 'failed',
+        });
+        this.publishPromptCompleted(record.id, 'failed');
+        return { id };
+      }
+    } else {
+      this.pendingSubmissions.push(record);
+    }
+    if (
+      options?.steerIfActive === true &&
+      this.active !== undefined &&
+      this.active.record.tracked &&
+      this.engine !== undefined
+    ) {
+      this.machineEngine().steer(id);
+    }
+    return { id };
   }
 
-  steer(prompt: LoopPromptSubmit): Turn | undefined {
+  async steer(promptIds: readonly string[]): Promise<void> {
     if (this.disposing) throw abortError('Agent loop disposed');
+    if (promptIds.length === 0) {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, 'prompt_ids must not be empty');
+    }
     const active = this.active;
-    if (active === undefined) return undefined;
-    const message = normalizePromptMessage(prompt);
-    const id = prompt.promptId ?? randomUUID();
-    this.nudges.push({
-      contextMessage: message,
-      steer: true,
-      bypassMaxSteps: false,
-      turnScoped: false,
-      onConsume: prompt.onMaterialize,
-      onDrop: undefined,
-    });
-    active.steerController.abort(abortError('Steered by new input'));
-    this.machineEngine().submit({ id, message: machineUserMessage(message) });
-    this.machineEngine().steer(id);
-    return active.turn;
+    if (active === undefined || !active.record.tracked) {
+      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active prompt to steer into');
+    }
+    const engine = this.machineEngine();
+    const ids = new Set(promptIds);
+    const queuedIds = new Set(engine.snapshot().queue.map((item) => item.meta?.promptId));
+    if (ids.size !== promptIds.length || ![...ids].every((id) => queuedIds.has(id))) {
+      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are not pending');
+    }
+    for (const id of ids) {
+      const record = this.promptRecords.get(id);
+      if (record !== undefined) await this.materializeDaemonRefs(record.message);
+    }
+    if (
+      this.active !== active ||
+      ![...ids].every((id) => new Set(engine.snapshot().queue.map((item) => item.meta?.promptId)).has(id))
+    ) {
+      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are no longer pending');
+    }
+    engine.steer(promptIds);
+  }
+
+  promptHandle(id: string): PromptHandle | undefined {
+    const record = this.promptRecords.get(id);
+    if (record === undefined) return undefined;
+    if (
+      record.state === 'completed' ||
+      record.state === 'failed' ||
+      record.state === 'cancelled' ||
+      record.state === 'blocked'
+    ) {
+      this.promptRecords.delete(id);
+    }
+    return record.handle;
   }
 
   notify(note: LoopNotify = {}): LoopNotifyHandle {
@@ -334,7 +409,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.nudges.push(nudge);
     if (this.quiescenceDepth === 0 && this.engine !== undefined) {
       nudge.sentToMachine = true;
-      this.machineEngine().notify(machineUserMessage(note.message));
+      this.machineEngine().notify(createUserEntry(machineUserMessage(note.message)));
     }
     return {
       get dropped() {
@@ -349,465 +424,146 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     };
   }
 
-  private createReservation(prompt: LoopPromptSubmit): TurnReservation {
+  private createPromptRecord(input: {
+    message: ContextMessage;
+    promptId?: string;
+    origin?: PromptOrigin;
+    tracked?: boolean;
+    createdAt?: string;
+    userMessageId?: string;
+    onMaterialize?: () => void;
+  }): PromptRecord {
+    const tracked = input.tracked === true;
     const controller = new AbortController();
     const ready = createControlledPromise<void>();
     const result = createControlledPromise<TurnResult>();
     void ready.catch(() => undefined);
-    const message = normalizePromptMessage(prompt);
-    let reservation: TurnReservation;
+    let record: PromptRecord;
     const turn: MutableTurn = {
       id: undefined,
       state: 'queued',
       signal: controller.signal,
       ready,
       result,
-      cancel: (reason) => this.cancelReservation(reservation, reason),
+      cancel: (reason) => this.cancelRecord(record, reason),
     };
-    reservation = {
-      machineQueueId: prompt.promptId ?? randomUUID(),
-      message,
-      origin: message.origin ?? { kind: 'user' },
-      promptId: prompt.promptId,
-      onMaterialize: prompt.onMaterialize,
+    const launched = createControlledPromise<Turn | undefined>();
+    const completion = createControlledPromise<PromptCompletion>();
+    record = {
+      id: input.message.id ?? newMessageId(),
+      message: input.message,
+      origin: input.origin ?? input.message.origin ?? { kind: 'user' },
+      promptId: tracked ? (input.message.id ?? newMessageId()) : input.promptId,
+      tracked,
+      state: 'pending',
+      createdAt: input.createdAt ?? (tracked ? new Date().toISOString() : ''),
+      userMessageId: input.userMessageId ?? (tracked ? (input.message.id ?? '') : ''),
       cancelled: false,
       controller,
       ready,
       result,
       turn,
-      promptTracked: false,
-      promptState: 'pending',
-      createdAt: '',
-      userMessageId: '',
-      promptLaunched: createControlledPromise<Turn | undefined>(),
-      promptCompletion: createControlledPromise<PromptCompletion>(),
+      launched,
+      completion,
       steeredChildren: [],
+      onMaterialize: input.onMaterialize,
+      handle: undefined as unknown as PromptHandle,
     };
-    return reservation;
-  }
-
-  private launchReservation(reservation: TurnReservation): void {
-    if (reservation.cancelled || reservation.launched) return;
-    if (this.engine === undefined) return;
-    reservation.launched = true;
-    this.machineEngine().submit({
-      id: reservation.machineQueueId,
-      message: machineUserMessage(this.gatedMessageFor(reservation)),
-    });
-  }
-
-  private gatedMessageFor(reservation: TurnReservation): ContextMessage {
-    if (!reservation.promptTracked) return reservation.message;
-    return {
-      ...reservation.message,
-      content: gateImageFormatParts(
-        reservation.message.content,
-        this.profile.getModelProviderType(),
-      ),
+    record.handle = {
+      get id() {
+        return record.id;
+      },
+      get userMessageId() {
+        return record.userMessageId;
+      },
+      get createdAt() {
+        return record.createdAt;
+      },
+      get state() {
+        return record.state;
+      },
+      get message() {
+        return record.message;
+      },
+      launched: record.launched,
+      completion: record.completion,
     };
+    return record;
   }
 
-  status(): AgentLoopStatus {
+  private machinePaused(): boolean {
+    return this.engine?.snapshot().paused ?? false;
+  }
+
+  snapshot(): LoopSnapshot {
+    const engine = this.engine;
+    const engineSnapshot = engine?.snapshot();
+    const machineQueue = engineSnapshot?.queue ?? [];
+    const parked = this.pendingSubmissions.filter(
+      (record) => !machineQueue.some((item) => item.meta?.promptId === record.id),
+    );
+    const queue = [
+      ...machineQueue,
+      ...parked.map((record) => queueEntryOf(record, machineUserMessage(record.message))),
+    ];
+    const turn = engineSnapshot?.turn;
     return {
       state: this.active === undefined ? 'idle' : 'running',
       activeTurnId: this.active?.id,
-      pendingPromptIds: this.reservations
-        .filter((reservation) => !reservation.cancelled)
-        .map((reservation) => reservation.machineQueueId),
+      activePromptId:
+        this.active !== undefined && this.active.record.tracked ? this.active.record.id : undefined,
+      queue,
+      notificationCount: engineSnapshot?.notificationCount ?? 0,
+      paused: engineSnapshot?.paused ?? false,
       hasPendingRequests: this.hasPendingRequests(),
+      turn:
+        turn === undefined
+          ? undefined
+          : {
+              turnId: turn.turnId,
+              phase: turn.phase,
+              step: turn.step,
+              ending: engineSnapshot?.aborting ?? false,
+              endingReason: engineSnapshot?.aborting === true ? 'aborted' : undefined,
+              retry: turn.retry,
+              activeToolCalls: turn.activeToolCalls,
+              since: this.active?.startedAt,
+            },
       activeTraceId: this.activeRequestTrace?.traceId,
     };
   }
 
-  activitySnapshot(): AgentActivitySnapshot {
-    const engine = this.engine;
-    if (engine === undefined) return {};
-    const snapshot = engine.snapshot();
-    const turn = snapshot.turn;
-    if (turn === undefined) return {};
-    return {
-      turn: {
-        turnId: turn.turnId,
-        phase: turn.phase,
-        step: turn.step,
-        ending: snapshot.aborting,
-        endingReason: snapshot.aborting ? 'aborted' : undefined,
-        retry: turn.retry,
-        activeToolCalls: turn.activeToolCalls,
-        since: this.active?.startedAt,
-      },
-    };
+  private settlePromptLaunched(record: PromptRecord): void {
+    record.launched.resolve(record.turn);
+    void record.turn.result.then((result) => this.settlePromptCompletion(record, result));
+    if (!record.tracked) return;
+    record.state = 'running';
+    this.publishPromptStarted(record);
   }
 
-  async submitPrompt(payload: PromptPayload): Promise<PromptLaunchResult | undefined> {
-    await this.updatePromptMetadata(promptMetadataTextFromContentParts(payload.input));
-    const handle = await this.enqueuePrompt({
-      id: payload.promptId,
-      message: {
-        role: 'user',
-        content: [...payload.input],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
-    });
-    if (handle.state === 'pending') return undefined;
-    return await launchedTurnId(handle.launched);
-  }
-
-  async submitSteerPrompt(payload: SteerPayload): Promise<PromptLaunchResult | undefined> {
-    this.telemetry.track2('input_steer', { parts: payload.input.length });
-    await this.updatePromptMetadata(promptMetadataTextFromContentParts(payload.input));
-    const queued = await this.enqueuePrompt({
-      message: {
-        role: 'user',
-        content: [...payload.input],
-        toolCalls: [],
-      },
-    });
-    if (queued.state !== 'pending') {
-      return launchedTurnId(queued.launched);
-    }
-    try {
-      const [steered] = await this.steerPrompts([queued.id]);
-      return await launchedTurnId(steered?.launched ?? Promise.resolve(undefined));
-    } catch (error) {
-      if (isError2(error) && error.code === ErrorCodes.PROMPT_NOT_FOUND) return undefined;
-      throw error;
-    }
-  }
-
-  async enqueuePrompt(input: PromptInput): Promise<PromptHandle> {
-    if (this.disposing) throw abortError('Agent loop disposed');
-    const id = input.id ?? input.message.id ?? newMessageId();
-    const message = { ...input.message, id };
-    const reservation = this.createPromptReservation(message, id);
-    this.reservations.push(reservation);
-    const queued =
-      this.active !== undefined ||
-      this.promptLaunchInFlight() ||
-      this.compactionBlocksPromptLaunch();
-    this.publishPromptSubmitted(reservation, queued ? 'queued' : 'running');
-    if (queued) {
-      this.publishPromptQueued(reservation);
-      return reservation.promptHandle!;
-    }
-    void this.drainPromptQueue();
-    await Promise.race([
-      reservation.promptLaunched,
-      reservation.promptCompletion,
-    ]);
-    return reservation.promptHandle!;
-  }
-
-  async steerPrompts(promptIds: readonly string[]): Promise<readonly PromptHandle[]> {
-    if (promptIds.length === 0) {
-      throw new Error2(ErrorCodes.REQUEST_INVALID, 'prompt_ids must not be empty');
-    }
-    const active = this.active;
-    if (active === undefined || !active.reservation.promptTracked) {
-      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active prompt to steer into');
-    }
-    const ids = new Set(promptIds);
-    const selected = this.promptPendingReservations().filter((reservation) =>
-      ids.has(reservation.machineQueueId),
-    );
-    if (ids.size !== promptIds.length || selected.length !== ids.size) {
-      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are not pending');
-    }
-    const rerouted = mergeSteerMessages(selected.map((reservation) => reservation.message));
-    await this.materializeDaemonRefs(rerouted);
-    if (
-      selected.some(
-        (reservation) =>
-          !this.reservations.includes(reservation) ||
-          reservation.cancelled ||
-          reservation.launched === true,
-      ) ||
-      this.active !== active
-    ) {
-      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are no longer pending');
-    }
-    const removed: { readonly reservation: TurnReservation; readonly index: number }[] = [];
-    for (const reservation of selected) {
-      const index = this.reservations.indexOf(reservation);
-      removed.push({ reservation, index });
-      this.reservations.splice(index, 1);
-    }
-    const ownerPromptId = newMessageId();
-    const message = {
-      ...rerouted,
-      id: ownerPromptId,
-      content: gateImageFormatParts(rerouted.content, this.profile.getModelProviderType()),
-    };
-    let turn: Turn | undefined;
-    try {
-      turn = this.steer({
-        message,
-        promptId: ownerPromptId,
-        onMaterialize: () => {
-          void this.dispatcher.dispatch(
-            new TurnSteer({
-              agentId: this.scopeContext.agentId,
-              input: message.content,
-              origin: message.origin ?? USER_PROMPT_ORIGIN,
-            }),
-          );
-        },
-      });
-    } catch {
-      turn = undefined;
-    }
-    if (turn === undefined || this.active !== active) {
-      for (const { reservation, index } of removed.toReversed()) {
-        this.reservations.splice(index, 0, reservation);
-      }
-      if (this.active === undefined) void this.drainPromptQueue();
-      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active turn to steer into');
-    }
-    for (const reservation of selected) {
-      reservation.promptState = 'steered';
-      reservation.promptLaunched.resolve(turn);
-    }
-    active.reservation.steeredChildren.push(...selected);
-    void this.dispatcher.dispatch(
-      new PromptSteered({
-        agentId: this.scopeContext.agentId,
-        activePromptId: active.reservation.machineQueueId,
-        promptIds: selected.map((reservation) => reservation.machineQueueId),
-        content: selected.flatMap((reservation) => stripBundledSkillBlocks(reservation.message)),
-        steeredAt: new Date().toISOString(),
-      }),
-    );
-    return selected.map((reservation) => reservation.promptHandle!);
-  }
-
-  abortPrompt(promptId: string, reason: Error = userCancellationReason()): boolean {
-    const active = this.active;
-    if (
-      active !== undefined &&
-      active.reservation.promptTracked &&
-      active.reservation.machineQueueId === promptId
-    ) {
-      active.turn.cancel(reason);
-      return true;
-    }
-    const reservation = this.promptPendingReservations().find(
-      (entry) => entry.machineQueueId === promptId,
-    );
-    if (reservation === undefined) {
-      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, `prompt ${promptId} not found`);
-    }
-    this.cancelReservation(reservation, reason);
-    return true;
-  }
-
-  async drainPrompts(reason: Error = userCancellationReason()): Promise<void> {
-    for (const reservation of this.promptPendingReservations()) {
-      this.abortPrompt(reservation.machineQueueId, reason);
-    }
-    const active = this.active;
-    if (active !== undefined && active.reservation.promptTracked) {
-      this.abortPrompt(active.reservation.machineQueueId, reason);
-    }
-  }
-
-  async injectPrompt(message: ContextMessage): Promise<Turn | undefined> {
-    await this.materializeDaemonRefs(message);
-    const ownerPromptId = message.id ?? newMessageId();
-    const gated = {
-      ...message,
-      id: ownerPromptId,
-      content: gateImageFormatParts(message.content, this.profile.getModelProviderType()),
-    };
-    const request = {
-      message: gated,
-      promptId: ownerPromptId,
-      onMaterialize: () => {
-        void this.dispatcher.dispatch(
-          new TurnSteer({
-            agentId: this.scopeContext.agentId,
-            input: gated.content,
-            origin: gated.origin ?? USER_PROMPT_ORIGIN,
-          }),
-        );
-      },
-    };
-    return this.steer(request) ?? this.submit(request).turn;
-  }
-
-  async retryPrompt(): Promise<Turn | undefined> {
-    return this.submit({
-      message: { role: 'user', content: [], toolCalls: [], origin: { kind: 'retry' } },
-    }).turn;
-  }
-
-  promptQueue(): PromptQueueSnapshot {
-    const active = this.active;
-    return {
-      active:
-        active !== undefined && active.reservation.promptTracked
-          ? promptSnapshotOf(active.reservation)
-          : undefined,
-      pending: this.promptPendingReservations().map(promptSnapshotOf),
-      launching: this.promptLaunchInFlight(),
-    };
-  }
-
-  private createPromptReservation(message: ContextMessage, id: string): TurnReservation {
-    const reservation = this.createReservation({ message, promptId: id });
-    reservation.promptTracked = true;
-    reservation.createdAt = new Date().toISOString();
-    reservation.userMessageId = id;
-    reservation.promptHandle = {
-      get id() {
-        return reservation.machineQueueId;
-      },
-      get userMessageId() {
-        return reservation.userMessageId;
-      },
-      get createdAt() {
-        return reservation.createdAt;
-      },
-      get state() {
-        return reservation.promptState;
-      },
-      get message() {
-        return reservation.message;
-      },
-      launched: reservation.promptLaunched,
-      completion: reservation.promptCompletion,
-    };
-    return reservation;
-  }
-
-  private promptLaunchInFlight(): boolean {
-    return (
-      this.promptLaunching ||
-      this.reservations.some(
-        (reservation) =>
-          reservation.promptTracked && reservation.launched === true && !reservation.cancelled,
-      )
-    );
-  }
-
-  private compactionBlocksPromptLaunch(): boolean {
-    return this.fullCompaction.compacting !== null && this.active === undefined;
-  }
-
-  private get fullCompaction(): IAgentFullCompactionService {
-    if (this.fullCompactionService === undefined) {
-      this.fullCompactionService = this.instantiation.invokeFunction((accessor) =>
-        accessor.get(IAgentFullCompactionService),
-      );
-      this.fullCompactionService.onDidFinishCompaction(() => {
-        void this.drainPromptQueue();
-      });
-    }
-    return this.fullCompactionService;
-  }
-
-  private async drainPromptQueue(): Promise<void> {
-    if (this.promptLaunching) return;
-    if (
-      this.active !== undefined ||
-      this.disposing ||
-      this.quiescenceDepth > 0 ||
-      this.engine === undefined
-    ) {
-      return;
-    }
-    if (
-      this.reservations.some(
-        (reservation) =>
-          reservation.promptTracked && reservation.launched === true && !reservation.cancelled,
-      )
-    ) {
-      return;
-    }
-    const reservation = this.reservations.find(
-      (entry) => entry.promptTracked && !entry.cancelled && entry.launched !== true,
-    );
-    if (reservation === undefined) return;
-    this.promptLaunching = true;
-    this.promptLaunchingReservation = reservation;
-    try {
-      if (this.compactionBlocksPromptLaunch()) return;
-      await this.materializeDaemonRefs(reservation.message);
-      if (!this.reservations.includes(reservation) || reservation.cancelled) return;
-      this.launchReservation(reservation);
-    } catch {
-      this.removeReservation(reservation);
-      reservation.promptState = 'failed';
-      reservation.promptLaunched.resolve(undefined);
-      reservation.promptCompletion.resolve({
-        promptId: reservation.machineQueueId,
-        result: undefined,
-        state: 'failed',
-      });
-      this.publishPromptCompleted(reservation.machineQueueId, 'failed');
-    } finally {
-      this.promptLaunching = false;
-      this.promptLaunchingReservation = undefined;
-      if (this.active === undefined && !this.compactionBlocksPromptLaunch()) {
-        void this.drainPromptQueue();
-      }
-    }
-  }
-
-  private promptPendingReservations(): TurnReservation[] {
-    return this.reservations.filter(
-      (reservation) =>
-        reservation.promptTracked &&
-        !reservation.cancelled &&
-        reservation.launched !== true &&
-        reservation !== this.promptLaunchingReservation,
-    );
-  }
-
-  private removeReservation(reservation: TurnReservation): void {
-    const index = this.reservations.indexOf(reservation);
-    if (index >= 0) this.reservations.splice(index, 1);
-  }
-
-  private settlePromptLaunched(reservation: TurnReservation): void {
-    if (!reservation.promptTracked) return;
-    reservation.promptState = 'running';
-    reservation.promptLaunched.resolve(reservation.turn);
-    this.publishPromptStarted(reservation);
-    void reservation.result.then((result) => this.settlePromptCompletion(reservation, result));
-  }
-
-  private settlePromptCompletion(reservation: TurnReservation, result: TurnResult): void {
+  private settlePromptCompletion(record: PromptRecord, result: TurnResult): void {
     const state =
       result.type === 'cancelled' ? 'cancelled' : result.type === 'failed' ? 'failed' : 'completed';
-    reservation.promptState = state;
-    reservation.promptCompletion.resolve({
-      promptId: reservation.machineQueueId,
+    record.state = state;
+    record.completion.resolve({
+      promptId: record.id,
       result,
       state,
     });
-    for (const child of reservation.steeredChildren) {
-      child.promptState = state;
-      child.promptCompletion.resolve({
-        promptId: child.machineQueueId,
+    for (const child of record.steeredChildren) {
+      child.state = state;
+      child.completion.resolve({
+        promptId: child.id,
         result,
         state,
       });
+      this.promptRecords.delete(child.id);
     }
-    if (state === 'cancelled') this.publishPromptAborted(reservation.machineQueueId);
-    else this.publishPromptCompleted(reservation.machineQueueId, state);
-  }
-
-  private async updatePromptMetadata(text: string | undefined): Promise<void> {
-    if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
-    await applyPromptMetadataUpdate(
-      {
-        metadata: this.metadata,
-        eventService: this.eventService,
-        sessionId: this.sessionContext.sessionId,
-      },
-      text,
-    );
+    if (record.tracked) {
+      if (state === 'cancelled') this.publishPromptAborted(record.id);
+      else this.publishPromptCompleted(record.id, state);
+    }
+    this.promptRecords.delete(record.id);
   }
 
   private async materializeDaemonRefs(message: ContextMessage): Promise<void> {
@@ -819,46 +575,62 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     await materializePromptDaemonRefs(message.content, { files, mediaStore });
   }
 
-  private async runPromptGate(queueItemId: string | undefined): Promise<boolean> {
-    const reservation = this.reservations.find((entry) => entry.machineQueueId === queueItemId);
-    if (reservation === undefined || !reservation.promptTracked || reservation.cancelled) {
+  private async runPromptGate(
+    queueItemId: string | undefined,
+    _message: UserMessage,
+  ): Promise<PromptGateVerdict> {
+    const record = queueItemId === undefined ? undefined : this.promptRecords.get(queueItemId);
+    if (record === undefined || !record.tracked || record.cancelled) {
       return false;
     }
     const ctx: PromptSubmitContext = {
-      promptMessage: reservation.message,
+      promptMessage: record.message,
       isSteer: false,
       block: false,
     };
     await this.hooks.onBeforeSubmitPrompt.run(ctx);
-    return ctx.block;
+    if (ctx.block) return { block: true };
+    await this.materializeDaemonRefs(record.message);
+    return {
+      block: false,
+      message: {
+        role: 'user',
+        content: gateImageFormatParts(record.message.content, this.profile.getModelProviderType()),
+      },
+    };
   }
 
   private settleGateRejectedPrompt(queueItemId: string | undefined, state: 'blocked' | 'failed'): void {
-    const reservation = this.reservations.find(
-      (entry) => entry.machineQueueId === queueItemId && !entry.cancelled,
-    );
-    if (reservation === undefined) return;
-    this.removeReservation(reservation);
-    if (state === 'blocked' && reservation.message.content.length > 0) {
-      this.context.append(reservation.message);
+    const record = queueItemId === undefined ? undefined : this.promptRecords.get(queueItemId);
+    if (record === undefined || record.cancelled) return;
+    if (state === 'blocked' && record.message.content.length > 0) {
+      this.context.append(record.message);
     }
-    reservation.promptState = state;
-    reservation.promptLaunched.resolve(undefined);
-    reservation.promptCompletion.resolve({
-      promptId: reservation.machineQueueId,
+    record.state = state;
+    record.launched.resolve(undefined);
+    record.completion.resolve({
+      promptId: record.id,
       result: undefined,
       state,
     });
-    this.publishPromptCompleted(reservation.machineQueueId, state);
-    void this.drainPromptQueue();
+    this.publishPromptCompleted(record.id, state);
+    this.promptRecords.delete(record.id);
+    this.maybeSettle();
   }
+
 
   private async deliverToolResult(ctx: ToolDidExecuteContext): Promise<void> {
     const delivery = ctx.result.delivery;
     if (delivery === undefined) return;
     const { delivery: _delivery, ...rest } = ctx.result;
     ctx.result = rest as ExecutableToolResult;
-    if (delivery.kind === 'steer') await this.injectPrompt(delivery.message as ContextMessage);
+    if (delivery.kind === 'steer') {
+      const message = delivery.message as ContextMessage;
+      this.submit(
+        { message: machineUserMessage(message), meta: { origin: message.origin } },
+        { steerIfActive: true },
+      );
+    }
   }
 
   private publishPromptCompleted(promptId: string, reason: 'completed' | 'failed' | 'blocked'): void {
@@ -872,38 +644,38 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     );
   }
 
-  private publishPromptQueued(reservation: TurnReservation): void {
-    if (reservation.origin.kind !== 'user') return;
+  private publishPromptQueued(record: PromptRecord): void {
+    if (record.origin.kind !== 'user') return;
     void this.dispatcher.dispatch(
       new PromptQueued({
         agentId: this.scopeContext.agentId,
-        promptId: reservation.machineQueueId,
-        content: stripBundledSkillBlocks(reservation.message),
-        queueLength: this.promptPendingReservations().length,
+        promptId: record.id,
+        content: stripBundledSkillBlocks(record.message),
+        queueLength: (this.engine?.snapshot().queue.length ?? 0) + 1,
       }),
     );
   }
 
-  private publishPromptSubmitted(reservation: TurnReservation, status: 'running' | 'queued'): void {
-    if (reservation.origin.kind !== 'user') return;
+  private publishPromptSubmitted(record: PromptRecord, status: 'running' | 'queued'): void {
+    if (record.origin.kind !== 'user') return;
     void this.dispatcher.dispatch(
       new PromptSubmitted({
         agentId: this.scopeContext.agentId,
-        promptId: reservation.machineQueueId,
-        userMessageId: reservation.userMessageId,
+        promptId: record.id,
+        userMessageId: record.userMessageId,
         status,
-        content: stripBundledSkillBlocks(reservation.message),
-        createdAt: reservation.createdAt,
+        content: stripBundledSkillBlocks(record.message),
+        createdAt: record.createdAt,
       }),
     );
   }
 
-  private publishPromptStarted(reservation: TurnReservation): void {
-    if (reservation.origin.kind !== 'user') return;
+  private publishPromptStarted(record: PromptRecord): void {
+    if (record.origin.kind !== 'user') return;
     void this.dispatcher.dispatch(
       new PromptStarted({
         agentId: this.scopeContext.agentId,
-        promptId: reservation.machineQueueId,
+        promptId: record.id,
       }),
     );
   }
@@ -918,48 +690,54 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     );
   }
 
-  cancel(turnId?: number, reason?: unknown): boolean {
+  cancel(target?: LoopCancelTarget, reason?: unknown): boolean {
     const cancellation = reason ?? userCancellationReason();
-    return this.cancelActiveTurn(turnId, cancellation);
+    if (target?.promptId !== undefined) {
+      const active = this.active;
+      if (active !== undefined && active.record.tracked && active.record.id === target.promptId) {
+        return this.cancelActiveTurn(undefined, cancellation);
+      }
+      const record = this.promptRecords.get(target.promptId);
+      if (record === undefined) {
+        throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, `prompt ${target.promptId} not found`);
+      }
+      return this.cancelRecord(record, cancellation);
+    }
+    return this.cancelActiveTurn(target?.turnId, cancellation);
   }
 
-  cancelQueued(queueId: string, reason?: unknown): boolean {
-    const reservation = this.reservations.find(
-      (entry) => entry.machineQueueId === queueId && !entry.cancelled,
-    );
-    if (reservation === undefined) return false;
-    return this.cancelReservation(reservation, reason);
-  }
-
-  private cancelReservation(reservation: TurnReservation, reason?: unknown): boolean {
+  private cancelRecord(record: PromptRecord, reason?: unknown): boolean {
     const cancellation = reason ?? userCancellationReason();
-    if (this.active?.reservation === reservation) {
+    if (this.active?.record === record) {
       return this.cancelActiveTurn(undefined, cancellation);
     }
-    if (reservation.cancelled) return false;
-    reservation.cancelled = true;
-    const index = this.reservations.indexOf(reservation);
-    if (index >= 0) this.reservations.splice(index, 1);
-    if (reservation.launched) {
-      this.machineEngine().cancelQueueItem(reservation.machineQueueId);
+    if (record.cancelled) return false;
+    record.cancelled = true;
+    this.engine?.cancelQueueItem(record.id);
+    this.settleRecordCancelled(record, cancellation);
+    if (record.tracked) {
+      this.publishPromptAborted(record.id);
     }
-    this.settleReservationCancelled(reservation, cancellation);
-    if (reservation.promptTracked) {
-      this.publishPromptAborted(reservation.machineQueueId);
-      if (reservation.launched) void this.drainPromptQueue();
-    }
+    this.promptRecords.delete(record.id);
     return true;
   }
 
-  cancelFromUser(turnId?: number): void {
-    const status = this.status();
-    if (status.state === 'running') {
-      this.telemetry.track2('cancel', {
-        from: 'streaming',
-        trace_id: status.activeTraceId,
-      });
-    }
-    this.cancel(turnId);
+  private settleRecordCancelled(record: PromptRecord, cancellation: unknown): void {
+    record.cancelled = true;
+    record.controller.abort(cancellation);
+    record.turn.state = 'cancelled';
+    record.ready.reject(
+      cancellation instanceof Error ? cancellation : abortError('Turn cancelled'),
+    );
+    record.result.resolve({ type: 'cancelled', steps: 0, reason: cancellation });
+    record.state = 'cancelled';
+    record.launched.resolve(undefined);
+    record.completion.resolve({
+      promptId: record.id,
+      result: undefined,
+      state: 'cancelled',
+    });
+    this.maybeSettle();
   }
 
   tryAcquireQuiescence(): IDisposable | undefined {
@@ -973,6 +751,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       return undefined;
     }
     this.quiescenceDepth += 1;
+    this.engine?.pause();
     return toDisposable(() => this.releaseQuiescence());
   }
 
@@ -980,23 +759,25 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (this.quiescenceDepth === 0) return;
     this.quiescenceDepth -= 1;
     if (this.quiescenceDepth > 0 || this.disposing) return;
+    this.engine?.resume();
     this.drainPendingToMachine();
     this.maybeSettle();
   }
 
   private drainPendingToMachine(): void {
     if (this.engine === undefined) return;
-    // oxlint-disable-next-line unicorn/no-useless-spread -- launchReservation starts the machine prompt gate synchronously, and a hook callback can re-enter and splice this.reservations mid-iteration
-    for (const reservation of [...this.reservations]) {
-      if (!reservation.cancelled && !reservation.promptTracked) this.launchReservation(reservation);
+    const queued = new Set(this.engine.snapshot().queue.map((item) => item.meta?.promptId));
+    for (const record of this.pendingSubmissions.splice(0)) {
+      if (queued.has(record.id) || record.cancelled) continue;
+      this.machineEngine().submit(queueEntryOf(record, machineUserMessage(record.message)));
     }
+    if (this.quiescenceDepth > 0) return;
     for (const nudge of this.nudges.slice(this.nudgeCursor)) {
       if (!nudge.dropped && !nudge.sentToMachine) {
         nudge.sentToMachine = true;
-        this.machineEngine().notify(machineUserMessage(nudge.contextMessage));
+        this.machineEngine().notify(createUserEntry(machineUserMessage(nudge.contextMessage)));
       }
     }
-    void this.drainPromptQueue();
   }
 
   async resetMachineEngine(): Promise<void> {
@@ -1034,34 +815,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return true;
   }
 
-  private settleReservationCancelled(reservation: TurnReservation, cancellation: unknown): void {
-    reservation.cancelled = true;
-    reservation.controller.abort(cancellation);
-    reservation.turn.state = 'cancelled';
-    reservation.ready.reject(
-      cancellation instanceof Error ? cancellation : abortError('Turn cancelled'),
-    );
-    reservation.result.resolve({ type: 'cancelled', steps: 0, reason: cancellation });
-    if (reservation.promptTracked) {
-      reservation.promptState = 'cancelled';
-      reservation.promptLaunched.resolve(undefined);
-      reservation.promptCompletion.resolve({
-        promptId: reservation.machineQueueId,
-        result: undefined,
-        state: 'cancelled',
-      });
-    }
-    this.maybeSettle();
-  }
-
-  private settleUnboundReservation(
+  private settleUnboundRecord(
     pending: { readonly id: number; readonly queueItemId?: string },
     outcome: { readonly outcome: MachineTurnOutcome; readonly error?: unknown },
   ): void {
     const active = this.active;
     if (active !== undefined) {
       active.afterChain = active.afterChain.then(() => {
-        this.settleUnboundReservation(pending, outcome);
+        this.settleUnboundRecord(pending, outcome);
       });
       return;
     }
@@ -1073,26 +834,24 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         this.consumeDrainedNudges();
         return;
       }
-      this.beginActiveTurn(
-        this.createSeededReservation(seeded.contextMessage as ContextMessage),
-        pending.id,
-      );
+      const record = this.createPromptRecord({
+        message: seeded.contextMessage as ContextMessage,
+        promptId: (seeded.contextMessage as ContextMessage).id,
+      });
+      this.promptRecords.set(record.id, record);
+      this.beginActiveTurn(record, pending.id);
       const seededTurn = this.active;
       if (seededTurn === undefined) return;
       this.mirrorConsumedNudges(seededTurn);
       this.endPreGateTurn(seededTurn, outcome);
       return;
     }
-    const index = this.reservations.findIndex(
-      (entry) => entry.machineQueueId === pending.queueItemId,
-    );
-    if (index < 0) return;
-    const [reservation] = this.reservations.splice(index, 1);
-    if (reservation === undefined || reservation.cancelled) return;
-    this.beginActiveTurn(reservation, pending.id);
-    reservation.onMaterialize?.();
-    this.materializeMessage(this.gatedMessageFor(reservation));
-    this.settlePromptLaunched(reservation);
+    const record = this.promptRecords.get(pending.queueItemId);
+    if (record === undefined || record.cancelled) return;
+    this.beginActiveTurn(record, pending.id);
+    record.onMaterialize?.();
+    this.materializeMessage(this.gatedRecordMessage(record));
+    this.settlePromptLaunched(record);
     const turn = this.active;
     if (turn === undefined) return;
     this.endPreGateTurn(turn, outcome);
@@ -1118,9 +877,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     );
   }
 
-  hasPendingRequests(): boolean {
+  private hasPendingRequests(): boolean {
     return (
-      this.reservations.some((reservation) => !reservation.cancelled) ||
+      this.pendingSubmissions.length > 0 ||
+      (this.engine?.snapshot().queue.length ?? 0) > 0 ||
       this.nudges.slice(this.nudgeCursor).some((nudge) => !nudge.dropped)
     );
   }
@@ -1194,10 +954,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (turn.stopRequested) return { type: 'fail' };
     if (turn.failedStep !== undefined) return { type: 'fail' };
     const consumed = this.mirrorConsumedNudges(turn);
-    if (
-      turn.steerController.signal.aborted &&
-      !this.nudges.slice(this.nudgeCursor).some((nudge) => nudge.steer && !nudge.dropped)
-    ) {
+    if (turn.steerController.signal.aborted) {
       turn.steerController = new AbortController();
     }
     if (turn.toolStopRequested && consumed.live === 0) return { type: 'fail' };
@@ -1274,36 +1031,25 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private bindMachineTurn(pending: { readonly id: number; readonly queueItemId?: string }): boolean {
     if (this.active !== undefined) {
       if (pending.queueItemId !== undefined) {
-        const stolen = this.reservations.find(
-          (entry) => entry.machineQueueId === pending.queueItemId && !entry.cancelled,
-        );
-        if (stolen !== undefined) {
-          this.machineEngine().submit({
-            id: stolen.machineQueueId,
-            message: machineUserMessage(this.gatedMessageFor(stolen)),
-          });
+        const stolen = this.promptRecords.get(pending.queueItemId);
+        if (stolen !== undefined && !stolen.cancelled) {
+          this.machineEngine().submit(
+            queueEntryOf(stolen, machineUserMessage(this.gatedRecordMessage(stolen))),
+          );
         }
       }
       return true;
     }
     if (pending.queueItemId !== undefined) {
-      const index = this.reservations.findIndex(
-        (entry) => entry.machineQueueId === pending.queueItemId,
-      );
-      const reservation = index >= 0 ? this.reservations[index] : undefined;
-      if (reservation === undefined) {
+      const record = this.promptRecords.get(pending.queueItemId);
+      if (record === undefined || record.cancelled) {
         this.machineTurnSuppressed = true;
         return false;
       }
-      this.reservations.splice(index, 1);
-      if (reservation.cancelled) {
-        this.machineTurnSuppressed = true;
-        return false;
-      }
-      this.beginActiveTurn(reservation, pending.id);
-      reservation.onMaterialize?.();
-      this.materializeMessage(this.gatedMessageFor(reservation));
-      this.settlePromptLaunched(reservation);
+      this.beginActiveTurn(record, pending.id);
+      record.onMaterialize?.();
+      this.materializeMessage(this.gatedRecordMessage(record));
+      this.settlePromptLaunched(record);
       return true;
     }
     const seeded = this.nudges.slice(this.nudgeCursor).find(
@@ -1313,56 +1059,30 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       this.machineTurnSuppressed = true;
       return false;
     }
-    this.beginActiveTurn(
-      this.createSeededReservation(seeded.contextMessage as ContextMessage),
-      pending.id,
-    );
+    const record = this.createPromptRecord({
+      message: seeded.contextMessage as ContextMessage,
+      promptId: (seeded.contextMessage as ContextMessage).id,
+    });
+    this.promptRecords.set(record.id, record);
+    this.beginActiveTurn(record, pending.id);
     return true;
   }
 
-  private createSeededReservation(message: ContextMessage): TurnReservation {
-    const controller = new AbortController();
-    const ready = createControlledPromise<void>();
-    const result = createControlledPromise<TurnResult>();
-    void ready.catch(() => undefined);
-    let reservation: TurnReservation;
-    const turn: MutableTurn = {
-      id: undefined,
-      state: 'queued',
-      signal: controller.signal,
-      ready,
-      result,
-      cancel: (reason) => this.cancelReservation(reservation, reason),
+  private gatedRecordMessage(record: PromptRecord): ContextMessage {
+    if (!record.tracked) return record.message;
+    return {
+      ...record.message,
+      content: gateImageFormatParts(record.message.content, this.profile.getModelProviderType()),
     };
-    reservation = {
-      machineQueueId: randomUUID(),
-      message,
-      origin: message.origin ?? { kind: 'user' },
-      promptId: message.id,
-      onMaterialize: undefined,
-      cancelled: false,
-      controller,
-      ready,
-      result,
-      turn,
-      promptTracked: false,
-      promptState: 'pending',
-      createdAt: '',
-      userMessageId: '',
-      promptLaunched: createControlledPromise<Turn | undefined>(),
-      promptCompletion: createControlledPromise<PromptCompletion>(),
-      steeredChildren: [],
-    };
-    return reservation;
   }
 
-  private beginActiveTurn(reservation: TurnReservation, id: number): void {
-    const turn = reservation.turn;
+  private beginActiveTurn(record: PromptRecord, id: number): void {
+    const turn = record.turn;
     turn.id = id;
     const active: ActiveTurn = {
       id,
-      reservation,
-      controller: reservation.controller,
+      record,
+      controller: record.controller,
       steerController: new AbortController(),
       turn,
       startedAt: Date.now(),
@@ -1390,7 +1110,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     };
     this.active = active;
     active.readyResolved = true;
-    reservation.ready.resolve();
+    record.ready.resolve();
     active.mode = this.telemetry.getContext().mode;
     const { provider_type, protocol } = this.telemetry.getContext();
     active.providerType = provider_type;
@@ -1401,9 +1121,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     void this.dispatcher.dispatch(
       new TurnPrompt({
         agentId: this.scopeContext.agentId,
-        input: reservation.message.content,
-        origin: reservation.origin,
-        promptId: reservation.promptId,
+        input: record.message.content,
+        origin: record.origin,
+        promptId: record.promptId,
         turnId: id,
       }),
     );
@@ -1412,12 +1132,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       new TurnStarted({
         agentId: this.scopeContext.agentId,
         turnId: id,
-        promptId: reservation.promptId,
-        origin: reservation.origin,
-        prompt: isDisplayablePromptOrigin(reservation.origin)
-          ? turnPromptText(reservation.message.content, reservation.origin)
+        promptId: record.promptId,
+        origin: record.origin,
+        prompt: isDisplayablePromptOrigin(record.origin)
+          ? turnPromptText(record.message.content, record.origin)
           : undefined,
-        promptAttachments: turnPromptAttachments(reservation.message.content, reservation.origin),
+        promptAttachments: turnPromptAttachments(record.message.content, record.origin),
       }),
     );
     const started: TurnStartedTelemetryEvent = {
@@ -1478,6 +1198,59 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         this.settleGateRejectedPrompt(event.queueItemId, 'failed');
         return;
       }
+      case 'promptSteered': {
+        const active = this.active;
+        if (active === undefined) return;
+        const records = event.queueItemIds
+          .map((id) => this.promptRecords.get(id))
+          .filter((record): record is PromptRecord => record !== undefined);
+        if (records.length === 0) return;
+        for (const record of records) {
+          record.state = 'steered';
+          record.launched.resolve(active.turn);
+          active.record.steeredChildren.push(record);
+        }
+        active.steerController.abort(abortError('Steered by new input'));
+        const merged =
+          records.length === 1
+            ? { content: records[0]!.message.content, origin: records[0]!.origin }
+            : mergeSteerMessages(
+                records.map((record) => ({ content: record.message.content, origin: record.origin })),
+              );
+        const gatedContent = gateImageFormatParts(
+          merged.content,
+          this.profile.getModelProviderType(),
+        );
+        this.nudges.push({
+          contextMessage: {
+            role: 'user',
+            content: gatedContent,
+            toolCalls: [],
+            origin: merged.origin,
+            id: newMessageId(),
+          },
+          bypassMaxSteps: false,
+          turnScoped: false,
+          sentToMachine: true,
+        });
+        void this.dispatcher.dispatch(
+          new TurnSteer({
+            agentId: this.scopeContext.agentId,
+            input: gatedContent,
+            origin: merged.origin,
+          }),
+        );
+        void this.dispatcher.dispatch(
+          new PromptSteered({
+            agentId: this.scopeContext.agentId,
+            activePromptId: active.record.id,
+            promptIds: records.map((record) => record.id),
+            content: records.flatMap((record) => stripBundledSkillBlocks(record.message)),
+            steeredAt: new Date().toISOString(),
+          }),
+        );
+        return;
+      }
       case 'turnSettled': {
         const outcome = event;
         const active = this.active;
@@ -1490,7 +1263,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           const pending = this.pendingMachineTurn;
           this.pendingMachineTurn = undefined;
           this.machineTurnSuppressed = false;
-          this.settleUnboundReservation(pending, outcome);
+          this.settleUnboundRecord(pending, outcome);
           this.maybeSettle();
           return;
         }
@@ -1504,7 +1277,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         if (turn === undefined || step === undefined) return;
         if (!turn.readyResolved) {
           turn.readyResolved = true;
-          turn.reservation.ready.resolve();
+          turn.record.ready.resolve();
         }
         void this.dispatcher.dispatch(
           new TurnStepStarted({
@@ -2052,7 +1825,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           if (turn.retryRequested) {
             turn.retryRequested = false;
             await this.machineEngine().resetHistory(historyFromContext(this.context.get()));
-            this.machineEngine().notify(EMPTY_MACHINE_PROMPT);
+            this.machineEngine().notify(createUserEntry(EMPTY_MACHINE_PROMPT));
           }
           return;
         }
@@ -2140,16 +1913,16 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       }
     }
     turn.turn.state = result.type;
-    const reservation = turn.reservation;
+    const record = turn.record;
     if (!turn.readyResolved) {
       if (result.type === 'failed') {
-        reservation.ready.reject(result.error);
+        record.ready.reject(result.error);
       } else if (result.type === 'cancelled') {
-        reservation.ready.reject(
+        record.ready.reject(
           result.reason instanceof Error ? result.reason : abortError('Turn cancelled'),
         );
       } else {
-        reservation.ready.reject(new Error2(ErrorCodes.INTERNAL, 'Turn ended before first step'));
+        record.ready.reject(new Error2(ErrorCodes.INTERNAL, 'Turn ended before first step'));
       }
     }
     const durationMs = Date.now() - turn.startedAt;
@@ -2199,11 +1972,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.telemetry.setContext({ turn_id: undefined, trace_id: undefined, thinking_effort: undefined });
     this.activeRequestTrace = undefined;
     this.lastRequestTraceId = undefined;
-    reservation.result.resolve(result);
-    for (const pending of this.reservations) {
-      if (!pending.cancelled && !pending.promptTracked) this.launchReservation(pending);
-    }
-    void this.drainPromptQueue();
+    record.result.resolve(result);
     this.maybeSettle();
   }
 
@@ -2237,44 +2006,51 @@ function normalizeFinishReason(reason: FinishReason): string {
   return reason;
 }
 
-function normalizePromptMessage(prompt: LoopPromptSubmit): ContextMessage {
-  return prompt.message;
-}
-
 function machineUserMessage(message: ContextMessage | undefined): UserMessage {
   if (message === undefined) return EMPTY_MACHINE_PROMPT;
   return { role: 'user', content: [...message.content] };
+}
+
+function queueEntryOf(record: PromptRecord, message: UserMessage): UserEntry {
+  return {
+    message,
+    meta: {
+      promptId: record.id,
+      origin: record.origin,
+      tracked: record.tracked,
+      createdAt: record.createdAt,
+      userMessageId: record.userMessageId,
+    },
+  };
 }
 
 type MutableTurn = {
   -readonly [K in keyof Turn]: Turn[K];
 };
 
-interface TurnReservation {
-  readonly machineQueueId: string;
+interface PromptRecord {
+  readonly id: string;
   message: ContextMessage;
   readonly origin: PromptOrigin;
   readonly promptId?: string;
-  onMaterialize?: () => void;
+  readonly tracked: boolean;
+  state: PromptState;
+  readonly createdAt: string;
+  readonly userMessageId: string;
   cancelled: boolean;
-  launched?: boolean;
   readonly controller: AbortController;
   readonly ready: ReturnType<typeof createControlledPromise<void>>;
   readonly result: ReturnType<typeof createControlledPromise<TurnResult>>;
   readonly turn: MutableTurn;
-  promptTracked: boolean;
-  promptState: PromptState;
-  createdAt: string;
-  userMessageId: string;
-  readonly promptLaunched: ReturnType<typeof createControlledPromise<Turn | undefined>>;
-  readonly promptCompletion: ReturnType<typeof createControlledPromise<PromptCompletion>>;
-  readonly steeredChildren: TurnReservation[];
-  promptHandle?: PromptHandle;
+  readonly launched: ReturnType<typeof createControlledPromise<Turn | undefined>>;
+  readonly completion: ReturnType<typeof createControlledPromise<PromptCompletion>>;
+  readonly steeredChildren: PromptRecord[];
+  handle: PromptHandle;
+  readonly onMaterialize?: () => void;
 }
 
 interface Nudge {
   readonly contextMessage?: ContextMessage;
-  readonly steer?: boolean;
   readonly bypassMaxSteps: boolean;
   readonly turnScoped: boolean;
   readonly onConsume?: () => void;
@@ -2311,7 +2087,7 @@ interface MachineFailedStep {
 
 interface ActiveTurn {
   readonly id: number;
-  readonly reservation: TurnReservation;
+  readonly record: PromptRecord;
   readonly controller: AbortController;
   steerController: AbortController;
   readonly turn: MutableTurn;
@@ -2337,16 +2113,6 @@ interface ActiveTurn {
   mode: 'agent' | 'plan' | undefined;
   providerType: string | undefined;
   protocol: string | undefined;
-}
-
-function promptSnapshotOf(reservation: TurnReservation): PromptSnapshot {
-  return {
-    id: reservation.machineQueueId,
-    userMessageId: reservation.userMessageId,
-    createdAt: reservation.createdAt,
-    state: reservation.promptState,
-    message: reservation.message,
-  };
 }
 
 function cancelReasonFor(cancellation: unknown): 'user_cancelled' | 'aborted' {

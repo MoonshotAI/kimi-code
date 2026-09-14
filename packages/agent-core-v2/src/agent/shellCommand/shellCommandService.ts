@@ -6,6 +6,7 @@ import { defineState } from '#/state/state';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { escapeXml } from '#/_base/utils/xml-escape';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -252,12 +253,13 @@ export class AgentShellCommandService implements IAgentShellCommandService {
   }
 
   private notifyBackgrounded(output: string): void {
-    void this.loop.injectPrompt({
-      role: 'user',
-      content: [{ type: 'text', text: output }],
-      toolCalls: [],
-      origin: { kind: 'injection', variant: 'shell_command_backgrounded' },
-    });
+    this.loop.submit(
+      {
+        message: { role: 'user', content: [{ type: 'text', text: output }] },
+        meta: { origin: { kind: 'injection', variant: 'shell_command_backgrounded' } as PromptOrigin },
+      },
+      { steerIfActive: true },
+    );
   }
 }
 

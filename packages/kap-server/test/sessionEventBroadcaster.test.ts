@@ -113,8 +113,10 @@ class FakeAgentHandle {
     this.services.set(IAgentScopeContext, scope);
     this.services.set(IEventBus, this.bus);
     this.services.set(IAgentLoopService, {
-      status: () => ({ state: this.activity.turn === undefined ? 'idle' : 'running' }),
-      activitySnapshot: () => this.activity,
+      snapshot: () => ({
+        state: this.activity.turn === undefined ? 'idle' : 'running',
+        turn: this.activity.turn,
+      }),
     });
     this.accessor = {
       get: (token: unknown) => this.services.get(token),

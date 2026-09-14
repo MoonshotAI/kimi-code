@@ -127,7 +127,7 @@ describe('compaction controller manual', () => {
     const env = await testEnv();
     const main = await env.stores.open('main');
     const actor = startAgent(main, createEchoRequester());
-    actor.send({ type: 'input.submit', message: createUserMessage('first') });
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('first') } });
     await waitFor(actor, (s) => s.matches('idle') && main.getState().history.length === 2, {
       timeout: 5000,
     });
@@ -215,10 +215,10 @@ describe('compaction controller manual', () => {
       },
     };
     const actor = startAgent(main, requester);
-    actor.send({ type: 'input.submit', message: createUserMessage('first') });
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('first') } });
     await waitFor(actor, (s) => s.matches('running'), { timeout: 5000 });
-    actor.send({ type: 'input.submit', message: createUserMessage('q1') });
-    actor.send({ type: 'input.submit', message: createUserMessage('q2') });
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('q1') } });
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('q2') } });
     await vi.waitFor(() => expect(actor.getSnapshot().context.queue).toHaveLength(2), { timeout: 5000 });
     const harness = startController(env, actor);
 
@@ -270,16 +270,20 @@ describe('compaction controller manual', () => {
       },
     };
     const actor = startAgent(main, requester);
-    actor.send({ type: 'input.submit', message: createUserMessage('first') });
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('first') } });
     await waitFor(actor, (s) => s.matches('running'), { timeout: 5000 });
     actor.send({
       type: 'input.submit',
-      id: 'e1',
-      message: createUserMessage('early'),
-      origin: { kind: 'user' },
-      tracked: true,
-      createdAt: '2026-09-14T00:00:00.000Z',
-      userMessageId: 'umid-e1',
+      entry: {
+        message: createUserMessage('early'),
+        meta: {
+          promptId: 'e1',
+          origin: { kind: 'user' },
+          tracked: true,
+          createdAt: '2026-09-14T00:00:00.000Z',
+          userMessageId: 'umid-e1',
+        },
+      },
     });
     await vi.waitFor(() => expect(actor.getSnapshot().context.queue).toHaveLength(1), {
       timeout: 5000,
@@ -299,8 +303,8 @@ describe('compaction controller manual', () => {
     (release as () => void)();
     await vi.waitFor(() => expect(summaryCalled).toBe(true), { timeout: 5000 });
     expect(harness.controller.status().phase).toBe('summarizing');
-    actor.send({ type: 'input.submit', id: 's1', message: createUserMessage('late') });
-    actor.send({ type: 'input.submit', message: createUserMessage('queued') });
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('late'), meta: { promptId: 's1' } } });
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('queued') } });
     await vi.waitFor(() => expect(actor.getSnapshot().context.queue).toHaveLength(3), { timeout: 5000 });
     actor.send({ type: 'input.steer', id: 'e1' });
     actor.send({ type: 'input.steer', id: 's1' });
@@ -329,12 +333,15 @@ describe('compaction controller manual', () => {
     ]);
     expect(main.getState().queue).toEqual([
       {
-        id: 'e1',
         message: createUserMessage('early'),
-        origin: { kind: 'user' },
-        tracked: true,
-        createdAt: '2026-09-14T00:00:00.000Z',
-        userMessageId: 'umid-e1',
+        meta: {
+          source: 'input',
+          promptId: 'e1',
+          origin: { kind: 'user' },
+          tracked: true,
+          createdAt: '2026-09-14T00:00:00.000Z',
+          userMessageId: 'umid-e1',
+        },
       },
     ]);
     expect(main.getState().turnIndex.nextTurnId).toBe(3);
@@ -352,7 +359,7 @@ describe('compaction controller manual', () => {
     const env = await testEnv();
     const main = await env.stores.open('main');
     const actor = startAgent(main, createEchoRequester());
-    actor.send({ type: 'input.submit', message: createUserMessage('first') });
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('first') } });
     await waitFor(actor, (s) => s.matches('idle') && main.getState().history.length === 2, {
       timeout: 5000,
     });
@@ -366,7 +373,7 @@ describe('compaction controller manual', () => {
     await vi.waitFor(() => expect(harness.controller.status().phase).toBe('summarizing'), {
       timeout: 5000,
     });
-    actor.send({ type: 'input.submit', message: createUserMessage('while-compacting') });
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('while-compacting') } });
     harness.controller.cancel();
 
     await expect(compactPromise).rejects.toMatchObject({ code: 'cancelled' });
@@ -416,7 +423,7 @@ describe('compaction controller manual', () => {
       },
     };
     const actor = startAgent(main, requester);
-    actor.send({ type: 'input.submit', message: createUserMessage('first') });
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('first') } });
     await waitFor(actor, (s) => s.matches('running'), { timeout: 5000 });
     const harness = startController(env, actor);
 
@@ -435,7 +442,7 @@ describe('compaction controller manual', () => {
     const cancelled = harness.events.at(-1);
     expect(cancelled?.type === 'compaction.cancelled' && cancelled.cause === 'user-abort').toBe(true);
 
-    actor.send({ type: 'input.submit', message: createUserMessage('later') });
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('later') } });
     await vi.waitFor(() => expect(actor.getSnapshot().context.queue).toHaveLength(1), { timeout: 5000 });
     expect(actor.getSnapshot().matches('idle')).toBe(true);
     expect(actor.getSnapshot().context.paused).toBe(true);
@@ -456,7 +463,7 @@ describe('compaction controller manual', () => {
     const env = await testEnv();
     const main = await env.stores.open('main');
     const actor = startAgent(main, createEchoRequester());
-    actor.send({ type: 'input.submit', message: createUserMessage('first') });
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('first') } });
     await waitFor(actor, (s) => s.matches('idle') && main.getState().history.length === 2, {
       timeout: 5000,
     });
@@ -513,13 +520,13 @@ describe('compaction controller auto', () => {
     const harness = startController(env, actor);
     beforeStep.current = harness.controller.onBeforeStep;
 
-    actor.send({ type: 'input.submit', message: createUserMessage('big') });
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('big') } });
     await waitFor(actor, (s) => s.matches('idle') && main.getState().history.length === 2, {
       timeout: 5000,
     });
     expect(seen).toEqual(['big']);
 
-    actor.send({ type: 'input.submit', message: createUserMessage('next') });
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('next') } });
     await vi.waitFor(
       () => {
         expect(harness.events.filter((event) => event.type === 'compaction.completed')).toHaveLength(1);
@@ -567,7 +574,7 @@ describe('compaction controller auto', () => {
     const harness = startController(env, actor, { maxAutoAttempts: 2 });
     beforeStep.current = harness.controller.onBeforeStep;
 
-    actor.send({ type: 'input.submit', message: createUserMessage('go') });
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('go') } });
     await vi.waitFor(() => expect(failedCount).toBe(3), { timeout: 5000 });
     await vi.waitFor(
       () => {

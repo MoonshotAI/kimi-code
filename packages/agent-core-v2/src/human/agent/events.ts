@@ -2,8 +2,13 @@ import { z } from 'zod';
 
 import { defineEvent } from '#/eventStore/events';
 
-import { historyMessageSchema, systemMessageSchema, userMessageSchema } from './historySchema';
-import type { PromptOrigin } from './origin';
+import {
+  historyMessageSchema,
+  systemEntrySchema,
+  systemMessageSchema,
+  userEntrySchema,
+  userMessageSchema,
+} from './historySchema';
 
 export const messageAppended = defineEvent({
   type: 'message.appended',
@@ -29,26 +34,28 @@ export type TurnEnded = ReturnType<typeof turnEnded>;
 
 export const inputSubmitted = defineEvent({
   type: 'input.submitted',
-  schema: z.object({
-    id: z.string().optional(),
-    message: userMessageSchema,
-    origin: z.custom<PromptOrigin>().optional(),
-    tracked: z.boolean().optional(),
-    createdAt: z.string().optional(),
-    userMessageId: z.string().optional(),
-  }),
+  schema: z.union([
+    z.object({ entry: userEntrySchema }),
+    z.object({ id: z.string().optional(), message: userMessageSchema }),
+  ]),
 });
 export type InputSubmitted = ReturnType<typeof inputSubmitted>;
 
 export const inputNotified = defineEvent({
   type: 'input.notified',
-  schema: z.object({ message: userMessageSchema, source: z.string().optional() }),
+  schema: z.union([
+    z.object({ entry: userEntrySchema }),
+    z.object({ message: userMessageSchema, source: z.string().optional() }),
+  ]),
 });
 export type InputNotified = ReturnType<typeof inputNotified>;
 
 export const inputReminded = defineEvent({
   type: 'input.reminded',
-  schema: z.object({ key: z.string(), message: z.union([userMessageSchema, systemMessageSchema]) }),
+  schema: z.object({
+    key: z.string(),
+    message: z.union([userEntrySchema, systemEntrySchema, userMessageSchema, systemMessageSchema]),
+  }),
 });
 export type InputReminded = ReturnType<typeof inputReminded>;
 

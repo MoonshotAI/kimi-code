@@ -1359,7 +1359,7 @@ describe('WaitForTool (harness)', () => {
       expect(output).toContain('[output]\nDONE-OUTPUT');
       expect(ctx.allEvents.some((event) => event.event === 'task.waitDelivered')).toBe(true);
 
-      expect(loop.hasPendingRequests()).toBe(false);
+      expect(loop.snapshot().hasPendingRequests).toBe(false);
       loop.drainNextBatch(ctx.context);
       expect(ctx.context.get().some((message) => message.origin?.kind === 'task')).toBe(false);
       expect(ctx.allEvents.some((event) => event.event === 'task.notified')).toBe(false);

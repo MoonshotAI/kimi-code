@@ -16,7 +16,7 @@ import {
   type Subscription,
 } from '#/xstate2';
 
-import { createUserMessage, type SystemMessage, type ToolCall, type UserMessage } from '#/llm/message';
+import { createUserMessage, type ToolCall, type UserMessage } from '#/llm/message';
 import type { LlmRequestConfig } from '#/llm/requester/requester';
 import type { ToolExecutor, ToolResult } from '#/tool/executor';
 import { createToolMachine, type ToolEvent, type ToolOutput } from '#/tool/machine';
@@ -28,11 +28,9 @@ import { messageAppended, turnEnded, turnStarted } from './events';
 import { mergeSteerMessages } from './origin';
 import { createSystemEntry, createUserEntry } from './turn';
 import { createAbortScope, withAbort, type AbortScope } from '#/utils/abort';
-import type { createTurnMachine, HistoryMessage, TurnLlmEvent, TurnOutput, UserEntry } from './turn';
+import type { createTurnMachine, HistoryMessage, SystemEntry, TurnLlmEvent, TurnOutput, UserEntry } from './turn';
 import { storeActor } from '#/eventStore/actor';
-import type { AgentEventStore, AgentStoreState, QueuedPrompt } from './slices';
-
-export type { QueuedPrompt } from './slices';
+import type { AgentEventStore, AgentStoreState } from './slices';
 
 export interface AgentInput {
   request: LlmRequestConfig;
@@ -84,9 +82,9 @@ type SpawnChild = <TLogic extends AnyActorLogic>(
 export type AgentEvent =
   | TurnLlmEvent
   | ToolEvent
-  | ({ type: 'input.submit' } & QueuedPrompt)
-  | { type: 'input.notify'; message: UserMessage }
-  | { type: 'input.remind'; key: string; message: UserMessage | SystemMessage }
+  | { type: 'input.submit'; entry: UserEntry }
+  | { type: 'input.notify'; entry: UserEntry }
+  | { type: 'input.remind'; key: string; entry: SystemEntry | UserEntry }
   | { type: 'input.steer'; id: string | readonly string[] }
   | { type: 'input.cancel'; id: string }
   | { type: 'input.abort' }
@@ -148,7 +146,7 @@ export interface AgentMachineContext {
   scope: AbortScope;
   notifications: UserEntry[];
   reminders: HistoryMessage[];
-  queue: QueuedPrompt[];
+  queue: UserEntry[];
   turnId: number;
   activeTurnId?: number;
   branchId: string;
@@ -253,11 +251,11 @@ function drainPendingPatch(
     messages: [
       ...context.messages,
       ...context.notifications,
-      ...(head === undefined ? [] : [createUserEntry(head.message, { source: 'input' })]),
+      ...(head === undefined ? [] : [head]),
     ],
     notifications: [],
     queue: rest,
-    drainedId: head?.id,
+    drainedId: head?.meta?.promptId,
   };
 }
 
@@ -322,16 +320,16 @@ export function createAgentMachine({
       ),
       promptGateActor: fromPromise<
         { id?: string; block: boolean; message?: UserMessage; error?: unknown },
-        { gate?: PromptGate; head?: QueuedPrompt }
+        { gate?: PromptGate; head?: UserEntry }
       >(async ({ input }) => {
         const { gate, head } = input;
-        if (gate === undefined || head === undefined) return { id: head?.id, block: false };
+        if (gate === undefined || head === undefined) return { id: head?.meta?.promptId, block: false };
         try {
-          const verdict = await gate(head.id, head.message);
-          if (typeof verdict === 'boolean') return { id: head.id, block: verdict };
-          return { id: head.id, block: verdict.block, message: verdict.message };
+          const verdict = await gate(head.meta?.promptId, head.message);
+          if (typeof verdict === 'boolean') return { id: head.meta?.promptId, block: verdict };
+          return { id: head.meta?.promptId, block: verdict.block, message: verdict.message };
         } catch (error) {
-          return { id: head.id, block: false, error };
+          return { id: head.meta?.promptId, block: false, error };
         }
       }),
       disposeScopeActor: fromPromise<void, { handle?: AgentScopeHandle }>(async ({ input }) => {
@@ -350,7 +348,7 @@ export function createAgentMachine({
             ...context.notifications.map((entry) => messageAppended({ message: entry })),
             ...(head === undefined
               ? []
-              : [messageAppended({ message: createUserEntry(head.message, { source: 'input' }) })]),
+              : [messageAppended({ message: head })]),
           ],
         });
         enqueue.assign(drainPendingPatch(context));
@@ -451,14 +449,7 @@ export function createAgentMachine({
           return {
             queue: [
               ...context.queue,
-              {
-                id: event.id,
-                message: event.message,
-                origin: event.origin,
-                tracked: event.tracked,
-                createdAt: event.createdAt,
-                userMessageId: event.userMessageId,
-              },
+              createUserEntry(event.entry.message, { source: 'input', ...event.entry.meta }),
             ],
           };
         }),
@@ -469,7 +460,7 @@ export function createAgentMachine({
           return {
             notifications: [
               ...context.notifications,
-              createUserEntry(event.message, { source: 'notify' }),
+              createUserEntry(event.entry.message, { source: 'notify', ...event.entry.meta }),
             ],
           };
         }),
@@ -477,11 +468,12 @@ export function createAgentMachine({
       'input.remind': {
         actions: assign(({ context, event }) => {
           if (event.type !== 'input.remind') return {};
-          const kept = context.reminders.filter((entry) => entry.meta.key !== event.key);
+          const kept = context.reminders.filter((entry) => entry.meta?.key !== event.key);
+          const meta = { source: 'reminder', key: event.key, ...event.entry.meta };
           kept.push(
-            event.message.role === 'system'
-              ? createSystemEntry(event.message, { source: 'reminder', key: event.key })
-              : createUserEntry(event.message, { source: 'reminder', key: event.key }),
+            event.entry.message.role === 'system'
+              ? createSystemEntry(event.entry.message, meta)
+              : createUserEntry(event.entry.message, meta),
           );
           return { reminders: kept };
         }),
@@ -491,11 +483,11 @@ export function createAgentMachine({
           if (event.type !== 'input.steer') return;
           const ids = typeof event.id === 'string' ? [event.id] : event.id;
           const steered = context.queue.filter(
-            (item) => item.id !== undefined && ids.includes(item.id),
+            (item) => item.meta?.promptId !== undefined && ids.includes(item.meta?.promptId),
           );
           if (steered.length === 0) return;
           const merged = mergeSteerMessages(
-            steered.map((item) => ({ content: item.message.content, origin: item.origin })),
+            steered.map((item) => ({ content: item.message.content, origin: item.meta?.origin })),
           );
           enqueue.assign({
             queue: context.queue.filter((item) => !steered.includes(item)),
@@ -506,14 +498,14 @@ export function createAgentMachine({
           });
           enqueue.emit({
             type: 'prompt.steered' as const,
-            queueItemIds: steered.map((item) => item.id as string),
+            queueItemIds: steered.map((item) => item.meta?.promptId as string),
           });
         }),
       },
       'input.cancel': {
         actions: assign(({ context, event }) => {
           if (event.type !== 'input.cancel') return {};
-          return { queue: context.queue.filter((item) => item.id !== event.id) };
+          return { queue: context.queue.filter((item) => item.meta?.promptId !== event.id) };
         }),
       },
       'store.reset': {
@@ -595,7 +587,7 @@ export function createAgentMachine({
               reminders: [
                 ...event.state.reminders.filter(
                   (entry) =>
-                    !context.reminders.some((local) => local.meta.key === entry.meta.key),
+                    !context.reminders.some((local) => local.meta?.key === entry.meta?.key),
                 ),
                 ...context.reminders,
               ],
@@ -656,7 +648,7 @@ export function createAgentMachine({
               onDone: [
                 {
                   guard: ({ context, event }) =>
-                    context.paused || context.queue[0]?.id !== event.output.id,
+                    context.paused || context.queue[0]?.meta?.promptId !== event.output.id,
                   target: 'ready',
                 },
                 {
@@ -665,7 +657,7 @@ export function createAgentMachine({
                   actions: [
                     emit(({ context, event }) => ({
                       type: 'prompt.gate_failed' as const,
-                      queueItemId: context.queue[0]?.id,
+                      queueItemId: context.queue[0]?.meta?.promptId,
                       error: event.output.error,
                     })),
                     assign(({ context }) => ({ queue: context.queue.slice(1) })),
@@ -677,7 +669,7 @@ export function createAgentMachine({
                   actions: [
                     emit(({ context }) => ({
                       type: 'prompt.blocked' as const,
-                      queueItemId: context.queue[0]?.id,
+                      queueItemId: context.queue[0]?.meta?.promptId,
                     })),
                     assign(({ context }) => ({ queue: context.queue.slice(1) })),
                   ],
@@ -700,7 +692,7 @@ export function createAgentMachine({
                 actions: [
                   emit(({ context, event }) => ({
                     type: 'prompt.gate_failed' as const,
-                    queueItemId: context.queue[0]?.id,
+                    queueItemId: context.queue[0]?.meta?.promptId,
                     error: event.error,
                   })),
                   assign(({ context }) => ({ queue: context.queue.slice(1) })),

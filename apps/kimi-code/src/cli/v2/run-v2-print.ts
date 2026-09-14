@@ -562,14 +562,12 @@ async function runNativeTurn(
     if (event.type === 'turn.ended') turnEndings.push(event as TurnEnded);
   });
   try {
-    const handle = await agent.accessor.get(IAgentLoopService).enqueuePrompt({
-      message: {
-        role: 'user',
-        content: [{ type: 'text', text: prompt }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
+    const loop = agent.accessor.get(IAgentLoopService);
+    const { id } = loop.submit({
+      message: { role: 'user', content: [{ type: 'text', text: prompt }] },
+      meta: { origin: { kind: 'user' }, tracked: true },
     });
+    const handle = loop.promptHandle(id)!;
     const turn = await handle.launched;
     if (turn === undefined) {
       // A prompt blocked by an onBeforeSubmitPrompt hook never launches a turn.
@@ -1005,9 +1003,10 @@ async function quiesceSessionAgents(
   // Repeat until every queue is empty and every loop freezable: a prompt can
   // still surface from the launch window or a cancelled turn's settle chain.
   for (;;) {
-    await Promise.allSettled(loops.map((loop) => loop.drainPrompts()));
     for (const loop of loops) {
-      for (const queueId of loop.status().pendingPromptIds) loop.cancelQueued(queueId);
+      for (const queueId of loop.snapshot().queue.map((item) => item.meta?.promptId)) {
+        if (queueId !== undefined) loop.cancel({ promptId: queueId });
+      }
       loop.cancel();
     }
     await Promise.allSettled(loops.map((loop) => loop.settled()));
@@ -1029,12 +1028,8 @@ async function quiesceSessionAgents(
     }
     const busy = loops.some((loop) => {
       try {
-        const snapshot = loop.promptQueue();
-        return (
-          snapshot.launching ||
-          snapshot.active !== undefined ||
-          snapshot.pending.length > 0
-        );
+        const snapshot = loop.snapshot();
+        return snapshot.state === 'running' || snapshot.queue.length > 0;
       } catch {
         return false;
       }

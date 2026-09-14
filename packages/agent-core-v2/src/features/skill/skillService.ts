@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { createDecorator } from '#/_base/di/instantiation';
 import type {
   BundledSkillActivation,
-  ContextMessage,
+  PromptOrigin,
   SkillActivationOrigin,
 } from '#/agent/contextMemory/types';
 import { IAgentLoopService, type PromptLaunchResult, type Turn } from '#/agent/loop/loop';
@@ -146,21 +146,26 @@ export class AgentSkillService implements IAgentSkillService {
     for (const activation of prepared) {
       void this.recordActivation(activation.origin);
     }
-    const handle = await this.loop.enqueuePrompt({
+    const status = this.loop.snapshot();
+    const { id } = this.loop.submit({
       message: {
         role: 'user',
         content: [...prepared.map((activation) => activation.part), ...input.input],
-        toolCalls: [],
+      },
+      meta: {
         origin: {
           kind: 'user',
           skillActivations: prepared.map((activation) => activation.entry),
           attachments: input.attachments,
-        },
+        } as PromptOrigin,
+        tracked: true,
       },
     });
-    if (handle.state === 'pending') {
-      return { prompt_id: handle.id, created_at: handle.createdAt, state: 'queued' };
+    const handle = this.loop.promptHandle(id)!;
+    if (status.state === 'running' || status.paused || status.queue.length > 0) {
+      return { prompt_id: id, created_at: handle.createdAt, state: 'queued' };
     }
+    await Promise.race([handle.launched, handle.completion]);
     const turn = await handle.launched;
     if (turn === undefined && handle.state !== 'blocked') {
       throw new Error2(ErrorCodes.INTERNAL, 'promptWithSkills failed to launch a turn');
@@ -168,7 +173,7 @@ export class AgentSkillService implements IAgentSkillService {
     if (turn !== undefined) await turn.ready.catch(() => undefined);
     return {
       turn_id: turn?.id,
-      prompt_id: handle.id,
+      prompt_id: id,
       created_at: handle.createdAt,
       state: handle.state === 'blocked' ? 'blocked' : 'running',
     };
@@ -248,16 +253,15 @@ export class AgentSkillService implements IAgentSkillService {
     this.publishActivation(origin);
 
     if (input === undefined) return undefined;
-    const message: ContextMessage = {
-      role: 'user',
-      content: [...input],
-      toolCalls: [],
-      origin,
-    };
-    if (this.loop.status().state === 'running') {
-      return this.loop.injectPrompt(message);
-    }
-    return (await this.loop.enqueuePrompt({ message })).launched;
+    const steer = this.loop.snapshot().state === 'running';
+    const { id } = this.loop.submit(
+      {
+        message: { role: 'user', content: [...input] },
+        meta: { origin, tracked: !steer },
+      },
+      { steerIfActive: steer },
+    );
+    return this.loop.promptHandle(id)!.launched;
   }
 
   private renderSkillPrompt(skill: SkillDefinition, rawArgs: string): string {

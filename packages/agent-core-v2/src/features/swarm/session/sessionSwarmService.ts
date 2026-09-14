@@ -216,7 +216,7 @@ export class SessionSwarmService implements ISessionSwarmService {
   }
 
   private requireIdleSubagent(agentId: string, child: IAgentScopeHandle): void {
-    if (child.accessor.get(IAgentLoopService).status().state === 'running') {
+    if (child.accessor.get(IAgentLoopService).snapshot().state === 'running') {
       throw new Error2(
         ErrorCodes.AGENT_ALREADY_RUNNING,
         `Agent instance "${agentId}" is already running and cannot run concurrently`,

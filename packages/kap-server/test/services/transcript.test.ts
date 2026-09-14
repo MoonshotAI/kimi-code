@@ -3112,7 +3112,7 @@ describe('bindSessionTranscript', () => {
       this.closeHandlers.add(cb);
       return { dispose: () => this.closeHandlers.delete(cb) };
     }
-    add(id: string, opts?: { loopStatus?: unknown; tasks?: readonly unknown[]; activePromptId?: string }): FakeAgentHandle {
+    add(id: string, opts?: { loopStatus?: { state?: 'idle' | 'running'; activeTurnId?: number }; tasks?: readonly unknown[]; activePromptId?: string }): FakeAgentHandle {
       const bus = this.handles.get(id)?.bus ?? new FakeBus();
       const scope = makeAgentScopeContext({
         agentId: id,
@@ -3145,28 +3145,36 @@ describe('bindSessionTranscript', () => {
             if (token === IAgentScopeContext) return scope;
             if (token === IEventBus) return bus;
             if (token === IAgentLoopService) {
-              return {
-                status: () =>
-                  opts?.loopStatus ?? { state: activity.turn === undefined ? 'idle' : 'running' },
-                activitySnapshot: () => activity,
-                promptQueue: () => ({
-                  active: opts?.activePromptId === undefined
-                    ? undefined
-                    : {
-                        id: opts.activePromptId,
-                        userMessageId: opts.activePromptId,
-                        createdAt: '2026-01-01T00:00:00.000Z',
-                        state: 'running',
-                        message: {
-                          role: 'user',
-                          content: [{ type: 'text', text: 'hi' }],
-                          toolCalls: [],
-                          origin: { kind: 'user' },
-                        },
+              const active =
+                opts?.activePromptId === undefined
+                  ? undefined
+                  : {
+                      id: opts.activePromptId,
+                      userMessageId: opts.activePromptId,
+                      createdAt: '2026-01-01T00:00:00.000Z',
+                      state: 'running' as const,
+                      message: {
+                        role: 'user' as const,
+                        content: [{ type: 'text' as const, text: 'hi' }],
+                        toolCalls: [],
+                        origin: { kind: 'user' as const },
                       },
-                  pending: [],
-                  launching: false,
+                      launched: Promise.resolve(undefined),
+                      completion: new Promise(() => {}),
+                    };
+              return {
+                snapshot: () => ({
+                  state: opts?.loopStatus?.state ?? (activity.turn === undefined ? 'idle' : 'running'),
+                  activeTurnId: opts?.loopStatus?.activeTurnId ?? activity.turn?.turnId,
+                  activePromptId: opts?.activePromptId,
+                  queue: [],
+                  notificationCount: 0,
+                  paused: false,
+                  hasPendingRequests: activity.turn !== undefined,
+                  turn: activity.turn,
+                  activeTraceId: undefined,
                 }),
+                promptHandle: (id: string) => (active?.id === id ? active : undefined),
               };
             }
             if (token === IAgentTaskService) {

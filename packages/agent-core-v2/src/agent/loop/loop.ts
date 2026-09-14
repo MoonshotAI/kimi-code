@@ -1,11 +1,12 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Error2, isError2, type Error2Options } from '#/_base/errors/errors';
-import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
+import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { FinishReason } from '#human/llm/finish-reason';
 import type { ContentPart } from '#human/llm/message';
 import type { TokenUsage } from '#human/llm/usage';
 import type { Hooks } from '#/hooks';
+import type { UserEntry } from '#human/agent/turn';
 import { LoopErrors } from './errors';
 import type {
   MachineEngine,
@@ -28,6 +29,18 @@ export interface AgentActivityTurnSnapshot {
 
 export interface AgentActivitySnapshot {
   readonly turn?: AgentActivityTurnSnapshot;
+}
+
+export interface LoopSnapshot {
+  readonly state: 'idle' | 'running';
+  readonly activeTurnId?: number;
+  readonly activePromptId?: string;
+  readonly queue: readonly UserEntry[];
+  readonly notificationCount: number;
+  readonly paused: boolean;
+  readonly hasPendingRequests: boolean;
+  readonly turn?: AgentActivityTurnSnapshot;
+  readonly activeTraceId?: string;
 }
 
 export type LoopErrorCode = (typeof LoopErrors.codes)[keyof typeof LoopErrors.codes];
@@ -114,19 +127,18 @@ export interface Turn {
   cancel(reason?: unknown): boolean;
 }
 
-export interface AgentLoopStatus {
-  readonly state: 'idle' | 'running';
-  readonly activeTurnId?: number;
-  readonly pendingPromptIds: readonly string[];
-  readonly hasPendingRequests: boolean;
-  readonly activeTraceId?: string;
+export interface LoopSubmitOptions {
+  readonly steerIfActive?: boolean;
+  readonly onMaterialize?: () => void;
 }
 
-export interface LoopPromptSubmit {
-  readonly message: ContextMessage;
-  readonly origin?: PromptOrigin;
+export interface LoopSubmitResult {
+  readonly id: string;
+}
+
+export interface LoopCancelTarget {
+  readonly turnId?: number;
   readonly promptId?: string;
-  readonly onMaterialize?: () => void;
 }
 
 export type PromptState =
@@ -157,12 +169,6 @@ export interface PromptHandle extends PromptSnapshot {
   readonly completion: Promise<PromptCompletion>;
 }
 
-export interface PromptQueueSnapshot {
-  readonly active: PromptSnapshot | undefined;
-  readonly pending: readonly PromptSnapshot[];
-  readonly launching: boolean;
-}
-
 export interface PromptPayload {
   readonly input: readonly ContentPart[];
   readonly promptId?: string;
@@ -174,11 +180,6 @@ export interface SteerPayload {
 
 export interface PromptLaunchResult {
   readonly turn_id: number;
-}
-
-export interface PromptInput {
-  readonly id?: string;
-  readonly message: ContextMessage;
 }
 
 export interface PromptSubmitContext {
@@ -203,41 +204,19 @@ export interface LoopNotifyHandle {
 export interface IAgentLoopService {
   readonly _serviceBrand: undefined;
 
-  submit(prompt: LoopPromptSubmit): { readonly turn: Turn };
+  submit(input: UserEntry, options?: LoopSubmitOptions): LoopSubmitResult;
 
-  steer(prompt: LoopPromptSubmit): Turn | undefined;
+  steer(promptIds: readonly string[]): Promise<void>;
 
-  notify(note?: LoopNotify): LoopNotifyHandle;
+  cancel(target?: LoopCancelTarget, reason?: unknown): boolean;
 
-  cancel(turnId?: number, reason?: unknown): boolean;
+  snapshot(): LoopSnapshot;
 
-  cancelQueued(queueId: string, reason?: unknown): boolean;
-
-  cancelFromUser(turnId?: number): void;
-
-  status(): AgentLoopStatus;
-
-  activitySnapshot(): AgentActivitySnapshot;
-
-  submitPrompt(payload: PromptPayload): Promise<PromptLaunchResult | undefined>;
-
-  submitSteerPrompt(payload: SteerPayload): Promise<PromptLaunchResult | undefined>;
-
-  enqueuePrompt(input: PromptInput): Promise<PromptHandle>;
-
-  steerPrompts(promptIds: readonly string[]): Promise<readonly PromptHandle[]>;
-
-  abortPrompt(promptId: string, reason?: Error): boolean;
-
-  drainPrompts(reason?: Error): Promise<void>;
-
-  injectPrompt(message: ContextMessage): Promise<Turn | undefined>;
-
-  retryPrompt(): Promise<Turn | undefined>;
-
-  promptQueue(): PromptQueueSnapshot;
+  settled(): Promise<void>;
 
   tryAcquireQuiescence(): IDisposable | undefined;
+
+  notify(note?: LoopNotify): LoopNotifyHandle;
 
   buildAttachBundle(): MachineEngineAttachBundle;
 
@@ -245,9 +224,7 @@ export interface IAgentLoopService {
 
   resetMachineEngine(): Promise<void>;
 
-  settled(): Promise<void>;
-
-  hasPendingRequests(): boolean;
+  promptHandle(id: string): PromptHandle | undefined;
 
   registerLoopErrorHandler(
     handler: LoopErrorHandler,

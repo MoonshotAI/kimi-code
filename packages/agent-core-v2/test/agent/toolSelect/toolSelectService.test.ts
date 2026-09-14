@@ -21,8 +21,7 @@ import {
   type AfterStepContext,
   type BeforeStepContext,
   type LoopNotifyHandle,
-  type LoopPromptSubmit,
-  type PromptQueueSnapshot,
+  type LoopSnapshot,
   type PromptSubmitContext,
   type Turn,
 } from '#/agent/loop/loop';
@@ -210,67 +209,37 @@ class FakeLoopService implements IAgentLoopService {
     onBeforeSubmitPrompt: new OrderedHookSlot<PromptSubmitContext>(),
   };
 
-  submitPrompt(): never {
+  submit(): never {
     throw new Error('unused in this suite');
   }
 
-  submitSteerPrompt(): never {
+  steer(): never {
     throw new Error('unused in this suite');
   }
 
-  enqueuePrompt(): never {
+  cancel(): never {
     throw new Error('unused in this suite');
   }
 
-  steerPrompts(): never {
+  snapshot(): LoopSnapshot {
+    return {
+      state: 'idle',
+      activeTurnId: undefined,
+      activePromptId: undefined,
+      queue: [],
+      notificationCount: 0,
+      paused: false,
+      hasPendingRequests: false,
+      turn: undefined,
+      activeTraceId: undefined,
+    };
+  }
+
+  promptHandle(): never {
     throw new Error('unused in this suite');
-  }
-
-  abortPrompt(): never {
-    throw new Error('unused in this suite');
-  }
-
-  async drainPrompts(): Promise<void> {}
-
-  injectPrompt(): never {
-    throw new Error('unused in this suite');
-  }
-
-  retryPrompt(): never {
-    throw new Error('unused in this suite');
-  }
-
-  promptQueue(): PromptQueueSnapshot {
-    return { active: undefined, pending: [], launching: false };
-  }
-
-  cancelFromUser(): void {}
-
-  submit(_prompt: LoopPromptSubmit): { readonly turn: Turn } {
-    throw new Error('unused in this suite');
-  }
-
-  steer(): undefined {
-    return undefined;
   }
 
   notify(): LoopNotifyHandle {
-    throw new Error('unused in this suite');
-  }
-
-  status() {
-    return { state: 'idle' as const, pendingPromptIds: [], hasPendingRequests: false };
-  }
-
-  activitySnapshot() {
-    return {};
-  }
-
-  cancel(_turnId?: number, _reason?: unknown): boolean {
-    throw new Error('unused in this suite');
-  }
-
-  cancelQueued(_queueId: string, _reason?: unknown): boolean {
     throw new Error('unused in this suite');
   }
 
@@ -287,10 +256,6 @@ class FakeLoopService implements IAgentLoopService {
   }
 
   async resetMachineEngine(): Promise<void> {}
-
-  hasPendingRequests(): boolean {
-    return false;
-  }
 
   async settled(): Promise<void> {}
 

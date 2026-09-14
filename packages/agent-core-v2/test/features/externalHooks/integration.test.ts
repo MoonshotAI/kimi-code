@@ -371,13 +371,13 @@ describe('IExternalHooksRunnerService integration', () => {
         finishReason: 'filtered',
       };
       await loop.hooks.onDidFinishStep.run(filtered);
-      expect(loop.hasPendingRequests()).toBe(false);
+      expect(loop.snapshot().hasPendingRequests).toBe(false);
       expect(stopInputs).toEqual([]);
       expect(context.messages).toEqual([]);
 
       const first = makeAfterStep(signal);
       await loop.hooks.onDidFinishStep.run(first);
-      expect(loop.hasPendingRequests()).toBe(true);
+      expect(loop.snapshot().hasPendingRequests).toBe(true);
       expect(context.messages.at(-1)).toEqual(
         expect.objectContaining({
           role: 'user',
@@ -389,7 +389,7 @@ describe('IExternalHooksRunnerService integration', () => {
 
       const second = makeAfterStep(signal);
       await loop.hooks.onDidFinishStep.run(second);
-      expect(loop.hasPendingRequests()).toBe(false);
+      expect(loop.snapshot().hasPendingRequests).toBe(false);
       expect(stopInputs).toEqual([{ stopHookActive: false }]);
 
       eventBus.publish(
@@ -403,7 +403,7 @@ describe('IExternalHooksRunnerService integration', () => {
 
       const nextTurn = makeAfterStep(signal);
       await loop.hooks.onDidFinishStep.run(nextTurn);
-      expect(loop.hasPendingRequests()).toBe(true);
+      expect(loop.snapshot().hasPendingRequests).toBe(true);
       expect(context.messages.at(-1)).toEqual(
         expect.objectContaining({
           role: 'user',
@@ -690,7 +690,7 @@ describe('IExternalHooksRunnerService integration', () => {
       resolveReady();
       await pending;
 
-      expect(loop.hasPendingRequests()).toBe(true);
+      expect(loop.snapshot().hasPendingRequests).toBe(true);
       expect(context.messages.at(-1)).toEqual(
         expect.objectContaining({
           role: 'user',

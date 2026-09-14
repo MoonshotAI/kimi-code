@@ -159,15 +159,12 @@ describe('fork subagent first-request parity', () => {
     ctx.mockNextResponse({ type: 'text', text: CHILD_FINAL_TEXT });
     ctx.mockNextResponse({ type: 'text', text: 'parent final answer' });
 
-    const handle = await parent.accessor.get(IAgentLoopService).enqueuePrompt({
-      message: {
-        role: 'user',
-        content: [{ type: 'text', text: 'start the parity probe' }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
+    const loop = parent.accessor.get(IAgentLoopService);
+    const { id } = loop.submit({
+      message: { role: 'user', content: [{ type: 'text', text: 'start the parity probe' }] },
+      meta: { origin: { kind: 'user' }, tracked: true },
     });
-    const completion = await handle.completion;
+    const completion = await loop.promptHandle(id)!.completion;
     expect(completion.state).toBe('completed');
 
     expect(ctx.llmCalls).toHaveLength(3);

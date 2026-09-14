@@ -359,7 +359,7 @@ export function ChatView({
   const cancel = async () => {
     if (sessionId === null) return;
     try {
-      await klient.session(sessionId).agent(agentId).service(IAgentLoopService).cancelFromUser();
+      await klient.session(sessionId).agent(agentId).service(IAgentLoopService).cancel(undefined);
       trail?.recordEvent('cancel', undefined, state);
     } catch (error) {
       setSendError(error);

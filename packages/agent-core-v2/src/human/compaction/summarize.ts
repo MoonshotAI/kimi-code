@@ -53,8 +53,8 @@ export function createSummarize(options: CreateSummarizeOptions): Summarize {
         if (entry !== undefined && text !== undefined && text.trim().length > 0) {
           return {
             text,
-            usage: entry.meta.usage,
-            traceId: entry.meta.headers?.['x-trace-id'],
+            usage: entry.meta?.usage,
+            traceId: entry.meta?.headers?.['x-trace-id'],
             attempts: attempt + 1,
             droppedCount: history.length - attemptHistory.length,
           };

@@ -618,7 +618,7 @@ describe('Agent resume', () => {
         'agent-seen0000',
         'already delivered summary',
       );
-      const steer = vi.spyOn(ctx.get(IAgentLoopService), 'steerPrompts');
+      const steer = vi.spyOn(ctx.get(IAgentLoopService), 'steer');
 
       await ctx.restorePersisted();
       expect(
@@ -707,7 +707,7 @@ describe('Agent resume', () => {
         status: 'completed',
       });
       await backgroundPersistence.appendTaskOutput('agent-new00000', 'newly delivered summary');
-      const steer = vi.spyOn(ctx.get(IAgentLoopService), 'steerPrompts');
+      const steer = vi.spyOn(ctx.get(IAgentLoopService), 'steer');
 
       await ctx.restorePersisted();
 

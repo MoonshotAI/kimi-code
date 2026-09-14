@@ -40,11 +40,11 @@ function handleWith(
     [
       IAgentLoopService,
       {
-        enqueuePrompt: async (input: unknown) => {
+        submit: (input: unknown) => {
           prompts.push(input);
-          return { launched: Promise.resolve(turn) };
+          return { id: 'p' };
         },
-        retryPrompt: async () => turn,
+        promptHandle: () => ({ launched: Promise.resolve(turn) }),
         cancel: () => true,
       },
     ],

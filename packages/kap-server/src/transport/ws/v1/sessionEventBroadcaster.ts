@@ -916,7 +916,7 @@ export class SessionEventBroadcaster {
     this.activityTrackers.set(
       `${sessionId}:${handle.id}`,
       new LegacyActivityTracker(
-        () => handle.accessor.get(IAgentLoopService).activitySnapshot(),
+        () => handle.accessor.get(IAgentLoopService).snapshot(),
         () => legacyApprovalsOf(handle),
       ),
     );

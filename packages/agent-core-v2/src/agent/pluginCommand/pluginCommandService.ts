@@ -65,12 +65,10 @@ export class AgentPluginCommandService implements IAgentPluginCommandService {
         trigger: origin.trigger,
       }),
     );
-    await this.loop.enqueuePrompt({ message: {
-      role: 'user',
-      content: [{ type: 'text', text: expanded }],
-      toolCalls: [],
-      origin,
-    } });
+    this.loop.submit({
+      message: { role: 'user', content: [{ type: 'text', text: expanded }] },
+      meta: { origin, tracked: true },
+    });
     if (this.scopeContext.agentId === MAIN_AGENT_ID) {
       await applyPromptMetadataUpdate(
         {

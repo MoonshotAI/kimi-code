@@ -58,7 +58,7 @@ describe('server-v2 snapshot route enrichment', () => {
         [IAgentContextMemoryService, { get: () => [] }],
         [
           IAgentLoopService,
-          { promptQueue: () => ({ active: { id: promptId }, pending: [], launching: false }) },
+          { snapshot: () => ({ activePromptId: promptId }) },
         ],
         [IWireService, { flush: async () => {} }],
         [IAgentScopeContext, { scope: () => 'scope/sess_snapshot' }],

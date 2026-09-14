@@ -9,7 +9,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
 import { ContextApplyCompaction } from '#/agent/contextMemory/contextEvents';
 import { isPromptOwnedInjection, isUndoAnchor } from '#/agent/contextMemory/conversationTime';
-import type { ContextMessage, TaskOrigin } from '#/agent/contextMemory/types';
+import type { ContextMessage, PromptOrigin, TaskOrigin } from '#/agent/contextMemory/types';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { turnKey } from '#/agent/loop/turnOps';
@@ -32,6 +32,7 @@ import type { WireRecord } from '#/wire/record';
 import { IWireService } from '#/wire/wire';
 
 import { createTestAgent, execEnvServices, telemetryServices, InMemoryWireRecordPersistence, type TestAgentContext } from '../../harness';
+import { submitPromptTurn } from '../loop/stubs';
 import { createFakeHostFs } from '../../tools/fixtures/fake-exec';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -122,13 +123,9 @@ describe('AgentConversationUndoService', () => {
       await next();
     });
     ctx.mockNextResponse({ type: 'text', text: 'system result' });
-    const turn = loop.submit({
-      message: {
-        role: 'user',
-        content: [{ type: 'text', text: 'system work' }],
-        toolCalls: [],
-        origin: { kind: 'system_trigger', name: 'test' },
-      },
+    const turn = submitPromptTurn(loop, {
+      message: { role: 'user', content: [{ type: 'text', text: 'system work' }] },
+      meta: { origin: { kind: 'system_trigger', name: 'test' } as PromptOrigin },
     }).turn;
     await didStart;
     const history = ctx.context.get();
@@ -138,7 +135,7 @@ describe('AgentConversationUndoService', () => {
       details: { reason: 'loop' },
     });
     expect(turn.signal.aborted).toBe(false);
-    expect(loop.status().state).toBe('running');
+    expect(loop.snapshot().state).toBe('running');
     expect(ctx.context.get()).toBe(history);
 
     hook.dispose();
@@ -303,13 +300,9 @@ describe('AgentConversationUndoService', () => {
       text: string,
     ): Promise<number | undefined> => {
       target.mockNextResponse({ type: 'text', text: `answer to ${text}` });
-      const { turn } = target.get(IAgentLoopService).submit({
-        message: {
-          role: 'user',
-          content: [{ type: 'text', text }],
-          toolCalls: [],
-          origin: { kind: 'user' },
-        },
+      const { turn } = submitPromptTurn(target.get(IAgentLoopService), {
+        message: { role: 'user', content: [{ type: 'text', text }] },
+        meta: { origin: { kind: 'user' } },
       });
       await expect(turn.result).resolves.toMatchObject({ type: 'completed' });
       return turn.id;
@@ -362,31 +355,23 @@ describe('AgentConversationUndoService', () => {
     const loop = ctx.get(IAgentLoopService);
 
     ctx.mockNextResponse({ type: 'text', text: 'a1' });
-    const userTurn = loop.submit({
-      message: {
-        role: 'user',
-        content: [{ type: 'text', text: 'u1' }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
+    const userTurn = submitPromptTurn(loop, {
+      message: { role: 'user', content: [{ type: 'text', text: 'u1' }] },
+      meta: { origin: { kind: 'user' } },
     }).turn;
     await expect(userTurn.result).resolves.toMatchObject({ type: 'completed' });
 
     ctx.mockNextResponse({ type: 'text', text: 'cron done' });
-    const cronTurn = loop.submit({
-      message: {
-        role: 'user',
-        content: [{ type: 'text', text: 'cron work' }],
-        toolCalls: [],
-        origin: {
-          kind: 'cron_job',
-          jobId: 'j1',
-          cron: '0 9 * * *',
-          recurring: true,
-          coalescedCount: 0,
-          stale: false,
-        },
-      },
+    const cronTurn = submitPromptTurn(loop, {
+      message: { role: 'user', content: [{ type: 'text', text: 'cron work' }] },
+      meta: { origin: {
+        kind: 'cron_job',
+        jobId: 'j1',
+        cron: '0 9 * * *',
+        recurring: true,
+        coalescedCount: 0,
+        stale: false,
+      } as PromptOrigin },
     }).turn;
     await expect(cronTurn.result).resolves.toMatchObject({ type: 'completed' });
 
@@ -601,23 +586,30 @@ describe('AgentConversationUndoService', () => {
 
     ctx.appendTurnExchange('u2', 'a2');
     ctx.appendTurnExchange('u3', 'a3');
-    const list = vi.spyOn(ctx.get(IAgentLoopService), 'promptQueue').mockReturnValue({
-      active: undefined,
-      launching: false,
-      pending: [
+    const list = vi.spyOn(ctx.get(IAgentLoopService), 'snapshot').mockReturnValue({
+      state: 'idle',
+      activeTurnId: undefined,
+      activePromptId: undefined,
+      queue: [
         {
-          id: 'queued',
-          userMessageId: 'queued',
-          createdAt: new Date(0).toISOString(),
-          state: 'pending',
           message: {
             role: 'user',
             content: [{ type: 'text', text: 'queued prompt' }],
-            toolCalls: [],
+          },
+          meta: {
+            promptId: 'queued',
             origin: { kind: 'user' },
+            tracked: true,
+            createdAt: new Date(0).toISOString(),
+            userMessageId: 'queued',
           },
         },
       ],
+      notificationCount: 0,
+      paused: false,
+      hasPendingRequests: true,
+      turn: undefined,
+      activeTraceId: undefined,
     });
 
     try {

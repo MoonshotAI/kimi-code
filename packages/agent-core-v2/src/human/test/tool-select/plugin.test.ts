@@ -314,7 +314,7 @@ describe('tool select agent flow', () => {
     });
     connectPlugins(actor, [plugin]);
     actor.start();
-    actor.send({ type: 'input.submit', message: createUserMessage('weather?') });
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('weather?') } });
     await waitFor(
       actor,
       (s) => s.matches('idle') && store.getState().history.length > 1,
@@ -329,7 +329,7 @@ describe('tool select agent flow', () => {
     const schemaEntry = store.getState().history.find(
       (entry: HistoryMessage) => entry.message.role === 'system',
     );
-    expect(schemaEntry?.meta.key).toBe(DYNAMIC_TOOL_SCHEMA_REMINDER_KEY);
+    expect(schemaEntry?.meta?.key).toBe(DYNAMIC_TOOL_SCHEMA_REMINDER_KEY);
     const schemaMessage = schemaEntry?.message as SystemMessage;
     expect(schemaMessage.tools?.map((tool) => tool.name)).toEqual(['get_weather']);
 

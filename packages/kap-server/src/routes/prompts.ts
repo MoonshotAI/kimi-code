@@ -18,8 +18,10 @@ import {
   isUserActivatableSkillType,
   promptMetadataTextFromContentParts,
   ProfileError,
+  type ContextMessage,
   type PromptHandle,
-  type PromptQueueSnapshot,
+  type PromptOrigin,
+  type PromptState,
   type PromptWithSkillsResult,
   newMessageId,
   ISessionContext,
@@ -174,7 +176,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     async (req, reply) => {
       try {
         const { session_id } = req.params;
-        const result = projectPromptList((await resolvePrompt(core, session_id)).prompt.promptQueue());
+        const result = projectPromptList((await resolvePrompt(core, session_id)).prompt);
         reply.send(okEnvelope(result, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
@@ -330,17 +332,21 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           eventService: core.accessor.get(IEventService),
           sessionId: session_id,
         }, promptMetadataTextFromContentParts(parts));
-        const handle = await resolved.prompt.enqueuePrompt({
-          id: reservation.id,
-          message: {
-            role: 'user',
-            content: parts,
-            toolCalls: [],
-            origin: { kind: 'user', attachments: promptAttachments },
+        const status = resolved.prompt.snapshot();
+        const { id } = resolved.prompt.submit({
+          message: { role: 'user', content: parts },
+          meta: {
+            promptId: reservation.id,
+            origin: { kind: 'user', attachments: promptAttachments } as PromptOrigin,
+            tracked: true,
           },
         });
         reservation.submit();
         enqueued = true;
+        const handle = resolved.prompt.promptHandle(id)!;
+        if (status.state === 'idle' && !status.paused && status.queue.length === 0) {
+          await Promise.race([handle.launched, handle.completion]);
+        }
         const staging = preparedMedia;
         void Promise.race([handle.launched, handle.completion]).then(
           () => staging?.discard(),
@@ -377,7 +383,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
       try {
         const { session_id } = req.params;
         const resolved = await resolvePrompt(core, session_id);
-        await resolved.prompt.steerPrompts(req.body.prompt_ids);
+        await resolved.prompt.steer(req.body.prompt_ids);
         reply.send(okEnvelope({ steered: true, prompt_ids: [...req.body.prompt_ids] }, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
@@ -443,21 +449,36 @@ const promptActions: ActionTable<'abort' | 'steer', PromptActionExtra> = {
 
 async function abortPromptAction(ctx: PromptActionCtx): Promise<void> {
   const { resolved, session_id, req, reply, id } = ctx;
-  resolved.prompt.abortPrompt(id);
+  resolved.prompt.cancel({ promptId: id });
   requestLog(req)?.info({ session_id, prompt_id: id }, 'prompt aborted');
   reply.send(okEnvelope({ aborted: true }, req.id));
 }
 
 async function steerPromptAction(ctx: PromptActionCtx): Promise<void> {
   const { resolved, req, reply, id } = ctx;
-  await resolved.prompt.steerPrompts([id]);
+  await resolved.prompt.steer([id]);
   reply.send(okEnvelope({ steered: true, prompt_ids: [id] }, req.id));
 }
 
-function projectPromptList(snapshot: PromptQueueSnapshot) {
+function projectPromptList(loop: IAgentLoopService) {
+  const snapshot = loop.snapshot();
+  const active =
+    snapshot.activePromptId === undefined
+      ? undefined
+      : loop.promptHandle(snapshot.activePromptId);
   return {
-    active: snapshot.active === undefined ? null : projectPromptSnapshot(snapshot.active),
-    queued: snapshot.pending.map(projectPromptSnapshot),
+    active: active === undefined ? null : projectPromptSnapshot(active),
+    queued: snapshot.queue
+      .filter((item) => item.meta?.tracked === true)
+      .map((item) =>
+        projectPromptSnapshot({
+          id: item.meta?.promptId ?? '',
+          userMessageId: item.meta?.userMessageId ?? '',
+          createdAt: item.meta?.createdAt ?? '',
+          state: 'pending',
+          message: { ...item.message, toolCalls: [], origin: item.meta?.origin as PromptOrigin | undefined },
+        }),
+      ),
   };
 }
 
@@ -465,7 +486,13 @@ function projectPromptHandle(handle: PromptHandle) {
   return projectPromptSnapshot(handle);
 }
 
-export function projectPromptSnapshot(prompt: PromptQueueSnapshot['pending'][number]) {
+export function projectPromptSnapshot(prompt: {
+  readonly id: string;
+  readonly userMessageId: string;
+  readonly createdAt: string;
+  readonly state: PromptState;
+  readonly message: ContextMessage;
+}) {
   const status = prompt.state === 'running' || prompt.state === 'steered'
     ? 'running'
     : prompt.state === 'blocked' ? 'blocked' : 'queued';
@@ -481,7 +508,7 @@ export function projectPromptSnapshot(prompt: PromptQueueSnapshot['pending'][num
   };
 }
 
-interface PromptIdReservation {
+export interface PromptIdReservation {
   readonly id: string;
   submit(): void;
   dispose(): void;
@@ -489,7 +516,7 @@ interface PromptIdReservation {
 
 const reservedPromptIds = new Map<string, Set<string>>();
 
-function reservePromptId(sessionId: string, promptId?: string): PromptIdReservation {
+export function reservePromptId(sessionId: string, promptId?: string): PromptIdReservation {
   if (promptId !== undefined && promptId.length === 0) {
     throw new Error2(ErrorCodes.REQUEST_INVALID, 'prompt_id must not be empty');
   }

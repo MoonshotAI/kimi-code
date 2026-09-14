@@ -189,6 +189,7 @@ function stubAttachEngine(): MachineEngine {
       aborting: false,
       waitingForBackground: false,
       paused: false,
+      queue: [],
       queueLength: 0,
       queueIds: [],
       notificationCount: 0,
@@ -261,9 +262,7 @@ describe('AgentLifecycleService', () => {
   let loopActiveTurnId: number | undefined;
   let loopPendingPromptIds: string[];
   let loopCancel: ReturnType<typeof vi.fn<IAgentLoopService['cancel']>>;
-  let loopCancelQueued: ReturnType<typeof vi.fn<IAgentLoopService['cancelQueued']>>;
   let loopSettled: ReturnType<typeof vi.fn<IAgentLoopService['settled']>>;
-  let promptDrain: ReturnType<typeof vi.fn<IAgentLoopService['drainPrompts']>>;
   let beforeExecuteListeners: number;
   let didExecuteHookIds: string[];
 
@@ -390,14 +389,14 @@ describe('AgentLifecycleService', () => {
     } as unknown as IAgentToolExecutorService);
     loopActiveTurnId = undefined;
     loopPendingPromptIds = [];
-    loopCancel = vi.fn<IAgentLoopService['cancel']>((turnId) => {
-      if (turnId === undefined) {
+    loopCancel = vi.fn<IAgentLoopService['cancel']>((target) => {
+      if (target?.promptId !== undefined) {
+        loopPendingPromptIds = loopPendingPromptIds.filter((id) => id !== target.promptId);
+        return true;
+      }
+      if (target?.turnId === undefined) {
         loopActiveTurnId = undefined;
       }
-      return true;
-    });
-    loopCancelQueued = vi.fn<IAgentLoopService['cancelQueued']>((queueId) => {
-      loopPendingPromptIds = loopPendingPromptIds.filter((id) => id !== queueId);
       return true;
     });
     loopSettled = vi.fn<IAgentLoopService['settled']>(async () => {
@@ -405,7 +404,6 @@ describe('AgentLifecycleService', () => {
         throw new Error('Agent loop did not settle');
       }
     });
-    promptDrain = vi.fn<IAgentLoopService['drainPrompts']>(async () => {});
     ix.stub(IAgentLoopService, {
       _serviceBrand: undefined,
       hooks: {
@@ -413,17 +411,22 @@ describe('AgentLifecycleService', () => {
         onDidFinishStep: { register: () => ({ dispose: () => {} }) },
       },
       registerLoopErrorHandler: () => ({ dispose: () => {} }),
-      status: () => ({
+      snapshot: () => ({
         state: loopActiveTurnId === undefined ? 'idle' : 'running',
         activeTurnId: loopActiveTurnId,
-        pendingPromptIds: loopPendingPromptIds,
+        activePromptId: undefined,
+        queue: loopPendingPromptIds.map((promptId) => ({
+          message: { role: 'user', content: [] },
+          meta: { promptId },
+        })),
+        notificationCount: 0,
+        paused: false,
         hasPendingRequests: loopActiveTurnId !== undefined || loopPendingPromptIds.length > 0,
+        turn: undefined,
+        activeTraceId: undefined,
       }),
       cancel: loopCancel,
-      cancelQueued: loopCancelQueued,
       settled: loopSettled,
-      drainPrompts: promptDrain,
-      promptQueue: () => ({ launching: false, active: undefined, pending: [] }),
       tryAcquireQuiescence: vi.fn(() => ({ dispose: vi.fn() })),
       buildAttachBundle: () => stubAttachBundle(),
       attachEngine: () => stubAttachEngine(),
@@ -768,13 +771,13 @@ describe('AgentLifecycleService', () => {
     await svc.remove(main);
 
     expect(stopAllOnExit).toHaveBeenCalledWith('Session closed');
-    expect(promptDrain).toHaveBeenCalledOnce();
+    expect(loopSettled).toHaveBeenCalled();
     expect(suppressAllTerminalNotifications).toHaveBeenCalledOnce();
     expect(suppressAllTerminalNotifications.mock.invocationCallOrder[0]).toBeLessThan(
-      promptDrain.mock.invocationCallOrder[0]!,
+      loopSettled.mock.invocationCallOrder[0]!,
     );
     expect(stopAllOnExit.mock.invocationCallOrder[0]).toBeGreaterThan(
-      promptDrain.mock.invocationCallOrder[0]!,
+      loopSettled.mock.invocationCallOrder[0]!,
     );
   });
 
@@ -784,7 +787,7 @@ describe('AgentLifecycleService', () => {
     const drainStarted = new Promise<void>((resolve) => {
       markDrainStarted = resolve;
     });
-    promptDrain.mockImplementationOnce(() => {
+    loopSettled.mockImplementationOnce(() => {
       markDrainStarted();
       return new Promise<void>((resolve) => {
         releaseDrain = resolve;
@@ -814,8 +817,11 @@ describe('AgentLifecycleService', () => {
 
     await svc.remove(main);
 
-    expect(loopCancelQueued.mock.calls.map(([queueId]) => queueId)).toEqual(['q2', 'q3']);
-    expect(loopCancel.mock.calls.map(([turnId]) => turnId)).toEqual([undefined]);
+    expect(loopCancel.mock.calls.map(([target]) => target)).toEqual([
+      { promptId: 'q2' },
+      { promptId: 'q3' },
+      undefined,
+    ]);
     expect(loopSettled).toHaveBeenCalledOnce();
   });
 

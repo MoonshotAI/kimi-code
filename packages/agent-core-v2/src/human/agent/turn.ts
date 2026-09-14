@@ -40,6 +40,7 @@ import { createAbortScope, withAbort, type AbortScope } from '#/utils/abort';
 
 import { MaxStepsExceededError } from './errors';
 import { estimateUsedContextTokens } from './context-usage';
+import type { PromptOrigin } from './origin';
 
 export interface EntryMeta {
   source?: string;
@@ -48,7 +49,13 @@ export interface EntryMeta {
 
 export type SystemMeta = EntryMeta;
 
-export type UserMeta = EntryMeta;
+export interface UserMeta extends EntryMeta {
+  promptId?: string;
+  origin?: PromptOrigin;
+  tracked?: boolean;
+  createdAt?: string;
+  userMessageId?: string;
+}
 
 export type ToolMeta = EntryMeta;
 
@@ -64,7 +71,7 @@ export type AssistantMetaInput = Omit<AssistantMeta, 'usage'> & { usage?: TokenU
 
 export interface HistoryEntry<T extends Message, F extends EntryMeta> {
   message: T;
-  meta: F;
+  meta?: F;
 }
 
 export type SystemEntry = HistoryEntry<SystemMessage, SystemMeta>;
@@ -336,7 +343,7 @@ function emptyErrorOf(context: TurnMachineContext): LlmErrorMessage<'empty_respo
   return emptyResponseError(
     entry.message,
     context.input.request.model,
-    entry.meta.finish ?? NO_FINISH,
+    entry.meta?.finish ?? NO_FINISH,
   );
 }
 
@@ -384,7 +391,7 @@ export function createTurnMachine(
       },
       signalRemindersConsumed: ({ self, event }) => {
         if (event.type !== 'turn.notify') return;
-        const reminders = event.messages.filter((entry) => entry.meta.source === 'reminder');
+        const reminders = event.messages.filter((entry) => entry.meta?.source === 'reminder');
         if (reminders.length === 0) return;
         self._parent?.send({ type: 'turn.reminders_consumed', reminders });
       },

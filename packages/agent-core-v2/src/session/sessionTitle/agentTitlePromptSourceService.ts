@@ -1,7 +1,7 @@
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import {
   promptMetadataTextFromContentParts,
@@ -83,10 +83,22 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
   }
 
   private combinedMessages(): ContextMessage[] {
-    const queue = this.loop.promptQueue();
+    const snapshot = this.loop.snapshot();
     const all = [...this.context.get()];
-    if (queue.active !== undefined) all.push(queue.active.message);
-    for (const item of queue.pending) all.push(item.message);
+    const activeHandle =
+      snapshot.activePromptId === undefined
+        ? undefined
+        : this.loop.promptHandle(snapshot.activePromptId);
+    if (activeHandle !== undefined) all.push(activeHandle.message);
+    for (const item of snapshot.queue) {
+      if (item.meta?.tracked !== true) continue;
+      all.push({
+        role: 'user',
+        content: [...item.message.content],
+        toolCalls: [],
+        origin: item.meta?.origin as PromptOrigin | undefined,
+      });
+    }
     return all;
   }
 }

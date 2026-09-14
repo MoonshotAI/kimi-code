@@ -385,7 +385,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     if (history.length === 0) {
       throw new Error2(ErrorCodes.COMPACTION_UNABLE, 'No messages to compact in current history.');
     }
-    if (source === 'manual' && this.loopService.status().state !== 'idle') {
+    if (source === 'manual' && this.loopService.snapshot().state !== 'idle') {
       throw new Error2(
         ErrorCodes.COMPACTION_UNABLE,
         'Cannot compact while a turn is active. Wait for it to finish, then retry.',

@@ -135,8 +135,8 @@ describe('usage plugin', () => {
     });
     connectPlugins(actor, [plugin, timingPlugin]);
     actor.start();
-    actor.send({ type: 'input.submit', message: createUserMessage('hi') });
-    actor.send({ type: 'input.submit', message: createUserMessage('again') });
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('hi') } });
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('again') } });
     await waitFor(
       actor,
       (s) => s.matches('idle') && store.getState().history.length === 4,

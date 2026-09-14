@@ -160,7 +160,7 @@ async function assembleSnapshot(
 function readCurrentPromptId(main: IAgentScopeHandle | undefined): string | undefined {
   if (main === undefined) return undefined;
   try {
-    return main.accessor.get(IAgentLoopService).promptQueue().active?.id;
+    return main.accessor.get(IAgentLoopService).snapshot().activePromptId;
   } catch {
     return undefined;
   }
