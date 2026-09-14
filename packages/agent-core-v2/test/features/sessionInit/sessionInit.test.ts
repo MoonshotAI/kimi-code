@@ -191,8 +191,6 @@ describe('SessionInitService', () => {
         subagentName: 'coder',
         parentToolCallId: 'generate-agents-md',
         callerAgentId: 'main',
-        model: 'mock-model',
-        thinkingEffort: 'off',
       }),
     );
     expect(republishStatus).toHaveBeenCalledTimes(1);

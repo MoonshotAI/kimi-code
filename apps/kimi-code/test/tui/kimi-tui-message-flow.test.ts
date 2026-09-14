@@ -124,6 +124,7 @@ interface MessageDriver {
   pluginCommandMap: Map<string, string>;
   sessionEventHandler: {
     notifications: import('#/tui/controllers/notify').NotifyController;
+    subAgentEventHandler: import('#/tui/controllers/subagent-event-handler').SubAgentEventHandler;
     startSubscription(): void;
     handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void;
   };
@@ -6337,7 +6338,7 @@ command = "vim"
     expect(transcript).toContain('✗ The user manually interrupted this subagent x.');
   });
 
-  it('shows the spawned model on the subagent card at spawn, mapped through the model catalog', async () => {
+  it('shows the child model on the subagent card from the status channel, mapped through the model catalog', async () => {
     const { driver } = await makeDriver();
     const sendQueued = vi.fn();
     driver.state.appState.availableModels = {
@@ -6360,6 +6361,14 @@ command = "vim"
         subagentName: 'explore',
         description: 'explore project',
         runInBackground: false,
+      } as Event,
+      sendQueued,
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'agent-1',
+        sessionId: 'ses-1',
         model: 'k2-cheap',
       } as Event,
       sendQueued,
@@ -6368,7 +6377,7 @@ command = "vim"
     expect(stripSgr(renderTranscript(driver))).toContain('Kimi K2 Cheap');
   });
 
-  it('falls back to the raw alias when the spawned model is missing from the catalog', async () => {
+  it('falls back to the raw alias when the status-channel model is missing from the catalog', async () => {
     const { driver } = await makeDriver();
     const sendQueued = vi.fn();
 
@@ -6382,6 +6391,14 @@ command = "vim"
         subagentName: 'explore',
         description: 'explore project',
         runInBackground: false,
+      } as Event,
+      sendQueued,
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'agent-1',
+        sessionId: 'ses-1',
         model: 'k2-cheap',
       } as Event,
       sendQueued,
@@ -6390,7 +6407,7 @@ command = "vim"
     expect(stripSgr(renderTranscript(driver))).toContain('k2-cheap');
   });
 
-  it('shows any concrete spawned effort, same as the session or not', async () => {
+  it('shows any concrete child effort, same as the session or not', async () => {
     const { driver } = await makeDriver();
     const sendQueued = vi.fn();
     driver.state.appState.thinkingEffort = 'high';
@@ -6405,7 +6422,14 @@ command = "vim"
         subagentName: 'explore',
         description: 'explore project',
         runInBackground: false,
-        model: 'k2-cheap',
+      } as Event,
+      sendQueued,
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'agent-1',
+        sessionId: 'ses-1',
         thinkingEffort: 'high',
       } as Event,
       sendQueued,
@@ -6428,7 +6452,14 @@ command = "vim"
           subagentName: 'explore',
           description: `explore ${effort}`,
           runInBackground: false,
-          model: 'k2-cheap',
+        } as Event,
+        sendQueued,
+      );
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'agent.status.updated',
+          agentId: `agent-${effort}`,
+          sessionId: 'ses-1',
           thinkingEffort: effort,
         } as Event,
         sendQueued,
@@ -6471,7 +6502,7 @@ command = "vim"
     expect(stripSgr(renderTranscript(driver))).toContain('k2-cheap');
   });
 
-  it('shows the spawned model in the swarm panel header at spawn', async () => {
+  it('shows the member model in the swarm panel header from the status channel', async () => {
     const { driver } = await makeDriver();
     const sendQueued = vi.fn();
 
@@ -6502,6 +6533,14 @@ command = "vim"
         description: 'Review changed files #1 (coder)',
         swarmIndex: 1,
         runInBackground: false,
+      } as Event,
+      sendQueued,
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'agent-1',
+        sessionId: 'ses-1',
         model: 'k2-cheap',
       } as Event,
       sendQueued,
@@ -6514,7 +6553,7 @@ command = "vim"
     expect(stripSgr(progress.render(118).join('\n'))).toContain('k2-cheap');
   });
 
-  it('includes the spawned model in the background-agent transcript entry', async () => {
+  it('keeps model out of the background-agent transcript entry; the detail view picks it up from the status channel', async () => {
     const { driver } = await makeDriver();
     const sendQueued = vi.fn();
 
@@ -6528,12 +6567,23 @@ command = "vim"
         subagentName: 'explore',
         description: 'explore project',
         runInBackground: true,
+      } as Event,
+      sendQueued,
+    );
+    expect(stripSgr(renderTranscript(driver))).not.toContain('k2-cheap');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'agent-1',
+        sessionId: 'ses-1',
         model: 'k2-cheap',
       } as Event,
       sendQueued,
     );
-
-    expect(stripSgr(renderTranscript(driver))).toContain('k2-cheap');
+    expect(
+      driver.sessionEventHandler.subAgentEventHandler.activityStore.get('agent-1')?.model,
+    ).toBe('k2-cheap');
   });
 
   it('does not let later transcript entries reduce the AgentSwarm grid height', async () => {
