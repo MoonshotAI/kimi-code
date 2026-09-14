@@ -37,12 +37,14 @@ Provider credentials (`api_key`, `base_url`) follow their own resolution rules, 
 
 For a single provider, credentials are resolved in this order:
 
-1. `[providers.<name>].api_key`: key written directly in the config file; highest priority
-2. `[providers.<name>].api_key_env`: name of a shell environment variable to read the key from; consulted only when `api_key` is empty
-3. The matching key inside the `[providers.<name>.env]` sub-table (`KIMI_API_KEY`, `ANTHROPIC_API_KEY`, etc.): consulted only when both fields above are empty
+1. `[providers.<name>].api_key`: key written directly in the config file
+2. `[providers.<name>].api_key_env`: name of a shell environment variable to read the key from
+3. The matching key inside the `[providers.<name>.env]` sub-table (`KIMI_API_KEY`, `ANTHROPIC_API_KEY`, etc.): consulted only when neither field above is present
 4. If all are absent, startup fails with an error indicating the provider is missing credentials
 
-`api_key_env` is the one deliberate exception to "no shell environment variables for credentials": the value is re-read from the process's own environment on every request, so it is never cached beyond the process lifetime and no secret lands in `config.toml`. Note that a running process only sees the environment it started with — rotating the variable takes a restart of the `kimi` / TUI or kap-server process; a fresh `export` in the parent shell only affects newly spawned processes. Declaring `api_key_env` while the variable is unset or empty fails fast with an error naming the provider and the variable — at session readiness checks (print mode, kap-server session creation) and at request time — and is never silently ignored, with no fallback to another credential source. Setting `api_key` together with `api_key_env`, or `api_key_env` together with `oauth`, is rejected as a configuration conflict.
+`api_key` and `api_key_env` are alternatives, not a priority chain: set exactly one — setting both is rejected as a configuration conflict, as is setting `api_key_env` together with `oauth`.
+
+`api_key_env` is the one deliberate exception to "no shell environment variables for credentials": the value is re-read from the process's own environment on every request, so it is never cached beyond the process lifetime and no secret lands in `config.toml`. Note that a running process only sees the environment it started with — rotating the variable takes a restart of the `kimi` / TUI or kap-server process; a fresh `export` in the parent shell only affects newly spawned processes. Declaring `api_key_env` while the variable is unset or empty fails fast with an error naming the provider and the variable — at session readiness checks (print mode, kap-server session creation) and at request time — and is never silently ignored, with no fallback to another credential source.
 
 `base_url` is resolved the same way: first `[providers.<name>].base_url`, then the `*_BASE_URL` key in `[providers.<name>.env]`.
 
