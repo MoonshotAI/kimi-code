@@ -975,6 +975,66 @@ describe('Remote Control stream bridge', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it('stops replaying early frames at the high-water mark and continues after each drain', () => {
+    vi.useFakeTimers();
+    class GrowingSocket extends FakeSocket {
+      override send(data: RawData): void {
+        super.send(data);
+        this.bufferedAmount += 512 * 1024;
+      }
+    }
+    const local = new FakeSocket();
+    const tunnel = new GrowingSocket();
+    const buffer: EarlyFrameBuffer = { frames: [], bytes: 0 };
+    for (let index = 0; index < 7; index += 1) {
+      bufferEarlyFrame(local, buffer, Buffer.from(`f${index}`), false);
+    }
+
+    bridgeSockets(local, tunnel, () => {}, buffer.frames);
+    expect(tunnel.sent).toEqual(['f0', 'f1', 'f2']);
+    expect(local.isPaused).toBe(true);
+    expect(vi.getTimerCount()).toBe(1);
+
+    vi.advanceTimersByTime(20);
+    expect(tunnel.sent).toHaveLength(3);
+    expect(local.isPaused).toBe(true);
+
+    tunnel.bufferedAmount = 0;
+    vi.advanceTimersByTime(20);
+    expect(tunnel.sent).toEqual(['f0', 'f1', 'f2', 'f3', 'f4', 'f5']);
+    expect(local.isPaused).toBe(true);
+
+    tunnel.bufferedAmount = 0;
+    vi.advanceTimersByTime(20);
+    expect(tunnel.sent).toEqual(['f0', 'f1', 'f2', 'f3', 'f4', 'f5', 'f6']);
+    expect(local.isPaused).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+
+    local.emit('message', Buffer.from('live'), false);
+    expect(tunnel.sent.at(-1)).toBe('live');
+  });
+
+  it('drops the unsent early frames when the bridge closes mid-replay', () => {
+    vi.useFakeTimers();
+    const local = new FakeSocket();
+    const tunnel = new FakeSocket();
+    const buffer: EarlyFrameBuffer = { frames: [], bytes: 0 };
+    for (let index = 0; index < 3; index += 1) {
+      bufferEarlyFrame(local, buffer, Buffer.from(`f${index}`), false);
+    }
+    tunnel.bufferedAmount = 2 * 1024 * 1024;
+    bridgeSockets(local, tunnel, () => {}, buffer.frames);
+    expect(tunnel.sent).toEqual(['f0']);
+    expect(local.isPaused).toBe(true);
+
+    tunnel.close(1000);
+    expect(local.isPaused).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+    tunnel.bufferedAmount = 0;
+    vi.advanceTimersByTime(40);
+    expect(tunnel.sent).toEqual(['f0']);
+  });
+
   it('resumes a source still paused from early-frame buffering when the peer closes', () => {
     const local = new FakeSocket();
     const tunnel = new FakeSocket();

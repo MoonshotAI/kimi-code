@@ -1080,8 +1080,7 @@ export function bridgeSockets(
   };
   if (earlyLeftFrames !== undefined) {
     left.removeAllListeners('message');
-    for (const [data, isBinary] of earlyLeftFrames) leftToRight.forward(data, isBinary);
-    if (left.isPaused && !leftToRight.throttled()) left.resume();
+    leftToRight.replay(earlyLeftFrames);
   }
   left.on('message', leftToRight.forward);
   right.on('message', rightToLeft.forward);
@@ -1095,15 +1094,20 @@ export function bridgeSockets(
 // high-water mark and resumes as soon as a poll sees it back at the mark. There is no lower
 // resume threshold on purpose: the local server closes a peer whose socket makes no progress
 // for 15 s, so each pause must stay short even when the relay link drains slowly.
+//
+// Frames buffered before the sink existed are replayed through the same gate: the replay
+// stops at the mark, the rest waits in `pending`, and each drain poll continues the replay
+// before the source is allowed to read again.
 function createPump(
   from: BridgeSocket,
   to: BridgeSocket,
 ): {
   readonly forward: (data: RawData, isBinary: boolean) => void;
-  readonly throttled: () => boolean;
+  readonly replay: (frames: readonly [RawData, boolean][]) => void;
   readonly dispose: () => void;
 } {
   let drain: NodeJS.Timeout | undefined;
+  let pending: [RawData, boolean][] = [];
   // Always leaves the source reading: a close handshake on a paused socket never sees the
   // peer's close frame and lingers until ws gives up on it.
   const dispose = (): void => {
@@ -1111,18 +1115,41 @@ function createPump(
       clearInterval(drain);
       drain = undefined;
     }
+    pending = [];
     if (from.isPaused) from.resume();
   };
-  const forward = (data: RawData, isBinary: boolean): void => {
-    if (to.readyState !== WebSocket.OPEN) return;
+  const send = (data: RawData, isBinary: boolean): boolean => {
+    if (to.readyState !== WebSocket.OPEN) return false;
     to.send(data, { binary: isBinary });
-    if (drain !== undefined || to.bufferedAmount <= BRIDGE_HIGH_WATER_MARK_BYTES) return;
+    if (drain !== undefined) return true;
+    if (to.bufferedAmount <= BRIDGE_HIGH_WATER_MARK_BYTES) return false;
     from.pause();
-    drain = setInterval(() => {
-      if (to.bufferedAmount <= BRIDGE_HIGH_WATER_MARK_BYTES) dispose();
-    }, BRIDGE_DRAIN_POLL_MS);
+    drain = setInterval(poll, BRIDGE_DRAIN_POLL_MS);
+    return true;
   };
-  return { forward, throttled: () => drain !== undefined, dispose };
+  const flushPending = (): void => {
+    while (pending.length > 0) {
+      const [data, isBinary] = pending.shift()!;
+      if (send(data, isBinary)) return;
+    }
+    if (from.isPaused) from.resume();
+  };
+  const poll = (): void => {
+    if (to.bufferedAmount > BRIDGE_HIGH_WATER_MARK_BYTES) return;
+    if (drain !== undefined) {
+      clearInterval(drain);
+      drain = undefined;
+    }
+    flushPending();
+  };
+  const forward = (data: RawData, isBinary: boolean): void => {
+    send(data, isBinary);
+  };
+  const replay = (frames: readonly [RawData, boolean][]): void => {
+    pending = [...frames];
+    flushPending();
+  };
+  return { forward, replay, dispose };
 }
 
 // Resumes a socket paused by back-pressure or early-frame buffering before closing it so the
