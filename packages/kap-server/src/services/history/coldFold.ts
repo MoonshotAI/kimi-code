@@ -182,8 +182,6 @@ interface TurnScratch {
   currentStep?: number;
   serverUserSeq: number;
   attachmentSeq: number;
-  openingInputKey?: string;
-  openingSteerDeduped: boolean;
 }
 
 interface GoalState {
@@ -273,7 +271,7 @@ export function foldWireHistory(
   const scratch = (rawId: number): TurnScratch => {
     let entry = scratchByTurn.get(rawId);
     if (entry === undefined) {
-      entry = { serverUserSeq: 0, attachmentSeq: 0, openingSteerDeduped: false };
+      entry = { serverUserSeq: 0, attachmentSeq: 0 };
       scratchByTurn.set(rawId, entry);
     }
     return entry;
@@ -324,7 +322,6 @@ export function foldWireHistory(
     scratchByTurn.set(rawId, {
       serverUserSeq: 0,
       attachmentSeq: 0,
-      openingSteerDeduped: false,
     });
   };
 
@@ -534,8 +531,6 @@ export function foldWireHistory(
     scratchByTurn.set(rawId, {
       serverUserSeq: carriedUserSeq,
       attachmentSeq: attachments,
-      openingInputKey: JSON.stringify(input),
-      openingSteerDeduped: false,
     });
     if (openingMessageId !== undefined) {
       const notification =
@@ -571,16 +566,6 @@ export function foldWireHistory(
     if (rawId === undefined || hiddenTurnIds.has(rawId)) return;
     const input = Array.isArray(record['input']) ? (record['input'] as ContentPart[]) : [];
     const skipBlocks = kind === 'user' ? (origin?.skillActivations?.length ?? 0) : 0;
-    const entry = scratch(rawId);
-    if (
-      entry.currentStep === undefined &&
-      !entry.openingSteerDeduped &&
-      entry.openingInputKey !== undefined &&
-      entry.openingInputKey === JSON.stringify(input)
-    ) {
-      entry.openingSteerDeduped = true;
-      return;
-    }
     if (kind === 'user') {
       const recordAtMs = atMs(record);
       const matchedId = matchQueuedPrompt(input, skipBlocks);
@@ -935,6 +920,10 @@ export function foldWireHistory(
           createOrphanTurn(rawId, recordAtMs, recordAtIso);
         }
         currentTurn = rawId;
+        scratchByTurn.set(rawId, {
+          serverUserSeq: 0,
+          attachmentSeq: 0,
+        });
       }
       const entry = scratch(rawId);
       const ordinal = (entry.currentStep ?? 0) + 1;
