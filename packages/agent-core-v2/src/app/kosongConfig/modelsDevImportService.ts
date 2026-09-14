@@ -196,10 +196,10 @@ export class ModelsDevImportService implements IModelsDevImportService {
         userAgent: await this.outboundUserAgent(),
         signal: AbortSignal.timeout(UPSTREAM_FETCH_TIMEOUT_MS),
       });
-    } catch (err) {
+    } catch (error) {
       throw new Error2(
         codes.REGISTRY_IMPORT_INVALID,
-        `custom registry at ${url} cannot be imported: ${truncateUpstreamMessage(err)}`,
+        `custom registry at ${url} cannot be imported: ${truncateUpstreamMessage(error)}`,
       );
     }
     if (Object.keys(entries).length === 0) {
@@ -270,8 +270,21 @@ export class ModelsDevImportService implements IModelsDevImportService {
       (total, entry) => total + Object.keys(entry.models).length,
       0,
     );
-    return { providers: imported, modelsImported };
+    const credentialEnv: Record<string, string> = {};
+    for (const entry of Object.values(entries)) {
+      const envKey = firstNonEmptyString(entry.env);
+      if (envKey !== undefined) credentialEnv[entry.id] = envKey;
+    }
+    return { providers: imported, modelsImported, credentialEnv };
   }
+}
+
+function firstNonEmptyString(values: readonly string[] | undefined): string | undefined {
+  for (const value of values ?? []) {
+    const trimmed = value.trim();
+    if (trimmed.length > 0) return trimmed;
+  }
+  return undefined;
 }
 
 async function seedDefaultModelWhenUnset(config: IConfigService, alias: string): Promise<void> {

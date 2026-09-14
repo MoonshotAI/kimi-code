@@ -141,6 +141,22 @@ export async function handleProviderAdd(
   for (const id of addedProviderIds) {
     deps.stdout.write(`  - ${id}\n`);
   }
+  for (const entry of entryList) {
+    const envKey = firstNonEmptyString(entry.env);
+    if (envKey !== undefined) {
+      deps.stdout.write(
+        `provider "${entry.id}" declares credential env var "${envKey}" — set api_key_env in config.toml to use it\n`,
+      );
+    }
+  }
+}
+
+function firstNonEmptyString(values: readonly string[] | undefined): string | undefined {
+  for (const value of values ?? []) {
+    const trimmed = value.trim();
+    if (trimmed.length > 0) return trimmed;
+  }
+  return undefined;
 }
 
 export async function handleProviderRemove(

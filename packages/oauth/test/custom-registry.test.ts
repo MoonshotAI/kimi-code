@@ -495,7 +495,28 @@ describe('applyCustomRegistryProvider', () => {
     expect(alias?.['defaultEffort']).toBeUndefined();
   });
 
-  it('writes apiKeyEnv from the entry env field and drops the legacy inline apiKey', () => {
+  it('ignores the entry env field — never writes apiKeyEnv or source.envKey', () => {
+    const config: ManagedKimiConfigShape = { providers: {} };
+    const entry: CustomRegistryProviderEntry = {
+      id: 'acme',
+      name: 'Acme',
+      api: 'https://acme.example.test/v1',
+      type: 'openai',
+      env: ['ACME_API_KEY'],
+      models: { m1: { id: 'm1' } },
+    };
+
+    applyCustomRegistryProvider(config, entry, KOKUB_SOURCE);
+
+    expect(config.providers['acme']).toEqual({
+      type: 'openai',
+      baseUrl: 'https://acme.example.test/v1',
+      apiKey: 'sk-token',
+      source: KOKUB_SOURCE,
+    });
+  });
+
+  it('keeps the inline apiKey for an env-declaring entry when no hand-edited apiKeyEnv exists', () => {
     const config: ManagedKimiConfigShape = {
       providers: {
         acme: {
@@ -519,104 +540,9 @@ describe('applyCustomRegistryProvider', () => {
     expect(config.providers['acme']).toEqual({
       type: 'openai',
       baseUrl: 'https://acme.example.test/v1',
-      apiKeyEnv: 'ACME_API_KEY',
-      source: { ...KOKUB_SOURCE, envKey: 'ACME_API_KEY' },
+      apiKey: 'sk-token',
+      source: KOKUB_SOURCE,
     });
-  });
-
-  it('takes the first non-empty string of the entry env list', () => {
-    const config: ManagedKimiConfigShape = { providers: {} };
-    const entry: CustomRegistryProviderEntry = {
-      id: 'acme',
-      name: 'Acme',
-      api: 'https://acme.example.test/v1',
-      type: 'openai',
-      env: ['', '  ', 'ACME_FALLBACK_KEY'],
-      models: { m1: { id: 'm1' } },
-    };
-
-    applyCustomRegistryProvider(config, entry, KOKUB_SOURCE);
-
-    expect(config.providers['acme']?.['apiKeyEnv']).toBe('ACME_FALLBACK_KEY');
-  });
-
-  it('follows an upstream env rename tracked through source.envKey', () => {
-    const config: ManagedKimiConfigShape = {
-      providers: {
-        acme: {
-          type: 'openai',
-          baseUrl: 'https://acme.example.test/v1',
-          apiKeyEnv: 'ACME_API_KEY',
-          source: { ...KOKUB_SOURCE, envKey: 'ACME_API_KEY' },
-        },
-      },
-    };
-    const entry: CustomRegistryProviderEntry = {
-      id: 'acme',
-      name: 'Acme',
-      api: 'https://acme.example.test/v1',
-      type: 'openai',
-      env: ['ACME_RENAMED_KEY'],
-      models: { m1: { id: 'm1' } },
-    };
-
-    applyCustomRegistryProvider(config, entry, KOKUB_SOURCE);
-
-    expect(config.providers['acme']?.['apiKeyEnv']).toBe('ACME_RENAMED_KEY');
-    const source = config.providers['acme']?.['source'] as { envKey?: string };
-    expect(source.envKey).toBe('ACME_RENAMED_KEY');
-  });
-
-  it('preserves a user-edited apiKeyEnv while still tracking the upstream name', () => {
-    const config: ManagedKimiConfigShape = {
-      providers: {
-        acme: {
-          type: 'openai',
-          baseUrl: 'https://acme.example.test/v1',
-          apiKeyEnv: 'MY_OWN_KEY',
-          source: { ...KOKUB_SOURCE, envKey: 'ACME_API_KEY' },
-        },
-      },
-    };
-    const entry: CustomRegistryProviderEntry = {
-      id: 'acme',
-      name: 'Acme',
-      api: 'https://acme.example.test/v1',
-      type: 'openai',
-      env: ['ACME_RENAMED_KEY'],
-      models: { m1: { id: 'm1' } },
-    };
-
-    applyCustomRegistryProvider(config, entry, KOKUB_SOURCE);
-
-    expect(config.providers['acme']?.['apiKeyEnv']).toBe('MY_OWN_KEY');
-    const source = config.providers['acme']?.['source'] as { envKey?: string };
-    expect(source.envKey).toBe('ACME_RENAMED_KEY');
-  });
-
-  it('overwrites an empty apiKeyEnv even when it differs from the tracked source name', () => {
-    const config: ManagedKimiConfigShape = {
-      providers: {
-        acme: {
-          type: 'openai',
-          baseUrl: 'https://acme.example.test/v1',
-          apiKeyEnv: '',
-          source: { ...KOKUB_SOURCE, envKey: 'ACME_API_KEY' },
-        },
-      },
-    };
-    const entry: CustomRegistryProviderEntry = {
-      id: 'acme',
-      name: 'Acme',
-      api: 'https://acme.example.test/v1',
-      type: 'openai',
-      env: ['ACME_RENAMED_KEY'],
-      models: { m1: { id: 'm1' } },
-    };
-
-    applyCustomRegistryProvider(config, entry, KOKUB_SOURCE);
-
-    expect(config.providers['acme']?.['apiKeyEnv']).toBe('ACME_RENAMED_KEY');
   });
 
   it('preserves a hand-edited apiKeyEnv when the entry declares no env', () => {
@@ -626,7 +552,7 @@ describe('applyCustomRegistryProvider', () => {
           type: 'openai',
           baseUrl: 'https://acme.example.test/v1',
           apiKeyEnv: 'MY_OWN_KEY',
-          source: { ...KOKUB_SOURCE, envKey: 'ACME_API_KEY' },
+          source: KOKUB_SOURCE,
         },
       },
     };
@@ -649,14 +575,13 @@ describe('applyCustomRegistryProvider', () => {
   });
 
   it('keeps a hand-edited apiKeyEnv when upstream drops and later re-adds the env field', () => {
-    const trackedSource: CustomRegistrySource = { ...KOKUB_SOURCE, envKey: 'ACME_API_KEY' };
     const config: ManagedKimiConfigShape = {
       providers: {
         acme: {
           type: 'openai',
           baseUrl: 'https://acme.example.test/v1',
           apiKeyEnv: 'MY_OWN_KEY',
-          source: trackedSource,
+          source: KOKUB_SOURCE,
         },
       },
     };
@@ -668,11 +593,11 @@ describe('applyCustomRegistryProvider', () => {
       models: { m1: { id: 'm1' } },
     };
 
-    applyCustomRegistryProvider(config, entryWithoutEnv, trackedSource);
+    applyCustomRegistryProvider(config, entryWithoutEnv, KOKUB_SOURCE);
     expect(config.providers['acme']?.['apiKeyEnv']).toBe('MY_OWN_KEY');
     expect(config.providers['acme']).not.toHaveProperty('apiKey');
 
-    applyCustomRegistryProvider(config, { ...entryWithoutEnv, env: ['ACME_API_KEY'] }, trackedSource);
+    applyCustomRegistryProvider(config, { ...entryWithoutEnv, env: ['ACME_API_KEY'] }, KOKUB_SOURCE);
     expect(config.providers['acme']?.['apiKeyEnv']).toBe('MY_OWN_KEY');
     expect(config.providers['acme']).not.toHaveProperty('apiKey');
   });

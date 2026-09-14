@@ -178,5 +178,6 @@ export type ImportCatalogProviderResponse = z.infer<typeof importCatalogProvider
 export const importCustomRegistryResponseSchema = z.object({
   providers: z.array(providerCatalogItemSchema),
   models_imported: z.number().int().min(0),
+  credential_env: z.record(z.string(), z.string()).optional(),
 });
 export type ImportCustomRegistryResponse = z.infer<typeof importCustomRegistryResponseSchema>;

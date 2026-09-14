@@ -385,6 +385,14 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
       : `Imported ${String(count)} providers from registry.`,
     'success',
   );
+  for (const entry of Object.values(entries)) {
+    const envKey = firstNonEmptyString(entry.env);
+    if (envKey !== undefined) {
+      host.showStatus(
+        `provider "${entry.id}" declares credential env var "${envKey}" — set api_key_env in config.toml to use it`,
+      );
+    }
+  }
 
   // Offer the model selector so the user can pick a default, just like the
   // catalog (known-provider) flow. Copy without the v1-synthesized
@@ -429,4 +437,12 @@ function promptCustomRegistryImport(
     );
     host.mountEditorReplacement(dialog);
   });
+}
+
+function firstNonEmptyString(values: readonly string[] | undefined): string | undefined {
+  for (const value of values ?? []) {
+    const trimmed = value.trim();
+    if (trimmed.length > 0) return trimmed;
+  }
+  return undefined;
 }

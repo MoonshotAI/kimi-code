@@ -165,13 +165,7 @@ function readCustomRegistrySource(provider: ProviderView): CustomRegistrySource 
   const apiKey = candidate['apiKey'];
   if (typeof url !== 'string' || url.length === 0) return undefined;
   if (typeof apiKey !== 'string') return undefined;
-  const envKey = candidate['envKey'];
-  return {
-    kind: 'apiJson',
-    url,
-    apiKey,
-    envKey: typeof envKey === 'string' && envKey.length > 0 ? envKey : undefined,
-  };
+  return { kind: 'apiJson', url, apiKey };
 }
 
 function customRegistrySourceKey(source: CustomRegistrySource): string {

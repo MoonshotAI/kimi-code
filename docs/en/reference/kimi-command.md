@@ -309,7 +309,7 @@ Five actions are available:
 
 #### `kimi provider add <url>`
 
-Bulk-import all providers from a custom registry (`api.json`). The command fetches the registry, creates a `[providers.<id>]` and `[models.<alias>]` entry for each item, and writes `source` metadata so the TUI refreshes providers and models from the same registry URL automatically on next startup. When a registry entry declares the `env` field, the imported provider is written with `api_key_env` instead of storing the registry token as the LLM key; see [Providers and models](../configuration/providers.md).
+Bulk-import all providers from a custom registry (`api.json`). The command fetches the registry, creates a `[providers.<id>]` and `[models.<alias>]` entry for each item, and writes `source` metadata so the TUI refreshes providers and models from the same registry URL automatically on next startup. When a registry entry declares the `env` field, the command prints a hint naming the declared variable — set `api_key_env` in `config.toml` to use it; see [Providers and models](../configuration/providers.md).
 
 | Parameter / Option | Description |
 | --- | --- |

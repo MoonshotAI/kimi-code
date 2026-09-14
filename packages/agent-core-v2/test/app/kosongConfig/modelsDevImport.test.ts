@@ -154,7 +154,7 @@ async function expectError2(promise: Promise<unknown>, code: string): Promise<Er
     () => {
       throw new Error(`expected the call to throw ${code}`);
     },
-    (cause: unknown) => cause,
+    (error: unknown) => error,
   );
   expect(isError2(err)).toBe(true);
   expect((err as Error2).code).toBe(code);
@@ -422,6 +422,20 @@ describe('IModelsDevImportService', () => {
     const models = config.inspect<ModelsSection>(MODELS_SECTION).userValue ?? {};
     expect(models['acme-old/gpt-y']).toBeUndefined();
     expect(models['acme-gpt/gpt-x']).toMatchObject({ provider: 'acme-gpt', model: 'gpt-x' });
+  });
+
+  it('returns declared credential env names as hints without persisting them', async () => {
+    const docWithEnv = {
+      'acme-gpt': { ...REGISTRY_DOC['acme-gpt'], env: ['ACME_API_KEY'] },
+    };
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJson(docWithEnv) });
+    const { config, imports } = createHost();
+
+    const result = await imports.importCustomRegistry({ url: REGISTRY_URL });
+
+    expect(result.credentialEnv).toEqual({ 'acme-gpt': 'ACME_API_KEY' });
+    const providers = config.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue ?? {};
+    expect(providers['acme-gpt']).not.toHaveProperty('apiKeyEnv');
   });
 
   it('rejects a registry import that would rewrite an OAuth-managed provider', async () => {

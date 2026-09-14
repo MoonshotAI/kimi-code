@@ -309,7 +309,7 @@ kimi provider <action> [options]
 
 #### `kimi provider add <url>`
 
-从自定义 registry（`api.json`）批量导入所有供应商。命令会拉取 registry，为每个条目创建 `[providers.<id>]` 和 `[models.<alias>]`，并写入 `source` 元数据，使 TUI 下次启动时自动刷新同一 registry 地址下的供应商和模型。当 registry 条目声明了 `env` 字段时，导入的供应商会写成 `api_key_env`，registry token 不再被存为 LLM 密钥，详见[平台与模型](../configuration/providers.md)。
+从自定义 registry（`api.json`）批量导入所有供应商。命令会拉取 registry，为每个条目创建 `[providers.<id>]` 和 `[models.<alias>]`，并写入 `source` 元数据，使 TUI 下次启动时自动刷新同一 registry 地址下的供应商和模型。当 registry 条目声明了 `env` 字段时，命令会打印一条提示，指明声明的变量名——想用就在 `config.toml` 里设置 `api_key_env`，详见[平台与模型](../configuration/providers.md)。
 
 | 参数 / 选项 | 说明 |
 | --- | --- |

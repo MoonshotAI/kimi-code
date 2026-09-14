@@ -43,6 +43,7 @@ export interface ImportCustomRegistryOptions {
 export interface ImportCustomRegistryResult {
   readonly providers: readonly ProviderCatalogItem[];
   readonly modelsImported: number;
+  readonly credentialEnv: Readonly<Record<string, string>>;
 }
 
 export interface IModelsDevImportService {

@@ -11,16 +11,11 @@ export type { ManagedKimiConfigShape };
  * document). Refresh treats the URL as the stable registry identity and may try
  * more than one API key when existing provider records drift during key
  * rotation.
- *
- * `envKey` records the upstream `env` variable name written by the last apply,
- * so a later refresh can tell "we wrote this `apiKeyEnv`" apart from a manual
- * user edit (which must be preserved).
  */
 export interface CustomRegistrySource {
   readonly kind: 'apiJson';
   readonly url: string;
   readonly apiKey: string;
-  readonly envKey?: string;
 }
 
 export interface FetchCustomRegistryOptions {
@@ -314,14 +309,11 @@ function resolveCapabilities(model: CustomRegistryModelEntry): string[] {
  * provider object via `ManagedKimiProviderConfig`'s index signature so the
  * refresh dispatcher can rediscover it later.
  *
- * When the entry declares `env` (the registry's published credential variable
- * names), the provider stores `apiKeyEnv` instead of an inline `apiKey` — the
- * registry Bearer key stays on `source.apiKey` for registry fetches only. A
- * hand-edited `apiKeyEnv` survives: it is only overwritten when empty or when
- * it still equals the name the previous apply wrote (tracked as
- * `source.envKey`). An entry without `env` keeps a hand-edited `apiKeyEnv`
- * too, rather than resurrecting an inline `apiKey` that would conflict with
- * it.
+ * The entry's `env` field is deliberately NOT consumed here: the registry
+ * controls both the variable name and the endpoint the credential is sent to,
+ * so the binding is left for the user to declare explicitly. A hand-edited
+ * `apiKeyEnv` on the existing record is preserved instead, without
+ * resurrecting an inline `apiKey` that would conflict with it.
  */
 export function applyCustomRegistryProvider(
   config: ManagedKimiConfigShape,
@@ -329,41 +321,22 @@ export function applyCustomRegistryProvider(
   source: CustomRegistrySource,
 ): void {
   const providerKey = entry.id;
-  const envKey = firstNonEmptyString(entry.env);
   const existing = config.providers[providerKey];
-
-  if (envKey === undefined) {
-    const existingApiKeyEnv = nonEmptyString(existing?.['apiKeyEnv']);
-    config.providers[providerKey] =
-      existingApiKeyEnv === undefined
-        ? {
-            type: entry.type,
-            baseUrl: entry.api,
-            apiKey: source.apiKey,
-            source,
-          }
-        : {
-            type: entry.type,
-            baseUrl: entry.api,
-            apiKeyEnv: existingApiKeyEnv,
-            source,
-          };
-  } else {
-    const existingApiKeyEnv = nonEmptyString(existing?.['apiKeyEnv']);
-    const trackedEnvKey = isRecord(existing?.['source'])
-      ? nonEmptyString(existing['source']['envKey'])
-      : undefined;
-    const apiKeyEnv =
-      existingApiKeyEnv === undefined || existingApiKeyEnv === trackedEnvKey
-        ? envKey
-        : existingApiKeyEnv;
-    config.providers[providerKey] = {
-      type: entry.type,
-      baseUrl: entry.api,
-      apiKeyEnv,
-      source: { ...source, envKey },
-    };
-  }
+  const existingApiKeyEnv = nonEmptyString(existing?.['apiKeyEnv']);
+  config.providers[providerKey] =
+    existingApiKeyEnv === undefined
+      ? {
+          type: entry.type,
+          baseUrl: entry.api,
+          apiKey: source.apiKey,
+          source,
+        }
+      : {
+          type: entry.type,
+          baseUrl: entry.api,
+          apiKeyEnv: existingApiKeyEnv,
+          source,
+        };
 
   const existingModels = config.models ?? {};
   // Selectively merge upstream models into the existing config so any fields
@@ -404,14 +377,6 @@ export function applyCustomRegistryProvider(
   }
 
   config.models = existingModels;
-}
-
-function firstNonEmptyString(values: readonly string[] | undefined): string | undefined {
-  for (const value of values ?? []) {
-    const trimmed = value.trim();
-    if (trimmed.length > 0) return trimmed;
-  }
-  return undefined;
 }
 
 function nonEmptyString(value: unknown): string | undefined {

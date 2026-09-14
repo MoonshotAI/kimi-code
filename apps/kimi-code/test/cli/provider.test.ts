@@ -410,6 +410,31 @@ describe('kimi provider add', () => {
     expect(stdout.join('')).toContain('Imported 2 providers');
   });
 
+  it('prints an api_key_env hint for entries declaring a credential env var, without persisting it', async () => {
+    mockRegistryFetch({
+      acme: {
+        id: 'acme',
+        name: 'Acme',
+        api: 'https://acme.example.test/v1',
+        type: 'openai',
+        env: ['ACME_API_KEY'],
+        models: { m1: { id: 'm1' } },
+      },
+    });
+    const { harness, current } = makeHarness({ providers: {} } as KimiConfig);
+    const { deps, stdout, exitCodes } = makeDeps(harness);
+
+    await tryRun(() => handleProviderAdd(deps, REGISTRY_URL, {}));
+
+    expect(exitCodes).toEqual([]);
+    const output = stdout.join('');
+    expect(output).toContain('provider "acme" declares credential env var "ACME_API_KEY"');
+    expect(output).toContain('api_key_env');
+    const acme = current().providers['acme']!;
+    expect(acme.apiKey).toBe('');
+    expect(acme).not.toHaveProperty('apiKeyEnv');
+  });
+
   it('exits 1 when the registry fetch fails with an HTTP error', async () => {
     mockRegistryFetch({ message: 'invalid token' }, 401);
     const { harness } = makeHarness({ providers: {} } as KimiConfig);
