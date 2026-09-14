@@ -1154,6 +1154,20 @@ describe('AgentSwarmProgressComponent terminal state memory', () => {
     expect(text.length).toBeLessThanOrEqual(2_000);
     expect(text).not.toMatch(/[\uD800-\uDBFF]$/);
   });
+
+  it('closes an OSC 8 hyperlink that the storage cap slices through', () => {
+    const component = createComponent();
+    registerSubagents(component, 1);
+
+    component.markCompleted(
+      'agent-1',
+      `\u001B]8;;https://example.com\u0007x${'\u0301'.repeat(5_000)}\u001B]8;;\u0007`,
+    );
+
+    const text = membersOf(component)[0]?.completedText ?? '';
+    expect(text.startsWith('\u001B]8;;https://example.com\u0007')).toBe(true);
+    expect(text.endsWith('\u001B]8;;\u0007')).toBe(true);
+  });
 });
 
 describe('AgentSwarmProgressComponent frame timer', () => {

@@ -994,6 +994,7 @@ function capFinalOutputLabel(text: string): string {
 function capCodeUnits(text: string, maxCodeUnits: number): string {
   if (text.length <= maxCodeUnits) return text;
   let end = maxCodeUnits;
+  let osc8CloseSuffix = '';
   let index = text.indexOf('\u001B');
   while (index >= 0 && index < end) {
     const sequenceEnd = ansiSequenceEnd(text, index);
@@ -1001,13 +1002,28 @@ function capCodeUnits(text: string, maxCodeUnits: number): string {
       end = index;
       break;
     }
+    const osc8Close = osc8CloseAfterSequence(text.slice(index, sequenceEnd));
+    if (osc8Close !== undefined) osc8CloseSuffix = osc8Close ?? '';
     index = text.indexOf('\u001B', sequenceEnd);
   }
   // A cut landing on a lead surrogate reads as the astral code point; back
   // off so the retained label never ends in an unpaired surrogate.
   const codePoint = text.codePointAt(end - 1);
   if (codePoint !== undefined && codePoint > 0xffff) end -= 1;
-  return text.slice(0, end);
+  return text.slice(0, end) + osc8CloseSuffix;
+}
+
+// Mirrors pi-tui's OSC 8 bookkeeping: a sequence with a non-empty URI opens a
+// hyperlink (closed with the opener's terminator), an empty URI closes one.
+// SGR resets do not close hyperlinks, so a sliced opener would otherwise
+// leak the link onto later cells of the grid row.
+function osc8CloseAfterSequence(sequence: string): string | null | undefined {
+  if (!sequence.startsWith('\u001B]8;')) return undefined;
+  const terminator = sequence.endsWith('\u0007') ? '\u0007' : '\u001B\\';
+  const body = sequence.slice(4, sequence.length - terminator.length);
+  const separatorIndex = body.indexOf(';');
+  if (separatorIndex < 0) return undefined;
+  return body.slice(separatorIndex + 1).length > 0 ? `\u001B]8;;${terminator}` : null;
 }
 
 function ansiSequenceEnd(text: string, start: number): number | undefined {
