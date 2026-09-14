@@ -424,8 +424,16 @@ export class WsConnectionV1 implements BroadcastTarget {
   private sendImmediateEnvelope(envelope: EventEnvelope): void {
     if (this.closed) return;
     this.flush();
-    if (this.outbound.length > 0) this.outbound.push(envelope);
-    else this.sendFrame(envelope);
+    if (this.outbound.length > 0) {
+      this.outbound.push(envelope);
+      return;
+    }
+    if (this.socket.bufferedAmount > this.highWaterMarkBytes) {
+      this.outbound.push(envelope);
+      this.deferForBackpressure();
+      return;
+    }
+    this.sendFrame(envelope);
   }
 
   private sendImmediateFrame(msg: unknown): void {

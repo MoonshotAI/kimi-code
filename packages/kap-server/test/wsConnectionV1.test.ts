@@ -866,6 +866,49 @@ describe('WsConnectionV1 outbound buffer', () => {
     conn.close();
   });
 
+  it('defers an immediate event when the peer is above the high-water mark with no backlog', async () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { flushIntervalMs: 16, highWaterMarkBytes: 100 });
+    socket.sent = [];
+
+    socket.bufferedAmount = 200;
+    conn.send(durable('event.session.work_changed', 's2', 1), 'immediate');
+    conn.send(durable('event.session.work_changed', 's3', 2), 'immediate');
+    expect(socket.sent).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(socket.sent).toHaveLength(0);
+    expect(socket.closeCalls).toHaveLength(0);
+
+    socket.bufferedAmount = 0;
+    await vi.advanceTimersByTimeAsync(5);
+    const frames = socket.frames() as Array<{ session_id: string; seq: number }>;
+    expect(frames.map((f) => [f.session_id, f.seq])).toEqual([
+      ['s2', 1],
+      ['s3', 2],
+    ]);
+    conn.close();
+  });
+
+  it('closes 1013 when immediate events keep stalling above the high-water mark', async () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, {
+      flushIntervalMs: 16,
+      highWaterMarkBytes: 100,
+      heartbeatIntervalMs: 60_000,
+    });
+    socket.sent = [];
+
+    socket.bufferedAmount = 200;
+    conn.send(durable('event.session.work_changed', 's2', 1), 'immediate');
+    await vi.advanceTimersByTimeAsync(MAX_BACKPRESSURE_STALL_MS - 1);
+    expect(socket.closeCalls).toHaveLength(0);
+    conn.send(durable('event.session.work_changed', 's3', 2), 'immediate');
+    await vi.advanceTimersByTimeAsync(MAX_BACKPRESSURE_STALL_MS);
+    expect(socket.closeCalls).toEqual([{ code: 1013, reason: 'slow consumer' }]);
+    expect(socket.sent).toHaveLength(0);
+    conn.close();
+  });
+
   it('still sends an immediate event straight away when nothing is deferred', async () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { flushIntervalMs: 16, highWaterMarkBytes: 100 });
