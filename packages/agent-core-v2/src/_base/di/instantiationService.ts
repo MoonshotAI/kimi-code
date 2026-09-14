@@ -439,6 +439,9 @@ export class InstantiationService implements IInstantiationService {
       return undefined;
     }
     this._instanceEntries.delete(instance);
+    const serviceInstance = instance as object;
+    this._edgeNodes.delete(serviceInstance);
+    this._tree.graph.removeInstance(serviceInstance);
     return entry.dispose();
   }
 

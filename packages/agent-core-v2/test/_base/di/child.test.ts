@@ -447,6 +447,43 @@ describe('child scope detach on dispose', () => {
     return seen;
   }
 
+  it('retiring a service-backed unit drops its edge node from the tracked set and the graph', () => {
+    interface IParentSvc {
+      tag: string;
+    }
+    interface IChildSvc {
+      tag: string;
+    }
+    const IParentSvc = createDecorator<IParentSvc>('retire-parent-svc');
+    const IChildSvc = createDecorator<IChildSvc>('retire-child-svc');
+    class ParentSvc implements IParentSvc {
+      tag = 'parent';
+    }
+    class ChildSvc implements IChildSvc {
+      tag = 'child';
+      constructor(@IParentSvc readonly parent: IParentSvc) {}
+    }
+
+    const parent = new InstantiationService(
+      new ServiceCollection([IParentSvc, new SyncDescriptor(ParentSvc)]),
+    );
+    const child = parent.createChild(
+      new ServiceCollection([IChildSvc, new SyncDescriptor(ChildSvc)]),
+    ) as InstantiationService;
+    parent.invokeFunction((a) => a.get(IParentSvc));
+    const childInstance = child.invokeFunction((a) => a.get(IChildSvc));
+    child.fiberHost.recordInstanceEdge(childInstance, IChildSvc);
+
+    const graph = parent.cascadeTree.graph;
+    expect(graph.edges().some((edge) => edge.consumer.token === IChildSvc)).toBe(true);
+
+    child.unprovide(IChildSvc);
+
+    expect(graph.edges().some((edge) => edge.consumer.token === IChildSvc)).toBe(false);
+    expect(collectReachable(parent).has(childInstance)).toBe(false);
+    parent.dispose();
+  });
+
   it('disposing a child detaches it from the shared dependency graph and the parent', async () => {
     interface IParentSvc {
       tag: string;
