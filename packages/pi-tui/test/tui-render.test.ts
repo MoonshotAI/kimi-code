@@ -2,7 +2,7 @@ import assert from "node:assert";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it } from "node:test";
+import { describe, it, mock } from "node:test";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import { Image } from "../src/components/image.ts";
 import { Text } from "../src/components/text.ts";
@@ -613,6 +613,264 @@ describe("TUI content shrinkage", () => {
 		// All lines should be empty
 		assert.strictEqual(viewport[0]?.trim(), "", "Line 0 should be cleared");
 		assert.strictEqual(viewport[1]?.trim(), "", "Line 1 should be cleared");
+
+		tui.stop();
+	});
+});
+
+describe("TUI above-viewport changes", () => {
+	it("adopts in-place edits confined above the viewport without a full redraw", async () => {
+		const terminal = new LoggingVirtualTerminal(40, 10);
+		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = Array.from({ length: 30 }, (_, i) => `Line ${i}`);
+		tui.start();
+		tui.renderNow();
+		const initialRedraws = tui.fullRedraws;
+		terminal.clearWrites();
+
+		// A 1Hz ticking card above the viewport edits one line in place.
+		component.lines = Array.from({ length: 30 }, (_, i) => (i === 5 ? "Line 5 (t=1)" : `Line ${i}`));
+		tui.renderNow();
+
+		const writes = terminal.getWrites();
+		assert.ok(!writes.includes("\x1b[2J"), "confined above-viewport edit must not clear the screen");
+		assert.ok(!writes.includes("\x1b[3J"), "confined above-viewport edit must not clear scrollback");
+		assert.ok(!writes.includes("Line 5 (t=1)"), "off-screen rows are not reprinted");
+		assert.strictEqual(tui.fullRedraws, initialRedraws, "no full redraw for a confined in-place edit");
+
+		// The frame was adopted: a later visible change renders differentially.
+		terminal.clearWrites();
+		component.lines = Array.from({ length: 30 }, (_, i) =>
+			i === 5 ? "Line 5 (t=1)" : i === 25 ? "Line 25 (visible)" : `Line ${i}`,
+		);
+		tui.renderNow();
+		const diffWrites = terminal.getWrites();
+		assert.ok(diffWrites.includes("Line 25 (visible)"), "visible change renders differentially");
+		assert.ok(!diffWrites.includes("\x1b[2J"), "visible change stays on the differential path");
+
+		tui.stop();
+	});
+
+	it("renders only the visible part when an edit spans the viewport boundary", async () => {
+		const terminal = new LoggingVirtualTerminal(40, 10);
+		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = Array.from({ length: 30 }, (_, i) => `Line ${i}`);
+		tui.start();
+		tui.renderNow();
+		const initialRedraws = tui.fullRedraws;
+		terminal.clearWrites();
+
+		// One line above the viewport (top = 20) and one inside it change in the same frame.
+		component.lines = Array.from({ length: 30 }, (_, i) =>
+			i === 5 ? "Line 5 (tick)" : i === 25 ? "Line 25 (typed)" : `Line ${i}`,
+		);
+		tui.renderNow();
+
+		const writes = terminal.getWrites();
+		assert.ok(writes.includes("Line 25 (typed)"), "visible change is rendered");
+		assert.ok(!writes.includes("\x1b[2J"), "spanning in-place edit must not clear the screen");
+		assert.ok(!writes.includes("Line 5 (tick)"), "off-screen rows are not reprinted");
+		assert.strictEqual(tui.fullRedraws, initialRedraws, "no full redraw for a spanning in-place edit");
+
+		const viewport = await terminal.flushAndGetViewport();
+		assert.ok(viewport[5]?.includes("Line 25 (typed)"), "viewport shows the updated line");
+
+		tui.stop();
+	});
+
+	it("rate-limits automatic clear-full-redraws and drops the scrollback clear", async () => {
+		let monoNow = 1_000_000;
+		mock.timers.enable({ apis: ["setTimeout"], now: monoNow });
+		const perfClock = mock.method(performance, "now", () => monoNow);
+		try {
+			const terminal = new LoggingVirtualTerminal(40, 10);
+			const tui: TUI = new TuiMainScreen(terminal);
+			const component = new TestComponent();
+			tui.addChild(component);
+
+			component.lines = Array.from({ length: 30 }, (_, i) => `Line ${i}`);
+			tui.start();
+			tui.renderNow();
+			const redrawsAfterFirstRender = tui.fullRedraws;
+			terminal.clearWrites();
+
+			// A line-count change above the viewport cannot be handled in place:
+			// the first automatic fallback redraw runs immediately, clears the
+			// screen, but preserves the scrollback.
+			component.lines = ["Inserted 1", ...Array.from({ length: 30 }, (_, i) => `Line ${i}`)];
+			tui.renderNow();
+			let writes = terminal.getWrites();
+			assert.ok(writes.includes("\x1b[2J"), "first automatic fallback redraw clears the screen");
+			assert.ok(!writes.includes("\x1b[3J"), "automatic fallback redraw must not clear scrollback");
+			assert.strictEqual(tui.fullRedraws, redrawsAfterFirstRender + 1, "first fallback redraw ran");
+
+			// A second automatic fallback inside the window is deferred.
+			terminal.clearWrites();
+			component.lines = [
+				"Inserted 2",
+				"Inserted 1",
+				...Array.from({ length: 30 }, (_, i) => `Line ${i}`),
+			];
+			tui.renderNow();
+			writes = terminal.getWrites();
+			assert.ok(!writes.includes("\x1b[2J"), "second fallback redraw inside the window is deferred");
+			assert.strictEqual(tui.fullRedraws, redrawsAfterFirstRender + 1, "deferred redraw has not run yet");
+
+			// The deferred requests merge into one trailing redraw.
+			monoNow += 2000;
+			mock.timers.tick(2000);
+			await new Promise<void>((resolve) => process.nextTick(resolve));
+			monoNow += 20;
+			mock.timers.tick(20);
+			writes = terminal.getWrites();
+			assert.ok(writes.includes("\x1b[2J"), "trailing redraw runs after the window");
+			assert.ok(!writes.includes("\x1b[3J"), "trailing redraw must not clear scrollback");
+			assert.strictEqual(tui.fullRedraws, redrawsAfterFirstRender + 2, "exactly one trailing redraw ran");
+
+			tui.stop();
+		} finally {
+			mock.timers.reset();
+			perfClock.mock.restore();
+		}
+	});
+
+	it("lets keyboard-driven renders bypass the deferred full-redraw timer", async () => {
+		let monoNow = 1_000_000;
+		mock.timers.enable({ apis: ["setTimeout"], now: monoNow });
+		const perfClock = mock.method(performance, "now", () => monoNow);
+		try {
+			class TypingComponent extends TestComponent {
+				handleInput(data: string): void {
+					this.lines = [...this.lines, `Typed ${data}`];
+				}
+			}
+			const terminal = new LoggingVirtualTerminal(40, 10);
+			const tui: TUI = new TuiMainScreen(terminal);
+			const component = new TypingComponent();
+			tui.addChild(component);
+			tui.setFocus(component);
+
+			component.lines = Array.from({ length: 30 }, (_, i) => `Line ${i}`);
+			tui.start();
+			tui.renderNow();
+			terminal.clearWrites();
+
+			// The first automatic fallback redraw runs immediately.
+			component.lines = ["Inserted 1", ...component.lines];
+			tui.renderNow();
+			const redrawsAfterFallback = tui.fullRedraws;
+			terminal.clearWrites();
+
+			// The second one lands inside the rate-limit window and is deferred
+			// behind the trailing timer, leaving previousLines stale.
+			component.lines = ["Inserted 2", ...component.lines];
+			tui.renderNow();
+			assert.ok(!terminal.getWrites().includes("\x1b[2J"), "second fallback redraw is deferred");
+			terminal.clearWrites();
+
+			// A keyboard-driven render inside the window must not be delayed:
+			// deferring it would hide typed text until the trailing timer fired.
+			terminal.sendInput("x");
+			await new Promise<void>((resolve) => process.nextTick(resolve));
+			const writes = terminal.getWrites();
+			assert.ok(writes.includes("\x1b[2J"), "keyboard render bypasses the deferred timer");
+			assert.ok(writes.includes("Typed x"), "typed text is rendered immediately");
+			assert.strictEqual(tui.fullRedraws, redrawsAfterFallback + 1, "exactly one bypass render");
+
+			// The bypass supersedes the pending trailing timer.
+			terminal.clearWrites();
+			monoNow += 4000;
+			mock.timers.tick(4000);
+			await new Promise<void>((resolve) => process.nextTick(resolve));
+			monoNow += 20;
+			mock.timers.tick(20);
+			assert.ok(!terminal.getWrites().includes("\x1b[2J"), "trailing timer was cancelled by the bypass");
+			assert.strictEqual(tui.fullRedraws, redrawsAfterFallback + 1, "no trailing redraw after the bypass");
+
+			tui.stop();
+		} finally {
+			mock.timers.reset();
+			perfClock.mock.restore();
+		}
+	});
+
+	it("keeps the throttle window on a monotonic clock across wall-clock rollbacks", async () => {
+		let monoNow = 1_000_000;
+		let wallNow = 1_000_000;
+		mock.timers.enable({ apis: ["setTimeout"], now: monoNow });
+		const perfClock = mock.method(performance, "now", () => monoNow);
+		const wallClock = mock.method(Date, "now", () => wallNow);
+		try {
+			const terminal = new LoggingVirtualTerminal(40, 10);
+			const tui: TUI = new TuiMainScreen(terminal);
+			const component = new TestComponent();
+			tui.addChild(component);
+
+			component.lines = Array.from({ length: 30 }, (_, i) => `Line ${i}`);
+			tui.start();
+			tui.renderNow();
+			terminal.clearWrites();
+
+			component.lines = ["Inserted 1", ...component.lines];
+			tui.renderNow();
+			assert.ok(terminal.getWrites().includes("\x1b[2J"), "first fallback redraw ran");
+			terminal.clearWrites();
+
+			// The wall clock jumps back one hour; a monotonic throttle clock must
+			// not notice. With a wall-clock-based throttle the negative elapsed
+			// would stretch the trailing delay far beyond one window.
+			wallNow -= 3_600_000;
+
+			component.lines = ["Inserted 2", ...component.lines];
+			tui.renderNow();
+			assert.ok(!terminal.getWrites().includes("\x1b[2J"), "second fallback redraw is deferred");
+
+			monoNow += 1999;
+			mock.timers.tick(1999);
+			await new Promise<void>((resolve) => process.nextTick(resolve));
+			assert.ok(!terminal.getWrites().includes("\x1b[2J"), "trailing redraw does not fire early");
+
+			monoNow += 1;
+			mock.timers.tick(1);
+			await new Promise<void>((resolve) => process.nextTick(resolve));
+			monoNow += 20;
+			mock.timers.tick(20);
+			assert.ok(
+				terminal.getWrites().includes("\x1b[2J"),
+				"trailing redraw fires after exactly one throttle window despite the rollback",
+			);
+
+			tui.stop();
+		} finally {
+			mock.timers.reset();
+			perfClock.mock.restore();
+			wallClock.mock.restore();
+		}
+	});
+
+	it("still clears the scrollback on an explicit terminal resize", async () => {
+		const terminal = new LoggingVirtualTerminal(40, 10);
+		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = Array.from({ length: 30 }, (_, i) => `Line ${i}`);
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+
+		terminal.resize(60, 10);
+		await terminal.waitForRender();
+
+		const writes = terminal.getWrites();
+		assert.ok(writes.includes("\x1b[2J"), "resize redraw clears the screen");
+		assert.ok(writes.includes("\x1b[3J"), "resize redraw clears the scrollback");
 
 		tui.stop();
 	});
