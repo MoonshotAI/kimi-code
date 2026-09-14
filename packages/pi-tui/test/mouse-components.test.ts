@@ -266,6 +266,51 @@ describe("mouse-aware components", () => {
 		tui.stop();
 	});
 
+	it("dispatches cropped rows within the uncropped height to container subclasses", async () => {
+		const terminal = new VirtualTerminal(20, 5);
+		const tui = new TuiAltScreen(terminal);
+		const editor = new Editor(tui, editorTheme);
+		editor.setText("l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10");
+		// A Container subclass with its own handleMouse (like the app's
+		// GutterContainer) receives dispatch instead of being skipped.
+		const wrapper = new (class extends Container {
+			override handleMouse(event: TuiMouseEvent) {
+				return super.handleMouse(event);
+			}
+		})();
+		wrapper.addChild(editor);
+		tui.setLayoutRoot(wrapper);
+		tui.start();
+		tui.setFocus(editor);
+		await terminal.waitForRender();
+
+		// The wrapper renders 7 rows into 5 and is cropped by one row; the last
+		// screen row displays "l10".
+		terminal.sendInput("\x1b[<0;2;5M");
+		terminal.sendInput("\x1b[<0;2;5m");
+		terminal.sendInput("X");
+		await terminal.waitForRender();
+
+		assert.strictEqual(editor.getText(), "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nlX10");
+		tui.stop();
+	});
+
+	it("maps clicks from the grapheme-aligned scroll origin", () => {
+		const input = new Input({ prompt: "" });
+		input.setValue("😀a😀bc");
+		// setValue keeps the cursor at 0; walk to the end, then back to just
+		// after "a" so horizontal scrolling starts inside the first emoji.
+		for (let i = 0; i < 5; i++) input.handleInput("\x1b[C");
+		for (let i = 0; i < 3; i++) input.handleInput("\x1b[D");
+		input.render(5);
+
+		// "a" is the first displayed character; clicking it must place the
+		// cursor after "😀" rather than at the raw scroll column.
+		assert.strictEqual(input.handleMouse(mouse("press", 0, 0, 5, 1))?.handled, true);
+		input.handleInput("X");
+		assert.strictEqual(input.getValue(), "😀Xa😀bc");
+	});
+
 	it("selects and copies editor text on drag instead of moving the cursor", async () => {
 		const terminal = new VirtualTerminal(20, 6);
 		const copied: string[] = [];

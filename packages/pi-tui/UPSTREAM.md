@@ -177,6 +177,12 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 
 ### mouse-dispatch-accounts-for-cropped-rows — keep
 
-**Decision:** When the layout crops an over-tall component to keep its cursor row visible, alternate-screen mouse dispatch includes the box's `lineOffset` in the local coordinate transform, so clicks map to the rows actually displayed.
+**Decision:** When the layout crops an over-tall component to keep its cursor row visible, alternate-screen mouse dispatch includes the box's `lineOffset` in the local coordinate transform and uses the uncropped rendered height, so clicks map to the rows actually displayed.
 
 **Why not in the app:** The crop offset is computed inside the layout engine and the translation happens in the alternate-screen dispatch path.
+
+### input-scroll-origin-aligns-to-grapheme — keep
+
+**Decision:** The cached horizontal-scroll origin used for click mapping in `Input` is the grapheme boundary actually displayed first, not the raw column the scroller chose.
+
+**Why not in the app:** The scroll origin is computed inside `Input.render`; the click mapper only sees the cached value.

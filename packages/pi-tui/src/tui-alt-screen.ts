@@ -831,7 +831,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				x: event.screenX - box.rect.x,
 				y: event.screenY - box.rect.y + (box.lineOffset ?? 0),
 				width: box.rect.width,
-				height: box.rect.height,
+				height: box.lines?.length ?? box.rect.height,
 			});
 			if (result) return result;
 		}
