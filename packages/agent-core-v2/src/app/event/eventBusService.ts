@@ -70,7 +70,10 @@ export class EventBusService extends Service implements ISessionEventBus {
     }
     if (agent !== undefined) this.sources.set(event, agent);
     this.allEmitter.fire(event);
-    const channel = agent === undefined ? undefined : this.perAgent.get(agent.agentId);
+    const channel =
+      agent === undefined || !this.isAgentActive(agent)
+        ? undefined
+        : this.perAgent.get(agent.agentId);
     channel?.all.fire(event);
     this.perType.get(event.type)?.fire(event);
   }
