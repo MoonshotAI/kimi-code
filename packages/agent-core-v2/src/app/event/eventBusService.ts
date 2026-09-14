@@ -64,14 +64,20 @@ export class EventBusService extends Service implements ISessionEventBus {
     }
     if (agent !== undefined) this.sources.set(event, agent);
     this.allEmitter.fire(event);
-    this.perType.get(event.type)?.fire(event);
     const channel = agent === undefined ? undefined : this.perAgent.get(agent.agentId);
     channel?.all.fire(event);
+    this.perType.get(event.type)?.fire(event);
     channel?.perType.get(event.type)?.fire(event);
   }
 
   sourceOf(event: Event2<any>): AgentContext | undefined {
     return this.sources.get(event);
+  }
+
+  override dispose(): void {
+    for (const channel of this.perAgent.values()) channel.dispose();
+    this.perAgent.clear();
+    super.dispose();
   }
 
   subscribeAgent(agent: AgentContext, handler: (event: Event2<any>) => void): IDisposable;

@@ -317,7 +317,7 @@ describe('per-agent sharded channels', () => {
     expect(seen).toEqual(['test.agent', 'test.a', 'test.agent']);
   });
 
-  it('fires the full stream, then the per-type stream, then the per-agent stream for one publish', () => {
+  it('fires the full stream, then the agent stream, then the per-type stream for one publish', () => {
     const bus = new EventBusService();
     const a = stubAgentContext('a', 1);
     bus.activateAgent(a);
@@ -328,7 +328,7 @@ describe('per-agent sharded channels', () => {
 
     bus.publish(new TestAgentEvent({ agentId: 'a', value: 1 }), a);
 
-    expect(order).toEqual(['all', 'typed', 'agent']);
+    expect(order).toEqual(['all', 'agent', 'typed']);
   });
 
   it('does not attach view or onAgent subscriptions to the shared channels', () => {
@@ -410,5 +410,37 @@ describe('per-agent sharded channels', () => {
     bus.publish(new TestAgentEvent({ agentId: 'a', value: 1 }), scopeA.agentContext);
 
     expect(order).toEqual(['full', 'typed']);
+  });
+
+  it('delivers an agent full-stream handler before a session-level typed handler for the same event', () => {
+    const bus = new EventBusService();
+    const scopeA = makeAgentScopeContext({ agentId: 'a', agentScope: 'agents/a', generation: 1 });
+    bus.activateAgent(scopeA.agentContext);
+    const viewA = new AgentEventBusView(bus, scopeA);
+    const order: string[] = [];
+    bus.subscribe(TestAgentEvent, () => order.push('session-typed'));
+    viewA.subscribe(() => order.push('agent-full'));
+
+    bus.publish(new TestAgentEvent({ agentId: 'a', value: 2 }), scopeA.agentContext);
+
+    expect(order).toEqual(['agent-full', 'session-typed']);
+  });
+
+  it('disposes sharded channels when the bus itself is disposed', () => {
+    const bus = new EventBusService();
+    const scopeA = makeAgentScopeContext({ agentId: 'a', agentScope: 'agents/a', generation: 1 });
+    bus.activateAgent(scopeA.agentContext);
+    const viewA = new AgentEventBusView(bus, scopeA);
+    const seen: number[] = [];
+    viewA.subscribe((event) => {
+      if (event instanceof TestAgentEvent) seen.push(event.value);
+    });
+
+    bus.publish(new TestAgentEvent({ agentId: 'a', value: 1 }), scopeA.agentContext);
+    bus.dispose();
+    bus.publish(new TestAgentEvent({ agentId: 'a', value: 2 }), scopeA.agentContext);
+
+    expect(seen).toEqual([1]);
+    expect(bus.listenerCounts().perAgent).toEqual({});
   });
 });
