@@ -11,6 +11,7 @@ import type {
   AssistantDelta,
   ThinkingDelta,
   ToolCallDelta,
+  TurnActingStarted,
   TurnStarted,
   TurnStepCompleted,
   TurnStepInterrupted,
@@ -65,6 +66,7 @@ export type ProjectionBusEvent =
   | ({ readonly type: 'turn.started' } & TurnStarted)
   | ({ readonly type: 'turn.ended' } & TurnEnded)
   | ({ readonly type: 'turn.step.started' } & TurnStepStarted)
+  | ({ readonly type: 'turn.acting.started' } & TurnActingStarted)
   | ({ readonly type: 'turn.step.completed' } & TurnStepCompleted)
   | ({ readonly type: 'turn.step.interrupted' } & TurnStepInterrupted)
   | ({ readonly type: 'turn.step.retrying' } & TurnStepRetrying)

@@ -72,6 +72,7 @@ export type MachineEngineEvent =
       readonly traceId?: string;
     }
   | { readonly type: 'stepFailed'; readonly step: number; readonly error: LlmErrorMessage; readonly rawError?: unknown }
+  | { readonly type: 'actingStarted'; readonly step: number }
   | { readonly type: 'delta'; readonly delta: MachineEngineDelta }
   | {
       readonly type: 'retrying';
@@ -440,6 +441,9 @@ export function attachMachineEngine(
     }),
     ref.on('llm.failed.syntax', (event) => {
       pendingFailure = { step: currentStep, error: event.error };
+    }),
+    ref.on('turn.spawn_tools', () => {
+      publish({ type: 'actingStarted', step: currentStep });
     }),
     ref.on('llm.failed.remote', (event) => {
       pendingFailure = { step: currentStep, error: event.error };

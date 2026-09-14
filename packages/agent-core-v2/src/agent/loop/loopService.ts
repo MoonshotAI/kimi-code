@@ -88,6 +88,7 @@ import {
   isDisplayablePromptOrigin,
   ThinkingDelta,
   ToolCallDelta,
+  TurnActingStarted,
   turnPromptAttachments,
   turnPromptText,
   TurnStarted,
@@ -1465,6 +1466,20 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         } else {
           step.pendingToolIds = new Set(toolCalls.map((call) => call.id));
         }
+        return;
+      }
+      case 'actingStarted': {
+        const turn = this.active;
+        const step = turn?.current;
+        if (turn === undefined || step === undefined) return;
+        void this.dispatcher.dispatch(
+          new TurnActingStarted({
+            agentId: this.scopeContext.agentId,
+            turnId: turn.id,
+            step: step.number,
+            stepId: step.uuid,
+          }),
+        );
         return;
       }
       case 'toolStarted': {

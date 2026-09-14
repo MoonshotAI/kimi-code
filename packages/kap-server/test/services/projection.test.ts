@@ -1319,6 +1319,12 @@ describe('SessionProjection', () => {
         activeToolCalls: [{ toolCallId: 'call_1', name: 'Bash' }],
       },
     };
+    agent.bus.emit(ev({ type: 'turn.acting.started', turnId: 1, step: 1 }) as Event2<any>);
+    expect(
+      ofType(received, 'agent.state').some(
+        (m) => m.agent_id === 'main' && m.turn?.status === 'acting',
+      ),
+    ).toBe(true);
     agent.bus.emit(ev({ type: 'tool.call.started', turnId: 1, toolCallId: 'call_1', name: 'Bash', args: '{}' }) as Event2<any>);
     agent.bus.emit(ev({ type: 'compaction.blocked', turnId: 1 }) as Event2<any>);
     agent.bus.emit(ev({ type: 'compaction.started', trigger: 'auto' }) as Event2<any>);
