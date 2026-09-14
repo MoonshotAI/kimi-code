@@ -196,7 +196,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
         const entry = await store
           .load()
           .then(
-            (state) => state.roster.agents.find((agent) => agent.agentId === resumeId),
+            (state) => store.resolveAgent(state, resumeId),
             () => undefined,
           );
         if (entry === undefined) return;
@@ -219,8 +219,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
         const entry = await store
           .load()
           .then(
-            (state) =>
-              state.roster.agents.find((agent) => agent.agentId === this.agentCtx.agentId),
+            (state) => store.resolveAgent(state, this.agentCtx.agentId),
             () => undefined,
           );
         const slot = entry?.worktree;
@@ -277,6 +276,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
           .exit();
       }
     }
+    await this.adoptTowerRoster();
     for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
     this.lastPublished = true;
     this.dispatchEnter(base);
@@ -364,6 +364,18 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     this.inboxWakeHandle?.drop();
     this.inboxWakeHandle = undefined;
     this.inboxWakeSignals = 0;
+  }
+
+  private async adoptTowerRoster(): Promise<void> {
+    const store = new TowerStore(resolveTowerRepoRoot(this.sessionCtx.cwd));
+    await store.adopt(this.sessionCtx.sessionId).then(
+      () => undefined,
+      (error: unknown) => {
+        this.log.warn(
+          `failed to adopt tower workspace roster: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      },
+    );
   }
 
   private async releaseTowerOwnership(): Promise<void> {

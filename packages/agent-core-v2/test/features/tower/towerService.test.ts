@@ -1201,6 +1201,40 @@ describe('AgentTowerService', () => {
     }
   });
 
+  it('enter() retires the previous session\'s roster without requiring TowerInit', async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'tower-enter-roster-'));
+    try {
+      await initGitRepo(repo);
+      await writeFile(join(repo, 'README.md'), '# fixture\n');
+      await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
+      await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
+      const store = new TowerStore(repo);
+      await store.init('session-original');
+      await store.registerAgent({
+        name: 'worker-stale',
+        agentId: 'agent-0',
+        sessionId: 'session-original',
+        kind: 'worker',
+        spawnedAt: new Date().toISOString(),
+      });
+
+      ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-fork' } as unknown as ISessionContext);
+      const tower = ix.get(IAgentTowerService);
+
+      await tower.enter();
+
+      const state = await store.load();
+      expect(state.sessionId).toBe('session-fork');
+      expect(state.roster.agents).toEqual([]);
+      const log = await store.recentLog(5);
+      expect(
+        log.some((line) => line.includes(' adopt ') && line.includes('session=session-fork')),
+      ).toBe(true);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
   it('exit() releases workspace ownership recorded under this session', async () => {
     const repo = await mkdtemp(join(tmpdir(), 'tower-exit-release-'));
     try {
@@ -1241,6 +1275,7 @@ describe('AgentTowerService', () => {
 
       await tower.enter();
       expect(tower.isActive).toBe(true);
+      await store.adopt('session-third');
 
       let releaseSettled = Promise.resolve();
       const originalRelease = TowerStore.prototype.release;
@@ -1260,7 +1295,7 @@ describe('AgentTowerService', () => {
         await vi.waitFor(() => expect(releaseSpy).toHaveBeenCalledWith('session-fork'));
         await releaseSettled;
         expect(tower.isActive).toBe(false);
-        expect((await store.load()).sessionId).toBe('session-original');
+        expect((await store.load()).sessionId).toBe('session-third');
       } finally {
         releaseSpy.mockRestore();
       }
@@ -2118,6 +2153,29 @@ describe('AgentTowerService', () => {
 
       expect(decision).toBeUndefined();
       expect(permissionGateRan).toBe(true);
+      expect(formatDenyMessage).not.toHaveBeenCalled();
+    });
+
+    it('follows the latest roster entry when the agent id collides with a stale session registration', async () => {
+      const file = join(repo, '.tower/comms/state.json');
+      const state = JSON.parse(await readFile(file, 'utf8')) as {
+        roster: { agents: Record<string, unknown>[] };
+      };
+      state.roster.agents.unshift({
+        name: 'worker-stale',
+        agentId: WORKER_AGENT_ID,
+        kind: 'worker',
+        missionId: 'M29',
+        worktree: 'wt-29',
+        branch: 'feat/stale',
+        spawnedAt: '2026-09-13T08:00:00.000Z',
+      });
+      await writeFile(file, `${JSON.stringify(state, null, 2)}\n`);
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(writeHookContext('Write', [`${worktree}/src/gemm.cpp`]));
+
+      expect(decision).toBeUndefined();
       expect(formatDenyMessage).not.toHaveBeenCalled();
     });
   });
