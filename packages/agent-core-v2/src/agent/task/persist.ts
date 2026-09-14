@@ -1,6 +1,5 @@
 import { join } from 'pathe';
 
-import { BugIndicatingError } from '#/errors';
 import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import type { IFileSystemStorageService } from '#/persistence/interface/storage';
 
@@ -12,6 +11,44 @@ const JSON_SUFFIX = '.json';
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+
+const STORAGE_KEY_IDENTITY = /^[A-Za-z0-9_-]{1,64}$/;
+const WINDOWS_RESERVED_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+const STORAGE_KEY_PREFIX = 'enc~';
+const STORAGE_KEY_ENCODED_LIMIT = 56;
+const STORAGE_KEY_ENCODED_HEAD = 40;
+const STORAGE_KEY_SAFE_CHAR = /^[a-z0-9_-]$/;
+
+export function taskStorageKey(taskId: string): string {
+  if (STORAGE_KEY_IDENTITY.test(taskId) && !WINDOWS_RESERVED_NAME.test(taskId)) {
+    return taskId;
+  }
+  let encoded = '';
+  for (let index = 0; index < taskId.length; index++) {
+    const code = taskId.charCodeAt(index);
+    const ch = taskId[index]!;
+    encoded +=
+      code < 0x80 && STORAGE_KEY_SAFE_CHAR.test(ch)
+        ? ch
+        : code < 0x80
+          ? `%${code.toString(16).toUpperCase().padStart(2, '0')}`
+          : `%u${code.toString(16).toUpperCase().padStart(4, '0')}`;
+  }
+  const body =
+    encoded.length <= STORAGE_KEY_ENCODED_LIMIT
+      ? encoded
+      : `${encoded.slice(0, STORAGE_KEY_ENCODED_HEAD)}~${storageKeyDigest(taskId)}`;
+  return `${STORAGE_KEY_PREFIX}${body}`;
+}
+
+function storageKeyDigest(taskId: string): string {
+  let hash = 0xcbf29ce484222325n;
+  for (let index = 0; index < taskId.length; index++) {
+    hash ^= BigInt(taskId.charCodeAt(index));
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+  }
+  return hash.toString(16).padStart(16, '0');
+}
 
 type PersistedTask = AgentTaskInfo;
 
@@ -38,18 +75,6 @@ interface TaskOutputData {
   readonly data: Uint8Array;
 }
 
-function isPathSafeTaskId(taskId: string): boolean {
-  if (taskId.length === 0) return false;
-  if (taskId === '.' || taskId === '..') return false;
-  return !/[/\\\0]/.test(taskId);
-}
-
-function validateTaskId(taskId: string): void {
-  if (!isPathSafeTaskId(taskId)) {
-    throw new BugIndicatingError(`Invalid task id: "${taskId}"`);
-  }
-}
-
 export class AgentTaskPersistence {
   constructor(
     private readonly agentDir: string,
@@ -71,13 +96,11 @@ export class AgentTaskPersistence {
     taskId: string,
     root: AgentTaskPersistenceRoot = this.primaryRoot(),
   ): string {
-    validateTaskId(taskId);
-    return `${root.scope}/${TASKS_SCOPE}/${taskId}`;
+    return `${root.scope}/${TASKS_SCOPE}/${taskStorageKey(taskId)}`;
   }
 
   private taskOutputFileAt(taskId: string, root: AgentTaskPersistenceRoot): string {
-    validateTaskId(taskId);
-    return join(root.dir, TASKS_SCOPE, taskId, OUTPUT_LOG_KEY);
+    return join(root.dir, TASKS_SCOPE, taskStorageKey(taskId), OUTPUT_LOG_KEY);
   }
 
   taskOutputFile(taskId: string): string {
@@ -85,13 +108,11 @@ export class AgentTaskPersistence {
   }
 
   async writeTask(task: PersistedTask): Promise<void> {
-    validateTaskId(task.taskId);
-    await this.docs.set(this.tasksScope(), `${task.taskId}${JSON_SUFFIX}`, task);
+    await this.docs.set(this.tasksScope(), `${taskStorageKey(task.taskId)}${JSON_SUFFIX}`, task);
   }
 
   async readTask(taskId: string): Promise<PersistedTask | undefined> {
-    validateTaskId(taskId);
-    const key = `${taskId}${JSON_SUFFIX}`;
+    const key = `${taskStorageKey(taskId)}${JSON_SUFFIX}`;
     const task = await this.docs.get<PersistedTask>(this.tasksScope(), key);
     if (task !== undefined) {
       return isReadablePersistedTask(task) ? normalizePersistedTask(task) : undefined;
@@ -152,8 +173,10 @@ export class AgentTaskPersistence {
     if (fallbackRoot !== undefined) {
       const fallback = await this.listTasksAt(fallbackRoot);
       for (const entry of fallback.tasks) {
-        if (!primary.reservedIds.has(entry.keyId)) tasks.push(entry);
-      }
+      if (primary.reservedIds.has(entry.keyId)) continue;
+      if (primary.reservedIds.has(entry.task.taskId)) continue;
+      tasks.push(entry);
+    }
     }
     return tasks.map((entry) => entry.task).toSorted((a, b) => a.taskId.localeCompare(b.taskId));
   }
@@ -168,7 +191,6 @@ export class AgentTaskPersistence {
     for (const key of keys) {
       if (!key.endsWith(JSON_SUFFIX)) continue;
       const id = key.slice(0, -JSON_SUFFIX.length);
-      if (!isPathSafeTaskId(id)) continue;
       reservedIds.add(id);
       let task: PersistedTask | undefined;
       try {
@@ -177,7 +199,9 @@ export class AgentTaskPersistence {
         continue;
       }
       if (task === undefined || !isReadablePersistedTask(task)) continue;
-      tasks.push({ keyId: id, task: normalizePersistedTask(task) });
+      const normalized = normalizePersistedTask(task);
+      reservedIds.add(normalized.taskId);
+      tasks.push({ keyId: id, task: normalized });
     }
     return { reservedIds, tasks };
   }

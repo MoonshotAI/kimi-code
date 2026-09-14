@@ -5,11 +5,11 @@ import { describe, it, expect, afterEach } from 'vitest';
 
 import { buildSessionFixture } from '../fixtures/build';
 import {
-  isSafeTaskId,
   listBackgroundTasks,
   readTaskOutput,
   taskOutputMetadata,
   taskOutputSizeBytes,
+  taskStorageKey,
 } from '../../src/lib/task-store';
 
 async function writeTask(sessionDir: string, fileName: string, body: unknown): Promise<void> {
@@ -112,14 +112,14 @@ describe('task-store', () => {
     expect(tasks.map((t) => t.taskId)).toEqual(['call_other']);
   });
 
-  it('skips bad filenames, corrupt json, and unrecognized records', async () => {
+  it('treats filenames as storage keys and skips corrupt or unrecognized records', async () => {
     const { sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
     cleanup = c;
-    await writeTask(sessionDir, '...json', { taskId: 'call_dotdot', kind: 'process' });
+    await writeTask(sessionDir, 'enc~%42ash%3A21.json', { taskId: 'Bash:21', kind: 'process' });
     await writeTask(sessionDir, 'call_valid.json', { toolCallId: 'x', kind: 'process' });
     await mkdir(join(sessionDir, 'tasks'), { recursive: true });
     await writeFile(join(sessionDir, 'tasks', 'call_broken.json'), '{ broken');
-    expect(await listBackgroundTasks(sessionDir)).toEqual([]);
+    expect((await listBackgroundTasks(sessionDir)).map((t) => t.taskId)).toEqual(['Bash:21']);
   });
 
   it('returns [] when there is no tasks directory', async () => {
@@ -215,14 +215,21 @@ describe('task-store', () => {
     });
   });
 
-  it('isSafeTaskId guards traversal', () => {
-    expect(isSafeTaskId('call_abc123')).toBe(true);
-    expect(isSafeTaskId('bash-1a2b3c4d')).toBe(true);
-    expect(isSafeTaskId('../escape')).toBe(false);
-    expect(isSafeTaskId('a/b')).toBe(false);
-    expect(isSafeTaskId('a\\b')).toBe(false);
-    expect(isSafeTaskId('')).toBe(false);
-    expect(isSafeTaskId('.')).toBe(false);
-    expect(isSafeTaskId('..')).toBe(false);
+  it('taskStorageKey derives bounded portable keys for path-unsafe ids', () => {
+    expect(taskStorageKey('call_abc123')).toBe('call_abc123');
+    expect(taskStorageKey('bash-1a2b3c4d')).toBe('bash-1a2b3c4d');
+    expect(taskStorageKey('Bash:21')).toBe('enc~%42ash%3A21');
+    expect(taskStorageKey('bash:21')).toBe('enc~bash%3A21');
+    expect(taskStorageKey('../escape')).toBe('enc~%2E%2E%2Fescape');
+    expect(taskStorageKey('a\\b')).toBe('enc~a%5Cb');
+    expect(taskStorageKey('CON')).toBe('enc~%43%4F%4E');
+    expect(taskStorageKey('任务')).toBe('enc~%u4EFB%u52A1');
+    expect(taskStorageKey('\uD800')).toBe('enc~%uD800');
+    expect(taskStorageKey('\uDC00')).toBe('enc~%uDC00');
+    expect(taskStorageKey('\uFFFD')).toBe('enc~%uFFFD');
+    const longId = 'x'.repeat(100);
+    const key = taskStorageKey(longId);
+    expect(key).toMatch(/^enc~x{40}~[0-9a-f]{16}$/);
+    expect(taskStorageKey(longId)).toBe(key);
   });
 });
