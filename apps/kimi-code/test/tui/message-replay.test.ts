@@ -1087,7 +1087,7 @@ describe('KimiTUI resume message replay', () => {
     const driver = await replayIntoDriver([
       message('user', [{ type: 'text', text: 'real prompt' }]),
       message('assistant', [{ type: 'text', text: 'real answer' }]),
-      message('user', [{ type: 'text', text: cronFire }], {
+      message('user', [{ type: 'text', text: cronFire, contentType: 'text/xml' }], {
         origin: {
           kind: 'cron_job',
           jobId: 'job-1',
@@ -1121,7 +1121,7 @@ describe('KimiTUI resume message replay', () => {
     const driver = await replayIntoDriver([
       message('user', [{ type: 'text', text: 'real prompt' }]),
       message('assistant', [{ type: 'text', text: 'real answer' }]),
-      message('user', [{ type: 'text', text: cronFire }], {
+      message('user', [{ type: 'text', text: cronFire, contentType: 'text/xml' }], {
         origin: {
           kind: 'cron_job',
           jobId: 'job-1',
@@ -1141,12 +1141,10 @@ describe('KimiTUI resume message replay', () => {
   });
 
   it('renders cron_missed origin records during replay without exposing raw XML', async () => {
-    const cronMissed =
-      '<cron-fire jobId="job-2" missed="true" count="3">\n3 one-shot tasks missed while offline\n</cron-fire>';
     const driver = await replayIntoDriver([
       message('user', [{ type: 'text', text: 'real prompt' }]),
       message('assistant', [{ type: 'text', text: 'real answer' }]),
-      message('user', [{ type: 'text', text: cronMissed }], {
+      message('user', [{ type: 'text', text: '3 one-shot tasks missed while offline' }], {
         origin: { kind: 'cron_missed', count: 3 },
       }),
     ]);

@@ -85,10 +85,10 @@ import { mergeSteerMessages, stripBundledSkillBlocks } from '#human/agent/origin
 import { createUserEntry, type UserEntry } from '#human/agent/turn';
 import {
   AssistantDelta,
-  isDisplayablePromptOrigin,
   ThinkingDelta,
   ToolCallDelta,
   TurnActingStarted,
+  isDisplayablePromptOrigin,
   turnPromptAttachments,
   turnPromptText,
   TurnStarted,

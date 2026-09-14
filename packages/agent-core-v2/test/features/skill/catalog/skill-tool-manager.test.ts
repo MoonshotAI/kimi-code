@@ -250,6 +250,7 @@ describe('ToolManager SkillTool wire behavior', () => {
               'body of review',
               '</skill-loaded>',
             ].join('\n'),
+            contentType: 'text/xml',
           },
         ],
         origin: expect.objectContaining({

@@ -13,6 +13,7 @@ import {
 } from '#/agent/loop/loop';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
+import { createHistoryMessageBuilder } from '#human/agent/historyBuilder';
 
 import type { AgentRunCompletion, AgentRunHandle, AgentRunRequest } from './subagent';
 
@@ -40,7 +41,7 @@ export async function runAgentTurn(
   const loop = target.accessor.get(IAgentLoopService);
   const { id } = request.kind === 'prompt'
     ? loop.submit({
-        message: { role: 'user', content: [{ type: 'text', text: request.prompt }] },
+        message: createHistoryMessageBuilder().plain(request.prompt).userMessage(),
         meta: { origin: AGENT_RUN_PROMPT_ORIGIN, tracked: true },
       })
     : loop.submit({

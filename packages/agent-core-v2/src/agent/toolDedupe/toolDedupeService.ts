@@ -18,7 +18,7 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventBus } from '#/app/event/eventBus';
 import { TurnEnded } from '#/agent/loop/turnOps';
-import { wrapSystemReminder } from '#/features/reminder/systemReminder';
+import { systemReminderText } from '#human/agent/historyBuilder';
 import { IAgentToolExecutorService, type ToolCallDupType } from '#/agent/toolExecutor/toolExecutor';
 import type { ContentPart } from '#human/llm/message';
 import {
@@ -29,7 +29,7 @@ import {
 
 const REMINDER_TEXT_1 =
   '\n\n' +
-  wrapSystemReminder(
+  systemReminderText(
     'The same tool call has been repeated several times in a row. ' +
       'Before making your next call, write one sentence stating what new information you expect it to produce. ' +
       'Then act on that sentence: if it names something this result does not already give you, choose the action that best provides it; otherwise, continue with the evidence you already have.',
@@ -38,7 +38,7 @@ const REMINDER_TEXT_1 =
 function makeReminderText2(repeatCount: number): string {
   return (
     '\n\n' +
-    wrapSystemReminder(
+    systemReminderText(
       `The same tool call has now been issued ${String(repeatCount)} times in a row. ` +
         'Choose exactly one of the following and state your choice before acting:\n' +
         '(1) Falsification check: run the cheapest test that could conclusively disprove your current approach, if such a test exists.\n' +
@@ -50,7 +50,7 @@ function makeReminderText2(repeatCount: number): string {
 
 const REMINDER_TEXT_3 =
   '\n\n' +
-  wrapSystemReminder(
+  systemReminderText(
     'Write your final response now, without any further tool calls. ' +
       'Cover: the current blocker, each approach you have tried and what it established, and the specific information or decision you need from the user to unblock progress. ' +
       'Text only.',

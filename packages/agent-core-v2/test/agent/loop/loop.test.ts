@@ -88,6 +88,7 @@ describe('Agent loop', () => {
       [wire] tools.set_active_tools      { "agentId": "main", "names": [], "time": "<time>" }
       [emit] prompt.submitted            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Hello" } ], "createdAt": "<time>" }
       [wire] turn.prompt                 { "agentId": "main", "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "time": "<time>" }
+      [emit] turn.prompt                 { "time": "<time>", "agentId": "main", "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0 }
       [emit] turn.started                { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "prompt": "Hello" }
       [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "id": "<msg-1>", "toolCalls": [], "origin": { "kind": "user" } } ] }
       [emit] prompt.started              { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
@@ -182,6 +183,7 @@ describe('Agent loop', () => {
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
       [emit] prompt.submitted            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Hello" } ], "createdAt": "<time>" }
       [wire] turn.prompt                 { "agentId": "main", "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "time": "<time>" }
+      [emit] turn.prompt                 { "time": "<time>", "agentId": "main", "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0 }
       [emit] turn.started                { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "prompt": "Hello" }
       [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "id": "<msg-1>", "toolCalls": [], "origin": { "kind": "user" } } ] }
       [emit] prompt.started              { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
@@ -487,6 +489,7 @@ describe('Agent loop', () => {
       [wire] tools.set_active_tools          { "agentId": "main", "names": [ "Lookup" ], "time": "<time>" }
       [emit] prompt.submitted                { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Look up moon" } ], "createdAt": "<time>" }
       [wire] turn.prompt                     { "agentId": "main", "input": [ { "type": "text", "text": "Look up moon" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "time": "<time>" }
+      [emit] turn.prompt                     { "time": "<time>", "agentId": "main", "input": [ { "type": "text", "text": "Look up moon" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0 }
       [emit] turn.started                    { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "prompt": "Look up moon" }
       [emit] context.spliced                 { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "id": "<msg-1>", "toolCalls": [], "origin": { "kind": "user" } } ] }
       [emit] prompt.started                  { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
@@ -1112,12 +1115,13 @@ describe('Agent loop', () => {
     );
   });
 
-  it('omits the turn.started prompt for system-triggered turns', async () => {
+  it('carries the turn.started prompt only for displayable system-triggered turns', async () => {
     const prompts: Array<string | undefined> = [];
     const subscription = ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
       prompts.push(event.prompt);
     });
     ctx.mockNextResponse({ type: 'text', text: 'continued' });
+    ctx.mockNextResponse({ type: 'text', text: 'fired' });
     ctx.mockNextResponse({ type: 'text', text: 'hi there' });
 
     const system = submitPromptTurn(loop, {
@@ -1125,11 +1129,16 @@ describe('Agent loop', () => {
       meta: { origin: { kind: 'system_trigger', name: 'goal_continuation' } as PromptOrigin },
     }).turn;
     await system.result;
+    const cron = submitPromptTurn(loop, {
+      message: { role: 'user', content: [{ type: 'text', text: '<cron-fire>check</cron-fire>' }] },
+      meta: { origin: { kind: 'cron_job' } as PromptOrigin },
+    }).turn;
+    await cron.result;
     const user = submitTurn(loop, 'hi').turn;
     await user.result;
     subscription.dispose();
 
-    expect(prompts).toEqual([undefined, 'hi']);
+    expect(prompts).toEqual([undefined, '<cron-fire>check</cron-fire>', 'hi']);
   });
 
   it('carries the turn.started prompt for subagent system triggers', async () => {
@@ -1624,6 +1633,7 @@ describe('interruption reminder', () => {
       {
         type: 'text',
         text: '<system-reminder>\nThe previous turn was interrupted by the user before completion; any partial output shown above is incomplete. The user\'s next message continues the conversation.\n</system-reminder>',
+        contentType: 'text/xml',
       },
     ]);
     expect(ctx.contextData().history.indexOf(interruptionReminders()[0]!)).toBe(2);

@@ -1,8 +1,9 @@
 import { estimateMessageTokens, estimateUsedContextTokens } from '#/agent/context-usage';
 import { inputSubmitted, messageAppended, turnEnded, turnStarted } from '#/agent/events';
+import { createHistoryMessageBuilder } from '#/agent/historyBuilder';
 import { createUserEntry, type HistoryMessage, type UserEntry } from '#/agent/turn';
 import type { ExternalEvent } from '#/eventStore/events';
-import { createUserMessage, type UserMessage } from '#/llm/message';
+import type { UserMessage } from '#/llm/message';
 
 import summaryPrefixTemplate from './compaction-summary-prefix.md?raw';
 
@@ -37,15 +38,21 @@ export function buildCompactionSeed(input: {
     COMPACT_USER_MESSAGE_HEAD_TOKENS,
   );
   const elision = selection.elided
-    ? createUserEntry(createUserMessage(elisionText(selection.omittedTokens)), {
-        source: 'compaction',
-        key: 'elision',
-      })
+    ? createUserEntry(
+        createHistoryMessageBuilder().systemReminder(elisionContent(selection.omittedTokens)).userMessage(),
+        {
+          source: 'compaction',
+          key: 'elision',
+        },
+      )
     : undefined;
-  const summaryEntry = createUserEntry(createUserMessage(summaryText(input.summary)), {
-    source: 'compaction',
-    key: 'summary',
-  });
+  const summaryEntry = createUserEntry(
+    createHistoryMessageBuilder().plain(summaryText(input.summary)).userMessage(),
+    {
+      source: 'compaction',
+      key: 'summary',
+    },
+  );
   const kept: HistoryMessage[] = [
     ...selection.head,
     ...(elision === undefined ? [] : [elision]),
@@ -67,11 +74,9 @@ export function buildCompactionSeed(input: {
 }
 
 export function compactionContinuationMessage(): UserMessage {
-  return createUserMessage(
-    wrapSystemReminder(
-      'Context compaction is complete — continue the work that was in progress when it began.',
-    ),
-  );
+  return createHistoryMessageBuilder()
+    .systemReminder('Context compaction is complete — continue the work that was in progress when it began.')
+    .userMessage();
 }
 
 function summaryText(summary: string): string {
@@ -79,14 +84,8 @@ function summaryText(summary: string): string {
   return `${COMPACTION_SUMMARY_PREFIX}\n${trimmed.length > 0 ? trimmed : '(no summary available)'}`;
 }
 
-function elisionText(omittedTokens: number): string {
-  return wrapSystemReminder(
-    `Some of this conversation's user messages were omitted here during compaction: the messages above this note are the oldest user input, the messages below are the most recent, and roughly ${String(omittedTokens)} tokens in between were dropped. The omitted content is covered by the compaction summary at the end of the conversation.`,
-  );
-}
-
-function wrapSystemReminder(content: string): string {
-  return `<system-reminder>\n${content.trim()}\n</system-reminder>`;
+function elisionContent(omittedTokens: number): string {
+  return `Some of this conversation's user messages were omitted here during compaction: the messages above this note are the oldest user input, the messages below are the most recent, and roughly ${String(omittedTokens)} tokens in between were dropped. The omitted content is covered by the compaction summary at the end of the conversation.`;
 }
 
 function isKeptUserEntry(entry: HistoryMessage): entry is UserEntry {

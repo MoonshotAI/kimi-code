@@ -23,7 +23,7 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import { IFlagService } from '#/app/flag/flag';
 import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
 import { FORK_CONTEXT_NOTICE } from '#/session/subagent/spawn';
-import { wrapSystemReminder } from '#/features/reminder/systemReminder';
+import { systemReminderText } from '#human/agent/historyBuilder';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import {
   IRuntimeResolver,
@@ -193,7 +193,8 @@ describe('fork subagent first-request parity', () => {
     expect(tail[1]?.content).toEqual([{ type: 'text', text: INHERITED_IN_FLIGHT_TOOL_OUTPUT }]);
     const notice = tail[2]?.content[0];
     expect(notice?.type).toBe('text');
-    expect(notice?.type === 'text' && notice.text).toBe(wrapSystemReminder(FORK_CONTEXT_NOTICE));
+    expect(notice?.type === 'text' && notice.contentType).toBe('text/xml');
+    expect(notice?.type === 'text' && notice.text).toBe(systemReminderText(FORK_CONTEXT_NOTICE));
     const prompt = tail[3]?.content[0];
     expect(prompt?.type).toBe('text');
     expect(prompt?.type === 'text' && prompt.text).toBe('finish the inherited task');
