@@ -191,7 +191,7 @@ export type TurnEvent =
   | { type: 'turn.continue' }
   | { type: 'turn.abort' }
   | {
-      type: 'turn.failure.recovery.evaluated';
+      type: 'turn.failure.evaluated';
       cause: Extract<LlmEvent, { type: 'llm.failed.remote' }>;
       proposal?: LlmRecoveryProposal & LlmRecoveryRecord;
     };
@@ -624,7 +624,7 @@ export function createTurnMachine(
           },
           'llm.failed.remote': {
             actions: raise(({ context, event }) => ({
-              type: 'turn.failure.recovery.evaluated' as const,
+              type: 'turn.failure.evaluated' as const,
               cause: event,
               proposal: proposeRecovery(recovery, {
                 error: event.error,
@@ -634,7 +634,7 @@ export function createTurnMachine(
               }),
             })),
           },
-          'turn.failure.recovery.evaluated': [
+          'turn.failure.evaluated': [
             {
               guard: ({ event }) => event.proposal !== undefined,
               target: 'thinking',
