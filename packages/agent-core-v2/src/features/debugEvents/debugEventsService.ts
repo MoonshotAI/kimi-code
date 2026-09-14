@@ -20,7 +20,7 @@ interface BusCountSource {
   listenerCounts(): {
     all: number;
     perType: Record<string, number>;
-    perAgent: Record<string, { all: number; perType: Record<string, number> }>;
+    perAgent: Record<string, number>;
   };
 }
 

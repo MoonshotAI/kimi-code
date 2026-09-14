@@ -121,26 +121,15 @@ function busRows(bus: DebugEventBusSnapshot) {
     );
   }
   for (const agentId of Object.keys(bus.perAgent).toSorted()) {
-    const channel = bus.perAgent[agentId];
-    if (channel === undefined) continue;
+    const count = bus.perAgent[agentId] ?? 0;
     rows.push(
       <BusRow
         key={`${bus.scopePath}:agent:${agentId}`}
         scopePath={bus.scopePath}
         type={`agent:${agentId}`}
-        count={channel.all}
+        count={count}
       />,
     );
-    for (const type of Object.keys(channel.perType).toSorted()) {
-      rows.push(
-        <BusRow
-          key={`${bus.scopePath}:agent:${agentId}:${type}`}
-          scopePath={bus.scopePath}
-          type={`agent:${agentId}:${type}`}
-          count={channel.perType[type] ?? 0}
-        />,
-      );
-    }
   }
   return rows;
 }

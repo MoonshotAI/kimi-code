@@ -13,7 +13,7 @@ export interface DebugEventBusSnapshot {
   readonly scopePath: string;
   readonly all: number;
   readonly perType: Record<string, number>;
-  readonly perAgent: Record<string, { all: number; perType: Record<string, number> }>;
+  readonly perAgent: Record<string, number>;
 }
 
 export interface DebugEventSubscriptions {

@@ -11,7 +11,6 @@ import { IEventBus, ISessionEventBus } from './eventBus';
 
 class AgentChannel {
   readonly all: Emitter<Event2<any>>;
-  readonly perType = new Map<string, Emitter<Event2<any>>>();
 
   constructor(agentId: string) {
     this.all = new Emitter<Event2<any>>(`agent:${agentId}`);
@@ -19,8 +18,6 @@ class AgentChannel {
 
   dispose(): void {
     this.all.dispose();
-    for (const emitter of this.perType.values()) emitter.dispose();
-    this.perType.clear();
   }
 }
 
@@ -35,6 +32,14 @@ export class EventBusService extends Service implements ISessionEventBus {
   private disposedBus = false;
 
   activateAgent(agent: AgentContext): void {
+    const previous = this.agents.get(agent.agentId);
+    if (previous !== undefined && previous !== agent) {
+      const channel = this.perAgent.get(agent.agentId);
+      if (channel !== undefined) {
+        this.perAgent.delete(agent.agentId);
+        channel.dispose();
+      }
+    }
     this.agents.set(agent.agentId, agent);
   }
 
@@ -68,7 +73,6 @@ export class EventBusService extends Service implements ISessionEventBus {
     const channel = agent === undefined ? undefined : this.perAgent.get(agent.agentId);
     channel?.all.fire(event);
     this.perType.get(event.type)?.fire(event);
-    channel?.perType.get(event.type)?.fire(event);
   }
 
   sourceOf(event: Event2<any>): AgentContext | undefined {
@@ -94,16 +98,10 @@ export class EventBusService extends Service implements ISessionEventBus {
     handler?: (event: Event2<any>) => void,
   ): IDisposable {
     if (this.disposedBus) return Disposable.None;
-    const channel = this.channelFor(agent.agentId);
     if (typeof typeOrHandler === 'function') {
-      return channel.all.event(typeOrHandler);
+      return this.channelFor(agent.agentId).all.event(typeOrHandler);
     }
-    let emitter = channel.perType.get(typeOrHandler);
-    if (emitter === undefined) {
-      emitter = new Emitter<Event2<any>>(`agent:${agent.agentId}:${typeOrHandler}`);
-      channel.perType.set(typeOrHandler, emitter);
-    }
-    return emitter.event(handler!);
+    return this.subscribe(typeOrHandler, handler!);
   }
 
   private channelFor(agentId: string): AgentChannel {
@@ -136,7 +134,7 @@ export class EventBusService extends Service implements ISessionEventBus {
       );
     }
     const type = typeof typeOrClass === 'string' ? typeOrClass : typeOrClass.type;
-    return this.subscribeAgent(agent, type, (event) => {
+    return this.subscribe(type, (event) => {
       if (
         this.agents.get(agent.agentId) === agent &&
         (event as Event2<any> & AgentDomainTrait).agentId === agent.agentId
@@ -149,19 +147,15 @@ export class EventBusService extends Service implements ISessionEventBus {
   listenerCounts(): {
     all: number;
     perType: Record<string, number>;
-    perAgent: Record<string, { all: number; perType: Record<string, number> }>;
+    perAgent: Record<string, number>;
   } {
     const perType: Record<string, number> = {};
     for (const [type, emitter] of this.perType) {
       perType[type] = emitter.listenerCount;
     }
-    const perAgent: Record<string, { all: number; perType: Record<string, number> }> = {};
+    const perAgent: Record<string, number> = {};
     for (const [agentId, channel] of this.perAgent) {
-      const agentTypes: Record<string, number> = {};
-      for (const [type, emitter] of channel.perType) {
-        agentTypes[type] = emitter.listenerCount;
-      }
-      perAgent[agentId] = { all: channel.all.listenerCount, perType: agentTypes };
+      perAgent[agentId] = channel.all.listenerCount;
     }
     return { all: this.allEmitter.listenerCount, perType, perAgent };
   }
@@ -244,11 +238,23 @@ export class AgentEventBusView extends Service implements IEventBus {
     handler?: (event: Event2<any>) => void,
   ): IDisposable {
     if ((this.bus as unknown) === undefined) return { dispose: () => {} };
+    const matches = (event: Event2<any>): boolean => {
+      const cls = event.constructor as Event2Class;
+      if (cls.agentDomain) {
+        return (
+          this.bus.isAgentActive(this.agent) &&
+          (event as Event2<any> & AgentDomainTrait).agentId === this.agent.agentId
+        );
+      }
+      return this.bus.sourceOf(event) === this.agent;
+    };
     if (typeof typeOrHandler === 'function' && !('type' in typeOrHandler)) {
       return this.bus.subscribeAgent(this.agent, typeOrHandler as (event: Event2<any>) => void);
     }
     const type = typeof typeOrHandler === 'string' ? typeOrHandler : typeOrHandler.type;
-    return this.bus.subscribeAgent(this.agent, type, handler!);
+    return this.bus.subscribe(type, (event) => {
+      if (matches(event)) handler!(event);
+    });
   }
 }
 

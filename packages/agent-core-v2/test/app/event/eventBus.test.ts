@@ -343,18 +343,18 @@ describe('per-agent sharded channels', () => {
 
     expect(bus.listenerCounts()).toEqual({
       all: 0,
-      perType: {},
-      perAgent: { a: { all: 1, perType: { 'test.agent': 2 } } },
+      perType: { 'test.agent': 2 },
+      perAgent: { a: 1 },
     });
 
     typed.dispose();
-    expect(bus.listenerCounts().perAgent).toEqual({ a: { all: 1, perType: { 'test.agent': 1 } } });
+    expect(bus.listenerCounts().perAgent).toEqual({ a: 1 });
     full.dispose();
     perAgent.dispose();
     expect(bus.listenerCounts()).toEqual({
       all: 0,
-      perType: {},
-      perAgent: { a: { all: 0, perType: { 'test.agent': 0 } } },
+      perType: { 'test.agent': 0 },
+      perAgent: { a: 0 },
     });
   });
 
@@ -365,7 +365,7 @@ describe('per-agent sharded channels', () => {
     const view1 = new AgentEventBusView(bus, gen1);
     const seen1: number[] = [];
     view1.subscribe(TestAgentEvent, (event) => seen1.push(event.value));
-    expect(bus.listenerCounts().perAgent).toEqual({ a: { all: 0, perType: { 'test.agent': 1 } } });
+    expect(bus.listenerCounts().perAgent).toEqual({});
 
     bus.deactivateAgent(gen1.agentContext);
     expect(bus.listenerCounts().perAgent).toEqual({});
@@ -382,6 +382,33 @@ describe('per-agent sharded channels', () => {
     expect(seen1).toEqual([]);
   });
 
+  it('isolates both channels when a new generation replaces the active context', () => {
+    const bus = new EventBusService();
+    const gen1 = makeAgentScopeContext({ agentId: 'a', agentScope: 'agents/a', generation: 1 });
+    bus.activateAgent(gen1.agentContext);
+    const view1 = new AgentEventBusView(bus, gen1);
+    const fullSeen: number[] = [];
+    const typedSeen: number[] = [];
+    view1.subscribe((event) => {
+      if (event instanceof TestAgentEvent) fullSeen.push(event.value);
+    });
+    view1.subscribe(TestAgentEvent, (event) => typedSeen.push(event.value));
+
+    const gen2 = makeAgentScopeContext({ agentId: 'a', agentScope: 'agents/a', generation: 2 });
+    bus.activateAgent(gen2.agentContext);
+    const view2 = new AgentEventBusView(bus, gen2);
+    const seen2: number[] = [];
+    view2.subscribe((event) => {
+      if (event instanceof TestAgentEvent) seen2.push(event.value);
+    });
+
+    bus.publish(new TestAgentEvent({ agentId: 'a', value: 9 }), gen2.agentContext);
+
+    expect(fullSeen).toEqual([]);
+    expect(typedSeen).toEqual([]);
+    expect(seen2).toEqual([9]);
+  });
+
   it('keeps a stale generation deactivation from removing the active channel', () => {
     const bus = new EventBusService();
     const gen1 = makeAgentScopeContext({ agentId: 'a', agentScope: 'agents/a', generation: 1 });
@@ -396,7 +423,7 @@ describe('per-agent sharded channels', () => {
     bus.publish(new TestAgentEvent({ agentId: 'a', value: 5 }), gen2.agentContext);
 
     expect(seen).toEqual([5]);
-    expect(bus.listenerCounts().perAgent).toEqual({ a: { all: 0, perType: { 'test.agent': 1 } } });
+    expect(bus.listenerCounts().perAgent).toEqual({});
   });
 
   it('fires full-stream handlers before typed handlers within an agent channel regardless of registration order', () => {
