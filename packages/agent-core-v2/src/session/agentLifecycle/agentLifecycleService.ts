@@ -53,6 +53,7 @@ import { IAgentRuntimeBindingSeed, IAgentRuntimeBindingService } from '#/agent/r
 import '#/agent/runtimeBinding/runtimeBindingService';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IWireService } from '#/wire/wire';
 import { WireService } from '#/wire/wireService';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
@@ -66,6 +67,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { bindTelemetryScope } from '#/app/telemetry/telemetryService';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { createActor, waitFor } from '#human/xstate2';
+import { effectScope } from '#human/kernel/index';
 import {
   createAgentMachine,
   type AgentMachineSelf,
@@ -78,6 +80,7 @@ import {
 } from '#human/session/machine';
 
 import { ManagedAgent } from './managedAgent';
+import { mountAgentFeatureUnits } from './featureUnits';
 import {
   type AgentListFilter,
   type AgentScopeCreatedEvent,
@@ -350,6 +353,20 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       const bundle = loop.buildAttachBundle();
       loop.attachEngine(self as unknown as MachineEngineAttachRef, bundle);
       if (managed !== undefined) managed.bundle = bundle;
+      stage = 'features';
+      const agentEffects = effectScope();
+      const featureUnits = mountAgentFeatureUnits({
+        self,
+        store: bundle.store,
+        sessionId: this.ctx.sessionId,
+        agentId,
+        toolRegistry: handle.accessor.get(IAgentToolRegistryService),
+        scope: agentEffects,
+      });
+      container.anchorKernelEntry(() => {
+        agentEffects.stop();
+        return featureUnits.unmount();
+      }, 'agent-feature-units');
       return {
         handle: { disposeAsync: () => Promise.resolve(scopeHandle.dispose()) },
         store: bundle.store,
@@ -525,6 +542,22 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       const bundle = loop.buildAttachBundle();
       loop.attachEngine(self as unknown as MachineEngineAttachRef, bundle);
       if (managed !== undefined) managed.bundle = bundle;
+      const agentEffects = effectScope();
+      const featureUnits = mountAgentFeatureUnits({
+        self,
+        store: bundle.store,
+        sessionId: this.ctx.sessionId,
+        agentId: agent.agentId,
+        toolRegistry: handle.accessor.get(IAgentToolRegistryService),
+        scope: agentEffects,
+      });
+      (handle.accessor.get(IInstantiationService) as InstantiationService).anchorKernelEntry(
+        () => {
+          agentEffects.stop();
+          void featureUnits.unmount();
+        },
+        'agent-feature-units',
+      );
       this.onDidCreateEmitter.fire(agent);
       this.onDidCreateScopeEmitter.fire({ context: agent, handle });
       attachInteractionAgent(agent.agentId, this.ctx.sessionId, handle.accessor.get(IEventDispatcher));

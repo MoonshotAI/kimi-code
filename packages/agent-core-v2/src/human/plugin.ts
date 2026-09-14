@@ -31,8 +31,8 @@ export interface AgentPluginSource {
   ): void;
 }
 
-export function connectPlugins(actor: AgentPluginSource, plugins: readonly Plugin[]): void {
-  const target: AgentPluginTarget = {
+export function createAgentPluginTarget(actor: AgentPluginSource): AgentPluginTarget {
+  return {
     kind: 'agent',
     on: (type, handler) => {
       actor.on(type, handler);
@@ -48,6 +48,10 @@ export function connectPlugins(actor: AgentPluginSource, plugins: readonly Plugi
       });
     },
   };
+}
+
+export function connectPlugins(actor: AgentPluginSource, plugins: readonly Plugin[]): void {
+  const target = createAgentPluginTarget(actor);
   for (const plugin of plugins) {
     plugin.connect?.(target);
   }
