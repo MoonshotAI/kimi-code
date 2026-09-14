@@ -462,6 +462,7 @@ export * from '#/features/cron/tools/cron-delete/cron-delete';
 
 import '#/session/agentLifecycle/profile/profiles';
 export * from '#/session/agentLifecycle/agentLifecycle';
+export * from '#/session/agentLifecycle/agentLifecycleEvents';
 export * from '#/session/agentLifecycle/agentLifecycleService';
 export * from '#/session/agentLifecycle/mainAgent';
 export * from '#/session/mcp/sessionMcpHandle';

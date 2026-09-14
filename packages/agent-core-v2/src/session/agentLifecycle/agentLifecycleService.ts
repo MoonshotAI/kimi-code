@@ -48,6 +48,7 @@ import { abortError } from '#/_base/utils/abort';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { closeTrailingOpenToolExchange } from '#/agent/contextMemory/openToolExchange';
+import { AgentFork } from '#/session/agentLifecycle/agentLifecycleEvents';
 import { IAgentRuntimeBindingSeed, IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
 import '#/agent/runtimeBinding/runtimeBindingService';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
@@ -445,6 +446,9 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       child.accessor
         .get(IAgentContextMemoryService)
         ?.append(...closeTrailingOpenToolExchange(sourceMessages));
+      void child.accessor.get(IEventDispatcher)?.dispatch(
+        new AgentFork({ agentId: childContext.agentId, forkedFrom: source.id }),
+      );
     }
     return childContext;
   }
