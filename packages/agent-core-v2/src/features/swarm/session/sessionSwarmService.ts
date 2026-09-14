@@ -60,6 +60,8 @@ export interface SubagentSuspendedEvent extends SubagentSuspendedPayload {
 
 const RESUMED_PROFILE_FALLBACK = 'subagent';
 
+type TerminalizeSubagent = (agentId: string, event: Event2) => void;
+
 export class SessionSwarmService implements ISessionSwarmService {
   declare readonly _serviceBrand: undefined;
 
@@ -90,10 +92,16 @@ export class SessionSwarmService implements ISessionSwarmService {
       if (task.signal !== undefined) unlinks.push(linkAbortSignal(task.signal, controller));
       return { ...task, signal: controller.signal };
     });
+    const terminalized = new Set<string>();
+    const terminalize: TerminalizeSubagent = (agentId, event) => {
+      if (terminalized.has(agentId)) return;
+      terminalized.add(agentId);
+      this.dispatchSubagentEvent(callerAgentId, event);
+    };
     const launcher: AgentRunBatchLauncher = {
-      spawn: (options) => this.spawnAttempt(callerAgentId, options),
-      resume: (agentId, options) => this.resumeAttempt(callerAgentId, agentId, options, false),
-      retry: (agentId, options) => this.resumeAttempt(callerAgentId, agentId, options, true),
+      spawn: (options) => this.spawnAttempt(callerAgentId, options, terminalize),
+      resume: (agentId, options) => this.resumeAttempt(callerAgentId, agentId, options, false, terminalize),
+      retry: (agentId, options) => this.resumeAttempt(callerAgentId, agentId, options, true, terminalize),
       suspended: (event) => {
         this.dispatchSubagentEvent(
           callerAgentId,
@@ -104,8 +112,8 @@ export class SessionSwarmService implements ISessionSwarmService {
         );
       },
       abandoned: (event) => {
-        this.dispatchSubagentEvent(
-          callerAgentId,
+        terminalize(
+          event.agentId,
           event.outcome === 'failed'
             ? new SubagentFailed({
                 subagentId: event.agentId,
@@ -136,6 +144,7 @@ export class SessionSwarmService implements ISessionSwarmService {
   private async spawnAttempt(
     callerAgentId: string,
     options: AgentSpawnAttemptOptions,
+    terminalize: TerminalizeSubagent,
   ): Promise<AgentRunAttemptHandle> {
     options.signal.throwIfAborted();
     const caller = this.requireHandle(callerAgentId, 'Caller agent');
@@ -167,6 +176,7 @@ export class SessionSwarmService implements ISessionSwarmService {
         prompt: spawned.promptText,
       },
       options,
+      terminalize,
     );
   }
 
@@ -175,6 +185,7 @@ export class SessionSwarmService implements ISessionSwarmService {
     agentId: string,
     options: AgentRunAttemptOptions,
     retryTurn: boolean,
+    terminalize: TerminalizeSubagent,
   ): Promise<AgentRunAttemptHandle> {
     options.signal.throwIfAborted();
     const meta = await this.requireOwnedSubagent(callerAgentId, agentId);
@@ -199,7 +210,7 @@ export class SessionSwarmService implements ISessionSwarmService {
     const request = retryTurn
       ? ({ kind: 'retry' } as const)
       : ({ kind: 'prompt', prompt: options.prompt } as const);
-    return this.observe(caller, child, profileName, request, options);
+    return this.observe(caller, child, profileName, request, options, terminalize);
   }
 
   private async observe(
@@ -208,6 +219,7 @@ export class SessionSwarmService implements ISessionSwarmService {
     profileName: string,
     request: { kind: 'prompt'; prompt: string } | { kind: 'retry' },
     options: AgentRunAttemptOptions,
+    terminalize: TerminalizeSubagent,
   ): Promise<AgentRunAttemptHandle> {
     const agentId = child.id;
     let run: AgentRunHandle;
@@ -217,7 +229,7 @@ export class SessionSwarmService implements ISessionSwarmService {
         onReady: options.onReady,
       });
     } catch (error) {
-      this.dispatchSubagentEvent(caller.id, runStartTerminalEvent(agentId, error, options.signal));
+      terminalize(agentId, runStartTerminalEvent(agentId, error, options.signal));
       throw error;
     }
     const mirrored = mirrorAgentRun(caller, run, {

@@ -970,18 +970,27 @@ describe('SessionSubagentScopeCacheService eviction guards', () => {
     expect(handles.has('agent-1')).toBe(true);
   });
 
-  it('requeues a guard-skipped subagent at the tail and keeps it counted after the attempt cap', async () => {
+  it('retries a transiently busy subagent on every overflow pass and evicts it once it settles', async () => {
     startCache();
+    const runningSnapshot = {
+      state: 'running',
+      activeTurnId: 1,
+      queue: [],
+      notificationCount: 0,
+      paused: false,
+      hasPendingRequests: true,
+    } as const;
+    const idleSnapshot = {
+      state: 'idle',
+      queue: [],
+      notificationCount: 0,
+      paused: false,
+      hasPendingRequests: false,
+    } as const;
+    let agent1Busy = true;
     handles.set(
       'agent-1',
-      loopHandle('agent-1', () => ({
-        state: 'running',
-        activeTurnId: 1,
-        queue: [],
-        notificationCount: 0,
-        paused: false,
-        hasPendingRequests: true,
-      })),
+      loopHandle('agent-1', () => (agent1Busy ? runningSnapshot : idleSnapshot)),
     );
     handles.set('agent-2', idleHandle('agent-2'));
 
@@ -992,33 +1001,16 @@ describe('SessionSubagentScopeCacheService eviction guards', () => {
     });
     expect(removeAgent.mock.calls[0]![0]).toMatchObject({ agentId: 'agent-2' });
 
-    handles.set('agent-3', idleHandle('agent-3'));
-    bus.publish(new SubagentCompleted({ subagentId: 'agent-3', resultSummary: 'done' }));
-    await vi.waitFor(() => {
-      expect(removeAgent).toHaveBeenCalledTimes(2);
-    });
-    expect(removeAgent.mock.calls[1]![0]).toMatchObject({ agentId: 'agent-3' });
-
-    handles.set('agent-4', idleHandle('agent-4'));
-    bus.publish(new SubagentCompleted({ subagentId: 'agent-4', resultSummary: 'done' }));
-    await vi.waitFor(() => {
-      expect(removeAgent).toHaveBeenCalledTimes(3);
-    });
-    expect(removeAgent.mock.calls[2]![0]).toMatchObject({ agentId: 'agent-4' });
-
-    handles.set('agent-5', idleHandle('agent-5'));
-    bus.publish(new SubagentCompleted({ subagentId: 'agent-5', resultSummary: 'done' }));
-    await vi.waitFor(() => {
-      expect(removeAgent).toHaveBeenCalledTimes(4);
-    });
-    expect(removeAgent.mock.calls[3]![0]).toMatchObject({ agentId: 'agent-5' });
-
-    handles.set('agent-6', idleHandle('agent-6'));
-    bus.publish(new SubagentCompleted({ subagentId: 'agent-6', resultSummary: 'done' }));
-    await vi.waitFor(() => {
-      expect(removeAgent).toHaveBeenCalledTimes(5);
-    });
-    expect(removeAgent.mock.calls[4]![0]).toMatchObject({ agentId: 'agent-6' });
+    const completeAndEvict = async (agentId: string): Promise<void> => {
+      handles.set(agentId, idleHandle(agentId));
+      bus.publish(new SubagentCompleted({ subagentId: agentId, resultSummary: 'done' }));
+      await vi.waitFor(() => {
+        expect(removeAgent.mock.calls.some((call) => call[0].agentId === agentId)).toBe(true);
+      });
+    };
+    for (const agentId of ['agent-3', 'agent-4', 'agent-5']) {
+      await completeAndEvict(agentId);
+    }
 
     expect(handles.has('agent-1')).toBe(true);
     expect(removeAgent.mock.calls.some((call) => call[0].agentId === 'agent-1')).toBe(false);
@@ -1026,20 +1018,24 @@ describe('SessionSubagentScopeCacheService eviction guards', () => {
     const deferred = logs.entries.filter(
       (entry) => entry.level === 'debug' && entry.message.includes('deferred'),
     );
-    expect(deferred).toHaveLength(2);
-    expect(deferred.map((entry) => entry.payload as { agentId: string; attempt: number })).toEqual([
-      { agentId: 'agent-1', attempt: 1 },
-      { agentId: 'agent-1', attempt: 2 },
+    expect(deferred).toHaveLength(4);
+    expect(deferred.map((entry) => (entry.payload as { agentId: string }).agentId)).toEqual([
+      'agent-1',
+      'agent-1',
+      'agent-1',
+      'agent-1',
     ]);
+    expect(
+      logs.entries.some((entry) => entry.level === 'warn' && entry.message.includes('abandoned')),
+    ).toBe(false);
 
-    const abandoned = logs.entries.filter(
-      (entry) => entry.level === 'warn' && entry.message.includes('abandoned'),
-    );
-    expect(abandoned).toHaveLength(1);
-    expect(abandoned[0]!.payload as { agentId: string; attempts: number }).toEqual({
-      agentId: 'agent-1',
-      attempts: 3,
+    agent1Busy = false;
+    handles.set('agent-6', idleHandle('agent-6'));
+    bus.publish(new SubagentCompleted({ subagentId: 'agent-6', resultSummary: 'done' }));
+    await vi.waitFor(() => {
+      expect(removeAgent.mock.calls.some((call) => call[0].agentId === 'agent-1')).toBe(true);
     });
+    expect(handles.has('agent-1')).toBe(false);
   });
 
   it('times out a hung remove, keeps tracking the closing scope, and keeps the queue moving', async () => {

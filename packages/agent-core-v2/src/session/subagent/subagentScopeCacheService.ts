@@ -105,6 +105,11 @@ export class SessionSubagentScopeCacheService
       this.retired.delete(agentId);
       const outcome = await this.evict(agentId);
       if (outcome === 'removed' || outcome === 'missing') continue;
+      if (outcome === 'deferred') {
+        this.log.debug('subagent scope eviction deferred; agent still busy', { agentId });
+        if (!this.retired.has(agentId)) this.retired.set(agentId, attempts);
+        continue;
+      }
       if (outcome === 'closing' || outcome === 'failed') {
         if (!this.retired.has(agentId)) this.retired.set(agentId, attempts);
         continue;
@@ -114,11 +119,6 @@ export class SessionSubagentScopeCacheService
         this.log.warn('subagent scope eviction abandoned; agent still busy', {
           agentId,
           attempts: nextAttempt,
-        });
-      } else if (outcome === 'deferred') {
-        this.log.debug('subagent scope eviction deferred; agent still busy', {
-          agentId,
-          attempt: nextAttempt,
         });
       }
       if (!this.retired.has(agentId)) this.retired.set(agentId, nextAttempt);

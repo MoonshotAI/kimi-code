@@ -26,6 +26,7 @@ import {
 import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { createHooks } from '#/hooks';
 import {
+  type AgentRunHandle,
   type AgentTaskHooks,
   ISessionSubagentService,
 } from '#/session/subagent/subagent';
@@ -1519,6 +1520,81 @@ describe('SessionSwarmService metadata compatibility', () => {
       expect(subagentIdsOf('subagent.suspended')).toEqual(['agent-rl']);
       expect(subagentIdsOf('subagent.cancelled')).toEqual(['agent-rl']);
       expect(subagentIdsOf('subagent.completed')).toEqual(['agent-peer']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('emits subagent.cancelled exactly once when a starting retry is cancelled', async () => {
+    vi.useFakeTimers();
+    try {
+      agents['agent-rl'] = {
+        labels: { parentAgentId: 'main' },
+      };
+      agents['agent-peer'] = {
+        labels: { parentAgentId: 'main' },
+      };
+      handles.set('agent-rl', agentHandle('agent-rl', lifecycle, eventBus));
+      handles.set('agent-peer', agentHandle('agent-peer', lifecycle, eventBus));
+      const rateLimited = createControlledPromise<{ summary: string }>();
+      const peer = createControlledPromise<{ summary: string }>();
+      const published: Event2[] = [];
+      (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: Event2) => {
+        published.push(event);
+      });
+      let rlRuns = 0;
+      runAgent.mockImplementation((agent, _request, options) => {
+        const agentId = (agent as AgentContext).agentId;
+        if (agentId === 'agent-rl') {
+          rlRuns += 1;
+          if (rlRuns === 1) {
+            options?.onReady?.();
+            return { agentId, turn: {} as never, completion: rateLimited };
+          }
+          return new Promise((_, reject) => {
+            options?.signal.addEventListener(
+              'abort',
+              () => {
+                reject(options.signal.reason);
+              },
+              { once: true },
+            );
+          }) as unknown as AgentRunHandle;
+        }
+        options?.onReady?.();
+        return { agentId, turn: {} as never, completion: peer };
+      });
+      const service = ix.get(ISessionSwarmService);
+      const controller = new AbortController();
+
+      const running = service.run({
+        callerAgentId: 'main',
+        tasks: [
+          { ...resumeSessionTask('agent-rl'), signal: controller.signal },
+          resumeSessionTask('agent-peer'),
+        ],
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      rateLimited.reject(new APIProviderRateLimitError('Rate limited'));
+      await vi.advanceTimersByTimeAsync(0);
+      peer.resolve({ summary: 'peer summary' });
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(rlRuns).toBe(2);
+
+      controller.abort(userCancellationReason());
+      await expect(running).resolves.toMatchObject([
+        { status: 'aborted', agentId: 'agent-rl' },
+        { status: 'completed', agentId: 'agent-peer' },
+      ]);
+      await vi.advanceTimersByTimeAsync(0);
+
+      const subagentIdsOf = (type: string) =>
+        published
+          .filter((event) => event.type === type)
+          .map((event) => (event as Event2 & { readonly subagentId: string }).subagentId);
+      expect(subagentIdsOf('subagent.suspended')).toEqual(['agent-rl']);
+      expect(subagentIdsOf('subagent.cancelled')).toEqual(['agent-rl']);
+      expect(subagentIdsOf('subagent.failed')).toEqual([]);
     } finally {
       vi.useRealTimers();
     }
