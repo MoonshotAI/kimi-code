@@ -272,7 +272,15 @@ describe('compaction controller manual', () => {
     const actor = startAgent(main, requester);
     actor.send({ type: 'input.submit', message: createUserMessage('first') });
     await waitFor(actor, (s) => s.matches('running'), { timeout: 5000 });
-    actor.send({ type: 'input.submit', id: 'e1', message: createUserMessage('early') });
+    actor.send({
+      type: 'input.submit',
+      id: 'e1',
+      message: createUserMessage('early'),
+      origin: { kind: 'user' },
+      tracked: true,
+      createdAt: '2026-09-14T00:00:00.000Z',
+      userMessageId: 'umid-e1',
+    });
     await vi.waitFor(() => expect(actor.getSnapshot().context.queue).toHaveLength(1), {
       timeout: 5000,
     });
@@ -318,6 +326,16 @@ describe('compaction controller manual', () => {
       'late',
       'queued',
       'echo:queued',
+    ]);
+    expect(main.getState().queue).toEqual([
+      {
+        id: 'e1',
+        message: createUserMessage('early'),
+        origin: { kind: 'user' },
+        tracked: true,
+        createdAt: '2026-09-14T00:00:00.000Z',
+        userMessageId: 'umid-e1',
+      },
     ]);
     expect(main.getState().turnIndex.nextTurnId).toBe(3);
     expect(harness.events.map((event) => event.type)).toEqual([

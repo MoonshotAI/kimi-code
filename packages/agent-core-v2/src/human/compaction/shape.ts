@@ -57,7 +57,16 @@ export function buildCompactionSeed(input: {
     turnStarted({ turnId: input.turnId }),
     ...seeded.map((message) => messageAppended({ message })),
     turnEnded({ turnId: input.turnId, outcome: 'done' }),
-    ...input.queue.map((item) => inputSubmitted({ id: item.id, message: item.message })),
+    ...input.queue.map((item) =>
+      inputSubmitted({
+        id: item.id,
+        message: item.message,
+        origin: item.origin,
+        tracked: item.tracked,
+        createdAt: item.createdAt,
+        userMessageId: item.userMessageId,
+      }),
+    ),
   ];
   return {
     events,

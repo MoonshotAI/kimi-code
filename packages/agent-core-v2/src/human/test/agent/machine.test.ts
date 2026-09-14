@@ -17,7 +17,8 @@ import type { LlmRetryOptions } from '#/llm/requester/retry';
 import { emptyUsage, type TokenUsage } from '#/llm/usage';
 import { connectPlugins } from '#/plugin';
 import { createTimingPlugin } from '#/timing/plugin';
-import { createAgentMachine, type AgentEmitted, type AgentMachineSelf, type ScopeFactoryOutput } from '#/agent/machine';
+import { createAgentMachine, type AgentEmitted, type AgentMachineSelf, type PromptGateVerdict, type ScopeFactoryOutput } from '#/agent/machine';
+import type { UserPromptOrigin } from '#/agent/origin';
 import { estimateMessageTokens, estimateTextTokens } from '#/agent/context-usage';
 import { messageAppended, turnEnded } from '#/agent/events';
 import { agentSlices, type AgentEventStore } from '#/agent/slices';
@@ -193,6 +194,21 @@ describe('agent machine tool failure', () => {
       estimateMessageTokens(createUserMessage('hi')) + estimateTextTokens(JSON.stringify(tools)),
       137,
     ]);
+
+    const plainRequester = createStubRequester([
+      createAssistantMessage([], [toolCall('call-1', 'fail_tool')]),
+      createAssistantMessage([{ type: 'text', text: 'done' }]),
+    ]);
+    const plainTools = stubTools(() => Promise.reject('plain failure'), 'fail_tool');
+
+    const plainMessages = await runAgent(plainRequester, plainTools);
+
+    expect(rolesAndTexts(plainMessages)).toEqual([
+      'user:hi',
+      'assistant:',
+      'tool:plain failure',
+      'assistant:done',
+    ]);
   });
 
   it('continues with the remaining tool calls after a failure', async () => {
@@ -217,23 +233,6 @@ describe('agent machine tool failure', () => {
       'assistant:',
       'tool:boom',
       'tool:ok',
-      'assistant:done',
-    ]);
-  });
-
-  it('stringifies non-Error thrown values', async () => {
-    const requester = createStubRequester([
-      createAssistantMessage([], [toolCall('call-1', 'fail_tool')]),
-      createAssistantMessage([{ type: 'text', text: 'done' }]),
-    ]);
-    const tools = stubTools(() => Promise.reject('plain failure'), 'fail_tool');
-
-    const messages = await runAgent(requester, tools);
-
-    expect(rolesAndTexts(messages)).toEqual([
-      'user:hi',
-      'assistant:',
-      'tool:plain failure',
       'assistant:done',
     ]);
   });
@@ -743,10 +742,26 @@ describe('agent machine lifecycle', () => {
     await vi.waitFor(() => {
       expect(resolveTool).toBeDefined();
     });
-    actor.send({ type: 'input.submit', message: createUserMessage('mid-turn') });
+    actor.send({
+      type: 'input.submit',
+      id: 'mid',
+      message: createUserMessage('mid-turn'),
+      origin: { kind: 'user' },
+      tracked: true,
+      createdAt: '2026-09-14T00:00:00.000Z',
+      userMessageId: 'umid-1',
+    });
     await vi.waitFor(() => {
       expect(actor.getSnapshot().context.queue).toHaveLength(1);
       expect(actor.getSnapshot().context.notifications).toHaveLength(0);
+    });
+    expect(actor.getSnapshot().context.queue[0]).toEqual({
+      id: 'mid',
+      message: createUserMessage('mid-turn'),
+      origin: { kind: 'user' },
+      tracked: true,
+      createdAt: '2026-09-14T00:00:00.000Z',
+      userMessageId: 'umid-1',
     });
 
     resolveTool?.({ content: [{ type: 'text', text: 'slow' }] });
@@ -1134,7 +1149,7 @@ describe('agent machine llm retry', () => {
 });
 
 describe('agent machine input.steer', () => {
-  it('promotes a queued prompt into the current turn at the next thinking step', async () => {
+  it('promotes queued prompts into the current turn and merges multi-id steers in FIFO order', async () => {
     const requester = createStubRequester([
       createAssistantMessage([], [toolCall('call-1', 'slow_tool')]),
       createAssistantMessage([{ type: 'text', text: 'done' }]),
@@ -1149,6 +1164,12 @@ describe('agent machine input.steer', () => {
     );
     const store = await testStore();
     const actor = createTestAgent(store, requester, tools);
+    const steered: string[][] = [];
+    actor.on('prompt.steered', (event) => steered.push(event.queueItemIds));
+    const p2Origin: UserPromptOrigin = {
+      kind: 'user',
+      skillActivations: [{ activationId: 'a1', skillName: 'demo' }],
+    };
     actor.start();
     actor.send({ type: 'input.submit', message: createUserMessage('hi') });
 
@@ -1165,17 +1186,48 @@ describe('agent machine input.steer', () => {
       expect(actor.getSnapshot().context.queue).toHaveLength(1);
       expect(actor.getSnapshot().context.notifications).toHaveLength(0);
     });
+    expect(steered).toEqual([]);
 
     actor.send({ type: 'input.steer', id: 'p1' });
     await vi.waitFor(() => {
       expect(actor.getSnapshot().context.queue).toHaveLength(0);
       expect(actor.getSnapshot().context.notifications).toHaveLength(1);
     });
+    expect(steered).toEqual([['p1']]);
+
+    actor.send({
+      type: 'input.submit',
+      id: 'p2',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'SKILLBLOCK' },
+          { type: 'text', text: 'p2 body' },
+        ],
+      },
+      origin: p2Origin,
+    });
+    actor.send({ type: 'input.submit', id: 'p3', message: createUserMessage('third') });
+    await vi.waitFor(() => {
+      expect(actor.getSnapshot().context.queue).toHaveLength(2);
+    });
+
+    actor.send({ type: 'input.steer', id: ['p2', 'p3'] });
+    await vi.waitFor(() => {
+      expect(actor.getSnapshot().context.queue).toHaveLength(0);
+      expect(actor.getSnapshot().context.notifications).toHaveLength(2);
+    });
+    expect(steered).toEqual([['p1'], ['p2', 'p3']]);
+    expect(actor.getSnapshot().context.notifications[1]?.message.content).toEqual([
+      { type: 'text', text: 'SKILLBLOCK' },
+      { type: 'text', text: 'p2 body' },
+      { type: 'text', text: 'third' },
+    ]);
 
     resolveTool?.({ content: [{ type: 'text', text: 'slow' }] });
     await waitFor(
       actor,
-      (s) => s.matches('idle') && store.getState().history.length === 5,
+      (s) => s.matches('idle') && store.getState().history.length === 6,
       { timeout: 5000 },
     );
 
@@ -1184,8 +1236,73 @@ describe('agent machine input.steer', () => {
       'assistant:',
       'tool:slow',
       'user:steer me',
+      'user:SKILLBLOCK\np2 body\nthird',
       'assistant:done',
     ]);
+  });
+});
+
+describe('agent machine prompt gate', () => {
+  it('commits a gate-rewritten message and drops the head on a boolean block or a gate failure', async () => {
+    const requester = createStubRequester([
+      createAssistantMessage([{ type: 'text', text: 'rewritten reply' }]),
+    ]);
+    const store = await testStore();
+    const gateCalls: string[] = [];
+    let gateImpl: () => PromptGateVerdict = () => ({
+      block: false,
+      message: createUserMessage('rewritten'),
+    });
+    const actor = createActor(createAgentMachine({}), {
+      input: {
+        request: { model },
+        scopeFactory: testScopeFactory({
+          store,
+          requester,
+          promptGate: (_id, message) => {
+            gateCalls.push(extractText(message));
+            return Promise.resolve(gateImpl());
+          },
+        }),
+      },
+    });
+    const blocked: (string | undefined)[] = [];
+    const failed: unknown[] = [];
+    actor.on('prompt.blocked', (event) => blocked.push(event.queueItemId));
+    actor.on('prompt.gate_failed', (event) => failed.push(event.error));
+    actor.start();
+
+    actor.send({ type: 'input.submit', id: 'g1', message: createUserMessage('original') });
+    await waitFor(actor, (s) => s.matches('idle') && store.getState().history.length === 2, {
+      timeout: 5000,
+    });
+    expect(rolesAndTexts(store.getState().history)).toEqual([
+      'user:rewritten',
+      'assistant:rewritten reply',
+    ]);
+    expect(gateCalls).toEqual(['original']);
+
+    gateImpl = () => true;
+    actor.send({ type: 'input.submit', id: 'g2', message: createUserMessage('blocked') });
+    await vi.waitFor(() => {
+      expect(blocked).toEqual(['g2']);
+    });
+    expect(actor.getSnapshot().context.queue).toHaveLength(0);
+    expect(store.getState().history).toHaveLength(2);
+
+    gateImpl = () => {
+      throw new Error('gate down');
+    };
+    actor.send({ type: 'input.submit', id: 'g3', message: createUserMessage('explode') });
+    await vi.waitFor(() => {
+      expect(failed).toHaveLength(1);
+    });
+    expect(String(failed[0])).toContain('gate down');
+    expect(actor.getSnapshot().context.queue).toHaveLength(0);
+    expect(store.getState().history).toHaveLength(2);
+    expect(actor.getSnapshot().matches('idle')).toBe(true);
+    expect(gateCalls).toEqual(['original', 'blocked', 'explode']);
+    actor.stop();
   });
 });
 
@@ -1737,6 +1854,40 @@ describe('agent machine context reset', () => {
     expect(turnStarts).toEqual([
       { turnId: 0, branchId: 'main' },
       { turnId: 1, branchId: 'main~2' },
+    ]);
+
+    actor.send({ type: 'input.pause' });
+    actor.send({ type: 'input.submit', id: 'q1', message: createUserMessage('queued') });
+    await vi.waitFor(() => {
+      expect(actor.getSnapshot().context.queue).toHaveLength(1);
+    });
+
+    await seedBranch(tree, 'main~3', ['third-seed']);
+    await store.reset(journalFromBranch(tree.openBranch('main~3'), tree));
+
+    await vi.waitFor(() => {
+      expect(resets).toEqual(['main~2', 'main~3']);
+    });
+    expect(store.getState().history).toHaveLength(1);
+    expect(actor.getSnapshot().context.queue).toEqual([
+      { id: 'q1', message: createUserMessage('queued') },
+    ]);
+
+    actor.send({ type: 'input.continue' });
+    await waitFor(
+      actor,
+      (s) => s.matches('idle') && store.getState().history.length === 3,
+      { timeout: 5000 },
+    );
+    expect(rolesAndTexts(store.getState().history)).toEqual([
+      'user:third-seed',
+      'user:queued',
+      'assistant:reply',
+    ]);
+    expect(turnStarts).toEqual([
+      { turnId: 0, branchId: 'main' },
+      { turnId: 1, branchId: 'main~2' },
+      { turnId: 1, branchId: 'main~3' },
     ]);
   });
 

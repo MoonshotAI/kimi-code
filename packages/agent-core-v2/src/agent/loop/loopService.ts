@@ -93,7 +93,8 @@ import {
   type Turn,
   type TurnResult,
 } from './loop';
-import { launchedTurnId, mergeSteerMessages, stripBundledSkillBlocks } from './promptQueue';
+import { launchedTurnId } from './promptQueue';
+import { mergeSteerMessages, stripBundledSkillBlocks } from '#human/agent/origin';
 import {
   AssistantDelta,
   isDisplayablePromptOrigin,
@@ -532,7 +533,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       removed.push({ reservation, index });
       this.reservations.splice(index, 1);
     }
-    const ownerPromptId = rerouted.id ?? newMessageId();
+    const ownerPromptId = newMessageId();
     const message = {
       ...rerouted,
       id: ownerPromptId,

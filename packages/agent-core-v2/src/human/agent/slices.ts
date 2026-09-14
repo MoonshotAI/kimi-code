@@ -3,6 +3,8 @@ import { createSlice } from '#/eventStore/slice';
 import type { BranchRef } from '#/store/types';
 import type { UserMessage } from '#/llm/message';
 
+import type { PromptOrigin } from './origin';
+
 import {
   inputCancelled,
   inputDrained,
@@ -29,6 +31,10 @@ import { createSystemEntry, createUserEntry, type HistoryMessage, type UserEntry
 export interface QueuedPrompt {
   id?: string;
   message: UserMessage;
+  origin?: PromptOrigin;
+  tracked?: boolean;
+  createdAt?: string;
+  userMessageId?: string;
 }
 
 export const historySlice = createSlice({
@@ -46,7 +52,14 @@ export const queueSlice = createSlice({
   initialState: () => [] as QueuedPrompt[],
   reducers: {
     [inputSubmitted.type]: (draft, event: InputSubmitted) => {
-      draft.push({ id: event.id, message: event.message });
+      draft.push({
+        id: event.id,
+        message: event.message,
+        origin: event.origin,
+        tracked: event.tracked,
+        createdAt: event.createdAt,
+        userMessageId: event.userMessageId,
+      });
     },
     [inputCancelled.type]: (draft, event: InputCancelled) =>
       draft.filter((entry) => entry.id !== event.id),

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { defineEvent } from '#/eventStore/events';
 
 import { historyMessageSchema, systemMessageSchema, userMessageSchema } from './historySchema';
+import type { PromptOrigin } from './origin';
 
 export const messageAppended = defineEvent({
   type: 'message.appended',
@@ -28,7 +29,14 @@ export type TurnEnded = ReturnType<typeof turnEnded>;
 
 export const inputSubmitted = defineEvent({
   type: 'input.submitted',
-  schema: z.object({ id: z.string().optional(), message: userMessageSchema }),
+  schema: z.object({
+    id: z.string().optional(),
+    message: userMessageSchema,
+    origin: z.custom<PromptOrigin>().optional(),
+    tracked: z.boolean().optional(),
+    createdAt: z.string().optional(),
+    userMessageId: z.string().optional(),
+  }),
 });
 export type InputSubmitted = ReturnType<typeof inputSubmitted>;
 

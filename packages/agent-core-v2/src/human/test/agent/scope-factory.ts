@@ -1,4 +1,4 @@
-import { dispatchTools, type ScopeFactory } from '#/agent/machine';
+import { dispatchTools, type PromptGate, type ScopeFactory } from '#/agent/machine';
 import type { AgentEventStore } from '#/agent/slices';
 import { createTurnMachine, type CreateTurnMachineOptions } from '#/agent/turn';
 import type { LlmRequester } from '#/llm/requester/requester';
@@ -10,6 +10,7 @@ export interface TestScopeOptions {
   readonly requester: LlmRequester;
   readonly tools?: readonly ToolDefinition[];
   readonly turnOptions?: CreateTurnMachineOptions;
+  readonly promptGate?: PromptGate;
 }
 
 export function testScopeFactory(options: TestScopeOptions): ScopeFactory {
@@ -20,5 +21,6 @@ export function testScopeFactory(options: TestScopeOptions): ScopeFactory {
       turnLogic: createTurnMachine(options.requester, options.turnOptions),
       toolLogic: createToolMachine(dispatchTools(tools)),
       tools,
+      promptGate: options.promptGate,
     });
 }

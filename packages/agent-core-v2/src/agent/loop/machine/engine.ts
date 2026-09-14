@@ -1,5 +1,6 @@
 import type { IAgentLLMRequesterService, AgentLLMRequestFinish, AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import type { PromptOrigin } from '#/agent/contextMemory/types';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { ModelRequestTiming } from '#/llm-adapter/model/model-requester';
 import type { ToolInfo, ToolResult as AgentToolResult, ToolUpdate as AgentToolUpdate } from '#/tool/toolContract';
@@ -107,6 +108,7 @@ export type MachineEngineEvent =
   | { readonly type: 'remindersConsumed'; readonly reminders: HistoryMessage[] }
   | { readonly type: 'promptBlocked'; readonly queueItemId?: string }
   | { readonly type: 'promptGateFailed'; readonly queueItemId?: string; readonly error: unknown }
+  | { readonly type: 'promptSteered'; readonly queueItemIds: readonly string[] }
   | { readonly type: 'aborting' };
 
 export interface CreateMachineEngineOptions {
@@ -157,6 +159,7 @@ export interface MachineEngineSnapshot {
   readonly running: boolean;
   readonly aborting: boolean;
   readonly waitingForBackground: boolean;
+  readonly paused: boolean;
   readonly queueLength: number;
   readonly queueIds: readonly (string | undefined)[];
   readonly notificationCount: number;
@@ -166,12 +169,21 @@ export interface MachineEngineSnapshot {
 }
 
 export interface MachineEngine {
-  submit(input: { readonly id?: string; readonly message: UserMessage }): void;
-  steer(id: string): void;
+  submit(input: {
+    readonly id?: string;
+    readonly message: UserMessage;
+    readonly origin?: PromptOrigin;
+    readonly tracked?: boolean;
+    readonly createdAt?: string;
+    readonly userMessageId?: string;
+  }): void;
+  steer(id: string | readonly string[]): void;
   notify(message: UserMessage): void;
   remind(key: string, message: UserMessage): void;
   cancelQueueItem(id: string): void;
   abort(): void;
+  pause(): void;
+  resume(): void;
   resetHistory(history: readonly HistoryMessage[]): Promise<void>;
   resetJournal(journal: SyncStoreJournal): Promise<void>;
   stop(): void;
@@ -202,6 +214,7 @@ interface MachineSnapshotLike {
     readonly notifications: readonly unknown[];
     readonly reminders: readonly unknown[];
     readonly background: Record<string, unknown>;
+    readonly paused: boolean;
   };
 }
 
@@ -458,6 +471,9 @@ export function attachMachineEngine(
     ref.on('prompt.gate_failed', (event) => {
       publish({ type: 'promptGateFailed', queueItemId: event.queueItemId, error: event.error });
     }),
+    ref.on('prompt.steered', (event) => {
+      publish({ type: 'promptSteered', queueItemIds: event.queueItemIds });
+    }),
     ref.on('turn.aborting', () => {
       publish({ type: 'aborting' });
     }),
@@ -489,7 +505,15 @@ export function attachMachineEngine(
   return {
     submit: (input) => {
       tools.sync();
-      ref.send({ type: 'input.submit', id: input.id, message: input.message });
+      ref.send({
+        type: 'input.submit',
+        id: input.id,
+        message: input.message,
+        origin: input.origin,
+        tracked: input.tracked,
+        createdAt: input.createdAt,
+        userMessageId: input.userMessageId,
+      });
     },
     steer: (id) => {
       tools.sync();
@@ -508,6 +532,12 @@ export function attachMachineEngine(
     },
     abort: () => {
       ref.send({ type: 'input.abort' });
+    },
+    pause: () => {
+      ref.send({ type: 'input.pause' });
+    },
+    resume: () => {
+      ref.send({ type: 'input.continue' });
     },
     resetHistory: (history) => {
       const events: ExternalEvent[] = history.map((message) => messageAppended({ message }));
@@ -566,6 +596,7 @@ export function attachMachineEngine(
         waitingForBackground:
           typeof value === 'object' && value !== null && 'idle' in value &&
           (value as { idle?: unknown }).idle === 'waiting',
+        paused: snapshot.context.paused,
         queueLength: snapshot.context.queue.length,
         queueIds: snapshot.context.queue.map((entry) => entry.id),
         notificationCount: snapshot.context.notifications.length,

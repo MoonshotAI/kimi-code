@@ -25,6 +25,7 @@ import type { ToolDefinition } from '#/tool/tool';
 import { createWaitForTasks, type ToolActorRef } from './wait-for';
 import { interruptReasonOf, type TurnInterruptReason } from './errors';
 import { messageAppended, turnEnded, turnStarted } from './events';
+import { mergeSteerMessages } from './origin';
 import { createSystemEntry, createUserEntry } from './turn';
 import { createAbortScope, withAbort, type AbortScope } from '#/utils/abort';
 import type { createTurnMachine, HistoryMessage, TurnLlmEvent, TurnOutput, UserEntry } from './turn';
@@ -55,10 +56,12 @@ export type ScopeFactory = (
   signal: AbortSignal,
 ) => Promise<ScopeFactoryOutput>;
 
+export type PromptGateVerdict = boolean | { block: boolean; message?: UserMessage };
+
 export type PromptGate = (
   queueItemId: string | undefined,
   message: UserMessage,
-) => Promise<boolean>;
+) => Promise<PromptGateVerdict>;
 
 export interface ScopeFactoryOutput {
   handle?: AgentScopeHandle;
@@ -81,10 +84,10 @@ type SpawnChild = <TLogic extends AnyActorLogic>(
 export type AgentEvent =
   | TurnLlmEvent
   | ToolEvent
-  | { type: 'input.submit'; id?: string; message: UserMessage }
+  | ({ type: 'input.submit' } & QueuedPrompt)
   | { type: 'input.notify'; message: UserMessage }
   | { type: 'input.remind'; key: string; message: UserMessage | SystemMessage }
-  | { type: 'input.steer'; id: string }
+  | { type: 'input.steer'; id: string | readonly string[] }
   | { type: 'input.cancel'; id: string }
   | { type: 'input.abort' }
   | { type: 'input.pause' }
@@ -119,6 +122,7 @@ export type AgentEmitted =
   | { type: 'turn.aborted'; messages: HistoryMessage[]; branchId: string }
   | { type: 'prompt.blocked'; queueItemId?: string }
   | { type: 'prompt.gate_failed'; queueItemId?: string; error: unknown }
+  | { type: 'prompt.steered'; queueItemIds: string[] }
   | { type: 'context.reset'; branchId: string }
   | { type: 'agent.attached' }
   | { type: 'agent.failed'; error: unknown };
@@ -259,11 +263,10 @@ function drainPendingPatch(
 
 function mirrorPatch(state: AgentStoreState): Pick<
   AgentMachineContext,
-  'messages' | 'queue' | 'notifications' | 'reminders'
+  'messages' | 'notifications' | 'reminders'
 > {
   return {
     messages: [...state.history],
-    queue: [...state.queue],
     notifications: [...state.notifications],
     reminders: [...state.reminders],
   };
@@ -318,13 +321,15 @@ export function createAgentMachine({
         ({ input, signal }) => input.scopeFactory(input.self, signal),
       ),
       promptGateActor: fromPromise<
-        { id?: string; block: boolean; error?: unknown },
+        { id?: string; block: boolean; message?: UserMessage; error?: unknown },
         { gate?: PromptGate; head?: QueuedPrompt }
       >(async ({ input }) => {
         const { gate, head } = input;
         if (gate === undefined || head === undefined) return { id: head?.id, block: false };
         try {
-          return { id: head.id, block: await gate(head.id, head.message) };
+          const verdict = await gate(head.id, head.message);
+          if (typeof verdict === 'boolean') return { id: head.id, block: verdict };
+          return { id: head.id, block: verdict.block, message: verdict.message };
         } catch (error) {
           return { id: head.id, block: false, error };
         }
@@ -350,10 +355,11 @@ export function createAgentMachine({
         });
         enqueue.assign(drainPendingPatch(context));
       }),
-      resetMirror: assign(({ event }) => {
+      resetMirror: assign(({ context, event }) => {
         if (event.type !== 'store.reset') return {};
         return {
           ...mirrorPatch(event.state),
+          queue: context.queue,
           turnTools: {},
           background: {},
           scope: createAbortScope(),
@@ -442,7 +448,19 @@ export function createAgentMachine({
       'input.submit': {
         actions: assign(({ context, event }) => {
           if (event.type !== 'input.submit') return {};
-          return { queue: [...context.queue, { id: event.id, message: event.message }] };
+          return {
+            queue: [
+              ...context.queue,
+              {
+                id: event.id,
+                message: event.message,
+                origin: event.origin,
+                tracked: event.tracked,
+                createdAt: event.createdAt,
+                userMessageId: event.userMessageId,
+              },
+            ],
+          };
         }),
       },
       'input.notify': {
@@ -471,14 +489,24 @@ export function createAgentMachine({
       'input.steer': {
         actions: enqueueActions(({ context, event, enqueue }) => {
           if (event.type !== 'input.steer') return;
-          const entry = context.queue.find((item) => item.id === event.id);
-          if (entry === undefined) return;
+          const ids = typeof event.id === 'string' ? [event.id] : event.id;
+          const steered = context.queue.filter(
+            (item) => item.id !== undefined && ids.includes(item.id),
+          );
+          if (steered.length === 0) return;
+          const merged = mergeSteerMessages(
+            steered.map((item) => ({ content: item.message.content, origin: item.origin })),
+          );
           enqueue.assign({
-            queue: context.queue.filter((item) => item.id !== event.id),
+            queue: context.queue.filter((item) => !steered.includes(item)),
             notifications: [
               ...context.notifications,
-              createUserEntry(entry.message, { source: 'input' }),
+              createUserEntry({ role: 'user', content: merged.content }, { source: 'input' }),
             ],
+          });
+          enqueue.emit({
+            type: 'prompt.steered' as const,
+            queueItemIds: steered.map((item) => item.id as string),
           });
         }),
       },
@@ -656,7 +684,15 @@ export function createAgentMachine({
                 },
                 {
                   target: '#agent.running',
-                  actions: ['commitPendingToHistory'],
+                  actions: [
+                    assign(({ context, event }) => {
+                      const rewritten = event.output.message;
+                      const head = context.queue[0];
+                      if (rewritten === undefined || head === undefined) return {};
+                      return { queue: [{ ...head, message: rewritten }, ...context.queue.slice(1)] };
+                    }),
+                    'commitPendingToHistory',
+                  ],
                 },
               ],
               onError: {
