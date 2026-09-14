@@ -340,13 +340,21 @@ describe('per-agent sharded channels', () => {
     const typed = viewA.subscribe(TestAgentEvent, () => undefined);
     const perAgent = bus.onAgent(scopeA.agentContext, TestAgentEvent, () => undefined);
 
-    expect(bus.listenerCounts()).toEqual({ all: 0, perType: {}, perAgent: { a: 3 } });
+    expect(bus.listenerCounts()).toEqual({
+      all: 0,
+      perType: {},
+      perAgent: { a: { all: 1, perType: { 'test.agent': 2 } } },
+    });
 
     typed.dispose();
-    expect(bus.listenerCounts().perAgent).toEqual({ a: 2 });
+    expect(bus.listenerCounts().perAgent).toEqual({ a: { all: 1, perType: { 'test.agent': 1 } } });
     full.dispose();
     perAgent.dispose();
-    expect(bus.listenerCounts()).toEqual({ all: 0, perType: {}, perAgent: { a: 0 } });
+    expect(bus.listenerCounts()).toEqual({
+      all: 0,
+      perType: {},
+      perAgent: { a: { all: 0, perType: { 'test.agent': 0 } } },
+    });
   });
 
   it('removes the sharded channel on deactivate and isolates a re-activated generation', () => {
@@ -356,7 +364,7 @@ describe('per-agent sharded channels', () => {
     const view1 = new AgentEventBusView(bus, gen1);
     const seen1: number[] = [];
     view1.subscribe(TestAgentEvent, (event) => seen1.push(event.value));
-    expect(bus.listenerCounts().perAgent).toEqual({ a: 1 });
+    expect(bus.listenerCounts().perAgent).toEqual({ a: { all: 0, perType: { 'test.agent': 1 } } });
 
     bus.deactivateAgent(gen1.agentContext);
     expect(bus.listenerCounts().perAgent).toEqual({});
@@ -387,6 +395,20 @@ describe('per-agent sharded channels', () => {
     bus.publish(new TestAgentEvent({ agentId: 'a', value: 5 }), gen2.agentContext);
 
     expect(seen).toEqual([5]);
-    expect(bus.listenerCounts().perAgent).toEqual({ a: 1 });
+    expect(bus.listenerCounts().perAgent).toEqual({ a: { all: 0, perType: { 'test.agent': 1 } } });
+  });
+
+  it('fires full-stream handlers before typed handlers within an agent channel regardless of registration order', () => {
+    const bus = new EventBusService();
+    const scopeA = makeAgentScopeContext({ agentId: 'a', agentScope: 'agents/a', generation: 1 });
+    bus.activateAgent(scopeA.agentContext);
+    const viewA = new AgentEventBusView(bus, scopeA);
+    const order: string[] = [];
+    viewA.subscribe(TestAgentEvent, () => order.push('typed'));
+    viewA.subscribe(() => order.push('full'));
+
+    bus.publish(new TestAgentEvent({ agentId: 'a', value: 1 }), scopeA.agentContext);
+
+    expect(order).toEqual(['full', 'typed']);
   });
 });
