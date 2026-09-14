@@ -141,11 +141,11 @@ describe('credentialsRecovery', () => {
     expect(credentialsRecovery.propose(recoveryContext(unauthorized, [], provider))).toEqual({
       strategy: 'credentials',
       action: 'refresh',
-      beforeRetry: expect.any(Function),
+      beforeNextAttempt: expect.any(Function),
     });
   });
 
-  it('invalidates the credentials before retrying', () => {
+  it('invalidates the credentials before the next attempt', () => {
     let invalidations = 0;
     const provider: LlmCredentialProvider = {
       resolve: () => ({ apiKey: 'tok' }),
@@ -155,7 +155,7 @@ describe('credentialsRecovery', () => {
       },
     };
     const proposal = credentialsRecovery.propose(recoveryContext(unauthorized, [], provider));
-    proposal?.beforeRetry?.();
+    proposal?.beforeNextAttempt?.();
     expect(invalidations).toBe(1);
   });
 

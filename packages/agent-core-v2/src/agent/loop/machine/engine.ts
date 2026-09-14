@@ -297,8 +297,8 @@ export function machineEngineAttachBundle(options: CreateMachineEngineOptions): 
   const current = (): LlmCredentialProvider | undefined => {
     const source = options.source?.();
     return source?.type === 'turn'
-      ? options.llmRequester.credentialsForTurn(source.turnId)
-      : options.llmRequester.currentCredentials();
+      ? options.llmRequester.credentialProviderForTurn(source.turnId)
+      : options.llmRequester.currentCredentialProvider();
   };
   const credentialProvider: LlmCredentialProvider = {
     resolve: () => current()?.resolve(),

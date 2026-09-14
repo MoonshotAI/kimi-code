@@ -672,7 +672,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             return request.result;
           };
           const result = await runWithCredentialRecovery(
-            this.llmRequester.currentCredentials(),
+            this.llmRequester.currentCredentialProvider(),
             runRequest,
             signal,
           );

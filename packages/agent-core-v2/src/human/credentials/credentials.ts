@@ -71,7 +71,7 @@ export const credentialsRecovery: LlmRecovery = {
     return {
       strategy: CREDENTIALS_RECOVERY_ID,
       action: 'refresh',
-      beforeRetry: () => credentialProvider?.invalidate?.(),
+      beforeNextAttempt: () => credentialProvider?.invalidate?.(),
     };
   },
 };

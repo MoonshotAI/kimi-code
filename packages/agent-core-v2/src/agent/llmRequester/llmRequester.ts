@@ -61,9 +61,9 @@ export interface IAgentLLMRequesterService {
 
   prepareTurnConfig(turnId: number): PreparedTurnRequestConfig | undefined;
 
-  currentCredentials(): LlmCredentialProvider | undefined;
+  currentCredentialProvider(): LlmCredentialProvider | undefined;
 
-  credentialsForTurn(turnId: number): LlmCredentialProvider | undefined;
+  credentialProviderForTurn(turnId: number): LlmCredentialProvider | undefined;
 
   request(
     overrides?: AgentLLMRequestOverrides,

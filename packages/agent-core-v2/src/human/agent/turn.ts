@@ -191,7 +191,7 @@ export type TurnEvent =
   | { type: 'turn.continue' }
   | { type: 'turn.abort' }
   | {
-      type: 'turn.failure.classified';
+      type: 'turn.failure.recovery.evaluated';
       cause: Extract<LlmEvent, { type: 'llm.failed.remote' }>;
       proposal?: LlmRecoveryProposal & LlmRecoveryRecord;
     };
@@ -624,7 +624,7 @@ export function createTurnMachine(
           },
           'llm.failed.remote': {
             actions: raise(({ context, event }) => ({
-              type: 'turn.failure.classified' as const,
+              type: 'turn.failure.recovery.evaluated' as const,
               cause: event,
               proposal: proposeRecovery(recovery, {
                 error: event.error,
@@ -634,7 +634,7 @@ export function createTurnMachine(
               }),
             })),
           },
-          'turn.failure.classified': [
+          'turn.failure.recovery.evaluated': [
             {
               guard: ({ event }) => event.proposal !== undefined,
               target: 'thinking',
@@ -642,7 +642,7 @@ export function createTurnMachine(
               actions: [
                 ({ context, event }) => {
                   context.accumulator.rollback();
-                  event.proposal?.beforeRetry?.();
+                  event.proposal?.beforeNextAttempt?.();
                 },
                 assign(({ context, event }) => {
                   const proposal = event.proposal as LlmRecoveryProposal & LlmRecoveryRecord;

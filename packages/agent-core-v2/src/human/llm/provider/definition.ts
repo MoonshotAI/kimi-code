@@ -9,7 +9,7 @@ import type { OpenAIResponsesTrait } from '#/llm/requester/bases/openai-response
 import type { OpenAITrait } from '#/llm/requester/bases/openai/trait';
 import type { LlmErrorClassifier, LlmRequester } from '#/llm/requester/requester';
 
-export interface ProtocolTraitsByName {
+interface ProtocolTraitsByName {
   readonly openai: OpenAITrait;
   readonly openai_responses: OpenAIResponsesTrait;
   readonly anthropic: AnthropicTrait;
