@@ -619,9 +619,44 @@ describe("TUI content shrinkage", () => {
 });
 
 describe("TUI above-viewport changes", () => {
-	it("adopts in-place edits confined above the viewport without a full redraw", async () => {
+	const createGuardedTui = (terminal: LoggingVirtualTerminal): TUI =>
+		new TuiMainScreen(terminal, undefined, undefined, { guardedAutomaticFullRedraws: true });
+
+	it("matches upstream behavior by default: immediate clear-full-redraws with scrollback clear", async () => {
 		const terminal = new LoggingVirtualTerminal(40, 10);
 		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = Array.from({ length: 30 }, (_, i) => `Line ${i}`);
+		tui.start();
+		tui.renderNow();
+		const initialRedraws = tui.fullRedraws;
+		terminal.clearWrites();
+
+		// An in-place edit above the viewport falls back to an immediate
+		// clear-full-redraw that also wipes the scrollback.
+		component.lines = Array.from({ length: 30 }, (_, i) => (i === 5 ? "Line 5 (t=1)" : `Line ${i}`));
+		tui.renderNow();
+		let writes = terminal.getWrites();
+		assert.ok(writes.includes("\x1b[2J"), "default above-viewport edit clears the screen");
+		assert.ok(writes.includes("\x1b[3J"), "default above-viewport edit clears the scrollback");
+		assert.strictEqual(tui.fullRedraws, initialRedraws + 1, "default fallback redraw is immediate");
+
+		// No rate limit: a second fallback right away redraws immediately too.
+		terminal.clearWrites();
+		component.lines = Array.from({ length: 30 }, (_, i) => (i === 5 ? "Line 5 (t=2)" : `Line ${i}`));
+		tui.renderNow();
+		writes = terminal.getWrites();
+		assert.ok(writes.includes("\x1b[2J"), "default fallback redraws are not rate-limited");
+		assert.strictEqual(tui.fullRedraws, initialRedraws + 2, "second default fallback redraw is immediate");
+
+		tui.stop();
+	});
+
+	it("adopts in-place edits confined above the viewport without a full redraw", async () => {
+		const terminal = new LoggingVirtualTerminal(40, 10);
+		const tui: TUI = createGuardedTui(terminal);
 		const component = new TestComponent();
 		tui.addChild(component);
 
@@ -656,7 +691,7 @@ describe("TUI above-viewport changes", () => {
 
 	it("renders only the visible part when an edit spans the viewport boundary", async () => {
 		const terminal = new LoggingVirtualTerminal(40, 10);
-		const tui: TUI = new TuiMainScreen(terminal);
+		const tui: TUI = createGuardedTui(terminal);
 		const component = new TestComponent();
 		tui.addChild(component);
 
@@ -690,7 +725,7 @@ describe("TUI above-viewport changes", () => {
 		const perfClock = mock.method(performance, "now", () => monoNow);
 		try {
 			const terminal = new LoggingVirtualTerminal(40, 10);
-			const tui: TUI = new TuiMainScreen(terminal);
+			const tui: TUI = createGuardedTui(terminal);
 			const component = new TestComponent();
 			tui.addChild(component);
 
@@ -751,7 +786,7 @@ describe("TUI above-viewport changes", () => {
 				}
 			}
 			const terminal = new LoggingVirtualTerminal(40, 10);
-			const tui: TUI = new TuiMainScreen(terminal);
+			const tui: TUI = createGuardedTui(terminal);
 			const component = new TypingComponent();
 			tui.addChild(component);
 			tui.setFocus(component);
@@ -808,7 +843,7 @@ describe("TUI above-viewport changes", () => {
 		const wallClock = mock.method(Date, "now", () => wallNow);
 		try {
 			const terminal = new LoggingVirtualTerminal(40, 10);
-			const tui: TUI = new TuiMainScreen(terminal);
+			const tui: TUI = createGuardedTui(terminal);
 			const component = new TestComponent();
 			tui.addChild(component);
 
@@ -856,7 +891,7 @@ describe("TUI above-viewport changes", () => {
 
 	it("still clears the scrollback on an explicit terminal resize", async () => {
 		const terminal = new LoggingVirtualTerminal(40, 10);
-		const tui: TUI = new TuiMainScreen(terminal);
+		const tui: TUI = createGuardedTui(terminal);
 		const component = new TestComponent();
 		tui.addChild(component);
 

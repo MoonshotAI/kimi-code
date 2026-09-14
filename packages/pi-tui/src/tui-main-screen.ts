@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { performance } from "node:perf_hooks";
 import { deleteKittyImage, isImageLine } from "./terminal-image.ts";
+import type { Terminal } from "./terminal.ts";
 import { SEGMENT_RESET, type TUI, TuiBase, type TuiStopOptions } from "./tui.ts";
 import { asciiVisibleWidth, normalizeTerminalOutput, sliceByColumn, visibleWidth } from "./utils.ts";
 
@@ -124,6 +125,22 @@ export interface TuiMainScreenRenderState {
 	previousViewportTop: number;
 }
 
+export interface TuiMainScreenOptions {
+	/**
+	 * Opt in to guarded handling of changes the differential renderer cannot
+	 * reach (first changed line above the viewport, content shrinking, kitty
+	 * pre-clear fallback). Off (default) matches upstream: every fallback does
+	 * an immediate clear-full-redraw including the scrollback (ESC[2J/H/3J +
+	 * the whole transcript). On: in-place edits confined above the viewport
+	 * are adopted without redrawing and spanning edits are clamped to the
+	 * visible range; automatic fallback redraws keep the scrollback
+	 * (ESC[3J stays reserved for explicit actions like resize), are
+	 * rate-limited to one per 2s with deferrals merged into a single trailing
+	 * redraw, and input-driven frames bypass the limit.
+	 */
+	guardedAutomaticFullRedraws?: boolean;
+}
+
 /** TUI implementation that renders into the terminal's main screen and scrollback. */
 export class TuiMainScreen extends TuiBase implements TUI {
 	readonly mode = "regular" as const;
@@ -154,6 +171,17 @@ export class TuiMainScreen extends TuiBase implements TUI {
 	 */
 	private lastAutoFullRedrawAt = -TuiMainScreen.MIN_AUTO_FULL_REDRAW_INTERVAL_MS;
 	private autoFullRedrawTimer: NodeJS.Timeout | undefined;
+	private readonly guardedAutomaticFullRedraws: boolean;
+
+	constructor(
+		terminal: Terminal,
+		showHardwareCursor?: boolean,
+		logDirectory?: string,
+		options?: TuiMainScreenOptions,
+	) {
+		super(terminal, showHardwareCursor, logDirectory);
+		this.guardedAutomaticFullRedraws = options?.guardedAutomaticFullRedraws ?? false;
+	}
 
 	captureRenderState(): TuiMainScreenRenderState {
 		return {
@@ -344,10 +372,11 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		newLines = processedLines;
 
 		// Helper to clear the viewport and render all new lines. clearScrollback
-		// additionally wipes the terminal scrollback (ESC[3J); it is reserved for
-		// explicit user actions (terminal resize, forced re-render). Automatic
-		// fallback redraws keep the scrollback intact so a redraw storm cannot
-		// destroy the user's history.
+		// additionally wipes the terminal scrollback (ESC[3J); with the guarded
+		// policy opted in it is reserved for explicit user actions (terminal
+		// resize, forced re-render) so an automatic redraw storm cannot destroy
+		// the user's history. Without the opt-in every clear-full-redraw wipes
+		// the scrollback, matching upstream.
 		const fullRender = (clear: boolean, clearScrollback = false): void => {
 			this.fullRedrawCount += 1;
 			const output = new BoundedTerminalWriter((data) => this.terminal.write(data));
@@ -404,13 +433,22 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		};
 
 		// Automatic clear-full-redraws are the fallback for changes the
-		// differential path cannot reach. They reprint the entire transcript, so
-		// they are rate-limited to one per MIN_AUTO_FULL_REDRAW_INTERVAL_MS;
-		// requests arriving inside the window are merged into a single trailing
-		// redraw. Explicit full renders (resize, forced renders) never come
-		// through here. State is left untouched when deferring, so the trailing
-		// render re-detects the same change.
+		// differential path cannot reach. With guardedAutomaticFullRedraws off
+		// (the default) they behave exactly like upstream: an immediate
+		// clear-full-redraw including the scrollback. With the opt-in they are
+		// rate-limited to one per MIN_AUTO_FULL_REDRAW_INTERVAL_MS and keep the
+		// scrollback; requests arriving inside the window are merged into a
+		// single trailing redraw. Explicit full renders (resize, forced renders)
+		// never come through here. State is left untouched when deferring, so
+		// the trailing render re-detects the same change.
 		const autoFullRender = (reason: string): void => {
+			// Without the opt-in, behavior matches upstream: an immediate
+			// clear-full-redraw that also wipes the scrollback.
+			if (!this.guardedAutomaticFullRedraws) {
+				logRedraw(reason);
+				fullRender(true, true);
+				return;
+			}
 			// Input-driven frames must never be delayed by the rate limit:
 			// deferring swallows the render while leaving previousLines stale,
 			// which would also swallow every subsequent frame (typed text,
@@ -579,15 +617,21 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		}
 
 		// Differential rendering can only touch what was actually visible.
-		// If the first changed line is above the previous viewport, we need a full redraw —
-		// unless the frame length is unchanged and no Kitty images are involved, which keeps
-		// the line-index-to-screen-row mapping intact: edits confined above the viewport
-		// change nothing on screen, so the new frame is adopted without writing anything
-		// (the stale rows only linger in scrollback, reconciled by the next explicit full
-		// redraw), and edits spanning into the viewport are clamped to the visible range and
-		// rendered differentially. A ticking card scrolled above the viewport used to force
-		// a clear-full-redraw of the whole transcript on every tick.
+		// If the first changed line is above the previous viewport, upstream needs
+		// a full redraw. The guarded policy (opt in via TuiMainScreenOptions)
+		// avoids it when the frame length is unchanged and no Kitty images are
+		// involved, which keeps the line-index-to-screen-row mapping intact:
+		// edits confined above the viewport change nothing on screen, so the new
+		// frame is adopted without writing anything (the stale rows only linger
+		// in scrollback, reconciled by the next explicit full redraw), and edits
+		// spanning into the viewport are clamped to the visible range and
+		// rendered differentially. A ticking card scrolled above the viewport
+		// used to force a clear-full-redraw of the whole transcript on every tick.
 		if (firstChanged < prevViewportTop) {
+			if (!this.guardedAutomaticFullRedraws) {
+				autoFullRender(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
+				return;
+			}
 			const countsMatch = newLines.length === this.previousLines.length;
 			let hasImages = false;
 			if (countsMatch) {

@@ -113,13 +113,18 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
               .getText()
               .then((text) => {
                 if (!text || ui.getFocusedComponent() !== target) return;
-                target.handleInput?.(`\x1b[200~${text}\x1b[201~`);
+                target.handleInput?.(`\x1B[200~${text}\x1B[201~`);
                 ui.requestRender();
               })
               .catch(() => {});
           },
         })
-      : new TuiMainScreen(terminal);
+      : new TuiMainScreen(terminal, undefined, undefined, {
+          // A card ticking above the viewport (e.g. a backgrounded `!`
+          // command) must not force a clear-full-redraw of the transcript
+          // every tick.
+          guardedAutomaticFullRedraws: true,
+        });
 
   const transcriptContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const activityContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
