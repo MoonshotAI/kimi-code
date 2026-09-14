@@ -177,7 +177,7 @@ async function internalGenerate(
 export function createGoogleGenAIRequester(options?: GoogleGenAIRequesterOptions): LlmRequester {
   const connection = options?.connection;
   const trait = options?.trait;
-  const convertError = options?.convertError;
+  const classifyError = options?.classifyError;
   const format = createGoogleGenAIFormat();
   const vertexai = options?.vertexai === true;
   const resolveClient =
@@ -223,7 +223,7 @@ export function createGoogleGenAIRequester(options?: GoogleGenAIRequesterOptions
       } catch (error) {
         onEvent?.({
           type: 'llm.failed.remote',
-          error: convertGoogleGenAIError(error, (e) => convertError?.(e)),
+          error: convertGoogleGenAIError(error, (e) => classifyError?.(e)),
         });
       }
     },

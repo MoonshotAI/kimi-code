@@ -150,7 +150,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
   ): AsyncIterable<ModelRequestEvent> {
     const { requester } = this.entry(id);
     yield* streamWithCredentialRecovery(
-      requester.model.credentials,
+      requester.model.credentialProvider,
       () => requester.request(input, signal, params),
       signal,
     );
@@ -183,7 +183,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
         }
         return { text: text.trim(), usage, finishReason };
       };
-      const result = await runWithCredentialRecovery(requester.model.credentials, consume);
+      const result = await runWithCredentialRecovery(requester.model.credentialProvider, consume);
       return {
         ok: true,
         durationMs: Date.now() - startedAt,
@@ -328,7 +328,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       provider: providerConfig,
       providerName,
     });
-    const credentials = this.buildCredentials(providerName, auth);
+    const credentialProvider = this.buildCredentialProvider(providerName, auth);
 
     const providerType = providerConfig?.type ?? protocol;
     const resolvedBaseUrl =
@@ -389,7 +389,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       alwaysThinking: declared.has('always_thinking'),
       providerType,
       providerName,
-      credentials,
+      credentialProvider,
       providerOptions,
     };
   }
@@ -448,7 +448,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     return protocol;
   }
 
-  private buildCredentials(
+  private buildCredentialProvider(
     providerName: string,
     auth: ResolvedModelAuthMaterial,
   ): LlmCredentialProvider {

@@ -107,7 +107,7 @@ export class ModelRequesterImpl implements ModelRequester {
       );
     }
     const video = typeof input === 'string' ? readVideoFile(input) : input;
-    const model = await resolveModelCredentials(resolved.model, this.model.credentials);
+    const model = await resolveModelCredentials(resolved.model, this.model.credentialProvider);
     return uploader(video, { model, signal: options?.signal });
   }
 
@@ -157,7 +157,7 @@ export class ModelRequesterImpl implements ModelRequester {
       usedContextTokens: params?.usedContextTokens,
     };
 
-    const credential = await this.model.credentials?.resolve();
+    const credential = await this.model.credentialProvider?.resolve();
     await requester.generate(
       { ...config, model: applyCredential(resolved.model, credential) },
       content,

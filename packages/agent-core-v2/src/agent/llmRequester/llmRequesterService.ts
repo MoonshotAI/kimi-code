@@ -213,13 +213,13 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
 
   currentCredentials(): LlmCredentialProvider | undefined {
     if (!this.profile.hasProvider()) return undefined;
-    return this.modelCatalog.get(this.profile.resolveModelContext().modelAlias).credentials;
+    return this.modelCatalog.get(this.profile.resolveModelContext().modelAlias).credentialProvider;
   }
 
   credentialsForTurn(turnId: number): LlmCredentialProvider | undefined {
     if (!this.profile.hasProvider()) return undefined;
     const resolved = this.turnConfigs.get(turnId)?.resolved ?? this.profile.resolveModelContext();
-    return this.modelCatalog.get(resolved.modelAlias).credentials;
+    return this.modelCatalog.get(resolved.modelAlias).credentialProvider;
   }
 
   async request(

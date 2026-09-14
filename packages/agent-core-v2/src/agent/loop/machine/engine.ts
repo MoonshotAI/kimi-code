@@ -300,7 +300,7 @@ export function machineEngineAttachBundle(options: CreateMachineEngineOptions): 
       ? options.llmRequester.credentialsForTurn(source.turnId)
       : options.llmRequester.currentCredentials();
   };
-  const credentials: LlmCredentialProvider = {
+  const credentialProvider: LlmCredentialProvider = {
     resolve: () => current()?.resolve(),
     canRecover: (error) => current()?.canRecover?.(error) === true,
     invalidate: () => current()?.invalidate?.(),
@@ -320,7 +320,7 @@ export function machineEngineAttachBundle(options: CreateMachineEngineOptions): 
     }),
     toolLogic: createToolMachine(tools.executor),
     tools: tools.tools,
-    request: { model: options.model, systemPrompt: options.systemPrompt, credentials },
+    request: { model: options.model, systemPrompt: options.systemPrompt, credentialProvider },
     requester,
     machineTools: tools,
   };

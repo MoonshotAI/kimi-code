@@ -295,7 +295,7 @@ async function probeWireEncoding(): Promise<void> {
       alwaysThinking: false,
       providerType,
       providerName: providerType ?? 'probe',
-      credentials: createStaticCredentialProvider('sk-probe'),
+      credentialProvider: createStaticCredentialProvider('sk-probe'),
     };
     return new ModelRequesterImpl(model, registry);
   };

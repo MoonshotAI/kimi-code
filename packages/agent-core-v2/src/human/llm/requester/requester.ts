@@ -56,7 +56,7 @@ export interface LlmCredentialProvider {
 
 export interface LlmRequestConfig {
   readonly model: LlmModel;
-  readonly credentials?: LlmCredentialProvider;
+  readonly credentialProvider?: LlmCredentialProvider;
   readonly systemPrompt?: string;
   readonly tools?: readonly ToolDescription[];
   readonly cacheKey?: string;

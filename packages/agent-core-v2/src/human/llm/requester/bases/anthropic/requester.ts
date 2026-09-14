@@ -208,7 +208,7 @@ async function internalGenerate(
 export function createAnthropicRequester(options?: AnthropicRequesterOptions): LlmRequester {
   const connection = options?.connection;
   const trait = options?.trait;
-  const convertError = options?.convertError;
+  const classifyError = options?.classifyError;
   const format = createAnthropicFormat();
   const resolveClient =
     options?.clientFactory ??
@@ -253,7 +253,7 @@ export function createAnthropicRequester(options?: AnthropicRequesterOptions): L
       } catch (error) {
         onEvent?.({
           type: 'llm.failed.remote',
-          error: convertAnthropicError(error, (e) => convertError?.(e)),
+          error: convertAnthropicError(error, (e) => classifyError?.(e)),
         });
       }
     },

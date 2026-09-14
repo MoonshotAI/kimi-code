@@ -196,7 +196,7 @@ async function internalGenerate(
 export function createOpenAIRequester(options?: OpenAIRequesterOptions): LlmRequester {
   const connection = options?.connection;
   const trait = options?.trait;
-  const convertError = options?.convertError;
+  const classifyError = options?.classifyError;
   const format = createOpenAIFormat();
   const resolveClient =
     options?.clientFactory ??
@@ -255,7 +255,7 @@ export function createOpenAIRequester(options?: OpenAIRequesterOptions): LlmRequ
       } catch (error) {
         onEvent?.({
           type: 'llm.failed.remote',
-          error: convertOpenAIError(error, (e) => convertError?.(e)),
+          error: convertOpenAIError(error, (e) => classifyError?.(e)),
         });
       }
     },

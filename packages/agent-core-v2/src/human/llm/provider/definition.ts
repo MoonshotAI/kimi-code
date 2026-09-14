@@ -22,7 +22,7 @@ export interface ProtocolBinding<N extends ProtocolName = ProtocolName> {
   readonly base: ProtocolBase<ProtocolTraitFor<N>>;
   readonly trait?: ProtocolTraitFor<N>;
   readonly connection?: ProviderConnection;
-  readonly convertError?: LlmErrorClassifier;
+  readonly classifyError?: LlmErrorClassifier;
   readonly capability?: (modelName: string) => ModelCapability | undefined;
 }
 
@@ -122,7 +122,7 @@ export function createProvider(definition: ProviderDefinition): Provider {
       return binding.base.createRequester({
         connection: binding.connection,
         trait: binding.trait,
-        convertError: binding.convertError,
+        classifyError: binding.classifyError,
       });
     },
   };

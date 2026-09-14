@@ -11,7 +11,7 @@ export interface LlmRecoveryContext {
   readonly error: LlmRemoteErrorMessage;
   readonly messages: readonly Message[];
   readonly applied: readonly LlmRecoveryRecord[];
-  readonly credentials?: LlmCredentialProvider;
+  readonly credentialProvider?: LlmCredentialProvider;
 }
 
 export interface LlmRecoveryProposal {

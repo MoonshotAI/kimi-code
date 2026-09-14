@@ -216,12 +216,12 @@ async function collect(
 }
 
 async function collectWithRecovery(requester: ModelRequester): Promise<Collected> {
-  const credentials = requester.model.credentials;
+  const credentialProvider = requester.model.credentialProvider;
   try {
     return await collect(requester);
   } catch (error) {
-    if (credentials?.canRecover?.(error) !== true) throw error;
-    credentials?.invalidate?.();
+    if (credentialProvider?.canRecover?.(error) !== true) throw error;
+    credentialProvider?.invalidate?.();
     return collect(requester);
   }
 }
@@ -364,7 +364,7 @@ async function probeBoundaries(): Promise<void> {
   const baseUrl = `http://127.0.0.1:${String(port)}`;
 
   const registry = new ProtocolAdapterRegistry();
-  const makeRequester = (credentials: LlmCredentialProvider, url = baseUrl): ModelRequester => {
+  const makeRequester = (credentialProvider: LlmCredentialProvider, url = baseUrl): ModelRequester => {
     const model: Model = {
       id: 'probe',
       name: 'probe-model',
@@ -376,7 +376,7 @@ async function probeBoundaries(): Promise<void> {
       maxContextSize: 8192,
       alwaysThinking: false,
       providerName: 'probe',
-      credentials,
+      credentialProvider,
     };
     return new ModelRequesterImpl(model, registry);
   };

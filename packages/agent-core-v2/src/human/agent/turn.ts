@@ -630,7 +630,7 @@ export function createTurnMachine(
                 error: event.error,
                 messages: baseMessages(context),
                 applied: context.appliedRecoveries,
-                credentials: context.input.request.credentials,
+                credentialProvider: context.input.request.credentialProvider,
               }),
             })),
           },

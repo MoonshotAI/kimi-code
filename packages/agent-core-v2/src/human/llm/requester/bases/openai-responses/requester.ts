@@ -172,7 +172,7 @@ export function createOpenAIResponsesRequester(
 ): LlmRequester {
   const connection = options?.connection;
   const trait = options?.trait;
-  const convertError = options?.convertError;
+  const classifyError = options?.classifyError;
   const format = createOpenAIResponsesFormat();
   const resolveClient =
     options?.clientFactory ??
@@ -218,7 +218,7 @@ export function createOpenAIResponsesRequester(
       } catch (error) {
         onEvent?.({
           type: 'llm.failed.remote',
-          error: convertOpenAIError(error, (e) => convertError?.(e)),
+          error: convertOpenAIError(error, (e) => classifyError?.(e)),
         });
       }
     },

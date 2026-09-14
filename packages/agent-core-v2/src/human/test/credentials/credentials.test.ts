@@ -127,9 +127,9 @@ describe('applyCredential / resolveModelCredentials', () => {
 function recoveryContext(
   error: unknown,
   applied: readonly LlmRecoveryRecord[] = [],
-  credentials?: LlmCredentialProvider,
+  credentialProvider?: LlmCredentialProvider,
 ): LlmRecoveryContext {
-  return { error: error as LlmRecoveryContext['error'], messages: [], applied, credentials };
+  return { error: error as LlmRecoveryContext['error'], messages: [], applied, credentialProvider };
 }
 
 const unauthorized = Object.assign(new Error('unauthorized'), { status: 401 });

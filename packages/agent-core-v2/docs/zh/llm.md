@@ -34,10 +34,10 @@ llm/
 ├── requester/
 │   ├── requester.ts      LlmRequester.generate(config, content, control)；
 │   │                     ExtraParams 按协议带类型 {openai?, responses?, anthropic?, googleGenai?}；
-│   │                     LlmRequestConfig.credentials：凭证贡献点
+│   │                     LlmRequestConfig.credentialProvider：凭证贡献点
 │   │                     （resolve/canRecover/invalidate），由调用方在每次 attempt 前解析；
 │   │                     工厂与 credentialsRecovery 策略位于 human/credentials
-│   │                     （staticCredentials / oauthCredentials；kimiOAuthCredentialProvider
+│   │                     （createStaticCredentialProvider / createOAuthCredentialProvider；createKimiOAuthCredentialProvider
 │   │                     适配 Kimi OAuth token）；供 direct 调用方使用的
 │   │                     runWithCredentialRecovery / streamWithCredentialRecovery 执行器
 │   │                     位于 llm-adapter/model/credential-recovery
@@ -50,7 +50,7 @@ llm/
 │                         （公开接缝：contract / trait / requester；format / lower / patterns 保持内部）
 │
 ├── provider/
-│   ├── definition.ts     ProviderDefinition{id, protocols{base+trait+connection+convertError+capability}, media, models}
+│   ├── definition.ts     ProviderDefinition{id, protocols{base+trait+connection+classifyError+capability}, media, models}
 │   │                     createProvider()（无 registry）→ Provider{listModels, resolveModel, createRequester}
 │   └── providers/        standard 等内建 provider（经贡献点注册）
 │
@@ -60,7 +60,7 @@ llm/
 └── media/                媒体贡献点：cache / degrade / ref / resolver / store / upload
 ```
 
-请求生命周期：`generate` 收到 (config, content, control) → 调用方在每次 attempt 前把 `config.credentials` 解析成带完整凭证的 model（machine 路径由 request actor 完成），请求因此始终携带新鲜凭证，而凭证刷新恢复（可恢复的 401 → `credentials.invalidate()`，以 `llm.recovering`（strategy 为 `credentials`）发出）在重发时自然重新解析（不经状态机的 direct 调用方——ping、generate、full compaction、媒体上传——通过 `runWithCredentialRecovery` / `streamWithCredentialRecovery` 共享同一套单次重试恢复） → requester 的 `plan*` 函数将纯 format 阶段与 trait hooks 组合为协议 requestParams（format 将通用 Message[] 经 Pattern Rewriter 降低，trait 在其间调整 kwargs、转换消息、合并历史、转换 tools 并收尾 params） → internalGenerate 调用官方 SDK → 流式 chunk 经无状态 parser 回调转换为 `llm.streaming.part / streaming.usage / streaming.finish / streaming.message_id` 事件 → 错误由 format 转换为 `llm.failed.*`；成功时 requester 发出 `llm.done`，失败时以 `llm.failed.syntax / llm.failed.remote` 收尾、不再发 `llm.done`。turn 在 `llm.done` 时经 `emptyResponseError` 判定空响应并重新转为 `llm.failed.remote`；turn machine 对 `llm.failed.remote` 先尝试恢复（由 engine 组装的策略链——可恢复 401 的凭证刷新在前、替换消息策略在后——经纯函数 `propose` 产出带不透明 `beforeRetry` 副作用的记录，发 `llm.recovering`），再按策略 backoff 重试（尊重 Retry-After，发 `llm.retrying`），耗尽后才将 turn 置为失败。turn 持有 HistoryAccumulator 随事件流累积，在 `llm.retrying / llm.recovering / llm.request.retrying` 时 rollback 并重建累加器，`llm.done` 时 finish 出完整消息；usage 统计、trace、compaction、媒体降级均以插件/贡献点身份挂接在事件流上。
+请求生命周期：`generate` 收到 (config, content, control) → 调用方在每次 attempt 前把 `config.credentialProvider` 解析成带完整凭证的 model（machine 路径由 request actor 完成），请求因此始终携带新鲜凭证，而凭证刷新恢复（可恢复的 401 → `credentials.invalidate()`，以 `llm.recovering`（strategy 为 `credentials`）发出）在重发时自然重新解析（不经状态机的 direct 调用方——ping、generate、full compaction、媒体上传——通过 `runWithCredentialRecovery` / `streamWithCredentialRecovery` 共享同一套单次重试恢复） → requester 的 `plan*` 函数将纯 format 阶段与 trait hooks 组合为协议 requestParams（format 将通用 Message[] 经 Pattern Rewriter 降低，trait 在其间调整 kwargs、转换消息、合并历史、转换 tools 并收尾 params） → internalGenerate 调用官方 SDK → 流式 chunk 经无状态 parser 回调转换为 `llm.streaming.part / streaming.usage / streaming.finish / streaming.message_id` 事件 → 错误由 format 转换为 `llm.failed.*`；成功时 requester 发出 `llm.done`，失败时以 `llm.failed.syntax / llm.failed.remote` 收尾、不再发 `llm.done`。turn 在 `llm.done` 时经 `emptyResponseError` 判定空响应并重新转为 `llm.failed.remote`；turn machine 对 `llm.failed.remote` 先尝试恢复（由 engine 组装的策略链——可恢复 401 的凭证刷新在前、替换消息策略在后——经纯函数 `propose` 产出带不透明 `beforeRetry` 副作用的记录，发 `llm.recovering`），再按策略 backoff 重试（尊重 Retry-After，发 `llm.retrying`），耗尽后才将 turn 置为失败。turn 持有 HistoryAccumulator 随事件流累积，在 `llm.retrying / llm.recovering / llm.request.retrying` 时 rollback 并重建累加器，`llm.done` 时 finish 出完整消息；usage 统计、trace、compaction、媒体降级均以插件/贡献点身份挂接在事件流上。
 
 ## 已被否决的方案（不要再引入）
 

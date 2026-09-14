@@ -87,7 +87,7 @@ function textStream(emit: (event: LlmRequestEvent) => void, text = 'hello'): voi
   ]);
 }
 
-function modelWith(credentials: Model['credentials']): Model {
+function modelWith(credentialProvider: Model['credentialProvider']): Model {
   return {
     id: 'm1',
     name: 'fake-model',
@@ -106,7 +106,7 @@ function modelWith(credentials: Model['credentials']): Model {
     alwaysThinking: false,
     providerType: 'fake',
     providerName: 'fake',
-    credentials,
+    credentialProvider,
   };
 }
 

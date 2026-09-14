@@ -56,13 +56,13 @@ const messages: readonly Message[] = [createUserMessage('hi')];
 const kimiOpenAI = {
   connection: kimiConnection,
   trait: kimiOpenAITrait,
-  convertError: classifyKimiQuotaError,
+  classifyError: classifyKimiQuotaError,
 } as const;
 
 const kimiAnthropic = {
   connection: kimiConnection,
   trait: kimiAnthropicTrait,
-  convertError: classifyKimiQuotaError,
+  classifyError: classifyKimiQuotaError,
 } as const;
 
 async function generateAndCollectUsage(

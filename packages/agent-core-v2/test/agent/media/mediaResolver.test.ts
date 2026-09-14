@@ -162,7 +162,7 @@ function requester(opts: {
   protocol?: Protocol;
   providerType?: string;
   uploadVideo?: ModelRequester['uploadVideo'];
-  credentials?: LlmCredentialProvider;
+  credentialProvider?: LlmCredentialProvider;
 }): ModelRequester {
   return {
     model: {
@@ -179,7 +179,7 @@ function requester(opts: {
       alwaysThinking: false,
       providerName: 'p',
       providerType: opts.providerType ?? 'kimi',
-      credentials: opts.credentials,
+      credentialProvider: opts.credentialProvider,
     },
     request: () => {
       throw new Error('unused');
@@ -343,7 +343,7 @@ describe('AgentMediaResolverService video strategy', () => {
 
   it('invalidates recoverable credentials and retries the upload once on a 401', async () => {
     let invalidations = 0;
-    const credentials: LlmCredentialProvider = {
+    const credentialProvider: LlmCredentialProvider = {
       resolve: () => ({ apiKey: 'tok' }),
       canRecover: (error) => (error as { statusCode?: number }).statusCode === 401,
       invalidate: () => {
@@ -356,7 +356,7 @@ describe('AgentMediaResolverService video strategy', () => {
 
     const out = await res.resolve(
       [videoMessage(buildKimiFileUrl(FILE_ID))],
-      requester({ uploadVideo: upload, credentials }),
+      requester({ uploadVideo: upload, credentialProvider }),
     );
 
     expect(firstPart(out)).toEqual(msPart('prov-9'));

@@ -51,7 +51,7 @@ export interface ProviderDefinition<N extends Protocol = Protocol> {
   readonly baseProtocol: N;
   readonly trait?: ProtocolTraitFor<N>;
   readonly connection?: ProviderConnection;
-  readonly convertError?: LlmErrorClassifier;
+  readonly classifyError?: LlmErrorClassifier;
   readonly capability?: (modelName: string) => HumanModelCapability | undefined;
   readonly endpoint?: ProtocolEndpoint;
   readonly endpoints?: readonly ProtocolEndpoint[];
@@ -226,7 +226,7 @@ registerProviderDefinition({
   baseProtocol: 'openai',
   trait: kimiOpenAITrait,
   connection: kimiConnection,
-  convertError: classifyKimiQuotaError,
+  classifyError: classifyKimiQuotaError,
   endpoint: kimiEndpoint,
   hostHeaders: 'full',
   modelSource: 'oauth-catalog',
@@ -237,7 +237,7 @@ registerProviderDefinition({
   baseProtocol: 'anthropic',
   trait: kimiAnthropicTrait,
   connection: kimiConnection,
-  convertError: classifyKimiQuotaError,
+  classifyError: classifyKimiQuotaError,
   endpoint: kimiEndpoint,
   hostHeaders: 'full',
   modelSource: 'oauth-catalog',
@@ -247,7 +247,7 @@ registerProviderDefinition({
   id: 'kimi',
   baseProtocol: 'openai_responses',
   connection: kimiConnection,
-  convertError: classifyKimiQuotaError,
+  classifyError: classifyKimiQuotaError,
   endpoint: kimiEndpoint,
   hostHeaders: 'full',
   modelSource: 'oauth-catalog',

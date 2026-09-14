@@ -34,10 +34,10 @@ llm/
 ├── requester/
 │   ├── requester.ts      LlmRequester.generate(config, content, control);
 │   │                     ExtraParams typed per protocol {openai?, responses?, anthropic?, googleGenai?};
-│   │                     LlmRequestConfig.credentials: credential contribution point
+│   │                     LlmRequestConfig.credentialProvider: credential contribution point
 │   │                     (resolve/canRecover/invalidate), resolved per attempt by the caller;
 │   │                     factories and the credentialsRecovery strategy live in human/credentials
-│   │                     (staticCredentials / oauthCredentials; kimiOAuthCredentialProvider adapts
+│   │                     (createStaticCredentialProvider / createOAuthCredentialProvider; createKimiOAuthCredentialProvider adapts
 │   │                     Kimi OAuth tokens); the runWithCredentialRecovery /
 │   │                     streamWithCredentialRecovery executors for direct callers live in
 │   │                     llm-adapter/model/credential-recovery
@@ -50,7 +50,7 @@ llm/
 │                         (public seam: contract / trait / requester; format / lower / patterns stay internal)
 │
 ├── provider/
-│   ├── definition.ts     ProviderDefinition{id, protocols{base+trait+connection+convertError+capability}, media, models}
+│   ├── definition.ts     ProviderDefinition{id, protocols{base+trait+connection+classifyError+capability}, media, models}
 │   │                     createProvider() (no registry) → Provider{listModels, resolveModel, createRequester}
 │   └── providers/        built-in providers such as standard (registered via contribution points)
 │
@@ -60,7 +60,7 @@ llm/
 └── media/                media contribution points: cache / degrade / ref / resolver / store / upload
 ```
 
-Request lifecycle: `generate` receives (config, content, control) → the caller resolves `config.credentials` into a fully-credentialed model before each attempt (the request actor on the machine path), so requests always carry fresh credentials and a credential-refresh recovery (recoverable 401 → `credentials.invalidate()`, emitted as `llm.recovering` with strategy `credentials`) naturally re-resolves on the re-send (direct callers outside the state machines — ping, generate, full compaction, media upload — share the same single-retry recovery through `runWithCredentialRecovery` / `streamWithCredentialRecovery`) → the requester's `plan*` function composes pure format stages with trait hooks into protocol requestParams (format lowers the generic Message[] through the Pattern Rewriter; trait adjusts kwargs, converted messages, history, tools, and final params in between) → internalGenerate calls the official SDK → streaming chunks are converted by the stateless parser callbacks into `llm.streaming.part / streaming.usage / streaming.finish / streaming.message_id` events → errors are converted by format into `llm.failed.*`; on success the requester emits `llm.done`, on failure it ends with `llm.failed.syntax / llm.failed.remote` and never emits `llm.done`. At `llm.done` the turn judges empty responses via `emptyResponseError` and re-raises them as `llm.failed.remote`; the turn machine first tries recovery on `llm.failed.remote` (the engine-composed strategy chain — credential refresh on a recoverable 401 first, then replacement-message strategies — each pure `propose` returning a record whose opaque `beforeRetry` effect the turn executes, emitting `llm.recovering`), then retries with backoff (honoring Retry-After, emitting `llm.retrying`), and only fails the turn once attempts are exhausted. The turn holds the HistoryAccumulator, fed by the event stream, rolls it back and recreates it on `llm.retrying / llm.recovering / llm.request.retrying`, and finishes the complete message at `llm.done`; usage accounting, tracing, compaction, and media degradation all attach to the event stream as plugins/contribution points.
+Request lifecycle: `generate` receives (config, content, control) → the caller resolves `config.credentialProvider` into a fully-credentialed model before each attempt (the request actor on the machine path), so requests always carry fresh credentials and a credential-refresh recovery (recoverable 401 → `credentials.invalidate()`, emitted as `llm.recovering` with strategy `credentials`) naturally re-resolves on the re-send (direct callers outside the state machines — ping, generate, full compaction, media upload — share the same single-retry recovery through `runWithCredentialRecovery` / `streamWithCredentialRecovery`) → the requester's `plan*` function composes pure format stages with trait hooks into protocol requestParams (format lowers the generic Message[] through the Pattern Rewriter; trait adjusts kwargs, converted messages, history, tools, and final params in between) → internalGenerate calls the official SDK → streaming chunks are converted by the stateless parser callbacks into `llm.streaming.part / streaming.usage / streaming.finish / streaming.message_id` events → errors are converted by format into `llm.failed.*`; on success the requester emits `llm.done`, on failure it ends with `llm.failed.syntax / llm.failed.remote` and never emits `llm.done`. At `llm.done` the turn judges empty responses via `emptyResponseError` and re-raises them as `llm.failed.remote`; the turn machine first tries recovery on `llm.failed.remote` (the engine-composed strategy chain — credential refresh on a recoverable 401 first, then replacement-message strategies — each pure `propose` returning a record whose opaque `beforeRetry` effect the turn executes, emitting `llm.recovering`), then retries with backoff (honoring Retry-After, emitting `llm.retrying`), and only fails the turn once attempts are exhausted. The turn holds the HistoryAccumulator, fed by the event stream, rolls it back and recreates it on `llm.retrying / llm.recovering / llm.request.retrying`, and finishes the complete message at `llm.done`; usage accounting, tracing, compaction, and media degradation all attach to the event stream as plugins/contribution points.
 
 ## Rejected Schemes (do not reintroduce)
 
