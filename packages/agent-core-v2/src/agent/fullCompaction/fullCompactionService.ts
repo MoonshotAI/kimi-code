@@ -10,7 +10,7 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentLLMRequesterService, type AgentLLMRequestFinish } from '#/agent/llmRequester/llmRequester';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
-import { retryBackoffDelays, sleepForRetry } from '#/_base/utils/retry';
+import { retryBackoffDelay, sleepForRetry } from '#/_base/utils/retry';
 import { runWithCredentialRecovery } from '#/llm-adapter/model/credential-recovery';
 import { IAgentLoopService, type LoopErrorContext } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
@@ -642,7 +642,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       const instruction = renderCompactionInstruction({ customInstruction: data.instruction });
 
       const maxAttempts = resolvedModel.compactionMaxAttempts ?? MAX_COMPACTION_RETRY_ATTEMPTS;
-      const delays = retryBackoffDelays(maxAttempts);
       let attempt: CompactionAttemptResult | undefined;
       let historyForModel: readonly ContextMessage[] = stripDynamicToolContext(originalHistory);
       let droppedCount = 0;
@@ -712,7 +711,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             messagesToCompact.length > 1
           ) {
             emptyOrTruncatedShrinkCount += 1;
-            if (emptyOrTruncatedShrinkCount > maxAttempts) {
+            if (emptyOrTruncatedShrinkCount >= maxAttempts) {
               throw error;
             }
             const reduced = dropOldestMessageAndLeadingToolResults(messagesToCompact);
@@ -727,7 +726,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
           if (retryCount + 1 >= maxAttempts) {
             throw error;
           }
-          await sleepForRetry(delays[retryCount]!, signal);
+          await sleepForRetry(retryBackoffDelay(retryCount), signal);
           retryCount += 1;
         }
       }

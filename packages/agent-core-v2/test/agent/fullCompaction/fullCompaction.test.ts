@@ -1451,6 +1451,47 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('fails a truncated compaction immediately when compactionMaxAttempts is 1', async () => {
+    let attempts = 0;
+    const generate: GenerateFn = requesterFromGenerateFn(async () => {
+      attempts += 1;
+      return {
+        ...textResult('Partial summary.'),
+        finishReason: 'truncated',
+        rawFinishReason: 'length',
+      };
+    });
+    const ctx = testAgent({
+      generate,
+      initialConfig: {
+        providers: {},
+        loopControl: { compactionMaxAttempts: 1 },
+      },
+    });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const failed = ctx.once('error');
+
+    await ctx.rpc.beginCompaction({});
+    await failed;
+
+    expect(attempts).toBe(1);
+    expect(ctx.newEvents()).toContainEqual(
+      expect.objectContaining({
+        event: 'error',
+        args: expect.objectContaining({
+          code: 'compaction.failed',
+          name: 'Error2',
+        }),
+      }),
+    );
+    await ctx.expectResumeMatches();
+  });
+
   it('renders rich compacted history without dropping non-text context', async () => {
     const ctx = testAgent();
     ctx.configure({
