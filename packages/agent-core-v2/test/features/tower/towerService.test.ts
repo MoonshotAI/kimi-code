@@ -1252,6 +1252,28 @@ describe('AgentTowerService', () => {
     }
   });
 
+  it('enter() refuses to activate when the roster adoption cannot be persisted', async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'tower-enter-adopt-fail-'));
+    try {
+      await initGitRepo(repo);
+      await writeFile(join(repo, 'README.md'), '# fixture\n');
+      await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
+      await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
+      const store = new TowerStore(repo);
+      await store.init('session-original');
+      await writeFile(join(repo, '.tower/comms/state.json'), '{corrupted\n');
+
+      ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-fork' } as unknown as ISessionContext);
+      const tower = ix.get(IAgentTowerService);
+
+      await expect(tower.enter()).rejects.toThrow(/failed to adopt the tower workspace roster/);
+      expect(tower.isActive).toBe(false);
+      expect(addedTools).toEqual([]);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
   it('enter() retires the previous session\'s roster without requiring TowerInit', async () => {
     const repo = await mkdtemp(join(tmpdir(), 'tower-enter-roster-'));
     try {
@@ -1817,6 +1839,103 @@ describe('AgentTowerService', () => {
       const state = await new TowerStore(repo).load();
       expect(state.sessionId).toBe('session-fork');
       expect(state.roster.agents).toEqual([]);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('deactivates a replayed tower mode when the stale-owner adoption fails', async () => {
+    const tower = ix.get(IAgentTowerService);
+    await tower.enter();
+
+    const log = ix.get(IAppendLogStore);
+    const records: WireRecord[] = [];
+    for await (const record of log.read<WireRecord>(
+      testWireScope('wire', 'tower-test'),
+      AGENT_WIRE_RECORD_KEY,
+    )) {
+      records.push(record);
+    }
+
+    const repo = await mkdtemp(join(tmpdir(), 'tower-fork-adopt-fail-'));
+    try {
+      await initGitRepo(repo);
+      await writeFile(join(repo, 'README.md'), '# fixture\n');
+      await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
+      await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
+      const store = new TowerStore(repo);
+      await store.init('session-original');
+      await store.registerAgent({
+        name: 'worker-stale',
+        agentId: 'agent-0',
+        sessionId: 'session-original',
+        kind: 'worker',
+        spawnedAt: new Date().toISOString(),
+      });
+
+      const ix2 = disposables.add(new TestInstantiationService());
+      ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+      ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+      ix2.set(IEventBus, new SyncDescriptor(EventBusService));
+      ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
+      ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
+      ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
+      ix2.stub(ILogService, stubLog());
+      ix2.stub(ISessionManager, {
+        get: () => undefined,
+      } as unknown as ISessionManager);
+      ix2.stub(ISessionContext, {
+        cwd: repo,
+        sessionId: 'session-fork',
+      } as unknown as ISessionContext);
+      ix2.stub(IAgentReminderService, createReminderStub());
+      ix2.stub(IAgentContextMemoryService, {
+        get: () => [],
+      } as unknown as IAgentContextMemoryService);
+      const restoredAdded: string[] = [];
+      ix2.stub(IAgentProfileService, {
+        data: () => ({ profileName: undefined }),
+        addActiveTool: (name: string) => {
+          restoredAdded.push(name);
+        },
+        removeActiveTool: () => {},
+      } as unknown as IAgentProfileService);
+      registerTestAgentWire(ix2, testWireScope('wire', 'tower-fork-adopt-fail-restore'), {
+        log: ix2.get(IAppendLogStore),
+        eventBus: ix2.get(IEventBus),
+      });
+      stubMainAgentScope(ix2);
+      const dispatcher = registerTestEventDispatcher(ix2);
+      ix2.set(IAgentTowerService, new SyncDescriptor(AgentTowerService));
+      const events: { readonly type: string; readonly towerMode?: boolean }[] = [];
+      disposables.add(
+        ix2.get(IEventBus).subscribe((e) => {
+          if (e.type === 'agent.status.updated') {
+            events.push({ type: e.type, towerMode: (e as AgentStatusUpdated).towerMode });
+          }
+        }),
+      );
+      const restored = ix2.get(IAgentTowerService);
+
+      const adoptSpy = vi
+        .spyOn(TowerStore.prototype, 'adopt')
+        .mockRejectedValue(new Error('EACCES: permission denied'));
+      try {
+        await restoreTestEventDispatcher(
+          dispatcher,
+          ix2.get(IAppendLogStore),
+          testWireScope('wire', 'tower-fork-adopt-fail-restore'),
+          records,
+        );
+
+        expect(restored.isActive).toBe(false);
+        expect(restoredAdded).toEqual([]);
+        expect(events).toContainEqual({ type: 'agent.status.updated', towerMode: false });
+        const state = await new TowerStore(repo).load();
+        expect(state.sessionId).toBe('session-original');
+      } finally {
+        adoptSpy.mockRestore();
+      }
     } finally {
       await rm(repo, { recursive: true, force: true });
     }

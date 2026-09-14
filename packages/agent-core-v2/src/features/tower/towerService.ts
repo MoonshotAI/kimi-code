@@ -368,14 +368,13 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
 
   private async adoptTowerRoster(): Promise<void> {
     const store = new TowerStore(resolveTowerRepoRoot(this.sessionCtx.cwd));
-    await store.adopt(this.sessionCtx.sessionId).then(
-      () => undefined,
-      (error: unknown) => {
-        this.log.warn(
-          `failed to adopt tower workspace roster: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      },
-    );
+    try {
+      await store.adopt(this.sessionCtx.sessionId);
+    } catch (error) {
+      throw new TowerProtocolError(
+        `failed to adopt the tower workspace roster: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   private async releaseTowerOwnership(): Promise<void> {
@@ -405,7 +404,14 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     const owner = await this.resolveTowerOwner();
     if (owner === undefined || owner === this.sessionCtx.sessionId) return;
     if (this.sessions.get(owner) === undefined) {
-      await this.adoptTowerRoster();
+      try {
+        await this.adoptTowerRoster();
+      } catch (error) {
+        this.log.warn(
+          `failed to adopt tower workspace roster on restore: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        await this.exit();
+      }
       return;
     }
     void this.exit();
