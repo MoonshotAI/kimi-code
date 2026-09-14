@@ -713,6 +713,10 @@ export class AuthSummaryService implements IAuthSummaryService {
         providerName,
       });
       if (auth.apiKey !== undefined) return;
+      if (auth.apiKeyEnv !== undefined) {
+        if (nonEmpty(process.env[auth.apiKeyEnv]) !== undefined) return;
+        throw new AuthTokenMissingError(providerName);
+      }
       if (auth.oauth !== undefined) {
         const providerKey = auth.oauthProviderKey ?? providerName;
         const token = await this.oauth.getCachedAccessToken(providerKey, auth.oauth);

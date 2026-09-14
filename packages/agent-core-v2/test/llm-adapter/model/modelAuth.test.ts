@@ -50,6 +50,57 @@ describe('resolveModelAuthMaterial', () => {
     ).toThrowError(expect.objectContaining({ code: ConfigErrors.codes.CONFIG_INVALID }));
   });
 
+  it('returns the declared variable name for provider api_key_env without reading the value', () => {
+    expect(
+      authMaterial({
+        model: { model: 'm' },
+        provider: { type: 'openai', apiKeyEnv: 'ACME_API_KEY' },
+      }),
+    ).toEqual({ apiKeyEnv: 'ACME_API_KEY' });
+  });
+
+  it('prefers provider api_key_env over the env sub-table conventional names', () => {
+    expect(
+      authMaterial({
+        model: { model: 'm' },
+        provider: { type: 'kimi', apiKeyEnv: 'ACME_API_KEY', env: { KIMI_API_KEY: 'sub-table-key' } },
+      }),
+    ).toEqual({ apiKeyEnv: 'ACME_API_KEY' });
+  });
+
+  it('ignores a blank api_key_env and falls through to the env sub-table', () => {
+    expect(
+      authMaterial({
+        model: { model: 'm' },
+        provider: { type: 'kimi', apiKeyEnv: '  ', env: { KIMI_API_KEY: 'sub-table-key' } },
+      }),
+    ).toEqual({ apiKey: 'sub-table-key' });
+  });
+
+  it('lets model-level credentials win over a provider api_key_env', () => {
+    expect(
+      authMaterial({
+        model: { model: 'm', apiKey: 'model-key' },
+        provider: { type: 'openai', apiKeyEnv: 'ACME_API_KEY' },
+      }),
+    ).toEqual({ apiKey: 'model-key' });
+  });
+
+  it('rejects apiKey+apiKeyEnv and apiKeyEnv+oauth on a provider as config.invalid', () => {
+    expect(() =>
+      authMaterial({
+        model: { model: 'm' },
+        provider: { type: 'openai', apiKey: 'k', apiKeyEnv: 'ACME_API_KEY' },
+      }),
+    ).toThrowError(expect.objectContaining({ code: ConfigErrors.codes.CONFIG_INVALID }));
+    expect(() =>
+      authMaterial({
+        model: { model: 'm' },
+        provider: { type: 'openai', apiKeyEnv: 'ACME_API_KEY', oauth: { storage: 'file', key: 'k' } },
+      }),
+    ).toThrowError(expect.objectContaining({ code: ConfigErrors.codes.CONFIG_INVALID }));
+  });
+
   it('reads env-bag credentials through the vendor endpoint declarations', () => {
     expect(
       authMaterial({

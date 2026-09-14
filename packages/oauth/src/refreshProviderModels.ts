@@ -76,6 +76,7 @@ interface ProviderView {
   readonly type?: string;
   readonly baseUrl?: string;
   readonly apiKey?: string;
+  readonly apiKeyEnv?: unknown;
   readonly oauth?: ManagedKimiOAuthRef;
   readonly source?: unknown;
   readonly env?: unknown;
@@ -83,18 +84,35 @@ interface ProviderView {
 
 /**
  * Mirrors the runtime credential resolution for `type: 'kimi'` providers:
- * the inline `apiKey`
- * wins, with `env.KIMI_API_KEY` as the documented config-file fallback.
+ * the inline `apiKey` wins, then a declared `apiKeyEnv` naming an environment
+ * variable (read from `process.env` at refresh time), with `env.KIMI_API_KEY`
+ * as the documented config-file fallback. A declared `apiKeyEnv` whose
+ * variable is unset or empty throws — silently falling through to another key
+ * source could send requests (and bill) under the wrong account.
  */
 function resolveProviderApiKey(provider: ProviderView): string | undefined {
   if (typeof provider.apiKey === 'string' && provider.apiKey.length > 0) {
     return provider.apiKey;
+  }
+  const apiKeyEnv = declaredApiKeyEnv(provider);
+  if (apiKeyEnv !== undefined) {
+    const value = process.env[apiKeyEnv];
+    if (typeof value === 'string' && value.trim().length > 0) return value.trim();
+    throw new Error(
+      `Provider declares api_key_env = "${apiKeyEnv}" in config.toml, but the environment variable is not set or is empty.`,
+    );
   }
   if (isRecord(provider.env)) {
     const fromEnv = provider.env['KIMI_API_KEY'];
     if (typeof fromEnv === 'string' && fromEnv.length > 0) return fromEnv;
   }
   return undefined;
+}
+
+function declaredApiKeyEnv(provider: ProviderView): string | undefined {
+  if (typeof provider.apiKeyEnv !== 'string') return undefined;
+  const trimmed = provider.apiKeyEnv.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function readProvider(
@@ -124,7 +142,13 @@ function readCustomRegistrySource(provider: ProviderView): CustomRegistrySource 
   const apiKey = candidate['apiKey'];
   if (typeof url !== 'string' || url.length === 0) return undefined;
   if (typeof apiKey !== 'string') return undefined;
-  return { kind: 'apiJson', url, apiKey };
+  const envKey = candidate['envKey'];
+  return {
+    kind: 'apiJson',
+    url,
+    apiKey,
+    ...(typeof envKey === 'string' && envKey.length > 0 ? { envKey } : {}),
+  };
 }
 
 function customRegistrySourceKey(source: CustomRegistrySource): string {
@@ -489,10 +513,10 @@ export async function refreshProviderModels(
 
     const providerConfig = readProvider(config, providerId);
     if (providerConfig === undefined) continue;
-    const apiKey = providerConfig.apiKey;
-    if (typeof apiKey !== 'string' || apiKey.length === 0) continue;
 
     try {
+      const apiKey = resolveProviderApiKey(providerConfig);
+      if (apiKey === undefined) continue;
       let models = await fetchOpenPlatformModels(platform, apiKey);
       models = filterModelsByPrefix(models, platform);
       if (models.length === 0) continue;
@@ -509,6 +533,13 @@ export async function refreshProviderModels(
         thinking: false,
         apiKey,
       });
+      const apiKeyEnv = declaredApiKeyEnv(providerConfig);
+      if (apiKeyEnv !== undefined) {
+        // `applyOpenPlatformConfig` persists the fetch key inline; an
+        // api_key_env provider must keep its env declaration instead, or the
+        // secret would leak from the environment into config.toml.
+        next.providers[providerId] = { type: 'kimi', baseUrl: platform.baseUrl, apiKeyEnv };
+      }
       const refreshedAliasKeys = providerRefreshAliasKeys(
         config,
         next,
@@ -553,9 +584,9 @@ export async function refreshProviderModels(
   // 2.5. Managed-endpoint API-key providers (hand-configured distributed keys)
   // ---------------------------------------------------------------------------
   // A hand-written `type: 'kimi'` provider whose baseUrl is exactly the managed
-  // Kimi Code endpoint, carrying an API key (inline or via `env.KIMI_API_KEY`)
-  // instead of an oauth ref, gets its model list refreshed from
-  // `{baseUrl}/models` just like the OAuth branch. Strict baseUrl matching
+  // Kimi Code endpoint, carrying an API key (inline, via `apiKeyEnv`, or via
+  // `env.KIMI_API_KEY`) instead of an oauth ref, gets its model list refreshed
+  // from `{baseUrl}/models` just like the OAuth branch. Strict baseUrl matching
   // keeps proxies / gateways with an untrusted `/models` schema out.
   for (const providerId of Object.keys(config.providers)) {
     if (isOpenPlatformId(providerId)) continue;
@@ -566,10 +597,10 @@ export async function refreshProviderModels(
     if (provider.oauth !== undefined) continue;
     if (readCustomRegistrySource(provider) !== undefined) continue;
     if (!isManagedKimiCodeBaseUrl(provider.baseUrl)) continue;
-    const apiKey = resolveProviderApiKey(provider);
-    if (apiKey === undefined) continue;
 
     try {
+      const apiKey = resolveProviderApiKey(provider);
+      if (apiKey === undefined) continue;
       const models = await fetchManagedKimiCodeModels({
         accessToken: apiKey,
         baseUrl: provider.baseUrl,

@@ -394,16 +394,20 @@ describe('kimi provider add', () => {
     );
   });
 
-  it('exits 1 with a clear message when no api key is supplied anywhere', async () => {
+  it('imports a public registry without an api key, sending no Authorization header', async () => {
     const fetchMock = mockRegistryFetch();
-    const { harness } = makeHarness({ providers: {} } as KimiConfig);
-    const { deps, stderr, exitCodes } = makeDeps(harness);
+    const { harness, current } = makeHarness({ providers: {} } as KimiConfig);
+    const { deps, stdout, stderr, exitCodes } = makeDeps(harness);
 
     await tryRun(() => handleProviderAdd(deps, REGISTRY_URL, {}));
 
-    expect(exitCodes).toEqual([1]);
-    expect(stderr.join('')).toMatch(/missing api key/i);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(exitCodes).toEqual([]);
+    expect(stderr.join('')).toBe('');
+    const call = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const headers = call[1].headers as Record<string, string>;
+    expect(headers['Authorization']).toBeUndefined();
+    expect(Object.keys(current().providers).toSorted()).toEqual(['kohub', 'kohub-responses']);
+    expect(stdout.join('')).toContain('Imported 2 providers');
   });
 
   it('exits 1 when the registry fetch fails with an HTTP error', async () => {

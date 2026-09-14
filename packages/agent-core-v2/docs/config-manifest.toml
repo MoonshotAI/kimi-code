@@ -333,6 +333,7 @@ merge_all_available_skills = true
   # default_model: string
   # type: string
   # api_key: string
+  # api_key_env: string
   # oauth: object
     # storage: "file" | "keyring"
     # key: string

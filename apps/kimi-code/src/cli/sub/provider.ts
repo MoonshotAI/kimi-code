@@ -74,13 +74,9 @@ export async function handleProviderAdd(
   url: string,
   opts: AddOptions,
 ): Promise<void> {
-  const apiKey = resolveApiKey(opts.apiKey, deps.env);
-  if (apiKey === undefined) {
-    deps.stderr.write(
-      'Missing API key. Pass --api-key <key> or set KIMI_REGISTRY_API_KEY.\n',
-    );
-    deps.exit(1);
-  }
+  // The registry key is optional: public registries need no Authorization at
+  // all, and `fetchCustomRegistry` only sends the header for a non-empty key.
+  const apiKey = resolveApiKey(opts.apiKey, deps.env) ?? '';
 
   const trimmedUrl = url.trim();
   if (trimmedUrl.length === 0) {
@@ -474,7 +470,10 @@ export function registerProviderCommand(parent: Command, deps?: Partial<Provider
   provider
     .command('add <url>')
     .description('Import every provider listed in a custom registry (api.json).')
-    .option('--api-key <key>', 'Registry API key. Falls back to KIMI_REGISTRY_API_KEY.')
+    .option(
+      '--api-key <key>',
+      'Registry API key. Falls back to KIMI_REGISTRY_API_KEY; omit both for public registries.',
+    )
     .action(async (url: string, options: { apiKey?: string }) => {
       const resolved = resolveDeps(deps);
       await runAction(resolved, () => handleProviderAdd(resolved, url, { apiKey: options.apiKey }));

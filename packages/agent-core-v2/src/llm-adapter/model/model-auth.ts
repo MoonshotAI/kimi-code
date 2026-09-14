@@ -22,7 +22,7 @@ export function resolveModelAuthMaterial(args: {
 }): ResolvedModelAuthMaterial {
   const modelApiKey = nonEmpty(args.model.apiKey);
   if (modelApiKey !== undefined && args.model.oauth !== undefined) {
-    throw authConflictError('Model', args.modelId);
+    throw authConflictError('Model', args.modelId, 'apiKey', 'oauth');
   }
   if (modelApiKey !== undefined) {
     return { apiKey: modelApiKey };
@@ -39,12 +39,26 @@ export function resolveModelAuthMaterial(args: {
     providerAuthType === undefined
       ? {}
       : explainProviderEndpoint(providerAuthType, args.provider?.env ?? {});
-  const providerApiKey = nonEmpty(args.provider?.apiKey) ?? nonEmpty(providerEndpoint.apiKey);
-  if (providerApiKey !== undefined && args.provider?.oauth !== undefined) {
-    throw authConflictError('Provider', args.providerName);
+  const inlineApiKey = nonEmpty(args.provider?.apiKey);
+  const apiKeyEnv = nonEmpty(args.provider?.apiKeyEnv);
+  const endpointApiKey = nonEmpty(providerEndpoint.apiKey);
+  if (inlineApiKey !== undefined && apiKeyEnv !== undefined) {
+    throw authConflictError('Provider', args.providerName, 'apiKey', 'apiKeyEnv');
   }
-  if (providerApiKey !== undefined) {
-    return { apiKey: providerApiKey };
+  if (apiKeyEnv !== undefined && args.provider?.oauth !== undefined) {
+    throw authConflictError('Provider', args.providerName, 'apiKeyEnv', 'oauth');
+  }
+  if ((inlineApiKey ?? endpointApiKey) !== undefined && args.provider?.oauth !== undefined) {
+    throw authConflictError('Provider', args.providerName, 'apiKey', 'oauth');
+  }
+  if (inlineApiKey !== undefined) {
+    return { apiKey: inlineApiKey };
+  }
+  if (apiKeyEnv !== undefined) {
+    return { apiKeyEnv };
+  }
+  if (endpointApiKey !== undefined) {
+    return { apiKey: endpointApiKey };
   }
   if (args.provider?.oauth !== undefined) {
     return {
@@ -211,9 +225,9 @@ export function nonEmpty(value: string | undefined): string | undefined {
   return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
 }
 
-function authConflictError(kind: string, name: string): Error2 {
+function authConflictError(kind: string, name: string, first: string, second: string): Error2 {
   return new Error2(
     CONFIG_INVALID_ERROR_CODE,
-    `${kind} "${name}" has both apiKey and oauth set in config.toml - they are mutually exclusive. Remove one.`,
+    `${kind} "${name}" has both ${first} and ${second} set in config.toml - they are mutually exclusive. Remove one.`,
   );
 }

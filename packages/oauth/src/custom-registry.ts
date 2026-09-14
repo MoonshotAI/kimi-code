@@ -11,11 +11,16 @@ export type { ManagedKimiConfigShape };
  * document). Refresh treats the URL as the stable registry identity and may try
  * more than one API key when existing provider records drift during key
  * rotation.
+ *
+ * `envKey` records the upstream `env` variable name written by the last apply,
+ * so a later refresh can tell "we wrote this `apiKeyEnv`" apart from a manual
+ * user edit (which must be preserved).
  */
 export interface CustomRegistrySource {
   readonly kind: 'apiJson';
   readonly url: string;
   readonly apiKey: string;
+  readonly envKey?: string;
 }
 
 export interface FetchCustomRegistryOptions {
@@ -308,6 +313,13 @@ function resolveCapabilities(model: CustomRegistryModelEntry): string[] {
  * `config.models[\`${entry.id}/${modelId}\`]`. The `source` blob is parked on the
  * provider object via `ManagedKimiProviderConfig`'s index signature so the
  * refresh dispatcher can rediscover it later.
+ *
+ * When the entry declares `env` (the registry's published credential variable
+ * names), the provider stores `apiKeyEnv` instead of an inline `apiKey` — the
+ * registry Bearer key stays on `source.apiKey` for registry fetches only. A
+ * hand-edited `apiKeyEnv` survives: it is only overwritten when empty or when
+ * it still equals the name the previous apply wrote (tracked as
+ * `source.envKey`).
  */
 export function applyCustomRegistryProvider(
   config: ManagedKimiConfigShape,
@@ -315,13 +327,32 @@ export function applyCustomRegistryProvider(
   source: CustomRegistrySource,
 ): void {
   const providerKey = entry.id;
+  const envKey = firstNonEmptyString(entry.env);
 
-  config.providers[providerKey] = {
-    type: entry.type,
-    baseUrl: entry.api,
-    apiKey: source.apiKey,
-    source,
-  };
+  if (envKey === undefined) {
+    config.providers[providerKey] = {
+      type: entry.type,
+      baseUrl: entry.api,
+      apiKey: source.apiKey,
+      source,
+    };
+  } else {
+    const existing = config.providers[providerKey];
+    const existingApiKeyEnv = nonEmptyString(existing?.['apiKeyEnv']);
+    const trackedEnvKey = isRecord(existing?.['source'])
+      ? nonEmptyString(existing['source']['envKey'])
+      : undefined;
+    const apiKeyEnv =
+      existingApiKeyEnv === undefined || existingApiKeyEnv === trackedEnvKey
+        ? envKey
+        : existingApiKeyEnv;
+    config.providers[providerKey] = {
+      type: entry.type,
+      baseUrl: entry.api,
+      apiKeyEnv,
+      source: { ...source, envKey },
+    };
+  }
 
   const existingModels = config.models ?? {};
   // Selectively merge upstream models into the existing config so any fields
@@ -362,6 +393,20 @@ export function applyCustomRegistryProvider(
   }
 
   config.models = existingModels;
+}
+
+function firstNonEmptyString(values: readonly string[] | undefined): string | undefined {
+  for (const value of values ?? []) {
+    const trimmed = value.trim();
+    if (trimmed.length > 0) return trimmed;
+  }
+  return undefined;
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 /**
