@@ -158,12 +158,13 @@ export class SessionSubagentScopeCacheService
       this.log.debug('subagent scope evicted', { agentId, durationMs });
       return 'removed';
     }
+    const gone = this.agentLifecycle.get(agentId) === undefined && !this.closing.has(agentId);
     this.log.warn('subagent scope eviction failed', {
       agentId,
       durationMs,
       error: outcome.error,
     });
-    return 'failed';
+    return gone ? 'removed' : 'failed';
   }
 }
 

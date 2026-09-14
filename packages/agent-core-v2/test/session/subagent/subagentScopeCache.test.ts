@@ -1038,6 +1038,48 @@ describe('SessionSubagentScopeCacheService eviction guards', () => {
     expect(handles.has('agent-1')).toBe(false);
   });
 
+  it('does not re-add a scope whose teardown completed despite a stop failure, and spawns no ghost evictions', async () => {
+    startCache();
+    removeAgent.mockImplementation((context: AgentContext) => {
+      closingAgents.add(context.agentId);
+      willClose.fire(context);
+      handles.delete(context.agentId);
+      closingAgents.delete(context.agentId);
+      didClose.fire(context);
+      return context.agentId === 'agent-old'
+        ? Promise.reject(new Error('stop failed'))
+        : Promise.resolve();
+    });
+    handles.set('agent-old', idleHandle('agent-old'));
+    handles.set('agent-new', idleHandle('agent-new'));
+
+    bus.publish(new SubagentCompleted({ subagentId: 'agent-old', resultSummary: 'done' }));
+    bus.publish(new SubagentCompleted({ subagentId: 'agent-new', resultSummary: 'done' }));
+    await vi.waitFor(() => {
+      expect(removeAgent).toHaveBeenCalledOnce();
+    });
+    await vi.waitFor(() => {
+      expect(
+        logs.entries.some(
+          (entry) => entry.level === 'warn' && entry.message.includes('eviction failed'),
+        ),
+      ).toBe(true);
+    });
+
+    expect(handles.has('agent-old')).toBe(false);
+    expect(handles.has('agent-new')).toBe(true);
+    expect(removeAgent.mock.calls.some((call) => call[0].agentId === 'agent-new')).toBe(false);
+
+    handles.set('agent-later', idleHandle('agent-later'));
+    bus.publish(new SubagentCompleted({ subagentId: 'agent-later', resultSummary: 'done' }));
+    await vi.waitFor(() => {
+      expect(removeAgent.mock.calls.some((call) => call[0].agentId === 'agent-new')).toBe(true);
+    });
+    expect(removeAgent.mock.calls.some((call) => call[0].agentId === 'agent-later')).toBe(false);
+    expect(removeAgent.mock.calls.filter((call) => call[0].agentId === 'agent-old')).toHaveLength(1);
+    expect(handles.has('agent-later')).toBe(true);
+  });
+
   it('times out a hung remove, keeps tracking the closing scope, and keeps the queue moving', async () => {
     startCache({ [SUBAGENT_SCOPE_EVICT_TIMEOUT_ENV]: '25' });
     removeAgent.mockImplementation((context: AgentContext) => {
