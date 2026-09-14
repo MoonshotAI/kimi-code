@@ -796,6 +796,39 @@ describe('applyCustomRegistryEntries', () => {
     expect(config.models?.['keepme/m1']).toBeDefined();
   });
 
+  it('preserves a hand-edited apiKeyEnv across an explicit re-import of the same registry', () => {
+    const source: CustomRegistrySource = {
+      kind: 'apiJson',
+      url: 'https://registry.example.test/api.json',
+      apiKey: '',
+    };
+    const entries: Record<string, CustomRegistryProviderEntry> = {
+      acme: {
+        id: 'acme',
+        name: 'Acme',
+        api: 'https://acme.example.test/v1',
+        type: 'openai',
+        models: { m1: { id: 'm1' } },
+      },
+    };
+
+    const config: ManagedKimiConfigShape = { providers: {} };
+    applyCustomRegistryEntries(config, entries, source);
+
+    const imported = config.providers['acme'] as Record<string, unknown>;
+    delete imported['apiKey'];
+    imported['apiKeyEnv'] = 'MY_OWN_KEY';
+
+    applyCustomRegistryEntries(config, entries, source);
+
+    expect(config.providers['acme']).toEqual({
+      type: 'openai',
+      baseUrl: 'https://acme.example.test/v1',
+      apiKeyEnv: 'MY_OWN_KEY',
+      source,
+    });
+  });
+
   it('does not remove providers from a different source URL even when ids overlap', () => {
     const sourceA: CustomRegistrySource = {
       kind: 'apiJson',

@@ -415,6 +415,43 @@ export function removeCustomRegistryProvider(
 }
 
 /**
+ * Captures the hand-edited `apiKeyEnv` of the given providers before an
+ * explicit re-import deletes their records, so {@link restoreProviderApiKeyEnvs}
+ * can re-attach the declarations afterwards (mirroring how
+ * `registryKeyFromExisting` preserves the registry key across re-imports).
+ */
+export function captureProviderApiKeyEnvs(
+  providers: Readonly<Record<string, unknown>>,
+  providerIds: ReadonlySet<string>,
+): Record<string, string> {
+  const preserved: Record<string, string> = {};
+  for (const id of providerIds) {
+    const provider = providers[id];
+    if (!isRecord(provider)) continue;
+    const apiKeyEnv = nonEmptyString(provider['apiKeyEnv']);
+    if (apiKeyEnv !== undefined) preserved[id] = apiKeyEnv;
+  }
+  return preserved;
+}
+
+/**
+ * Re-attaches captured `apiKeyEnv` declarations after a re-import: the
+ * declaration wins over the inline `apiKey` the apply just wrote, which would
+ * otherwise shadow it (and conflict with it).
+ */
+export function restoreProviderApiKeyEnvs(
+  providers: Record<string, unknown>,
+  preserved: Readonly<Record<string, string>>,
+): void {
+  for (const [id, apiKeyEnv] of Object.entries(preserved)) {
+    const record = providers[id];
+    if (!isRecord(record)) continue;
+    delete record['apiKey'];
+    record['apiKeyEnv'] = apiKeyEnv;
+  }
+}
+
+/**
  * Applies every entry from a single api.json import in memory. Mirrors the
  * "remove if present, then apply" sequence the Add Platform flow used to do
  * via the `removeProvider` RPC, but stays purely in-memory so callers can
@@ -440,6 +477,7 @@ export function applyCustomRegistryEntries(
   source: CustomRegistrySource,
 ): void {
   const surviving = new Set(Object.values(entries).map((entry) => entry.id));
+  const preservedApiKeyEnv = captureProviderApiKeyEnvs(config.providers, surviving);
   for (const [providerId, provider] of Object.entries(config.providers)) {
     if (surviving.has(providerId)) continue;
     if (!isRecord(provider)) continue;
@@ -459,4 +497,5 @@ export function applyCustomRegistryEntries(
     }
     applyCustomRegistryProvider(config, entry, source);
   }
+  restoreProviderApiKeyEnvs(config.providers, preservedApiKeyEnv);
 }

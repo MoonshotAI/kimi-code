@@ -14,8 +14,10 @@
 
 import {
   applyCustomRegistryProvider,
+  captureProviderApiKeyEnvs,
   CustomRegistryApiError,
   fetchCustomRegistry,
+  restoreProviderApiKeyEnvs,
   type CustomRegistrySource,
   type ManagedKimiConfigShape,
 } from '@moonshot-ai/kimi-code-oauth';
@@ -112,11 +114,17 @@ export async function handleProviderAdd(
   // `core-impl.ts removeKimiProvider`), so calling it inside the apply loop
   // would discard providers we already applied in memory but have not yet
   // persisted. Drop every stale id up front in a single batch instead, then
-  // apply against the resulting fresh config.
+  // apply against the resulting fresh config. Capture any hand-edited
+  // api_key_env first — the deletions below would otherwise silently replace
+  // the declaration with the registry key (often empty for public registries).
   let config = await harness.getConfig();
   const staleIds = entryList
     .filter((entry) => config.providers[entry.id] !== undefined)
     .map((entry) => entry.id);
+  const preservedApiKeyEnv = captureProviderApiKeyEnvs(
+    asManaged(config).providers,
+    new Set(staleIds),
+  );
   for (const id of staleIds) {
     config = await harness.removeProvider(id);
   }
@@ -128,6 +136,7 @@ export async function handleProviderAdd(
     addedProviderIds.push(entry.id);
     modelCount += Object.keys(entry.models).length;
   }
+  restoreProviderApiKeyEnvs(asManaged(config).providers, preservedApiKeyEnv);
 
   await harness.setConfig({
     providers: config.providers,

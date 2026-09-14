@@ -1,7 +1,9 @@
 import {
   applyCustomRegistryProvider,
+  captureProviderApiKeyEnvs,
   fetchCustomRegistry,
   removeCustomRegistryProvider,
+  restoreProviderApiKeyEnvs,
   type CustomRegistryProviderEntry,
   type CustomRegistrySource,
   type ManagedKimiConfigShape,
@@ -225,6 +227,7 @@ export class ModelsDevImportService implements IModelsDevImportService {
       },
     } as ManagedKimiConfigShape;
     const surviving = new Set(Object.values(entries).map((entry) => entry.id));
+    const preservedApiKeyEnv = captureProviderApiKeyEnvs(removed.providers, surviving);
     for (const [providerId, provider] of Object.entries(removed.providers)) {
       if (surviving.has(providerId)) continue;
       if (!isRecord(provider)) continue;
@@ -253,6 +256,7 @@ export class ModelsDevImportService implements IModelsDevImportService {
     for (const entry of Object.values(entries)) {
       applyCustomRegistryProvider(applied, entry, source);
     }
+    restoreProviderApiKeyEnvs(applied.providers, preservedApiKeyEnv);
     await config.replace(PROVIDERS_SECTION, applied.providers as ProvidersSection);
     await config.replace(MODELS_SECTION, (applied.models ?? {}) as ModelsSection);
 

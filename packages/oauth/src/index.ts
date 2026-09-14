@@ -173,11 +173,13 @@ export {
   applyCustomRegistryEntries,
   applyCustomRegistryProvider,
   capabilitiesFromCustomEntry,
+  captureProviderApiKeyEnvs,
   CustomRegistryApiError,
   CUSTOM_REGISTRY_DEFAULT_CAPABILITIES,
   CUSTOM_REGISTRY_DEFAULT_MAX_CONTEXT,
   fetchCustomRegistry,
   removeCustomRegistryProvider,
+  restoreProviderApiKeyEnvs,
 } from './custom-registry';
 export type {
   CustomRegistryModelEntry,

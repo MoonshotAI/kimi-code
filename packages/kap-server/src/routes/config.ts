@@ -110,6 +110,7 @@ interface ProviderLike {
   readonly baseUrl?: unknown;
   readonly defaultModel?: unknown;
   readonly apiKey?: unknown;
+  readonly apiKeyEnv?: unknown;
   readonly oauth?: unknown;
 }
 
@@ -130,6 +131,8 @@ function toProviderResponses(value: unknown): Record<string, ProviderResponse> {
 
 function hasProviderCredential(provider: ProviderLike): boolean {
   if (nonEmpty(provider.apiKey) !== undefined) return true;
+  const apiKeyEnv = nonEmpty(provider.apiKeyEnv);
+  if (apiKeyEnv !== undefined) return nonEmpty(process.env[apiKeyEnv]) !== undefined;
   if (provider.oauth !== undefined) return true;
   return false;
 }
