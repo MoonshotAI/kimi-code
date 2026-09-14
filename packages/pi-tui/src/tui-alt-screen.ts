@@ -824,10 +824,12 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			if (visited.has(box.component)) continue;
 			if (getLayoutNode(box.component) && box.component.handleMouse === Container.prototype.handleMouse) continue;
 			visited.add(box.component);
+			// lineOffset crops the top of an over-tall component so its cursor row
+			// stays visible; local coordinates must use the uncropped frame.
 			const result = dispatchMouseEvent(box.component, {
 				...event,
 				x: event.screenX - box.rect.x,
-				y: event.screenY - box.rect.y,
+				y: event.screenY - box.rect.y + (box.lineOffset ?? 0),
 				width: box.rect.width,
 				height: box.rect.height,
 			});

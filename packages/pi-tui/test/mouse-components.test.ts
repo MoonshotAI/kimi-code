@@ -245,6 +245,27 @@ describe("mouse-aware components", () => {
 		tui.stop();
 	});
 
+	it("translates clicks by the cropped line offset of an over-tall component", async () => {
+		const terminal = new VirtualTerminal(20, 5);
+		const tui = new TuiAltScreen(terminal);
+		const editor = new Editor(tui, editorTheme);
+		editor.setText("l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10");
+		tui.setLayoutRoot(editor);
+		tui.start();
+		tui.setFocus(editor);
+		await terminal.waitForRender();
+
+		// The editor renders 7 rows into 5, so the layout crops the top row to
+		// keep the cursor row visible; the second screen row displays "l7".
+		terminal.sendInput("\x1b[<0;2;2M");
+		terminal.sendInput("\x1b[<0;2;2m");
+		terminal.sendInput("X");
+		await terminal.waitForRender();
+
+		assert.strictEqual(editor.getText(), "l1\nl2\nl3\nl4\nl5\nl6\nlX7\nl8\nl9\nl10");
+		tui.stop();
+	});
+
 	it("selects and copies editor text on drag instead of moving the cursor", async () => {
 		const terminal = new VirtualTerminal(20, 6);
 		const copied: string[] = [];

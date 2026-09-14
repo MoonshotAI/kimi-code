@@ -174,3 +174,9 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 **Decision:** The package entry exports the `TuiMouseDispatchResult` type so hosts can type components that delegate mouse events to children.
 
 **Why not in the app:** Type-only export surface; the app cannot name the base `Container.handleMouse` return type without it.
+
+### mouse-dispatch-accounts-for-cropped-rows — keep
+
+**Decision:** When the layout crops an over-tall component to keep its cursor row visible, alternate-screen mouse dispatch includes the box's `lineOffset` in the local coordinate transform, so clicks map to the rows actually displayed.
+
+**Why not in the app:** The crop offset is computed inside the layout engine and the translation happens in the alternate-screen dispatch path.
