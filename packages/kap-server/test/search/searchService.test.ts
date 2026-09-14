@@ -501,6 +501,7 @@ describe('GlobalSearchService', () => {
     const s1 = summary('s1', 'one', T1);
     await writeWire(home!, s1.id, 'main', [userLine('needle body', T1)]);
     const writer = track(makeInlineService(home!, staticIndex([s1])));
+    writer.syncDebounceMs = 60_000;
     await writer.reindex();
     const reader = track(makeInlineService(home!, staticIndex([s1])));
     await settleSync(reader);
@@ -2148,7 +2149,7 @@ describe('GlobalSearchService', () => {
       });
       expect(page.source).toBe('live');
       expect(page.items.length).toBe(3);
-      expect(page.items.map((h) => h.role).sort()).toEqual(['assistant', 'title', 'user']);
+      expect(page.items.map((h) => h.role).toSorted()).toEqual(['assistant', 'title', 'user']);
 
       await expect(service.search({ query: '苹', mode: 'literal' })).rejects.toMatchObject({
         reason: 'invalid_query',
