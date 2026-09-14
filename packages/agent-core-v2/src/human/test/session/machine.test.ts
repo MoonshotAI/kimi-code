@@ -103,6 +103,10 @@ function agentRef(session: SessionActor, agentId: string): AgentActorRef {
   return (entry as { ref: AgentActorRef }).ref;
 }
 
+function childRef(session: SessionActor, agentId: string): unknown {
+  return (session.getSnapshot().children as Record<string, unknown>)[agentId];
+}
+
 function submit(session: SessionActor, agentId: string, text: string): void {
   session.send({
     type: 'agent.send',
@@ -213,6 +217,25 @@ describe('session machine agent lifecycle', () => {
     expect(ref.getSnapshot().status).toBe('done');
   });
 
+  it('releases the stopped actor from the session children so it can be collected', async () => {
+    const session = createTestSession();
+    const env = await testEnv();
+    sendCreate(session, createEchoRequester(), await env.open('a'), 'a');
+    const ref = agentRef(session, 'a');
+    await waitFor(ref, (snapshot) => snapshot.matches('idle'), { timeout: 5000 });
+    expect(childRef(session, 'a')).toBe(ref);
+
+    session.send({ type: 'agent.stop', agentId: 'a' });
+    await waitFor(session, (snapshot) => snapshot.context.agents['a'] === undefined, {
+      timeout: 5000,
+    });
+
+    const snapshot = session.getSnapshot();
+    expect(snapshot.context.agents['a']).toBeUndefined();
+    expect(childRef(session, 'a')).toBeUndefined();
+    expect(ref.getSnapshot().status).toBe('done');
+  });
+
   it('emits agent.failed when routing to an unknown agent', async () => {
     const session = createTestSession();
     const errors: string[] = [];
@@ -299,6 +322,7 @@ describe('session machine concurrent agents', () => {
 
     expect(oldRef.getSnapshot().status).toBe('done');
     expect(Object.keys(session.getSnapshot().context.agents).toSorted()).toEqual(['a', 'b']);
+    expect(childRef(session, 'a')).toBe(agentRef(session, 'a'));
     expect(restarted).toHaveLength(1);
     expect(restarted[0]?.agentId).toBe('a');
     expect(restarted[0]?.ref).toBe(agentRef(session, 'a'));

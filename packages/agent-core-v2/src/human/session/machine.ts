@@ -3,6 +3,7 @@ import {
   emit,
   sendTo,
   setup,
+  stopChild,
   type ActorRefFrom,
   type ActorRefFromLogic,
   type AnyActorLogic,
@@ -130,6 +131,7 @@ export function createSessionMachine() {
               delete agents[event.actorId];
               return { agents };
             }),
+            stopChild(({ event }) => event.actorId),
             emit(({ event }) => ({ type: 'agent.stopped' as const, agentId: event.actorId })),
           ],
         },
