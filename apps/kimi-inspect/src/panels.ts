@@ -130,7 +130,7 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
     id: String(IAgentLoopService),
     label: 'AgentLoopService',
     scope: 'agent',
-    fetch: (svc) => call(svc, 'activitySnapshot'),
+    fetch: (svc) => call(svc, 'snapshot'),
   },
   {
     id: String(IAgentProfileService),

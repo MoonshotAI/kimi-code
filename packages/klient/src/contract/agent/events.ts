@@ -201,7 +201,6 @@ export const warningEventSchema = z.object({
 /** `agent.status.updated` carries a wide optional status bag; kept loose. */
 export const agentStatusUpdatedEventSchema = z.looseObject({
   time: z.number().optional(),
-  phase: z.string().optional(),
 });
 
 // ── registrations ───────────────────────────────────────────────────────────
