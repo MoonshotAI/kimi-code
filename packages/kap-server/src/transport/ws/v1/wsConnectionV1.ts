@@ -440,6 +440,9 @@ export class WsConnectionV1 implements BroadcastTarget {
     if (this.closed) return;
     this.flush();
     this.sendFrame(msg);
+    if (!this.closed && this.socket.bufferedAmount > this.highWaterMarkBytes) {
+      this.deferForBackpressure();
+    }
   }
 
   private sendFrame(frame: unknown): void {
@@ -464,18 +467,18 @@ export class WsConnectionV1 implements BroadcastTarget {
       clearTimeout(this.flushTimer);
       this.flushTimer = undefined;
     }
-    if (this.outbound.length === 0) return;
     if (this.closed || this.socket.readyState !== this.socket.OPEN) {
       this.outbound = [];
       return;
     }
 
     const aboveHighWaterMark = this.socket.bufferedAmount > this.highWaterMarkBytes;
+    if (!aboveHighWaterMark) this.backpressureSince = undefined;
+    if (this.outbound.length === 0) return;
     if (aboveHighWaterMark && !force) {
       this.deferForBackpressure();
       return;
     }
-    if (!aboveHighWaterMark) this.backpressureSince = undefined;
 
     const frames = coalesceFrames(this.outbound);
     this.outbound = [];

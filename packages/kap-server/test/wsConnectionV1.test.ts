@@ -942,6 +942,58 @@ describe('WsConnectionV1 outbound buffer', () => {
     conn.close();
   });
 
+  it('closes 1013 when control replies keep landing above the high-water mark', async () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, {
+      flushIntervalMs: 16,
+      highWaterMarkBytes: 100,
+      heartbeatIntervalMs: 60_000,
+    });
+    socket.sent = [];
+    const unsubscribe = JSON.stringify({ type: 'unsubscribe', id: 'u1', payload: { session_ids: [] } });
+
+    socket.bufferedAmount = 200;
+    socket.emit('message', Buffer.from(unsubscribe));
+    await vi.advanceTimersByTimeAsync(0);
+    expect((socket.frames() as Array<{ type: string }>).map((f) => f.type)).toEqual(['ack']);
+    await vi.advanceTimersByTimeAsync(MAX_BACKPRESSURE_STALL_MS - 1);
+    expect(socket.closeCalls).toHaveLength(0);
+
+    socket.emit('message', Buffer.from(unsubscribe));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(socket.closeCalls).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(1);
+    socket.emit('message', Buffer.from(unsubscribe));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(socket.closeCalls).toEqual([{ code: 1013, reason: 'slow consumer' }]);
+    conn.close();
+  });
+
+  it('resets the stall clock for control replies once the peer drains below the mark', async () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, {
+      flushIntervalMs: 16,
+      highWaterMarkBytes: 100,
+      heartbeatIntervalMs: 60_000,
+    });
+    socket.sent = [];
+    const unsubscribe = JSON.stringify({ type: 'unsubscribe', id: 'u1', payload: { session_ids: [] } });
+
+    socket.bufferedAmount = 200;
+    socket.emit('message', Buffer.from(unsubscribe));
+    await vi.advanceTimersByTimeAsync(MAX_BACKPRESSURE_STALL_MS);
+    socket.bufferedAmount = 0;
+    socket.emit('message', Buffer.from(unsubscribe));
+    await vi.advanceTimersByTimeAsync(0);
+    socket.bufferedAmount = 300;
+    socket.emit('message', Buffer.from(unsubscribe));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(socket.closeCalls).toHaveLength(0);
+    expect(socket.sent).toHaveLength(3);
+    conn.close();
+  });
+
   it('does not close a peer that keeps draining while above the high-water mark', async () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, {
