@@ -877,6 +877,21 @@ describe('foldWireHistory queued prompts and legacy messages', () => {
     const records: ContextRecord[] = [
       rec('context.append_message', {
         message: {
+          id: 'm1',
+          role: 'user',
+          content: [{ type: 'text', text: 'main question' }],
+          origin: { kind: 'user', attachments: [{ name: 'a.txt' }] },
+        },
+      }),
+      rec('context.append_message', {
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'main follow up' }],
+          origin: { kind: 'user' },
+        },
+      }),
+      rec('context.append_message', {
+        message: {
           role: 'assistant',
           content: [{ type: 'text', text: 'main answer' }],
           toolCalls: [{ id: 'call_1', name: 'Bash', arguments: '{"cmd":"ls"}' }],
@@ -899,6 +914,7 @@ describe('foldWireHistory queued prompts and legacy messages', () => {
         T0 + 5,
       ),
       loopEvent({ type: 'step.end', uuid: 'st1', finishReason: 'stop' }, T0 + 6),
+      rec('turn.steer', { input: [{ type: 'text', text: 'steer one' }], origin: { kind: 'user' } }, T0 + 6),
       rec('turn.ended', { turnId: 0, reason: 'completed' }, T0 + 7),
       rec(
         'turn.prompt',
@@ -928,9 +944,16 @@ describe('foldWireHistory queued prompts and legacy messages', () => {
       output: 'file.txt',
     });
     expect(ofType(messages, 'user').map((u) => [u.message_id, u.turn_id])).toEqual([
+      ['m1', 't-1'],
+      ['t-1.u1', 't-1'],
       ['b1', 't0'],
+      ['t0.u1', 't0'],
       ['b2', 't1'],
     ]);
+    expect(ofType(messages, 'user')[0]).toMatchObject({
+      text: [{ type: 'text', text: 'main question', meta: {} }],
+      attachment_ids: ['t-1.att1'],
+    });
     expect(ofType(messages, 'step').map((s) => [s.step_id, s.status])).toEqual([
       ['t-1.1', 'completed'],
       ['t0.1', 'completed'],
@@ -939,7 +962,26 @@ describe('foldWireHistory queued prompts and legacy messages', () => {
     const seed = foldTimelineSeed(records);
     expect(seed.timelineIds).toEqual(['t-1', 'sys_fork.boundary_1', 't0', 't1']);
     expect(seed.nextTurnId).toBe(2);
+    expect(seed.anchorTurnOrdinals).toEqual([0, 1]);
     expect(seed.systemCounts).toEqual(new Map([['fork.boundary', 1]]));
+
+    const legacy = records.filter((r) => r.type !== 'agent.fork');
+    expect(ofType(fold(legacy), 'user').map((u) => [u.message_id, u.turn_id])).toEqual([
+      ['m1', 't-1'],
+      ['t-1.u1', 't-1'],
+      ['b1', 't0'],
+      ['t0.u1', 't0'],
+      ['b2', 't1'],
+    ]);
+    expect(foldTimelineSeed(legacy).timelineIds).toEqual(['t-1', 't0', 't1']);
+
+    const cleared = fold([...records, rec('context.clear', {}, T0 + 20)]);
+    expect(ofType(cleared, 'turn')).toHaveLength(0);
+    expect(ofType(cleared, 'user')).toHaveLength(0);
+    expect(ofType(cleared, 'step')).toHaveLength(0);
+    expect(ofType(cleared, 'system').find((m) => m.subtype === 'clear')).toMatchObject({
+      payload: { removed_ids: ['t-1', 'sys_fork.boundary_1', 't0', 't1'] },
+    });
   });
 });
 
