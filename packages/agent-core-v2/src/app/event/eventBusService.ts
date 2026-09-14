@@ -101,15 +101,27 @@ export class EventBusService extends Service implements ISessionEventBus {
     handler?: (event: Event2<any>) => void,
   ): IDisposable {
     if (this.disposedBus) return Disposable.None;
+    if (!this.isAgentActive(agent)) {
+      throw new Error(
+        `Agent ${agent.agentId}:${String(agent.generation)} is not the active lifecycle context`,
+      );
+    }
     if (typeof typeOrHandler === 'function') {
-      if (!this.isAgentActive(agent)) {
-        throw new Error(
-          `Agent ${agent.agentId}:${String(agent.generation)} is not the active lifecycle context`,
-        );
-      }
       return this.channelFor(agent.agentId).all.event(typeOrHandler);
     }
-    return this.subscribe(typeOrHandler, handler!);
+    const matches = (event: Event2<any>): boolean => {
+      const cls = event.constructor as Event2Class;
+      if (cls.agentDomain) {
+        return (
+          this.isAgentActive(agent) &&
+          (event as Event2<any> & AgentDomainTrait).agentId === agent.agentId
+        );
+      }
+      return this.sourceOf(event) === agent;
+    };
+    return this.subscribe(typeOrHandler, (event) => {
+      if (matches(event)) handler!(event);
+    });
   }
 
   private channelFor(agentId: string): AgentChannel {

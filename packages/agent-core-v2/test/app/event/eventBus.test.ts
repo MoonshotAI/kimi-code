@@ -449,6 +449,51 @@ describe('per-agent sharded channels', () => {
     expect(staleSeen).toEqual([]);
   });
 
+  it('delivers only its own agent events to a typed subscribeAgent subscriber', () => {
+    const bus = new EventBusService();
+    const scopeA = makeAgentScopeContext({ agentId: 'a', agentScope: 'agents/a', generation: 1 });
+    const scopeB = makeAgentScopeContext({ agentId: 'b', agentScope: 'agents/b', generation: 1 });
+    bus.activateAgent(scopeA.agentContext);
+    bus.activateAgent(scopeB.agentContext);
+    const agentEvents: number[] = [];
+    const plainEvents: number[] = [];
+    bus.subscribeAgent(scopeA.agentContext, 'test.agent', (event) =>
+      agentEvents.push((event as TestAgentEvent).value),
+    );
+    bus.subscribeAgent(scopeA.agentContext, 'test.a', (event) =>
+      plainEvents.push((event as TestA).x),
+    );
+
+    bus.publish(new TestAgentEvent({ agentId: 'a', value: 1 }), scopeA.agentContext);
+    bus.publish(new TestAgentEvent({ agentId: 'b', value: 2 }), scopeB.agentContext);
+    bus.publish(new TestA({ x: 1 }), scopeA.agentContext);
+    bus.publish(new TestA({ x: 2 }), scopeB.agentContext);
+    bus.publish(new TestA({ x: 3 }));
+
+    expect(agentEvents).toEqual([1]);
+    expect(plainEvents).toEqual([1]);
+  });
+
+  it('stops typed subscribeAgent delivery after the agent generation is replaced', () => {
+    const bus = new EventBusService();
+    const gen1 = makeAgentScopeContext({ agentId: 'a', agentScope: 'agents/a', generation: 1 });
+    bus.activateAgent(gen1.agentContext);
+    const seen: number[] = [];
+    bus.subscribeAgent(gen1.agentContext, 'test.agent', (event) =>
+      seen.push((event as TestAgentEvent).value),
+    );
+
+    bus.publish(new TestAgentEvent({ agentId: 'a', value: 1 }), gen1.agentContext);
+    const gen2 = makeAgentScopeContext({ agentId: 'a', agentScope: 'agents/a', generation: 2 });
+    bus.activateAgent(gen2.agentContext);
+    bus.publish(new TestAgentEvent({ agentId: 'a', value: 2 }), gen2.agentContext);
+
+    expect(seen).toEqual([1]);
+    expect(() => bus.subscribeAgent(gen1.agentContext, 'test.agent', () => {})).toThrow(
+      'not the active',
+    );
+  });
+
   it('keeps a stale generation deactivation from removing the active channel', () => {
     const bus = new EventBusService();
     const gen1 = makeAgentScopeContext({ agentId: 'a', agentScope: 'agents/a', generation: 1 });
