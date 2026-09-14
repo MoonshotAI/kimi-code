@@ -72,15 +72,20 @@ function controllableProcess(): {
   };
 }
 
+let foregroundTaskSeq = 0;
+
 function registerForeground(
   background: IAgentTaskService,
   proc: IHostProcess,
   command: string,
   description: string,
 ): string {
-  return background.registerTask(new ProcessTask(proc, command, description), {
-    detached: false,
-  });
+  return background.registerTask(
+    new ProcessTask(proc, command, description, undefined, undefined, `call_fg_${++foregroundTaskSeq}`),
+    {
+      detached: false,
+    },
+  );
 }
 
 async function drainPendingNotifications(

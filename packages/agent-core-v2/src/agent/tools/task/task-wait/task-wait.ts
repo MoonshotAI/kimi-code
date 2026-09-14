@@ -19,7 +19,7 @@ export const WaitForInputSchema = z.object({
     .string()
     .optional()
     .describe(
-      'The background task ID to wait for. When omitted, the wait ends as soon as any background task that was running at call time finishes.',
+      'The background task ID to wait for — the tool call ID of the Bash/Agent/AskUserQuestion call that started the task, as shown by TaskList. When omitted, the wait ends as soon as any background task that was running at call time finishes.',
     ),
 });
 

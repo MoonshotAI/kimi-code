@@ -21,7 +21,7 @@ function registerProcess(
   command: string,
   description: string,
 ): string {
-  return manager.registerTask(new ProcessTask(proc, command, description));
+  return manager.registerTask(new ProcessTask(proc, command, description, undefined, undefined, 'call_process'));
 }
 
 function agentTask(
@@ -31,6 +31,7 @@ function agentTask(
   const handle: SubagentHandle = {
     agentId: 'agent-child',
     profileName: 'coder',
+    parentToolCallId: 'call_agent',
     completion,
   };
   return new SubagentTask(
@@ -82,17 +83,17 @@ describe('background task id format', () => {
     }
   });
 
-  it('assigns bash-prefixed ids to process tasks', async () => {
+  it('uses the spawning tool call id as the process task id', async () => {
     const proc = pendingProcess();
     const id = registerProcess(background, proc, 'sleep 60', 'process task');
 
-    expect(id).toMatch(/^bash-[0-9a-z]{8}$/);
+    expect(id).toBe('call_process');
     expect(background.getTask(id)).toMatchObject({ taskId: id, kind: 'process' });
     proc.resolve(0);
     await background.wait(id);
   });
 
-  it('assigns agent-prefixed ids to agent tasks', async () => {
+  it('uses the spawning tool call id as the agent task id', async () => {
     let resolveCompletion!: (value: { result: string }) => void;
     const completion = new Promise<{ result: string }>((resolve) => {
       resolveCompletion = resolve;
@@ -101,26 +102,22 @@ describe('background task id format', () => {
       agentTask(completion, 'agent task'),
     );
 
-    expect(id).toMatch(/^agent-[0-9a-z]{8}$/);
+    expect(id).toBe('call_agent');
     expect(background.getTask(id)).toMatchObject({ taskId: id, kind: 'agent' });
     resolveCompletion({ result: 'done' });
     await background.wait(id);
   });
 
-  it('rejects malformed ids at the persistence path boundary', () => {
+  it('rejects path-unsafe ids at the persistence path boundary', () => {
     const persistence = createAgentTaskPersistence('/tmp/kimi-bg-id-test');
     const rejected = [
       '',
-      'x',
-      '-bash',
-      'BASH-12345678',
-      'bash_12345678',
+      '.',
+      '..',
       '../escape',
-      'bash-1234567',
-      'bash-123456789',
-      'agent-ABCDEFGH',
-      'bg_12345678',
-      'a'.repeat(26),
+      'a/b',
+      'a\\b',
+      'a\0b',
     ];
 
     for (const bad of rejected) {
