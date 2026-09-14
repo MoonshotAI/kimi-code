@@ -1678,7 +1678,7 @@ describe('AgentTowerService', () => {
     }
   });
 
-  it('keeps a replayed tower mode when the store owner session is gone — adoption survives resume', async () => {
+  it('keeps a replayed tower mode when the store owner session is gone — and adopts the workspace', async () => {
     const tower = ix.get(IAgentTowerService);
     await tower.enter();
 
@@ -1697,7 +1697,15 @@ describe('AgentTowerService', () => {
       await writeFile(join(repo, 'README.md'), '# fixture\n');
       await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
       await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
-      await new TowerStore(repo).init('session-original');
+      const store = new TowerStore(repo);
+      await store.init('session-original');
+      await store.registerAgent({
+        name: 'worker-stale',
+        agentId: 'agent-0',
+        sessionId: 'session-original',
+        kind: 'worker',
+        spawnedAt: new Date().toISOString(),
+      });
 
       const ix2 = disposables.add(new TestInstantiationService());
       ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
@@ -1755,6 +1763,9 @@ describe('AgentTowerService', () => {
       expect(restored.isActive).toBe(true);
       expect(restoredAdded).toEqual([...TOWER_MODE_TOOLS]);
       expect(events).not.toContainEqual({ type: 'agent.status.updated', towerMode: false });
+      const state = await new TowerStore(repo).load();
+      expect(state.sessionId).toBe('session-fork');
+      expect(state.roster.agents).toEqual([]);
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
