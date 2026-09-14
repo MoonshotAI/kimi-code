@@ -1164,7 +1164,7 @@ describe('toolMessageConversion request config', () => {
       role: 'tool',
       toolCallId: 'call_1',
       content: [
-        { type: 'text', text: 'sunny' },
+        { type: 'text', text: 'sunny', contentType: 'text/markdown' },
         { type: 'image_url', imageUrl: { url: 'https://example.test/x.png' } },
       ],
     },
@@ -1307,7 +1307,10 @@ describe('anthropic user message merging', () => {
   }
 
   it('keeps a plain user text and a following tool result separate', async () => {
-    const merged = await generate([createUserMessage('hi'), createToolMessage('call_1', 'sunny')]);
+    const merged = await generate([
+      { role: 'user', content: [{ type: 'text', text: 'hi', contentType: 'text/xml' }] },
+      createToolMessage('call_1', 'sunny'),
+    ]);
     expect(merged).toHaveLength(2);
     expect(merged[0]?.['content']).toEqual([{ type: 'text', text: 'hi' }]);
     expect((merged[1]?.['content'] as Record<string, unknown>[])[0]?.['type']).toBe(
@@ -1744,7 +1747,7 @@ describe('openai responses base', () => {
       },
       {
         messages: [
-          createUserMessage('hi'),
+          { role: 'user', content: [{ type: 'text', text: 'hi', contentType: 'text/xml' }] },
           createAssistantMessage(
             [
               { type: 'think', think: 'hmm', encrypted: 'enc_0' },
@@ -1877,7 +1880,7 @@ describe('google genai base', () => {
       },
       {
         messages: [
-          createUserMessage('hi'),
+          { role: 'user', content: [{ type: 'text', text: 'hi', contentType: 'text/xml' }] },
           createAssistantMessage(
             [
               { type: 'think', think: 'hmm', encrypted: 'sig_0' },

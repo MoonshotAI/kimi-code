@@ -1069,12 +1069,13 @@ describe('Agent loop', () => {
     );
   });
 
-  it('omits the turn.started prompt for system-triggered turns', async () => {
+  it('carries the turn.started prompt only for displayable system-triggered turns', async () => {
     const prompts: Array<string | undefined> = [];
     const subscription = ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
       prompts.push(event.prompt);
     });
     ctx.mockNextResponse({ type: 'text', text: 'continued' });
+    ctx.mockNextResponse({ type: 'text', text: 'fired' });
     ctx.mockNextResponse({ type: 'text', text: 'hi there' });
 
     const system = submitPromptTurn(loop, {
@@ -1082,11 +1083,16 @@ describe('Agent loop', () => {
       meta: { origin: { kind: 'system_trigger', name: 'goal_continuation' } as PromptOrigin },
     }).turn;
     await system.result;
+    const cron = submitPromptTurn(loop, {
+      message: { role: 'user', content: [{ type: 'text', text: '<cron-fire>check</cron-fire>' }] },
+      meta: { origin: { kind: 'cron_job' } as PromptOrigin },
+    }).turn;
+    await cron.result;
     const user = submitTurn(loop, 'hi').turn;
     await user.result;
     subscription.dispose();
 
-    expect(prompts).toEqual([undefined, 'hi']);
+    expect(prompts).toEqual([undefined, '<cron-fire>check</cron-fire>', 'hi']);
   });
 
   it('carries the turn.started prompt for subagent system triggers', async () => {
