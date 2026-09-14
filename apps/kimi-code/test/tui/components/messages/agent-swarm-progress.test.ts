@@ -1123,7 +1123,7 @@ describe('AgentSwarmProgressComponent terminal state memory', () => {
     component.markCompleted('agent-1', `ok${'\u001B[31m'.repeat(10_000)}`);
 
     const text = membersOf(component)[0]?.completedText ?? '';
-    expect(text.length).toBeLessThanOrEqual(2_000);
+    expect(text.length).toBeLessThanOrEqual(2_000 + '\u001B[0m'.length);
     expect(text.startsWith('ok')).toBe(true);
     const escapeCount = text.match(/\u001B/g)?.length ?? 0;
     const completeSequenceCount = text.match(/\u001B\[[0-9;]*m/g)?.length ?? 0;
@@ -1167,6 +1167,32 @@ describe('AgentSwarmProgressComponent terminal state memory', () => {
     const text = membersOf(component)[0]?.completedText ?? '';
     expect(text.startsWith('\u001B]8;;https://example.com\u0007')).toBe(true);
     expect(text.endsWith('\u001B]8;;\u0007')).toBe(true);
+  });
+
+  it('resets SGR styling that the storage cap slices through', () => {
+    const component = createComponent();
+    registerSubagents(component, 1);
+
+    component.markCompleted(
+      'agent-1',
+      `\u001B[1m\u001B[31mx${'\u0301'.repeat(5_000)}\u001B[0m`,
+    );
+
+    const text = membersOf(component)[0]?.completedText ?? '';
+    expect(text.endsWith('\u001B[0m')).toBe(true);
+  });
+
+  it('appends the SGR reset after the OSC 8 close when both are sliced', () => {
+    const component = createComponent();
+    registerSubagents(component, 1);
+
+    component.markCompleted(
+      'agent-1',
+      `\u001B]8;;https://example.com\u0007\u001B[1mx${'\u0301'.repeat(5_000)}\u001B]8;;\u0007\u001B[0m`,
+    );
+
+    const text = membersOf(component)[0]?.completedText ?? '';
+    expect(text.endsWith('\u001B]8;;\u0007\u001B[0m')).toBe(true);
   });
 });
 

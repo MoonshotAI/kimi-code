@@ -995,6 +995,7 @@ function capCodeUnits(text: string, maxCodeUnits: number): string {
   if (text.length <= maxCodeUnits) return text;
   let end = maxCodeUnits;
   let osc8CloseSuffix = '';
+  let sgrActive = false;
   let index = text.indexOf('\u001B');
   while (index >= 0 && index < end) {
     const sequenceEnd = ansiSequenceEnd(text, index);
@@ -1002,15 +1003,17 @@ function capCodeUnits(text: string, maxCodeUnits: number): string {
       end = index;
       break;
     }
-    const osc8Close = osc8CloseAfterSequence(text.slice(index, sequenceEnd));
+    const sequence = text.slice(index, sequenceEnd);
+    const osc8Close = osc8CloseAfterSequence(sequence);
     if (osc8Close !== undefined) osc8CloseSuffix = osc8Close ?? '';
+    sgrActive = sgrActiveAfterSequence(sequence, sgrActive);
     index = text.indexOf('\u001B', sequenceEnd);
   }
   // A cut landing on a lead surrogate reads as the astral code point; back
   // off so the retained label never ends in an unpaired surrogate.
   const codePoint = text.codePointAt(end - 1);
   if (codePoint !== undefined && codePoint > 0xffff) end -= 1;
-  return text.slice(0, end) + osc8CloseSuffix;
+  return `${text.slice(0, end)}${osc8CloseSuffix}${sgrActive ? '\u001B[0m' : ''}`;
 }
 
 // Mirrors pi-tui's OSC 8 bookkeeping: a sequence with a non-empty URI opens a
@@ -1024,6 +1027,19 @@ function osc8CloseAfterSequence(sequence: string): string | null | undefined {
   const separatorIndex = body.indexOf(';');
   if (separatorIndex < 0) return undefined;
   return body.slice(separatorIndex + 1).length > 0 ? `\u001B]8;;${terminator}` : null;
+}
+
+// SGR state is cumulative: a parameter of 0 (or an empty parameter, which
+// defaults to 0) resets every attribute, anything else activates one, so a
+// sliced label with active styling needs a full reset appended.
+function sgrActiveAfterSequence(sequence: string, active: boolean): boolean {
+  if (!sequence.startsWith('\u001B[') || !sequence.endsWith('m')) return active;
+  const body = sequence.slice(2, -1);
+  if (body.length === 0) return false;
+  for (const param of body.split(';')) {
+    active = param !== '' && Number(param) !== 0;
+  }
+  return active;
 }
 
 function ansiSequenceEnd(text: string, start: number): number | undefined {
