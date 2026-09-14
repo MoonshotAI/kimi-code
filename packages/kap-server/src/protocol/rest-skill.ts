@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { fileContentSchema, imageContentSchema, videoContentSchema } from './message';
+import { fileContentSchema, imageContentSchema, textContentSchema, videoContentSchema } from './message';
 import { skillDescriptorSchema } from './skill';
 
 export const listSkillsResponseSchema = z.object({
@@ -17,6 +17,8 @@ export type ActivateSkillAttachment = z.infer<typeof activateSkillAttachmentSche
 
 export const activateSkillRequestSchema = z.object({
   args: z.string().optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+  content: z.array(z.discriminatedUnion('type', [textContentSchema, imageContentSchema, videoContentSchema, fileContentSchema])).optional(),
   attachments: z.array(activateSkillAttachmentSchema).optional(),
 });
 export type ActivateSkillRequest = z.infer<typeof activateSkillRequestSchema>;

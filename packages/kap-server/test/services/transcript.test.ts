@@ -1946,6 +1946,26 @@ describe('AgentTranscriptProjector', () => {
     expect(entity?.request).toEqual({ toolCallId: 'call_x' });
   });
 
+  it('preserves queue metadata through lifecycle updates and recovers individual steers without prior queue events', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+    const metadata = [{ display_text: 'Save button', kimi_code_composer: { version: 1, doc: { type: 'doc' } } }];
+    feed(ev({ type: 'prompt.submitted', promptId: 'p1', userMessageId: 'm1', status: 'queued', content: [{ type: 'text', text: 'wire' }], clientMetadata: metadata, createdAt: '2026-01-01T00:00:00.000Z' }));
+    feed(ev({ type: 'prompt.queued', promptId: 'p1', content: [{ type: 'text', text: 'wire' }], queueLength: 1, clientMetadata: metadata }));
+    feed(ev({ type: 'prompt.started', promptId: 'p1' }));
+    feed(ev({ type: 'prompt.completed', promptId: 'p1', finishedAt: '2026-01-01T00:00:02.000Z', reason: 'completed' }));
+    expect(tx.getPrompt('p1')?.clientMetadata).toEqual(metadata);
+    const cold = new AgentTranscript('main');
+    const coldProjector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    cold.apply(coldProjector.map(ev({
+      type: 'prompt.steered', activePromptId: 'active', promptIds: ['selected'], content: [{ type: 'text', text: 'wire' }], steeredAt: '2026-01-01T00:00:05.000Z',
+      inputs: [{ promptId: 'selected', userMessageId: 'selected-message', createdAt: '2026-01-01T00:00:03.000Z', content: [{ type: 'text', text: 'wire' }], clientMetadata: metadata }],
+    })));
+    expect(cold.getPrompt('selected')).toMatchObject({ status: 'completed', content: [{ type: 'text', text: 'wire' }], clientMetadata: metadata, userMessageId: 'selected-message', createdAt: '2026-01-01T00:00:03.000Z' });
+    expect(cold.getPrompt('active')?.clientMetadata).toEqual(metadata);
+  });
+
   it('projects prompt submitted/completed/aborted/steered as global queue entities', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
@@ -2216,6 +2236,22 @@ describe('AgentTranscriptProjector', () => {
     expect(frame?.kind === 'text' ? frame.attachmentIds : undefined).toEqual([
       attachmentOp?.op === 'attachment.upsert' ? attachmentOp.attachment.attachmentId : undefined,
     ]);
+  });
+
+  it('preserves a user skill activation during a running turn without consuming unrelated queued prompt ids', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+    const origin = { kind: 'skill_activation' as const, activationId: 'example-activation', trigger: 'user-slash' as const, skillName: 'example-skill', skillArgs: 'args', clientMetadata: [{ display_text: 'Save button' }] };
+    feed(ev({ type: 'turn.started', turnId: 5, origin: { kind: 'user' }, prompt: 'active' }));
+    feed(ev({ type: 'turn.step.started', turnId: 5, step: 1 }));
+    feed(ev({ type: 'prompt.steered', activePromptId: 'active', promptIds: ['queued'], content: [{ type: 'text', text: 'queued input' }], steeredAt: '2026-01-01T00:00:02.000Z' }));
+    feed(ev({ type: 'turn.steer', input: [{ type: 'text', text: 'User skill context' }], origin }));
+    feed(ev({ type: 'turn.steer', input: [{ type: 'text', text: 'queued input' }], origin: { kind: 'user' } }));
+    const frames = turnOps('t5', tx.getItems()).steps[0]!.frames;
+    expect(frames[0]).toMatchObject({ role: 'user', text: 'User skill context', origin: { kind: 'skill_activation', skillName: 'example-skill', clientMetadata: origin.clientMetadata } });
+    expect(frames[0]).not.toHaveProperty('promptIds', ['queued']);
+    expect(frames[1]).toMatchObject({ promptIds: ['queued'], text: 'queued input' });
   });
 
   it('ignores turn.steer for non-user origins and for turns that are not running', () => {

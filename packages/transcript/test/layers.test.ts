@@ -4,6 +4,7 @@ import { filterOpsForGrade, isAppendOnly, redactSnapshotForGrade } from '#/granu
 import { detachGrades, gradeFor, needsResetOnTransition } from '#/granularity/grade';
 import { paginateTurns } from '#/pagination/paginate';
 import { ViewRegistry } from '#/view/registry';
+import { projectTranscriptUserOrigin } from '#/contract/origin';
 import { groupMessagesIntoSnapshot, type HistoryContentPart } from '#/history/groupTurns';
 import { foldWireRecordFacts, type HistoryWireRecord } from '#/history/foldFacts';
 import {
@@ -11,12 +12,44 @@ import {
   transcriptQuerySchema,
   transcriptResponseSchema,
   transcriptGradeSpecSchema,
+  transcriptUserOriginSchema,
 } from '#/contract/schema';
 import type { TranscriptItem } from '#/model/item';
 import type { AgentTranscriptSnapshot, TranscriptOperation } from '#/ops/operation';
 
 const idLabel = (i: TranscriptItem): string =>
   i.kind === 'turn' ? i.turnId : i.kind === 'marker' ? i.markerId : i.refId;
+
+describe('client metadata in transcript user origins', () => {
+  it('retains user-invoked single skill frame metadata without exposing model-triggered activations as user input', () => {
+    const origin = { kind: 'skill_activation', trigger: 'user-slash', skillName: 'example-skill', skillArgs: 'args', clientMetadata: [{ display_text: 'Save button' }] };
+    expect(transcriptUserOriginSchema.parse(projectTranscriptUserOrigin(origin))).toEqual(origin);
+    expect(projectTranscriptUserOrigin({ ...origin, trigger: 'model-tool' })).toBeUndefined();
+  });
+
+  it('keeps opening prompt metadata when rebuilding history turns', () => {
+    const clientMetadata = [{ kimi_code_composer: { version: 1, doc: { type: 'doc' } } }];
+    const origin = { kind: 'user', clientMetadata };
+    const snapshot = groupMessagesIntoSnapshot([
+      { role: 'user', content: [{ type: 'text', text: 'visible prompt' }], toolCalls: [], origin },
+      { role: 'assistant', content: [{ type: 'text', text: 'reply' }], toolCalls: [] },
+    ]);
+    const turn = snapshot.items.find((item) => item.kind === 'turn');
+    expect(turn?.origin).toEqual({ kind: 'user', payload: { kind: 'user', clientMetadata } });
+    expect(turn?.prompt).toBe('visible prompt');
+  });
+
+  it('projects and validates independent document snapshots without losing their nested fields', () => {
+    const clientMetadata = [
+      { kimi_code_composer: { version: 1, doc: { type: 'doc', content: [{ type: 'paragraph' }] }, captureIds: ['capture-a'] } },
+      { kimi_code_composer: { version: 1, captureIds: ['capture-b'] } },
+    ];
+    const projected = projectTranscriptUserOrigin({ kind: 'user', clientMetadata });
+    expect(transcriptUserOriginSchema.parse(projected)).toEqual({ kind: 'user', clientMetadata });
+    expect(projectTranscriptUserOrigin({ kind: 'user' })).toStrictEqual({ kind: 'user' });
+    expect(projectTranscriptUserOrigin({ kind: 'injection', clientMetadata })).toBeUndefined();
+  });
+});
 
 const turnOp = (n: number): TranscriptOperation => ({
   op: 'turn.upsert',

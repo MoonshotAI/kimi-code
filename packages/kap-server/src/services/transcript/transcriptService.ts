@@ -1,3 +1,4 @@
+import type { UserPromptOrigin } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 
@@ -366,6 +367,7 @@ export class TranscriptService {
           userMessageId: activeHandle.userMessageId,
           content: projectPromptContentParts(activeHandle.message.content),
           createdAt: activeHandle.createdAt,
+          clientMetadata: activeHandle.message.origin?.kind === 'user' ? activeHandle.message.origin.clientMetadata : undefined,
         },
       });
     }
@@ -379,6 +381,7 @@ export class TranscriptService {
           userMessageId: item.meta?.userMessageId ?? '',
           content: projectPromptContentParts(item.message.content),
           createdAt: item.meta?.createdAt ?? '',
+          clientMetadata: (item.meta?.origin as UserPromptOrigin | undefined)?.clientMetadata,
         },
       });
     }

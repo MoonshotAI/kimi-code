@@ -223,7 +223,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
 
       let preparedMedia: PromptMediaPreparation | undefined;
       try {
-        const attachments = req.body.attachments ?? [];
+        const attachments = [...(req.body.content ?? []), ...(req.body.attachments ?? [])];
         const attachmentParts: ContentPart[] = [];
         if (attachments.length > 0) {
           if (contentHasPathRefs(attachments)) {
@@ -278,6 +278,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         await mainAgent.accessor.get(IAgentSkillService).activate({
           name: parsed.id,
           args: req.body.args,
+          clientMetadata: req.body.metadata === undefined ? undefined : [structuredClone(req.body.metadata)],
           content: attachmentParts,
           attachments: promptAttachments,
         });

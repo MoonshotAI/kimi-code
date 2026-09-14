@@ -1,3 +1,4 @@
+import { promptDisplayTextFromContentParts } from '#/agent/prompt/promptMetadataText';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 
@@ -665,6 +666,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         agentId: this.scopeContext.agentId,
         promptId: input.promptId,
         content: stripBundledSkillBlocks(input.message),
+        clientMetadata: input.origin.clientMetadata,
         queueLength: (this.engine?.snapshot().queue.length ?? 0) + 1,
       }),
     );
@@ -688,6 +690,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         userMessageId: input.userMessageId,
         status,
         content: stripBundledSkillBlocks(input.message),
+        clientMetadata: input.origin.clientMetadata,
         createdAt: input.createdAt,
       }),
     );
@@ -1345,6 +1348,15 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
             content: children.flatMap((child) =>
               stripBundledSkillBlocks(child.projection.message),
             ),
+            inputs: children.map((child) => ({
+              promptId: child.waiter.id,
+              userMessageId: child.projection.userMessageId,
+              content: stripBundledSkillBlocks(child.projection.message),
+              createdAt: child.projection.createdAt,
+              clientMetadata: merged.origin.kind === 'user' && merged.origin.clientMetadata !== undefined
+                ? (child.projection.origin.kind === 'user' ? child.projection.origin.clientMetadata : undefined) ?? [{ display_text: promptDisplayTextFromContentParts(stripBundledSkillBlocks(child.projection.message)) }]
+                : undefined,
+            })),
             steeredAt: new Date().toISOString(),
           }),
         );

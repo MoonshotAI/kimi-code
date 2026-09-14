@@ -463,6 +463,7 @@ function mapOrigin(message: HistoryMessage): TurnOrigin {
     case 'shell_command':
       return { kind: 'user', payload: origin };
     case 'user':
+      return { kind: 'user', payload: origin };
     case undefined:
       return { kind: 'user' };
     default:
