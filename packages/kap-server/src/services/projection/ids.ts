@@ -41,7 +41,7 @@ export function attachmentIdOf(baseId: string, ordinal: number): string {
 }
 
 export function turnOrdinalOf(turnId: string): number | undefined {
-  if (!/^t\d+$/.test(turnId)) return undefined;
+  if (!/^t-?\d+$/.test(turnId)) return undefined;
   return Number(turnId.slice(1));
 }
 

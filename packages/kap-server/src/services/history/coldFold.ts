@@ -308,6 +308,26 @@ export function foldWireHistory(
     seedTurn.durationMs = Math.max(0, recordAtMs - seedTurn.at);
   };
 
+  const createOrphanTurn = (rawId: number, recordAtMs: number, recordAtIso: string): void => {
+    const turnId = turnIdOf(rawId);
+    const draft: TurnDraft = {
+      turnId,
+      rawId,
+      origin: { kind: 'other' },
+      status: 'running',
+      startedAt: recordAtIso,
+      at: recordAtMs,
+    };
+    turns.set(turnId, draft);
+    order.push(`turn:${turnId}`);
+    timelineIds.push(turnId);
+    scratchByTurn.set(rawId, {
+      serverUserSeq: 0,
+      attachmentSeq: 0,
+      openingSteerDeduped: false,
+    });
+  };
+
   const createTextDraft = (
     stepId: string,
     turnId: string,
@@ -849,6 +869,38 @@ export function foldWireHistory(
         return;
       }
       if (!isUndoAnchorOrigin(message.origin)) return;
+      if (!seedEnded) {
+        const recordAtMs = atMs(record);
+        if (!turns.has(turnIdOf(SEED_TURN_RAW_ID))) {
+          createOrphanTurn(SEED_TURN_RAW_ID, recordAtMs, new Date(recordAtMs).toISOString());
+        }
+        currentTurn = SEED_TURN_RAW_ID;
+        const seedTurnId = turnIdOf(SEED_TURN_RAW_ID);
+        const content = Array.isArray(message.content) ? message.content : [];
+        const skipBlocks = bundledSkillCount(message.origin);
+        const entry = scratch(SEED_TURN_RAW_ID);
+        const attachmentIds: string[] = [];
+        for (let i = promptAttachmentCount(content, message.origin); i > 0; i -= 1) {
+          entry.attachmentSeq += 1;
+          attachmentIds.push(attachmentIdOf(seedTurnId, entry.attachmentSeq));
+        }
+        const messageId =
+          typeof message.id === 'string'
+            ? message.id
+            : `${seedTurnId}.u${(entry.serverUserSeq += 1)}`;
+        const draft: UserDraft = {
+          messageId,
+          turnId: seedTurnId,
+          text: wireContentParts(content.slice(skipBlocks)),
+          timestamp: recordAtMs,
+          origin: userOriginOf(message.origin),
+          attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+          skillActivations: skillActivationsOf(message.origin),
+        };
+        users.set(messageId, draft);
+        order.push(`user:${messageId}`);
+        return;
+      }
       const messageId = typeof message.id === 'string' ? message.id : undefined;
       const matchingIndex =
         messageId !== undefined
@@ -880,23 +932,7 @@ export function foldWireHistory(
         rawId = seedEnded ? nextTurnId : SEED_TURN_RAW_ID;
         if (!turns.has(turnIdOf(rawId))) {
           if (seedEnded) nextTurnId += 1;
-          const turnId = turnIdOf(rawId);
-          const draft: TurnDraft = {
-            turnId,
-            rawId,
-            origin: { kind: 'other' },
-            status: 'running',
-            startedAt: recordAtIso,
-            at: recordAtMs,
-          };
-          turns.set(turnId, draft);
-          order.push(`turn:${turnId}`);
-          timelineIds.push(turnId);
-          scratchByTurn.set(rawId, {
-            serverUserSeq: 0,
-            attachmentSeq: 0,
-            openingSteerDeduped: false,
-          });
+          createOrphanTurn(rawId, recordAtMs, recordAtIso);
         }
         currentTurn = rawId;
       }

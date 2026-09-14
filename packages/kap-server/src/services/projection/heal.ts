@@ -126,6 +126,14 @@ export function foldTimelineSeed(records: readonly ContextRecord[]): TimelineSee
           break;
         }
         if (message?.role !== 'user' || !isUndoAnchorOrigin(message.origin)) break;
+        if (!seedEnded) {
+          if (!visibleTurnOrdinals.has(SEED_TURN_RAW_ID)) {
+            visibleTurnOrdinals.add(SEED_TURN_RAW_ID);
+            timelineIds.push(turnIdOf(SEED_TURN_RAW_ID));
+          }
+          currentTurn = SEED_TURN_RAW_ID;
+          break;
+        }
         const messageId = typeof message.id === 'string' ? message.id : undefined;
         const matchingIndex =
           messageId !== undefined
