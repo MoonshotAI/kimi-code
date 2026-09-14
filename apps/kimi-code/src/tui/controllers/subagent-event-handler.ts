@@ -13,6 +13,7 @@ import { modelDisplayName } from '../components/dialogs/model-selector';
 import { MAIN_AGENT_ID } from '../constant/kimi-tui';
 import type {
   BackgroundAgentMetadata,
+  BackgroundAgentStatusPhase,
   ToolCallBlockData,
   ToolResultBlockData,
   TranscriptEntry,
@@ -376,6 +377,11 @@ export class SubAgentEventHandler {
     this.pruneForegroundOnlyRecord(event.subagentId);
     const backgroundMeta = this.backgroundAgentMetadata.get(event.subagentId);
     if (backgroundMeta !== undefined) {
+      const taskId = this.findAgentTaskId(
+        event.subagentId,
+        backgroundMeta,
+        this.deps.backgroundTasks,
+      );
       this.backgroundAgentMetadata.delete(event.subagentId);
       this.deps.syncBackgroundAgentBadge();
       this.host.streamingUI.applyBackgroundTaskTerminalStatus({
@@ -383,6 +389,13 @@ export class SubAgentEventHandler {
         description: backgroundMeta.description ?? '',
         status: 'killed',
       });
+      if (taskId !== undefined && this.deps.backgroundTaskTranscriptedTerminal.has(taskId)) {
+        return;
+      }
+      if (taskId !== undefined) {
+        this.deps.backgroundTaskTranscriptedTerminal.add(taskId);
+      }
+      this.appendBackgroundAgentEntry('killed', backgroundMeta);
       return;
     }
 
@@ -450,7 +463,7 @@ export class SubAgentEventHandler {
   }
 
   private appendBackgroundAgentEntry(
-    phase: 'started' | 'completed' | 'failed',
+    phase: BackgroundAgentStatusPhase,
     meta: BackgroundAgentMetadata,
     extras: { resultSummary?: string; error?: string } | undefined = undefined,
   ): void {
