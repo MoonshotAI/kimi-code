@@ -41,7 +41,7 @@ export function formatContentPartMd(part: ContentPart): string {
     case 'text':
       return part.text;
     case 'think':
-      if (!part.think.trim()) return '';
+      if (part.hidden === true || !part.think.trim()) return '';
       return `<details><summary>Thinking</summary>\n\n${part.think}\n\n</details>`;
     case 'image_url':
       return '[image]';

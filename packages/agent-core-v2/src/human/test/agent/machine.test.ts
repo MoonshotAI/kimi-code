@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createActor, waitFor } from '#/xstate2';
+import { xstateInspectionCollector } from '#/xstateInspection';
 
 import { UNKNOWN_CAPABILITY } from '#/llm/capability';
 import {
@@ -845,7 +846,12 @@ describe('agent machine lifecycle', () => {
   });
 
   it('persists turn events without reporting unhandled store.changed and closes directly while linking', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const unhandledStoreChanged: unknown[] = [];
+    const unsubscribe = xstateInspectionCollector.subscribe((envelope) => {
+      if (envelope.eventType === 'store.changed' && envelope.unhandled === true) {
+        unhandledStoreChanged.push(envelope);
+      }
+    });
     try {
       const requester = createStubRequester([
         createAssistantMessage([{ type: 'text', text: 'hi' }]),
@@ -858,12 +864,9 @@ describe('agent machine lifecycle', () => {
         timeout: 5000,
       });
       await store.flush();
-      const unhandled = warn.mock.calls.filter(([message]) =>
-        String(message).includes('unhandled event "store.changed"'),
-      );
-      expect(unhandled).toEqual([]);
+      expect(unhandledStoreChanged).toEqual([]);
     } finally {
-      warn.mockRestore();
+      unsubscribe();
     }
 
     const visitedStates: unknown[] = [];

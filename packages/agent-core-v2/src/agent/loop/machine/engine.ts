@@ -39,6 +39,7 @@ export type MachineEngineDelta =
       readonly delta: string;
       readonly encrypted?: string;
       readonly detailsIndex?: number;
+      readonly hidden?: boolean;
     }
   | {
       readonly kind: 'toolCall';
@@ -225,6 +226,7 @@ function createDeltaSplitter(): (part: StreamedMessagePart) => MachineEngineDelt
           delta: part.think,
           encrypted: part.encrypted,
           detailsIndex: part.detailsIndex,
+          hidden: part.hidden,
         };
       case 'image_url':
       case 'audio_url':
