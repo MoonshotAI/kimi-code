@@ -124,7 +124,7 @@ The input box remains usable while the agent is thinking or calling tools, and s
 
 - **`Ctrl-S`**: inject the content in the input box into the running turn immediately, without waiting for it to finish
 - **`Esc` / `Ctrl-C`**: interrupt the current turn
-- **`Ctrl-O`**: globally toggle the collapsed/expanded state of tool output and compaction summaries
+- **`Ctrl-O`**: globally toggle tool output, assistant messages folded into transcript summaries, and compaction summaries
 
 When the agent is waiting for background tasks through `WaitFor`, pressing `Ctrl-S` ends that wait early. Background tasks keep running and existing tool results are preserved. If other foreground tools remain in the same batch, the agent processes your message after they return.
 
