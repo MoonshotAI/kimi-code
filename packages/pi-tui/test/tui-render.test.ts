@@ -895,6 +895,22 @@ describe("Text negative width safety", () => {
 	});
 });
 
+describe("Text copy-friendly rendering", () => {
+	it("does not fill short lines with trailing spaces", () => {
+		const text = new Text("hello", 0, 0);
+		const lines = text.render(80);
+		assert.strictEqual(lines.length, 1);
+		assert.strictEqual(lines[0], "hello");
+	});
+
+	it("keeps requested margins without filling the remaining width", () => {
+		const text = new Text("hello", 2, 0);
+		const lines = text.render(80);
+		assert.strictEqual(lines.length, 1);
+		assert.strictEqual(lines[0], "  hello  ");
+	});
+});
+
 describe("TUI steady-frame processed-line reuse", () => {
 	it("writes only the changed line when one component updates in a long transcript", async () => {
 		const terminal = new LoggingVirtualTerminal(40, 10);
