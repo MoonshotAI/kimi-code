@@ -6184,7 +6184,9 @@ command = "vim"
       } as Event,
       sendQueued,
     );
-    expect(driver.state.ui.requestRender).toHaveBeenCalled();
+    // Swarm child events are batched onto the swarm's own frame timer instead
+    // of rendering the whole tree per event.
+    expect(driver.state.ui.requestRender).not.toHaveBeenCalled();
 
     driver.sessionEventHandler.handleEvent(
       {
@@ -6246,7 +6248,9 @@ command = "vim"
       } as Event,
       sendQueued,
     );
-    expect(driver.state.ui.requestRender).toHaveBeenCalled();
+    // A child turn end changes no swarm state, so it stays on the batched
+    // frame timer like the deltas above.
+    expect(driver.state.ui.requestRender).not.toHaveBeenCalled();
 
     transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('Agent Swarm');
