@@ -26,7 +26,7 @@ For ordinary runtime parameters such as model alias, Plan mode, permission mode,
 A small number of environment variables explicitly override specific config file fields. For example, `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` has higher priority than `[background].keep_alive_on_exit`. These exceptions are noted in [Environment variables](./env-vars.md) and in the relevant field descriptions in [Configuration files](./config-files.md).
 
 ::: warning
-**Ordinary runtime parameters do not fall back to shell environment variables.** Provider `api_key` / `base_url` are read only from `config.toml` (including the `[providers.<name>.env]` sub-table) and do not fall back to `export`-ed shell variables. The only exception is the explicit `KIMI_MODEL_*` channel; see [Define a model from environment variables](./env-vars.md#define-a-model-from-environment-variables-kimi_model_).
+**Ordinary runtime parameters do not fall back to shell environment variables.** Provider `api_key` / `base_url` are read only from `config.toml` (including the `[providers.<name>.env]` sub-table) and do not fall back to `export`-ed shell variables. The only exceptions are the `KIMI_MODEL_*` family and a provider's `api_key_env` field, two explicit channels that *do* read credentials from the shell; see [Define a model from environment variables](./env-vars.md#define-a-model-from-environment-variables-kimi_model_) and [Provider credentials](#provider-credentials).
 :::
 
 The CLI currently reads a single user-level config file and has no project-level config file mechanism. To isolate config between different projects, point `KIMI_CODE_HOME` at different data directories; see [Common scenarios](#common-scenarios) below.
