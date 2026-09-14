@@ -587,6 +587,12 @@ export class AgentRunBatch<T> {
       if (state.agentId === undefined) continue;
       this.launcher.abandoned?.({ task: state.task, agentId: state.agentId, outcome: 'cancelled' });
     }
+    for (const attempt of this.active) {
+      if (attempt.ready) continue;
+      const agentId = attempt.state.agentId;
+      if (agentId === undefined) continue;
+      this.launcher.abandoned?.({ task: attempt.state.task, agentId, outcome: 'cancelled' });
+    }
   }
 
   private cleanup(): void {

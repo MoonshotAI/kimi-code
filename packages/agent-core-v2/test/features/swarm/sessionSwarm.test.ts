@@ -869,6 +869,44 @@ describe('AgentRunBatch abandoned callback', () => {
     }
   });
 
+  it('abandons a rate-limited task that is relaunched but not yet ready when the batch is cancelled', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const onAbandoned = vi.fn();
+      const { runBatch, attempts } = createMockAgentRunBatchRunner({ onAbandoned });
+      const running = runBatch(
+        Array.from({ length: 2 }, (_, index) => queuedAgentRunTask(index + 1)),
+        { signal: controller.signal },
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      attempts.forEach((attempt) => {
+        attempt.markReady();
+      });
+      attempts[0]!.outcome.resolve({ type: 'rate_limited', agentId: 'agent-1' });
+      attempts[1]!.outcome.resolve({
+        task: attempts[1]!.task,
+        agentId: 'agent-2',
+        status: 'completed',
+        result: 'completed 2',
+      });
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(attempts).toHaveLength(3);
+      expect(attempts[2]!.retryAgentId).toBe('agent-1');
+      expect(attempts[2]!.ready).toBeFalsy();
+
+      controller.abort(userCancellationReason());
+      await running;
+
+      expect(onAbandoned).toHaveBeenCalledWith(
+        expect.objectContaining({ agentId: 'agent-1', outcome: 'cancelled' }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('does not abandon agents when a rate-limited task retries successfully', async () => {
     vi.useFakeTimers();
     try {
@@ -1801,6 +1839,7 @@ type MockAgentRunAttemptOutcome<T> =
 type MockAgentRunAttemptRecord = {
   readonly task: QueuedAgentRunTask<number>;
   readonly retryAgentId?: string;
+  ready: boolean;
   readonly markReady: () => void;
   readonly outcome: ReturnType<typeof createControlledPromise<MockAgentRunAttemptOutcome<number>>>;
 };
@@ -1832,19 +1871,21 @@ function createMockAgentRunBatchRunner(
   ): AgentRunAttemptHandle => {
     const task = findMockAgentRunTask<T>(activeTasks, runOptions);
     const outcome = createControlledPromise<MockAgentRunAttemptOutcome<T>>();
-    const markReady = () => {
-      runOptions.onReady?.();
-    };
     const attemptIndex = attempts.length;
-    attempts.push({
+    const record: MockAgentRunAttemptRecord = {
       task: task as unknown as QueuedAgentRunTask<number>,
       retryAgentId,
-      markReady,
+      ready: false,
+      markReady: () => {
+        record.ready = true;
+        runOptions.onReady?.();
+      },
       outcome: outcome as unknown as MockAgentRunAttemptRecord['outcome'],
-    });
+    };
+    attempts.push(record);
 
     const delay = options.readyDelay?.(attemptIndex);
-    if (delay !== undefined) setTimeout(markReady, delay);
+    if (delay !== undefined) setTimeout(record.markReady, delay);
 
     return {
       agentId,
