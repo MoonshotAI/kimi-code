@@ -2481,7 +2481,7 @@ describe('SessionEventBroadcaster', () => {
       const ids = transcriptEnvelopes(view.envelopes)
         .filter((e) => e.type === 'transcript.reset')
         .map((e) => (e.payload as { agent_id: string }).agent_id)
-        .toSorted();
+        .sort();
       expect(ids).toEqual(['main', 'sub-1']);
     });
 

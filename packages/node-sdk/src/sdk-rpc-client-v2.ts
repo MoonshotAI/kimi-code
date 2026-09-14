@@ -955,9 +955,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * cannot deadlock.
    */
   private runSessionAccessAll<T>(sessionIds: readonly string[], work: () => Promise<T>): Promise<T> {
-    const keys = [...new Set(sessionIds)].toSorted();
+    const keys = [...new Set(sessionIds)].sort();
     let chained: () => Promise<T> = work;
-    for (const key of [...keys].toReversed()) {
+    for (const key of [...keys].reverse()) {
       const inner = chained;
       chained = () => this.runSessionAccess(key, inner);
     }
