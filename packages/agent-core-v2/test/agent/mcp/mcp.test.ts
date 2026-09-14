@@ -132,7 +132,7 @@ class FakeMcpManager {
     tools: readonly KosongTool[],
     enabledNames = new Set(tools.map((tool) => tool.name)),
     rawTools?: readonly MCPToolDefinition[],
-    deferred = true,
+    deferred = false,
   ): void {
     const resolvedRawTools =
       rawTools ??
@@ -333,7 +333,7 @@ describe('AgentMcpService', () => {
       'mcp__local_server__echo',
       'mcp__local_server__noop',
     ]);
-    expect(infos.every((info) => info.disclosure === 'deferred')).toBe(true);
+    expect(infos.every((info) => info.disclosure === 'inline')).toBe(true);
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'tool.list.updated',
@@ -377,17 +377,17 @@ describe('AgentMcpService', () => {
     }
   });
 
-  it('registers tools of a deferred=false server with inline disclosure', async () => {
+  it('registers tools of a deferred=true server with deferred disclosure', async () => {
     const manager = new FakeMcpManager();
     const client = fakeMcpClient();
-    manager.setResolved('s', client, await discoverTools(client), undefined, undefined, false);
+    manager.setResolved('s', client, await discoverTools(client), undefined, undefined, true);
     createService(manager);
 
     manager.connect('s');
 
     const infos = ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp');
     expect(infos.length).toBeGreaterThan(0);
-    expect(infos.every((info) => info.disclosure === 'inline')).toBe(true);
+    expect(infos.every((info) => info.disclosure === 'deferred')).toBe(true);
   });
 
   it('ignores status changes from servers outside the session baseline', async () => {
@@ -1249,7 +1249,7 @@ describe('AgentMcpService', () => {
     expect(receivedSignal).toBe(controller.signal);
   });
 
-  it('registers a synthetic authenticate tool inline when the server declares deferred: false', () => {
+  it('registers a synthetic authenticate tool deferred when the server declares deferred: true', () => {
     const oauthService = {
       beginAuthorization: async () => ({
         authorizationUrl: new URL('https://example.com/authorize'),
@@ -1260,14 +1260,14 @@ describe('AgentMcpService', () => {
     const manager = new FakeMcpManager({ oauthService });
     createService(manager);
 
-    manager.needsAuth('needs-auth', { deferred: false });
+    manager.needsAuth('needs-auth', { deferred: true });
 
     const tools = ix.get(IAgentToolRegistryService).list();
     expect(tools).toEqual([
       expect.objectContaining({
         name: 'mcp__needs-auth__authenticate',
         source: 'mcp',
-        disclosure: 'inline',
+        disclosure: 'deferred',
       }),
     ]);
   });
@@ -1290,7 +1290,7 @@ describe('AgentMcpService', () => {
       expect.objectContaining({
         name: 'mcp__needs-auth__authenticate',
         source: 'mcp',
-        disclosure: 'deferred',
+        disclosure: 'inline',
       }),
     ]);
     expect(events).toContainEqual(

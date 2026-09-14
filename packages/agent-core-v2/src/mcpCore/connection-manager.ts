@@ -163,7 +163,7 @@ export class McpConnectionManager implements McpConnectionView {
       tools: entry.tools,
       rawTools: entry.rawTools,
       enabledNames: entry.enabledNames ?? new Set(entry.tools.map((t) => t.name)),
-      deferred: entry.config.deferred !== false,
+      deferred: entry.config.deferred === true,
     };
   }
 

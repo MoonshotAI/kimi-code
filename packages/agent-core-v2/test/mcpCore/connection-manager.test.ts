@@ -225,10 +225,10 @@ describe('McpConnectionManager', () => {
     try {
       await cm.connectAll({
         plain: stdioConfig(),
-        pinned: { ...stdioConfig(), deferred: false },
+        pinned: { ...stdioConfig(), deferred: true },
       });
-      expect(cm.resolved('plain')?.deferred).toBe(true);
-      expect(cm.resolved('pinned')?.deferred).toBe(false);
+      expect(cm.resolved('plain')?.deferred).toBe(false);
+      expect(cm.resolved('pinned')?.deferred).toBe(true);
     } finally {
       await cm.shutdown();
     }
