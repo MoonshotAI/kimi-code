@@ -7,26 +7,22 @@
 //
 // The visualizer never writes these files; it mirrors the engine's on-disk
 // layout (`packages/agent-core-v2/src/agent/task/persist.ts`) for reading only:
-//   - the same `VALID_TASK_ID` guard, so a corrupt / hand-edited filename
-//     cannot turn a log path into a traversal primitive;
-//   - the same legacy snake_case → current camelCase normalization, so old
-//     sessions list identically to how the CLI would list them.
+// the same path-safety guard, so a corrupt / hand-edited filename cannot turn
+// a log path into a traversal primitive.
 
 import { open, readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type {
   BackgroundTaskInfo,
-  BackgroundTaskStatus,
 } from './agent-record-types';
 
-/** Task id format: `{prefix}-{8 chars of [0-9a-z]}`. Mirror of the engine's
- *  `VALID_TASK_ID` (`agent/task/persist.ts`). Enforced before deriving any
- *  output path so neither `../` nor a legacy `bg_<hex>` id can escape. */
-const VALID_TASK_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*-[0-9a-z]{8}$/;
-
-export function isSafeTaskId(id: string): boolean {
-  return VALID_TASK_ID.test(id);
+/** Mirror of the engine's `isPathSafeTaskId` (`agent/task/persist.ts`).
+ *  Enforced before deriving any output path so `../` and friends cannot escape. */
+export function isSafeTaskId(taskId: string): boolean {
+  if (taskId.length === 0) return false;
+  if (taskId === '.' || taskId === '..') return false;
+  return !/[/\\\0]/.test(taskId);
 }
 
 function tasksDirOf(agentDir: string): string {
@@ -34,7 +30,7 @@ function tasksDirOf(agentDir: string): string {
 }
 
 function taskOutputFile(agentDir: string, taskId: string): string {
-  if (!VALID_TASK_ID.test(taskId)) {
+  if (!isSafeTaskId(taskId)) {
     throw new Error(`Invalid task id: "${taskId}"`);
   }
   return join(tasksDirOf(agentDir), taskId, 'output.log');
@@ -44,9 +40,9 @@ function taskOutputFile(agentDir: string, taskId: string): string {
  * Enumerate all persisted background tasks for a session, normalized to the
  * current `BackgroundTaskInfo` shape and sorted newest-first by start time.
  *
- * Silently skips: filenames that don't match `VALID_TASK_ID`, files that fail
- * to read/parse, and records that are neither the current nor the legacy
- * task shape — matching the engine's tolerant `listTasks`.
+ * Silently skips: filenames that fail the path-safety guard, files that fail
+ * to read/parse, and records without a string `taskId` — matching the
+ * engine's tolerant `listTasks`.
  */
 export async function listBackgroundTasks(
   agentDir: string,
@@ -85,7 +81,7 @@ async function listBackgroundTasksAt(
   for (const entry of entries) {
     if (!entry.name.endsWith('.json')) continue;
     const id = entry.name.slice(0, -'.json'.length);
-    if (!VALID_TASK_ID.test(id)) continue;
+    if (!isSafeTaskId(id)) continue;
     reservedIds.add(id);
     if (!entry.isFile()) continue;
     let parsed: unknown;
@@ -95,9 +91,7 @@ async function listBackgroundTasksAt(
       continue;
     }
     if (!isReadablePersistedTask(parsed)) continue;
-    const task = normalizePersistedTask(parsed);
-    if (task === undefined || task.taskId !== id) continue;
-    tasks.push({ keyId: id, task });
+    tasks.push({ keyId: id, task: normalizePersistedTask(parsed) });
   }
   return { reservedIds, tasks };
 }
@@ -214,187 +208,17 @@ function isMissingPath(error: unknown): boolean {
 
 // ── normalization (ported from agent-core-v2/agent/task/persist.ts) ────────
 
-type ReadablePersistedTask = Record<string, unknown>;
-
-interface CurrentTaskBase {
-  readonly taskId: string;
-  readonly description: string;
-  readonly status: BackgroundTaskStatus;
-  readonly detached: boolean;
-  readonly startedAt: number;
-  readonly endedAt: number | null;
-  readonly stopReason?: string;
-  readonly terminalNotificationSuppressed?: boolean;
-  readonly resumeReminded?: boolean;
-  readonly timeoutMs?: number;
-}
-
-const CURRENT_TASK_STATUSES: ReadonlySet<BackgroundTaskStatus> = new Set([
-  'running',
-  'completed',
-  'failed',
-  'timed_out',
-  'killed',
-  'lost',
-]);
-
-function normalizePersistedTask(task: ReadablePersistedTask): BackgroundTaskInfo | undefined {
-  const current = isLegacyPersistedTask(task) ? legacyPersistedTaskToCurrent(task) : task;
-  return decodeCurrentPersistedTask(current);
-}
-
-function decodeCurrentPersistedTask(task: ReadablePersistedTask): BackgroundTaskInfo | undefined {
-  const base = decodeCurrentTaskBase(task);
-  if (base === undefined) return undefined;
-
-  switch (task['kind']) {
-    case 'process':
-      if (
-        typeof task['command'] !== 'string' ||
-        !isFiniteNumber(task['pid']) ||
-        !isNullableFiniteNumber(task['exitCode'])
-      ) {
-        return undefined;
-      }
-      return {
-        ...base,
-        kind: 'process',
-        command: task['command'],
-        pid: task['pid'],
-        exitCode: task['exitCode'],
-        parentToolCallId: optionalString(task['parentToolCallId']),
-      };
-    case 'agent':
-      return {
-        ...base,
-        kind: 'agent',
-        agentId: optionalString(task['agentId']),
-        subagentType: optionalString(task['subagentType']),
-        parentToolCallId: optionalString(task['parentToolCallId']),
-        model: optionalString(task['model']),
-        thinkingEffort: optionalString(task['thinkingEffort']),
-        stopCode: optionalString(task['stopCode']),
-      };
-    case 'question':
-      if (!isFiniteNumber(task['questionCount'])) return undefined;
-      return {
-        ...base,
-        kind: 'question',
-        questionCount: task['questionCount'],
-        toolCallId: optionalString(task['toolCallId']),
-      };
-    default:
-      return undefined;
-  }
-}
-
-function decodeCurrentTaskBase(task: ReadablePersistedTask): CurrentTaskBase | undefined {
-  if (
-    typeof task['taskId'] !== 'string' ||
-    !VALID_TASK_ID.test(task['taskId']) ||
-    typeof task['description'] !== 'string' ||
-    !isCurrentTaskStatus(task['status']) ||
-    !isFiniteNumber(task['startedAt']) ||
-    !isNullableFiniteNumber(task['endedAt'])
-  ) {
-    return undefined;
-  }
+function normalizePersistedTask(task: BackgroundTaskInfo): BackgroundTaskInfo {
   return {
-    taskId: task['taskId'],
-    description: task['description'],
-    status: task['status'],
-    detached: optionalBoolean(task['detached']) ?? true,
-    startedAt: task['startedAt'],
-    endedAt: task['endedAt'],
-    stopReason: optionalString(task['stopReason']),
-    terminalNotificationSuppressed: optionalBoolean(task['terminalNotificationSuppressed']),
-    resumeReminded: optionalBoolean(task['resumeReminded']),
-    timeoutMs: optionalNumber(task['timeoutMs']),
+    ...task,
+    detached: task.detached ?? true,
   };
 }
 
-function legacyPersistedTaskToCurrent(
-  task: ReadablePersistedTask & { readonly task_id: string },
-): ReadablePersistedTask {
-  const base: ReadablePersistedTask = {
-    taskId: task.task_id,
-    description: task['description'],
-    status: legacyStatusToCurrent(task),
-    detached: true,
-    startedAt: task['started_at'],
-    endedAt: task['ended_at'],
-    stopReason: optionalNonEmptyString(task['stop_reason']),
-    timeoutMs: optionalNumber(task['timeout_ms']),
-  };
-  if (task.task_id.startsWith('agent-')) {
-    return {
-      ...base,
-      kind: 'agent',
-      agentId: optionalNonEmptyString(task['agent_id']),
-      subagentType: optionalNonEmptyString(task['subagent_type']),
-    };
-  }
-  return {
-    ...base,
-    kind: 'process',
-    command: task['command'],
-    pid: task['pid'],
-    exitCode: task['exit_code'],
-  };
-}
-
-function legacyStatusToCurrent(task: ReadablePersistedTask): unknown {
-  if (task['status'] === 'awaiting_approval') return 'running';
-  if (task['status'] === 'failed' && task['timed_out'] === true) return 'timed_out';
-  return task['status'];
-}
-
-function isReadablePersistedTask(obj: unknown): obj is ReadablePersistedTask {
-  return (
-    isRecord(obj) &&
-    (typeof obj['taskId'] === 'string' || typeof obj['task_id'] === 'string')
-  );
-}
-
-function isLegacyPersistedTask(
-  task: ReadablePersistedTask,
-): task is ReadablePersistedTask & { readonly task_id: string } {
-  return typeof task['task_id'] === 'string';
+function isReadablePersistedTask(obj: unknown): obj is BackgroundTaskInfo {
+  return isRecord(obj) && typeof obj['taskId'] === 'string';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
-}
-
-function optionalNonEmptyString(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function optionalString(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined;
-}
-
-function optionalBoolean(value: unknown): boolean | undefined {
-  return typeof value === 'boolean' ? value : undefined;
-}
-
-function optionalNumber(value: unknown): number | undefined {
-  return isFiniteNumber(value) ? value : undefined;
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
-}
-
-function isNullableFiniteNumber(value: unknown): value is number | null {
-  return value === null || isFiniteNumber(value);
-}
-
-function isCurrentTaskStatus(value: unknown): value is BackgroundTaskStatus {
-  return (
-    typeof value === 'string' &&
-    CURRENT_TASK_STATUSES.has(value as BackgroundTaskStatus)
-  );
 }

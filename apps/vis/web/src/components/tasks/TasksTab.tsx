@@ -134,7 +134,6 @@ function TaskCard({ sessionId, entry }: { sessionId: string; entry: BackgroundTa
         {task.kind === 'question' ? (
           <>
             <Field label="questionCount">{task.questionCount}</Field>
-            <Field label="toolCallId">{task.toolCallId ?? <Dim>(none)</Dim>}</Field>
           </>
         ) : null}
         <Field label="duration">
