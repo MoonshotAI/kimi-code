@@ -319,7 +319,9 @@ function resolveCapabilities(model: CustomRegistryModelEntry): string[] {
  * registry Bearer key stays on `source.apiKey` for registry fetches only. A
  * hand-edited `apiKeyEnv` survives: it is only overwritten when empty or when
  * it still equals the name the previous apply wrote (tracked as
- * `source.envKey`).
+ * `source.envKey`). An entry without `env` keeps a hand-edited `apiKeyEnv`
+ * too, rather than resurrecting an inline `apiKey` that would conflict with
+ * it.
  */
 export function applyCustomRegistryProvider(
   config: ManagedKimiConfigShape,
@@ -328,16 +330,25 @@ export function applyCustomRegistryProvider(
 ): void {
   const providerKey = entry.id;
   const envKey = firstNonEmptyString(entry.env);
+  const existing = config.providers[providerKey];
 
   if (envKey === undefined) {
-    config.providers[providerKey] = {
-      type: entry.type,
-      baseUrl: entry.api,
-      apiKey: source.apiKey,
-      source,
-    };
+    const existingApiKeyEnv = nonEmptyString(existing?.['apiKeyEnv']);
+    config.providers[providerKey] =
+      existingApiKeyEnv === undefined
+        ? {
+            type: entry.type,
+            baseUrl: entry.api,
+            apiKey: source.apiKey,
+            source,
+          }
+        : {
+            type: entry.type,
+            baseUrl: entry.api,
+            apiKeyEnv: existingApiKeyEnv,
+            source,
+          };
   } else {
-    const existing = config.providers[providerKey];
     const existingApiKeyEnv = nonEmptyString(existing?.['apiKeyEnv']);
     const trackedEnvKey = isRecord(existing?.['source'])
       ? nonEmptyString(existing['source']['envKey'])

@@ -147,7 +147,7 @@ function readCustomRegistrySource(provider: ProviderView): CustomRegistrySource 
     kind: 'apiJson',
     url,
     apiKey,
-    ...(typeof envKey === 'string' && envKey.length > 0 ? { envKey } : {}),
+    envKey: typeof envKey === 'string' && envKey.length > 0 ? envKey : undefined,
   };
 }
 

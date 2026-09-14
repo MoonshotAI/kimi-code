@@ -618,6 +618,64 @@ describe('applyCustomRegistryProvider', () => {
 
     expect(config.providers['acme']?.['apiKeyEnv']).toBe('ACME_RENAMED_KEY');
   });
+
+  it('preserves a hand-edited apiKeyEnv when the entry declares no env', () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        acme: {
+          type: 'openai',
+          baseUrl: 'https://acme.example.test/v1',
+          apiKeyEnv: 'MY_OWN_KEY',
+          source: { ...KOKUB_SOURCE, envKey: 'ACME_API_KEY' },
+        },
+      },
+    };
+    const entry: CustomRegistryProviderEntry = {
+      id: 'acme',
+      name: 'Acme',
+      api: 'https://acme.example.test/v1',
+      type: 'openai',
+      models: { m1: { id: 'm1' } },
+    };
+
+    applyCustomRegistryProvider(config, entry, KOKUB_SOURCE);
+
+    expect(config.providers['acme']).toEqual({
+      type: 'openai',
+      baseUrl: 'https://acme.example.test/v1',
+      apiKeyEnv: 'MY_OWN_KEY',
+      source: KOKUB_SOURCE,
+    });
+  });
+
+  it('keeps a hand-edited apiKeyEnv when upstream drops and later re-adds the env field', () => {
+    const trackedSource: CustomRegistrySource = { ...KOKUB_SOURCE, envKey: 'ACME_API_KEY' };
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        acme: {
+          type: 'openai',
+          baseUrl: 'https://acme.example.test/v1',
+          apiKeyEnv: 'MY_OWN_KEY',
+          source: trackedSource,
+        },
+      },
+    };
+    const entryWithoutEnv: CustomRegistryProviderEntry = {
+      id: 'acme',
+      name: 'Acme',
+      api: 'https://acme.example.test/v1',
+      type: 'openai',
+      models: { m1: { id: 'm1' } },
+    };
+
+    applyCustomRegistryProvider(config, entryWithoutEnv, trackedSource);
+    expect(config.providers['acme']?.['apiKeyEnv']).toBe('MY_OWN_KEY');
+    expect(config.providers['acme']).not.toHaveProperty('apiKey');
+
+    applyCustomRegistryProvider(config, { ...entryWithoutEnv, env: ['ACME_API_KEY'] }, trackedSource);
+    expect(config.providers['acme']?.['apiKeyEnv']).toBe('MY_OWN_KEY');
+    expect(config.providers['acme']).not.toHaveProperty('apiKey');
+  });
 });
 
 describe('removeCustomRegistryProvider', () => {
