@@ -137,6 +137,7 @@ beforeEach(async () => {
         },
         exit: () => {
           towerActive = false;
+          return Promise.resolve();
         },
       });
       reg.defineInstance(ISessionManager, {

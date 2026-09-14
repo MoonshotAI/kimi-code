@@ -151,7 +151,7 @@ describe('AgentTowerService', () => {
   let removedTools: string[];
   let activeTools: string[] | undefined;
   let policyInactiveTools: string[];
-  let liveSessions: Map<string, { busy: boolean; pendingInteraction: SessionPendingInteraction; exit: Mock<() => void>; title?: string; metadataReadFails?: boolean }>;
+  let liveSessions: Map<string, { busy: boolean; pendingInteraction: SessionPendingInteraction; exit: Mock<() => Promise<void>>; title?: string; metadataReadFails?: boolean }>;
   let fireUnitsChanged: () => void = () => {};
 
   beforeEach(() => {
@@ -279,7 +279,7 @@ describe('AgentTowerService', () => {
     expect(tower.isActive).toBe(false);
     await expect(tower.enter()).resolves.toEqual({ entered: true });
     expect(tower.isActive).toBe(true);
-    tower.exit();
+    await tower.exit();
     expect(tower.isActive).toBe(false);
 
     expect(events).toEqual([
@@ -299,7 +299,7 @@ describe('AgentTowerService', () => {
       }),
     );
 
-    tower.exit();
+    await tower.exit();
     expect(tower.isActive).toBe(false);
     await tower.enter();
     await tower.enter();
@@ -328,7 +328,7 @@ describe('AgentTowerService', () => {
       expect(state.base).toBe('develop');
       expect(state.sessionId).toBe('session-base');
 
-      tower.exit();
+      await tower.exit();
       expect(tower.requestedBase).toBeUndefined();
     } finally {
       await rm(repo, { recursive: true, force: true });
@@ -972,8 +972,8 @@ describe('AgentTowerService', () => {
   function stubLiveSession(
     id: string,
     init: { busy?: boolean; pendingInteraction?: SessionPendingInteraction; title?: string; metadataReadFails?: boolean } = {},
-  ): Mock<() => void> {
-    const exit = vi.fn();
+  ): Mock<() => Promise<void>> {
+    const exit = vi.fn(() => Promise.resolve());
     liveSessions.set(id, {
       busy: init.busy ?? false,
       pendingInteraction: init.pendingInteraction ?? 'none',
@@ -1180,6 +1180,57 @@ describe('AgentTowerService', () => {
     }
   });
 
+  it('enter() awaits the outgoing owner\'s release before adopting the roster', async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'tower-enter-takeover-order-'));
+    try {
+      await initGitRepo(repo);
+      await writeFile(join(repo, 'README.md'), '# fixture\n');
+      await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
+      await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
+      const store = new TowerStore(repo);
+      await store.init('session-original');
+      await store.registerAgent({
+        name: 'worker-stale',
+        agentId: 'agent-0',
+        sessionId: 'session-original',
+        kind: 'worker',
+        spawnedAt: new Date().toISOString(),
+      });
+
+      let releaseResolve: (() => void) | undefined;
+      const ownerExit = stubLiveSession('session-original');
+      ownerExit.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseResolve = resolve;
+          }),
+      );
+      ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-fork' } as unknown as ISessionContext);
+      const adoptSpy = vi.spyOn(TowerStore.prototype, 'adopt');
+      try {
+        const tower = ix.get(IAgentTowerService);
+        const entered = tower.enter();
+
+        await vi.waitFor(() => expect(ownerExit).toHaveBeenCalled());
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(adoptSpy).not.toHaveBeenCalled();
+
+        releaseResolve!();
+        await entered;
+
+        expect(adoptSpy).toHaveBeenCalledTimes(1);
+        expect(tower.isActive).toBe(true);
+        const state = await store.load();
+        expect(state.sessionId).toBe('session-fork');
+        expect(state.roster.agents).toEqual([]);
+      } finally {
+        adoptSpy.mockRestore();
+      }
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
   it('enter() adopts the tower once the owning session is gone — TowerInit stays reachable', async () => {
     const repo = await mkdtemp(join(tmpdir(), 'tower-enter-stale-'));
     try {
@@ -1248,7 +1299,7 @@ describe('AgentTowerService', () => {
       const tower = ix.get(IAgentTowerService);
 
       await tower.enter();
-      tower.exit();
+      await tower.exit();
 
       expect(tower.isActive).toBe(false);
       await vi.waitFor(async () => {
@@ -1290,7 +1341,7 @@ describe('AgentTowerService', () => {
           return pending;
         });
       try {
-        tower.exit();
+        await tower.exit();
 
         await vi.waitFor(() => expect(releaseSpy).toHaveBeenCalledWith('session-fork'));
         await releaseSettled;
@@ -1325,7 +1376,7 @@ describe('AgentTowerService', () => {
     expect(addedTools).toEqual([...TOWER_MODE_TOOLS]);
     expect(removedTools).toEqual([]);
 
-    tower.exit();
+    await tower.exit();
     expect(removedTools).toEqual([]);
   });
 
@@ -1341,7 +1392,7 @@ describe('AgentTowerService', () => {
     expect(tower.isActive).toBe(false);
     expect(addedTools).toEqual([]);
 
-    tower.exit();
+    await tower.exit();
     expect(removedTools).toEqual([]);
   });
 
@@ -1420,7 +1471,7 @@ describe('AgentTowerService', () => {
     towerFlagOn = false;
     expect(tower.isActive).toBe(false);
 
-    tower.exit();
+    await tower.exit();
 
     towerFlagOn = true;
     expect(tower.isActive).toBe(false);
@@ -2393,7 +2444,7 @@ describe('AgentTowerService', () => {
       await flushWake();
       expect(loop.hasPendingRequests()).toBe(true);
 
-      tower.exit();
+      await tower.exit();
 
       expect(loop.hasPendingRequests()).toBe(false);
       expect(drainWakeMessages()).toEqual([]);
@@ -2653,7 +2704,7 @@ describe('TowerModeInjection', () => {
     await tower.enter();
 
     await injectDynamic(ctx);
-    tower.exit();
+    await tower.exit();
     await injectDynamic(ctx);
 
     expect(towerReminderMessages(context)).toHaveLength(2);
@@ -2751,7 +2802,7 @@ describe('TowerModeInjection', () => {
     await tower.enter();
 
     await injectDynamic(ctx);
-    tower.exit();
+    await tower.exit();
     await injectDynamic(ctx);
     await injectDynamic(ctx);
 

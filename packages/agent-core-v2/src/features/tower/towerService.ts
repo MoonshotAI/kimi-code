@@ -269,7 +269,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
           const ownerTitle = await this.resolveOwnerTitle(ownerHandle);
           return { entered: false, reason: 'owned-by-live-session', owner, ownerTitle };
         }
-        ownerHandle.accessor
+        await ownerHandle.accessor
           .get(IAgentLifecycleService)
           .handleOf('main')
           ?.accessor.get(IAgentTowerService)
@@ -352,12 +352,12 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     );
   }
 
-  exit(): void {
+  async exit(): Promise<void> {
     if (!this.agentState.get(towerKey)) return;
     this.lastPublished = false;
     this.dropInboxWake();
     void this.dispatcher.dispatch(new TowerModeExit({ agentId: this.agentCtx.agentId }));
-    void this.releaseTowerOwnership();
+    await this.releaseTowerOwnership();
   }
 
   private dropInboxWake(): void {
@@ -408,7 +408,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       await this.adoptTowerRoster();
       return;
     }
-    this.exit();
+    void this.exit();
   }
 
   private async resolveTowerOwner(): Promise<string | undefined> {
