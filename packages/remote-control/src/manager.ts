@@ -27,11 +27,6 @@ export interface RemoteControlManagerOptions {
   readonly clientVersion: string;
   readonly relayOrigin?: string;
   readonly stderr?: Pick<NodeJS.WriteStream, 'write'>;
-  /**
-   * Resolved each time a tunnel starts, so a flag flipped while Remote
-   * Control is off applies to the next tunnel (see `flag.ts`).
-   */
-  readonly chunkedResponses?: () => boolean;
 }
 
 interface RemoteControlMachineContext {
@@ -59,7 +54,6 @@ function createRemoteControlMachine(
           clientVersion: options.clientVersion,
           relayOrigin: options.relayOrigin,
           stderr: options.stderr,
-          chunkedResponses: options.chunkedResponses?.(),
         });
         onTunnelStarted(handle);
         return handle;

@@ -36,7 +36,6 @@ const MAX_EARLY_FRAME_BYTES = 1024 * 1024;
 const MAX_EARLY_FRAMES = 256;
 const BRIDGE_HIGH_WATER_MARK_BYTES = 1024 * 1024;
 const BRIDGE_DRAIN_POLL_MS = 20;
-const RESPONSE_CHUNK_BYTES = 256 * 1024;
 const RELAY_PING_INTERVAL_MS = 30_000;
 const RELAY_SILENCE_TIMEOUT_MS = 300_000;
 const BLOCKED_REQUEST_HEADERS = new Set([
@@ -137,12 +136,6 @@ export interface RemoteControlOptions {
   readonly onStatus?: (status: RemoteControlStatus) => void;
   readonly pingIntervalMs?: number;
   readonly silenceTimeoutMs?: number;
-  /**
-   * Split HTTP responses into 256 KiB tunnel frames. Resolve it from the
-   * `remote_control_chunked_responses` experimental flag (see `flag.ts`);
-   * off by default.
-   */
-  readonly chunkedResponses?: boolean;
 }
 
 export interface RemoteControlHandle {
@@ -386,7 +379,6 @@ class RemoteControlClient {
   private reconnectImmediately = false;
   private readonly pingIntervalMs: number;
   private readonly silenceTimeoutMs: number;
-  private readonly chunkedResponses: boolean;
   private stopped = false;
   private connected = false;
   private relayOnline = false;
@@ -412,7 +404,6 @@ class RemoteControlClient {
     this.onStatus = options.onStatus ?? (() => {});
     this.pingIntervalMs = options.pingIntervalMs ?? RELAY_PING_INTERVAL_MS;
     this.silenceTimeoutMs = options.silenceTimeoutMs ?? RELAY_SILENCE_TIMEOUT_MS;
-    this.chunkedResponses = options.chunkedResponses ?? false;
   }
 
   async start(): Promise<void> {
@@ -650,22 +641,15 @@ class RemoteControlClient {
   }
 
   private sendHttpResponse(requestId: string, response: Buffer): void {
-    const http = this.http;
-    if (http?.readyState !== WebSocket.OPEN) return;
-    const chunkBytes = this.chunkedResponses ? RESPONSE_CHUNK_BYTES : Math.max(response.length, 1);
-    let offset = 0;
-    do {
-      const end = Math.min(response.length, offset + chunkBytes);
-      http.send(
-        JSON.stringify({
-          request_id: requestId,
-          type: 'response',
-          is_last: end >= response.length,
-          body_base64: response.subarray(offset, end).toString('base64'),
-        }),
-      );
-      offset = end;
-    } while (offset < response.length);
+    if (this.http?.readyState !== WebSocket.OPEN) return;
+    this.http.send(
+      JSON.stringify({
+        request_id: requestId,
+        type: 'response',
+        is_last: true,
+        body_base64: response.toString('base64'),
+      }),
+    );
   }
 
   private async openStream(payload: Record<string, unknown>): Promise<void> {

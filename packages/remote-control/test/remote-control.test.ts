@@ -30,8 +30,6 @@ import {
   type EarlyFrameBuffer,
   type RemoteControlHandle,
 } from '../src/remote-control';
-import { remoteControlChunkedResponsesFlag } from '../src/flag';
-import { createRemoteControlManager } from '../src/manager';
 import { remoteControlLockPath } from '../src/lock';
 
 const CLIENT_VERSION = 'kimi-code/test';
@@ -1075,103 +1073,6 @@ describe('Remote Control stream bridge', () => {
     tunnel.close(1000);
     expect(local.isPaused).toBe(false);
     expect(local.closes).toEqual([1000]);
-  });
-});
-
-describe('Remote Control chunked responses', () => {
-  async function tunnelLargeResponse(
-    options: { chunkedResponses?: boolean; viaManager?: boolean } = {},
-  ): Promise<Array<Record<string, unknown>>> {
-    const { viaManager, ...tunnelFlags } = options;
-    const body = Buffer.alloc(600 * 1024);
-    for (let index = 0; index < body.length; index += 1) body[index] = index % 251;
-    const localServer = createServer((_request, response) => {
-      response.writeHead(200, { 'Content-Type': 'application/octet-stream' });
-      response.end(body);
-    });
-    const localPort = await listen(localServer);
-    cleanups.push(() => closeServer(localServer));
-    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
-    const relay = await startAuthRelay();
-    const tunnelOptions = {
-      homeDir,
-      localOrigin: `http://127.0.0.1:${localPort}`,
-      clientVersion: CLIENT_VERSION,
-      relayOrigin: `http://127.0.0.1:${relay.port}/coding-relay`,
-      stderr: { write: () => true },
-    };
-    if (viaManager === true) {
-      const manager = createRemoteControlManager({
-        ...tunnelOptions,
-        localOrigin: () => tunnelOptions.localOrigin,
-        localServerToken: () => 'local-server-token',
-        chunkedResponses: () => tunnelFlags.chunkedResponses ?? false,
-      });
-      cleanups.push(() => manager.close());
-      await manager.enable();
-    } else {
-      let handle: RemoteControlHandle | undefined;
-      cleanups.push(async () => handle?.close());
-      handle = await startRemoteControl({
-        ...tunnelOptions,
-        localServerToken: 'local-server-token',
-        ...tunnelFlags,
-      });
-    }
-    const http = relay.httpSockets[0]!;
-    const frames: Array<Record<string, unknown>> = [];
-    const done = new Promise<void>((resolve) => {
-      http.on('message', (data) => {
-        const frame = JSON.parse(rawDataText(data)) as Record<string, unknown>;
-        frames.push(frame);
-        if (frame['is_last'] === true) resolve();
-      });
-    });
-    http.send(
-      JSON.stringify({
-        request_id: 'large',
-        type: 'request',
-        is_last: true,
-        body_base64: Buffer.from('GET /blob HTTP/1.1\r\nHost: relay.test\r\n\r\n').toString('base64'),
-      }),
-    );
-    await done;
-    const raw = Buffer.concat(
-      frames.map((frame) => Buffer.from(frame['body_base64'] as string, 'base64')),
-    );
-    const separator = raw.indexOf('\r\n\r\n');
-    expect(raw.subarray(0, separator).toString()).toMatch(/^HTTP\/1\.1 200 OK\r\n/);
-    expect(raw.subarray(separator + 4).equals(body)).toBe(true);
-    return frames;
-  }
-
-  it('registers chunked responses as an experimental flag that defaults off', () => {
-    expect(remoteControlChunkedResponsesFlag).toMatchObject({
-      id: 'remote_control_chunked_responses',
-      env: 'KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL_CHUNKED_RESPONSES',
-      default: false,
-    });
-  });
-
-  it('splits responses into 256 KiB frames when chunked responses are enabled', async () => {
-    const frames = await tunnelLargeResponse({ chunkedResponses: true });
-    expect(frames.map((frame) => frame['is_last'])).toEqual([false, false, true]);
-    expect(frames.every((frame) => frame['request_id'] === 'large' && frame['type'] === 'response')).toBe(
-      true,
-    );
-    const lengths = frames.map((frame) => Buffer.from(frame['body_base64'] as string, 'base64').length);
-    expect(lengths[0]).toBe(256 * 1024);
-    expect(lengths[1]).toBe(256 * 1024);
-  });
-
-  it('splits responses for manager-created tunnels when the flag resolves true', async () => {
-    const frames = await tunnelLargeResponse({ chunkedResponses: true, viaManager: true });
-    expect(frames.map((frame) => frame['is_last'])).toEqual([false, false, true]);
-  });
-
-  it('sends a single frame by default', async () => {
-    const frames = await tunnelLargeResponse();
-    expect(frames.map((frame) => frame['is_last'])).toEqual([true]);
   });
 });
 
