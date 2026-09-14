@@ -61,6 +61,8 @@ export type AgentRunSuspendedEvent = {
 export type AgentRunAbandonedEvent = {
   readonly task: QueuedAgentRunTask;
   readonly agentId: string;
+  readonly outcome: 'cancelled' | 'failed';
+  readonly error?: string;
 };
 
 export type AgentRunBatchLauncher = {
@@ -370,6 +372,12 @@ export class AgentRunBatch<T> {
     if ('status' in outcome) {
       this.results[attempt.state.index] = outcome;
     } else if (this.isOnlyUnfinishedTask(attempt.state)) {
+      this.launcher.abandoned?.({
+        task: attempt.state.task,
+        agentId: outcome.agentId,
+        outcome: 'failed',
+        error: outcome.error,
+      });
       this.results[attempt.state.index] = {
         task: attempt.state.task,
         agentId: outcome.agentId,
@@ -577,7 +585,7 @@ export class AgentRunBatch<T> {
   private abandonSuspended(): void {
     for (const state of this.pending) {
       if (state.agentId === undefined) continue;
-      this.launcher.abandoned?.({ task: state.task, agentId: state.agentId });
+      this.launcher.abandoned?.({ task: state.task, agentId: state.agentId, outcome: 'cancelled' });
     }
   }
 

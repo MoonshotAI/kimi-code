@@ -18,7 +18,12 @@ import {
   subagentParentAgentId,
   subagentSwarmItem,
 } from '#/session/agentLifecycle/subagentMetadata';
-import { emitAgentRunSpawned, mirrorAgentRun, SubagentCancelled } from '#/session/subagent/mirrorAgentRun';
+import {
+  emitAgentRunSpawned,
+  mirrorAgentRun,
+  SubagentCancelled,
+  SubagentFailed,
+} from '#/session/subagent/mirrorAgentRun';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -101,7 +106,12 @@ export class SessionSwarmService implements ISessionSwarmService {
       abandoned: (event) => {
         this.dispatchSubagentEvent(
           callerAgentId,
-          new SubagentCancelled({ subagentId: event.agentId }),
+          event.outcome === 'failed'
+            ? new SubagentFailed({
+                subagentId: event.agentId,
+                error: event.error ?? 'Provider rate limit',
+              })
+            : new SubagentCancelled({ subagentId: event.agentId }),
         );
       },
     };

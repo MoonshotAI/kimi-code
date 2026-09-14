@@ -826,6 +826,49 @@ describe('AgentRunBatch abandoned callback', () => {
     }
   });
 
+  it('abandons with a failed outcome when the final rate-limited task is terminalized instead of requeued', async () => {
+    vi.useFakeTimers();
+    try {
+      const onAbandoned = vi.fn();
+      const { runBatch, attempts } = createMockAgentRunBatchRunner({ onAbandoned });
+      const running = runBatch(
+        Array.from({ length: 2 }, (_, index) => queuedAgentRunTask(index + 1)),
+        { signal: new AbortController().signal },
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      attempts.forEach((attempt) => {
+        attempt.markReady();
+      });
+      attempts[0]!.outcome.resolve({
+        task: attempts[0]!.task,
+        agentId: 'agent-1',
+        status: 'completed',
+        result: 'done 1',
+      });
+      attempts[1]!.outcome.resolve({
+        type: 'rate_limited',
+        agentId: 'agent-2',
+        error: 'Rate limited',
+      });
+
+      await expect(running).resolves.toMatchObject([
+        { status: 'completed' },
+        { status: 'failed' },
+      ]);
+      expect(onAbandoned).toHaveBeenCalledTimes(1);
+      expect(onAbandoned).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentId: 'agent-2',
+          outcome: 'failed',
+          error: 'Rate limited',
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('does not abandon agents when a rate-limited task retries successfully', async () => {
     vi.useFakeTimers();
     try {

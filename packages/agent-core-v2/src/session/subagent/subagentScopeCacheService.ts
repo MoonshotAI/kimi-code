@@ -4,6 +4,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { ISessionEventBus } from '#/app/event/eventBus';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentTaskService } from '#/agent/task/task';
 import { SubagentSuspended } from '#/features/swarm/session/sessionSwarmService';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ILogService } from '#/_base/log/log';
@@ -131,6 +132,7 @@ export class SessionSubagentScopeCacheService
     if (handle === undefined) return this.closing.has(agentId) ? 'closing' : 'missing';
     const status = handle.accessor.get(IAgentLoopService).status();
     if (status.state === 'running' || status.hasPendingRequests) return 'deferred';
+    if (handle.accessor.get(IAgentTaskService).list(true).length > 0) return 'deferred';
     const startedAt = Date.now();
     const removal = this.agentLifecycle.remove(context).then(
       () => 'removed' as const,

@@ -556,6 +556,7 @@ describe('SessionSubagentScopeCacheService', () => {
     } satisfies ISessionMcpHandle);
     ix.stub(IAgentTaskService, {
       _serviceBrand: undefined,
+      list: () => [],
       stopAllOnExit: async () => [],
       suppressAllTerminalNotifications: async () => {},
     } as unknown as IAgentTaskService);
@@ -634,6 +635,26 @@ describe('SessionSubagentScopeCacheService', () => {
     for (const agentId of ['agent-1', 'agent-2']) {
       await svc.create({ agentId });
     }
+
+    completed('agent-1');
+    completed('agent-2');
+    await settle();
+
+    expect(svc.handleOf('agent-1')).toBeDefined();
+    expect(svc.handleOf('agent-2')).toBeDefined();
+  });
+
+  it('defers eviction while the scope has active background tasks', async () => {
+    cacheService('1');
+    const svc = ix.get(IAgentLifecycleService);
+    ix.stub(IAgentTaskService, {
+      _serviceBrand: undefined,
+      list: (activeOnly?: boolean) => (activeOnly === true ? [{ taskId: 'task-1' }] : []),
+      stopAllOnExit: async () => [],
+      suppressAllTerminalNotifications: async () => {},
+    } as unknown as IAgentTaskService);
+    await svc.create({ agentId: 'agent-1' });
+    await svc.create({ agentId: 'agent-2' });
 
     completed('agent-1');
     completed('agent-2');
@@ -741,6 +762,7 @@ describe('SessionSubagentScopeCacheService', () => {
     let stopAllCalls = 0;
     ix.stub(IAgentTaskService, {
       _serviceBrand: undefined,
+      list: () => [],
       stopAllOnExit: () => (stopAllCalls++ === 0 ? stopAll : Promise.resolve([])),
       suppressAllTerminalNotifications: async () => {},
     } as unknown as IAgentTaskService);
@@ -872,7 +894,9 @@ describe('SessionSubagentScopeCacheService eviction guards', () => {
         get: (serviceId: unknown) =>
           serviceId === IAgentLoopService
             ? ({ _serviceBrand: undefined, status } as unknown as IAgentLoopService)
-            : undefined,
+            : serviceId === IAgentTaskService
+              ? ({ _serviceBrand: undefined, list: () => [] } as unknown as IAgentTaskService)
+              : undefined,
       } as IAgentScopeHandle['accessor'],
       dispose: () => {},
     };
