@@ -426,6 +426,29 @@ describe('per-agent sharded channels', () => {
     expect(seen).toEqual(['test.a']);
   });
 
+  it('rejects a stale generation subscribing to the replacement full stream', () => {
+    const bus = new EventBusService();
+    const gen1 = makeAgentScopeContext({ agentId: 'a', agentScope: 'agents/a', generation: 1 });
+    bus.activateAgent(gen1.agentContext);
+    const view1 = new AgentEventBusView(bus, gen1);
+
+    const gen2 = makeAgentScopeContext({ agentId: 'a', agentScope: 'agents/a', generation: 2 });
+    bus.activateAgent(gen2.agentContext);
+    const view2 = new AgentEventBusView(bus, gen2);
+    const seen2: string[] = [];
+    view2.subscribe((event) => seen2.push(event.type));
+
+    const staleSeen: string[] = [];
+    expect(() => view1.subscribe((event) => staleSeen.push(event.type))).toThrow(
+      'not the active',
+    );
+
+    bus.publish(new TestA({ x: 1 }), gen2.agentContext);
+
+    expect(seen2).toEqual(['test.a']);
+    expect(staleSeen).toEqual([]);
+  });
+
   it('keeps a stale generation deactivation from removing the active channel', () => {
     const bus = new EventBusService();
     const gen1 = makeAgentScopeContext({ agentId: 'a', agentScope: 'agents/a', generation: 1 });
