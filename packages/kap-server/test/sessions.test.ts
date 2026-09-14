@@ -535,17 +535,17 @@ describe('server-v2 /api/v1/sessions', () => {
 
     const page1 = await getJson<PageWire>('/api/v1/sessions?page_size=3');
     expect(page1.body.code).toBe(0);
-    expect(page1.body.data.items.map((s) => s.id)).toEqual(ids.slice(4).reverse());
+    expect(page1.body.data.items.map((s) => s.id)).toEqual(ids.slice(4).toReversed());
     expect(page1.body.data.has_more).toBe(true);
 
-    const cursor1 = page1.body.data.items[page1.body.data.items.length - 1]!.id;
+    const cursor1 = page1.body.data.items.at(-1)!.id;
     const page2 = await getJson<PageWire>(
       `/api/v1/sessions?page_size=3&before_id=${encodeURIComponent(cursor1)}`,
     );
-    expect(page2.body.data.items.map((s) => s.id)).toEqual(ids.slice(1, 4).reverse());
+    expect(page2.body.data.items.map((s) => s.id)).toEqual(ids.slice(1, 4).toReversed());
     expect(page2.body.data.has_more).toBe(true);
 
-    const cursor2 = page2.body.data.items[page2.body.data.items.length - 1]!.id;
+    const cursor2 = page2.body.data.items.at(-1)!.id;
     const page3 = await getJson<PageWire>(
       `/api/v1/sessions?page_size=3&before_id=${encodeURIComponent(cursor2)}`,
     );
@@ -642,9 +642,6 @@ describe('server-v2 /api/v1/sessions', () => {
         '[providers."managed:kimi-code".oauth]',
         'storage = "file"',
         'key = "kimi-code"',
-        '',
-        '[experimental]',
-        'auto_session_title = true',
         '',
       ].join('\n'),
       'utf-8',
