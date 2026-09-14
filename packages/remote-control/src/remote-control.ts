@@ -1097,7 +1097,9 @@ export function bridgeSockets(
 //
 // Frames buffered before the sink existed are replayed through the same gate: the replay
 // stops at the mark, the rest waits in `pending`, and each drain poll continues the replay
-// before the source is allowed to read again.
+// before the source is allowed to read again. Live frames that still arrive while a drain
+// is active (pausing only stops the socket read, not the messages already decoded from the
+// last chunk) join the same queue instead of bypassing the mark.
 function createPump(
   from: BridgeSocket,
   to: BridgeSocket,
@@ -1121,7 +1123,6 @@ function createPump(
   const send = (data: RawData, isBinary: boolean): boolean => {
     if (to.readyState !== WebSocket.OPEN) return false;
     to.send(data, { binary: isBinary });
-    if (drain !== undefined) return true;
     if (to.bufferedAmount <= BRIDGE_HIGH_WATER_MARK_BYTES) return false;
     from.pause();
     drain = setInterval(poll, BRIDGE_DRAIN_POLL_MS);
@@ -1143,6 +1144,10 @@ function createPump(
     flushPending();
   };
   const forward = (data: RawData, isBinary: boolean): void => {
+    if (drain !== undefined) {
+      pending.push([data, isBinary]);
+      return;
+    }
     send(data, isBinary);
   };
   const replay = (frames: readonly [RawData, boolean][]): void => {

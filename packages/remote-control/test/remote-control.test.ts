@@ -1014,6 +1014,32 @@ describe('Remote Control stream bridge', () => {
     expect(tunnel.sent.at(-1)).toBe('live');
   });
 
+  it('queues live frames that arrive while the sink is draining and replays them in order', () => {
+    vi.useFakeTimers();
+    const local = new FakeSocket();
+    const tunnel = new FakeSocket();
+    bridgeSockets(local, tunnel, () => {});
+
+    tunnel.bufferedAmount = 1024 * 1024 + 1;
+    local.emit('message', Buffer.from('a'), false);
+    expect(tunnel.sent).toEqual(['a']);
+    expect(local.isPaused).toBe(true);
+
+    local.emit('message', Buffer.from('b'), false);
+    local.emit('message', Buffer.from('c'), false);
+    vi.advanceTimersByTime(20);
+    expect(tunnel.sent).toEqual(['a']);
+
+    tunnel.bufferedAmount = 0;
+    vi.advanceTimersByTime(20);
+    expect(tunnel.sent).toEqual(['a', 'b', 'c']);
+    expect(local.isPaused).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+
+    local.emit('message', Buffer.from('d'), false);
+    expect(tunnel.sent).toEqual(['a', 'b', 'c', 'd']);
+  });
+
   it('drops the unsent early frames when the bridge closes mid-replay', () => {
     vi.useFakeTimers();
     const local = new FakeSocket();
