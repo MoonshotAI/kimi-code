@@ -1,4 +1,4 @@
-import { type IDisposable } from '#/_base/di/lifecycle';
+import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -32,6 +32,7 @@ export class EventBusService extends Service implements ISessionEventBus {
   private readonly perAgent = new Map<string, AgentChannel>();
   private readonly agents = new Map<string, AgentContext>();
   private readonly sources = new WeakMap<Event2<any>, AgentContext>();
+  private disposedBus = false;
 
   activateAgent(agent: AgentContext): void {
     this.agents.set(agent.agentId, agent);
@@ -75,6 +76,7 @@ export class EventBusService extends Service implements ISessionEventBus {
   }
 
   override dispose(): void {
+    this.disposedBus = true;
     for (const channel of this.perAgent.values()) channel.dispose();
     this.perAgent.clear();
     super.dispose();
@@ -91,6 +93,7 @@ export class EventBusService extends Service implements ISessionEventBus {
     typeOrHandler: string | ((event: Event2<any>) => void),
     handler?: (event: Event2<any>) => void,
   ): IDisposable {
+    if (this.disposedBus) return Disposable.None;
     const channel = this.channelFor(agent.agentId);
     if (typeof typeOrHandler === 'function') {
       return channel.all.event(typeOrHandler);

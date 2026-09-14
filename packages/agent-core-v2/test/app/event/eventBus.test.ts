@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { createDecorator } from '#/_base/di/instantiation';
 import { InstantiationService } from '#/_base/di/instantiationService';
+import { Disposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
 import { ServiceCollection } from '#/_base/di/serviceCollection';
 import { AgentEvent2, Event2 } from '#/app/event/event2';
@@ -442,5 +443,23 @@ describe('per-agent sharded channels', () => {
 
     expect(seen).toEqual([1]);
     expect(bus.listenerCounts().perAgent).toEqual({});
+  });
+
+  it('does not recreate agent channels after the bus is disposed', () => {
+    const bus = new EventBusService();
+    const scopeA = makeAgentScopeContext({ agentId: 'a', agentScope: 'agents/a', generation: 1 });
+    bus.activateAgent(scopeA.agentContext);
+    const viewA = new AgentEventBusView(bus, scopeA);
+
+    bus.dispose();
+
+    const seen: number[] = [];
+    const subscription = viewA.subscribe((event) => {
+      if (event instanceof TestAgentEvent) seen.push(event.value);
+    });
+    expect(bus.listenerCounts().perAgent).toEqual({});
+    expect(subscription).toBe(Disposable.None);
+    expect(() => bus.publish(new TestAgentEvent({ agentId: 'a', value: 3 }), scopeA.agentContext)).not.toThrow();
+    expect(seen).toEqual([]);
   });
 });
