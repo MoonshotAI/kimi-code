@@ -76,6 +76,11 @@ export const systemMessageSchema = z.discriminatedUnion('subtype', [
     subtype: z.literal('interruption'),
     payload: z.unknown().optional(),
   }),
+  z.object({
+    ...systemMessageBase,
+    subtype: z.literal('fork.boundary'),
+    payload: z.unknown().optional(),
+  }),
 ]);
 
 export type SystemMessage = z.infer<typeof systemMessageSchema>;
