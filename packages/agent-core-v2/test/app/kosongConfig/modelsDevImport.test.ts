@@ -317,6 +317,22 @@ describe('IModelsDevImportService', () => {
     expect(providers['openai']?.apiKey).toBe('sk-new');
   });
 
+  it('keeps a hand-edited api_key_env on a re-import without a key, drops it when a new key is given', async () => {
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJson(CATALOG) });
+    const { config, imports } = createHost({
+      providers: { openai: { type: 'openai', apiKeyEnv: 'OPENAI_OWN_KEY' } },
+    });
+
+    await imports.importModelsDevProvider({ catalogId: 'openai' });
+    let providers = config.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue ?? {};
+    expect(providers['openai']?.apiKeyEnv).toBe('OPENAI_OWN_KEY');
+
+    await imports.importModelsDevProvider({ catalogId: 'openai', apiKey: 'sk-new' });
+    providers = config.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue ?? {};
+    expect(providers['openai']?.apiKey).toBe('sk-new');
+    expect(providers['openai']?.apiKeyEnv).toBeUndefined();
+  });
+
   it('rejects importing over an OAuth-managed provider', async () => {
     setModelsDevUpstreamForTest({ fetchImpl: fetchJson(CATALOG) });
     const { imports } = createHost({
