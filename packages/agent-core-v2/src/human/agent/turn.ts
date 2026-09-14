@@ -306,7 +306,7 @@ function proposeRecovery(
   if (recovery === undefined) return undefined;
   const proposal = recovery.propose(ctx);
   if (proposal === undefined) return undefined;
-  if (proposal.messages !== undefined && proposal.messages === ctx.messages) return undefined;
+  if (proposal.attemptMessageOverride !== undefined && proposal.attemptMessageOverride === ctx.messages) return undefined;
   return proposal;
 }
 
@@ -658,7 +658,7 @@ export function createTurnMachine(
                       ...context.appliedRecoveries,
                       { strategy: proposal.strategy, action: proposal.action },
                     ],
-                    attemptMessageOverride: proposal.messages ?? context.attemptMessageOverride,
+                    attemptMessageOverride: proposal.attemptMessageOverride ?? context.attemptMessageOverride,
                     attempt: 1,
                   };
                 }),

@@ -4,7 +4,6 @@ import {
   applyCredential,
   credentialsRecovery,
   createOAuthCredentialProvider,
-  resolveModelCredentials,
   createStaticCredentialProvider,
 } from '#/credentials/credentials';
 import type { LlmModel } from '#/llm/model';
@@ -106,10 +105,9 @@ describe('createOAuthCredentialProvider', () => {
   });
 });
 
-describe('applyCredential / resolveModelCredentials', () => {
-  it('returns the model unchanged when the credential is undefined', async () => {
+describe('applyCredential', () => {
+  it('returns the model unchanged when the credential is undefined', () => {
     expect(applyCredential(MODEL, undefined)).toBe(MODEL);
-    await expect(resolveModelCredentials(MODEL, undefined)).resolves.toBe(MODEL);
   });
 
   it('overrides the api key and merges headers', () => {

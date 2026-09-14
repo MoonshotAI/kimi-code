@@ -153,7 +153,7 @@ export interface OpenAILoweredMessage {
   readonly message: OpenAIWireMessage;
 }
 
-export function lowerOpenAIRequest(
+export function lowerOpenAIMessages(
   input: FormatRequestInput,
   options: OpenAILowerOptions,
 ): OpenAILoweredMessage[] {

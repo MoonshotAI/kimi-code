@@ -87,7 +87,7 @@ export const kimiOpenAITrait: OpenAITrait = {
     };
   },
 
-  maxCompletionTokens: (maxCompletionTokens) => ({
+  encodeMaxCompletionTokens: (maxCompletionTokens) => ({
     max_completion_tokens: maxCompletionTokens,
   }),
 

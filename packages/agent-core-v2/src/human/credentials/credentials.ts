@@ -51,13 +51,6 @@ export function applyCredential(
   };
 }
 
-export async function resolveModelCredentials(
-  model: LlmModel,
-  credentialProvider: LlmCredentialProvider | undefined,
-): Promise<LlmModel> {
-  return applyCredential(model, await credentialProvider?.resolve());
-}
-
 const CREDENTIALS_RECOVERY_ID = 'credentials';
 
 export const credentialsRecovery: LlmRecovery = {

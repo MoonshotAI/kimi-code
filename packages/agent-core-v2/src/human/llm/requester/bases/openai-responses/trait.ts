@@ -14,7 +14,7 @@ export interface OpenAIResponsesTrait {
 
   cacheKey?(key: string, ctx: TraitContext): Record<string, unknown> | undefined;
 
-  maxCompletionTokens?(
+  encodeMaxCompletionTokens?(
     maxCompletionTokens: number,
     ctx: TraitContext,
   ): Record<string, unknown> | undefined;

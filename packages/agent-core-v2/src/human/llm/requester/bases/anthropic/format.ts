@@ -186,7 +186,7 @@ export interface AnthropicLoweredMessage {
   readonly message: AnthropicWireMessage;
 }
 
-export function lowerAnthropicRequest(
+export function lowerAnthropicMessages(
   input: FormatRequestInput,
   acceptedMimes: ReadonlySet<string>,
 ): AnthropicLoweredMessage[] {

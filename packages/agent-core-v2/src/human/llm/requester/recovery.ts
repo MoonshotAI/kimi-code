@@ -16,7 +16,7 @@ export interface LlmRecoveryContext {
 
 export interface LlmRecoveryProposal {
   readonly action: string;
-  readonly messages?: readonly Message[];
+  readonly attemptMessageOverride?: readonly Message[];
   readonly beforeNextAttempt?: () => void;
 }
 

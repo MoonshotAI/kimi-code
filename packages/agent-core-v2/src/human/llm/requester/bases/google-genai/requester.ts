@@ -39,13 +39,13 @@ export interface GoogleGenAIRequesterOptions
   readonly vertexai?: boolean;
 }
 
-export interface GoogleGenAIRequestPlanOptions {
+export interface GoogleGenAIRequestPreparationOptions {
   readonly trait?: GoogleGenAITrait;
 }
 
-export function planGoogleGenAIRequest(
+export function prepareGoogleGenAIRequest(
   input: FormatRequestInput,
-  options?: GoogleGenAIRequestPlanOptions,
+  options?: GoogleGenAIRequestPreparationOptions,
 ): GoogleGenAIRequestParams {
   const trait = options?.trait;
   const ctx: TraitContext = { model: input.model };
@@ -59,7 +59,7 @@ export function planGoogleGenAIRequest(
   if (cap !== undefined) {
     kwargs = {
       ...kwargs,
-      ...(trait?.maxCompletionTokens?.(cap, ctx) ?? encodeGoogleGenAIMaxOutputTokens(cap)),
+      ...(trait?.encodeMaxCompletionTokens?.(cap, ctx) ?? encodeGoogleGenAIMaxOutputTokens(cap)),
     };
   }
   if (input.responseFormat !== undefined) {
@@ -124,7 +124,7 @@ interface GoogleGenAITransport {
   readonly onEvent?: (event: LlmRequestEvent) => void;
 }
 
-async function internalGenerate(
+async function executeGoogleGenAIRequest(
   request: GoogleGenAIRequestParams,
   transport: GoogleGenAITransport,
 ): Promise<void> {
@@ -197,7 +197,7 @@ export function createGoogleGenAIRequester(options?: GoogleGenAIRequesterOptions
       const ctx: TraitContext = { model };
       let request: GoogleGenAIRequestParams;
       try {
-        request = planGoogleGenAIRequest(
+        request = prepareGoogleGenAIRequest(
           {
             ...config,
             model,
@@ -212,7 +212,7 @@ export function createGoogleGenAIRequester(options?: GoogleGenAIRequesterOptions
         return;
       }
       try {
-        await internalGenerate(request, {
+        await executeGoogleGenAIRequest(request, {
           connection,
           ctx,
           format,
