@@ -110,6 +110,19 @@ export class TurnStepStarted extends AgentEvent2<TurnStepStartedPayload> {
 }
 export interface TurnStepStarted extends TurnStepStartedPayload {}
 
+export interface TurnActingStartedPayload {
+  readonly agentId: string;
+  readonly turnId: number;
+  readonly step: number;
+  readonly stepId?: string;
+}
+
+export class TurnActingStarted extends AgentEvent2<TurnActingStartedPayload> {
+  static override readonly type = 'turn.acting.started';
+  static override readonly observable = true;
+}
+export interface TurnActingStarted extends TurnActingStartedPayload {}
+
 export interface TurnStepCompletedPayload {
   readonly agentId: string;
   readonly turnId: number;
