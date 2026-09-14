@@ -873,14 +873,14 @@ describe('foldWireHistory queued prompts and legacy messages', () => {
     expect(ofType(aborted, 'user')).toHaveLength(0);
   });
 
-  it('rebuilds legacy append-only assistant and tool messages', () => {
-    const messages = fold([
+  it('keeps fork seed messages in an unnumbered turn before the fork boundary', () => {
+    const records: ContextRecord[] = [
       rec('context.append_message', {
         message: {
           role: 'assistant',
           content: [
             { type: 'think', think: 'summary', hidden: true },
-            { type: 'text', text: 'hi' },
+            { type: 'text', text: 'main answer' },
           ],
           toolCalls: [{ id: 'call_1', name: 'Bash', arguments: '{"cmd":"ls"}' }],
         },
@@ -890,14 +890,60 @@ describe('foldWireHistory queued prompts and legacy messages', () => {
         { message: { role: 'tool', content: [{ type: 'text', text: 'file.txt' }], toolCalls: [], toolCallId: 'call_1' } },
         T0 + 1,
       ),
+      rec('agent.fork', { agentId: 'agent-1', forkedFrom: 'main' }, T0 + 2),
+      rec(
+        'turn.prompt',
+        { input: [{ type: 'text', text: 'btw one' }], origin: { kind: 'user' }, promptId: 'b1' },
+        T0 + 3,
+      ),
+      loopEvent({ type: 'step.begin', uuid: 'st1', turnId: '0', step: 1 }, T0 + 4),
+      loopEvent(
+        { type: 'content.part', stepUuid: 'st1', part: { type: 'text', text: 'answer one' }, turnId: '0', step: 1 },
+        T0 + 5,
+      ),
+      loopEvent({ type: 'step.end', uuid: 'st1', finishReason: 'stop' }, T0 + 6),
+      rec('turn.ended', { turnId: 0, reason: 'completed' }, T0 + 7),
+      rec(
+        'turn.prompt',
+        { input: [{ type: 'text', text: 'btw two' }], origin: { kind: 'user' }, promptId: 'b2' },
+        T0 + 8,
+      ),
+      rec('turn.ended', { turnId: 1, reason: 'completed' }, T0 + 9),
+    ];
+    const messages = fold(records);
+    expect(ofType(messages, 'turn').map((t) => [t.turn_id, t.ordinal, t.status])).toEqual([
+      ['t-1', -1, 'completed'],
+      ['t0', 0, 'completed'],
+      ['t1', 1, 'completed'],
     ]);
-    const turn = ofType(messages, 'turn')[0]!;
-    expect(turn).toMatchObject({ turn_id: 't0', origin: { kind: 'other' } });
+    const boundary = ofType(messages, 'system').find((s) => s.subtype === 'fork.boundary');
+    expect(boundary?.payload).toMatchObject({ forked_from: 'main' });
+    const assistants = ofType(messages, 'assistant');
+    expect(assistants.find((a) => a.text === 'main answer')).toMatchObject({
+      turn_id: 't-1',
+      message_id: 't-1.1.a1',
+    });
+    expect(assistants.find((a) => a.text === 'answer one')).toMatchObject({ turn_id: 't0' });
     expect(ofType(messages, 'thinking')).toHaveLength(0);
-    const assistant = ofType(messages, 'assistant')[0]!;
-    expect(assistant).toMatchObject({ message_id: 't0.1.a1', text: 'hi', status: 'completed' });
-    const tool = ofType(messages, 'tool_call')[0]!;
-    expect(tool).toMatchObject({ tool_call_id: 'call_1', status: 'done', output: 'file.txt' });
+    expect(ofType(messages, 'tool_call')[0]).toMatchObject({
+      tool_call_id: 'call_1',
+      turn_id: 't-1',
+      status: 'done',
+      output: 'file.txt',
+    });
+    expect(ofType(messages, 'user').map((u) => [u.message_id, u.turn_id])).toEqual([
+      ['b1', 't0'],
+      ['b2', 't1'],
+    ]);
+    expect(ofType(messages, 'step').map((s) => [s.step_id, s.status])).toEqual([
+      ['t-1.1', 'completed'],
+      ['t0.1', 'completed'],
+    ]);
+
+    const seed = foldTimelineSeed(records);
+    expect(seed.timelineIds).toEqual(['t-1', 'sys_fork.boundary_1', 't0', 't1']);
+    expect(seed.nextTurnId).toBe(2);
+    expect(seed.systemCounts).toEqual(new Map([['fork.boundary', 1]]));
   });
 });
 
@@ -1510,6 +1556,7 @@ describe('live and cold rebuild id consistency', () => {
       .filter((m) => m.type === 'turn' || m.type === 'system')
       .map((m) => (m.type === 'turn' ? m.turn_id : m.system_id));
     expect(legacySeed.timelineIds).toEqual(legacyColdIds);
-    expect(legacySeed.nextTurnId).toBe(2);
+    expect(legacySeed.timelineIds).toEqual(['t-1', 't0']);
+    expect(legacySeed.nextTurnId).toBe(1);
   });
 });

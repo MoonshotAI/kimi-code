@@ -11,6 +11,7 @@ export const DURABLE_SYSTEM_SUBTYPES = [
   'swarm.enter',
   'swarm.exit',
   'interruption',
+  'fork.boundary',
 ] as const;
 
 export type DurableSystemSubtype = (typeof DURABLE_SYSTEM_SUBTYPES)[number];

@@ -49,6 +49,8 @@ export function foldTimelineSeed(records: readonly ContextRecord[]): TimelineSee
   const anchorTurnOrdinals: number[] = [];
   const sysIds = new SystemIdAllocator();
   let nextTurnId = 0;
+  const SEED_TURN_RAW_ID = -1;
+  let seedEnded = false;
   let currentTurn: number | undefined;
   const cancelledTurnIds = new Set<number>();
   const hiddenTurnIds = new Set<number>();
@@ -73,6 +75,7 @@ export function foldTimelineSeed(records: readonly ContextRecord[]): TimelineSee
   for (const record of records) {
     switch (record.type) {
       case 'turn.prompt': {
+        seedEnded = true;
         skipCancelledTurnIds();
         const recordTurnId = record['turnId'];
         const rawId =
@@ -106,11 +109,19 @@ export function foldTimelineSeed(records: readonly ContextRecord[]): TimelineSee
             hiddenTurnIds.has(currentTurn) ||
             !visibleTurnOrdinals.has(currentTurn)
           ) {
-            const rawId = nextTurnId;
-            nextTurnId += 1;
-            visibleTurnOrdinals.add(rawId);
-            timelineIds.push(turnIdOf(rawId));
-            currentTurn = rawId;
+            if (seedEnded) {
+              const rawId = nextTurnId;
+              nextTurnId += 1;
+              visibleTurnOrdinals.add(rawId);
+              timelineIds.push(turnIdOf(rawId));
+              currentTurn = rawId;
+            } else {
+              if (!visibleTurnOrdinals.has(SEED_TURN_RAW_ID)) {
+                visibleTurnOrdinals.add(SEED_TURN_RAW_ID);
+                timelineIds.push(turnIdOf(SEED_TURN_RAW_ID));
+              }
+              currentTurn = SEED_TURN_RAW_ID;
+            }
           }
           break;
         }
@@ -136,6 +147,11 @@ export function foldTimelineSeed(records: readonly ContextRecord[]): TimelineSee
           turnPromptIds.set(matchedTurnId, messageId);
         }
         undoAnchors.push({ rawId: matchedTurnId ?? nextTurnId });
+        break;
+      }
+      case 'agent.fork': {
+        seedEnded = true;
+        pushSystem('fork.boundary');
         break;
       }
       case 'turn.ended': {

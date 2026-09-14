@@ -1314,6 +1314,8 @@ describe('AgentLifecycleService', () => {
   });
 
   it('fork seeds the child context, closing the trailing open tool exchange', async () => {
+    const log = recordingAppendLog();
+    ix.stub(IAppendLogStore, log.store);
     const svc = ix.get(IAgentLifecycleService);
     const source = await svc.create({ agentId: 'main' });
     const sourceHandle = svc.handleOf('main')!;
@@ -1331,6 +1333,7 @@ describe('AgentLifecycleService', () => {
 
     const child = await svc.fork(agentContextOf(sourceHandle), { agentId: 'forked' });
 
+    await svc.handleOf(child.agentId)!.accessor.get(IWireService).flush();
     const seeded = svc.handleOf(child.agentId)!.accessor.get(IAgentContextMemoryService).get();
     expect(seeded).toHaveLength(3);
     expect(seeded[0]).toMatchObject({ role: 'user' });
@@ -1340,6 +1343,14 @@ describe('AgentLifecycleService', () => {
       toolCallId: 'call_agent',
       content: [{ type: 'text', text: INHERITED_IN_FLIGHT_TOOL_OUTPUT }],
     });
+    const boundaryIndex = log.appended.findIndex((record) => record.type === 'agent.fork');
+    expect(boundaryIndex).toBeGreaterThan(-1);
+    expect(log.appended[boundaryIndex]).toMatchObject({ agentId: 'forked', forkedFrom: 'main' });
+    const lastSeedAppend = log.appended.reduce(
+      (acc, record, index) => (record.type === 'context.append_message' ? index : acc),
+      -1,
+    );
+    expect(boundaryIndex).toBeGreaterThan(lastSeedAppend);
   });
 
   it('fork leaves the child context empty when the source history is empty', async () => {
