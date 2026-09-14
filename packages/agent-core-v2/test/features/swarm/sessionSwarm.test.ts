@@ -1600,6 +1600,54 @@ describe('SessionSwarmService metadata compatibility', () => {
     }
   });
 
+  it('emits subagent.cancelled exactly once when a child with an installed mirror is cancelled before ready', async () => {
+    vi.useFakeTimers();
+    try {
+      const published: Event2[] = [];
+      (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: Event2) => {
+        published.push(event);
+      });
+      runAgent.mockImplementation((agent, _request, options) => {
+        const agentId = (agent as AgentContext).agentId;
+        return {
+          agentId,
+          turn: {} as never,
+          completion: new Promise((_, reject) => {
+            options?.signal.addEventListener(
+              'abort',
+              () => {
+                reject(options.signal.reason);
+              },
+              { once: true },
+            );
+          }),
+        };
+      });
+      const service = ix.get(ISessionSwarmService);
+      const controller = new AbortController();
+
+      const running = service.run({
+        callerAgentId: 'main',
+        tasks: [{ ...spawnSessionTask('src/a.ts'), signal: controller.signal }],
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      controller.abort(userCancellationReason());
+      await expect(running).resolves.toMatchObject([{ status: 'aborted' }]);
+      await vi.advanceTimersByTimeAsync(0);
+
+      const subagentIdsOf = (type: string) =>
+        published
+          .filter((event) => event.type === type)
+          .map((event) => (event as Event2 & { readonly subagentId: string }).subagentId);
+      expect(subagentIdsOf('subagent.spawned')).toEqual(['agent-new']);
+      expect(subagentIdsOf('subagent.cancelled')).toEqual(['agent-new']);
+      expect(subagentIdsOf('subagent.failed')).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('emits subagent.cancelled when cancellation arrives during the start hook', async () => {
     vi.useFakeTimers();
     try {

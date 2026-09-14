@@ -212,7 +212,7 @@ export async function mirrorAgentRun(
     return result;
   } catch (error) {
     const event = terminalEventFor(run.agentId, error, options);
-    if (event !== undefined) void dispatcher?.dispatch(event);
+    if (event !== undefined) emitTerminal(dispatcher, options, run.agentId, event);
     throw error;
   }
 }
