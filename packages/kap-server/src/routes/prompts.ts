@@ -9,7 +9,6 @@ import {
   IAgentRuntimeBindingService,
   IAgentToolPolicyService,
   IAgentSkillService,
-  IAuthSummaryService,
   IEventBus,
   IEventService,
   IFileService,
@@ -86,8 +85,6 @@ const sessionIdParamSchema = z.object({
 });
 
 const validationDetailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
-const authProviderDetailsSchema = z.object({ provider_id: z.string() });
-const authModelDetailsSchema = z.object({ model_id: z.string(), provider_id: z.string() }).partial();
 
 async function resolveSession(core: Scope, sessionId: string): Promise<ISessionScopeHandle> {
   const session = await resumeSessionById(core.accessor, sessionId);
@@ -113,7 +110,6 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     prompt: agent.accessor.get(IAgentLoopService),
     skill: agent.accessor.get(IAgentSkillService),
     events: agent.accessor.get(IEventBus),
-    auth: agent.accessor.get(IAuthSummaryService),
     profile: agent.accessor.get(IAgentProfileService),
     toolPolicy: agent.accessor.get(IAgentToolPolicyService),
     permissionMode: agent.accessor.get(IAgentPermissionModeService),
@@ -198,10 +194,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema: validationDetailsSchema },
         [ErrorCode.SKILL_NOT_FOUND]: {},
         [ErrorCode.SKILL_NOT_ACTIVATABLE]: {},
-        [ErrorCode.AUTH_PROVISIONING_REQUIRED]: {},
-        [ErrorCode.AUTH_TOKEN_MISSING]: { detailsSchema: authProviderDetailsSchema },
-        [ErrorCode.AUTH_TOKEN_UNAUTHORIZED]: { detailsSchema: authProviderDetailsSchema },
-        [ErrorCode.AUTH_MODEL_NOT_RESOLVED]: { detailsSchema: authModelDetailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.FILE_NOT_FOUND]: {},
         [ErrorCode.PROMPT_ID_CONFLICT]: {},
@@ -247,13 +239,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         );
         resolved ??= await resolvePromptFromSession(session, req.body.agent_id);
         reservation = reservePromptId(session_id, req.body.prompt_id);
-        const sessionModel = resolved.profile.getModel();
-        const switchingProfile =
-          req.body.profile !== undefined &&
-          req.body.profile !== resolved.profile.data().profileName;
-        await resolved.auth.ensureReady(
-          req.body.model ?? (switchingProfile ? undefined : sessionModel || undefined),
-        );
 
         const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
         preparedMedia = await resolvePromptMediaFiles(
@@ -615,72 +600,6 @@ function sendMappedError(
       case 'skill.type_unsupported':
         reply.send(errEnvelope(ErrorCode.SKILL_NOT_ACTIVATABLE, err.message, requestId, err.stack));
         return;
-      case 'auth.provisioning_required':
-        reply.send({
-          code: ErrorCode.AUTH_PROVISIONING_REQUIRED,
-          msg: err.message,
-          data: null,
-          request_id: requestId,
-          stack: err.stack,
-          details: null,
-        });
-        return;
-      case 'auth.token_missing': {
-        const details = authProviderDetails(err);
-        if (details === undefined) {
-          log?.error({ err }, 'prompt request failed');
-          reply.send(
-            errEnvelope(
-              ErrorCode.INTERNAL_ERROR,
-              `auth error ${err.code} missing provider_id`,
-              requestId,
-            ),
-          );
-          return;
-        }
-        reply.send({
-          code: ErrorCode.AUTH_TOKEN_MISSING,
-          msg: err.message,
-          data: null,
-          request_id: requestId,
-          stack: err.stack,
-          details,
-        });
-        return;
-      }
-      case 'auth.token_unauthorized': {
-        const details = authProviderDetails(err);
-        if (details === undefined) {
-          log?.error({ err }, 'prompt request failed');
-          reply.send(
-            errEnvelope(
-              ErrorCode.INTERNAL_ERROR,
-              `auth error ${err.code} missing provider_id`,
-              requestId,
-            ),
-          );
-          return;
-        }
-        reply.send({
-          code: ErrorCode.AUTH_TOKEN_UNAUTHORIZED,
-          msg: err.message,
-          data: null,
-          request_id: requestId,
-          stack: err.stack,
-          details,
-        });
-        return;
-      }
-      case 'auth.model_not_resolved':
-        reply.send({
-          code: ErrorCode.AUTH_MODEL_NOT_RESOLVED,
-          msg: err.message,
-          data: null,
-          request_id: requestId,
-          stack: err.stack,
-          details: authModelDetails(err),
-        });
-        return;
     }
   }
   log?.error({ err }, 'prompt request failed');
@@ -692,19 +611,4 @@ function sendMappedError(
       err instanceof Error ? err.stack : undefined,
     ),
   );
-}
-
-function authProviderDetails(err: Error2): { provider_id: string } | undefined {
-  const providerId = err.details?.['provider_id'];
-  if (typeof providerId !== 'string') return undefined;
-  return { provider_id: providerId };
-}
-
-function authModelDetails(err: Error2): { model_id?: string; provider_id?: string } | null {
-  const details: { model_id?: string; provider_id?: string } = {};
-  const modelId = err.details?.['model_id'];
-  const providerId = err.details?.['provider_id'];
-  if (typeof modelId === 'string') details.model_id = modelId;
-  if (typeof providerId === 'string') details.provider_id = providerId;
-  return Object.keys(details).length === 0 ? null : details;
 }
