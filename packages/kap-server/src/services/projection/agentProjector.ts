@@ -318,6 +318,7 @@ export class AgentMessageProjector {
       case 'permission.approval.requested':
       case 'permission.approval.resolved':
       case 'subagent.started':
+      case 'turn.acting.started':
         return [];
       case 'task.notified':
         return this.onTaskNotified(event);

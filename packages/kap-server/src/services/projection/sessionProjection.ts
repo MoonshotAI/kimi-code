@@ -441,6 +441,7 @@ export class SessionProjection {
         return;
       }
       case 'turn.step.started':
+      case 'turn.acting.started':
       case 'tool.call.started':
       case 'tool.result':
       case 'turn.step.interrupted':
