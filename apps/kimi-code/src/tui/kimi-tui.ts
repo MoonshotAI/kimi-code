@@ -1326,8 +1326,15 @@ export class KimiTUI {
     const stream = this.shellOutputStreams.get(commandId);
     if (stream === undefined) return;
     if (backgrounded === true) {
-      // The command was moved to the background; detachRunningShellCommand owns
-      // the UI and the model notification, so there is nothing to render here.
+      // The command was auto-backgrounded by the engine's foreground timeout
+      // (a manual ctrl+b detach already finalized the card and dropped the
+      // stream, so it never reaches here). Finalize the card as backgrounded
+      // so its 1s tick timer stops instead of running forever, and drop the
+      // stream. The engine's notification turn owns the model notification
+      // and the streaming phase from here.
+      stream.component.finishBackgrounded();
+      stream.entry.content = 'Moved to background.';
+      this.shellOutputStreams.delete(commandId);
       return;
     }
     stream.component.finish(stdout, stderr, isError);
