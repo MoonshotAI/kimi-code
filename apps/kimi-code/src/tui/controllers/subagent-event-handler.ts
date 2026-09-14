@@ -630,7 +630,13 @@ export class SubAgentEventHandler {
       progress.markCancelled(event.subagentId);
     })) {
       this.host.streamingUI.removeToolComponentIfInactive(parentToolCallId);
+      return;
     }
+
+    const tc = this.host.streamingUI.getToolComponent(parentToolCallId);
+    if (tc === undefined) return;
+    tc.onSubagentFailed({ error: 'Aborted by the user' });
+    this.host.streamingUI.removeToolComponentIfInactive(parentToolCallId);
   }
 
   private applySubagentEventToSwarmProgress(

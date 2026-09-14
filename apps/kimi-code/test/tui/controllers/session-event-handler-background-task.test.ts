@@ -129,6 +129,18 @@ describe('SubAgentEventHandler — background agent cancelled transcript', () =>
     expect(host.appendTranscriptEntry).not.toHaveBeenCalled();
     expect(handler.backgroundAgentMetadata.has('a1')).toBe(false);
   });
+
+  it('delivers a terminal status to a non-swarm foreground tool card when a subagent is cancelled', () => {
+    const { handler, host } = makeSubagentHandler();
+    const tc = { onSubagentSpawned: vi.fn(), onSubagentFailed: vi.fn() };
+    (host.streamingUI.getToolComponent as ReturnType<typeof vi.fn>).mockReturnValue(tc);
+    handler.handleLifecycleEvent(spawnEvent('a1', false));
+
+    handler.handleLifecycleEvent(cancelledEvent('a1'));
+
+    expect(tc.onSubagentFailed).toHaveBeenCalledWith({ error: 'Aborted by the user' });
+    expect(host.streamingUI.removeToolComponentIfInactive).toHaveBeenCalledWith('tc-a1');
+  });
 });
 
 describe('SubAgentEventHandler — activity record pruning', () => {

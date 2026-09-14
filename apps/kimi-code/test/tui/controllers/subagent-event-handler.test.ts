@@ -144,6 +144,24 @@ describe('SubAgentEventHandler — subagent.cancelled', () => {
     const output = component.render(120).join('\n');
     expect(output).toContain('⊘');
   });
+
+  it('keeps the batch-level cancelled label when a member cancel event follows', () => {
+    const { handler, transcriptContainer } = makeSwarmHandler();
+    startSwarmWithChild(handler);
+    handler.routeChildAgentEvent(childEvent('assistant.delta', 'child-1'));
+
+    handler.handleAgentSwarmToolResult(
+      'tc-1',
+      { output: 'The user manually interrupted this subagent batch.' } as never,
+      true,
+    );
+    handler.handleLifecycleEvent(lifecycleEvent('subagent.cancelled', 'child-1', 'tc-1'));
+
+    const component = swarmComponentOf(transcriptContainer);
+    const output = component.render(120).join('\n');
+    expect(output).toContain('⊘');
+    expect(output).toContain('hello');
+  });
 });
 
 describe('SubAgentEventHandler — swarm grid height measurement', () => {
