@@ -126,6 +126,7 @@ export type ContextMessage = Message & {
   readonly isError?: boolean;
   toolCallDisplays?: Record<string, ToolInputDisplay>;
   readonly note?: string;
+  readonly inherited?: boolean;
 };
 
 export interface UserMessageRecord {
