@@ -318,13 +318,14 @@ Configuration errors fail loudly instead of falling back silently. Session creat
 
 ## `loop_control`
 
-`loop_control` governs the step count limit, the per-step attempt limit, and the threshold that triggers automatic context compaction in the Agent execution loop.
+`loop_control` governs the step count limit, the per-step attempt limit, and the thresholds and attempt limit for automatic context compaction in the Agent execution loop.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `max_steps_per_turn` | `integer` | — | Maximum steps per turn; unset or `0` means unlimited |
 | `max_attempts_per_step` | `integer` | `10` | Maximum total attempts for a failing step, including the initial attempt |
 | `reserved_context_size` | `integer` | — | Number of tokens reserved for model output; automatic compaction is triggered when the remaining context window falls below this value |
+| `compaction_max_attempts` | `integer` | `5` | Maximum total attempts for a failing compaction request, including the initial attempt |
 
 `max_steps_per_turn` can be overridden by the `KIMI_LOOP_MAX_STEPS_PER_TURN` environment variable, and `max_attempts_per_step` by `KIMI_LOOP_MAX_ATTEMPTS_PER_STEP`; both take higher priority than the config file. The former `KIMI_LOOP_MAX_RETRIES_PER_STEP` variable is deprecated but still honored (with a startup warning) when the new one is unset.
 

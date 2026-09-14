@@ -641,7 +641,8 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
       const instruction = renderCompactionInstruction({ customInstruction: data.instruction });
 
-      const delays = retryBackoffDelays(MAX_COMPACTION_RETRY_ATTEMPTS);
+      const maxAttempts = resolvedModel.compactionMaxAttempts ?? MAX_COMPACTION_RETRY_ATTEMPTS;
+      const delays = retryBackoffDelays(maxAttempts);
       let attempt: CompactionAttemptResult | undefined;
       let historyForModel: readonly ContextMessage[] = stripDynamicToolContext(originalHistory);
       let droppedCount = 0;
@@ -711,7 +712,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             messagesToCompact.length > 1
           ) {
             emptyOrTruncatedShrinkCount += 1;
-            if (emptyOrTruncatedShrinkCount > MAX_COMPACTION_RETRY_ATTEMPTS) {
+            if (emptyOrTruncatedShrinkCount > maxAttempts) {
               throw error;
             }
             const reduced = dropOldestMessageAndLeadingToolResults(messagesToCompact);
@@ -723,7 +724,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
           if (!isRetryableGenerateError(unwrappedError)) {
             throw error;
           }
-          if (retryCount + 1 >= MAX_COMPACTION_RETRY_ATTEMPTS) {
+          if (retryCount + 1 >= maxAttempts) {
             throw error;
           }
           await sleepForRetry(delays[retryCount]!, signal);

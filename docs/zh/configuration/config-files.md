@@ -317,13 +317,14 @@ k3-max = "同一模型的 max Thinking 档位。适合最难的子任务。"
 
 ## `loop_control`
 
-`loop_control` 控制 Agent 执行循环的步数上限、单步尝试次数上限，以及触发上下文自动压缩的阈值。
+`loop_control` 控制 Agent 执行循环的步数上限、单步尝试次数上限，以及上下文自动压缩的触发阈值和尝试次数上限。
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `max_steps_per_turn` | `integer` | — | 单轮最大步数；不设或设为 `0` 则无上限 |
 | `max_attempts_per_step` | `integer` | `10` | 单步失败后的最大总尝试次数（含首次尝试） |
 | `reserved_context_size` | `integer` | — | 预留给模型输出的 token 数；上下文窗口剩余量低于此值时触发自动压缩 |
+| `compaction_max_attempts` | `integer` | `5` | 压缩请求失败后的最大总尝试次数（含首次尝试） |
 
 `max_steps_per_turn` 可被环境变量 `KIMI_LOOP_MAX_STEPS_PER_TURN` 覆盖，`max_attempts_per_step` 可被 `KIMI_LOOP_MAX_ATTEMPTS_PER_STEP` 覆盖，优先级均高于配置文件。旧的 `KIMI_LOOP_MAX_RETRIES_PER_STEP` 已废弃，但在新变量未设置时仍生效（启动时会给出警告）。
 

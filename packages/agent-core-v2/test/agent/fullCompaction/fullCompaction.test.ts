@@ -1405,6 +1405,52 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('honors loopControl.compactionMaxAttempts for retryable generation failures', async () => {
+    vi.useFakeTimers();
+    const records: TelemetryRecord[] = [];
+    const firstAttemptFailed = deferred<void>();
+    let attempts = 0;
+    const generate: GenerateFn = requesterFromGenerateFn(async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        firstAttemptFailed.resolve();
+      }
+      throw new APIConnectionError('socket hang up');
+    });
+    const ctx = testAgent({
+      generate,
+      telemetry: recordingTelemetry(records),
+      initialConfig: {
+        providers: {},
+        loopControl: { compactionMaxAttempts: 2 },
+      },
+    });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const failed = ctx.once('error');
+
+    await ctx.rpc.beginCompaction({});
+    await firstAttemptFailed.promise;
+    await vi.advanceTimersByTimeAsync(60_000);
+    await failed;
+
+    expect(attempts).toBe(2);
+    expect(records).toContainEqual({
+      event: 'compaction_failed',
+      properties: expect.objectContaining({
+        source: 'manual',
+        retry_count: 1,
+        error_type: 'APIConnectionError',
+      }),
+    });
+    vi.useRealTimers();
+    await ctx.expectResumeMatches();
+  });
+
   it('renders rich compacted history without dropping non-text context', async () => {
     const ctx = testAgent();
     ctx.configure({

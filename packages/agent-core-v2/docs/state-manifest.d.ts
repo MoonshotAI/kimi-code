@@ -956,6 +956,7 @@ export interface AgentStateSnapshot {
       readonly thinkingLevel: /* ThinkingEffort — packages/agent-core-v2/src/human/llm/thinking.ts */ 'off' | 'on' | (string & {});
       readonly reservedContextSize: number | undefined;
       readonly compactionTriggerRatio: number | undefined;
+      readonly compactionMaxAttempts: number | undefined;
     };
     readonly params: /* ModelRequestParams — packages/agent-core-v2/src/llm-adapter/model/model-requester.ts */ {
       readonly cacheKey?: string;
