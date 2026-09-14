@@ -130,8 +130,8 @@ export class SessionSubagentScopeCacheService
     if (context === undefined) return this.closing.has(agentId) ? 'closing' : 'missing';
     const handle = this.agentLifecycle.handleOf(agentId);
     if (handle === undefined) return this.closing.has(agentId) ? 'closing' : 'missing';
-    const status = handle.accessor.get(IAgentLoopService).status();
-    if (status.state === 'running' || status.hasPendingRequests) return 'deferred';
+    const snapshot = handle.accessor.get(IAgentLoopService).snapshot();
+    if (snapshot.state === 'running' || snapshot.hasPendingRequests) return 'deferred';
     if (handle.accessor.get(IAgentTaskService).list(true).length > 0) return 'deferred';
     const startedAt = Date.now();
     const removal = this.agentLifecycle.remove(context).then(

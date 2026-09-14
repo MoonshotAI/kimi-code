@@ -33,7 +33,6 @@ const DROPPED_DOMAIN_EVENT_TYPES: ReadonlySet<string> = new Set([
   'plan.revision',
   'permission.approval.requested',
   'permission.approval.resolved',
-  'prompt.accepted',
   'prompt.submitted',
   'prompt.completed',
   'prompt.aborted',

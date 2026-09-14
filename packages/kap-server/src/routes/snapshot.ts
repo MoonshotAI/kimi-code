@@ -1,6 +1,6 @@
 import {
-  IAgentPromptService,
   INTERACTION_TAG_SESSION_ID,
+  IAgentLoopService,
   ISessionContext,
   ISessionMetadata,
   IWorkspaceService,
@@ -82,12 +82,12 @@ export function registerSnapshotRoutes(app: SnapshotRouteHost, deps: SnapshotRou
       try {
         const data = await assembleSnapshot(core, broadcaster, session_id);
         reply.send(okEnvelope(data, req.id));
-      } catch (err) {
-        if (err instanceof SnapshotNotFoundError) {
-          reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, req.id, err.stack));
+      } catch (error) {
+        if (error instanceof SnapshotNotFoundError) {
+          reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, error.message, req.id, error.stack));
           return;
         }
-        throw err;
+        throw error;
       }
     },
   );
@@ -160,7 +160,7 @@ async function assembleSnapshot(
 function readCurrentPromptId(main: IAgentScopeHandle | undefined): string | undefined {
   if (main === undefined) return undefined;
   try {
-    return main.accessor.get(IAgentPromptService).list().active?.id;
+    return main.accessor.get(IAgentLoopService).snapshot().activePromptId;
   } catch {
     return undefined;
   }

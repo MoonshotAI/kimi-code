@@ -916,7 +916,7 @@ export class SessionEventBroadcaster {
     this.activityTrackers.set(
       `${sessionId}:${handle.id}`,
       new LegacyActivityTracker(
-        () => handle.accessor.get(IAgentLoopService).activitySnapshot(),
+        () => handle.accessor.get(IAgentLoopService).snapshot(),
         () => legacyApprovalsOf(handle),
       ),
     );
@@ -955,8 +955,6 @@ export class SessionEventBroadcaster {
   private onAgentEvent(sessionId: string, agentId: string, event: Event2<any>): void {
     const state = this.sessions.get(sessionId);
     if (state === undefined) return;
-
-    if (event.type === 'prompt.accepted') return;
 
     if (
       event.type === 'agent.status.updated' &&

@@ -52,7 +52,6 @@ import { IAgentRuntimeBindingSeed, IAgentRuntimeBindingService } from '#/agent/r
 import '#/agent/runtimeBinding/runtimeBindingService';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IWireService } from '#/wire/wire';
 import { WireService } from '#/wire/wireService';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
@@ -357,6 +356,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         toolLogic: bundle.toolLogic,
         tools: bundle.tools,
         request: bundle.request,
+        promptGate: bundle.promptGate,
       };
     } catch (error) {
       this.telemetry.track2('agent_create_failed', {
@@ -531,6 +531,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         toolLogic: bundle.toolLogic,
         tools: bundle.tools,
         request: bundle.request,
+        promptGate: bundle.promptGate,
       });
     } catch (error) {
       const managed = this.roster.get(agent.agentId);
@@ -578,23 +579,21 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const compaction = handle.accessor.get(IAgentFullCompactionService).compacting;
     const compactionSettled = compaction?.promise.catch(() => undefined) ?? Promise.resolve();
     const reason = abortError('Agent removed');
-    const prompt = handle.accessor.get(IAgentPromptService);
     if (compaction !== null && !compaction.abortController.signal.aborted) {
       compaction.abortController.abort(reason);
     }
     const promptIdleDeadline = Date.now() + REMOVE_PROMPT_QUIESCE_TIMEOUT_MS;
     let releaseQuiescence: (() => void) | undefined;
     for (;;) {
-      for (const queueId of loop.status().pendingPromptIds) {
-        loop.cancelQueued(queueId, reason);
+      for (const queueId of loop.snapshot().queue.map((item) => item.meta?.promptId)) {
+        if (queueId !== undefined) loop.cancel({ promptId: queueId }, reason);
       }
       loop.cancel(undefined, reason);
-      await Promise.all([loop.settled(), compactionSettled, prompt.drain(reason)]);
+      await Promise.all([loop.settled(), compactionSettled]);
       let idle = true;
       try {
-        const snapshot = prompt.list();
-        idle =
-          !snapshot.launching && snapshot.active === undefined && snapshot.pending.length === 0;
+        const snapshot = loop.snapshot();
+        idle = snapshot.state === 'idle' && snapshot.queue.length === 0;
       } catch {
         idle = true;
       }

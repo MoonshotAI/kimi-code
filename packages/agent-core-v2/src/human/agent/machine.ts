@@ -16,7 +16,7 @@ import {
   type Subscription,
 } from '#/xstate2';
 
-import { createUserMessage, type SystemMessage, type ToolCall, type UserMessage } from '#/llm/message';
+import { createUserMessage, type ToolCall, type UserMessage } from '#/llm/message';
 import type { LlmRequestConfig } from '#/llm/requester/requester';
 import type { ToolExecutor, ToolResult } from '#/tool/executor';
 import { createToolMachine, type ToolEvent, type ToolOutput } from '#/tool/machine';
@@ -25,13 +25,12 @@ import type { ToolDefinition } from '#/tool/tool';
 import { createWaitForTasks, type ToolActorRef } from './wait-for';
 import { interruptReasonOf, type TurnInterruptReason } from './errors';
 import { messageAppended, turnEnded, turnStarted } from './events';
+import { mergeSteerMessages } from './origin';
 import { createSystemEntry, createUserEntry } from './turn';
 import { createAbortScope, withAbort, type AbortScope } from '#/utils/abort';
-import type { createTurnMachine, HistoryMessage, TurnLlmEvent, TurnOutput, UserEntry } from './turn';
+import type { createTurnMachine, HistoryMessage, SystemEntry, TurnLlmEvent, TurnOutput, UserEntry } from './turn';
 import { storeActor } from '#/eventStore/actor';
-import type { AgentEventStore, AgentStoreState, QueuedPrompt } from './slices';
-
-export type { QueuedPrompt } from './slices';
+import type { AgentEventStore, AgentStoreState } from './slices';
 
 export interface AgentInput {
   request: LlmRequestConfig;
@@ -55,6 +54,13 @@ export type ScopeFactory = (
   signal: AbortSignal,
 ) => Promise<ScopeFactoryOutput>;
 
+export type PromptGateVerdict = boolean | { block: boolean; message?: UserMessage };
+
+export type PromptGate = (
+  queueItemId: string | undefined,
+  message: UserMessage,
+) => Promise<PromptGateVerdict>;
+
 export interface ScopeFactoryOutput {
   handle?: AgentScopeHandle;
   store: AgentEventStore;
@@ -62,6 +68,7 @@ export interface ScopeFactoryOutput {
   toolLogic: ToolLogic;
   tools: readonly ToolDefinition[];
   request?: LlmRequestConfig;
+  promptGate?: PromptGate;
 }
 
 type TurnLogic = ReturnType<typeof createTurnMachine>;
@@ -75,10 +82,10 @@ type SpawnChild = <TLogic extends AnyActorLogic>(
 export type AgentEvent =
   | TurnLlmEvent
   | ToolEvent
-  | { type: 'input.submit'; id?: string; message: UserMessage }
-  | { type: 'input.notify'; message: UserMessage }
-  | { type: 'input.remind'; key: string; message: UserMessage | SystemMessage }
-  | { type: 'input.steer'; id: string }
+  | { type: 'input.submit'; entry: UserEntry }
+  | { type: 'input.notify'; entry: UserEntry }
+  | { type: 'input.remind'; key: string; entry: SystemEntry | UserEntry }
+  | { type: 'input.steer'; id: string | readonly string[] }
   | { type: 'input.cancel'; id: string }
   | { type: 'input.abort' }
   | { type: 'input.pause' }
@@ -98,7 +105,7 @@ export type AgentEvent =
 export type AgentEmitted =
   | TurnLlmEvent
   | ToolEvent
-  | { type: 'turn.started'; turnId: number; branchId: string; queueItemId?: string }
+  | { type: 'turn.started'; turnId: number; branchId: string; queueItemId?: string; entry?: UserEntry }
   | { type: 'step.started'; step: number }
   | { type: 'turn.aborting' }
   | { type: 'turn.reminders_consumed'; reminders: HistoryMessage[] }
@@ -111,6 +118,9 @@ export type AgentEmitted =
       branchId: string;
     }
   | { type: 'turn.aborted'; messages: HistoryMessage[]; branchId: string }
+  | { type: 'prompt.blocked'; queueItemId?: string; entry?: UserEntry }
+  | { type: 'prompt.gate_failed'; queueItemId?: string; error: unknown; entry?: UserEntry }
+  | { type: 'prompt.steered'; queueItemIds: string[]; entries: UserEntry[] }
   | { type: 'context.reset'; branchId: string }
   | { type: 'agent.attached' }
   | { type: 'agent.failed'; error: unknown };
@@ -129,17 +139,19 @@ export interface AgentMachineContext {
   turnLogic?: TurnLogic;
   toolLogic?: ToolLogic;
   tools?: readonly ToolDefinition[];
+  promptGate?: PromptGate;
   messages: HistoryMessage[];
   turnTools: Record<string, ToolEntry>;
   background: Record<string, ToolEntry>;
   scope: AbortScope;
   notifications: UserEntry[];
   reminders: HistoryMessage[];
-  queue: QueuedPrompt[];
+  queue: UserEntry[];
   turnId: number;
   activeTurnId?: number;
   branchId: string;
   drainedId?: string;
+  drainedEntry?: UserEntry;
   paused: boolean;
 }
 
@@ -234,27 +246,27 @@ function hasBackgroundWork(context: AgentMachineContext): boolean {
 
 function drainPendingPatch(
   context: AgentMachineContext,
-): Pick<AgentMachineContext, 'messages' | 'notifications' | 'queue' | 'drainedId'> {
+): Pick<AgentMachineContext, 'messages' | 'notifications' | 'queue' | 'drainedId' | 'drainedEntry'> {
   const [head, ...rest] = context.queue;
   return {
     messages: [
       ...context.messages,
       ...context.notifications,
-      ...(head === undefined ? [] : [createUserEntry(head.message, { source: 'input' })]),
+      ...(head === undefined ? [] : [head]),
     ],
     notifications: [],
     queue: rest,
-    drainedId: head?.id,
+    drainedId: head?.meta?.promptId,
+    drainedEntry: head,
   };
 }
 
 function mirrorPatch(state: AgentStoreState): Pick<
   AgentMachineContext,
-  'messages' | 'queue' | 'notifications' | 'reminders'
+  'messages' | 'notifications' | 'reminders'
 > {
   return {
     messages: [...state.history],
-    queue: [...state.queue],
     notifications: [...state.notifications],
     reminders: [...state.reminders],
   };
@@ -308,6 +320,20 @@ export function createAgentMachine({
       scopeFactoryActor: fromPromise<ScopeFactoryOutput, AgentInput & { self: AgentMachineSelf }>(
         ({ input, signal }) => input.scopeFactory(input.self, signal),
       ),
+      promptGateActor: fromPromise<
+        { id?: string; block: boolean; message?: UserMessage; error?: unknown },
+        { gate?: PromptGate; head?: UserEntry }
+      >(async ({ input }) => {
+        const { gate, head } = input;
+        if (gate === undefined || head === undefined) return { id: head?.meta?.promptId, block: false };
+        try {
+          const verdict = await gate(head.meta?.promptId, head.message);
+          if (typeof verdict === 'boolean') return { id: head.meta?.promptId, block: verdict };
+          return { id: head.meta?.promptId, block: verdict.block, message: verdict.message };
+        } catch (error) {
+          return { id: head.meta?.promptId, block: false, error };
+        }
+      }),
       disposeScopeActor: fromPromise<void, { handle?: AgentScopeHandle }>(async ({ input }) => {
         await input.handle?.disposeAsync();
       }),
@@ -316,10 +342,24 @@ export function createAgentMachine({
       forwardToParent: ({ self, event }) => {
         self._parent?.send(event);
       },
-      resetMirror: assign(({ event }) => {
+      commitPendingToHistory: enqueueActions(({ context, enqueue }) => {
+        const head = context.queue[0];
+        enqueue.sendTo('store', {
+          type: 'store.append' as const,
+          event: [
+            ...context.notifications.map((entry) => messageAppended({ message: entry })),
+            ...(head === undefined
+              ? []
+              : [messageAppended({ message: head })]),
+          ],
+        });
+        enqueue.assign(drainPendingPatch(context));
+      }),
+      resetMirror: assign(({ context, event }) => {
         if (event.type !== 'store.reset') return {};
         return {
           ...mirrorPatch(event.state),
+          queue: context.queue,
           turnTools: {},
           background: {},
           scope: createAbortScope(),
@@ -408,7 +448,12 @@ export function createAgentMachine({
       'input.submit': {
         actions: assign(({ context, event }) => {
           if (event.type !== 'input.submit') return {};
-          return { queue: [...context.queue, { id: event.id, message: event.message }] };
+          return {
+            queue: [
+              ...context.queue,
+              createUserEntry(event.entry.message, { source: 'input', ...event.entry.meta }),
+            ],
+          };
         }),
       },
       'input.notify': {
@@ -417,7 +462,7 @@ export function createAgentMachine({
           return {
             notifications: [
               ...context.notifications,
-              createUserEntry(event.message, { source: 'notify' }),
+              createUserEntry(event.entry.message, { source: 'notify', ...event.entry.meta }),
             ],
           };
         }),
@@ -425,11 +470,12 @@ export function createAgentMachine({
       'input.remind': {
         actions: assign(({ context, event }) => {
           if (event.type !== 'input.remind') return {};
-          const kept = context.reminders.filter((entry) => entry.meta.key !== event.key);
+          const kept = context.reminders.filter((entry) => entry.meta?.key !== event.key);
+          const meta = { source: 'reminder', key: event.key, ...event.entry.meta };
           kept.push(
-            event.message.role === 'system'
-              ? createSystemEntry(event.message, { source: 'reminder', key: event.key })
-              : createUserEntry(event.message, { source: 'reminder', key: event.key }),
+            event.entry.message.role === 'system'
+              ? createSystemEntry(event.entry.message, meta)
+              : createUserEntry(event.entry.message, meta),
           );
           return { reminders: kept };
         }),
@@ -437,21 +483,32 @@ export function createAgentMachine({
       'input.steer': {
         actions: enqueueActions(({ context, event, enqueue }) => {
           if (event.type !== 'input.steer') return;
-          const entry = context.queue.find((item) => item.id === event.id);
-          if (entry === undefined) return;
+          const ids = typeof event.id === 'string' ? [event.id] : event.id;
+          const steered = context.queue.filter(
+            (item) => item.meta?.promptId !== undefined && ids.includes(item.meta?.promptId),
+          );
+          if (steered.length === 0) return;
+          const merged = mergeSteerMessages(
+            steered.map((item) => ({ content: item.message.content, origin: item.meta?.origin })),
+          );
           enqueue.assign({
-            queue: context.queue.filter((item) => item.id !== event.id),
+            queue: context.queue.filter((item) => !steered.includes(item)),
             notifications: [
               ...context.notifications,
-              createUserEntry(entry.message, { source: 'input' }),
+              createUserEntry({ role: 'user', content: merged.content }, { source: 'input' }),
             ],
+          });
+          enqueue.emit({
+            type: 'prompt.steered' as const,
+            queueItemIds: steered.map((item) => item.meta?.promptId as string),
+            entries: steered,
           });
         }),
       },
       'input.cancel': {
         actions: assign(({ context, event }) => {
           if (event.type !== 'input.cancel') return {};
-          return { queue: context.queue.filter((item) => item.id !== event.id) };
+          return { queue: context.queue.filter((item) => item.meta?.promptId !== event.id) };
         }),
       },
       'store.reset': {
@@ -506,6 +563,7 @@ export function createAgentMachine({
                   toolLogic: output.toolLogic,
                   tools: output.tools,
                   request: output.request ?? context.request,
+                  promptGate: output.promptGate,
                 };
               }),
               emit({ type: 'agent.attached' as const }),
@@ -532,7 +590,7 @@ export function createAgentMachine({
               reminders: [
                 ...event.state.reminders.filter(
                   (entry) =>
-                    !context.reminders.some((local) => local.meta.key === entry.meta.key),
+                    !context.reminders.some((local) => local.meta?.key === entry.meta?.key),
                 ),
                 ...context.reminders,
               ],
@@ -545,60 +603,109 @@ export function createAgentMachine({
       },
       idle: {
         initial: 'ready',
-        always: {
-          guard: ({ context }) => hasPendingWork(context) && !context.paused,
-          target: 'running',
-          actions: [
-            sendTo('store', ({ context }) => {
-              const head = context.queue[0];
-              return {
-                type: 'store.append' as const,
-                event: [
-                  ...context.notifications.map((entry) => messageAppended({ message: entry })),
-                  ...(head === undefined
-                    ? []
-                    : [
-                        messageAppended({ message: createUserEntry(head.message, { source: 'input' }) }),
-                      ]),
-                ],
-              };
-            }),
-            assign(({ context }) => drainPendingPatch(context)),
-          ],
-        },
         on: {
           'input.continue': {
             guard: ({ context }) =>
               !hasPendingWork(context) && historyEndsMidToolChain(context.messages),
             target: 'running',
-            actions: [
-              assign({ paused: false }),
-              sendTo('store', ({ context }) => {
-                const head = context.queue[0];
-                return {
-                  type: 'store.append' as const,
-                  event: [
-                    ...context.notifications.map((entry) => messageAppended({ message: entry })),
-                    ...(head === undefined
-                      ? []
-                      : [
-                          messageAppended({ message: createUserEntry(head.message, { source: 'input' }) }),
-                        ]),
-                  ],
-                };
-              }),
-              assign(({ context }) => drainPendingPatch(context)),
-            ],
+            actions: [assign({ paused: false }), 'commitPendingToHistory'],
           },
         },
         states: {
           ready: {
-            always: {
-              guard: ({ context }) => hasBackgroundWork(context),
-              target: 'waiting',
+            always: [
+              {
+                guard: ({ context }) =>
+                  context.promptGate !== undefined && context.queue.length > 0 && !context.paused,
+                target: 'gating',
+              },
+              {
+                guard: ({ context }) => hasPendingWork(context) && !context.paused,
+                target: '#agent.running',
+                actions: ['commitPendingToHistory'],
+              },
+              {
+                guard: ({ context }) => hasBackgroundWork(context),
+                target: 'waiting',
+              },
+            ],
+          },
+          waiting: {
+            always: [
+              {
+                guard: ({ context }) =>
+                  context.promptGate !== undefined && context.queue.length > 0 && !context.paused,
+                target: 'gating',
+              },
+              {
+                guard: ({ context }) => hasPendingWork(context) && !context.paused,
+                target: '#agent.running',
+                actions: ['commitPendingToHistory'],
+              },
+            ],
+          },
+          gating: {
+            invoke: {
+              src: 'promptGateActor',
+              input: ({ context }) => ({ gate: context.promptGate, head: context.queue[0] }),
+              onDone: [
+                {
+                  guard: ({ context, event }) =>
+                    context.paused || context.queue[0]?.meta?.promptId !== event.output.id,
+                  target: 'ready',
+                },
+                {
+                  guard: ({ event }) => event.output.error !== undefined,
+                  target: 'ready',
+                  actions: [
+                    emit(({ context, event }) => ({
+                      type: 'prompt.gate_failed' as const,
+                      queueItemId: context.queue[0]?.meta?.promptId,
+                      error: event.output.error,
+                      entry: context.queue[0],
+                    })),
+                    assign(({ context }) => ({ queue: context.queue.slice(1) })),
+                  ],
+                },
+                {
+                  guard: ({ event }) => event.output.block,
+                  target: 'ready',
+                  actions: [
+                    emit(({ context }) => ({
+                      type: 'prompt.blocked' as const,
+                      queueItemId: context.queue[0]?.meta?.promptId,
+                      entry: context.queue[0],
+                    })),
+                    assign(({ context }) => ({ queue: context.queue.slice(1) })),
+                  ],
+                },
+                {
+                  target: '#agent.running',
+                  actions: [
+                    assign(({ context, event }) => {
+                      const rewritten = event.output.message;
+                      const head = context.queue[0];
+                      if (rewritten === undefined || head === undefined) return {};
+                      return { queue: [{ ...head, message: rewritten }, ...context.queue.slice(1)] };
+                    }),
+                    'commitPendingToHistory',
+                  ],
+                },
+              ],
+              onError: {
+                target: 'ready',
+                actions: [
+                  emit(({ context, event }) => ({
+                    type: 'prompt.gate_failed' as const,
+                    queueItemId: context.queue[0]?.meta?.promptId,
+                    error: event.error,
+                    entry: context.queue[0],
+                  })),
+                  assign(({ context }) => ({ queue: context.queue.slice(1) })),
+                ],
+              },
             },
           },
-          waiting: {},
         },
       },
       running: {
@@ -609,6 +716,7 @@ export function createAgentMachine({
             turnId: context.turnId,
             branchId: context.branchId,
             queueItemId: context.drainedId,
+            entry: context.drainedEntry,
           })),
           sendTo('store', ({ context }) => ({
             type: 'store.append' as const,

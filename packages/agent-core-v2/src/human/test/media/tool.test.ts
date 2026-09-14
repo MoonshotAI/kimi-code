@@ -195,7 +195,7 @@ describe('media stack wiring', () => {
       },
     });
     actor.start();
-    actor.send({ type: 'input.submit', message: createUserMessage('watch this') });
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('watch this') } });
     await waitFor(actor, (s) => s.matches('idle') && agentStore.getState().history.length > 1, {
       timeout: 5000,
     });

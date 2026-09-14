@@ -1667,26 +1667,15 @@ describe('SessionSwarmService metadata compatibility', () => {
     };
     handles.set(
       'agent-existing',
-      agentHandle(
-        'agent-existing',
-        lifecycle,
-        eventBus,
-        {},
-        new Map([
-          [
-            IAgentLoopService,
-            {
-              _serviceBrand: undefined,
-              status: () => ({
-                state: 'running',
-                activeTurnId: 1,
-                pendingPromptIds: [],
-                hasPendingRequests: true,
-              }),
-            },
-          ],
-        ]),
-      ),
+      agentHandle('agent-existing', lifecycle, eventBus, {}, new Map([
+        [
+          IAgentLoopService,
+          {
+            _serviceBrand: undefined,
+            snapshot: () => ({ state: 'running' }),
+          },
+        ],
+      ])),
     );
     const service = ix.get(ISessionSwarmService);
 
@@ -1912,7 +1901,7 @@ function agentHandle(
         if (serviceId === IAgentLoopService) {
           return {
             _serviceBrand: undefined,
-            status: () => ({ state: 'idle', pendingPromptIds: [], hasPendingRequests: false }),
+            snapshot: () => ({ state: 'idle' }),
           } as unknown as IAgentLoopService;
         }
         if (serviceId === IAgentUserToolService) return userToolServiceStub();

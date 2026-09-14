@@ -6,6 +6,26 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.43.0 (2026-09-14)
+
+### Features
+
+- web: AI session titles are now always on — a title is generated after the first turn and can be regenerated from the rename field, with no experimental flag required.
+- Delete sessions from the session picker: press Ctrl+X on a session, then y to confirm.
+- Add `-y, --yes` to `kimi upgrade` (alias `kimi update`) to skip the confirmation prompt and install the update directly.
+- Add the `loop_control.compaction_max_attempts` config option to set the maximum total attempts for a failing compaction request (default 5). See [`loop_control`](../configuration/config-files.md#loop_control) for details.
+
+### Polish
+
+- Skip the confirmation prompt for rm -rf commands that target only /tmp or /temp paths.
+- Allow steering messages to interrupt waits for background tasks.
+- Goal time budgets no longer count time spent with the session closed, and the 24-hour limit is removed.
+- Add the `KIMI_CODE_PERMISSION_MODE_REMINDER` environment variable: set it to `0` to stop injecting the auto permission-mode reminders into the model context.
+
+### Bug Fixes
+
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
 ## 0.42.0 (2026-09-09)
 
 ### Features

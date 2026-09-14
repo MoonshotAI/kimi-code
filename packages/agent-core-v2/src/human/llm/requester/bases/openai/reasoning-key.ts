@@ -82,11 +82,17 @@ export function extractReasoningDetails(
 
 export function convertReasoningDetails(
   elements: readonly ReasoningDetailsElement[],
+  hiddenSummary = false,
 ): StreamedMessagePart[] {
   const parts: StreamedMessagePart[] = [];
   for (const element of elements) {
     if (element.type !== 'encrypted' && element.summary !== undefined && element.summary.length > 0) {
-      parts.push({ type: 'think', think: element.summary, detailsIndex: element.index } satisfies ThinkPart);
+      parts.push({
+        type: 'think',
+        think: element.summary,
+        detailsIndex: element.index,
+        hidden: hiddenSummary ? true : undefined,
+      } satisfies ThinkPart);
     }
     if (element.type !== 'summary' && element.encrypted !== undefined && element.encrypted.length > 0) {
       parts.push({

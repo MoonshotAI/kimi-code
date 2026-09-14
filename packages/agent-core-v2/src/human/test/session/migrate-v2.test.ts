@@ -55,7 +55,7 @@ function submit(session: SessionActor, agentId: string, text: string): void {
   session.send({
     type: 'agent.send',
     agentId,
-    event: { type: 'input.submit', message: createUserMessage(text) },
+    event: { type: 'input.submit', entry: { message: createUserMessage(text) } },
   });
 }
 
@@ -254,7 +254,7 @@ describe('migrateV2Session', () => {
       'file.txt',
       'second',
     ]);
-    expect(agent.messages[0]?.meta.source).toBe('input');
+    expect(agent.messages[0]?.meta?.source).toBe('input');
     const first = agent.messages[1];
     expect(first?.message.role).toBe('assistant');
     if (first?.message.role === 'assistant') {
@@ -265,15 +265,15 @@ describe('migrateV2Session', () => {
       expect(first.message.toolCalls).toEqual([
         { type: 'function', id: 'c1', name: 'bash', arguments: '{"cmd":"ls"}' },
       ]);
-      expect(first.meta.usage).toEqual({ inputOther: 1, output: 2, inputCacheRead: 3, inputCacheCreation: 4 });
-      expect(first.meta.finish).toEqual({ finishReason: 'tool_calls', rawFinishReason: 'stop_raw' });
-      expect(first.meta.messageId).toBe('msg_v2_1');
-      expect(first.meta.model).toEqual({ provider: 'prov', model: 'mod' });
+      expect(first.meta?.usage).toEqual({ inputOther: 1, output: 2, inputCacheRead: 3, inputCacheCreation: 4 });
+      expect(first.meta?.finish).toEqual({ finishReason: 'tool_calls', rawFinishReason: 'stop_raw' });
+      expect(first.meta?.messageId).toBe('msg_v2_1');
+      expect(first.meta?.model).toEqual({ provider: 'prov', model: 'mod' });
     }
-    expect(agent.messages[2]?.meta.source).toBe('tool');
+    expect(agent.messages[2]?.meta?.source).toBe('tool');
     const second = agent.messages[3];
     if (second?.message.role === 'assistant') {
-      expect(second.meta.finish).toEqual({ finishReason: 'completed', rawFinishReason: null });
+      expect(second.meta?.finish).toEqual({ finishReason: 'completed', rawFinishReason: null });
     }
     expect(agent.turnIndex.nextTurnId).toBe(1);
     expect(loaded.meta).toMatchObject({
@@ -384,7 +384,7 @@ describe('migrateV2Session', () => {
     const loaded = await loadMigrated(dir);
     const agent = loaded.agents[0]!;
     expect(agent.messages.map((entry) => extractText(entry.message))).toEqual(['u1', 'u3', 'CTX']);
-    expect(agent.messages.map((entry) => entry.meta.source)).toEqual(['input', 'input', 'compaction_summary']);
+    expect(agent.messages.map((entry) => entry.meta?.source)).toEqual(['input', 'input', 'compaction_summary']);
 
     const big = 'x'.repeat(90_000);
     const elided = await makeV2SessionDir({
@@ -406,7 +406,7 @@ describe('migrateV2Session', () => {
     });
     const loadedElided = await loadMigrated(elided);
     const elidedMessages = loadedElided.agents[0]!.messages;
-    expect(elidedMessages.map((entry) => entry.meta.source)).toEqual([
+    expect(elidedMessages.map((entry) => entry.meta?.source)).toEqual([
       'input',
       'injection',
       'input',
@@ -458,7 +458,7 @@ describe('migrateV2Session', () => {
     const loaded = await loadMigrated(dir);
     expect(loaded.agents.map((agent) => agent.agentId)).toEqual(['agent-1', MAIN]);
     const sub = loaded.agents[0]!;
-    expect(sub.messages[0]?.meta.source).toBe('task');
+    expect(sub.messages[0]?.meta?.source).toBe('task');
     expect(sub.states['todo']).toEqual({
       todos: [{ title: 'task a', status: 'in_progress' }],
       lastWriteTurn: 0,

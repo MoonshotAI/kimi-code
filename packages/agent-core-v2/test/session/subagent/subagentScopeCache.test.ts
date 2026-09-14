@@ -15,7 +15,7 @@ import type { AgentContext } from '#/agent/agentContext/agentContext';
 import '#/agent/contextMemory/contextMemoryService';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
-import { IAgentLoopService, type AgentLoopStatus } from '#/agent/loop/loop';
+import { IAgentLoopService, type LoopSnapshot } from '#/agent/loop/loop';
 import type { MachineEngine, MachineEngineAttachBundle } from '#/agent/loop/machine/engine';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
@@ -27,7 +27,6 @@ import {
 } from '#/agent/permissionMode/permissionModeOps';
 import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentTaskService } from '#/agent/task/task';
@@ -187,6 +186,8 @@ function stubAttachEngine(): MachineEngine {
     remind: () => {},
     cancelQueueItem: () => {},
     abort: () => {},
+    pause: () => {},
+    resume: () => {},
     resetHistory: () => Promise.resolve(),
     resetJournal: () => Promise.resolve(),
     stop: () => {},
@@ -194,6 +195,8 @@ function stubAttachEngine(): MachineEngine {
       running: false,
       aborting: false,
       waitingForBackground: false,
+      paused: false,
+      queue: [],
       queueLength: 0,
       queueIds: [],
       notificationCount: 0,
@@ -448,24 +451,19 @@ describe('SessionSubagentScopeCacheService', () => {
         onDidFinishStep: { register: () => ({ dispose: () => {} }) },
       },
       registerLoopErrorHandler: () => ({ dispose: () => {} }),
-      status: () => ({
+      snapshot: () => ({
         state: 'idle',
-        activeTurnId: undefined,
-        pendingPromptIds: [],
+        queue: [],
+        notificationCount: 0,
+        paused: false,
         hasPendingRequests: false,
       }),
       cancel: () => true,
-      cancelQueued: () => true,
       settled: async () => {},
       tryAcquireQuiescence: () => ({ dispose: () => {} }),
       buildAttachBundle: () => stubAttachBundle(),
       attachEngine: () => stubAttachEngine(),
     } as unknown as IAgentLoopService);
-    ix.stub(IAgentPromptService, {
-      _serviceBrand: undefined,
-      drain: async () => {},
-      list: () => ({ launching: false, active: undefined, pending: [] }),
-    } as unknown as IAgentPromptService);
     ix.stub(ITelemetryService, {
       _serviceBrand: undefined,
       track2: () => {},
@@ -914,14 +912,14 @@ describe('SessionSubagentScopeCacheService eviction guards', () => {
     ix.get(ISessionSubagentScopeCacheService);
   }
 
-  function loopHandle(agentId: string, status: () => AgentLoopStatus): IAgentScopeHandle {
+  function loopHandle(agentId: string, snapshot: () => LoopSnapshot): IAgentScopeHandle {
     return {
       id: agentId,
       kind: LifecycleScope.Agent,
       accessor: {
         get: (serviceId: unknown) =>
           serviceId === IAgentLoopService
-            ? ({ _serviceBrand: undefined, status } as unknown as IAgentLoopService)
+            ? ({ _serviceBrand: undefined, snapshot } as unknown as IAgentLoopService)
             : serviceId === IAgentTaskService
               ? ({ _serviceBrand: undefined, list: () => [] } as unknown as IAgentTaskService)
               : undefined,
@@ -933,7 +931,9 @@ describe('SessionSubagentScopeCacheService eviction guards', () => {
   function idleHandle(agentId: string): IAgentScopeHandle {
     return loopHandle(agentId, () => ({
       state: 'idle',
-      pendingPromptIds: [],
+      queue: [],
+      notificationCount: 0,
+      paused: false,
       hasPendingRequests: false,
     }));
   }
@@ -945,7 +945,9 @@ describe('SessionSubagentScopeCacheService eviction guards', () => {
       loopHandle('agent-1', () => ({
         state: 'running',
         activeTurnId: 1,
-        pendingPromptIds: [],
+        queue: [],
+        notificationCount: 0,
+        paused: false,
         hasPendingRequests: true,
       })),
     );
@@ -975,7 +977,9 @@ describe('SessionSubagentScopeCacheService eviction guards', () => {
       loopHandle('agent-1', () => ({
         state: 'running',
         activeTurnId: 1,
-        pendingPromptIds: [],
+        queue: [],
+        notificationCount: 0,
+        paused: false,
         hasPendingRequests: true,
       })),
     );

@@ -62,7 +62,7 @@ function startAgent(store: AgentEventStore, requester: LlmRequester = createEcho
 }
 
 async function runTurn(actor: AgentActor, store: AgentEventStore, text: string, historyLength: number): Promise<void> {
-  actor.send({ type: 'input.submit', message: createUserMessage(text) });
+  actor.send({ type: 'input.submit', entry: { message: createUserMessage(text) } });
   await waitFor(actor, (s) => s.matches('idle') && store.getState().history.length === historyLength, {
     timeout: 5000,
   });
@@ -254,7 +254,9 @@ describe('SessionStores switchBranch', () => {
       turns: [{ turnId: 1, start: { branch: 'main~2', seq: 0 }, end: { branch: 'main~2', seq: 3 } }],
       nextTurnId: 2,
     });
-    expect(main.getState().queue).toEqual([{ id: undefined, message: createUserMessage('queued') }]);
+    expect(main.getState().queue).toEqual([
+      { message: createUserMessage('queued'), meta: { source: 'input' } },
+    ]);
     expect(env.tree.openBranch('main~2').header.parentBranch).toBeUndefined();
     expect(switched).toEqual([
       {

@@ -1,6 +1,5 @@
 import { estimateMessageTokens, estimateUsedContextTokens } from '#/agent/context-usage';
 import { inputSubmitted, messageAppended, turnEnded, turnStarted } from '#/agent/events';
-import type { QueuedPrompt } from '#/agent/slices';
 import { createUserEntry, type HistoryMessage, type UserEntry } from '#/agent/turn';
 import type { ExternalEvent } from '#/eventStore/events';
 import { createUserMessage, type UserMessage } from '#/llm/message';
@@ -29,7 +28,7 @@ export function buildCompactionSeed(input: {
   turnId: number;
   history: readonly HistoryMessage[];
   summary: string;
-  queue: readonly QueuedPrompt[];
+  queue: readonly UserEntry[];
 }): CompactionSeed {
   const compactable = input.history.filter(isKeptUserEntry);
   const selection = selectCompactionUserMessages(
@@ -57,7 +56,7 @@ export function buildCompactionSeed(input: {
     turnStarted({ turnId: input.turnId }),
     ...seeded.map((message) => messageAppended({ message })),
     turnEnded({ turnId: input.turnId, outcome: 'done' }),
-    ...input.queue.map((item) => inputSubmitted({ id: item.id, message: item.message })),
+    ...input.queue.map((item) => inputSubmitted({ entry: item })),
   ];
   return {
     events,
@@ -92,8 +91,8 @@ function wrapSystemReminder(content: string): string {
 
 function isKeptUserEntry(entry: HistoryMessage): entry is UserEntry {
   if (entry.message.role !== 'user') return false;
-  if (entry.meta.source === 'compaction') return false;
-  return entry.meta.source === undefined || entry.meta.source === 'input';
+  if (entry.meta?.source === 'compaction') return false;
+  return entry.meta?.source === undefined || entry.meta?.source === 'input';
 }
 
 function selectCompactionUserMessages(

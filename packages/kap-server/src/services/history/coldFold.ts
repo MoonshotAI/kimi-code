@@ -672,7 +672,7 @@ export function foldWireHistory(
       case 'content.part': {
         const e = event as {
           stepUuid: string;
-          part: { type: string; text?: string; think?: string };
+          part: { type: string; text?: string; think?: string; hidden?: boolean };
           turnId?: string;
           step?: number;
         };
@@ -680,6 +680,7 @@ export function foldWireHistory(
         if (ref === undefined) return;
         const draft = ensureStepDraft(ref.turn, ref.step, atMs(record));
         if (draft === undefined) return;
+        if (e.part.type === 'think' && e.part.hidden === true) return;
         const kind = e.part.type === 'text' ? 'assistant' : e.part.type === 'think' ? 'thinking' : undefined;
         const partText = e.part.type === 'think' ? e.part.think : e.part.text;
         if (kind === undefined || typeof partText !== 'string') return;
@@ -902,6 +903,7 @@ export function foldWireHistory(
           target.at = recordAtMs;
         } else if (part.type === 'think') {
           const think = (part as { think?: unknown }).think;
+          if ((part as { hidden?: unknown }).hidden === true) continue;
           if (typeof think !== 'string' || think.length === 0) continue;
           const existingId = stepTextIds.get(step.stepId)?.thinking;
           const target =

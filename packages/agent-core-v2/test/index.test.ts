@@ -92,7 +92,6 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'plugin.session_start',
   'runtime.set_binding',
   'turn.ended',
-  'prompt.accepted',
   'prompt.aborted',
   'prompt.completed',
   'prompt.steered',
@@ -286,14 +285,14 @@ describe('conversation-time checkpoint registration', () => {
   it('registers every context-reacting state as checkpointed or explicitly exempt', () => {
     const violations: string[] = [];
     let entries = 0;
-    const undoable = BUILTIN_REPLAYABLE_STATE_KEYS.filter(
+    const undoable = new Set(BUILTIN_REPLAYABLE_STATE_KEYS.filter(
       (key) => key.replayable.undoable !== undefined,
-    );
+    ));
     for (const key of BUILTIN_REPLAYABLE_STATE_KEYS) {
       if (key.name === CONTEXT_OWNER_STATE) continue;
       if (!CONTEXT_EVENTS.some((cls) => key.replayable.folds.has(cls))) continue;
       entries += 1;
-      if (undoable.includes(key)) continue;
+      if (undoable.has(key)) continue;
       if (CHECKPOINT_EXEMPT_STATES.has(key.name)) continue;
       violations.push(key.name);
     }

@@ -955,9 +955,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * cannot deadlock.
    */
   private runSessionAccessAll<T>(sessionIds: readonly string[], work: () => Promise<T>): Promise<T> {
-    const keys = [...new Set(sessionIds)].sort();
+    const keys = [...new Set(sessionIds)].toSorted();
     let chained: () => Promise<T> = work;
-    for (const key of [...keys].reverse()) {
+    for (const key of [...keys].toReversed()) {
       const inner = chained;
       chained = () => this.runSessionAccess(key, inner);
     }
@@ -1520,7 +1520,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         for (const agent of agentLifecycle.list()) {
           const agentHandle = agentLifecycle.handleOf(agent.agentId);
           if (agentHandle === undefined) continue;
-          if (agentHandle.accessor.get(IAgentLoopService).status().state === 'running') {
+          if (agentHandle.accessor.get(IAgentLoopService).snapshot().state === 'running') {
             throw new KimiError(
               ErrorCodes.TURN_AGENT_BUSY,
               `Session "${sessionId}" cannot be reloaded while a turn is running`,
@@ -1934,7 +1934,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async importContext(input: ImportContextRpcInput): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
     if (
-      agent.accessor.get(IAgentLoopService).status().state === 'running' ||
+      agent.accessor.get(IAgentLoopService).snapshot().state === 'running' ||
       agent.accessor.get(IAgentFullCompactionService).compacting !== null
     ) {
       throw new KimiError(

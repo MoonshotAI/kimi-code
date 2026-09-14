@@ -1,12 +1,59 @@
 import { toDisposable } from '#/_base/di/lifecycle';
 import { Event } from '#/_base/event';
-import type { IAgentLoopService, LoopErrorHandler, LoopErrorHandlerRegistrationOptions, LoopNotify, LoopNotifyHandle, LoopPromptSubmit, Turn, TurnResult } from '#/agent/loop/loop';
+import type { IAgentLoopService, LoopErrorHandler, LoopErrorHandlerRegistrationOptions, LoopNotify, LoopNotifyHandle, LoopSubmitOptions, PromptHandle, Turn, TurnResult } from '#/agent/loop/loop';
+import type { UserEntry } from '#human/agent/turn';
+
+export function submitPromptTurn(
+  loop: IAgentLoopService,
+  input: UserEntry,
+  options?: LoopSubmitOptions,
+): { readonly turn: Turn } {
+  const { id } = loop.submit(input, options);
+  const handle = loop.promptHandle(id);
+  if (handle === undefined) throw new Error(`missing prompt handle for ${id}`);
+  let backing: Turn | undefined;
+  let settledCancelled = false;
+  void handle.launched.then((turn) => {
+    backing = turn;
+  });
+  void handle.completion.then((completion) => {
+    settledCancelled = completion.state === 'cancelled';
+  });
+  const controller = new AbortController();
+  const result: Promise<TurnResult> = handle.launched.then(
+    (turn) =>
+      turn?.result ??
+      handle.completion.then((completion) => {
+        if (completion.result !== undefined) return completion.result;
+        if (completion.state === 'cancelled') {
+          return { type: 'cancelled', steps: 0, reason: undefined } as TurnResult;
+        }
+        return new Promise<TurnResult>(() => {});
+      }),
+  );
+  return {
+    turn: {
+      get id() {
+        return backing?.id;
+      },
+      get state() {
+        return backing?.state ?? (settledCancelled ? 'cancelled' : 'queued');
+      },
+      signal: controller.signal,
+      ready: handle.launched.then(async (turn) => {
+        await turn?.ready;
+      }),
+      result,
+      cancel: (reason) => loop.cancel({ promptId: id }, reason),
+    },
+  };
+}
 import type { MachineEngine, MachineEngineAttachBundle } from '#/agent/loop/machine/engine';
 import type { AgentEventStore } from '#human/agent/slices';
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { BeforeToolExecuteEvent, ToolDidExecuteContext, WillExecuteToolEvent } from '#/agent/toolExecutor/toolHooks';
 import { OrderedHookSlot } from '#/hooks';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { createHooks } from '#/hooks';
 import type { IWireService } from '#/wire/wire';
 
@@ -63,10 +110,12 @@ function stubAttachEngine(): MachineEngine {
     remind: () => {},
     cancelQueueItem: () => {},
     abort: () => {},
+    pause: () => {},
+    resume: () => {},
     resetHistory: () => Promise.resolve(),
     resetJournal: () => Promise.resolve(),
     stop: () => {},
-    snapshot: () => ({ running: false, aborting: false, waitingForBackground: false, queueLength: 0, queueIds: [], notificationCount: 0, reminderCount: 0, backgroundCount: 0 }),
+    snapshot: () => ({ running: false, aborting: false, waitingForBackground: false, paused: false, queue: [], queueLength: 0, queueIds: [], notificationCount: 0, reminderCount: 0, backgroundCount: 0 }),
     currentStep: () => 0,
     lastFinish: () => undefined,
     toolExtras: new Map(),
@@ -74,9 +123,10 @@ function stubAttachEngine(): MachineEngine {
   };
 }
 export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
-  const hooks = createHooks(['onWillBeginStep', 'onDidFinishStep']) as IAgentLoopService['hooks'];
+  const hooks = createHooks(['onWillBeginStep', 'onDidFinishStep', 'onBeforeSubmitPrompt']) as IAgentLoopService['hooks'];
   const errorHandlers = registry(); const launches: number[] = []; const cancels: { turnId?: number; reason?: unknown }[] = [];
   const pending: PendingEntry[] = [];
+  const handles = new Map<string, PromptHandle>();
   let active: Turn | undefined; let nextId = typeof options.currentId === 'number' ? options.currentId : 0;
   let releaseActiveResult: ((result: TurnResult) => void) | undefined;
   const startTurn = () => {
@@ -92,16 +142,27 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
     _serviceBrand: undefined, hooks, launches, cancels, startTurn,
     queue: { hasPendingRequests: hasPending },
     settleActive(result = { type: 'completed', steps: 0, truncated: false }) { releaseActiveResult?.(result); },
-    submit(prompt: LoopPromptSubmit) {
+    submit(input: UserEntry, options?: LoopSubmitOptions) {
       const turn = startTurn();
-      pending.push({ kind: 'prompt', message: prompt.message, onConsume: prompt.onMaterialize });
-      return { turn };
+      const id = input.meta?.promptId ?? 'p';
+      const message: ContextMessage = {
+        ...input.message,
+        toolCalls: [],
+        origin: input.meta?.origin as PromptOrigin | undefined,
+      };
+      pending.push({ kind: 'prompt', message, onConsume: options?.onMaterialize });
+      handles.set(id, {
+        id,
+        userMessageId: id,
+        createdAt: '',
+        state: 'running',
+        message,
+        launched: Promise.resolve(turn),
+        completion: new Promise(() => {}),
+      });
+      return { id };
     },
-    steer(prompt: LoopPromptSubmit) {
-      if (active === undefined) return undefined;
-      pending.push({ kind: 'steer', message: prompt.message, onConsume: prompt.onMaterialize });
-      return active;
-    },
+    steer: async () => {},
     notify(note: LoopNotify = {}): LoopNotifyHandle {
       const entry: PendingEntry = {
         kind: note.bypassMaxSteps === true ? 'handoff' : note.message !== undefined ? 'message' : 'continuation',
@@ -121,16 +182,25 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
         },
       };
     },
-    status() { return { state: active !== undefined ? 'running' : 'idle', activeTurnId: active?.id, pendingPromptIds: [], hasPendingRequests: hasPending() }; },
-    activitySnapshot() { return {}; },
-    cancel(turnId, reason) { cancels.push({ turnId, reason }); if (active === undefined || (turnId !== undefined && active.id !== turnId)) return false; active.cancel(reason); return true; },
-    cancelQueued() { return false; },
-    cancelFromUser(turnId) { stub.cancel(turnId); },
+    snapshot() {
+      return {
+        state: active !== undefined ? 'running' : 'idle',
+        activeTurnId: active?.id,
+        activePromptId: undefined,
+        queue: [],
+        notificationCount: 0,
+        paused: false,
+        hasPendingRequests: hasPending(),
+        turn: undefined,
+        activeTraceId: undefined,
+      };
+    },
+    promptHandle: (id) => handles.get(id),
+    cancel(target, reason) { cancels.push({ turnId: target?.turnId, reason }); if (target?.promptId !== undefined) return true; if (active === undefined || (target?.turnId !== undefined && active.id !== target.turnId)) return false; active.cancel(reason); return true; },
     tryAcquireQuiescence: () => toDisposable(() => {}),
     buildAttachBundle: () => stubAttachBundle(),
     attachEngine: () => stubAttachEngine(),
     resetMachineEngine: () => Promise.resolve(),
-    hasPendingRequests: hasPending,
     registerLoopErrorHandler: errorHandlers.register,
     settled: () => Promise.resolve(),
     drainNextBatch(context) {
