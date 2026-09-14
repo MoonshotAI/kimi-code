@@ -24,6 +24,7 @@ const PHASE_LABEL_WIDTH = 'Completed'.length;
 const MIN_LABEL_WIDTH = PHASE_LABEL_WIDTH;
 const MAX_LATEST_MODEL_CHARS = 2_000;
 const MAX_FINAL_OUTPUT_LABEL_CHARS = 400;
+const MAX_FINAL_OUTPUT_LABEL_CODE_UNITS = 2_000;
 const COMPLETE_FILL_MS = 360;
 const FAILED_PLACEHOLDER_RED_FACTOR = 0.75;
 const FAILED_PLACEHOLDER_NON_RED_FACTOR = 0.25;
@@ -862,21 +863,27 @@ export class AgentSwarmProgressComponent implements Component {
 
   private hasAnimatedMembers(): boolean {
     const now = Date.now();
-    return (
-      this.progressEstimator.hasPendingCatchup() ||
-      this.members.some((member) =>
-        member.phase === 'running' ||
-        (
-          member.phase === 'completed' &&
-          member.completedAtMs !== undefined &&
-          now - member.completedAtMs < COMPLETE_FILL_MS
-        ) ||
-        (
-          member.phase === 'failed' &&
-          member.failedAtMs !== undefined &&
-          now - member.failedAtMs < COMPLETE_FILL_MS
-        ),
-      )
+    // Running cells and estimator catch-up only animate while the tool call
+    // is live: no further progress arrives once it ends (an unparsable result
+    // leaves members running), so ticking would repaint the tree forever.
+    if (
+      this.toolCallActive &&
+      (this.progressEstimator.hasPendingCatchup() ||
+        this.members.some((member) => member.phase === 'running'))
+    ) {
+      return true;
+    }
+    return this.members.some((member) =>
+      (
+        member.phase === 'completed' &&
+        member.completedAtMs !== undefined &&
+        now - member.completedAtMs < COMPLETE_FILL_MS
+      ) ||
+      (
+        member.phase === 'failed' &&
+        member.failedAtMs !== undefined &&
+        now - member.failedAtMs < COMPLETE_FILL_MS
+      ),
     );
   }
 
@@ -972,8 +979,61 @@ function releaseTerminalMemberText(member: AgentSwarmMember): void {
   delete member.cellCache;
 }
 
+// Display width alone does not bound memory: ANSI sequences and zero-width
+// graphemes add unbounded code units within a single column, so the retained
+// label is additionally capped by storage length.
 function capFinalOutputLabel(text: string): string {
-  return truncateToWidth(text, MAX_FINAL_OUTPUT_LABEL_CHARS, '');
+  return capCodeUnits(
+    truncateToWidth(text, MAX_FINAL_OUTPUT_LABEL_CHARS, ''),
+    MAX_FINAL_OUTPUT_LABEL_CODE_UNITS,
+  );
+}
+
+function capCodeUnits(text: string, maxCodeUnits: number): string {
+  if (text.length <= maxCodeUnits) return text;
+  let end = maxCodeUnits;
+  let index = text.indexOf('\x1B');
+  while (index >= 0 && index < end) {
+    const sequenceEnd = ansiSequenceEnd(text, index);
+    if (sequenceEnd === undefined || sequenceEnd > end) {
+      end = index;
+      break;
+    }
+    index = text.indexOf('\x1B', sequenceEnd);
+  }
+  const code = text.codePointAt(end - 1);
+  if (code >= 0xd800 && code <= 0xdbff) end -= 1;
+  return text.slice(0, end);
+}
+
+function ansiSequenceEnd(text: string, start: number): number | undefined {
+  if (text[start] !== '\x1B') return undefined;
+  const kind = text[start + 1];
+  if (kind === undefined) return undefined;
+  if (kind === '[') {
+    for (let index = start + 2; index < text.length; index += 1) {
+      const code = text.codePointAt(index);
+      if (code >= 0x40 && code <= 0x7e) return index + 1;
+    }
+    return undefined;
+  }
+  if (kind === ']' || kind === '_') {
+    for (let index = start + 2; index < text.length; index += 1) {
+      if (text[index] === '\u0007') return index + 1;
+      if (text[index] === '\x1B' && text[index + 1] === '\\') return index + 2;
+    }
+    return undefined;
+  }
+  let index = start + 1;
+  while (index < text.length) {
+    const code = text.codePointAt(index);
+    if (code >= 0x20 && code <= 0x2f) {
+      index += 1;
+      continue;
+    }
+    return code >= 0x30 && code <= 0x7e ? index + 1 : undefined;
+  }
+  return undefined;
 }
 
 function isTerminalPhase(phase: AgentSwarmPhase): boolean {

@@ -1115,6 +1115,31 @@ describe('AgentSwarmProgressComponent terminal state memory', () => {
     component.render(100);
     expect(membersOf(component)[0]?.cellCache).toBeDefined();
   });
+
+  it('bounds the retained label code units when the output carries ANSI sequences', () => {
+    const component = createComponent();
+    registerSubagents(component, 1);
+
+    component.markCompleted('agent-1', `ok${'\x1B[31m'.repeat(10_000)}`);
+
+    const text = membersOf(component)[0]?.completedText ?? '';
+    expect(text.length).toBeLessThanOrEqual(2_000);
+    expect(text.startsWith('ok')).toBe(true);
+    const escapeCount = text.match(/\x1B/g)?.length ?? 0;
+    const completeSequenceCount = text.match(/\x1B\[[0-9;]*m/g)?.length ?? 0;
+    expect(escapeCount).toBe(completeSequenceCount);
+  });
+
+  it('bounds the retained label code units for a long zero-width grapheme', () => {
+    const component = createComponent();
+    registerSubagents(component, 1);
+
+    component.markCompleted('agent-1', `x${'\u0301'.repeat(50_000)}`);
+
+    const text = membersOf(component)[0]?.completedText ?? '';
+    expect(text.length).toBeLessThanOrEqual(2_000);
+    expect(text.startsWith('x')).toBe(true);
+  });
 });
 
 describe('AgentSwarmProgressComponent frame timer', () => {
@@ -1175,6 +1200,23 @@ describe('AgentSwarmProgressComponent frame timer', () => {
     vi.advanceTimersByTime(80 * 10);
     const callsAfterSettled = requestRender.mock.calls.length;
     expect(callsAfterSettled).toBeGreaterThan(0);
+
+    vi.advanceTimersByTime(80 * 5);
+    expect(requestRender.mock.calls.length).toBe(callsAfterSettled);
+  });
+
+  it('stops the frame timer when the tool call ends with an unparsable result', () => {
+    vi.useFakeTimers();
+    const requestRender = vi.fn();
+    const component = createComponent({ requestRender });
+    registerSubagents(component, 1);
+    startSubagents(component, 1);
+    requestRender.mockClear();
+
+    component.markToolCallEnded();
+    expect(component.applyResult('Done')).toBe(false);
+    vi.advanceTimersByTime(80 * 10);
+    const callsAfterSettled = requestRender.mock.calls.length;
 
     vi.advanceTimersByTime(80 * 5);
     expect(requestRender.mock.calls.length).toBe(callsAfterSettled);
