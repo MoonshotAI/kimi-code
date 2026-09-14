@@ -1,14 +1,14 @@
 // apps/vis/server/src/lib/task-store.ts
 //
 // Read-only reader for background tasks, persisted by the engine under each
-// spawning agent's homedir at `<agentDir>/tasks/<taskId>.json`
-// (+ `tasks/<taskId>/output.log`). Main-agent reads may also receive the
+// spawning agent's homedir at `<agentDir>/tasks/<storageKey>.json`
+// (+ `tasks/<storageKey>/output.log`). Main-agent reads may also receive the
 // legacy session root as a fallback.
 //
 // The visualizer never writes these files; it mirrors the engine's on-disk
 // layout (`packages/agent-core-v2/src/agent/task/persist.ts`) for reading only:
-// the same path-safety guard, so a corrupt / hand-edited filename cannot turn
-// a log path into a traversal primitive.
+// the same taskId → storage-key derivation, so provider-supplied ids with
+// Windows-reserved characters resolve to the same portable paths.
 
 import { open, readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -17,12 +17,44 @@ import type {
   BackgroundTaskInfo,
 } from './agent-record-types';
 
-/** Mirror of the engine's `isPathSafeTaskId` (`agent/task/persist.ts`).
- *  Enforced before deriving any output path so `../` and friends cannot escape. */
-export function isSafeTaskId(taskId: string): boolean {
-  if (taskId.length === 0) return false;
-  if (taskId === '.' || taskId === '..') return false;
-  return !/[/\\\0]/.test(taskId);
+const STORAGE_KEY_IDENTITY = /^[A-Za-z0-9_-]{1,64}$/;
+const WINDOWS_RESERVED_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+const STORAGE_KEY_PREFIX = 'enc~';
+const STORAGE_KEY_ENCODED_LIMIT = 56;
+const STORAGE_KEY_ENCODED_HEAD = 40;
+const STORAGE_KEY_SAFE_CHAR = /^[a-z0-9_-]$/;
+
+/** Mirror of the engine's `taskStorageKey` (`agent/task/persist.ts`): identity
+ *  for portable ids, otherwise a bounded `enc~`-prefixed percent-encoding. */
+export function taskStorageKey(taskId: string): string {
+  if (STORAGE_KEY_IDENTITY.test(taskId) && !WINDOWS_RESERVED_NAME.test(taskId)) {
+    return taskId;
+  }
+  let encoded = '';
+  for (let index = 0; index < taskId.length; index++) {
+    const code = taskId.charCodeAt(index);
+    const ch = taskId[index]!;
+    encoded +=
+      code < 0x80 && STORAGE_KEY_SAFE_CHAR.test(ch)
+        ? ch
+        : code < 0x80
+          ? `%${code.toString(16).toUpperCase().padStart(2, '0')}`
+          : `%u${code.toString(16).toUpperCase().padStart(4, '0')}`;
+  }
+  const body =
+    encoded.length <= STORAGE_KEY_ENCODED_LIMIT
+      ? encoded
+      : `${encoded.slice(0, STORAGE_KEY_ENCODED_HEAD)}~${storageKeyDigest(taskId)}`;
+  return `${STORAGE_KEY_PREFIX}${body}`;
+}
+
+function storageKeyDigest(taskId: string): string {
+  let hash = 0xcbf29ce484222325n;
+  for (let index = 0; index < taskId.length; index++) {
+    hash ^= BigInt(taskId.charCodeAt(index));
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+  }
+  return hash.toString(16).padStart(16, '0');
 }
 
 function tasksDirOf(agentDir: string): string {
@@ -30,19 +62,16 @@ function tasksDirOf(agentDir: string): string {
 }
 
 function taskOutputFile(agentDir: string, taskId: string): string {
-  if (!isSafeTaskId(taskId)) {
-    throw new Error(`Invalid task id: "${taskId}"`);
-  }
-  return join(tasksDirOf(agentDir), taskId, 'output.log');
+  return join(tasksDirOf(agentDir), taskStorageKey(taskId), 'output.log');
 }
 
 /**
  * Enumerate all persisted background tasks for a session, normalized to the
  * current `BackgroundTaskInfo` shape and sorted newest-first by start time.
  *
- * Silently skips: filenames that fail the path-safety guard, files that fail
- * to read/parse, and records without a string `taskId` — matching the
- * engine's tolerant `listTasks`.
+ * Silently skips files that fail to read/parse and records without a string
+ * `taskId` — matching the engine's tolerant `listTasks`. Filenames are only
+ * storage keys; the displayed id always comes from the record itself.
  */
 export async function listBackgroundTasks(
   agentDir: string,
@@ -53,7 +82,9 @@ export async function listBackgroundTasks(
   if (fallbackDir !== undefined) {
     const fallback = await listBackgroundTasksAt(fallbackDir);
     for (const task of fallback.tasks) {
-      if (!primary.reservedIds.has(task.keyId)) out.push(task);
+      if (primary.reservedIds.has(task.keyId)) continue;
+      if (primary.reservedIds.has(task.task.taskId)) continue;
+      out.push(task);
     }
   }
   // Newest first; tasks with no start time sort last.
@@ -81,7 +112,6 @@ async function listBackgroundTasksAt(
   for (const entry of entries) {
     if (!entry.name.endsWith('.json')) continue;
     const id = entry.name.slice(0, -'.json'.length);
-    if (!isSafeTaskId(id)) continue;
     reservedIds.add(id);
     if (!entry.isFile()) continue;
     let parsed: unknown;
@@ -91,7 +121,9 @@ async function listBackgroundTasksAt(
       continue;
     }
     if (!isReadablePersistedTask(parsed)) continue;
-    tasks.push({ keyId: id, task: normalizePersistedTask(parsed) });
+    const task = normalizePersistedTask(parsed);
+    reservedIds.add(task.taskId);
+    tasks.push({ keyId: id, task });
   }
   return { reservedIds, tasks };
 }

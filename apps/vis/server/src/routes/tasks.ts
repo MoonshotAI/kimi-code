@@ -4,7 +4,6 @@ import { KIMI_CODE_HOME } from '../config';
 import type { BackgroundTaskEntry } from '../lib/agent-record-types';
 import { readSessionDetail } from '../lib/session-store';
 import {
-  isSafeTaskId,
   listBackgroundTasks,
   readTaskOutput,
   taskOutputMetadata,
@@ -52,9 +51,6 @@ export function tasksRoute(home: string = KIMI_CODE_HOME): Hono {
   r.get('/:id/tasks/:taskId/output', async (c) => {
     const id = c.req.param('id');
     const taskId = c.req.param('taskId');
-    if (!isSafeTaskId(taskId)) {
-      return c.json({ error: 'invalid task id', code: 'BAD_REQUEST' }, 400);
-    }
     const offset = parseNonNegativeInt(c.req.query('offset'), 0);
     const limit = Math.min(
       parseNonNegativeInt(c.req.query('limit'), DEFAULT_OUTPUT_LIMIT),
