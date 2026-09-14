@@ -122,13 +122,13 @@ describe('tasks route', () => {
     expect((await res.json())).toMatchObject({ size: 0, content: '', eof: true });
   });
 
-  it('rejects an unsafe task id with 400', async () => {
+  it('neutralizes a traversal task id through the derived storage key', async () => {
     const { home, cleanup: c } = await buildSessionFixture('sample-main');
     cleanup = c;
     const app = tasksRoute(home);
     const res = await app.request('/session_fixture/tasks/..%2Fescape/output');
-    expect(res.status).toBe(400);
-    expect(await res.json()).toMatchObject({ code: 'BAD_REQUEST' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ size: 0, content: '', eof: true });
   });
 
   it('returns 404 for a missing session', async () => {

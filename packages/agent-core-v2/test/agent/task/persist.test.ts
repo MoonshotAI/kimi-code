@@ -1,4 +1,4 @@
-import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
@@ -11,6 +11,7 @@ import {
   AgentTaskPersistence,
   type AgentTaskInfo,
 } from '#/agent/task/task';
+import { taskStorageKey } from '#/agent/task/persist';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -127,23 +128,28 @@ describe('AgentTaskPersistence', () => {
     expect(st.mode & 0o777).toBe(0o700);
   });
 
-  it('rejects path-traversal task ids', async () => {
-    await expect(
-      persistence.writeTask(sample({ taskId: '../../etc/passwd' })),
-    ).rejects.toThrow(/Invalid task id/);
-    await expect(persistence.readTask('../etc/passwd')).rejects.toThrow(/Invalid task id/);
-    expect(() => persistence.taskOutputFile('../etc/passwd')).toThrow(/Invalid task id/);
+  it('round-trips path-unsafe task ids under a derived storage key', async () => {
+    const weird = sample({ taskId: 'Bash:21/../../etc' });
+    await persistence.writeTask(weird);
+    expect(await persistence.readTask(weird.taskId)).toEqual(weird);
+    const files = await readdir(join(sessionDir, SESSION_SCOPE, 'tasks'));
+    expect(files).toEqual([`${taskStorageKey(weird.taskId)}.json`]);
+    expect(files[0]).not.toContain('..');
+    expect(persistence.taskOutputFile(weird.taskId)).toBe(
+      join(sessionDir, 'tasks', taskStorageKey(weird.taskId), 'output.log'),
+    );
   });
 
-  it('listTasks silently skips non-validating task id files', async () => {
-    await persistence.writeTask(sample());
+  it('listTasks treats filenames as storage keys and reads the record id', async () => {
+    const weird = sample({ taskId: 'Bash:21' });
+    await persistence.writeTask(weird);
     await writeFile(
       join(sessionDir, SESSION_SCOPE, 'tasks', '...json'),
       JSON.stringify(sample({ taskId: '..' })),
       'utf-8',
     );
     const all = await persistence.listTasks();
-    expect(all.map((task) => task.taskId)).toEqual(['bash-11111111']);
+    expect(all.map((task) => task.taskId).toSorted()).toEqual(['..', 'Bash:21']);
   });
 
   it('listTasks skips unrecognized records', async () => {
