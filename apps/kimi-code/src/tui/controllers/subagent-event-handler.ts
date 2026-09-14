@@ -173,6 +173,9 @@ export class SubAgentEventHandler {
       case 'subagent.failed':
         this.handleSubagentFailed(event);
         return;
+      case 'subagent.cancelled':
+        this.handleSubagentCancelled(event);
+        return;
     }
   }
 
@@ -364,6 +367,28 @@ export class SubAgentEventHandler {
     const info = this.subagentInfo.get(event.subagentId);
     if (info === undefined || info.runInBackground) return;
     this.handleForegroundSubagentFailed(event, info);
+  }
+
+  private handleSubagentCancelled(
+    event: SubagentLifecycleEventOf<'subagent.cancelled'>,
+  ): void {
+    this.activityStore.markFailed(event.subagentId);
+    this.pruneForegroundOnlyRecord(event.subagentId);
+    const backgroundMeta = this.backgroundAgentMetadata.get(event.subagentId);
+    if (backgroundMeta !== undefined) {
+      this.backgroundAgentMetadata.delete(event.subagentId);
+      this.deps.syncBackgroundAgentBadge();
+      this.host.streamingUI.applyBackgroundTaskTerminalStatus({
+        agentId: event.subagentId,
+        description: backgroundMeta.description ?? '',
+        status: 'killed',
+      });
+      return;
+    }
+
+    const info = this.subagentInfo.get(event.subagentId);
+    if (info === undefined || info.runInBackground) return;
+    this.handleForegroundSubagentCancelled(event, info);
   }
 
   private findAgentTaskId(
@@ -583,6 +608,18 @@ export class SubAgentEventHandler {
     this.host.streamingUI.removeToolComponentIfInactive(parentToolCallId);
   }
 
+  private handleForegroundSubagentCancelled(
+    event: SubagentLifecycleEventOf<'subagent.cancelled'>,
+    info: SubagentInfo,
+  ): void {
+    const { parentToolCallId } = info;
+    if (this.updateAgentSwarmProgress(parentToolCallId, (progress) => {
+      progress.markCancelled(event.subagentId);
+    })) {
+      this.host.streamingUI.removeToolComponentIfInactive(parentToolCallId);
+    }
+  }
+
   private applySubagentEventToSwarmProgress(
     progress: AgentSwarmProgressComponent,
     event: Event,
@@ -765,7 +802,8 @@ function isSubagentLifecycleEvent(event: Event): event is SubagentLifecycleEvent
     event.type === 'subagent.started' ||
     event.type === 'subagent.suspended' ||
     event.type === 'subagent.completed' ||
-    event.type === 'subagent.failed'
+    event.type === 'subagent.failed' ||
+    event.type === 'subagent.cancelled'
   );
 }
 

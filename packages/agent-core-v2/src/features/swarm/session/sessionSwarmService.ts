@@ -5,16 +5,20 @@ import { linkAbortSignal } from '#/_base/utils/abort';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { Event2 } from '#/app/event/event2';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
+import { hasPinnedPermissionMode } from '#/features/tower/tower';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { createAgentAwaitingClose } from '#/session/agentLifecycle/createAwaitingClose';
 import {
   isSubagentMeta,
+  labelsFromAgentMeta,
   subagentLabels,
   subagentParentAgentId,
   subagentSwarmItem,
 } from '#/session/agentLifecycle/subagentMetadata';
-import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
+import { emitAgentRunSpawned, mirrorAgentRun, SubagentCancelled } from '#/session/subagent/mirrorAgentRun';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -86,12 +90,18 @@ export class SessionSwarmService implements ISessionSwarmService {
       resume: (agentId, options) => this.resumeAttempt(callerAgentId, agentId, options, false),
       retry: (agentId, options) => this.resumeAttempt(callerAgentId, agentId, options, true),
       suspended: (event) => {
-        const caller = this.agentLifecycle.handleOf(callerAgentId);
-        void caller?.accessor.get(IEventDispatcher)?.dispatch(
+        this.dispatchSubagentEvent(
+          callerAgentId,
           new SubagentSuspended({
             subagentId: event.agentId,
             reason: event.reason,
           }),
+        );
+      },
+      abandoned: (event) => {
+        this.dispatchSubagentEvent(
+          callerAgentId,
+          new SubagentCancelled({ subagentId: event.agentId }),
         );
       },
     };
@@ -106,6 +116,11 @@ export class SessionSwarmService implements ISessionSwarmService {
 
   cancel({ callerAgentId }: { readonly callerAgentId: string }): void {
     this.inFlight.get(callerAgentId)?.abort();
+  }
+
+  private dispatchSubagentEvent(callerAgentId: string, event: Event2): void {
+    const caller = this.agentLifecycle.handleOf(callerAgentId);
+    void caller?.accessor.get(IEventDispatcher)?.dispatch(event);
   }
 
   private async spawnAttempt(
@@ -152,9 +167,10 @@ export class SessionSwarmService implements ISessionSwarmService {
     retryTurn: boolean,
   ): Promise<AgentRunAttemptHandle> {
     options.signal.throwIfAborted();
-    await this.requireOwnedSubagent(callerAgentId, agentId);
+    const meta = await this.requireOwnedSubagent(callerAgentId, agentId);
     const caller = this.requireHandle(callerAgentId, 'Caller agent');
-    const child = this.requireHandle(agentId, 'Agent instance');
+    const child =
+      this.agentLifecycle.handleOf(agentId) ?? (await this.rebuildSubagent(agentId, meta, caller));
     this.requireIdleSubagent(agentId, child);
     const profileName =
       child.accessor.get(IAgentProfileService).data().profileName ?? RESUMED_PROFILE_FALLBACK;
@@ -225,9 +241,33 @@ export class SessionSwarmService implements ISessionSwarmService {
     }
   }
 
-  private async requireOwnedSubagent(callerAgentId: string, agentId: string): Promise<void> {
+  private async rebuildSubagent(
+    agentId: string,
+    meta: AgentMeta,
+    caller: IAgentScopeHandle,
+  ): Promise<IAgentScopeHandle> {
+    await createAgentAwaitingClose(this.agentLifecycle, {
+      agentId,
+      labels: labelsFromAgentMeta(meta),
+      forkedFrom: meta.forkedFrom,
+    });
+    const rebuilt = this.agentLifecycle.handleOf(agentId);
+    if (rebuilt === undefined) {
+      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent instance "${agentId}" does not exist`, {
+        details: { agentId },
+      });
+    }
+    if (!hasPinnedPermissionMode(rebuilt.accessor.get(IAgentProfileService).data().profileName)) {
+      rebuilt.accessor
+        .get(IAgentPermissionModeService)
+        .setMode(caller.accessor.get(IAgentPermissionModeService).mode);
+    }
+    return rebuilt;
+  }
+
+  private async requireOwnedSubagent(callerAgentId: string, agentId: string): Promise<AgentMeta> {
     const meta = await this.agentMeta(agentId);
-    if (!isSubagentMeta(meta)) {
+    if (meta === undefined || !isSubagentMeta(meta)) {
       throw new Error2(ErrorCodes.AGENT_NOT_A_SUBAGENT, `Agent instance "${agentId}" is not a subagent`, {
         details: { agentId },
       });
@@ -239,6 +279,7 @@ export class SessionSwarmService implements ISessionSwarmService {
         { details: { agentId, callerAgentId } },
       );
     }
+    return meta;
   }
 
   private async agentMeta(agentId: string): Promise<AgentMeta | undefined> {

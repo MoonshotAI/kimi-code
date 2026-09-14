@@ -425,6 +425,18 @@ export class SessionProjection {
         }
         return;
       }
+      case 'subagent.cancelled': {
+        const tracker = this.agentStates.get((event as { subagentId: string }).subagentId);
+        if (
+          tracker?.runFinished(
+            'interrupted',
+            new Date((event as { time?: number }).time ?? Date.now()).toISOString(),
+          ) === true
+        ) {
+          this.emitAgentState(tracker.agentId);
+        }
+        return;
+      }
       case 'turn.started': {
         const tracker = this.agentStates.get(agentId);
         if (tracker === undefined) return;

@@ -71,6 +71,16 @@ export class SubagentFailed extends Event2<SubagentFailedPayload> {
 }
 export interface SubagentFailed extends SubagentFailedPayload {}
 
+export interface SubagentCancelledPayload {
+  readonly subagentId: string;
+}
+
+export class SubagentCancelled extends Event2<SubagentCancelledPayload> {
+  static override readonly type = 'subagent.cancelled';
+  static override readonly observable = true;
+}
+export interface SubagentCancelled extends SubagentCancelledPayload {}
+
 export interface SubagentSpawnedEvent extends SubagentSpawnedPayload {
   readonly type: 'subagent.spawned';
 }
@@ -85,6 +95,10 @@ export interface SubagentCompletedEvent extends SubagentCompletedPayload {
 
 export interface SubagentFailedEvent extends SubagentFailedPayload {
   readonly type: 'subagent.failed';
+}
+
+export interface SubagentCancelledEvent extends SubagentCancelledPayload {
+  readonly type: 'subagent.cancelled';
 }
 
 export interface AgentRunSpawnedMeta {
@@ -195,7 +209,9 @@ export async function mirrorAgentRun(
     });
     return result;
   } catch (error) {
-    if (!isAbortError(error) && !shouldSuppressFailure(options, error)) {
+    if (isAbortError(error) || options.signal.aborted) {
+      void dispatcher?.dispatch(new SubagentCancelled({ subagentId: run.agentId }));
+    } else if (!suppressesRateLimitFailure(options, error)) {
       void dispatcher?.dispatch(
         new SubagentFailed({
           subagentId: run.agentId,
@@ -207,10 +223,8 @@ export async function mirrorAgentRun(
   }
 }
 
-function shouldSuppressFailure(options: MirrorAgentRunOptions, error: unknown): boolean {
-  if (options.suppressRateLimitFailureEvent !== true) return false;
-  if (isProviderRateLimitError(error)) return true;
-  return isAbortError(error) || options.signal.aborted;
+function suppressesRateLimitFailure(options: MirrorAgentRunOptions, error: unknown): boolean {
+  return options.suppressRateLimitFailureEvent === true && isProviderRateLimitError(error);
 }
 
 function errorMessage(error: unknown): string {

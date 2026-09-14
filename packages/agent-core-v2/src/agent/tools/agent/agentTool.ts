@@ -48,6 +48,7 @@ import { IFlagService } from '#/app/flag/flag';
 import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { NOTIFY_USER_TOOL_NAME } from '#/features/notify/tools/notify-user/notify-user';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { createAgentAwaitingClose } from '#/session/agentLifecycle/createAwaitingClose';
 import {
   isSubagentMeta,
   labelsFromAgentMeta,
@@ -387,7 +388,7 @@ export class SubagentTool implements ISubagentTool {
   }
 
   private async rebuildSubagent(agentId: string, meta: AgentMeta): Promise<IAgentScopeHandle> {
-    await this.agentLifecycle.create({
+    await createAgentAwaitingClose(this.agentLifecycle, {
       agentId,
       labels: labelsFromAgentMeta(meta),
       forkedFrom: meta.forkedFrom,

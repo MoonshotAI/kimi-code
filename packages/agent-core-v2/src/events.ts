@@ -19,7 +19,7 @@ import type { GoalUpdatedEvent } from '#/features/goal/goalOps';
 import type { SkillActivatedEvent } from '#/features/skill/skillOps';
 import type { SubagentSuspendedEvent } from '#/features/swarm/session/sessionSwarmService';
 import type { SessionMetaUpdatedEvent } from '#/session/sessionMetadata/sessionMetaEvents';
-import type { SubagentCompletedEvent, SubagentFailedEvent, SubagentSpawnedEvent, SubagentStartedEvent } from '#/session/subagent/mirrorAgentRun';
+import type { SubagentCancelledEvent, SubagentCompletedEvent, SubagentFailedEvent, SubagentSpawnedEvent, SubagentStartedEvent } from '#/session/subagent/mirrorAgentRun';
 
 import type { ErrorEvent, WarningEvent } from './errors';
 
@@ -69,6 +69,7 @@ export type AgentEvent =
   | SubagentSuspendedEvent
   | SubagentCompletedEvent
   | SubagentFailedEvent
+  | SubagentCancelledEvent
   | CompactionStartedEvent
   | CompactionBlockedEvent
   | CompactionCancelledEvent

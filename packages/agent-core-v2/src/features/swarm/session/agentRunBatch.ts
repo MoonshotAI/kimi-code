@@ -58,11 +58,17 @@ export type AgentRunSuspendedEvent = {
   readonly reason: string;
 };
 
+export type AgentRunAbandonedEvent = {
+  readonly task: QueuedAgentRunTask;
+  readonly agentId: string;
+};
+
 export type AgentRunBatchLauncher = {
   spawn(options: AgentSpawnAttemptOptions): Promise<AgentRunAttemptHandle>;
   resume(agentId: string, options: AgentRunAttemptOptions): Promise<AgentRunAttemptHandle>;
   retry(agentId: string, options: AgentRunAttemptOptions): Promise<AgentRunAttemptHandle>;
   suspended?(event: AgentRunSuspendedEvent): void;
+  abandoned?(event: AgentRunAbandonedEvent): void;
 };
 
 type RateLimitedOutcome = {
@@ -524,6 +530,7 @@ export class AgentRunBatch<T> {
 
   private finishWithUserCancellation(): void {
     if (this.finished) return;
+    this.abandonSuspended();
 
     this.finish(
       this.states.map((state) => {
@@ -561,9 +568,17 @@ export class AgentRunBatch<T> {
 
   private fail(error: unknown): void {
     if (this.finished) return;
+    this.abandonSuspended();
     this.finished = true;
     this.cleanup();
     this.reject?.(error);
+  }
+
+  private abandonSuspended(): void {
+    for (const state of this.pending) {
+      if (state.agentId === undefined) continue;
+      this.launcher.abandoned?.({ task: state.task, agentId: state.agentId });
+    }
   }
 
   private cleanup(): void {
