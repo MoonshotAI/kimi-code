@@ -1,7 +1,7 @@
-import { assign, raise, setup } from '#/xstate2';
+import { assign, fromPromise, raise, setup } from '#/xstate2';
 
 import { emptyResponseError } from '#/llm/empty-response';
-import type { LlmErrorMessage, LlmRemoteErrorMessage } from '#/llm/errors';
+import type { LlmErrorMessage } from '#/llm/errors';
 import { NO_FINISH, type FinishInfo } from '#/llm/finish-reason';
 import {
   createMessageAccumulator,
@@ -16,14 +16,14 @@ import {
   type UserMessage,
 } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
-import type { createLlmMachine, LlmEvent } from '#/llm/requester/machine';
+import { createRequestActor, type LlmEvent, type MessageResolver } from '#/llm/requester/actor';
 import type {
   LlmRecovery,
   LlmRecoveryContext,
   LlmRecoveryProposal,
   LlmRecoveryRecord,
 } from '#/llm/requester/recovery';
-import type { LlmRequestConfig } from '#/llm/requester/requester';
+import type { LlmRequestConfig, LlmRequester } from '#/llm/requester/requester';
 import {
   readRetryAfterMs,
   resolveMaxAttempts,
@@ -36,9 +36,11 @@ import { ToolCallIdNormalizer } from '#/llm/toolCallIdNormalizer';
 import { emptyUsage, type TokenUsage } from '#/llm/usage';
 import type { ToolResult } from '#/tool/executor';
 import type { ToolOutput } from '#/tool/machine';
+import { createAbortScope, withAbort, type AbortScope } from '#/utils/abort';
 
 import { MaxStepsExceededError } from './errors';
 import { estimateUsedContextTokens } from './context-usage';
+import type { PromptOrigin } from './origin';
 
 export interface EntryMeta {
   source?: string;
@@ -47,7 +49,13 @@ export interface EntryMeta {
 
 export type SystemMeta = EntryMeta;
 
-export type UserMeta = EntryMeta;
+export interface UserMeta extends EntryMeta {
+  promptId?: string;
+  origin?: PromptOrigin;
+  tracked?: boolean;
+  createdAt?: string;
+  userMessageId?: string;
+}
 
 export type ToolMeta = EntryMeta;
 
@@ -63,7 +71,7 @@ export type AssistantMetaInput = Omit<AssistantMeta, 'usage'> & { usage?: TokenU
 
 export interface HistoryEntry<T extends Message, F extends EntryMeta> {
   message: T;
-  meta: F;
+  meta?: F;
 }
 
 export type SystemEntry = HistoryEntry<SystemMessage, SystemMeta>;
@@ -173,10 +181,11 @@ export interface TurnInput {
   request: LlmRequestConfig;
   history: readonly HistoryMessage[];
   maxSteps?: number;
+  parentSignal?: AbortSignal;
 }
 
 export type TurnToolEvent =
-  | { type: 'tool.async'; toolCallId: string; text: string }
+  | { type: 'tool.detached'; toolCallId: string; text: string }
   | { type: 'tool.done'; toolCallId: string; result: ToolResult }
   | { type: 'tool.failed'; toolCallId: string; error: unknown }
   | { type: 'tool.aborted'; toolCallId: string };
@@ -184,17 +193,25 @@ export type TurnToolEvent =
 export type TurnEvent =
   | LlmEvent
   | TurnToolEvent
-  | { type: 'turn.notifications'; messages: HistoryMessage[] }
-  | { type: 'turn.abort' };
+  | { type: 'turn.notify'; messages: HistoryMessage[] }
+  | { type: 'turn.pause' }
+  | { type: 'turn.continue' }
+  | { type: 'turn.abort' }
+  | {
+      type: 'turn.failure.triaged';
+      cause: Extract<LlmEvent, { type: 'llm.failed.remote' }>;
+      proposal?: LlmRecoveryProposal & LlmRecoveryRecord;
+    };
 
 export type TurnLlmEvent =
   | Exclude<LlmEvent, { type: 'llm.done' }>
   | { type: 'llm.done'; entry: AssistantEntry };
 
 export type TurnSignal =
-  | { type: 'turn.spawnTools'; toolCalls: ToolCall[] }
+  | { type: 'step.started'; step: number }
+  | { type: 'turn.spawn_tools'; toolCalls: ToolCall[] }
   | { type: 'turn.drain' }
-  | { type: 'turn.remindersConsumed'; reminders: HistoryMessage[] };
+  | { type: 'turn.reminders_consumed'; reminders: HistoryMessage[] };
 
 export type TurnOutput =
   | { type: 'done'; produced: HistoryMessage[] }
@@ -206,13 +223,16 @@ export interface TurnMachineContext {
   produced: HistoryMessage[];
   accumulator: HistoryAccumulator;
   toolCallIds: ToolCallIdNormalizer;
+  llmScope: AbortScope;
   pendingToolCalls: ToolCall[];
   outcomes: Record<string, ToolOutput>;
   steps: number;
+  step: number;
   attempt: number;
   delayMs: number;
   appliedRecoveries: LlmRecoveryRecord[];
-  lastError?: LlmRemoteErrorMessage;
+  recoveryMessages?: readonly Message[];
+  paused: boolean;
   outcome?: 'done' | 'failed' | 'aborted';
   error?: unknown;
 }
@@ -275,20 +295,8 @@ function baseMessages(context: TurnMachineContext): readonly Message[] {
   return toInputMessages([...context.input.history, ...context.produced]);
 }
 
-function attemptMessages(
-  context: TurnMachineContext,
-  recovery: LlmRecovery | undefined,
-): readonly Message[] {
-  const base = baseMessages(context);
-  const lastError = context.lastError;
-  if (lastError === undefined || context.appliedRecoveries.length === 0) return base;
-  return (
-    proposeRecovery(recovery, {
-      error: lastError,
-      messages: base,
-      applied: context.appliedRecoveries.slice(0, -1),
-    })?.messages ?? base
-  );
+function attemptMessages(context: TurnMachineContext): readonly Message[] {
+  return context.recoveryMessages ?? baseMessages(context);
 }
 
 function proposeRecovery(
@@ -297,8 +305,9 @@ function proposeRecovery(
 ): (LlmRecoveryProposal & LlmRecoveryRecord) | undefined {
   if (recovery === undefined) return undefined;
   const proposal = recovery.propose(ctx);
-  if (proposal === undefined || proposal.messages === ctx.messages) return undefined;
-  return { strategy: recovery.id, action: proposal.action, messages: proposal.messages };
+  if (proposal === undefined) return undefined;
+  if (proposal.messages !== undefined && proposal.messages === ctx.messages) return undefined;
+  return proposal;
 }
 
 function llmRetryingEvent(
@@ -334,21 +343,32 @@ function emptyErrorOf(context: TurnMachineContext): LlmErrorMessage<'empty_respo
   return emptyResponseError(
     entry.message,
     context.input.request.model,
-    entry.meta.finish ?? NO_FINISH,
+    entry.meta?.finish ?? NO_FINISH,
   );
 }
+
+export interface TurnBeforeStepContext {
+  messages: readonly HistoryMessage[];
+  request: LlmRequestConfig;
+}
+
+export type TurnBeforeStep = (context: TurnBeforeStepContext) => void | Promise<void>;
 
 export interface CreateTurnMachineOptions {
   readonly recovery?: LlmRecovery;
   readonly retry?: LlmRetryOptions;
+  readonly abortGraceMs?: number;
+  readonly messageResolvers?: readonly MessageResolver[];
+  readonly onBeforeStep?: TurnBeforeStep;
 }
 
 export function createTurnMachine(
-  llmActor: ReturnType<typeof createLlmMachine>,
+  requester: LlmRequester,
   options?: CreateTurnMachineOptions,
 ) {
   const recovery = options?.recovery;
   const retry = options?.retry;
+  const abortGraceMs = options?.abortGraceMs ?? 2_500;
   return setup({
     types: {
       input: {} as TurnInput,
@@ -357,7 +377,10 @@ export function createTurnMachine(
       output: {} as TurnOutput,
     },
     actors: {
-      llmActor,
+      llmActor: createRequestActor(requester, options?.messageResolvers),
+      onBeforeStepActor: fromPromise<void, TurnBeforeStepContext>(async ({ input }) => {
+        await options?.onBeforeStep?.(input);
+      }),
     },
     actions: {
       forwardToParent: ({ self, event }) => {
@@ -367,21 +390,43 @@ export function createTurnMachine(
         self._parent?.send(params);
       },
       signalRemindersConsumed: ({ self, event }) => {
-        if (event.type !== 'turn.notifications') return;
-        const reminders = event.messages.filter((entry) => entry.meta.source === 'reminder');
+        if (event.type !== 'turn.notify') return;
+        const reminders = event.messages.filter((entry) => entry.meta?.source === 'reminder');
         if (reminders.length === 0) return;
-        self._parent?.send({ type: 'turn.remindersConsumed', reminders });
+        self._parent?.send({ type: 'turn.reminders_consumed', reminders });
       },
       sendToParent: ({ self }, params: TurnLlmEvent) => {
         self._parent?.send(params);
       },
+      discardAttemptStream: ({ context }) => {
+        context.accumulator.rollback();
+        context.accumulator = createHistoryAccumulator(
+          modelMeta(context.input.request.model),
+          context.toolCallIds,
+        );
+      },
+      salvageAborted: assign(({ context }) => {
+        const partial = context.accumulator.finish({ source: 'salvaged' });
+        const salvaged = salvageInterruptedMessage(partial.message);
+        return {
+          outcome: 'aborted' as const,
+          produced:
+            salvaged === null
+              ? context.produced
+              : [...context.produced, { message: salvaged, meta: partial.meta }],
+        };
+      }),
+      collectAborted: assign(({ context }) =>
+        collectToolOutcomes({ ...context, outcomes: abortOutcomes(context) }),
+      ),
     },
     delays: {
       retryDelay: ({ context }) => context.delayMs,
+      abortGrace: abortGraceMs,
     },
   }).createMachine({
     id: 'turn',
-    initial: 'thinking',
+    initial: 'gating',
     context: ({ input }) => {
       const toolCallIds = new ToolCallIdNormalizer();
       toolCallIds.seedFrom(toInputMessages(input.history));
@@ -390,28 +435,69 @@ export function createTurnMachine(
         produced: [],
         accumulator: createHistoryAccumulator(modelMeta(input.request.model), toolCallIds),
         toolCallIds,
+        llmScope: createAbortScope(),
         pendingToolCalls: [],
         outcomes: {},
         steps: 1,
+        step: 0,
         attempt: 1,
         delayMs: 0,
         appliedRecoveries: [],
+        paused: false,
       };
     },
+    on: {
+      'turn.pause': {
+        actions: assign({ paused: true }),
+      },
+      'turn.continue': {
+        actions: assign({ paused: false }),
+      },
+    },
     states: {
+      gating: {
+        always: [{ guard: () => options?.onBeforeStep === undefined, target: 'thinking' }],
+        invoke: {
+          src: 'onBeforeStepActor',
+          input: ({ context }) => ({
+            messages: [...context.input.history, ...context.produced],
+            request: context.input.request,
+          }),
+          onDone: { target: 'thinking' },
+          onError: { target: 'done' },
+        },
+        on: {
+          'turn.abort': {
+            target: 'aborted',
+            actions: assign({ outcome: 'aborted' as const }),
+          },
+        },
+      },
       thinking: {
-        entry: assign({
-          accumulator: ({ context }) =>
-            createHistoryAccumulator(modelMeta(context.input.request.model), context.toolCallIds),
-        }),
+        entry: [
+          assign({
+            accumulator: ({ context }) =>
+              createHistoryAccumulator(modelMeta(context.input.request.model), context.toolCallIds),
+            llmScope: ({ context }) =>
+              context.input.parentSignal !== undefined
+                ? withAbort(context.input.parentSignal)
+                : createAbortScope(),
+            step: ({ context }) => context.step + 1,
+          }),
+          {
+            type: 'signalParent',
+            params: ({ context }) => ({ type: 'step.started' as const, step: context.step }),
+          },
+        ],
         invoke: {
           src: 'llmActor',
           input: ({ context }) => {
             const entries = [...context.input.history, ...context.produced];
             return {
               config: context.input.request,
+              signal: context.llmScope.signal,
               content: {
-                messages: attemptMessages(context, recovery),
+                messages: attemptMessages(context),
                 usedContextTokens: estimateUsedContextTokens(entries, {
                   systemPrompt: context.input.request.systemPrompt,
                   tools: context.input.request.tools,
@@ -437,16 +523,13 @@ export function createTurnMachine(
                   recovery: context.appliedRecoveries.at(-1),
                 }),
               },
-              ({ context }) => {
-                context.accumulator.rollback();
-                context.accumulator = createHistoryAccumulator(
-                  modelMeta(context.input.request.model),
-                  context.toolCallIds,
-                );
-              },
+              'discardAttemptStream',
             ],
           },
-          'llm.headers': {
+          'llm.request.retrying': {
+            actions: ['discardAttemptStream'],
+          },
+          'llm.streaming.headers': {
             actions: [
               'forwardToParent',
               ({ context, event }) => {
@@ -454,7 +537,7 @@ export function createTurnMachine(
               },
             ],
           },
-          'llm.delta': {
+          'llm.streaming.part': {
             actions: [
               ({ context, event, self }) => {
                 const part = context.accumulator.push(event.part);
@@ -462,7 +545,7 @@ export function createTurnMachine(
               },
             ],
           },
-          'llm.usage': {
+          'llm.streaming.usage': {
             actions: [
               'forwardToParent',
               ({ context, event }) => {
@@ -470,7 +553,7 @@ export function createTurnMachine(
               },
             ],
           },
-          'llm.finish': {
+          'llm.streaming.finish': {
             actions: [
               'forwardToParent',
               ({ context, event }) => {
@@ -478,7 +561,7 @@ export function createTurnMachine(
               },
             ],
           },
-          'llm.message-id': {
+          'llm.streaming.message_id': {
             actions: [
               'forwardToParent',
               ({ context, event }) => {
@@ -488,7 +571,8 @@ export function createTurnMachine(
           },
           'llm.done': [
             {
-              guard: ({ context }) => context.accumulator.finish().message.toolCalls.length > 0,
+              guard: ({ context }) =>
+                context.accumulator.finish().message.toolCalls.length > 0,
               target: 'acting',
               actions: [
                 {
@@ -545,33 +629,36 @@ export function createTurnMachine(
               }),
             ],
           },
-          'llm.failed.remote': [
+          'llm.failed.remote': {
+            actions: raise(({ context, event }) => ({
+              type: 'turn.failure.triaged' as const,
+              cause: event,
+              proposal: proposeRecovery(recovery, {
+                error: event.error,
+                messages: baseMessages(context),
+                applied: context.appliedRecoveries,
+                credentials: context.input.request.credentials,
+              }),
+            })),
+          },
+          'turn.failure.triaged': [
             {
-              guard: ({ context, event }) =>
-                proposeRecovery(recovery, {
-                  error: event.error,
-                  messages: baseMessages(context),
-                  applied: context.appliedRecoveries,
-                }) !== undefined,
+              guard: ({ event }) => event.proposal !== undefined,
               target: 'thinking',
               reenter: true,
               actions: [
-                ({ context }) => {
+                ({ context, event }) => {
                   context.accumulator.rollback();
+                  event.proposal?.prepare?.();
                 },
                 assign(({ context, event }) => {
-                  const proposal = proposeRecovery(recovery, {
-                    error: event.error,
-                    messages: baseMessages(context),
-                    applied: context.appliedRecoveries,
-                  });
-                  if (proposal === undefined) return {};
+                  const proposal = event.proposal as LlmRecoveryProposal & LlmRecoveryRecord;
                   return {
-                    lastError: event.error,
                     appliedRecoveries: [
                       ...context.appliedRecoveries,
                       { strategy: proposal.strategy, action: proposal.action },
                     ],
+                    recoveryMessages: proposal.messages ?? context.recoveryMessages,
                     attempt: 1,
                   };
                 }),
@@ -580,13 +667,14 @@ export function createTurnMachine(
                   params: ({ context, event }) =>
                     llmRecoveringEvent(
                       context.appliedRecoveries.at(-1) as LlmRecoveryRecord,
-                      event.error,
+                      event.cause.error,
                     ),
                 },
               ],
             },
             {
-              guard: ({ context, event }) => shouldRetry(retry, context.attempt, event.error),
+              guard: ({ context, event }) =>
+                shouldRetry(retry, context.attempt, event.cause.error),
               target: 'retrying',
               actions: [
                 ({ context }) => {
@@ -594,39 +682,35 @@ export function createTurnMachine(
                 },
                 assign({
                   delayMs: ({ context, event }) =>
-                    readRetryAfterMs(event.error) ?? retryBackoffDelay(context.attempt - 1),
+                    readRetryAfterMs(event.cause.error) ??
+                    retryBackoffDelay(context.attempt - 1),
                 }),
                 {
                   type: 'sendToParent',
                   params: ({ context, event }) =>
-                    llmRetryingEvent(retry, context.attempt, context.delayMs, event.error),
+                    llmRetryingEvent(retry, context.attempt, context.delayMs, event.cause.error),
                 },
               ],
             },
             {
               target: 'failed',
               actions: [
-                'forwardToParent',
+                { type: 'sendToParent', params: ({ event }) => event.cause },
                 assign({
                   outcome: 'failed' as const,
-                  error: ({ event }) => event.error,
+                  error: ({ event }) => event.cause.rawError ?? event.cause.error,
                 }),
               ],
             },
           ],
           'turn.abort': {
             target: 'aborted',
-            actions: assign(({ context }) => {
-              const partial = context.accumulator.finish({ source: 'salvaged' });
-              const salvaged = salvageInterruptedMessage(partial.message);
-              return {
-                outcome: 'aborted' as const,
-                produced:
-                  salvaged === null
-                    ? context.produced
-                    : [...context.produced, { message: salvaged, meta: partial.meta }],
-              };
-            }),
+            actions: [
+              ({ context }) => {
+                context.llmScope.abort();
+              },
+              'salvageAborted',
+            ],
           },
         },
       },
@@ -646,10 +730,11 @@ export function createTurnMachine(
         entry: {
           type: 'signalParent',
           params: ({ context }) => ({
-            type: 'turn.spawnTools' as const,
+            type: 'turn.spawn_tools' as const,
             toolCalls: context.pendingToolCalls,
           }),
         },
+        initial: 'running',
         always: [
           {
             guard: ({ context }) =>
@@ -670,7 +755,7 @@ export function createTurnMachine(
           },
         ],
         on: {
-          'tool.async': {
+          'tool.detached': {
             guard: ({ context, event }) => context.outcomes[event.toolCallId] === undefined,
             actions: assign(({ context, event }) => {
               const toolCall = context.pendingToolCalls.find(
@@ -711,18 +796,30 @@ export function createTurnMachine(
               }),
             }),
           },
-          'turn.abort': [
-            {
-              guard: ({ context }) => context.outcome === 'aborted',
-              target: 'aborted',
-              actions: assign(({ context }) =>
-                collectToolOutcomes({ ...context, outcomes: abortOutcomes(context) }),
-              ),
+        },
+        states: {
+          running: {
+            on: {
+              'turn.abort': {
+                target: 'aborting',
+                actions: assign({ outcome: 'aborted' as const }),
+              },
             },
-            {
-              actions: assign({ outcome: 'aborted' as const }),
+          },
+          aborting: {
+            after: {
+              abortGrace: {
+                target: '#turn.aborted',
+                actions: 'collectAborted',
+              },
             },
-          ],
+            on: {
+              'turn.abort': {
+                target: '#turn.aborted',
+                actions: 'collectAborted',
+              },
+            },
+          },
         },
       },
       draining: {
@@ -731,7 +828,17 @@ export function createTurnMachine(
           params: { type: 'turn.drain' },
         },
         on: {
-          'turn.notifications': [
+          'turn.notify': [
+            {
+              guard: ({ context }) => context.paused,
+              target: 'done',
+              actions: [
+                assign(({ context, event }) => ({
+                  produced: [...context.produced, ...event.messages],
+                })),
+                'signalRemindersConsumed',
+              ],
+            },
             {
               guard: ({ context, event }) =>
                 event.messages.length === 0 && maxStepsExceeded(context),
@@ -742,14 +849,14 @@ export function createTurnMachine(
               })),
             },
             {
-              target: 'thinking',
+              target: 'gating',
               actions: [
                 assign(({ context, event }) => ({
                   produced: [...context.produced, ...event.messages],
                   steps: event.messages.length > 0 ? 1 : context.steps + 1,
                   attempt: 1,
                   appliedRecoveries: [],
-                  lastError: undefined,
+                  recoveryMessages: undefined,
                 })),
                 'signalRemindersConsumed',
               ],

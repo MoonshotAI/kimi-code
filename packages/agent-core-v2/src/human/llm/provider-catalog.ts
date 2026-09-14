@@ -4,7 +4,7 @@ import type { LlmModel } from '#/llm/model';
 import type { ProtocolName } from '#/llm/protocol/base';
 import type { Provider } from '#/llm/provider/definition';
 import type { LlmRequester } from '#/llm/requester/requester';
-import { assign, createActor, emit, enqueueActions, fromPromise, setup } from '#/xstate2';
+import { assign, createActor, emit, enqueueActions, fromPromise, setup, type Actor } from '#/xstate2';
 
 export interface CatalogOAuthRef {
   readonly storage: 'file' | 'keyring';
@@ -546,6 +546,11 @@ export interface ProviderCatalog {
     info?: CatalogProviderInfo;
     models?: readonly CatalogModelDefinition[];
   }): void;
+  upsertEntry(input: {
+    providerId: string;
+    info?: CatalogProviderInfo;
+    models?: readonly CatalogModelDefinition[];
+  }): void;
   remove(providerId: string): void;
   refresh(provider: Provider): void;
   ping(providerId: string, model: string): void;
@@ -656,9 +661,24 @@ export async function createProviderCatalog(
   const loaded = options.snapshot ?? (await options.store?.load());
   const actor = createActor(createProviderCatalogMachine(), { input: loaded });
   actor.start();
+  return buildProviderCatalog(actor, options.store);
+}
 
-  if (options.store !== undefined) {
-    const store = options.store;
+export function createProviderCatalogSync(
+  options: {
+    snapshot?: CatalogSnapshot;
+  } = {},
+): ProviderCatalog {
+  const actor = createActor(createProviderCatalogMachine(), { input: options.snapshot });
+  actor.start();
+  return buildProviderCatalog(actor, undefined);
+}
+
+function buildProviderCatalog(
+  actor: Actor<ReturnType<typeof createProviderCatalogMachine>>,
+  store: ProviderCatalogStore | undefined,
+): ProviderCatalog {
+  if (store !== undefined) {
     actor.on('changed', () => {
       void store.save(actor.getSnapshot().context.snapshot);
     });
@@ -683,6 +703,14 @@ export async function createProviderCatalog(
         models: input.models,
       });
       actor.send({ type: 'refresh', providers: [input.provider] });
+    },
+    upsertEntry: (input) => {
+      actor.send({
+        type: 'upsert',
+        providerId: input.providerId,
+        info: input.info,
+        models: input.models,
+      });
     },
     remove: (providerId) => {
       live.delete(providerId);

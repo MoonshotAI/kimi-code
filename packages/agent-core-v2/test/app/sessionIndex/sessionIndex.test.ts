@@ -27,6 +27,7 @@ import {
   recencyColumn,
   sessionCollection,
 } from '#/app/sessionIndex/sessionIndexModel';
+import { markSessionDirty } from '#/app/sessionIndex/sessionIndexDirtyJournal';
 import { FileSessionIndex } from '#/app/sessionIndex/sessionIndexService';
 import {
   drainSessionIndexMirror,
@@ -797,16 +798,17 @@ describe('FileSessionIndex (read model)', () => {
     expect(await store.count({ workspaceIds: [workspaceId], includeArchived: true })).toBe(3);
   });
 
-  it('a crashed initial projection falls back to disk and recovers on retry', async () => {
+  it('a crashed or rebuilt mid-flight projection falls back to disk and recovers on retry', async () => {
     await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
     await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
 
     class FlakyQueryStore extends MiniDbQueryStore {
       failNextBatch = false;
+      failure: Error = new Error('injected projection crash');
       override async batch(ops: readonly WriteOp[]): Promise<void> {
         if (this.failNextBatch) {
           this.failNextBatch = false;
-          throw new Error('injected projection crash');
+          throw this.failure;
         }
         return super.batch(ops);
       }
@@ -851,6 +853,20 @@ describe('FileSessionIndex (read model)', () => {
     expect(recovered).toEqual({ state: 'ready', generation: 1, degradedCount: 1 });
     const warm = await store.listRecent({ workspaceIds: [workspaceId] });
     expect(warm.items.map((s) => s.id)).toEqual(['b', 'a']);
+
+    const internal = queryStore as unknown as { dbPromise: Promise<{ batch: unknown }> };
+    const db = await internal.dbPromise;
+    db.batch = () =>
+      Promise.reject(Object.assign(new Error('poisoned'), { code: 'WAL_POISONED' }));
+    await store.reprojectNow();
+    expect(store.status().state).toBe('degraded');
+    expect(await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST)).toBeUndefined();
+
+    const rebuilt = await store.prepare();
+    expect(rebuilt.state).toBe('ready');
+    const after = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(after.items.map((s) => s.id)).toEqual(['b', 'a']);
+    expect(await store.count({ workspaceIds: [workspaceId] })).toBe(2);
   });
 
   it('a crashed re-projection keeps readers on the previous generation', async () => {
@@ -941,6 +957,7 @@ describe('FileSessionIndex (read model)', () => {
     expect(await store.count({ workspaceIds: [workspaceId] })).toBe(3);
 
     await seedSession('keep', { title: 'after', createdAt: 1, updatedAt: 4 });
+    await markSessionDirty(new FileStorageService(homeDir), 'sessions', 'keep');
     await fsp.rm(join(sessionsDir, workspaceId, 'gone'), { recursive: true, force: true });
     await store.reconcileNow();
 
@@ -1281,7 +1298,7 @@ describe('FileSessionIndex (read model)', () => {
     await first.prepare();
     expect(first.status()).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
     const published = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
-    expect(published).toMatchObject({ seq: 1, sourceMaxMtimeMs: expect.any(Number) });
+    expect(published).toMatchObject({ seq: 1, sourceSessionCount: 3 });
     disposeHost?.();
     disposeHost = undefined;
     await drainSessionIndexMirror();
@@ -1319,7 +1336,7 @@ describe('FileSessionIndex (read model)', () => {
     expect(docs.gets).toBe(0);
   });
 
-  it('re-projects on the next startup when the session directories changed externally', async () => {
+  it('reconciles the current generation on the next startup when the session directories changed externally', async () => {
     await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
     await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
 
@@ -1332,21 +1349,90 @@ describe('FileSessionIndex (read model)', () => {
     await drainQueryStoreDisposals();
 
     await seedSession('c', { title: 'c', createdAt: 3, updatedAt: 4 });
-    const future = new Date(Date.now() + 60_000);
-    await fsp.utimes(
-      join(sessionsDir, workspaceId, 'c', 'session-meta', 'state.json'),
-      future,
-      future,
-    );
 
     const second = build();
     const status = await second.prepare();
-    expect(status).toEqual({ state: 'ready', generation: 2, degradedCount: 0 });
+    expect(status).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
     const page = await second.listRecent({ workspaceIds: [workspaceId] });
     expect(page.items.map((s) => s.id)).toEqual(['c', 'b', 'a']);
+
+    const disposeSecond = disposeHost ?? (() => undefined);
+    disposeSecond();
+    disposeHost = undefined;
+    await drainSessionIndexMirror();
+    await drainQueryStoreDisposals();
+
+    await seedSession('d', { title: 'd', createdAt: 4, updatedAt: 5 });
+    const third = build();
+    expect(await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST)).toMatchObject({ seq: 1 });
+    const internal = queryStore as unknown as { dbPromise: Promise<{ batch: unknown }> };
+    const db = await internal.dbPromise;
+    db.batch = () =>
+      Promise.reject(Object.assign(new Error('poisoned'), { code: 'WAL_POISONED' }));
+    const degraded = await third.prepare();
+    expect(degraded.state).toBe('degraded');
+    expect(degraded.reason).toBe('prepare failed');
+
+    const recovered = await third.prepare();
+    expect(recovered.state).toBe('ready');
+    const republished = await third.listRecent({ workspaceIds: [workspaceId] });
+    expect(republished.items.map((s) => s.id)).toEqual(['d', 'c', 'b', 'a']);
   });
 
-  it('treats a published checkpoint without sourceMaxMtimeMs as stale and re-projects', async () => {
+  it('the periodic tick skips reconciliation while the session directories are unchanged', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
+    const store = build();
+    await store.prepare();
+    const internals = store as unknown as {
+      projector: { reconcile(generation: number): Promise<unknown> };
+      tick(): Promise<void>;
+    };
+    let reconciles = 0;
+    const original = internals.projector.reconcile.bind(internals.projector);
+    internals.projector.reconcile = async (generation: number) => {
+      reconciles += 1;
+      return original(generation);
+    };
+
+    await internals.tick();
+    expect(reconciles).toBe(0);
+
+    await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
+    await internals.tick();
+    expect(reconciles).toBe(1);
+
+    await fsp.rm(join(sessionsDir, workspaceId, 'b'), { recursive: true, force: true });
+    await internals.tick();
+    expect(reconciles).toBe(2);
+    const remaining = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(remaining.items.map((s) => s.id)).toEqual(['a']);
+
+    await internals.tick();
+    expect(reconciles).toBe(2);
+
+    await fsp.mkdir(join(sessionsDir, workspaceId, 'ghost'), { recursive: true });
+    await internals.tick();
+    expect(reconciles).toBe(3);
+    const withoutGhost = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(withoutGhost.items.map((s) => s.id)).toEqual(['a']);
+    await internals.tick();
+    expect(reconciles).toBe(3);
+
+    await seedSession('a', { title: 'a-renamed', createdAt: 1, updatedAt: 4 });
+    await internals.tick();
+    expect(reconciles).toBe(3);
+    expect((await store.get('a'))?.title).toBe('a');
+
+    await markSessionDirty(new FileStorageService(homeDir), 'sessions', 'a');
+    await internals.tick();
+    expect(reconciles).toBe(4);
+    expect((await store.get('a'))?.title).toBe('a-renamed');
+    expect(await fsp.readdir(join(sessionsDir, '.index-dirty'))).toEqual([]);
+    await internals.tick();
+    expect(reconciles).toBe(4);
+  });
+
+  it('re-projects when the published checkpoint predates the current schema version', async () => {
     await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
 
     const first = build();
@@ -1364,27 +1450,51 @@ describe('FileSessionIndex (read model)', () => {
     expect(page.items.map((s) => s.id)).toEqual(['a']);
   });
 
-  it('reconciliation refreshes the published source max mtime', async () => {
+  it('reconciliation reads only the journaled sessions and refreshes the checkpoint', async () => {
     await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
+    await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
+    await seedSession('c', { title: 'c', createdAt: 3, updatedAt: 4 });
 
-    const store = build();
+    class CountingDocs extends JsonAtomicDocumentStore {
+      gets = 0;
+      override async get<T>(scope: string, key: string): Promise<T | undefined> {
+        this.gets += 1;
+        return super.get<T>(scope, key);
+      }
+    }
+    const fileStorage = new FileStorageService(homeDir);
+    const docs = new CountingDocs(fileStorage);
+    const host = createScopedTestHost([
+      stubPair(IFileSystemStorageService, fileStorage),
+      stubPair(IAtomicDocumentStore, docs),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(ILogService, stubLog()),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ITelemetryService, noopTelemetryService),
+    ]);
+    disposeHost = () => {
+      host.dispose();
+    };
+    queryStore = host.app.accessor.get(IQueryStore);
+    mirror = host.app.accessor.get(ISessionIndexMirror);
+    const store = host.app.accessor.get(ISessionIndex) as FileSessionIndex;
+
     await store.prepare();
-    const published = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
-    expect(published).toMatchObject({ seq: 1, sourceMaxMtimeMs: expect.any(Number) });
+    expect(docs.gets).toBe(6);
+    docs.gets = 0;
 
     await seedSession('a', { title: 'a2', createdAt: 1, updatedAt: 5 });
-    const future = new Date((published?.sourceMaxMtimeMs ?? 0) + 60_000);
-    await fsp.utimes(
-      join(sessionsDir, workspaceId, 'a', 'session-meta', 'state.json'),
-      future,
-      future,
-    );
-
+    await markSessionDirty(fileStorage, 'sessions', 'a');
     await store.reconcileNow();
-    const refreshed = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
-    expect(refreshed?.seq).toBe(1);
-    expect(refreshed?.sourceMaxMtimeMs).toBeGreaterThan(published?.sourceMaxMtimeMs ?? 0);
+
+    expect(docs.gets).toBe(2);
     expect((await store.get('a'))?.title).toBe('a2');
+    expect(await store.listRecent({ workspaceIds: [workspaceId] })).toMatchObject({
+      items: [{ id: 'a' }, { id: 'c' }, { id: 'b' }],
+    });
+    const refreshed = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
+    expect(refreshed).toMatchObject({ seq: 1, sourceSessionCount: 3, schemaVersion: 2 });
+    expect(await fsp.readdir(join(sessionsDir, '.index-dirty'))).toEqual([]);
   });
 
   it('the resume-startup sequence pays one scan: point lookup, projection, then warm lists', async () => {

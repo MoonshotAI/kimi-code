@@ -9,15 +9,17 @@ import { createActor, waitFor } from '#/xstate2';
 import { UNKNOWN_CAPABILITY } from '#/llm/capability';
 import { createUserMessage, extractText } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
-import { createLlmMachine } from '#/llm/requester/machine';
 import type { LlmRequester } from '#/llm/requester/requester';
 import { createAgentMachine } from '#/agent/machine';
-import { createTurnMachine } from '#/agent/turn';
+import type { StateUpdated } from '#/agent/events';
+import type { AgentEventStore, TurnIndexState } from '#/agent/slices';
+import type { HistoryMessage } from '#/agent/turn';
 import { createSessionMachine, type AgentActorRef } from '#/session/machine';
-import { undoAgentTurns } from '#/session/undo';
-import { loadSessionState, persistSession } from '#/persist/session';
+import type { SessionStores } from '#/session/stores';
+import { createSlice } from '#/eventStore/slice';
 import { openSessionStore } from '#/persist/open';
 import { migrateV2Session } from '#/persist/v2/migrate';
+import { testScopeFactory } from '#/test/agent/scope-factory';
 
 const MAIN = 'main';
 
@@ -30,7 +32,7 @@ function createEchoRequester(): LlmRequester {
     generate: (_config, { messages }, { onEvent }) => {
       const last = messages.at(-1);
       const text = last !== undefined && last.role === 'user' ? extractText(last) : '';
-      onEvent?.({ type: 'llm.delta', part: { type: 'text', text: `echo:${text}` } });
+      onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: `echo:${text}` } });
       onEvent?.({ type: 'llm.done' });
       return Promise.resolve();
     },
@@ -38,15 +40,7 @@ function createEchoRequester(): LlmRequester {
 }
 
 function createTestSession() {
-  const session = createActor(
-    createSessionMachine({
-      agent: createAgentMachine({
-        tools: [],
-        turnActor: createTurnMachine(createLlmMachine({ requester: createEchoRequester() })),
-      }),
-    }),
-    { input: { request: { model } } },
-  );
+  const session = createActor(createSessionMachine(), { input: { request: { model } } });
   session.start();
   return session;
 }
@@ -61,7 +55,7 @@ function submit(session: SessionActor, agentId: string, text: string): void {
   session.send({
     type: 'agent.send',
     agentId,
-    event: { type: 'input.submit', message: createUserMessage(text) },
+    event: { type: 'input.submit', entry: { message: createUserMessage(text) } },
   });
 }
 
@@ -83,7 +77,7 @@ afterEach(async () => {
 });
 
 async function makeV2SessionDir(fixture: V2SessionFixture): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'v3-migrate-v2-'));
+  const dir = await mkdtemp(join(tmpdir(), 'migrate-v2-'));
   dirs.push(dir);
   const meta = fixture.meta ?? {
     id: 'session_test',
@@ -153,10 +147,55 @@ function assistantStep(uuid: string, text: string, agentId = MAIN): Record<strin
   return [stepBegin(uuid, agentId), contentPart(uuid, text, agentId), stepEnd(uuid, { finishReason: 'end_turn' }, agentId)];
 }
 
-async function loadMigrated(dir: string): Promise<Awaited<ReturnType<typeof loadSessionState>>> {
+const statesSlice = createSlice({
+  name: 'states',
+  initialState: () => ({}) as Record<string, unknown>,
+  reducers: {
+    'state.updated': (draft, event: StateUpdated) => {
+      draft[event.name] = event.value;
+    },
+  },
+});
+
+interface LoadedAgent {
+  agentId: string;
+  messages: HistoryMessage[];
+  turnIndex: TurnIndexState;
+  states: Record<string, unknown>;
+}
+
+function readStates(store: AgentEventStore): Record<string, unknown> {
+  return (store.getState() as unknown as Record<string, Record<string, unknown>>)['states'] ?? {};
+}
+
+async function loadAgent(stores: SessionStores, agentId: string): Promise<LoadedAgent> {
+  const store = await stores.open(agentId);
+  if ((store.getState() as unknown as Record<string, unknown>)['states'] === undefined) {
+    await store.registerSlice(statesSlice);
+  }
+  return {
+    agentId,
+    messages: store.getState().history,
+    turnIndex: store.getState().turnIndex,
+    states: readStates(store),
+  };
+}
+
+async function loadAgents(stores: SessionStores): Promise<LoadedAgent[]> {
+  const roster = (await stores.session()).getState().roster.agents;
+  const agents: LoadedAgent[] = [];
+  for (const agentId of Object.keys(roster).toSorted()) {
+    agents.push(await loadAgent(stores, agentId));
+  }
+  return agents;
+}
+
+async function loadMigrated(dir: string) {
   await migrateV2Session(dir);
   const opened = await openSessionStore(dir);
-  return loadSessionState(opened.tree);
+  const agents = await loadAgents(opened.stores);
+  const meta = (await opened.stores.session()).getState().sessionMeta.value;
+  return { agents, meta };
 }
 
 describe('migrateV2Session', () => {
@@ -215,7 +254,7 @@ describe('migrateV2Session', () => {
       'file.txt',
       'second',
     ]);
-    expect(agent.messages[0]?.meta.source).toBe('input');
+    expect(agent.messages[0]?.meta?.source).toBe('input');
     const first = agent.messages[1];
     expect(first?.message.role).toBe('assistant');
     if (first?.message.role === 'assistant') {
@@ -226,17 +265,17 @@ describe('migrateV2Session', () => {
       expect(first.message.toolCalls).toEqual([
         { type: 'function', id: 'c1', name: 'bash', arguments: '{"cmd":"ls"}' },
       ]);
-      expect(first.meta.usage).toEqual({ inputOther: 1, output: 2, inputCacheRead: 3, inputCacheCreation: 4 });
-      expect(first.meta.finish).toEqual({ finishReason: 'tool_calls', rawFinishReason: 'stop_raw' });
-      expect(first.meta.messageId).toBe('msg_v2_1');
-      expect(first.meta.model).toEqual({ provider: 'prov', model: 'mod' });
+      expect(first.meta?.usage).toEqual({ inputOther: 1, output: 2, inputCacheRead: 3, inputCacheCreation: 4 });
+      expect(first.meta?.finish).toEqual({ finishReason: 'tool_calls', rawFinishReason: 'stop_raw' });
+      expect(first.meta?.messageId).toBe('msg_v2_1');
+      expect(first.meta?.model).toEqual({ provider: 'prov', model: 'mod' });
     }
-    expect(agent.messages[2]?.meta.source).toBe('tool');
+    expect(agent.messages[2]?.meta?.source).toBe('tool');
     const second = agent.messages[3];
     if (second?.message.role === 'assistant') {
-      expect(second.meta.finish).toEqual({ finishReason: 'completed', rawFinishReason: null });
+      expect(second.meta?.finish).toEqual({ finishReason: 'completed', rawFinishReason: null });
     }
-    expect(agent.turnId).toBe(0);
+    expect(agent.turnIndex.nextTurnId).toBe(1);
     expect(loaded.meta).toMatchObject({
       id: 'session_basic',
       version: 2,
@@ -345,7 +384,7 @@ describe('migrateV2Session', () => {
     const loaded = await loadMigrated(dir);
     const agent = loaded.agents[0]!;
     expect(agent.messages.map((entry) => extractText(entry.message))).toEqual(['u1', 'u3', 'CTX']);
-    expect(agent.messages.map((entry) => entry.meta.source)).toEqual(['input', 'input', 'compaction_summary']);
+    expect(agent.messages.map((entry) => entry.meta?.source)).toEqual(['input', 'input', 'compaction_summary']);
 
     const big = 'x'.repeat(90_000);
     const elided = await makeV2SessionDir({
@@ -367,7 +406,7 @@ describe('migrateV2Session', () => {
     });
     const loadedElided = await loadMigrated(elided);
     const elidedMessages = loadedElided.agents[0]!.messages;
-    expect(elidedMessages.map((entry) => entry.meta.source)).toEqual([
+    expect(elidedMessages.map((entry) => entry.meta?.source)).toEqual([
       'input',
       'injection',
       'input',
@@ -419,7 +458,7 @@ describe('migrateV2Session', () => {
     const loaded = await loadMigrated(dir);
     expect(loaded.agents.map((agent) => agent.agentId)).toEqual(['agent-1', MAIN]);
     const sub = loaded.agents[0]!;
-    expect(sub.messages[0]?.meta.source).toBe('task');
+    expect(sub.messages[0]?.meta?.source).toBe('task');
     expect(sub.states['todo']).toEqual({
       todos: [{ title: 'task a', status: 'in_progress' }],
       lastWriteTurn: 0,
@@ -523,39 +562,51 @@ describe('migrateV2Session', () => {
     const first = await openSessionStore(dir);
     expect(first.migrated).toBe(true);
 
-    const loaded = await loadSessionState(first.tree);
-    const session = createTestSession();
-    const persistence = persistSession(session, first.tree, {
-      branches: new Map(loaded.agents.map((agent) => [agent.agentId, agent.branch])),
-    });
-    for (const agent of loaded.agents) {
-      session.send({
-        type: 'agent.create',
-        agentId: agent.agentId,
-        input: { history: agent.messages, turnId: agent.turnId, branchId: agent.branch },
-      });
-    }
-    submit(session, MAIN, 'again');
-    await waitFor(agentRef(session, MAIN), (s) => s.matches('idle') && s.context.messages.length === 4, {
-      timeout: 5000,
-    });
-
-    const undone = await undoAgentTurns(session, first.tree, MAIN, 1);
-    expect(undone.messages.map((entry) => extractText(entry.message))).toEqual(['first', 'first-reply']);
-    await persistence.flush();
-    persistence.dispose();
-    session.stop();
-
-    const second = await openSessionStore(dir);
-    expect(second.migrated).toBe(false);
-    const reloaded = await loadSessionState(second.tree);
-    expect(reloaded.agents.map((agent) => agent.agentId)).toEqual([MAIN]);
-    expect(reloaded.agents[0]!.messages.map((entry) => extractText(entry.message))).toEqual([
+    const agentStore = await first.stores.open(MAIN);
+    expect(agentStore.getState().history.map((entry) => extractText(entry.message))).toEqual([
       'first',
       'first-reply',
     ]);
+    expect(agentStore.getState().turnIndex.nextTurnId).toBe(1);
+
+    const session = createTestSession();
+    session.send({
+      type: 'agent.create',
+      agentId: MAIN,
+      logic: createAgentMachine({}),
+      input: {
+        request: { model },
+        scopeFactory: testScopeFactory({ store: agentStore, requester: createEchoRequester() }),
+      },
+    });
+    submit(session, MAIN, 'again');
+    await waitFor(
+      agentRef(session, MAIN),
+      (s) => s.matches('idle') && agentStore.getState().history.length === 4,
+      { timeout: 5000 },
+    );
+    await first.stores.flush();
+
+    const undone = await first.stores.undo(MAIN, 1);
+    expect(undone.branchId).toBe('main~2');
+    expect(agentStore.ref.branch).toBe('main~2');
+    expect(agentStore.getState().history.map((entry) => extractText(entry.message))).toEqual([
+      'first',
+      'first-reply',
+      'again',
+    ]);
+    expect((await first.stores.session()).getState().roster.agents[MAIN]).toBe('main~2');
+    await first.stores.flush();
+    session.stop();
+    await first.stores.dispose();
+
+    const second = await openSessionStore(dir);
+    expect(second.migrated).toBe(false);
+    const roster = (await second.stores.session()).getState().roster.agents;
+    expect(Object.keys(roster)).toEqual([MAIN]);
+    expect(roster[MAIN]).toBe('main~2');
     const names = await readdir(dir);
-    expect(names.filter((name) => name.startsWith('.v3-migrate'))).toEqual([]);
+    expect(names.filter((name) => name.startsWith('.migrate'))).toEqual([]);
     expect(names).toContain('state.json');
     expect(names).toContain('agents');
     expect(names).toContain('trees');

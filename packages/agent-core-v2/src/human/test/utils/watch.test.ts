@@ -286,18 +286,15 @@ describe('watch chokidar mode', () => {
     const events = await start();
 
     const file = join(root, 'a.txt');
+    const actions = () => events.filter((e) => e.path === file).map((e) => e.action);
     await writeFile(file, 'v1');
-    await wait(300);
+    await expect.poll(actions).toContain('created');
     await writeFile(file, 'v2');
-    await wait(300);
+    await expect.poll(actions).toContain('modified');
     await rm(file);
-    await wait(300);
+    await expect.poll(actions).toContain('deleted');
 
     expect(events.some((e) => e.path === preexisting)).toBe(false);
-    const actions = events.filter((e) => e.path === file).map((e) => e.action);
-    expect(actions).toContain('created');
-    expect(actions).toContain('modified');
-    expect(actions).toContain('deleted');
     expect(events.find((e) => e.path === file)?.kind).toBe('file');
   });
 
@@ -322,7 +319,7 @@ describe('watch chokidar mode', () => {
     await wait(300);
 
     expect(events.some((e) => e.path.includes('node_modules'))).toBe(false);
-    expect(events.some((e) => e.path === join(root, 'index.ts'))).toBe(true);
+    await expect.poll(() => events.some((e) => e.path === join(root, 'index.ts'))).toBe(true);
   });
 
   it('does not report changes below the configured depth', async () => {
@@ -334,8 +331,8 @@ describe('watch chokidar mode', () => {
     await writeFile(join(root, 'sub', 'nested.txt'), 'x');
     await wait(300);
 
-    expect(events.some((e) => e.path === join(root, 'top.txt'))).toBe(true);
-    expect(events.some((e) => e.path === join(root, 'sub'))).toBe(true);
+    await expect.poll(() => events.some((e) => e.path === join(root, 'top.txt'))).toBe(true);
+    await expect.poll(() => events.some((e) => e.path === join(root, 'sub'))).toBe(true);
     expect(events.some((e) => e.path.endsWith('nested.txt'))).toBe(false);
   });
 
@@ -348,7 +345,7 @@ describe('watch chokidar mode', () => {
     await writeFile(join(root, 'sub', 'nested.txt'), 'x');
     await wait(300);
 
-    expect(events.some((e) => e.path === join(root, 'top.txt'))).toBe(true);
+    await expect.poll(() => events.some((e) => e.path === join(root, 'top.txt'))).toBe(true);
     expect(events.some((e) => e.path.endsWith('nested.txt'))).toBe(false);
   });
 

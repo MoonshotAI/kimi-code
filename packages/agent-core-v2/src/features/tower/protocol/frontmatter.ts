@@ -1,8 +1,9 @@
 const FENCE = '---';
 
-export function renderFrontmatter(fields: Readonly<Record<string, string>>): string {
+export function renderFrontmatter(fields: Readonly<Record<string, string | undefined>>): string {
   const lines = [FENCE];
   for (const [key, value] of Object.entries(fields)) {
+    if (value === undefined) continue;
     if (/[\r\n]/.test(value)) {
       throw new Error(`frontmatter value for "${key}" must be single-line`);
     }

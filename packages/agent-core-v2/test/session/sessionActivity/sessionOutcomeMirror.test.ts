@@ -13,7 +13,6 @@ import { createScopedTestHost, stubPair, type ScopedTestHost } from '#/_base/di/
 import { Emitter, Event } from '#/_base/event';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2, Event2Class } from '#/app/event/event2';
-import { AgentActivityUpdated } from '#/agent/activityView/activityView';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded, turnKey, type TurnModelState } from '#/agent/loop/turnOps';
@@ -187,14 +186,6 @@ describe('SessionOutcomeMirror (Session scope)', () => {
     lifecycle.bus.publish(new TurnStarted({ agentId: 'main', turnId, origin: { kind: 'user' } }));
   const ended = (reason: TurnEnded['reason'], interruptReason?: TurnEnded['interruptReason'], turnId = 1) =>
     lifecycle.bus.publish(new TurnEnded({ agentId: 'main', turnId, reason, interruptReason }));
-  const activityBackfill = (turnId: number, reason: TurnEnded['reason']) =>
-    lifecycle.bus.publish(
-      new AgentActivityUpdated({ agentId: 'main',
-        lifecycle: 'ready',
-        background: [],
-        lastTurn: { turnId, reason, at: 0 },
-      }),
-    );
 
   it('persists completed/failed/user-cancelled, never programmatic aborts', async () => {
     lifecycle.addMain();
@@ -256,24 +247,27 @@ describe('SessionOutcomeMirror (Session scope)', () => {
     await tick();
     started();
     ended('completed');
-    activityBackfill(1, 'completed');
+    lifecycle.lastEnded = { turnId: 1, reason: 'completed' };
+    lifecycle.removeMain();
+    lifecycle.addMain();
+    await tick();
     expect(writes).toEqual(['completed']);
     expect(touches).toEqual([true]);
   });
 
   it('backfills a restored outcome that never got a turn.ended fact', async () => {
+    lifecycle.lastEnded = { turnId: 3, reason: 'failed' };
     lifecycle.addMain();
     await tick();
-    activityBackfill(3, 'failed');
     expect(writes).toEqual(['failed']);
     ended('failed');
     expect(writes).toEqual(['failed']);
   });
 
   it('backfills a restored cancellation without touching recency', async () => {
+    lifecycle.lastEnded = { turnId: 4, reason: 'cancelled' };
     lifecycle.addMain();
     await tick();
-    activityBackfill(4, 'cancelled');
     expect(writes).toEqual(['cancelled']);
     expect(touches).toEqual([false]);
   });
@@ -282,7 +276,10 @@ describe('SessionOutcomeMirror (Session scope)', () => {
     lifecycle.addMain();
     await tick();
     ended('completed');
-    activityBackfill(9, 'failed');
+    lifecycle.lastEnded = { turnId: 9, reason: 'failed' };
+    lifecycle.removeMain();
+    lifecycle.addMain();
+    await tick();
     expect(writes).toEqual(['completed']);
   });
 

@@ -1,7 +1,6 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { randomUUID } from 'node:crypto';
 
-import { IInstantiationService } from '#/_base/di/instantiation';
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -21,7 +20,14 @@ import type {
 } from '#/agent/toolExecutor/toolHooks';
 import { AgentEvent2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { ISessionApprovalService } from '#/session/approval/approval';
+import {
+  INTERACTION_TAG_AGENT_ID,
+  INTERACTION_TAG_SESSION_ID,
+  INTERACTION_TAG_TOOL_CALL_ID,
+  INTERACTION_TAG_TURN_ID,
+  type InteractionTags,
+} from '#/human/interaction/interaction';
+import { interactions } from '#/human/interaction/facade';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
@@ -68,7 +74,6 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
     @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
     @IAgentPermissionRulesService private readonly rulesService: IAgentPermissionRulesService,
     @ISessionContext private readonly session: ISessionContext,
-    @IInstantiationService private readonly instantiation: IInstantiationService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
   ) {
@@ -130,60 +135,64 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
     } satisfies PermissionApprovalRequestedPayload;
     const startedAt = Date.now();
 
+    const tags: InteractionTags = {
+      [INTERACTION_TAG_AGENT_ID]: this.scopeContext.agentId,
+      [INTERACTION_TAG_SESSION_ID]: this.session.sessionId,
+      [INTERACTION_TAG_TURN_ID]: context.turnId,
+      [INTERACTION_TAG_TOOL_CALL_ID]: context.toolCall.id,
+    };
     let response: ApprovalResponse;
-    const approvalService = this.tryApprovalService();
-    if (approvalService === undefined) {
-      response = { decision: 'approved' };
-    } else {
-      void this.dispatcher.dispatch(new PermissionApprovalRequested(approvalContext));
-      try {
-        response = await abortable(
-          approvalService.request(approvalRequest),
-          context.signal,
-        );
-        context.signal.throwIfAborted();
-      } catch (error) {
-        if (isUserCancellation(error)) throw error;
-        this.telemetry.track2('permission_approval_result', {
-          turn_id: context.turnId,
-          tool_call_id: context.toolCall.id,
-          policy_name: origin,
-          tool_name: name,
-          permission_mode: this.modeService.mode,
-          result: 'error',
-          approval_surface: display.kind,
-          duration_ms: Date.now() - startedAt,
-          session_cache_written: false,
-          has_feedback: false,
-          trace_id: context.trace?.traceId,
-        });
-        void this.dispatcher.dispatch(
-          new PermissionApprovalResolved({
-            ...approvalContext,
-            decision: 'error',
-            error: error instanceof Error ? error.message : String(error),
-          }),
-        );
-        const resolved = result.resolveError?.(error);
-        if (resolved !== undefined) {
-          return this.resolvePermissionResolution(resolved, context, origin);
-        }
-        throw error;
+    void this.dispatcher.dispatch(new PermissionApprovalRequested(approvalContext));
+    try {
+      response = await abortable(
+        interactions.request<typeof approvalRequest, ApprovalResponse>({
+          id: approvalRequest.id,
+          kind: 'approval',
+          payload: approvalRequest,
+          tags,
+        }),
+        context.signal,
+      );
+      context.signal.throwIfAborted();
+    } catch (error) {
+      if (isUserCancellation(error)) throw error;
+      this.telemetry.track2('permission_approval_result', {
+        turn_id: context.turnId,
+        tool_call_id: context.toolCall.id,
+        policy_name: origin,
+        tool_name: name,
+        permission_mode: this.modeService.mode,
+        result: 'error',
+        approval_surface: display.kind,
+        duration_ms: Date.now() - startedAt,
+        session_cache_written: false,
+        has_feedback: false,
+        trace_id: context.trace?.traceId,
+      });
+      void this.dispatcher.dispatch(
+        new PermissionApprovalResolved({
+          ...approvalContext,
+          decision: 'error',
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+      const resolved = result.resolveError?.(error);
+      if (resolved !== undefined) {
+        return this.resolvePermissionResolution(resolved, context, origin);
       }
+      throw error;
     }
 
     const sessionApprovalRule =
       response.decision === 'approved' && response.scope === 'session'
         ? context.execution.approvalRule
         : undefined;
-    if (approvalService !== undefined) {
-      void this.dispatcher.dispatch(
-        new PermissionApprovalResolved({
-          ...approvalContext,
-          ...response,
-        }),
-      );
-    }
+    void this.dispatcher.dispatch(
+      new PermissionApprovalResolved({
+        ...approvalContext,
+        ...response,
+      }),
+    );
     this.rulesService.recordApprovalResult({
       turnId: context.turnId,
       toolCallId: context.toolCall.id,
@@ -243,16 +252,6 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
       return `${message} Try a different approach — don't retry the same call, don't attempt to bypass the restriction.`;
     }
     return message;
-  }
-
-  private tryApprovalService(): ISessionApprovalService | undefined {
-    try {
-      return this.instantiation.invokeFunction(
-        (accessor) => accessor.get(ISessionApprovalService) as ISessionApprovalService | undefined,
-      );
-    } catch {
-      return undefined;
-    }
   }
 
   private usesWorkerRejectionGuidance(): boolean {

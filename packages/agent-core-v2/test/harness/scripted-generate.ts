@@ -93,13 +93,13 @@ export function requesterFromGenerateFn(fn: LegacyGenerateFn): LlmRequester {
         );
       } catch (error) {
         for (const part of normalizeProviderStreamParts(parts)) {
-          emit?.({ type: 'llm.delta', part: structuredClone(part) });
+          emit?.({ type: 'llm.streaming.part', part: structuredClone(part) });
         }
         throw error;
       }
 
       emit?.({
-        type: 'llm.headers',
+        type: 'llm.streaming.headers',
         headers:
           result.traceId !== undefined && result.traceId !== null
             ? { 'x-trace-id': result.traceId }
@@ -110,19 +110,19 @@ export function requesterFromGenerateFn(fn: LegacyGenerateFn): LlmRequester {
           ? normalizeProviderStreamParts(parts)
           : partsFromGeneratedMessage(result.message);
       for (const part of streamed) {
-        emit?.({ type: 'llm.delta', part: structuredClone(part) });
+        emit?.({ type: 'llm.streaming.part', part: structuredClone(part) });
         await Promise.resolve();
         control.signal.throwIfAborted();
       }
       if (result.usage !== null) {
-        emit?.({ type: 'llm.usage', usage: result.usage });
+        emit?.({ type: 'llm.streaming.usage', usage: result.usage });
       }
       emit?.({
-        type: 'llm.finish',
+        type: 'llm.streaming.finish',
         finish: { finishReason: result.finishReason, rawFinishReason: result.rawFinishReason },
       });
       if (result.id !== null) {
-        emit?.({ type: 'llm.message-id', messageId: result.id });
+        emit?.({ type: 'llm.streaming.message_id', messageId: result.id });
       }
       emit?.({ type: 'llm.done' });
     },
@@ -188,7 +188,7 @@ export function createScriptedGenerate() {
 
     const emit = control.onEvent;
     emit?.({
-      type: 'llm.headers',
+      type: 'llm.streaming.headers',
       headers:
         response.traceId !== undefined && response.traceId !== null
           ? { 'x-trace-id': response.traceId }
@@ -209,7 +209,7 @@ export function createScriptedGenerate() {
         : partsFromGeneratedMessage(message);
 
     for (const part of streamed) {
-      emit?.({ type: 'llm.delta', part: structuredClone(part) });
+      emit?.({ type: 'llm.streaming.part', part: structuredClone(part) });
       await Promise.resolve();
       control.signal.throwIfAborted();
     }
@@ -221,7 +221,7 @@ export function createScriptedGenerate() {
     const inferredFinishReason: FinishReason = toolCalls.length > 0 ? 'tool_calls' : 'completed';
     const finishReason = response.finishReason === undefined ? inferredFinishReason : response.finishReason;
     emit?.({
-      type: 'llm.usage',
+      type: 'llm.streaming.usage',
       usage: {
         inputOther: estimateTokensForMessages(normalizeMessagesForTokenEstimates(history)),
         output: estimateTokensForMessages(normalizeMessagesForTokenEstimates([message])),
@@ -230,7 +230,7 @@ export function createScriptedGenerate() {
       },
     });
     emit?.({
-      type: 'llm.finish',
+      type: 'llm.streaming.finish',
       finish: {
         finishReason,
         rawFinishReason:
@@ -239,7 +239,7 @@ export function createScriptedGenerate() {
             : response.rawFinishReason,
       },
     });
-    emit?.({ type: 'llm.message-id', messageId: `mock-${String(calls.length)}` });
+    emit?.({ type: 'llm.streaming.message_id', messageId: `mock-${String(calls.length)}` });
     emit?.({ type: 'llm.done' });
   }
 

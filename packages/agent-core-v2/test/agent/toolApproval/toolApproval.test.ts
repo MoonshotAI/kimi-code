@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DisposableStore } from '#/_base/di/lifecycle';
+import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import type { TestInstantiationService } from '#/_base/di/test';
 import { UserCancellationError } from '#/_base/utils/abort';
@@ -28,10 +28,11 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { OrderedHookSlot } from '#/hooks';
 import type { ToolCall } from '#human/llm/message';
 import {
-  ISessionApprovalService,
   type ApprovalRequest,
   type ApprovalResponse,
-} from '#/session/approval/approval';
+} from '#/agent/interaction/approval';
+import { INTERACTION_TAG_SESSION_ID } from '#/human/interaction/interaction';
+import { interactions } from '#/human/interaction/facade';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
@@ -139,6 +140,7 @@ describe('AgentToolApprovalService', () => {
   });
   afterEach(() => {
     disposables.dispose();
+    interactions.purgeSession('test-session');
   });
 
   function make(): IAgentToolApprovalService {
@@ -149,13 +151,24 @@ describe('AgentToolApprovalService', () => {
     request: (approval: ApprovalRequest) => Promise<ApprovalResponse>,
   ): ReturnType<typeof vi.fn<(approval: ApprovalRequest) => Promise<ApprovalResponse>>> {
     const requestSpy = vi.fn(request);
-    ix.set(ISessionApprovalService, {
-      _serviceBrand: undefined,
-      request: requestSpy,
-      enqueue: (approval) => ({ ...approval, id: approval.id ?? 'approval-1' }),
-      decide: () => {},
-      listPending: () => [],
-    });
+    const seen = new Set<string>();
+    disposables.add(
+      toDisposable(
+        interactions.onDidChangePending(() => {
+          for (const pending of interactions.findAll({
+            kind: 'approval',
+            resolved: false,
+            tags: { [INTERACTION_TAG_SESSION_ID]: 'test-session' },
+          })) {
+            if (seen.has(pending.id)) continue;
+            seen.add(pending.id);
+            void requestSpy(pending.payload as ApprovalRequest).then((response) => {
+              interactions.respond(pending.id, response);
+            });
+          }
+        }),
+      ),
+    );
     return requestSpy;
   }
 
@@ -247,44 +260,9 @@ describe('AgentToolApprovalService', () => {
         veto: { output: 'Plan review handled.' },
       });
     });
-
-    it('runs the ask round-trip for ask resolutions', async () => {
-      useBroker(async () => ({ decision: 'approved' }));
-      const svc = make();
-      await expect(
-        svc.resolvePermissionResolution(ask(), makeContext('Bash'), 'p'),
-      ).resolves.toBeUndefined();
-    });
   });
 
   describe('requestToolApproval', () => {
-    it('auto-approves when no approval broker is registered', async () => {
-      const events = subscribeApprovalEvents();
-      const svc = make();
-
-      await expect(
-        svc.requestToolApproval(makeContext('Bash', { command: 'printf hi' }), ask(), 'fallback-ask'),
-      ).resolves.toBeUndefined();
-
-      expect(events.requested).not.toHaveBeenCalled();
-      expect(events.resolved).not.toHaveBeenCalled();
-      expect(recorded).toHaveLength(1);
-      expect(recorded[0]).toMatchObject({
-        toolName: 'Bash',
-        sessionApprovalRule: undefined,
-        result: { decision: 'approved' },
-      });
-      expect(records).toContainEqual({
-        event: 'permission_approval_result',
-        properties: expect.objectContaining({
-          policy_name: 'fallback-ask',
-          tool_name: 'Bash',
-          result: 'approved',
-          session_cache_written: false,
-        }),
-      });
-    });
-
     it('publishes approval events around the broker round-trip', async () => {
       const events = subscribeApprovalEvents();
       const request = useBroker(async () => ({
@@ -540,14 +518,18 @@ describe('AgentToolApprovalService', () => {
     it('tracks approval transport errors before rethrowing', async () => {
       const events = subscribeApprovalEvents();
       const error = new Error('approval transport closed');
-      useBroker(async () => {
-        throw error;
-      });
+      useBroker(() => new Promise<ApprovalResponse>(() => {}));
       const svc = make();
+      const controller = new AbortController();
 
-      await expect(
-        svc.requestToolApproval(makeContext('ExitPlanMode'), ask(), 'exit-plan-mode-review-ask'),
-      ).rejects.toThrow('approval transport closed');
+      const promise = svc.requestToolApproval(
+        makeContext('ExitPlanMode', {}, { signal: controller.signal }),
+        ask(),
+        'exit-plan-mode-review-ask',
+      );
+      const expectation = expect(promise).rejects.toThrow('approval transport closed');
+      controller.abort(error);
+      await expectation;
 
       expect(records).toContainEqual({
         event: 'permission_approval_result',
@@ -567,18 +549,18 @@ describe('AgentToolApprovalService', () => {
     });
 
     it('folds resolveError continuations into the result instead of rethrowing', async () => {
-      useBroker(async () => {
-        throw new Error('approval transport closed');
-      });
+      useBroker(() => new Promise<ApprovalResponse>(() => {}));
       const svc = make();
+      const controller = new AbortController();
 
-      await expect(
-        svc.requestToolApproval(
-          makeContext('ExitPlanMode'),
-          ask({ resolveError: () => ({ kind: 'deny', message: 'review unavailable' }) }),
-          'exit-plan-mode-review-ask',
-        ),
-      ).resolves.toEqual({
+      const promise = svc.requestToolApproval(
+        makeContext('ExitPlanMode', {}, { signal: controller.signal }),
+        ask({ resolveError: () => ({ kind: 'deny', message: 'review unavailable' }) }),
+        'exit-plan-mode-review-ask',
+      );
+      controller.abort(new Error('approval transport closed'));
+
+      await expect(promise).resolves.toEqual({
         veto: { output: 'review unavailable', isError: true },
       });
     });

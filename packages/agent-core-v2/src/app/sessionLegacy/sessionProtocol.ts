@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { isoDateTimeSchema } from '#/_base/utils/isoDateTime';
+import type { SessionPendingInteraction, SessionTurnOutcome } from '#/session/sessionActivity/sessionActivity';
 
 export const sessionWarningSchema = z.object({
   code: z.string(),
@@ -83,3 +84,56 @@ export const sessionStatusResponseSchema = z.object({
   context_usage: z.number().min(0).max(1).optional(),
 });
 export type SessionStatusResponse = z.infer<typeof sessionStatusResponseSchema>;
+
+export interface SessionUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  total_cost_usd?: number;
+  context_tokens: number;
+  context_limit?: number;
+  turn_count?: number;
+}
+
+export interface Session {
+  id: string;
+  workspace_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  busy: boolean;
+  main_turn_active?: boolean;
+  pending_interaction?: SessionPendingInteraction;
+  last_turn_reason?: SessionTurnOutcome;
+  archived?: boolean;
+  archived_at?: string;
+  current_prompt_id?: string;
+  last_prompt?: string;
+  metadata: SessionMetadata;
+  agent_config: SessionAgentConfig;
+  usage: SessionUsage;
+  permission_rules: PermissionRule[];
+  message_count: number;
+  last_seq: number;
+}
+
+export interface SessionCreatedEvent {
+  readonly type: 'event.session.created';
+  readonly session: Session;
+}
+
+export interface SessionStatusChangedEvent {
+  readonly type: 'event.session.status_changed';
+  readonly status: 'idle' | 'running' | 'awaiting_approval' | 'awaiting_question' | 'aborted';
+  readonly previous_status: 'idle' | 'running' | 'awaiting_approval' | 'awaiting_question' | 'aborted';
+  readonly current_prompt_id?: string;
+}
+
+export interface SessionWorkChangedEvent {
+  readonly type: 'event.session.work_changed';
+  readonly busy: boolean;
+  readonly main_turn_active?: boolean;
+  readonly pending_interaction?: SessionPendingInteraction;
+  readonly last_turn_reason?: SessionTurnOutcome;
+}

@@ -35,6 +35,7 @@ import { GenerationBuilder, TEXT_BUILD_WORKER_MIN_DOCS, GEN_BUILD_WAL_DELTA_BYTE
 import type { GenBuildOp } from './generation-builder.js';
 import { WalGroupTracker } from './wal-group.js';
 import { WritePath } from './write-path.js';
+import { withWindowsEpermRetry } from './rename-replace.js';
 import { openMiniDb, closeMiniDb, renewMiniDbLock, openOrRebuildMiniDb } from './lifecycle.js';
 import { IndexAdmin } from './index-admin.js';
 import { ReadPath } from './read-path.js';
@@ -221,6 +222,7 @@ export class MiniDb<V = unknown> {
   genBuildKickFailureBackoffMs = 300_000;
   private lastGenBuildKickAt = 0;
   private lastGenBuildFailureAt = 0;
+  lastGenBuildError: unknown = null;
   /** Abort handle / mutation queue / single-flight guard / status of the
    *  generation build all live in the GenerationBuilder facet (declared
    *  below); these views keep the open / write / close paths' call sites
@@ -360,8 +362,12 @@ export class MiniDb<V = unknown> {
     ensureOpen: () => this.ensureOpen(),
     ensureWritable: () => this.ensureWritable(),
     boundedTextBuild: (name, ti, def, checkpoint) => this.boundedTextBuild(name, ti, def, checkpoint),
-    noteBuildFailure: () => {
+    noteBuildFailure: (err) => {
       this.lastGenBuildFailureAt = Date.now();
+      if (err !== undefined) this.lastGenBuildError = err;
+    },
+    noteBuildSuccess: () => {
+      this.lastGenBuildError = null;
     },
   });
 
@@ -1087,8 +1093,10 @@ export class MiniDb<V = unknown> {
       // offset belongs to the old file's coordinate system and truncating to
       // it would zero-extend the new file. The new file never carried the
       // un-acked tail, so skipping the truncate is the correct recovery.
-      const st = await fs.stat(this.walPath);
-      if (poison.failedAtOffset <= st.size) await fs.truncate(this.walPath, poison.failedAtOffset);
+      await withWindowsEpermRetry(async () => {
+        const st = await fs.stat(this.walPath);
+        if (poison.failedAtOffset <= st.size) await fs.truncate(this.walPath, poison.failedAtOffset);
+      });
     } catch (err) {
       this.writeDisabled = err;
       return;

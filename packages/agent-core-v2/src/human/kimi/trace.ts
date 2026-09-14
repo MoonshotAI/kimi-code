@@ -19,8 +19,8 @@ export function createTracePlugin(): TracePlugin {
     traceId: () => current,
     connect(target) {
       if (target.kind !== 'agent') return;
-      target.on('llm.headers', (event) => {
-        if (event.type === 'llm.headers') {
+      target.on('llm.streaming.headers', (event) => {
+        if (event.type === 'llm.streaming.headers') {
           capture(event.headers);
         }
       });

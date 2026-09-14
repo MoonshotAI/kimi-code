@@ -17,9 +17,12 @@
  *     APIConnectionError / APIEmptyResponseError / ...), so the requester could
  *     translate it into a coded `Error2` (`provider.*` / `context.overflow`).
  *   - owned by ModelRequester  — behavior the ChatProvider layer CANNOT
- *     provide: per-request auth injection and the OAuth 401 → force-refresh →
- *     single replay, plus the final `translateProviderError` safety net that
+ *     provide: per-request credential injection (credentials.resolve per
+ *     attempt), plus the final `translateProviderError` safety net that
  *     turns even unwrapped raw errors into `Error2` (`internal`).
+ *   - owned by the caller      — the OAuth 401 → credentials.invalidate →
+ *     single replay: the requester surfaces the 401, and the call site
+ *     re-resolves and re-sends (mirroring IModelCatalog.generate / ping).
  *   - owned by neither         — user cancellation: the standard AbortError
  *     DOMException passes through BOTH layers untranslated, by design.
  *
@@ -56,11 +59,16 @@ import {
   isAbortError,
   isToolExchangeAdjacencyError,
 } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/errors';
+import {
+  oauthCredentials,
+  staticCredentials,
+} from '@moonshot-ai/agent-core-v2/human/credentials/credentials';
 import type {
   ToolCall,
   ToolDescription as Tool,
 } from '@moonshot-ai/agent-core-v2/human/llm/message';
-import type { AuthProvider, Model } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
+import type { LlmCredentialProvider } from '@moonshot-ai/agent-core-v2/human/llm/requester/requester';
+import type { Model } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import type {
   ModelRequestInput,
@@ -207,6 +215,17 @@ async function collect(
   return { events, text, toolCalls, usage, finishReason };
 }
 
+async function collectWithRecovery(requester: ModelRequester): Promise<Collected> {
+  const credentials = requester.model.credentials;
+  try {
+    return await collect(requester);
+  } catch (error) {
+    if (credentials?.canRecover?.(error) !== true) throw error;
+    credentials?.invalidate?.();
+    return collect(requester);
+  }
+}
+
 // --- stub server -----------------------------------------------------------
 
 type StubHandler = (req: IncomingMessage, res: ServerResponse) => void;
@@ -345,7 +364,7 @@ async function probeBoundaries(): Promise<void> {
   const baseUrl = `http://127.0.0.1:${String(port)}`;
 
   const registry = new ProtocolAdapterRegistry();
-  const makeRequester = (authProvider: AuthProvider, url = baseUrl): ModelRequester => {
+  const makeRequester = (credentials: LlmCredentialProvider, url = baseUrl): ModelRequester => {
     const model: Model = {
       id: 'probe',
       name: 'probe-model',
@@ -357,14 +376,10 @@ async function probeBoundaries(): Promise<void> {
       maxContextSize: 8192,
       alwaysThinking: false,
       providerName: 'probe',
-      authProvider,
+      credentials,
     };
     return new ModelRequesterImpl(model, registry);
   };
-  const staticKey = (apiKey: string): AuthProvider => ({
-    canRefresh: false,
-    getAuth: () => Promise.resolve({ apiKey }),
-  });
   const resetCounts = (): void => {
     requestCount = 0;
     lastAuth = undefined;
@@ -374,7 +389,7 @@ async function probeBoundaries(): Promise<void> {
     // 1) happy path — the requester's event envelope on top of the raw stream.
     resetCounts();
     handler = (_req, res) => writePong(res);
-    const ok = await collect(makeRequester(staticKey('sk-probe')));
+    const ok = await collect(makeRequester(staticCredentials('sk-probe')));
     assert(ok.text === 'pong', 'happy path assembles streamed text');
     assert(ok.events.includes('usage'), 'happy path emits a usage event');
     assert(ok.events.includes('finish'), 'happy path emits a finish event');
@@ -383,11 +398,11 @@ async function probeBoundaries(): Promise<void> {
     report('happy-path', `events=${ok.events.join('>')} text=${JSON.stringify(ok.text)}`, '—');
 
     // 2) 401 with a static key: ChatProvider wraps to APIStatusError(401), the
-    // requester translates to provider.auth_error. No replay (canRefresh=false).
+    // requester translates to provider.auth_error. No replay (no canRecover).
     resetCounts();
     handler = (_req, res) => writeJsonError(res, 401, 'invalid api key');
     try {
-      await collect(makeRequester(staticKey('sk-bad')));
+      await collect(makeRequester(staticCredentials('sk-bad')));
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -397,33 +412,30 @@ async function probeBoundaries(): Promise<void> {
       report('auth-401-static-key', outcome, wrappedBy);
     }
 
-    // 3) 401 with a refreshable auth provider: the requester force-refreshes
-    // and replays ONCE — behavior the ChatProvider layer cannot own.
+    // 3) 401 with refreshable credentials: the call site invalidates and
+    // replays ONCE — recovery the requester deliberately does not own.
     resetCounts();
     handler = (req, res) => {
       if (req.headers.authorization === 'Bearer sk-good') writePong(res);
       else writeJsonError(res, 401, 'token expired');
     };
-    let getAuthCalls = 0;
-    const refreshable: AuthProvider = {
-      canRefresh: true,
-      getAuth: (options) => {
-        getAuthCalls += 1;
-        return Promise.resolve({ apiKey: options?.force === true ? 'sk-good' : 'sk-stale' });
-      },
-    };
-    const replayed = await collect(makeRequester(refreshable));
+    let resolveCalls = 0;
+    const refreshable = oauthCredentials((options) => {
+      resolveCalls += 1;
+      return Promise.resolve(options?.force === true ? 'sk-good' : 'sk-stale');
+    });
+    const replayed = await collectWithRecovery(makeRequester(refreshable));
     assert(replayed.text === 'pong', 'refresh+replay succeeds');
-    assert(getAuthCalls === 2, 'getAuth called twice (normal + forced)');
+    assert(resolveCalls === 2, 'resolve called twice (normal + forced)');
     assert(requests() === 2, 'exactly one replay after the 401');
-    report('auth-401-refresh-replay', `success after ${String(requestCount)} attempts`, 'ModelRequester ONLY (ChatProvider just throws the 401)');
+    report('auth-401-refresh-replay', `success after ${String(requestCount)} attempts`, 'caller-owned recovery (ModelRequester surfaces the 401)');
 
     // 4) 401 that survives a forced refresh: the provider rejected the account
     // — surfaced as provider.auth_error, not a re-login prompt.
     resetCounts();
     handler = (_req, res) => writeJsonError(res, 401, 'account disabled');
     try {
-      await collect(makeRequester(refreshable));
+      await collectWithRecovery(makeRequester(refreshable));
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -436,7 +448,7 @@ async function probeBoundaries(): Promise<void> {
     resetCounts();
     handler = (_req, res) => writeJsonError(res, 429, 'too many requests', { 'retry-after': '2' });
     try {
-      await collect(makeRequester(staticKey('sk-probe')));
+      await collect(makeRequester(staticCredentials('sk-probe')));
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -451,7 +463,7 @@ async function probeBoundaries(): Promise<void> {
     handler = (_req, res) =>
       writeJsonError(res, 400, 'This model\'s maximum context length is 8192 tokens.');
     try {
-      await collect(makeRequester(staticKey('sk-probe')));
+      await collect(makeRequester(staticCredentials('sk-probe')));
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -467,7 +479,7 @@ async function probeBoundaries(): Promise<void> {
       res.end('<html><head><title>500 Internal Server Error</title></head><body>oops</body></html>');
     };
     try {
-      await collect(makeRequester(staticKey('sk-probe')));
+      await collect(makeRequester(staticCredentials('sk-probe')));
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -488,7 +500,7 @@ async function probeBoundaries(): Promise<void> {
   });
     handler = (_req, res) => writePong(res); // unused — nothing listens there
     try {
-      await collect(makeRequester(staticKey('sk-probe'), `http://127.0.0.1:${String(deadPort)}`));
+      await collect(makeRequester(staticCredentials('sk-probe'), `http://127.0.0.1:${String(deadPort)}`));
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -500,7 +512,7 @@ async function probeBoundaries(): Promise<void> {
     resetCounts();
     handler = (_req, res) => writeSse(res, []);
     try {
-      await collect(makeRequester(staticKey('sk-probe')));
+      await collect(makeRequester(staticCredentials('sk-probe')));
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -516,7 +528,7 @@ async function probeBoundaries(): Promise<void> {
       res.end('data: {this is not json}\n\ndata: [DONE]\n\n');
     };
     try {
-      await collect(makeRequester(staticKey('sk-probe')));
+      await collect(makeRequester(staticCredentials('sk-probe')));
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -533,7 +545,7 @@ async function probeBoundaries(): Promise<void> {
       });
     };
     try {
-      await collect(makeRequester(staticKey('sk-probe')));
+      await collect(makeRequester(staticCredentials('sk-probe')));
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -566,7 +578,7 @@ async function probeBoundaries(): Promise<void> {
         sseToolDelta([], 'tool_calls'),
         SSE_USAGE,
       ]);
-    const toolOk = await collect(makeRequester(staticKey('sk-probe')), undefined, TOOL_INPUT);
+    const toolOk = await collect(makeRequester(staticCredentials('sk-probe')), undefined, TOOL_INPUT);
     const wireTools = (lastRequestBody as { tools?: { function?: { name?: string } }[] }).tools;
     assert(
       wireTools?.some((t) => t.function?.name === 'get_weather') === true,
@@ -605,7 +617,7 @@ async function probeBoundaries(): Promise<void> {
         sseToolDelta([], 'tool_calls'),
         SSE_USAGE,
       ]);
-    const parallel = await collect(makeRequester(staticKey('sk-probe')), undefined, TOOL_INPUT);
+    const parallel = await collect(makeRequester(staticCredentials('sk-probe')), undefined, TOOL_INPUT);
     assert(parallel.toolCalls.length === 2, 'two parallel tool calls assembled');
     assert(
       parallel.toolCalls[0]?.name === 'tool_a' && parallel.toolCalls[0]?.arguments === '{"a":1}',
@@ -639,7 +651,7 @@ async function probeBoundaries(): Promise<void> {
         sseToolDelta([], 'tool_calls'),
         SSE_USAGE,
       ]);
-    const malformedArgs = await collect(makeRequester(staticKey('sk-probe')), undefined, TOOL_INPUT);
+    const malformedArgs = await collect(makeRequester(staticCredentials('sk-probe')), undefined, TOOL_INPUT);
     assert(
       malformedArgs.toolCalls[0]?.arguments === '{not json',
       'malformed arguments pass through untouched',
@@ -664,7 +676,7 @@ async function probeBoundaries(): Promise<void> {
         sseToolDelta([], 'tool_calls'),
         SSE_USAGE,
       ]);
-    const indexless = await collect(makeRequester(staticKey('sk-probe')), undefined, TOOL_INPUT);
+    const indexless = await collect(makeRequester(staticCredentials('sk-probe')), undefined, TOOL_INPUT);
     assert(
       indexless.toolCalls[0]?.arguments === '{"location":"HZ"}',
       'index-less fragments merge into the pending call',
@@ -682,7 +694,7 @@ async function probeBoundaries(): Promise<void> {
     handler = (_req, res) =>
       writeJsonError(res, 400, 'tool_call_id "call_1" is not found');
     try {
-      await collect(makeRequester(staticKey('sk-probe')), undefined, TOOL_HISTORY_INPUT);
+      await collect(makeRequester(staticCredentials('sk-probe')), undefined, TOOL_HISTORY_INPUT);
       throw new Error('expected a failure');
     } catch (error) {
       const { outcome, wrappedBy } = describeCaught(error);
@@ -698,7 +710,7 @@ async function probeBoundaries(): Promise<void> {
     // the tool result must hit the wire in the provider's shape.
     resetCounts();
     handler = (_req, res) => writePong(res);
-    await collect(makeRequester(staticKey('sk-probe')), undefined, TOOL_HISTORY_INPUT);
+    await collect(makeRequester(staticCredentials('sk-probe')), undefined, TOOL_HISTORY_INPUT);
     const wireMessages = (lastRequestBody as { messages?: Record<string, unknown>[] }).messages;
     assert(
       wireMessages?.some(
@@ -728,7 +740,7 @@ async function probeBoundaries(): Promise<void> {
     };
     const ac = new AbortController();
     try {
-      for await (const event of makeRequester(staticKey('sk-probe')).request(PING_INPUT, ac.signal)) {
+      for await (const event of makeRequester(staticCredentials('sk-probe')).request(PING_INPUT, ac.signal)) {
         if (event.type === 'part') ac.abort();
       }
       throw new Error('expected an abort');

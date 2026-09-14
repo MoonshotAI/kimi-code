@@ -28,9 +28,8 @@ there is no fallback data source.
 - **Search** — cross-session full-text search over `POST /api/v1/search`
   (cursor-paged; exact-match maps to the API's `literal` mode; a `live`/`index`
   badge shows which server route served the results).
-- **Model Catalog** — every provider with its models; expanding one opens the
-  model inspector (config layers + resolved runtime view with per-value
-  provenance).
+- **Model Catalog** — every provider with its models and the default marker,
+  with per-model ping and session creation actions.
 - **App / Workspace Services** — the full Service reflection over the App
   scope, and over each Workspace scope (picked via the directory browser;
   workspace handlers materialize on demand).

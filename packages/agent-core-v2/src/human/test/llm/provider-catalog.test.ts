@@ -79,7 +79,7 @@ describe('providerCatalog ping', () => {
             },
           });
         } else {
-          onEvent?.({ type: 'llm.delta', part: { type: 'text', text: 'pong' } });
+          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'pong' } });
           onEvent?.({ type: 'llm.done' });
         }
         return Promise.resolve();

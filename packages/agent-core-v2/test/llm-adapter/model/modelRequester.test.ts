@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { isError2 } from '#/_base/errors/errors';
+import { oauthCredentials, staticCredentials } from '#human/credentials/credentials';
 import type { ProviderMediaContribution } from '#human/llm/media/upload';
 import type { LlmModel } from '#human/llm/model';
 import type {
@@ -77,13 +78,13 @@ function emitAll(emit: (event: LlmRequestEvent) => void, events: readonly LlmReq
 function textStream(emit: (event: LlmRequestEvent) => void, text = 'hello'): void {
   emitAll(emit, [
     { type: 'llm.sent' },
-    { type: 'llm.delta', part: { type: 'text', text } },
-    { type: 'llm.finish', finish: { finishReason: 'completed', rawFinishReason: 'stop' } },
+    { type: 'llm.streaming.part', part: { type: 'text', text } },
+    { type: 'llm.streaming.finish', finish: { finishReason: 'completed', rawFinishReason: 'stop' } },
     { type: 'llm.done' },
   ]);
 }
 
-function modelWith(authProvider: Model['authProvider']): Model {
+function modelWith(credentials: Model['credentials']): Model {
   return {
     id: 'm1',
     name: 'fake-model',
@@ -102,14 +103,9 @@ function modelWith(authProvider: Model['authProvider']): Model {
     alwaysThinking: false,
     providerType: 'fake',
     providerName: 'fake',
-    authProvider,
+    credentials,
   };
 }
-
-const staticAuth = (apiKey?: string): Model['authProvider'] => ({
-  canRefresh: false,
-  getAuth: () => Promise.resolve(apiKey === undefined ? undefined : { apiKey }),
-});
 
 async function collect(stream: AsyncIterable<ModelRequestEvent>): Promise<ModelRequestEvent[]> {
   const events: ModelRequestEvent[] = [];
@@ -123,7 +119,7 @@ describe('ModelRequesterImpl request execution', () => {
   it('maps ModelRequestParams onto LlmRequestConfig, content and control', async () => {
     const requester = new FakeLlmRequester();
     requester.handler = (_i, emit) => textStream(emit);
-    const impl = new ModelRequesterImpl(modelWith(staticAuth('sk-1')), gatewayReturning(requester));
+    const impl = new ModelRequesterImpl(modelWith(staticCredentials('sk-1')), gatewayReturning(requester));
     const signal = AbortSignal.timeout(1000);
     const messages: Message[] = [
       {
@@ -198,7 +194,7 @@ describe('ModelRequesterImpl request execution', () => {
   it('omits the thinking intent when no effort is requested', async () => {
     const requester = new FakeLlmRequester();
     requester.handler = (_i, emit) => textStream(emit);
-    const impl = new ModelRequesterImpl(modelWith(staticAuth()), gatewayReturning(requester));
+    const impl = new ModelRequesterImpl(modelWith(staticCredentials()), gatewayReturning(requester));
     await collect(impl.request(INPUT));
     expect(requester.calls[0]?.config.thinking).toBeUndefined();
     expect(requester.calls[0]?.config.extraParams).toBeUndefined();
@@ -210,22 +206,22 @@ describe('ModelRequesterImpl request execution', () => {
     requester.handler = (_i, emit) =>
       emitAll(emit, [
         { type: 'llm.sent' },
-        { type: 'llm.headers', headers: { 'x-trace-id': 'trace-1' } },
-        { type: 'llm.delta', part: { type: 'text', text: 'he' } },
-        { type: 'llm.delta', part: { type: 'text', text: 'llo' } },
+        { type: 'llm.streaming.headers', headers: { 'x-trace-id': 'trace-1' } },
+        { type: 'llm.streaming.part', part: { type: 'text', text: 'he' } },
+        { type: 'llm.streaming.part', part: { type: 'text', text: 'llo' } },
         {
-          type: 'llm.delta',
+          type: 'llm.streaming.part',
           part: { type: 'function', id: 'call-1', name: 'do', arguments: '{"a"', _streamIndex: 0 },
         },
-        { type: 'llm.delta', part: { type: 'tool_call_part', argumentsPart: ':1}', index: 0 } },
-        { type: 'llm.usage', usage: { inputOther: 10 } },
-        { type: 'llm.usage', usage: { output: 7 } },
-        { type: 'llm.finish', finish: { finishReason: 'tool_calls', rawFinishReason: 'tool_calls' } },
-        { type: 'llm.message-id', messageId: 'msg-42' },
+        { type: 'llm.streaming.part', part: { type: 'tool_call_part', argumentsPart: ':1}', index: 0 } },
+        { type: 'llm.streaming.usage', usage: { inputOther: 10 } },
+        { type: 'llm.streaming.usage', usage: { output: 7 } },
+        { type: 'llm.streaming.finish', finish: { finishReason: 'tool_calls', rawFinishReason: 'tool_calls' } },
+        { type: 'llm.streaming.message_id', messageId: 'msg-42' },
         { type: 'llm.done' },
       ]);
     const traceIds: Array<string | null> = [];
-    const impl = new ModelRequesterImpl(modelWith(staticAuth()), gatewayReturning(requester));
+    const impl = new ModelRequesterImpl(modelWith(staticCredentials()), gatewayReturning(requester));
     const events = await collect(
       impl.request(INPUT, undefined, { onTraceId: (id) => traceIds.push(id) }),
     );
@@ -261,46 +257,7 @@ describe('ModelRequesterImpl request execution', () => {
     expect(traceIds).toEqual(['trace-1']);
   });
 
-  it('replays once after a forced token refresh on 401', async () => {
-    const requester = new FakeLlmRequester();
-    requester.handler = (callIndex, emit) => {
-      if (callIndex === 0) {
-        emit({
-          type: 'llm.failed.remote',
-          error: {
-            kind: 'status',
-            statusCode: 401,
-            message: 'unauthorized',
-            requestId: null,
-            retryAfterMs: null,
-            headers: null,
-          },
-        });
-        return;
-      }
-      textStream(emit, 'ok');
-    };
-    const authCalls: Array<{ force?: boolean }> = [];
-    const impl = new ModelRequesterImpl(
-      modelWith({
-        canRefresh: true,
-        getAuth: (options) => {
-          authCalls.push(options ?? {});
-          return Promise.resolve({ apiKey: authCalls.length === 1 ? 'tok-1' : 'tok-2' });
-        },
-      }),
-      gatewayReturning(requester),
-    );
-
-    const events = await collect(impl.request(INPUT));
-    expect(events.some((e) => e.type === 'finish')).toBe(true);
-    expect(requester.calls).toHaveLength(2);
-    expect(requester.calls[0]?.config.model.apiKey).toBe('tok-1');
-    expect(requester.calls[1]?.config.model.apiKey).toBe('tok-2');
-    expect(authCalls).toEqual([{ force: undefined }, { force: true }]);
-  });
-
-  it('surfaces a replay-surviving 401 as provider.auth_error', async () => {
+  it('surfaces a 401 as provider.auth_error without replaying', async () => {
     const requester = new FakeLlmRequester();
     requester.handler = (_i, emit) =>
       emit({
@@ -315,10 +272,7 @@ describe('ModelRequesterImpl request execution', () => {
         },
       });
     const impl = new ModelRequesterImpl(
-      modelWith({
-        canRefresh: true,
-        getAuth: () => Promise.resolve({ apiKey: 'tok' }),
-      }),
+      modelWith(oauthCredentials(() => Promise.resolve('tok'))),
       gatewayReturning(requester),
     );
 
@@ -326,10 +280,10 @@ describe('ModelRequesterImpl request execution', () => {
     expect(isError2(failure)).toBe(true);
     expect((failure as { code: string }).code).toBe(PROVIDER_AUTH_ERROR_CODE);
     expect((failure as Error).message).toContain('account rejected');
-    expect(requester.calls).toHaveLength(2);
+    expect(requester.calls).toHaveLength(1);
   });
 
-  it('does not replay 401s against a non-refreshable auth provider', async () => {
+  it('does not replay 401s against static credentials', async () => {
     const requester = new FakeLlmRequester();
     requester.handler = (_i, emit) =>
       emit({
@@ -344,7 +298,7 @@ describe('ModelRequesterImpl request execution', () => {
         },
       });
     const impl = new ModelRequesterImpl(
-      modelWith(staticAuth('sk-bad')),
+      modelWith(staticCredentials('sk-bad')),
       gatewayReturning(requester),
     );
 
@@ -367,7 +321,7 @@ describe('ModelRequesterImpl request execution', () => {
           headers: null,
         },
       });
-    const impl = new ModelRequesterImpl(modelWith(staticAuth()), gatewayReturning(requester));
+    const impl = new ModelRequesterImpl(modelWith(staticCredentials()), gatewayReturning(requester));
     const failure = await collect(impl.request(INPUT)).catch((error: unknown) => error);
     expect((failure as { code: string }).code).toBe(PROVIDER_API_ERROR_CODE);
 
@@ -394,7 +348,7 @@ describe('ModelRequesterImpl request execution', () => {
   it('uploadVideo presence is the capability declaration', async () => {
     const requester = new FakeLlmRequester();
     const impl = new ModelRequesterImpl(
-      modelWith(staticAuth('sk-1')),
+      modelWith(staticCredentials('sk-1')),
       gatewayReturning(requester),
     );
     await expect(impl.uploadVideo('file-id')).rejects.toThrow(/does not support video upload/);
@@ -410,7 +364,7 @@ describe('ModelRequesterImpl request execution', () => {
       },
     };
     const withMedia = new ModelRequesterImpl(
-      modelWith(staticAuth('sk-1')),
+      modelWith(staticCredentials('sk-1')),
       gatewayReturning(requester, media),
     );
     const part = await withMedia.uploadVideo({ data: new Uint8Array([1]), mimeType: 'video/mp4' });
@@ -422,14 +376,14 @@ describe('ModelRequesterImpl request execution', () => {
     const requester = new FakeLlmRequester();
     requester.handler = (_i, emit) => {
       emit({ type: 'llm.sent' });
-      emit({ type: 'llm.delta', part: { type: 'text', text: 'a' } });
+      emit({ type: 'llm.streaming.part', part: { type: 'text', text: 'a' } });
       const spinUntil = Date.now() + 150;
       while (Date.now() < spinUntil) {}
-      emit({ type: 'llm.delta', part: { type: 'text', text: 'b' } });
-      emit({ type: 'llm.finish', finish: { finishReason: 'completed', rawFinishReason: 'stop' } });
+      emit({ type: 'llm.streaming.part', part: { type: 'text', text: 'b' } });
+      emit({ type: 'llm.streaming.finish', finish: { finishReason: 'completed', rawFinishReason: 'stop' } });
       emit({ type: 'llm.done' });
     };
-    const impl = new ModelRequesterImpl(modelWith(staticAuth()), gatewayReturning(requester));
+    const impl = new ModelRequesterImpl(modelWith(staticCredentials()), gatewayReturning(requester));
     const events = await collect(impl.request(INPUT));
     const timing = events.find((event) => event.type === 'timing');
     expect(timing).toBeDefined();

@@ -24,7 +24,7 @@
 // cross-reducers), blobs (the folding states whose blob codec offloads inline
 // media to blob storage), owner (the source file declaring the class).
 
-// Index (60 record types)
+// Index (59 record types)
 //   config.update                      profile                                               src/agent/profile/profileOps.ts
 //   context.append_loop_event          contextMemory, turn                                   src/agent/contextMemory/contextEvents.ts
 //   context.append_message             contextMemory, plan, task.notificationDelivery        src/agent/contextMemory/contextEvents.ts
@@ -43,8 +43,8 @@
 //   goal.clear                         (none)                                                src/features/goal/goalOps.ts
 //   goal.create                        (none)                                                src/features/goal/goalOps.ts
 //   goal.update                        (none)                                                src/features/goal/goalOps.ts
-//   interaction.request                (none)                                                src/features/interaction/interactionOps.ts
-//   interaction.resolved               (none)                                                src/features/interaction/interactionOps.ts
+//   interaction.request                (none)                                                src/agent/interaction/interactionOps.ts
+//   interaction.resolved               (none)                                                src/agent/interaction/interactionOps.ts
 //   interruptionReminder.recorded      interruptionReminder                                  src/agent/interruptionReminder/interruptionReminderOps.ts
 //   llm.request                        llm.requestTrace                                      src/agent/llmRequester/llmRequestOps.ts
 //   llm.tools_snapshot                 llm.requestTrace                                      src/agent/llmRequester/llmRequestOps.ts
@@ -57,10 +57,9 @@
 //   plan.revision                      plan                                                  src/features/plan/planOps.ts
 //   plugin.session_start               pluginSessionStartSnapshot                            src/agent/plugin/agentPluginOps.ts
 //   profile.bind                       profile, profile.activeTools                          src/agent/profile/profileOps.ts
-//   prompt.aborted                     promptResolution                                      src/agent/prompt/promptService.ts
-//   prompt.accepted                    promptAdmission                                       src/agent/prompt/promptOps.ts
-//   prompt.completed                   promptResolution                                      src/agent/prompt/promptService.ts
-//   prompt.steered                     promptResolution                                      src/agent/prompt/promptService.ts
+//   prompt.aborted                     (none)                                                src/agent/prompt/promptEvents.ts
+//   prompt.completed                   (none)                                                src/agent/prompt/promptEvents.ts
+//   prompt.steered                     (none)                                                src/agent/prompt/promptEvents.ts
 //   runtime.set_binding                runtimeBinding                                        src/agent/runtimeBinding/runtimeBindingOps.ts
 //   swarm_mode.enter                   swarm                                                 src/features/swarm/swarmOps.ts
 //   swarm_mode.exit                    contextMemory, swarm                                  src/features/swarm/swarmOps.ts
@@ -328,7 +327,7 @@ interface GoalUpdatePayload {
 
 /**
  * states: (none)
- * owner: src/features/interaction/interactionOps.ts
+ * owner: src/agent/interaction/interactionOps.ts
  */
 interface InteractionRequestPayload {
   _name: 'interaction.request';
@@ -341,7 +340,7 @@ interface InteractionRequestPayload {
 
 /**
  * states: (none)
- * owner: src/features/interaction/interactionOps.ts
+ * owner: src/agent/interaction/interactionOps.ts
  */
 interface InteractionResolvedPayload {
   _name: 'interaction.resolved';
@@ -524,8 +523,8 @@ interface ProfileBindPayload {
 }
 
 /**
- * states: promptResolution
- * owner: src/agent/prompt/promptService.ts
+ * states: (none)
+ * owner: src/agent/prompt/promptEvents.ts
  */
 interface PromptAbortedPayload {
   _name: 'prompt.aborted';
@@ -535,19 +534,8 @@ interface PromptAbortedPayload {
 }
 
 /**
- * states: promptAdmission
- * owner: src/agent/prompt/promptOps.ts
- */
-interface PromptAcceptedPayload {
-  _name: 'prompt.accepted';
-  agentId: string;
-  promptId: string;
-  content?: any;
-}
-
-/**
- * states: promptResolution
- * owner: src/agent/prompt/promptService.ts
+ * states: (none)
+ * owner: src/agent/prompt/promptEvents.ts
  */
 interface PromptCompletedPayload {
   _name: 'prompt.completed';
@@ -558,8 +546,8 @@ interface PromptCompletedPayload {
 }
 
 /**
- * states: promptResolution
- * owner: src/agent/prompt/promptService.ts
+ * states: (none)
+ * owner: src/agent/prompt/promptEvents.ts
  */
 interface PromptSteeredPayload {
   _name: 'prompt.steered';
@@ -833,6 +821,7 @@ interface TurnPromptPayload {
   /** PromptOrigin */
   origin: 'user' | 'skill_activation' | 'plugin_command' | 'injection' | 'shell_command' | 'compaction_summary' | 'system_trigger' | 'task' | 'cron_job' | 'cron_missed' | 'hook_result' | 'retry';
   promptId?: string;
+  turnId?: number;
 }
 
 /**
@@ -928,7 +917,6 @@ interface WirePayloadMap {
   "plugin.session_start": PluginSessionStartPayload;
   "profile.bind": ProfileBindPayload;
   "prompt.aborted": PromptAbortedPayload;
-  "prompt.accepted": PromptAcceptedPayload;
   "prompt.completed": PromptCompletedPayload;
   "prompt.steered": PromptSteeredPayload;
   "runtime.set_binding": RuntimeSetBindingPayload;

@@ -33,6 +33,7 @@ export {
 } from '#/_base/di/fiber';
 export { Service } from '#/_base/di/service';
 export * from './errors';
+export * from './events';
 export * from '#/runtime/runtime';
 export * from '#/runtime/runtimeRegistry';
 export * from '#/runtime/runtimeWorkspaceView';
@@ -57,6 +58,8 @@ export * from '#/_base/log/fileLog';
 export * from '#/_base/log/logService';
 export * from '#/wire/wire';
 export * from '#/wire/wireService';
+export * from '#/wire/journal';
+export * from '#/wire/tree/index';
 export * from '#/wire/record';
 export * from '#/wire/migration/migration';
 export * from '#/session/sessionLog/sessionLogService';
@@ -158,10 +161,9 @@ export type {
 export type { ThinkingEffort, ThinkingRequestOptions } from '#human/llm/thinking';
 export type { VideoUploadInput } from '#human/llm/media/upload';
 export type { ToolCallIdPolicy } from '#human/llm/requester/requester';
-export type { ProviderRequestAuth } from '#/llm-adapter/model/catalog';
 export type { SamplingOptions } from '#/llm-adapter/model/model-requester';
 export * from '#/llm-adapter/contract/request-trace';
-export type { ExtraBody, KimiThinkingConfig } from '#human/llm-kimi/trait';
+export type { KimiThinkingConfig } from '#human/llm-kimi/trait';
 
 export * from '#/app/sessionIndex/sessionIndex';
 export * from '#/app/sessionIndex/sessionIndexService';
@@ -177,11 +179,11 @@ export * from '#/session/sessionTitle/agentTitlePromptSource';
 import '#/session/sessionTitle/agentTitlePromptSourceService';
 export * from '#/session/sessionTitle/sessionTitle';
 export * from '#/session/sessionTitle/sessionTitleService';
-import '#/session/sessionTitle/flag';
 export * from '#/session/sessionToolPolicy/sessionToolPolicy';
 export * from '#/session/sessionToolPolicy/sessionToolPolicyService';
 export * from '#/app/config/config';
 export * from '#/app/config/configEvents';
+export type { ConfigChangedEvent } from '#/app/config/configEvents';
 export * from '#/app/config/configService';
 export * from '#/app/config/configSectionContributions';
 import '#/app/kosongConfig/configSection';
@@ -329,8 +331,6 @@ export * from '#/app/flag/flagRegistryService';
 export * from '#/app/flag/flag';
 export * from '#/app/flag/flagService';
 
-export * from '#/agent/activityView/activityView';
-import '#/agent/activityView/activityViewService';
 export * from '#/agent/modeMutex/modeMutex';
 import '#/agent/modeMutex/modeMutexService';
 export * from '#/features/btw/btw';
@@ -454,6 +454,7 @@ export * from '#/features/cron/cronTask';
 export * from '#/features/cron/configSection';
 export * from '#/features/cron/cronService';
 export * from '#/features/cron/cronOps';
+export type { CronFiredEvent } from '#/features/cron/cronOps';
 import '#/features/cron/cronFeature';
 export * from '#/features/cron/tools/cron-create/cron-create';
 export * from '#/features/cron/tools/cron-list/cron-list';
@@ -510,23 +511,17 @@ export * from '#/app/sessionExport/wire-scan';
 export * from '#/app/sessionExport/zip';
 export * from '#/app/sessionLegacy/sessionLegacy';
 export * from '#/app/sessionLegacy/sessionLegacyService';
-export * from '#/features/interaction/interaction';
-export * from '#/features/interaction/interactionOps';
-export * from '#/features/interaction/interactionService';
-export * from '#/features/interaction/sessionInteractions';
-import '#/features/interaction/interactionFeature';
+export * from '#/human/interaction/interaction';
+export * from '#/human/interaction/facade';
+export * from '#/agent/interaction/interactionOps';
 export * from '#/session/sessionContext/sessionContext';
 
-import '#/session/approval/approval';
-import '#/session/approval/approvalService';
+export * from '#/agent/interaction/question';
 export {
-  ISessionApprovalService,
   type ApprovalDecision,
   type ApprovalRequest as SessionApprovalRequest,
   type ApprovalResponse as SessionApprovalResponse,
-} from '#/session/approval/approval';
-export * from '#/session/question/question';
-export * from '#/session/question/questionService';
+} from '#/agent/interaction/approval';
 export * from '#/agent/tools/ask-user-question/ask-user-question';
 import '#/agent/tools/ask-user-question/askUserQuestionTool';
 export * from '#/app/gateway/gateway';
@@ -600,8 +595,8 @@ export {
   resolveMaxImageEdgePx,
   resolveReadImageByteBudget,
 } from '#/agent/media/image-compress';
+export { providerImagePolicy, type ProviderImagePolicy } from '#human/llm/media/image-formats';
 export {
-  MODEL_ACCEPTED_IMAGE_MIMES,
   buildImageConversionGuidance,
   buildUnsupportedImageNotice,
   decodeBase64Prefix,
@@ -674,6 +669,7 @@ export * from '#/_base/utils/timer';
 import '#/agent/loop/configSection';
 export * from '#/agent/loop/loop';
 export * from '#/agent/loop/loopService';
+export * from '#/agent/loop/promptChannel';
 export * from '#/agent/interruptionReminder/interruptionReminder';
 export * from '#/agent/interruptionReminder/interruptionReminderService';
 export * from '#/agent/interruptionReminder/interruptionReminderOps';
@@ -716,9 +712,7 @@ export * from '#/agent/pluginCommand/pluginCommandService';
 export * from '#/agent/profile/profile';
 export * from '#/agent/profile/profileService';
 export * from '#/agent/profile/context';
-export * from '#/agent/prompt/prompt';
-export * from '#/agent/prompt/promptOps';
-export * from '#/agent/prompt/promptService';
+export * from '#/agent/prompt/promptEvents';
 export * from '#/agent/prompt/promptMetadataText';
 export * from '#/agent/replayBuilder/types';
 export * from '#/agent/replayBuilder/fold';
@@ -739,6 +733,10 @@ export * from '#/features/todo/todoListReminder';
 export * from '#/features/todo/todoService';
 export * from '#/features/todo/tools/todo-list/todo-list';
 import '#/features/todo/todoFeature';
+export * from '#/features/notify/flag';
+export * from '#/features/notify/notifyUserAvailability';
+export * from '#/features/notify/tools/notify-user/notify-user';
+import '#/features/notify/notifyFeature';
 export * from '#/tool/toolContract';
 export * from '#/agent/toolExecutor/toolHooks';
 export * from '#/agent/toolExecutor/toolExecutor';

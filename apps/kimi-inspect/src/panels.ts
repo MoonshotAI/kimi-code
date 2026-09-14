@@ -16,7 +16,7 @@
  * every Service.
  */
 
-import { IAgentActivityView } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
+import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
 import { IAgentPermissionModeService } from '@moonshot-ai/agent-core-v2/agent/permissionMode/permissionMode';
 import { IAgentPermissionRulesService } from '@moonshot-ai/agent-core-v2/agent/permissionRules/permissionRules';
@@ -29,8 +29,6 @@ import { IAuthSummaryService } from '@moonshot-ai/agent-core-v2/app/auth/auth';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
 import { IProviderService } from '@moonshot-ai/agent-core-v2/llm-adapter/provider/provider';
-import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
-import { ISessionQuestionService } from '@moonshot-ai/agent-core-v2/session/question/question';
 import { ISessionInitService } from '@moonshot-ai/agent-core-v2/features/sessionInit/sessionInit';
 import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 import { ISessionWorkspaceContext } from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceContext';
@@ -111,18 +109,6 @@ export const SESSION_PANELS: readonly ServicePanelDef[] = [
     ],
   },
   {
-    id: String(ISessionApprovalService),
-    label: 'SessionApprovalService',
-    scope: 'session',
-    fetch: (svc) => call(svc, 'listPending'),
-  },
-  {
-    id: String(ISessionQuestionService),
-    label: 'SessionQuestionService',
-    scope: 'session',
-    fetch: (svc) => call(svc, 'listPending'),
-  },
-  {
     id: String(ISessionWorkspaceContext),
     label: 'SessionWorkspaceContext',
     scope: 'session',
@@ -141,10 +127,10 @@ export const SESSION_PANELS: readonly ServicePanelDef[] = [
 
 export const AGENT_PANELS: readonly ServicePanelDef[] = [
   {
-    id: String(IAgentActivityView),
-    label: 'AgentActivityView',
+    id: String(IAgentLoopService),
+    label: 'AgentLoopService',
     scope: 'agent',
-    fetch: (svc) => call(svc, 'state'),
+    fetch: (svc) => call(svc, 'activitySnapshot'),
   },
   {
     id: String(IAgentProfileService),

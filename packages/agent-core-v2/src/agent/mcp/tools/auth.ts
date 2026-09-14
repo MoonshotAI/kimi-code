@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import {
+  MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE,
   type ExecutableTool,
   type ExecutableToolContext,
   type ExecutableToolResult,
@@ -9,7 +10,7 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { AlreadyAuthorizedError, type McpOAuthService } from '#/mcpCore/oauth/service';
 import { qualifyMcpToolName } from '#/mcpCore/tool-naming';
 
-export const MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE = 'mcp.oauth.authorization_url';
+export { MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE } from '#/tool/toolContract';
 
 export interface McpOAuthAuthorizationUrlUpdateData {
   readonly serverName: string;

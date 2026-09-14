@@ -10,6 +10,9 @@ import type { IInstantiationService } from '#/_base/di/instantiation';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IFeatureManager } from '#/app/feature/featureManager';
+import { IFlagService } from '#/app/flag/flag';
+import { ISessionNotify } from '#/features/notify/sessionNotify';
+import { notifyUserAvailable } from '#/features/notify/notifyUserAvailability';
 import { getConfigSectionContributions } from '#/app/config/configSectionContributions';
 import { applySectionEnv } from '#/app/config/configService';
 import { Emitter, Event, type IWaitUntil } from '#/_base/event';
@@ -42,12 +45,11 @@ import type { PermissionRule } from '#/agent/permissionRules/permissionRules';
 import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
 import { IAgentProfileService, type AgentConfigData } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
 import type {
   PromptLaunchResult,
   PromptPayload,
   SteerPayload,
-} from '#/agent/prompt/prompt';
+} from '#/agent/loop/loop';
 import type { AgentCommandInfo } from '#/agent/command/agentCommand';
 import { IAgentCommandService } from '#/agent/command/agentCommand';
 import type { AgentContextData } from '#/agent/contextMemory/types';
@@ -127,10 +129,8 @@ import {
   FileStorageService,
   InMemoryStorageService,
   AgentFullCompactionService,
-  IAgentActivityView,
   IAppendLogStore,
   IFileSystemStorageService,
-  ISessionApprovalService,
   ISessionMetadata,
   IAgentTaskService,
   IBlobStore,
@@ -188,7 +188,11 @@ import {
   type SessionCreatedEvent,
   type SessionWillCloseEvent,
 } from '#/workspace/sessionLifecycle/sessionLifecycle';
+import { IEventService } from '#/app/event/event';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { applyPromptMetadataUpdate } from '#/session/sessionMetadata/promptMetadata';
+import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IWireService } from '#/wire/wire';
 import { WireService } from '#/wire/wireService';
@@ -202,6 +206,7 @@ import {
 } from '#/app/kosongConfig/configSection';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { ModelCatalog } from '#/llm-adapter/model/catalog-service';
+import { IProviderCatalogRuntime } from '#/llm-adapter/model/catalog-runtime';
 import { IModelOAuthTokens } from '#/llm-adapter/model/model-oauth';
 import type { ModelRequestParams, ModelRequester } from '#/llm-adapter/model/model-requester';
 import { IHostRequestHeaders } from '#/llm-adapter/model/host-request-headers';
@@ -210,12 +215,16 @@ import {
   type ProviderConfig,
   type ProvidersSection,
 } from '#/llm-adapter/provider/provider';
-import type { ApprovalResponse } from '#/session/approval/approval';
-import type { InteractionRequest } from '#/features/interaction/interaction';
-import { IAgentInteractionService } from '#/features/interaction/interactionService';
+import type { ApprovalRequest, ApprovalResponse } from '#/agent/interaction/approval';
+import type { QuestionRequest, QuestionResult } from '#/agent/interaction/question';
+import {
+  INTERACTION_TAG_SESSION_ID,
+  type Interaction,
+  type InteractionKind,
+} from '#/human/interaction/interaction';
+import { interactions } from '#/human/interaction/facade';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import type { EnvironmentDisclosureSnapshot } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { ISessionQuestionService, type QuestionResult } from '#/session/question/question';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionSwarmService } from '#/features/swarm/session/sessionSwarm';
 import type { PathAccessOperation } from '#/session/workspaceContext/workspaceContext';
@@ -397,6 +406,17 @@ interface UserToolInteractionPayload {
   readonly turnId?: number;
   readonly toolCallId: string;
   readonly args: unknown;
+}
+
+function interactionRpcMethod(kind: InteractionKind): 'requestApproval' | 'requestQuestion' | 'toolCall' {
+  switch (kind) {
+    case 'approval':
+      return 'requestApproval';
+    case 'question':
+      return 'requestQuestion';
+    case 'user_tool':
+      return 'toolCall';
+  }
 }
 
 interface ResumeStateSnapshot {
@@ -664,10 +684,6 @@ export function llmGenerateServices(requester: LlmRequester): TestAgentServiceOv
 
 export function telemetryServices(telemetry: ITelemetryService): TestAgentServiceOverride {
   return appService(ITelemetryService, telemetry);
-}
-
-export function questionServices(service: ISessionQuestionService): TestAgentServiceOverride {
-  return sessionService(ISessionQuestionService, service);
 }
 
 export function externalHookServices(
@@ -951,7 +967,7 @@ class PersistenceAppendLogStore implements IAppendLogStore {
   declare readonly _serviceBrand: undefined;
   readonly onDidWrite: IAppendLogStore['onDidWrite'] = Event.None as IAppendLogStore['onDidWrite'];
   private readonly history: WireRecord[] = [];
-  private readSeeded = false;
+  private historySeeded = false;
 
   constructor(
     private readonly persistence: WireRecordPersistence,
@@ -959,7 +975,14 @@ class PersistenceAppendLogStore implements IAppendLogStore {
     private readonly onRead: (event: WireRecord) => void,
   ) { }
 
+  private seedHistory(): void {
+    if (this.historySeeded) return;
+    this.history.push(...this.persistence.records.map(cloneRecord));
+    this.historySeeded = true;
+  }
+
   append<R>(_scope: string, _key: string, record: R): void {
+    this.seedHistory();
     const event = record as WireRecord;
     this.onAppend(event);
     this.persistence.append(event);
@@ -967,13 +990,11 @@ class PersistenceAppendLogStore implements IAppendLogStore {
   }
 
   async *read<R>(_scope: string, _key: string): AsyncIterable<R> {
-    const seeding = !this.readSeeded;
+    this.seedHistory();
     for await (const event of this.persistence.read()) {
       this.onRead(event);
-      if (seeding) this.history.push(cloneRecord(event));
       yield event as R;
     }
-    this.readSeeded = true;
   }
 
   rewrite<R>(_scope: string, _key: string, records: readonly R[]): Promise<void> {
@@ -1002,7 +1023,13 @@ class PersistenceAppendLogStore implements IAppendLogStore {
   }
 
   historySnapshot(): WireRecord[] {
+    this.seedHistory();
     return this.history.map(cloneRecord);
+  }
+
+  recordRestore(records: readonly WireRecord[]): void {
+    this.seedHistory();
+    this.history.push(...records.map(cloneRecord));
   }
 }
 
@@ -1010,13 +1037,14 @@ class ConfigBackedModelCatalog extends ModelCatalog {
   constructor(
     private readonly options: TestModelProviderOptions = {},
     @IConfigService private readonly config: IConfigService,
+    @IProviderCatalogRuntime runtime: IProviderCatalogRuntime,
     @IProviderService private readonly providerRegistry: IProviderService,
     @IModelService private readonly modelRegistry: IModelService,
     @IModelOAuthTokens oauthTokens: IModelOAuthTokens,
     @IProtocolAdapterRegistry protocolRegistry: IProtocolAdapterRegistry,
     @IHostRequestHeaders hostRequestHeaders: IHostRequestHeaders,
   ) {
-    super(providerRegistry, modelRegistry, oauthTokens, protocolRegistry, hostRequestHeaders);
+    super(runtime, providerRegistry, modelRegistry, oauthTokens, protocolRegistry, hostRequestHeaders);
   }
 
   private syncRegistriesFromConfig(): void {
@@ -1234,8 +1262,11 @@ export class AgentTestContext {
               onDidCreateSession: Event.None as Event<SessionCreatedEvent & IWaitUntil>,
               onWillCloseSession: Event.None as Event<SessionWillCloseEvent & IWaitUntil>,
             });
-            reg.defineInstance(ISessionApprovalService, this.createApprovalService());
-            reg.defineInstance(ISessionQuestionService, this.createQuestionService());
+            reg.defineInstance(ISessionNotify, {
+              _serviceBrand: undefined,
+              ready: Promise.resolve(),
+              enabled: notifyUserAvailable(this.root.accessor.get(IFlagService), bootstrap),
+            });
             reg.defineInstance(ISessionSkillCatalogData, {
               _serviceBrand: undefined,
               ready: Promise.resolve(),
@@ -1380,11 +1411,10 @@ export class AgentTestContext {
       .get(ISessionEventBus)
       .activateAgent(harnessAgentContext);
     adoptAgent!();
-    this.installInteractionBridge(harnessAgentContext);
+    this.installInteractionBridge();
     reassertServiceOverrides(this.serviceOverrides, 'agent', this.agent.instantiation);
 
     this.initializeRestorableServices();
-    this.get(IAgentActivityView);
 
     const eventBus = this.get(IEventBus);
     this.disposables.push(
@@ -1485,6 +1515,7 @@ export class AgentTestContext {
   private async restoreRecordsOnly(records: readonly WireRecord[]): Promise<void> {
     const scopeContext = this.get(IAgentScopeContext);
     const log = this.get(IAppendLogStore);
+    if (log instanceof PersistenceAppendLogStore) log.recordRestore(records);
     await log.rewrite(scopeContext.scope(), AGENT_WIRE_RECORD_KEY, records);
     this.persistedRestored = this.dispatcher.restore();
     await this.persistedRestored;
@@ -1510,33 +1541,80 @@ export class AgentTestContext {
   }
 
   private async closeWire(): Promise<void> {
+    if (this.session.accessor.get(IAgentLifecycleService).get(this.agent.id) === undefined) return;
     await this.wire.flush();
   }
 
-  private installInteractionBridge(agent: AgentContext): void {
-    const interaction = this.session.accessor.get(IAgentLifecycleService).handleOf(agent.agentId)!.accessor.get(IAgentInteractionService);
-    const request = interaction.request.bind(interaction);
-    interaction.request = (<TPayload, TResponse>(req: InteractionRequest<TPayload>) => {
-      if (req.kind !== 'user_tool') return request<TPayload, TResponse>(req);
-      const pending = request<TPayload, TResponse>(req);
-      const parked = interaction.listPending('user_tool').at(-1)!;
-      const payload = req.payload as UserToolInteractionPayload;
-      const response = this.createRpcPromise<ExecutableToolResult>();
-      void response.then(
-        (result) => { interaction.respond(parked.id, result); },
-        () => { interaction.respond(parked.id, { cancelled: true }); },
-      );
-      this.recordRpc(
-        'toolCall',
-        {
-          turnId: payload.turnId,
-          toolCallId: payload.toolCallId,
-          args: payload.args,
-        },
-        response,
-      );
-      return pending;
-    }) as IAgentInteractionService['request'];
+  private installInteractionBridge(): void {
+    const sessionId = this.session.id;
+    const bridged = new Map<string, 'requestApproval' | 'requestQuestion' | 'toolCall'>();
+    this.disposables.push(
+      toDisposable(
+        interactions.onDidChangePending(() => {
+          for (const pending of interactions.findAll({
+            resolved: false,
+            tags: { [INTERACTION_TAG_SESSION_ID]: sessionId },
+          })) {
+            if (bridged.has(pending.id)) continue;
+            bridged.set(pending.id, interactionRpcMethod(pending.kind));
+            this.bridgeInteraction(pending);
+          }
+        }),
+      ),
+      toDisposable(
+        interactions.onDidResolve(({ id, response }) => {
+          const method = bridged.get(id);
+          if (method === undefined) return;
+          bridged.delete(id);
+          this.resolvePendingRpc(method, id, response);
+        }),
+      ),
+    );
+  }
+
+  private bridgeInteraction(interaction: Interaction): void {
+    switch (interaction.kind) {
+      case 'approval': {
+        const { sessionId: _sessionId, agentId: _agentId, ...payload } =
+          interaction.payload as ApprovalRequest;
+        const response = this.createRpcPromise<ApprovalResponse>();
+        void response.then((result) => {
+          interactions.respond(interaction.id, result);
+        });
+        this.recordRpc('requestApproval', payload, response);
+        return;
+      }
+      case 'question': {
+        const response = this.createRpcPromise<QuestionResult>();
+        void response.then((result) => {
+          interactions.respond(interaction.id, result);
+        });
+        this.recordRpc('requestQuestion', interaction.payload as QuestionRequest, response);
+        return;
+      }
+      case 'user_tool': {
+        const payload = interaction.payload as UserToolInteractionPayload;
+        const response = this.createRpcPromise<ExecutableToolResult>();
+        void response.then(
+          (result) => {
+            interactions.respond(interaction.id, result);
+          },
+          () => {
+            interactions.respond(interaction.id, { cancelled: true });
+          },
+        );
+        this.recordRpc(
+          'toolCall',
+          {
+            turnId: payload.turnId,
+            toolCallId: payload.toolCallId,
+            args: payload.args,
+          },
+          response,
+        );
+        return;
+      }
+    }
   }
 
   private initializeRestorableServices(): void {
@@ -1694,7 +1772,8 @@ export class AgentTestContext {
   }
 
   clearContext(): void {
-    this.get(IAgentPromptService).clear();
+    drainPrompts(this.get(IAgentLoopService));
+    this.get(IAgentContextMemoryService).clear();
   }
 
   async undoHistory(count: number): Promise<number> {
@@ -2074,52 +2153,6 @@ export class AgentTestContext {
     };
   }
 
-  private createApprovalService(): ISessionApprovalService {
-    return {
-      _serviceBrand: undefined,
-      request: (request) => {
-        const { sessionId: _sessionId, agentId: _agentId, ...payload } = request;
-        const promise = this.createRpcPromise<ApprovalResponse>();
-        this.recordRpc('requestApproval', payload, promise);
-        return promise;
-      },
-      enqueue: (request) => {
-        const id = request.id ?? request.toolCallId ?? `${request.toolName}:test`;
-        const { sessionId: _sessionId, agentId: _agentId, ...payload } = { ...request, id };
-        this.recordRpc('requestApproval', payload);
-        return { ...request, id };
-      },
-      decide: (id, response) => {
-        this.resolvePendingRpc('requestApproval', id, response);
-      },
-      listPending: () => [],
-    };
-  }
-
-  private createQuestionService(): ISessionQuestionService {
-    return {
-      _serviceBrand: undefined,
-      request: (request) => {
-        const promise = this.createRpcPromise<QuestionResult>();
-        this.recordRpc('requestQuestion', request, promise);
-        return promise;
-      },
-      enqueue: (request) => {
-        const id = request.id ?? request.toolCallId ?? 'question:test';
-        const payload = { ...request, id };
-        this.recordRpc('requestQuestion', payload);
-        return payload;
-      },
-      answer: (id, response) => {
-        this.resolvePendingRpc('requestQuestion', id, response);
-      },
-      dismiss: (id) => {
-        this.resolvePendingRpc('requestQuestion', id, null);
-      },
-      listPending: () => [],
-    };
-  }
-
   private captureRecord(event: WireRecord): void {
     const cloned = cloneRecord(event);
     if (this.suppressWireSnapshot) return;
@@ -2146,10 +2179,13 @@ export class AgentTestContext {
 
   private createRpcPassthroughAdapters(): AgentRpcPassthroughAPI {
     return {
-      prompt: (payload) => this.get(IAgentPromptService).submit(payload),
+      prompt: (payload) => submitPromptFacade(this, payload),
       promptWithSkills: (payload) => this.get(IAgentSkillService).promptWithSkills(payload),
-      steer: (payload) => this.get(IAgentPromptService).submitSteer(payload),
-      cancel: (payload) => this.get(IAgentLoopService).cancelFromUser(payload.turnId),
+      steer: (payload) => submitSteerPromptFacade(this, payload),
+      cancel: (payload) =>
+        this.get(IAgentLoopService).cancel(
+          payload.turnId === undefined ? undefined : { turnId: payload.turnId },
+        ),
       undoHistory: (payload) => this.get(IAgentConversationUndoService).undo(payload.count),
       setPermission: (payload) =>
         this.get(IAgentPermissionModeService).setModeAndBroadcast(payload.mode),
@@ -2195,7 +2231,10 @@ export class AgentTestContext {
         void tasks.stop(payload.taskId, payload.reason);
       },
       detachTask: (payload) => this.get(IAgentTaskService).detach(payload.taskId),
-      clearContext: () => this.get(IAgentPromptService).clear(),
+      clearContext: () => {
+        drainPrompts(this.get(IAgentLoopService));
+        this.get(IAgentContextMemoryService).clear();
+      },
       createGoal: (payload) => this.get(IAgentGoalService).createGoal(payload),
       getGoal: () => this.get(IAgentGoalService).getGoal(),
       pauseGoal: () => this.get(IAgentGoalService).pauseGoal(),
@@ -2761,8 +2800,6 @@ function createGenerateBackedGateway(requester: LlmRequester): IProtocolAdapterR
       real.resolveProviderBaseId(protocol, providerType),
     resolveCapability: (protocol, modelName, providerType) =>
       real.resolveCapability(protocol, modelName, providerType),
-    explainCapability: (protocol, modelName, providerType) =>
-      real.explainCapability(protocol, modelName, providerType),
     resolve: (model) => ({ ...real.resolve(model), requester }),
   };
 }
@@ -2798,4 +2835,71 @@ function withMetadata(events: readonly WireRecord[]): readonly WireRecord[] {
     },
     ...events,
   ];
+}
+
+async function submitPromptFacade(
+  ctx: TestAgentContext,
+  payload: PromptPayload,
+): Promise<PromptLaunchResult | undefined> {
+  const loop = ctx.get(IAgentLoopService);
+  if (ctx.get(IAgentScopeContext).agentId === MAIN_AGENT_ID) {
+    await applyPromptMetadataUpdate(
+      {
+        metadata: ctx.get(ISessionMetadata),
+        eventService: ctx.get(IEventService),
+        sessionId: ctx.get(ISessionContext).sessionId,
+      },
+      promptMetadataTextFromContentParts(payload.input),
+    );
+  }
+  const status = loop.snapshot();
+  const { id } = loop.submit({
+    message: { role: 'user', content: [...payload.input] },
+    meta: { promptId: payload.promptId, origin: { kind: 'user' }, tracked: true },
+  });
+  if (status.state === 'running' || status.paused || status.queue.length > 0) return undefined;
+  const turn = await loop.promptHandle(id)?.launched;
+  if (turn === undefined) return undefined;
+  await turn.ready.catch(() => undefined);
+  return turn.id === undefined ? undefined : { turn_id: turn.id };
+}
+
+async function submitSteerPromptFacade(
+  ctx: TestAgentContext,
+  payload: SteerPayload,
+): Promise<PromptLaunchResult | undefined> {
+  const loop = ctx.get(IAgentLoopService);
+  if (ctx.get(IAgentScopeContext).agentId === MAIN_AGENT_ID) {
+    await applyPromptMetadataUpdate(
+      {
+        metadata: ctx.get(ISessionMetadata),
+        eventService: ctx.get(IEventService),
+        sessionId: ctx.get(ISessionContext).sessionId,
+      },
+      promptMetadataTextFromContentParts(payload.input),
+    );
+  }
+  const status = loop.snapshot();
+  const { id } = loop.submit(
+    {
+      message: { role: 'user', content: [...payload.input] },
+      meta: { origin: { kind: 'user' }, tracked: true },
+    },
+    { steerIfActive: true },
+  );
+  if (status.state === 'running' && status.activePromptId === undefined) return undefined;
+  const turn = await loop.promptHandle(id)?.launched;
+  if (turn === undefined) return undefined;
+  await turn.ready.catch(() => undefined);
+  return turn.id === undefined ? undefined : { turn_id: turn.id };
+}
+
+function drainPrompts(loop: IAgentLoopService): void {
+  const snapshot = loop.snapshot();
+  for (const item of snapshot.queue) {
+    if (item.meta?.promptId !== undefined) loop.cancel({ promptId: item.meta.promptId });
+  }
+  if (snapshot.activePromptId !== undefined) {
+    loop.cancel({ promptId: snapshot.activePromptId });
+  }
 }

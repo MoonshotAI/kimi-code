@@ -3,12 +3,15 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { IntervalTimer } from '#/_base/utils/timer';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { databaseBaseEnabled } from '#/persistence/configSection';
 import { IQueryStore } from '#/persistence/interface/queryStore';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
 import { ISessionIndexMirror, type SessionSummary } from './sessionIndex';
+import { markSessionDirty } from './sessionIndexDirtyJournal';
 import {
   SESSION_INDEX_MANIFEST,
   recencyColumn,
@@ -33,24 +36,31 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
   declare readonly _serviceBrand: undefined;
 
   private readonly pendingMap = new Map<string, SessionSummary>();
+  private readonly pendingMarks = new Set<Promise<void>>();
   private readonly timer = this._register(new IntervalTimer({ unref: true }));
   private flushing: Promise<void> | undefined;
   private consecutiveFailures = 0;
   private giveUpTracked = false;
   private disposed = false;
   private overflowLogged = false;
+  private readonly sessionsScope: string;
 
   constructor(
     @IQueryStore private readonly queryStore: IQueryStore,
     @IConfigService private readonly config: IConfigService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ILogService private readonly log: ILogService,
+    @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
+    @IBootstrapService bootstrap: IBootstrapService,
   ) {
     super();
+    this.sessionsScope = bootstrap.scope('sessions');
     this._register(
       toDisposable(() => {
         this.disposed = true;
-        const pending = this.drain().catch(() => {});
+        const pending = Promise.all(this.pendingMarks)
+          .catch(() => {})
+          .then(() => this.drain().catch(() => {}));
         pendingDrains.add(pending);
         void pending.finally(() => pendingDrains.delete(pending));
       }),
@@ -58,7 +68,13 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
   }
 
   record(summary: SessionSummary): void {
-    if (this.disposed || !databaseBaseEnabled(this.config)) return;
+    if (this.disposed) return;
+    const mark = markSessionDirty(this.storage, this.sessionsScope, summary.id).catch((error) => {
+      this.log.debug('session index dirty mark failed', { error: String(error) });
+    });
+    this.pendingMarks.add(mark);
+    void mark.finally(() => this.pendingMarks.delete(mark));
+    if (!databaseBaseEnabled(this.config)) return;
     if (this.pendingMap.size >= MAX_PENDING && !this.pendingMap.has(summary.id)) {
       if (!this.overflowLogged) {
         this.overflowLogged = true;
@@ -168,18 +184,26 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
       for (const [id, summary] of chunk) {
         if (this.pendingMap.get(id) === summary) this.pendingMap.delete(id);
       }
+      if (this.consecutiveFailures > 0) {
+        this.log.info('session index mirror flush recovered', {
+          afterFailures: this.consecutiveFailures,
+          pending: this.pendingMap.size,
+        });
+      }
       this.consecutiveFailures = 0;
       this.giveUpTracked = false;
     } catch (error) {
       this.consecutiveFailures += 1;
-      this.log.warn('failed to flush session index mirror chunk', {
-        pending: this.pendingMap.size,
-        failures: this.consecutiveFailures,
-        error: String(error),
-      });
+      if (this.consecutiveFailures === 1) {
+        this.log.warn('failed to flush session index mirror chunk', {
+          pending: this.pendingMap.size,
+          error: String(error),
+        });
+      }
       if (this.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
         this.log.warn('session index mirror giving up until the next record; reconciliation will heal', {
           pending: this.pendingMap.size,
+          failures: this.consecutiveFailures,
         });
         if (!this.giveUpTracked) {
           this.giveUpTracked = true;

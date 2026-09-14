@@ -955,7 +955,7 @@ async function undoSessionAction(
 async function abortSessionAction(ctx: SessionActionCtx): Promise<void> {
   const { core, req, reply, id } = ctx;
   const agent = await resolveMainAgent(core, id);
-  agent.accessor.get(IAgentLoopService).cancelFromUser();
+  agent.accessor.get(IAgentLoopService).cancel();
   requestLog(req)?.info({ session_id: id, action: 'abort' }, 'session action completed');
   reply.send(okEnvelope({ aborted: true }, req.id));
 }

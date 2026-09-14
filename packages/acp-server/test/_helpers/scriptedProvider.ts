@@ -151,19 +151,19 @@ export function createScriptedProvider(): ScriptedProvider {
           { signal: control.signal },
         );
         for await (const part of stream) {
-          control.onEvent?.({ type: 'llm.delta', part });
+          control.onEvent?.({ type: 'llm.streaming.part', part });
           control.signal.throwIfAborted();
         }
-        control.onEvent?.({ type: 'llm.usage', usage: stream.usage ?? ZERO_USAGE });
+        control.onEvent?.({ type: 'llm.streaming.usage', usage: stream.usage ?? ZERO_USAGE });
         control.onEvent?.({
-          type: 'llm.finish',
+          type: 'llm.streaming.finish',
           finish: {
             finishReason: stream.finishReason,
             rawFinishReason: stream.rawFinishReason,
           },
         });
         if (stream.id !== null) {
-          control.onEvent?.({ type: 'llm.message-id', messageId: stream.id });
+          control.onEvent?.({ type: 'llm.streaming.message_id', messageId: stream.id });
         }
         control.onEvent?.({ type: 'llm.done' });
       } catch (error) {
@@ -179,7 +179,7 @@ export function createScriptedProvider(): ScriptedProvider {
   };
   // Identity/capability/model resolution delegates to the real registry (the
   // interface grew `resolveAdapterIdentity` / `resolveProviderBaseId` /
-  // `resolveCapability` / `explainCapability` / `resolve` — delegating keeps the
+  // `resolveCapability` / `resolve` — delegating keeps the
   // stub truthful and immune to further growth); only the requester is scripted.
   const real = new ProtocolAdapterRegistry();
   const registry: IProtocolAdapterRegistryType = {
@@ -188,7 +188,6 @@ export function createScriptedProvider(): ScriptedProvider {
     resolveAdapterIdentity: real.resolveAdapterIdentity.bind(real),
     resolveProviderBaseId: real.resolveProviderBaseId.bind(real),
     resolveCapability: real.resolveCapability.bind(real),
-    explainCapability: real.explainCapability.bind(real),
     resolve: (model: Model) => ({ ...real.resolve(model), requester }),
     // `createChatProvider` is called by `ModelImpl` (a package-internal method
     // not on the public interface); present at runtime, cast for the type gap.

@@ -45,6 +45,10 @@ export class SubagentSuspended extends Event2<SubagentSuspendedPayload> {
 }
 export interface SubagentSuspended extends SubagentSuspendedPayload {}
 
+export interface SubagentSuspendedEvent extends SubagentSuspendedPayload {
+  readonly type: 'subagent.suspended';
+}
+
 const RESUMED_PROFILE_FALLBACK = 'subagent';
 
 export class SessionSwarmService implements ISessionSwarmService {
@@ -212,7 +216,7 @@ export class SessionSwarmService implements ISessionSwarmService {
   }
 
   private requireIdleSubagent(agentId: string, child: IAgentScopeHandle): void {
-    if (child.accessor.get(IAgentLoopService).status().state === 'running') {
+    if (child.accessor.get(IAgentLoopService).snapshot().state === 'running') {
       throw new Error2(
         ErrorCodes.AGENT_ALREADY_RUNNING,
         `Agent instance "${agentId}" is already running and cannot run concurrently`,

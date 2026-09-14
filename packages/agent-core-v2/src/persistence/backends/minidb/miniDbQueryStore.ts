@@ -1,9 +1,7 @@
-import { promises as fsp } from 'node:fs';
-
 import { join } from 'pathe';
 
-import { type QueryOptions } from '@moonshot-ai/minidb';
-import { ClusterDb } from '@moonshot-ai/minidb/cluster';
+import { classifyStorageError, type QueryOptions } from '@moonshot-ai/minidb';
+import { ClusterDb, wipeCluster } from '@moonshot-ai/minidb/cluster';
 
 import { Disposable, toDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
@@ -12,6 +10,7 @@ import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import {
   IQueryStore,
+  QueryStoreRebuiltError,
   type Checkpoint,
   type ColumnBounds,
   type ColumnPageQuery,
@@ -29,6 +28,7 @@ const STORE_SUBDIR = 'query-store';
 const SHARD_COUNT = 16;
 const LOCK_ACQUIRE_TIMEOUT_MS = 1000;
 const DROP_BATCH_SIZE = 500;
+const TRANSIENT_ESCALATION_LIMIT = 5;
 
 function physicalKey(collection: string, key: string): string {
   return `${collection}${SEP}${key}`;
@@ -36,10 +36,6 @@ function physicalKey(collection: string, key: string): string {
 
 function indexName(collection: string, name: string): string {
   return `${collection}:${name}`;
-}
-
-function isRebuildable(error: unknown): boolean {
-  return error instanceof SyntaxError || (error as { name?: string }).name === 'CorruptFrameError';
 }
 
 const pendingDisposals = new Set<Promise<void>>();
@@ -54,6 +50,9 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
   private readonly dir: string;
   private dbPromise: Promise<ClusterDb> | undefined;
   private rebuildPromise: Promise<void> | undefined;
+  private transientReadFailures = 0;
+  private transientWriteFailures = 0;
+  private storeEpochCounter = 0;
   private readonly ensuredIndexes = new Set<string>();
 
   constructor(
@@ -95,7 +94,7 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
 
   private rebuild(cause: unknown): Promise<void> {
     this.rebuildPromise ??= (async () => {
-      this.log.warn('minidb query-store rebuilt after corruption', {
+      this.log.warn('minidb query-store rebuilt after unrecoverable failure', {
         dir: this.dir,
         error: String(cause),
       });
@@ -106,18 +105,52 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
         const db = await previous.catch(() => undefined);
         await db?.close().catch(() => {});
       }
-      await fsp.rm(this.dir, { recursive: true, force: true });
+      const outcome = await wipeCluster({
+        dir: this.dir,
+        lockAcquireTimeoutMs: LOCK_ACQUIRE_TIMEOUT_MS,
+      });
+      if (outcome === 'locked') throw cause;
+      this.storeEpochCounter += 1;
     })();
-    return this.rebuildPromise;
+    const settled = this.rebuildPromise;
+    return settled.then(
+      () => {
+        if (this.rebuildPromise === settled) this.rebuildPromise = undefined;
+      },
+      (error: unknown) => {
+        if (this.rebuildPromise === settled) this.rebuildPromise = undefined;
+        throw error;
+      },
+    );
   }
 
-  private async withDb<T>(op: (db: ClusterDb) => Promise<T>): Promise<T> {
+  private async withDb<T>(
+    op: (db: ClusterDb) => Promise<T>,
+    kind: 'read' | 'write',
+    expectedStoreEpoch?: number,
+  ): Promise<T> {
+    const db = await this.openDb();
+    if (expectedStoreEpoch !== undefined && expectedStoreEpoch !== this.storeEpochCounter) {
+      throw new QueryStoreRebuiltError();
+    }
     try {
-      return await op(await this.openDb());
+      const result = await op(db);
+      if (kind === 'write') this.transientWriteFailures = 0;
+      else this.transientReadFailures = 0;
+      return result;
     } catch (error) {
-      if (!isRebuildable(error)) throw error;
+      if (classifyStorageError(error) !== 'rebuild') {
+        const failures =
+          kind === 'write'
+            ? (this.transientWriteFailures += 1)
+            : (this.transientReadFailures += 1);
+        if (failures < TRANSIENT_ESCALATION_LIMIT) throw error;
+      }
+      this.transientReadFailures = 0;
+      this.transientWriteFailures = 0;
       await this.rebuild(error);
-      return op(await this.openDb());
+      if (expectedStoreEpoch !== undefined) throw new QueryStoreRebuiltError();
+      throw error;
     }
   }
 
@@ -127,41 +160,45 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
     value: T,
     options?: { columns?: Record<string, number> },
   ): Promise<void> {
-    await this.withDb((db) =>
-      db.set(physicalKey(collection, key), value, { dt: options?.columns }),
+    await this.withDb(
+      (db) => db.set(physicalKey(collection, key), value, { dt: options?.columns }),
+      'write',
     );
   }
 
   async batch(ops: readonly WriteOp[]): Promise<void> {
     if (ops.length === 0) return;
-    await this.withDb((db) =>
-      db.batch(
-        ops.map((op) =>
-          op.kind === 'put'
-            ? {
-                op: 'set' as const,
-                key: physicalKey(op.collection, op.key),
-                value: op.value,
-                dt: op.columns,
-              }
-            : { op: 'del' as const, key: physicalKey(op.collection, op.key) },
+    await this.withDb(
+      (db) =>
+        db.batch(
+          ops.map((op) =>
+            op.kind === 'put'
+              ? {
+                  op: 'set' as const,
+                  key: physicalKey(op.collection, op.key),
+                  value: op.value,
+                  dt: op.columns,
+                }
+              : { op: 'del' as const, key: physicalKey(op.collection, op.key) },
+          ),
         ),
-      ),
+      'write',
     );
   }
 
   async delete(collection: string, key: string): Promise<void> {
-    await this.withDb((db) => db.del(physicalKey(collection, key)));
+    await this.withDb((db) => db.del(physicalKey(collection, key)), 'write');
   }
 
   async get<T>(collection: string, key: string): Promise<T | undefined> {
-    return this.withDb((db) => db.get(physicalKey(collection, key)) as Promise<T | undefined>);
+    return this.withDb((db) => db.get(physicalKey(collection, key)) as Promise<T | undefined>, 'read');
   }
 
   async getMany<T>(collection: string, keys: readonly string[]): Promise<Map<string, T>> {
     if (keys.length === 0) return new Map();
-    const values = await this.withDb((db) =>
-      db.mget(keys.map((key) => physicalKey(collection, key))),
+    const values = await this.withDb(
+      (db) => db.mget(keys.map((key) => physicalKey(collection, key))),
+      'read',
     );
     const out = new Map<string, T>();
     values.forEach((value, index) => {
@@ -172,36 +209,39 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
 
   async pageByColumn<T>(collection: string, query: ColumnPageQuery): Promise<Page<T>> {
     const dir = query.dir ?? 'asc';
-    const rows = (await this.withDb((db) =>
-      db.query({
-        dt: { [query.column]: query.bounds ?? {} },
-        filter: query.filter as Record<string, unknown> | undefined,
-        sort: { [query.column]: dir === 'desc' ? -1 : 1 },
-        limit: query.limit,
-      }),
+    const rows = (await this.withDb(
+      (db) =>
+        db.query({
+          dt: { [query.column]: query.bounds ?? {} },
+          filter: query.filter as Record<string, unknown> | undefined,
+          sort: { [query.column]: dir === 'desc' ? -1 : 1 },
+          limit: query.limit,
+        }),
+      'read',
     )) as ReadonlyArray<{ value: T }>;
     return { items: rows.map((row) => row.value) };
   }
 
   async listKeys(collection: string): Promise<readonly string[]> {
     const prefix = `${collection}${SEP}`;
-    const entries = await this.withDb((db) => db.scan({ prefix }));
+    const entries = await this.withDb((db) => db.scan({ prefix }), 'read');
     return entries.map((entry) => entry.key.slice(prefix.length));
   }
 
   async dropCollection(collection: string): Promise<void> {
     const prefix = `${collection}${SEP}`;
-    const entries = await this.withDb((db) => db.scan({ prefix }));
+    const entries = await this.withDb((db) => db.scan({ prefix }), 'read');
     for (let start = 0; start < entries.length; start += DROP_BATCH_SIZE) {
       const chunk = entries.slice(start, start + DROP_BATCH_SIZE);
-      await this.withDb((db) =>
-        db.batch(chunk.map((entry) => ({ op: 'del' as const, key: entry.key }))),
+      await this.withDb(
+        (db) => db.batch(chunk.map((entry) => ({ op: 'del' as const, key: entry.key }))),
+        'write',
       );
     }
   }
 
   query<T>(collection: string): IQuery<T> {
-    return new MiniDbQuery<T>((op) => this.withDb(op), collection);
+    return new MiniDbQuery<T>((op) => this.withDb(op, 'read'), collection);
   }
 
   async ensureIndex(collection: string, def: IndexDef): Promise<void> {
@@ -223,7 +263,7 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
       } catch (error) {
         if (!(error instanceof Error) || !error.message.includes('already exists')) throw error;
       }
-    });
+    }, 'write');
     this.ensuredIndexes.add(guard);
   }
 
@@ -231,8 +271,20 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
     return this.get<Checkpoint>(CHECKPOINT_COLLECTION, source);
   }
 
-  async setCheckpoint(source: string, checkpoint: Checkpoint): Promise<void> {
-    await this.put(CHECKPOINT_COLLECTION, source, checkpoint);
+  async setCheckpoint(
+    source: string,
+    checkpoint: Checkpoint,
+    expectedStoreEpoch?: number,
+  ): Promise<void> {
+    await this.withDb(
+      (db) => db.set(physicalKey(CHECKPOINT_COLLECTION, source), checkpoint),
+      'write',
+      expectedStoreEpoch,
+    );
+  }
+
+  storeEpoch(): number {
+    return this.storeEpochCounter;
   }
 
   async close(): Promise<void> {

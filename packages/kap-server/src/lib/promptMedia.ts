@@ -131,6 +131,7 @@ export interface ResolvePromptMediaOptions {
   readonly resolveOriginalsDir?: () => Promise<string | undefined>;
   readonly resolveAttachmentsDir?: () => Promise<string | undefined>;
   readonly telemetry?: ITelemetryService;
+  readonly providerType?: string;
 }
 
 export interface PromptMediaPreparation {
@@ -182,7 +183,7 @@ export async function resolvePromptMediaFiles(
           part.source.media_type,
           decodeBase64Prefix(part.source.data),
         );
-        if (!isModelAcceptedImageMime(effectiveMime)) {
+        if (!isModelAcceptedImageMime(effectiveMime, options.providerType)) {
           const bytes = Buffer.from(part.source.data, 'base64');
           const name = part.name ?? `image.${imageExtensionForMime(effectiveMime)}`;
           const persisted = await persistAttachmentBytes(
@@ -193,7 +194,7 @@ export async function resolvePromptMediaFiles(
           content.push({
             type: 'text',
             text: persisted === null
-              ? buildUnsupportedImageNotice(effectiveMime)
+              ? buildUnsupportedImageNotice(effectiveMime, undefined, options.providerType)
               : buildAttachedFileNotice(name, effectiveMime, bytes.length, persisted),
           });
           if (persisted !== null) {
@@ -245,9 +246,12 @@ export async function resolvePromptMediaFiles(
       }
 
       if (part.type === 'image' && part.source.kind === 'url') {
-        const extMime = unsupportedImageMimeFromUrl(part.source.url);
+        const extMime = unsupportedImageMimeFromUrl(part.source.url, options.providerType);
         if (extMime !== null) {
-          content.push({ type: 'text', text: buildUnsupportedImageNotice(extMime, part.source.url) });
+          content.push({
+            type: 'text',
+            text: buildUnsupportedImageNotice(extMime, part.source.url, options.providerType),
+          });
           changed = true;
           continue;
         }
@@ -307,7 +311,7 @@ export async function resolvePromptMediaFiles(
           throw new Error2('validation.failed', `${sourcePath} is ${declared}, not an image`);
         }
         let mediaType = resolveEffectiveImageMime(declared, data);
-        if (!isModelAcceptedImageMime(mediaType)) {
+        if (!isModelAcceptedImageMime(mediaType, options.providerType)) {
           content.push({
             type: 'text',
             text: buildAttachedFileNotice(name, mediaType, data.length, sourcePath),
@@ -390,7 +394,7 @@ export async function resolvePromptMediaFiles(
         const data = await readFileOrStream(file);
         let mediaType = file.meta.media_type;
         mediaType = resolveEffectiveImageMime(mediaType, data);
-        if (!isModelAcceptedImageMime(mediaType)) {
+        if (!isModelAcceptedImageMime(mediaType, options.providerType)) {
           const name = part.name ?? file.meta.name;
           const persisted = await persistAttachmentBytes(
             data,
@@ -400,7 +404,7 @@ export async function resolvePromptMediaFiles(
           content.push({
             type: 'text',
             text: persisted === null
-              ? buildUnsupportedImageNotice(mediaType, name)
+              ? buildUnsupportedImageNotice(mediaType, name, options.providerType)
               : buildAttachedFileNotice(name, mediaType, file.meta.size, persisted),
           });
           if (persisted !== null) {

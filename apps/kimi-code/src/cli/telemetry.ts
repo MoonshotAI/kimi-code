@@ -2,6 +2,7 @@ import { createKimiDeviceId, KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-c
 import {
   KimiAuthFacade,
   loadRuntimeConfigSafe,
+  log,
   resolveConfigPath,
   resolveKimiHome,
   type KimiConfig,
@@ -61,6 +62,7 @@ export function initializeCliTelemetry(options: InitializeCliTelemetryOptions): 
     endpoint: () => currentKimiProfile().telemetryEndpoint,
     getAccessToken: async () =>
       (await options.harness.auth.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME)) ?? null,
+    onUnexpectedError: (error) => log.warn('telemetry property dropped', { error: String(error) }),
   });
   if (options.bootstrap.firstLaunch) {
     options.harness.track('first_launch');
@@ -104,6 +106,7 @@ export function initializeServerTelemetry(
     model: config.defaultModel,
     endpoint: () => currentKimiProfile().telemetryEndpoint,
     getAccessToken: async () => (await auth.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME)) ?? null,
+    onUnexpectedError: (error) => log.warn('telemetry property dropped', { error: String(error) }),
   });
 
   return {

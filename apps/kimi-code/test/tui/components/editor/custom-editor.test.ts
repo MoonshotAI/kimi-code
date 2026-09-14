@@ -549,7 +549,7 @@ describe('CustomEditor paste marker expansion', () => {
     expect(editor.getText()).toContain(longText);
 
     // Undo (Ctrl+-) restores both the marker text and its paste-registry entry.
-    editor.handleInput('\x1b[45;5u');
+    editor.handleInput('\u001B[45;5u');
     expect(editor.getText()).toContain('[paste #1');
 
     simulateLargePaste(editor, 'anything');
@@ -665,6 +665,68 @@ describe('CustomEditor shortcut telemetry hooks', () => {
 
     expect(onToggleTodoExpand).toHaveBeenCalledOnce();
   });
+
+  it.each(['\u000E', '\u001B[110;5u'] as const)(
+    'toggles Updates focus on %j without changing the draft',
+    (key) => {
+      const editor = makeEditor();
+      const onPageNotify = vi.fn().mockReturnValue(true);
+      editor.onPageNotify = onPageNotify;
+      editor.setText('draft\nsecond line');
+      const cursor = editor.getCursor();
+      editor.handleInput(key);
+      expect(onPageNotify).toHaveBeenCalledWith();
+      expect(editor.getText()).toBe('draft\nsecond line');
+      expect(editor.getCursor()).toEqual(cursor);
+    },
+  );
+
+  it.each([
+    ['\u001B[D', 'left'],
+    ['\u001B[C', 'right'],
+    ['\u001B[A', 'up'],
+    ['\u001B[B', 'down'],
+    ['\u001B', 'escape'],
+  ] as const)('routes %j to the focused Updates panel as %s', (key, panelKey) => {
+    const editor = makeEditor();
+    const onNotifyPanelKey = vi.fn().mockReturnValue(true);
+    editor.onNotifyPanelKey = onNotifyPanelKey;
+    editor.setText('draft');
+    editor.handleInput(key);
+    expect(onNotifyPanelKey).toHaveBeenCalledWith(panelKey);
+    expect(editor.getText()).toBe('draft');
+  });
+
+  it.each(['\u001B[D', '\u001B[A', '\u001B'] as const)(
+    'leaves %j to autocomplete even when the Updates panel is focused',
+    (key) => {
+      const editor = makeEditor();
+      const onNotifyPanelKey = vi.fn();
+      editor.onNotifyPanelKey = onNotifyPanelKey;
+      const internals = editor as unknown as { cancelAutocompleteActivity: () => void };
+      const cancelAutocomplete = vi.spyOn(internals, 'cancelAutocompleteActivity');
+      cancelAutocomplete.mockImplementation(() => {});
+      vi.spyOn(editor, 'hasAutocompleteActivity').mockReturnValue(true);
+      editor.setText('/rev');
+      editor.handleInput(key);
+      expect(onNotifyPanelKey).not.toHaveBeenCalled();
+      if (key === '\u001B') expect(cancelAutocomplete).toHaveBeenCalledOnce();
+    },
+  );
+
+  it('keeps the original editor bindings when Updates paging is unavailable', () => {
+    const editor = makeEditor();
+    const baseline = makeEditor();
+    editor.onPageNotify = () => false;
+    for (const instance of [editor, baseline]) instance.setText('first\nsecond');
+    for (const key of ['\u0010', '\u000E']) {
+      editor.handleInput(key);
+      baseline.handleInput(key);
+      expect(editor.getCursor()).toEqual(baseline.getCursor());
+      expect(editor.getText()).toBe(baseline.getText());
+    }
+  });
+
 });
 
 describe('CustomEditor bash mode border label', () => {

@@ -1,6 +1,6 @@
 /**
  * `sessionQuestionService` — ask-user request broker. Mirrors
- * `agent-core-v2/session/question/question.ts` (the in-process camelCase
+ * `agent-core-v2/agent/interaction/question.ts` (the in-process camelCase
  * representation; the snake_case protocol shape is adapted at the edge).
  */
 

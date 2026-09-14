@@ -5,7 +5,7 @@
  * `interaction` kernel.
  *
  * The engine's `AgentPermissionGate` and `AskUserQuestionTool` park requests on
- * the Session-scoped interaction service and block on their response. This
+ * the process-global interaction kernel and block on their response. This
  * bridge is a pure edge observer driven entirely by the klient facade: it
  * subscribes to the session's `interactions.changed` event (which pushes the
  * full pending set on every change), and for every newly-pending `approval` /

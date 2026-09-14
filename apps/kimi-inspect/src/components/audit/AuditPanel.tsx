@@ -1,32 +1,32 @@
 /**
  * Audit panel — the `Audit` tab of the chat view's right dock
- * (`RightPanel`): replays how the visible `TranscriptChatStore` was built,
- * entry by entry. It used to be a standalone column docked inside the chat
- * view.
+ * (`RightPanel`): replays how the visible `ChatStore` was built, entry by
+ * entry. It used to be a standalone column docked inside the chat view.
  *
- *  - Timeline (draggable slider + entry list): every REST page load, WS
- *    frame (`transcript.ops` / `transcript.reset`), loss signal, and user
- *    action the channel processed, with its timestamp.
+ *  - Timeline (draggable slider + entry list): every REST history page,
+ *    every WS message (entity / delta / state), and every channel event
+ *    (subscribe ack, reconnect, catch-up fallback, prompt/cancel), with its
+ *    timestamp.
  *  - Detail tabs for the selected entry: `Diff` (structural diff vs the
  *    previous entry — added/modified/removed colored), `State` (the full
- *    store state at that point, goal/plan/todos included), `Event` (the
- *    raw REST request/response or WS payload).
+ *    store state at that point: entity timeline plus the interaction /
+ *    task / todo / session.state entities), `Event` (the raw REST
+ *    request/response or WS payload).
  */
 
-import { EMPTY_AGENT_STATE } from '@moonshot-ai/transcript';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import { diffValue, type DiffNode } from '../../audit/diff';
 import { serializeState } from '../../audit/serialize';
 import type { AuditEntry, AuditTrail } from '../../audit/trail';
 import { tailTrunc } from '../../audit/truncate';
+import { EMPTY_CHAT_STATE } from '../../transcript/store';
 import { Badge } from '../../ui';
 import { plainNode, StateTree } from './StateTree';
 
-const KIND_TONE: Record<AuditEntry['kind'], 'sky' | 'green' | 'violet' | 'neutral'> = {
+const KIND_TONE: Record<AuditEntry['kind'], 'sky' | 'green' | 'neutral'> = {
   rest: 'sky',
-  ops: 'green',
-  reset: 'violet',
+  ws: 'green',
   event: 'neutral',
 };
 
@@ -41,15 +41,14 @@ function EventJson({ entry }: { entry: AuditEntry }) {
   const payload = useMemo(() => {
     switch (entry.kind) {
       case 'rest':
-        return { request: entry.request, appliedAs: entry.appliedAs, response: entry.page };
-      case 'ops':
-        return { envelopeAt: entry.envelopeAt, delivery: entry.delivery, ops: entry.ops };
-      case 'reset':
         return {
-          envelopeAt: entry.envelopeAt,
-          hasMoreOlder: entry.hasMoreOlder,
-          snapshot: entry.snapshot,
+          request: entry.request,
+          mode: entry.mode,
+          messageCount: entry.messageCount,
+          inFlight: entry.inFlight,
         };
+      case 'ws':
+        return entry.message;
       case 'event':
         return { event: entry.event, detail: entry.detail };
     }
@@ -89,7 +88,7 @@ export function AuditPanel({ trail }: { trail: AuditTrail }) {
     if (current === undefined || tab === 'event') return null;
     if (tab === 'state') return plainNode(serializeState(current.state));
     const prevState =
-      currentPos > 0 ? (entries[currentPos - 1]?.state ?? EMPTY_AGENT_STATE) : EMPTY_AGENT_STATE;
+      currentPos > 0 ? (entries[currentPos - 1]?.state ?? EMPTY_CHAT_STATE) : EMPTY_CHAT_STATE;
     return diffValue(serializeState(prevState), serializeState(current.state));
   }, [current, currentPos, entries, tab]);
 
@@ -130,7 +129,7 @@ export function AuditPanel({ trail }: { trail: AuditTrail }) {
       <div ref={listRef} className="h-56 shrink-0 overflow-y-auto border-b border-neutral-800">
         {entries.length === 0 ? (
           <div className="px-3 py-2 text-[11px] text-neutral-600 italic">
-            Nothing recorded yet — the initial transcript load is still running.
+            Nothing recorded yet — the initial history load is still running.
           </div>
         ) : null}
         {entries.map((entry, pos) => (

@@ -42,11 +42,11 @@ export function createTimingPlugin(input?: { now?: () => number }): TimingPlugin
       const mark = (): void => {
         lastEventAt = now();
       };
-      target.on('turn.start', () => {
+      target.on('turn.started', () => {
         retryAnchor = undefined;
         lastEventAt = now();
       });
-      target.on('tool.async', mark);
+      target.on('tool.detached', mark);
       target.on('tool.done', mark);
       target.on('tool.failed', mark);
       target.on('tool.aborted', mark);
@@ -61,7 +61,7 @@ export function createTimingPlugin(input?: { now?: () => number }): TimingPlugin
         clientConsumeMs = 0;
         lastEventAt = t;
       });
-      target.on('llm.delta', () => {
+      target.on('llm.streaming.part', () => {
         const arrivedAt = now();
         if (sentAt === undefined) return;
         if (firstDeltaAt === undefined) {

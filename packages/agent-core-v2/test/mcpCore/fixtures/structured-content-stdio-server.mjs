@@ -61,11 +61,11 @@ server.registerTool(
     content: [
       {
         type: 'text',
-        text: 'Project: Central Macaw [d594e625]\nDescription: none\nTimeline: 1920x1080 @ 30fps | durationInFrames=0\nAssets: total=0',
+        text: 'Project: Example Project [example-project]\nDescription: none\nTimeline: 1920x1080 @ 30fps | durationInFrames=0\nAssets: total=0',
       },
     ],
     structuredContent: {
-      project: { id: 'd594e625', name: 'Central Macaw', description: null },
+      project: { id: 'example-project', name: 'Example Project', description: null },
       timeline: { width: 1920, height: 1080, fps: 30, durationInFrames: 0 },
       assets: { total: 0 },
     },

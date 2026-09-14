@@ -45,20 +45,16 @@ afterEach(() => {
 registerProviderDefinition({
   id: 'cap-vendor',
   baseProtocol: 'openai',
-  traits: [
-    {
-      capability: (modelName) =>
-        modelName === 'special-model'
-          ? {
-              image_in: true,
-              video_in: false,
-              audio_in: false,
-              thinking: false,
-              tool_use: true,
-            }
-          : undefined,
-    },
-  ],
+  capability: (modelName: string) =>
+    modelName === 'special-model'
+      ? {
+          image_in: true,
+          video_in: false,
+          audio_in: false,
+          thinking: false,
+          tool_use: true,
+        }
+      : undefined,
 });
 
 const registry = new ProtocolAdapterRegistry();
@@ -90,7 +86,6 @@ function modelWith(spec: {
     providerName: spec.providerType ?? spec.protocol,
     reasoningKey: spec.reasoningKey,
     supportEfforts: spec.supportEfforts,
-    authProvider: { canRefresh: false, getAuth: () => Promise.resolve(undefined) },
     providerOptions: spec.providerOptions,
   };
 }
@@ -110,28 +105,28 @@ describe('supportedProtocols', () => {
 describe('resolveAdapterIdentity', () => {
   it('resolves the kimi pair registrations to their vendor traits', () => {
     expect(registry.resolveAdapterIdentity('openai', 'kimi').baseId).toBe('openai');
-    expect(registry.resolveAdapterIdentity('openai', 'kimi').traits).toHaveLength(1);
+    expect(registry.resolveAdapterIdentity('openai', 'kimi').trait).toBeDefined();
     expect(registry.resolveAdapterIdentity('anthropic', 'kimi').baseId).toBe('anthropic');
-    expect(registry.resolveAdapterIdentity('anthropic', 'kimi').traits).toHaveLength(1);
+    expect(registry.resolveAdapterIdentity('anthropic', 'kimi').trait).toBeDefined();
     expect(registry.resolveAdapterIdentity('openai_responses', 'kimi').baseId).toBe(
       'openai_responses',
     );
-    expect(registry.resolveAdapterIdentity('openai_responses', 'kimi').traits).toHaveLength(1);
+    expect(registry.resolveAdapterIdentity('openai_responses', 'kimi').trait).toBeUndefined();
   });
 
-  it('resolves unregistered pairs to the protocol itself with no vendor traits', () => {
+  it('resolves unregistered pairs to the protocol itself with no vendor trait', () => {
     const google = registry.resolveAdapterIdentity('google-genai', 'kimi');
     expect(google.baseId).toBe('google-genai');
-    expect(google.traits).toHaveLength(0);
+    expect(google.trait).toBeUndefined();
     const unknown = registry.resolveAdapterIdentity('openai', 'no-such-vendor');
     expect(unknown.baseId).toBe('openai');
-    expect(unknown.traits).toHaveLength(0);
+    expect(unknown.trait).toBeUndefined();
   });
 
   it('resolves the no-providerType branch identically', () => {
     const identity = registry.resolveAdapterIdentity('openai');
     expect(identity.baseId).toBe('openai');
-    expect(identity.traits).toHaveLength(0);
+    expect(identity.trait).toBeUndefined();
   });
 });
 
@@ -167,28 +162,6 @@ describe('resolveCapability', () => {
       true,
     );
     expect(registry.resolveCapability('openai', 'gpt-4o', 'kimi').image_in).toBe(true);
-  });
-});
-
-describe('explainCapability', () => {
-  it('reports the trait level when a trait hook answers', () => {
-    const { capability, source } = registry.explainCapability('openai', 'special-model', 'cap-vendor');
-    expect(capability.image_in).toBe(true);
-    expect(source.kind).toBe('builtin');
-    expect(source.detail).toContain('trait');
-  });
-
-  it('reports the base catalog level', () => {
-    const { capability, source } = registry.explainCapability('openai', 'gpt-4o');
-    expect(capability.image_in).toBe(true);
-    expect(source.kind).toBe('builtin');
-    expect(source.detail).toContain('base');
-  });
-
-  it('reports none when nothing knows the model', () => {
-    const { capability, source } = registry.explainCapability('openai', 'mystery-model');
-    expect(isUnknownCapability(capability)).toBe(true);
-    expect(source.kind).toBe('none');
   });
 });
 
@@ -293,11 +266,11 @@ describe('kimi provider definitions', () => {
     const anthropic = getProviderDefinition('kimi', 'anthropic');
     const responses = getProviderDefinition('kimi', 'openai_responses');
     expect(native?.baseProtocol).toBe('openai');
-    expect(native?.traits).toHaveLength(1);
+    expect(native?.trait).toBeDefined();
     expect(anthropic?.baseProtocol).toBe('anthropic');
-    expect(anthropic?.traits).toHaveLength(1);
+    expect(anthropic?.trait).toBeDefined();
     expect(responses?.baseProtocol).toBe('openai_responses');
-    expect(responses?.traits).toHaveLength(1);
+    expect(responses?.trait).toBeUndefined();
     for (const definition of [native, anthropic, responses]) {
       expect(definition?.endpoint).toEqual({
         apiKeyEnv: 'KIMI_API_KEY',
@@ -321,12 +294,10 @@ describe('kimi provider definitions', () => {
     registerProviderDefinition({
       id: 'pair-vendor',
       baseProtocol: 'openai',
-      traits: [],
     });
     registerProviderDefinition({
       id: 'pair-vendor',
       baseProtocol: 'anthropic',
-      traits: [],
     });
     expect(getProviderDefinition('pair-vendor', 'openai')).toBeDefined();
     expect(getProviderDefinition('pair-vendor', 'anthropic')).toBeDefined();
@@ -334,14 +305,12 @@ describe('kimi provider definitions', () => {
       registerProviderDefinition({
         id: 'pair-vendor',
         baseProtocol: 'openai',
-        traits: [],
       }),
     ).toThrow(/already registered/);
     expect(() =>
       registerProviderDefinition({
         id: 'kimi',
         baseProtocol: 'openai',
-        traits: [],
       }),
     ).toThrow(/already registered/);
   });

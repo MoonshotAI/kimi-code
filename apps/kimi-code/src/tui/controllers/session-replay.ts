@@ -127,6 +127,7 @@ export class SessionReplayRenderer {
       this.hydrateSnapshot(main);
       this.renderRecords(main);
       this.applyTerminalBackgroundAgentStatuses(main);
+      this.host.sessionEventHandler.notifications.restore(session.getResumeState());
       this.host.mergeAllTurnSteps();
       return true;
     } catch (error) {

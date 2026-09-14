@@ -2,18 +2,14 @@ import type { ExperimentalFeatureState } from '@moonshot-ai/kimi-code-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SlashCommandHost } from '#/tui/commands';
-import {
-  applyExperimentalFeatureChanges,
-} from '#/tui/commands/config';
+import { applyExperimentalFeatureChanges } from '#/tui/commands/config';
 import {
   isExperimentalFlagEnabled,
   setExperimentalFeatures,
 } from '#/tui/commands/experimental-flags';
 import { darkColors } from '#/tui/theme/colors';
 
-function feature(
-  overrides: Partial<ExperimentalFeatureState> = {},
-): ExperimentalFeatureState {
+function feature(overrides: Partial<ExperimentalFeatureState> = {}): ExperimentalFeatureState {
   return {
     id: 'micro_compaction',
     title: 'Micro compaction',
@@ -79,12 +75,10 @@ describe('experimental feature command handlers', () => {
   it('persists config overrides, refreshes command flags, closes the panel, and reloads', async () => {
     const host = makeHost();
 
-    await applyExperimentalFeatureChanges(host, [
-      { id: 'micro_compaction', enabled: false },
-    ]);
+    await applyExperimentalFeatureChanges(host, [{ id: 'micro_compaction', enabled: false }]);
 
     expect(host.harness.setConfig).toHaveBeenCalledWith({
-      experimental: { 'micro_compaction': false },
+      experimental: { micro_compaction: false },
     });
     expect(host.harness.getExperimentalFeatures).toHaveBeenCalledOnce();
     expect(isExperimentalFlagEnabled('micro_compaction')).toBe(false);
@@ -105,6 +99,34 @@ describe('experimental feature command handlers', () => {
       'Experimental features updated.',
       darkColors.success,
     );
+  });
+
+  it.each([true, false])(
+    'toggles notification display without reloading the session: %s',
+    async (enabled) => {
+      const host = makeHost();
+      host.harness.getExperimentalFeatures.mockResolvedValue([
+        feature({ id: 'notify_user', enabled }),
+      ]);
+      await applyExperimentalFeatureChanges(host, [{ id: 'notify_user', enabled }]);
+      expect(host.harness.setConfig).toHaveBeenCalledWith({
+        experimental: { notify_user: enabled },
+      });
+      expect(isExperimentalFlagEnabled('notify_user')).toBe(enabled);
+      expect(host.refreshSlashCommandAutocomplete).toHaveBeenCalledOnce();
+      expect(host.harness.reloadSession).not.toHaveBeenCalled();
+      expect(host.reloadCurrentSessionView).not.toHaveBeenCalled();
+      expect(host.showError).not.toHaveBeenCalled();
+    },
+  );
+
+  it('still reloads when another experimental feature changes alongside notifications', async () => {
+    const host = makeHost();
+    await applyExperimentalFeatureChanges(host, [
+      { id: 'notify_user', enabled: false },
+      { id: 'micro_compaction', enabled: false },
+    ]);
+    expect(host.harness.reloadSession).toHaveBeenCalledOnce();
   });
 
   it('reports the post-apply enabled flag set in telemetry', async () => {
@@ -148,9 +170,7 @@ describe('experimental feature command handlers', () => {
   it('does not show the restart notice for non-tower changes', async () => {
     const host = makeHost();
 
-    await applyExperimentalFeatureChanges(host, [
-      { id: 'micro_compaction', enabled: false },
-    ]);
+    await applyExperimentalFeatureChanges(host, [{ id: 'micro_compaction', enabled: false }]);
 
     expect(host.showNotice).not.toHaveBeenCalled();
   });

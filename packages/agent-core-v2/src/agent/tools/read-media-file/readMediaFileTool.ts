@@ -3,8 +3,10 @@ import type { ContentPart } from '#human/llm/message';
 import { VideoUploadUnsupportedError } from '#/llm-adapter/contract/errors';
 import { inlineVideoPart, isVideoUploadAuthError } from '#/agent/media/videoUpload';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
+import { isDaemonFileUrl } from '#/agent/media/mediaRef';
+import { attachmentFileSource, runtimeFileSource, withAttachmentLocation, type FileReadSource } from '#/agent/tools/fileReadSource';
 
-import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import { inspectAgentRuntime, type IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
@@ -21,21 +23,23 @@ import {
   sniffImageDimensions,
 } from '#/agent/media/file-type';
 import {
-  IMAGE_BYTE_BUDGET,
   MAX_IMAGE_DECODE_BYTES,
   compressImageForModel,
   cropImageForModel,
   formatByteSize,
+  isRecodableImage,
   resolveMaxImageEdgePx,
   resolveReadImageByteBudget,
   type ImageCropRegion,
 } from '#/agent/media/image-compress';
 import {
   buildImageConversionGuidance,
+  buildOversizedImageConversionGuidance,
   isModelAcceptedImageMime,
 } from '#/agent/media/image-format-policy';
+import { providerImagePolicy } from '#human/llm/media/image-formats';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
+import { literalRulePattern, matchesGlobRuleSubject, matchesPathRuleSubject } from '#/tool/rule-match';
 import { renderPrompt } from '#/_base/utils/render-prompt';
 import {
   MAX_MEDIA_BYTES,
@@ -157,10 +161,14 @@ function buildImageDecodeLimitError(finalBytes: number): string {
   );
 }
 
-function buildFullResolutionLimitError(path: string, finalBytes: number): string {
+function buildFullResolutionLimitError(
+  path: string,
+  finalBytes: number,
+  inlineByteBudget: number,
+): string {
   return (
     `"${path}" is ${String(finalBytes)} bytes (${formatByteSize(finalBytes)}), ` +
-    `over the ${String(IMAGE_BYTE_BUDGET)}-byte (${formatByteSize(IMAGE_BYTE_BUDGET)}) ` +
+    `over the ${String(inlineByteBudget)}-byte (${formatByteSize(inlineByteBudget)}) ` +
     'per-image limit, so full_resolution cannot be honored. ' +
     'Use region to view a crop at full fidelity instead.'
   );
@@ -178,6 +186,8 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadMediaFileInputSchema);
   private readonly telemetry: ITelemetryService | undefined;
   private readonly inlineVideoSupported: boolean;
+  private readonly providerType: string | undefined;
+  private readonly inlineImageByteBudget: number;
   constructor(
     private readonly runtime: IAgentRuntimeService,
     private readonly workspace: WorkspaceConfig,
@@ -185,10 +195,14 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     private readonly videoUploader?: VideoUploader,
     telemetry?: ITelemetryService,
     inlineVideoSupported?: boolean,
+    providerType?: string,
+    private readonly attachmentStore?: ISessionMediaStore,
   ) {
     this.description = buildDescription(capabilities);
     this.telemetry = telemetry;
     this.inlineVideoSupported = inlineVideoSupported ?? false;
+    this.providerType = providerType;
+    this.inlineImageByteBudget = providerImagePolicy(providerType).inlineByteBudget;
   }
 
   private async videoContentPart(
@@ -210,9 +224,12 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     return inlineVideoPart(data, mimeType);
   }
 
-  resolveExecution(args: ReadMediaFileInput): ToolExecution {
+  resolveExecution(args: ReadMediaFileInput): ToolExecution | Promise<ToolExecution> {
     if (!args.path) {
       return { isError: true, output: 'File path cannot be empty.' };
+    }
+    if (isDaemonFileUrl(args.path)) {
+      return this.attachmentExecution(args);
     }
     const inspected = inspectAgentRuntime(this.runtime);
     const env = inspected.environment;
@@ -243,7 +260,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
           if (lease.runtime.identity.generation !== inspected.identity.generation) {
             return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
           }
-          return await this.execution(args, path, lease.runtime.fs!, env);
+          return await this.execution(args, runtimeFileSource(lease.runtime.fs!, path), env);
         } finally {
           lease.dispose();
         }
@@ -251,18 +268,32 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     };
   }
 
+  private async attachmentExecution(args: ReadMediaFileInput): Promise<ToolExecution> {
+    const source = await attachmentFileSource(args.path, this.attachmentStore);
+    return {
+      accesses: ToolAccesses.readFile(source.localPath ?? args.path),
+      description: `Reading media: ${args.path}`,
+      display: { kind: 'file_io', operation: 'read', path: source.localPath ?? args.path },
+      approvalRule: literalRulePattern(this.name, args.path),
+      matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.path),
+      execute: async () => withAttachmentLocation(
+        await this.execution(args, source, { osKind: 'unknown' }), source,
+      ),
+    };
+  }
+
   private async execution(
     args: ReadMediaFileInput,
-    safePath: string,
-    fs: IHostFileSystem,
-    env: HostEnvironmentInfo,
+    source: FileReadSource,
+    env: Pick<HostEnvironmentInfo, 'osKind'>,
   ): Promise<ExecutableToolResult> {
     if (!args.path) {
       return { isError: true, output: 'File path cannot be empty.' };
     }
 
     try {
-      const header = await fs.readBytes(safePath, MEDIA_SNIFF_BYTES);
+      const safePath = source.name;
+      const header = await source.readBytes(MEDIA_SNIFF_BYTES);
       const fileType = detectFileType(safePath, header, 'media');
 
       if (fileType.kind === 'text') {
@@ -288,10 +319,13 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
             'Tell the user to use a model with image input capability.',
         };
       }
-      if (fileType.kind === 'image' && !isModelAcceptedImageMime(fileType.mimeType)) {
+      if (
+        fileType.kind === 'image' &&
+        !isModelAcceptedImageMime(fileType.mimeType, this.providerType)
+      ) {
         return {
           isError: true,
-          output: buildImageConversionGuidance(args.path, fileType.mimeType, env.osKind),
+          output: buildImageConversionGuidance(source.localPath ?? args.path, fileType.mimeType, env.osKind),
         };
       }
       if (fileType.kind === 'video' && !this.capabilities.video_in) {
@@ -303,7 +337,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
         };
       }
 
-      const stat = await fs.stat(safePath);
+      const stat = await source.stat();
       if (stat.size === 0) {
         return { isError: true, output: `"${args.path}" is empty.` };
       }
@@ -338,11 +372,11 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
         fileType.kind === 'image' &&
         args.region === undefined &&
         args.full_resolution === true &&
-        stat.size > IMAGE_BYTE_BUDGET
+        stat.size > this.inlineImageByteBudget
       ) {
         return {
           isError: true,
-          output: buildFullResolutionLimitError(args.path, stat.size),
+          output: buildFullResolutionLimitError(args.path, stat.size, this.inlineImageByteBudget),
         };
       }
 
@@ -366,7 +400,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
         };
       }
 
-      const data = Buffer.from(await fs.readBytes(safePath));
+      const data = Buffer.from(await source.readBytes());
       let dimensions = fileType.kind === 'image' ? sniffImageDimensions(data) : null;
       let mediaPart: ContentPart;
       let delivery: ImageDelivery | undefined;
@@ -396,10 +430,14 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
           };
           dimensions = { width: outcome.originalWidth, height: outcome.originalHeight };
         } else if (args.full_resolution === true) {
-          if (data.length > IMAGE_BYTE_BUDGET) {
+          if (data.length > this.inlineImageByteBudget) {
             return {
               isError: true,
-              output: buildFullResolutionLimitError(args.path, data.length),
+              output: buildFullResolutionLimitError(
+                args.path,
+                data.length,
+                this.inlineImageByteBudget,
+              ),
             };
           }
           const base64 = data.toString('base64');
@@ -416,13 +454,28 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
           };
         } else {
           const { readByteBudget, maxEdge } = imageDeliveryLimits;
+          const inlineOnly = !isRecodableImage(data, fileType.mimeType);
           const compressed = await compressImageForModel(data, fileType.mimeType, {
             byteBudget: readByteBudget,
             maxEdge,
             telemetry: this.telemetry,
             telemetrySource: 'read_media',
           });
-          if (
+          if (inlineOnly) {
+            const inlineLimit = Math.max(readByteBudget, this.inlineImageByteBudget);
+            if (compressed.finalByteLength > inlineLimit) {
+              return {
+                isError: true,
+                output: buildOversizedImageConversionGuidance(
+                  source.localPath ?? args.path,
+                  fileType.mimeType,
+                  env.osKind,
+                  compressed.finalByteLength,
+                  inlineLimit,
+                ),
+              };
+            }
+          } else if (
             compressed.finalByteLength > readByteBudget ||
             Math.max(compressed.width, compressed.height) > maxEdge
           ) {
@@ -456,7 +509,8 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
       }
 
       const tag = fileType.kind === 'image' ? 'image' : 'video';
-      const openText = `<${tag} path="${safePath}">`;
+      const tagPath = isDaemonFileUrl(args.path) ? args.path : safePath;
+      const openText = `<${tag} path="${tagPath}">`;
       const closeText = `</${tag}>`;
 
       const note = buildMediaNote({

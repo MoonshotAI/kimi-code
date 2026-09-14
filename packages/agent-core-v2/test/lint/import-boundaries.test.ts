@@ -77,7 +77,7 @@ describe('check-import-boundaries', () => {
       at('agent', 'loop.ts'),
     );
     expect(violations).toHaveLength(1);
-    expect(violations[0]?.message).toMatch(/only llm-adapter and agent\/loop\/machine may import the human implementation/);
+    expect(violations[0]?.message).toMatch(/only llm-adapter, agent\/loop\/machine and session\/agentLifecycle may import the human implementation/);
   });
 
   it('allows a non-adapter v2 file importing human vocabulary', () => {
@@ -102,7 +102,76 @@ describe('check-import-boundaries', () => {
       at('agent', 'loop.ts'),
     );
     expect(violations).toHaveLength(1);
-    expect(violations[0]?.message).toMatch(/only llm-adapter and agent\/loop\/machine may import the human implementation/);
+    expect(violations[0]?.message).toMatch(/only llm-adapter, agent\/loop\/machine and session\/agentLifecycle may import the human implementation/);
+  });
+
+  it('flags a trait importing a protocol format module', () => {
+    const violations = checkSource(
+      `import { CONTEXT_MANAGEMENT_BETA } from '#/llm/requester/bases/anthropic/format';`,
+      atHuman('llm-kimi', 'trait.ts'),
+    );
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.message).toMatch(/format and trait never import each other/);
+  });
+
+  it('flags a trait importing a protocol lower module via a relative path', () => {
+    const violations = checkSource(
+      `import type { OpenAIWireToolCall } from '../openai/lower';`,
+      atHuman('llm/requester/bases/anthropic', 'trait.ts'),
+    );
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.message).toMatch(/format and trait never import each other/);
+  });
+
+  it('flags a format module importing a trait', () => {
+    const violations = checkSource(
+      `import type { OpenAITrait } from './trait';`,
+      atHuman('llm/requester/bases/openai', 'format.ts'),
+    );
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.message).toMatch(/format and trait never import each other/);
+  });
+
+  it('allows a trait importing the protocol contract', () => {
+    const violations = checkSource(
+      `import type { OpenAIWireToolCall } from '#/llm/requester/bases/openai/contract';`,
+      atHuman('llm-kimi', 'trait.ts'),
+    );
+    expect(violations).toHaveLength(0);
+  });
+
+  it('flags llm-adapter importing a protocol format module', () => {
+    const violations = checkSource(
+      `import { convertOpenAIError } from '#human/llm/requester/bases/openai/format';`,
+      atAdapter('protocol', 'protocolAdapterRegistry.ts'),
+    );
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.message).toMatch(/internal to the requester pipeline/);
+  });
+
+  it('flags human code outside bases importing a protocol lower module', () => {
+    const violations = checkSource(
+      `import { lowerMessage } from '#/llm/requester/bases/openai/lower';`,
+      atHuman('llm-kimi', 'provider.ts'),
+    );
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.message).toMatch(/internal to the requester pipeline/);
+  });
+
+  it('allows a sibling base importing another base format module', () => {
+    const violations = checkSource(
+      `import { convertOpenAIError } from '../openai/format';`,
+      atHuman('llm/requester/bases/openai-responses', 'format.ts'),
+    );
+    expect(violations).toHaveLength(0);
+  });
+
+  it('allows a test importing a protocol format module', () => {
+    const violations = checkSource(
+      `import { createOpenAIFormat } from '#/llm/requester/bases/openai/format';`,
+      atHuman('test/llm', 'usage.test.ts'),
+    );
+    expect(violations).toHaveLength(0);
   });
 
   it('allows arbitrary cross-domain imports outside kosong', () => {

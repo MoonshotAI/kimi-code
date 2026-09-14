@@ -21,6 +21,11 @@ export interface TelemetryBootstrapOptions {
   readonly locale?: string;
   readonly getAccessToken?: () => string | null | Promise<string | null>;
   /**
+   * Invoked when a tracked property is dropped for not being a primitive.
+   * Telemetry stays silent by default; hosts wire this to their logger.
+   */
+  readonly onUnexpectedError?: (error: Error) => void;
+  /**
    * Region-aware endpoint derived by the composition root (this package stays
    * dependency-free and keeps the cn default in `TELEMETRY_ENDPOINT`). A
    * resolver is invoked per flush so an in-process region switch takes effect
@@ -42,6 +47,7 @@ export function shouldEnableTelemetry(
 
 export function initializeTelemetry(options: TelemetryBootstrapOptions): void {
   const client = getDefaultTelemetryClient();
+  client.setUnexpectedErrorHandler(options.onUnexpectedError ?? null);
   if (!shouldEnableTelemetry({ enabled: options.enabled })) {
     client.disable();
     return;

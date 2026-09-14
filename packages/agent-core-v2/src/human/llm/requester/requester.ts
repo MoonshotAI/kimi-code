@@ -20,15 +20,18 @@ export interface ToolCallIdPolicy {
   maxLength?: number;
 }
 
+export type LlmErrorClassifier = (error: unknown) => LlmRemoteErrorMessage | undefined;
+
 export type LlmRequestEvent =
   | { type: 'llm.sent' }
-  | { type: 'llm.headers'; headers: Record<string, string> }
-  | { type: 'llm.delta'; part: StreamedMessagePart }
-  | { type: 'llm.usage'; usage: Partial<TokenUsage> }
-  | { type: 'llm.finish'; finish: FinishInfo }
-  | { type: 'llm.message-id'; messageId: string }
+  | { type: 'llm.streaming.headers'; headers: Record<string, string> }
+  | { type: 'llm.streaming.part'; part: StreamedMessagePart }
+  | { type: 'llm.streaming.usage'; usage: Partial<TokenUsage> }
+  | { type: 'llm.streaming.finish'; finish: FinishInfo }
+  | { type: 'llm.streaming.message_id'; messageId: string }
   | { type: 'llm.failed.syntax'; error: LlmErrorMessage<'syntax'> }
-  | { type: 'llm.failed.remote'; error: LlmRemoteErrorMessage }
+  | { type: 'llm.failed.remote'; error: LlmRemoteErrorMessage; rawError?: unknown }
+  | { type: 'llm.request.retrying' }
   | { type: 'llm.done' };
 
 export interface ExtraParams {
@@ -40,8 +43,20 @@ export interface ExtraParams {
 
 export type ToolMessageConversion = 'extract_text' | 'keep_parts';
 
+export interface LlmCredential {
+  readonly apiKey?: string;
+  readonly headers?: Record<string, string>;
+}
+
+export interface LlmCredentialProvider {
+  resolve(): Promise<LlmCredential | undefined> | LlmCredential | undefined;
+  canRecover?(error: unknown): boolean;
+  invalidate?(): void;
+}
+
 export interface LlmRequestConfig {
   readonly model: LlmModel;
+  readonly credentials?: LlmCredentialProvider;
   readonly systemPrompt?: string;
   readonly tools?: readonly ToolDescription[];
   readonly cacheKey?: string;

@@ -687,7 +687,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 #### `POST /api/v1/sessions/{session_id}/title/generate`
 
-通过托管供应商的 `chat_title` 工具根据会话的提示词生成标题并应用，同时广播 `session.meta.updated`。生成需要托管 OAuth 登录和 `auto_session_title` 实验开关；未提供 `force` 时，已有自定义标题或已生成标题的会话会上报为不可用，而不会被覆盖。
+通过托管供应商的 `chat_title` 工具根据会话的提示词生成标题并应用，同时广播 `session.meta.updated`。生成需要托管 OAuth 登录；未提供 `force` 时，已有自定义标题或已生成标题的会话会上报为不可用，而不会被覆盖。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -751,7 +751,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 #### `POST /api/v1/sessions/{session_id}:btw`
 
-开启一个 `"by the way"` 旁路对话：把 main agent fork 成一个禁用工具调用的子 Agent，让快速的临时问题在隔离环境中运行，不触碰工作上下文。需要可用的模型配置。
+开启一个 `"by the way"` 旁路对话：把 main agent fork 成一个仅可使用只读工具（`Read`、`Grep`、`Glob`）的子 Agent，让快速的临时问题在隔离环境中运行，不触碰工作上下文。需要可用的模型配置。
 
 成功时，`data` 为 `{ agent_id }`——新子 Agent 的 id。
 

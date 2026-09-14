@@ -29,7 +29,12 @@ import {
   applyServerPrefix,
   buildPayload,
 } from '../src/transport';
-import type { EnrichedTelemetryEvent, TelemetryEvent, TelemetryTransport } from '../src/types';
+import type {
+  EnrichedTelemetryEvent,
+  TelemetryEvent,
+  TelemetryProperties,
+  TelemetryTransport,
+} from '../src/types';
 
 const tempDirs: string[] = [];
 
@@ -179,6 +184,62 @@ describe('TelemetryClient', () => {
     expect(event.event).toBe('big_number');
     expect(event.properties).not.toHaveProperty('big');
     expect(event.properties['keep']).toBe(true);
+  });
+
+  it('reports dropped non-primitive properties to the unexpected error handler', async () => {
+    const client = new TelemetryClient();
+    const transport = new RecordingTransport();
+    client.attachSink(makeSink(transport));
+    const onUnexpectedError = vi.fn();
+    client.setUnexpectedErrorHandler(onUnexpectedError);
+
+    const properties = { nested: { a: 1 }, list: [1, 2], keep: 1 } as unknown as TelemetryProperties;
+    client.track('bad_props', properties);
+    client.withContext({ sessionId: 'scoped' }).track('bad_props_scoped', properties);
+    await client.flush();
+
+    expect(onUnexpectedError).toHaveBeenCalledTimes(4);
+    const first = onUnexpectedError.mock.calls[0]?.[0];
+    expect(first).toBeInstanceOf(Error);
+    expect(String(first)).toContain('"nested"');
+    expect(transport.sent[0]?.[0]?.properties).toEqual({ keep: 1 });
+    expect(transport.sent[0]?.[1]?.properties).toEqual({ keep: 1 });
+  });
+
+  it('reports drops for events queued before the handler is attached', async () => {
+    const client = new TelemetryClient();
+    const properties = { nested: { a: 1 }, keep: 1 } as unknown as TelemetryProperties;
+    client.track('early_bad', properties);
+    (properties as Record<string, unknown>)['keep'] = 2;
+    (properties as Record<string, unknown>)['added'] = 'later';
+
+    const onUnexpectedError = vi.fn();
+    client.setUnexpectedErrorHandler(onUnexpectedError);
+    const transport = new RecordingTransport();
+    client.attachSink(makeSink(transport));
+    await client.flush();
+
+    expect(onUnexpectedError).toHaveBeenCalledTimes(1);
+    expect(String(onUnexpectedError.mock.calls[0]?.[0])).toContain('"nested"');
+    expect(transport.sent[0]?.[0]?.properties).toEqual({ keep: 1 });
+  });
+
+  it('contains exceptions thrown by the unexpected error handler', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const client = new TelemetryClient();
+    const transport = new RecordingTransport();
+    client.attachSink(makeSink(transport));
+    client.setUnexpectedErrorHandler(() => {
+      throw new Error('handler blew up');
+    });
+
+    const properties = { nested: { a: 1 }, keep: 1 } as unknown as TelemetryProperties;
+    expect(() => client.track('bad_props', properties)).not.toThrow();
+    await client.flush();
+
+    expect(transport.sent[0]?.[0]?.properties).toEqual({ keep: 1 });
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 
   it('stops the previous system metrics collector when replacing it', () => {
@@ -590,7 +651,7 @@ describe('AsyncTransport', () => {
 
   it('resolves a function endpoint per send, so an in-process switch needs no rebuild', async () => {
     const fetchImpl = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
-      Promise.resolve(new Response('', { status: 200 })),
+      new Response('', { status: 200 }),
     );
     let endpoint = 'https://cn.test/events';
     const transport = new AsyncTransport({
@@ -925,6 +986,25 @@ describe('telemetry bootstrap', () => {
 
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://mock.test/events');
+  });
+
+  it('wires onUnexpectedError to property sanitization on the singleton', async () => {
+    const fetchImpl = vi.fn(async () => new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchImpl);
+    const onUnexpectedError = vi.fn();
+
+    initializeTelemetry({
+      homeDir: await tempHome(),
+      deviceId: 'dev',
+      appName: 'kimi-code-cli',
+      version: '1.2.3',
+      onUnexpectedError,
+    });
+    track('bad_props', { nested: { a: 1 } } as unknown as TelemetryProperties);
+    await shutdownTelemetry();
+
+    expect(onUnexpectedError).toHaveBeenCalledTimes(1);
+    expect(String(onUnexpectedError.mock.calls[0]?.[0])).toContain('"nested"');
   });
 
   it('reconciles the singleton sink model for subsequently tracked events', async () => {
@@ -1331,7 +1411,7 @@ function numberProperty(
 ): number {
   const value = properties[key];
   if (typeof value !== 'number' || !Number.isFinite(value)) {
-    throw new Error(`Expected property ${key} to be a finite number, got ${String(value)}`);
+    throw new TypeError(`Expected property ${key} to be a finite number, got ${String(value)}`);
   }
   return value;
 }

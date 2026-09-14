@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -95,6 +95,94 @@ async function removeTempDir(dir: string): Promise<void> {
 }
 
 describe('Session.prompt events', () => {
+  it('continues notifying sessions after disabling and restarting with identical prompt and tools', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_NOTIFY_USER', '');
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const requests: Array<{ tools: unknown; messages: Array<{ role: string; content: unknown }> }> =
+      [];
+    fetchStub!.mockImplementation(
+      async (input: Parameters<typeof fetch>[0], init: Parameters<typeof fetch>[1]) => {
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (url !== MODEL_URL) throw new Error(`Unexpected fetch: ${url}`);
+        if (typeof init?.body !== 'string') throw new Error('Expected a JSON request body');
+        requests.push(JSON.parse(init.body));
+        const body =
+          requests.length % 2 === 1
+            ? [
+                sseChunk({
+                  role: 'assistant',
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: `notify-${requests.length}`,
+                      type: 'function',
+                      function: {
+                        name: 'NotifyUser',
+                        arguments: JSON.stringify({ message: 'Checking the work.' }),
+                      },
+                    },
+                  ],
+                }),
+                sseChunk({}, 'tool_calls'),
+                'data: [DONE]',
+              ]
+                .map((line) => `${line}\n\n`)
+                .join('')
+            : sseBody('Work completed.');
+        return new Response(body, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      },
+    );
+    let harness = createKimiHarness({
+      identity: TEST_IDENTITY,
+      homeDir,
+      uiCapabilities: ['update_panel'],
+    });
+    try {
+      await configureFakeProvider(harness);
+      await harness.setConfig({ experimental: { notify_user: true } });
+      let session = await harness.createSession({ id: 'ses_notify_continue', workDir });
+      const events: Event[] = [];
+      let unsubscribe = session.onEvent((event) => events.push(event));
+      for (let turn = 0; turn < 3; turn++) {
+        if (turn === 1) await harness.setConfig({ experimental: { notify_user: false } });
+        if (turn === 2) {
+          unsubscribe();
+          await harness.close();
+          harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir, uiCapabilities: [] });
+          session = await harness.resumeSession({ id: 'ses_notify_continue' });
+          unsubscribe = session.onEvent((event) => events.push(event));
+        }
+        const done = waitForEvent(session, (event) => event.type === 'turn.ended');
+        await session.prompt(`Continue the work, turn ${turn + 1}.`);
+        expect(await done).toMatchObject({ reason: 'completed' });
+      }
+      unsubscribe();
+      expect(requests).toHaveLength(6);
+      const system = (request: (typeof requests)[number]) =>
+        request.messages.filter((message) => message.role === 'system');
+      for (const request of requests) {
+        expect(request.tools).toEqual(requests[0]!.tools);
+        expect(system(request)).toEqual(system(requests[0]!));
+      }
+      const results = events.filter((event) => event.type === 'tool.result');
+      expect(results).toHaveLength(3);
+      expect(results.every((event) => event.isError !== true)).toBe(true);
+      expect(JSON.stringify(results[0])).toContain('Update shown to the user.');
+      expect(JSON.stringify(results.slice(1))).toContain(
+        'Notifications are disabled; the update was not displayed.',
+      );
+    } finally {
+      await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('preserves existing custom metadata when an SDK metadata patch is resumed', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
@@ -485,7 +573,7 @@ describe('Session.prompt events', () => {
     }
   });
 
-  it('returns the requested identity for a historical fork', async () => {
+  it('returns the requested identity and derives metadata from the selected historical turn', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
@@ -512,44 +600,81 @@ describe('Session.prompt events', () => {
       expect(fork.id).toBe('ses_turn_fork_metadata_child');
       expect(fork.workDir).toBe(source.workDir);
       expect(state?.sessionMetadata.forkedFrom).toBe(source.id);
+      expect(fork.summary).toMatchObject({
+        title: 'Historical branch',
+        lastPrompt: 'branch here',
+        metadata: { source: 'vscode', branch: 'historical' },
+      });
+      expect(state?.sessionMetadata).toMatchObject({
+        title: 'Historical branch',
+        lastPrompt: 'branch here',
+        custom: { source: 'vscode', branch: 'historical' },
+      });
     } finally {
       await harness.close();
     }
   });
 
-  it('derives historical fork metadata from the selected turn', async () => {
+  it('flattens the undo branch out of a turn-sliced fork', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
 
     try {
       await configureFakeProvider(harness);
-      const source = await harness.createSession({
-        id: 'ses_turn_fork_state_source',
-        workDir,
-        metadata: { source: 'vscode' },
-      });
-      await runPrompt(source, 'branch here', 'kept answer');
-      await runPrompt(source, 'future prompt', 'discarded answer');
+      const source = await harness.createSession({ id: 'ses_turn_fork_undo_source', workDir });
+      await runPrompt(source, 'kept prompt one', 'kept answer one');
+      await runPrompt(source, 'kept prompt two', 'kept answer two');
+      await runPrompt(source, 'retracted prompt', 'retracted answer');
+      await source.undoHistory(1);
+      await runPrompt(source, 'follow-up prompt', 'follow-up answer');
 
       const fork = await harness.forkSession({
         id: source.id,
-        forkId: 'ses_turn_fork_state_child',
-        title: 'Historical branch',
-        metadata: { branch: 'historical' },
-        turnIndex: 0,
+        forkId: 'ses_turn_fork_undo_child',
+        turnIndex: 2,
       });
+      await fork.close();
+      const resumed = await harness.resumeSession({ id: fork.id });
+      const replayText = visibleReplayText(resumed.getResumeState()?.agents['main']?.replay ?? []);
 
-      expect(fork.summary).toMatchObject({
-        title: 'Historical branch',
-        lastPrompt: 'branch here',
-        metadata: { source: 'vscode', branch: 'historical' },
-      });
-      expect(fork.getResumeState()?.sessionMetadata).toMatchObject({
-        title: 'Historical branch',
-        lastPrompt: 'branch here',
-        custom: { source: 'vscode', branch: 'historical' },
-      });
+      expect(replayText).toEqual([
+        'user:kept prompt one',
+        'assistant:kept answer one',
+        'user:kept prompt two',
+        'assistant:kept answer two',
+        'user:follow-up prompt',
+        'assistant:follow-up answer',
+      ]);
+
+      const wireFiles = (await readdir(homeDir, { recursive: true })).filter((path) =>
+        path.endsWith(join('agents', 'main', 'wire.jsonl')),
+      );
+      const forkedLines = (await readFile(
+        join(homeDir, wireFiles.find((path) => path.includes(fork.id))!),
+        'utf8',
+      ))
+        .trimEnd()
+        .split('\n');
+      const types = forkedLines.map((line) => (JSON.parse(line) as { type: string }).type);
+      expect(types).not.toContain('agent.switched');
+      expect(types).not.toContain('context.undo');
+      expect(types).not.toContain('context.undone');
+
+      const sourceLines = (await readFile(
+        join(homeDir, wireFiles.find((path) => path.includes(source.id))!),
+        'utf8',
+      ))
+        .trimEnd()
+        .split('\n');
+      const sourceTypes = sourceLines.map((line) => (JSON.parse(line) as { type: string }).type);
+      expect(sourceTypes).toContain('agent.switched');
+      expect(sourceLines.some((line) => line.includes('retracted'))).toBe(true);
+
+      const retractedTypes = forkedLines
+        .filter((line) => line.includes('retracted'))
+        .map((line) => (JSON.parse(line) as { type: string }).type);
+      expect(retractedTypes).toEqual([]);
     } finally {
       await harness.close();
     }

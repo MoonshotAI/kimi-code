@@ -4,24 +4,43 @@ import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { ModelRequestTiming } from '#/llm-adapter/model/model-requester';
 import type { ToolInfo, ToolResult as AgentToolResult, ToolUpdate as AgentToolUpdate } from '#/tool/toolContract';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
-import { createAgentMachine } from '#human/agent/machine';
-import { createTurnMachine, type AssistantEntry, type HistoryMessage } from '#human/agent/turn';
+import { createAgentMachine, type PromptGate, type PromptGateVerdict } from '#human/agent/machine';
+import { createTurnMachine, type AssistantEntry, type HistoryMessage, type SystemEntry, type UserEntry } from '#human/agent/turn';
+import { messageAppended, turnEnded } from '#human/agent/events';
+import { agentSlices, type AgentEventStore } from '#human/agent/slices';
+import { credentialsRecovery } from '#human/credentials/credentials';
+import { createEventStoreSync } from '#human/eventStore/eventStore';
+import type { ExternalEvent } from '#human/eventStore/events';
+import { memoryJournal, type SyncStoreJournal } from '#human/eventStore/journal';
 import type { LlmErrorMessage } from '#human/llm/errors';
 import type { FinishInfo } from '#human/llm/finish-reason';
-import type { StreamedMessagePart, UserMessage } from '#human/llm/message';
+import type { StreamedMessagePart } from '#human/llm/message';
+import { UNKNOWN_CAPABILITY } from '#human/llm/capability';
 import type { LlmModel } from '#human/llm/model';
-import { createLlmMachine } from '#human/llm/requester/machine';
 import type { LlmRecovery, LlmRecoveryRecord } from '#human/llm/requester/recovery';
+import type { LlmCredentialProvider, LlmRequestConfig } from '#human/llm/requester/requester';
+import { resolveMaxAttempts } from '#human/llm/requester/retry';
 import type { ToolResult as MachineToolResult, ToolUpdate } from '#human/tool/executor';
-import type { TokenUsage } from '#human/llm/usage';
-import { createActor, type Subscription } from '#human/xstate2';
+import { createToolMachine } from '#human/tool/machine';
+import type { ToolDefinition } from '#human/tool/tool';
+import { emptyUsage, type TokenUsage } from '#human/llm/usage';
+import type { Actor, Subscription } from '#human/xstate2';
 
-import { createMachineRequester, type MachineRequesterGateDecision } from './requester';
-import { createMachineTools, type ToolResultExtras } from './tools';
+import { createMachineRequester, type MachineRequester, type MachineRequesterGateDecision } from './requester';
+import { createMachineTools, type MachineTools, type ToolResultExtras } from './tools';
+import { seededStoreJournal } from './storeJournal';
+
+export type { PromptGateVerdict };
 
 export type MachineEngineDelta =
   | { readonly kind: 'assistant'; readonly delta: string }
-  | { readonly kind: 'thinking'; readonly delta: string }
+  | {
+      readonly kind: 'thinking';
+      readonly delta: string;
+      readonly encrypted?: string;
+      readonly detailsIndex?: number;
+      readonly hidden?: boolean;
+    }
   | {
       readonly kind: 'toolCall';
       readonly toolCallId: string;
@@ -33,7 +52,7 @@ export type MachineEngineDelta =
 export type MachineTurnOutcome = 'done' | 'failed' | 'aborted';
 
 export type MachineEngineEvent =
-  | { readonly type: 'turnStarted'; readonly machineTurnId: number }
+  | { readonly type: 'turnStarted'; readonly machineTurnId: number; readonly queueItemId?: string; readonly entry?: UserEntry }
   | {
       readonly type: 'turnSettled';
       readonly outcome: MachineTurnOutcome;
@@ -89,6 +108,9 @@ export type MachineEngineEvent =
   | { readonly type: 'toolAborted'; readonly toolCallId: string }
   | { readonly type: 'toolBatchFailed'; readonly error: unknown }
   | { readonly type: 'remindersConsumed'; readonly reminders: HistoryMessage[] }
+  | { readonly type: 'promptBlocked'; readonly queueItemId?: string; readonly entry?: UserEntry }
+  | { readonly type: 'promptGateFailed'; readonly queueItemId?: string; readonly error: unknown; readonly entry?: UserEntry }
+  | { readonly type: 'promptSteered'; readonly queueItemIds: readonly string[]; readonly entries: readonly UserEntry[] }
   | { readonly type: 'aborting' };
 
 export interface CreateMachineEngineOptions {
@@ -96,51 +118,99 @@ export interface CreateMachineEngineOptions {
   readonly systemPrompt?: string;
   readonly llmRequester: IAgentLLMRequesterService;
   readonly toolExecutor: IAgentToolExecutorService;
-  readonly toolInfos: readonly ToolInfo[];
+  readonly toolInfos: () => readonly ToolInfo[];
   readonly maxAttemptsPerStep?: number;
   readonly recovery?: LlmRecovery;
   readonly abortTimeoutMs?: number;
+  readonly initialTurnId?: number;
+  readonly journal?: SyncStoreJournal;
   readonly trace?: () => LLMRequestTrace | undefined;
   readonly source?: () => AgentLLMRequestSource | undefined;
   readonly toolTurnId?: () => number | undefined;
+  readonly steerSignal?: () => AbortSignal | undefined;
   readonly gate?: (signal: AbortSignal) => Promise<MachineRequesterGateDecision>;
+  readonly promptGate?: PromptGate;
   readonly onTrace?: (trace: LLMRequestTrace) => void;
   readonly onEvent?: (event: MachineEngineEvent) => void;
   readonly onToolResult?: (toolCallId: string, result: AgentToolResult) => void;
+}
+
+export interface MachineEngineRetrySnapshot {
+  readonly failedAttempt: number;
+  readonly nextAttempt: number;
+  readonly maxAttempts: number;
+  readonly delayMs: number;
+  readonly errorName?: string;
+  readonly statusCode?: number;
+}
+
+export interface MachineEngineToolCallSnapshot {
+  readonly toolCallId: string;
+  readonly name: string;
+}
+
+export interface MachineEngineTurnSnapshot {
+  readonly turnId: number;
+  readonly phase: 'running' | 'tool_call' | 'retrying';
+  readonly step: number;
+  readonly retry?: MachineEngineRetrySnapshot;
+  readonly activeToolCalls: readonly MachineEngineToolCallSnapshot[];
 }
 
 export interface MachineEngineSnapshot {
   readonly running: boolean;
   readonly aborting: boolean;
   readonly waitingForBackground: boolean;
+  readonly paused: boolean;
+  readonly queue: readonly UserEntry[];
   readonly queueLength: number;
   readonly queueIds: readonly (string | undefined)[];
   readonly notificationCount: number;
   readonly reminderCount: number;
   readonly backgroundCount: number;
+  readonly turn?: MachineEngineTurnSnapshot;
 }
 
 export interface MachineEngine {
-  submit(input: { readonly id?: string; readonly message: UserMessage }): void;
-  steer(id: string): void;
-  notify(message: UserMessage): void;
-  remind(key: string, message: UserMessage): void;
+  submit(entry: UserEntry): void;
+  steer(id: string | readonly string[]): void;
+  notify(entry: UserEntry): void;
+  remind(key: string, entry: SystemEntry | UserEntry): void;
+  cancelQueueItem(id: string): void;
   abort(): void;
-  resetHistory(history: readonly HistoryMessage[], turnId: number): void;
+  pause(): void;
+  resume(): void;
+  resetHistory(history: readonly HistoryMessage[]): Promise<void>;
+  resetJournal(journal: SyncStoreJournal): Promise<void>;
   stop(): void;
   snapshot(): MachineEngineSnapshot;
+  currentStep(): number;
   lastFinish(): AgentLLMRequestFinish | undefined;
   readonly toolExtras: ReadonlyMap<string, ToolResultExtras>;
   handleToolProgress(toolCallId: string, update: AgentToolUpdate): void;
 }
 
-interface MachineSnapshotLike {
+interface TurnSnapshotLike {
   readonly value: unknown;
   readonly context: {
-    readonly queue: readonly { readonly id?: string }[];
+    readonly steps: number;
+    readonly attempt: number;
+    readonly delayMs: number;
+    readonly pendingToolCalls: readonly { readonly id: string; readonly name: string }[];
+    readonly outcomes: Record<string, unknown>;
+  };
+}
+
+interface MachineSnapshotLike {
+  readonly value: unknown;
+  readonly children: Record<string, { getSnapshot(): TurnSnapshotLike } | undefined>;
+  readonly context: {
+    readonly turnId: number;
+    readonly queue: readonly UserEntry[];
     readonly notifications: readonly unknown[];
     readonly reminders: readonly unknown[];
     readonly background: Record<string, unknown>;
+    readonly paused: boolean;
   };
 }
 
@@ -151,7 +221,13 @@ function createDeltaSplitter(): (part: StreamedMessagePart) => MachineEngineDelt
       case 'text':
         return { kind: 'assistant', delta: part.text };
       case 'think':
-        return { kind: 'thinking', delta: part.think };
+        return {
+          kind: 'thinking',
+          delta: part.think,
+          encrypted: part.encrypted,
+          detailsIndex: part.detailsIndex,
+          hidden: part.hidden,
+        };
       case 'image_url':
       case 'audio_url':
       case 'video_url':
@@ -181,11 +257,29 @@ function createDeltaSplitter(): (part: StreamedMessagePart) => MachineEngineDelt
   };
 }
 
-export function createMachineEngine(options: CreateMachineEngineOptions): MachineEngine {
-  let currentStep = 0;
-  let split = createDeltaSplitter();
-  let pendingFailure: { step: number; error: LlmErrorMessage } | undefined;
+export type MachineEngineAttachRef = Pick<
+  Actor<ReturnType<typeof createAgentMachine>>,
+  'on' | 'send' | 'getSnapshot'
+>;
 
+export const MACHINE_LOOP_MODEL: LlmModel = {
+  provider: 'agent-loop',
+  model: 'agent-loop',
+  capability: UNKNOWN_CAPABILITY,
+};
+
+export interface MachineEngineAttachBundle {
+  readonly store: AgentEventStore;
+  readonly turnLogic: ReturnType<typeof createTurnMachine>;
+  readonly toolLogic: ReturnType<typeof createToolMachine>;
+  readonly tools: ToolDefinition[];
+  readonly request: LlmRequestConfig;
+  readonly requester: MachineRequester;
+  readonly machineTools: MachineTools;
+  readonly promptGate?: PromptGate;
+}
+
+export function machineEngineAttachBundle(options: CreateMachineEngineOptions): MachineEngineAttachBundle {
   const publish = (event: MachineEngineEvent): void => {
     options.onEvent?.(event);
   };
@@ -198,6 +292,7 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
     toolExecutor: options.toolExecutor,
     toolInfos: options.toolInfos,
     turnId: () => options.toolTurnId?.() ?? 0,
+    steerSignal: options.steerSignal,
     trace: options.trace,
     onToolCall: (payload) => {
       publish({
@@ -213,41 +308,87 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
       publish({ type: 'toolBatchFailed', error });
     },
   });
-  const actor = createActor(
-    createAgentMachine({
-      tools: tools.tools,
-      turnActor: createTurnMachine(
-        createLlmMachine({
-          requester: requester.requester,
-        }),
-        {
-          retry: { maxAttemptsPerStep: options.maxAttemptsPerStep },
-          recovery: options.recovery,
-        },
-      ),
-      abortTimeoutMs: options.abortTimeoutMs,
+  const current = (): LlmCredentialProvider | undefined => {
+    const source = options.source?.();
+    return source?.type === 'turn'
+      ? options.llmRequester.credentialsForTurn(source.turnId)
+      : options.llmRequester.currentCredentials();
+  };
+  const credentials: LlmCredentialProvider = {
+    resolve: () => current()?.resolve(),
+    canRecover: (error) => current()?.canRecover?.(error) === true,
+    invalidate: () => current()?.invalidate?.(),
+  };
+  const baseJournal = options.journal;
+  const initialTurnId = options.initialTurnId ?? 0;
+  const journal = engineJournal(baseJournal, initialTurnId);
+  const store: AgentEventStore = createEventStoreSync({ journal, slices: agentSlices });
+  tools.sync();
+  return {
+    store,
+    turnLogic: createTurnMachine(requester.requester, {
+      retry: { maxAttemptsPerStep: options.maxAttemptsPerStep },
+      recovery: {
+        propose: (ctx) => credentialsRecovery.propose(ctx) ?? options.recovery?.propose(ctx),
+      },
     }),
-    { input: { request: { model: options.model, systemPrompt: options.systemPrompt } } },
-  );
+    toolLogic: createToolMachine(tools.executor),
+    tools: tools.tools,
+    request: { model: options.model, systemPrompt: options.systemPrompt, credentials },
+    requester,
+    machineTools: tools,
+    promptGate: options.promptGate,
+  };
+}
+
+export function attachMachineEngine(
+  ref: MachineEngineAttachRef,
+  bundle: MachineEngineAttachBundle,
+  options: CreateMachineEngineOptions,
+): MachineEngine {
+  let currentStep = 0;
+  let split = createDeltaSplitter();
+  let pendingFailure: { step: number; error: LlmErrorMessage } | undefined;
+  let lastRetry: MachineEngineRetrySnapshot | undefined;
+
+  const publish = (event: MachineEngineEvent): void => {
+    options.onEvent?.(event);
+  };
+  const store = bundle.store;
+  const requester = bundle.requester;
+  const tools = bundle.machineTools;
+  let currentJournal = options.journal;
   const subscriptions: Subscription[] = [
-    actor.on('turn.start', (event) => {
+    ref.on('turn.started', (event) => {
       currentStep = 0;
       split = createDeltaSplitter();
       pendingFailure = undefined;
-      publish({ type: 'turnStarted', machineTurnId: event.turnId });
+      lastRetry = undefined;
+      publish({ type: 'turnStarted', machineTurnId: event.turnId, queueItemId: event.queueItemId, entry: event.entry });
     }),
-    actor.on('llm.sent', (event) => {
-      currentStep += 1;
+    ref.on('step.started', (event) => {
+      currentStep = event.step;
+    }),
+    ref.on('llm.sent', (event) => {
       split = createDeltaSplitter();
+      lastRetry = undefined;
       tools.beginBatch();
       publish({ type: 'stepStarted', step: currentStep, recovery: event.recovery });
     }),
-    actor.on('llm.delta', (event) => {
+    ref.on('llm.streaming.part', (event) => {
       const delta = split(event.part);
       if (delta !== undefined) publish({ type: 'delta', delta });
     }),
-    actor.on('llm.retrying', (event) => {
+    ref.on('llm.retrying', (event) => {
       pendingFailure = undefined;
+      lastRetry = {
+        failedAttempt: event.failedAttempt,
+        nextAttempt: event.nextAttempt,
+        maxAttempts: event.maxAttempts,
+        delayMs: event.delayMs,
+        errorName: event.errorName,
+        statusCode: event.statusCode,
+      };
       publish({
         type: 'retrying',
         step: currentStep,
@@ -261,7 +402,7 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
         rawError: requester.lastError(),
       });
     }),
-    actor.on('llm.recovering', (event) => {
+    ref.on('llm.recovering', (event) => {
       pendingFailure = undefined;
       publish({
         type: 'recovering',
@@ -273,8 +414,9 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
         statusCode: event.statusCode,
       });
     }),
-    actor.on('llm.done', (event) => {
+    ref.on('llm.done', (event) => {
       pendingFailure = undefined;
+      lastRetry = undefined;
       tools.beginBatch(event.entry.message.toolCalls);
       const finish = requester.lastFinish();
       const meta = event.entry.meta;
@@ -282,51 +424,60 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
         type: 'stepCompleted',
         step: currentStep,
         entry: event.entry,
-        usage: finish?.usage ?? meta.usage,
+        usage: finish?.usage ?? meta?.usage ?? emptyUsage(),
         finish:
           finish !== undefined
             ? {
                 finishReason: finish.providerFinishReason ?? null,
                 rawFinishReason: finish.rawFinishReason ?? null,
               }
-            : meta.finish,
-        messageId: finish?.providerMessageId ?? meta.messageId,
-        model: finish?.model ?? meta.model?.model,
+            : meta?.finish,
+        messageId: finish?.providerMessageId ?? meta?.messageId,
+        model: finish?.model ?? meta?.model?.model,
         timing: finish?.timing,
         traceId: finish?.traceId,
       });
     }),
-    actor.on('llm.failed.syntax', (event) => {
+    ref.on('llm.failed.syntax', (event) => {
       pendingFailure = { step: currentStep, error: event.error };
     }),
-    actor.on('llm.failed.remote', (event) => {
+    ref.on('llm.failed.remote', (event) => {
       pendingFailure = { step: currentStep, error: event.error };
     }),
-    actor.on('tool.update', (event) => {
+    ref.on('tool.update', (event) => {
       publish({ type: 'toolUpdate', toolCallId: event.toolCallId, update: event.update });
     }),
-    actor.on('tool.async', (event) => {
+    ref.on('tool.detached', (event) => {
       publish({ type: 'toolAsync', toolCallId: event.toolCallId, text: event.text });
     }),
-    actor.on('tool.done', (event) => {
+    ref.on('tool.done', (event) => {
       publish({ type: 'toolDone', toolCallId: event.toolCallId, result: event.result });
     }),
-    actor.on('tool.failed', (event) => {
+    ref.on('tool.failed', (event) => {
       publish({ type: 'toolFailed', toolCallId: event.toolCallId, error: event.error });
     }),
-    actor.on('tool.aborted', (event) => {
+    ref.on('tool.aborted', (event) => {
       publish({ type: 'toolAborted', toolCallId: event.toolCallId });
     }),
-    actor.on('turn.remindersConsumed', (event) => {
+    ref.on('turn.reminders_consumed', (event) => {
       publish({ type: 'remindersConsumed', reminders: event.reminders });
     }),
-    actor.on('turn.aborting', () => {
+    ref.on('prompt.blocked', (event) => {
+      publish({ type: 'promptBlocked', queueItemId: event.queueItemId, entry: event.entry });
+    }),
+    ref.on('prompt.gate_failed', (event) => {
+      publish({ type: 'promptGateFailed', queueItemId: event.queueItemId, error: event.error, entry: event.entry });
+    }),
+    ref.on('prompt.steered', (event) => {
+      publish({ type: 'promptSteered', queueItemIds: event.queueItemIds, entries: event.entries });
+    }),
+    ref.on('turn.aborting', () => {
       publish({ type: 'aborting' });
     }),
-    actor.on('turn.done', (event) => {
+    ref.on('turn.done', (event) => {
       publish({ type: 'turnSettled', outcome: 'done', produced: event.messages });
     }),
-    actor.on('turn.failed', (event) => {
+    ref.on('turn.failed', (event) => {
       const failure = pendingFailure;
       if (failure !== undefined) {
         publish({
@@ -343,38 +494,90 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
         produced: event.messages,
       });
     }),
-    actor.on('turn.aborted', (event) => {
+    ref.on('turn.aborted', (event) => {
       publish({ type: 'turnSettled', outcome: 'aborted', produced: event.messages });
     }),
   ];
-  actor.start();
 
   return {
-    submit: (input) => {
-      actor.send({ type: 'input.submit', id: input.id, message: input.message });
+    submit: (entry) => {
+      tools.sync();
+      ref.send({ type: 'input.submit', entry });
     },
     steer: (id) => {
-      actor.send({ type: 'input.steer', id });
+      tools.sync();
+      ref.send({ type: 'input.steer', id });
     },
-    notify: (message) => {
-      actor.send({ type: 'input.notify', message });
+    notify: (entry) => {
+      tools.sync();
+      ref.send({ type: 'input.notify', entry });
     },
-    remind: (key, message) => {
-      actor.send({ type: 'input.reminder', key, message });
+    remind: (key, entry) => {
+      tools.sync();
+      ref.send({ type: 'input.remind', key, entry });
+    },
+    cancelQueueItem: (id) => {
+      ref.send({ type: 'input.cancel', id });
     },
     abort: () => {
-      actor.send({ type: 'input.abort' });
+      ref.send({ type: 'input.abort' });
     },
-    resetHistory: (history, turnId) => {
-      actor.send({ type: 'context.reset', history, turnId });
+    pause: () => {
+      ref.send({ type: 'input.pause' });
+    },
+    resume: () => {
+      ref.send({ type: 'input.continue' });
+    },
+    resetHistory: (history) => {
+      const events: ExternalEvent[] = history.map((message) => messageAppended({ message }));
+      const nextTurnId = (ref.getSnapshot() as unknown as MachineSnapshotLike).context.turnId;
+      if (nextTurnId > 0) {
+        events.push(turnEnded({ turnId: nextTurnId - 1, outcome: 'done' }));
+      }
+      const seed = seedRecords(events);
+      const next = currentJournal === undefined ? seed : seededStoreJournal(currentJournal, seed.readSync());
+      return store.reset(next);
+    },
+    resetJournal: (journal) => {
+      currentJournal = journal;
+      return store.reset(journal);
     },
     stop: () => {
       for (const subscription of subscriptions) subscription.unsubscribe();
-      actor.stop();
     },
     snapshot: () => {
-      const snapshot = actor.getSnapshot() as unknown as MachineSnapshotLike;
+      const snapshot = ref.getSnapshot() as unknown as MachineSnapshotLike;
       const value = snapshot.value;
+      const turnRef = snapshot.children['turn'];
+      let turn: MachineEngineTurnSnapshot | undefined;
+      if (turnRef !== undefined) {
+        const turnSnapshot = turnRef.getSnapshot();
+        const turnValue = turnSnapshot.value;
+        const phase =
+          turnValue === 'retrying'
+            ? ('retrying' as const)
+            : typeof turnValue === 'object' && turnValue !== null && 'acting' in turnValue
+              ? ('tool_call' as const)
+              : ('running' as const);
+        const context = turnSnapshot.context;
+        turn = {
+          turnId: snapshot.context.turnId,
+          phase,
+          step: context.steps,
+          retry:
+            phase === 'retrying'
+              ? (lastRetry ?? {
+                  failedAttempt: context.attempt - 1,
+                  nextAttempt: context.attempt,
+                  maxAttempts: resolveMaxAttempts({ maxAttemptsPerStep: options.maxAttemptsPerStep }),
+                  delayMs: context.delayMs,
+                })
+              : undefined,
+          activeToolCalls: context.pendingToolCalls
+            .filter((toolCall) => context.outcomes[toolCall.id] === undefined)
+            .map((toolCall) => ({ toolCallId: toolCall.id, name: toolCall.name })),
+        };
+      }
       return {
         running: value === 'running' || (typeof value === 'object' && value !== null && 'running' in value),
         aborting: typeof value === 'object' && value !== null && 'running' in value &&
@@ -382,17 +585,41 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
         waitingForBackground:
           typeof value === 'object' && value !== null && 'idle' in value &&
           (value as { idle?: unknown }).idle === 'waiting',
+        paused: snapshot.context.paused,
+        queue: snapshot.context.queue,
         queueLength: snapshot.context.queue.length,
-        queueIds: snapshot.context.queue.map((entry) => entry.id),
+        queueIds: snapshot.context.queue.map((entry) => entry.meta?.promptId),
         notificationCount: snapshot.context.notifications.length,
         reminderCount: snapshot.context.reminders.length,
         backgroundCount: Object.keys(snapshot.context.background).length,
+        turn,
       };
     },
     lastFinish: () => requester.lastFinish(),
+    currentStep: () => currentStep,
     toolExtras: tools.extras,
     handleToolProgress: (toolCallId, update) => {
       tools.handleProgress(toolCallId, update);
     },
   };
+}
+
+function seedRecords(events: readonly ExternalEvent[]): SyncStoreJournal {
+  const journal = memoryJournal();
+  for (const event of events) {
+    void journal.append({ type: event.type, kind: 'event', data: event });
+  }
+  return journal;
+}
+
+export function engineJournal(base: SyncStoreJournal | undefined, initialTurnId: number): SyncStoreJournal {
+  if (base === undefined) {
+    if (initialTurnId <= 0) return memoryJournal();
+    return seedRecords([turnEnded({ turnId: initialTurnId - 1, outcome: 'done' })]);
+  }
+  if (initialTurnId <= 0 || base.readSync().length > 0) return base;
+  return seededStoreJournal(
+    base,
+    seedRecords([turnEnded({ turnId: initialTurnId - 1, outcome: 'done' })]).readSync(),
+  );
 }

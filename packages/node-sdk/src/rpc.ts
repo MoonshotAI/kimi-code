@@ -80,7 +80,6 @@ const MAIN_AGENT_ID = 'main';
 export interface SessionPromptRpcInput {
   readonly sessionId: string;
   readonly input: PromptInput;
-  readonly disabledTools?: readonly string[];
   readonly promptId?: string;
 }
 

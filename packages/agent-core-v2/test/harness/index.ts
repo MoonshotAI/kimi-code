@@ -20,7 +20,6 @@ export {
   modelProviderServices,
   permissionModeServices,
   permissionRulesServices,
-  questionServices,
   sessionService,
   sessionServices,
   skillServices,

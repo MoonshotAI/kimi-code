@@ -21,13 +21,13 @@ export function createUsagePlugin(input?: { model?: LlmModel }): UsagePlugin {
     actor,
     connect(target) {
       if (target.kind !== 'agent') return;
-      target.on('turn.start', (event) => {
-        if (event.type === 'turn.start') {
+      target.on('turn.started', (event) => {
+        if (event.type === 'turn.started') {
           currentTurnId = event.turnId;
         }
       });
-      target.on('llm.usage', (event) => {
-        if (event.type === 'llm.usage') {
+      target.on('llm.streaming.usage', (event) => {
+        if (event.type === 'llm.streaming.usage') {
           actor.send({
             type: 'usage.record',
             record: {

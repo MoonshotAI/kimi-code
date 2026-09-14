@@ -6,6 +6,48 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.43.0 (2026-09-14)
+
+### Features
+
+- web: AI session titles are now always on — a title is generated after the first turn and can be regenerated from the rename field, with no experimental flag required.
+- Delete sessions from the session picker: press Ctrl+X on a session, then y to confirm.
+- Add `-y, --yes` to `kimi upgrade` (alias `kimi update`) to skip the confirmation prompt and install the update directly.
+- Add the `loop_control.compaction_max_attempts` config option to set the maximum total attempts for a failing compaction request (default 5). See [`loop_control`](../configuration/config-files.md#loop_control) for details.
+
+### Polish
+
+- Skip the confirmation prompt for rm -rf commands that target only /tmp or /temp paths.
+- Allow steering messages to interrupt waits for background tasks.
+- Goal time budgets no longer count time spent with the session closed, and the 24-hour limit is removed.
+- Add the `KIMI_CODE_PERMISSION_MODE_REMINDER` environment variable: set it to `0` to stop injecting the auto permission-mode reminders into the model context.
+
+### Bug Fixes
+
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
+## 0.42.0 (2026-09-09)
+
+### Features
+
+- Remote Control is now always on; the experimental `KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL` flag has been removed. See [Remote Control](https://moonshotai.github.io/kimi-code/guides/remote-control.html) for details.
+- web: Support permanently deleting sessions from the session row context menu, with a confirmation prompt.
+- Add read-only tools to the `/btw` side agent.
+- web: Preview images and videos in a reorderable media rail in the composer, mention them in the text on demand, and keep the previews after queueing and sending.
+- Accept HEIC, HEIF, and BMP images in prompt attachments and `ReadMediaFile` when the model is served by Kimi.
+
+### Polish
+
+- Collapse finished tool calls in the transcript to a header plus one marked outcome row: short output is shown whole, hidden output is counted (`N more lines`, `+N more`) and revealed by `Ctrl-O`, which the footer advertises while it is available.
+- Upgrade the default thinking effort to the recommended level for eligible users.
+- The subagent model pool (`[secondary_model]`) is now always on; the experimental secondary-model flag and the `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL` opt-out have been removed.
+- Add configurable character limits and resumable long-line file reads without repeated output truncation; see [`read`](https://moonshotai.github.io/kimi-code/configuration/config-files.html#read) for details.
+- The minidb session-index read model and global search worker are now always on; the experimental flags have been replaced by the `[database]` config section and the `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` / `KIMI_CODE_SEARCH_WORKER` env vars; see [`database`](https://moonshotai.github.io/kimi-code/configuration/config-files.html#database) for details.
+
+### Bug Fixes
+
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
 ## 0.41.0 (2026-09-04)
 
 ### Features

@@ -243,8 +243,11 @@ describe('handleRemoteControlCommand', () => {
       const png = readFileSync(pngPath);
       expect(png.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
       expect(png).toEqual(await QRCode.toBuffer(sessionUrl));
-      expect(written).not.toContain('local-server-token');
-      expect(written).not.toContain('#token=');
+      expect(written).toContain(
+        'Local UI: http://127.0.0.1:58627/#token=local-server-token',
+      );
+      expect(written).not.toContain(`${entryUrl}#token=`);
+      expect(written).not.toContain(`${sessionUrl}#token=`);
       expect(close).toHaveBeenCalledOnce();
     } finally {
       writeSpy.mockRestore();

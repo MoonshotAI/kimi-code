@@ -7,6 +7,7 @@ export interface TowerRosterEntry {
   readonly kind: TowerAgentKind;
   readonly missionId?: string;
   readonly reviewTarget?: string;
+  readonly reviewMissionId?: string;
   readonly worktree?: string;
   readonly branch?: string;
   readonly spawnedAt: string;
@@ -78,6 +79,9 @@ export interface TowerReviewInfo {
   readonly reviewedCommit: string;
   readonly date: string;
   readonly file: string;
+  readonly mtimeMs: number;
+  readonly seq?: number;
+  readonly mission?: string;
 }
 
 export interface TowerInboxItem {

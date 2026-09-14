@@ -3,6 +3,8 @@ import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
+import { parseBooleanEnv } from '#/_base/utils/env';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { PermissionModeInjection } from '#/agent/permissionMode/injection/permissionModeInjection';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -20,6 +22,8 @@ import {
   PermissionSetMode,
 } from './permissionModeOps';
 
+export const PERMISSION_MODE_REMINDER_ENV = 'KIMI_CODE_PERMISSION_MODE_REMINDER';
+
 export class AgentPermissionModeService extends Service implements IAgentPermissionModeService {
   declare readonly _serviceBrand: undefined;
 
@@ -33,11 +37,14 @@ export class AgentPermissionModeService extends Service implements IAgentPermiss
     @IAgentReminderService reminder: IAgentReminderService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly agentState: IAgentStateService,
+    @IBootstrapService bootstrap: IBootstrapService,
   ) {
     super();
     this.agentState.contributeState(permissionModeKey);
     this.agentState.contributeState(permissionModeConfiguredKey);
-    this._register(new PermissionModeInjection(this, reminder, this.agentState));
+    if (parseBooleanEnv(bootstrap.getEnv(PERMISSION_MODE_REMINDER_ENV)) !== false) {
+      this._register(new PermissionModeInjection(this, reminder, this.agentState));
+    }
   }
 
   get mode(): PermissionMode {

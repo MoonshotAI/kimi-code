@@ -1,5 +1,6 @@
 export * from './cache';
 export * from './degrade';
+export * from './image-formats';
 export * from './mime';
 export * from './ref';
 export * from './resolver';

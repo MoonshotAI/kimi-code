@@ -38,6 +38,13 @@ export interface ModelCatalogChanged {
   readonly payload: RefreshProviderModelsResponse;
 }
 
+export interface ModelCatalogChangedEvent {
+  readonly type: 'event.model_catalog.changed';
+  readonly changed: readonly ProviderRefreshChange[];
+  readonly unchanged: readonly string[];
+  readonly failed: readonly ProviderRefreshFailure[];
+}
+
 export interface RefreshProviderModelsOptions {
   readonly scope?: RefreshProviderModelsScope;
   readonly providerId?: string;

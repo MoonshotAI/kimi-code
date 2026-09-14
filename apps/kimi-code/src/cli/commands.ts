@@ -16,7 +16,7 @@ import { registerWebCommand } from './sub/web';
 export type MainCommandHandler = (opts: CLIOptions) => void;
 export type MigrateCommandHandler = (options: MigrateCommandOptions) => void;
 export type PluginNodeRunnerHandler = (entry: string, args: readonly string[]) => void;
-export type UpgradeCommandHandler = () => void | Promise<void>;
+export type UpgradeCommandHandler = (yes: boolean) => void | Promise<void>;
 export type UpdateDownloadHandler = (version: string, manual: boolean) => void;
 
 export function createProgram(
@@ -31,6 +31,7 @@ export function createProgram(
     .description('The Starting Point for Next-Gen Agents')
     .version(version, '-V, --version')
     .allowUnknownOption(false)
+    .enablePositionalOptions()
     .configureHelp({ helpWidth: 100 })
     .helpOption('-h, --help', 'Show help.')
     .usage('[options] [command]')
@@ -131,8 +132,9 @@ export function createProgram(
     .command('upgrade')
     .alias('update')
     .description('Upgrade Kimi Code to the latest version.')
-    .action(async () => {
-      await onUpgrade();
+    .option('-y, --yes', 'Skip the confirmation prompt and install the update directly.', false)
+    .action(async (options: { yes?: boolean }) => {
+      await onUpgrade(options.yes === true);
     });
 
   program

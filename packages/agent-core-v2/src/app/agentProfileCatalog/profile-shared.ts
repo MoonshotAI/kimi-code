@@ -109,6 +109,18 @@ export const DEFAULT_PRODUCT_NAME = 'Kimi Code CLI';
 export const DEFAULT_REPLY_STYLE_GUIDE =
   "Your text replies render as Markdown in the user's terminal. Keep structure light and shallow — deep nesting, large tables, and heavy headings read poorly there. Cite code locations as `path/to/file.ts:42` so the user can navigate to them. Do not use emoji unless the user does first or asks for it.";
 
+export const NOTIFY_USER_GUIDANCE =
+  'When `NotifyUser` is available, use it proactively to keep the end user informed while you work. For a multi-step task, send an early update describing your approach, then report meaningful findings, phase conclusions, long waits, and blockers. Keep each update to one or two sentences in the end user\'s language; avoid repeating unchanged status. The UI adds the source label automatically. If you are working as a subagent, report only your own subtask\'s progress, do not present its completion as completion of the whole task, and do not ask the end user questions or request decisions. Updates do not automatically reach your parent agent: include every important finding in your final handoff. Updates remain visible until the main agent starts its next turn, so your final reply must still stand on its own.';
+
+export function renderAgentProfilePrompt(
+  profile: AgentProfile,
+  context: AgentProfileContext,
+): SystemPromptRenderResult {
+  const rendered = profile.renderSystemPrompt(context);
+  if (context.notifyUserActive !== true || rendered.text.includes(NOTIFY_USER_GUIDANCE)) return rendered;
+  return { ...rendered, text: `${rendered.text}\n\n${NOTIFY_USER_GUIDANCE}` };
+}
+
 const ADDITIONAL_DIRS_SECTION_PROSE =
   'The following directories have been added to the workspace. You can read, write, search, and glob files in these directories as part of your workspace scope.';
 
@@ -135,6 +147,7 @@ export function systemPromptVars(
     role_additional: '',
     product_name: context.productName ?? DEFAULT_PRODUCT_NAME,
     reply_style_guide: context.replyStyleGuide ?? DEFAULT_REPLY_STYLE_GUIDE,
+    notify_user_guidance: context.notifyUserActive === true ? ` ${NOTIFY_USER_GUIDANCE}` : '',
     os: context.osKind ?? '',
     windows_notes: context.osKind === 'Windows' ? `\n\n${WINDOWS_NOTES}\n\n` : '',
     shell: shellName.length > 0 ? `${shellName} (\`${shellPath}\`)` : '',
