@@ -1,6 +1,6 @@
 import { Input } from "./components/input.ts";
 import { getKeybindings } from "./keybindings.ts";
-import type { Component, Focusable } from "./tui.ts";
+import type { Component, Focusable, TuiMouseEvent, TuiMouseEventResult } from "./tui.ts";
 import { getGraphemeSegmenter, stripTerminalSequences, truncateToWidth, visibleWidth } from "./utils.ts";
 
 const segmenter = getGraphemeSegmenter();
@@ -208,6 +208,7 @@ export class AltScreenSearchComponent implements Component, Focusable {
 	private previousButtonEnd = -1;
 	private nextButtonStart = -1;
 	private nextButtonEnd = -1;
+	private inputAreaWidth = 0;
 	private hoveredNavigationDirection: -1 | 1 | undefined;
 	private _focused = false;
 
@@ -253,6 +254,19 @@ export class AltScreenSearchComponent implements Component, Focusable {
 		if (query !== previous) this.onQueryChange(query);
 	}
 
+	// The input lives on row 1 inside the border, starting after the "│"
+	// column; translate into its frame so clicks can position the caret.
+	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		if (event.y !== 1 || event.x < 1 || event.x >= 1 + this.inputAreaWidth) return undefined;
+		return this.input.handleMouse({
+			...event,
+			x: event.x - 1,
+			y: 0,
+			width: Math.max(1, this.inputAreaWidth),
+			height: 1,
+		});
+	}
+
 	invalidate(): void {
 		this.input.invalidate();
 	}
@@ -283,6 +297,7 @@ export class AltScreenSearchComponent implements Component, Focusable {
 		const visibleResult = truncateToWidth(result, resultSpace, "");
 		const resultText = visibleResult ? `\x1b[2m ${visibleResult} \x1b[22m` : "";
 		const inputWidth = Math.max(0, innerWidth - visibleWidth(resultText));
+		this.inputAreaWidth = inputWidth;
 		const inputLine = truncateToWidth(this.input.render(Math.max(1, inputWidth))[0] ?? "", inputWidth, "");
 		const inputPadding = " ".repeat(Math.max(0, inputWidth - visibleWidth(inputLine)));
 		const content = `${inputLine}${inputPadding}${resultText}`;

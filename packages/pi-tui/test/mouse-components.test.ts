@@ -1,5 +1,6 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
+import { AltScreenSearchComponent } from "../src/alt-screen-search.ts";
 import { Editor, type EditorTheme } from "../src/components/editor.ts";
 import { Input } from "../src/components/input.ts";
 import { SelectList, type SelectListTheme } from "../src/components/select-list.ts";
@@ -68,6 +69,29 @@ describe("mouse-aware components", () => {
 		assert.strictEqual(input.handleMouse(mouse("press", 4, 0, 20, 1))?.handled, true);
 		input.handleInput("X");
 		assert.strictEqual(input.getValue(), "heXllo");
+	});
+
+	it("positions the input cursor relative to a custom prompt", () => {
+		const input = new Input({ prompt: " " });
+		input.setValue("hello");
+		input.render(20);
+
+		assert.strictEqual(input.handleMouse(mouse("press", 3, 0, 20, 1))?.handled, true);
+		input.handleInput("X");
+		assert.strictEqual(input.getValue(), "heXllo");
+	});
+
+	it("routes search field presses to the embedded input", () => {
+		let query = "";
+		const component = new AltScreenSearchComponent((value) => {
+			query = value;
+		});
+		component.render(40);
+		component.handleInput("hello");
+
+		assert.strictEqual(component.handleMouse(mouse("press", 4, 1, 40, 3))?.handled, true);
+		component.handleInput("X");
+		assert.strictEqual(query, "heXllo");
 	});
 
 	it("selects and activates list rows", () => {

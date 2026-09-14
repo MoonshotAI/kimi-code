@@ -156,3 +156,21 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 **Decision:** Fullscreen can swap the layout root. When the primary scroll view has nothing to scroll, viewport keys go to the focused component. Terminal focus in/out reports are not consumed, so app-level listeners still see them.
 
 **Why not in the app:** Viewport key handling and focus-report consumption sit in the alternate-screen input path.
+
+### input-click-uses-prompt-width — keep
+
+**Decision:** Click-to-position in `Input` subtracts the configured prompt's visible width instead of the default two columns.
+
+**Why not in the app:** The click-to-caret mapping is inside `Input.handleMouse`, before any host callback.
+
+### alt-screen-search-field-forwards-mouse — keep
+
+**Decision:** The fullscreen search component forwards pointer input on its text row to the embedded `Input` with translated coordinates, so the caret can be positioned by mouse. Navigation-button hit regions are unaffected.
+
+**Why not in the app:** The search component and the overlay mouse dispatch both live in the library; the app cannot reach the inner `Input`.
+
+### export-mouse-dispatch-result — keep
+
+**Decision:** The package entry exports the `TuiMouseDispatchResult` type so hosts can type components that delegate mouse events to children.
+
+**Why not in the app:** Type-only export surface; the app cannot name the base `Container.handleMouse` return type without it.

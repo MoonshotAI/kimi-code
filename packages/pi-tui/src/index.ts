@@ -137,6 +137,7 @@ export {
 	type TuiInputListenerResult,
 	type TuiMode,
 	type TuiMouseButton,
+	type TuiMouseDispatchResult,
 	type TuiMouseEvent,
 	type TuiMouseEventResult,
 	type TuiMouseEventType,

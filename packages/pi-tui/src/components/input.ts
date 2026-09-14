@@ -228,7 +228,7 @@ export class Input implements Component, Focusable {
 
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
 		if (event.type !== "press" || event.button !== "left" || event.y !== 0) return undefined;
-		const visibleColumn = Math.max(0, event.x - 2);
+		const visibleColumn = Math.max(0, event.x - visibleWidth(this.prompt));
 		const targetColumn = this.renderedStartColumn + visibleColumn;
 		let currentColumn = 0;
 		this.cursor = this.value.length;
