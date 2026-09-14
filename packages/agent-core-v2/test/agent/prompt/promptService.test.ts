@@ -319,7 +319,7 @@ describe('prompt queue', () => {
     await loop.settled();
   });
 
-  it('delivers a blocked prompt’s compression captions right after their host message', async () => {
+  it('delivers a blocked prompt’s compression captions inline in their host message', async () => {
     setup();
     loop.hooks.onBeforeSubmitPrompt.register('block', async (hookCtx, next) => {
       hookCtx.block = true;
@@ -333,19 +333,14 @@ describe('prompt queue', () => {
     await expect(handle.completion).resolves.toMatchObject({ state: 'blocked' });
 
     const history = ctx.context.get();
-    expect(history).toHaveLength(2);
-    expect(history[0]?.origin).toEqual({
-      kind: 'injection',
-      variant: 'image_compression',
-      ownerPromptId: 'prompt-caption',
-    });
-    expect(history[1]?.origin).toEqual({ kind: 'user' });
-    expect(history[1]?.content).toEqual([{ type: 'text', text: 'look at this' }]);
-    const captionPart = history[0]?.content[0];
-    expect(captionPart?.type).toBe('text');
-    expect((captionPart as { text: string }).text).toContain(
-      'Image compressed to fit model limits: 800x600',
-    );
+    expect(history).toHaveLength(1);
+    expect(history[0]?.origin).toEqual({ kind: 'user' });
+    expect(history[0]?.content).toEqual([
+      {
+        type: 'text',
+        text: '<system>Image compressed to fit model limits: 800x600</system>look at this',
+      },
+    ]);
   });
 
   it('settles the prompt as failed when the launch pipeline throws', async () => {

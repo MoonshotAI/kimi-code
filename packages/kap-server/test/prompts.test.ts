@@ -772,11 +772,10 @@ describe('server-v2 /api/v1 prompts', () => {
     const session = getLiveSessionById(server!.core.accessor, id);
     const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
     const memory = main.accessor.get(IAgentContextMemoryService).get();
-    const reminder = memory.find((m) => m.origin?.kind === 'injection');
-    const reminderText = reminder?.content[0];
-    expect(reminderText?.type).toBe('text');
-    expect((reminderText as { type: 'text'; text: string }).text).toContain('<system-reminder>');
-    expect((reminderText as { type: 'text'; text: string }).text).toContain('Image compressed');
+    const promptMessage = memory.find((m) => m.origin?.kind === 'user');
+    const captionPart = promptMessage?.content[0];
+    expect(captionPart?.type).toBe('text');
+    expect((captionPart as { type: 'text'; text: string }).text).toContain('Image compressed');
   });
 
   it('rolls back a compressed upload when a later prompt part fails to resolve', async () => {

@@ -33,7 +33,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
 import { newMessageId } from '#/agent/contextMemory/messageId';
 import { USER_PROMPT_ORIGIN, type ContextMessage, type PromptOrigin } from '#/agent/contextMemory/types';
-import { extractImageCompressionCaptions, gateImageFormatParts } from '#/agent/media/image-compress';
+import { gateImageFormatParts } from '#/agent/media/image-compress';
 import { daemonFileRefFromPart } from '#/agent/media/mediaRef';
 import { materializePromptDaemonRefs } from '#/agent/media/promptMediaIntake';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
@@ -41,7 +41,6 @@ import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompacti
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IFileService } from '#/app/file/fileService';
 import { IEventService } from '#/app/event/event';
 import type {
@@ -178,7 +177,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IWireService private readonly wire: IWireService,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
-    @IAgentReminderService private readonly reminder: IAgentReminderService,
     @IEventService private readonly eventService: IEventService,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @ISessionContext private readonly sessionContext: ISessionContext,
@@ -398,8 +396,19 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     reservation.launched = true;
     this.machineEngine().submit({
       id: reservation.machineQueueId,
-      message: machineUserMessage(reservation.message),
+      message: machineUserMessage(this.gatedMessageFor(reservation)),
     });
+  }
+
+  private gatedMessageFor(reservation: TurnReservation): ContextMessage {
+    if (!reservation.promptTracked) return reservation.message;
+    return {
+      ...reservation.message,
+      content: gateImageFormatParts(
+        reservation.message.content,
+        this.profile.getModelProviderType(),
+      ),
+    };
   }
 
   status(): AgentLoopStatus {
@@ -511,9 +520,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (ids.size !== promptIds.length || selected.length !== ids.size) {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are not pending');
     }
-    const { message: rerouted, captions } = this.extractCompressionCaptions(
-      mergeSteerMessages(selected.map((reservation) => reservation.message)),
-    );
+    const rerouted = mergeSteerMessages(selected.map((reservation) => reservation.message));
     await this.materializeDaemonRefs(rerouted);
     if (
       selected.some(
@@ -551,7 +558,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
               origin: message.origin ?? USER_PROMPT_ORIGIN,
             }),
           );
-          this.notifyCaptions(captions, ownerPromptId);
         },
       });
     } catch {
@@ -612,13 +618,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   async injectPrompt(message: ContextMessage): Promise<Turn | undefined> {
-    const { message: rerouted, captions } = this.extractCompressionCaptions(message);
-    await this.materializeDaemonRefs(rerouted);
-    const ownerPromptId = rerouted.id ?? newMessageId();
+    await this.materializeDaemonRefs(message);
+    const ownerPromptId = message.id ?? newMessageId();
     const gated = {
-      ...rerouted,
+      ...message,
       id: ownerPromptId,
-      content: gateImageFormatParts(rerouted.content, this.profile.getModelProviderType()),
+      content: gateImageFormatParts(message.content, this.profile.getModelProviderType()),
     };
     const request = {
       message: gated,
@@ -631,7 +636,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
             origin: gated.origin ?? USER_PROMPT_ORIGIN,
           }),
         );
-        this.notifyCaptions(captions, ownerPromptId);
       },
     };
     return this.steer(request) ?? this.submit(request).turn;
@@ -711,7 +715,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         return reservation.promptState;
       },
       get message() {
-        return reservation.originalMessage ?? reservation.message;
+        return reservation.message;
       },
       launched: reservation.promptLaunched,
       completion: reservation.promptCompletion,
@@ -771,19 +775,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.promptLaunchingReservation = reservation;
     try {
       if (this.compactionBlocksPromptLaunch()) return;
-      const { message, captions } = this.extractCompressionCaptions(reservation.message);
-      await this.materializeDaemonRefs(message);
+      await this.materializeDaemonRefs(reservation.message);
       if (!this.reservations.includes(reservation) || reservation.cancelled) return;
-      reservation.gateMessage = message;
-      reservation.gateCaptions = captions;
-      reservation.onMaterialize = () => {
-        this.notifyCaptions(captions, reservation.machineQueueId);
-      };
-      reservation.originalMessage = reservation.message;
-      reservation.message = {
-        ...message,
-        content: gateImageFormatParts(message.content, this.profile.getModelProviderType()),
-      };
       this.launchReservation(reservation);
     } catch {
       this.removeReservation(reservation);
@@ -875,7 +868,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       return false;
     }
     const ctx: PromptSubmitContext = {
-      promptMessage: reservation.gateMessage ?? reservation.message,
+      promptMessage: reservation.message,
       isSteer: false,
       block: false,
     };
@@ -889,11 +882,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     );
     if (reservation === undefined) return;
     this.removeReservation(reservation);
-    if (state === 'blocked') {
-      this.appendBlockedPrompt(
-        reservation.gateMessage ?? reservation.message,
-        reservation.gateCaptions ?? [],
-      );
+    if (state === 'blocked' && reservation.message.content.length > 0) {
+      this.context.append(reservation.message);
     }
     reservation.promptState = state;
     reservation.promptLaunched.resolve(undefined);
@@ -904,40 +894,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     });
     this.publishPromptCompleted(reservation.machineQueueId, state);
     void this.drainPromptQueue();
-  }
-
-  private extractCompressionCaptions(message: ContextMessage): {
-    message: ContextMessage;
-    captions: readonly string[];
-  } {
-    if ((message.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') return { message, captions: [] };
-    const captions: string[] = [];
-    const parts: ContentPart[] = [];
-    for (const part of message.content) {
-      if (part.type !== 'text') {
-        parts.push(part);
-        continue;
-      }
-      const extracted = extractImageCompressionCaptions(part.text);
-      captions.push(...extracted.captions);
-      if (extracted.text.trim().length > 0) parts.push({ type: 'text', text: extracted.text });
-    }
-    return { message: captions.length === 0 ? message : { ...message, content: parts }, captions };
-  }
-
-  private appendBlockedPrompt(message: ContextMessage, captions: readonly string[]): void {
-    const ownerPromptId = message.id ?? newMessageId();
-    this.notifyCaptions(captions, ownerPromptId);
-    if (message.content.length > 0) this.context.append({ ...message, id: ownerPromptId });
-  }
-
-  private notifyCaptions(captions: readonly string[], ownerPromptId: string): void {
-    for (const caption of captions) {
-      this.reminder.notify(caption, {
-        variant: 'image_compression',
-        ownerPromptId,
-      });
-    }
   }
 
   private async deliverToolResult(ctx: ToolDidExecuteContext): Promise<void> {
@@ -1178,7 +1134,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (reservation === undefined || reservation.cancelled) return;
     this.beginActiveTurn(reservation, pending.id);
     reservation.onMaterialize?.();
-    this.materializeMessage(reservation.message);
+    this.materializeMessage(this.gatedMessageFor(reservation));
     this.settlePromptLaunched(reservation);
     const turn = this.active;
     if (turn === undefined) return;
@@ -1367,7 +1323,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         if (stolen !== undefined) {
           this.machineEngine().submit({
             id: stolen.machineQueueId,
-            message: machineUserMessage(stolen.message),
+            message: machineUserMessage(this.gatedMessageFor(stolen)),
           });
         }
       }
@@ -1389,7 +1345,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       }
       this.beginActiveTurn(reservation, pending.id);
       reservation.onMaterialize?.();
-      this.materializeMessage(reservation.message);
+      this.materializeMessage(this.gatedMessageFor(reservation));
       this.settlePromptLaunched(reservation);
       return true;
     }
@@ -2351,15 +2307,12 @@ interface TurnReservation {
   readonly turn: MutableTurn;
   promptTracked: boolean;
   promptState: PromptState;
-  gateMessage?: ContextMessage;
-  gateCaptions?: readonly string[];
   createdAt: string;
   userMessageId: string;
   readonly promptLaunched: ReturnType<typeof createControlledPromise<Turn | undefined>>;
   readonly promptCompletion: ReturnType<typeof createControlledPromise<PromptCompletion>>;
   readonly steeredChildren: TurnReservation[];
   promptHandle?: PromptHandle;
-  originalMessage?: ContextMessage;
 }
 
 interface Nudge {
@@ -2435,7 +2388,7 @@ function promptSnapshotOf(reservation: TurnReservation): PromptSnapshot {
     userMessageId: reservation.userMessageId,
     createdAt: reservation.createdAt,
     state: reservation.promptState,
-    message: reservation.originalMessage ?? reservation.message,
+    message: reservation.message,
   };
 }
 
