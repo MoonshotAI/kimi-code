@@ -89,12 +89,31 @@ interface ProviderView {
  * as the documented config-file fallback. A declared `apiKeyEnv` whose
  * variable is unset or empty throws — silently falling through to another key
  * source could send requests (and bill) under the wrong account.
+ *
+ * The two credential conflicts the runtime rejects (inline `apiKey` together
+ * with `apiKeyEnv`, and `apiKeyEnv` together with `oauth`) throw here too:
+ * refresh must not honor a configuration the chat path would refuse, and the
+ * open-platform rewrite must never pick one side of a conflict to persist.
  */
 function resolveProviderApiKey(provider: ProviderView): string | undefined {
-  if (typeof provider.apiKey === 'string' && provider.apiKey.length > 0) {
-    return provider.apiKey;
-  }
+  const inlineApiKey =
+    typeof provider.apiKey === 'string' && provider.apiKey.length > 0
+      ? provider.apiKey
+      : undefined;
   const apiKeyEnv = declaredApiKeyEnv(provider);
+  if (inlineApiKey !== undefined && apiKeyEnv !== undefined) {
+    throw new Error(
+      'Provider has both apiKey and apiKeyEnv set in config.toml - they are mutually exclusive. Remove one.',
+    );
+  }
+  if (apiKeyEnv !== undefined && provider.oauth !== undefined) {
+    throw new Error(
+      'Provider has both apiKeyEnv and oauth set in config.toml - they are mutually exclusive. Remove one.',
+    );
+  }
+  if (inlineApiKey !== undefined) {
+    return inlineApiKey;
+  }
   if (apiKeyEnv !== undefined) {
     const value = process.env[apiKeyEnv];
     if (typeof value === 'string' && value.trim().length > 0) return value.trim();
@@ -537,8 +556,17 @@ export async function refreshProviderModels(
       if (apiKeyEnv !== undefined) {
         // `applyOpenPlatformConfig` persists the fetch key inline; an
         // api_key_env provider must keep its env declaration instead, or the
-        // secret would leak from the environment into config.toml.
-        next.providers[providerId] = { type: 'kimi', baseUrl: platform.baseUrl, apiKeyEnv };
+        // secret would leak from the environment into config.toml. Only the
+        // inline key is dropped — hand-written fields such as customHeaders
+        // survive the refresh.
+        const { apiKey: _persistedKey, ...rest } = providerConfig as ProviderView &
+          Record<string, unknown>;
+        next.providers[providerId] = {
+          ...rest,
+          type: 'kimi',
+          baseUrl: platform.baseUrl,
+          apiKeyEnv,
+        };
       }
       const refreshedAliasKeys = providerRefreshAliasKeys(
         config,

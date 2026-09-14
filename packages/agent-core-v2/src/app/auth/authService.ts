@@ -715,7 +715,10 @@ export class AuthSummaryService implements IAuthSummaryService {
       if (auth.apiKey !== undefined) return;
       if (auth.apiKeyEnv !== undefined) {
         if (nonEmpty(process.env[auth.apiKeyEnv]) !== undefined) return;
-        throw new AuthTokenMissingError(providerName);
+        throw new AuthTokenMissingError(
+          providerName,
+          `Provider "${providerName}" declares api_key_env = "${auth.apiKeyEnv}" in config.toml, but the environment variable is not set or is empty.`,
+        );
       }
       if (auth.oauth !== undefined) {
         const providerKey = auth.oauthProviderKey ?? providerName;

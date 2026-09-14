@@ -96,10 +96,10 @@ export class AuthProvisioningRequiredError extends Error2 {
 export class AuthTokenMissingError extends Error2 {
   readonly providerId: string;
 
-  constructor(providerId: string) {
+  constructor(providerId: string, message?: string) {
     super(
       AuthErrors.codes.AUTH_TOKEN_MISSING,
-      `provider ${providerId} has no credential configured`,
+      message ?? `provider ${providerId} has no credential configured`,
       { details: { provider_id: providerId }, name: 'AuthTokenMissingError' },
     );
     this.providerId = providerId;

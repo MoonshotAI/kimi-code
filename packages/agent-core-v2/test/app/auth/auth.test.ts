@@ -1751,10 +1751,13 @@ describe('AuthSummaryService', () => {
     };
     defaultModel = 'acme';
 
-    await expect(createSummary().ensureReady()).rejects.toMatchObject({
+    const error = await createSummary().ensureReady().catch((error: unknown) => error);
+    expect(error).toMatchObject({
       code: 'auth.token_missing',
       details: { provider_id: 'acme' },
     });
+    expect((error as Error).message).toContain('acme');
+    expect((error as Error).message).toContain('KIMI_TEST_ENSURE_READY_KEY');
     expect(getCachedAccessToken).not.toHaveBeenCalled();
   });
 
