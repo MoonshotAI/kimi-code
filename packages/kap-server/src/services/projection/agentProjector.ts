@@ -1122,9 +1122,9 @@ export class AgentMessageProjector {
     const { info } = event;
     const agentInfo = agentInfoOf(info);
     const parentTool =
-      agentInfo?.parentToolCallId === undefined
+      agentInfo === undefined
         ? undefined
-        : this.tools.get(agentInfo.parentToolCallId);
+        : this.tools.get(agentInfo.parentToolCallId ?? agentInfo.taskId);
     const task = this.upsertTask(info.taskId, (prev) => ({
       taskId: info.taskId,
       kind: mapTaskKind(info.kind),
@@ -2144,18 +2144,14 @@ function mapTaskKind(kind: string): TaskMessage['kind'] {
 function agentInfoOf(info: AgentTaskInfo):
   | {
       agentId?: string;
+      taskId: string;
       parentToolCallId?: string;
       model?: string;
       thinkingEffort?: string;
     }
   | undefined {
   if (info.kind !== 'agent') return undefined;
-  return info as {
-    agentId?: string;
-    parentToolCallId?: string;
-    model?: string;
-    thinkingEffort?: string;
-  };
+  return info;
 }
 
 function tailWindow(text: string): string {

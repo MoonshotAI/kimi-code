@@ -305,7 +305,6 @@ const TERMINAL_STATUSES: ReadonlySet<AgentTaskStatus> = new Set([
   'lost',
 ]);
 const SIGTERM_GRACE_MS = 5_000;
-const TASK_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
 
 interface ForegroundRelease {
   readonly promise: Promise<ForegroundTaskReleaseReason>;
@@ -355,13 +354,6 @@ function createFakeTaskService(
 } {
   const tasks = new Map<string, ManagedEntry>();
   const persisted = new Set<string>();
-  let counter = 0;
-
-  const nextId = (prefix: string): string => {
-    counter += 1;
-    const suffix = counter.toString(TASK_ID_ALPHABET.length).padStart(8, '0');
-    return `${prefix}-${suffix}`;
-  };
 
   const entryToInfo = (entry: ManagedEntry): AgentTaskInfo => {
     return entry.task.toInfo({
@@ -467,9 +459,6 @@ function createFakeTaskService(
 
   const service: IAgentTaskService = {
     _serviceBrand: undefined,
-    track(): never {
-      throw new Error('fake IAgentTaskService.track is not implemented');
-    },
 
     registerTask(task: AgentTask, registerOptions: RegisterAgentTaskOptions = {}): string {
       const detached = registerOptions.detached ?? true;
@@ -479,7 +468,7 @@ function createFakeTaskService(
         }
       }
 
-      const taskId = nextId(task.idPrefix);
+      const taskId = task.taskId;
       const abortController = new AbortController();
       const entry: ManagedEntry = {
         taskId,
@@ -1018,7 +1007,7 @@ describe('BashTool', () => {
       expect(result).toMatchObject({
         isError: false,
       });
-      expect(result.output).toContain('task_id: bash-');
+      expect(result.output).toContain('task_id: call_bash');
       resolveWait(0);
     } finally {
       vi.useRealTimers();
@@ -1193,7 +1182,7 @@ describe('BashTool', () => {
     expect(result.output).toBe(fullOutput);
     const spill = result.spill;
     expect(spill).toBeDefined();
-    const taskId = /^\/fake\/tasks\/(bash-[0-9a-z]{8})\/output\.log$/.exec(
+    const taskId = /^\/fake\/tasks\/(call_bash)\/output\.log$/.exec(
       spill!.outputPath!,
     )?.[1];
     expect(taskId).toBeTruthy();
@@ -1239,7 +1228,7 @@ describe('BashTool', () => {
     const result = await executeTool(tool, context({ command: 'yes', timeout: 60 }));
 
     expect(persisted.size).toBe(1);
-    const taskId = /^\/fake\/tasks\/(bash-[0-9a-z]{8})\/output\.log$/.exec(
+    const taskId = /^\/fake\/tasks\/(call_bash)\/output\.log$/.exec(
       result.spill!.outputPath!,
     )?.[1];
     expect(taskId).toBeTruthy();
@@ -1446,7 +1435,7 @@ describe('BashTool background mode', () => {
     await running;
   });
 
-  it('records the parent tool call id on the registered task', async () => {
+  it('records the spawning tool call id as the registered task id', async () => {
     const { proc, finish } = pendingProcess();
     const { runner } = createTestRunner(proc);
     const { service } = createFakeTaskService();
@@ -1461,7 +1450,7 @@ describe('BashTool background mode', () => {
     expect(task).toMatchObject({
       kind: 'process',
       detached: false,
-      parentToolCallId: 'call_bash',
+      taskId: 'call_bash',
     });
 
     finish();
@@ -1639,9 +1628,9 @@ describe('BashTool background mode', () => {
       context({ command: 'sleep 10', run_in_background: true, description: 'long running task' }),
     );
 
-    expect(result.output).toMatch(/task_id: bash-[0-9a-z]{8}/);
+    expect(result.output).toMatch(/task_id: call_bash/);
     expect(result.output).toContain('automatic_notification: true');
-    expect((result as { brief?: string }).brief).toMatch(/^Started bash-[0-9a-z]{8}$/);
+    expect((result as { brief?: string }).brief).toMatch(/^Started call_bash$/);
     expect(result.output).toContain('do NOT wait, poll, or call TaskOutput on it');
     expect(result.output).not.toContain('block=false');
     expect(service.list(false)).toHaveLength(1);
@@ -1649,7 +1638,7 @@ describe('BashTool background mode', () => {
 
   it('kills a spawned background command when the task limit is reached', async () => {
     const { service } = createFakeTaskService({ maxRunningTasks: 1 });
-    service.registerTask(new ProcessTask(processWithOutput(), 'sleep 10', 'existing task'));
+    service.registerTask(new ProcessTask(processWithOutput(), 'sleep 10', 'existing task', undefined, undefined, 'call_existing'));
     const rejectedProc = processWithOutput();
     const { runner, exec } = createTestRunner(rejectedProc);
     const tool = bashTool(runner, createTestEnv(), createTestCtx(), service);
@@ -1762,7 +1751,7 @@ describe('BashTool background mode', () => {
       );
       expect(typeof result.output).toBe('string');
       if (typeof result.output !== 'string') throw new Error('Expected string tool output.');
-      const taskId = result.output.match(/task_id: (bash-[0-9a-z]{8})/)?.[1];
+      const taskId = result.output.match(/task_id: (call_bash)/)?.[1];
       expect(taskId).toBeDefined();
 
       markExited();

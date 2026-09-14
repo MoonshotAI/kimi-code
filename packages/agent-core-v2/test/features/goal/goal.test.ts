@@ -2500,7 +2500,7 @@ describe('AgentGoalService WaitFor regression', () => {
         }) as IHostProcess['kill'],
         dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
       } as IHostProcess;
-      tasks.registerTask(new ProcessTask(proc, 'sleep 30', 'bg work'));
+      tasks.registerTask(new ProcessTask(proc, 'sleep 30', 'bg work', undefined, undefined, 'call_bg_work'));
       await ctx.rpc.createGoal({ objective: 'finish bounded work' });
 
       const continuationTurnIds: number[] = [];
@@ -2665,7 +2665,7 @@ describe('AgentGoalService WaitFor background scenarios', () => {
       });
       tasks.registerTask(
         new SubagentTask(
-          { agentId: 'agent-child', profileName: 'coder', completion },
+          { agentId: 'agent-child', profileName: 'coder', parentToolCallId: 'call_agent', completion },
           'investigate flaky test',
           new AbortController(),
         ),
@@ -2927,7 +2927,7 @@ describe('AgentGoalService WaitFor guidance gating', () => {
       });
       tasks.registerTask(
         new SubagentTask(
-          { agentId: 'agent-child', profileName: 'coder', completion },
+          { agentId: 'agent-child', profileName: 'coder', parentToolCallId: 'call_agent', completion },
           'bg work',
           new AbortController(),
         ),
