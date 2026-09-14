@@ -993,7 +993,8 @@ function capFinalOutputLabel(text: string): string {
 
 function capCodeUnits(text: string, maxCodeUnits: number): string {
   if (text.length <= maxCodeUnits) return text;
-  let end = maxCodeUnits;
+  const graphemeEnd = graphemeSafeEnd(text, maxCodeUnits);
+  let end = graphemeEnd > 0 ? graphemeEnd : maxCodeUnits;
   let osc8CloseSuffix = '';
   let sgrActive = false;
   let index = text.indexOf('\u001B');
@@ -1014,6 +1015,23 @@ function capCodeUnits(text: string, maxCodeUnits: number): string {
   const codePoint = text.codePointAt(end - 1);
   if (codePoint !== undefined && codePoint > 0xffff) end -= 1;
   return `${text.slice(0, end)}${osc8CloseSuffix}${sgrActive ? '\u001B[0m' : ''}`;
+}
+
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+// The storage cap must not slice through a grapheme cluster: a ZWJ sequence
+// (a family emoji runs about eleven code units per two columns) cut in half
+// renders as its separate parts. Back off to the nearest whole cluster; the
+// ANSI walk above only ever lands on escape boundaries, which are cluster
+// boundaries too. A single cluster larger than the budget falls back to the
+// raw cut.
+function graphemeSafeEnd(text: string, end: number): number {
+  let boundary = 0;
+  for (const { index, segment } of graphemeSegmenter.segment(text)) {
+    if (index + segment.length > end) break;
+    boundary = index + segment.length;
+  }
+  return boundary;
 }
 
 // Mirrors pi-tui's OSC 8 bookkeeping: a sequence with a non-empty URI opens a

@@ -1194,6 +1194,21 @@ describe('AgentSwarmProgressComponent terminal state memory', () => {
     const text = membersOf(component)[0]?.completedText ?? '';
     expect(text.endsWith('\u001B]8;;\u0007\u001B[0m')).toBe(true);
   });
+
+  it('does not split a ZWJ grapheme cluster at the retained label storage limit', () => {
+    const component = createComponent();
+    registerSubagents(component, 1);
+
+    const family = '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}';
+    component.markCompleted(
+      'agent-1',
+      `x${'\u0301'.repeat(1_996)}${family}${'\u0301'.repeat(5_000)}`,
+    );
+
+    const text = membersOf(component)[0]?.completedText ?? '';
+    expect(text.length).toBeLessThanOrEqual(2_000);
+    expect(text).not.toContain('\u200D');
+  });
 });
 
 describe('AgentSwarmProgressComponent frame timer', () => {
