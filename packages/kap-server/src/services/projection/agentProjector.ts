@@ -72,8 +72,6 @@ interface TurnRecord {
   promptId?: string;
   userMessageId?: string;
   attachmentIds?: string[];
-  openingKey?: { text: string; attachments: number };
-  openingSteerDeduped: boolean;
   startedAt?: string;
   endedAt?: string;
   durationMs?: number;
@@ -356,7 +354,6 @@ export class AgentMessageProjector {
         info.promptId === undefined
           ? undefined
           : (info.userMessageId ?? turnUserMessageIdOf(turnId)),
-      openingSteerDeduped: false,
     };
     this.turns.set(turnId, this.currentTurn);
     this.timelineIds.push(turnId);
@@ -677,8 +674,6 @@ export class AgentMessageProjector {
         ? (promptRecord?.userMessageId ?? turnUserMessageIdOf(turnId))
         : undefined,
       attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
-      openingKey: { text: promptText ?? '', attachments: attachmentIds.length },
-      openingSteerDeduped: false,
       startedAt: epochMsToIso(event.time),
     };
     this.currentTurn = turn;
@@ -956,7 +951,6 @@ export class AgentMessageProjector {
       status: 'running',
       origin: { kind: 'other' },
       anchor: false,
-      openingSteerDeduped: false,
       startedAt: epochMsToIso(time),
     };
     this.currentTurn = turn;
@@ -1486,15 +1480,6 @@ export class AgentMessageProjector {
     const turn = this.currentTurn;
     if (turn === undefined || turn.status !== 'running') return ops;
     const skipBlocks = kind === 'user' ? (origin.skillActivations?.length ?? 0) : 0;
-    const step = this.currentStep;
-    const stepStarted = step !== undefined && step.turnId === turn.turnId;
-    if (!stepStarted && !turn.openingSteerDeduped && turn.openingKey !== undefined) {
-      const key = steerKeyOf(event.input, skipBlocks);
-      if (key.text === turn.openingKey.text && key.attachments === turn.openingKey.attachments) {
-        turn.openingSteerDeduped = true;
-        return ops;
-      }
-    }
     const matched =
       kind === 'user' ? this.matchQueuedPrompt(event.input, skipBlocks) : undefined;
     if (matched !== undefined) {
@@ -2329,22 +2314,6 @@ function bundledSkillCount(origin: unknown): number {
     | undefined;
   if (candidate?.kind !== 'user') return 0;
   return candidate.skillActivations?.length ?? 0;
-}
-
-export function steerKeyOf(
-  input: readonly ContentPart[],
-  skipBlocks: number,
-): { text: string; attachments: number } {
-  let text = '';
-  let attachments = 0;
-  for (const part of input.slice(skipBlocks)) {
-    if (part.type === 'text') {
-      text += part.text;
-      continue;
-    }
-    if (daemonFileRefFromPart(part) !== undefined) attachments += 1;
-  }
-  return { text, attachments };
 }
 
 export function wireContentParts(content: readonly ContentPart[]): WireContentPart[] {
