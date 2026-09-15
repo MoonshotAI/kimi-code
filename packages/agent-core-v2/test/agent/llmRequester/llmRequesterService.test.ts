@@ -566,6 +566,27 @@ describe('AgentLLMRequesterService media-stripped resend', () => {
     expect(calls.value).toBe(1);
     expect(projection.calls).toEqual(['normal']);
   });
+
+  it('warns the user when media are stripped from the retried request', async () => {
+    const calls = { value: 0 };
+    const projection = recordProjectionCalls();
+    const { service, dispatcher, events } = createService(
+      createRequester(calls, IMAGE_FORMAT_400),
+      projection.projector,
+    );
+
+    await service.request();
+    await dispatcher.flush();
+
+    expect(events.filter((event) => event.type === 'warning')).toEqual([
+      expect.objectContaining({
+        type: 'warning',
+        code: 'media-stripped',
+        message:
+          'Provider rejected the media in the request; all media were omitted and the request was retried.',
+      }),
+    ]);
+  });
 });
 
 describe('AgentLLMRequesterService media-degraded resend', () => {
@@ -708,6 +729,44 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
       expect(calls.value).toBe(1);
       expect(projection.calls).toEqual(['normal']);
     }
+  });
+
+  it('warns the user when older media are dropped from the retried request', async () => {
+    const calls = { value: 0 };
+    const projection = recordProjectionCalls();
+    const { service, dispatcher, events } = createService(
+      createRequester(calls, BODY_TOO_LARGE_413),
+      projection.projector,
+    );
+
+    await service.request();
+    await dispatcher.flush();
+
+    expect(events.filter((event) => event.type === 'warning')).toEqual([
+      expect.objectContaining({
+        type: 'warning',
+        code: 'media-degraded',
+        message:
+          'Provider rejected the request as too large; older media were dropped and the request was retried.',
+      }),
+    ]);
+  });
+
+  it('warns for each escalation when the degraded resend is also rejected as too large', async () => {
+    const calls = { value: 0 };
+    const projection = recordProjectionCalls();
+    const { service, dispatcher, events } = createService(
+      createRequester(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413]),
+      projection.projector,
+    );
+
+    await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
+    await dispatcher.flush();
+
+    expect(events.filter((event) => event.type === 'warning')).toEqual([
+      expect.objectContaining({ type: 'warning', code: 'media-degraded' }),
+      expect.objectContaining({ type: 'warning', code: 'media-stripped' }),
+    ]);
   });
 });
 

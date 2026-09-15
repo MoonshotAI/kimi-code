@@ -378,10 +378,24 @@ describe('media', () => {
     ).rejects.toThrow('Expected a video mime type');
   });
 
+  it('rejects a non-image mime type', async () => {
+    const files = new KimiFiles({ apiKey: 'sk-test', baseUrl: 'https://example.test/v1' });
+    await expect(
+      files.uploadImage({ data: new Uint8Array([1]), mimeType: 'video/mp4' }),
+    ).rejects.toThrow('Expected an image mime type');
+  });
+
   it('requires an api key', async () => {
     const files = new KimiFiles({ baseUrl: 'https://example.test/v1' });
     await expect(
       files.uploadVideo({ data: new Uint8Array([1]), mimeType: 'video/mp4' }),
+    ).rejects.toThrow('apiKey is required');
+  });
+
+  it('requires an api key for image uploads', async () => {
+    const files = new KimiFiles({ baseUrl: 'https://example.test/v1' });
+    await expect(
+      files.uploadImage({ data: new Uint8Array([1]), mimeType: 'image/png' }),
     ).rejects.toThrow('apiKey is required');
   });
 

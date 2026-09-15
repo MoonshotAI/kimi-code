@@ -42,6 +42,12 @@ const kimiMedia: ProviderMediaContribution = {
       baseUrl: model.baseUrl ?? KIMI_DEFAULT_BASE_URL,
       defaultHeaders: model.defaultHeaders === undefined ? undefined : { ...model.defaultHeaders },
     }).uploadVideo(video, { signal }),
+  uploadImage: (image, { model, signal }) =>
+    new KimiFiles({
+      apiKey: model.apiKey,
+      baseUrl: model.baseUrl ?? KIMI_DEFAULT_BASE_URL,
+      defaultHeaders: model.defaultHeaders === undefined ? undefined : { ...model.defaultHeaders },
+    }).uploadImage(image, { signal }),
 };
 
 interface AdapterRoute {

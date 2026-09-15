@@ -578,6 +578,21 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       turn_id: request.source?.turnId,
     };
     this.telemetry.track2('llm_request_projection_fallback', properties);
+    if (projection === 'media-degraded' || projection === 'media-stripped') {
+      try {
+        void this.dispatcher.dispatch(
+          new WarningIssued({
+            agentId: this.scopeContext.agentId,
+            code: projection,
+            message:
+              projection === 'media-degraded'
+                ? 'Provider rejected the request as too large; older media were dropped and the request was retried.'
+                : 'Provider rejected the media in the request; all media were omitted and the request was retried.',
+          }),
+        );
+      } catch {
+      }
+    }
     return nextPolicy;
   }
 

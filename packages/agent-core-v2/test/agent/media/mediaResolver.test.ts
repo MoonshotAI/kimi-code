@@ -23,13 +23,15 @@ import { type GetResult, IFileService } from '#/app/file/fileService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
 import type { Message } from '#/llm-adapter/contract/message';
-import type { ContentPart, VideoURLPart } from '#human/llm/message';
+import type { ContentPart, ImageURLPart, VideoURLPart } from '#human/llm/message';
 import type { LlmCredentialProvider } from '#human/llm/requester/requester';
 import type { ModelRequester } from '#/llm-adapter/model/model-requester';
 import type { Protocol } from '#/llm-adapter/protocol/protocol';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 
 import { registerStateServices } from '../../state/stubs';
+import { staticCredentials } from '#human/credentials/credentials';
+import { ImageUploadUnsupportedError } from '#/llm-adapter/contract/errors';
 
 const FILE_ID = 'file_abc';
 const VIDEO_BYTES = Buffer.from('tiny fake mp4 bytes');
@@ -162,6 +164,7 @@ function requester(opts: {
   protocol?: Protocol;
   providerType?: string;
   uploadVideo?: ModelRequester['uploadVideo'];
+  uploadImage?: ModelRequester['uploadImage'];
   credentials?: LlmCredentialProvider;
 }): ModelRequester {
   return {
@@ -185,11 +188,16 @@ function requester(opts: {
       throw new Error('unused');
     },
     uploadVideo: opts.uploadVideo,
+    uploadImage: opts.uploadImage,
   };
 }
 
 function msPart(id: string): VideoURLPart {
   return { type: 'video_url', videoUrl: { url: `ms://${id}`, id } };
+}
+
+function msImagePart(id: string): ImageURLPart {
+  return { type: 'image_url', imageUrl: { url: `ms://${id}`, id } };
 }
 
 let disposables: DisposableStore;
@@ -416,6 +424,23 @@ describe('AgentMediaResolverService video strategy', () => {
       type: 'text',
       text: VIDEO_UNAVAILABLE_TEXT,
     });
+  });
+
+  it('re-uploads when the resolved account changes, reusing the upload while it stays the same', async () => {
+    const upload = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
+    const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]));
+    const message = videoMessage(buildKimiFileUrl(FILE_ID));
+    const accountA = requester({ uploadVideo: upload, credentials: staticCredentials('key-a') });
+
+    await res.resolve([message], accountA);
+    await res.resolve([message], accountA);
+    expect(upload).toHaveBeenCalledTimes(1);
+
+    const accountB = requester({ uploadVideo: upload, credentials: staticCredentials('key-b') });
+    const out = await res.resolve([message], accountB);
+
+    expect(firstPart(out)).toEqual(msPart('prov-1'));
+    expect(upload).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -728,6 +753,118 @@ describe('AgentMediaResolverService image strategy', () => {
       expect(counting.gets).toBe(reads);
     },
   );
+});
+
+describe('AgentMediaResolverService image upload', () => {
+  it('uploads an image once and serves later resolves from the cached reference', async () => {
+    const upload = vi.fn(async (): Promise<ImageURLPart> => msImagePart('img-1'));
+    const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
+    const req = requester({ uploadImage: upload });
+    const message = imageMessage(buildKimiFileUrl(FILE_ID));
+
+    const first = await res.resolve([message], req);
+    const second = await res.resolve([message], req);
+
+    expect(firstPart(first)).toEqual(msImagePart('img-1'));
+    expect(firstPart(second)).toEqual(msImagePart('img-1'));
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(upload).toHaveBeenCalledWith(
+      { data: PNG_BYTES, mimeType: 'image/png', filename: 'pic.png' },
+      expect.anything(),
+    );
+  });
+
+  it('reuses a persisted image upload across resolver instances without re-uploading', async () => {
+    const files = new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]);
+    const blobs = blobStore();
+    const message = imageMessage(buildKimiFileUrl(FILE_ID));
+
+    const upload1 = vi.fn(async (): Promise<ImageURLPart> => msImagePart('img-1'));
+    await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore()).resolve(
+      [message],
+      requester({ uploadImage: upload1 }),
+    );
+
+    const upload2 = vi.fn(async (): Promise<ImageURLPart> => msImagePart('img-2'));
+    const out = await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore()).resolve(
+      [message],
+      requester({ uploadImage: upload2 }),
+    );
+
+    expect(firstPart(out)).toEqual(msImagePart('img-1'));
+    expect(upload1).toHaveBeenCalledTimes(1);
+    expect(upload2).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the inline base64 part when the upload fails for a non-auth reason', async () => {
+    const upload = vi.fn(async (): Promise<ImageURLPart> => {
+      throw new Error('files endpoint unavailable');
+    });
+    const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
+
+    const out = await res.resolve(
+      [imageMessage(buildKimiFileUrl(FILE_ID))],
+      requester({ uploadImage: upload }),
+    );
+
+    expect(firstPart(out)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
+    expect(upload).toHaveBeenCalledTimes(1);
+  });
+
+  it('rethrows an auth failure so it can drive credential refresh', async () => {
+    const upload = vi.fn(async () => {
+      throw Object.assign(new Error('unauthorized'), { statusCode: 401 });
+    });
+    const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
+
+    await expect(
+      res.resolve([imageMessage(buildKimiFileUrl(FILE_ID))], requester({ uploadImage: upload })),
+    ).rejects.toThrow('unauthorized');
+  });
+
+  it('keeps the inline base64 part when the requester has no image uploader', async () => {
+    const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
+
+    const out = await res.resolve(
+      [imageMessage(buildKimiFileUrl(FILE_ID))],
+      requester({ uploadImage: undefined }),
+    );
+
+    expect(firstPart(out)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
+  });
+
+  it('re-uploads when the resolved account changes, reusing the upload while it stays the same', async () => {
+    const upload = vi.fn(async (): Promise<ImageURLPart> => msImagePart('img-1'));
+    const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
+    const message = imageMessage(buildKimiFileUrl(FILE_ID));
+    const accountA = requester({ uploadImage: upload, credentials: staticCredentials('key-a') });
+
+    await res.resolve([message], accountA);
+    await res.resolve([message], accountA);
+    expect(upload).toHaveBeenCalledTimes(1);
+
+    const accountB = requester({ uploadImage: upload, credentials: staticCredentials('key-b') });
+    const out = await res.resolve([message], accountB);
+
+    expect(firstPart(out)).toEqual(msImagePart('img-1'));
+    expect(upload).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops probing the upload endpoint after the requester declares image upload unsupported', async () => {
+    const upload = vi.fn(async (): Promise<ImageURLPart> => {
+      throw new ImageUploadUnsupportedError('no image upload');
+    });
+    const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
+    const req = requester({ uploadImage: upload });
+    const message = imageMessage(buildKimiFileUrl(FILE_ID));
+
+    const first = await res.resolve([message], req);
+    const second = await res.resolve([message], req);
+
+    expect(firstPart(first)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
+    expect(firstPart(second)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
+    expect(upload).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('AgentMediaResolverService session-canonical display path', () => {

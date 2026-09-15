@@ -3,7 +3,7 @@ import type { VideoURLPart } from '#human/llm/message';
 import type { Protocol } from '#/llm-adapter/protocol/protocol';
 import { ProtocolErrors } from '#/llm-adapter/protocol/errors';
 
-export function isVideoUploadAuthError(error: unknown): boolean {
+export function isMediaUploadAuthError(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
   if ((error as { code?: unknown }).code === ProtocolErrors.codes.PROVIDER_AUTH_ERROR) return true;
   const statusCode = (error as { statusCode?: unknown }).statusCode;

@@ -372,6 +372,35 @@ describe('ModelRequesterImpl request execution', () => {
     expect(seen).toEqual(['sk-1']);
   });
 
+  it('uploadImage presence is the capability declaration', async () => {
+    const requester = new FakeLlmRequester();
+    const impl = new ModelRequesterImpl(
+      modelWith(staticCredentials('sk-1')),
+      gatewayReturning(requester),
+    );
+    await expect(
+      impl.uploadImage({ data: new Uint8Array([1]), mimeType: 'image/png' }),
+    ).rejects.toThrow(/does not support image upload/);
+
+    const seen: Array<string | undefined> = [];
+    const media: ProviderMediaContribution = {
+      uploadImage: (_image, options) => {
+        seen.push(options.model.apiKey);
+        return Promise.resolve({
+          type: 'image_url',
+          imageUrl: { url: 'ms://img-1', id: 'img-1' },
+        });
+      },
+    };
+    const withMedia = new ModelRequesterImpl(
+      modelWith(staticCredentials('sk-1')),
+      gatewayReturning(requester, media),
+    );
+    const part = await withMedia.uploadImage({ data: new Uint8Array([1]), mimeType: 'image/png' });
+    expect(part).toEqual({ type: 'image_url', imageUrl: { url: 'ms://img-1', id: 'img-1' } });
+    expect(seen).toEqual(['sk-1']);
+  });
+
   it('reports the event-loop-busy overlap of the decode window as clientBlockedMs', async () => {
     const requester = new FakeLlmRequester();
     requester.handler = (_i, emit) => {
