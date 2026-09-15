@@ -22,6 +22,7 @@ import {
   type KimiRegion,
   type ManagedKimiConfigShape,
 } from '@moonshot-ai/kimi-code-oauth';
+import { declaredProviderCredential } from '@moonshot-ai/kimi-code-oauth/provider-credential';
 import type {
   OAuthFlowSnapshot,
   OAuthFlowStart,
@@ -334,6 +335,8 @@ export class OAuthService extends Disposable implements IOAuthService {
     }
 
     try {
+      const declared = declaredProviderCredential(provider, KIMI_CODE_PROVIDER_NAME);
+      if (declared.kind === 'conflict') throw new Error(declared.message);
       const auth = resolveKimiCodeRuntimeAuth({
         configuredBaseUrl: provider.baseUrl,
         configuredOAuthRef: provider.oauth,

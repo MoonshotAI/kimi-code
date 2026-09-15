@@ -742,7 +742,13 @@ export async function refreshProviderModels(
           continue;
         }
 
-        const existed = config.providers[providerId] !== undefined;
+        const existingProvider = readProvider(config, providerId);
+        const declared = declaredProviderCredential(existingProvider ?? {}, providerId);
+        if (declared.kind === 'conflict') {
+          failed.push({ provider: providerId, reason: declared.message });
+          continue;
+        }
+        const existed = existingProvider !== undefined;
         applyCustomRegistryProvider(next, entry, source);
         const refreshedAliasKeys = providerRefreshAliasKeys(config, next, providerId, `${providerId}/`);
         if (existed) {
