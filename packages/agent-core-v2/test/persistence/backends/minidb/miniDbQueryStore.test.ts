@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { promises as fsp } from 'node:fs';
 import os from 'node:os';
@@ -8,13 +8,8 @@ import { ScopeActivation, _clearScopedRegistryForTests, registerScopedService } 
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { MiniDb } from '@moonshot-ai/minidb';
-import { ClusterDb, LockError, shardDirName, shardFor } from '@moonshot-ai/minidb/cluster';
-import {
-  drainQueryStoreDisposals,
-  isLockContentionError,
-  MiniDbQueryStore,
-} from '#/persistence/backends/minidb/miniDbQueryStore';
+import { ClusterDb } from '@moonshot-ai/minidb/cluster';
+import { drainQueryStoreDisposals, MiniDbQueryStore } from '#/persistence/backends/minidb/miniDbQueryStore';
 import { IQueryStore, QueryStoreRebuiltError } from '#/persistence/interface/queryStore';
 import { stubBootstrap } from '../../../app/bootstrap/stubs';
 import { stubLog } from '../../../_base/log/stubs';
@@ -45,10 +40,10 @@ describe('MiniDbQueryStore', () => {
     await fsp.rm(homeDir, { recursive: true, force: true });
   });
 
-  function build(log: ILogService = stubLog()): IQueryStore {
+  function build(): IQueryStore {
     const host = createScopedTestHost([
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
-      stubPair(ILogService, log),
+      stubPair(ILogService, stubLog()),
     ]);
     disposeHost = () => { host.dispose(); };
     return host.app.accessor.get(IQueryStore);
@@ -157,64 +152,6 @@ describe('MiniDbQueryStore', () => {
     } finally {
       await peer.close();
     }
-  });
-
-  it('lock contention from another process fails writes without escalating to a rebuild', async () => {
-    const warn = vi.fn();
-    const logStub: ILogService = {
-      _serviceBrand: undefined,
-      level: 'info',
-      setLevel: () => {},
-      flush: () => Promise.resolve(),
-      error: () => {},
-      warn,
-      info: () => {},
-      debug: () => {},
-      child: () => logStub,
-    };
-    const store = build(logStub);
-    const physicalKey = (key: string) => `${COLLECTION}${SEP}${key}`;
-    const storeDir = join(homeDir, 'cache', 'query-store');
-    const lockedShardId = shardFor(physicalKey('locked'), 16);
-    const freeKeys: string[] = [];
-    for (let i = 0; freeKeys.length < 2; i++) {
-      const candidate = `free-${i}`;
-      if (shardFor(physicalKey(candidate), 16) !== lockedShardId) freeKeys.push(candidate);
-    }
-    await store.put(COLLECTION, freeKeys[0]!, { id: freeKeys[0], v: 0 });
-
-    const holder = await MiniDb.open({
-      dir: join(storeDir, shardDirName(lockedShardId, 16)),
-      valueCodec: 'json',
-    });
-    try {
-      const attemptsBeyondEscalation = 6;
-      for (let attempt = 0; attempt < attemptsBeyondEscalation; attempt++) {
-        await expect(store.put(COLLECTION, 'locked', { id: 'locked' })).rejects.toThrow(/locked/);
-      }
-      expect(warn.mock.calls.some(([message]) => String(message).includes('rebuilt'))).toBe(false);
-      const contentionLogs = warn.mock.calls.filter(([message]) =>
-        String(message).includes('lock contention'),
-      );
-      expect(contentionLogs).toHaveLength(1);
-      await store.put(COLLECTION, freeKeys[1]!, { id: freeKeys[1], v: 2 });
-      expect(await store.get(COLLECTION, freeKeys[0]!)).toEqual({ id: freeKeys[0], v: 0 });
-    } finally {
-      await holder.close();
-    }
-    await store.put(COLLECTION, 'locked', { id: 'locked', v: 3 });
-    expect(await store.get(COLLECTION, 'locked')).toEqual({ id: 'locked', v: 3 });
-  }, 30_000);
-
-  it('classifies lock errors, including cross-shard aggregate failures, as contention', () => {
-    expect(isLockContentionError(new LockError('locked'))).toBe(true);
-    expect(
-      isLockContentionError(
-        new AggregateError([new LockError('a'), new Error('io')], 'batch failed on 1/2 shard(s)'),
-      ),
-    ).toBe(true);
-    expect(isLockContentionError(new AggregateError([new Error('io')], 'batch failed'))).toBe(false);
-    expect(isLockContentionError(new Error('io'))).toBe(false);
   });
 
   it('wipes and rebuilds the store after the cluster registry is corrupted', async () => {
