@@ -1,6 +1,8 @@
 import { customRef, shallowRef } from '@vue/reactivity';
 import type { Ref, ShallowRef } from '@vue/reactivity';
 
+import { isEqual } from 'radashi';
+
 import { createActor } from '#/xstate2';
 import type { Actor, AnyActorLogic, EventFromLogic, InputFrom, SnapshotFrom } from '#/xstate2';
 
@@ -76,7 +78,7 @@ export function acquireDurableManager(node: UnitNode): DurableManager {
     for (const [key, slot] of entries) {
       if (
         key in (sliceState as Record<string, unknown>) &&
-        !sameValue((sliceState as Record<string, unknown>)[key], slot.value)
+        !isEqual((sliceState as Record<string, unknown>)[key], slot.value)
       ) {
         slot.value = (sliceState as Record<string, unknown>)[key];
       }
@@ -178,10 +180,6 @@ export function useMachine<TLogic extends AnyActorLogic>(
     actor.stop();
   });
   return [snapshotRef, (event) => actor.send(event), actor];
-}
-
-function sameValue(a: unknown, b: unknown): boolean {
-  return Object.is(a, b) || JSON.stringify(a) === JSON.stringify(b);
 }
 
 function report(error: unknown): void {
