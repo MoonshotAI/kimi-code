@@ -107,20 +107,27 @@ export type {
 } from './managed-userinfo';
 
 export {
+  boosterWalletInfoSchema,
   fetchManagedUsage,
   formatDuration,
   isManagedKimiCode,
   isManagedKimiCodeBaseUrl,
   kimiCodeBaseUrl,
   kimiCodeUsageUrl,
+  managedQuotaEntrySchema,
+  managedQuotaSchema,
+  managedQuotaUsagesSchema,
+  managedUsageResultSchema,
   parseManagedUsagePayload,
 } from './managed-usage';
 export type {
+  BoosterWalletInfo,
   FetchManagedUsageError,
   FetchManagedUsageResult,
-  ParsedManagedUsage,
-  UsageRow,
-  UsageWindow,
+  ManagedQuota,
+  ManagedQuotaEntry,
+  ManagedQuotaUsages,
+  ManagedUsageResult,
 } from './managed-usage';
 
 export { fetchChatTitle, kimiCodeToolsUrl } from './managed-tools';
@@ -189,8 +196,8 @@ export type {
 
 export { KimiOAuthToolkit, resolveKimiTokenStorageName } from './toolkit';
 export type {
-  AuthManagedUserInfoResult,
   AuthManagedUsageResult,
+  AuthManagedUserInfoResult,
   AuthProviderStatus,
   AuthStatus,
   BearerTokenProvider,

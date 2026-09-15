@@ -192,7 +192,7 @@ These endpoints drive the managed Kimi OAuth login lifecycle and expose account-
 | `GET /api/v1/oauth/login` | Poll the login flow state |
 | `DELETE /api/v1/oauth/login` | Cancel a pending login flow |
 | `POST /api/v1/oauth/logout` | Log out the managed provider |
-| `GET /api/v1/oauth/usage` | Plan usage and limits |
+| `GET /api/v1/oauth/usage` | Plan quota and booster wallet |
 | `GET /api/v1/oauth/userinfo` | Account profile |
 | `GET /api/v1/oauth/region` | Resolve the client region (`mainland-cn` / `global`) |
 
@@ -245,13 +245,13 @@ On success, `data` is `{ logged_out: true, provider }`.
 
 #### `GET /api/v1/oauth/usage`
 
-Plan usage and limits of the managed account, fetched live from the account service. An upstream failure does not fail the envelope — it comes back in-band with `kind: "error"`.
+Plan quota and booster wallet of the managed account, fetched live from the account service. An upstream failure does not fail the envelope — it comes back in-band with `kind: "error"`.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `provider` | query | string | Managed provider name. Default `managed:kimi-code` |
 
-On success, `data` is `{ kind: "ok", summary, limits, extra_usage }` or `{ kind: "error", message, status? }`, where `status` is the upstream HTTP status when one exists. In the `ok` shape, `summary` (nullable) is the primary quota row and `limits` lists every quota window; a row is `{ name?, window?, used, limit, reset_at? }` with `window` as `{ duration, unit }`, `unit` one of `minute` / `hour` / `day` / `week`. `extra_usage` (nullable) is the pay-as-you-go wallet: `{ balance_cents, total_cents, monthly_charge_limit_enabled, monthly_charge_limit_cents, monthly_used_cents, currency }`.
+On success, `data` is `{ kind: "ok", quota }` or `{ kind: "error", message, status? }`, where `status` is the upstream HTTP status when one exists. In the `ok` shape, `quota` is `{ usages, extraUsage }`: `usages` carries one `{ usedRatio, resetAt? }` entry per quota window the account has — `limit5h`, `limit7d`, `monthTotal`, `monthCode` — with `usedRatio` as a 0–1 float and `resetAt` as an RFC3339 reset timestamp, and clients render whichever entries are present; `extraUsage` (nullable) is the pay-as-you-go wallet: `{ balanceCents, totalCents, monthlyChargeLimitEnabled, monthlyChargeLimitCents, monthlyUsedCents, currency }`.
 
 #### `GET /api/v1/oauth/userinfo`
 

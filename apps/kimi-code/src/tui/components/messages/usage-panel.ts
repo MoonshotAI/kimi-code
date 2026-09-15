@@ -15,6 +15,7 @@ import {
   renderProgressBar,
   safeUsageRatio,
   usagePercent,
+  type QuotaUsageRow,
 } from '#/utils/usage/usage-format';
 import { currentTheme } from '#/tui/theme';
 import type { ColorToken } from '#/tui/theme';
@@ -25,29 +26,7 @@ const BOX_OVERHEAD = LEFT_MARGIN + 2 + 2 * SIDE_PADDING;
 
 type Colorize = (text: string) => string;
 
-export interface ManagedUsageWindow {
-  readonly duration: number;
-  readonly unit: 'minute' | 'hour' | 'day' | 'week';
-}
-
-export interface ManagedUsageRow {
-  readonly name?: string;
-  readonly window?: ManagedUsageWindow;
-  readonly used: number;
-  readonly limit: number;
-  readonly resetAt?: string;
-}
-
-function usageRowLabel(row: ManagedUsageRow): string {
-  const window = row.window;
-  if (window !== undefined) {
-    if (window.unit === 'week') return 'Weekly limit';
-    return `${String(window.duration)}${window.unit[0] ?? ''} limit`;
-  }
-  return row.name ?? 'Limit';
-}
-
-function usageRowResetHint(row: ManagedUsageRow): string | undefined {
+function usageRowResetHint(row: QuotaUsageRow): string | undefined {
   const resetAt = row.resetAt;
   if (resetAt === undefined) return undefined;
   const parsed = Date.parse(resetAt);
@@ -67,8 +46,7 @@ export interface BoosterWalletInfo {
 }
 
 export interface ManagedUsageReport {
-  readonly summary: ManagedUsageRow | null;
-  readonly limits: readonly ManagedUsageRow[];
+  readonly rows: readonly QuotaUsageRow[];
   readonly extraUsage?: BoosterWalletInfo | null;
 }
 
@@ -146,24 +124,20 @@ function buildManagedUsageSection(
 ): string[] {
   if (error !== undefined) return [accent('Plan usage'), errorStyle(`  ${error}`)];
   if (usage === undefined) return [];
-  const { summary, limits } = usage;
-  if (summary === null && limits.length === 0) {
+  const { rows } = usage;
+  if (rows.length === 0) {
     return [accent('Plan usage'), muted('  No usage data available.')];
   }
 
-  const rows: ManagedUsageRow[] = [];
-  if (summary !== null) rows.push(summary);
-  rows.push(...limits);
-  const usedRatio = (r: ManagedUsageRow): number =>
-    r.limit > 0 ? Math.max(0, Math.min(r.used / r.limit, 1)) : 0;
-  const labels = rows.map((r) => usageRowLabel(r));
+  const labels = rows.map((r) => r.name);
   const labelWidth = Math.max(10, ...labels.map((l) => l.length));
-  const pctWidth = Math.max(...rows.map((r) => `${Math.round(usedRatio(r) * 100)}% used`.length));
+  const rowRatio = (r: QuotaUsageRow): number => safeUsageRatio(r.usedRatio);
+  const pctWidth = Math.max(...rows.map((r) => `${Math.round(rowRatio(r) * 100)}% used`.length));
 
   const out: string[] = [accent('Plan usage')];
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]!;
-    const ratioUsed = usedRatio(row);
+    const ratioUsed = rowRatio(row);
     const bar = renderProgressBar(ratioUsed, 20);
     const pct = `${Math.round(ratioUsed * 100)}% used`;
     const barColoured = currentTheme.fg(severityColor(ratioSeverity(ratioUsed)), bar);
@@ -171,6 +145,12 @@ function buildManagedUsageSection(
     const resetHint = usageRowResetHint(row);
     const resetStr = resetHint !== undefined ? `  ${muted(resetHint)}` : '';
     out.push(`  ${muted(label)}  ${barColoured}  ${value(pct.padEnd(pctWidth, ' '))}${resetStr}`);
+    const breakdown = row.breakdown;
+    if (breakdown !== undefined) {
+      const kimi = Math.round(safeUsageRatio(breakdown.kimiRatio) * 100);
+      const code = Math.round(safeUsageRatio(breakdown.codeRatio) * 100);
+      out.push(`  ${' '.repeat(labelWidth)}  ${muted(`kimi ${String(kimi)}% · code ${String(code)}%`)}`);
+    }
   }
   return out;
 }
