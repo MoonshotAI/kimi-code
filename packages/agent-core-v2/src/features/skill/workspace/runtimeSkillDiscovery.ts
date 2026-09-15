@@ -66,6 +66,11 @@ async function discoverRuntimeSkills(
           reason: `unsupported skill type "${error.skillType}"`,
         });
       } else if (error instanceof SkillParseError) {
+        skipped.push({
+          path: input.skillMdPath,
+          type: 'invalid',
+          reason: error.message,
+        });
         warn?.(`Skipping invalid skill at ${input.skillMdPath}: ${error.message}`, error);
       } else {
         warn?.(`Skipping skill at ${input.skillMdPath} due to unexpected error`, error);

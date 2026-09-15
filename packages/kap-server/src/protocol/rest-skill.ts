@@ -3,8 +3,16 @@ import { z } from 'zod';
 import { fileContentSchema, imageContentSchema, videoContentSchema } from './message';
 import { skillDescriptorSchema } from './skill';
 
+export const invalidSkillSchema = z.object({
+  path: z.string(),
+  type: z.string(),
+  reason: z.string(),
+});
+export type InvalidSkill = z.infer<typeof invalidSkillSchema>;
+
 export const listSkillsResponseSchema = z.object({
   skills: z.array(skillDescriptorSchema),
+  invalid_skills: z.array(invalidSkillSchema),
 });
 export type ListSkillsResponse = z.infer<typeof listSkillsResponseSchema>;
 

@@ -77,7 +77,11 @@ export function parseSkillText(options: ParseSkillTextOptions): SkillDefinition 
 
   const metadata = normalizeMetadata(frontmatter);
   if (!isSupportedSkillType(metadata.type)) {
-    throw new UnsupportedSkillTypeError(metadata.type ?? String(frontmatter['type']));
+    throw new UnsupportedSkillTypeError(
+      typeof metadata.type === 'string'
+        ? metadata.type
+        : describeUnsupportedSkillType(frontmatter['type']),
+    );
   }
 
   const name = nonEmptyString(metadata.name);
@@ -147,6 +151,16 @@ function descriptionFromBody(body: string): string {
     .find((line) => line.length > 0);
   if (firstLine === undefined) return 'No description provided.';
   return firstLine.length > 240 ? `${firstLine.slice(0, 239)}…` : firstLine;
+}
+
+function describeUnsupportedSkillType(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
 }
 
 function nonEmptyString(value: unknown): string | undefined {
