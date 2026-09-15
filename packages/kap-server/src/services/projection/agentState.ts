@@ -152,7 +152,7 @@ export class AgentStateTracker {
       session_id: sessionId,
       agent_id: this.agentId,
       profile: { kind: this.profileKind },
-      timestamp: Date.now(),
+      event_created_at: new Date().toISOString(),
       origin: this.origin,
       created_at: this.createdAt,
       ended_at: this.endedAt,

@@ -19,9 +19,9 @@ import { plainNode, StateTree } from './StateTree';
 const T0 = Date.parse('2026-01-01T00:00:00.000Z');
 let tick = 0;
 
-function ts(): number {
+function ts(): string {
   tick += 1;
-  return T0 + tick * 1000;
+  return new Date(T0 + tick * 1000).toISOString();
 }
 
 function turnMsg(n: number, text?: string): TurnMessage {
@@ -29,7 +29,7 @@ function turnMsg(n: number, text?: string): TurnMessage {
     type: 'turn',
     session_id: 's1',
     agent_id: 'main',
-    timestamp: ts(),
+    event_created_at: ts(),
     turn_id: `t${n}`,
     ordinal: n,
     status: 'completed',
@@ -43,7 +43,7 @@ function stepMsg(stepId: string): StepMessage {
     type: 'step',
     session_id: 's1',
     agent_id: 'main',
-    timestamp: ts(),
+    event_created_at: ts(),
     step_id: stepId,
     turn_id: stepId.split('.')[0] ?? 't0',
     ordinal: Number(stepId.split('.')[1] ?? '1'),
@@ -56,7 +56,7 @@ function assistantMsg(stepId: string, text: string): AssistantMessage {
     type: 'assistant',
     session_id: 's1',
     agent_id: 'main',
-    timestamp: ts(),
+    event_created_at: ts(),
     message_id: `${stepId}.a0`,
     turn_id: stepId.split('.')[0] ?? 't0',
     step_id: stepId,
@@ -107,7 +107,7 @@ describe('StateTree', () => {
     );
     const html = renderToStaticMarkup(<StateTree root={root} />);
     expect(html).not.toContain('{"type"');
-    for (const field of ['turn_id', 'ordinal', 'status', 'origin', 'timestamp', 'agent_id']) {
+    for (const field of ['turn_id', 'ordinal', 'status', 'origin', 'event_created_at', 'agent_id']) {
       expect(html).toContain(field);
     }
     expect(html).toContain('HELLO');

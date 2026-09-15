@@ -65,7 +65,7 @@ describe('server-v2 GET /api/v1/connections', () => {
     return new Promise((resolve, reject) => {
       const token = (server as RunningServer).authTokenService.getToken();
       const ws = new WebSocket(wsUrl, [`kimi-code.bearer.${token}`]);
-      ws.once('message', () => resolve(ws));
+      ws.once('open', () => resolve(ws));
       ws.once('error', reject);
     });
   }
@@ -97,7 +97,6 @@ describe('server-v2 GET /api/v1/connections', () => {
     expect(connections).toHaveLength(1);
     const c = connections[0]!;
     expect(c.id).toMatch(/^conn_/);
-    expect(c.has_client_hello).toBe(true);
     expect(c.subscriptions).toEqual([]);
     expect(c.connected_at).toMatch(/Z$/);
     expect(typeof c.remote_address).toBe('string');
@@ -111,16 +110,15 @@ describe('server-v2 GET /api/v1/connections', () => {
     const sessionId = await createSession(home as string);
     const ws = await connect();
     try {
-      send(ws, { type: 'subscribe', id: 1, session_id: sessionId });
+      send(ws, { type: 'subscribe', request_id: 'r1', session_id: sessionId });
       await new Promise((r) => setTimeout(r, 50));
 
       let connections = await listConnections();
       expect(connections).toHaveLength(1);
       const c = connections[0]!;
-      expect(c.has_client_hello).toBe(true);
       expect(c.subscriptions).toContain(sessionId);
 
-      send(ws, { type: 'unsubscribe', id: 2, session_id: sessionId });
+      send(ws, { type: 'unsubscribe', request_id: 'r2', session_id: sessionId });
       await new Promise((r) => setTimeout(r, 50));
       connections = await listConnections();
       expect(connections[0]!.subscriptions).not.toContain(sessionId);

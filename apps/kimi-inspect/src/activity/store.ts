@@ -89,6 +89,7 @@ export interface SessionActivityHubOptions {
   readonly onListChanged: () => void;
   readonly WebSocketImpl?: WsLikeCtor;
   readonly fetchImpl?: typeof fetch;
+  readonly heartbeatIntervalMs?: number;
 }
 
 export class SessionActivityHub {
@@ -109,6 +110,7 @@ export class SessionActivityHub {
       url: opts.url,
       token: opts.token,
       WebSocketImpl: opts.WebSocketImpl,
+      heartbeatIntervalMs: opts.heartbeatIntervalMs,
       handlers: {
         onSession: (message) => this.onSession(message, opts.onListChanged),
         onWorkspaceChanged: () => opts.onListChanged(),

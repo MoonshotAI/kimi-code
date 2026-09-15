@@ -48,8 +48,8 @@ export interface WsAuditEntry extends AuditEntryBase {
 export interface EventAuditEntry extends AuditEntryBase {
   readonly kind: 'event';
   readonly event:
-    | 'ack'
-    | 'ack-error'
+    | 'response'
+    | 'response-error'
     | 'reconnect'
     | 'catchup-refresh'
     | 'protocol-error'
@@ -124,10 +124,10 @@ export class AuditTrail {
     state: ChatState,
   ): void {
     const label =
-      event === 'ack'
-        ? 'subscribe ack → after_step catch-up'
-        : event === 'ack-error'
-          ? 'subscribe ack error'
+      event === 'response'
+        ? 'subscribe response → after_step catch-up'
+        : event === 'response-error'
+          ? 'subscribe response error'
           : event === 'reconnect'
             ? 'socket dropped → reconnecting'
             : event === 'catchup-refresh'

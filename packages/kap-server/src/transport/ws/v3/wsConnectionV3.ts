@@ -13,15 +13,12 @@ import type { LaneSubscriber } from './sessionLane';
 import type { WsV3Logger } from './wsV3Deps';
 import type { WsV3Hub } from './wsV3Hub';
 
-export const V3_PROTOCOL_VERSION = '3';
-export const V3_CAPABILITIES: readonly string[] = ['step_replay_v1'];
-
 const DEFAULT_MAX_OUTBOUND_MESSAGES = 1000;
 const DEFAULT_HIGH_WATER_MARK_BYTES = 1 << 20;
 const DEFAULT_BACKPRESSURE_RETRY_MS = 5;
 const DEFAULT_STALL_TIMEOUT_MS = 30_000;
-const DEFAULT_HEARTBEAT_INTERVAL_MS = 10_000;
-const HEARTBEAT_MISS_LIMIT = 2;
+const DEFAULT_IDLE_TIMEOUT_MS = 600_000;
+const IDLE_CHECK_INTERVAL_MS = 60_000;
 
 export interface SubscriptionFilter {
   readonly agentIds?: ReadonlySet<string>;
@@ -56,13 +53,12 @@ export interface WsConnectionV3Options {
   readonly connectionRegistry?: IConnectionRegistry;
   readonly remoteAddress: string | null;
   readonly userAgent: string | null;
-  readonly serverId: string;
   readonly logger?: WsV3Logger;
   readonly maxOutboundMessages?: number;
   readonly highWaterMarkBytes?: number;
   readonly backpressureRetryMs?: number;
   readonly stallTimeoutMs?: number;
-  readonly heartbeatIntervalMs?: number;
+  readonly idleTimeoutMs?: number;
 }
 
 export class WsConnectionV3 {
@@ -78,13 +74,13 @@ export class WsConnectionV3 {
   private readonly highWaterMarkBytes: number;
   private readonly backpressureRetryMs: number;
   private readonly stallTimeoutMs: number;
-  private readonly heartbeatIntervalMs: number;
+  private readonly idleTimeoutMs: number;
 
   private readonly subscriptions = new Map<string, LaneSubscriber>();
   private outbound: string[] = [];
   private drainTimer?: ReturnType<typeof setTimeout>;
-  private heartbeatTimer?: ReturnType<typeof setInterval>;
-  private missedPongs = 0;
+  private idleCheckTimer?: ReturnType<typeof setInterval>;
+  private lastInboundAt: number;
   private stallSince?: number;
   private closed = false;
 
@@ -100,29 +96,20 @@ export class WsConnectionV3 {
     this.highWaterMarkBytes = opts.highWaterMarkBytes ?? DEFAULT_HIGH_WATER_MARK_BYTES;
     this.backpressureRetryMs = opts.backpressureRetryMs ?? DEFAULT_BACKPRESSURE_RETRY_MS;
     this.stallTimeoutMs = opts.stallTimeoutMs ?? DEFAULT_STALL_TIMEOUT_MS;
-    this.heartbeatIntervalMs = opts.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
+    this.idleTimeoutMs = opts.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+    this.lastInboundAt = Date.now();
 
     this.socket.on('message', (data: RawData) => this.onRaw(data));
-    this.socket.on('pong', () => {
-      this.missedPongs = 0;
-    });
     this.socket.on('close', () => this.onClose());
     this.socket.on('error', () => this.onClose());
 
     opts.connectionRegistry?.add(this);
     this.hub.addConnection(this);
-    this.sendImmediate({
-      type: 'hello',
-      protocol_version: V3_PROTOCOL_VERSION,
-      server_id: opts.serverId,
-      capabilities: [...V3_CAPABILITIES],
-    });
-    this.heartbeatTimer = setInterval(() => this.onHeartbeat(), this.heartbeatIntervalMs);
-    this.heartbeatTimer.unref?.();
-  }
-
-  get hasClientHello(): boolean {
-    return true;
+    this.idleCheckTimer = setInterval(
+      () => this.onIdleCheck(),
+      Math.min(this.idleTimeoutMs, IDLE_CHECK_INTERVAL_MS),
+    );
+    this.idleCheckTimer.unref?.();
   }
 
   get subscriptionSessionIds(): readonly string[] {
@@ -164,6 +151,7 @@ export class WsConnectionV3 {
 
   private onRaw(data: RawData): void {
     if (this.closed) return;
+    this.lastInboundAt = Date.now();
     let parsed: unknown;
     try {
       parsed = JSON.parse(rawDataToString(data));
@@ -189,30 +177,25 @@ export class WsConnectionV3 {
       return;
     }
     const frame = result.data;
-    if (frame.type === 'subscribe') {
+    if (frame.type === 'ping') {
+      this.enqueue({ type: 'response', request_id: frame.request_id, code: ErrorCode.SUCCESS });
+    } else if (frame.type === 'subscribe') {
       this.hub.subscribeSession(this, frame);
     } else {
-      this.hub.unsubscribeSession(this, frame.session_id, frame.id);
+      this.hub.unsubscribeSession(this, frame.session_id, frame.request_id);
     }
   }
 
-  private onHeartbeat(): void {
-    this.missedPongs += 1;
-    if (this.missedPongs >= HEARTBEAT_MISS_LIMIT) {
-      this.logger?.warn(
-        { connId: this.id, remoteAddress: this.remoteAddress },
-        'ws v3: heartbeat timeout, terminating connection',
-      );
-      try {
-        this.socket.terminate();
-      } catch {
-        this.onClose();
-      }
-      return;
-    }
+  private onIdleCheck(): void {
+    if (Date.now() - this.lastInboundAt <= this.idleTimeoutMs) return;
+    this.logger?.warn(
+      { connId: this.id, remoteAddress: this.remoteAddress },
+      'ws v3: inbound idle timeout, terminating connection',
+    );
     try {
-      this.socket.ping();
+      this.socket.terminate();
     } catch {
+      this.onClose();
     }
   }
 
@@ -300,7 +283,7 @@ export class WsConnectionV3 {
     if (this.closed) return;
     this.closed = true;
     if (this.drainTimer !== undefined) clearTimeout(this.drainTimer);
-    if (this.heartbeatTimer !== undefined) clearInterval(this.heartbeatTimer);
+    if (this.idleCheckTimer !== undefined) clearInterval(this.idleCheckTimer);
     this.outbound = [];
     this.hub.dropConnection(this);
   }

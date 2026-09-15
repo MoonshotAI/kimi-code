@@ -9,6 +9,7 @@ import { WebSocket, type RawData } from 'ws';
 import { ErrorCode } from '../src/protocol/error-codes';
 import type { ServerMessage, WorkspaceInfo } from '../src/protocol/messages';
 import { startServer, type RunningServer } from '../src/start';
+import { WsConnectionDebug } from '../src/transport/ws/debug/wsConnectionDebug';
 import {
   WsConnectionV3,
   type WsConnectionV3Options,
@@ -20,7 +21,6 @@ import { fixedTokenAuth } from './helpers/fixedAuth';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 
 const TS = '2026-01-01T00:00:00.000Z';
-const TS_MS = 1_767_225_600_000;
 const WS_ID = 'wd_test_0123456789ab';
 
 class FakeSocket {
@@ -29,7 +29,6 @@ class FakeSocket {
   readyState = 1;
   bufferedAmount = 0;
   sent: string[] = [];
-  pingCalls = 0;
   terminateCalls = 0;
   closeCalls: Array<{ code?: number; reason?: string }> = [];
   private readonly handlers = new Map<string, Array<(...a: unknown[]) => void>>();
@@ -43,10 +42,6 @@ class FakeSocket {
 
   send(data: string): void {
     this.sent.push(data);
-  }
-
-  ping(): void {
-    this.pingCalls += 1;
   }
 
   close(code?: number, reason?: string): void {
@@ -209,7 +204,6 @@ function makeConn(
     hub,
     remoteAddress: null,
     userAgent: null,
-    serverId: 'srv_test',
     ...opts,
   });
 }
@@ -224,7 +218,7 @@ function sessionStateMessage(sessionId: string): ServerMessage {
   return {
     type: 'session.state',
     session_id: sessionId,
-    timestamp: TS_MS,
+    event_created_at: TS,
     status: 'idle',
   };
 }
@@ -234,7 +228,7 @@ function assistantMessage(sessionId: string, agentId: string, text = 'hello'): S
     type: 'assistant',
     session_id: sessionId,
     agent_id: agentId,
-    timestamp: TS_MS,
+    event_created_at: TS,
     message_id: `t1.1.a0.${agentId}.${text}`,
     turn_id: 't1',
     step_id: 't1.1',
@@ -248,7 +242,7 @@ function assistantDeltaMessage(sessionId: string, agentId: string): ServerMessag
     type: 'assistant.delta',
     session_id: sessionId,
     agent_id: agentId,
-    timestamp: TS_MS,
+    event_created_at: TS,
     message_id: `t1.1.a0.${agentId}.delta`,
     text: 'chunk',
   };
@@ -280,20 +274,18 @@ function frameTypes(socket: FakeSocket): unknown[] {
   return socket.frames().map((frame) => frame['type']);
 }
 
-describe('WsConnectionV3 handshake and recovery', () => {
-  it('sends hello immediately with protocol version, server id and capabilities', () => {
+describe('WsConnectionV3 subscribe and recovery', () => {
+  it('sends no handshake frame and answers ping with a response echoing the request id', () => {
     const { hub } = makeHarness();
     const socket = new FakeSocket();
     makeConn(hub, socket);
-    expect(socket.frames()[0]).toEqual({
-      type: 'hello',
-      protocol_version: '3',
-      server_id: 'srv_test',
-      capabilities: ['step_replay_v1'],
-    });
+    expect(socket.frames()).toEqual([]);
+
+    socket.emit('message', JSON.stringify({ type: 'ping', request_id: 'req-1' }));
+    expect(socket.frames()).toEqual([{ type: 'response', request_id: 'req-1', code: ErrorCode.SUCCESS }]);
   });
 
-  it('acks subscribe and delivers recovery before live messages in one session sequence', async () => {
+  it('responds to subscribe and delivers recovery before live messages in one session sequence', async () => {
     const { projection, lifecycle, hub, logger, warnings } = makeHarness();
     lifecycle.existing.add('s1');
     projection.live.add('s1');
@@ -301,32 +293,32 @@ describe('WsConnectionV3 handshake and recovery', () => {
     const socket = new FakeSocket();
     makeConn(hub, socket, { logger });
 
-    socket.emit('message', JSON.stringify({ type: 'subscribe', id: 7, session_id: 's1' }));
+    socket.emit('message', JSON.stringify({ type: 'subscribe', request_id: 'r7', session_id: 's1' }));
     await settle();
-    expect(frameTypes(socket)).toEqual(['hello', 'ack', 'session.state', 'assistant']);
-    expect(socket.frames()[1]).toEqual({ type: 'ack', id: 7, code: ErrorCode.SUCCESS });
+    expect(frameTypes(socket)).toEqual(['response', 'session.state', 'assistant']);
+    expect(socket.frames()[0]).toEqual({ type: 'response', request_id: 'r7', code: ErrorCode.SUCCESS });
 
     projection.emit('s1', assistantMessage('s1', 'main', 'live'));
     await settle();
-    expect(frameTypes(socket)).toEqual(['hello', 'ack', 'session.state', 'assistant', 'assistant']);
-    expect(socket.frames()[4]).toMatchObject({ text: 'live' });
+    expect(frameTypes(socket)).toEqual(['response', 'session.state', 'assistant', 'assistant']);
+    expect(socket.frames()[3]).toMatchObject({ text: 'live' });
 
     projection.emit('s1', { type: 'assistant', session_id: 's1' } as ServerMessage);
     await settle();
-    expect(frameTypes(socket)).toEqual(['hello', 'ack', 'session.state', 'assistant', 'assistant']);
+    expect(frameTypes(socket)).toEqual(['response', 'session.state', 'assistant', 'assistant']);
     expect(warnings.some((msg) => msg.includes('failed schema validation'))).toBe(true);
   });
 
-  it('acks SESSION_NOT_FOUND when subscribing to an unknown session', async () => {
+  it('responds SESSION_NOT_FOUND when subscribing to an unknown session', async () => {
     const { hub } = makeHarness();
     const socket = new FakeSocket();
     makeConn(hub, socket);
 
-    socket.emit('message', JSON.stringify({ type: 'subscribe', id: 3, session_id: 'ghost' }));
+    socket.emit('message', JSON.stringify({ type: 'subscribe', request_id: 'r3', session_id: 'ghost' }));
     await settle();
-    expect(socket.frames()[1]).toMatchObject({
-      type: 'ack',
-      id: 3,
+    expect(socket.frames()[0]).toMatchObject({
+      type: 'response',
+      request_id: 'r3',
       code: ErrorCode.SESSION_NOT_FOUND,
     });
   });
@@ -336,13 +328,13 @@ describe('WsConnectionV3 handshake and recovery', () => {
     const socket = new FakeSocket();
     makeConn(hub, socket);
 
-    socket.emit('message', JSON.stringify({ type: 'bogus_frame', id: 1 }));
+    socket.emit('message', JSON.stringify({ type: 'bogus_frame', request_id: 'r1' }));
     socket.emit('message', 'not json at all');
-    expect(socket.frames()[1]).toMatchObject({
+    expect(socket.frames()[0]).toMatchObject({
       type: 'error',
       code: ErrorCode.VALIDATION_FAILED,
     });
-    expect(socket.frames()[2]).toMatchObject({
+    expect(socket.frames()[1]).toMatchObject({
       type: 'error',
       code: ErrorCode.REQUEST_MALFORMED,
     });
@@ -364,24 +356,24 @@ describe('WsConnectionV3 handshake and recovery', () => {
       'message',
       JSON.stringify({
         type: 'subscribe',
-        id: 1,
+        request_id: 'r1',
         session_id: 's1',
         agent_ids: ['main'],
         omit: ['assistant.delta'],
       }),
     );
     await settle();
-    expect(frameTypes(socket)).toEqual(['hello', 'ack', 'session.state', 'assistant']);
+    expect(frameTypes(socket)).toEqual(['response', 'session.state', 'assistant']);
 
     projection.emit('s1', assistantMessage('s1', 'sub', 'filtered'));
     projection.emit('s1', assistantDeltaMessage('s1', 'main'));
     projection.emit('s1', assistantMessage('s1', 'main', 'kept'));
     await settle();
-    expect(frameTypes(socket)).toEqual(['hello', 'ack', 'session.state', 'assistant', 'assistant']);
-    expect(socket.frames()[4]).toMatchObject({ text: 'kept' });
+    expect(frameTypes(socket)).toEqual(['response', 'session.state', 'assistant', 'assistant']);
+    expect(socket.frames()[3]).toMatchObject({ text: 'kept' });
   });
 
-  it('acks unsubscribe and stops further delivery', async () => {
+  it('responds to unsubscribe and stops further delivery', async () => {
     const { projection, lifecycle, hub } = makeHarness();
     lifecycle.existing.add('s1');
     projection.live.add('s1');
@@ -389,38 +381,18 @@ describe('WsConnectionV3 handshake and recovery', () => {
     const socket = new FakeSocket();
     makeConn(hub, socket);
 
-    socket.emit('message', JSON.stringify({ type: 'subscribe', id: 1, session_id: 's1' }));
+    socket.emit('message', JSON.stringify({ type: 'subscribe', request_id: 'r1', session_id: 's1' }));
     await settle();
-    socket.emit('message', JSON.stringify({ type: 'unsubscribe', id: 2, session_id: 's1' }));
+    socket.emit('message', JSON.stringify({ type: 'unsubscribe', request_id: 'r2', session_id: 's1' }));
     await settle();
-    expect(socket.frames()[3]).toEqual({ type: 'ack', id: 2, code: ErrorCode.SUCCESS });
+    expect(socket.frames()[2]).toEqual({ type: 'response', request_id: 'r2', code: ErrorCode.SUCCESS });
 
     projection.emit('s1', assistantMessage('s1', 'main', 'late'));
     await settle();
-    expect(frameTypes(socket)).toEqual(['hello', 'ack', 'session.state', 'ack']);
+    expect(frameTypes(socket)).toEqual(['response', 'session.state', 'response']);
   });
 
-  it('implicitly unsubscribes on disconnect and disposes the lane listener', async () => {
-    const { projection, lifecycle, hub } = makeHarness();
-    lifecycle.existing.add('s1');
-    projection.live.add('s1');
-    projection.recovery.set('s1', [sessionStateMessage('s1')]);
-    const socket = new FakeSocket();
-    makeConn(hub, socket);
-
-    socket.emit('message', JSON.stringify({ type: 'subscribe', id: 1, session_id: 's1' }));
-    await settle();
-    expect(projection.listeners.get('s1')?.size).toBe(1);
-
-    socket.close();
-    await settle();
-    expect(projection.listeners.get('s1')?.size ?? 0).toBe(0);
-    projection.emit('s1', assistantMessage('s1', 'main', 'late'));
-    await settle();
-    expect(frameTypes(socket)).toEqual(['hello', 'ack', 'session.state']);
-  });
-
-  it('delivers recovery again when a fresh connection resubscribes after disconnect', async () => {
+  it('disposes the lane listener on disconnect and delivers recovery again on a fresh resubscribe', async () => {
     const { projection, lifecycle, hub } = makeHarness();
     lifecycle.existing.add('s1');
     projection.live.add('s1');
@@ -428,17 +400,23 @@ describe('WsConnectionV3 handshake and recovery', () => {
 
     const first = new FakeSocket();
     makeConn(hub, first);
-    first.emit('message', JSON.stringify({ type: 'subscribe', id: 1, session_id: 's1' }));
+    first.emit('message', JSON.stringify({ type: 'subscribe', request_id: 'r1', session_id: 's1' }));
     await settle();
-    expect(frameTypes(first)).toEqual(['hello', 'ack', 'session.state']);
+    expect(frameTypes(first)).toEqual(['response', 'session.state']);
+    expect(projection.listeners.get('s1')?.size).toBe(1);
+
     first.close();
     await settle();
+    expect(projection.listeners.get('s1')?.size ?? 0).toBe(0);
+    projection.emit('s1', assistantMessage('s1', 'main', 'late'));
+    await settle();
+    expect(frameTypes(first)).toEqual(['response', 'session.state']);
 
     const second = new FakeSocket();
     makeConn(hub, second);
-    second.emit('message', JSON.stringify({ type: 'subscribe', id: 1, session_id: 's1' }));
+    second.emit('message', JSON.stringify({ type: 'subscribe', request_id: 'r1', session_id: 's1' }));
     await settle();
-    expect(frameTypes(second)).toEqual(['hello', 'ack', 'session.state']);
+    expect(frameTypes(second)).toEqual(['response', 'session.state']);
   });
 
   it('replaces the subscription when the same session is subscribed again', async () => {
@@ -449,34 +427,32 @@ describe('WsConnectionV3 handshake and recovery', () => {
     const socket = new FakeSocket();
     makeConn(hub, socket);
 
-    socket.emit('message', JSON.stringify({ type: 'subscribe', id: 1, session_id: 's1' }));
+    socket.emit('message', JSON.stringify({ type: 'subscribe', request_id: 'r1', session_id: 's1' }));
     await settle();
     socket.emit(
       'message',
-      JSON.stringify({ type: 'subscribe', id: 2, session_id: 's1', agent_ids: ['sub'] }),
+      JSON.stringify({ type: 'subscribe', request_id: 'r2', session_id: 's1', agent_ids: ['sub'] }),
     );
     await settle();
     expect(frameTypes(socket)).toEqual([
-      'hello',
-      'ack',
+      'response',
       'session.state',
-      'ack',
+      'response',
       'session.state',
     ]);
-    expect(socket.frames()[3]).toEqual({ type: 'ack', id: 2, code: ErrorCode.SUCCESS });
+    expect(socket.frames()[2]).toEqual({ type: 'response', request_id: 'r2', code: ErrorCode.SUCCESS });
 
     projection.emit('s1', assistantMessage('s1', 'main', 'filtered'));
     projection.emit('s1', assistantMessage('s1', 'sub', 'kept'));
     await settle();
     expect(frameTypes(socket)).toEqual([
-      'hello',
-      'ack',
+      'response',
       'session.state',
-      'ack',
+      'response',
       'session.state',
       'assistant',
     ]);
-    expect(socket.frames()[5]).toMatchObject({ text: 'kept' });
+    expect(socket.frames()[4]).toMatchObject({ text: 'kept' });
   });
 
   it('serves a minimal recovery for non-live sessions and backfills one when the session becomes live', async () => {
@@ -485,23 +461,23 @@ describe('WsConnectionV3 handshake and recovery', () => {
     const socket = new FakeSocket();
     makeConn(hub, socket);
 
-    socket.emit('message', JSON.stringify({ type: 'subscribe', id: 1, session_id: 's2' }));
+    socket.emit('message', JSON.stringify({ type: 'subscribe', request_id: 'r1', session_id: 's2' }));
     await settle();
-    expect(frameTypes(socket)).toEqual(['hello', 'ack']);
-    expect(socket.frames()[1]).toMatchObject({ code: ErrorCode.SUCCESS });
+    expect(frameTypes(socket)).toEqual(['response']);
+    expect(socket.frames()[0]).toMatchObject({ code: ErrorCode.SUCCESS });
 
     projection.live.add('s2');
     projection.recovery.set('s2', [sessionStateMessage('s2')]);
     lifecycle.fireCreated('s2');
     await settle();
-    expect(frameTypes(socket)).toEqual(['hello', 'ack', 'session.state']);
+    expect(frameTypes(socket)).toEqual(['response', 'session.state']);
 
     projection.emit('s2', assistantMessage('s2', 'main', 'after'));
     await settle();
-    expect(frameTypes(socket)).toEqual(['hello', 'ack', 'session.state', 'assistant']);
+    expect(frameTypes(socket)).toEqual(['response', 'session.state', 'assistant']);
   });
 
-  it('acks INTERNAL_ERROR and keeps live traffic flowing when the recovery payload throws', async () => {
+  it('responds INTERNAL_ERROR and keeps live traffic flowing when the recovery payload throws', async () => {
     const { projection, lifecycle, hub, warnings } = makeHarness();
     lifecycle.existing.add('s1');
     projection.live.add('s1');
@@ -511,20 +487,20 @@ describe('WsConnectionV3 handshake and recovery', () => {
     const socket = new FakeSocket();
     makeConn(hub, socket);
 
-    socket.emit('message', JSON.stringify({ type: 'subscribe', id: 9, session_id: 's1' }));
+    socket.emit('message', JSON.stringify({ type: 'subscribe', request_id: 'r9', session_id: 's1' }));
     await settle();
-    expect(socket.frames()[1]).toEqual({ type: 'ack', id: 9, code: ErrorCode.SUCCESS });
-    expect(socket.frames()[2]).toMatchObject({ type: 'ack', id: 9, code: ErrorCode.INTERNAL_ERROR });
+    expect(socket.frames()[0]).toEqual({ type: 'response', request_id: 'r9', code: ErrorCode.SUCCESS });
+    expect(socket.frames()[1]).toMatchObject({ type: 'response', request_id: 'r9', code: ErrorCode.INTERNAL_ERROR });
     expect(warnings.some((msg) => msg.includes('recovery failed'))).toBe(true);
 
     projection.emit('s1', assistantMessage('s1', 'main', 'after'));
     await settle();
-    expect(frameTypes(socket)).toEqual(['hello', 'ack', 'ack', 'assistant']);
-    expect(socket.frames()[3]).toMatchObject({ text: 'after' });
+    expect(frameTypes(socket)).toEqual(['response', 'response', 'assistant']);
+    expect(socket.frames()[2]).toMatchObject({ text: 'after' });
   });
 });
 
-describe('WsConnectionV3 backpressure and heartbeat', () => {
+describe('WsConnectionV3 backpressure', () => {
   it('closes slow consumers with a dedicated error code when the outbound queue overflows', () => {
     const { hub } = makeHarness();
     const socket = new FakeSocket();
@@ -533,7 +509,7 @@ describe('WsConnectionV3 backpressure and heartbeat', () => {
 
     for (let i = 0; i < 4; i++) conn.enqueue(sessionStateMessage('s1'));
 
-    expect(socket.frames()[1]).toEqual({
+    expect(socket.frames()[0]).toEqual({
       type: 'error',
       code: ErrorCode.WS_SLOW_CONSUMER,
       msg: 'outbound queue overflow: slow consumer',
@@ -551,11 +527,10 @@ describe('WsConnectionV3 backpressure and heartbeat', () => {
         maxOutboundMessages: 100,
         stallTimeoutMs: 50,
         backpressureRetryMs: 5,
-        heartbeatIntervalMs: 60_000,
       });
       conn.enqueue(sessionStateMessage('s1'));
       vi.advanceTimersByTime(200);
-      expect(socket.frames()[1]).toMatchObject({
+      expect(socket.frames()[0]).toMatchObject({
         type: 'error',
         code: ErrorCode.WS_SLOW_CONSUMER,
       });
@@ -564,22 +539,62 @@ describe('WsConnectionV3 backpressure and heartbeat', () => {
       vi.useRealTimers();
     }
   });
+});
 
-  it('pings on the heartbeat interval and terminates after missed pongs', () => {
+describe('WsConnectionV3 inbound idle timeout', () => {
+  it('terminates the connection when no inbound frame arrives within the idle timeout', () => {
+    vi.useFakeTimers();
+    try {
+      const { hub, logger, warnings } = makeHarness();
+      const socket = new FakeSocket();
+      makeConn(hub, socket, { logger, idleTimeoutMs: 100 });
+
+      vi.advanceTimersByTime(100);
+      expect(socket.terminateCalls).toBe(0);
+      vi.advanceTimersByTime(100);
+      expect(socket.terminateCalls).toBe(1);
+      expect(warnings.some((msg) => msg.includes('inbound idle timeout'))).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the connection alive while inbound frames arrive', () => {
     vi.useFakeTimers();
     try {
       const { hub } = makeHarness();
       const socket = new FakeSocket();
-      makeConn(hub, socket, { heartbeatIntervalMs: 100 });
+      makeConn(hub, socket, { idleTimeoutMs: 100 });
 
-      vi.advanceTimersByTime(100);
-      expect(socket.pingCalls).toBe(1);
-      socket.emit('pong');
-      vi.advanceTimersByTime(100);
-      expect(socket.pingCalls).toBe(2);
+      vi.advanceTimersByTime(50);
+      socket.emit('message', JSON.stringify({ type: 'ping', request_id: 'r1' }));
+      vi.advanceTimersByTime(50);
       expect(socket.terminateCalls).toBe(0);
+      vi.advanceTimersByTime(50);
+      socket.emit('message', JSON.stringify({ type: 'ping', request_id: 'r2' }));
       vi.advanceTimersByTime(100);
+      expect(socket.terminateCalls).toBe(0);
+      vi.advanceTimersByTime(150);
       expect(socket.terminateCalls).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('WsConnectionDebug inbound idle timeout', () => {
+  it('closes an idle debug connection but tolerates inbound frames', () => {
+    vi.useFakeTimers();
+    try {
+      const socket = new FakeSocket();
+      new WsConnectionDebug({ socket: socket as unknown as WebSocket, idleTimeoutMs: 100 });
+
+      vi.advanceTimersByTime(50);
+      socket.emit('message', JSON.stringify({ type: 'subscribe' }));
+      vi.advanceTimersByTime(50);
+      expect(socket.closeCalls).toEqual([]);
+      vi.advanceTimersByTime(150);
+      expect(socket.closeCalls).toEqual([{ code: 1000, reason: undefined }]);
     } finally {
       vi.useRealTimers();
     }
@@ -610,27 +625,27 @@ describe('WsV3 global message fanout', () => {
     await settle();
 
     const frames = socket.frames();
-    expect(frames[1]).toEqual({
+    expect(frames[0]).toEqual({
       type: 'config.warning',
-      timestamp: expect.any(Number),
+      event_created_at: expect.any(String),
       warnings: ['model: bad field', 'plain'],
     });
-    expect(frames[2]).toEqual({
+    expect(frames[1]).toEqual({
       type: 'config',
-      timestamp: expect.any(Number),
+      event_created_at: expect.any(String),
       config: { default_model: 'm2' },
       changed_fields: ['default_model'],
     });
-    expect(frames[3]).toEqual({
+    expect(frames[2]).toEqual({
       type: 'capability',
-      timestamp: expect.any(Number),
+      event_created_at: expect.any(String),
       capability_id: 'cap-1',
     });
-    expect(frames[4]).toEqual({ type: 'plugin', timestamp: expect.any(Number) });
-    expect(frames[5]).toEqual({ type: 'model_catalog', timestamp: expect.any(Number) });
+    expect(frames[3]).toEqual({ type: 'plugin', event_created_at: expect.any(String) });
+    expect(frames[4]).toEqual({ type: 'model_catalog', event_created_at: expect.any(String) });
   });
 
-  it('translates workspace lifecycle events, using the cached entity for deletions', async () => {
+  it('translates workspace and session lifecycle events into global messages', async () => {
     const { globalSource, hub } = makeHarness();
     const socket = new FakeSocket();
     makeConn(hub, socket);
@@ -655,28 +670,21 @@ describe('WsV3 global message fanout', () => {
     await settle();
 
     const frames = socket.frames();
-    expect(frames[1]).toMatchObject({
+    expect(frames[0]).toMatchObject({
       type: 'workspace',
       subtype: 'created',
       workspace: { id: WS_ID, name: 'ws-root', session_count: 0 },
     });
-    expect(frames[2]).toMatchObject({
+    expect(frames[1]).toMatchObject({
       type: 'workspace',
       subtype: 'deleted',
       workspace: { id: WS_ID, name: 'ws-root' },
     });
-    expect(frames[3]).toMatchObject({
+    expect(frames[2]).toMatchObject({
       type: 'workspace',
       subtype: 'deleted',
       workspace: { id: 'wd_gone_0123456789ab', name: 'gone-dir', session_count: 0 },
     });
-  });
-
-  it('translates session lifecycle events into session messages with entities', async () => {
-    const { globalSource, hub } = makeHarness();
-    const socket = new FakeSocket();
-    makeConn(hub, socket);
-    await settle();
 
     globalSource.sessionInfoResult = sessionInfoWire('s1');
     globalSource.fire({
@@ -693,26 +701,26 @@ describe('WsV3 global message fanout', () => {
     });
     await settle();
 
-    const frames = socket.frames();
-    expect(frames[1]).toMatchObject({
+    const sessionFrames = socket.frames();
+    expect(sessionFrames[3]).toMatchObject({
       type: 'session',
       subtype: 'created',
       session: { id: 's1' },
     });
-    expect(frames[2]).toMatchObject({
+    expect(sessionFrames[4]).toMatchObject({
       type: 'session',
       subtype: 'updated',
       session: { id: 's1' },
       changed_fields: ['title'],
     });
-    expect(frames[3]).toMatchObject({
+    expect(sessionFrames[5]).toMatchObject({
       type: 'session',
       subtype: 'archived',
       session: { id: 's1' },
     });
   });
 
-  it('emits session updated on session activity changes', async () => {
+  it('emits session updated on activity and session deleted only for sessions seen before', async () => {
     const { globalSource, hub } = makeHarness();
     const socket = new FakeSocket();
     makeConn(hub, socket);
@@ -727,7 +735,7 @@ describe('WsV3 global message fanout', () => {
     await settle();
 
     const frames = socket.frames();
-    expect(frames[2]).toMatchObject({
+    expect(frames[1]).toMatchObject({
       type: 'session',
       subtype: 'updated',
       session: { id: 's1' },
@@ -736,19 +744,8 @@ describe('WsV3 global message fanout', () => {
     globalSource.sessionInfoResult = undefined;
     globalSource.fireActivity('s9');
     await settle();
-    expect(socket.frames()).toHaveLength(3);
-  });
+    expect(socket.frames()).toHaveLength(2);
 
-  it('emits session deleted only for sessions seen before', async () => {
-    const { globalSource, hub } = makeHarness();
-    const socket = new FakeSocket();
-    makeConn(hub, socket);
-    await settle();
-
-    globalSource.fire({
-      type: 'event.session.created',
-      payload: { sessionId: 's1', session: sessionInfoWire('s1') },
-    });
     globalSource.fire({
       type: 'event.session.deleted',
       payload: { sessionId: 's1', workspaceId: WS_ID },
@@ -758,10 +755,8 @@ describe('WsV3 global message fanout', () => {
       payload: { sessionId: 's2', workspaceId: WS_ID },
     });
     await settle();
-
-    const frames = socket.frames();
-    expect(frames).toHaveLength(3);
-    expect(frames[2]).toMatchObject({
+    expect(socket.frames()).toHaveLength(3);
+    expect(socket.frames()[2]).toMatchObject({
       type: 'session',
       subtype: 'deleted',
       session: { id: 's1' },
@@ -779,7 +774,7 @@ describe('WsV3 global message fanout', () => {
       payload: { sessionId: 's1', session: { id: 's1' } },
     });
     await settle();
-    expect(frameTypes(socket)).toEqual(['hello']);
+    expect(frameTypes(socket)).toEqual([]);
     expect(warnings.some((msg) => msg.includes('failed schema validation'))).toBe(true);
 
     globalSource.fire({
@@ -787,7 +782,7 @@ describe('WsV3 global message fanout', () => {
       payload: { sessionId: 's2', session: { id: 's2' } },
     });
     await settle();
-    expect(frameTypes(socket)).toEqual(['hello']);
+    expect(frameTypes(socket)).toEqual([]);
     expect(warnings.filter((msg) => msg.includes('failed schema validation'))).toHaveLength(1);
   });
 });
@@ -846,7 +841,7 @@ describe('WsV3 endpoint over a real server', () => {
         } catch {
         }
       });
-      ws.once('message', () => resolve({ ws, frames }));
+      ws.once('open', () => resolve({ ws, frames }));
       ws.once('error', reject);
     });
   }
@@ -875,15 +870,9 @@ describe('WsV3 endpoint over a real server', () => {
     await expectRejected(v3Url());
   });
 
-  it('serves hello, global session messages, ack and recovery over the real stack', async () => {
+  it('serves global session messages, response and recovery over the real stack without a handshake frame', async () => {
     const { ws, frames } = await openV3();
     sockets.push(ws);
-    expect(frames[0]).toMatchObject({
-      type: 'hello',
-      protocol_version: '3',
-      capabilities: expect.arrayContaining(['step_replay_v1']),
-    });
-    expect(typeof frames[0]?.['server_id']).toBe('string');
 
     const created = await fetch(`${base}/api/v1/sessions`, {
       method: 'POST',
@@ -905,16 +894,16 @@ describe('WsV3 endpoint over a real server', () => {
       { timeout: 5000 },
     );
 
-    ws.send(JSON.stringify({ type: 'subscribe', id: 1, session_id: sessionId }));
+    ws.send(JSON.stringify({ type: 'subscribe', request_id: 'r1', session_id: sessionId }));
     await vi.waitFor(
       () => {
-        const ackIndex = frames.findIndex(
-          (frame) => frame['type'] === 'ack' && frame['id'] === 1,
+        const responseIndex = frames.findIndex(
+          (frame) => frame['type'] === 'response' && frame['request_id'] === 'r1',
         );
-        expect(ackIndex).toBeGreaterThan(0);
-        expect(frames[ackIndex]).toMatchObject({ code: ErrorCode.SUCCESS });
+        expect(responseIndex).toBeGreaterThanOrEqual(0);
+        expect(frames[responseIndex]).toMatchObject({ code: ErrorCode.SUCCESS });
         const stateIndex = frames.findIndex((frame) => frame['type'] === 'session.state');
-        expect(stateIndex).toBeGreaterThan(ackIndex);
+        expect(stateIndex).toBeGreaterThan(responseIndex);
         expect(frames[stateIndex]).toMatchObject({ session_id: sessionId, status: 'idle' });
       },
       { timeout: 5000 },

@@ -44,7 +44,7 @@ export class GlobalMessageTranslator {
       const session = await this.deps.sessionInfo(sessionId);
       if (session === undefined) return;
       this.sessions.set(sessionId, session);
-      this.emitValidated({ type: 'session', timestamp: Date.now(), subtype: 'updated', session });
+      this.emitValidated({ type: 'session', event_created_at: new Date().toISOString(), subtype: 'updated', session });
     });
   }
 
@@ -60,7 +60,7 @@ export class GlobalMessageTranslator {
   }
 
   private async translate(event: WsV3CoreEvent): Promise<unknown[]> {
-    const timestamp = Date.now();
+    const eventCreatedAt = new Date().toISOString();
     switch (event.type) {
       case 'event.workspace.created':
       case 'event.workspace.updated': {
@@ -71,7 +71,7 @@ export class GlobalMessageTranslator {
         return [
           {
             type: 'workspace',
-            timestamp,
+            event_created_at: eventCreatedAt,
             subtype: event.type === 'event.workspace.created' ? 'created' : 'updated',
             workspace: info,
           },
@@ -86,12 +86,12 @@ export class GlobalMessageTranslator {
           id: payload.workspaceId,
           root: payload.root,
           name: basename(payload.root).slice(0, 100) || payload.root,
-          created_at: new Date(timestamp).toISOString(),
-          last_opened_at: new Date(timestamp).toISOString(),
+          created_at: eventCreatedAt,
+          last_opened_at: eventCreatedAt,
           session_count: 0,
         };
         return [
-          { type: 'workspace', timestamp, subtype: 'deleted', workspace: cached ?? fallback },
+          { type: 'workspace', event_created_at: eventCreatedAt, subtype: 'deleted', workspace: cached ?? fallback },
         ];
       }
       case 'event.config.changed': {
@@ -100,7 +100,7 @@ export class GlobalMessageTranslator {
         return [
           {
             type: 'config',
-            timestamp,
+            event_created_at: eventCreatedAt,
             config: payload['config'],
             changed_fields: stringArray(payload['changedFields']),
           },
@@ -109,19 +109,19 @@ export class GlobalMessageTranslator {
       case 'event.config.warning': {
         const warnings = configWarningStrings(event.payload);
         if (warnings === undefined) return [];
-        return [{ type: 'config.warning', timestamp, warnings }];
+        return [{ type: 'config.warning', event_created_at: eventCreatedAt, warnings }];
       }
       case 'event.model_catalog.changed':
-        return [{ type: 'model_catalog', timestamp }];
+        return [{ type: 'model_catalog', event_created_at: eventCreatedAt }];
       case 'event.plugin.changed':
-        return [{ type: 'plugin', timestamp }];
+        return [{ type: 'plugin', event_created_at: eventCreatedAt }];
       case 'event.capability.changed': {
         const payload = asRecord(event.payload);
         const capabilityId = payload?.['capability_id'];
         return [
           {
             type: 'capability',
-            timestamp,
+            event_created_at: eventCreatedAt,
             capability_id:
               typeof capabilityId === 'string' && capabilityId.length > 0
                 ? capabilityId
@@ -136,7 +136,7 @@ export class GlobalMessageTranslator {
         const session = payload['session'] ?? (await this.deps.sessionInfo(sessionId));
         if (typeof session !== 'object' || session === null) return [];
         this.sessions.set(sessionId, session);
-        return [{ type: 'session', timestamp, subtype: 'created', session }];
+        return [{ type: 'session', event_created_at: eventCreatedAt, subtype: 'created', session }];
       }
       case 'event.session.archived': {
         const sessionId = stringField(asRecord(event.payload), 'sessionId');
@@ -144,7 +144,7 @@ export class GlobalMessageTranslator {
         const session = await this.deps.sessionInfo(sessionId);
         if (session === undefined) return [];
         this.sessions.set(sessionId, session);
-        return [{ type: 'session', timestamp, subtype: 'archived', session }];
+        return [{ type: 'session', event_created_at: eventCreatedAt, subtype: 'archived', session }];
       }
       case 'event.session.deleted': {
         const sessionId = stringField(asRecord(event.payload), 'sessionId');
@@ -152,7 +152,7 @@ export class GlobalMessageTranslator {
         const cached = this.sessions.get(sessionId);
         this.sessions.delete(sessionId);
         if (cached === undefined) return [];
-        return [{ type: 'session', timestamp, subtype: 'deleted', session: cached }];
+        return [{ type: 'session', event_created_at: eventCreatedAt, subtype: 'deleted', session: cached }];
       }
       case 'session.meta.updated': {
         const payload = asRecord(event.payload);
@@ -164,7 +164,7 @@ export class GlobalMessageTranslator {
         return [
           {
             type: 'session',
-            timestamp,
+            event_created_at: eventCreatedAt,
             subtype: 'updated',
             session,
             changed_fields: metaChangedFields(payload),
