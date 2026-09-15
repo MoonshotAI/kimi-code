@@ -1369,7 +1369,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 ### 能力与插件
 
-能力是带有分层就绪状态的内置特性——由检测步骤加后台安装组成；当前版本注册了 `kimi-cu`（Kimi Computer Use）与 `kimi-webbridge`（Kimi WebBridge）。插件是已安装的技能、MCP 服务、hook 与命令的打包集合。这组端点报告能力状态、驱动能力安装，并管理插件从市场列表到移除的整个生命周期。
+能力是带有分层就绪状态的内置特性——由检测步骤加后台安装组成；当前版本注册了 `kimi-cu`（Kimi Computer Use）与 `kimi-webbridge`（Kimi Browser Extension）。插件是已安装的技能、MCP 服务、hook 与命令的打包集合。这组端点报告能力状态、驱动能力安装，并管理插件从市场列表到移除的整个生命周期。
 
 | 方法与路径 | 说明 |
 | --- | --- |

@@ -1369,7 +1369,7 @@ On success, `data` is `{ restarting: true }`.
 
 ### Capabilities and plugins
 
-Capabilities are built-in features with layered readiness — detection steps plus a background install; the current build registers `kimi-cu` (Kimi Computer Use) and `kimi-webbridge` (Kimi WebBridge). Plugins are installed packages of skills, MCP servers, hooks, and commands. These endpoints report capability status and drive capability installs, and manage the plugin lifecycle from marketplace listing to removal.
+Capabilities are built-in features with layered readiness — detection steps plus a background install; the current build registers `kimi-cu` (Kimi Computer Use) and `kimi-webbridge` (Kimi Browser Extension). Plugins are installed packages of skills, MCP servers, hooks, and commands. These endpoints report capability status and drive capability installs, and manage the plugin lifecycle from marketplace listing to removal.
 
 | Method and path | Description |
 | --- | --- |
