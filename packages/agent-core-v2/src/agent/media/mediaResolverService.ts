@@ -337,7 +337,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     const model = requester.model;
     try {
       const uploaded = await runWithCredentialRecovery(
-        model.credentials,
+        model.credentialProvider,
         () =>
           upload.uploader(
             { data: source.bytes, mimeType, filename: source.filename },
@@ -473,7 +473,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
 
     try {
       const uploaded = await runWithCredentialRecovery(
-        requester.model.credentials,
+        requester.model.credentialProvider,
         () => uploader({ data: bytes, mimeType, filename }, { signal }),
         signal,
       );
@@ -543,7 +543,7 @@ async function accountHashFor(model: Model): Promise<string> {
     identity = `authorization\0${authorization.trim()}`;
   } else {
     try {
-      const apiKey = (await model.credentials?.resolve())?.apiKey;
+      const apiKey = (await model.credentialProvider?.resolve())?.apiKey;
       if (apiKey !== undefined && apiKey.length > 0) {
         identity = `api-key\0${stableJwtSubject(apiKey) ?? apiKey}`;
       }

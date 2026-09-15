@@ -1,10 +1,12 @@
 import { Markdown, visibleWidth } from '@moonshot-ai/pi-tui';
+import chalk from 'chalk';
 import * as cliHighlight from 'cli-highlight';
 import { describe, expect, it, vi } from 'vitest';
 
 import { AssistantMessageComponent } from '#/tui/components/messages/assistant-message';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
+import { currentTheme } from '#/tui/theme/theme';
 import { setMarkdownRenderLatex } from '#/tui/utils/markdown-options';
 
 import { captureProcessWrite } from '../../../helpers/process';
@@ -129,13 +131,27 @@ describe('AssistantMessageComponent', () => {
     expect(highlightSpy).toHaveBeenCalled();
   });
 
+  it('highlights diff fences with the palette diff colors', () => {
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    try {
+      const theme = createMarkdownTheme();
+      expect(theme.highlightCode?.('- removed\n+ added', 'diff')).toEqual([
+        chalk.hex(currentTheme.color('diffRemoved'))('- removed'),
+        chalk.hex(currentTheme.color('diffAdded'))('+ added'),
+      ]);
+    } finally {
+      chalk.level = previousLevel;
+    }
+  });
+
   it('marks the rendered zone with OSC 133 markers, once across cache hits', () => {
     const component = new AssistantMessageComponent();
     component.updateContent('hello');
 
     const lines = component.render(80);
     expect(lines[0]).toMatch(/^\u001B\]133;A\u0007/);
-    expect(lines[lines.length - 1]).toMatch(/^\u001B\]133;B\u0007\u001B\]133;C\u0007/);
+    expect(lines.at(-1)).toMatch(/^\u001B\]133;B\u0007\u001B\]133;C\u0007/);
 
     const cached = component.render(80);
     expect(cached[0]).toBe(lines[0]);

@@ -56,13 +56,13 @@ const messages: readonly Message[] = [createUserMessage('hi')];
 const kimiOpenAI = {
   connection: kimiConnection,
   trait: kimiOpenAITrait,
-  convertError: classifyKimiQuotaError,
+  classifyError: classifyKimiQuotaError,
 } as const;
 
 const kimiAnthropic = {
   connection: kimiConnection,
   trait: kimiAnthropicTrait,
-  convertError: classifyKimiQuotaError,
+  classifyError: classifyKimiQuotaError,
 } as const;
 
 async function generateAndCollectUsage(
@@ -1120,8 +1120,8 @@ describe('request pipeline', () => {
     const client = stubOpenAIClient(chatCompletionChunks);
     const requester = createOpenAIRequester({
       trait: {
-        cacheKey: (key) => {
-          order.push('cacheKey');
+        encodeCacheKey: (key) => {
+          order.push('encodeCacheKey');
           return { prompt_cache_key: key };
         },
         thinking: () => {
@@ -1167,7 +1167,7 @@ describe('request pipeline', () => {
       { signal: new AbortController().signal },
     );
     expect(order).toEqual([
-      'cacheKey',
+      'encodeCacheKey',
       'thinking',
       'convertMessage:user',
       'mergeHistory',

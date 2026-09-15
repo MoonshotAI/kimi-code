@@ -33,7 +33,7 @@ import type { Protocol } from '#/llm-adapter/protocol/protocol';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 
 import { registerStateServices } from '../../state/stubs';
-import { staticCredentials } from '#human/credentials/credentials';
+import { createStaticCredentialProvider } from '#human/credentials/credentials';
 import { ImageUploadUnsupportedError } from '#/llm-adapter/contract/errors';
 
 const FILE_ID = 'file_abc';
@@ -177,7 +177,7 @@ function requester(opts: {
   headers?: Record<string, string>;
   uploadVideo?: ModelRequester['uploadVideo'];
   uploadImage?: ModelRequester['uploadImage'];
-  credentials?: LlmCredentialProvider;
+  credentialProvider?: LlmCredentialProvider;
 }): ModelRequester {
   return {
     model: {
@@ -195,7 +195,7 @@ function requester(opts: {
       alwaysThinking: false,
       providerName: 'p',
       providerType: opts.providerType ?? 'kimi',
-      credentials: opts.credentials,
+      credentialProvider: opts.credentialProvider,
     },
     request: () => {
       throw new Error('unused');
@@ -381,7 +381,7 @@ describe('AgentMediaResolverService video strategy', () => {
 
   it('invalidates recoverable credentials and retries the upload once on a 401', async () => {
     let invalidations = 0;
-    const credentials: LlmCredentialProvider = {
+    const credentialProvider: LlmCredentialProvider = {
       resolve: () => ({ apiKey: 'tok' }),
       canRecover: (error) => (error as { statusCode?: number }).statusCode === 401,
       invalidate: () => {
@@ -394,7 +394,7 @@ describe('AgentMediaResolverService video strategy', () => {
 
     const out = await res.resolve(
       [videoMessage(buildKimiFileUrl(FILE_ID))],
-      requester({ uploadVideo: upload, credentials }),
+      requester({ uploadVideo: upload, credentialProvider }),
     );
 
     expect(firstPart(out)).toEqual(msPart('prov-9'));
@@ -460,13 +460,13 @@ describe('AgentMediaResolverService video strategy', () => {
     const upload = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
     const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]));
     const message = videoMessage(buildKimiFileUrl(FILE_ID));
-    const accountA = requester({ uploadVideo: upload, credentials: staticCredentials('key-a') });
+    const accountA = requester({ uploadVideo: upload, credentialProvider: createStaticCredentialProvider('key-a') });
 
     await res.resolve([message], accountA);
     await res.resolve([message], accountA);
     expect(upload).toHaveBeenCalledTimes(1);
 
-    const accountB = requester({ uploadVideo: upload, credentials: staticCredentials('key-b') });
+    const accountB = requester({ uploadVideo: upload, credentialProvider: createStaticCredentialProvider('key-b') });
     const out = await res.resolve([message], accountB);
 
     expect(firstPart(out)).toEqual(msPart('prov-1'));
@@ -488,11 +488,11 @@ describe('AgentMediaResolverService video strategy', () => {
     const tokenB = fakeJwt({ ...base, sub: 'user-1', token_id: 'tok-2', iat: 300, exp: 400 });
     const tokenC = fakeJwt({ ...base, sub: 'user-2', token_id: 'tok-3', iat: 500, exp: 600 });
 
-    await res.resolve([message], requester({ uploadVideo: upload, credentials: staticCredentials(tokenA) }));
-    await res.resolve([message], requester({ uploadVideo: upload, credentials: staticCredentials(tokenB) }));
+    await res.resolve([message], requester({ uploadVideo: upload, credentialProvider: createStaticCredentialProvider(tokenA) }));
+    await res.resolve([message], requester({ uploadVideo: upload, credentialProvider: createStaticCredentialProvider(tokenB) }));
     expect(upload).toHaveBeenCalledTimes(1);
 
-    await res.resolve([message], requester({ uploadVideo: upload, credentials: staticCredentials(tokenC) }));
+    await res.resolve([message], requester({ uploadVideo: upload, credentialProvider: createStaticCredentialProvider(tokenC) }));
     expect(upload).toHaveBeenCalledTimes(2);
   });
 
@@ -502,7 +502,7 @@ describe('AgentMediaResolverService video strategy', () => {
     const message = videoMessage(buildKimiFileUrl(FILE_ID));
     const endpointA = requester({
       uploadVideo: upload,
-      credentials: staticCredentials('key-a'),
+      credentialProvider: createStaticCredentialProvider('key-a'),
       baseUrl: 'https://a.example.test/v1',
     });
 
@@ -512,7 +512,7 @@ describe('AgentMediaResolverService video strategy', () => {
 
     const endpointB = requester({
       uploadVideo: upload,
-      credentials: staticCredentials('key-a'),
+      credentialProvider: createStaticCredentialProvider('key-a'),
       baseUrl: 'https://b.example.test/v1',
     });
     const out = await res.resolve([message], endpointB);
@@ -936,13 +936,13 @@ describe('AgentMediaResolverService image upload', () => {
     const upload = vi.fn(async (): Promise<ImageURLPart> => msImagePart('img-1'));
     const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
     const message = imageMessage(buildKimiFileUrl(FILE_ID));
-    const accountA = requester({ uploadImage: upload, credentials: staticCredentials('key-a') });
+    const accountA = requester({ uploadImage: upload, credentialProvider: createStaticCredentialProvider('key-a') });
 
     await res.resolve([message], accountA);
     await res.resolve([message], accountA);
     expect(upload).toHaveBeenCalledTimes(1);
 
-    const accountB = requester({ uploadImage: upload, credentials: staticCredentials('key-b') });
+    const accountB = requester({ uploadImage: upload, credentialProvider: createStaticCredentialProvider('key-b') });
     const out = await res.resolve([message], accountB);
 
     expect(firstPart(out)).toEqual(msImagePart('img-1'));
@@ -955,7 +955,7 @@ describe('AgentMediaResolverService image upload', () => {
     const message = imageMessage(buildKimiFileUrl(FILE_ID));
     const endpointA = requester({
       uploadImage: upload,
-      credentials: staticCredentials('key-a'),
+      credentialProvider: createStaticCredentialProvider('key-a'),
       baseUrl: 'https://a.example.test/v1',
     });
 
@@ -965,7 +965,7 @@ describe('AgentMediaResolverService image upload', () => {
 
     const endpointB = requester({
       uploadImage: upload,
-      credentials: staticCredentials('key-a'),
+      credentialProvider: createStaticCredentialProvider('key-a'),
       baseUrl: 'https://b.example.test/v1',
     });
     const out = await res.resolve([message], endpointB);
@@ -982,13 +982,13 @@ describe('AgentMediaResolverService image upload', () => {
     const message = imageMessage(buildKimiFileUrl(FILE_ID));
     const openai = requester({
       uploadImage: upload,
-      credentials: staticCredentials('key-a'),
+      credentialProvider: createStaticCredentialProvider('key-a'),
       protocol: 'openai',
       baseUrl: 'https://api.example.test',
     });
     const anthropic = requester({
       uploadImage: upload,
-      credentials: staticCredentials('key-a'),
+      credentialProvider: createStaticCredentialProvider('key-a'),
       protocol: 'anthropic',
       baseUrl: 'https://api.example.test',
     });
@@ -1008,13 +1008,13 @@ describe('AgentMediaResolverService image upload', () => {
     const message = imageMessage(buildKimiFileUrl(FILE_ID));
     const accountA = requester({
       uploadImage: upload,
-      credentials: staticCredentials('catalog-key'),
+      credentialProvider: createStaticCredentialProvider('catalog-key'),
       baseUrl: 'https://api.example.test/v1',
       headers: { Authorization: 'Bearer account-a' },
     });
     const accountB = requester({
       uploadImage: upload,
-      credentials: staticCredentials('catalog-key'),
+      credentialProvider: createStaticCredentialProvider('catalog-key'),
       baseUrl: 'https://api.example.test/v1',
       headers: { Authorization: 'Bearer account-b' },
     });

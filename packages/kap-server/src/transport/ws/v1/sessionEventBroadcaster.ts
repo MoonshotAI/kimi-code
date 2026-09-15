@@ -1241,6 +1241,7 @@ const TRANSCRIPT_PROJECTED_EVENT_TYPES: ReadonlySet<string> = new Set([
   'subagent.started',
   'subagent.completed',
   'subagent.failed',
+  'subagent.cancelled',
   'subagent.suspended',
   'compaction.started',
   'compaction.blocked',

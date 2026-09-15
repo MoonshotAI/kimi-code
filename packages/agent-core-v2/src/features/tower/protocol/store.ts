@@ -302,6 +302,17 @@ export class TowerStore {
     return stale.map((agent) => agent.name);
   }
 
+  async adopt(sessionId: string): Promise<readonly string[]> {
+    try {
+      await readFile(this.abs(STATE_FILE), 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    }
+    const state = await this.load();
+    return this.adoptForeignRoster(state, sessionId);
+  }
+
   async release(sessionId: string): Promise<void> {
     if (!(await this.isInitialized())) return;
     const state = await this.load();
@@ -374,9 +385,17 @@ export class TowerStore {
     return all.slice(-lines);
   }
 
+  resolveAgent(state: TowerState, agentId: string): TowerRosterEntry | undefined {
+    let resolved: TowerRosterEntry | undefined;
+    for (const agent of state.roster.agents) {
+      if (agent.agentId === agentId) resolved = agent;
+    }
+    return resolved;
+  }
+
   resolveCallerName(state: TowerState, agentId: string): string {
     if (agentId === 'main') return TOWER_NAME;
-    const entry = state.roster.agents.find((agent) => agent.agentId === agentId);
+    const entry = this.resolveAgent(state, agentId);
     if (entry === undefined) {
       throw new TowerProtocolError(
         `agent "${agentId}" is not a tower participant — only spawned workers/reviewers and the tower can use tower tools`,
@@ -405,6 +424,11 @@ export class TowerStore {
         `tower agent name "${entry.name}" is reserved by the tower protocol — pick a different name`,
       );
     }
+    for (let index = state.roster.agents.length - 1; index >= 0; index -= 1) {
+      if (state.roster.agents[index]!.agentId === entry.agentId) {
+        state.roster.agents.splice(index, 1);
+      }
+    }
     if (this.findAgent(state, entry.name) !== undefined) {
       throw new TowerProtocolError(`tower agent name "${entry.name}" is already registered`);
     }
@@ -418,7 +442,7 @@ export class TowerStore {
     reason?: string,
   ): Promise<TowerRosterEntry | undefined> {
     const state = await this.load();
-    const index = state.roster.agents.findIndex((agent) => agent.agentId === agentId);
+    const index = state.roster.agents.findLastIndex((agent) => agent.agentId === agentId);
     const existing = state.roster.agents[index];
     if (existing === undefined) return undefined;
     if (existing.diedAt !== undefined) return existing;
@@ -450,7 +474,7 @@ export class TowerStore {
 
   async clearAgentDied(agentId: string): Promise<boolean> {
     const state = await this.load();
-    const index = state.roster.agents.findIndex((agent) => agent.agentId === agentId);
+    const index = state.roster.agents.findLastIndex((agent) => agent.agentId === agentId);
     const existing = state.roster.agents[index];
     if (existing === undefined || existing.diedAt === undefined) return false;
     const entry: TowerRosterEntry = {

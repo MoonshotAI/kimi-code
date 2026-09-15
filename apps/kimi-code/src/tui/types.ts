@@ -166,7 +166,7 @@ export interface BackgroundAgentMetadata {
   readonly effort?: string;
 }
 
-export type BackgroundAgentStatusPhase = 'started' | 'completed' | 'failed';
+export type BackgroundAgentStatusPhase = 'started' | 'completed' | 'failed' | 'killed';
 
 export interface BackgroundAgentStatusData {
   readonly phase: BackgroundAgentStatusPhase;

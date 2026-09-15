@@ -286,6 +286,25 @@ describe('Model assembly (pure data)', () => {
     }
   });
 
+  it('surfaces a declared adaptive_thinking flag on the assembled model', () => {
+    const { host, catalog } = createHost({
+      providers: { claude: { type: 'anthropic', apiKey: 'sk-a' } },
+      models: {
+        custom: {
+          provider: 'claude',
+          model: 'my-custom-model',
+          maxContextSize: 200000,
+          adaptiveThinking: true,
+        },
+      },
+    });
+    try {
+      expect(catalog.get('custom').adaptiveThinking).toBe(true);
+    } finally {
+      host.dispose();
+    }
+  });
+
   it('resolves provider env-bag credentials and endpoints through the registry', async () => {
     const { host, catalog } = createHost({
       providers: {
@@ -300,7 +319,7 @@ describe('Model assembly (pure data)', () => {
     try {
       const kimi = catalog.get('k1');
       expect(kimi.baseUrl).toBe('https://kimi-env.example.test/v1');
-      return expect(await kimi.credentials?.resolve()).toEqual({ apiKey: 'env-token' });
+      return expect(await kimi.credentialProvider?.resolve()).toEqual({ apiKey: 'env-token' });
     } finally {
       host.dispose();
     }
@@ -486,10 +505,10 @@ describe('Model assembly (pure data)', () => {
     );
     try {
       const model = catalog.get('k1');
-      expect(model.credentials?.canRecover?.(Object.assign(new Error('x'), { status: 401 }))).toBe(
+      expect(model.credentialProvider?.canRecover?.(Object.assign(new Error('x'), { status: 401 }))).toBe(
         true,
       );
-      await expect(model.credentials?.resolve()).resolves.toEqual({ apiKey: 'tok-1' });
+      await expect(model.credentialProvider?.resolve()).resolves.toEqual({ apiKey: 'tok-1' });
     } finally {
       host.dispose();
     }

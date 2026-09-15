@@ -147,7 +147,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
           ? undefined
           : (input, options) =>
               runWithCredentialRecovery(
-                requester.model.credentials,
+                requester.model.credentialProvider,
                 () => uploader(input, options),
                 options?.signal,
               ),

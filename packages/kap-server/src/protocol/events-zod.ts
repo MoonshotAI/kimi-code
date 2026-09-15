@@ -72,6 +72,7 @@ import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 import type { FinishReason } from '@moonshot-ai/agent-core-v2/human/llm/finish-reason';
 import type { TokenUsage } from '@moonshot-ai/agent-core-v2/human/llm/usage';
 import type {
+  SubagentCancelledPayload,
   SubagentCompletedPayload,
   SubagentFailedPayload,
   SubagentSpawnedPayload,
@@ -929,6 +930,11 @@ export const subagentFailedEventSchema = z.object({
   error: z.string(),
 }) satisfies z.ZodType<SubagentFailedPayload>;
 
+export const subagentCancelledEventSchema = z.object({
+  type: z.literal('subagent.cancelled'),
+  subagentId: z.string(),
+}) satisfies z.ZodType<SubagentCancelledPayload>;
+
 export const compactionStartedEventSchema = z.object({
   type: z.literal('compaction.started'),
   agentId: z.string(),
@@ -1088,6 +1094,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   subagentSuspendedEventSchema,
   subagentCompletedEventSchema,
   subagentFailedEventSchema,
+  subagentCancelledEventSchema,
   compactionStartedEventSchema,
   compactionBlockedEventSchema,
   compactionCancelledEventSchema,

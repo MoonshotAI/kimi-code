@@ -25,12 +25,12 @@ export class AgentModeMutexService extends Disposable implements IAgentModeMutex
     super();
     this._register(
       eventBus.subscribe(PlanModeEnter, () => {
-        if (this.tower.isActive) this.tower.exit();
+        if (this.tower.isActive) void this.tower.exit();
       }),
     );
     this._register(
       eventBus.subscribe(SwarmModeEnter, () => {
-        if (this.tower.isActive) this.tower.exit();
+        if (this.tower.isActive) void this.tower.exit();
       }),
     );
     this._register(

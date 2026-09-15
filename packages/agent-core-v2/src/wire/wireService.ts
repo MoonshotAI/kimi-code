@@ -485,7 +485,7 @@ export class WireService extends Service implements IWireService, IAgentJournal 
     const persistError = this.persistError;
     this.persistError = undefined;
     if (persistError !== undefined) throw persistError;
-    await this.log.flush();
+    await this.log.flushLog(this.wireScope, AGENT_WIRE_RECORD_KEY);
   }
 
   private async rebuildRewriteRecords(

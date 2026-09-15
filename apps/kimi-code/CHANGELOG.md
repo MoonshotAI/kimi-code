@@ -1,5 +1,23 @@
 # @moonshot-ai/kimi-code
 
+## 0.43.1
+
+### Patch Changes
+
+- [#3780](https://github.com/MoonshotAI/kimi-code/pull/3780) [`486dcd2`](https://github.com/MoonshotAI/kimi-code/commit/486dcd26c76f2854fc351515a45d8f0fc2d31ed6) Thanks [@Grapedge](https://github.com/Grapedge)! - Update the terminal UI engine, fixing link colors in wrapped markdown tables and `@` file-completion ordering, and adding native clipboard support on Linux X11.
+
+- [#3776](https://github.com/MoonshotAI/kimi-code/pull/3776) [`48fad6e`](https://github.com/MoonshotAI/kimi-code/commit/48fad6e7d9cd00511c6118e84ae6d22dafb96be9) Thanks [@huangzheng2016](https://github.com/huangzheng2016)! - Fix memory not being released when subagent scopes are disposed.
+
+- [#3777](https://github.com/MoonshotAI/kimi-code/pull/3777) [`dc76b0c`](https://github.com/MoonshotAI/kimi-code/commit/dc76b0caaa6e0aa406bf87957e6b5f8aca722221) Thanks [@huangzheng2016](https://github.com/huangzheng2016)! - Fix progressively slower rendering on each round of large agent swarm runs.
+
+- [#3631](https://github.com/MoonshotAI/kimi-code/pull/3631) [`1336be3`](https://github.com/MoonshotAI/kimi-code/commit/1336be38777959cc558fed2b51dc53caa07da5db) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Stop returning deleted sessions from global search before the search index catches up.
+
+- [#3775](https://github.com/MoonshotAI/kimi-code/pull/3775) [`f248624`](https://github.com/MoonshotAI/kimi-code/commit/f2486241fb5e268d7a43cb589b5c2d59af8db571) Thanks [@huangzheng2016](https://github.com/huangzheng2016)! - Reduce event-loop stalls and GC churn in sessions with many concurrent subagents.
+
+- [#3779](https://github.com/MoonshotAI/kimi-code/pull/3779) [`82ec469`](https://github.com/MoonshotAI/kimi-code/commit/82ec469e47eed52feb664fd361e3d8dcb774596e) Thanks [@huangzheng2016](https://github.com/huangzheng2016)! - Fix pressing Ctrl+C while subagents are running exiting the whole CLI instead of just interrupting the subagents.
+
+- [#3752](https://github.com/MoonshotAI/kimi-code/pull/3752) [`0725ef1`](https://github.com/MoonshotAI/kimi-code/commit/0725ef1ce0a7f9c15db7ffc042f57308657b3ee6) Thanks [@tpoisonooo](https://github.com/tpoisonooo)! - Fix tower mode mistaking newly spawned agents for previous sessions' roster entries.
+
 ## 0.43.0
 
 ### Minor Changes

@@ -899,11 +899,14 @@ describe('OAuthService', () => {
   });
 
   it('getManagedUsage resolves the managed runtime auth and delegates to the toolkit', async () => {
-    const usage = { kind: 'ok' as const, summary: null, limits: [], extraUsage: null };
-    toolkit.getManagedUsage.mockResolvedValue(usage);
+    const quota = {
+      kind: 'ok' as const,
+      quota: { usages: {}, extraUsage: null },
+    };
+    toolkit.getManagedUsage.mockResolvedValue(quota);
     const svc = createService();
 
-    await expect(svc.getManagedUsage(OAUTH_PROVIDER)).resolves.toBe(usage);
+    await expect(svc.getManagedUsage(OAUTH_PROVIDER)).resolves.toBe(quota);
     expect(toolkit.getManagedUsage).toHaveBeenCalledWith(OAUTH_PROVIDER, {
       oauthRef: EXAMPLE_COM_SCOPED_REF,
       baseUrl: 'https://api.example.com',

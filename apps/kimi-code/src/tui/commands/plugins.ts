@@ -808,7 +808,7 @@ async function installPluginFromSource(
 const PLUGIN_RELOAD_HINT = 'Run /new or /reload to apply plugin changes.';
 
 const WEBBRIDGE_POST_INSTALL_MARKDOWN = [
-  '*Two steps left to use Kimi WebBridge:*',
+  '*Two steps left to use Kimi Browser Extension:*',
   '1. Install the browser extension',
   '',
   '   - [Chrome Web Store](https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc)',
