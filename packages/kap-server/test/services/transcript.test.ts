@@ -2097,6 +2097,63 @@ describe('AgentTranscriptProjector', () => {
     ]);
   });
 
+  it('preserves backfilled prompt content on prompt.steered when the projector missed the submissions', () => {
+    const tx = new AgentTranscript('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID, {
+      prompt: (promptId) => tx.getPrompt(promptId),
+    });
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    tx.apply([
+      {
+        op: 'prompt.upsert',
+        prompt: {
+          promptId: 'p1',
+          status: 'running',
+          userMessageId: 'm1',
+          content: [{ type: 'text', text: 'original' }],
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+      },
+      {
+        op: 'prompt.upsert',
+        prompt: {
+          promptId: 'p2',
+          status: 'queued',
+          userMessageId: 'm2',
+          content: [{ type: 'text', text: 'look at this' }],
+          createdAt: '2026-01-01T00:00:01.000Z',
+        },
+      },
+    ]);
+
+    feed(
+      ev({
+        type: 'prompt.steered',
+        activePromptId: 'p1',
+        promptIds: ['p2'],
+        content: [{ type: 'text', text: 'look at this' }],
+        steeredAt: '2026-01-01T00:00:02.000Z',
+      }),
+    );
+
+    expect(tx.getPrompt('p1')).toMatchObject({
+      status: 'running',
+      userMessageId: 'm1',
+      content: [{ type: 'text', text: 'original' }],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      steeredAt: '2026-01-01T00:00:02.000Z',
+    });
+    expect(tx.getPrompt('p2')).toMatchObject({
+      status: 'completed',
+      userMessageId: 'm2',
+      content: [{ type: 'text', text: 'look at this' }],
+      createdAt: '2026-01-01T00:00:01.000Z',
+      finishedAt: '2026-01-01T00:00:02.000Z',
+      steeredAt: '2026-01-01T00:00:02.000Z',
+    });
+  });
+
   it('projects turn.steer as a user frame at the next step start, pairing promptIds from prompt.steered', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
