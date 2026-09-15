@@ -1,8 +1,20 @@
-import { effectScope, shallowReactive, shallowRef } from '@vue/reactivity';
-import type { EffectScope, ShallowRef } from '@vue/reactivity';
+import { computed, effectScope, shallowReactive, shallowRef, toValue } from '@vue/reactivity';
+import type { ComputedRef, EffectScope, MaybeRefOrGetter, ShallowRef } from '@vue/reactivity';
 
-import { envelope, type EventHandler, type RuntimeEvent, type ScopedEvent, type Unsubscribe } from './events';
-import type { CollectionToken, Token } from './tokens';
+import { createToken, watchEffect, type CollectionToken, type Token } from './primitives';
+
+export interface RuntimeEvent {
+  readonly type: string;
+  readonly [key: string]: unknown;
+}
+
+export type EventHandler<E extends RuntimeEvent = RuntimeEvent> = (event: E) => void;
+
+export type Unsubscribe = () => void;
+
+export const EventContext = createToken<Record<string, unknown>>('kernel.eventContext');
+
+export const AgentScope = createToken<EffectScope>('kernel.agentScope');
 
 export interface NodeRef {
   readonly name: string;
@@ -196,17 +208,26 @@ export class UnitNode implements NodeRef {
   }
 
   fire(event: RuntimeEvent): void {
-    const scoped: ScopedEvent = envelope(event);
     const path = [...lineage(this)];
+    const inherited: Record<string, unknown> = {};
     for (let i = path.length - 1; i >= 0; i--) {
-      (path[i] as UnitNode).dispatch(scoped, true);
+      const entries = (path[i] as UnitNode).provisions.get(EventContext as Token<unknown>);
+      if (entries !== undefined) {
+        for (const provided of entries) {
+          Object.assign(inherited, provided.value);
+        }
+      }
+    }
+    const enriched = { ...inherited, ...event } as RuntimeEvent;
+    for (let i = path.length - 1; i >= 0; i--) {
+      (path[i] as UnitNode).dispatch(enriched, true);
     }
     for (const unit of path) {
-      unit.dispatch(scoped, false);
+      unit.dispatch(enriched, false);
     }
   }
 
-  private dispatch(event: ScopedEvent, capture: boolean): void {
+  private dispatch(event: RuntimeEvent, capture: boolean): void {
     const lists = [this.handlers.get(event.type), this.handlers.get('*')];
     for (const list of lists) {
       if (list === undefined) {
@@ -421,4 +442,97 @@ export function runUnit(node: UnitNode): void {
   if (node.state === 'pending') {
     node.state = 'active';
   }
+}
+
+export function provide<T>(token: Token<T>, value: T): void {
+  currentUnit().provide(token, value);
+}
+
+export function inject<T>(token: Token<T>): T {
+  return currentUnit().resolve(token);
+}
+
+export function useNode(): UnitNode {
+  return currentUnit();
+}
+
+export function useFire(): (event: RuntimeEvent) => void {
+  const node = currentUnit();
+  return (event) => node.fire(event);
+}
+
+export function useOn<E extends RuntimeEvent>(
+  type: E['type'],
+  handler: EventHandler<E>,
+  opts?: { once?: boolean; capture?: boolean },
+): void {
+  const node = currentUnit();
+  pushCleanup(node, node.on(type, handler as EventHandler, opts));
+}
+
+export function useContribute<T>(
+  collection: CollectionToken<T>,
+  value: T,
+  priority = 0,
+): void {
+  const node = currentUnit();
+  pushCleanup(node, node.contribute(collection, value, priority));
+}
+
+export function useCollection<T>(collection: CollectionToken<T>): ComputedRef<readonly T[]> {
+  const node = currentUnit();
+  return computed(() => node.fold(collection));
+}
+
+export interface ChildEntry {
+  readonly key: string;
+  readonly recipe: KernelRecipe;
+  readonly props?: unknown;
+}
+
+interface ChildMount {
+  recipe: KernelRecipe;
+  props: unknown;
+  handle: UnitHandle;
+}
+
+export function useChildren(source: MaybeRefOrGetter<Array<ChildEntry | null>>): void {
+  const node = currentUnit();
+  const mounts = new Map<string, ChildMount>();
+  watchEffect(() => {
+    const entries = toValue(source);
+    const seen = new Set<string>();
+    for (const entry of entries) {
+      if (entry === null) {
+        continue;
+      }
+      if (seen.has(entry.key)) {
+        throw new Error(`duplicate child key '${entry.key}' in unit '${node.recipe.name}'`);
+      }
+      seen.add(entry.key);
+      const existing = mounts.get(entry.key);
+      if (existing !== undefined && existing.recipe !== entry.recipe) {
+        void existing.handle.unmount();
+        mounts.delete(entry.key);
+      }
+      const current = mounts.get(entry.key);
+      if (current === undefined) {
+        const handle = node.mount(entry.recipe, entry.props);
+        mounts.set(entry.key, { recipe: entry.recipe, props: entry.props, handle });
+      } else if (!Object.is(current.props, entry.props)) {
+        current.props = entry.props;
+        current.handle.update(entry.props);
+      }
+    }
+    for (const [key, child] of Array.from(mounts)) {
+      if (!seen.has(key)) {
+        mounts.delete(key);
+        void child.handle.unmount();
+      }
+    }
+  });
+}
+
+export function createUnit<P = void>(name: string, setup: UnitSetup<P>): UnitRecipe<P> {
+  return { name, setup };
 }

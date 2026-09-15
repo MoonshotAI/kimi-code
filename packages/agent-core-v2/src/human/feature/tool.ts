@@ -3,7 +3,6 @@ import { toValue, watch } from '@vue/reactivity';
 import {
   buildStoreHandle,
   createCollection,
-  NodeEnrichment,
   pushCleanup,
   type FaceEventMeta,
   type StoreResolution,
@@ -112,7 +111,6 @@ function bindToolFaceWatchers(name: string, node: UnitNode): void {
           node.fire({
             type: 'tool.state',
             tool: name,
-            ...resolveEnrichment(node),
             state: nonFunctionFields(record),
           });
           if (node.faceWatchers !== undefined) {
@@ -134,12 +132,4 @@ function nonFunctionFields(face: Record<string, unknown>): Record<string, unknow
     }
   }
   return out;
-}
-
-function resolveEnrichment(node: UnitNode): Record<string, unknown> {
-  try {
-    return node.resolve(NodeEnrichment);
-  } catch {
-    return {};
-  }
 }

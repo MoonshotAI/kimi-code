@@ -5,9 +5,9 @@ import type { AgentEventStore } from '#/agent/slices';
 import {
   AgentScope,
   createUnit,
+  EventContext,
   EventStoreService,
   mountRoot,
-  NodeEnrichment,
   provide,
   useChildren,
   watchEffect,
@@ -42,7 +42,7 @@ export interface AgentFeatureUnitProps {
 
 export const AgentFeatureUnit = createUnit<AgentFeatureUnitProps>('agent-features', (props, ctx) => {
   provide(AgentContext, { sessionId: props.sessionId, agentId: props.agentId });
-  provide(NodeEnrichment, { sessionId: props.sessionId, agentId: props.agentId });
+  provide(EventContext, { sessionId: props.sessionId, agentId: props.agentId });
   provide(EventStoreService, createDurableBackend(props.store));
   provide(AgentRuntime, createAgentPluginTarget(props.self as unknown as AgentPluginSource));
   if (props.scope !== undefined) {

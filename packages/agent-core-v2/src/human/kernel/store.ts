@@ -1,15 +1,14 @@
 import { toValue, watch } from '@vue/reactivity';
 
-import type { Unsubscribe } from './events';
+import type { Token } from './primitives';
 import {
   pushCleanup,
   type FaceEventMeta,
   type UnitNode,
   type UnitRecipe,
   type UnitSetup,
+  type Unsubscribe,
 } from './runtime';
-import type { Token } from './tokens';
-import { NodeEnrichment } from './tokens';
 
 export interface StoreHandle<S> {
   readonly name: string;
@@ -123,7 +122,6 @@ function bindFaceWatchers(name: string, node: UnitNode): void {
           node.fire({
             type: 'store.state',
             store: name,
-            ...resolveEnrichment(node),
             state: nonFunctionFields(record),
           });
           if (node.faceWatchers !== undefined) {
@@ -145,12 +143,4 @@ function nonFunctionFields(face: Record<string, unknown>): Record<string, unknow
     }
   }
   return out;
-}
-
-function resolveEnrichment(node: UnitNode): Record<string, unknown> {
-  try {
-    return node.resolve(NodeEnrichment);
-  } catch {
-    return {};
-  }
 }

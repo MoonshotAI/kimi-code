@@ -8,10 +8,10 @@ import {
   createToken,
   createUnit,
   effectScope,
+  EventContext,
   EventStoreService,
   inject,
   mountRoot,
-  NodeEnrichment,
   provide,
   pushCleanup,
   ref,
@@ -29,7 +29,6 @@ import {
   type DurableBackend,
   type DurableSlice,
   type Ref,
-  type ScopedEvent,
   type StoreResolution,
   type UnitHandle,
   type UnitNode,
@@ -555,22 +554,34 @@ describe('event fire', () => {
     ]);
   });
 
-  it('shares one scoped envelope across phases and supports veto', () => {
-    const seen: ScopedEvent[] = [];
-    const seq: string[] = [];
-    const { node, grandNode } = threeLevelTree(seq);
-    node.on('e', (event) => seen.push(event as ScopedEvent), { capture: true });
-    node.on('e', (event) => seen.push(event as ScopedEvent));
-    grandNode.on('e', (event) => {
-      (event as ScopedEvent).veto('stop');
+  it('merges EventContext down the lineage with deeper and explicit fields winning', () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const leaf = createUnit('leaf', () => {
+      provide(EventContext, { feature: 'todo', shared: 'leaf', depth: 'leaf' });
     });
-    const original = { type: 'e' };
-    grandNode.fire(original);
-    expect(seen).toHaveLength(2);
-    expect(seen[0]).toBe(seen[1]);
-    expect(seen[0]?.vetoed).toBe(true);
-    expect(seen[0]?.vetoReason).toBe('stop');
-    expect(original).toEqual({ type: 'e' });
+    const mid = createUnit('mid', () => {
+      provide(EventContext, { sessionId: 's1', shared: 'mid' });
+      useNode().mount(leaf);
+    });
+    const root = createUnit('root', () => {
+      provide(EventContext, { agentId: 'a1', shared: 'root', depth: 'root' });
+      const node = useNode();
+      node.on('e', (event) => seen.push(event as unknown as Record<string, unknown>));
+      node.mount(mid);
+    });
+    const { node } = mountRoot(root);
+    const leafNode = (node.children[0] as UnitNode).children[0] as UnitNode;
+    leafNode.fire({ type: 'e', shared: 'explicit', extra: 1 });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toEqual({
+      type: 'e',
+      agentId: 'a1',
+      sessionId: 's1',
+      feature: 'todo',
+      shared: 'explicit',
+      depth: 'leaf',
+      extra: 1,
+    });
   });
 
   it('honors once, wildcard handlers, and unsubscribe', () => {
@@ -684,7 +695,7 @@ describe('createStore', () => {
       sibling = inject(counterStore);
     });
     const root = createUnit('root', () => {
-      provide(NodeEnrichment, { agentId: 'a1' });
+      provide(EventContext, { agentId: 'a1' });
       const node = useNode();
       node.on('store.state', (event) => {
         events.push(event as unknown as Record<string, unknown>);

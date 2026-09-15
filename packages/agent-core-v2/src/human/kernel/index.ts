@@ -1,7 +1,37 @@
-export * from './tokens';
-export * from './events';
+export * from './primitives';
+export * from './capabilities';
 export * from './store';
-export * from './unit';
-export * from './hooks';
-export { UnitNode, mountRoot, pushCleanup, removeCleanup } from './runtime';
-export type { FaceEventMeta, KernelRecipe, MountRootOptions, NodeRef, ProviderEntry, RecipeExtension, UnitContext, UnitHandle, UnitState } from './runtime';
+export {
+  AgentScope,
+  EventContext,
+  UnitNode,
+  createUnit,
+  inject,
+  mountRoot,
+  provide,
+  pushCleanup,
+  removeCleanup,
+  useChildren,
+  useCollection,
+  useContribute,
+  useFire,
+  useNode,
+  useOn,
+} from './runtime';
+export type {
+  ChildEntry,
+  EventHandler,
+  FaceEventMeta,
+  KernelRecipe,
+  MountRootOptions,
+  NodeRef,
+  ProviderEntry,
+  RecipeExtension,
+  RuntimeEvent,
+  UnitContext,
+  UnitHandle,
+  UnitRecipe,
+  UnitSetup,
+  UnitState,
+  Unsubscribe,
+} from './runtime';
