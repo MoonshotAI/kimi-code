@@ -514,7 +514,23 @@ async function accountHashFor(model: Model): Promise<string> {
     apiKey = undefined;
   }
   if (apiKey === undefined || apiKey.length === 0) return 'no-key';
-  return createHash('sha256').update(apiKey).digest('hex').slice(0, 16);
+  return createHash('sha256').update(stableJwtSubject(apiKey) ?? apiKey).digest('hex').slice(0, 16);
+}
+
+function stableJwtSubject(token: string): string | undefined {
+  const parts = token.split('.');
+  if (parts.length !== 3) return undefined;
+  try {
+    const payload: unknown = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8'));
+    if (typeof payload !== 'object' || payload === null) return undefined;
+    const sub = (payload as { sub?: unknown }).sub;
+    if (typeof sub === 'string' && sub.length > 0) return sub;
+    const userId = (payload as { user_id?: unknown }).user_id;
+    if (typeof userId === 'string' && userId.length > 0) return userId;
+    return undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function inlinePartBytes(part: ContentPart): number {

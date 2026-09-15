@@ -212,6 +212,12 @@ function msImagePart(id: string): ImageURLPart {
   return { type: 'image_url', imageUrl: { url: `ms://${id}`, id } };
 }
 
+function fakeJwt(claims: Record<string, unknown>): string {
+  const encode = (value: Record<string, unknown>): string =>
+    Buffer.from(JSON.stringify(value)).toString('base64url');
+  return `${encode({ alg: 'none', typ: 'JWT' })}.${encode(claims)}.${Buffer.from('sig').toString('base64url')}`;
+}
+
 let disposables: DisposableStore;
 
 beforeEach(async () => {
@@ -463,6 +469,29 @@ describe('AgentMediaResolverService video strategy', () => {
     const out = await res.resolve([message], accountB);
 
     expect(firstPart(out)).toEqual(msPart('prov-1'));
+    expect(upload).toHaveBeenCalledTimes(2);
+  });
+
+  it('reuses the cached upload across access-token rotation when the JWT subject is stable', async () => {
+    const upload = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
+    const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]));
+    const message = videoMessage(buildKimiFileUrl(FILE_ID));
+    const base = {
+      client_id: 'client-1',
+      device_id: 'device-1',
+      scope: 'kimi-code',
+      iss: 'kimi-auth',
+      type: 'access',
+    };
+    const tokenA = fakeJwt({ ...base, sub: 'user-1', token_id: 'tok-1', iat: 100, exp: 200 });
+    const tokenB = fakeJwt({ ...base, sub: 'user-1', token_id: 'tok-2', iat: 300, exp: 400 });
+    const tokenC = fakeJwt({ ...base, sub: 'user-2', token_id: 'tok-3', iat: 500, exp: 600 });
+
+    await res.resolve([message], requester({ uploadVideo: upload, credentials: staticCredentials(tokenA) }));
+    await res.resolve([message], requester({ uploadVideo: upload, credentials: staticCredentials(tokenB) }));
+    expect(upload).toHaveBeenCalledTimes(1);
+
+    await res.resolve([message], requester({ uploadVideo: upload, credentials: staticCredentials(tokenC) }));
     expect(upload).toHaveBeenCalledTimes(2);
   });
 
