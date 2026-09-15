@@ -6,6 +6,25 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.43.1 (2026-09-15)
+
+### Features
+
+- Add native clipboard support on Linux X11, so copying from the TUI no longer depends on the terminal's OSC 52 support.
+
+### Polish
+
+- Reduce event-loop stalls and GC churn in sessions with many concurrent subagents.
+
+### Bug Fixes
+
+- Fix pressing Ctrl+C while subagents are running exiting the whole CLI instead of just interrupting the subagents.
+- Fix progressively slower rendering on each round of large agent swarm runs.
+- Fix memory not being released when subagent scopes are disposed.
+- Fix tower mode mistaking newly spawned agents for previous sessions' roster entries.
+- Stop returning deleted sessions from global search before the search index catches up.
+- Fix link colors in wrapped markdown tables and `@` file-completion ordering.
+
 ## 0.43.0 (2026-09-14)
 
 ### Features
