@@ -52,7 +52,6 @@ import type {
   PlanRevision,
   PluginSessionStartEvent,
   PromptAborted,
-  PromptAccepted,
   PromptCompleted,
   PromptSteered,
   TaskStarted,
@@ -129,6 +128,16 @@ export interface StaleGuardClearedRecord {
   readonly time?: number;
 }
 
+/** v2-dropped durable record: removed with the loop-side prompt admission
+ *  facility, but old wires still contain it. */
+export interface PromptAcceptedRecord {
+  readonly type: 'prompt.accepted';
+  readonly agentId: string;
+  readonly promptId: string;
+  readonly content?: unknown;
+  readonly time?: number;
+}
+
 /** The wire file header record. Declared locally (rather than via v2's
  *  `WireMetadataRecord`) so the union member keeps concrete field types —
  *  the upstream interface carries an index signature that would widen
@@ -182,7 +191,7 @@ export type AgentRecord =
   | WireRecordOf<'plugin.session_start', PluginSessionStartEvent>
   | WireRecordOf<'profile.bind', ProfileBind>
   | WireRecordOf<'prompt.aborted', PromptAborted>
-  | WireRecordOf<'prompt.accepted', PromptAccepted>
+  | PromptAcceptedRecord
   | WireRecordOf<'prompt.completed', PromptCompleted>
   | WireRecordOf<'prompt.steered', PromptSteered>
   | WireRecordOf<'runtime.set_binding', RuntimeSetBinding>

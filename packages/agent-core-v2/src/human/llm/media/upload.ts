@@ -1,4 +1,4 @@
-import type { VideoURLPart } from '#/llm/message';
+import type { ImageURLPart, VideoURLPart } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
 
 export interface VideoUploadInput {
@@ -17,7 +17,19 @@ export type MediaVideoUploader = (
   options: MediaVideoUploadOptions,
 ) => Promise<VideoURLPart>;
 
+export interface ImageUploadInput {
+  readonly data: Uint8Array;
+  readonly mimeType: string;
+  readonly filename?: string;
+}
+
+export type MediaImageUploader = (
+  image: ImageUploadInput,
+  options: MediaVideoUploadOptions,
+) => Promise<ImageURLPart>;
+
 export interface ProviderMediaContribution {
   readonly inlineVideo?: boolean;
   readonly uploadVideo?: MediaVideoUploader;
+  readonly uploadImage?: MediaImageUploader;
 }

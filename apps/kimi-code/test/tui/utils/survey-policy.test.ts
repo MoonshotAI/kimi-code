@@ -33,7 +33,7 @@ function passingSession(overrides: Partial<SessionArmGateInput> = {}): SessionAr
     editorAutocompleteActive: false,
     feedbackSurveyDisabled: false,
     telemetryDisabled: false,
-    currentModel: 'k2',
+    kfcModelId: 'k3',
     lastUserMessageStartsOrderedList: false,
     mountedForMs: 600_000,
     userTurnsSinceMount: 5,
@@ -60,7 +60,7 @@ function passingLongContext(
     terminalHeight: 24,
     feedbackSurveyDisabled: false,
     telemetryDisabled: false,
-    currentModel: 'k2',
+    kfcModelId: 'k3',
     lastUserMessageStartsOrderedList: false,
     cumulativeTokens: 0,
     virtualContextTokens: 0,
@@ -133,8 +133,9 @@ describe('evaluateSurveyGate (session arm)', () => {
   });
 
   describe('model gate', () => {
-    it('opens for every model with "*"', () => {
-      expect(evaluateSurveyGate(gate({ currentModel: 'anything' })).show).toBe(true);
+    it('opens for everything with "*", even without a resolved kfc id', () => {
+      expect(evaluateSurveyGate(gate({ kfcModelId: 'anything' })).show).toBe(true);
+      expect(evaluateSurveyGate(gate({ kfcModelId: undefined })).show).toBe(true);
     });
 
     it('closes both arms with an empty list', () => {
@@ -144,14 +145,18 @@ describe('evaluateSurveyGate (session arm)', () => {
       });
     });
 
-    it('requires an exact match otherwise', () => {
+    it('requires a resolved kfc id that exactly matches otherwise', () => {
       const config = { ...CONFIG, on_for_models: ['k3'] };
-      expect(evaluateSurveyGate(gate({ currentModel: 'k3' }, config)).show).toBe(true);
-      expect(evaluateSurveyGate(gate({ currentModel: 'k2' }, config))).toEqual({
+      expect(evaluateSurveyGate(gate({ kfcModelId: 'k3' }, config)).show).toBe(true);
+      expect(evaluateSurveyGate(gate({ kfcModelId: 'k2' }, config))).toEqual({
         show: false,
         reason: 'model-gated',
       });
-      expect(evaluateSurveyGate(gate({ currentModel: 'k3-fictional' }, config))).toEqual({
+      expect(evaluateSurveyGate(gate({ kfcModelId: undefined }, config))).toEqual({
+        show: false,
+        reason: 'model-gated',
+      });
+      expect(evaluateSurveyGate(gate({ kfcModelId: 'k3-fictional' }, config))).toEqual({
         show: false,
         reason: 'model-gated',
       });
@@ -188,7 +193,7 @@ describe('evaluateSurveyGate (session arm)', () => {
 });
 
 describe('evaluateLongContextArm', () => {
-  const ELIGIBLE: Partial<LongContextArmGateInput> = { cumulativeTokens: 250_000 };
+  const ELIGIBLE: Partial<LongContextArmGateInput> = { virtualContextTokens: 250_000 };
 
   function arm(
     overrides: Partial<LongContextArmGateInput> = {},
@@ -223,7 +228,7 @@ describe('evaluateLongContextArm', () => {
     [{ feedbackSurveyDisabled: true }, 'feature-disabled'],
     [{ telemetryDisabled: true }, 'telemetry-disabled'],
     [{ lastUserMessageStartsOrderedList: true }, 'ordered-list-ambiguity'],
-    [{ cumulativeTokens: 199_999 }, 'below-threshold'],
+    [{ virtualContextTokens: 199_999 }, 'below-threshold'],
   ])('skips with %j → %s', (overrides, reason) => {
     expect(arm(overrides)).toEqual({ show: false, reason });
   });
@@ -247,14 +252,14 @@ describe('evaluateLongContextArm', () => {
       show: false,
       reason: 'model-gated',
     });
-    expect(arm({}, { ...CONFIG, on_for_models: ['k3'] })).toEqual({
+    expect(arm({ kfcModelId: undefined }, { ...CONFIG, on_for_models: ['k3'] })).toEqual({
       show: false,
       reason: 'model-gated',
     });
   });
 
   it('shows at the counter boundary (counter == threshold)', () => {
-    expect(arm({ cumulativeTokens: 200_000 })).toEqual({
+    expect(arm({ virtualContextTokens: 200_000 })).toEqual({
       show: true,
       survey: 'long_context',
       longContextRollConsumed: true,
@@ -277,7 +282,7 @@ describe('evaluateLongContextArm', () => {
   describe('mount one-shot', () => {
     it('does not draw the dice below the threshold, so the roll stays unspent', () => {
       const drawMountRoll = vi.fn(() => 0);
-      expect(arm({ cumulativeTokens: 199_999, drawMountRoll })).toEqual({
+      expect(arm({ virtualContextTokens: 199_999, drawMountRoll })).toEqual({
         show: false,
         reason: 'below-threshold',
       });
@@ -328,8 +333,11 @@ describe('evaluateLongContextArm', () => {
     });
 
     it('runs on the built-in 200k default when the field never took a cloud value', () => {
-      expect(arm({ cumulativeTokens: 199_999 })).toEqual({ show: false, reason: 'below-threshold' });
-      expect(arm({ cumulativeTokens: 200_000 })).toEqual({
+      expect(arm({ virtualContextTokens: 199_999 })).toEqual({
+        show: false,
+        reason: 'below-threshold',
+      });
+      expect(arm({ virtualContextTokens: 200_000 })).toEqual({
         show: true,
         survey: 'long_context',
         longContextRollConsumed: true,
@@ -338,21 +346,26 @@ describe('evaluateLongContextArm', () => {
   });
 
   describe('counter mode', () => {
-    it('compares the cumulative counter by default and ignores the window occupancy', () => {
-      expect(arm({ cumulativeTokens: 199_999, virtualContextTokens: 500_000 })).toEqual({
+    it('compares the window occupancy by default and ignores the cumulative counter', () => {
+      expect(arm({ cumulativeTokens: 500_000, virtualContextTokens: 199_999 })).toEqual({
         show: false,
         reason: 'below-threshold',
       });
-    });
-
-    it('compares the window occupancy when the trigger mode is virtual_context', () => {
-      const config = { ...CONFIG, long_context_trigger_mode: 'virtual_context' as const };
-      expect(arm({ cumulativeTokens: 0, virtualContextTokens: 250_000 }, config)).toEqual({
+      expect(arm({ cumulativeTokens: 0, virtualContextTokens: 200_000 })).toEqual({
         show: true,
         survey: 'long_context',
         longContextRollConsumed: true,
       });
-      expect(arm({ cumulativeTokens: 500_000, virtualContextTokens: 100 }, config)).toEqual({
+    });
+
+    it('compares the cumulative counter when the trigger mode is cumulative', () => {
+      const config = { ...CONFIG, long_context_trigger_mode: 'cumulative' as const };
+      expect(arm({ cumulativeTokens: 250_000, virtualContextTokens: 0 }, config)).toEqual({
+        show: true,
+        survey: 'long_context',
+        longContextRollConsumed: true,
+      });
+      expect(arm({ cumulativeTokens: 100, virtualContextTokens: 500_000 }, config)).toEqual({
         show: false,
         reason: 'below-threshold',
       });
@@ -361,7 +374,7 @@ describe('evaluateLongContextArm', () => {
 });
 
 describe('evaluateSurveyGate (arbitration)', () => {
-  const ELIGIBLE: Partial<LongContextArmGateInput> = { cumulativeTokens: 250_000 };
+  const ELIGIBLE: Partial<LongContextArmGateInput> = { virtualContextTokens: 250_000 };
 
   it('prefers the long-context survey when both arms pass', () => {
     expect(evaluateSurveyGate(gate({}, CONFIG, ELIGIBLE))).toEqual({
@@ -571,6 +584,7 @@ describe('buildSurveyEventProperties', () => {
 
   const ENVIRONMENT: SurveyEventEnvironmentFields = {
     current_model: 'k2',
+    kfc_model_id: 'k3',
     user_turn_count: 9,
     cumulative_tokens: 123,
     virtual_context_tokens: 45,
@@ -607,7 +621,7 @@ describe('buildSurveyEventProperties', () => {
       config_min_time_between_global_feedback_ms: 100_000_000,
       config_long_context_survey_threshold: 200_000,
       config_long_context_probability: 0.2,
-      config_long_context_trigger_mode: 'cumulative',
+      config_long_context_trigger_mode: 'virtual_context',
     });
   });
 

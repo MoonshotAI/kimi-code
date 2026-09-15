@@ -71,6 +71,13 @@ export class VideoUploadUnsupportedError extends ChatProviderError {
   }
 }
 
+export class ImageUploadUnsupportedError extends ChatProviderError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ImageUploadUnsupportedError';
+  }
+}
+
 export class APITimeoutError extends ChatProviderError {
   constructor(message: string) {
     super(message, PROVIDER_CONNECTION_ERROR_CODE);

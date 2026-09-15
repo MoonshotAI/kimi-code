@@ -93,7 +93,7 @@ describe('foldWireHistory turn lifecycle', () => {
       T0 + 7,
     ),
     loopEvent({ type: 'step.begin', uuid: 'u2', turnId: '0', step: 2 }, T0 + 8),
-    loopEvent({ type: 'content.part', stepUuid: 'u2', part: { type: 'think', think: '' } }, T0 + 9),
+    loopEvent({ type: 'content.part', stepUuid: 'u2', part: { type: 'think', think: 'summary', hidden: true } }, T0 + 9),
     loopEvent({ type: 'content.part', stepUuid: 'u2', part: { type: 'text', text: 'done' } }, T0 + 10),
     loopEvent({ type: 'step.end', uuid: 'u2', finishReason: 'stop' }, T0 + 11),
     rec('turn.ended', { turnId: 0, reason: 'completed', durationMs: 1500 }, T0 + 12),
@@ -809,7 +809,10 @@ describe('foldWireHistory queued prompts and legacy messages', () => {
       rec('context.append_message', {
         message: {
           role: 'assistant',
-          content: [{ type: 'text', text: 'hi' }],
+          content: [
+            { type: 'think', think: 'summary', hidden: true },
+            { type: 'text', text: 'hi' },
+          ],
           toolCalls: [{ id: 'call_1', name: 'Bash', arguments: '{"cmd":"ls"}' }],
         },
       }),
@@ -821,6 +824,7 @@ describe('foldWireHistory queued prompts and legacy messages', () => {
     ]);
     const turn = ofType(messages, 'turn')[0]!;
     expect(turn).toMatchObject({ turn_id: 't0', origin: { kind: 'other' } });
+    expect(ofType(messages, 'thinking')).toHaveLength(0);
     const assistant = ofType(messages, 'assistant')[0]!;
     expect(assistant).toMatchObject({ message_id: 't0.1.a1', text: 'hi', status: 'completed' });
     const tool = ofType(messages, 'tool_call')[0]!;

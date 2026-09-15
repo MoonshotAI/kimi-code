@@ -211,15 +211,15 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     return { thinkingEffort: config.resolved.thinkingLevel };
   }
 
-  currentCredentials(): LlmCredentialProvider | undefined {
+  currentCredentialProvider(): LlmCredentialProvider | undefined {
     if (!this.profile.hasProvider()) return undefined;
-    return this.modelCatalog.get(this.profile.resolveModelContext().modelAlias).credentials;
+    return this.modelCatalog.get(this.profile.resolveModelContext().modelAlias).credentialProvider;
   }
 
-  credentialsForTurn(turnId: number): LlmCredentialProvider | undefined {
+  credentialProviderForTurn(turnId: number): LlmCredentialProvider | undefined {
     if (!this.profile.hasProvider()) return undefined;
     const resolved = this.turnConfigs.get(turnId)?.resolved ?? this.profile.resolveModelContext();
-    return this.modelCatalog.get(resolved.modelAlias).credentials;
+    return this.modelCatalog.get(resolved.modelAlias).credentialProvider;
   }
 
   async request(
@@ -352,6 +352,9 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       this.markMediaStrippedRecoveryTurn(snapshot, request.source);
       return { strip: snapshot };
     };
+    let previousMediaCount: number | undefined;
+    let previousMediaPolicy: ProjectionPolicy['media'];
+    let mediaPaths: ReadonlyMap<string, string> | undefined;
     const run = async (
       policy: ProjectionPolicy | undefined,
     ): Promise<AgentLLMRequestFinish> => {
@@ -359,15 +362,43 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       const projection = projectionNameOf(policy);
       const fields =
         projection === undefined ? request.logFields : { ...request.logFields, projection };
+      if (policy?.media !== undefined) {
+        mediaPaths ??= await this.mediaResolver.displayPaths(shaped);
+      }
+      const projected = this.projector.project(shaped, policy, mediaPaths);
+      const currentMediaCount = mediaPartCount(projected);
+      const mediaPolicyChanged =
+        previousMediaCount !== undefined && previousMediaPolicy !== policy?.media;
+      const droppedMediaCount =
+        previousMediaCount === undefined ? 0 : previousMediaCount - currentMediaCount;
+      previousMediaCount = currentMediaCount;
+      previousMediaPolicy = policy?.media;
       const input = {
         systemPrompt: request.systemPrompt,
         tools: request.tools,
-        messages: await this.mediaResolver.resolve(
-          this.projector.project(shaped, policy),
-          request.requester,
-          signal,
-        ),
+        messages: await this.mediaResolver.resolve(projected, request.requester, signal),
       };
+      const mediaProjection =
+        projection === 'media-degraded' || projection === 'strict-media-degraded'
+          ? 'media-degraded'
+          : projection === 'media-stripped' || projection === 'strict-media-stripped'
+            ? 'media-stripped'
+            : undefined;
+      if (mediaPolicyChanged && droppedMediaCount > 0 && mediaProjection !== undefined) {
+        try {
+          void this.dispatcher.dispatch(
+            new WarningIssued({
+              agentId: this.scopeContext.agentId,
+              code: mediaProjection,
+              message:
+                mediaProjection === 'media-degraded'
+                  ? 'Provider rejected the request as too large; older media were dropped and the request was retried.'
+                  : 'Provider rejected the media in the request; all media were omitted and the request was retried.',
+            }),
+          );
+        } catch {
+        }
+      }
       this.warnAboutAnthropicThinkingEffort(request);
       const logInput: LLMRequestLogInput = {
         protocol: request.model.protocol,
@@ -876,6 +907,18 @@ function stringField(fields: AgentLLMRequestLogFields, key: string): string | un
 function numberField(fields: AgentLLMRequestLogFields, key: string): number | undefined {
   const value = fields[key];
   return typeof value === 'number' ? value : undefined;
+}
+
+function mediaPartCount(messages: readonly Message[]): number {
+  return messages.reduce(
+    (count, message) =>
+      count +
+      message.content.filter(
+        (part) =>
+          part.type === 'image_url' || part.type === 'audio_url' || part.type === 'video_url',
+      ).length,
+    0,
+  );
 }
 
 type LlmRequestProjection = NonNullable<LlmRequestPayload['projection']>;

@@ -690,6 +690,56 @@ describe('projector tool-exchange normalization', () => {
       const allParts = projected.flatMap((message) => message.content);
       expect(allParts.some((part) => part.type === 'image_url')).toBe(true);
     });
+
+    it('replaces older media with path tags when display paths are provided', () => {
+      const projected = projector.project(
+        [
+          imageMessage('kimi-file://f_old1'),
+          imageMessage('kimi-file://f_old2'),
+          imageMessage('kimi-file://f_keep1'),
+          imageMessage('kimi-file://f_keep2'),
+        ],
+        { media: 'degraded' },
+        new Map([
+          ['kimi-file://f_old1', '/session/media/f_old1.png'],
+          ['kimi-file://f_old2', '/session/media/f_old2.png'],
+        ]),
+      );
+
+      const parts = projected.flatMap((message) => message.content);
+      const urls = parts
+        .filter((part) => part.type === 'image_url')
+        .map((part) => part.imageUrl.url);
+      expect(urls).toEqual(['kimi-file://f_keep1', 'kimi-file://f_keep2']);
+      const texts = parts.filter((part) => part.type === 'text').map((part) => part.text);
+      expect(texts).toContain('<image path="/session/media/f_old1.png"></image>');
+      expect(texts).toContain('<image path="/session/media/f_old2.png"></image>');
+      expect(
+        texts.some((text) => text.includes('dropped to fit the provider request size limit')),
+      ).toBe(false);
+    });
+
+    it('falls back to the sentence marker for media without a display path', () => {
+      const projected = projector.project(
+        [
+          imageMessage('kimi-file://f_old1'),
+          imageMessage('kimi-file://f_old2'),
+          imageMessage('kimi-file://f_keep1'),
+          imageMessage('kimi-file://f_keep2'),
+        ],
+        { media: 'degraded' },
+        new Map([['kimi-file://f_old1', '/session/media/f_old1.png']]),
+      );
+
+      const texts = projected
+        .flatMap((message) => message.content)
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text);
+      expect(texts).toContain('<image path="/session/media/f_old1.png"></image>');
+      expect(
+        texts.filter((text) => text.includes('dropped to fit the provider request size limit')),
+      ).toHaveLength(1);
+    });
   });
 
   describe('project with media: stripped policy', () => {
@@ -744,6 +794,24 @@ describe('projector tool-exchange normalization', () => {
     it('returns the projected messages untouched when there is no media', () => {
       const projected = projectStripped([user('just text')]);
       expect(projected).toEqual(project([user('just text')]));
+    });
+
+    it('replaces stripped media with path tags when display paths are provided', () => {
+      const history = [imageMessage('kimi-file://f_old', 'old-id')];
+      const snapshot = projector.captureMediaStripSnapshot(history);
+
+      const projected = projector.project(
+        history,
+        { media: { strip: snapshot } },
+        new Map([['kimi-file://f_old', '/session/media/f_old.png']]),
+      );
+
+      const texts = projected
+        .flatMap((message) => message.content)
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text);
+      expect(texts).toContain('<image path="/session/media/f_old.png"></image>');
+      expect(texts.some((text) => text.includes('omitted for provider compatibility'))).toBe(false);
     });
 
     it('preserves media introduced after the rejected-media snapshot', () => {

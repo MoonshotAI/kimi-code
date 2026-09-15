@@ -5,8 +5,8 @@ import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { Error2, ErrorCodes, toKimiErrorPayload, type KimiErrorPayload } from '#/errors';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
 import {
+  IAgentLoopService,
   isMaxStepsExceededError,
   type Turn,
   type TurnResult,
@@ -37,16 +37,17 @@ export async function runAgentTurn(
   options: RunAgentTurnOptions,
 ): Promise<AgentRunHandle> {
   options.signal.throwIfAborted();
-  const promptService = target.accessor.get(IAgentPromptService);
-  const turn =
-    request.kind === 'prompt'
-      ? await (await promptService.enqueue({ message: {
-          role: 'user',
-          content: [{ type: 'text', text: request.prompt }],
-          toolCalls: [],
-          origin: AGENT_RUN_PROMPT_ORIGIN,
-        } })).launched
-      : await promptService.retry();
+  const loop = target.accessor.get(IAgentLoopService);
+  const { id } = request.kind === 'prompt'
+    ? loop.submit({
+        message: { role: 'user', content: [{ type: 'text', text: request.prompt }] },
+        meta: { origin: AGENT_RUN_PROMPT_ORIGIN, tracked: true },
+      })
+    : loop.submit({
+        message: { role: 'user', content: [] },
+        meta: { origin: { kind: 'retry' } },
+      });
+  const turn = await loop.promptHandle(id)?.launched;
   if (turn === undefined) throw new Error2(ErrorCodes.INTERNAL, 'Agent turn could not be started');
 
   if (options.onReady !== undefined) {

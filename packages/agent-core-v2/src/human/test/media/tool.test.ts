@@ -8,11 +8,11 @@ import { createActor, waitFor } from '#/xstate2';
 
 import { createAgentMachine } from '#/agent/machine';
 import { agentSlices, type AgentEventStore } from '#/agent/slices';
-import { createTurnMachine } from '#/agent/turn';
 import { createEventStore } from '#/eventStore/eventStore';
 import { journalFromBranch } from '#/eventStore/journal';
 import { MemoryBackend } from '#/store/backend/memory';
 import { TreeStore } from '#/store/store';
+import { testScopeFactory } from '#/test/agent/scope-factory';
 import type { ModelCapability } from '#/llm/capability';
 import {
   createAssistantMessage,
@@ -28,7 +28,7 @@ import { createMemoryMediaStore } from '#/llm/media/store';
 import type { LlmModel } from '#/llm/model';
 import { createProvider } from '#/llm/provider/definition';
 import type { LlmRequester } from '#/llm/requester/requester';
-import { openAIBase, planOpenAIRequest } from '#/llm/requester/bases/openai/requester';
+import { openAIBase, prepareOpenAIRequest } from '#/llm/requester/bases/openai/requester';
 import { createReadMediaFileTool } from '#/media/tool';
 
 const CAPABILITY: ModelCapability = {
@@ -175,23 +175,27 @@ describe('media stack wiring', () => {
     };
 
     const agentStore = await testStore();
-    const actor = createActor(
-      createAgentMachine({
-        tools,
-        turnActor: createTurnMachine(requester, {
-          messageResolvers: [
-            createMediaRefResolver({
-              providers: [provider],
-              source: store,
-              cache: createMemoryMediaUploadCache(),
-            }),
-          ],
+    const actor = createActor(createAgentMachine({}), {
+      input: {
+        request: { model },
+        scopeFactory: testScopeFactory({
+          store: agentStore,
+          requester,
+          tools,
+          turnOptions: {
+            messageResolvers: [
+              createMediaRefResolver({
+                providers: [provider],
+                source: store,
+                cache: createMemoryMediaUploadCache(),
+              }),
+            ],
+          },
         }),
-      }),
-      { input: { request: { model }, store: agentStore } },
-    );
+      },
+    });
     actor.start();
-    actor.send({ type: 'input.submit', message: createUserMessage('watch this') });
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('watch this') } });
     await waitFor(actor, (s) => s.matches('idle') && agentStore.getState().history.length > 1, {
       timeout: 5000,
     });
@@ -205,7 +209,7 @@ describe('media stack wiring', () => {
     ]);
     expect(uploadVideo).toHaveBeenCalledTimes(1);
 
-    const wire = planOpenAIRequest({
+    const wire = prepareOpenAIRequest({
       model,
       messages: seenMessages[1] as readonly Message[],
       tools: [],

@@ -92,7 +92,6 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'plugin.session_start',
   'runtime.set_binding',
   'turn.ended',
-  'prompt.accepted',
   'prompt.aborted',
   'prompt.completed',
   'prompt.steered',

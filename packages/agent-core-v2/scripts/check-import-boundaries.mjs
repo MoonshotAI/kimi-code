@@ -9,6 +9,7 @@ const TEST_ROOT = join(PKG_ROOT, 'test');
 const HUMAN_ROOT = join(SRC_ROOT, 'human');
 const ADAPTER_ROOT = join(SRC_ROOT, 'llm-adapter');
 const LOOP_MACHINE_ADAPTER_ROOT = join(SRC_ROOT, 'agent/loop/machine');
+const SESSION_LIFECYCLE_ADAPTER_ROOT = join(SRC_ROOT, 'session/agentLifecycle');
 
 const SELF_PACKAGE_PREFIX = '@moonshot-ai/agent-core-v2/';
 const KOSONG_PATH_RE = /(?:^|\/)kosong(?:\/|$)/;
@@ -40,6 +41,7 @@ function basesInternalViolation(absFile, targetAbs, specifier) {
 }
 
 const HUMAN_VOCABULARY = new Set([
+  'agent/origin',
   'llm/message',
   'llm/usage',
   'llm/capability',
@@ -118,7 +120,10 @@ export function checkSource(source, absFile) {
   const violations = [];
   const inSrc = !relative(SRC_ROOT, absFile).startsWith('..');
   const inHuman = isInside(HUMAN_ROOT, absFile);
-  const inAdapter = isInside(ADAPTER_ROOT, absFile) || isInside(LOOP_MACHINE_ADAPTER_ROOT, absFile);
+  const inAdapter =
+    isInside(ADAPTER_ROOT, absFile) ||
+    isInside(LOOP_MACHINE_ADAPTER_ROOT, absFile) ||
+    isInside(SESSION_LIFECYCLE_ADAPTER_ROOT, absFile);
 
   let match;
   IMPORT_RE.lastIndex = 0;
@@ -179,7 +184,7 @@ export function checkSource(source, absFile) {
       violations.push({
         file: absFile,
         line,
-        message: `only llm-adapter and agent/loop/machine may import the human implementation ('${specifier}') — v2 code outside those adapter layers is limited to the vocabulary modules (${[...HUMAN_VOCABULARY].join(', ')})`,
+        message: `only llm-adapter, agent/loop/machine and session/agentLifecycle may import the human implementation ('${specifier}') — v2 code outside those adapter layers is limited to the vocabulary modules (${[...HUMAN_VOCABULARY].join(', ')})`,
       });
     }
   }

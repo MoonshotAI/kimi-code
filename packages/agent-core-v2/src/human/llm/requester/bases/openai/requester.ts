@@ -37,7 +37,7 @@ import {
   encodeOpenAIMaxCompletionTokens,
   encodeOpenAIRequest,
   encodeOpenAIThinkHistoryKwargs,
-  lowerOpenAIRequest,
+  lowerOpenAIMessages,
   parseOpenAIUsage,
   responseFormatToOpenAI,
   type OpenAIRequestParams,
@@ -62,20 +62,20 @@ export interface OpenAIRequesterOptions
   extends ProtocolRequesterOptions<OpenAITrait>,
     LlmRequesterOptions<OpenAI> {}
 
-export interface OpenAIRequestPlanOptions {
+export interface OpenAIRequestPreparationOptions {
   readonly trait?: OpenAITrait;
   readonly reasoningKey?: string;
 }
 
-export function planOpenAIRequest(
+export function prepareOpenAIRequest(
   input: FormatRequestInput,
-  options?: OpenAIRequestPlanOptions,
+  options?: OpenAIRequestPreparationOptions,
 ): OpenAIRequestParams {
   const trait = options?.trait;
   const ctx: TraitContext = { model: input.model };
   let kwargs: Record<string, unknown> = {};
   if (input.cacheKey !== undefined) {
-    kwargs = trait?.cacheKey?.(input.cacheKey, ctx) ?? encodeOpenAICacheKey(input.cacheKey);
+    kwargs = trait?.encodeCacheKey?.(input.cacheKey, ctx) ?? encodeOpenAICacheKey(input.cacheKey);
   }
   let preserveThinking = false;
   if (input.thinking !== undefined) {
@@ -100,13 +100,13 @@ export function planOpenAIRequest(
   if (cap !== undefined) {
     kwargs = {
       ...kwargs,
-      ...(trait?.maxCompletionTokens?.(cap, ctx) ??
+      ...(trait?.encodeMaxCompletionTokens?.(cap, ctx) ??
         encodeOpenAIMaxCompletionTokens(ctx.model.model, cap)),
     };
   }
   kwargs = shake(assign(kwargs, input.extraParams?.openai ?? {}));
 
-  const lowered = lowerOpenAIRequest(input, {
+  const lowered = lowerOpenAIMessages(input, {
     reasoningKey: options?.reasoningKey ?? DEFAULT_REASONING_KEY,
     preserveThinking,
     toolMessageConversion: input.toolMessageConversion ?? trait?.toolMessageConversion,
@@ -141,7 +141,7 @@ interface OpenAITransport {
   readonly onEvent?: (event: LlmRequestEvent) => void;
 }
 
-async function internalGenerate(
+async function executeOpenAIRequest(
   request: OpenAIRequestParams,
   transport: OpenAITransport,
 ): Promise<void> {
@@ -196,7 +196,7 @@ async function internalGenerate(
 export function createOpenAIRequester(options?: OpenAIRequesterOptions): LlmRequester {
   const connection = options?.connection;
   const trait = options?.trait;
-  const convertError = options?.convertError;
+  const classifyError = options?.classifyError;
   const format = createOpenAIFormat();
   const resolveClient =
     options?.clientFactory ??
@@ -227,7 +227,7 @@ export function createOpenAIRequester(options?: OpenAIRequesterOptions): LlmRequ
       try {
         reasoning = reasoningFor(ctx);
         const policy = trait?.toolCallIdPolicy ?? OPENAI_CHAT_TOOL_CALL_ID_POLICY;
-        request = planOpenAIRequest(
+        request = prepareOpenAIRequest(
           {
             ...config,
             model,
@@ -242,7 +242,7 @@ export function createOpenAIRequester(options?: OpenAIRequesterOptions): LlmRequ
         return;
       }
       try {
-        await internalGenerate(request, {
+        await executeOpenAIRequest(request, {
           connection,
           trait,
           ctx,
@@ -255,7 +255,7 @@ export function createOpenAIRequester(options?: OpenAIRequesterOptions): LlmRequ
       } catch (error) {
         onEvent?.({
           type: 'llm.failed.remote',
-          error: convertOpenAIError(error, (e) => convertError?.(e)),
+          error: convertOpenAIError(error, (e) => classifyError?.(e)),
         });
       }
     },

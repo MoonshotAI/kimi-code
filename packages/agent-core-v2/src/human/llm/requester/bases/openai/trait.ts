@@ -13,9 +13,9 @@ export interface OpenAITrait {
 
   readonly thinking?: ThinkingStrategy;
 
-  cacheKey?(key: string, ctx: TraitContext): Record<string, unknown> | undefined;
+  encodeCacheKey?(key: string, ctx: TraitContext): Record<string, unknown> | undefined;
 
-  maxCompletionTokens?(
+  encodeMaxCompletionTokens?(
     maxCompletionTokens: number,
     ctx: TraitContext,
   ): Record<string, unknown> | undefined;
