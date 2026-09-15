@@ -168,7 +168,10 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
       path: '/sessions/{session_id}/prompts',
       params: sessionIdParamSchema,
       success: { data: promptListResponseSchema },
-      errors: { [ErrorCode.SESSION_NOT_FOUND]: {} },
+      errors: {
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
+      },
       description: 'List the active prompt and queued prompts for a session',
       tags: ['prompts'],
       operationId: 'listPrompts',
@@ -199,6 +202,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.FILE_NOT_FOUND]: {},
         [ErrorCode.PROMPT_ID_CONFLICT]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'Submit a prompt to a session',
       tags: ['prompts'],
@@ -383,6 +387,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.VALIDATION_FAILED]: {},
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.PROMPT_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'Steer queued prompts into the active turn',
       tags: ['prompts'],
@@ -410,6 +415,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.VALIDATION_FAILED]: {},
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.PROMPT_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'Abort a running prompt or steer a queued prompt',
       tags: ['prompts'],
@@ -635,6 +641,9 @@ function sendMappedError(
         return;
       case 'skill.type_unsupported':
         reply.send(errEnvelope(ErrorCode.SKILL_NOT_ACTIVATABLE, err.message, requestId, err.stack));
+        return;
+      case 'wire.version_too_low':
+        reply.send(errEnvelope(ErrorCode.WIRE_VERSION_TOO_LOW, err.message, requestId, err.stack));
         return;
     }
   }
