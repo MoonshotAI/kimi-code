@@ -9,6 +9,7 @@ import { WebSocket, type RawData } from 'ws';
 import { ErrorCode } from '../src/protocol/error-codes';
 import type { ServerMessage, WorkspaceInfo } from '../src/protocol/messages';
 import { startServer, type RunningServer } from '../src/start';
+import { WsConnectionDebug } from '../src/transport/ws/debug/wsConnectionDebug';
 import {
   WsConnectionV3,
   type WsConnectionV3Options,
@@ -28,6 +29,7 @@ class FakeSocket {
   readyState = 1;
   bufferedAmount = 0;
   sent: string[] = [];
+  terminateCalls = 0;
   closeCalls: Array<{ code?: number; reason?: string }> = [];
   private readonly handlers = new Map<string, Array<(...a: unknown[]) => void>>();
 
@@ -44,6 +46,12 @@ class FakeSocket {
 
   close(code?: number, reason?: string): void {
     this.closeCalls.push({ code, reason });
+    this.readyState = this.CLOSED;
+    this.emit('close');
+  }
+
+  terminate(): void {
+    this.terminateCalls += 1;
     this.readyState = this.CLOSED;
     this.emit('close');
   }
@@ -384,27 +392,7 @@ describe('WsConnectionV3 subscribe and recovery', () => {
     expect(frameTypes(socket)).toEqual(['response', 'session.state', 'response']);
   });
 
-  it('implicitly unsubscribes on disconnect and disposes the lane listener', async () => {
-    const { projection, lifecycle, hub } = makeHarness();
-    lifecycle.existing.add('s1');
-    projection.live.add('s1');
-    projection.recovery.set('s1', [sessionStateMessage('s1')]);
-    const socket = new FakeSocket();
-    makeConn(hub, socket);
-
-    socket.emit('message', JSON.stringify({ type: 'subscribe', request_id: 'r1', session_id: 's1' }));
-    await settle();
-    expect(projection.listeners.get('s1')?.size).toBe(1);
-
-    socket.close();
-    await settle();
-    expect(projection.listeners.get('s1')?.size ?? 0).toBe(0);
-    projection.emit('s1', assistantMessage('s1', 'main', 'late'));
-    await settle();
-    expect(frameTypes(socket)).toEqual(['response', 'session.state']);
-  });
-
-  it('delivers recovery again when a fresh connection resubscribes after disconnect', async () => {
+  it('disposes the lane listener on disconnect and delivers recovery again on a fresh resubscribe', async () => {
     const { projection, lifecycle, hub } = makeHarness();
     lifecycle.existing.add('s1');
     projection.live.add('s1');
@@ -415,8 +403,14 @@ describe('WsConnectionV3 subscribe and recovery', () => {
     first.emit('message', JSON.stringify({ type: 'subscribe', request_id: 'r1', session_id: 's1' }));
     await settle();
     expect(frameTypes(first)).toEqual(['response', 'session.state']);
+    expect(projection.listeners.get('s1')?.size).toBe(1);
+
     first.close();
     await settle();
+    expect(projection.listeners.get('s1')?.size ?? 0).toBe(0);
+    projection.emit('s1', assistantMessage('s1', 'main', 'late'));
+    await settle();
+    expect(frameTypes(first)).toEqual(['response', 'session.state']);
 
     const second = new FakeSocket();
     makeConn(hub, second);
@@ -547,6 +541,66 @@ describe('WsConnectionV3 backpressure', () => {
   });
 });
 
+describe('WsConnectionV3 inbound idle timeout', () => {
+  it('terminates the connection when no inbound frame arrives within the idle timeout', () => {
+    vi.useFakeTimers();
+    try {
+      const { hub, logger, warnings } = makeHarness();
+      const socket = new FakeSocket();
+      makeConn(hub, socket, { logger, idleTimeoutMs: 100 });
+
+      vi.advanceTimersByTime(100);
+      expect(socket.terminateCalls).toBe(0);
+      vi.advanceTimersByTime(100);
+      expect(socket.terminateCalls).toBe(1);
+      expect(warnings.some((msg) => msg.includes('inbound idle timeout'))).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the connection alive while inbound frames arrive', () => {
+    vi.useFakeTimers();
+    try {
+      const { hub } = makeHarness();
+      const socket = new FakeSocket();
+      makeConn(hub, socket, { idleTimeoutMs: 100 });
+
+      vi.advanceTimersByTime(50);
+      socket.emit('message', JSON.stringify({ type: 'ping', request_id: 'r1' }));
+      vi.advanceTimersByTime(50);
+      expect(socket.terminateCalls).toBe(0);
+      vi.advanceTimersByTime(50);
+      socket.emit('message', JSON.stringify({ type: 'ping', request_id: 'r2' }));
+      vi.advanceTimersByTime(100);
+      expect(socket.terminateCalls).toBe(0);
+      vi.advanceTimersByTime(150);
+      expect(socket.terminateCalls).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('WsConnectionDebug inbound idle timeout', () => {
+  it('closes an idle debug connection but tolerates inbound frames', () => {
+    vi.useFakeTimers();
+    try {
+      const socket = new FakeSocket();
+      new WsConnectionDebug({ socket: socket as unknown as WebSocket, idleTimeoutMs: 100 });
+
+      vi.advanceTimersByTime(50);
+      socket.emit('message', JSON.stringify({ type: 'subscribe' }));
+      vi.advanceTimersByTime(50);
+      expect(socket.closeCalls).toEqual([]);
+      vi.advanceTimersByTime(150);
+      expect(socket.closeCalls).toEqual([{ code: 1000, reason: undefined }]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('WsV3 global message fanout', () => {
   it('translates config, capability, plugin and catalog events into global messages', async () => {
     const { globalSource, hub } = makeHarness();
@@ -591,7 +645,7 @@ describe('WsV3 global message fanout', () => {
     expect(frames[4]).toEqual({ type: 'model_catalog', event_created_at: expect.any(String) });
   });
 
-  it('translates workspace lifecycle events, using the cached entity for deletions', async () => {
+  it('translates workspace and session lifecycle events into global messages', async () => {
     const { globalSource, hub } = makeHarness();
     const socket = new FakeSocket();
     makeConn(hub, socket);
@@ -631,13 +685,6 @@ describe('WsV3 global message fanout', () => {
       subtype: 'deleted',
       workspace: { id: 'wd_gone_0123456789ab', name: 'gone-dir', session_count: 0 },
     });
-  });
-
-  it('translates session lifecycle events into session messages with entities', async () => {
-    const { globalSource, hub } = makeHarness();
-    const socket = new FakeSocket();
-    makeConn(hub, socket);
-    await settle();
 
     globalSource.sessionInfoResult = sessionInfoWire('s1');
     globalSource.fire({
@@ -654,26 +701,26 @@ describe('WsV3 global message fanout', () => {
     });
     await settle();
 
-    const frames = socket.frames();
-    expect(frames[0]).toMatchObject({
+    const sessionFrames = socket.frames();
+    expect(sessionFrames[3]).toMatchObject({
       type: 'session',
       subtype: 'created',
       session: { id: 's1' },
     });
-    expect(frames[1]).toMatchObject({
+    expect(sessionFrames[4]).toMatchObject({
       type: 'session',
       subtype: 'updated',
       session: { id: 's1' },
       changed_fields: ['title'],
     });
-    expect(frames[2]).toMatchObject({
+    expect(sessionFrames[5]).toMatchObject({
       type: 'session',
       subtype: 'archived',
       session: { id: 's1' },
     });
   });
 
-  it('emits session updated on session activity changes', async () => {
+  it('emits session updated on activity and session deleted only for sessions seen before', async () => {
     const { globalSource, hub } = makeHarness();
     const socket = new FakeSocket();
     makeConn(hub, socket);
@@ -698,18 +745,7 @@ describe('WsV3 global message fanout', () => {
     globalSource.fireActivity('s9');
     await settle();
     expect(socket.frames()).toHaveLength(2);
-  });
 
-  it('emits session deleted only for sessions seen before', async () => {
-    const { globalSource, hub } = makeHarness();
-    const socket = new FakeSocket();
-    makeConn(hub, socket);
-    await settle();
-
-    globalSource.fire({
-      type: 'event.session.created',
-      payload: { sessionId: 's1', session: sessionInfoWire('s1') },
-    });
     globalSource.fire({
       type: 'event.session.deleted',
       payload: { sessionId: 's1', workspaceId: WS_ID },
@@ -719,10 +755,8 @@ describe('WsV3 global message fanout', () => {
       payload: { sessionId: 's2', workspaceId: WS_ID },
     });
     await settle();
-
-    const frames = socket.frames();
-    expect(frames).toHaveLength(2);
-    expect(frames[1]).toMatchObject({
+    expect(socket.frames()).toHaveLength(3);
+    expect(socket.frames()[2]).toMatchObject({
       type: 'session',
       subtype: 'deleted',
       session: { id: 's1' },

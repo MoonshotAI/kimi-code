@@ -7,12 +7,15 @@ import type { WebSocket } from 'ws';
 
 const DEFAULT_FLUSH_INTERVAL_MS = 16;
 const DEFAULT_HIGH_WATER_MARK_BYTES = 1 << 20;
+const DEFAULT_IDLE_TIMEOUT_MS = 600_000;
+const IDLE_CHECK_INTERVAL_MS = 60_000;
 
 export interface WsConnectionDebugOptions {
   readonly socket: WebSocket;
   readonly collector?: XstateInspectionCollector;
   readonly flushIntervalMs?: number;
   readonly highWaterMarkBytes?: number;
+  readonly idleTimeoutMs?: number;
 }
 
 export class WsConnectionDebug {
@@ -20,24 +23,36 @@ export class WsConnectionDebug {
   private readonly collector: XstateInspectionCollector;
   private readonly flushIntervalMs: number;
   private readonly highWaterMarkBytes: number;
+  private readonly idleTimeoutMs: number;
 
   private closed = false;
   private collectorUnsubscribe?: () => void;
   private outbound: XstateInspectionEnvelope[] = [];
   private flushTimer?: ReturnType<typeof setTimeout>;
+  private idleCheckTimer?: ReturnType<typeof setInterval>;
+  private lastInboundAt: number;
 
   constructor(opts: WsConnectionDebugOptions) {
     this.socket = opts.socket;
     this.collector = opts.collector ?? xstateInspectionCollector;
     this.flushIntervalMs = opts.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
     this.highWaterMarkBytes = opts.highWaterMarkBytes ?? DEFAULT_HIGH_WATER_MARK_BYTES;
+    this.idleTimeoutMs = opts.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+    this.lastInboundAt = Date.now();
 
     this.socket.on('close', () => this.onClose());
     this.socket.on('error', () => this.onClose());
     this.socket.on('message', (data) => this.onMessage(data));
+
+    this.idleCheckTimer = setInterval(
+      () => this.onIdleCheck(),
+      Math.min(this.idleTimeoutMs, IDLE_CHECK_INTERVAL_MS),
+    );
+    this.idleCheckTimer.unref?.();
   }
 
   private onMessage(data: unknown): void {
+    this.lastInboundAt = Date.now();
     let frame: unknown;
     try {
       frame = JSON.parse(String(data));
@@ -98,6 +113,11 @@ export class WsConnectionDebug {
     }
   }
 
+  private onIdleCheck(): void {
+    if (Date.now() - this.lastInboundAt <= this.idleTimeoutMs) return;
+    this.close();
+  }
+
   close(): void {
     if (this.closed) return;
     try {
@@ -111,6 +131,7 @@ export class WsConnectionDebug {
     if (this.closed) return;
     this.closed = true;
     if (this.flushTimer !== undefined) clearTimeout(this.flushTimer);
+    if (this.idleCheckTimer !== undefined) clearInterval(this.idleCheckTimer);
     this.outbound = [];
     this.collectorUnsubscribe?.();
     this.collectorUnsubscribe = undefined;

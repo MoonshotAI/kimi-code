@@ -17,6 +17,8 @@ const DEFAULT_MAX_OUTBOUND_MESSAGES = 1000;
 const DEFAULT_HIGH_WATER_MARK_BYTES = 1 << 20;
 const DEFAULT_BACKPRESSURE_RETRY_MS = 5;
 const DEFAULT_STALL_TIMEOUT_MS = 30_000;
+const DEFAULT_IDLE_TIMEOUT_MS = 600_000;
+const IDLE_CHECK_INTERVAL_MS = 60_000;
 
 export interface SubscriptionFilter {
   readonly agentIds?: ReadonlySet<string>;
@@ -56,6 +58,7 @@ export interface WsConnectionV3Options {
   readonly highWaterMarkBytes?: number;
   readonly backpressureRetryMs?: number;
   readonly stallTimeoutMs?: number;
+  readonly idleTimeoutMs?: number;
 }
 
 export class WsConnectionV3 {
@@ -71,10 +74,13 @@ export class WsConnectionV3 {
   private readonly highWaterMarkBytes: number;
   private readonly backpressureRetryMs: number;
   private readonly stallTimeoutMs: number;
+  private readonly idleTimeoutMs: number;
 
   private readonly subscriptions = new Map<string, LaneSubscriber>();
   private outbound: string[] = [];
   private drainTimer?: ReturnType<typeof setTimeout>;
+  private idleCheckTimer?: ReturnType<typeof setInterval>;
+  private lastInboundAt: number;
   private stallSince?: number;
   private closed = false;
 
@@ -90,6 +96,8 @@ export class WsConnectionV3 {
     this.highWaterMarkBytes = opts.highWaterMarkBytes ?? DEFAULT_HIGH_WATER_MARK_BYTES;
     this.backpressureRetryMs = opts.backpressureRetryMs ?? DEFAULT_BACKPRESSURE_RETRY_MS;
     this.stallTimeoutMs = opts.stallTimeoutMs ?? DEFAULT_STALL_TIMEOUT_MS;
+    this.idleTimeoutMs = opts.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+    this.lastInboundAt = Date.now();
 
     this.socket.on('message', (data: RawData) => this.onRaw(data));
     this.socket.on('close', () => this.onClose());
@@ -97,6 +105,11 @@ export class WsConnectionV3 {
 
     opts.connectionRegistry?.add(this);
     this.hub.addConnection(this);
+    this.idleCheckTimer = setInterval(
+      () => this.onIdleCheck(),
+      Math.min(this.idleTimeoutMs, IDLE_CHECK_INTERVAL_MS),
+    );
+    this.idleCheckTimer.unref?.();
   }
 
   get subscriptionSessionIds(): readonly string[] {
@@ -138,6 +151,7 @@ export class WsConnectionV3 {
 
   private onRaw(data: RawData): void {
     if (this.closed) return;
+    this.lastInboundAt = Date.now();
     let parsed: unknown;
     try {
       parsed = JSON.parse(rawDataToString(data));
@@ -169,6 +183,19 @@ export class WsConnectionV3 {
       this.hub.subscribeSession(this, frame);
     } else {
       this.hub.unsubscribeSession(this, frame.session_id, frame.request_id);
+    }
+  }
+
+  private onIdleCheck(): void {
+    if (Date.now() - this.lastInboundAt <= this.idleTimeoutMs) return;
+    this.logger?.warn(
+      { connId: this.id, remoteAddress: this.remoteAddress },
+      'ws v3: inbound idle timeout, terminating connection',
+    );
+    try {
+      this.socket.terminate();
+    } catch {
+      this.onClose();
     }
   }
 
@@ -256,6 +283,7 @@ export class WsConnectionV3 {
     if (this.closed) return;
     this.closed = true;
     if (this.drainTimer !== undefined) clearTimeout(this.drainTimer);
+    if (this.idleCheckTimer !== undefined) clearInterval(this.idleCheckTimer);
     this.outbound = [];
     this.hub.dropConnection(this);
   }

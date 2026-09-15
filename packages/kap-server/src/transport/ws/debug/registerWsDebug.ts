@@ -10,6 +10,7 @@ export interface RegisterWsDebugOptions {
   readonly collector?: XstateInspectionCollector;
   readonly flushIntervalMs?: number;
   readonly highWaterMarkBytes?: number;
+  readonly idleTimeoutMs?: number;
 }
 
 export function registerWsDebug(opts: RegisterWsDebugOptions = {}): WebSocketServer {
@@ -22,6 +23,7 @@ export function registerWsDebug(opts: RegisterWsDebugOptions = {}): WebSocketSer
       collector: opts.collector,
       flushIntervalMs: opts.flushIntervalMs,
       highWaterMarkBytes: opts.highWaterMarkBytes,
+      idleTimeoutMs: opts.idleTimeoutMs,
     });
     connections.add(conn);
     socket.on('close', () => {

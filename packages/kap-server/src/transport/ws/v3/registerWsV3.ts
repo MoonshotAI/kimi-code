@@ -28,6 +28,7 @@ export interface RegisterWsV3Options {
   readonly projection: ProjectionService;
   readonly logger?: WsV3Logger;
   readonly maxOutboundMessages?: number;
+  readonly idleTimeoutMs?: number;
 }
 
 export interface WsV3Registration {
@@ -120,6 +121,7 @@ export function registerWsV3(core: Scope, opts: RegisterWsV3Options): WsV3Regist
       userAgent: req.headers['user-agent'] ?? null,
       logger: opts.logger,
       maxOutboundMessages: opts.maxOutboundMessages,
+      idleTimeoutMs: opts.idleTimeoutMs,
     });
     socket.on('close', () => opts.registry.remove(conn.id));
   });
