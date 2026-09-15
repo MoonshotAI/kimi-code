@@ -346,4 +346,25 @@ describe('SessionSubagentModelsValidationService', () => {
     });
     expect(resolve()).toBeUndefined();
   });
+
+  it('fails session creation when default_effort is off but a pool model always thinks', () => {
+    modelIds.add('provider/always');
+    modelMeta.set('provider/always', {
+      capabilities: { thinking: true },
+      alwaysThinking: true,
+      supportEfforts: ['low', 'high', 'max'],
+    });
+    setup({
+      [SECONDARY_MODEL_SECTION]: {
+        defaultModel: 'provider/always',
+        models: { 'provider/always': 'always reasoning' },
+        defaultEffort: 'off',
+      },
+    });
+    const error = resolve();
+    expect(isError2(error)).toBe(true);
+    expect((error as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
+    expect((error as Error2).message).toContain('[secondary_model].default_effort "off"');
+    expect((error as Error2).message).toContain('"provider/always"');
+  });
 });

@@ -194,6 +194,20 @@ function assertValidSubagentDefaultEffort(
   if (effort === undefined || pool === undefined) return;
   for (const alias of Object.keys(pool.models)) {
     const model = modelCatalog.get(alias);
+    if (effort === 'off' && model.alwaysThinking === true) {
+      throw new Error2(
+        ErrorCodes.CONFIG_INVALID,
+        `[secondary_model].default_effort "off" cannot disable thinking for model "${alias}", which always reasons. Choose a concrete thinking effort instead of "off".`,
+        {
+          details: {
+            section: SECONDARY_MODEL_SECTION,
+            field: 'defaultEffort',
+            model: alias,
+            effort,
+          },
+        },
+      );
+    }
     if (modelSupportsThinkingEffort(effort, model, true)) continue;
     if (!modelSupportsThinking(model)) {
       throw new Error2(
