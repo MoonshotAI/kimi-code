@@ -5,6 +5,15 @@ import OpenAIClient from 'openai';
 
 import type { ImageURLPart, VideoURLPart } from '#/llm/message';
 import type { ImageUploadInput, VideoUploadInput } from '#/llm/media/upload';
+import type { LlmModel } from '#/llm/model';
+
+import { KIMI_DEFAULT_BASE_URL } from './trait';
+
+export function kimiFilesBaseUrl(model: LlmModel): string {
+  const base = model.baseUrl ?? KIMI_DEFAULT_BASE_URL;
+  if (model.provider !== 'anthropic') return base;
+  return /\/v1\/?$/.test(base) ? base : `${base.replace(/\/$/, '')}/v1`;
+}
 
 export interface KimiUploadOptions {
   signal?: AbortSignal;

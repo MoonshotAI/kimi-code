@@ -17,8 +17,7 @@ import {
 import type { OpenAITrait } from '#human/llm/requester/bases/openai/trait';
 import { openAIBase } from '#human/llm/requester/bases/openai/requester';
 import { openAIResponsesBase } from '#human/llm/requester/bases/openai-responses/requester';
-import { KimiFiles } from '#human/llm-kimi/files';
-import { KIMI_DEFAULT_BASE_URL } from '#human/llm-kimi/trait';
+import { KimiFiles, kimiFilesBaseUrl } from '#human/llm-kimi/files';
 
 import type { Model } from '../model/catalog';
 import type { ResolvedLlmModel } from '../model/model-requester-impl';
@@ -39,13 +38,13 @@ const kimiMedia: ProviderMediaContribution = {
   uploadVideo: (video, { model, signal }) =>
     new KimiFiles({
       apiKey: model.apiKey,
-      baseUrl: model.baseUrl ?? KIMI_DEFAULT_BASE_URL,
+      baseUrl: kimiFilesBaseUrl(model),
       defaultHeaders: model.defaultHeaders === undefined ? undefined : { ...model.defaultHeaders },
     }).uploadVideo(video, { signal }),
   uploadImage: (image, { model, signal }) =>
     new KimiFiles({
       apiKey: model.apiKey,
-      baseUrl: model.baseUrl ?? KIMI_DEFAULT_BASE_URL,
+      baseUrl: kimiFilesBaseUrl(model),
       defaultHeaders: model.defaultHeaders === undefined ? undefined : { ...model.defaultHeaders },
     }).uploadImage(image, { signal }),
 };

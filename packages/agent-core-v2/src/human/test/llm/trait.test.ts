@@ -18,7 +18,7 @@ import { createMediaRefResolver } from '#/llm/media/resolver';
 import { createMemoryMediaSource } from '#/llm/media/source';
 import type { LlmModel } from '#/llm/model';
 import { createProvider } from '#/llm/provider/definition';
-import { KimiFiles } from '#/llm-kimi/files';
+import { KimiFiles, kimiFilesBaseUrl } from '#/llm-kimi/files';
 import { kimiMediaContribution } from '#/llm-kimi/media';
 import { kimiProvider } from '#/llm-kimi/provider';
 import {
@@ -397,6 +397,22 @@ describe('media', () => {
     await expect(
       files.uploadImage({ data: new Uint8Array([1]), mimeType: 'image/png' }),
     ).rejects.toThrow('apiKey is required');
+  });
+
+  it('restores the stripped /v1 for anthropic-routed kimi models', () => {
+    const anthropic: LlmModel = { ...mediaModel, provider: 'anthropic' };
+    expect(kimiFilesBaseUrl({ ...anthropic, baseUrl: 'https://api.example.test' })).toBe(
+      'https://api.example.test/v1',
+    );
+    expect(kimiFilesBaseUrl({ ...anthropic, baseUrl: 'https://api.example.test/v1' })).toBe(
+      'https://api.example.test/v1',
+    );
+    expect(kimiFilesBaseUrl({ ...anthropic, baseUrl: 'https://api.example.test/' })).toBe(
+      'https://api.example.test/v1',
+    );
+    expect(kimiFilesBaseUrl(anthropic)).toBe(KIMI_DEFAULT_BASE_URL);
+    const openai: LlmModel = { ...mediaModel, provider: 'openai', baseUrl: 'https://api.example.test' };
+    expect(kimiFilesBaseUrl(openai)).toBe('https://api.example.test');
   });
 
   it('uploads a video ref once and serves later requests from the cache', async () => {
