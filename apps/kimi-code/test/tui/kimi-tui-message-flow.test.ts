@@ -1053,7 +1053,7 @@ describe('KimiTUI message flow', () => {
     const { driver } = await makeDriver(makeSession());
     const notifications = driver.sessionEventHandler.notifications;
     notifications.setEnabled(true);
-    notifications.handleEvent({ type: 'turn.started', agentId: 'main', sessionId: 's1', turnId: 1, origin: { kind: 'user' } });
+    notifications.handleEvent({ type: 'turn.started', agentId: 'main', sessionId: 's1', turnId: 1, origin: { kind: 'user' }, input: [] });
     for (const [toolCallId, message] of [
       ['n1', 'first update'],
       ['n2', 'second update'],
@@ -5181,6 +5181,7 @@ command = "vim"
         sessionId: 'ses-1',
         turnId: 1,
         origin: { kind: 'user' },
+        input: [],
       } as Event,
       () => {},
     );

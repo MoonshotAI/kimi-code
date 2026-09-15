@@ -368,7 +368,7 @@ describe('foldWireRecords', () => {
 
   it('ignores state-only, observability, and v2-only record types', () => {
     const folded = fold([
-      { type: 'turn.prompt', input: [], origin: { kind: 'user' }, time: 1 },
+      { type: 'turn.started', input: [], origin: { kind: 'user' }, time: 1 },
       { type: 'usage.record', model: 'k2', usage: {}, time: 2 },
       { type: 'profile.bind', modelAlias: 'k2', disallowedTools: [], time: 3 },
       { type: 'task.started', taskId: 't1', time: 4 },

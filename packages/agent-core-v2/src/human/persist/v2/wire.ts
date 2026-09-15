@@ -25,6 +25,7 @@ const CONSUMED_TYPES = new Set([
   'context.apply_compaction',
   'context.clear',
   'context.undo',
+  'turn.started',
   'turn.prompt',
   'turn.cancel',
   'turn.ended',
@@ -83,6 +84,7 @@ function passesValidation(record: V2WireRecord): boolean {
     }
     case 'context.apply_compaction':
       return isValidCompactionRecord(record);
+    case 'turn.started':
     case 'turn.prompt': {
       const promptId = record['promptId'];
       return promptId === undefined || typeof promptId === 'string';

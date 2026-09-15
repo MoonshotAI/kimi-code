@@ -77,6 +77,7 @@ function turnStarted(origin: Record<string, unknown>): Event {
     type: 'turn.started',
     turnId: 1,
     origin,
+    input: [],
   } as unknown as Event;
 }
 

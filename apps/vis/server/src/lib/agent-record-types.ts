@@ -26,6 +26,7 @@ export type { QuestionTaskInfo as QuestionBackgroundTaskInfo } from '@moonshot-a
 
 import type {
   AgentTaskInfo as BackgroundTaskInfo,
+  ContentPart,
   CronAddPayload,
   CronCursorPayload,
   CronDeletePayload,
@@ -53,6 +54,7 @@ import type {
   PluginSessionStartEvent,
   PromptAborted,
   PromptCompleted,
+  PromptOrigin,
   PromptSteered,
   TaskStarted,
   TaskTerminated,
@@ -71,9 +73,8 @@ import type {
   ContextClear,
   ContextUndo,
 } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
-import type { TurnCancel, TurnEnded, TurnPrompt, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
-import type { TurnStepInterrupted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
-import type { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
+import type { TurnCancel, TurnEnded, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import type { TurnStarted, TurnStepInterrupted, TurnStepRetrying } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { UsageRecord } from '@moonshot-ai/agent-core-v2/agent/usage/usageOps';
 import type {
   ConfigUpdate,
@@ -135,6 +136,18 @@ export interface PromptAcceptedRecord {
   readonly agentId: string;
   readonly promptId: string;
   readonly content?: unknown;
+  readonly time?: number;
+}
+
+/** v2-renamed durable record: `turn.started` carries the same payload, but
+ *  old wires still contain `turn.prompt` (whose `turnId` may be absent). */
+export interface TurnPromptRecord {
+  readonly type: 'turn.prompt';
+  readonly agentId: string;
+  readonly input: readonly ContentPart[];
+  readonly origin: PromptOrigin;
+  readonly promptId?: string;
+  readonly turnId?: number;
   readonly time?: number;
 }
 
@@ -213,7 +226,8 @@ export type AgentRecord =
   | WireRecordOf<'tower_mode.exit', TowerModeExit>
   | WireRecordOf<'turn.cancel', TurnCancel>
   | WireRecordOf<'turn.ended', TurnEnded>
-  | WireRecordOf<'turn.prompt', TurnPrompt>
+  | WireRecordOf<'turn.started', TurnStarted>
+  | TurnPromptRecord
   | WireRecordOf<'turn.steer', TurnSteer>
   | WireRecordOf<'turn.step.interrupted', TurnStepInterrupted>
   | WireRecordOf<'turn.step.retrying', TurnStepRetrying>

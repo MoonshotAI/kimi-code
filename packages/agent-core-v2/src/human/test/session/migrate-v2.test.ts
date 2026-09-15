@@ -123,6 +123,10 @@ function turnPrompt(agentId = MAIN): Record<string, unknown> {
   return { type: 'turn.prompt', agentId, time: 1, input: [{ type: 'text', text: 'x' }], origin: { kind: 'user' } };
 }
 
+function turnStarted(agentId = MAIN): Record<string, unknown> {
+  return { type: 'turn.started', agentId, time: 1, turnId: 0, input: [{ type: 'text', text: 'x' }], origin: { kind: 'user' } };
+}
+
 function stepBegin(uuid: string, agentId = MAIN): Record<string, unknown> {
   return { type: 'context.append_loop_event', agentId, time: 1, event: { type: 'step.begin', uuid, turnId: '0' } };
 }
@@ -555,7 +559,7 @@ describe('migrateV2Session', () => {
     const dir = await makeV2SessionDir({
       agents: {
         [MAIN]: {
-          records: [turnPrompt(), appendUser('first'), ...assistantStep('s1', 'first-reply')],
+          records: [turnStarted(), appendUser('first'), ...assistantStep('s1', 'first-reply')],
         },
       },
     });

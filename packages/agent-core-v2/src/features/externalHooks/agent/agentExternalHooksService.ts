@@ -15,7 +15,7 @@ import {
 } from '#/agent/fullCompaction/fullCompaction';
 import type { CompactionResult } from '#/agent/fullCompaction/types';
 import { IAgentLoopService, type AfterStepContext } from '#/agent/loop/loop';
-import { TurnStarted } from '#/agent/loop/turnEvents';
+import { isDisplayablePromptOrigin, turnPromptText, TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { type PromptSubmitContext } from '#/agent/loop/loop';
 import { PromptQueued } from '#/agent/prompt/promptEvents';
@@ -227,7 +227,9 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
         turnId: event.turnId,
         originKind: event.origin.kind,
         originName: 'name' in event.origin ? event.origin.name : undefined,
-        prompt: event.prompt,
+        prompt: isDisplayablePromptOrigin(event.origin)
+          ? turnPromptText(event.input, event.origin)
+          : undefined,
       },
       event.origin.kind,
     );

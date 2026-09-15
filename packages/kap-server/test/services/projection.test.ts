@@ -74,7 +74,7 @@ function makeProjector(agentId = 'main'): AgentMessageProjector {
 function runFullTurn(projector: AgentMessageProjector, sink: ServerMessage[]): void {
   feed(
     projector,
-    ev({ type: 'turn.started', turnId: 1, promptId: 'p1', origin: { kind: 'user' }, prompt: 'fix the bug' }),
+    ev({ type: 'turn.started', turnId: 1, promptId: 'p1', origin: { kind: 'user' }, input: [{ type: 'text', text: 'fix the bug' }] }),
     sink,
   );
   feed(projector, ev({ type: 'turn.step.started', turnId: 1, step: 1 }), sink);
@@ -197,7 +197,7 @@ describe('AgentMessageProjector', () => {
   it('folds a step retry into the retry field of the same running step', () => {
     const projector = makeProjector();
     const messages = feedAll(projector, [
-      ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'go' }),
+      ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, input: [{ type: 'text', text: 'go' }] }),
       ev({ type: 'turn.step.started', turnId: 1, step: 1 }),
       ev({
         type: 'turn.step.retrying',
@@ -231,7 +231,7 @@ describe('AgentMessageProjector', () => {
   it('marks the open step interrupted and emits system(interruption) on user cancel', () => {
     const projector = makeProjector();
     const messages = feedAll(projector, [
-      ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'go' }),
+      ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, input: [{ type: 'text', text: 'go' }] }),
       ev({ type: 'turn.step.started', turnId: 1, step: 1 }),
       ev({ type: 'assistant.delta', turnId: 1, delta: 'partial' }),
       ev({ type: 'turn.ended', turnId: 1, reason: 'cancelled', interruptReason: 'user_cancelled' }),
@@ -252,7 +252,7 @@ describe('AgentMessageProjector', () => {
   it('links approvals to their tool call and projects pending then resolved interactions', () => {
     const projector = makeProjector();
     const sink: ServerMessage[] = [];
-    feed(projector, ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'go' }), sink);
+    feed(projector, ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, input: [{ type: 'text', text: 'go' }] }), sink);
     feed(projector, ev({ type: 'turn.step.started', turnId: 1, step: 1 }), sink);
     feed(
       projector,
@@ -289,7 +289,7 @@ describe('AgentMessageProjector', () => {
   it('emits steer user messages read at their steer event with per-turn ids', () => {
     const projector = makeProjector();
     const messages = feedAll(projector, [
-      ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'do A' }),
+      ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, input: [{ type: 'text', text: 'do A' }] }),
       ev({ type: 'turn.step.started', turnId: 1, step: 1 }),
       ev({ type: 'turn.steer', turnId: 1, input: [{ type: 'text', text: 'also B' }], origin: { kind: 'user' } }),
       ev({ type: 'turn.step.completed', turnId: 1, step: 1 }),
@@ -317,16 +317,10 @@ describe('AgentMessageProjector', () => {
     const projector = makeProjector();
     const messages = feedAll(projector, [
       ev({
-        type: 'turn.prompt',
-        turnId: 1,
-        input: [{ type: 'text', text: 'check the queue', contentType: 'text/xml' }],
-        origin: { kind: 'cron_job', jobId: 'job-1', cron: '*/5 * * * *', recurring: true, coalescedCount: 0, stale: false },
-      }),
-      ev({
         type: 'turn.started',
         turnId: 1,
         origin: { kind: 'cron_job', jobId: 'job-1', cron: '*/5 * * * *', recurring: true, coalescedCount: 0, stale: false },
-        prompt: 'check the queue',
+        input: [{ type: 'text', text: 'check the queue', contentType: 'text/xml' }],
       }),
     ]);
     const turn = ofType(messages, 'turn')[0]!;
@@ -364,7 +358,7 @@ describe('AgentMessageProjector', () => {
         type: 'turn.started',
         turnId: 2,
         origin: { kind: 'cron_missed', count: 3 },
-        prompt: 'missed cron runs',
+        input: [{ type: 'text', text: 'missed cron runs' }],
       }),
       messages,
     );
@@ -387,6 +381,7 @@ describe('AgentMessageProjector', () => {
         type: 'turn.started',
         turnId: 1,
         origin: { kind: 'task', taskId: 'task-1', status: 'completed', notificationId: 'task:task-1:completed' },
+        input: [],
       }),
       sink,
     );
@@ -498,7 +493,7 @@ describe('AgentMessageProjector', () => {
           trigger: 'user-slash',
           activationId: 'a1',
         },
-        prompt: 'review the code',
+        input: [{ type: 'text', text: 'review the code' }],
       }),
       sink,
     );
@@ -543,7 +538,7 @@ describe('AgentMessageProjector', () => {
   it('covers the three subagent wait modes around the parent tool call', () => {
     const projector = makeProjector();
     const sink: ServerMessage[] = [];
-    feed(projector, ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'go' }), sink);
+    feed(projector, ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, input: [{ type: 'text', text: 'go' }] }), sink);
     feed(projector, ev({ type: 'turn.step.started', turnId: 1, step: 1 }), sink);
     feed(
       projector,
@@ -716,7 +711,7 @@ describe('AgentMessageProjector', () => {
   it('drives todo entities from the todo emitter and links TodoList tool calls', () => {
     const projector = makeProjector();
     const sink: ServerMessage[] = [];
-    feed(projector, ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'go' }), sink);
+    feed(projector, ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, input: [{ type: 'text', text: 'go' }] }), sink);
     feed(projector, ev({ type: 'turn.step.started', turnId: 1, step: 1 }), sink);
     feed(
       projector,
@@ -743,9 +738,9 @@ describe('AgentMessageProjector', () => {
   it('truncates the timeline on context.undone with removed top-level ids', () => {
     const projector = makeProjector();
     const messages = feedAll(projector, [
-      ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'one' }),
+      ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, input: [{ type: 'text', text: 'one' }] }),
       ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }),
-      ev({ type: 'turn.started', turnId: 2, origin: { kind: 'user' }, prompt: 'two' }),
+      ev({ type: 'turn.started', turnId: 2, origin: { kind: 'user' }, input: [{ type: 'text', text: 'two' }] }),
       ev({ type: 'turn.ended', turnId: 2, reason: 'completed' }),
       ev({
         type: 'goal.updated',
@@ -772,20 +767,20 @@ describe('AgentMessageProjector', () => {
   it('settles a full-cut splice as system(clear) on new events, on timeout, or as undo', () => {
     const projector = makeProjector();
     const before = feedAll(projector, [
-      ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'one' }),
+      ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, input: [{ type: 'text', text: 'one' }] }),
       ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }),
     ]);
     expect(ofType(before, 'system')).toHaveLength(0);
     const after = feedAll(projector, [
       ev({ type: 'context.spliced', start: 0, deleteCount: 4, messages: [] }),
-      ev({ type: 'turn.started', turnId: 2, origin: { kind: 'user' }, prompt: 'fresh' }),
+      ev({ type: 'turn.started', turnId: 2, origin: { kind: 'user' }, input: [{ type: 'text', text: 'fresh' }] }),
     ]);
     const clear = ofType(after, 'system').find((m) => m.subtype === 'clear');
     expect(clear).toMatchObject({ subtype: 'clear', payload: { removed_ids: ['t1'] } });
 
     const projector2 = makeProjector();
     feedAll(projector2, [
-      ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'one' }),
+      ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, input: [{ type: 'text', text: 'one' }] }),
       ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }),
     ]);
     const undoOnly = feedAll(projector2, [
@@ -802,7 +797,7 @@ describe('AgentMessageProjector', () => {
         onDeferred: (messages) => deferred.push(...messages),
       });
       const pending = feedAll(projector3, [
-        ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'one' }),
+        ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, input: [{ type: 'text', text: 'one' }] }),
         ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }),
         ev({ type: 'context.spliced', start: 0, deleteCount: 4, messages: [] }),
       ]);
@@ -823,7 +818,7 @@ describe('AgentMessageProjector', () => {
   it('replays in-flight entities plus state entities as recovery payload', () => {
     const projector = makeProjector();
     const sink: ServerMessage[] = [];
-    feed(projector, ev({ type: 'turn.started', turnId: 1, promptId: 'p1', origin: { kind: 'user' }, prompt: 'go' }), sink);
+    feed(projector, ev({ type: 'turn.started', turnId: 1, promptId: 'p1', origin: { kind: 'user' }, input: [{ type: 'text', text: 'go' }] }), sink);
     feed(projector, ev({ type: 'turn.step.started', turnId: 1, step: 1 }), sink);
     feed(projector, ev({ type: 'assistant.delta', turnId: 1, delta: 'Hello' }), sink);
     feed(
@@ -896,7 +891,7 @@ describe('AgentMessageProjector', () => {
   it('emits an unread user message for queued prompts and converges on dequeue or abort', () => {
     const projector = makeProjector();
     const sink: ServerMessage[] = [];
-    feed(projector, ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' }, prompt: 'first' }), sink);
+    feed(projector, ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' }, input: [{ type: 'text', text: 'first' }] }), sink);
     feed(
       projector,
       ev({
@@ -937,7 +932,7 @@ describe('AgentMessageProjector', () => {
     feed(projector, ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }), sink);
     feed(
       projector,
-      ev({ type: 'turn.started', turnId: 1, promptId: 'q1', origin: { kind: 'user' }, prompt: 'second' }),
+      ev({ type: 'turn.started', turnId: 1, promptId: 'q1', origin: { kind: 'user' }, input: [{ type: 'text', text: 'second' }] }),
       sink,
     );
     const dequeued = ofType(sink, 'user').at(-1)!;
@@ -958,7 +953,7 @@ describe('AgentMessageProjector', () => {
         type: 'turn.started',
         turnId: 1,
         origin: { kind: 'system_trigger', name: 'goal_continuation' },
-        prompt: 'continue the goal',
+        input: [{ type: 'text', text: 'continue the goal' }],
       }),
     ]);
     const turn = ofType(messages, 'turn')[0]!;
@@ -969,15 +964,15 @@ describe('AgentMessageProjector', () => {
   it('counts undo anchors instead of timeline turns when fromTurnId is missing', () => {
     const projector = makeProjector();
     const messages = feedAll(projector, [
-      ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'one' }),
+      ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, input: [{ type: 'text', text: 'one' }] }),
       ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }),
-      ev({ type: 'turn.started', turnId: 2, origin: { kind: 'user' }, prompt: 'two' }),
+      ev({ type: 'turn.started', turnId: 2, origin: { kind: 'user' }, input: [{ type: 'text', text: 'two' }] }),
       ev({ type: 'turn.ended', turnId: 2, reason: 'completed' }),
       ev({
         type: 'turn.started',
         turnId: 3,
         origin: { kind: 'cron_job', jobId: 'j1', cron: '* * * * *' },
-        prompt: 'cron',
+        input: [{ type: 'text', text: 'cron' }],
       }),
       ev({ type: 'turn.ended', turnId: 3, reason: 'completed' }),
       ev({ type: 'context.undone', turns: 1 }),
@@ -995,7 +990,7 @@ describe('AgentMessageProjector', () => {
       nextTurnId: 2,
     });
     const messages = feedAll(projector, [
-      ev({ type: 'turn.started', turnId: 2, origin: { kind: 'user' }, prompt: 'live' }),
+      ev({ type: 'turn.started', turnId: 2, origin: { kind: 'user' }, input: [{ type: 'text', text: 'live' }] }),
       ev({ type: 'turn.ended', turnId: 2, reason: 'completed' }),
       ev({
         type: 'goal.updated',
@@ -1035,7 +1030,7 @@ describe('foldWireTurn + healTurn', () => {
   it('overrides only divergent domains: missing tool outcome and truncated live text', () => {
     const projector = makeProjector();
     const sink: ServerMessage[] = [];
-    feed(projector, ev({ type: 'turn.started', turnId: 3, origin: { kind: 'user' }, prompt: 'go' }), sink);
+    feed(projector, ev({ type: 'turn.started', turnId: 3, origin: { kind: 'user' }, input: [{ type: 'text', text: 'go' }] }), sink);
     feed(projector, ev({ type: 'turn.step.started', turnId: 3, step: 1 }), sink);
     feed(projector, ev({ type: 'assistant.delta', turnId: 3, delta: 'Hello' }), sink);
     feed(
@@ -1062,7 +1057,7 @@ describe('foldWireTurn + healTurn', () => {
   it('rebuilds steps the live projection never saw', () => {
     const projector = makeProjector();
     const sink: ServerMessage[] = [];
-    feed(projector, ev({ type: 'turn.started', turnId: 3, origin: { kind: 'user' }, prompt: 'go' }), sink);
+    feed(projector, ev({ type: 'turn.started', turnId: 3, origin: { kind: 'user' }, input: [{ type: 'text', text: 'go' }] }), sink);
     feed(projector, ev({ type: 'turn.ended', turnId: 3, reason: 'completed' }), sink);
     const healed = projector.healTurn(3, foldWireTurn(records, 3)).map((m) => serverMessageSchema.parse(m));
     const step = ofType(healed, 'step')[0]!;
@@ -1294,7 +1289,7 @@ describe('SessionProjection', () => {
     expect(ofType(received, 'agent.state').some((m) => m.agent_id !== 'main')).toBe(false);
 
     agent.activity = { turn: { turnId: 1, step: 1, phase: 'running', ending: false, activeToolCalls: [] } };
-    agent.bus.emit(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'go' }) as Event2<any>);
+    agent.bus.emit(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, input: [{ type: 'text', text: 'go' }] }) as Event2<any>);
     agent.bus.emit(ev({ type: 'turn.step.started', turnId: 1, step: 1 }) as Event2<any>);
     agent.bus.emit(ev({ type: 'assistant.delta', turnId: 1, delta: 'Hi' }) as Event2<any>);
     agent.bus.emit(ev({ type: 'agent.status.updated', agentId: 'main', model: 'kimi-k2' }) as Event2<any>);
@@ -1458,7 +1453,7 @@ describe('SessionProjection', () => {
     expect(ofType(received, 'interaction')).toHaveLength(0);
     expect(logger.warn).toHaveBeenCalled();
 
-    agent.bus.emit(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'go' }) as Event2<any>);
+    agent.bus.emit(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, input: [{ type: 'text', text: 'go' }] }) as Event2<any>);
     interactions.enqueue({
       id: 'apr-1',
       kind: 'approval',
@@ -1497,7 +1492,7 @@ describe('SessionProjection', () => {
     expect(subtypes).toContain('swarm.exit');
 
     agent.bus.emit(ev({ type: 'agent.status.updated', agentId: 'main', planMode: true }) as Event2<any>);
-    agent.bus.emit(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'go' }) as Event2<any>);
+    agent.bus.emit(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, input: [{ type: 'text', text: 'go' }] }) as Event2<any>);
     agent.bus.emit(ev({ type: 'turn.step.started', turnId: 1, step: 1 }) as Event2<any>);
     agent.bus.emit(
       ev({ type: 'tool.call.started', turnId: 1, toolCallId: 'call_plan', name: 'ExitPlanMode', args: '{}' }) as Event2<any>,

@@ -320,7 +320,7 @@ describe('AgentConversationUndoService', () => {
 
     const persisted = await ctx.persistedWireRecords();
     expect(
-      persisted.filter((record) => record.type === 'turn.prompt').map((record) => record['turnId']),
+      persisted.filter((record) => record.type === 'turn.started').map((record) => record['turnId']),
     ).toEqual([0, 1, 1]);
     expect(
       persisted

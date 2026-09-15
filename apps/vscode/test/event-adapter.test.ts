@@ -23,6 +23,7 @@ describe('event adapter (projects SDK events into the legacy Webview contract)',
         agentId: 'main',
         turnId: 7,
         origin: { kind: 'user' },
+        input: [],
       },
       { pendingInput: 'Fix the failing test' },
     );

@@ -35,13 +35,23 @@ export interface TurnStartedPayload {
   readonly turnId: number;
   readonly promptId?: string;
   readonly origin: PromptOrigin;
-  readonly prompt?: string;
-  readonly promptAttachments?: readonly TurnPromptAttachment[];
+  readonly input: readonly ContentPart[];
 }
+
+const turnStartedSchema = z.object({
+  agentId: z.string(),
+  turnId: z.number().optional(),
+  promptId: z.string().optional(),
+  origin: z.custom<PromptOrigin>(),
+  input: z.custom<readonly ContentPart[]>(),
+});
 
 export class TurnStarted extends AgentEvent2<TurnStartedPayload> {
   static override readonly type = 'turn.started';
+  static override readonly durable = true;
   static override readonly observable = true;
+  static override readonly aliases = ['turn.prompt'];
+  static override readonly schema = turnStartedSchema;
 }
 export interface TurnStarted extends TurnStartedPayload {}
 
@@ -61,7 +71,7 @@ export function turnPromptText(
 export function turnPromptAttachments(
   input: readonly ContentPart[],
   origin?: PromptOrigin,
-): TurnStartedPayload['promptAttachments'] {
+): readonly TurnPromptAttachment[] | undefined {
   const attachments: TurnPromptAttachment[] = [];
   const promptMediaFileId = (url: string, id: string | undefined): string | undefined => {
     const fileId = parseDaemonFileUrl(url)?.fileId;

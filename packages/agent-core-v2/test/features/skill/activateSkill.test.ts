@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { turnPromptText, type TurnStarted } from '#/agent/loop/turnEvents';
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
 
 import { stubSkill } from './catalog/stubs';
@@ -111,8 +112,8 @@ describe('promptWithSkills', () => {
         .slice(0, 2)
         .map((event) => (event.args as { readonly skillName?: string }).skillName),
     ).toEqual(['review', 'security']);
-    const started = events[2]?.args as { readonly prompt?: string };
-    expect(started.prompt).toBe('Review this change.');
+    const started = events[2]?.args as TurnStarted;
+    expect(turnPromptText(started.input, started.origin)).toBe('Review this change.');
   });
 
   it('rejects the whole submission when any skill is unknown', async () => {

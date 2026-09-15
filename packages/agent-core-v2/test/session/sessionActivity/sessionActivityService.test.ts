@@ -96,7 +96,7 @@ class FakeAgentHandle {
 
   startTurn(turnId: number): void {
     this.loopState = 'running';
-    this.bus.publish(new TurnStarted({ agentId: this.id, turnId, origin: { kind: 'user' } }));
+    this.bus.publish(new TurnStarted({ agentId: this.id, turnId, origin: { kind: 'user' }, input: [] }));
   }
 
   endTurn(turnId: number, reason: 'completed' | 'cancelled' | 'failed' | 'blocked'): void {

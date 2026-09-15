@@ -33,7 +33,7 @@ describe('writeMainAgentWire', () => {
     });
   });
 
-  it('wraps each user turn in turn.prompt/turn.ended records', async () => {
+  it('wraps each user turn in turn.started/turn.ended records', async () => {
     await writeMainAgentWire(dir, {
       createdAtMs: 1,
       messages: [
@@ -44,7 +44,7 @@ describe('writeMainAgentWire', () => {
     const records = await readWireRecords();
     expect(records.map((r) => r.type)).toEqual([
       'metadata',
-      'turn.prompt',
+      'turn.started',
       'context.append_message',
       'context.append_message',
       'turn.ended',
@@ -58,7 +58,7 @@ describe('writeMainAgentWire', () => {
     expect(ended).toMatchObject({ agentId: 'main', turnId: 0, reason: 'completed' });
   });
 
-  it('numbers one turn.prompt per user message with sequential turnIds', async () => {
+  it('numbers one turn.started per user message with sequential turnIds', async () => {
     await writeMainAgentWire(dir, {
       createdAtMs: 1,
       messages: [
@@ -69,7 +69,7 @@ describe('writeMainAgentWire', () => {
       ],
     });
     const records = await readWireRecords();
-    const prompts = records.filter((r) => r.type === 'turn.prompt');
+    const prompts = records.filter((r) => r.type === 'turn.started');
     const endeds = records.filter((r) => r.type === 'turn.ended');
     expect(prompts).toHaveLength(2);
     expect(endeds.map((r) => r['turnId'])).toEqual([0, 1]);
@@ -85,7 +85,7 @@ describe('writeMainAgentWire', () => {
       ],
     });
     const records = await readWireRecords();
-    const prompts = records.filter((r) => r.type === 'turn.prompt');
+    const prompts = records.filter((r) => r.type === 'turn.started');
     expect(prompts).toHaveLength(2);
     expect(prompts[0]?.['origin']).toEqual({ kind: 'system_trigger', name: 'imported_orphan' });
     expect(prompts[0]?.['input']).toEqual([]);
@@ -103,7 +103,7 @@ describe('writeMainAgentWire', () => {
       ],
     });
     const records = await readWireRecords();
-    expect(records.filter((r) => r.type === 'turn.prompt')).toHaveLength(2);
+    expect(records.filter((r) => r.type === 'turn.started')).toHaveLength(2);
     expect(records.filter((r) => r.type === 'turn.ended').map((r) => r['turnId'])).toEqual([0]);
   });
 
