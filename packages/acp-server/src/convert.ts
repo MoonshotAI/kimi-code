@@ -83,10 +83,10 @@ export function acpBlocksToContentParts(blocks: readonly ContentBlock[]): readon
  * (`resolvePromptMediaFiles`). Best effort: a part that cannot be compressed
  * is passed through unchanged.
  *
- * Compression is NOT duplicated by the engine: agent-core-v2's prompt pipeline
- * (`agent/prompt/promptService.ts`) only *extracts* pre-existing compression
- * captions from user text (rerouting them to system reminders) — it never
- * compresses images at the prompt entry, so the edge ingestion point owns
+ * Compression is NOT duplicated by the engine: agent-core-v2 never compresses
+ * images at the prompt entry — its prompt pipeline only *extracts* pre-existing
+ * compression captions from user text for prompt metadata
+ * (`agent/prompt/promptMetadataText.ts`) — so the edge ingestion point owns
  * that step.
  *
  * Format gating is deliberately left to the engine: the accepted image
@@ -148,6 +148,7 @@ export async function compressPromptImageParts(
               },
               originalPath,
             }),
+            contentType: 'text/xml',
           });
           out.push({
             type: 'image_url',

@@ -1153,12 +1153,12 @@ describe('AgentMcpService', () => {
     expect(result.isError).toBeUndefined();
     expect(Array.isArray(result.output)).toBe(true);
     expect(result.output as ContentPart[]).toEqual([
-      { type: 'text', text: '<mcp_tool_result name="mcp__s__snap">' },
+      { type: 'text', text: '<mcp_tool_result name="mcp__s__snap">', contentType: 'text/xml' },
       {
         type: 'image_url',
         imageUrl: { url: 'data:image/png;base64,' + 'x'.repeat(100_000) },
       },
-      { type: 'text', text: '</mcp_tool_result>' },
+      { type: 'text', text: '</mcp_tool_result>', contentType: 'text/xml' },
     ]);
   });
 

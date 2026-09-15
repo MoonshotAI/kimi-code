@@ -8,6 +8,7 @@ export type MessageRole = z.infer<typeof messageRoleSchema>;
 export const textContentSchema = z.object({
   type: z.literal('text'),
   text: z.string(),
+  contentType: z.string().optional(),
 });
 export type TextContent = z.infer<typeof textContentSchema>;
 

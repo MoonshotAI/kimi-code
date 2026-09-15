@@ -416,6 +416,7 @@ describe('resolveOriginalCaptions', () => {
       expect(resolved).toHaveLength(3);
       const caption = resolved[1];
       if (caption?.type !== 'text') throw new Error('expected caption text part');
+      expect(caption.contentType).toBe('text/xml');
       expect(caption.text).toContain('Image compressed');
       expect(caption.text).toContain('2600x2600');
       expect(caption.text).toContain(att.original!.path!);
@@ -503,6 +504,7 @@ describe('resolveOriginalCaptions', () => {
 
       expect(twice).toHaveLength(2);
       expect(twice[0]?.type).toBe('text');
+      expect((twice[0] as { contentType?: string }).contentType).toBe('text/xml');
       expect(twice[1]?.type).toBe('image_url');
       // The content-addressed original was persisted exactly once.
       expect(att.original?.path?.startsWith(dir)).toBe(true);

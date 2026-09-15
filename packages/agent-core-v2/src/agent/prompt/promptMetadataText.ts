@@ -44,6 +44,7 @@ export function promptMetadataTextFromText(text: string): string | undefined {
 function promptPartText(part: ContentPart): string | undefined {
   switch (part.type) {
     case 'text': {
+      if (part.contentType === 'text/xml') return undefined;
       if (matchSingleMediaPathTag(part.text) !== undefined) return undefined;
       const { text } = extractImageCompressionCaptions(part.text);
       return text.trim().length === 0 ? undefined : text;
