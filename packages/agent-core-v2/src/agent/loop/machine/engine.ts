@@ -558,10 +558,11 @@ export function attachMachineEngine(
         const turnSnapshot = turnRef.getSnapshot();
         const turnValue = turnSnapshot.value;
         const phase =
-          turnValue === 'retrying'
-            ? ('retrying' as const)
-            : typeof turnValue === 'object' && turnValue !== null && 'acting' in turnValue
-              ? ('tool_call' as const)
+          typeof turnValue === 'object' && turnValue !== null && 'acting' in turnValue
+            ? ('tool_call' as const)
+            : typeof turnValue === 'object' && turnValue !== null && 'streaming' in turnValue &&
+                (turnValue as { streaming?: unknown }).streaming === 'retrying'
+              ? ('retrying' as const)
               : ('running' as const);
         const context = turnSnapshot.context;
         turn = {
