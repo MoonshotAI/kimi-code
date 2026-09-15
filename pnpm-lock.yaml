@@ -696,31 +696,6 @@ importers:
         specifier: 'catalog:'
         version: 4.3.6
 
-  packages/kosong:
-    dependencies:
-      '@anthropic-ai/sdk':
-        specifier: ^0.95.2
-        version: 0.95.2(zod@4.3.6)
-      '@google/genai':
-        specifier: ^1.49.0
-        version: 1.49.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))
-      openai:
-        specifier: ^6.34.0
-        version: 6.34.0(ws@8.20.0)(zod@4.3.6)
-      zod:
-        specifier: ^4.3.6
-        version: 4.3.6
-      zod-to-json-schema:
-        specifier: ^3.25.2
-        version: 3.25.2(zod@4.3.6)
-    devDependencies:
-      ajv:
-        specifier: ^8.18.0
-        version: 8.18.0
-      ajv-formats:
-        specifier: ^3.0.1
-        version: 3.0.1(ajv@8.18.0)
-
   packages/migration-legacy:
     dependencies:
       '@moonshot-ai/agent-core-v2':
@@ -759,9 +734,6 @@ importers:
       '@moonshot-ai/klient':
         specifier: workspace:^
         version: link:../klient
-      '@moonshot-ai/kosong':
-        specifier: workspace:^
-        version: link:../kosong
       '@types/yazl':
         specifier: ^2.4.6
         version: 2.4.6

@@ -9,16 +9,20 @@ import {
   type KimiHostIdentity,
   type ManagedKimiOAuthRef,
 } from '@moonshot-ai/kimi-code-oauth';
-import type {
-  ProviderConfig as KosongProviderConfig,
-  ProviderRequestAuth,
-} from '@moonshot-ai/kosong';
-import { APIStatusError, UNKNOWN_CAPABILITY } from '@moonshot-ai/kosong';
-import { resolveKimiHome } from '@moonshot-ai/agent-core-v2';
+import {
+  APIStatusError,
+  resolveKimiHome,
+  UNKNOWN_CAPABILITY,
+} from '@moonshot-ai/agent-core-v2';
 
 import { ErrorCodes, KimiError } from '#/errors';
 import type { Logger } from '#/logging/index';
-import type { ModelProvider, ResolvedRuntimeProvider } from '#/model-provider';
+import type {
+  ModelProvider,
+  ProviderConfig as KosongProviderConfig,
+  ProviderRequestAuth,
+  ResolvedRuntimeProvider,
+} from '#/model-provider';
 import { mapOAuthTokenError } from '#/oauth-error';
 
 export interface KimiForCodingProviderOptions extends KimiHostIdentity {

@@ -66,7 +66,6 @@
         ./packages/agent-core-v2
         ./packages/kap-server
         ./packages/klient
-        ./packages/kosong
         ./packages/migration-legacy
         ./packages/minidb
         ./packages/node-sdk
@@ -88,7 +87,6 @@
         "@moonshot-ai/acp-server"
         "@moonshot-ai/agent-core-v2"
         "@moonshot-ai/kap-server"
-        "@moonshot-ai/kosong"
         "@moonshot-ai/migration-legacy"
         "@moonshot-ai/minidb"
         "@moonshot-ai/kimi-code-sdk"

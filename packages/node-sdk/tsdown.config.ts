@@ -21,7 +21,6 @@ export default defineConfig({
   },
   alias: {
     '@moonshot-ai/kimi-code-oauth': fileURLToPath(new URL('../oauth/src/index.ts', import.meta.url)),
-    '@moonshot-ai/kosong': fileURLToPath(new URL('../kosong/src/index.ts', import.meta.url)),
   },
   deps: {
     alwaysBundle: [/^@moonshot-ai\//],

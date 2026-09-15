@@ -25,9 +25,8 @@ export interface FetchCustomRegistryOptions {
 }
 
 /**
- * The kosong `ProviderConfig` union (`packages/kosong/src/providers/index.ts`)
- * mirrors these literal values. `kimi` is included because the api.json schema
- * permits it even though kokub itself only emits the other three.
+ * `kimi` is included because the api.json schema permits it even though kokub
+ * itself only emits the other three.
  */
 export type CustomRegistryProviderType =
   | 'anthropic'
