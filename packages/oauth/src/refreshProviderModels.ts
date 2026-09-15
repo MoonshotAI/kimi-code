@@ -27,6 +27,7 @@ import {
 import {
   declaredProviderCredential,
   apiKeyEnvMissingMessage,
+  credentialConflictMessage,
   nonEmptyString,
 } from './provider-credential';
 import { isRecord } from './utils';
@@ -118,7 +119,12 @@ function resolveProviderApiKey(provider: ProviderView, providerName: string): st
   }
   if (isRecord(provider.env)) {
     const fromEnv = nonEmptyString(provider.env['KIMI_API_KEY']);
-    if (fromEnv !== undefined) return fromEnv;
+    if (fromEnv !== undefined) {
+      if (provider.oauth !== undefined) {
+        throw new Error(credentialConflictMessage('Provider', providerName, 'apiKey', 'oauth'));
+      }
+      return fromEnv;
+    }
   }
   return undefined;
 }

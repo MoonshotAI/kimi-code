@@ -48,15 +48,11 @@ interface FakeHarness {
   getConfig: () => Promise<KimiConfig>;
   setConfig: (patch: Partial<KimiConfig>) => Promise<KimiConfig>;
   removeProvider: (providerId: string) => Promise<KimiConfig>;
-  supportsAtomicSectionReplace: () => boolean;
   replaceConfigSections: (sections: Record<string, unknown>) => Promise<void>;
   close: () => Promise<void>;
 }
 
-function makeHarness(
-  initial: KimiConfig,
-  opts: { atomicReplace?: boolean } = {},
-): {
+function makeHarness(initial: KimiConfig): {
   harness: FakeHarness;
   current: () => KimiConfig;
   setConfigCalls: Array<Partial<KimiConfig>>;
@@ -106,7 +102,6 @@ function makeHarness(
       if (removedDefault) persisted = { ...persisted, defaultModel: undefined };
       return structuredClone(persisted);
     },
-    supportsAtomicSectionReplace: () => opts.atomicReplace === true,
     replaceConfigSections: async (sections) => {
       replaceSectionCalls.push(structuredClone(sections));
       // Replacement semantics: a section present here replaces wholesale, and
@@ -263,7 +258,7 @@ const CATALOG_BODY = {
 describe('kimi provider add', () => {
   it('imports providers and models from a custom registry, persisting source on each provider', async () => {
     const fetchMock = mockRegistryFetch();
-    const { harness, current, setConfigCalls } = makeHarness({ providers: {} } as KimiConfig);
+    const { harness, current, replaceSectionCalls } = makeHarness({ providers: {} } as KimiConfig);
     const { deps, stdout, stderr, exitCodes } = makeDeps(harness);
 
     await tryRun(() =>
@@ -300,9 +295,10 @@ describe('kimi provider add', () => {
       model: 'gpt-5.5',
     });
 
-    // The single setConfig patch should carry both providers and models.
-    expect(setConfigCalls).toHaveLength(1);
-    expect(Object.keys(setConfigCalls[0]?.providers ?? {}).toSorted()).toEqual([
+    // The two replaceConfigSections writes (purge, then rebuilt records)
+    // should both carry providers and models.
+    expect(replaceSectionCalls).toHaveLength(2);
+    expect(Object.keys(replaceSectionCalls[1]?.['providers'] ?? {}).toSorted()).toEqual([
       'kohub',
       'kohub-responses',
     ]);
@@ -341,14 +337,13 @@ describe('kimi provider add', () => {
 
     expect(exitCodes).toEqual([]);
     // The stale model alias must be gone; the registry's alias must be in.
-    // The batch is applied in memory via `applyCustomRegistryEntries` — the
-    // stale provider record is overwritten and its aliases dropped without a
-    // `removeProvider` RPC.
+    // Removals are persisted through the two-phase `replaceConfigSections`
+    // writes, not per-id `removeProvider` RPCs.
     expect(current().models?.['kohub/stale-model']).toBeUndefined();
     expect(current().models?.['kohub/claude-opus-4-7']).toBeDefined();
   });
 
-  it('persists removals and cleared defaults through replaceConfigSections on the v2 harness', async () => {
+  it('persists removals and cleared defaults through replaceConfigSections', async () => {
     mockRegistryFetch();
     const initial: KimiConfig = {
       providers: {
@@ -369,8 +364,9 @@ describe('kimi provider add', () => {
         'gone/m1': { provider: 'gone', model: 'm1', maxContextSize: 1024, capabilities: [] },
       },
       defaultModel: 'gone/m1',
+      thinking: { enabled: false },
     } as unknown as KimiConfig;
-    const { harness, current, replaceSectionCalls } = makeHarness(initial, { atomicReplace: true });
+    const { harness, current, replaceSectionCalls } = makeHarness(initial);
     const { deps, exitCodes } = makeDeps(harness);
 
     await tryRun(() => handleProviderAdd(deps, REGISTRY_URL, {}));
@@ -379,12 +375,14 @@ describe('kimi provider add', () => {
     // The vanished provider and its alias are gone from disk...
     expect(current().providers['gone']).toBeUndefined();
     expect(current().models?.['gone/m1']).toBeUndefined();
-    // ...the dangling default_model was cleared...
+    // ...the dangling default_model was cleared, with its thinking state...
     expect(current().defaultModel).toBeUndefined();
+    expect(current().thinking).toBeUndefined();
     // ...and the purge was persisted as a replacement write before the rebuilt records.
     expect(replaceSectionCalls).toHaveLength(2);
     expect(replaceSectionCalls[0]).not.toHaveProperty('defaultModel');
     expect(replaceSectionCalls[1]).toHaveProperty('defaultModel', undefined);
+    expect(replaceSectionCalls[1]).toHaveProperty('thinking', undefined);
   });
 
   it('preserves newly-imported providers when a later registry entry replaces an existing id', async () => {

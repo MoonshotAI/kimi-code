@@ -922,6 +922,32 @@ describe('refreshProviderModels api_key_env credentials', () => {
       host.dispose();
     }
   });
+
+  it('fails an open-platform provider whose env sub-table key conflicts with oauth, without rewriting it', async () => {
+    const fetchMock = stubManagedModelsFetch();
+    const { host, discovery, providers } = await createHost({
+      providers: {
+        'moonshot-cn': {
+          type: 'kimi',
+          oauth: { storage: 'file', key: 'oauth/moonshot' },
+          env: { KIMI_API_KEY: 'sk-sub-table' },
+        },
+      },
+      models: {},
+    });
+    try {
+      const result = await discovery.refreshProviderModels({ scope: 'all' });
+      expect(result.failed).toHaveLength(1);
+      expect(result.failed[0]).toMatchObject({ provider: 'moonshot-cn' });
+      expect(result.failed[0]?.reason).toContain('mutually exclusive');
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(providers.list()['moonshot-cn']).toMatchObject({
+        oauth: { storage: 'file', key: 'oauth/moonshot' },
+      });
+    } finally {
+      host.dispose();
+    }
+  });
 });
 
 describe('refreshProviderModels defaultModel self-heal', () => {
