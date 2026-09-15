@@ -286,6 +286,25 @@ describe('Model assembly (pure data)', () => {
     }
   });
 
+  it('surfaces a declared adaptive_thinking flag on the assembled model', () => {
+    const { host, catalog } = createHost({
+      providers: { claude: { type: 'anthropic', apiKey: 'sk-a' } },
+      models: {
+        custom: {
+          provider: 'claude',
+          model: 'my-custom-model',
+          maxContextSize: 200000,
+          adaptiveThinking: true,
+        },
+      },
+    });
+    try {
+      expect(catalog.get('custom').adaptiveThinking).toBe(true);
+    } finally {
+      host.dispose();
+    }
+  });
+
   it('resolves provider env-bag credentials and endpoints through the registry', async () => {
     const { host, catalog } = createHost({
       providers: {
