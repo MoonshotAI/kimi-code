@@ -20,21 +20,20 @@ function smokePiTuiNativeLoad(): void {
   const arch = process.arch;
   let rel: string | undefined;
   if (platform === 'darwin' && (arch === 'x64' || arch === 'arm64')) {
-    rel = join('native', 'darwin', 'prebuilds', `darwin-${arch}`, 'darwin-modifiers.node');
+    rel = join('native', 'darwin', 'prebuilds', `darwin-${arch}`, 'darwin-platform.node');
+  } else if (platform === 'linux' && (arch === 'x64' || arch === 'arm64')) {
+    rel = join('native', 'linux', 'prebuilds', `linux-${arch}`, 'linux-platform-x11.node');
   } else if (platform === 'win32' && (arch === 'x64' || arch === 'arm64')) {
-    rel = join('native', 'win32', 'prebuilds', `win32-${arch}`, 'win32-console-mode.node');
+    rel = join('native', 'win32', 'prebuilds', `win32-${arch}`, 'win32-platform.node');
   }
   if (rel === undefined) return;
 
   const req = createRequire(import.meta.url);
   const helper = req(join(dirname(process.execPath), rel)) as {
-    isModifierPressed?: unknown;
-    enableVirtualTerminalInput?: unknown;
+    getText?: unknown;
+    getImage?: unknown;
   };
-  if (
-    typeof helper.isModifierPressed !== 'function' &&
-    typeof helper.enableVirtualTerminalInput !== 'function'
-  ) {
+  if (typeof helper.getText !== 'function' || typeof helper.getImage !== 'function') {
     throw new TypeError(`pi-tui native helper exports are unexpected: ${rel}`);
   }
 }

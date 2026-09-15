@@ -4,7 +4,6 @@ import {
   IAgentLoopService,
   IAgentPermissionModeService,
   IAgentProfileService,
-  IAgentPromptService,
   IAgentScopeContext,
   IAgentStateService,
   IAgentTaskService,
@@ -1087,9 +1086,20 @@ describe('SessionProjection', () => {
             };
           }
           if (token === IAgentLoopService) {
-            return { status: () => ({ state: 'idle' }), activitySnapshot: () => agent.activity };
+            return {
+              snapshot: () => ({
+                state: 'idle' as const,
+                activeTurnId: undefined,
+                activePromptId: undefined,
+                queue: [],
+                notificationCount: 0,
+                paused: false,
+                hasPendingRequests: false,
+                turn: agent.activity.turn,
+                activeTraceId: undefined,
+              }),
+            };
           }
-          if (token === IAgentPromptService) return { list: () => ({ active: undefined, pending: [] }) };
           if (token === IAgentTaskService) {
             return { list: () => [], readOutput: async () => 'task tail window' };
           }

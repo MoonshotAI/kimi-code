@@ -109,7 +109,7 @@ export class SessionLegacyService implements ISessionLegacyService {
     for (const agent of agents.list()) {
       const agentHandle = agents.handleOf(agent.agentId);
       if (agentHandle === undefined) continue;
-      if (agentHandle.accessor.get(IAgentLoopService).status().state === 'running') return true;
+      if (agentHandle.accessor.get(IAgentLoopService).snapshot().state === 'running') return true;
       const tasks = agentHandle.accessor.get(IAgentTaskService);
       if (tasks.list(true).length > 0) return true;
       if (agentHandle.accessor.get(IAgentFullCompactionService).compacting !== null) return true;

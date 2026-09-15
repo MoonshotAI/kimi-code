@@ -39,16 +39,17 @@ function mapContentPart(part: ContextMessage['content'][number]): MessageContent
 }
 
 function buildProtocolContent(msg: ContextMessage): MessageContent[] {
+  const visibleContent = msg.content.filter((p) => p.type !== 'think' || p.hidden !== true);
   if (msg.role === 'tool') {
     if (msg.toolCallId === undefined) {
-      return msg.content.map((p) => mapContentPart(p));
+      return visibleContent.map((p) => mapContentPart(p));
     }
-    const hasMediaPart = msg.content.some(
+    const hasMediaPart = visibleContent.some(
       (p) => p.type === 'image_url' || p.type === 'video_url' || p.type === 'audio_url',
     );
     const output: unknown = hasMediaPart
-      ? msg.content
-      : msg.content.map((p) => (p.type === 'text' ? p.text : '')).join('');
+      ? visibleContent
+      : visibleContent.map((p) => (p.type === 'text' ? p.text : '')).join('');
     const part: MessageContent =
       msg.isError === true
         ? {
@@ -65,7 +66,7 @@ function buildProtocolContent(msg: ContextMessage): MessageContent[] {
     return [part];
   }
 
-  const base = msg.content.map((p) => mapContentPart(p));
+  const base = visibleContent.map((p) => mapContentPart(p));
 
   if (msg.role === 'assistant' && msg.toolCalls.length > 0) {
     for (const call of msg.toolCalls) {

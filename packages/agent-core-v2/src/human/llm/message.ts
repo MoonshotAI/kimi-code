@@ -17,6 +17,7 @@ export interface ThinkPart {
   think: string;
   encrypted?: string;
   detailsIndex?: number;
+  hidden?: boolean;
 }
 
 export interface ImageURLPart {
@@ -107,6 +108,9 @@ export function mergeInPlace(target: StreamedMessagePart, source: StreamedMessag
     if (target.detailsIndex !== source.detailsIndex) {
       return false;
     }
+    if (target.hidden !== source.hidden) {
+      return false;
+    }
     target.think += source.think;
     if (source.encrypted !== undefined) {
       target.encrypted = source.encrypted;
@@ -171,7 +175,7 @@ export function isVacuousContentPart(part: ContentPart): boolean {
     case 'text':
       return part.text.trim().length === 0;
     case 'think':
-      return part.encrypted === undefined && part.think.trim().length === 0;
+      return part.encrypted === undefined && part.hidden !== true && part.think.trim().length === 0;
     case 'image_url':
     case 'audio_url':
     case 'video_url':

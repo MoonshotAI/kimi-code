@@ -273,7 +273,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
 
     try {
       const uploaded = await runWithCredentialRecovery(
-        requester.model.credentials,
+        requester.model.credentialProvider,
         () => uploader({ data: bytes, mimeType, filename }, { signal }),
         signal,
       );

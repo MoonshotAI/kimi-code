@@ -7,7 +7,7 @@ import type { ProviderMediaContribution } from '#human/llm/media/upload';
 import type { LlmModel } from '#human/llm/model';
 import type { ProtocolBase } from '#human/llm/protocol/base';
 import type { ProviderConnection } from '#human/llm/protocol/connection';
-import type { AnyProtocolTrait } from '#human/llm/provider/definition';
+import type { ProtocolTraitFor } from '#human/llm/provider/definition';
 import type { LlmErrorClassifier } from '#human/llm/requester/requester';
 import { anthropicBase, anthropicBetaBase } from '#human/llm/requester/bases/anthropic/requester';
 import {
@@ -45,10 +45,10 @@ const kimiMedia: ProviderMediaContribution = {
 };
 
 interface AdapterRoute {
-  readonly base: ProtocolBase<AnyProtocolTrait>;
-  readonly trait?: AnyProtocolTrait;
+  readonly base: ProtocolBase<ProtocolTraitFor<Protocol>>;
+  readonly trait?: ProtocolTraitFor<Protocol>;
   readonly connection?: ProviderConnection;
-  readonly convertError?: LlmErrorClassifier;
+  readonly classifyError?: LlmErrorClassifier;
   readonly providerId: string;
   readonly media?: ProviderMediaContribution;
 }
@@ -68,7 +68,7 @@ function routeFor(model: Model): AdapterRoute {
     definition !== undefined &&
     (definition.trait !== undefined ||
       definition.connection !== undefined ||
-      definition.convertError !== undefined)
+      definition.classifyError !== undefined)
       ? definition
       : undefined;
   switch (model.protocol) {
@@ -78,7 +78,7 @@ function routeFor(model: Model): AdapterRoute {
             base: openAIBase,
             trait: custom.trait,
             connection: custom.connection,
-            convertError: custom.convertError,
+            classifyError: custom.classifyError,
             providerId: 'openai',
             media: routeMedia,
           }
@@ -94,7 +94,7 @@ function routeFor(model: Model): AdapterRoute {
             base: openAIResponsesBase,
             trait: custom.trait,
             connection: custom.connection,
-            convertError: custom.convertError,
+            classifyError: custom.classifyError,
             providerId: 'openai-responses',
             media: routeMedia,
           }
@@ -110,7 +110,7 @@ function routeFor(model: Model): AdapterRoute {
             base,
             trait: custom.trait,
             connection: custom.connection,
-            convertError: custom.convertError,
+            classifyError: custom.classifyError,
             providerId: 'anthropic',
             media: routeMedia,
           }
@@ -171,7 +171,7 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
     const requester = route.base.createRequester({
       connection: route.connection,
       trait: route.trait,
-      convertError: route.convertError,
+      classifyError: route.classifyError,
     });
     const llmModel: LlmModel & ModelThinkingMetadata = {
       provider: route.providerId,

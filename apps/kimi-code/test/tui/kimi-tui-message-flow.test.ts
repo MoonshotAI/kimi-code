@@ -6184,7 +6184,9 @@ command = "vim"
       } as Event,
       sendQueued,
     );
-    expect(driver.state.ui.requestRender).toHaveBeenCalled();
+    // Swarm child events are batched onto the swarm's own frame timer instead
+    // of rendering the whole tree per event.
+    expect(driver.state.ui.requestRender).not.toHaveBeenCalled();
 
     driver.sessionEventHandler.handleEvent(
       {
@@ -6246,7 +6248,9 @@ command = "vim"
       } as Event,
       sendQueued,
     );
-    expect(driver.state.ui.requestRender).toHaveBeenCalled();
+    // A child turn end changes no swarm state, so it stays on the batched
+    // frame timer like the deltas above.
+    expect(driver.state.ui.requestRender).not.toHaveBeenCalled();
 
     transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('Agent Swarm');
@@ -8969,7 +8973,7 @@ describe('KimiTUI session rating survey', () => {
         config_min_time_between_global_feedback_ms: 100_000_000,
         config_long_context_survey_threshold: 200_000,
         config_long_context_probability: 0.2,
-        config_long_context_trigger_mode: 'cumulative',
+        config_long_context_trigger_mode: 'virtual_context',
       });
       const appearanceId = (
         harness.track.mock.calls[0]![1] as { appearance_id: string }
@@ -9033,7 +9037,7 @@ describe('KimiTUI session rating survey', () => {
     }
   });
 
-  it('shows the long-context survey once cumulative tokens cross the threshold', async () => {
+  it('shows the long-context survey once the context window crosses the threshold', async () => {
     vi.useFakeTimers();
     const homeDir = await makeTempHome();
     process.env['KIMI_CODE_HOME'] = homeDir;
@@ -9053,13 +9057,13 @@ describe('KimiTUI session rating survey', () => {
             type: 'agent.status.updated',
             agentId: 'main',
             sessionId: 'ses-1',
-            contextTokens: 1500,
+            contextTokens: 205_000,
             usage: {
               total: {
-                inputOther: 150_000,
-                output: 20_000,
-                inputCacheRead: 25_000,
-                inputCacheCreation: 10_000,
+                inputOther: 1_000,
+                output: 500,
+                inputCacheRead: 0,
+                inputCacheCreation: 0,
               },
             },
           } as Event,
@@ -9078,11 +9082,11 @@ describe('KimiTUI session rating survey', () => {
           event_type: 'appeared',
           appearance_index: 1,
           user_turn_count: 1,
-          cumulative_tokens: 205_000,
-          virtual_context_tokens: 1500,
+          cumulative_tokens: 1500,
+          virtual_context_tokens: 205_000,
           config_long_context_survey_threshold: 200_000,
           config_long_context_probability: 0.2,
-          config_long_context_trigger_mode: 'cumulative',
+          config_long_context_trigger_mode: 'virtual_context',
         }),
       );
 

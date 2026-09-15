@@ -63,13 +63,13 @@ describe('AgentNotifyUserNudgeService', () => {
     flags.setConfigOverrides({ [NOTIFY_USER_FLAG_ID]: true });
     const registry = ctx.get(IAgentToolRegistryService);
     if (registry.resolve(NOTIFY_USER_TOOL_NAME) === undefined) registry.register(notifyToolStub);
+    await ctx.restorePersisted();
     context.append({
       role: 'user',
       content: [{ type: 'text', text: 'do the thing' }],
       toolCalls: [],
       origin: { kind: 'user' },
     });
-    await ctx.restorePersisted();
     ctx.configure();
   });
 

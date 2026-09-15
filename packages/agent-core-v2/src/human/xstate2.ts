@@ -1,21 +1,9 @@
 import { createActor as createXStateActor } from 'xstate';
-import type { Actor, ActorOptions, AnyActorLogic, InspectionEvent } from 'xstate';
+import type { Actor, ActorOptions, AnyActorLogic } from 'xstate';
 
 import { xstateInspectionCollector } from '#/xstateInspection';
 
 export * from 'xstate';
-
-function reportUnhandled(event: InspectionEvent): void {
-  if (event.type !== '@xstate.microstep' || event._transitions.length > 0) {
-    return;
-  }
-  if (event.event.type.startsWith('xstate.')) {
-    return;
-  }
-  console.warn(
-    `[agent-core] unhandled event "${event.event.type}" in actor "${event.actorRef.sessionId}"`,
-  );
-}
 
 function createActorWithInspect<TLogic extends AnyActorLogic>(
   logic: TLogic,
@@ -25,7 +13,6 @@ function createActorWithInspect<TLogic extends AnyActorLogic>(
   return createXStateActor(logic, {
     ...options,
     inspect: (event) => {
-      reportUnhandled(event);
       xstateInspectionCollector.publish(event);
       if (typeof inspect === 'function') {
         inspect(event);

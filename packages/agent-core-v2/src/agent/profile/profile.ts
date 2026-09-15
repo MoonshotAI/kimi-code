@@ -95,6 +95,7 @@ export interface ProfileModelContext {
   readonly thinkingLevel: ThinkingEffort;
   readonly reservedContextSize: number | undefined;
   readonly compactionTriggerRatio: number | undefined;
+  readonly compactionMaxAttempts: number | undefined;
 }
 
 export interface ProfileSetModelResult {

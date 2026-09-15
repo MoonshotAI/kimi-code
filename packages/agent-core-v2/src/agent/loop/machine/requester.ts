@@ -81,7 +81,10 @@ export function createMachineRequester(
         ? { ...baseSource, step: decision.step }
         : baseSource;
     const task = service.start(
-      { source },
+      {
+        source,
+        onAttemptRetry: () => control.onEvent?.({ type: 'llm.request.retrying' }),
+      },
       (part) => control.onEvent?.({ type: 'llm.streaming.part', part }),
       signal,
     );

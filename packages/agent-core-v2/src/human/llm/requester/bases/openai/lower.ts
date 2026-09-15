@@ -74,7 +74,9 @@ export function lowerMessage(message: Message, lower: OpenAILowerContext): OpenA
   for (const part of message.content) {
     if (part.type === 'think') {
       hasReasoningPart = true;
-      reasoningContent += part.think;
+      if (part.hidden !== true) {
+        reasoningContent += part.think;
+      }
     } else {
       nonThinkParts.push(part);
     }

@@ -20,7 +20,6 @@ import {
   type ContextCompactionInput,
   type ContextCompactionResult,
 } from '#/agent/contextMemory/contextMemory';
-import { computeUndoCut } from '#/agent/contextMemory/contextOps';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import {
   HookDefSchema,
@@ -39,8 +38,7 @@ import { IAgentLoopService, type AfterStepContext } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
-import { PromptQueued } from '#/agent/prompt/promptService';
+import { PromptQueued } from '#/agent/prompt/promptEvents';
 import { IAgentTaskService } from '#/agent/task/task';
 import { TaskStarted } from '#/agent/task/taskOps';
 import {
@@ -128,13 +126,6 @@ function stubContextMemory(): IAgentContextMemoryService & {
     publishTrailingRemoval: () => false,
     clear: () => {
       messages.splice(0);
-    },
-    undo: (count) => {
-      const cut = computeUndoCut(messages, count);
-      if (cut.cutIndex >= 0 && cut.removedCount >= count) {
-        messages.splice(cut.cutIndex);
-      }
-      return cut;
     },
     applyCompaction: (input: ContextCompactionInput): ContextCompactionResult => {
       const shape = buildContextCompactionShape(messages, input);
@@ -360,9 +351,6 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(IAgentContextMemoryService, context);
           reg.defineInstance(IAgentLoopService, loop);
           registerAgentEventBus(reg);
-          reg.definePartialInstance(IAgentPromptService, {
-            hooks: createHooks(['onBeforeSubmitPrompt']),
-          });
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
           reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, {
@@ -383,13 +371,13 @@ describe('IExternalHooksRunnerService integration', () => {
         finishReason: 'filtered',
       };
       await loop.hooks.onDidFinishStep.run(filtered);
-      expect(loop.hasPendingRequests()).toBe(false);
+      expect(loop.snapshot().hasPendingRequests).toBe(false);
       expect(stopInputs).toEqual([]);
       expect(context.messages).toEqual([]);
 
       const first = makeAfterStep(signal);
       await loop.hooks.onDidFinishStep.run(first);
-      expect(loop.hasPendingRequests()).toBe(true);
+      expect(loop.snapshot().hasPendingRequests).toBe(true);
       expect(context.messages.at(-1)).toEqual(
         expect.objectContaining({
           role: 'user',
@@ -401,7 +389,7 @@ describe('IExternalHooksRunnerService integration', () => {
 
       const second = makeAfterStep(signal);
       await loop.hooks.onDidFinishStep.run(second);
-      expect(loop.hasPendingRequests()).toBe(false);
+      expect(loop.snapshot().hasPendingRequests).toBe(false);
       expect(stopInputs).toEqual([{ stopHookActive: false }]);
 
       eventBus.publish(
@@ -415,7 +403,7 @@ describe('IExternalHooksRunnerService integration', () => {
 
       const nextTurn = makeAfterStep(signal);
       await loop.hooks.onDidFinishStep.run(nextTurn);
-      expect(loop.hasPendingRequests()).toBe(true);
+      expect(loop.snapshot().hasPendingRequests).toBe(true);
       expect(context.messages.at(-1)).toEqual(
         expect.objectContaining({
           role: 'user',
@@ -468,9 +456,6 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(IAgentContextMemoryService, stubContextMemory());
           reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
           registerAgentEventBus(reg);
-          reg.definePartialInstance(IAgentPromptService, {
-            hooks: createHooks(['onBeforeSubmitPrompt']),
-          });
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
           reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, {
@@ -675,9 +660,6 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(IAgentContextMemoryService, context);
           reg.defineInstance(IAgentLoopService, loop);
           registerAgentEventBus(reg);
-          reg.definePartialInstance(IAgentPromptService, {
-            hooks: createHooks(['onBeforeSubmitPrompt']),
-          });
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
           reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, {
@@ -708,7 +690,7 @@ describe('IExternalHooksRunnerService integration', () => {
       resolveReady();
       await pending;
 
-      expect(loop.hasPendingRequests()).toBe(true);
+      expect(loop.snapshot().hasPendingRequests).toBe(true);
       expect(context.messages.at(-1)).toEqual(
         expect.objectContaining({
           role: 'user',
@@ -1211,9 +1193,6 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(IAgentContextMemoryService, stubContextMemory());
           reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
           registerAgentEventBus(reg);
-          reg.definePartialInstance(IAgentPromptService, {
-            hooks: createHooks(['onBeforeSubmitPrompt']),
-          });
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
           reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, {

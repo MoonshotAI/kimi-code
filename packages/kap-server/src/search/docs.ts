@@ -2,6 +2,7 @@ export const MAX_DOC_TEXT_CHARS = 20_000;
 
 export interface MessageDoc {
   readonly kind: 'message';
+  readonly sessionIdentity?: string;
   readonly sessionId: string;
   readonly workspaceId: string;
   readonly sessionTitle: string;
@@ -15,6 +16,7 @@ export interface MessageDoc {
 
 export interface TitleDoc {
   readonly kind: 'title';
+  readonly sessionIdentity?: string;
   readonly sessionId: string;
   readonly workspaceId: string;
   readonly sessionTitle: string;
@@ -56,10 +58,14 @@ export interface FileMetaDoc {
 
 export interface SessionMetaDoc {
   readonly kind: 'sessionMeta';
+  readonly title?: string;
+  readonly dir?: string;
+  readonly identity?: string;
 }
 
 export interface StatsDoc {
   readonly kind: 'stats';
+  readonly degraded?: string;
   readonly sessions: number;
   readonly documents: number;
   readonly lastIndexedAt: number;

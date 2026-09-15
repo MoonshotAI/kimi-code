@@ -10,14 +10,14 @@ export interface LlmRecoveryRecord {
 export interface LlmRecoveryContext {
   readonly error: LlmRemoteErrorMessage;
   readonly messages: readonly Message[];
-  readonly applied: readonly LlmRecoveryRecord[];
-  readonly credentials?: LlmCredentialProvider;
+  readonly appliedRecoveries: readonly LlmRecoveryRecord[];
+  readonly credentialProvider?: LlmCredentialProvider;
 }
 
 export interface LlmRecoveryProposal {
   readonly action: string;
-  readonly messages?: readonly Message[];
-  readonly prepare?: () => void;
+  readonly attemptMessageOverride?: readonly Message[];
+  readonly beforeNextAttempt?: () => void;
 }
 
 export interface LlmRecovery {
