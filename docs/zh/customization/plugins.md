@@ -164,7 +164,9 @@ Kimi Datasource 是 Kimi Code 官方数据插件。用自然语言直接查询�
 - 技术指标（MACD、KDJ 等）及实时行情仅在交易时段内可用
 - AI 输出内容仅供参考，不构成任何投资或商业决策建议
 
-### Kimi Browser Extension <Badge type="tip" text="v1.11.3" />
+<a id="kimi-webbridge"></a>
+
+### Kimi Browser Extension <Badge type="tip" text="v1.11.4" />
 
 Kimi Browser Extension 让 AI 直接操控你的浏览器，带着你的登录状态和 Cookie 打开网页、阅读内容、点击按钮、填写表单、截图保存，把重复的网页操作交给它完成。产品介绍见 [Kimi Browser Extension 官网](https://www.kimi.com/zh-cn/features/webbridge)。
 

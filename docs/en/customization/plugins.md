@@ -164,7 +164,9 @@ Look up national (GB), industry, local, and association standards by number or t
 - Technical indicators and real-time prices are only available during active trading hours
 - AI-generated output is for reference only and does not constitute investment or business advice
 
-### Kimi Browser Extension <Badge type="tip" text="v1.11.3" />
+<a id="kimi-webbridge"></a>
+
+### Kimi Browser Extension <Badge type="tip" text="v1.11.4" />
 
 Kimi Browser Extension lets AI drive your browser directly: not an emulator, not a crawler, but the browser you use every day, with your login sessions and cookies. AI can open pages, read content, click buttons, fill in forms, and take screenshots just like you do, taking repetitive web operations off your hands. See the [Kimi Browser Extension site](https://www.kimi.com/features/webbridge) for a product overview.
 
