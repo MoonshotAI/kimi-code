@@ -119,6 +119,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
       success: { data: listSkillsResponseSchema },
       errors: {
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'List the skills available to a session',
       tags: ['skills'],
@@ -192,6 +193,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         [ErrorCode.SKILL_NOT_FOUND]: {},
         [ErrorCode.SKILL_NOT_ACTIVATABLE]: {},
         [ErrorCode.FILE_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'Activate a skill in a session (REST analogue of the /<skill> slash command)',
       tags: ['skills'],
@@ -390,6 +392,9 @@ function sendMappedError(
       case ErrorCodes.REQUEST_INVALID:
       case ErrorCodes.VALIDATION_FAILED:
         reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId, err.stack));
+        return;
+      case ErrorCodes.WIRE_VERSION_TOO_LOW:
+        reply.send(errEnvelope(ErrorCode.WIRE_VERSION_TOO_LOW, err.message, requestId, err.stack));
         return;
     }
   }

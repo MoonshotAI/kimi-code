@@ -2,7 +2,7 @@ import type { Message } from '#/llm-adapter/contract/message';
 import type { Tool as LLMTool } from '#/llm-adapter/contract/message';
 import { expect } from 'vitest';
 
-import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
+import { WIRE_MIN_READER_VERSION, WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 
 const IS_EVENT_ARRAY = Symbol('isEventArray');
 const IS_GENERATE_INPUT_SNAPSHOT = Symbol('isGenerateInputSnapshot');
@@ -301,6 +301,9 @@ function normalizeObjectField(key: string, value: unknown, labels: SnapshotLabel
   if ((key === 'finishedAt' || key === 'abortedAt' || key === 'steeredAt' || key === 'createdAt') && typeof value === 'string') return '<time>';
   if (key === 'protocol_version' && value === WIRE_PROTOCOL_VERSION) {
     return '<protocol-version>';
+  }
+  if (key === 'min_protocol_version' && value === WIRE_MIN_READER_VERSION) {
+    return '<min-protocol-version>';
   }
   if (key === 'cwd' && typeof value === 'string') return '<cwd>';
   if (key === 'localDate' && typeof value === 'string') return '<date>';

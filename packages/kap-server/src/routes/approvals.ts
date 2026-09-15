@@ -65,6 +65,7 @@ export function registerApprovalsRoutes(app: ApprovalRouteHost, core: Scope): vo
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'List pending approval requests for a session',
       tags: ['approvals'],
@@ -103,6 +104,7 @@ export function registerApprovalsRoutes(app: ApprovalRouteHost, core: Scope): vo
         [ErrorCode.APPROVAL_ALREADY_RESOLVED]: {
           dataSchema: approvalAlreadyResolvedDataSchema,
         },
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'Resolve an approval request',
       tags: ['approvals'],

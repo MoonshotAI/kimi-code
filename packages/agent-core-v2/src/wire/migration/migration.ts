@@ -18,6 +18,8 @@ export {
 
 export const WIRE_PROTOCOL_VERSION = '1.5';
 
+export const WIRE_MIN_READER_VERSION = '1.5';
+
 export type WireMigrationRecord = WireRecord;
 
 export interface WireMigration {
@@ -36,6 +38,10 @@ const MIGRATIONS: readonly WireMigration[] = [
 
 export function isNewerWireVersion(readVersion: string): boolean {
   return compareWireVersions(readVersion, WIRE_PROTOCOL_VERSION) > 0;
+}
+
+export function isWireReaderVersionBelow(minProtocolVersion: string): boolean {
+  return compareWireVersions(WIRE_PROTOCOL_VERSION, minProtocolVersion) < 0;
 }
 
 export function resolveWireMigrations(readVersion: string): readonly WireMigration[] {

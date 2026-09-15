@@ -35,8 +35,10 @@ import {
   type WireTree,
 } from './tree';
 import {
+  WIRE_MIN_READER_VERSION,
   WIRE_PROTOCOL_VERSION,
   isNewerWireVersion,
+  isWireReaderVersionBelow,
   migrateV1_4ToV1_5,
   migrateWireRecord,
   resolveWireMigrations,
@@ -334,6 +336,32 @@ export class WireService extends Service implements IWireService, IAgentJournal 
             'Agent wire metadata is malformed',
             { details: { scope: this.wireScope, key: AGENT_WIRE_RECORD_KEY } },
           );
+        } else if (
+          sourceRecord.min_protocol_version !== undefined &&
+          (typeof sourceRecord.min_protocol_version !== 'string' ||
+            !/^\d+(\.\d+)*$/.test(sourceRecord.min_protocol_version))
+        ) {
+          throw new StorageError(
+            StorageErrors.codes.STORAGE_CORRUPTED,
+            'Agent wire metadata is malformed',
+            { details: { scope: this.wireScope, key: AGENT_WIRE_RECORD_KEY } },
+          );
+        } else if (
+          typeof sourceRecord.min_protocol_version === 'string' &&
+          isWireReaderVersionBelow(sourceRecord.min_protocol_version)
+        ) {
+          throw new WireError(
+            WireErrors.codes.WIRE_VERSION_TOO_LOW,
+            `Wire log requires protocol version ${sourceRecord.min_protocol_version} or newer, but this build supports ${WIRE_PROTOCOL_VERSION}. Upgrade kimi-code to resume this session.`,
+            {
+              details: {
+                scope: this.wireScope,
+                key: AGENT_WIRE_RECORD_KEY,
+                minProtocolVersion: sourceRecord.min_protocol_version,
+                protocolVersion: WIRE_PROTOCOL_VERSION,
+              },
+            },
+          );
         } else if (isNewerWireVersion(sourceRecord.protocol_version)) {
           newerWireVersion = true;
         } else {
@@ -346,8 +374,12 @@ export class WireService extends Service implements IWireService, IAgentJournal 
 
       const migratedRecord = migrateWireRecord(sourceRecord, migrations);
       const record =
-        !newerWireVersion && migratedRecord.type === 'metadata'
-          ? { ...migratedRecord, protocol_version: WIRE_PROTOCOL_VERSION }
+        !newerWireVersion && migratedRecord.type === 'metadata' && rewrittenRecords !== undefined
+          ? {
+              ...migratedRecord,
+              protocol_version: WIRE_PROTOCOL_VERSION,
+              min_protocol_version: WIRE_MIN_READER_VERSION,
+            }
           : migratedRecord;
       const normalized = newerWireVersion
         ? record
@@ -503,7 +535,11 @@ export class WireService extends Service implements IWireService, IAgentJournal 
       const migratedRecord = migrateWireRecord(candidate, migrations);
       const record =
         !newerWireVersion && migratedRecord.type === 'metadata'
-          ? { ...migratedRecord, protocol_version: WIRE_PROTOCOL_VERSION }
+          ? {
+              ...migratedRecord,
+              protocol_version: WIRE_PROTOCOL_VERSION,
+              min_protocol_version: WIRE_MIN_READER_VERSION,
+            }
           : migratedRecord;
       const normalized = newerWireVersion
         ? record
