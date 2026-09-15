@@ -1929,6 +1929,49 @@ describe('SessionSwarmService metadata compatibility', () => {
     }
   });
 
+  it('emits subagent.cancelled (not subagent.failed) when the child is aborted with a plain non-error reason', async () => {
+    agents['agent-managed'] = {
+      labels: { parentAgentId: 'main' },
+    };
+    handles.set('agent-managed', agentHandle('agent-managed', lifecycle, eventBus));
+    const published: Event2[] = [];
+    (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: Event2) => {
+      published.push(event);
+    });
+    runAgent.mockImplementation((agent, _request, options) => {
+      options?.onReady?.();
+      return {
+        agentId: (agent as AgentContext).agentId,
+        turn: {} as never,
+        completion: new Promise((_, reject) => {
+          options?.signal.addEventListener(
+            'abort',
+            () => {
+              reject(options.signal.reason);
+            },
+            { once: true },
+          );
+        }),
+      };
+    });
+    const taskSignal = new AbortController();
+    const service = ix.get(ISessionSwarmService);
+    const running = service.run({
+      callerAgentId: 'main',
+      tasks: [{ ...resumeSessionTask('agent-managed'), signal: taskSignal.signal }],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    taskSignal.abort('Timed out');
+    await expect(running).rejects.toBe('Timed out');
+
+    expect(
+      published
+        .filter((event) => event.type === 'subagent.cancelled')
+        .map((event) => (event as Event2 & { readonly subagentId: string }).subagentId),
+    ).toEqual(['agent-managed']);
+    expect(published.some((event) => event.type === 'subagent.failed')).toBe(false);
+  });
+
   it('rejects resume of an already running child before launching or emitting spawned', async () => {
     agents['agent-existing'] = {
       labels: { parentAgentId: 'main' },

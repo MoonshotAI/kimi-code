@@ -3116,6 +3116,42 @@ describe('Agent tool execution contract', () => {
     completion.resolve({ summary: 'finished later' });
   });
 
+  it('reports a background subagent stopped by the task manager as cancelled, not failed', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: (_agentId, _request, options) =>
+        new Promise((_resolve, reject) => {
+          options.signal.addEventListener(
+            'abort',
+            () => {
+              reject(options.signal.reason);
+            },
+            { once: true },
+          );
+        }),
+    });
+    const context = createAgentToolContext(lifecycle);
+    const tasks = context.get(IAgentTaskService);
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      run_in_background: true,
+    });
+    if (typeof result.output !== 'string') throw new TypeError('expected string output');
+    const taskId = result.output.match(/task_id: (agent-[0-9a-z]{8})/)?.[1];
+    expect(taskId).toBeDefined();
+
+    await expect(tasks.stop(taskId!, 'no longer needed')).resolves.toMatchObject({
+      status: 'killed',
+    });
+
+    const terminal = lifecycle.publishedEvents
+      .filter((event) => event.type === 'subagent.failed' || event.type === 'subagent.cancelled')
+      .map((event) => event.type);
+    expect(terminal).toEqual(['subagent.cancelled']);
+  });
+
   it('reports a deliberate user interruption when a foreground subagent is cancelled by the user', async () => {
     const lifecycle = createAgentLifecycleStub({
       createAgentIds: ['agent-child'],

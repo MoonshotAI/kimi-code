@@ -230,14 +230,21 @@ function emitTerminal(
   void dispatcher?.dispatch(event);
 }
 
+export type RunTermination = 'cancelled' | 'failed';
+
+export function classifyRunTermination(error: unknown, signal: AbortSignal): RunTermination {
+  if (!signal.aborted && !isAbortError(error)) return 'failed';
+  const reason = signal.aborted ? signal.reason : error;
+  if (isUserCancellation(reason)) return 'cancelled';
+  return reason instanceof Error && !isAbortError(reason) ? 'failed' : 'cancelled';
+}
+
 function terminalEventFor(
   agentId: string,
   error: unknown,
   options: MirrorAgentRunOptions,
 ): Event2 | undefined {
-  const aborted = isAbortError(error) || options.signal.aborted;
-  const userCancelled = isUserCancellation(error) || isUserCancellation(options.signal.reason);
-  if (aborted && userCancelled) {
+  if (classifyRunTermination(error, options.signal) === 'cancelled') {
     return new SubagentCancelled({ subagentId: agentId });
   }
   if (suppressesRateLimitFailure(options, error)) return undefined;

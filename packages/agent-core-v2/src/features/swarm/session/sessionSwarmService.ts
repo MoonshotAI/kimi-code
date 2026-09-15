@@ -1,7 +1,7 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import type { TokenUsage } from '#human/llm/usage';
 import { Error2, ErrorCodes } from '#/errors';
-import { isUserCancellation, linkAbortSignal } from '#/_base/utils/abort';
+import { linkAbortSignal } from '#/_base/utils/abort';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -19,6 +19,7 @@ import {
   subagentSwarmItem,
 } from '#/session/agentLifecycle/subagentMetadata';
 import {
+  classifyRunTermination,
   emitAgentRunSpawned,
   mirrorAgentRun,
   SubagentCancelled,
@@ -324,7 +325,7 @@ export class SessionSwarmService implements ISessionSwarmService {
 export type _AgentRunUsage = TokenUsage;
 
 function runStartTerminalEvent(agentId: string, error: unknown, signal: AbortSignal): Event2 {
-  if (isUserCancellation(error) || isUserCancellation(signal.reason)) {
+  if (classifyRunTermination(error, signal) === 'cancelled') {
     return new SubagentCancelled({ subagentId: agentId });
   }
   return new SubagentFailed({
