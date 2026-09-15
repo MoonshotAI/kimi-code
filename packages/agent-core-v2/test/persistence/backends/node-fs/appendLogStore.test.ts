@@ -1,10 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { AppendLogCorruptedError, IAppendLogStore, type AppendLogTruncation } from '#/persistence/interface/appendLogStore';
-import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { IFileSystemStorageService, StorageError, StorageErrors } from '#/persistence/interface/storage';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 
@@ -790,5 +790,391 @@ describe('AppendLogStore', () => {
     record.append<Rec>(SCOPE, KEY, { n: 1 });
     await expect(record.flush()).rejects.toThrow('disk full');
     expect(events).toEqual([`${SCOPE}/${KEY}`]);
+  });
+
+  describe('disk-full recovery', () => {
+    const diskFull = (): StorageError =>
+      new StorageError(
+        StorageErrors.codes.STORAGE_DISK_FULL,
+        'storage append failed: no space left on device',
+        { details: { errno: 'ENOSPC' } },
+      );
+
+    const settle = async (): Promise<void> => {
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+    };
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    function watchRecovery(): Promise<void> {
+      return new Promise<void>((resolve) => {
+        const subscription = record.onDidRecover((write) => {
+          if (write.scope === SCOPE && write.key === KEY) {
+            subscription.dispose();
+            resolve();
+          }
+        });
+      });
+    }
+
+    it('retries a disk-full append after a backoff and persists buffered records exactly once', async () => {
+      const failure = diskFull();
+      let attempts = 0;
+      const originalAppend = storage.append.bind(storage);
+      storage.append = async (...args) => {
+        attempts++;
+        if (attempts === 1) throw failure;
+        return originalAppend(...args);
+      };
+      let failures = 0;
+      let reportFailure!: () => void;
+      const reportedFailure = new Promise<void>((resolve) => {
+        reportFailure = resolve;
+      });
+      const recovered = watchRecovery();
+
+      record.append<Rec>(SCOPE, KEY, { n: 1 }, {
+        onError: () => {
+          failures++;
+          reportFailure();
+        },
+      });
+      await reportedFailure;
+
+      await expect(record.flush()).rejects.toBe(failure);
+      expect(attempts).toBe(1);
+
+      record.append<Rec>(SCOPE, KEY, { n: 2 });
+      await settle();
+      expect(failures).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(1000);
+      await recovered;
+      await record.flush();
+
+      expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 1 }, { n: 2 }]);
+      expect(attempts).toBe(2);
+      expect(failures).toBe(1);
+      expect(new TextDecoder().decode(await storage.read(SCOPE, KEY))).toBe('{"n":1}\n{"n":2}\n');
+    });
+
+    it('repairs a torn tail from a partially committed batch before retrying', async () => {
+      const failure = diskFull();
+      let attempts = 0;
+      const originalAppend = storage.append.bind(storage);
+      storage.append = async (scope, key, data, options) => {
+        attempts++;
+        if (attempts === 1) {
+          await originalAppend(scope, key, data.subarray(0, 9), options);
+          throw failure;
+        }
+        return originalAppend(scope, key, data, options);
+      };
+      let reportFailure!: () => void;
+      const reportedFailure = new Promise<void>((resolve) => {
+        reportFailure = resolve;
+      });
+      const recovered = watchRecovery();
+
+      record.append<Rec>(SCOPE, KEY, { n: 1 }, { onError: reportFailure });
+      record.append<Rec>(SCOPE, KEY, { n: 2 });
+      await reportedFailure;
+
+      expect(new TextDecoder().decode(await storage.read(SCOPE, KEY))).toBe('{"n":1}\n{');
+
+      await vi.advanceTimersByTimeAsync(1000);
+      await recovered;
+      await record.flush();
+
+      expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 1 }, { n: 2 }]);
+      expect(new TextDecoder().decode(await storage.read(SCOPE, KEY))).toBe('{"n":1}\n{"n":2}\n');
+      expect(attempts).toBe(2);
+    });
+
+    it('drops an ambiguously committed batch instead of duplicating it', async () => {
+      const failure = diskFull();
+      let attempts = 0;
+      const originalAppend = storage.append.bind(storage);
+      storage.append = async (scope, key, data, options) => {
+        attempts++;
+        if (attempts === 1) {
+          await originalAppend(scope, key, data, options);
+          throw failure;
+        }
+        return originalAppend(scope, key, data, options);
+      };
+      let reportFailure!: () => void;
+      const reportedFailure = new Promise<void>((resolve) => {
+        reportFailure = resolve;
+      });
+      const recovered = watchRecovery();
+
+      record.append<Rec>(SCOPE, KEY, { n: 1 }, { onError: reportFailure });
+      record.append<Rec>(SCOPE, KEY, { n: 2 });
+      await reportedFailure;
+
+      expect(new TextDecoder().decode(await storage.read(SCOPE, KEY))).toBe('{"n":1}\n{"n":2}\n');
+
+      await vi.advanceTimersByTimeAsync(1000);
+      await recovered;
+      await record.flush();
+
+      expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 1 }, { n: 2 }]);
+      expect(attempts).toBe(1);
+    });
+
+    it('stays sticky when the torn tail does not match the failed batch', async () => {
+      const failure = diskFull();
+      await storage.append(SCOPE, KEY, enc.encode('{"n":0}\n{"n":99'));
+      let attempts = 0;
+      const originalAppend = storage.append.bind(storage);
+      storage.append = async (...args) => {
+        attempts++;
+        if (attempts === 1) throw failure;
+        return originalAppend(...args);
+      };
+      let reportFailure!: () => void;
+      const reportedFailure = new Promise<void>((resolve) => {
+        reportFailure = resolve;
+      });
+
+      record.append<Rec>(SCOPE, KEY, { n: 1 }, { onError: reportFailure });
+      await reportedFailure;
+
+      await vi.advanceTimersByTimeAsync(5000);
+      await settle();
+      expect(attempts).toBe(1);
+      await expect(record.flush()).rejects.toBe(failure);
+      await expect(collect<Rec>(SCOPE, KEY)).rejects.toBe(failure);
+
+      await record.rewrite<Rec>(SCOPE, KEY, [{ n: 9 }]);
+      expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 9 }, { n: 1 }]);
+    });
+
+    it('re-enters backoff with a growing delay when the recovery attempt itself hits disk-full', async () => {
+      const failure = diskFull();
+      let attempts = 0;
+      const originalAppend = storage.append.bind(storage);
+      storage.append = async (...args) => {
+        attempts++;
+        if (attempts <= 2) throw failure;
+        return originalAppend(...args);
+      };
+      let reportFailure!: () => void;
+      const reportedFailure = new Promise<void>((resolve) => {
+        reportFailure = resolve;
+      });
+      const recovered = watchRecovery();
+
+      record.append<Rec>(SCOPE, KEY, { n: 1 }, { onError: reportFailure });
+      await reportedFailure;
+
+      await vi.advanceTimersByTimeAsync(1000);
+      await settle();
+      expect(attempts).toBe(2);
+
+      await vi.advanceTimersByTimeAsync(1000);
+      await settle();
+      expect(attempts).toBe(2);
+
+      await vi.advanceTimersByTimeAsync(1000);
+      await recovered;
+      await record.flush();
+
+      expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 1 }]);
+      expect(attempts).toBe(3);
+    });
+
+    it('close() makes a final recovery attempt and persists buffered records', async () => {
+      const failure = diskFull();
+      let attempts = 0;
+      const originalAppend = storage.append.bind(storage);
+      storage.append = async (...args) => {
+        attempts++;
+        if (attempts === 1) throw failure;
+        return originalAppend(...args);
+      };
+      let reportFailure!: () => void;
+      const reportedFailure = new Promise<void>((resolve) => {
+        reportFailure = resolve;
+      });
+
+      record.append<Rec>(SCOPE, KEY, { n: 1 }, { onError: reportFailure });
+      record.append<Rec>(SCOPE, KEY, { n: 2 });
+      await reportedFailure;
+
+      await record.close();
+
+      expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 1 }, { n: 2 }]);
+      expect(attempts).toBe(2);
+    });
+
+    it('does not enter recovery for non-retryable storage errors', async () => {
+      const failure = new StorageError(
+        StorageErrors.codes.STORAGE_PERMISSION_DENIED,
+        'storage append failed: permission denied',
+      );
+      let attempts = 0;
+      const originalAppend = storage.append.bind(storage);
+      storage.append = async (...args) => {
+        attempts++;
+        if (attempts === 1) throw failure;
+        return originalAppend(...args);
+      };
+      let reportFailure!: () => void;
+      const reportedFailure = new Promise<void>((resolve) => {
+        reportFailure = resolve;
+      });
+
+      record.append<Rec>(SCOPE, KEY, { n: 1 }, { onError: reportFailure });
+      await reportedFailure;
+
+      await vi.advanceTimersByTimeAsync(5000);
+      await settle();
+      expect(attempts).toBe(1);
+      await expect(record.flush()).rejects.toBe(failure);
+    });
+
+    it('also recovers transient io failures, not only disk-full', async () => {
+      const failure = new StorageError(
+        StorageErrors.codes.STORAGE_IO_FAILED,
+        'storage append failed: unrecognized I/O error',
+      );
+      let attempts = 0;
+      const originalAppend = storage.append.bind(storage);
+      storage.append = async (...args) => {
+        attempts++;
+        if (attempts === 1) throw failure;
+        return originalAppend(...args);
+      };
+      let reportFailure!: () => void;
+      const reportedFailure = new Promise<void>((resolve) => {
+        reportFailure = resolve;
+      });
+      const recovered = watchRecovery();
+
+      record.append<Rec>(SCOPE, KEY, { n: 1 }, { onError: reportFailure });
+      await reportedFailure;
+
+      await vi.advanceTimersByTimeAsync(1000);
+      await recovered;
+      await record.flush();
+
+      expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 1 }]);
+      expect(attempts).toBe(2);
+    });
+
+    it('retirement performs a final recovery attempt before dropping the log', async () => {
+      const failure = diskFull();
+      let attempts = 0;
+      const originalAppend = storage.append.bind(storage);
+      storage.append = async (...args) => {
+        attempts++;
+        if (attempts === 1) throw failure;
+        return originalAppend(...args);
+      };
+      let reportFailure!: () => void;
+      const reportedFailure = new Promise<void>((resolve) => {
+        reportFailure = resolve;
+      });
+
+      const owner = record.acquire(SCOPE, KEY);
+      record.append<Rec>(SCOPE, KEY, { n: 1 }, { onError: reportFailure });
+      await reportedFailure;
+
+      owner.dispose();
+      await record.drainRetirements();
+
+      expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 1 }]);
+      expect(attempts).toBe(2);
+    });
+
+    it('rewrite cancels a pending recovery and keeps the buffered records', async () => {
+      const failure = diskFull();
+      let attempts = 0;
+      const originalAppend = storage.append.bind(storage);
+      storage.append = async (...args) => {
+        attempts++;
+        if (attempts === 1) throw failure;
+        return originalAppend(...args);
+      };
+      let reportFailure!: () => void;
+      const reportedFailure = new Promise<void>((resolve) => {
+        reportFailure = resolve;
+      });
+
+      record.append<Rec>(SCOPE, KEY, { n: 1 }, { onError: reportFailure });
+      await reportedFailure;
+      expect(attempts).toBe(1);
+
+      await record.rewrite<Rec>(SCOPE, KEY, [{ n: 9 }]);
+      expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 9 }, { n: 1 }]);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      await settle();
+      expect(attempts).toBe(2);
+    });
+
+    it('recovers a failed rewrite once the disk has space again', async () => {
+      const failure = diskFull();
+      record.append<Rec>(SCOPE, KEY, { n: 1 });
+      await record.flush();
+
+      let writeAttempts = 0;
+      const originalWrite = storage.write.bind(storage);
+      storage.write = async (...args) => {
+        writeAttempts++;
+        if (writeAttempts === 1) throw failure;
+        return originalWrite(...args);
+      };
+      const recovered = watchRecovery();
+
+      await expect(record.rewrite<Rec>(SCOPE, KEY, [{ n: 9 }])).rejects.toBe(failure);
+      await expect(record.flush()).rejects.toBe(failure);
+
+      await vi.advanceTimersByTimeAsync(1000);
+      await recovered;
+
+      record.append<Rec>(SCOPE, KEY, { n: 2 });
+      await record.flush();
+      expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 1 }, { n: 2 }]);
+    });
+
+    it('becomes sticky when a recovery attempt hits a non-retryable error', async () => {
+      const permanent = new StorageError(
+        StorageErrors.codes.STORAGE_PERMISSION_DENIED,
+        'storage append failed: permission denied',
+      );
+      const failure = diskFull();
+      let attempts = 0;
+      const originalAppend = storage.append.bind(storage);
+      storage.append = async (...args) => {
+        attempts++;
+        if (attempts === 1) throw failure;
+        if (attempts === 2) throw permanent;
+        return originalAppend(...args);
+      };
+      let reportFailure!: () => void;
+      const reportedFailure = new Promise<void>((resolve) => {
+        reportFailure = resolve;
+      });
+
+      record.append<Rec>(SCOPE, KEY, { n: 1 }, { onError: reportFailure });
+      await reportedFailure;
+
+      await vi.advanceTimersByTimeAsync(1000);
+      await settle();
+      await vi.advanceTimersByTimeAsync(60_000);
+      await settle();
+
+      expect(attempts).toBe(2);
+      await expect(record.flush()).rejects.toBe(permanent);
+    });
   });
 });
