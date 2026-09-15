@@ -72,7 +72,7 @@ export function resolveCompletionPrefix(
 			const grownSuffix = argumentText.startsWith(prefix) ? argumentText.slice(prefix.length) : null;
 			if (grownSuffix !== null) {
 				let suffix = grownSuffix;
-				if (prefix.includes('"') && suffix.endsWith('"')) {
+				if (findUnclosedQuoteStart(prefix) !== null && suffix.endsWith('"')) {
 					suffix = suffix.slice(0, -1);
 				}
 				const hasBoundary = [...suffix].some((ch) => PATH_DELIMITERS.has(ch));

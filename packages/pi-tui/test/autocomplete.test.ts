@@ -840,6 +840,46 @@ describe("CombinedAutocompleteProvider", () => {
 			assert.strictEqual(applied.lines[0], "/goal next m=next manage");
 		});
 
+		test("inserts after a trailing quote the snapshot did not open", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = '/goal next ma"';
+			const item = { value: "next manage", label: "next manage" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "next m");
+
+			assert.strictEqual(applied.lines[0], '/goal next ma"next manage');
+		});
+
+		test("expands an unclosed quoted argument the user is still typing", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = '/goal next "ma';
+			const item = { value: 'next "manage"', label: 'next "manage"' };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, 'next "m');
+
+			assert.strictEqual(applied.lines[0], '/goal next "manage"');
+		});
+
+		test("expands a balanced quoted argument growing in its last word", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = '/goal next "done" de';
+			const item = { value: 'next "done" deal', label: 'next "done" deal' };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, 'next "done" d');
+
+			assert.strictEqual(applied.lines[0], '/goal next "done" deal');
+		});
+
+		test("does not strip a newly opened quote when the snapshot's quote is balanced", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = '/goal next "done" "';
+			const item = { value: 'next "done" deal', label: 'next "done" deal' };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, 'next "done" ');
+
+			assert.strictEqual(applied.lines[0], '/goal next "done" next "done" deal');
+		});
+
 		test("does not expand past a closing quote the user typed beyond", () => {
 			const provider = new CombinedAutocompleteProvider([], process.cwd());
 			const line = '/goal next "ma"x';
