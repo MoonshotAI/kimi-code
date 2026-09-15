@@ -1,4 +1,8 @@
-import { apiKeyEnvMissingMessage, parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
+import {
+  apiKeyEnvMissingMessage,
+  declaredProviderCredential,
+  parseKimiCodeCustomHeaders,
+} from '@moonshot-ai/kimi-code-oauth';
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
@@ -281,9 +285,11 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     providerId: string,
     provider: CatalogProviderInfo,
   ): Promise<ProviderCredentialState> {
+    const declared = declaredProviderCredential(provider, providerId);
     return {
       hasApiKey: hasConfiguredApiKey(provider),
       hasOAuthToken: await this.hasCachedToken(providerId, provider),
+      hasCredentialConflict: declared.kind === 'conflict',
     };
   }
 

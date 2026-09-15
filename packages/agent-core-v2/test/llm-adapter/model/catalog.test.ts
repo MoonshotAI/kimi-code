@@ -792,7 +792,11 @@ describe('wire projection (pure)', () => {
     const models: Record<string, ModelRecord> = { a: { provider: 'p1', model: 'm-a' } };
     const provider: ProviderConfig = { type: 'openai', baseUrl: 'https://x.test/v1' };
     expect(
-      toProtocolProvider('p1', provider, models, 'a', { hasApiKey: true, hasOAuthToken: false }),
+      toProtocolProvider('p1', provider, models, 'a', {
+        hasApiKey: true,
+        hasOAuthToken: false,
+        hasCredentialConflict: false,
+      }),
     ).toEqual({
       id: 'p1',
       type: 'openai',
@@ -803,15 +807,30 @@ describe('wire projection (pure)', () => {
       models: ['a'],
     });
     expect(
+      toProtocolProvider(
+        'p1',
+        {
+          ...provider,
+          apiKeyEnv: 'ACME_KEY',
+          oauth: { storage: 'file', key: 'oauth/p1' },
+        },
+        models,
+        'a',
+        { hasApiKey: true, hasOAuthToken: true, hasCredentialConflict: true },
+      ),
+    ).toMatchObject({ status: 'error', has_api_key: true });
+    expect(
       toProtocolProvider('p1', { ...provider, defaultModel: 'own' }, models, 'a', {
         hasApiKey: false,
         hasOAuthToken: false,
+        hasCredentialConflict: false,
       }).default_model,
     ).toBe('own');
     expect(
       toProtocolProvider('p1', { ...provider, type: undefined }, models, undefined, {
         hasApiKey: false,
         hasOAuthToken: false,
+        hasCredentialConflict: false,
       }),
     ).toMatchObject({ type: 'openai', status: 'unconfigured', default_model: undefined });
   });

@@ -89,6 +89,7 @@ export type SetDefaultModelResponse = z.infer<typeof setDefaultModelResponseSche
 export interface ProviderCredentialState {
   readonly hasApiKey: boolean;
   readonly hasOAuthToken: boolean;
+  readonly hasCredentialConflict: boolean;
 }
 
 export function toProtocolModel(
@@ -141,7 +142,11 @@ export function toProtocolProvider(
     default_model: defaultModel,
     api_key_env: provider.apiKeyEnv,
     has_api_key: credential.hasApiKey,
-    status: credential.hasApiKey || credential.hasOAuthToken ? 'connected' : 'unconfigured',
+    status: credential.hasCredentialConflict
+      ? 'error'
+      : credential.hasApiKey || credential.hasOAuthToken
+        ? 'connected'
+        : 'unconfigured',
     models: providerModels,
   };
 }

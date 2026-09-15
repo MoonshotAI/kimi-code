@@ -17,6 +17,7 @@ import {
   registerProviderCommand,
   type ProviderDeps,
 } from '#/cli/sub/provider';
+import { persistRegistryImport } from '#/utils/registry-import';
 
 // Spy on the SDK harness factory so the default-deps construction can be
 // asserted without booting a real engine. The real implementations stay in
@@ -256,6 +257,50 @@ const CATALOG_BODY = {
 };
 
 describe('kimi provider add', () => {
+  it('restores the original config when the rebuilt registry write fails', async () => {
+    const initial = {
+      providers: {
+        kohub: {
+          type: 'openai',
+          baseUrl: 'https://old.example.test/v1',
+          apiKey: 'old',
+          source: { kind: 'apiJson', url: REGISTRY_URL, apiKey: 'old' },
+        },
+      },
+      models: {
+        'kohub/old': { provider: 'kohub', model: 'old', maxContextSize: 1024 },
+      },
+      defaultModel: 'kohub/old',
+    } as unknown as KimiConfig;
+    const { harness, current, replaceSectionCalls } = makeHarness(initial);
+    const originalReplace = harness.replaceConfigSections;
+    let writes = 0;
+    harness.replaceConfigSections = async (sections) => {
+      writes++;
+      if (writes === 2) throw new Error('rebuild failed');
+      await originalReplace(sections);
+    };
+
+    await expect(
+      persistRegistryImport(
+        harness as unknown as Parameters<typeof persistRegistryImport>[0],
+        {
+          kohub: {
+            id: 'kohub',
+            name: 'KoHub',
+            api: 'https://new.example.test/v1',
+            type: 'openai',
+            models: { fresh: { id: 'fresh' } },
+          },
+        },
+        { kind: 'apiJson', url: REGISTRY_URL, apiKey: 'new' },
+      ),
+    ).rejects.toThrow('rebuild failed');
+
+    expect(current()).toEqual(initial);
+    expect(replaceSectionCalls).toHaveLength(2);
+  });
+
   it('imports providers and models from a custom registry, persisting source on each provider', async () => {
     const fetchMock = mockRegistryFetch();
     const { harness, current, replaceSectionCalls } = makeHarness({ providers: {} } as KimiConfig);
