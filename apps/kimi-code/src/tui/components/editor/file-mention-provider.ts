@@ -290,8 +290,9 @@ export class FileMentionProvider implements AutocompleteProvider {
     ) {
       const currentLine = lines[cursorLine] ?? '';
       const textBeforeCursor = currentLine.slice(0, cursorCol);
-      if (extractInlineSkillPrefix(textBeforeCursor, cursorLine) === prefix) {
-        const beforePrefix = currentLine.slice(0, cursorCol - prefix.length);
+      const inlineSkillPrefix = extractInlineSkillPrefix(textBeforeCursor, cursorLine);
+      if (inlineSkillPrefix !== null) {
+        const beforePrefix = currentLine.slice(0, cursorCol - inlineSkillPrefix.length);
         const afterCursor = currentLine.slice(cursorCol);
         const newLines = [...lines];
         newLines[cursorLine] = `${beforePrefix}/${item.value} ${afterCursor}`;

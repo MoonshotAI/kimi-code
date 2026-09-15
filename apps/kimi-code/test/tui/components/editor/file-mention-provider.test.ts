@@ -791,5 +791,34 @@ describe('FileMentionProvider', () => {
       expect(result.lines[0]).toBe('hello /skill:review ');
       expect(result.cursorCol).toBe('hello /skill:review '.length);
     });
+
+    it('applyCompletion replaces the grown inline skill token and keeps the slash', () => {
+      const provider = skillProvider();
+      const line = 'hello /revi';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        line.length,
+        { value: 'skill:review', label: 'skill:review', data: { inlineSkill: true } },
+        '/rev',
+      );
+
+      expect(result.lines[0]).toBe('hello /skill:review ');
+      expect(result.cursorCol).toBe('hello /skill:review '.length);
+    });
+
+    it('applyCompletion replaces the grown inline skill token on a later line', () => {
+      const provider = skillProvider();
+      const result = provider.applyCompletion(
+        ['first line', '/revi'],
+        1,
+        5,
+        { value: 'skill:review', label: 'skill:review', data: { inlineSkill: true } },
+        '/rev',
+      );
+
+      expect(result.lines[1]).toBe('/skill:review ');
+      expect(result.cursorCol).toBe('/skill:review '.length);
+    });
   });
 });
