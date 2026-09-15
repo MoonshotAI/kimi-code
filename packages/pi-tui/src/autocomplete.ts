@@ -53,6 +53,16 @@ export function resolveCompletionPrefix(
 	if (prefix !== "" && textBeforeCursor.endsWith(prefix)) {
 		return prefix;
 	}
+	const affinityPrefixes = prefix.startsWith('"') ? [prefix, prefix.slice(1)] : [prefix];
+	const sessionAlive = textBeforeCursor
+		.split(/[ \t"'=]+/)
+		.some(
+			(token) =>
+				token !== "" && affinityPrefixes.some((candidate) => token.startsWith(candidate) || candidate.startsWith(token)),
+		);
+	if (!sessionAlive) {
+		return "";
+	}
 	if (!prefix.startsWith("@") && !prefix.startsWith('"') && prefix.includes(" ")) {
 		const spaceIndex = textBeforeCursor.indexOf(" ");
 		const isSlashArgumentContext =
@@ -60,7 +70,17 @@ export function resolveCompletionPrefix(
 		if (isSlashArgumentContext) {
 			const argumentText = textBeforeCursor.slice(spaceIndex + 1);
 			const grownSuffix = argumentText.startsWith(prefix) ? argumentText.slice(prefix.length) : null;
-			if ((grownSuffix !== null && !grownSuffix.includes(" ")) || prefix.startsWith(argumentText)) {
+			if (grownSuffix !== null) {
+				let suffix = grownSuffix;
+				if (prefix.includes('"') && suffix.endsWith('"')) {
+					suffix = suffix.slice(0, -1);
+				}
+				const hasBoundary = [...suffix].some((ch) => PATH_DELIMITERS.has(ch));
+				if (!hasBoundary) {
+					return argumentText;
+				}
+			}
+			if (prefix.startsWith(argumentText)) {
 				return argumentText;
 			}
 		}

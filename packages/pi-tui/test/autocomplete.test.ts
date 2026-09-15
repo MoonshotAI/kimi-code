@@ -830,6 +830,106 @@ describe("CombinedAutocompleteProvider", () => {
 			assert.strictEqual(applied.lines[0], "/goal next ma next manage");
 		});
 
+		test("keeps text after an assignment delimiter in a stale argument", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "/goal next m=value";
+			const item = { value: "next manage", label: "next manage" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "next m");
+
+			assert.strictEqual(applied.lines[0], "/goal next m=next manage");
+		});
+
+		test("does not expand past a closing quote the user typed beyond", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = '/goal next "ma"x';
+			const item = { value: 'next "manage"', label: 'next "manage"' };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, 'next "m');
+
+			assert.strictEqual(applied.lines[0], '/goal next "ma"next "manage"');
+		});
+
+		test("does not expand over a quote the snapshot did not open", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = '/goal next m"va';
+			const item = { value: "next manage", label: "next manage" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "next m");
+
+			assert.strictEqual(applied.lines[0], '/goal next m"next manage');
+		});
+
+		test("replaces only the token after a user-closed quoted mention", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = 'see @"my folder"x';
+			const item = { value: '@"my folder/other.txt"', label: "other.txt" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, '@"my folder/t');
+
+			assert.strictEqual(applied.lines[0], 'see @"my folder"@"my folder/other.txt" ');
+		});
+
+		test("expands a stale slash argument on a later line", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const lines = ["first", "/goal next ma"];
+			const item = { value: "next manage", label: "next manage" };
+
+			const applied = provider.applyCompletion(lines, 1, "/goal next ma".length, item, "next m");
+
+			assert.strictEqual(applied.lines[1], "/goal next manage");
+		});
+
+		test("expands a stale slash argument with text after the cursor", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "/goal next ma tail";
+			const item = { value: "next manage", label: "next manage" };
+
+			const applied = provider.applyCompletion([line], 0, "/goal next ma".length, item, "next m");
+
+			assert.strictEqual(applied.lines[0], "/goal next manage tail");
+		});
+
+		test("replaces a user-closed quoted path in prose", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = 'cat "my dir"';
+			const item = { value: '"my dir/file.txt"', label: "file.txt" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, '"my d');
+
+			assert.strictEqual(applied.lines[0], 'cat "my dir/file.txt"');
+		});
+
+		test("inserts without deleting when the session token was backspaced away", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "see";
+			const item = { value: "@docs/readme.md", label: "readme.md" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "@docs/re");
+
+			assert.strictEqual(applied.lines[0], "see@docs/readme.md ");
+		});
+
+		test("inserts without deleting when the argument snapshot was backspaced away", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "/goal";
+			const item = { value: "next manage", label: "next manage" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "next m");
+
+			assert.strictEqual(applied.lines[0], "/goalnext manage");
+		});
+
+		test("does not treat a stale path snapshot as a slash command after backspacing", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "cd";
+			const item = { value: "/Applications/", label: "Applications/" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "/App");
+
+			assert.strictEqual(applied.lines[0], "cd/Applications/");
+		});
+
 		test("replaces a shrunk slash command argument as one range", () => {
 			const provider = new CombinedAutocompleteProvider([], process.cwd());
 			const line = "/goal next";
