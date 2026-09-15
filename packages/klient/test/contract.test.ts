@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 
 import { pluginManifestSchema } from '../src/contract/global/plugins.js';
 import { mcpServerAuthFlowHandleSchema } from '../src/contract/global/mcpManagement.js';
+import { providersContract } from '../src/contract/global/providers.js';
 import { createSessionOptionsSchema } from '../src/contract/session/lifecycle.js';
 import { promptPayloadSchema } from '../src/contract/agent/schemas.js';
 
@@ -112,5 +113,24 @@ describe('prompt contract validation', () => {
 
   it('accepts a non-empty caller-chosen promptId', () => {
     expect(promptPayloadSchema.safeParse({ input: [], promptId: 'submission-1' }).success).toBe(true);
+  });
+});
+
+describe('provider contract validation', () => {
+  it('round-trips apiKeyEnv through set input and get/list output', () => {
+    const wire = {
+      type: 'openai',
+      baseUrl: 'https://api.example.com/v1',
+      apiKeyEnv: 'ACME_API_KEY',
+    };
+
+    const setArgs = providersContract.set.input.parse(['acme', wire]);
+    expect(setArgs[1]).toMatchObject({ apiKeyEnv: 'ACME_API_KEY' });
+    expect(providersContract.get.output.parse(wire)).toMatchObject({
+      apiKeyEnv: 'ACME_API_KEY',
+    });
+    expect(providersContract.list.output.parse({ acme: wire })).toMatchObject({
+      acme: { apiKeyEnv: 'ACME_API_KEY' },
+    });
   });
 });

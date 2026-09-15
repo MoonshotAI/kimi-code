@@ -1,7 +1,9 @@
 import {
-  applyCustomRegistryProvider,
+  applyCustomRegistryEntries,
+  credentialEnvHints,
   fetchCustomRegistry,
-  removeCustomRegistryProvider,
+  reconcileProviderCredentialUpdate,
+  removeCustomRegistryEntries,
   type CustomRegistryProviderEntry,
   type CustomRegistrySource,
   type ManagedKimiConfigShape,
@@ -16,7 +18,13 @@ import { type ModelsSection } from '#/llm-adapter/model/model';
 import { type ProviderConfig, type ProvidersSection } from '#/llm-adapter/provider/provider';
 import { modelsDevProviderModels, resolveModelsDevImport } from './modelsDev';
 
-import { DEFAULT_MODEL_SECTION, MODELS_SECTION, PROVIDERS_SECTION } from './configSection';
+import {
+  DEFAULT_MODEL_SECTION,
+  DEFAULT_PROVIDER_SECTION,
+  MODELS_SECTION,
+  PROVIDERS_SECTION,
+  THINKING_SECTION,
+} from './configSection';
 import { ModelsDevImportErrors } from './errors';
 import { IKosongConfigService } from './kosongConfig';
 import {
@@ -154,7 +162,16 @@ export class ModelsDevImportService implements IModelsDevImportService {
 
     const provider: ProviderConfig = { type: resolution.wire };
     provider.baseUrl = resolution.baseUrl;
-    provider.apiKey = options.apiKey ?? existing?.apiKey;
+    const credential = reconcileProviderCredentialUpdate(
+      existing ?? {},
+      { apiKey: options.apiKey },
+      targetId,
+    );
+    if (!credential.ok) {
+      throw new Error2(codes.CATALOG_IMPORT_INVALID, credential.message);
+    }
+    provider.apiKey = credential.apiKey;
+    provider.apiKeyEnv = credential.apiKeyEnv;
     await config.replace(PROVIDERS_SECTION, { ...providers, [targetId]: provider });
 
     const records = config.inspect<ModelsSection>(MODELS_SECTION).userValue ?? {};
@@ -196,10 +213,10 @@ export class ModelsDevImportService implements IModelsDevImportService {
         userAgent: await this.outboundUserAgent(),
         signal: AbortSignal.timeout(UPSTREAM_FETCH_TIMEOUT_MS),
       });
-    } catch (err) {
+    } catch (error) {
       throw new Error2(
         codes.REGISTRY_IMPORT_INVALID,
-        `custom registry at ${url} cannot be imported: ${truncateUpstreamMessage(err)}`,
+        `custom registry at ${url} cannot be imported: ${truncateUpstreamMessage(error)}`,
       );
     }
     if (Object.keys(entries).length === 0) {
@@ -218,47 +235,36 @@ export class ModelsDevImportService implements IModelsDevImportService {
       }
     }
 
-    const removed = {
+    const previousDefault = config.inspect<string>(DEFAULT_MODEL_SECTION).userValue;
+    const previousDefaultProvider = config.inspect<string>(DEFAULT_PROVIDER_SECTION).userValue;
+    const previousThinking =
+      config.inspect<ManagedKimiConfigShape['thinking']>(THINKING_SECTION).userValue;
+    const next = {
       providers: { ...providers },
-      models: {
-        ...config.inspect<ModelsSection>(MODELS_SECTION).userValue,
-      },
+      models: { ...config.inspect<ModelsSection>(MODELS_SECTION).userValue },
     } as ManagedKimiConfigShape;
-    const surviving = new Set(Object.values(entries).map((entry) => entry.id));
-    for (const [providerId, provider] of Object.entries(removed.providers)) {
-      if (surviving.has(providerId)) continue;
-      if (!isRecord(provider)) continue;
-      if (provider['oauth'] !== undefined) continue;
-      const existingSource = provider['source'];
-      if (
-        isRecord(existingSource) &&
-        existingSource['kind'] === 'apiJson' &&
-        existingSource['url'] === url
-      ) {
-        removeCustomRegistryProvider(removed, providerId);
-      }
+    next.defaultModel = previousDefault;
+    next['defaultProvider'] = previousDefaultProvider;
+    next.thinking = previousThinking;
+    const removal = removeCustomRegistryEntries(next, entries, source);
+    await config.replace(PROVIDERS_SECTION, next.providers as ProvidersSection);
+    await config.replace(MODELS_SECTION, (next.models ?? {}) as ModelsSection);
+    applyCustomRegistryEntries(next, entries, source, removal);    await config.replace(PROVIDERS_SECTION, next.providers as ProvidersSection);
+    await config.replace(MODELS_SECTION, (next.models ?? {}) as ModelsSection);
+    if (next.defaultModel !== previousDefault) {
+      await config.replace(DEFAULT_MODEL_SECTION, next.defaultModel);
     }
-    for (const entry of Object.values(entries)) {
-      if (entry.id in removed.providers) {
-        removeCustomRegistryProvider(removed, entry.id);
-      }
+    if (next['defaultProvider'] !== previousDefaultProvider) {
+      await config.replace(DEFAULT_PROVIDER_SECTION, next['defaultProvider']);
     }
-    await config.replace(PROVIDERS_SECTION, removed.providers as ProvidersSection);
-    await config.replace(MODELS_SECTION, (removed.models ?? {}) as ModelsSection);
-
-    const applied = {
-      providers: removed.providers,
-      models: removed.models,
-    } as ManagedKimiConfigShape;
-    for (const entry of Object.values(entries)) {
-      applyCustomRegistryProvider(applied, entry, source);
+    if (next.thinking !== previousThinking) {
+      await config.replace(THINKING_SECTION, next.thinking);
     }
-    await config.replace(PROVIDERS_SECTION, applied.providers as ProvidersSection);
-    await config.replace(MODELS_SECTION, (applied.models ?? {}) as ModelsSection);
 
     const firstEntry = Object.values(entries)[0];
     const firstModelKey = firstEntry === undefined ? undefined : Object.keys(firstEntry.models)[0];
-    if (firstEntry !== undefined && firstModelKey !== undefined) {
+    const hadDefault = previousDefault !== undefined && previousDefault.trim().length > 0;
+    if (!hadDefault && firstEntry !== undefined && firstModelKey !== undefined) {
       await seedDefaultModelWhenUnset(config, `${firstEntry.id}/${firstModelKey}`);
     }
 
@@ -270,7 +276,11 @@ export class ModelsDevImportService implements IModelsDevImportService {
       (total, entry) => total + Object.keys(entry.models).length,
       0,
     );
-    return { providers: imported, modelsImported };
+    return {
+      providers: imported,
+      modelsImported,
+      credentialEnv: credentialEnvHints(Object.values(entries)),
+    };
   }
 }
 

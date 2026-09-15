@@ -109,7 +109,7 @@ describe('fetchOpenPlatformModels', () => {
       platform,
       'sk-bad',
       fetchMock as unknown as typeof fetch,
-    ).catch((caught: unknown) => caught);
+    ).catch((error: unknown) => error);
 
     expect(error).toBeInstanceOf(OpenPlatformApiError);
     expect((error as OpenPlatformApiError).status).toBe(401);
@@ -268,7 +268,7 @@ describe('applyOpenPlatformConfig', () => {
       models,
       selectedModel: models[0]!,
       thinking: true,
-      apiKey: 'sk-test',
+      credential: { apiKey: 'sk-test' },
     });
 
     expect(result).toEqual({
@@ -313,7 +313,7 @@ describe('applyOpenPlatformConfig', () => {
       models,
       selectedModel: models[0]!,
       thinking: false,
-      apiKey: 'sk-new',
+      credential: { apiKey: 'sk-new' },
     });
 
     expect(config.models?.['moonshot-cn/stale']).toBeUndefined();
@@ -351,7 +351,7 @@ describe('applyOpenPlatformConfig', () => {
       models,
       selectedModel: models[0]!,
       thinking: false,
-      apiKey: 'sk-new',
+      credential: { apiKey: 'sk-new' },
     });
 
     const alias = config.models?.['moonshot-cn/kimi-k2-0712-preview'];
@@ -390,7 +390,7 @@ describe('applyOpenPlatformConfig', () => {
       models,
       selectedModel: models[0]!,
       thinking: false,
-      apiKey: 'sk-new',
+      credential: { apiKey: 'sk-new' },
     });
 
     const alias = config.models?.['moonshot-cn/kimi-k2-0712-preview'];
@@ -417,7 +417,7 @@ describe('applyOpenPlatformConfig', () => {
       selectedModel: models[0]!,
       thinking: true,
       effort: 'high',
-      apiKey: 'sk-test',
+      credential: { apiKey: 'sk-test' },
     });
 
     expect(config.thinking).toEqual({ enabled: true, effort: 'high' });
@@ -441,7 +441,7 @@ describe('applyOpenPlatformConfig', () => {
       models,
       selectedModel: models[0]!,
       thinking: true,
-      apiKey: 'sk-test',
+      credential: { apiKey: 'sk-test' },
     });
 
     expect(config.thinking).toEqual({ enabled: true });

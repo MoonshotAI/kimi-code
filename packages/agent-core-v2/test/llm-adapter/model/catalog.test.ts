@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createScopedTestHost } from '#/_base/di/test';
 import { isErrorCode } from '#/_base/errors/codes';
@@ -110,6 +110,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   if (savedCustomHeaders === undefined) delete process.env['KIMI_CODE_CUSTOM_HEADERS'];
   else process.env['KIMI_CODE_CUSTOM_HEADERS'] = savedCustomHeaders;
 });
@@ -513,6 +514,46 @@ describe('Model assembly (pure data)', () => {
       host.dispose();
     }
   });
+
+  it('resolves api_key_env credentials from process.env on every request', async () => {
+    vi.stubEnv('KIMI_TEST_ACME_ENV_KEY', 'sk-first');
+    const { host, catalog } = createHost({
+      providers: {
+        acme: { type: 'openai', apiKeyEnv: 'KIMI_TEST_ACME_ENV_KEY', baseUrl: 'https://acme.example.test/v1' },
+      },
+      models: { m: { provider: 'acme', protocol: 'openai', model: 'acme-1', maxContextSize: 1000 } },
+    });
+    try {
+      const model = catalog.get('m');
+      expect(await model.credentials?.resolve()).toEqual({ apiKey: 'sk-first' });
+      vi.stubEnv('KIMI_TEST_ACME_ENV_KEY', 'sk-rotated');
+      expect(await model.credentials?.resolve()).toEqual({ apiKey: 'sk-rotated' });
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('fails credential resolution with config.invalid when the declared api_key_env variable is unset or empty', () => {
+    const { host, catalog } = createHost({
+      providers: {
+        acme: { type: 'openai', apiKeyEnv: 'KIMI_TEST_ACME_ENV_KEY', baseUrl: 'https://acme.example.test/v1' },
+      },
+      models: { m: { provider: 'acme', protocol: 'openai', model: 'acme-1', maxContextSize: 1000 } },
+    });
+    try {
+      const model = catalog.get('m');
+      expect(() => model.credentials?.resolve()).toThrowError(
+        expect.objectContaining({ code: ConfigErrors.codes.CONFIG_INVALID }),
+      );
+      expect(() => model.credentials?.resolve()).toThrowError(/acme[\s\S]*KIMI_TEST_ACME_ENV_KEY/);
+      vi.stubEnv('KIMI_TEST_ACME_ENV_KEY', '   ');
+      expect(() => model.credentials?.resolve()).toThrowError(
+        expect.objectContaining({ code: ConfigErrors.codes.CONFIG_INVALID }),
+      );
+    } finally {
+      host.dispose();
+    }
+  });
 });
 
 describe('ModelCatalog caching and config-event invalidation', () => {
@@ -770,7 +811,11 @@ describe('wire projection (pure)', () => {
     const models: Record<string, ModelRecord> = { a: { provider: 'p1', model: 'm-a' } };
     const provider: ProviderConfig = { type: 'openai', baseUrl: 'https://x.test/v1' };
     expect(
-      toProtocolProvider('p1', provider, models, 'a', { hasApiKey: true, hasOAuthToken: false }),
+      toProtocolProvider('p1', provider, models, 'a', {
+        hasApiKey: true,
+        hasOAuthToken: false,
+        hasCredentialConflict: false,
+      }),
     ).toEqual({
       id: 'p1',
       type: 'openai',
@@ -781,15 +826,30 @@ describe('wire projection (pure)', () => {
       models: ['a'],
     });
     expect(
+      toProtocolProvider(
+        'p1',
+        {
+          ...provider,
+          apiKeyEnv: 'ACME_KEY',
+          oauth: { storage: 'file', key: 'oauth/p1' },
+        },
+        models,
+        'a',
+        { hasApiKey: true, hasOAuthToken: true, hasCredentialConflict: true },
+      ),
+    ).toMatchObject({ status: 'error', has_api_key: true });
+    expect(
       toProtocolProvider('p1', { ...provider, defaultModel: 'own' }, models, 'a', {
         hasApiKey: false,
         hasOAuthToken: false,
+        hasCredentialConflict: false,
       }).default_model,
     ).toBe('own');
     expect(
       toProtocolProvider('p1', { ...provider, type: undefined }, models, undefined, {
         hasApiKey: false,
         hasOAuthToken: false,
+        hasCredentialConflict: false,
       }),
     ).toMatchObject({ type: 'openai', status: 'unconfigured', default_model: undefined });
   });
@@ -1046,6 +1106,24 @@ describe('ModelCatalog enumeration', () => {
       expect(byId['kimi']).toMatchObject({ has_api_key: true, status: 'connected' });
       expect(byId['claude']).toMatchObject({ has_api_key: true, status: 'connected' });
       expect(byId['empty']).toMatchObject({ has_api_key: false, status: 'unconfigured' });
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('treats an api_key_env provider as configured only while the variable is set', async () => {
+    const { host, catalog } = createHost({
+      providers: {
+        acme: { type: 'openai', apiKeyEnv: 'KIMI_TEST_ACME_ENV_KEY' },
+      },
+      models: {},
+    });
+    try {
+      const credentialState = async () =>
+        (await catalog.listProviders()).map((p) => [p.id, p.has_api_key, p.status]);
+      expect(await credentialState()).toEqual([['acme', false, 'unconfigured']]);
+      vi.stubEnv('KIMI_TEST_ACME_ENV_KEY', 'sk-live');
+      expect(await credentialState()).toEqual([['acme', true, 'connected']]);
     } finally {
       host.dispose();
     }

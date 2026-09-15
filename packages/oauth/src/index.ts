@@ -180,19 +180,35 @@ export {
   applyCustomRegistryEntries,
   applyCustomRegistryProvider,
   capabilitiesFromCustomEntry,
+  credentialEnvHints,
   CustomRegistryApiError,
   CUSTOM_REGISTRY_DEFAULT_CAPABILITIES,
   CUSTOM_REGISTRY_DEFAULT_MAX_CONTEXT,
   fetchCustomRegistry,
+  removeCustomRegistryEntries,
   removeCustomRegistryProvider,
 } from './custom-registry';
 export type {
   CustomRegistryModelEntry,
   CustomRegistryProviderEntry,
   CustomRegistryProviderType,
+  CustomRegistryRemoval,
   CustomRegistrySource,
   FetchCustomRegistryOptions,
 } from './custom-registry';
+
+export {
+  apiKeyEnvMissingMessage,
+  credentialConflictMessage,
+  declaredProviderCredential,
+  reconcileProviderCredentialUpdate,
+} from './provider-credential';
+export type {
+  DeclaredProviderCredential,
+  ProviderCredentialReconciliation,
+  ProviderCredentialUpdate,
+  ProviderCredentialView,
+} from './provider-credential';
 
 export { KimiOAuthToolkit, resolveKimiTokenStorageName } from './toolkit';
 export type {

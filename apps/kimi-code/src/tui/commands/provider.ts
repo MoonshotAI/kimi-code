@@ -1,8 +1,8 @@
 import {
-  applyCustomRegistryEntries,
+  credentialEnvHints,
+  CustomRegistryApiError,
   fetchCustomRegistry,
   type CustomRegistrySource,
-  type ManagedKimiConfigShape,
 } from '@moonshot-ai/kimi-code-oauth';
 import {
   applyCatalogProvider,
@@ -18,6 +18,7 @@ import {
 import { createKimiCodeUserAgent } from '#/cli/version';
 import { fetchCatalogOrBuiltIn } from '#/utils/catalog-fetch';
 import { refreshKimiRegion } from '#/utils/region';
+import { persistRegistryImport } from '#/utils/registry-import';
 import { ChoicePickerComponent } from '../components/dialogs/choice-picker';
 import {
   CustomRegistryImportDialogComponent,
@@ -353,21 +354,19 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
     entries = await fetchCustomRegistry(source, { userAgent: createKimiCodeUserAgent() });
   } catch (error) {
     host.showError(`Failed to import registry: ${formatErrorMessage(error)}`);
+    if (
+      value.apiKey.length === 0 &&
+      error instanceof CustomRegistryApiError &&
+      (error.status === 401 || error.status === 403)
+    ) {
+      host.showStatus('This registry requires authentication — paste its Bearer token.', 'warning');
+    }
     return false;
   }
 
   const addedProviderIds = Object.values(entries).map((entry) => entry.id);
   try {
-    const config = await host.harness.getConfig();
-    applyCustomRegistryEntries(
-      config as unknown as ManagedKimiConfigShape,
-      entries,
-      source,
-    );
-    await host.harness.setConfig({
-      providers: config.providers,
-      models: config.models,
-    });
+    await persistRegistryImport(host.harness, entries, source);
     await host.authFlow.refreshConfigAfterLogin();
   } catch (error) {
     host.showError(`Failed to apply registry: ${formatErrorMessage(error)}`);
@@ -385,6 +384,12 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
       : `Imported ${String(count)} providers from registry.`,
     'success',
   );
+  const hints = credentialEnvHints(Object.values(entries));
+  for (const [id, envName] of Object.entries(hints)) {
+    host.showStatus(
+      `provider "${id}" declares credential env var "${envName}" — set api_key_env in config.toml to use it`,
+    );
+  }
 
   // Offer the model selector so the user can pick a default, just like the
   // catalog (known-provider) flow. Copy without the v1-synthesized
