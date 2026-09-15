@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { Error2, ErrorCodes, isError2 } from '#/errors';
 import { deepMerge } from '#/app/config/configPure';
-import { isPlainObject } from '#/app/config/toml';
+import { isPlainObject, plainObjectToToml } from '#/app/config/toml';
 import {
   type EnvBindings,
   envBindings,
@@ -92,6 +92,8 @@ export function mergeSecondaryModelConfig(
 
 registerConfigSection(SECONDARY_MODEL_SECTION, SecondaryModelConfigSchema, {
   merge: mergeSecondaryModelConfig,
+  toToml: (value) =>
+    isPlainObject(value) ? plainObjectToToml(value, undefined) : value,
 });
 
 export function resolveSubagentTimeoutMs(config: IConfigService): number {

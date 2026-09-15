@@ -1983,7 +1983,7 @@ describe('subagent config section', () => {
     ix.set(IConfigService, new SyncDescriptor(ConfigService));
     const config = ix.get(IConfigService);
     await config.ready;
-    return { config, disposables };
+    return { config, disposables, storage };
   }
 
   it('defaults to two hours and honours the env override', async () => {
@@ -2221,7 +2221,7 @@ describe('subagent config section', () => {
 
   it('lets a model write replace a stale pool instead of being shadowed by it', async () => {
     const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
-    const { config, disposables } = await createConfig(
+    const { config, disposables, storage } = await createConfig(
       {},
       '[secondary_model]\ndefault_model = "provider/fast"\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n',
     );
@@ -2242,11 +2242,23 @@ describe('subagent config section', () => {
       modelSource: 'secondary_pool',
     });
 
+    const persisted = new TextDecoder().decode(await storage.read('', 'config.toml'));
+    expect(persisted).not.toContain('default_model');
+    expect(persisted).not.toContain('[secondary_model.models]');
+    expect(persisted).toContain('model = "provider/smart"');
+
+    const reloaded = await createConfig({}, persisted);
+    expect(resolveSubagentModelPool(reloaded.config)).toEqual({
+      defaultModel: 'provider/smart',
+      models: { 'provider/smart': '' },
+    });
+    reloaded.disposables.dispose();
+
     disposables.dispose();
   });
 
   it('lets a default_model write drop the stale legacy model key', async () => {
-    const { config, disposables } = await createConfig(
+    const { config, disposables, storage } = await createConfig(
       {},
       '[secondary_model]\nmodel = "provider/slow"\ndefault_effort = "low"\nmax_output_size = 8192\n',
     );
@@ -2258,6 +2270,10 @@ describe('subagent config section', () => {
       defaultEffort: 'low',
       maxOutputSize: 8192,
     });
+
+    const persisted = new TextDecoder().decode(await storage.read('', 'config.toml'));
+    expect(persisted).not.toContain('model = "provider/slow"');
+    expect(persisted).toContain('default_model = "provider/fast"');
 
     disposables.dispose();
   });
