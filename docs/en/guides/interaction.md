@@ -21,7 +21,7 @@ How to paste:
 
 After pasting, the input box shows a placeholder that you can edit like normal text; on submit, the placeholder is replaced with the actual content. A plain-text clipboard falls back to ordinary paste. Media support depends on the current model's multimodal capabilities (`image_in` / `video_in`); it is enabled by default when you are logged in to a Kimi Code account.
 
-If a conversation accumulates more than 20 MB of media, the oldest images and videos are omitted from requests automatically, and a warning is shown when this happens. Omitted media are not deleted — the agent can re-read them from their saved paths when needed.
+If a conversation accumulates more than 20 MB of media, the oldest images and videos are omitted from requests automatically, and a warning is shown when this happens.
 
 ## Slash commands
 
