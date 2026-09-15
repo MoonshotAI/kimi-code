@@ -25,7 +25,25 @@ export const EventStoreService = createToken<DurableBackend>('kernel.eventStore'
 export interface DurableManager {
   readonly sliceName: string;
   readonly entries: Map<string, ShallowRef<unknown>>;
-  dispatch(patch: Record<string, unknown>): void;
+  readonly initials: Map<string, unknown>;
+  dispatch(patch: Record<string, unknown>): Promise<void>;
+}
+
+export function useDurableReducer(type: string, reducer: (draft: any, event: any) => void): void {
+  const node = currentUnit();
+  if (node.internals.has('durables')) {
+    throw new Error(
+      `useDurableReducer for event '${type}' must run before the first useDurable in unit '${node.recipe.name}'`,
+    );
+  }
+  let reducers = node.internals.get('durableReducers') as
+    | Map<string, (draft: any, event: any) => void>
+    | undefined;
+  if (reducers === undefined) {
+    reducers = new Map();
+    node.internals.set('durableReducers', reducers);
+  }
+  reducers.set(type, reducer);
 }
 
 export function acquireDurableManager(node: UnitNode): DurableManager {
@@ -44,10 +62,15 @@ export function acquireDurableManager(node: UnitNode): DurableManager {
   })();
   const sliceName = node.recipe.name;
   const entries = new Map<string, ShallowRef<unknown>>();
+  const initials = new Map<string, unknown>();
   let unregister: (() => void) | undefined;
   let registered = false;
   let inFlight = 0;
-  const pending: Record<string, unknown>[] = [];
+  const pending: Array<{
+    readonly patch: Record<string, unknown>;
+    readonly resolve: () => void;
+    readonly reject: (error: unknown) => void;
+  }> = [];
   const resync = (): void => {
     if (!registered || inFlight > 0) {
       return;
@@ -66,35 +89,54 @@ export function acquireDurableManager(node: UnitNode): DurableManager {
       }
     }
   };
-  const trackedDispatch = (patch: Record<string, unknown>): void => {
+  const trackedDispatch = (patch: Record<string, unknown>): Promise<void> => {
     inFlight += 1;
-    void backend
+    const op = backend
       .dispatch({ type: 'store.patched', store: sliceName, patch })
-      .catch(report)
+      .then(() => undefined)
+      .catch((error: unknown) => {
+        report(error);
+        throw error;
+      })
       .finally(() => {
         inFlight -= 1;
         resync();
       });
+    void op.catch(() => {});
+    return op;
   };
+  const extraReducers = node.internals.get('durableReducers') as
+    | ReadonlyMap<string, (draft: any, event: any) => void>
+    | undefined;
   void backend
     .registerSlice({
       name: sliceName,
       initialState: () =>
-        Object.fromEntries([...entries].map(([key, slot]) => [key, slot.value])),
+        Object.fromEntries([...entries.keys()].map((key) => [key, initials.get(key)])),
       reducers: {
         'store.patched': (draft, event) => {
           if ((event as { store?: unknown }).store === sliceName) {
             Object.assign(draft, (event as { patch?: Record<string, unknown> }).patch);
           }
         },
+        ...(extraReducers === undefined ? {} : Object.fromEntries(extraReducers)),
       },
     })
     .then(async (dispose) => {
       unregister = dispose;
-      for (const patch of pending.splice(0)) {
-        inFlight += 1;
-        await backend.dispatch({ type: 'store.patched', store: sliceName, patch }).catch(report);
-        inFlight -= 1;
+      while (pending.length > 0) {
+        for (const entry of pending.splice(0)) {
+          inFlight += 1;
+          try {
+            await backend.dispatch({ type: 'store.patched', store: sliceName, patch: entry.patch });
+            entry.resolve();
+          } catch (error) {
+            report(error);
+            entry.reject(error);
+          } finally {
+            inFlight -= 1;
+          }
+        }
       }
       registered = true;
       resync();
@@ -104,12 +146,14 @@ export function acquireDurableManager(node: UnitNode): DurableManager {
   const manager: DurableManager = {
     sliceName,
     entries,
+    initials,
     dispatch: (patch) => {
       if (!registered) {
-        pending.push(patch);
-        return;
+        return new Promise<void>((resolve, reject) => {
+          pending.push({ patch, resolve, reject });
+        });
       }
-      trackedDispatch(patch);
+      return trackedDispatch(patch);
     },
   };
   node.internals.set('durables', manager);
@@ -127,6 +171,7 @@ export function useDurable<S>(key: string, initial: S): Ref<S> {
   if (backing === undefined) {
     const created: ShallowRef<unknown> = shallowRef(initial);
     manager.entries.set(key, created);
+    manager.initials.set(key, initial);
     backing = created as ShallowRef<S>;
   }
   const state = backing;
@@ -141,7 +186,7 @@ export function useDurable<S>(key: string, initial: S): Ref<S> {
       }
       state.value = next;
       trigger();
-      manager.dispatch({ [key]: next });
+      void manager.dispatch({ [key]: next });
     },
   }));
 }
