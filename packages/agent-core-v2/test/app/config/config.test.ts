@@ -2278,6 +2278,22 @@ describe('subagent config section', () => {
     disposables.dispose();
   });
 
+  it('preserves unknown on-disk keys while removing superseded ones', async () => {
+    const { config, disposables, storage } = await createConfig(
+      {},
+      '[secondary_model]\ndefault_model = "provider/fast"\nfuture_field = "keep me"\n',
+    );
+
+    await config.set(SECONDARY_MODEL_SECTION, { model: 'provider/smart' });
+
+    const persisted = new TextDecoder().decode(await storage.read('', 'config.toml'));
+    expect(persisted).not.toContain('default_model');
+    expect(persisted).toContain('future_field = "keep me"');
+    expect(persisted).toContain('model = "provider/smart"');
+
+    disposables.dispose();
+  });
+
   it('keeps both key families on an effort-only write and on a mixed write', async () => {
     const { config, disposables } = await createConfig(
       {},

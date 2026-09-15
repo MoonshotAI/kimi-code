@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { Error2, ErrorCodes, isError2 } from '#/errors';
 import { deepMerge } from '#/app/config/configPure';
-import { isPlainObject, plainObjectToToml } from '#/app/config/toml';
+import { camelToSnake, cloneRecord, isPlainObject, plainObjectToToml } from '#/app/config/toml';
 import {
   type EnvBindings,
   envBindings,
@@ -90,10 +90,18 @@ export function mergeSecondaryModelConfig(
   return merged;
 }
 
+function secondaryModelToToml(value: unknown, rawSnake: unknown): unknown {
+  if (!isPlainObject(value)) return value;
+  const out = cloneRecord(rawSnake);
+  for (const key of Object.keys(SecondaryModelConfigSchema.shape)) {
+    if (!(key in value)) delete out[camelToSnake(key)];
+  }
+  return plainObjectToToml(value, out);
+}
+
 registerConfigSection(SECONDARY_MODEL_SECTION, SecondaryModelConfigSchema, {
   merge: mergeSecondaryModelConfig,
-  toToml: (value) =>
-    isPlainObject(value) ? plainObjectToToml(value, undefined) : value,
+  toToml: secondaryModelToToml,
 });
 
 export function resolveSubagentTimeoutMs(config: IConfigService): number {
