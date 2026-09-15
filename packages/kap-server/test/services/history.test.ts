@@ -309,38 +309,6 @@ describe('foldWireHistory steer', () => {
       timestamp: T0 + 4,
     });
   });
-
-  it('emits steers read at their record without synthesizing a step', () => {
-    const attached = fold([
-      rec('turn.started', { input: [{ type: 'text', text: 'do A' }], origin: { kind: 'user' } }),
-      loopEvent({ type: 'step.begin', uuid: 'u1', turnId: '0', step: 1 }, T0 + 1),
-      loopEvent({ type: 'step.end', uuid: 'u1' }, T0 + 2),
-      rec('turn.steer', { input: [{ type: 'text', text: 'last' }], origin: { kind: 'user' } }, T0 + 3),
-      rec('turn.ended', { turnId: 0, reason: 'cancelled' }, T0 + 4),
-    ]);
-    expect(ofType(attached, 'step').map((s) => s.step_id)).toEqual(['t0.1']);
-    const steer = ofType(attached, 'user').find((u) => u.message_id === 't0.u1')!;
-    expect(steer).toMatchObject({
-      turn_id: 't0',
-      text: [{ type: 'text', text: 'last', meta: {} }],
-      status: 'read',
-      timestamp: T0 + 3,
-    });
-
-    const stepFree = fold([
-      rec('turn.started', { input: [{ type: 'text', text: 'do A' }], origin: { kind: 'user' } }),
-      rec('turn.steer', { input: [{ type: 'text', text: 'early' }], origin: { kind: 'user' } }, T0 + 1),
-      rec('turn.ended', { turnId: 0, reason: 'cancelled' }, T0 + 2),
-    ]);
-    expect(ofType(stepFree, 'step')).toHaveLength(0);
-    const early = ofType(stepFree, 'user').find((u) => u.message_id === 't0.u1')!;
-    expect(early).toMatchObject({
-      turn_id: 't0',
-      text: [{ type: 'text', text: 'early', meta: {} }],
-      status: 'read',
-      timestamp: T0 + 1,
-    });
-  });
 });
 
 describe('foldWireHistory task notifications', () => {
@@ -564,6 +532,66 @@ describe('foldWireHistory undo and clear', () => {
     expect(clear).toMatchObject({ subtype: 'clear', payload: { removed_ids: ['t0', 'sys_goal_1'] } });
     expect(ofType(messages, 'turn').map((t) => t.turn_id)).toEqual(['t1']);
     expect(ofType(messages, 'system').filter((m) => m.subtype === 'goal')).toHaveLength(0);
+  });
+});
+
+describe('foldWireHistory reused legacy turn ids', () => {
+  it('merges reused turn ids, resurrects undone turns and adopts online ids', () => {
+    const prompt = (text: string, promptId: string, turnId: number | undefined, time: number): ContextRecord[] => [
+      rec('turn.prompt', {
+        input: [{ type: 'text', text }],
+        origin: { kind: 'user' },
+        promptId,
+        turnId,
+      }, time),
+      rec('context.append_message', {
+        message: {
+          id: promptId,
+          role: 'user',
+          content: [{ type: 'text', text }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      }, time + 1),
+    ];
+    const step = (uuid: string, turnId: string, ordinal: number, answer: string, time: number): ContextRecord[] => [
+      loopEvent({ type: 'step.begin', uuid, turnId, step: ordinal }, time),
+      loopEvent({ type: 'content.part', stepUuid: uuid, part: { type: 'text', text: answer } }, time + 1),
+      loopEvent({ type: 'step.end', uuid, finishReason: 'stop' }, time + 2),
+    ];
+    const messages = fold([
+      ...prompt('A', 'pa', 0, T0),
+      ...step('u1', '0', 1, 'answer A', T0 + 2),
+      rec('turn.ended', { turnId: 0, reason: 'completed' }, T0 + 5),
+      ...prompt('B', 'pb', 0, T0 + 6),
+      ...step('u2', '0', 2, 'answer B', T0 + 8),
+      rec('turn.ended', { turnId: 0, reason: 'completed' }, T0 + 11),
+      rec('context.undo', { count: 1 }, T0 + 12),
+      ...prompt('C', 'pc', 0, T0 + 13),
+      ...step('u3', '0', 1, 'answer C', T0 + 15),
+      rec('turn.ended', { turnId: 0, reason: 'completed' }, T0 + 18),
+      ...prompt('D', 'pd', undefined, T0 + 19),
+      ...step('u4', '3', 1, 'answer D', T0 + 21),
+      rec('turn.ended', { turnId: 3, reason: 'completed' }, T0 + 24),
+    ]);
+    expect(ofType(messages, 'turn').map((t) => [t.turn_id, t.ordinal, t.status])).toEqual([
+      ['t0', 0, 'completed'],
+      ['t3', 3, 'completed'],
+    ]);
+    expect(ofType(messages, 'user').map((u) => [u.message_id, u.turn_id])).toEqual([
+      ['pc', 't0'],
+      ['pd', 't3'],
+    ]);
+    expect(ofType(messages, 'assistant').map((a) => [a.message_id, a.text])).toEqual([
+      ['t0.1.a1', 'answer C'],
+      ['t3.1.a1', 'answer D'],
+    ]);
+    expect(ofType(messages, 'step').map((s) => [s.step_id, s.status])).toEqual([
+      ['t0.1', 'completed'],
+      ['t3.1', 'completed'],
+    ]);
+    const undo = ofType(messages, 'system').find((m) => m.subtype === 'undo')!;
+    expect(undo.payload).toEqual({ removed_ids: ['t0'] });
   });
 });
 

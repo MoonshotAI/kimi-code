@@ -55,8 +55,7 @@ export function foldTimelineSeed(records: readonly ContextRecord[]): TimelineSee
   const cancelledTurnIds = new Set<number>();
   const hiddenTurnIds = new Set<number>();
   const visibleTurnOrdinals = new Set<number>();
-  const turnPromptIds = new Map<number, string>();
-  const pendingAnchorTurnIds: number[] = [];
+  const pendingAnchors: { rawId: number; promptId?: string }[] = [];
   const undoAnchors: { rawId: number }[] = [];
   let undoAnchorFloor = 0;
   const activeCancelTurnIds = new Set<number>();
@@ -86,9 +85,11 @@ export function foldTimelineSeed(records: readonly ContextRecord[]): TimelineSee
         nextTurnId = Math.max(nextTurnId, rawId + 1);
         const origin = record['origin'];
         const promptId = record['promptId'];
-        if (typeof promptId === 'string') turnPromptIds.set(rawId, promptId);
         if (isUndoAnchorOrigin(origin)) {
-          pendingAnchorTurnIds.push(rawId);
+          pendingAnchors.push({
+            rawId,
+            promptId: typeof promptId === 'string' ? promptId : undefined,
+          });
           anchorTurnOrdinals.push(rawId);
         }
         currentTurn = rawId;
@@ -96,8 +97,11 @@ export function foldTimelineSeed(records: readonly ContextRecord[]): TimelineSee
           hiddenTurnIds.add(rawId);
           break;
         }
-        visibleTurnOrdinals.add(rawId);
-        timelineIds.push(turnIdOf(rawId));
+        hiddenTurnIds.delete(rawId);
+        if (!visibleTurnOrdinals.has(rawId)) {
+          visibleTurnOrdinals.add(rawId);
+          timelineIds.push(turnIdOf(rawId));
+        }
         break;
       }
       case 'context.append_message': {
@@ -138,24 +142,21 @@ export function foldTimelineSeed(records: readonly ContextRecord[]): TimelineSee
         const messageId = typeof message.id === 'string' ? message.id : undefined;
         const matchingIndex =
           messageId !== undefined
-            ? pendingAnchorTurnIds.findIndex((turnId) => turnPromptIds.get(turnId) === messageId)
+            ? pendingAnchors.findIndex((anchor) => anchor.promptId === messageId)
             : -1;
         const legacyIndex =
           matchingIndex < 0 && messageId !== undefined
-            ? pendingAnchorTurnIds.findIndex((turnId) => !turnPromptIds.has(turnId))
+            ? pendingAnchors.findIndex((anchor) => anchor.promptId === undefined)
             : -1;
-        const matchedTurnId =
+        const matched =
           matchingIndex >= 0
-            ? pendingAnchorTurnIds.splice(matchingIndex, 1)[0]
+            ? pendingAnchors.splice(matchingIndex, 1)[0]
             : legacyIndex >= 0
-              ? pendingAnchorTurnIds.splice(legacyIndex, 1)[0]
+              ? pendingAnchors.splice(legacyIndex, 1)[0]
               : messageId === undefined
-                ? pendingAnchorTurnIds.shift()
+                ? pendingAnchors.shift()
                 : undefined;
-        if (matchedTurnId !== undefined && !turnPromptIds.has(matchedTurnId) && messageId !== undefined) {
-          turnPromptIds.set(matchedTurnId, messageId);
-        }
-        undoAnchors.push({ rawId: matchedTurnId ?? nextTurnId });
+        undoAnchors.push({ rawId: matched?.rawId ?? nextTurnId });
         break;
       }
       case 'agent.fork': {
@@ -166,8 +167,8 @@ export function foldTimelineSeed(records: readonly ContextRecord[]): TimelineSee
       case 'turn.ended': {
         const rawId = record['turnId'];
         if (typeof rawId !== 'number' || !Number.isInteger(rawId)) break;
-        const pendingIndex = pendingAnchorTurnIds.indexOf(rawId);
-        if (pendingIndex >= 0) pendingAnchorTurnIds.splice(pendingIndex, 1);
+        const pendingIndex = pendingAnchors.findIndex((anchor) => anchor.rawId === rawId);
+        if (pendingIndex >= 0) pendingAnchors.splice(pendingIndex, 1);
         break;
       }
       case 'turn.cancel': {
@@ -207,13 +208,17 @@ export function foldTimelineSeed(records: readonly ContextRecord[]): TimelineSee
         });
         if (cut < 0) break;
         timelineIds.length = cut;
-        for (let turnId = firstUndone; turnId < nextTurnId; turnId++) hiddenTurnIds.add(turnId);
+        for (let turnId = firstUndone; turnId < nextTurnId; turnId++) {
+          hiddenTurnIds.add(turnId);
+          visibleTurnOrdinals.delete(turnId);
+        }
         if (currentTurn !== undefined && currentTurn >= firstUndone) currentTurn = undefined;
         pushSystem('undo');
         break;
       }
       case 'context.clear': {
         timelineIds.length = 0;
+        visibleTurnOrdinals.clear();
         undoAnchorFloor = undoAnchors.length;
         currentTurn = undefined;
         pushSystem('clear');
