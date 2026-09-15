@@ -14,6 +14,7 @@ import {
 } from '#/tui/components/messages/agent-swarm-progress';
 import { AgentSwarmProgressEstimator } from '#/tui/components/messages/agent-swarm-progress-estimator';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
+import { setRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 const DEFAULT_DESCRIPTION = 'Review changed files';
 
@@ -944,6 +945,23 @@ describe('AgentSwarmProgressComponent render caching', () => {
     expect(after.map(strip)).toEqual(before.map(strip));
   });
 
+  it('bypasses both component and cell caches when the render cache is disabled', () => {
+    const component = createTerminalComponent();
+    const before = component.render(100);
+
+    setRenderCacheEnabled(false);
+    try {
+      const after = component.render(100);
+      expect(after).not.toBe(before);
+      expect(after.map(strip)).toEqual(before.map(strip));
+      const third = component.render(100);
+      expect(third).not.toBe(after);
+      expect(third.map(strip)).toEqual(after.map(strip));
+    } finally {
+      setRenderCacheEnabled(true);
+    }
+  });
+
   it('repaints member cells from the active palette when the theme changes', () => {
     const previousLevel = chalk.level;
     chalk.level = 3;
@@ -994,17 +1012,18 @@ describe('AgentSwarmProgressComponent render caching', () => {
 });
 
 describe('AgentSwarmProgressComponent terminal state memory', () => {
-  interface SwarmMemberInternals {
-    phase: string;
-    latestModelText: string;
-    completedText?: string;
-    failureText?: string;
-    cancelledLabelText?: string;
-    cellCache?: { readonly key: readonly unknown[]; readonly value: string };
+  const WIDE_RENDER_WIDTH = 500;
+
+  function rawCellLine(component: AgentSwarmProgressComponent): string {
+    const line = component
+      .render(WIDE_RENDER_WIDTH)
+      .find((candidate) => strip(candidate).includes('001 ['));
+    if (line === undefined) throw new Error('cell line not found');
+    return line;
   }
 
-  function membersOf(component: AgentSwarmProgressComponent): SwarmMemberInternals[] {
-    return (component as unknown as { members: SwarmMemberInternals[] }).members;
+  function visibleCellText(component: AgentSwarmProgressComponent): string {
+    return strip(rawCellLine(component)).trimEnd();
   }
 
   it('bounds completed output text to a few hundred characters', () => {
@@ -1013,10 +1032,10 @@ describe('AgentSwarmProgressComponent terminal state memory', () => {
 
     component.markCompleted('agent-1', `Reviewed imports. ${'x'.repeat(100_000)}`);
 
-    const member = membersOf(component)[0];
-    expect(member?.completedText).toBeDefined();
-    expect(member?.completedText?.length).toBeLessThanOrEqual(500);
-    expect(renderText(component)).toContain('✓ Reviewed imports.');
+    const cellText = visibleCellText(component);
+    expect(cellText.length).toBeLessThanOrEqual(500);
+    expect(cellText).not.toContain('…');
+    expect(cellText).toContain('✓ Reviewed imports.');
   });
 
   it('bounds failure text to a few hundred characters', () => {
@@ -1025,23 +1044,13 @@ describe('AgentSwarmProgressComponent terminal state memory', () => {
 
     component.markFailed('agent-1', `Provider request failed ${'y'.repeat(100_000)}`);
 
-    const member = membersOf(component)[0];
-    expect(member?.failureText).toBeDefined();
-    expect(member?.failureText?.length).toBeLessThanOrEqual(500);
-    expect(renderText(component)).toContain('✗ Provider request failed');
+    const cellText = visibleCellText(component);
+    expect(cellText.length).toBeLessThanOrEqual(500);
+    expect(cellText).not.toContain('…');
+    expect(cellText).toContain('✗ Provider request failed');
   });
 
-  it('clears the latest model text when a member completes', () => {
-    const component = createComponent();
-    registerSubagents(component, 1);
-    component.appendModelDelta({ agentId: 'agent-1', delta: 'working on it' });
-
-    component.markCompleted('agent-1', 'done');
-
-    expect(membersOf(component)[0]?.latestModelText).toBe('');
-  });
-
-  it('keeps the latest assistant line as the completed label after clearing model text', () => {
+  it('uses the latest assistant line as the completed label when no output is given', () => {
     const component = createComponent();
     registerSubagents(component, 1);
     component.appendModelDelta({
@@ -1051,22 +1060,10 @@ describe('AgentSwarmProgressComponent terminal state memory', () => {
 
     component.markCompleted('agent-1');
 
-    expect(membersOf(component)[0]?.latestModelText).toBe('');
     expect(renderText(component)).toContain('✓ Imports look stable');
   });
 
-  it('clears the latest model text when a member fails', () => {
-    const component = createComponent();
-    registerSubagents(component, 1);
-    component.appendModelDelta({ agentId: 'agent-1', delta: 'working on it' });
-
-    component.markFailed('agent-1', 'Agent timed out');
-
-    expect(membersOf(component)[0]?.latestModelText).toBe('');
-    expect(renderText(component)).toContain('✗ Agent timed out');
-  });
-
-  it('clears the latest model text when a running member is cancelled', () => {
+  it('bounds the cancelled label of a running member to a few hundred characters', () => {
     const component = createComponent();
     registerSubagents(component, 1);
     startSubagents(component, 1);
@@ -1074,28 +1071,120 @@ describe('AgentSwarmProgressComponent terminal state memory', () => {
 
     component.markCancelled('agent-1');
 
-    const member = membersOf(component)[0];
-    expect(member?.latestModelText).toBe('');
-    expect(member?.cancelledLabelText?.length).toBeLessThanOrEqual(500);
-    expect(renderText(component)).toContain(`⊘ ${'x'.repeat(20)}`);
+    const cellText = visibleCellText(component);
+    expect(cellText.length).toBeLessThanOrEqual(500);
+    expect(cellText).not.toContain('…');
+    expect(cellText).toContain(`⊘ ${'x'.repeat(20)}`);
   });
 
-  it('releases the member cell cache when entering a terminal state', () => {
+  it('re-renders a member cell with its terminal label after completing', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const component = createComponent();
     registerSubagents(component, 1);
     startSubagents(component, 1);
-    component.render(100);
-    expect(membersOf(component)[0]?.cellCache).toBeDefined();
+    component.appendModelDelta({ agentId: 'agent-1', delta: 'working on it' });
+    expect(renderText(component)).toContain('working on it');
 
     vi.setSystemTime(1_000);
     component.markCompleted('agent-1', 'done');
 
-    expect(membersOf(component)[0]?.cellCache).toBeUndefined();
+    const output = renderText(component);
+    expect(output).toContain('✓ done');
+    expect(output).not.toContain('working on it');
+  });
 
-    component.render(100);
-    expect(membersOf(component)[0]?.cellCache).toBeDefined();
+  it('bounds the retained label code units when the output carries ANSI sequences', () => {
+    const component = createComponent();
+    registerSubagents(component, 1);
+
+    component.markCompleted('agent-1', `ok${'\u001B[31m'.repeat(10_000)}`);
+
+    const line = rawCellLine(component);
+    expect(line.length).toBeLessThan(3_000);
+    expect(strip(line)).toContain('ok');
+    expect(line).toContain('\u001B[0m');
+    const escapeCount = line.match(/\u001B/g)?.length ?? 0;
+    const completeSequenceCount = line.match(/\u001B\[[0-9;]*m/g)?.length ?? 0;
+    expect(escapeCount).toBe(completeSequenceCount);
+  });
+
+  it('bounds the retained label code units for a long zero-width grapheme', () => {
+    const component = createComponent();
+    registerSubagents(component, 1);
+
+    component.markCompleted('agent-1', `x${'\u0301'.repeat(50_000)}`);
+
+    const line = rawCellLine(component);
+    expect(line.length).toBeLessThan(3_000);
+    expect(strip(line)).toContain('✓ x');
+  });
+
+  it('does not split a surrogate pair at the retained label storage limit', () => {
+    const component = createComponent();
+    registerSubagents(component, 1);
+
+    component.markCompleted(
+      'agent-1',
+      `x${'\u0301'.repeat(1_998)}\u{1F600}${'\u0301'.repeat(5_000)}`,
+    );
+
+    const line = rawCellLine(component);
+    expect(line.length).toBeLessThan(3_000);
+    expect(line).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+  });
+
+  it('closes an OSC 8 hyperlink that the storage cap slices through', () => {
+    const component = createComponent();
+    registerSubagents(component, 1);
+
+    component.markCompleted(
+      'agent-1',
+      `\u001B]8;;https://example.com\u0007x${'\u0301'.repeat(5_000)}\u001B]8;;\u0007`,
+    );
+
+    const line = rawCellLine(component);
+    expect(line).toContain('\u001B]8;;https://example.com\u0007');
+    expect(line).toContain('\u001B]8;;\u0007');
+  });
+
+  it('resets SGR styling that the storage cap slices through', () => {
+    const component = createComponent();
+    registerSubagents(component, 1);
+
+    component.markCompleted(
+      'agent-1',
+      `\u001B[1m\u001B[31mx${'\u0301'.repeat(5_000)}\u001B[0m`,
+    );
+
+    expect(rawCellLine(component)).toContain('\u001B[0m');
+  });
+
+  it('appends the SGR reset after the OSC 8 close when both are sliced', () => {
+    const component = createComponent();
+    registerSubagents(component, 1);
+
+    component.markCompleted(
+      'agent-1',
+      `\u001B]8;;https://example.com\u0007\u001B[1mx${'\u0301'.repeat(5_000)}\u001B]8;;\u0007\u001B[0m`,
+    );
+
+    expect(rawCellLine(component)).toContain('\u001B]8;;\u0007\u001B[0m');
+  });
+
+  it('does not split a ZWJ grapheme cluster at the retained label storage limit', () => {
+    const component = createComponent();
+    registerSubagents(component, 1);
+
+    const family = '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}';
+    component.markCompleted(
+      'agent-1',
+      `x${'\u0301'.repeat(1_996)}${family}${'\u0301'.repeat(5_000)}`,
+    );
+
+    const line = rawCellLine(component);
+    expect(line.length).toBeLessThan(3_000);
+    expect(line).not.toContain('\u200D');
   });
 });
 
@@ -1157,6 +1246,23 @@ describe('AgentSwarmProgressComponent frame timer', () => {
     vi.advanceTimersByTime(80 * 10);
     const callsAfterSettled = requestRender.mock.calls.length;
     expect(callsAfterSettled).toBeGreaterThan(0);
+
+    vi.advanceTimersByTime(80 * 5);
+    expect(requestRender.mock.calls.length).toBe(callsAfterSettled);
+  });
+
+  it('stops the frame timer when the tool call ends with an unparsable result', () => {
+    vi.useFakeTimers();
+    const requestRender = vi.fn();
+    const component = createComponent({ requestRender });
+    registerSubagents(component, 1);
+    startSubagents(component, 1);
+    requestRender.mockClear();
+
+    component.markToolCallEnded();
+    expect(component.applyResult('Done')).toBe(false);
+    vi.advanceTimersByTime(80 * 10);
+    const callsAfterSettled = requestRender.mock.calls.length;
 
     vi.advanceTimersByTime(80 * 5);
     expect(requestRender.mock.calls.length).toBe(callsAfterSettled);

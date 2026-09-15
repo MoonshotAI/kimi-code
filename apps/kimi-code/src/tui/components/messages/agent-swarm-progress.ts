@@ -6,6 +6,10 @@ import {
   type AgentSwarmProgressEstimate,
   type AgentSwarmProgressEstimatorPhase,
 } from '#/tui/components/messages/agent-swarm-progress-estimator';
+import {
+  MAX_FINAL_OUTPUT_LABEL_CHARS,
+  MAX_FINAL_OUTPUT_LABEL_CODE_UNITS,
+} from '#/tui/constant/rendering';
 import { FAILURE_MARK, SUCCESS_MARK } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
@@ -23,7 +27,6 @@ const BRAILLE_LEVELS = ['⣀', '⣄', '⣤', '⣦', '⣶', '⣷', '⣿'] as cons
 const PHASE_LABEL_WIDTH = 'Completed'.length;
 const MIN_LABEL_WIDTH = PHASE_LABEL_WIDTH;
 const MAX_LATEST_MODEL_CHARS = 2_000;
-const MAX_FINAL_OUTPUT_LABEL_CHARS = 400;
 const COMPLETE_FILL_MS = 360;
 const FAILED_PLACEHOLDER_RED_FACTOR = 0.75;
 const FAILED_PLACEHOLDER_NON_RED_FACTOR = 0.25;
@@ -746,12 +749,14 @@ export class AgentSwarmProgressComponent implements Component {
       Math.min(snapshot.phaseElapsedMs, COMPLETE_FILL_MS),
     ];
     const cached = member.cellCache;
-    if (cached !== undefined && cellCacheKeyEquals(cached.key, key)) return cached.value;
+    if (isRenderCacheEnabled() && cached !== undefined && cellCacheKeyEquals(cached.key, key)) {
+      return cached.value;
+    }
     const value = padAnsi(
       this.renderCellContent(member, snapshot, layout, estimate),
       layout.cellWidth,
     );
-    member.cellCache = { key, value };
+    if (isRenderCacheEnabled()) member.cellCache = { key, value };
     return value;
   }
 
@@ -860,21 +865,27 @@ export class AgentSwarmProgressComponent implements Component {
 
   private hasAnimatedMembers(): boolean {
     const now = Date.now();
-    return (
-      this.progressEstimator.hasPendingCatchup() ||
-      this.members.some((member) =>
-        member.phase === 'running' ||
-        (
-          member.phase === 'completed' &&
-          member.completedAtMs !== undefined &&
-          now - member.completedAtMs < COMPLETE_FILL_MS
-        ) ||
-        (
-          member.phase === 'failed' &&
-          member.failedAtMs !== undefined &&
-          now - member.failedAtMs < COMPLETE_FILL_MS
-        ),
-      )
+    // Running cells and estimator catch-up only animate while the tool call
+    // is live: no further progress arrives once it ends (an unparsable result
+    // leaves members running), so ticking would repaint the tree forever.
+    if (
+      this.toolCallActive &&
+      (this.progressEstimator.hasPendingCatchup() ||
+        this.members.some((member) => member.phase === 'running'))
+    ) {
+      return true;
+    }
+    return this.members.some((member) =>
+      (
+        member.phase === 'completed' &&
+        member.completedAtMs !== undefined &&
+        now - member.completedAtMs < COMPLETE_FILL_MS
+      ) ||
+      (
+        member.phase === 'failed' &&
+        member.failedAtMs !== undefined &&
+        now - member.failedAtMs < COMPLETE_FILL_MS
+      ),
     );
   }
 
@@ -970,8 +981,113 @@ function releaseTerminalMemberText(member: AgentSwarmMember): void {
   delete member.cellCache;
 }
 
+// Display width alone does not bound memory: ANSI sequences and zero-width
+// graphemes add unbounded code units within a single column, so the retained
+// label is additionally capped by storage length.
 function capFinalOutputLabel(text: string): string {
-  return truncateToWidth(text, MAX_FINAL_OUTPUT_LABEL_CHARS, '');
+  return capCodeUnits(
+    truncateToWidth(text, MAX_FINAL_OUTPUT_LABEL_CHARS, ''),
+    MAX_FINAL_OUTPUT_LABEL_CODE_UNITS,
+  );
+}
+
+function capCodeUnits(text: string, maxCodeUnits: number): string {
+  if (text.length <= maxCodeUnits) return text;
+  const graphemeEnd = graphemeSafeEnd(text, maxCodeUnits);
+  let end = graphemeEnd > 0 ? graphemeEnd : maxCodeUnits;
+  let osc8CloseSuffix = '';
+  let sgrActive = false;
+  let index = text.indexOf('\u001B');
+  while (index >= 0 && index < end) {
+    const sequenceEnd = ansiSequenceEnd(text, index);
+    if (sequenceEnd === undefined || sequenceEnd > end) {
+      end = index;
+      break;
+    }
+    const sequence = text.slice(index, sequenceEnd);
+    const osc8Close = osc8CloseAfterSequence(sequence);
+    if (osc8Close !== undefined) osc8CloseSuffix = osc8Close ?? '';
+    sgrActive = sgrActiveAfterSequence(sequence, sgrActive);
+    index = text.indexOf('\u001B', sequenceEnd);
+  }
+  // A cut landing on a lead surrogate reads as the astral code point; back
+  // off so the retained label never ends in an unpaired surrogate.
+  const codePoint = text.codePointAt(end - 1);
+  if (codePoint !== undefined && codePoint > 0xffff) end -= 1;
+  return `${text.slice(0, end)}${osc8CloseSuffix}${sgrActive ? '\u001B[0m' : ''}`;
+}
+
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+// The storage cap must not slice through a grapheme cluster: a ZWJ sequence
+// (a family emoji runs about eleven code units per two columns) cut in half
+// renders as its separate parts. Back off to the nearest whole cluster; the
+// ANSI walk above only ever lands on escape boundaries, which are cluster
+// boundaries too. A single cluster larger than the budget falls back to the
+// raw cut.
+function graphemeSafeEnd(text: string, end: number): number {
+  let boundary = 0;
+  for (const { index, segment } of graphemeSegmenter.segment(text)) {
+    if (index + segment.length > end) break;
+    boundary = index + segment.length;
+  }
+  return boundary;
+}
+
+// Mirrors pi-tui's OSC 8 bookkeeping: a sequence with a non-empty URI opens a
+// hyperlink (closed with the opener's terminator), an empty URI closes one.
+// SGR resets do not close hyperlinks, so a sliced opener would otherwise
+// leak the link onto later cells of the grid row.
+function osc8CloseAfterSequence(sequence: string): string | null | undefined {
+  if (!sequence.startsWith('\u001B]8;')) return undefined;
+  const terminator = sequence.endsWith('\u0007') ? '\u0007' : '\u001B\\';
+  const body = sequence.slice(4, sequence.length - terminator.length);
+  const separatorIndex = body.indexOf(';');
+  if (separatorIndex < 0) return undefined;
+  return body.slice(separatorIndex + 1).length > 0 ? `\u001B]8;;${terminator}` : null;
+}
+
+// SGR state is cumulative: a parameter of 0 (or an empty parameter, which
+// defaults to 0) resets every attribute, anything else activates one, so a
+// sliced label with active styling needs a full reset appended.
+function sgrActiveAfterSequence(sequence: string, active: boolean): boolean {
+  if (!sequence.startsWith('\u001B[') || !sequence.endsWith('m')) return active;
+  const body = sequence.slice(2, -1);
+  if (body.length === 0) return false;
+  for (const param of body.split(';')) {
+    active = param !== '' && Number(param) !== 0;
+  }
+  return active;
+}
+
+function ansiSequenceEnd(text: string, start: number): number | undefined {
+  if (text[start] !== '\u001B') return undefined;
+  const kind = text[start + 1];
+  if (kind === undefined) return undefined;
+  if (kind === '[') {
+    for (let index = start + 2; index < text.length; index += 1) {
+      const ch = text.charAt(index);
+      if (ch >= '@' && ch <= '~') return index + 1;
+    }
+    return undefined;
+  }
+  if (kind === ']' || kind === '_') {
+    for (let index = start + 2; index < text.length; index += 1) {
+      if (text[index] === '\u0007') return index + 1;
+      if (text[index] === '\u001B' && text[index + 1] === '\\') return index + 2;
+    }
+    return undefined;
+  }
+  let index = start + 1;
+  while (index < text.length) {
+    const ch = text.charAt(index);
+    if (ch >= ' ' && ch <= '/') {
+      index += 1;
+      continue;
+    }
+    return ch >= '0' && ch <= '~' ? index + 1 : undefined;
+  }
+  return undefined;
 }
 
 function isTerminalPhase(phase: AgentSwarmPhase): boolean {
