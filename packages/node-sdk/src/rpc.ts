@@ -1,7 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 import type { SwarmModeTrigger } from '@moonshot-ai/agent-core-v2/features/swarm/agent/swarm';
-import type { Kaos } from '@moonshot-ai/kaos';
 
 import type { AgentContextData } from '#/context';
 import { ErrorCodes, makeErrorPayload } from '#/errors';
@@ -181,27 +180,7 @@ export abstract class SDKRpcClientBase {
 
   abstract createSession(input: CreateSessionOptions): Promise<SessionSummary>;
 
-  async createSessionWithKaos(
-    input: CreateSessionOptions,
-    kaos: Kaos,
-    persistenceKaos?: Kaos,
-  ): Promise<SessionSummary> {
-    void kaos;
-    void persistenceKaos;
-    return this.createSession(input);
-  }
-
   abstract resumeSession(input: ResumeSessionInput): Promise<ResumedSessionSummary>;
-
-  async resumeSessionWithKaos(
-    input: ResumeSessionInput,
-    kaos: Kaos,
-    persistenceKaos?: Kaos,
-  ): Promise<ResumedSessionSummary> {
-    void kaos;
-    void persistenceKaos;
-    return this.resumeSession(input);
-  }
 
   abstract reloadSession(input: ReloadSessionRpcInput): Promise<ResumedSessionSummary>;
 
