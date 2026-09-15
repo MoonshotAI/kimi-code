@@ -231,15 +231,22 @@ export async function handleWebCommand(
           onStatus,
         });
         const qrCode = await generateRemoteControlQr(remoteControl.url, dataDir);
+        const dangerNotice = parsed.dangerousBypassAuth
+          ? `${formatDangerNoticeLines().join('\n')}\n`
+          : '';
         deps.stdout.write(
-          formatRemoteControlOutput({
-            url: remoteControl.url,
-            localOrigin: origin,
-            localServerToken: token,
-            deviceName: remoteControl.deviceName,
-            qrCode: qrCode.terminal,
-            pngPath: qrCode.pngPath,
-          }),
+          dangerNotice +
+            formatRemoteControlOutput({
+              url: remoteControl.url,
+              localOrigin: origin,
+              // The token is meaningless to a bypassed server: inject it into
+              // tunnel-forwarded requests, but never render it into the Local
+              // UI line where it would leak into copied URLs.
+              localServerToken: parsed.dangerousBypassAuth ? undefined : token,
+              deviceName: remoteControl.deviceName,
+              qrCode: qrCode.terminal,
+              pngPath: qrCode.pngPath,
+            }),
         );
         outputReady = true;
         for (const line of pendingStatuses) deps.stdout.write(line);
