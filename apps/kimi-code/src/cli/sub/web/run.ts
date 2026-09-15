@@ -192,9 +192,6 @@ export async function handleWebCommand(
   deps: WebCommandDeps = DEFAULT_WEB_COMMAND_DEPS,
 ): Promise<void> {
   const parsed = parseServerOptions(opts);
-  if (opts.remoteControl === true && parsed.dangerousBypassAuth) {
-    throw new Error('--remote-control cannot be combined with --dangerous-bypass-auth.');
-  }
   if (opts.remoteControl === true && !isLoopbackHost(parsed.host)) {
     throw new Error('--remote-control requires a loopback host.');
   }
@@ -208,8 +205,13 @@ export async function handleWebCommand(
       // It is printed in the ready banner and rides in the opened Web UI
       // URL's `#token=` fragment (M5.5); falls back to the plain origin / no
       // token line when unavailable. When auth is bypassed, the token is
-      // meaningless and is intentionally NOT shown or carried in the URL.
-      const token = parsed.dangerousBypassAuth ? undefined : deps.resolveToken?.();
+      // meaningless and is intentionally NOT shown or carried in the URL —
+      // Remote Control still resolves it, because the tunnel client requires
+      // a non-empty token to inject into forwarded requests.
+      const token =
+        parsed.dangerousBypassAuth && opts.remoteControl !== true
+          ? undefined
+          : deps.resolveToken?.();
       if (opts.remoteControl === true) {
         if (token === undefined) throw new Error('Unable to read the local server token.');
         const dataDir = getDataDir();
