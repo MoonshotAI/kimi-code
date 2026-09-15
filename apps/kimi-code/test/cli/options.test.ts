@@ -404,7 +404,12 @@ describe('CLI options parsing', () => {
       const help = createProgram('0.1.0-test', () => {}, () => {}).helpInformation();
       const normalizedHelp = help.replaceAll(/\s+/g, ' ');
 
-      expect(normalizedHelp).toContain('Agent profile to start the new session with.');
+      expect(normalizedHelp).toContain('Agent profile name for a new session');
+      expect(normalizedHelp).toContain('Mutually exclusive with --agent-file');
+      expect(normalizedHelp).toContain('tools/disallowedTools in frontmatter');
+      expect(normalizedHelp).toContain('alias: -r, --resume');
+      expect(normalizedHelp).toContain('Alias for --session');
+      expect(normalizedHelp).not.toContain('loaded via --agent-file');
       expect(normalizedHelp).not.toContain('print-mode invocation');
     });
 
