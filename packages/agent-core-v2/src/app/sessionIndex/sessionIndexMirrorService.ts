@@ -12,6 +12,7 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
 import { ISessionIndexMirror, type SessionSummary } from './sessionIndex';
 import { markSessionDirty } from './sessionIndexDirtyJournal';
+import { diagEnabled } from '#/app/diagnostics/diag';
 import {
   SESSION_INDEX_MANIFEST,
   recencyColumn,
@@ -41,6 +42,7 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
   private flushing: Promise<void> | undefined;
   private consecutiveFailures = 0;
   private giveUpTracked = false;
+  private readonly diag = diagEnabled();
   private disposed = false;
   private overflowLogged = false;
   private readonly sessionsScope: string;
@@ -198,7 +200,7 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
       if (this.consecutiveFailures === 1) {
         this.log.warn('failed to flush session index mirror chunk', {
           pending: this.pendingMap.size,
-          durationMs: Date.now() - startedAt,
+          durationMs: this.diag ? Date.now() - startedAt : undefined,
           error: String(error),
         });
       }

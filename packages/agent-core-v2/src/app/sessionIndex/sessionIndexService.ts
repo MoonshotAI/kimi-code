@@ -32,6 +32,7 @@ import {
   type SessionSummary,
 } from './sessionIndex';
 import { markSessionDirty } from './sessionIndexDirtyJournal';
+import { diagEnabled } from '#/app/diagnostics/diag';
 import {
   PARENT_INDEX_NAME,
   SESSION_INDEX_MANIFEST,
@@ -86,6 +87,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   private lastDegradedKey: string | undefined;
   private prepareFlight: Promise<SessionIndexStatus> | undefined;
   private projectFlight: Promise<void> | undefined;
+  private readonly diag = diagEnabled();
   private readonly reconcileTimer = this._register(new IntervalTimer({ unref: true }));
   private readonly projector: SessionIndexProjector;
 
@@ -273,7 +275,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       if (await this.manifestFresh(manifest)) return;
       await this.projector.reconcile(manifest.seq);
       const durationMs = Date.now() - startedAt;
-      if (durationMs >= SLOW_RECONCILE_MS) {
+      if (this.diag && durationMs >= SLOW_RECONCILE_MS) {
         this.log.warn('session index reconciliation slow', {
           durationMs,
           generation: manifest.seq,
@@ -282,7 +284,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     } catch (error) {
       this.log.warn('session index reconciliation failed', {
         error: String(error),
-        durationMs: Date.now() - startedAt,
+        durationMs: this.diag ? Date.now() - startedAt : undefined,
       });
     }
   }
@@ -703,7 +705,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       result = [...byId.values()];
     }
     const durationMs = Date.now() - startedAt;
-    if (durationMs >= SLOW_AUTHORITATIVE_SCAN_MS) {
+    if (this.diag && durationMs >= SLOW_AUTHORITATIVE_SCAN_MS) {
       this.log.warn('session index authoritative scan slow', {
         durationMs,
         sessions: result.length,

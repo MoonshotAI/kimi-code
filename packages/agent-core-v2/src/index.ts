@@ -169,6 +169,7 @@ export * from '#/app/sessionIndex/sessionIndex';
 export * from '#/app/sessionIndex/sessionIndexService';
 export * from '#/app/sessionIndex/sessionIndexMirrorService';
 export * from '#/app/diagnostics/eventLoopMonitor';
+export * from '#/app/diagnostics/diag';
 export * from '#/session/sessionMetadata/sessionMetadata';
 export * from '#/session/sessionMetadata/sessionMetadataService';
 export * from '#/session/sessionMetadata/promptMetadata';

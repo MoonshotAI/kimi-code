@@ -22,6 +22,8 @@ import {
   type WriteOp,
 } from '#/persistence/interface/queryStore';
 
+import { rebuildOnContentionEnabled } from '#/app/diagnostics/diag';
+
 const SEP = String.fromCodePoint(0);
 const CHECKPOINT_COLLECTION = '__checkpoint__';
 const STORE_SUBDIR = 'query-store';
@@ -60,6 +62,7 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
   private transientWriteFailures = 0;
   private storeEpochCounter = 0;
   private lastContentionLogAt = 0;
+  private readonly rebuildOnContention = rebuildOnContentionEnabled();
   private readonly ensuredIndexes = new Set<string>();
 
   constructor(
@@ -149,7 +152,7 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
       if (classifyStorageError(error) !== 'rebuild') {
         if (isLockContentionError(error)) {
           this.noteLockContention(db, kind, error);
-          throw error;
+          if (!this.rebuildOnContention) throw error;
         }
         const failures =
           kind === 'write'

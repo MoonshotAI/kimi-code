@@ -6,12 +6,12 @@ import { createDecorator } from '#/_base/di/instantiation';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { IntervalTimer } from '#/_base/utils/timer';
-import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+
+import { diagEnabled } from './diag';
 
 const SAMPLE_INTERVAL_MS = 1_000;
 const SUMMARY_EVERY_TICKS = 60;
 const STALL_WARN_MS = 250;
-const ENABLE_ENV = 'KIMI_CODE_EVENT_LOOP_MONITOR';
 
 export const IEventLoopMonitorService =
   createDecorator<EventLoopMonitorService>('eventLoopMonitor');
@@ -23,12 +23,9 @@ export class EventLoopMonitorService extends Disposable {
   private readonly histogram: IntervalHistogram | undefined;
   private ticks = 0;
 
-  constructor(
-    @IBootstrapService bootstrap: IBootstrapService,
-    @ILogService private readonly log: ILogService,
-  ) {
+  constructor(@ILogService private readonly log: ILogService) {
     super();
-    if (bootstrap.getEnv(ENABLE_ENV) === undefined) return;
+    if (!diagEnabled()) return;
     this.histogram = monitorEventLoopDelay({ resolution: 20 });
     this.histogram.enable();
     this.timer.cancelAndSet(() => this.sample(), SAMPLE_INTERVAL_MS);
