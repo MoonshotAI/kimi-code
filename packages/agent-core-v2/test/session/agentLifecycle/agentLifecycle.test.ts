@@ -5,7 +5,7 @@ import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { InstantiationService } from '#/_base/di/instantiationService';
 import { LifecycleScope } from '#/app/scopes';
-import { type ISessionScopeHandle } from '#/_base/di/scope';
+import { createScopedChildHandle, type IAgentScopeHandle, type ISessionScopeHandle } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -23,7 +23,7 @@ import {
   permissionModeConfiguredKey,
   permissionModeKey,
 } from '#/agent/permissionMode/permissionModeOps';
-import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
+import { IAgentRuntimeBindingSeed, IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -32,7 +32,7 @@ import { AgentReminderService, IAgentReminderService } from '#/features/reminder
 import '#/agent/contextMemory/contextMemoryService';
 import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/agent/contextMemory/openToolExchange';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { agentContextOf, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { agentContextOf, IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
@@ -106,7 +106,13 @@ import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { _clearAgentToolContributionsForTests } from '#/agent/toolRegistry/toolContribution';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import {
+  IAgentToolRegistryService,
+  type ToolRegistrationOptions,
+} from '#/agent/toolRegistry/toolRegistry';
+import type { ExecutableTool } from '#/tool/toolContract';
+import { createFeature, featureSpecs } from '#human/feature/index';
+import { AgentScope, createUnit, inject, ref, watchEffect, type EffectScope } from '#human/kernel/index';
 import '#/agent/toolActivation/toolActivationService';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -131,6 +137,8 @@ const noopLog = {
   debug: () => {},
   child: () => noopLog,
 } as unknown as ILogService;
+
+const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 const pluginServiceStub = {
   _serviceBrand: undefined,
@@ -266,6 +274,8 @@ describe('AgentLifecycleService', () => {
   let loopSettled: ReturnType<typeof vi.fn<IAgentLoopService['settled']>>;
   let beforeExecuteListeners: number;
   let didExecuteHookIds: string[];
+  let registryRegistrations: { tool: ExecutableTool; options?: ToolRegistrationOptions }[];
+  let registryDisposals: string[];
 
   beforeEach(() => {
     _clearAgentToolContributionsForTests();
@@ -361,11 +371,30 @@ describe('AgentLifecycleService', () => {
       _serviceBrand: undefined,
       refreshSessionStart: async () => {},
     });
+    registryRegistrations = [];
+    registryDisposals = [];
+    featureSpecs.value = [];
     ix.stub(IAgentToolRegistryService, {
       _serviceBrand: undefined,
-      register: () => ({ dispose: () => {} }),
+      register: (tool: ExecutableTool, options?: ToolRegistrationOptions) => {
+        registryRegistrations.push({ tool, options });
+        return {
+          dispose: () => {
+            registryDisposals.push(tool.name);
+          },
+        };
+      },
       resolve: () => undefined,
-      list: () => [],
+      list: () =>
+        registryRegistrations
+          .filter(({ tool }) => !registryDisposals.includes(tool.name))
+          .map(({ tool, options }) => ({
+            name: tool.name,
+            description: tool.description,
+            parameters: tool.parameters,
+            source: options?.source ?? 'builtin',
+            disclosure: options?.disclosure,
+          })),
     } as unknown as IAgentToolRegistryService);
     ix.stub(IAgentMediaToolsRegistrar, {
       _serviceBrand: undefined,
@@ -545,6 +574,7 @@ describe('AgentLifecycleService', () => {
     ix.set(IAgentLifecycleService, new SyncDescriptor(AgentLifecycleService));
   });
   afterEach(() => {
+    featureSpecs.value = [];
     disposables.dispose();
     vi.restoreAllMocks();
   });
@@ -578,15 +608,31 @@ describe('AgentLifecycleService', () => {
   }
 
   it('create / get / list / remove', async () => {
+    const mounted: string[] = [];
+    const unmounted: string[] = [];
+    featureSpecs.value = [
+      createFeature('probe', {
+        agent: [
+          createUnit('probe', () => {
+            mounted.push('probe');
+            return () => {
+              unmounted.push('probe');
+            };
+          }),
+        ],
+      })(),
+    ];
     const svc = ix.get(IAgentLifecycleService);
     const main = await svc.create({ agentId: 'main' });
     expect(main.agentId).toBe('main');
     expect(svc.get('main')).toBe(main);
     expect(svc.handleOf('main')).toBeDefined();
     expect(svc.list()).toEqual([main]);
+    expect(mounted).toEqual(['probe']);
     await svc.remove(main);
     expect(svc.get('main')).toBeUndefined();
     expect(svc.handleOf('main')).toBeUndefined();
+    expect(unmounted).toEqual(['probe']);
   });
 
   it('remove flushes the agent wire journal before disposal', async () => {
@@ -600,6 +646,106 @@ describe('AgentLifecycleService', () => {
     const flush = vi.spyOn(dispatcher, 'flush');
     await svc.remove(svc.get('main')!);
     expect(flush).toHaveBeenCalled();
+  });
+
+  function installScopeProbe() {
+    const source = ref(0);
+    const ticks: number[] = [];
+    const order: string[] = [];
+    let scope: EffectScope | undefined;
+    let markEntered!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      markEntered = resolve;
+    });
+    featureSpecs.value = [
+      createFeature('probe', {
+        agent: [
+          createUnit('probe', () => {
+            scope = inject(AgentScope);
+            watchEffect(() => {
+              ticks.push(source.value);
+            });
+            return () =>
+              new Promise<void>((resolve) => {
+                markEntered();
+                release = () => {
+                  order.push('cleanup');
+                  resolve();
+                };
+              });
+          }),
+        ],
+      })(),
+    ];
+    return {
+      source,
+      ticks,
+      order,
+      injected: () => scope,
+      entered,
+      release: () => {
+        release();
+      },
+    };
+  }
+
+  it('stops the per-agent effect scope before the anchored feature unmount drains', async () => {
+    const probe = installScopeProbe();
+    const svc = ix.get(IAgentLifecycleService);
+    const main = await svc.create({ agentId: 'main' });
+    expect(probe.injected()).toBeDefined();
+    expect(probe.ticks).toEqual([0]);
+    let settled = false;
+    const removal = svc.remove(main).then(() => {
+      settled = true;
+    });
+    await probe.entered;
+    probe.source.value = 1;
+    await flush();
+    expect(probe.ticks).toEqual([0]);
+    expect(probe.order).toEqual([]);
+    expect(settled).toBe(false);
+    probe.release();
+    await removal;
+    expect(probe.order).toEqual(['cleanup']);
+    expect(probe.injected()?.active).toBe(false);
+  });
+
+  it('adopts an agent into a per-agent effect scope with fire-and-forget feature unmount', async () => {
+    const probe = installScopeProbe();
+    const scopeContext = makeAgentScopeContext({
+      agentId: 'adopted',
+      agentScope: 'sessions/ws_test/sess_test/agents/adopted',
+      generation: 1,
+    });
+    const handle = createScopedChildHandle(ix, LifecycleScope.Agent, 'adopted', {
+      seeds: [
+        [IAgentScopeContext, scopeContext],
+        [IAgentRuntimeBindingSeed, {
+          _serviceBrand: undefined,
+          binding: { workspaceId: 'ws_test', runtimeId: 'local' },
+        }],
+        [IEventDispatcher, {
+          restore: () => Promise.resolve(),
+          flush: () => Promise.resolve(),
+        }],
+      ],
+    }) as IAgentScopeHandle;
+    const svc = ix.get(IAgentLifecycleService);
+    const agent = svc.adopt(handle);
+    await flush();
+    expect(probe.injected()).toBeDefined();
+    expect(probe.ticks).toEqual([0]);
+    await svc.remove(agent);
+    expect(probe.injected()?.active).toBe(false);
+    probe.source.value = 1;
+    await flush();
+    expect(probe.ticks).toEqual([0]);
+    expect(probe.order).toEqual([]);
+    probe.release();
+    await flush();
+    expect(probe.order).toEqual(['cleanup']);
   });
 
   it('remove keeps the lifecycle context active through async scope teardown', async () => {

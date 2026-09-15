@@ -65,6 +65,7 @@
     "@moonshot-ai/minidb": "workspace:^",
     "@moonshot-ai/tree-sitter-bash": "workspace:^",
     "@mozilla/readability": "^0.6.0",
+    "@vue/reactivity": "^3.5.35",
     "ajv": "^8.18.0",
     "ajv-formats": "^3.0.1",
     "chokidar": "^4.0.3",
