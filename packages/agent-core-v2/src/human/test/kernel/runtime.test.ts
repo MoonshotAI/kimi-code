@@ -475,6 +475,17 @@ describe('useChildren', () => {
     });
     expect(() => mountRoot(parent)).toThrow("duplicate child key 'a' in unit 'parent'");
   });
+
+  it('keeps setup props reactive across handle.update', () => {
+    const seen: number[] = [];
+    const probe = createUnit<{ n: number }>('probe', (props) => {
+      watch(() => props.n, (next) => seen.push(next), { immediate: true });
+    });
+    const { handle } = mountRoot(probe, { n: 1 });
+    expect(seen).toEqual([1]);
+    handle.update({ n: 2 });
+    expect(seen).toEqual([1, 2]);
+  });
 });
 
 describe('collection fold', () => {

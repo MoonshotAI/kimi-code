@@ -88,13 +88,17 @@ interface HandlerEntry {
 
 let contributionOrder = 0;
 
+function isObjectLike(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
 export class UnitNode implements NodeRef {
   readonly recipe: UnitRecipe<unknown>;
   parent: UnitNode | null;
   readonly children: UnitNode[] = [];
   readonly internals = new Map<string, unknown>();
   props: unknown;
-  readonly propsRef: ShallowRef<unknown>;
+  readonly propsView: unknown;
   state: UnitState = 'pending';
   setupResult: unknown;
   readonly scope: EffectScope;
@@ -111,7 +115,7 @@ export class UnitNode implements NodeRef {
   constructor(recipe: UnitRecipe<unknown>, props: unknown, parent: UnitNode | null) {
     this.recipe = recipe;
     this.props = props;
-    this.propsRef = shallowRef(props);
+    this.propsView = isObjectLike(props) ? shallowReactive({ ...props }) : props;
     this.parent = parent;
     this.scope = effectScope();
     parent?.children.push(this);
@@ -397,7 +401,15 @@ export function handleFor(node: UnitNode): UnitHandle {
         return;
       }
       node.props = props;
-      node.propsRef.value = props;
+      if (isObjectLike(props) && isObjectLike(node.propsView)) {
+        const view = node.propsView;
+        for (const key of Object.keys(view)) {
+          if (!(key in props)) {
+            delete view[key];
+          }
+        }
+        Object.assign(view, props);
+      }
     },
     async unmount() {
       await node.unmount();
@@ -427,7 +439,7 @@ export function runUnit(node: UnitNode): void {
   unitStack.push(node);
   let result: unknown;
   try {
-    result = node.scope.run(() => node.recipe.setup(node.props, ctx));
+    result = node.scope.run(() => node.recipe.setup(node.propsView, ctx));
   } catch (error) {
     node.state = 'failed';
     throw error;
