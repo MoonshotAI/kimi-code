@@ -6,6 +6,26 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 0.43.0（2026-09-14）
+
+### 新功能
+
+- Web 版会话的 AI 标题功能默认开启：首轮对话后自动生成标题，并可在重命名输入框中重新生成。
+- 会话选择器中可删除会话：在目标会话上按 `Ctrl-X`，再按 `y` 确认。
+- `kimi upgrade`（别名 `kimi update`）新增 `-y, --yes` 选项，跳过确认提示直接安装更新。
+- 新增 `loop_control.compaction_max_attempts` 配置项，可设置压缩请求失败后的最大总尝试次数（默认 5 次），详见 [`loop_control`](../configuration/config-files.md#loop_control)。
+
+### 优化
+
+- 仅作用于 `/tmp` 或 `/temp` 路径的 `rm -rf` 命令不再弹出确认提示。
+- 引导消息现在可以打断对后台任务的等待。
+- 目标模式的时间预算不再计入会话关闭期间的时间，并取消 24 小时上限。
+- 新增 `KIMI_CODE_PERMISSION_MODE_REMINDER` 环境变量：设为 `0` 后不再向模型上下文注入自动权限模式提醒。
+
+### 修复
+
+- 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
 ## 0.42.0（2026-09-09）
 
 ### 新功能

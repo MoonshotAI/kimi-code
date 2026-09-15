@@ -2,6 +2,7 @@ import type { ModelCapability } from '#human/llm/capability';
 import type { ModelRequester } from '#/llm-adapter/model/model-requester';
 import type { VideoUploadEvent } from '#/app/telemetry/events';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { ISessionMediaStore } from './sessionMediaStore';
 
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import type { WorkspaceConfig } from '#/tool/path-access';
@@ -11,6 +12,7 @@ import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTo
 import type { VideoUploader } from '#/agent/tools/read-media-file/read-media-file';
 
 export interface RegisterMediaToolsDeps {
+  readonly attachmentStore?: ISessionMediaStore;
   readonly runtime: IAgentRuntimeService;
   readonly workspace: WorkspaceConfig;
   readonly capabilities: ModelCapability;
@@ -25,7 +27,7 @@ export function registerMediaTools(
   deps: RegisterMediaToolsDeps,
 ): IDisposable {
   if (
-    !deps.runtime.isAvailable(['fs']) ||
+    (!deps.runtime.isAvailable(['fs']) && deps.attachmentStore === undefined) ||
     (!deps.capabilities.image_in && !deps.capabilities.video_in)
   ) {
     return toDisposable(() => {});
@@ -39,6 +41,7 @@ export function registerMediaTools(
       deps.telemetry,
       deps.inlineVideoSupported,
       deps.providerType,
+      deps.attachmentStore,
     ),
   );
 }

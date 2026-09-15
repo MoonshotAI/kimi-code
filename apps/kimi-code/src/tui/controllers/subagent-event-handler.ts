@@ -90,8 +90,10 @@ export class SubAgentEventHandler {
     const { parentToolCallId } = info;
     const swarmProgress = this.agentSwarmProgress.get(parentToolCallId);
     if (swarmProgress !== undefined) {
+      // No per-event requestRender: the swarm component's own frame timer
+      // (kept alive while members run) batches these deltas into ~12.5fps
+      // re-renders instead of rendering the whole tree per delta.
       this.applySubagentEventToSwarmProgress(swarmProgress, event, childAgentId);
-      this.requestRender();
       return true;
     }
 
@@ -657,7 +659,41 @@ export class SubAgentEventHandler {
     this.host.updateActivityPane();
   }
 
+  private agentSwarmGridHeightFrame:
+    | { readonly columns: number; readonly rows: number; readonly value: number | undefined }
+    | undefined;
+
+  /**
+   * The measurement re-renders every dock child, so it is shared by every
+   * swarm component for the rest of the current synchronous render pass
+   * (frames are macrotask-separated, hence the microtask reset) instead of
+   * being recomputed per component per frame.
+   */
   private agentSwarmGridHeight(): number | undefined {
+    const { state } = this.host;
+    const terminalRows = state.ui.terminal.rows;
+    const terminalColumns = state.ui.terminal.columns;
+    const frame = this.agentSwarmGridHeightFrame;
+    if (
+      frame !== undefined &&
+      frame.columns === terminalColumns &&
+      frame.rows === terminalRows
+    ) {
+      return frame.value;
+    }
+    const entry = {
+      columns: terminalColumns,
+      rows: terminalRows,
+      value: this.measureAgentSwarmGridHeight(),
+    };
+    this.agentSwarmGridHeightFrame = entry;
+    queueMicrotask(() => {
+      if (this.agentSwarmGridHeightFrame === entry) this.agentSwarmGridHeightFrame = undefined;
+    });
+    return entry.value;
+  }
+
+  private measureAgentSwarmGridHeight(): number | undefined {
     const { state } = this.host;
     const terminalRows = state.ui.terminal.rows;
     const terminalColumns = state.ui.terminal.columns;

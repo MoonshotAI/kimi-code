@@ -131,7 +131,7 @@ Background task tools manage tasks started via `Bash`, `Agent`, or `AskUserQuest
 
 **`TaskStop`** accepts a `task_id` and optional `reason` (defaults to `Stopped by TaskStop`). Safe to call on tasks that are already in a terminal state.
 
-**`WaitFor`** suspends the current turn until a background task finishes or the timeout elapses. Parameters: `timeout` (required, in seconds, max 600) and optional `task_id`. Without `task_id`, the wait ends as soon as any background task that was running at call time finishes; when no background tasks are running, it returns immediately. A timeout is not an error — the result lists the tasks still running, and the Agent can wait again or do other work meanwhile. A task whose result was reported by `WaitFor` does not also produce an automatic completion notification.
+**`WaitFor`** suspends the current turn until a background task finishes, the timeout elapses, or a steer message arrives. Parameters: `timeout` (required, in seconds, max 600) and optional `task_id`. Without `task_id`, the wait ends as soon as any background task that was running at call time finishes; when no background tasks are running, it returns immediately. A timeout is not an error — the result lists the tasks still running, and the Agent can wait again or do other work meanwhile. Steering (`Ctrl-S` in the terminal) ends the wait early; background tasks keep running and still notify the agent on completion. A task whose result was reported by `WaitFor` does not also produce an automatic completion notification.
 
 ## Scheduled Tasks
 

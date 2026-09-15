@@ -1,31 +1,9 @@
 import { extractText, type ContentPart, type Message } from '#/llm/message';
-import type { ProtocolTrait, TraitContext } from '#/llm/protocol/trait';
+import type { ToolMessageConversion } from '#/llm/requester/requester';
 
+import type { OpenAIContentPart, OpenAIWireMessage } from './contract';
 import { TOOL_RESULT_MEDIA_PLACEHOLDER } from './patterns';
 import { DEFAULT_REASONING_KEY, REASONING_DETAILS_KEY } from './reasoning-key';
-
-export type OpenAIContentPart = {
-  type: 'text' | 'image_url' | 'audio_url' | 'video_url';
-  text?: string | undefined;
-  image_url?: { url: string; id?: string | null } | undefined;
-  audio_url?: { url: string; id?: string | null } | undefined;
-  video_url?: { url: string; id?: string | null } | undefined;
-};
-
-export type OpenAIWireToolCall = {
-  id: string;
-  type: 'function';
-  function: { name: string; arguments: string };
-};
-
-export type OpenAIWireMessage =
-  | { role: 'system' | 'user'; content: string | OpenAIContentPart[] }
-  | {
-      role: 'assistant';
-      content: string | OpenAIContentPart[] | null;
-      tool_calls?: OpenAIWireToolCall[];
-    }
-  | { role: 'tool'; tool_call_id: string; content: string | OpenAIContentPart[] };
 
 const OMITTED_AUDIO_PLACEHOLDER = '(audio omitted: not supported by this provider)';
 const OMITTED_VIDEO_PLACEHOLDER = '(video omitted: not supported by this provider)';
@@ -83,27 +61,28 @@ function convertToolMessageMediaText(message: Message): string {
 }
 
 export interface OpenAILowerContext {
-  readonly trait: ProtocolTrait | undefined;
-  readonly ctx: TraitContext;
   readonly reasoningKey: string;
   readonly preserveThinking: boolean;
+  readonly toolMessageConversion: ToolMessageConversion | undefined;
 }
 
 export function lowerMessage(message: Message, lower: OpenAILowerContext): OpenAIWireMessage[] {
-  const { trait, ctx, reasoningKey, preserveThinking } = lower;
+  const { reasoningKey, preserveThinking } = lower;
   let reasoningContent = '';
   let hasReasoningPart = false;
   const nonThinkParts: ContentPart[] = [];
   for (const part of message.content) {
     if (part.type === 'think') {
       hasReasoningPart = true;
-      reasoningContent += part.think;
+      if (part.hidden !== true) {
+        reasoningContent += part.think;
+      }
     } else {
       nonThinkParts.push(part);
     }
   }
   let content: string | OpenAIContentPart[] | undefined;
-  if (message.role === 'tool' && trait?.toolMessageConversion?.(ctx) !== 'keep_parts') {
+  if (message.role === 'tool' && lower.toolMessageConversion !== 'keep_parts') {
     content = message.content.some((part) => part.type !== 'text' && part.type !== 'think')
       ? convertToolMessageMediaText(message)
       : extractText(message);
@@ -157,9 +136,5 @@ export function lowerMessage(message: Message, lower: OpenAILowerContext): OpenA
   } else if (hasReasoningPart || (preserveThinking && message.role === 'assistant')) {
     (converted as Record<string, unknown>)[reasoningKey] = reasoningContent;
   }
-  const hooked =
-    trait?.convertMessage === undefined
-      ? converted
-      : (trait.convertMessage(message, converted, ctx) as OpenAIWireMessage | null);
-  return hooked === null ? [] : [hooked];
+  return [converted];
 }

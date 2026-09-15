@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, stat, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, stat, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -10,6 +10,7 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import type { ServiceIdentifier } from '#/_base/di/instantiation';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentTaskService, type AgentTaskInfo } from '#/agent/task/task';
 import type { AnyAgentTool } from '#/agent/toolRegistry/toolContribution';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { TOWER_TOOL_CONTRIBUTIONS } from '#/features/tower/towerFeature';
@@ -74,6 +75,7 @@ let towerRequestedBase: string | undefined;
 let currentAgentId: string;
 let currentSessionId: string;
 let liveSessionIds: string[];
+let liveAgentTaskIds: string[];
 const agentContexts = new Map<string, AgentContext>();
 
 beforeEach(async () => {
@@ -87,6 +89,7 @@ beforeEach(async () => {
   towerRequestedBase = undefined;
   currentAgentId = 'main';
   liveSessionIds = [];
+  liveAgentTaskIds = [];
   currentSessionId = 'session-test';
   agentContexts.clear();
 
@@ -134,6 +137,7 @@ beforeEach(async () => {
         },
         exit: () => {
           towerActive = false;
+          return Promise.resolve();
         },
       });
       reg.defineInstance(ISessionManager, {
@@ -141,6 +145,12 @@ beforeEach(async () => {
       } as unknown as ISessionManager);
       reg.definePartialInstance(ITowerRateLimitService, {
         snapshot: () => ({ budget: 2, inflight: 0, blockedUntil: null }),
+      });
+      reg.definePartialInstance(IAgentTaskService, {
+        list: () =>
+          liveAgentTaskIds.map(
+            (agentId) => ({ kind: 'agent', agentId }) as unknown as AgentTaskInfo,
+          ),
       });
       reg.define(ITowerInitTool, TowerInitTool);
       reg.define(ITowerPlanTool, TowerPlanTool);
@@ -363,6 +373,39 @@ describe('TowerPlanTool', () => {
     const state = await new TowerStore(repo).load();
     expect(state.missions[0]?.context).toBe('Ship it as a single binary.');
   });
+
+  it('rejects a re-planned title whose slugged branch is already taken, guiding a title change', async () => {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Build engine', scope: ['src/engine/**'] }],
+    });
+
+    const result = await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'build engine', scope: ['src/engine-v2/**'] }],
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('feat/build-engine');
+    expect(result.output).toContain('already used by M1');
+    expect(result.output).toContain('change the title');
+    expect((await new TowerStore(repo).load()).missions).toHaveLength(1);
+  });
+
+  it('rejects the slug of an abandoned mission too — reuse would corrupt branch-to-mission resolution', async () => {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Build engine', scope: ['src/engine/**'] }],
+    });
+    await new TowerStore(repo).updateMission('tower', 'M1', { status: 'abandoned' });
+
+    const result = await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Build engine', scope: ['src/web/**'] }],
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('already used by M1 (abandoned)');
+    expect((await new TowerStore(repo).load()).missions).toHaveLength(1);
+  });
 });
 
 describe('TowerTeardownTool', () => {
@@ -448,6 +491,37 @@ describe('TowerSendTool + TowerInboxTool', () => {
     }
   });
 
+  it('reads and stamps the mailbox of the latest registration when the agent id collides with a stale roster entry', async () => {
+    const file = join(repo, '.tower/comms/state.json');
+    const state = JSON.parse(await readFile(file, 'utf8')) as {
+      roster: { agents: Record<string, unknown>[] };
+    };
+    state.roster.agents.unshift({
+      name: 'w-stale',
+      kind: 'worker',
+      agentId: 'agent-w1',
+      sessionId: 'session-old',
+      spawnedAt: '2026-09-13T08:00:00.000Z',
+    });
+    await writeFile(file, `${JSON.stringify(state, null, 2)}\n`);
+
+    await run(ix.get(ITowerSendTool), { to: 'w1', subject: 'for current w1', body: 'a' });
+    await run(ix.get(ITowerSendTool), { to: 'w-stale', subject: 'for stale identity', body: 'b' });
+
+    currentAgentId = 'agent-w1';
+    const inbox = await run(ix.get(ITowerInboxTool), {});
+    expect(inbox.isError).toBeFalsy();
+    expect(inbox.output).toContain('message(s) for w1');
+    expect(inbox.output).toContain('subject: for current w1');
+    expect(inbox.output).not.toContain('subject: for stale identity');
+
+    const sent = await run(ix.get(ITowerSendTool), { to: 'tower', subject: 'report', body: 'c' });
+    expect(sent.isError).toBeFalsy();
+    currentAgentId = 'main';
+    const towerInbox = await run(ix.get(ITowerInboxTool), {});
+    expect(towerInbox.output).toContain('from: w1');
+  });
+
   it('maps a TowerProtocolError (unknown recipient) to an isError result', async () => {
     const result = await run(ix.get(ITowerSendTool), {
       to: 'ghost',
@@ -458,6 +532,26 @@ describe('TowerSendTool + TowerInboxTool', () => {
     expect(result.isError).toBe(true);
     expect(result.output).toContain('unknown recipient "ghost"');
     expect(result.output).toContain('known: tower, all, w1, w2');
+  });
+
+  it('notes when the tower messages a roster agent that has no running task to deliver it', async () => {
+    const idle = await run(ix.get(ITowerSendTool), { to: 'w1', subject: 'wake', body: 'x' });
+    expect(idle.isError).toBeFalsy();
+    expect(idle.output).toContain('w1 has no running task');
+    expect(idle.output).toContain('Agent(resume="agent-w1", run_in_background=true');
+
+    liveAgentTaskIds.push('agent-w1');
+    const busy = await run(ix.get(ITowerSendTool), { to: 'w1', subject: 'wake', body: 'x' });
+    expect(busy.output).not.toContain('has no running task');
+  });
+
+  it('skips the delivery note for broadcasts and for sends from workers', async () => {
+    const broadcast = await run(ix.get(ITowerSendTool), { to: 'all', subject: 'b', body: 'x' });
+    expect(broadcast.output).not.toContain('has no running task');
+
+    currentAgentId = 'agent-w1';
+    const fromWorker = await run(ix.get(ITowerSendTool), { to: 'w2', subject: 'b', body: 'x' });
+    expect(fromWorker.output).not.toContain('has no running task');
   });
 });
 
@@ -496,7 +590,7 @@ describe('TowerStatusTool', () => {
     expect(result.output).toContain('💀 failed');
     expect(result.output).toContain('## Dead workers');
     expect(result.output).toContain('M1 owner w1 died (failed)');
-    expect(result.output).toContain('Agent(resume="agent-w1"');
+    expect(result.output).toContain('Agent(resume="agent-w1", run_in_background=true');
   });
 });
 

@@ -376,7 +376,7 @@ export class SubagentTool implements ISubagentTool {
       );
     }
     const target = live ?? (await this.rebuildSubagent(agentId, meta));
-    if (target.accessor.get(IAgentLoopService).status().state === 'running') {
+    if (target.accessor.get(IAgentLoopService).snapshot().state === 'running') {
       throw new Error2(
         ErrorCodes.AGENT_ALREADY_RUNNING,
         `Agent instance "${agentId}" is already running and cannot run concurrently`,

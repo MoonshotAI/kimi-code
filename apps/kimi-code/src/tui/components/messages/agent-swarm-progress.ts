@@ -3,12 +3,18 @@ import chalk from 'chalk';
 
 import {
   AgentSwarmProgressEstimator,
+  type AgentSwarmProgressEstimate,
   type AgentSwarmProgressEstimatorPhase,
 } from '#/tui/components/messages/agent-swarm-progress-estimator';
+import {
+  MAX_FINAL_OUTPUT_LABEL_CHARS,
+  MAX_FINAL_OUTPUT_LABEL_CODE_UNITS,
+} from '#/tui/constant/rendering';
 import { FAILURE_MARK, SUCCESS_MARK } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
 import { gradientText } from '#/tui/theme/gradient-text';
+import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 const TEXT_CELL_PREFERRED_WIDTH = 30;
 const CELL_GAP = '  ';
@@ -122,6 +128,14 @@ interface AgentSwarmMember {
   suspendedReason?: string;
   completedAtMs?: number;
   failedAtMs?: number;
+  cellCache?: AgentSwarmCellCache;
+}
+
+type AgentSwarmCellCacheKey = readonly (string | number | boolean | ColorPalette | undefined)[];
+
+interface AgentSwarmCellCache {
+  readonly key: AgentSwarmCellCacheKey;
+  readonly value: string;
 }
 
 interface AgentSwarmSnapshot {
@@ -150,6 +164,14 @@ interface AgentSwarmSummary {
   readonly completed: number;
   readonly failed: number;
   readonly cancelled: number;
+}
+
+interface AgentSwarmRenderCache {
+  readonly outerWidth: number;
+  readonly version: number;
+  readonly palette: ColorPalette;
+  readonly gridHeight: number | undefined;
+  readonly lines: string[];
 }
 
 export interface AgentSwarmGridLayoutInput {
@@ -186,6 +208,7 @@ const PHASE_LABELS: Record<AgentSwarmPhase, string> = {
 
 export class AgentSwarmProgressComponent implements Component {
   private members: AgentSwarmMember[];
+  private readonly membersByAgentId = new Map<string, AgentSwarmMember>();
   private readonly progressEstimator = new AgentSwarmProgressEstimator();
   private description: string;
   private readonly requestRender: (() => void) | undefined;
@@ -200,6 +223,8 @@ export class AgentSwarmProgressComponent implements Component {
   private promptTemplateText = '';
   private activitySpinnerText: (() => string) | undefined;
   private timer: ReturnType<typeof setInterval> | undefined;
+  private renderVersion = 0;
+  private renderCache: AgentSwarmRenderCache | undefined;
 
   constructor(options: AgentSwarmProgressOptions) {
     this.description = options.description;
@@ -219,11 +244,19 @@ export class AgentSwarmProgressComponent implements Component {
     this.timer = undefined;
   }
 
-  invalidate(): void {}
+  invalidate(): void {
+    this.renderCache = undefined;
+    for (const member of this.members) delete member.cellCache;
+  }
+
+  private markDirty(): void {
+    this.renderVersion += 1;
+  }
 
   setActivitySpinnerText(provider: (() => string) | undefined): void {
     if (!this.toolCallActive) return;
     this.activitySpinnerText = provider;
+    this.markDirty();
   }
 
   /**
@@ -234,6 +267,7 @@ export class AgentSwarmProgressComponent implements Component {
   setModelDisplay(modelDisplay: string): void {
     if (this.modelDisplay.length > 0 || modelDisplay.length === 0) return;
     this.modelDisplay = modelDisplay;
+    this.markDirty();
   }
 
   /**
@@ -244,11 +278,13 @@ export class AgentSwarmProgressComponent implements Component {
   setEffortDisplay(effortDisplay: string): void {
     if (this.effortDisplay.length > 0 || effortDisplay.length === 0) return;
     this.effortDisplay = effortDisplay;
+    this.markDirty();
   }
 
   markToolCallEnded(): void {
     this.toolCallActive = false;
     this.activitySpinnerText = undefined;
+    this.markDirty();
   }
 
   isToolCallActive(): boolean {
@@ -296,6 +332,7 @@ export class AgentSwarmProgressComponent implements Component {
     const itemCount = Math.max(fullRows.length, partialRows.length);
     if (itemCount > 0) this.ensureMemberCount(itemCount);
     this.updateItemTexts(fullRows, partialRows);
+    this.markDirty();
   }
 
   markInputComplete(): void {
@@ -304,6 +341,7 @@ export class AgentSwarmProgressComponent implements Component {
       for (const member of this.members) {
         if (member.phase === 'pending') member.phase = 'queued';
       }
+      this.markDirty();
     }
     this.startAnimationIfNeeded();
   }
@@ -315,8 +353,9 @@ export class AgentSwarmProgressComponent implements Component {
   }): void {
     const member = this.findMemberForSubagent(input.agentId, input.swarmIndex);
     if (member === undefined) return;
-    member.agentId = input.agentId;
+    this.assignMemberAgentId(member, input.agentId);
     if (member.phase === 'pending') member.phase = 'queued';
+    this.markDirty();
     this.startAnimationIfNeeded();
   }
 
@@ -327,6 +366,7 @@ export class AgentSwarmProgressComponent implements Component {
     this.progressEstimator.markStarted(member.id, nowMs);
     member.ticks = Math.max(member.ticks, 1);
     this.promoteToRunning(member, nowMs);
+    this.markDirty();
     this.startAnimationIfNeeded();
   }
 
@@ -344,6 +384,7 @@ export class AgentSwarmProgressComponent implements Component {
     if (!result.accepted) return;
     member.ticks = result.rawTicks;
     this.promoteToRunning(member);
+    this.markDirty();
     this.startAnimationIfNeeded();
   }
 
@@ -357,6 +398,8 @@ export class AgentSwarmProgressComponent implements Component {
       -MAX_LATEST_MODEL_CHARS,
     );
     this.promoteToRunning(member, Date.now(), true);
+    this.markDirty();
+    this.startAnimationIfNeeded();
   }
 
   markCompleted(agentId: string, completedText?: string): void {
@@ -364,6 +407,7 @@ export class AgentSwarmProgressComponent implements Component {
     if (member === undefined || member.phase === 'failed' || member.phase === 'cancelled') return;
     const nowMs = Date.now();
     this.completeMember(member, nowMs, completedText);
+    this.markDirty();
     this.startAnimationIfNeeded();
   }
 
@@ -376,10 +420,11 @@ export class AgentSwarmProgressComponent implements Component {
     const member = this.findMemberByAgentId(input.agentId) ??
       this.findMemberForSubagent(input.agentId, input.swarmIndex);
     if (member === undefined || member.phase === 'completed' || member.phase === 'cancelled') return;
-    member.agentId = input.agentId;
+    this.assignMemberAgentId(member, input.agentId);
     this.progressEstimator.markQueued(member.id, Date.now());
     member.phase = 'suspended';
     clearMemberState(member, ...TERMINAL_CLEAR_KEYS);
+    this.markDirty();
     this.startAnimationIfNeeded();
   }
 
@@ -388,6 +433,7 @@ export class AgentSwarmProgressComponent implements Component {
     if (member === undefined) return;
     const nowMs = Date.now();
     this.failMember(member, nowMs, failureText);
+    this.markDirty();
     this.startAnimationIfNeeded();
   }
 
@@ -399,6 +445,7 @@ export class AgentSwarmProgressComponent implements Component {
       if (isTerminalPhase(member.phase)) continue;
       this.failMember(member, nowMs, failureText);
     }
+    this.markDirty();
     this.startAnimationIfNeeded();
   }
 
@@ -406,6 +453,7 @@ export class AgentSwarmProgressComponent implements Component {
     const member = this.findMemberByAgentId(agentId);
     if (member === undefined) return;
     this.cancelMember(member, Date.now());
+    this.markDirty();
   }
 
   markActiveCancelled(): void {
@@ -415,6 +463,7 @@ export class AgentSwarmProgressComponent implements Component {
       if (isTerminalPhase(member.phase)) continue;
       this.cancelMember(member, nowMs);
     }
+    this.markDirty();
     this.startAnimationIfNeeded();
   }
 
@@ -435,6 +484,7 @@ export class AgentSwarmProgressComponent implements Component {
         this.cancelMember(member, nowMs);
       }
     }
+    this.markDirty();
     this.startAnimationIfNeeded();
     return true;
   }
@@ -445,41 +495,80 @@ export class AgentSwarmProgressComponent implements Component {
       1,
       outerWidth - visibleWidth(AGENT_SWARM_LEFT_INDENT) - AGENT_SWARM_RIGHT_GAP,
     );
-    if (this.members.length === 0) {
-      const lines = [
-        '',
-        this.renderHeader(innerWidth, undefined),
-        '',
-        this.renderStatusLine(innerWidth),
-        '',
-      ];
-      return this.indentLines(lines, outerWidth);
+    const palette = currentTheme.palette;
+    // The empty panel has no grid, so the height callback stays untouched
+    // there (matching the uncached path); with members its result feeds the
+    // cache key, since a shrinking dock compresses the grid.
+    const gridHeight = this.members.length === 0 ? undefined : this.availableGridHeight?.();
+    const cache = this.renderCache;
+    if (
+      isRenderCacheEnabled() &&
+      cache !== undefined &&
+      cache.outerWidth === outerWidth &&
+      cache.version === this.renderVersion &&
+      cache.palette === palette &&
+      cache.gridHeight === gridHeight
+    ) {
+      return cache.lines;
     }
 
-    const nowMs = Date.now();
-    const snapshots = this.members.map((member): AgentSwarmSnapshot => ({
-      phase: member.phase,
-      ticks: member.ticks,
-      latestModelText: member.latestModelText,
-      phaseElapsedMs: terminalPhaseElapsedMs(member, nowMs),
-    }));
-    const summary = summarizeSnapshots(snapshots);
-    const lines = [
-      '',
-      this.renderHeader(innerWidth, summary),
-      '',
-      ...this.renderGrid(
-        innerWidth,
-        this.availableGridHeight?.(),
-        snapshots,
-        nowMs,
-      ),
-      '',
-      this.renderStatusLine(innerWidth),
-      '',
-    ];
-    this.startAnimationIfNeeded();
-    return this.indentLines(lines, outerWidth);
+    let lines: string[];
+    if (this.members.length === 0) {
+      lines = this.indentLines(
+        [
+          '',
+          this.renderHeader(innerWidth, undefined),
+          '',
+          this.renderStatusLine(innerWidth),
+          '',
+        ],
+        outerWidth,
+      );
+    } else {
+      const nowMs = Date.now();
+      const snapshots = this.members.map((member): AgentSwarmSnapshot => ({
+        phase: member.phase,
+        ticks: member.ticks,
+        latestModelText: member.latestModelText,
+        phaseElapsedMs: terminalPhaseElapsedMs(member, nowMs),
+      }));
+      const summary = summarizeSnapshots(snapshots);
+      lines = this.indentLines(
+        [
+          '',
+          this.renderHeader(innerWidth, summary),
+          '',
+          ...this.renderGrid(
+            innerWidth,
+            gridHeight,
+            snapshots,
+            nowMs,
+          ),
+          '',
+          this.renderStatusLine(innerWidth),
+          '',
+        ],
+        outerWidth,
+      );
+      this.startAnimationIfNeeded();
+    }
+    if (isRenderCacheEnabled() && !this.hasTimeDependentRender()) {
+      this.renderCache = { outerWidth, version: this.renderVersion, palette, gridHeight, lines };
+    }
+    return lines;
+  }
+
+  /**
+   * Renders that change with wall-clock time even without any mutation must
+   * never be served from the cache: the activity spinner ticks externally,
+   * running cells keep drifting toward their estimate, and the completion /
+   * failure fill animates for a short window. Once the panel is static it
+   * stays static until the next mutation bumps the version, so a cache hit
+   * can safely skip `startAnimationIfNeeded()`.
+   */
+  private hasTimeDependentRender(): boolean {
+    if (this.toolCallActive && this.activitySpinnerText !== undefined) return true;
+    return this.hasAnimatedMembers();
   }
 
   private indentLines(lines: readonly string[], width: number): string[] {
@@ -612,7 +701,7 @@ export class AgentSwarmProgressComponent implements Component {
         const member = this.members[index];
         const snapshot = snapshots[index];
         if (member === undefined || snapshot === undefined) continue;
-        cells.push(padAnsi(this.renderCell(member, snapshot, layout, nowMs), layout.cellWidth));
+        cells.push(this.renderCell(member, snapshot, layout, nowMs));
       }
       lines.push(leftPadding + cells.join(cellGap));
     }
@@ -625,6 +714,58 @@ export class AgentSwarmProgressComponent implements Component {
     layout: AgentSwarmGridLayout,
     nowMs: number,
   ): string {
+    const needsEstimate = !(
+      snapshot.phase === 'pending' ||
+      (snapshot.phase === 'cancelled' && snapshot.ticks <= 0) ||
+      (layout.renderText && snapshot.phase === 'queued' && snapshot.ticks <= 0)
+    );
+    const estimate = needsEstimate
+      ? this.progressEstimator.estimate({
+          memberKey: member.id,
+          phase: snapshot.phase,
+          capacityTicks: layout.barCells * BRAILLE_LEVELS.length,
+          nowMs,
+        })
+      : undefined;
+    // Terminal and queued cells are fully determined by this key, so repeated
+    // frames of an animating panel reuse them; the elapsed-time clamp keeps
+    // hits valid once the completion fill window has passed.
+    const key: AgentSwarmCellCacheKey = [
+      currentTheme.palette,
+      snapshot.phase,
+      member.ticks,
+      member.latestModelText,
+      member.itemText,
+      member.completedText,
+      member.failureText,
+      member.cancelledLabelText,
+      member.cancelledLabelColor,
+      member.cancelledMarkColor,
+      member.cancelledBarColor,
+      layout.renderText,
+      layout.cellWidth,
+      layout.barCells,
+      estimate === undefined ? member.ticks : estimate.displayTicks,
+      Math.min(snapshot.phaseElapsedMs, COMPLETE_FILL_MS),
+    ];
+    const cached = member.cellCache;
+    if (isRenderCacheEnabled() && cached !== undefined && cellCacheKeyEquals(cached.key, key)) {
+      return cached.value;
+    }
+    const value = padAnsi(
+      this.renderCellContent(member, snapshot, layout, estimate),
+      layout.cellWidth,
+    );
+    if (isRenderCacheEnabled()) member.cellCache = { key, value };
+    return value;
+  }
+
+  private renderCellContent(
+    member: AgentSwarmMember,
+    snapshot: AgentSwarmSnapshot,
+    layout: AgentSwarmGridLayout,
+    estimate: AgentSwarmProgressEstimate | undefined,
+  ): string {
     const width = layout.cellWidth;
     if (snapshot.phase === 'pending') {
       return renderPendingCell(member, width, this.colors);
@@ -632,57 +773,25 @@ export class AgentSwarmProgressComponent implements Component {
     if (snapshot.phase === 'cancelled' && snapshot.ticks <= 0) {
       return renderCancelledUnstartedCell(member, width, this.colors);
     }
-    if (!layout.renderText) {
-      return this.renderCompactCell(member, snapshot, layout.barCells, nowMs);
-    }
-    if (snapshot.phase === 'queued' && snapshot.ticks <= 0) {
+    if (layout.renderText && snapshot.phase === 'queued' && snapshot.ticks <= 0) {
       return renderQueuedCell(member, width, this.colors);
     }
-
-    const estimate = this.progressEstimator.estimate({
-      memberKey: member.id,
-      phase: snapshot.phase,
-      capacityTicks: layout.barCells * BRAILLE_LEVELS.length,
-      nowMs,
-    });
     const id = chalk.hex(this.colors.primary)(member.id);
     const bar = brailleBar(
-      estimate.displayTicks,
+      estimate!.displayTicks,
       snapshot.phase,
       layout.barCells,
       this.colors,
       snapshot.phaseElapsedMs,
       cancelledProgressColor(member, snapshot.phase, this.colors),
     );
+    if (!layout.renderText) {
+      return `${id} ${bar}${compactTerminalMark(member, snapshot.phase, this.colors)}`;
+    }
     const prefix = `${id} ${bar} `;
     const labelWidth = Math.max(1, width - visibleWidth(prefix));
     const label = renderCellLabel(member, snapshot, labelWidth, this.colors);
     return prefix + label;
-  }
-
-  private renderCompactCell(
-    member: AgentSwarmMember,
-    snapshot: AgentSwarmSnapshot,
-    barCells: number,
-    nowMs: number,
-  ): string {
-    const estimatePhase = snapshot.phase === 'pending' ? 'queued' : snapshot.phase;
-    const estimate = this.progressEstimator.estimate({
-      memberKey: member.id,
-      phase: estimatePhase,
-      capacityTicks: barCells * BRAILLE_LEVELS.length,
-      nowMs,
-    });
-    const id = chalk.hex(this.colors.primary)(member.id);
-    const bar = brailleBar(
-      estimate.displayTicks,
-      estimatePhase,
-      barCells,
-      this.colors,
-      snapshot.phaseElapsedMs,
-      cancelledProgressColor(member, snapshot.phase, this.colors),
-    );
-    return `${id} ${bar}${compactTerminalMark(member, snapshot.phase, this.colors)}`;
   }
 
   private findMemberForSubagent(
@@ -706,7 +815,15 @@ export class AgentSwarmProgressComponent implements Component {
   }
 
   private findMemberByAgentId(agentId: string): AgentSwarmMember | undefined {
-    return this.members.find((member) => member.agentId === agentId);
+    return this.membersByAgentId.get(agentId);
+  }
+
+  private assignMemberAgentId(member: AgentSwarmMember, agentId: string): void {
+    if (member.agentId !== undefined && member.agentId !== agentId) {
+      this.membersByAgentId.delete(member.agentId);
+    }
+    member.agentId = agentId;
+    this.membersByAgentId.set(agentId, member);
   }
 
   private ensureMemberCount(count: number): void {
@@ -748,20 +865,27 @@ export class AgentSwarmProgressComponent implements Component {
 
   private hasAnimatedMembers(): boolean {
     const now = Date.now();
-    return (
-      this.progressEstimator.hasPendingCatchup() ||
-      this.members.some((member) =>
-        (
-          member.phase === 'completed' &&
-          member.completedAtMs !== undefined &&
-          now - member.completedAtMs < COMPLETE_FILL_MS
-        ) ||
-        (
-          member.phase === 'failed' &&
-          member.failedAtMs !== undefined &&
-          now - member.failedAtMs < COMPLETE_FILL_MS
-        ),
-      )
+    // Running cells and estimator catch-up only animate while the tool call
+    // is live: no further progress arrives once it ends (an unparsable result
+    // leaves members running), so ticking would repaint the tree forever.
+    if (
+      this.toolCallActive &&
+      (this.progressEstimator.hasPendingCatchup() ||
+        this.members.some((member) => member.phase === 'running'))
+    ) {
+      return true;
+    }
+    return this.members.some((member) =>
+      (
+        member.phase === 'completed' &&
+        member.completedAtMs !== undefined &&
+        now - member.completedAtMs < COMPLETE_FILL_MS
+      ) ||
+      (
+        member.phase === 'failed' &&
+        member.failedAtMs !== undefined &&
+        now - member.failedAtMs < COMPLETE_FILL_MS
+      ),
     );
   }
 
@@ -779,9 +903,18 @@ export class AgentSwarmProgressComponent implements Component {
       this.progressEstimator.markCompleted(member.id, nowMs);
       member.completedAtMs = nowMs;
     }
-    const normalizedCompletedText = normalizeFinalOutputText(completedText);
-    if (normalizedCompletedText !== undefined) member.completedText = normalizedCompletedText;
+    // Terminal cells render a single-line label, so only a bounded prefix of
+    // the final output is worth keeping; full outputs must not accumulate on
+    // the component for the lifetime of the transcript. The latest-model-text
+    // fallback is baked in here because latestModelText is released below.
+    const normalizedCompletedText =
+      normalizeFinalOutputText(completedText) ??
+      normalizeFinalOutputText(latestNonEmptyLine(member.latestModelText));
+    if (normalizedCompletedText !== undefined) {
+      member.completedText = capFinalOutputLabel(normalizedCompletedText);
+    }
     member.phase = 'completed';
+    releaseTerminalMemberText(member);
     clearMemberState(member, ...COMPLETED_CLEAR_KEYS);
   }
 
@@ -791,8 +924,11 @@ export class AgentSwarmProgressComponent implements Component {
       member.failedAtMs = nowMs;
     }
     const normalizedFailureText = normalizeFailureText(failureText);
-    if (normalizedFailureText !== undefined) member.failureText = normalizedFailureText;
+    if (normalizedFailureText !== undefined) {
+      member.failureText = capFinalOutputLabel(normalizedFailureText);
+    }
     member.phase = 'failed';
+    releaseTerminalMemberText(member);
     clearMemberState(member, ...FAILED_CLEAR_KEYS);
   }
 
@@ -807,7 +943,9 @@ export class AgentSwarmProgressComponent implements Component {
       member.cancelledMarkColor = this.colors.warning;
       member.cancelledBarColor = this.colors.warning;
     } else if (previousPhase === 'running') {
-      member.cancelledLabelText = runningCellLabelText(member);
+      member.cancelledLabelText = capFinalOutputLabel(
+        runningCellLabelText(member, latestNonEmptyLine(member.latestModelText)),
+      );
       member.cancelledLabelColor = cancelledLabelColor(this.colors);
       member.cancelledMarkColor = this.colors.warning;
       member.cancelledBarColor = this.colors.warning;
@@ -817,6 +955,7 @@ export class AgentSwarmProgressComponent implements Component {
       member.cancelledMarkColor = this.colors.warning;
       member.cancelledBarColor = this.colors.warning;
     }
+    releaseTerminalMemberText(member);
   }
 }
 
@@ -832,6 +971,123 @@ function createMembers(count: number, phase: AgentSwarmPhase): AgentSwarmMember[
 
 function clearMemberState(member: AgentSwarmMember, ...keys: ClearableMemberKey[]): void {
   for (const key of keys) delete member[key];
+}
+
+// Terminal cells no longer stream, so the rolling model-text window and the
+// stale cell memo (whose key referenced it) are dropped; the next render
+// re-memoizes against the bounded terminal label.
+function releaseTerminalMemberText(member: AgentSwarmMember): void {
+  member.latestModelText = '';
+  delete member.cellCache;
+}
+
+// Display width alone does not bound memory: ANSI sequences and zero-width
+// graphemes add unbounded code units within a single column, so the retained
+// label is additionally capped by storage length.
+function capFinalOutputLabel(text: string): string {
+  return capCodeUnits(
+    truncateToWidth(text, MAX_FINAL_OUTPUT_LABEL_CHARS, ''),
+    MAX_FINAL_OUTPUT_LABEL_CODE_UNITS,
+  );
+}
+
+function capCodeUnits(text: string, maxCodeUnits: number): string {
+  if (text.length <= maxCodeUnits) return text;
+  const graphemeEnd = graphemeSafeEnd(text, maxCodeUnits);
+  let end = graphemeEnd > 0 ? graphemeEnd : maxCodeUnits;
+  let osc8CloseSuffix = '';
+  let sgrActive = false;
+  let index = text.indexOf('\u001B');
+  while (index >= 0 && index < end) {
+    const sequenceEnd = ansiSequenceEnd(text, index);
+    if (sequenceEnd === undefined || sequenceEnd > end) {
+      end = index;
+      break;
+    }
+    const sequence = text.slice(index, sequenceEnd);
+    const osc8Close = osc8CloseAfterSequence(sequence);
+    if (osc8Close !== undefined) osc8CloseSuffix = osc8Close ?? '';
+    sgrActive = sgrActiveAfterSequence(sequence, sgrActive);
+    index = text.indexOf('\u001B', sequenceEnd);
+  }
+  // A cut landing on a lead surrogate reads as the astral code point; back
+  // off so the retained label never ends in an unpaired surrogate.
+  const codePoint = text.codePointAt(end - 1);
+  if (codePoint !== undefined && codePoint > 0xffff) end -= 1;
+  return `${text.slice(0, end)}${osc8CloseSuffix}${sgrActive ? '\u001B[0m' : ''}`;
+}
+
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+// The storage cap must not slice through a grapheme cluster: a ZWJ sequence
+// (a family emoji runs about eleven code units per two columns) cut in half
+// renders as its separate parts. Back off to the nearest whole cluster; the
+// ANSI walk above only ever lands on escape boundaries, which are cluster
+// boundaries too. A single cluster larger than the budget falls back to the
+// raw cut.
+function graphemeSafeEnd(text: string, end: number): number {
+  let boundary = 0;
+  for (const { index, segment } of graphemeSegmenter.segment(text)) {
+    if (index + segment.length > end) break;
+    boundary = index + segment.length;
+  }
+  return boundary;
+}
+
+// Mirrors pi-tui's OSC 8 bookkeeping: a sequence with a non-empty URI opens a
+// hyperlink (closed with the opener's terminator), an empty URI closes one.
+// SGR resets do not close hyperlinks, so a sliced opener would otherwise
+// leak the link onto later cells of the grid row.
+function osc8CloseAfterSequence(sequence: string): string | null | undefined {
+  if (!sequence.startsWith('\u001B]8;')) return undefined;
+  const terminator = sequence.endsWith('\u0007') ? '\u0007' : '\u001B\\';
+  const body = sequence.slice(4, sequence.length - terminator.length);
+  const separatorIndex = body.indexOf(';');
+  if (separatorIndex < 0) return undefined;
+  return body.slice(separatorIndex + 1).length > 0 ? `\u001B]8;;${terminator}` : null;
+}
+
+// SGR state is cumulative: a parameter of 0 (or an empty parameter, which
+// defaults to 0) resets every attribute, anything else activates one, so a
+// sliced label with active styling needs a full reset appended.
+function sgrActiveAfterSequence(sequence: string, active: boolean): boolean {
+  if (!sequence.startsWith('\u001B[') || !sequence.endsWith('m')) return active;
+  const body = sequence.slice(2, -1);
+  if (body.length === 0) return false;
+  for (const param of body.split(';')) {
+    active = param !== '' && Number(param) !== 0;
+  }
+  return active;
+}
+
+function ansiSequenceEnd(text: string, start: number): number | undefined {
+  if (text[start] !== '\u001B') return undefined;
+  const kind = text[start + 1];
+  if (kind === undefined) return undefined;
+  if (kind === '[') {
+    for (let index = start + 2; index < text.length; index += 1) {
+      const ch = text.charAt(index);
+      if (ch >= '@' && ch <= '~') return index + 1;
+    }
+    return undefined;
+  }
+  if (kind === ']' || kind === '_') {
+    for (let index = start + 2; index < text.length; index += 1) {
+      if (text[index] === '\u0007') return index + 1;
+      if (text[index] === '\u001B' && text[index + 1] === '\\') return index + 2;
+    }
+    return undefined;
+  }
+  let index = start + 1;
+  while (index < text.length) {
+    const ch = text.charAt(index);
+    if (ch >= ' ' && ch <= '/') {
+      index += 1;
+      continue;
+    }
+    return ch >= '0' && ch <= '~' ? index + 1 : undefined;
+  }
+  return undefined;
 }
 
 function isTerminalPhase(phase: AgentSwarmPhase): boolean {
@@ -1405,15 +1661,19 @@ function renderCellLabel(
   width: number,
   colors: ColorPalette,
 ): string {
-  const latestLine = latestNonEmptyLine(snapshot.latestModelText);
   if (snapshot.phase === 'running') {
-    return truncateWithColor(runningCellLabelText(member), width, colors.textDim);
+    const latestLine = latestNonEmptyLine(snapshot.latestModelText);
+    return truncateWithColor(runningCellLabelText(member, latestLine), width, colors.textDim);
   }
   if (snapshot.phase === 'failed' && member.failureText !== undefined) {
     return truncateWithColor(`${FAILURE_MARK}${member.failureText}`, width, colors.error);
   }
   if (snapshot.phase === 'completed') {
-    return renderCompletedCellLabel(member.completedText ?? latestLine, width, colors);
+    return renderCompletedCellLabel(
+      member.completedText ?? latestNonEmptyLine(snapshot.latestModelText),
+      width,
+      colors,
+    );
   }
   if (snapshot.phase === 'cancelled') {
     return renderCancelledCellLabel(member, width, colors);
@@ -1421,8 +1681,7 @@ function renderCellLabel(
   return truncateWithColor(PHASE_LABELS[snapshot.phase], width, phaseColor(snapshot.phase, colors));
 }
 
-function runningCellLabelText(member: AgentSwarmMember): string {
-  const latestLine = latestNonEmptyLine(member.latestModelText);
+function runningCellLabelText(member: AgentSwarmMember, latestLine: string): string {
   const itemText = collapseWhitespace(member.itemText);
   const text = latestLine.length > 0 ? latestLine : itemText;
   return text.length > 0 ? text : PHASE_LABELS.running;
@@ -1646,6 +1905,14 @@ function parsePartialJsonString(
 function padAnsi(text: string, width: number): string {
   const truncated = truncateToWidth(text, width);
   return truncated + ' '.repeat(Math.max(0, width - visibleWidth(truncated)));
+}
+
+function cellCacheKeyEquals(a: AgentSwarmCellCacheKey, b: AgentSwarmCellCacheKey): boolean {
+  if (a.length !== b.length) return false;
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index] !== b[index]) return false;
+  }
+  return true;
 }
 
 function completedDisplayTicks(ticks: number, width: number, phaseElapsedMs: number): number {

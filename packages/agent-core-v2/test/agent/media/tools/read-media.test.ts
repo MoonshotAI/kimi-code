@@ -1,4 +1,5 @@
 import * as posixPath from 'node:path/posix';
+import { Readable } from 'node:stream';
 
 import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/llm-adapter/contract/capability';
 import type { ContentPart } from '#human/llm/message';
@@ -28,6 +29,11 @@ import {
 } from '#/agent/media/image-compress';
 import { createVideoUploader, registerMediaTools } from '#/agent/media/registerMediaTools';
 import { AgentMediaToolsRegistrar } from '#/agent/media/mediaToolsRegistrar';
+import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
+import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
+import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
+import { makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import {
@@ -218,7 +224,7 @@ async function execute(
   tool: ReadMediaFileTool,
   args: ReadMediaFileInput,
 ): Promise<ExecutableToolResult> {
-  const execution = tool.resolveExecution(args);
+  const execution = await tool.resolveExecution(args);
   if (!('execute' in execution)) {
     return execution;
   }
@@ -435,7 +441,7 @@ describe('ReadMediaFileTool', () => {
 
     expect(result.isError).toBe(false);
     expect(vi.mocked(fs.readBytes)).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(fs.readBytes)).toHaveBeenLastCalledWith('/workspace/large.png');
+    expect(vi.mocked(fs.readBytes)).toHaveBeenLastCalledWith('/workspace/large.png', undefined);
   });
 
   it('returns external preprocessing guidance before loading an oversized region source', async () => {
@@ -862,6 +868,7 @@ describe('AgentMediaToolsRegistrar', () => {
   function createRegistrarHarness(
     files: Record<string, FakeFile> = {},
     providerTypes: Record<string, string> = {},
+    attachmentStore?: ISessionMediaStore,
   ) {
     const registry = new AgentToolRegistryService();
     const eventBus = new EventBusService();
@@ -903,7 +910,10 @@ describe('AgentMediaToolsRegistrar', () => {
       _serviceBrand: undefined,
       onDidChange: runtimeChanges.event,
       isAvailable: (required = []) => runtimeAvailable && baseRuntime.isAvailable(required),
-      inspect: () => baseRuntime.inspect(),
+      inspect: () => {
+        if (!runtimeAvailable) throw new Error('runtime unavailable');
+        return baseRuntime.inspect();
+      },
       acquire: (required = []) => baseRuntime.acquire(required),
     };
     const registrar = new AgentMediaToolsRegistrar(
@@ -915,6 +925,8 @@ describe('AgentMediaToolsRegistrar', () => {
       workspaceCtx,
       recordingTelemetry([]),
       new AgentStateService(),
+      undefined,
+      attachmentStore,
     );
     const bindModel = (alias: string, caps: ModelCapability): void => {
       state.alias = alias;
@@ -1010,6 +1022,26 @@ describe('AgentMediaToolsRegistrar', () => {
 
     setRuntimeAvailable(true);
     expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+  });
+
+  it('keeps session-image reads available while the workspace runtime is unavailable', async () => {
+    const storage = new InMemoryStorageService();
+    const store = new SessionMediaStoreService(makeSessionContext({
+      sessionId: 'session', workspaceId: 'workspace', cwd: '/workspace',
+      sessionDir: '/session', sessionScope: 'session',
+    }), storage, new JsonAtomicDocumentStore(storage));
+    const bytes = Buffer.from(await new Jimp({ width: 32, height: 32, color: 0x3366ccff }).getBuffer('image/png'));
+    await store.materialize({ fileId: 'f_picture', name: 'picture.png', mimeType: 'image/png', size: bytes.length, stream: () => Readable.from([bytes]) });
+    const { registry, bindModel, setRuntimeAvailable } = createRegistrarHarness({}, {}, store);
+    bindModel('vision-model', capabilities({ image_in: true, video_in: false }));
+    setRuntimeAvailable(false);
+    const tool = registry.resolve('ReadMediaFile');
+    expect(tool).toBeDefined();
+    const execution = await tool!.resolveExecution({ path: 'kimi-file://f_picture' });
+    if (execution.isError === true) throw new Error('expected runnable attachment read');
+    const result = await execution.execute({ turnId: 1, toolCallId: 'image', signal: new AbortController().signal });
+    expect(result.isError).not.toBe(true);
+    expect(outputParts(result).some((part) => part.type === 'image_url')).toBe(true);
   });
 
   it('swaps the tool instance when the model alias changes', () => {

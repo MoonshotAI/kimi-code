@@ -120,6 +120,17 @@ function busRows(bus: DebugEventBusSnapshot) {
       />,
     );
   }
+  for (const agentId of Object.keys(bus.perAgent).toSorted()) {
+    const count = bus.perAgent[agentId] ?? 0;
+    rows.push(
+      <BusRow
+        key={`${bus.scopePath}:agent:${agentId}`}
+        scopePath={bus.scopePath}
+        type={`agent:${agentId}`}
+        count={count}
+      />,
+    );
+  }
   return rows;
 }
 

@@ -4,6 +4,7 @@ import type {
   McpServerEntry,
   McpStatusListener,
 } from '#/mcpCore/connection-manager';
+import type { McpServerConfig } from '#/mcpCore/config-schema';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
 import { abortable } from '#/_base/utils/abort';
 
@@ -25,6 +26,10 @@ export class MergedMcpConnectionView implements McpConnectionView {
 
   get(name: string): McpServerEntry | undefined {
     return this.owner(name).get(name);
+  }
+
+  configOf(name: string): McpServerConfig | undefined {
+    return this.owner(name).configOf(name);
   }
 
   resolved(name: string): ReturnType<McpConnectionView['resolved']> {

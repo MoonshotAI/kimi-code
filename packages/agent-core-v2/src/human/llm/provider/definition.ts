@@ -2,12 +2,28 @@ import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/llm/capability';
 import type { ProviderMediaContribution } from '#/llm/media/upload';
 import type { LlmConnection, LlmModel } from '#/llm/model';
 import type { ProtocolBase, ProtocolName } from '#/llm/protocol/base';
-import type { ProtocolTrait } from '#/llm/protocol/trait';
-import type { LlmRequester } from '#/llm/requester/requester';
+import type { ProviderConnection } from '#/llm/protocol/connection';
+import type { AnthropicTrait } from '#/llm/requester/bases/anthropic/trait';
+import type { GoogleGenAITrait } from '#/llm/requester/bases/google-genai/trait';
+import type { OpenAIResponsesTrait } from '#/llm/requester/bases/openai-responses/trait';
+import type { OpenAITrait } from '#/llm/requester/bases/openai/trait';
+import type { LlmErrorClassifier, LlmRequester } from '#/llm/requester/requester';
 
-export interface ProtocolVariant {
-  readonly base: ProtocolBase;
-  readonly trait?: ProtocolTrait;
+export interface ProtocolTraitMap {
+  readonly openai: OpenAITrait;
+  readonly openai_responses: OpenAIResponsesTrait;
+  readonly anthropic: AnthropicTrait;
+  readonly 'google-genai': GoogleGenAITrait;
+}
+
+export type AnyProtocolTrait = ProtocolTraitMap[ProtocolName];
+
+export interface ProtocolVariant<N extends ProtocolName = ProtocolName> {
+  readonly base: ProtocolBase<ProtocolTraitMap[N]>;
+  readonly trait?: ProtocolTraitMap[N];
+  readonly connection?: ProviderConnection;
+  readonly convertError?: LlmErrorClassifier;
+  readonly capability?: (modelName: string) => ModelCapability | undefined;
 }
 
 export interface LlmModelSeed {
@@ -22,7 +38,7 @@ export type ProviderModelSource = () => Promise<readonly LlmModelSeed[]>;
 
 export interface ProviderDefinition {
   readonly id: string;
-  readonly protocols: Readonly<Partial<Record<ProtocolName, ProtocolVariant>>>;
+  readonly protocols: Readonly<{ [N in ProtocolName]?: ProtocolVariant<N> }>;
   readonly media?: ProviderMediaContribution;
   readonly models?: ProviderModelSource;
 }
@@ -67,9 +83,7 @@ export function createProvider(definition: ProviderDefinition): Provider {
   };
 
   const detectCapability = (variant: ProtocolVariant, modelName: string): ModelCapability =>
-    variant.trait?.capability?.(modelName) ??
-    variant.base.capability?.(modelName) ??
-    UNKNOWN_CAPABILITY;
+    variant.capability?.(modelName) ?? variant.base.capability?.(modelName) ?? UNKNOWN_CAPABILITY;
 
   return {
     id: definition.id,
@@ -84,7 +98,7 @@ export function createProvider(definition: ProviderDefinition): Provider {
         provider: definition.id,
         model: seed.model,
         capability:
-          defaultVariant.trait?.capability?.(seed.model) ??
+          defaultVariant.capability?.(seed.model) ??
           seed.capability ??
           defaultVariant.base.capability?.(seed.model) ??
           UNKNOWN_CAPABILITY,
@@ -105,7 +119,11 @@ export function createProvider(definition: ProviderDefinition): Provider {
     }),
     createRequester: (protocol) => {
       const variant = variantFor(protocol);
-      return variant.base.createRequester(variant.trait);
+      return variant.base.createRequester({
+        connection: variant.connection,
+        trait: variant.trait,
+        convertError: variant.convertError,
+      });
     },
   };
 }

@@ -10,7 +10,7 @@ import { UNKNOWN_CAPABILITY } from '#/llm/capability';
 import { createAssistantMessage, createUserMessage, type Message } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
 import { classifyKimiQuotaError } from '#/llm-kimi/errors';
-import { kimiOpenAITrait } from '#/llm-kimi/trait';
+import { kimiConnection, kimiOpenAITrait } from '#/llm-kimi/trait';
 import { createGoogleGenAIRequester } from '#/llm/requester/bases/google-genai/requester';
 import { convertOpenAIError } from '#/llm/requester/bases/openai/format';
 import { createOpenAIRequester } from '#/llm/requester/bases/openai/requester';
@@ -273,7 +273,7 @@ describe('requester error conversion', () => {
   }
 
   it('converts a 429 response to rate_limit', async () => {
-    const requester = createOpenAIRequester(undefined, {
+    const requester = createOpenAIRequester({
       clientFactory: failingOpenAIClient(
         new RawOpenAISDKAPIError(
           429,
@@ -291,7 +291,10 @@ describe('requester error conversion', () => {
   });
 
   it('converts a kimi quota response to quota_exhausted', async () => {
-    const requester = createOpenAIRequester(kimiOpenAITrait, {
+    const requester = createOpenAIRequester({
+      connection: kimiConnection,
+      trait: kimiOpenAITrait,
+      convertError: classifyKimiQuotaError,
       clientFactory: failingOpenAIClient(
         new RawOpenAISDKAPIError(
           429,
@@ -310,7 +313,7 @@ describe('requester error conversion', () => {
 
   it('emits llm.failed.syntax for a local message syntax error without sending a request', async () => {
     const clientFactory = vi.fn(() => ({}) as never);
-    const requester = createGoogleGenAIRequester(undefined, { clientFactory });
+    const requester = createGoogleGenAIRequester({ clientFactory });
     const events = await generateEvents(requester, [
       createAssistantMessage([], [
         { type: 'function', id: 'call-1', name: 'some_tool', arguments: 'not json' },

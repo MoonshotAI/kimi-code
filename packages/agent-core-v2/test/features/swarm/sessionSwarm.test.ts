@@ -1182,7 +1182,7 @@ describe('SessionSwarmService metadata compatibility', () => {
           IAgentLoopService,
           {
             _serviceBrand: undefined,
-            status: () => ({ state: 'running', activeTurnId: 1, pendingPromptIds: [], hasPendingRequests: true }),
+            snapshot: () => ({ state: 'running' }),
           },
         ],
       ])),
@@ -1206,6 +1206,38 @@ describe('SessionSwarmService metadata compatibility', () => {
     expect(eventBus.publish).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: 'subagent.spawned' }),
     );
+  });
+
+  it('does not produce an unhandled rejection when the batch fails with a non-user abort', async () => {
+    agents['agent-a'] = { labels: { parentAgentId: 'main' } };
+    handles.set('agent-a', agentHandle('agent-a', lifecycle, eventBus));
+    const blocker = createControlledPromise<{ summary: string }>();
+    runAgent.mockImplementation((agent, request, options) => {
+      options?.onReady?.();
+      return {
+        agentId: (agent as AgentContext).agentId,
+        turn: {} as never,
+        completion: blocker,
+      };
+    });
+    const rejections: unknown[] = [];
+    const listener = (reason: unknown): void => {
+      rejections.push(reason);
+    };
+    process.on('unhandledRejection', listener);
+    try {
+      const service = ix.get(ISessionSwarmService);
+      const running = service.run({
+        callerAgentId: 'main',
+        tasks: [resumeSessionTask('agent-a')],
+      });
+      service.cancel({ callerAgentId: 'main' });
+      await expect(running).rejects.toThrow();
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(rejections).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', listener);
+    }
   });
 });
 
@@ -1359,7 +1391,7 @@ function agentHandle(
         if (serviceId === IAgentLoopService) {
           return {
             _serviceBrand: undefined,
-            status: () => ({ state: 'idle', pendingPromptIds: [], hasPendingRequests: false }),
+            snapshot: () => ({ state: 'idle' }),
           } as unknown as IAgentLoopService;
         }
         if (serviceId === IAgentUserToolService) return userToolServiceStub();

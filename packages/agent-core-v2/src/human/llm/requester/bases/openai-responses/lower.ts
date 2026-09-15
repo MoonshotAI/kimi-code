@@ -1,23 +1,7 @@
 import type { ContentPart, Message } from '#/llm/message';
 
+import type { ResponsesInputContentItem, ResponsesInputItem } from './contract';
 import { convertToolResultToPlainText } from '../tool-result-text';
-
-export type ResponsesInputContentItem =
-  | { type: 'input_text'; text: string }
-  | { type: 'input_image'; detail?: string; image_url: string }
-  | { type: 'input_file'; file_data: string; filename: string }
-  | { type: 'input_file'; file_url: string }
-  | { type: 'output_text'; text: string; annotations: unknown[] };
-
-export type ResponsesInputItem =
-  | { type: 'message'; role: string; content: ResponsesInputContentItem[] }
-  | { type: 'function_call'; call_id: string; name: string; arguments: string }
-  | { type: 'function_call_output'; call_id: string; output: string | ResponsesInputContentItem[] }
-  | {
-      type: 'reasoning';
-      summary: { type: 'summary_text'; text: string }[];
-      encrypted_content?: string;
-    };
 
 const OMITTED_AUDIO_PLACEHOLDER = '(audio omitted: unsupported audio format)';
 const OMITTED_VIDEO_PLACEHOLDER = '(video omitted: not supported by this provider)';

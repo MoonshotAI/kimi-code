@@ -11,6 +11,7 @@ export interface McpResolvedServer {
   readonly tools: readonly KosongTool[];
   readonly rawTools: readonly MCPToolDefinition[];
   readonly enabledNames: ReadonlySet<string>;
+  readonly deferred: boolean;
 }
 
 export interface IAgentMcpService {

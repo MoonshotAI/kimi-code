@@ -4,6 +4,10 @@
 
 MCP tool results can include text (`content`) and structured data (`structuredContent`). Kimi Code CLI makes both available to the agent and omits the structured copy only when it can confirm that a text block already contains the same complete JSON value. Text summaries and media do not replace structured records.
 
+Kimi Code CLI preserves embedded MCP attachments that cannot be delivered directly because of format or size limits. Embedded images, audio, and video are saved even when they can be delivered unchanged, because provider conversion or later history reduction may omit them. Session-attachment readers remain available without workspace filesystem access when the model supports the corresponding content. Originals are retained in the session's media storage instead of an evictable image cache. Saved originals, including images preserved during compression, have absolute paths and stable `kimi-file://` references. Pass a reference as the `path` to `Read` or `ReadMediaFile`; bytes are read from the current session's storage even when the workspace runtime cannot access it. Pagination keeps the reference, including after a fork. For binary formats that `Read` cannot open, its error includes a server-local path when available; an external converter must have access to that filesystem. Text attachments such as CSV, HTML, JSON, and plain SVG use readable extensions.
+
+Attachment paths and compression details share the tool-output budget. Large lists are saved to a text file, with a short pointer that remains visible when accompanying text is shortened; the agent can pass the list’s `kimi-file://` reference to `Read` and page through it. Canceling the tool stops subsequent attachment processing and signals active writes. If decoding or saving fails, the result explicitly reports that the original could not be preserved while retaining other usable output. Resource links are not automatically downloaded.
+
 ## Connection Methods
 
 Kimi Code CLI supports three MCP server connection methods:
@@ -58,6 +62,7 @@ Optional fields:
 | `headers` | `Record<string, string>` | HTTP, SSE | Static request headers appended to every request |
 | `bearerTokenEnvVar` | `string` | HTTP, SSE | Name of an environment variable that contains a bearer token |
 | `enabled` | `boolean` | All | Set to `false` to disable this server |
+| `deferred` | `boolean` | All | Experimental: set to `true` to let the model load this server's tools on demand. Defaults to `false` (always exposed inline). Prerequisites and behavior: [Loading tools on demand](#loading-tools-on-demand) |
 | `startupTimeoutMs` | `number` | All | Connection timeout from `1` to `2147483647` milliseconds; default `30000` |
 | `toolTimeoutMs` | `number` | All | Timeout from `1` to `2147483647` milliseconds for a single tool call |
 | `enabledTools` | `string[]` | All | Tool allowlist |
@@ -72,6 +77,30 @@ Plugins can also declare MCP servers in their manifest. Servers declared by a pl
 ::: warning Note
 stdio entries in a project-level `.kimi-code/mcp.json` execute local commands when a session starts. Only enable these in repositories you trust.
 :::
+
+## Loading tools on demand
+
+By default, every tool of a server goes straight into the model's top-level tool list; with many connected servers — or a single server that exposes many tools — those definitions occupy context for the whole session. Marking a server as deferred keeps its tools out of the top-level list: the model first sees a manifest of loadable tools, loads full definitions on demand through the built-in `select_tools` tool, and can call them in the same turn once loaded.
+
+Loading tools on demand is experimental and takes effect only when both prerequisites are met:
+
+- The `tool-select` experimental flag is on: set `KIMI_CODE_EXPERIMENTAL_TOOL_SELECT=1`, or write `tool-select = true` under `[experimental]` in `config.toml`; the master switch `KIMI_CODE_EXPERIMENTAL_FLAG=1` enables it too.
+- The current model declares the `dynamically_loaded_tools` capability: official models declare it automatically; for other models, add it to `capabilities` in `config.toml` — see [Configuration files](../configuration/config-files.md#models).
+
+With both prerequisites met, set `deferred: true` on the server entry in `mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "url": "https://mcp.example.com/mcp",
+      "deferred": true
+    }
+  }
+}
+```
+
+Servers without `deferred` are unaffected and always exposed inline; when a prerequisite is missing, the field is ignored with the same result. The authentication tool exposed by an OAuth server before authorization completes follows the same field.
 
 ## Tool Naming and Permissions
 

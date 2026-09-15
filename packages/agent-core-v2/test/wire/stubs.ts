@@ -157,11 +157,23 @@ export function stubAgentWire(
     seal: async () => {},
     appendRecord: () => {},
     readJournal: async function* () {},
+    readRestorable: async function* () {},
+    readHumanChain: () => [],
     flush,
     drainPersisted: async () => {},
     lineCount: () => 0,
     lastContextClearLine: () => undefined,
     journalPath: () => undefined,
+    journalRef: { tree: 'stub', branch: 'main' },
+    append: () => {},
+    read: async function* () {},
+    readRaw: async function* () {},
+    switchBranch: async () => {
+      throw new Error('stubAgentWire.switchBranch is not implemented');
+    },
+    branches: () => ['main'],
+    nextSeq: () => 1,
+    settled: async () => {},
   };
 }
 
@@ -171,7 +183,19 @@ export function stubWireJournal(journal: WireRecord[]): AgentWire {
     appendRecord: (record) => {
       journal.push(record);
     },
+    append: (record) => {
+      journal.push(record);
+    },
     readJournal: async function* () {
+      for (const record of journal) yield record;
+    },
+    readRestorable: async function* () {
+      for (const record of journal) yield record;
+    },
+    read: async function* () {
+      for (const record of journal) yield record;
+    },
+    readRaw: async function* () {
       for (const record of journal) yield record;
     },
   };

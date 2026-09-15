@@ -1,6 +1,6 @@
 import type {
-  AuthManagedUserInfoResult,
   AuthManagedUsageResult,
+  AuthManagedUserInfoResult,
   BearerTokenProvider,
   KimiOAuthLoginOptions,
   KimiOAuthLoginResult,

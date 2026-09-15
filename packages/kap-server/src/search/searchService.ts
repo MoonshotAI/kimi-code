@@ -356,7 +356,8 @@ export class GlobalSearchService implements IGlobalSearchService {
     }
     this.summaries = new Map(sessions.map((s) => [s.id, s]));
     this.lastSyncStartedAt = Date.now();
-    await backend.sync(sessions.map((s) => this.toSyncInput(s)));
+    const outcome = await backend.sync(sessions.map((s) => this.toSyncInput(s)));
+    if (outcome.truncated || outcome.failures > 0) this.requestSync();
   }
 
   private async listAllSessions(): Promise<SessionSummary[]> {
@@ -620,7 +621,7 @@ export class GlobalSearchService implements IGlobalSearchService {
     return {
       sessionId: doc.sessionId,
       workspaceId: doc.workspaceId,
-      sessionTitle: this.summaries.get(doc.sessionId)?.title ?? doc.sessionTitle,
+      sessionTitle: doc.sessionTitle,
       agentId: doc.agentId,
       role: doc.role,
       snippet:

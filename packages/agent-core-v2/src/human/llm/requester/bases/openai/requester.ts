@@ -1,10 +1,14 @@
 import OpenAI from 'openai';
+import { assign, shake } from 'radashi';
 
 import { headersToRecord } from '#/llm/errors';
 import { modelKey, type LlmModel } from '#/llm/model';
 import { toLlmSyntaxErrorMessage } from '#/llm/syntax-errors';
-import type { ProtocolBase } from '#/llm/protocol/base';
-import { resolveModelConnection, type ProtocolTrait, type TraitContext } from '#/llm/protocol/trait';
+import type { ProtocolBase, ProtocolRequesterOptions, TraitContext } from '#/llm/protocol/base';
+import { resolveModelConnection } from '#/llm/protocol/connection';
+import { applyThinking } from '#/llm/protocol/thinking';
+import { resolveMaxCompletionCap, type FormatRequestInput } from '#/llm/protocol/format';
+import { encodeReasoningEffortFallback } from '#/llm/thinking';
 import {
   mergeRequestHeaders,
   type LlmClientContext,
@@ -22,8 +26,23 @@ import {
   sanitizeToolCallId,
 } from '../tool-call-id';
 import { getOpenAILegacyModelCapability } from './capability';
-import { convertOpenAIError, openAIFormat, type OpenAIRequestParams } from './format';
-import { ReasoningKeyDialect } from './reasoning-key';
+import type { OpenAIWireMessage } from './contract';
+import type { OpenAITrait } from './trait';
+import {
+  assembleOpenAIRequest,
+  convertOpenAIError,
+  createOpenAIFormat,
+  defaultOpenAITool,
+  encodeOpenAICacheKey,
+  encodeOpenAIMaxCompletionTokens,
+  encodeOpenAIRequest,
+  encodeOpenAIThinkHistoryKwargs,
+  lowerOpenAIRequest,
+  parseOpenAIUsage,
+  responseFormatToOpenAI,
+  type OpenAIRequestParams,
+} from './format';
+import { DEFAULT_REASONING_KEY, ReasoningKeyDialect } from './reasoning-key';
 
 const OPENAI_CHAT_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
   normalize: (id) => sanitizeToolCallId(id, 64),
@@ -39,10 +58,84 @@ function createClient(model: LlmModel, headers: Record<string, string> | undefin
   });
 }
 
+export interface OpenAIRequesterOptions
+  extends ProtocolRequesterOptions<OpenAITrait>,
+    LlmRequesterOptions<OpenAI> {}
+
+export interface OpenAIRequestPlanOptions {
+  readonly trait?: OpenAITrait;
+  readonly reasoningKey?: string;
+}
+
+export function planOpenAIRequest(
+  input: FormatRequestInput,
+  options?: OpenAIRequestPlanOptions,
+): OpenAIRequestParams {
+  const trait = options?.trait;
+  const ctx: TraitContext = { model: input.model };
+  let kwargs: Record<string, unknown> = {};
+  if (input.cacheKey !== undefined) {
+    kwargs = trait?.cacheKey?.(input.cacheKey, ctx) ?? encodeOpenAICacheKey(input.cacheKey);
+  }
+  let preserveThinking = false;
+  if (input.thinking !== undefined) {
+    const applied = applyThinking(kwargs, input.thinking, trait?.thinking, ctx, (t) =>
+      encodeReasoningEffortFallback(t, ctx.model, trait?.strictThinkingValidation === true),
+    );
+    kwargs = applied.kwargs;
+    preserveThinking = applied.preserveThinking;
+  }
+  if (
+    trait?.thinking === undefined &&
+    input.thinking?.effort !== 'off' &&
+    kwargs['reasoning_effort'] === undefined &&
+    input.messages.some((message) => message.content.some((part) => part.type === 'think'))
+  ) {
+    kwargs = { ...kwargs, ...encodeOpenAIThinkHistoryKwargs() };
+  }
+  if (input.responseFormat !== undefined) {
+    kwargs = { ...kwargs, response_format: responseFormatToOpenAI(input.responseFormat) };
+  }
+  const cap = resolveMaxCompletionCap(input);
+  if (cap !== undefined) {
+    kwargs = {
+      ...kwargs,
+      ...(trait?.maxCompletionTokens?.(cap, ctx) ??
+        encodeOpenAIMaxCompletionTokens(ctx.model.model, cap)),
+    };
+  }
+  kwargs = shake(assign(kwargs, input.extraParams?.openai ?? {}));
+
+  const lowered = lowerOpenAIRequest(input, {
+    reasoningKey: options?.reasoningKey ?? DEFAULT_REASONING_KEY,
+    preserveThinking,
+    toolMessageConversion: input.toolMessageConversion ?? trait?.toolMessageConversion,
+  });
+  const converted = lowered.flatMap(({ source, message }) => {
+    if (trait?.convertMessage === undefined) {
+      return [message];
+    }
+    const hooked = trait.convertMessage(source, message, ctx);
+    return hooked === null ? [] : [hooked];
+  });
+  const history: readonly OpenAIWireMessage[] = input.systemPrompt
+    ? [{ role: 'system', content: input.systemPrompt }, ...converted]
+    : converted;
+  const merged = trait?.mergeHistory?.(history, ctx) ?? history;
+  const tools = input.tools.map(
+    (tool) => trait?.convertTool?.(tool, ctx) ?? defaultOpenAITool(tool),
+  );
+  const params = assembleOpenAIRequest(input, { messages: merged, tools, kwargs });
+  const finalParams = trait?.buildParams?.(params, ctx) ?? params;
+  return encodeOpenAIRequest(finalParams);
+}
+
 interface OpenAITransport {
-  readonly trait: ProtocolTrait | undefined;
+  readonly connection: OpenAIRequesterOptions['connection'];
+  readonly trait: OpenAITrait | undefined;
   readonly ctx: TraitContext;
-  readonly dialect: ReasoningKeyDialect;
+  readonly format: ReturnType<typeof createOpenAIFormat>;
+  readonly reasoning: ReasoningKeyDialect;
   readonly resolveClient: (request: LlmClientContext) => OpenAI;
   readonly signal: AbortSignal;
   readonly onEvent?: (event: LlmRequestEvent) => void;
@@ -52,11 +145,11 @@ async function internalGenerate(
   request: OpenAIRequestParams,
   transport: OpenAITransport,
 ): Promise<void> {
-  const { trait, ctx, dialect, resolveClient, signal, onEvent } = transport;
+  const { connection, trait, ctx, format, reasoning, resolveClient, signal, onEvent } = transport;
   const client = resolveClient({
     model: ctx.model,
     headers: mergeRequestHeaders(
-      mergeRequestHeaders(trait?.defaultHeaders?.(ctx), ctx.model.defaultHeaders),
+      mergeRequestHeaders(connection?.defaultHeaders?.(ctx), ctx.model.defaultHeaders),
       request.headers,
     ),
   });
@@ -65,10 +158,19 @@ async function internalGenerate(
     .create(request.params, { signal })
     .withResponse();
   onEvent?.({ type: 'llm.streaming.headers', headers: headersToRecord(response.headers) ?? {} });
-  const parse = openAIFormat.createStreamParser({ trait, ctx });
+  const parse = format.createStreamParser({
+    reasoningKey: trait?.reasoningKey,
+    resolveUsage:
+      trait?.extractUsage === undefined
+        ? undefined
+        : (chunk, defaultUsage) => {
+            const hooked = trait.extractUsage?.(chunk);
+            return hooked !== undefined ? parseOpenAIUsage(hooked) : defaultUsage;
+          },
+  });
   let messageId: string | undefined;
   for await (const chunk of stream) {
-    dialect.observe(chunk.choices?.[0]?.delta);
+    reasoning.observe(chunk.choices?.[0]?.delta);
     let failed = false;
     parse(chunk, {
       onDelta: (part) => onEvent?.({ type: 'llm.streaming.part', part }),
@@ -91,22 +193,23 @@ async function internalGenerate(
   onEvent?.({ type: 'llm.done' });
 }
 
-export function createOpenAIRequester(
-  trait?: ProtocolTrait,
-  options?: LlmRequesterOptions<OpenAI>,
-): LlmRequester {
+export function createOpenAIRequester(options?: OpenAIRequesterOptions): LlmRequester {
+  const connection = options?.connection;
+  const trait = options?.trait;
+  const convertError = options?.convertError;
+  const format = createOpenAIFormat();
   const resolveClient =
     options?.clientFactory ??
     ((request: LlmClientContext) => createClient(request.model, request.headers));
-  const dialects = new Map<string, ReasoningKeyDialect>();
-  const dialectFor = (ctx: TraitContext): ReasoningKeyDialect => {
+  const reasoningByModel = new Map<string, ReasoningKeyDialect>();
+  const reasoningFor = (ctx: TraitContext): ReasoningKeyDialect => {
     const key = modelKey(ctx.model);
-    let dialect = dialects.get(key);
-    if (dialect === undefined) {
-      dialect = new ReasoningKeyDialect(trait?.reasoningKey?.(ctx));
-      dialects.set(key, dialect);
+    let reasoning = reasoningByModel.get(key);
+    if (reasoning === undefined) {
+      reasoning = new ReasoningKeyDialect(trait?.reasoningKey);
+      reasoningByModel.set(key, reasoning);
     }
-    return dialect;
+    return reasoning;
   };
   return {
     async generate(
@@ -114,52 +217,52 @@ export function createOpenAIRequester(
       content: LlmRequestContent,
       control: LlmRequestControl,
     ): Promise<void> {
-      const model = resolveModelConnection(config.model, trait);
-      const { systemPrompt, tools = [] } = config;
+      const model = resolveModelConnection(config.model, connection);
+      const { tools = [] } = config;
       const { messages } = content;
       const { signal, onEvent } = control;
       const ctx: TraitContext = { model };
-      let dialect: ReasoningKeyDialect;
+      let reasoning: ReasoningKeyDialect;
       let request: OpenAIRequestParams;
       try {
-        dialect = dialectFor(ctx);
-        const policy = trait?.toolCallIdPolicy?.(ctx) ?? OPENAI_CHAT_TOOL_CALL_ID_POLICY;
-        request = openAIFormat.formatRequest(
+        reasoning = reasoningFor(ctx);
+        const policy = trait?.toolCallIdPolicy ?? OPENAI_CHAT_TOOL_CALL_ID_POLICY;
+        request = planOpenAIRequest(
           {
+            ...config,
             model,
             messages: normalizeToolCallIdsForProvider(messages, policy),
-            systemPrompt,
             tools,
-            trait,
-            ctx,
-            cacheKey: config.cacheKey,
-            thinking: config.thinking,
-            responseFormat: config.responseFormat,
-            maxCompletionTokens: config.maxCompletionTokens,
             usedContextTokens: content.usedContextTokens,
-            maxContextTokens: config.maxContextTokens,
-            extraParams: config.extraParams,
-            toolMessageConversion: config.toolMessageConversion,
           },
-          { reasoningKey: dialect.outboundKey() },
+          { trait, reasoningKey: reasoning.outboundKey() },
         );
       } catch (error) {
         onEvent?.({ type: 'llm.failed.syntax', error: toLlmSyntaxErrorMessage(error) });
         return;
       }
       try {
-        await internalGenerate(request, { trait, ctx, dialect, resolveClient, signal, onEvent });
+        await internalGenerate(request, {
+          connection,
+          trait,
+          ctx,
+          format,
+          reasoning,
+          resolveClient,
+          signal,
+          onEvent,
+        });
       } catch (error) {
         onEvent?.({
           type: 'llm.failed.remote',
-          error: convertOpenAIError(error, (e) => trait?.convertError?.(e, ctx)),
+          error: convertOpenAIError(error, (e) => convertError?.(e)),
         });
       }
     },
   };
 }
 
-export const openAIBase: ProtocolBase = {
+export const openAIBase: ProtocolBase<OpenAITrait> = {
   capability: getOpenAILegacyModelCapability,
   createRequester: createOpenAIRequester,
 };

@@ -25,12 +25,11 @@ import type { WarningIssued } from '@moonshot-ai/agent-core-v2/agent/profile/pro
 import type {
   PromptAborted,
   PromptCompleted,
+  PromptQueued,
   PromptStarted,
   PromptSteered,
   PromptSubmitted,
-} from '@moonshot-ai/agent-core-v2/agent/prompt/promptService';
-import type { PromptAccepted } from '@moonshot-ai/agent-core-v2/agent/prompt/promptOps';
-import type { PromptQueued } from '@moonshot-ai/agent-core-v2/agent/prompt/promptService';
+} from '@moonshot-ai/agent-core-v2/agent/prompt/promptEvents';
 import type {
   ShellCompleted,
   ShellOutput,
@@ -99,7 +98,6 @@ export interface ProjectorInteraction {
 
 type PlanRevisionEvent = { readonly type: 'plan.revision' } & PlanRevision;
 
-type PromptAcceptedEvent = { readonly type: 'prompt.accepted' } & PromptAccepted;
 type PromptQueuedEvent = { readonly type: 'prompt.queued' } & PromptQueued;
 type PromptSubmittedEvent = { readonly type: 'prompt.submitted' } & PromptSubmitted;
 type PromptStartedEvent = { readonly type: 'prompt.started' } & PromptStarted;
@@ -137,7 +135,6 @@ export type ProjectorBusEvent =
   | ({ readonly type: 'subagent.suspended' } & SubagentSuspended)
   | ({ readonly type: 'goal.updated' } & GoalUpdated)
   | ({ readonly type: 'agent.status.updated' } & AgentStatusUpdated)
-  | PromptAcceptedEvent
   | PromptQueuedEvent
   | PromptSubmittedEvent
   | PromptStartedEvent
@@ -339,8 +336,6 @@ export class AgentTranscriptProjector {
         return this.onGoalUpdated(event);
       case 'agent.status.updated':
         return this.onAgentStatusUpdated(event);
-      case 'prompt.accepted':
-        return this.onPromptAccepted(event);
       case 'prompt.queued':
         return this.onPromptQueued(event);
       case 'prompt.submitted':
@@ -1352,20 +1347,6 @@ export class AgentTranscriptProjector {
     eventPayload: unknown,
   ): TranscriptOperation {
     return this.markerOp('notice', { level, message, event: eventPayload });
-  }
-
-  private onPromptAccepted(event: PromptAcceptedEvent): TranscriptOperation[] {
-    const prompt = this.upsertPrompt(event.promptId, () => ({
-      promptId: event.promptId,
-      status: 'running',
-      userMessageId: event.promptId,
-      content:
-        event.content === undefined
-          ? undefined
-          : projectPromptContentParts(event.content as readonly ContentPart[]),
-      createdAt: nowIso(),
-    }));
-    return [{ op: 'prompt.upsert', prompt }];
   }
 
   private onPromptQueued(event: PromptQueuedEvent): TranscriptOperation[] {

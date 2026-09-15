@@ -14,6 +14,8 @@ import { ProfileBind } from '#/agent/profile/profileOps';
 import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
+import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
+import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import '#/agent/permissionMode/permissionModeService';
@@ -56,7 +58,6 @@ import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
 import '#/agent/mcp/mcpService';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import '#/wire/wireService';
 import '#/state/eventDispatcherService';
 import { IAgentTaskService } from '#/agent/task/task';
 import { AgentCronService, IAgentCronService } from '#/features/cron/cronService';
@@ -76,20 +77,26 @@ import { ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import '#/app/event/eventBusService';
 import { TurnStarted } from '#/agent/loop/turnEvents';
-import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
 import { ILogService } from '#/_base/log/log';
 import { IPluginService } from '#/app/plugin/plugin';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { BlobStoreService } from '#/persistence/backends/node-fs/blobStoreService';
+import { IBlobStore } from '#/persistence/interface/blobStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { createWireMetadataRecord, type WireRecord } from '#/wire/record';
+import { IWireService } from '#/wire/wire';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
+import type {
+  MachineEngine,
+  MachineEngineAttachBundle,
+} from '#/agent/loop/machine/engine';
+import type { AgentEventStore } from '#human/agent/slices';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -145,6 +152,64 @@ const pluginServiceStub = {
   enabledHooks: async () => [],
 } as unknown as IPluginService;
 
+function stubAttachStore(): AgentEventStore {
+  return {
+    ref: { tree: 'test', branch: 'main' },
+    getState: () => ({
+      history: [],
+      queue: [],
+      notifications: [],
+      reminders: [],
+      turnIndex: { nextTurnId: 0 },
+    }),
+    subscribe: () => () => {},
+    dispatch: () => Promise.resolve({ kind: 'entry', seq: 0, ts: 0, type: 'noop', payload: null }),
+    registerSlice: () => Promise.resolve(() => {}),
+    reset: () => Promise.resolve(),
+    flush: () => Promise.resolve(),
+    close: () => Promise.resolve(),
+  } as unknown as AgentEventStore;
+}
+
+function stubAttachEngine(): MachineEngine {
+  return {
+    submit: () => {},
+    steer: () => {},
+    notify: () => {},
+    remind: () => {},
+    cancelQueueItem: () => {},
+    abort: () => {},
+    pause: () => {},
+    resume: () => {},
+    resetHistory: () => Promise.resolve(),
+    resetJournal: () => Promise.resolve(),
+    stop: () => {},
+    snapshot: () => ({
+      running: false,
+      aborting: false,
+      waitingForBackground: false,
+      paused: false,
+      queue: [],
+      queueLength: 0,
+      queueIds: [],
+      notificationCount: 0,
+      reminderCount: 0,
+      backgroundCount: 0,
+    }),
+    currentStep: () => 0,
+    lastFinish: () => undefined,
+    toolExtras: new Map(),
+    handleToolProgress: () => {},
+  };
+}
+
+function stubAttachBundle(): MachineEngineAttachBundle {
+  return {
+    store: stubAttachStore(),
+    request: { model: { provider: 'test', model: 'test' } },
+  } as unknown as MachineEngineAttachBundle;
+}
+
 function recordingAppendLog(initial: readonly WireRecord[] = []): {
   readonly appended: WireRecord[];
   readonly store: IAppendLogStore;
@@ -186,15 +251,6 @@ function recordingAppendLog(initial: readonly WireRecord[] = []): {
   };
 }
 
-function stubBlobPassThrough(ix: TestInstantiationService): void {
-  ix.stub(IAgentBlobService, {
-    _serviceBrand: undefined,
-    offloadParts: async (parts) => parts,
-    loadParts: async (parts) => parts,
-    isBlobRef: () => false,
-  } satisfies IAgentBlobService);
-}
-
 describe('AgentLifecycleService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
@@ -202,12 +258,11 @@ describe('AgentLifecycleService', () => {
   let atomicDocs: Map<string, unknown>;
   let permissionModeSetMode: ReturnType<typeof vi.fn>;
   let stopAllOnExit: ReturnType<typeof vi.fn>;
+  let suppressAllTerminalNotifications: ReturnType<typeof vi.fn>;
   let loopActiveTurnId: number | undefined;
   let loopPendingPromptIds: string[];
   let loopCancel: ReturnType<typeof vi.fn<IAgentLoopService['cancel']>>;
-  let loopCancelQueued: ReturnType<typeof vi.fn<IAgentLoopService['cancelQueued']>>;
   let loopSettled: ReturnType<typeof vi.fn<IAgentLoopService['settled']>>;
-  let promptDrain: ReturnType<typeof vi.fn<IAgentPromptService['drain']>>;
   let beforeExecuteListeners: number;
   let didExecuteHookIds: string[];
 
@@ -222,7 +277,8 @@ describe('AgentLifecycleService', () => {
     ix.get(IAgentStateService).contributeState(permissionModeConfiguredKey);
     ix.stub(IAppendLogStore, recordingAppendLog().store);
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
-    stubBlobPassThrough(ix);
+    ix.stub(IBlobStore, new BlobStoreService(new InMemoryStorageService()));
+    ix.set(ISessionMediaStore, new SyncDescriptor(SessionMediaStoreService));
     registerAgent = vi.fn<ISessionMetadata['registerAgent']>().mockResolvedValue(undefined);
     atomicDocs = new Map();
     ix.stub(ISessionContext, {
@@ -264,6 +320,7 @@ describe('AgentLifecycleService', () => {
       _serviceBrand: undefined,
       homeDir: '/tmp/kimi-agentLifecycle-home',
       cwd: '/tmp/kimi-agentLifecycle-home',
+      getEnv: () => undefined,
     } as unknown as IBootstrapService);
     ix.stub(IFlagService, {
       _serviceBrand: undefined,
@@ -332,14 +389,14 @@ describe('AgentLifecycleService', () => {
     } as unknown as IAgentToolExecutorService);
     loopActiveTurnId = undefined;
     loopPendingPromptIds = [];
-    loopCancel = vi.fn<IAgentLoopService['cancel']>((turnId) => {
-      if (turnId === undefined) {
+    loopCancel = vi.fn<IAgentLoopService['cancel']>((target) => {
+      if (target?.promptId !== undefined) {
+        loopPendingPromptIds = loopPendingPromptIds.filter((id) => id !== target.promptId);
+        return true;
+      }
+      if (target?.turnId === undefined) {
         loopActiveTurnId = undefined;
       }
-      return true;
-    });
-    loopCancelQueued = vi.fn<IAgentLoopService['cancelQueued']>((queueId) => {
-      loopPendingPromptIds = loopPendingPromptIds.filter((id) => id !== queueId);
       return true;
     });
     loopSettled = vi.fn<IAgentLoopService['settled']>(async () => {
@@ -354,23 +411,26 @@ describe('AgentLifecycleService', () => {
         onDidFinishStep: { register: () => ({ dispose: () => {} }) },
       },
       registerLoopErrorHandler: () => ({ dispose: () => {} }),
-      status: () => ({
+      snapshot: () => ({
         state: loopActiveTurnId === undefined ? 'idle' : 'running',
         activeTurnId: loopActiveTurnId,
-        pendingPromptIds: loopPendingPromptIds,
+        activePromptId: undefined,
+        queue: loopPendingPromptIds.map((promptId) => ({
+          message: { role: 'user', content: [] },
+          meta: { promptId },
+        })),
+        notificationCount: 0,
+        paused: false,
         hasPendingRequests: loopActiveTurnId !== undefined || loopPendingPromptIds.length > 0,
+        turn: undefined,
+        activeTraceId: undefined,
       }),
       cancel: loopCancel,
-      cancelQueued: loopCancelQueued,
       settled: loopSettled,
       tryAcquireQuiescence: vi.fn(() => ({ dispose: vi.fn() })),
+      buildAttachBundle: () => stubAttachBundle(),
+      attachEngine: () => stubAttachEngine(),
     } as unknown as IAgentLoopService);
-    promptDrain = vi.fn<IAgentPromptService['drain']>(async () => {});
-    ix.stub(IAgentPromptService, {
-      _serviceBrand: undefined,
-      drain: promptDrain,
-      list: () => ({ launching: false, active: undefined, pending: [] }),
-    } as unknown as IAgentPromptService);
     ix.stub(ITelemetryService, {
       _serviceBrand: undefined,
       track2: () => {},
@@ -460,9 +520,11 @@ describe('AgentLifecycleService', () => {
       isBaselineServer: () => true,
     } satisfies ISessionMcpHandle);
     stopAllOnExit = vi.fn(async () => []);
+    suppressAllTerminalNotifications = vi.fn(async () => {});
     ix.stub(IAgentTaskService, {
       _serviceBrand: undefined,
       stopAllOnExit,
+      suppressAllTerminalNotifications,
     } as unknown as IAgentTaskService);
     ix.stub(IAgentFullCompactionService, {
       _serviceBrand: undefined,
@@ -529,7 +591,11 @@ describe('AgentLifecycleService', () => {
   it('remove flushes the agent wire journal before disposal', async () => {
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'main' });
-    const dispatcher = svc.handleOf('main')!.accessor.get(IEventDispatcher);
+    const handle = svc.handleOf('main')!;
+    const dispatcher = handle.accessor.get(IEventDispatcher);
+    expect((dispatcher as unknown as { wire: IWireService }).wire).toBe(
+      handle.accessor.get(IWireService),
+    );
     const flush = vi.spyOn(dispatcher, 'flush');
     await svc.remove(svc.get('main')!);
     expect(flush).toHaveBeenCalled();
@@ -705,7 +771,14 @@ describe('AgentLifecycleService', () => {
     await svc.remove(main);
 
     expect(stopAllOnExit).toHaveBeenCalledWith('Session closed');
-    expect(promptDrain).toHaveBeenCalledOnce();
+    expect(loopSettled).toHaveBeenCalled();
+    expect(suppressAllTerminalNotifications).toHaveBeenCalledOnce();
+    expect(suppressAllTerminalNotifications.mock.invocationCallOrder[0]).toBeLessThan(
+      loopSettled.mock.invocationCallOrder[0]!,
+    );
+    expect(stopAllOnExit.mock.invocationCallOrder[0]).toBeGreaterThan(
+      loopSettled.mock.invocationCallOrder[0]!,
+    );
   });
 
   it('remove waits for prompt intake to drain before disposing the agent scope', async () => {
@@ -714,7 +787,7 @@ describe('AgentLifecycleService', () => {
     const drainStarted = new Promise<void>((resolve) => {
       markDrainStarted = resolve;
     });
-    promptDrain.mockImplementationOnce(() => {
+    loopSettled.mockImplementationOnce(() => {
       markDrainStarted();
       return new Promise<void>((resolve) => {
         releaseDrain = resolve;
@@ -744,8 +817,11 @@ describe('AgentLifecycleService', () => {
 
     await svc.remove(main);
 
-    expect(loopCancelQueued.mock.calls.map(([queueId]) => queueId)).toEqual(['q2', 'q3']);
-    expect(loopCancel.mock.calls.map(([turnId]) => turnId)).toEqual([undefined]);
+    expect(loopCancel.mock.calls.map(([target]) => target)).toEqual([
+      { promptId: 'q2' },
+      { promptId: 'q3' },
+      undefined,
+    ]);
     expect(loopSettled).toHaveBeenCalledOnce();
   });
 

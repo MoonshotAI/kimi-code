@@ -97,7 +97,7 @@ function assistantContentPartToUpdate(
       delta: part.text,
     });
   }
-  if (part.type === 'think' && part.think) {
+  if (part.type === 'think' && part.think && part.hidden !== true) {
     return thinkingDeltaToSessionUpdate(sessionId, {
       type: 'thinking.delta',
       turnId,

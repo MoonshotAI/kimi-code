@@ -1,106 +1,97 @@
 /**
- * Minimal `/api/v1/ws` client for the transcript stream — **block grade**.
+ * Minimal `/api/v3/ws` client for the message protocol.
  *
- * The socket is used exclusively as an incremental channel, at the cheapest
- * grade that keeps the live view correct: 'block' drops the per-token
- * `append` frames (the bulk of transcript traffic) and still receives the
- * whole-state frame upserts at every flush point, so content converges
- * without a REST round-trip. After the
- * upgrade, the client sends `client_hello` with the session in
- * `subscriptions`, then a `subscribe_v2` frame carrying the opt-in
- * `transcript` grade map (plus the `transcript_since` cursor when a
- * watermark is known), and forwards every `transcript.ops` frame to the
- * consumer. Full state never comes from here:
- * `transcript.reset` snapshots are ignored by the store (they are surfaced
- * through the optional `onReset` handler for observers like the audit panel),
- * because complete data (initial load and any refresh) is read back from the
- * REST transcript API, paged from the tail backwards.
+ * Handshake per the protocol contract: the server sends `hello` right after
+ * the upgrade, the client answers with `subscribe` (`{id, session_id,
+ * agent_ids?, omit?}`), the server replies with `ack` (matched by `id`) and
+ * then streams the recovery payload followed by live traffic — one ordered
+ * session sequence, no cursors anywhere. Heartbeat is the WS protocol-level
+ * ping/pong, handled by the WebSocket implementation itself.
  *
- * Loss signals are surfaced, not repaired locally — transcript frames are
- * volatile by design (never journaled), so the consumer answers them with a
- * REST refresh: `resync_required` → `onResyncRequired`, and the
- * `subscribe_v2` ack after every established socket → `onReconnected` (the
- * server attaches the stream only after processing `subscribe_v2`; ops
- * emitted between the REST page load and that point are missed).
+ * Every data frame is validated against the shared
+ * `serverMessageSchema`; control frames (`hello` / `ack` / `error`) are
+ * handled here, everything else is forwarded through `onMessage`. The union
+ * is open: a frame whose `type` is not in the current schema is a future
+ * message type and is ignored silently; a frame that names a known type but
+ * fails validation is a server bug and surfaces via `onInvalidFrame`.
  *
- * The bearer token is presented at the upgrade through the
- * `kimi-code.bearer.<token>` subprotocol (the only credential channel a
- * browser WebSocket has).
+ * A drop is answered with a backoff reconnect and a fresh subscribe — the
+ * recovery payload is idempotent, so the consumer's only job on `onAck` is
+ * to run its REST tail catch-up. The bearer token rides the
+ * `kimi-code.bearer.<token>` subprotocol at the upgrade (the only
+ * credential channel a browser WebSocket has).
  */
 
-import {
-  transcriptOpsEventSchema,
-  transcriptResetEventSchema,
-  type AgentTranscriptSnapshot,
-  type TranscriptOperation,
-} from '@moonshot-ai/transcript';
+import { serverMessageSchema, type ServerMessage } from '@moonshot-ai/kap-server/protocol';
 
 import type { WsLike, WsLikeCtor } from '../channel/wsLike';
 
-/** Envelope/payload metadata carried alongside a transcript frame (for auditing + seq tracking). */
-export interface TranscriptFrameMeta {
-  /** Envelope `timestamp` (server send time, ISO); absent on legacy servers. */
-  readonly at?: string | undefined;
-  /** Op-batch sequence number (payload `seq`); absent on legacy servers. */
-  readonly seq?: number | undefined;
+const WS_BEARER_PROTOCOL_PREFIX = 'kimi-code.bearer.';
+
+const KNOWN_MESSAGE_TYPES: ReadonlySet<string> = new Set([
+  'turn',
+  'step',
+  'user',
+  'assistant',
+  'assistant.delta',
+  'thinking',
+  'thinking.delta',
+  'tool_call',
+  'tool_call.delta',
+  'tool.progress',
+  'system',
+  'interaction',
+  'task',
+  'todo',
+  'session.state',
+  'session',
+  'workspace',
+  'config',
+  'config.warning',
+  'model_catalog',
+  'plugin',
+  'capability',
+  'hello',
+  'ack',
+  'error',
+]);
+
+export interface ChatWsHandlers {
+  /** Any validated non-control server message (entity, delta, state, global). */
+  onMessage: (message: ServerMessage) => void;
+  /** The subscribe ack (code 0 = subscribed) — fires on every (re)subscribe. */
+  onAck: (code: number, msg?: string) => void;
+  /** Protocol-level `error` frame (auth failure, unknown frame, slow consumer). */
+  onProtocolError: (code: number, msg: string) => void;
+  /** A frame naming a KNOWN type failed schema validation (server bug). */
+  onInvalidFrame?: (raw: unknown) => void;
+  /** The socket dropped and a reconnect attempt is scheduled. */
+  onReconnectScheduled?: (attempt: number) => void;
 }
 
-export interface TranscriptWsHandlers {
-  /** Incremental L2 op batch for the agent (the only data frame consumed). */
-  onOps: (agentId: string, ops: readonly TranscriptOperation[], meta?: TranscriptFrameMeta) => void;
-  /**
-   * Baseline snapshot frame. The chat consumer deliberately ignores these
-   * (full state is REST-sourced) — the handler exists for observers such as
-   * the audit panel that want to record every frame on the wire.
-   */
-  onReset?: (
-    agentId: string,
-    snapshot: AgentTranscriptSnapshot,
-    hasMoreOlder: boolean,
-    meta?: TranscriptFrameMeta,
-  ) => void;
-  /** Server signalled desync for our session — consumer should REST-refresh. */
-  onResyncRequired: () => void;
-  /** Socket re-established after a drop — volatile ops were missed meanwhile. */
-  onReconnected: () => void;
-}
-
-export interface TranscriptWsOptions {
-  /** Server base URL (`http(s)://host:port`) or a full `ws(s)://…/api/v1/ws` URL. */
+export interface ChatWsOptions {
+  /** Server base URL (`http(s)://host:port`) or a full `ws(s)://…/api/v3/ws` URL. */
   readonly url: string;
-  readonly token?: string | undefined;
+  readonly token?: string;
   readonly sessionId: string;
-  readonly agentId: string;
-  readonly handlers: TranscriptWsHandlers;
-  /**
-   * Returns the caller's current op-batch watermark at (re)subscribe time;
-   * when defined it is sent as the `transcript_since` cursor so a sequenced
-   * server replays missed batches instead of sending a baseline reset.
-   */
-  readonly getSince?: (() => number | undefined) | undefined;
+  /** Agents to subscribe; defaults to all agents of the session when empty. */
+  readonly agentIds?: readonly string[];
+  /** Message types to exclude from the subscription (exact `type` names). */
+  readonly omit?: readonly string[];
+  readonly handlers: ChatWsHandlers;
   /** WebSocket implementation; defaults to the global `WebSocket`. */
   readonly WebSocketImpl?: WsLikeCtor;
   /** Base delay (ms) for the reconnect backoff. Default `500`. */
   readonly reconnectDelayMs?: number;
 }
 
-interface ServerFrame {
-  readonly type: string;
-  readonly id?: string;
-  readonly code?: number;
-  readonly timestamp?: string;
-  readonly payload?: unknown;
-}
-
-const WS_BEARER_PROTOCOL_PREFIX = 'kimi-code.bearer.';
-
-export class TranscriptWs {
+export class ChatWs {
   private readonly wsUrl: string;
   private readonly token?: string;
   private readonly sessionId: string;
-  private readonly agentId: string;
-  private readonly handlers: TranscriptWsHandlers;
-  private readonly getSince?: (() => number | undefined) | undefined;
+  private readonly agentIds?: readonly string[];
+  private readonly omit?: readonly string[];
+  private readonly handlers: ChatWsHandlers;
   private readonly WsCtor: WsLikeCtor;
   private readonly reconnectDelayMs: number;
 
@@ -108,17 +99,15 @@ export class TranscriptWs {
   private manualClose = false;
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
-  private helloId: string | undefined;
-  private subscribeV2Id: string | undefined;
-  private subscribeV2Acked = false;
+  private subscribeId = 0;
 
-  constructor(opts: TranscriptWsOptions) {
-    this.wsUrl = toWsUrl(opts.url);
+  constructor(opts: ChatWsOptions) {
+    this.wsUrl = toWsV3Url(opts.url);
     this.token = opts.token;
     this.sessionId = opts.sessionId;
-    this.agentId = opts.agentId;
+    this.agentIds = opts.agentIds;
+    this.omit = opts.omit;
     this.handlers = opts.handlers;
-    this.getSince = opts.getSince;
     const ctor = opts.WebSocketImpl ?? (globalThis.WebSocket as unknown as WsLikeCtor | undefined);
     if (ctor === undefined) {
       throw new Error('no WebSocket implementation available; pass WebSocketImpl');
@@ -140,6 +129,25 @@ export class TranscriptWs {
     ws?.close();
   }
 
+  /** Force a reconnect (debug/testing): drop the socket and re-subscribe after `delayMs`. */
+  reconnect(delayMs = 0): void {
+    if (this.manualClose) return;
+    if (this.reconnectTimer !== undefined) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+    const ws = this.ws;
+    this.ws = undefined;
+    ws?.close();
+    this.reconnectAttempt += 1;
+    this.handlers.onReconnectScheduled?.(this.reconnectAttempt);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = undefined;
+      this.connect();
+    }, delayMs);
+    this.reconnectTimer.unref?.();
+  }
+
   private connect(): void {
     const protocols =
       this.token !== undefined && this.token.length > 0
@@ -155,108 +163,68 @@ export class TranscriptWs {
     this.ws = ws;
     ws.addEventListener('open', () => {
       this.reconnectAttempt = 0;
-      this.helloId = `kimi-inspect-${Date.now().toString(36)}`;
-      this.subscribeV2Id = `${this.helloId}-sub`;
-      this.subscribeV2Acked = false;
-      const since = this.getSince?.();
-      this.send({
-        type: 'client_hello',
-        id: this.helloId,
-        payload: {
-          client_id: 'kimi-inspect',
-          subscriptions: [this.sessionId],
-        },
-      });
-      // Transcript grades ride only `subscribe_v2` — sent right after the
-      // hello on the same socket, so the server processes them in order.
-      this.send({
-        type: 'subscribe_v2',
-        id: this.subscribeV2Id,
-        payload: {
-          session_id: this.sessionId,
-          transcript: { [this.agentId]: 'block' },
-          transcript_since: since !== undefined ? { [this.agentId]: since } : undefined,
-        },
-      });
-      // The reconcile fires on the subscribe_v2 ACK (see onMessage) — the
-      // server attaches the transcript stream only after processing
-      // subscribe_v2, so refreshing at open could finish before the
-      // subscription is active and still miss the ops in between.
     });
     ws.addEventListener('message', (event: { data: unknown }) => {
       this.onMessage(event.data);
     });
     ws.addEventListener('close', () => {
-      // Stale socket (a manual close already cleared `this.ws`).
       if (this.ws !== ws) return;
       this.ws = undefined;
       if (!this.manualClose) this.scheduleReconnect();
     });
-    ws.addEventListener('error', () => {
-      // The 'close' event always follows 'error'; reconnect logic lives there.
-    });
+    ws.addEventListener('error', () => {});
   }
 
   private onMessage(raw: unknown): void {
-    let frame: ServerFrame;
+    let frame: unknown;
     try {
-      frame = JSON.parse(typeof raw === 'string' ? raw : String(raw)) as ServerFrame;
+      frame = JSON.parse(typeof raw === 'string' ? raw : String(raw));
     } catch {
+      this.handlers.onInvalidFrame?.(raw);
       return;
     }
-    switch (frame.type) {
-      case 'ack': {
-        // The subscribe_v2 ack: the server has attached the transcript stream
-        // by now — reconcile once per socket (ops emitted between the REST
-        // page load and this point are missed; the consumer refreshes).
-        if (!this.subscribeV2Acked && frame.id !== undefined && frame.id === this.subscribeV2Id) {
-          this.subscribeV2Acked = true;
-          this.handlers.onReconnected();
-        }
-        return;
+    const parsed = serverMessageSchema.safeParse(frame);
+    if (!parsed.success) {
+      const type = (frame as { readonly type?: unknown } | null)?.type;
+      if (typeof type !== 'string' || KNOWN_MESSAGE_TYPES.has(type)) {
+        this.handlers.onInvalidFrame?.(frame);
       }
-      case 'transcript.ops': {
-        const parsed = transcriptOpsEventSchema.safeParse(frame.payload);
-        if (!parsed.success) return;
-        this.handlers.onOps(parsed.data.agent_id, parsed.data.ops, {
-          at: frame.timestamp,
-          seq: parsed.data.seq,
+      return;
+    }
+    const message = parsed.data;
+    switch (message.type) {
+      case 'hello': {
+        this.subscribeId += 1;
+        this.send({
+          type: 'subscribe',
+          id: this.subscribeId,
+          session_id: this.sessionId,
+          agent_ids: this.agentIds !== undefined && this.agentIds.length > 0 ? [...this.agentIds] : undefined,
+          omit: this.omit !== undefined && this.omit.length > 0 ? [...this.omit] : undefined,
         });
         return;
       }
-      case 'transcript.reset': {
-        // Snapshots are deliberately ignored by the chat store: full state is
-        // REST-sourced. Surface them to optional observers (audit panel).
-        if (this.handlers.onReset === undefined) return;
-        const parsed = transcriptResetEventSchema.safeParse(frame.payload);
-        if (!parsed.success) return;
-        this.handlers.onReset(
-          parsed.data.agent_id,
-          parsed.data.snapshot,
-          parsed.data.has_more_older,
-          { at: frame.timestamp, seq: parsed.data.seq },
-        );
+      case 'ack': {
+        if (message.id === this.subscribeId) {
+          this.handlers.onAck(message.code, message.msg);
+        }
         return;
       }
-      case 'ping': {
-        const nonce = (frame.payload as { nonce?: unknown } | undefined)?.nonce;
-        this.send({ type: 'pong', payload: { nonce } });
+      case 'error': {
+        this.handlers.onProtocolError(message.code, message.msg);
         return;
       }
-      case 'resync_required': {
-        const sessionId = (frame.payload as { session_id?: unknown } | undefined)?.session_id;
-        if (sessionId === this.sessionId) this.handlers.onResyncRequired();
+      default: {
+        this.handlers.onMessage(message);
         return;
       }
-      default:
-        // server_hello / ack / legacy session events — not consumed here.
-        return;
     }
   }
 
   private scheduleReconnect(): void {
     if (this.manualClose) return;
     this.reconnectAttempt += 1;
+    this.handlers.onReconnectScheduled?.(this.reconnectAttempt);
     const delay = Math.min(this.reconnectDelayMs * 2 ** (this.reconnectAttempt - 1), 10_000);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined;
@@ -271,21 +239,20 @@ export class TranscriptWs {
     try {
       ws.send(JSON.stringify(frame));
     } catch {
-      // best-effort; the close handler handles teardown
     }
   }
 }
 
-/** Derive the `/api/v1/ws` WebSocket URL from a server base URL (or pass a full ws URL through). */
-function toWsUrl(base: string): string {
+/** Derive the `/api/v3/ws` WebSocket URL from a server base URL (or pass a full ws URL through). */
+function toWsV3Url(base: string): string {
   const url = new URL(base);
   if (url.protocol === 'http:') url.protocol = 'ws:';
   else if (url.protocol === 'https:') url.protocol = 'wss:';
   if (url.protocol !== 'ws:' && url.protocol !== 'wss:') {
     throw new Error(`unsupported URL scheme for WS transport: ${base}`);
   }
-  if (!url.pathname.endsWith('/api/v1/ws')) {
-    url.pathname = `${url.pathname.replace(/\/$/, '')}/api/v1/ws`;
+  if (!url.pathname.endsWith('/api/v3/ws')) {
+    url.pathname = `${url.pathname.replace(/\/$/, '')}/api/v3/ws`;
   }
   url.search = '';
   url.hash = '';

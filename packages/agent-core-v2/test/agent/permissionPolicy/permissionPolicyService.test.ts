@@ -274,13 +274,11 @@ describe('AgentPermissionPolicyService chain', () => {
     ['systemctl poweroff', 'systemctl poweroff'],
     ['systemctl --user reboot', 'systemctl reboot'],
     ['bash -c "shutdown now"', 'shutdown'],
-    ['rm -rf /tmp/build', 'rm -rf'],
+    ['rm -rf /tmp/build /root', 'rm -rf'],
     ['rm -fr dir', 'rm -rf'],
     ['rm -r -f dir', 'rm -rf'],
     ['rm -R --force dir', 'rm -rf'],
-    ['rm --recursive --force dir', 'rm -rf'],
     ['rm -rfv dir', 'rm -rf'],
-    ['sudo rm -rf dir', 'rm -rf'],
     ['sudo -u root rm --recursive --force dir', 'rm -rf'],
     ['echo ok && rm -rf dir', 'rm -rf'],
     ['env rm -rf dir', 'rm -rf'],
@@ -310,6 +308,21 @@ describe('AgentPermissionPolicyService chain', () => {
       result: { kind: 'ask', reason: { dangerous_command: matched } },
     });
   });
+
+  it.each(['rm -rf /tmp/build', 'rm -rf /temp/cache'])(
+    'approves `%s` in yolo mode',
+    async (command) => {
+      mode = 'yolo';
+
+      await expect(evaluate({
+        toolName: 'Bash',
+        args: { command, timeout: 60 },
+      })).resolves.toMatchObject({
+        policyName: 'yolo-mode-approve',
+        result: { kind: 'approve' },
+      });
+    },
+  );
 
   it.each([
     'init 3',

@@ -31,7 +31,9 @@ import {
   type InteractionRequest,
 } from '@moonshot-ai/agent-core-v2/human/interaction/interaction';
 import { interactions } from '@moonshot-ai/agent-core-v2/human/interaction/facade';
+import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import type { SkillActivationOrigin } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
+import { ITelemetryService } from '@moonshot-ai/agent-core-v2/app/telemetry/telemetry';
 import type {
   PromptWithSkillsInput,
   SkillActivationInput,
@@ -185,6 +187,22 @@ function agentSkillServiceView(agent: IAgentScopeHandle): Record<string, unknown
   };
 }
 
+function agentLoopServiceView(agent: IAgentScopeHandle): Record<string, unknown> {
+  const loop = agent.accessor.get(IAgentLoopService);
+  return {
+    cancelFromUser: (turnId?: number) => {
+      const snapshot = loop.snapshot();
+      if (snapshot.state === 'running') {
+        agent.accessor.get(ITelemetryService).track2('cancel', {
+          from: 'streaming',
+          trace_id: snapshot.activeTraceId,
+        });
+      }
+      loop.cancel(turnId === undefined ? undefined : { turnId });
+    },
+  };
+}
+
 export interface MemoryDispatcher {
   call(scope: ScopeRef, service: string, method: string, args: unknown[]): Promise<unknown>;
   stream(scope: ScopeRef, service: string, method: string, args: unknown[]): AsyncIterable<unknown>;
@@ -330,6 +348,12 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
       }
       return agentSkillServiceView(resolved.like as IAgentScopeHandle);
     }
+    if (service === 'agentLoopService') {
+      if (resolved.kind !== 'agent') {
+        throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
+      }
+      return agentLoopServiceView(resolved.like as IAgentScopeHandle);
+    }
     const token = serviceTokens[service];
     if (token === undefined) {
       throw new RPCError(REQUEST_INVALID, `unknown service: ${service}`);
@@ -473,9 +497,9 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
     },
 
     stream(scope, service, method, args): AsyncIterable<unknown> {
-      // Special case: modelResolver.generate routes to
-      // getRequester(modelId).request(input, signal, params) because the
-      // catalog has no `generate` method — the facade synthesises the call.
+      // Special case: modelResolver.generate routes to IModelCatalog.generate
+      // (which owns credential recovery); the dispatcher only supplies the
+      // abort signal so client cancellation still reaches the request.
       if (service === 'modelResolver' && method === 'generate') {
         return {
           [Symbol.asyncIterator]() {
@@ -488,9 +512,17 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
                 const resolved = await resolveScope(scope);
                 const catalog = resolveService(resolved, 'modelResolver');
                 const [modelId, input, params] = args;
-                const requester = (catalog as { getRequester(id: string): { request(...a: unknown[]): AsyncIterable<unknown> } })
-                  .getRequester(modelId as string);
-                const iterable = requester.request(
+                const iterable = (
+                  catalog as {
+                    generate(
+                      id: string,
+                      input: unknown,
+                      signal: AbortSignal,
+                      params: unknown,
+                    ): AsyncIterable<unknown>;
+                  }
+                ).generate(
+                  modelId as string,
                   wireClone(input),
                   controller.signal,
                   wireClone(params),

@@ -165,7 +165,7 @@ function stubGoogleClient(chunks: readonly Record<string, unknown>[]): ClientStu
 describe('openai requester responseFormat', () => {
   it('maps json_object to response_format', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester(undefined, { clientFactory: client.clientFactory });
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     await requester.generate(
       { model, responseFormat: jsonObjectFormat },
       { messages },
@@ -176,7 +176,7 @@ describe('openai requester responseFormat', () => {
 
   it('maps json_schema to response_format.json_schema', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester(undefined, { clientFactory: client.clientFactory });
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     await requester.generate(
       { model, responseFormat: jsonSchemaFormat },
       { messages },
@@ -197,7 +197,7 @@ describe('openai requester responseFormat', () => {
 describe('openai-responses requester responseFormat', () => {
   it('maps json_schema to text.format', async () => {
     const client = stubResponsesClient(responsesStreamEvents);
-    const requester = createOpenAIResponsesRequester(undefined, {
+    const requester = createOpenAIResponsesRequester({
       clientFactory: client.clientFactory,
     });
     await requester.generate(
@@ -229,7 +229,7 @@ describe('openai-responses requester responseFormat', () => {
 describe('anthropic requester responseFormat', () => {
   it('maps json_schema to output_config.format and keeps the thinking effort', async () => {
     const client = stubAnthropicClient(anthropicStreamEvents);
-    const requester = createAnthropicRequester(undefined, { clientFactory: client.clientFactory });
+    const requester = createAnthropicRequester({ clientFactory: client.clientFactory });
     await requester.generate(
       { model, thinking: { effort: 'high' }, responseFormat: jsonSchemaFormat },
       { messages },
@@ -243,7 +243,7 @@ describe('anthropic requester responseFormat', () => {
 
   it('fails with a syntax error for json_object', async () => {
     const client = stubAnthropicClient(anthropicStreamEvents);
-    const requester = createAnthropicRequester(undefined, { clientFactory: client.clientFactory });
+    const requester = createAnthropicRequester({ clientFactory: client.clientFactory });
     const events: LlmRequestEvent[] = [];
     await requester.generate(
       { model, responseFormat: jsonObjectFormat },
@@ -261,7 +261,7 @@ describe('anthropic requester responseFormat', () => {
 describe('google-genai requester responseFormat', () => {
   it('maps response formats to config', async () => {
     const client = stubGoogleClient(googleGenAIStreamChunks);
-    const requester = createGoogleGenAIRequester(undefined, {
+    const requester = createGoogleGenAIRequester({
       clientFactory: client.clientFactory,
     });
     await requester.generate(
@@ -299,10 +299,10 @@ describe('requester toolMessageConversion', () => {
     const expectedText = 'shot taken\n(image omitted: tool result converted to plain text)';
 
     const openAIClient = stubOpenAIClient(chatCompletionChunks);
-    await createOpenAIRequester(
-      { toolMessageConversion: () => 'extract_text' },
-      { clientFactory: openAIClient.clientFactory },
-    ).generate(
+    await createOpenAIRequester({
+      trait: { toolMessageConversion: 'extract_text' },
+      clientFactory: openAIClient.clientFactory,
+    }).generate(
       { model },
       { messages: toolMessages },
       { signal: new AbortController().signal },
@@ -315,10 +315,10 @@ describe('requester toolMessageConversion', () => {
     expect(JSON.stringify(chatMessages)).not.toContain('image_url');
 
     const responsesClient = stubResponsesClient(responsesStreamEvents);
-    await createOpenAIResponsesRequester(
-      { toolMessageConversion: () => 'extract_text' },
-      { clientFactory: responsesClient.clientFactory },
-    ).generate(
+    await createOpenAIResponsesRequester({
+      trait: { toolMessageConversion: 'extract_text' },
+      clientFactory: responsesClient.clientFactory,
+    }).generate(
       { model },
       { messages: toolMessages },
       { signal: new AbortController().signal },

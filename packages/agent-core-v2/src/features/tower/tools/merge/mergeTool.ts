@@ -52,7 +52,7 @@ export class TowerMergeTool implements ITowerMergeTool {
               ...conflictsWith.map(
                 (conflict) => `- ${conflict.branch}: ${conflict.files.join(', ')}`,
               ),
-              'Tell each affected worker (Agent resume) to rebase onto the updated base, resolve, push, and request a re-review.',
+              'Tell each affected worker (Agent resume with run_in_background=true — never foreground: their output flows back through the tower protocol files) to rebase onto the updated base, resolve, push, and request a re-review.',
             );
           } else {
             lines.push('The mission is now marked merged. Continue with the remaining missions in Dependency Flow order.');

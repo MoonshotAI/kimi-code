@@ -7,7 +7,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createActor, waitFor } from '#/xstate2';
 
 import { createAgentMachine } from '#/agent/machine';
-import { createTurnMachine } from '#/agent/turn';
+import { agentSlices, type AgentEventStore } from '#/agent/slices';
+import { createEventStore } from '#/eventStore/eventStore';
+import { journalFromBranch } from '#/eventStore/journal';
+import { MemoryBackend } from '#/store/backend/memory';
+import { TreeStore } from '#/store/store';
+import { testScopeFactory } from '#/test/agent/scope-factory';
 import type { ModelCapability } from '#/llm/capability';
 import {
   createAssistantMessage,
@@ -22,10 +27,8 @@ import { createMediaRefResolver } from '#/llm/media/resolver';
 import { createMemoryMediaStore } from '#/llm/media/store';
 import type { LlmModel } from '#/llm/model';
 import { createProvider } from '#/llm/provider/definition';
-import { createLlmMachine } from '#/llm/requester/machine';
 import type { LlmRequester } from '#/llm/requester/requester';
-import { openAIFormat } from '#/llm/requester/bases/openai/format';
-import { openAIBase } from '#/llm/requester/bases/openai/requester';
+import { openAIBase, planOpenAIRequest } from '#/llm/requester/bases/openai/requester';
 import { createReadMediaFileTool } from '#/media/tool';
 
 const CAPABILITY: ModelCapability = {
@@ -46,6 +49,14 @@ function tmpWorkspace(): string {
 
 function toolCall(id: string, name: string, args: string): ToolCall {
   return { type: 'function', id, name, arguments: args };
+}
+
+async function testStore(): Promise<AgentEventStore> {
+  const backend = new MemoryBackend();
+  const store = await TreeStore.open(backend, {});
+  const tree = await store.tree('test');
+  tree.createBranch('main');
+  return createEventStore({ journal: journalFromBranch(tree.openBranch('main'), tree), slices: agentSlices });
 }
 
 afterEach(() => {
@@ -163,12 +174,15 @@ describe('media stack wiring', () => {
       },
     };
 
-    const actor = createActor(
-      createAgentMachine({
-        tools,
-        turnActor: createTurnMachine(
-          createLlmMachine({
-            requester,
+    const agentStore = await testStore();
+    const actor = createActor(createAgentMachine({}), {
+      input: {
+        request: { model },
+        scopeFactory: testScopeFactory({
+          store: agentStore,
+          requester,
+          tools,
+          turnOptions: {
             messageResolvers: [
               createMediaRefResolver({
                 providers: [provider],
@@ -176,14 +190,13 @@ describe('media stack wiring', () => {
                 cache: createMemoryMediaUploadCache(),
               }),
             ],
-          }),
-        ),
-      }),
-      { input: { request: { model } } },
-    );
+          },
+        }),
+      },
+    });
     actor.start();
-    actor.send({ type: 'input.submit', message: createUserMessage('watch this') });
-    await waitFor(actor, (s) => s.matches('idle') && s.context.messages.length > 1, {
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('watch this') } });
+    await waitFor(actor, (s) => s.matches('idle') && agentStore.getState().history.length > 1, {
       timeout: 5000,
     });
 
@@ -196,11 +209,10 @@ describe('media stack wiring', () => {
     ]);
     expect(uploadVideo).toHaveBeenCalledTimes(1);
 
-    const wire = openAIFormat.formatRequest({
+    const wire = planOpenAIRequest({
       model,
       messages: seenMessages[1] as readonly Message[],
       tools: [],
-      ctx: { model },
     });
     const wireMessages = wire.params.messages as unknown as Record<string, unknown>[];
     const toolWire = wireMessages.find((message) => message['role'] === 'tool');

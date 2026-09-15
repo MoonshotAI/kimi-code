@@ -71,6 +71,7 @@ export interface ExecutableToolContext {
   readonly trace?: LLMRequestTrace;
   readonly metadata?: unknown;
   readonly signal: AbortSignal;
+  readonly steerSignal?: AbortSignal;
   readonly onUpdate?: ((update: ToolUpdate) => void) | undefined;
   readonly onForegroundTaskStart?: ((taskId: string) => void) | undefined;
 }

@@ -3,8 +3,10 @@ import type { ContentPart } from '#human/llm/message';
 import { VideoUploadUnsupportedError } from '#/llm-adapter/contract/errors';
 import { inlineVideoPart, isVideoUploadAuthError } from '#/agent/media/videoUpload';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
+import { isDaemonFileUrl } from '#/agent/media/mediaRef';
+import { attachmentFileSource, runtimeFileSource, withAttachmentLocation, type FileReadSource } from '#/agent/tools/fileReadSource';
 
-import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import { inspectAgentRuntime, type IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
@@ -37,7 +39,7 @@ import {
 } from '#/agent/media/image-format-policy';
 import { providerImagePolicy } from '#human/llm/media/image-formats';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
+import { literalRulePattern, matchesGlobRuleSubject, matchesPathRuleSubject } from '#/tool/rule-match';
 import { renderPrompt } from '#/_base/utils/render-prompt';
 import {
   MAX_MEDIA_BYTES,
@@ -194,6 +196,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     telemetry?: ITelemetryService,
     inlineVideoSupported?: boolean,
     providerType?: string,
+    private readonly attachmentStore?: ISessionMediaStore,
   ) {
     this.description = buildDescription(capabilities);
     this.telemetry = telemetry;
@@ -221,9 +224,12 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     return inlineVideoPart(data, mimeType);
   }
 
-  resolveExecution(args: ReadMediaFileInput): ToolExecution {
+  resolveExecution(args: ReadMediaFileInput): ToolExecution | Promise<ToolExecution> {
     if (!args.path) {
       return { isError: true, output: 'File path cannot be empty.' };
+    }
+    if (isDaemonFileUrl(args.path)) {
+      return this.attachmentExecution(args);
     }
     const inspected = inspectAgentRuntime(this.runtime);
     const env = inspected.environment;
@@ -254,7 +260,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
           if (lease.runtime.identity.generation !== inspected.identity.generation) {
             return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
           }
-          return await this.execution(args, path, lease.runtime.fs!, env);
+          return await this.execution(args, runtimeFileSource(lease.runtime.fs!, path), env);
         } finally {
           lease.dispose();
         }
@@ -262,18 +268,32 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     };
   }
 
+  private async attachmentExecution(args: ReadMediaFileInput): Promise<ToolExecution> {
+    const source = await attachmentFileSource(args.path, this.attachmentStore);
+    return {
+      accesses: ToolAccesses.readFile(source.localPath ?? args.path),
+      description: `Reading media: ${args.path}`,
+      display: { kind: 'file_io', operation: 'read', path: source.localPath ?? args.path },
+      approvalRule: literalRulePattern(this.name, args.path),
+      matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.path),
+      execute: async () => withAttachmentLocation(
+        await this.execution(args, source, { osKind: 'unknown' }), source,
+      ),
+    };
+  }
+
   private async execution(
     args: ReadMediaFileInput,
-    safePath: string,
-    fs: IHostFileSystem,
-    env: HostEnvironmentInfo,
+    source: FileReadSource,
+    env: Pick<HostEnvironmentInfo, 'osKind'>,
   ): Promise<ExecutableToolResult> {
     if (!args.path) {
       return { isError: true, output: 'File path cannot be empty.' };
     }
 
     try {
-      const header = await fs.readBytes(safePath, MEDIA_SNIFF_BYTES);
+      const safePath = source.name;
+      const header = await source.readBytes(MEDIA_SNIFF_BYTES);
       const fileType = detectFileType(safePath, header, 'media');
 
       if (fileType.kind === 'text') {
@@ -305,7 +325,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
       ) {
         return {
           isError: true,
-          output: buildImageConversionGuidance(args.path, fileType.mimeType, env.osKind),
+          output: buildImageConversionGuidance(source.localPath ?? args.path, fileType.mimeType, env.osKind),
         };
       }
       if (fileType.kind === 'video' && !this.capabilities.video_in) {
@@ -317,7 +337,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
         };
       }
 
-      const stat = await fs.stat(safePath);
+      const stat = await source.stat();
       if (stat.size === 0) {
         return { isError: true, output: `"${args.path}" is empty.` };
       }
@@ -380,7 +400,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
         };
       }
 
-      const data = Buffer.from(await fs.readBytes(safePath));
+      const data = Buffer.from(await source.readBytes());
       let dimensions = fileType.kind === 'image' ? sniffImageDimensions(data) : null;
       let mediaPart: ContentPart;
       let delivery: ImageDelivery | undefined;
@@ -447,7 +467,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
               return {
                 isError: true,
                 output: buildOversizedImageConversionGuidance(
-                  args.path,
+                  source.localPath ?? args.path,
                   fileType.mimeType,
                   env.osKind,
                   compressed.finalByteLength,
@@ -489,7 +509,8 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
       }
 
       const tag = fileType.kind === 'image' ? 'image' : 'video';
-      const openText = `<${tag} path="${safePath}">`;
+      const tagPath = isDaemonFileUrl(args.path) ? args.path : safePath;
+      const openText = `<${tag} path="${tagPath}">`;
       const closeText = `</${tag}>`;
 
       const note = buildMediaNote({

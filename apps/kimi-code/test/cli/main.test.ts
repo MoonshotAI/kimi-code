@@ -205,12 +205,12 @@ async function runHandleMainCommand(opts: CLIOptions): Promise<number | null> {
   }
 }
 
-async function runHandleUpgradeCommand(): Promise<number> {
+async function runHandleUpgradeCommand(yes = false): Promise<number> {
   const exitSpy = vi.spyOn(process, 'exit').mockImplementation((code?: string | number | null) => {
     throw new ExitCalled(Number(code ?? 0));
   });
   try {
-    await handleUpgradeCommand('0.0.1-alpha.2');
+    await handleUpgradeCommand('0.0.1-alpha.2', yes);
     throw new Error('expected process.exit');
   } catch (error) {
     if (error instanceof ExitCalled) {
@@ -464,6 +464,7 @@ describe('main entry command handling', () => {
     expect(mocks.handleUpgrade).toHaveBeenCalledWith('0.0.1-alpha.2', {
       track: mocks.track,
       logger: mocks.log,
+      yes: false,
     });
     expect(mocks.shutdownTelemetry).toHaveBeenCalledWith({ timeoutMs: 3000 });
     expect(mocks.harness.close).toHaveBeenCalledTimes(1);

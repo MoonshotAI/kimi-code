@@ -1,7 +1,8 @@
 import { readdir, readFile, rename, rm, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
-import { SESSION_AGENT_OPEN_ENTRY_TYPE, SESSION_LOG_BRANCH, SESSION_META_ENTRY_TYPE } from '#/persist/session';
+import { messageAppended, stateUpdated, turnEnded } from '#/agent/events';
+import { agentOpened, SESSION_LOG_BRANCH, sessionMetaUpdated } from '#/session/events';
 import { NodeBackend } from '#/store/backend/node';
 import { TreeStore } from '#/store/store';
 import type { Branch } from '#/store/branch';
@@ -174,33 +175,37 @@ export async function migrateV2Session(dir: string): Promise<V2MigrationResult> 
           resolveBlob,
         );
         if (converted === null) continue;
-        await branch.append({ type: 'message', kind: 'agent', data: converted });
+        await branch.append({
+          type: messageAppended.type,
+          kind: 'event',
+          data: messageAppended({ message: converted }),
+        });
       }
       const lastTurnId = folded.nextTurnId - 1;
       if (folded.todos.length > 0) {
         await branch.append({
-          type: 'state',
-          kind: 'agent',
-          data: {
+          type: stateUpdated.type,
+          kind: 'event',
+          data: stateUpdated({
             name: 'todo',
             value: { todos: folded.todos, lastWriteTurn: Math.max(0, lastTurnId) },
-          },
+          }),
         });
       }
       if (folded.nextTurnId > 0) {
         await branch.append({
-          type: 'turn',
-          kind: 'agent',
-          data: { phase: 'start', turnId: lastTurnId },
+          type: turnEnded.type,
+          kind: 'event',
+          data: turnEnded({ turnId: lastTurnId, outcome: 'done' }),
         });
       }
       await log.append({
-        type: SESSION_AGENT_OPEN_ENTRY_TYPE,
-        kind: 'session',
-        data: { agentId, branch: agentId },
+        type: agentOpened.type,
+        kind: 'event',
+        data: agentOpened({ agentId, branch: agentId }),
       });
     }
-    await log.append({ type: SESSION_META_ENTRY_TYPE, kind: 'session', data: meta });
+    await log.append({ type: sessionMetaUpdated.type, kind: 'event', data: sessionMetaUpdated({ meta }) });
     for (const branchName of tree.branches()) {
       await tree.openBranch(branchName).settled();
     }

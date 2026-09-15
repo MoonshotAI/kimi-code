@@ -96,6 +96,7 @@ describe('server-v2 /api/v1/search', () => {
       ].join('\n') + '\n',
       'utf8',
     );
+    await writeFile(join(home, 'sessions', WS, 's1', 'state.json'), JSON.stringify({ title: '苹果询价' }));
     const summaries: SessionSummary[] = [
       {
         id: 's1',

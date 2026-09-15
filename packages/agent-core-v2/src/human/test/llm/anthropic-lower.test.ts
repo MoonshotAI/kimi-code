@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { UNKNOWN_CAPABILITY } from '#/llm/capability';
+import { providerImagePolicy } from '#/llm/media/image-formats';
 import type { Message } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
 import { lowerMessage } from '#/llm/requester/bases/anthropic/lower';
@@ -65,20 +66,21 @@ function stubAnthropicClient(): {
 }
 
 describe('anthropic lowering of inline images', () => {
-  it('forwards a base64 image the Kimi trait accepts even though the route id is anthropic', () => {
-    const wire = lowerMessage(message, { trait: kimiAnthropicTrait, ctx: { model: routedModel } });
+  it('forwards a base64 image the Kimi policy accepts even though the route id is anthropic', () => {
+    const wire = lowerMessage(message, providerImagePolicy('kimi').acceptedMimes);
     expect(wire[0]?.content[0]).toEqual(HEIC_BLOCK);
   });
 
   it('refuses a base64 image outside the baseline set when no trait widens it', () => {
-    expect(() =>
-      lowerMessage(message, { trait: undefined, ctx: { model: routedModel } }),
-    ).toThrow(/Unsupported media type for base64 image: image\/heic/);
+    expect(() => lowerMessage(message, providerImagePolicy().acceptedMimes)).toThrow(
+      /Unsupported media type for base64 image: image\/heic/,
+    );
   });
 
   it('sends the HEIC block on the wire when Kimi is reached over the Anthropic protocol', async () => {
     const client = stubAnthropicClient();
-    const requester = createAnthropicRequester(kimiAnthropicTrait, {
+    const requester = createAnthropicRequester({
+      trait: kimiAnthropicTrait,
       clientFactory: client.clientFactory,
     });
     await requester.generate(

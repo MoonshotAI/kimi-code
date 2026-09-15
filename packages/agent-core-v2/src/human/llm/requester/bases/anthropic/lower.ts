@@ -1,44 +1,7 @@
 import type { Message, TextPart } from '#/llm/message';
-import type { ProtocolTrait, TraitContext } from '#/llm/protocol/trait';
 import { SyntaxRequestFormatError } from '#/llm/syntax-errors';
-import { providerImagePolicy } from '#/llm/media/image-formats';
 
-export type AnthropicWireContentBlock =
-  | { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }
-  | {
-      type: 'image';
-      source: { type: 'base64'; data: string; media_type: string } | { type: 'url'; url: string };
-      cache_control?: { type: 'ephemeral' };
-    }
-  | {
-      type: 'video';
-      source: { type: 'base64'; media_type: string; data: string } | { type: 'url'; url: string };
-      cache_control?: { type: 'ephemeral' };
-    }
-  | {
-      type: 'thinking';
-      thinking: string;
-      signature?: string;
-      cache_control?: { type: 'ephemeral' };
-    }
-  | {
-      type: 'tool_use';
-      id: string;
-      name: string;
-      input: unknown;
-      cache_control?: { type: 'ephemeral' };
-    }
-  | {
-      type: 'tool_result';
-      tool_use_id: string;
-      content: AnthropicWireContentBlock[];
-      cache_control?: { type: 'ephemeral' };
-    };
-
-export type AnthropicWireMessage = {
-  role: 'user' | 'assistant';
-  content: AnthropicWireContentBlock[];
-};
+import type { AnthropicWireContentBlock, AnthropicWireMessage } from './contract';
 
 type AnthropicWireImageBlock = Extract<AnthropicWireContentBlock, { type: 'image' }>;
 
@@ -124,17 +87,14 @@ export function messageContent(message: AnthropicWireMessage): AnthropicWireCont
   return Array.isArray(message.content) ? message.content : [];
 }
 
-export interface AnthropicLowerContext {
-  readonly trait: ProtocolTrait | undefined;
-  readonly ctx: TraitContext;
+export function isAnthropicWireMessageEmpty(message: AnthropicWireMessage): boolean {
+  return messageContent(message).length === 0;
 }
 
 export function lowerMessage(
   message: Message,
-  lower: AnthropicLowerContext,
+  acceptedMimes: ReadonlySet<string>,
 ): AnthropicWireMessage[] {
-  const { trait, ctx } = lower;
-  const acceptedMimes = trait?.acceptedImageMimes?.(ctx) ?? providerImagePolicy().acceptedMimes;
   const content: AnthropicWireContentBlock[] = [];
   if (message.role === 'system') {
     const text = message.content
@@ -191,15 +151,5 @@ export function lowerMessage(
     role: message.role === 'assistant' ? 'assistant' : 'user',
     content,
   };
-  const hooked =
-    trait?.convertMessage === undefined
-      ? converted
-      : (trait.convertMessage(message, converted, ctx) as AnthropicWireMessage | null);
-  if (hooked === null) {
-    return [];
-  }
-  if (messageContent(hooked).length === 0) {
-    return [];
-  }
-  return [hooked];
+  return [converted];
 }

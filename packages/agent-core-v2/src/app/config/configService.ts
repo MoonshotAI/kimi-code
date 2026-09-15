@@ -151,7 +151,8 @@ function isSameSection(
     existing.fromToml === options.fromToml &&
     existing.toToml === options.toToml &&
     deepEqual(existing.defaultValue, options.defaultValue) &&
-    deepEqual(existing.deprecations, options.deprecations)
+    deepEqual(existing.deprecations, options.deprecations) &&
+    existing.collectDiagnostics === options.collectDiagnostics
   );
 }
 
@@ -249,6 +250,7 @@ export class ConfigRegistry extends Disposable implements IConfigRegistry {
       fromToml: options.fromToml,
       toToml: options.toToml,
       deprecations: options.deprecations,
+      collectDiagnostics: options.collectDiagnostics,
     });
     this._onDidRegisterSection.fire({ domain });
   }
@@ -575,6 +577,13 @@ export class ConfigService extends Disposable implements IConfigService {
     const nextRawSnake = cloneRecord(fileData);
     for (const diagnostic of collectKeyDeprecations(nextRawSnake, this.registry.listSections())) {
       this.pushDiagnostic(diagnostic);
+    }
+    for (const section of this.registry.listSections()) {
+      if (section.collectDiagnostics === undefined) continue;
+      const rawSection = nextRawSnake[camelToSnake(section.domain)];
+      for (const diagnostic of section.collectDiagnostics(rawSection)) {
+        this.pushDiagnostic(diagnostic);
+      }
     }
     if (source !== 'load' && JSON.stringify(nextRawSnake) === JSON.stringify(this.rawSnake)) {
       const scratch = { ...this.validated };

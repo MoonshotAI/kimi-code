@@ -35,8 +35,8 @@ export function createToolSelectPlugin(state: ToolSelectState): ToolSelectPlugin
       target.on('turn.reminders_consumed', (event) => {
         if (event.type !== 'turn.reminders_consumed') return;
         for (const entry of event.reminders) {
-          if (entry.meta.key === LOADABLE_TOOLS_REMINDER_KEY) state.markAnnounced();
-          if (entry.meta.key === DYNAMIC_TOOL_SCHEMA_REMINDER_KEY) state.markSchemasLanded();
+          if (entry.meta?.key === LOADABLE_TOOLS_REMINDER_KEY) state.markAnnounced();
+          if (entry.meta?.key === DYNAMIC_TOOL_SCHEMA_REMINDER_KEY) state.markSchemasLanded();
         }
       });
       target.on('context.reset', () => {

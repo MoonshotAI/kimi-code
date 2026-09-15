@@ -8,7 +8,6 @@ import { LifecycleScope } from '#/app/scopes';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
 import { IOAuthService } from '#/app/auth/auth';
-import { IFlagService } from '#/app/flag/flag';
 import { IEventService } from '#/app/event/event';
 import type { Event2 } from '#/app/event/event2';
 import { IHostRequestHeaders } from '#/llm-adapter/model/host-request-headers';
@@ -145,7 +144,6 @@ describe('SessionTitleService', () => {
   let turnExcerpt: TitleTurnExcerpt;
   let digestExcerpt: TitleDigestExcerpt;
   let tokenCalls: boolean[];
-  let flagEnabled: boolean;
 
   beforeEach(() => {
     tokenError = undefined;
@@ -156,7 +154,6 @@ describe('SessionTitleService', () => {
     turnExcerpt = {};
     digestExcerpt = { turns: [] };
     tokenCalls = [];
-    flagEnabled = true;
     providers = { 'managed:kimi-code': MANAGED_PROVIDER };
     metadata = new FakeSessionMetadata();
     events = new FakeEventService();
@@ -220,7 +217,6 @@ describe('SessionTitleService', () => {
           headers: { 'User-Agent': 'test' },
           thirdPartyHeaders: {},
         });
-        reg.definePartialInstance(IFlagService, { enabled: () => flagEnabled });
         reg.define(ISessionTitleService, SessionTitleService);
       },
     });
@@ -231,17 +227,6 @@ describe('SessionTitleService', () => {
     disposables.dispose();
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
-  });
-
-  it('is unavailable while the experimental auto_session_title flag is off', async () => {
-    flagEnabled = false;
-    titlePrompts = ['hello'];
-
-    await expect(ix.get(ISessionTitleService).generateTitle()).resolves.toBeUndefined();
-    await expect(
-      ix.get(ISessionTitleService).generateTitle({ force: true, source: 'digest' }),
-    ).resolves.toBeUndefined();
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('replaces the easy title with the generated one', async () => {

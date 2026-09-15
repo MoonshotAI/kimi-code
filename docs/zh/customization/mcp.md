@@ -4,6 +4,10 @@
 
 MCP 工具结果可以包含文本（`content`）和结构化数据（`structuredContent`）。Kimi Code CLI 会将两者提供给 Agent，只有能够确认某个文本块已包含同一份完整 JSON 值时，才省略重复的结构化内容。文本摘要和媒体不会替代结构化记录。
 
+Kimi Code CLI 会保留因格式或大小限制而无法直接交付的内嵌 MCP 附件。内嵌图片、音频和视频即使能够原样交付也会保存，因为后续供应商协议转换或历史精简可能省略它们。模型支持相应内容时，即使工作区文件系统不可用，也仍可读取会话附件。原件随会话保存在媒体存储中，不会被图片缓存淘汰。保存的原件（包括图片压缩前的原图）均提供绝对路径和稳定的 `kimi-file://` 引用。将引用作为 `path` 传给 `Read` 或 `ReadMediaFile`，即使工作区 runtime 无法访问会话存储，也能直接从当前会话存储读取字节。分页续读会保留该引用，包括 fork 后的会话。对于 `Read` 无法打开的二进制格式，错误信息会在可用时提供服务端本地路径；外部转换工具必须能够访问该文件系统。CSV、HTML、JSON 和普通 SVG 等文本附件使用可读取的扩展名。
+
+附件路径和压缩说明共用工具输出预算。较长的清单会保存为文本文件，结果中保留简短指针，即使伴随的文本被截短，该指针仍然可见；Agent 可将清单的 `kimi-file://` 引用传给 `Read`，分页读取完整内容。取消工具调用会停止后续附件处理，并通知正在进行的写入操作。如果解码或保存失败，结果会明确说明原件未能保留，并保留其他可用输出。资源链接不会被自动下载。
+
 ## 接入方式
 
 Kimi Code CLI 支持三种 MCP server 接入方式：
@@ -58,8 +62,9 @@ MCP server 配置写在 `mcp.json` 中，分两层：
 | `headers` | `Record<string, string>` | HTTP、SSE | 附加到每次请求的静态请求头 |
 | `bearerTokenEnvVar` | `string` | HTTP、SSE | 存放 bearer token 的环境变量名 |
 | `enabled` | `boolean` | 全部 | 设为 `false` 可禁用该 server |
-| `startupTimeoutMs` | `number` | 全部 | 连接超时，默认 `30000` 毫秒 |
-| `toolTimeoutMs` | `number` | 全部 | 单次工具调用超时（毫秒） |
+| `deferred` | `boolean` | 全部 | 实验功能：设为 `true` 时该 server 的工具由模型按需加载，默认 `false`（始终直接暴露）。前提与行为见 [按需加载工具](#按需加载工具) |
+| `startupTimeoutMs` | `number` | 全部 | 连接超时，取值范围为 `1` 到 `2147483647` 毫秒，默认 `30000` |
+| `toolTimeoutMs` | `number` | 全部 | 单次工具调用超时，取值范围为 `1` 到 `2147483647` 毫秒 |
 | `enabledTools` | `string[]` | 全部 | 工具白名单 |
 | `disabledTools` | `string[]` | 全部 | 工具黑名单 |
 
@@ -72,6 +77,30 @@ Plugins 也可以在 manifest 中声明 MCP servers。Plugin 声明的 servers �
 ::: warning 注意
 项目级 `.kimi-code/mcp.json` 中的 stdio 条目会在会话启动时执行本地命令，只在你信任的仓库里启用。
 :::
+
+## 按需加载工具
+
+默认情况下，server 的所有工具都会直接进入模型的顶层工具列表；接入的 server 较多、或单个 server 暴露的工具较多时，这些工具定义会持续占用上下文。把 server 标记为 deferred 后，它的工具不再进入顶层工具列表：模型先看到一份可加载工具清单，需要时通过内置的 `select_tools` 工具加载完整定义，加载后同一轮即可调用。
+
+按需加载是实验功能，同时满足两个前提才会生效：
+
+- 启用 `tool-select` 实验标志：设置环境变量 `KIMI_CODE_EXPERIMENTAL_TOOL_SELECT=1`，或在 `config.toml` 的 `[experimental]` 下写 `tool-select = true`；总开关 `KIMI_CODE_EXPERIMENTAL_FLAG=1` 会一并启用。
+- 当前模型声明了 `dynamically_loaded_tools` 能力：官方模型自动声明；其他模型可在 `config.toml` 的 `capabilities` 中追加，见 [配置文件](../configuration/config-files.md#models)。
+
+满足前提后，在 `mcp.json` 的 server 条目里设 `deferred: true`：
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "url": "https://mcp.example.com/mcp",
+      "deferred": true
+    }
+  }
+}
+```
+
+未设置 `deferred` 的 server 不受影响，工具始终直接暴露；前提不满足时该字段被忽略，行为相同。需要 OAuth 授权的 server 在完成授权前暴露的认证工具也遵循这个字段。
 
 ## 工具命名与权限
 

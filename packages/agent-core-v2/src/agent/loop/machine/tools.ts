@@ -12,7 +12,7 @@ import type {
   ToolUpdate as AgentToolUpdate,
 } from '#/tool/toolContract';
 import type { ContentPart, ToolCall } from '#human/llm/message';
-import type { ToolExecuteInput, ToolResult, ToolUpdate } from '#human/tool/executor';
+import type { ToolExecuteInput, ToolExecutor, ToolResult, ToolUpdate } from '#human/tool/executor';
 import type { ToolDefinition } from '#human/tool/tool';
 
 const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
@@ -32,8 +32,9 @@ export interface ToolResultExtras {
 
 export interface CreateMachineToolsOptions {
   readonly toolExecutor: IAgentToolExecutorService;
-  readonly toolInfos: readonly ToolInfo[];
+  readonly toolInfos: () => readonly ToolInfo[];
   readonly turnId: () => number;
+  readonly steerSignal?: () => AbortSignal | undefined;
   readonly trace?: () => LLMRequestTrace | undefined;
   readonly onToolCall?: (payload: ToolCallStartedPayload) => void;
   readonly onToolResult?: (toolCallId: string, result: AgentToolResult) => void;
@@ -42,7 +43,9 @@ export interface CreateMachineToolsOptions {
 
 export interface MachineTools {
   readonly tools: ToolDefinition[];
+  readonly executor: ToolExecutor;
   readonly extras: ReadonlyMap<string, ToolResultExtras>;
+  sync(): void;
   beginBatch(expectedCalls?: readonly ToolCall[]): void;
   handleProgress(toolCallId: string, update: AgentToolUpdate): void;
 }
@@ -60,10 +63,26 @@ function toContentParts(output: string | ContentPart[]): ContentPart[] {
 export function createMachineTools(options: CreateMachineToolsOptions): MachineTools {
   const extras = new Map<string, ToolResultExtras>();
   const progressHandlers = new Map<string, ((update: ToolUpdate) => void) | undefined>();
-  const knownNames = new Set(options.toolInfos.map((info) => info.name));
+  const definitions = new Map<string, ToolDefinition>();
+  const tools: ToolDefinition[] = [];
   const pending = new Map<string, PendingEntry>();
   let expectedIds: readonly string[] | undefined;
   let batchInFlight = false;
+
+  const materialize = (): void => {
+    for (const info of options.toolInfos()) {
+      if (definitions.has(info.name)) continue;
+      const definition: ToolDefinition = {
+        name: info.name,
+        description: info.description,
+        parameters: info.parameters ?? EMPTY_TOOL_PARAMETERS,
+        deferred: info.disclosure === 'deferred' ? true : undefined,
+        execute,
+      };
+      definitions.set(info.name, definition);
+      tools.push(definition);
+    }
+  };
 
   const settleEntry = (entry: PendingEntry, result: ToolResult): void => {
     entry.removeAbortListener();
@@ -81,9 +100,6 @@ export function createMachineTools(options: CreateMachineToolsOptions): MachineT
   const runBatch = async (entries: readonly PendingEntry[]): Promise<void> => {
     batchInFlight = true;
     const inFlight = new Map<string, PendingEntry>();
-    for (const entry of entries) inFlight.set(entry.input.toolCall.id, entry);
-    const signal = AbortSignal.any(entries.map((entry) => entry.input.signal));
-    const calls = entries.map((entry) => entry.input.toolCall);
     const settleRemaining = (error?: unknown): void => {
       for (const entry of inFlight.values()) {
         settleEntry(entry, {
@@ -102,8 +118,12 @@ export function createMachineTools(options: CreateMachineToolsOptions): MachineT
       inFlight.clear();
     };
     try {
+      for (const entry of entries) inFlight.set(entry.input.toolCall.id, entry);
+      const signal = AbortSignal.any(entries.map((entry) => entry.input.signal));
+      const calls = entries.map((entry) => entry.input.toolCall);
       const stream = options.toolExecutor.execute(calls, {
         signal,
+        steerSignal: options.steerSignal?.(),
         turnId: options.turnId(),
         trace: options.trace?.(),
         onToolCall: options.onToolCall,
@@ -138,6 +158,12 @@ export function createMachineTools(options: CreateMachineToolsOptions): MachineT
     }
   };
 
+  const startBatch = (entries: readonly PendingEntry[]): void => {
+    void runBatch(entries).catch((error: unknown) => {
+      options.onBatchError?.(error);
+    });
+  };
+
   const applyResult = (entry: PendingEntry, matched: ToolExecutionResult): void => {
     const id = entry.input.toolCall.id;
     const { result } = matched;
@@ -162,23 +188,38 @@ export function createMachineTools(options: CreateMachineToolsOptions): MachineT
     if (!expectedIds.every((id) => pending.has(id))) return;
     const entries: PendingEntry[] = [];
     for (const id of expectedIds) {
-      const entry = pending.get(id)!;
+      const entry = pending.get(id);
+      if (entry === undefined) continue;
       pending.delete(id);
       entries.push(entry);
     }
     if (entries.length === 0) return;
-    void runBatch(entries);
+    startBatch(entries);
   };
 
   const execute = (input: ToolExecuteInput): Promise<ToolResult> => {
-    progressHandlers.set(input.toolCall.id, input.onUpdate);
     if (expectedIds === undefined || batchInFlight) {
+      progressHandlers.set(input.toolCall.id, input.onUpdate);
       return new Promise<ToolResult>((resolve) => {
         const entry: PendingEntry = { input, resolve, removeAbortListener: () => {} };
-        void runBatch([entry]);
+        startBatch([entry]);
       });
     }
     return new Promise<ToolResult>((resolve) => {
+      const previous = pending.get(input.toolCall.id);
+      if (previous !== undefined) {
+        pending.delete(input.toolCall.id);
+        settleEntry(previous, {
+          content: [
+            {
+              type: 'text',
+              text: `Tool "${previous.input.toolCall.name}" superseded by a duplicate tool call id.`,
+            },
+          ],
+          isError: true,
+        });
+      }
+      progressHandlers.set(input.toolCall.id, input.onUpdate);
       const onAbort = (): void => {
         if (!pending.delete(input.toolCall.id)) return;
         const stale = [...pending.values()];
@@ -199,15 +240,24 @@ export function createMachineTools(options: CreateMachineToolsOptions): MachineT
   };
 
   return {
-    tools: options.toolInfos.map((info) => ({
-      name: info.name,
-      description: info.description,
-      parameters: info.parameters ?? EMPTY_TOOL_PARAMETERS,
-      deferred: info.disclosure === 'deferred' ? true : undefined,
-      execute,
-    })),
+    tools,
+    executor: {
+      execute: async (input) => {
+        materialize();
+        const tool = definitions.get(input.toolCall.name);
+        if (tool === undefined) {
+          return {
+            content: [{ type: 'text', text: `unknown tool: ${input.toolCall.name}` }],
+            isError: true,
+          };
+        }
+        return tool.execute(input);
+      },
+    },
     extras,
+    sync: materialize,
     beginBatch: (expectedCalls) => {
+      materialize();
       if (expectedCalls === undefined) {
         expectedIds = undefined;
         const stale = [...pending.values()];
@@ -215,7 +265,9 @@ export function createMachineTools(options: CreateMachineToolsOptions): MachineT
         for (const entry of stale) settleAborted(entry);
         return;
       }
-      expectedIds = expectedCalls.filter((call) => knownNames.has(call.name)).map((call) => call.id);
+      expectedIds = [
+        ...new Set(expectedCalls.filter((call) => definitions.has(call.name)).map((call) => call.id)),
+      ];
       flushIfReady();
     },
     handleProgress: (toolCallId, update) => {

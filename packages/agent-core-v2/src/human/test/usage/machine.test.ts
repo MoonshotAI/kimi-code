@@ -5,11 +5,15 @@ import { connectPlugins } from '#/plugin';
 import { UNKNOWN_CAPABILITY } from '#/llm/capability';
 import { createUserMessage } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
-import { createLlmMachine } from '#/llm/requester/machine';
 import type { LlmRequester } from '#/llm/requester/requester';
 import type { TokenUsage } from '#/llm/usage';
 import { createAgentMachine } from '#/agent/machine';
-import { createTurnMachine } from '#/agent/turn';
+import { agentSlices, type AgentEventStore } from '#/agent/slices';
+import { createEventStore } from '#/eventStore/eventStore';
+import { journalFromBranch } from '#/eventStore/journal';
+import { MemoryBackend } from '#/store/backend/memory';
+import { TreeStore } from '#/store/store';
+import { testScopeFactory } from '#/test/agent/scope-factory';
 import { createUsageMachine } from '#/usage/machine';
 import type { UsageEmitted } from '#/usage/machine';
 import { createUsagePlugin } from '#/usage/plugin';
@@ -32,6 +36,14 @@ function record(
   extra?: { model?: LlmModel; turnId?: number },
 ): UsageRecord {
   return { usage: usage(inputOther, output), model: extra?.model, turnId: extra?.turnId, at: 0 };
+}
+
+async function testStore(): Promise<AgentEventStore> {
+  const backend = new MemoryBackend();
+  const store = await TreeStore.open(backend, {});
+  const tree = await store.tree('test');
+  tree.createBranch('main');
+  return createEventStore({ journal: journalFromBranch(tree.openBranch('main'), tree), slices: agentSlices });
 }
 
 describe('xstate inspection collector', () => {
@@ -117,19 +129,17 @@ describe('usage plugin', () => {
     };
     const plugin = createUsagePlugin({ model });
     const timingPlugin = createTimingPlugin({ now: () => ticks.shift() ?? Number.NaN });
-    const actor = createActor(
-      createAgentMachine({
-        turnActor: createTurnMachine(createLlmMachine({ requester })),
-      }),
-      { input: { request: { model } } },
-    );
+    const store = await testStore();
+    const actor = createActor(createAgentMachine({}), {
+      input: { request: { model }, scopeFactory: testScopeFactory({ store, requester }) },
+    });
     connectPlugins(actor, [plugin, timingPlugin]);
     actor.start();
-    actor.send({ type: 'input.submit', message: createUserMessage('hi') });
-    actor.send({ type: 'input.submit', message: createUserMessage('again') });
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('hi') } });
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('again') } });
     await waitFor(
       actor,
-      (s) => s.matches('idle') && s.context.messages.length === 4,
+      (s) => s.matches('idle') && store.getState().history.length === 4,
       { timeout: 5000 },
     );
 

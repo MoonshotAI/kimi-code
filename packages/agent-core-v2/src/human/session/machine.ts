@@ -1,38 +1,50 @@
-import { assign, emit, sendTo, setup, stopChild, type ActorRefFrom } from '#/xstate2';
+import {
+  assign,
+  emit,
+  sendTo,
+  setup,
+  type ActorRefFrom,
+  type ActorRefFromLogic,
+  type AnyActorLogic,
+  type DoneActorEvent,
+  type InputFrom,
+} from '#/xstate2';
 
-import type { LlmRequestConfig } from '#/llm/requester/requester';
 import type { createAgentMachine, AgentEvent, AgentInput } from '#/agent/machine';
-import type { HistoryMessage, TurnLlmEvent, TurnToolEvent } from '#/agent/turn';
+import type { LlmRequestConfig } from '#/llm/requester/requester';
+import type { TurnLlmEvent, TurnToolEvent } from '#/agent/turn';
 import type { ToolUpdate } from '#/tool/executor';
 
 export interface SessionInput {
   request: LlmRequestConfig;
 }
 
-export type AgentActorRef = ActorRefFrom<ReturnType<typeof createAgentMachine>>;
+export type AgentLogic = ReturnType<typeof createAgentMachine>;
+
+export type AgentActorRef = ActorRefFrom<AgentLogic>;
 
 export interface AgentEntry {
   ref: AgentActorRef;
+  logic: AgentLogic;
+  input: AgentInput;
+  pendingRestart?: boolean;
 }
 
 export type SessionEvent =
   | TurnLlmEvent
   | TurnToolEvent
   | { type: 'tool.update'; toolCallId: string; update: ToolUpdate }
-  | { type: 'agent.create'; agentId?: string; input?: Pick<AgentInput, 'history' | 'turnId' | 'request' | 'branchId'> }
-  | { type: 'agent.fork'; sourceId: string; agentId?: string }
-  | {
-      type: 'agent.switch';
-      agentId: string;
-      input: { branchId: string; history: readonly HistoryMessage[]; reason?: string };
-    }
+  | { type: 'agent.create'; agentId?: string; logic: AgentLogic; input: AgentInput }
+  | { type: 'agent.fork'; sourceId: string; agentId?: string; logic: AgentLogic; input: AgentInput }
+  | { type: 'agent.restart'; agentId: string }
   | { type: 'agent.send'; agentId: string; event: AgentEvent }
-  | { type: 'agent.stop'; agentId: string };
+  | { type: 'agent.stop'; agentId: string }
+  | DoneActorEvent;
 
 export type SessionEmitted =
   | { type: 'agent.created'; agentId: string; branchId: string; ref: AgentActorRef }
   | { type: 'agent.forked'; sourceId: string; agentId: string; branchId: string; ref: AgentActorRef }
-  | { type: 'agent.switched'; agentId: string; branchId: string; reason?: string }
+  | { type: 'agent.restarted'; agentId: string; ref: AgentActorRef }
   | { type: 'agent.stopped'; agentId: string }
   | { type: 'agent.failed'; agentId: string; error: string };
 
@@ -40,10 +52,6 @@ export interface SessionMachineContext {
   input: SessionInput;
   agents: Record<string, AgentEntry>;
   anonymousCount: number;
-}
-
-export interface CreateSessionMachineOptions {
-  agent: ReturnType<typeof createAgentMachine>;
 }
 
 function nextAnonymousCount(context: SessionMachineContext): number {
@@ -54,16 +62,18 @@ function nextAnonymousCount(context: SessionMachineContext): number {
   return count;
 }
 
-export function createSessionMachine({ agent }: CreateSessionMachineOptions) {
+type SpawnChild = <TLogic extends AnyActorLogic>(
+  logic: TLogic,
+  options: { id: string; input: InputFrom<TLogic> },
+) => ActorRefFromLogic<TLogic>;
+
+export function createSessionMachine() {
   return setup({
     types: {
       input: {} as SessionInput,
       context: {} as SessionMachineContext,
       events: {} as SessionEvent,
       emitted: {} as SessionEmitted,
-    },
-    actors: {
-      agentActor: agent,
     },
   }).createMachine({
     id: 'session',
@@ -86,6 +96,44 @@ export function createSessionMachine({ agent }: CreateSessionMachineOptions) {
       'tool.failed': {},
       'tool.aborted': {},
       'context.reset': {},
+      'store.reset': {},
+      'store.error': {},
+      'xstate.done.actor.*': [
+        {
+          guard: ({ context, event }) => context.agents[event.actorId]?.pendingRestart === true,
+          actions: [
+            assign(({ context, event, spawn }) => {
+              const entry = context.agents[event.actorId] as AgentEntry;
+              const ref = (spawn as unknown as SpawnChild)(entry.logic, {
+                id: event.actorId,
+                input: entry.input,
+              });
+              return {
+                agents: {
+                  ...context.agents,
+                  [event.actorId]: { ref, logic: entry.logic, input: entry.input },
+                },
+              };
+            }),
+            emit(({ context, event }) => ({
+              type: 'agent.restarted' as const,
+              agentId: event.actorId,
+              ref: (context.agents[event.actorId] as AgentEntry).ref,
+            })),
+          ],
+        },
+        {
+          guard: ({ context, event }) => context.agents[event.actorId] !== undefined,
+          actions: [
+            assign(({ context, event }) => {
+              const agents = { ...context.agents };
+              delete agents[event.actorId];
+              return { agents };
+            }),
+            emit(({ event }) => ({ type: 'agent.stopped' as const, agentId: event.actorId })),
+          ],
+        },
+      ],
     },
     states: {
       active: {
@@ -108,17 +156,15 @@ export function createSessionMachine({ agent }: CreateSessionMachineOptions) {
                       ? nextAnonymousCount(context)
                       : context.anonymousCount;
                   const agentId = event.agentId ?? `agent-${anonymousCount}`;
-                  const ref = spawn('agentActor', {
+                  const ref = (spawn as unknown as SpawnChild)(event.logic, {
                     id: agentId,
-                    input: {
-                      request: event.input?.request ?? context.input.request,
-                      history: event.input?.history,
-                      turnId: event.input?.turnId,
-                      branchId: event.input?.branchId ?? agentId,
-                    },
+                    input: event.input,
                   });
                   return {
-                    agents: { ...context.agents, [agentId]: { ref } },
+                    agents: {
+                      ...context.agents,
+                      [agentId]: { ref, logic: event.logic, input: event.input },
+                    },
                     anonymousCount,
                   };
                 }),
@@ -128,7 +174,7 @@ export function createSessionMachine({ agent }: CreateSessionMachineOptions) {
                   return {
                     type: 'agent.created' as const,
                     agentId,
-                    branchId: event.input?.branchId ?? agentId,
+                    branchId: event.input.store?.ref.branch ?? 'main',
                     ref: entry.ref,
                   };
                 }),
@@ -158,17 +204,13 @@ export function createSessionMachine({ agent }: CreateSessionMachineOptions) {
                       ? nextAnonymousCount(context)
                       : context.anonymousCount;
                   const agentId = event.agentId ?? `agent-${anonymousCount}`;
-                  const ref = spawn('agentActor', {
-                    id: agentId,
-                    input: {
-                      request: source.context.input.request,
-                      history: [...source.context.messages],
-                      turnId: source.context.turnId,
-                      branchId: agentId,
-                    },
-                  });
+                  const input: AgentInput = {
+                    ...event.input,
+                    request: event.input.request ?? source.context.input.request,
+                  };
+                  const ref = (spawn as unknown as SpawnChild)(event.logic, { id: agentId, input });
                   return {
-                    agents: { ...context.agents, [agentId]: { ref } },
+                    agents: { ...context.agents, [agentId]: { ref, logic: event.logic, input } },
                     anonymousCount,
                   };
                 }),
@@ -179,47 +221,10 @@ export function createSessionMachine({ agent }: CreateSessionMachineOptions) {
                     type: 'agent.forked' as const,
                     sourceId: event.sourceId,
                     agentId,
-                    branchId: agentId,
+                    branchId: event.input.store?.ref.branch ?? 'main',
                     ref: entry.ref,
                   };
                 }),
-              ],
-            },
-          ],
-          'agent.switch': [
-            {
-              guard: ({ context, event }) => context.agents[event.agentId] === undefined,
-              actions: emit(({ event }) => ({
-                type: 'agent.failed' as const,
-                agentId: event.agentId,
-                error: `unknown agent: '${event.agentId}'`,
-              })),
-            },
-            {
-              guard: ({ context, event }) =>
-                !(context.agents[event.agentId] as AgentEntry).ref.getSnapshot().matches('idle'),
-              actions: emit(({ event }) => ({
-                type: 'agent.failed' as const,
-                agentId: event.agentId,
-                error: `agent is busy: '${event.agentId}'`,
-              })),
-            },
-            {
-              actions: [
-                sendTo(
-                  ({ context, event }) => (context.agents[event.agentId] as AgentEntry).ref,
-                  ({ event }) => ({
-                    type: 'context.reset' as const,
-                    history: event.input.history,
-                    branchId: event.input.branchId,
-                  }),
-                ),
-                emit(({ event }) => ({
-                  type: 'agent.switched' as const,
-                  agentId: event.agentId,
-                  branchId: event.input.branchId,
-                  reason: event.input.reason,
-                })),
               ],
             },
           ],
@@ -239,6 +244,39 @@ export function createSessionMachine({ agent }: CreateSessionMachineOptions) {
               ),
             },
           ],
+          'agent.restart': [
+            {
+              guard: ({ context, event }) => {
+                const entry = context.agents[event.agentId];
+                return entry === undefined || entry.pendingRestart === true;
+              },
+              actions: emit(({ context, event }) => ({
+                type: 'agent.failed' as const,
+                agentId: event.agentId,
+                error:
+                  context.agents[event.agentId] === undefined
+                    ? `unknown agent: '${event.agentId}'`
+                    : `agent '${event.agentId}' restart already pending`,
+              })),
+            },
+            {
+              actions: [
+                assign(({ context, event }) => {
+                  const entry = context.agents[event.agentId] as AgentEntry;
+                  return {
+                    agents: {
+                      ...context.agents,
+                      [event.agentId]: { ...entry, pendingRestart: true },
+                    },
+                  };
+                }),
+                sendTo(
+                  ({ context, event }) => (context.agents[event.agentId] as AgentEntry).ref,
+                  { type: 'input.close' as const },
+                ),
+              ],
+            },
+          ],
           'agent.stop': [
             {
               guard: ({ context, event }) => context.agents[event.agentId] === undefined,
@@ -250,13 +288,19 @@ export function createSessionMachine({ agent }: CreateSessionMachineOptions) {
             },
             {
               actions: [
-                stopChild(({ event }) => event.agentId),
                 assign(({ context, event }) => {
-                  const agents = { ...context.agents };
-                  delete agents[event.agentId];
-                  return { agents };
+                  const entry = context.agents[event.agentId] as AgentEntry;
+                  return {
+                    agents: {
+                      ...context.agents,
+                      [event.agentId]: { ...entry, pendingRestart: undefined },
+                    },
+                  };
                 }),
-                emit(({ event }) => ({ type: 'agent.stopped' as const, agentId: event.agentId })),
+                sendTo(
+                  ({ context, event }) => (context.agents[event.agentId] as AgentEntry).ref,
+                  { type: 'input.close' as const },
+                ),
               ],
             },
           ],

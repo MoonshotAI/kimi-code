@@ -1,5 +1,33 @@
 export type TextDecodeErrors = 'strict' | 'replace' | 'ignore';
 
+export async function* readUtf8Lines(
+  source: AsyncIterable<Uint8Array>,
+  errors: TextDecodeErrors = 'strict',
+): AsyncGenerator<string> {
+  let pending: Buffer[] = [];
+  let offset = 0;
+  let pendingOffset = 0;
+  for await (const bytes of source) {
+    const chunk = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    let start = 0;
+    for (let i = 0; i < chunk.length; i++) {
+      if (chunk[i] !== 0x0a) continue;
+      const piece = chunk.subarray(start, i + 1);
+      const lineOffset = pending.length === 0 ? offset + start : pendingOffset;
+      const line = pending.length === 0 ? piece : Buffer.concat([...pending, piece]);
+      yield decodeTextWithErrors(line, 'utf-8', errors, lineOffset !== 0);
+      pending = [];
+      start = i + 1;
+    }
+    if (start < chunk.length) {
+      if (pending.length === 0) pendingOffset = offset + start;
+      pending.push(Buffer.from(chunk.subarray(start)));
+    }
+    offset += chunk.length;
+  }
+  if (pending.length > 0) yield decodeTextWithErrors(Buffer.concat(pending), 'utf-8', errors, pendingOffset !== 0);
+}
+
 function isUtf8Continuation(byte: number): boolean {
   return byte >= 0x80 && byte <= 0xbf;
 }
