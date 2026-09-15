@@ -13,12 +13,10 @@
  */
 
 import {
-  applyCustomRegistryEntries,
   credentialEnvHints,
   CustomRegistryApiError,
   fetchCustomRegistry,
   type CustomRegistrySource,
-  type ManagedKimiConfigShape,
 } from '@moonshot-ai/kimi-code-oauth';
 import {
   applyCatalogProvider,
@@ -36,6 +34,7 @@ import type { Command } from 'commander';
 
 import { createKimiCodeHostIdentity, createKimiCodeUserAgent } from '#/cli/version';
 import { fetchCatalogOrBuiltIn } from '#/utils/catalog-fetch';
+import { persistRegistryImport } from '#/utils/registry-import';
 
 interface WritableLike {
   write(chunk: string): boolean;
@@ -118,20 +117,7 @@ export async function handleProviderAdd(
     deps.exit(1);
   }
 
-  // The whole batch is applied in memory and persisted with a single write:
-  // `applyCustomRegistryEntries` removes same-registry providers that no
-  // longer exist upstream, applies each entry over its existing record (which
-  // preserves a hand-edited api_key_env via the provenance check), and clears
-  // a dangling defaultModel — no `removeProvider` RPC per id.
-  const config = await harness.getConfig();
-  applyCustomRegistryEntries(asManaged(config), entries, source);
-
-  await harness.setConfig({
-    providers: config.providers,
-    models: config.models,
-    defaultModel: config.defaultModel,
-    defaultProvider: config.defaultProvider,
-  });
+  await persistRegistryImport(harness, entries, source);
 
   const modelCount = entryList.reduce((total, entry) => total + Object.keys(entry.models).length, 0);
   deps.stdout.write(
@@ -585,10 +571,6 @@ function resolveApiKey(flag: string | undefined, env: NodeJS.ProcessEnv): string
   const fromEnv = env['KIMI_REGISTRY_API_KEY'];
   if (typeof fromEnv === 'string' && fromEnv.length > 0) return fromEnv;
   return undefined;
-}
-
-function asManaged(config: KimiConfig): ManagedKimiConfigShape {
-  return config as unknown as ManagedKimiConfigShape;
 }
 
 function providerSourceLabel(provider: KimiConfig['providers'][string]): string {

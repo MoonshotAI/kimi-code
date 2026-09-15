@@ -1,10 +1,8 @@
 import {
-  applyCustomRegistryEntries,
   credentialEnvHints,
   CustomRegistryApiError,
   fetchCustomRegistry,
   type CustomRegistrySource,
-  type ManagedKimiConfigShape,
 } from '@moonshot-ai/kimi-code-oauth';
 import {
   applyCatalogProvider,
@@ -20,6 +18,7 @@ import {
 import { createKimiCodeUserAgent } from '#/cli/version';
 import { fetchCatalogOrBuiltIn } from '#/utils/catalog-fetch';
 import { refreshKimiRegion } from '#/utils/region';
+import { persistRegistryImport } from '#/utils/registry-import';
 import { ChoicePickerComponent } from '../components/dialogs/choice-picker';
 import {
   CustomRegistryImportDialogComponent,
@@ -367,18 +366,7 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
 
   const addedProviderIds = Object.values(entries).map((entry) => entry.id);
   try {
-    const config = await host.harness.getConfig();
-    applyCustomRegistryEntries(
-      config as unknown as ManagedKimiConfigShape,
-      entries,
-      source,
-    );
-    await host.harness.setConfig({
-      providers: config.providers,
-      models: config.models,
-      defaultModel: config.defaultModel,
-      defaultProvider: config.defaultProvider,
-    });
+    await persistRegistryImport(host.harness, entries, source);
     await host.authFlow.refreshConfigAfterLogin();
   } catch (error) {
     host.showError(`Failed to apply registry: ${formatErrorMessage(error)}`);

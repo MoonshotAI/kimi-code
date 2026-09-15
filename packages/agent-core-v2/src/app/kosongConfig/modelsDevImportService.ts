@@ -246,11 +246,10 @@ export class ModelsDevImportService implements IModelsDevImportService {
     next.defaultModel = previousDefault;
     next['defaultProvider'] = previousDefaultProvider;
     next.thinking = previousThinking;
-    const prior = removeCustomRegistryEntries(next, entries, source);
+    const removal = removeCustomRegistryEntries(next, entries, source);
     await config.replace(PROVIDERS_SECTION, next.providers as ProvidersSection);
     await config.replace(MODELS_SECTION, (next.models ?? {}) as ModelsSection);
-    applyCustomRegistryEntries(next, entries, source, prior);
-    await config.replace(PROVIDERS_SECTION, next.providers as ProvidersSection);
+    applyCustomRegistryEntries(next, entries, source, removal);    await config.replace(PROVIDERS_SECTION, next.providers as ProvidersSection);
     await config.replace(MODELS_SECTION, (next.models ?? {}) as ModelsSection);
     if (next.defaultModel !== previousDefault) {
       await config.replace(DEFAULT_MODEL_SECTION, next.defaultModel);

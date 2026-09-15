@@ -461,22 +461,33 @@ export function credentialEnvHints(
   return hints;
 }
 
+export interface CustomRegistryRemoval {
+  readonly prior: Readonly<Record<string, unknown>>;
+  readonly previousDefault: string | undefined;
+  readonly previousDefaultProvider: string | undefined;
+}
+
 /**
  * Removes the providers a re-import of `source.url` will replace: entries that
  * vanished upstream (same-registry only — a colliding manual or other-registry
  * provider is left alone) plus every entry's current record, so the follow-up
  * apply rebuilds them fresh and state upstream no longer declares cannot
- * linger. Returns the pre-removal snapshot of `config.providers`; pass it to
- * `applyCustomRegistryEntries` so its provenance check can still preserve
- * hand-edited `apiKeyEnv` declarations.
+ * linger. The returned snapshot is captured BEFORE anything is removed — pass
+ * it to `applyCustomRegistryEntries` so its provenance check can preserve
+ * hand-edited `apiKeyEnv` declarations and its defaults restore still sees the
+ * pre-removal `defaultModel`/`defaultProvider`.
  */
 export function removeCustomRegistryEntries(
   config: ManagedKimiConfigShape,
   entries: Record<string, CustomRegistryProviderEntry>,
   source: CustomRegistrySource,
-): Readonly<Record<string, unknown>> {
+): CustomRegistryRemoval {
   const surviving = new Set(Object.values(entries).map((entry) => entry.id));
-  const prior = { ...config.providers };
+  const removal: CustomRegistryRemoval = {
+    prior: { ...config.providers },
+    previousDefault: config.defaultModel,
+    previousDefaultProvider: config['defaultProvider'] as string | undefined,
+  };
   for (const [providerId, provider] of Object.entries(config.providers)) {
     if (!isRecord(provider)) continue;
     if (provider['oauth'] !== undefined) continue;
@@ -489,14 +500,14 @@ export function removeCustomRegistryEntries(
       removeCustomRegistryProvider(config, providerId);
     }
   }
-  return prior;
+  return removal;
 }
 
 /**
  * Applies every entry from a single api.json import in memory. Pass the
- * `prior` snapshot returned by {@link removeCustomRegistryEntries} when the
- * removals already happened (e.g. a caller that persists the removal phase
- * before the apply phase); without it, the removals are performed here first.
+ * snapshot returned by {@link removeCustomRegistryEntries} when the removals
+ * already happened (e.g. a caller that persists the removal phase before the
+ * apply phase); without it, the removals are performed here first.
  *
  * Re-import semantics: providers previously imported from the same source URL
  * but no longer present in `entries` are removed (along with their aliases and
@@ -511,31 +522,30 @@ export function removeCustomRegistryEntries(
  * `applyCustomRegistryProvider` still sees the pre-removal snapshot — its
  * provenance check is the single mechanism that preserves a hand-edited
  * `apiKeyEnv`. Defaults (`defaultModel`/`defaultProvider`) that still resolve
- * after the rebuild are restored; a `defaultModel` left dangling is cleared
- * (with `thinking`, mirroring the refresh path).
+ * after the rebuild are restored from the snapshot; a `defaultModel` left
+ * dangling is cleared (with `thinking`, mirroring the refresh path).
  */
 export function applyCustomRegistryEntries(
   config: ManagedKimiConfigShape,
   entries: Record<string, CustomRegistryProviderEntry>,
   source: CustomRegistrySource,
-  prior?: Readonly<Record<string, unknown>>,
+  removal?: CustomRegistryRemoval,
 ): void {
-  const previousDefault = config.defaultModel;
-  const previousDefaultProvider = config['defaultProvider'] as string | undefined;
-  const provenance = prior ?? removeCustomRegistryEntries(config, entries, source);
+  const r = removal ?? removeCustomRegistryEntries(config, entries, source);
   for (const entry of Object.values(entries)) {
-    applyCustomRegistryProvider(config, entry, source, provenance);
+    applyCustomRegistryProvider(config, entry, source, r.prior);
   }
 
   config.defaultModel =
-    previousDefault !== undefined && config.models?.[previousDefault] !== undefined
-      ? previousDefault
+    r.previousDefault !== undefined && config.models?.[r.previousDefault] !== undefined
+      ? r.previousDefault
       : undefined;
   config['defaultProvider'] =
-    previousDefaultProvider !== undefined && config.providers[previousDefaultProvider] !== undefined
-      ? previousDefaultProvider
+    r.previousDefaultProvider !== undefined &&
+    config.providers[r.previousDefaultProvider] !== undefined
+      ? r.previousDefaultProvider
       : undefined;
-  if (previousDefault !== undefined && config.defaultModel === undefined) {
+  if (r.previousDefault !== undefined && config.defaultModel === undefined) {
     config.thinking = undefined;
   }
 }

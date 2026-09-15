@@ -48,14 +48,20 @@ interface FakeHarness {
   getConfig: () => Promise<KimiConfig>;
   setConfig: (patch: Partial<KimiConfig>) => Promise<KimiConfig>;
   removeProvider: (providerId: string) => Promise<KimiConfig>;
+  supportsAtomicSectionReplace: () => boolean;
+  replaceConfigSections: (sections: Record<string, unknown>) => Promise<void>;
   close: () => Promise<void>;
 }
 
-function makeHarness(initial: KimiConfig): {
+function makeHarness(
+  initial: KimiConfig,
+  opts: { atomicReplace?: boolean } = {},
+): {
   harness: FakeHarness;
   current: () => KimiConfig;
   setConfigCalls: Array<Partial<KimiConfig>>;
   removeCalls: string[];
+  replaceSectionCalls: Array<Record<string, unknown>>;
 } {
   // `persisted` simulates the on-disk config; the real RPC's `removeProvider`
   // reads from / writes to disk on every call. Tests must
@@ -65,6 +71,7 @@ function makeHarness(initial: KimiConfig): {
   let persisted: KimiConfig = structuredClone(initial);
   const setConfigCalls: Array<Partial<KimiConfig>> = [];
   const removeCalls: string[] = [];
+  const replaceSectionCalls: Array<Record<string, unknown>> = [];
   const harness: FakeHarness = {
     ensureConfigFile: async () => {},
     getConfig: async () => structuredClone(persisted),
@@ -99,6 +106,13 @@ function makeHarness(initial: KimiConfig): {
       if (removedDefault) persisted = { ...persisted, defaultModel: undefined };
       return structuredClone(persisted);
     },
+    supportsAtomicSectionReplace: () => opts.atomicReplace === true,
+    replaceConfigSections: async (sections) => {
+      replaceSectionCalls.push(structuredClone(sections));
+      // Replacement semantics: a section present here replaces wholesale, and
+      // an `undefined` value clears the key; absent sections are untouched.
+      persisted = { ...persisted, ...sections } as KimiConfig;
+    },
     close: async () => {},
   };
   return {
@@ -106,6 +120,7 @@ function makeHarness(initial: KimiConfig): {
     current: () => persisted,
     setConfigCalls,
     removeCalls,
+    replaceSectionCalls,
   };
 }
 
@@ -331,6 +346,45 @@ describe('kimi provider add', () => {
     // `removeProvider` RPC.
     expect(current().models?.['kohub/stale-model']).toBeUndefined();
     expect(current().models?.['kohub/claude-opus-4-7']).toBeDefined();
+  });
+
+  it('persists removals and cleared defaults through replaceConfigSections on the v2 harness', async () => {
+    mockRegistryFetch();
+    const initial: KimiConfig = {
+      providers: {
+        kohub: {
+          type: 'anthropic',
+          baseUrl: 'https://registry.example.test',
+          apiKey: 'old',
+          source: { kind: 'apiJson', url: REGISTRY_URL, apiKey: 'old' },
+        },
+        gone: {
+          type: 'openai',
+          baseUrl: 'https://registry.example.test/gone',
+          apiKey: 'old',
+          source: { kind: 'apiJson', url: REGISTRY_URL, apiKey: 'old' },
+        },
+      },
+      models: {
+        'gone/m1': { provider: 'gone', model: 'm1', maxContextSize: 1024, capabilities: [] },
+      },
+      defaultModel: 'gone/m1',
+    } as unknown as KimiConfig;
+    const { harness, current, replaceSectionCalls } = makeHarness(initial, { atomicReplace: true });
+    const { deps, exitCodes } = makeDeps(harness);
+
+    await tryRun(() => handleProviderAdd(deps, REGISTRY_URL, {}));
+
+    expect(exitCodes).toEqual([]);
+    // The vanished provider and its alias are gone from disk...
+    expect(current().providers['gone']).toBeUndefined();
+    expect(current().models?.['gone/m1']).toBeUndefined();
+    // ...the dangling default_model was cleared...
+    expect(current().defaultModel).toBeUndefined();
+    // ...and the purge was persisted as a replacement write before the rebuilt records.
+    expect(replaceSectionCalls).toHaveLength(2);
+    expect(replaceSectionCalls[0]).not.toHaveProperty('defaultModel');
+    expect(replaceSectionCalls[1]).toHaveProperty('defaultModel', undefined);
   });
 
   it('preserves newly-imported providers when a later registry entry replaces an existing id', async () => {

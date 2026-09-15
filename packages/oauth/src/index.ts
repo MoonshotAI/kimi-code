@@ -185,6 +185,7 @@ export type {
   CustomRegistryModelEntry,
   CustomRegistryProviderEntry,
   CustomRegistryProviderType,
+  CustomRegistryRemoval,
   CustomRegistrySource,
   FetchCustomRegistryOptions,
 } from './custom-registry';
