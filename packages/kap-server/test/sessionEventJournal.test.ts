@@ -4,18 +4,42 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const fsMock = vi.hoisted(() => ({ appendFailures: 0 }));
+const fsMock = vi.hoisted(() => ({
+  appendFailures: 0,
+  appendPrefixLines: 0,
+  appendPrefixBytes: 0,
+}));
 
 vi.mock('node:fs/promises', async (importActual) => {
   const actual = await importActual<typeof import('node:fs/promises')>();
+  const enospc = (): NodeJS.ErrnoException => {
+    const error = new Error('ENOSPC: no space left on device, write') as NodeJS.ErrnoException;
+    error.code = 'ENOSPC';
+    return error;
+  };
   return {
     ...actual,
     appendFile: async (...args: Parameters<typeof actual.appendFile>) => {
+      if (fsMock.appendPrefixLines > 0) {
+        const count = fsMock.appendPrefixLines;
+        fsMock.appendPrefixLines = 0;
+        const prefix =
+          String(args[1])
+            .split('\n')
+            .slice(0, count)
+            .join('\n') + '\n';
+        await actual.appendFile(args[0], prefix, args[2]);
+        throw enospc();
+      }
+      if (fsMock.appendPrefixBytes > 0) {
+        const count = fsMock.appendPrefixBytes;
+        fsMock.appendPrefixBytes = 0;
+        await actual.appendFile(args[0], String(args[1]).slice(0, count), args[2]);
+        throw enospc();
+      }
       if (fsMock.appendFailures > 0) {
         fsMock.appendFailures--;
-        const error = new Error('ENOSPC: no space left on device, write') as NodeJS.ErrnoException;
-        error.code = 'ENOSPC';
-        throw error;
+        throw enospc();
       }
       return actual.appendFile(...args);
     },
@@ -196,5 +220,57 @@ describe('SessionEventJournal', () => {
     fsMock.appendFailures = 0;
     await new Promise((resolve) => setTimeout(resolve, 1200));
     expect(await readFile(filePath, 'utf8').catch(() => '')).toBe('');
+  });
+
+  it('does not duplicate events after a partially committed write', async () => {
+    const j = await SessionEventJournal.open(filePath);
+    fsMock.appendPrefixLines = 2;
+    try {
+      j.append(j.nextSeq(), envelope(1));
+      j.append(j.nextSeq(), envelope(2));
+
+      const deadline = Date.now() + 5000;
+      let content = '';
+      while (Date.now() < deadline) {
+        content = await readFile(filePath, 'utf8').catch(() => '');
+        if (content.includes('"seq":2')) break;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      const lines = content.trim().split('\n').filter(Boolean);
+      expect(lines).toHaveLength(3);
+      expect(lines[0]).toContain('"journal_header"');
+      expect(lines[1]).toContain('"seq":1');
+      expect(lines[2]).toContain('"seq":2');
+      const entries = await j.readSince(0, 100);
+      expect(entries.map((entry) => entry.seq)).toEqual([1, 2]);
+    } finally {
+      await j.close();
+    }
+  });
+
+  it('repairs a torn line on retry so the event is not lost', async () => {
+    const j = await SessionEventJournal.open(filePath);
+    const epoch = j.epoch;
+    fsMock.appendPrefixBytes = 10;
+    try {
+      j.append(j.nextSeq(), envelope(1));
+
+      const deadline = Date.now() + 5000;
+      let content = '';
+      while (Date.now() < deadline) {
+        content = await readFile(filePath, 'utf8').catch(() => '');
+        if (content.includes('"seq":1')) break;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      const entries = await j.readSince(0, 100);
+      expect(entries.map((entry) => entry.seq)).toEqual([1]);
+
+      const reopened = await SessionEventJournal.open(filePath);
+      expect(reopened.epoch).toBe(epoch);
+      expect(reopened.seq).toBe(1);
+      await reopened.close();
+    } finally {
+      await j.close();
+    }
   });
 });
