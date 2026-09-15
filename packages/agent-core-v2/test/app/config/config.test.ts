@@ -2219,6 +2219,75 @@ describe('subagent config section', () => {
     disposables.dispose();
   });
 
+  it('lets a model write replace a stale pool instead of being shadowed by it', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\ndefault_model = "provider/fast"\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n',
+    );
+
+    await config.set(SECONDARY_MODEL_SECTION, { model: 'provider/smart', defaultEffort: 'low' });
+
+    expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
+      model: 'provider/smart',
+      defaultEffort: 'low',
+    });
+    expect(resolveSubagentModelPool(config)).toEqual({
+      defaultModel: 'provider/smart',
+      models: { 'provider/smart': '' },
+    });
+    expect(resolveSubagentBinding(config, own)).toEqual({
+      model: 'provider/smart',
+      thinking: 'low',
+      modelSource: 'secondary_pool',
+    });
+
+    disposables.dispose();
+  });
+
+  it('lets a default_model write drop the stale legacy model key', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/slow"\ndefault_effort = "low"\nmax_output_size = 8192\n',
+    );
+
+    await config.set(SECONDARY_MODEL_SECTION, { defaultModel: 'provider/fast' });
+
+    expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
+      defaultModel: 'provider/fast',
+      defaultEffort: 'low',
+      maxOutputSize: 8192,
+    });
+
+    disposables.dispose();
+  });
+
+  it('keeps both key families on an effort-only write and on a mixed write', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/slow"\ndefault_model = "provider/fast"\n',
+    );
+
+    await config.set(SECONDARY_MODEL_SECTION, { defaultEffort: 'low' });
+    expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
+      model: 'provider/slow',
+      defaultModel: 'provider/fast',
+      defaultEffort: 'low',
+    });
+
+    await config.set(SECONDARY_MODEL_SECTION, {
+      defaultModel: 'provider/fast',
+      model: 'provider/slow',
+    });
+    expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
+      model: 'provider/slow',
+      defaultModel: 'provider/fast',
+      defaultEffort: 'low',
+    });
+
+    disposables.dispose();
+  });
+
   it('binds [secondary_model].default_effort as the subagent thinking', async () => {
     const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
     const { config, disposables } = await createConfig(
