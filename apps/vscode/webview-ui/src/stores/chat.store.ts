@@ -8,6 +8,7 @@ import { toast } from "@/components/ui/sonner";
 import { useSettingsStore } from "./settings.store";
 import { processEvent } from "./event-handlers";
 import type { StatusUpdate, ContentPart, QuestionRequest, ToolResult } from "shared/legacy-sdk";
+import { parseHostSlashCommand } from "shared/host-slash-command";
 import type { UIStreamEvent } from "shared/types";
 
 const HANDSHAKE_TIMEOUT_MS = 30_000;
@@ -87,6 +88,10 @@ export interface QueuedItem {
   model: string;
 }
 
+export function canSteerQueuedContent(content: string | ContentPart[]): boolean {
+  return parseHostSlashCommand(content) === undefined;
+}
+
 export interface ChatState {
   sessionId: string | null;
   messages: ChatMessage[];
@@ -121,6 +126,7 @@ export interface ChatState {
   removeFromQueue: (id: string) => void;
   editQueueItem: (id: string, content: string | ContentPart[]) => void;
   moveQueueItemUp: (id: string) => void;
+  steerQueued: (id: string) => Promise<void>;
   sendNextQueued: () => void;
 }
 
@@ -460,6 +466,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
       return { queue: next };
     });
+  },
+
+  steerQueued: async (id) => {
+    const item = get().queue.find((queued) => queued.id === id);
+    if (item === undefined || !canSteerQueuedContent(item.content)) return;
+
+    const result = await bridge.steerChat(item.content);
+    if (result.ok) get().removeFromQueue(id);
   },
 
   sendNextQueued: () => {
