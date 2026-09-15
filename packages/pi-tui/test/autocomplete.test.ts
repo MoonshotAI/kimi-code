@@ -970,6 +970,96 @@ describe("CombinedAutocompleteProvider", () => {
 			assert.strictEqual(applied.lines[0], "cd/Applications/");
 		});
 
+		test("replaces an active mention edited to a divergent value", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "@docs/no";
+			const item = { value: "@docs/readme.md", label: "readme.md" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "@docs/re");
+
+			assert.strictEqual(applied.lines[0], "@docs/readme.md ");
+		});
+
+		test("replaces a divergent slash command token", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "/hx";
+			const item = { value: "help", label: "help" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "/he");
+
+			assert.strictEqual(applied.lines[0], "/help ");
+		});
+
+		test("inserts without deleting for a divergent path token with no sigil", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "src/other";
+			const item = { value: "src/components/", label: "components/" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "src/comp");
+
+			assert.strictEqual(applied.lines[0], "src/othersrc/components/");
+		});
+
+		test("expands a slash argument whose last word diverges after matching leading words", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "/goal next n";
+			const item = { value: "next manage", label: "next manage" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "next m");
+
+			assert.strictEqual(applied.lines[0], "/goal next manage");
+		});
+
+		test("keeps a divergent last argument word behind an assignment delimiter scoped", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "/goal next n=x";
+			const item = { value: "next manage", label: "next manage" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "next m");
+
+			assert.strictEqual(applied.lines[0], "/goal next n=next manage");
+		});
+
+		test("does not expand when the leading argument words diverge", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "/goal other n";
+			const item = { value: "next manage", label: "next manage" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "next m");
+
+			assert.strictEqual(applied.lines[0], "/goal other next manage");
+		});
+
+		test("replaces a divergent unclosed quoted path token in prose", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = 'cat "other dir';
+			const item = { value: '"my dir/file.txt"', label: "file.txt" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, '"my d');
+
+			assert.strictEqual(applied.lines[0], 'cat "my dir/file.txt"');
+		});
+
+		test("replaces a divergent closed quoted @ mention as a unit", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = 'see @"other folder/x"';
+			const item = { value: '@"my folder/other.txt"', label: "other.txt" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, '@"my folder/t');
+
+			assert.strictEqual(applied.lines[0], 'see @"my folder/other.txt" ');
+		});
+
+		test("inserts after a divergent closed quoted token in prose", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = 'cat "other dir"';
+			const item = { value: '"my dir/file.txt"', label: "file.txt" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, '"my d');
+
+			assert.strictEqual(applied.lines[0], 'cat "other dir""my dir/file.txt"');
+		});
+
 		test("replaces a shrunk slash command argument as one range", () => {
 			const provider = new CombinedAutocompleteProvider([], process.cwd());
 			const line = "/goal next";

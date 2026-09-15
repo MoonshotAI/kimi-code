@@ -53,13 +53,21 @@ export function resolveCompletionPrefix(
 	if (prefix !== "" && textBeforeCursor.endsWith(prefix)) {
 		return prefix;
 	}
+	const currentToken = textBeforeCursor.slice(findLastDelimiter(textBeforeCursor) + 1);
+	const structuralAlive =
+		(prefix.startsWith("@") && currentToken.startsWith("@")) ||
+		(prefix.startsWith("/") && currentToken.startsWith("/")) ||
+		((prefix.startsWith('"') || prefix.startsWith('@"')) && extractQuotedPrefix(textBeforeCursor) !== null);
 	const affinityPrefixes = prefix.startsWith('"') ? [prefix, prefix.slice(1)] : [prefix];
-	const sessionAlive = textBeforeCursor
-		.split(/[ \t"'=]+/)
-		.some(
-			(token) =>
-				token !== "" && affinityPrefixes.some((candidate) => token.startsWith(candidate) || candidate.startsWith(token)),
-		);
+	const sessionAlive =
+		structuralAlive ||
+		textBeforeCursor
+			.split(/[ \t"'=]+/)
+			.some(
+				(token) =>
+					token !== "" &&
+					affinityPrefixes.some((candidate) => token.startsWith(candidate) || candidate.startsWith(token)),
+			);
 	if (!sessionAlive) {
 		return "";
 	}
@@ -82,6 +90,17 @@ export function resolveCompletionPrefix(
 			}
 			if (prefix.startsWith(argumentText)) {
 				return argumentText;
+			}
+			let commonLength = 0;
+			const limit = Math.min(argumentText.length, prefix.length);
+			while (commonLength < limit && argumentText[commonLength] === prefix[commonLength]) {
+				commonLength += 1;
+			}
+			if (commonLength > 0 && argumentText[commonLength - 1] === " ") {
+				const activeWord = argumentText.slice(commonLength);
+				if (activeWord !== "" && ![...activeWord].some((ch) => PATH_DELIMITERS.has(ch))) {
+					return argumentText;
+				}
 			}
 		}
 	}
