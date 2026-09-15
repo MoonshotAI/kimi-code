@@ -53,13 +53,15 @@ export function resolveCompletionPrefix(
 	if (textBeforeCursor.endsWith(prefix)) {
 		return prefix;
 	}
-	if (!prefix.startsWith("@") && !prefix.startsWith('"')) {
+	if (!prefix.startsWith("@") && !prefix.startsWith('"') && prefix.includes(" ")) {
 		const spaceIndex = textBeforeCursor.indexOf(" ");
 		const isSlashArgumentContext =
 			textBeforeCursor.startsWith("/") && spaceIndex !== -1 && !textBeforeCursor.slice(1, spaceIndex).includes("/");
 		if (isSlashArgumentContext) {
 			const argumentText = textBeforeCursor.slice(spaceIndex + 1);
-			if (argumentText.startsWith(prefix) || prefix.startsWith(argumentText)) {
+			const trimmedArgument = argumentText.trimEnd();
+			const grownSuffix = trimmedArgument.startsWith(prefix) ? trimmedArgument.slice(prefix.length) : null;
+			if ((grownSuffix !== null && !grownSuffix.includes(" ")) || prefix.startsWith(trimmedArgument)) {
 				return argumentText;
 			}
 		}

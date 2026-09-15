@@ -770,12 +770,42 @@ describe("CombinedAutocompleteProvider", () => {
 			assert.strictEqual(applied.lines[0], "/goal Fix the @checkout @checkout docs/");
 		});
 
-		test("replaces the whole slash command argument when it grew another word", () => {
+		test("keeps a single-token argument snapshot scoped to the current token when it grew another word", () => {
 			const provider = new CombinedAutocompleteProvider([], process.cwd());
 			const line = "/goal next m";
 			const item = { value: "next manage", label: "next manage" };
 
 			const applied = provider.applyCompletion([line], 0, line.length, item, "next");
+
+			assert.strictEqual(applied.lines[0], "/goal next next manage");
+		});
+
+		test("keeps later argument text when a single-token snapshot grew multiword", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "/goal next write tests";
+			const item = { value: "next", label: "next" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "n");
+
+			assert.strictEqual(applied.lines[0], "/goal next write next");
+		});
+
+		test("keeps words typed beyond a multiword argument snapshot", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "/goal next m extra";
+			const item = { value: "next manage", label: "next manage" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "next m");
+
+			assert.strictEqual(applied.lines[0], "/goal next m next manage");
+		});
+
+		test("replaces a shrunk slash command argument as one range", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "/goal next";
+			const item = { value: "next manage", label: "next manage" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "next m");
 
 			assert.strictEqual(applied.lines[0], "/goal next manage");
 		});

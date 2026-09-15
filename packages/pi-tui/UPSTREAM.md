@@ -141,7 +141,7 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 
 ### stale-prefix-completion-uses-current-token — keep
 
-**Decision:** Accepting a completion deletes the token currently before the cursor, not the prefix snapshotted when the suggestions were produced. When the text before the cursor no longer ends with the stored prefix, the delete range falls back to the current token (quoted prefix, else token after the last delimiter); slash/@/path classification still uses the provider-supplied prefix. The re-derivation is exported as `resolveCompletionPrefix` so host-side providers can apply the same rule.
+**Decision:** Accepting a completion deletes the range currently before the cursor, not the prefix snapshotted when the suggestions were produced. When the text before the cursor no longer ends with the stored prefix, the delete range is re-derived: a multiword slash-command-argument snapshot expands to the whole argument when the user grew only its last word or shrank it; a quoted token the user just closed is replaced as a whole; otherwise the current quoted prefix or the token after the last delimiter, with an empty token meaning insert-only. Slash/@/path classification still uses the provider-supplied prefix. The re-derivation is exported as `resolveCompletionPrefix` so host-side providers can apply the same rule.
 
 **Why not in the app:** The accept path (Tab/Enter/list-select handlers) and the prefix ferry live inside the editor and the combined autocomplete provider; the host is only called with the final prefix.
 
