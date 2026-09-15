@@ -193,7 +193,8 @@ describe('registerSlice', () => {
 
     const causes: Cause<any>[] = [];
     store.subscribe((_state, cause) => causes.push(cause));
-    await store.registerSlice(notesSlice);
+    store.registerSlice(notesSlice);
+    await store.flush();
     expect(store.getState()).toEqual({ counter: 7, notes: ['late'] });
     expect(causes).toEqual([{ kind: 'slice-joined', name: 'notes' }]);
   });

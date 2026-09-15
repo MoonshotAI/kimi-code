@@ -175,7 +175,8 @@ function readStates(store: AgentEventStore): Record<string, unknown> {
 async function loadAgent(stores: SessionStores, agentId: string): Promise<LoadedAgent> {
   const store = await stores.open(agentId);
   if ((store.getState() as unknown as Record<string, unknown>)['states'] === undefined) {
-    await store.registerSlice(statesSlice);
+    store.registerSlice(statesSlice);
+    await store.flush();
   }
   return {
     agentId,
