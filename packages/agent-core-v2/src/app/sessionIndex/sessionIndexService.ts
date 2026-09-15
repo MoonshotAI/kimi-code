@@ -69,7 +69,9 @@ function isSessionSummaryShape(value: unknown): value is SessionSummary {
     typeof summary['workspaceId'] === 'string' &&
     typeof summary['createdAt'] === 'number' &&
     typeof summary['updatedAt'] === 'number' &&
-    typeof summary['archived'] === 'boolean'
+    typeof summary['archived'] === 'boolean' &&
+    (summary['cwd'] === undefined ||
+      (typeof summary['cwd'] === 'string' && summary['cwd'].length > 0))
   );
 }
 
@@ -331,7 +333,14 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
 
   async listRecent(query: SessionListQuery): Promise<Page<SessionSummary>> {
     return this.withReadModel(
-      (generation) => this.listRecentFromReadModel(generation, query),
+      async (generation) => {
+        const page = await this.listRecentFromReadModel(generation, query);
+        if (page.items.length === 0 && query.workspaceIds !== undefined) {
+          const legacy = await this.listLegacy(query);
+          if (legacy.items.length > 0) return legacy;
+        }
+        return page;
+      },
       () => this.listLegacy(query),
     );
   }
