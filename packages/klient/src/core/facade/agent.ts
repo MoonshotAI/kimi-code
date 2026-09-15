@@ -1,14 +1,13 @@
 /**
  * The agent facade — one `session.agent(id)` handle over the agent-scope
  * services the wire exposes. Turn-driving calls (prompt / steer / cancel),
- * skill activation, permission mode, and commands go straight to their domain
+ * skill activation, and permission mode go straight to their domain
  * services, as do shell commands, model, usage, plan, and task calls;
  * `getContext` merges two reads client-side. Prompt streaming is
  * NOT on this interface: it flows through the agent's `events` hub
  * (`turn.*`, `assistant.delta`, `tool.call.*`, `prompt.completed`, …).
  */
 
-import type { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
 import type { IAgentContextMemoryService } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextMemory';
 import type { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
 import type { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/agent/runtimeBinding/runtimeBinding';
@@ -39,7 +38,6 @@ export type AgentContextData = {
   history: ReturnType<IAgentContextMemoryService['get']>;
   tokenCount: ReturnType<ISessionTokenCountingService['statusSize']>;
 };
-export type AgentCommandInfo = Awaited<ReturnType<IAgentCommandService['list']>>[number];
 export type RuntimeBinding = ReturnType<IAgentRuntimeBindingService['get']>;
 export type PlanData = Awaited<ReturnType<IAgentPlanService['status']>>;
 export type AgentTaskInfo = Awaited<ReturnType<IAgentTaskService['list']>>[number];
@@ -78,8 +76,6 @@ export interface AgentFacade {
   setPermission(mode: PermissionMode): Promise<void>;
   getUsage(): Promise<UsageStatus>;
   getContext(): Promise<AgentContextData>;
-  listCommands(): Promise<readonly AgentCommandInfo[]>;
-  runCommand(input: { name: string; args?: string }): Promise<void>;
   getRuntime(): Promise<RuntimeBinding>;
   switchRuntime(runtimeId: string): Promise<RuntimeBinding>;
   getPlan(): Promise<PlanData>;
@@ -138,17 +134,6 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
       ]);
       return { history, tokenCount } as AgentContextData;
     },
-    listCommands: () =>
-      call(scope, 'agentCommandService', 'list', []) as Promise<readonly AgentCommandInfo[]>,
-    runCommand: (input) =>
-      // Same `[undefined]` → `[null]` wire hazard as `cancel`: the engine's
-      // `args = ''` default only applies to a missing arg.
-      call(
-        scope,
-        'agentCommandService',
-        'run',
-        input.args === undefined ? [input.name] : [input.name, input.args],
-      ) as Promise<void>,
     getRuntime: () =>
       call(scope, 'agentRuntimeBindingService', 'get', []) as Promise<RuntimeBinding>,
     switchRuntime: (runtimeId) =>

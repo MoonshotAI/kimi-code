@@ -19,10 +19,6 @@ import type { ConfigSchema, RegisterSectionOptions } from '#/app/config/config';
 import { ConfigSectionContribution } from '#/app/config/configSectionContributions';
 import { LifecycleScope } from '#/app/scopes';
 import {
-  CommandContribution,
-  type CommandContribution as CommandContributionPayload,
-} from '#/agent/command/commandContribution';
-import {
   AgentToolContribution,
   type AgentToolContributionOptions,
   type AgentToolCtor,
@@ -94,10 +90,6 @@ export abstract class Feature extends Service {
       activation: ScopeActivation.OnDemand,
     });
     this.provide(AgentToolContribution, { id, ctor, options });
-  }
-
-  contributeCommand(contribution: CommandContributionPayload): FiberHandle {
-    return this.provide(CommandContribution, contribution);
   }
 
   contributeProfiles(

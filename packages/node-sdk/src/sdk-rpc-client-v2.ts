@@ -39,7 +39,7 @@
  *   (`src/v2/resume-replay.ts`) — `includeSubagents` and `replayTurnLimit`
  *   included.
  * - `setModel` / `setPermission` / `setPlanMode` / `getPlan` / `clearPlan` /
- *   `getContext` / `getUsage` / `listCommands` / `runCommand` →
+ *   `getContext` / `getUsage` →
  *   the `klient.session(id).agent(id)` facade; `cancel` → the same facade
  *   plus `ISessionInitService.cancelInit` (v1's cascade to the session-level
  *   /init run); `setThinking` / `compact` /
@@ -245,7 +245,6 @@ import {
   type ImportContextRpcInput,
   type ReconnectMcpServerRpcInput,
   type ReloadSessionRpcInput,
-  type RunCommandRpcInput,
   type SessionIdRpcInput,
   type SwitchSessionRuntimeRpcInput,
   type SessionPromptRpcInput,
@@ -262,7 +261,6 @@ import {
 import type {
   AddAdditionalDirInput,
   AddAdditionalDirResult,
-  AgentCommandInfo,
   AgentRuntimeBinding,
   AppMcpServerInspection,
   BackgroundTaskInfo,
@@ -1753,18 +1751,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async clearPlan(input: SessionIdRpcInput): Promise<void> {
     const agent = await this.agentFacade(input.sessionId);
     return agent.clearPlan();
-  }
-
-  /** Facade (`agentCommandService.list`) — the v2-only contributed-command seam. */
-  override async listCommands(input: SessionIdRpcInput): Promise<readonly AgentCommandInfo[]> {
-    const agent = await this.agentFacade(input.sessionId);
-    return agent.listCommands();
-  }
-
-  /** Facade (`agentCommandService.run`) — runs the contribution engine-side. */
-  override async runCommand(input: RunCommandRpcInput): Promise<void> {
-    const agent = await this.agentFacade(input.sessionId);
-    return agent.runCommand({ name: input.name, args: input.args });
   }
 
   override async getRuntime(input: SessionIdRpcInput): Promise<AgentRuntimeBinding> {

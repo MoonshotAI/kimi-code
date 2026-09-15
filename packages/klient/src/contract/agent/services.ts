@@ -1,6 +1,6 @@
 /**
  * Agent-scope domain service contracts. These mirror the signatures of the
- * engine's domain Services (prompt / skill / loop / permissionMode / command /
+ * engine's domain Services (prompt / skill / loop / permissionMode /
  * contextMemory / tokenCounting / shellCommand / profile / usage / plan /
  * task) that the agent facade calls directly; payload and result schemas are
  * shared in `agent/schemas.ts` (they mirror the same wire shapes).
@@ -12,7 +12,6 @@ import { maybe, noResult } from '../helpers.js';
 import type { ServiceContract } from '../types.js';
 import {
   activateSkillPayloadSchema,
-  agentCommandInfoSchema,
   agentTaskInfoSchema,
   permissionModeSchema,
   planDataSchema,
@@ -53,11 +52,6 @@ export const agentLoopContract = {
 
 export const agentPermissionModeContract = {
   setModeAndBroadcast: { input: z.tuple([permissionModeSchema]), output: noResult },
-} satisfies ServiceContract;
-
-export const agentCommandContract = {
-  list: { input: z.tuple([]), output: z.array(agentCommandInfoSchema) },
-  run: { input: z.tuple([z.string(), z.string().optional()]), output: noResult },
 } satisfies ServiceContract;
 
 export const agentRuntimeBindingContract = {

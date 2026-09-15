@@ -10,7 +10,6 @@
 import type { z } from 'zod';
 
 import type { AgentContextData } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
-import type { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
 import type { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/agent/runtimeBinding/runtimeBinding';
 import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { SessionActivityState } from '@moonshot-ai/agent-core-v2/session/sessionActivity/sessionActivity';
@@ -158,7 +157,6 @@ import type { WarningEvent } from '@moonshot-ai/agent-core-v2/errors';
 
 import { sessionActivityStateSchema } from '../src/contract/session/activity.js';
 import {
-  agentCommandInfoSchema,
   agentContextDataSchema,
   agentTaskInfoSchema,
   activateSkillPayloadSchema,
@@ -175,7 +173,6 @@ import {
   promptSkillActivationSchema,
   promptWithSkillsPayloadSchema,
   promptWithSkillsResultSchema,
-  runCommandPayloadSchema,
   runShellCommandPayloadSchema,
   runtimeBindingSchema,
   setModelPayloadSchema,
@@ -591,12 +588,11 @@ const _sessionActivityState: AssertWire<typeof sessionActivityStateSchema, Sessi
 // ── agent scope (services.ts / schemas.ts) ──────────────────────────────────
 // Payload/result types are derived from the domain service interfaces the
 // facade calls, so the assertions track the exact methods the contract
-// mirrors; facade-only payload shapes (cancel / setPermission / plan / task /
-// command) derive from the `AgentFacade` input types.
+// mirrors; facade-only payload shapes (cancel / setPermission / plan / task)
+// derive from the `AgentFacade` input types.
 type ActivateSkillPayload = Parameters<IAgentSkillService['activate']>[0];
 type PromptWithSkillsPayload = Parameters<IAgentSkillService['promptWithSkills']>[0];
 type PromptSkillActivation = PromptWithSkillsPayload['skills'][number];
-type AgentCommandInfo = ReturnType<IAgentCommandService['list']>[number];
 type RuntimeBinding = ReturnType<IAgentRuntimeBindingService['get']>;
 type RunShellCommandPayload = Parameters<IAgentShellCommandService['run']>[0];
 type ShellCommandResult = Awaited<ReturnType<IAgentShellCommandService['run']>>;
@@ -607,7 +603,6 @@ type PromptPart = Extract<ContentPart, { type: 'text' | 'image_url' | 'video_url
 type EmptyPayload = {};
 type CancelPayload = NonNullable<Parameters<AgentFacade['cancel']>[0]>;
 type SetPermissionPayload = { mode: PermissionMode };
-type RunCommandPayload = Parameters<AgentFacade['runCommand']>[0];
 type CancelShellCommandPayload = Parameters<AgentFacade['cancelShellCommand']>[0];
 type SetModelPayload = { model: string };
 type CancelPlanPayload = NonNullable<Parameters<AgentFacade['cancelPlan']>[0]>;
@@ -659,9 +654,7 @@ const _usageStatus: AssertWire<typeof usageStatusSchema, UsageStatus> = true;
 // One-directional: `history` entries are full `ContextMessage`s (deep
 // `Message`/`Tool`/`PromptOrigin` unions) mirrored as `unknown`.
 const _agentContextData: AssertEngineToWire<typeof agentContextDataSchema, AgentContextData> = true;
-const _agentCommandInfo: AssertWire<typeof agentCommandInfoSchema, AgentCommandInfo> = true;
 const _runtimeBinding: AssertWire<typeof runtimeBindingSchema, RuntimeBinding> = true;
-const _runCommandPayload: AssertWire<typeof runCommandPayloadSchema, RunCommandPayload> = true;
 const _planData: AssertWire<typeof planDataSchema, PlanData> = true;
 const _cancelPlanPayload: AssertWire<typeof cancelPlanPayloadSchema, CancelPlanPayload> = true;
 const _getTasksPayload: AssertWire<typeof getTasksPayloadSchema, GetTasksPayload> = true;

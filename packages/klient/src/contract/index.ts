@@ -8,7 +8,6 @@
 
 import type { KlientContract } from './types.js';
 import {
-  agentCommandContract,
   agentContextMemoryContract,
   agentFullCompactionContract,
   agentLoopContract,
@@ -80,7 +79,6 @@ export const globalContract: KlientContract = {
   agentSkillService: agentSkillContract,
   agentLoopService: agentLoopContract,
   agentPermissionModeService: agentPermissionModeContract,
-  agentCommandService: agentCommandContract,
   agentRuntimeBindingService: agentRuntimeBindingContract,
   agentContextMemoryService: agentContextMemoryContract,
   agentTokenCountingService: agentTokenCountingContract,

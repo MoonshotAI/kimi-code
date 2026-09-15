@@ -140,19 +140,6 @@ export const agentContextDataSchema = z.object({
   tokenCount: z.number(),
 });
 
-/** `AgentCommandInfo` (`agent-core-v2/agent/command/agentCommand.ts`). */
-export const agentCommandInfoSchema = z.object({
-  name: z.string(),
-  description: z.string().optional(),
-  source: z.string(),
-});
-
-/** The facade's `runCommand` input shape. */
-export const runCommandPayloadSchema = z.object({
-  name: z.string(),
-  args: z.string().optional(),
-});
-
 /** `PlanData = null | { id, content, path }` — null is JSON-representable. */
 export const planDataSchema = z.union([
   z.null(),
