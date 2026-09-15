@@ -11,6 +11,7 @@ import { SseMcpClient } from './client-sse';
 import type { UnexpectedCloseReason } from './client-shared';
 import { StdioMcpClient } from './client-stdio';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
+import { sanitizeMcpSchema } from './schema-sanitize';
 import { assertMcpInputSchema, type MCPClient, type MCPToolDefinition } from './types';
 
 export type McpServerStatus = 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth' | 'removed';
@@ -455,7 +456,7 @@ export class McpConnectionManager implements McpConnectionView {
       tools: mcpTools.map((mcpTool) => ({
         name: mcpTool.name,
         description: mcpTool.description,
-        parameters: assertMcpInputSchema(mcpTool.name, mcpTool.inputSchema),
+        parameters: sanitizeMcpSchema(assertMcpInputSchema(mcpTool.name, mcpTool.inputSchema)),
       })),
     };
   }
