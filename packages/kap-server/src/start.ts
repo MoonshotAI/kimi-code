@@ -353,10 +353,10 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     homeDir,
     core,
     logger,
-    opsBatchMs: parseNonNegativeIntEnv(process.env['KIMI_CODE_TRANSCRIPT_OPS_BATCH_MS']),
+    opsBatchMs: parseNonNegativeIntEnv((opts.env ?? process.env)['KIMI_CODE_TRANSCRIPT_OPS_BATCH_MS']),
   });
   core.accessor.get(IGlobalSearchService).setLiveTranscriptSource(transcriptService);
-  const wsTuning = parseWsTuning(process.env);
+  const wsTuning = parseWsTuning(opts.env ?? process.env);
   const broadcaster = new SessionEventBroadcaster({
     eventsDir: join(homeDir, 'server', 'events'),
     core,
