@@ -32,6 +32,7 @@ import {
   type SessionSummary,
 } from './sessionIndex';
 import { markSessionDirty } from './sessionIndexDirtyJournal';
+import { diagEnabled } from '#/app/diagnostics/diag';
 import {
   PARENT_INDEX_NAME,
   SESSION_INDEX_MANIFEST,
@@ -54,6 +55,8 @@ import {
 const RECONCILE_INTERVAL_MS = 60_000;
 const DEGRADED_RETRY_MS = 5_000;
 const TIE_REPAIR_LIMIT = 1_000;
+const SLOW_RECONCILE_MS = 2_000;
+const SLOW_AUTHORITATIVE_SCAN_MS = 2_000;
 const UNBOUNDED = Number.MAX_SAFE_INTEGER;
 
 function canonicalOrder(a: SessionSummary, b: SessionSummary): number {
@@ -84,6 +87,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   private lastDegradedKey: string | undefined;
   private prepareFlight: Promise<SessionIndexStatus> | undefined;
   private projectFlight: Promise<void> | undefined;
+  private readonly diag = diagEnabled();
   private readonly reconcileTimer = this._register(new IntervalTimer({ unref: true }));
   private readonly projector: SessionIndexProjector;
 
@@ -259,6 +263,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       return;
     }
     if (this.state !== 'ready') return;
+    const startedAt = Date.now();
     try {
       const manifest = await this.queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
       if (manifest === undefined) {
@@ -269,8 +274,18 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       this.generation = manifest.seq;
       if (await this.manifestFresh(manifest)) return;
       await this.projector.reconcile(manifest.seq);
+      const durationMs = Date.now() - startedAt;
+      if (this.diag && durationMs >= SLOW_RECONCILE_MS) {
+        this.log.warn('session index reconciliation slow', {
+          durationMs,
+          generation: manifest.seq,
+        });
+      }
     } catch (error) {
-      this.log.warn('session index reconciliation failed', { error: String(error) });
+      this.log.warn('session index reconciliation failed', {
+        error: String(error),
+        durationMs: this.diag ? Date.now() - startedAt : undefined,
+      });
     }
   }
 
@@ -656,6 +671,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   private async collectAuthoritative(
     workspaceIds: readonly string[] | undefined,
   ): Promise<SessionSummary[]> {
+    const startedAt = Date.now();
     let collected: SessionSummary[];
     if (
       this.readModelEnabled() &&
@@ -677,13 +693,26 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       }
     }
     const pending = this.mirror.pending();
-    if (pending.length === 0) return collected;
-    const byId = new Map(collected.map((summary) => [summary.id, summary]));
-    for (const summary of pending) {
-      if (workspaceIds !== undefined && !workspaceIds.includes(summary.workspaceId)) continue;
-      byId.set(summary.id, summary);
+    let result: SessionSummary[];
+    if (pending.length === 0) {
+      result = collected;
+    } else {
+      const byId = new Map(collected.map((summary) => [summary.id, summary]));
+      for (const summary of pending) {
+        if (workspaceIds !== undefined && !workspaceIds.includes(summary.workspaceId)) continue;
+        byId.set(summary.id, summary);
+      }
+      result = [...byId.values()];
     }
-    return [...byId.values()];
+    const durationMs = Date.now() - startedAt;
+    if (this.diag && durationMs >= SLOW_AUTHORITATIVE_SCAN_MS) {
+      this.log.warn('session index authoritative scan slow', {
+        durationMs,
+        sessions: result.length,
+        state: this.state,
+      });
+    }
+    return result;
   }
 
   private readModelEnabled(): boolean {
