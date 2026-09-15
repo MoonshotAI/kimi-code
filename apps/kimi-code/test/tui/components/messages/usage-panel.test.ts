@@ -235,6 +235,18 @@ describe('UsagePanelComponent', () => {
     expect(new Set(extraRows.map((line) => line.length)).size).toBe(1);
   });
 
+  it('shows an empty-hint instead of an error when there is no session yet', () => {
+    const lines = buildUsageReportLines({
+      contextUsage: 0,
+      contextTokens: 0,
+      maxContextTokens: 1_000_000,
+    }).map(strip);
+
+    const output = lines.join('\n');
+    expect(output).toContain('No token usage recorded yet.');
+    expect(output).not.toContain('No active session');
+  });
+
   it('wraps preformatted usage lines in a bordered panel', () => {
     const component = new UsagePanelComponent(() => ['Session usage'], 'primary');
     const output = component.render(80).map(strip);
