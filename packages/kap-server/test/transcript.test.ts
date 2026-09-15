@@ -350,6 +350,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
         userMessageId: 'p2',
         status: 'queued',
         content: [{ type: 'text', text: 'second' }],
+        clientMetadata: [{ display_text: 'Second display', kimi_code_composer: { version: 1 } }],
         createdAt: '2026-01-01T00:00:01.000Z',
       }),
     );
@@ -363,7 +364,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
         content: [{ type: 'text', text: 'first' }],
       }),
     );
-    expect(body.data.prompts).toContainEqual(expect.objectContaining({ promptId: 'p2', status: 'queued' }));
+    expect(body.data.prompts).toContainEqual(expect.objectContaining({ promptId: 'p2', status: 'queued', clientMetadata: [{ display_text: 'Second display', kimi_code_composer: { version: 1 } }] }));
 
     bus.publish(serverEvent({ type: 'prompt.started', promptId: 'p2' }));
     ({ body } = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`));

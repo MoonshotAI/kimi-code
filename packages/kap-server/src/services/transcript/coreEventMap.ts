@@ -1355,6 +1355,7 @@ export class AgentTranscriptProjector {
       status: 'queued',
       userMessageId: prev?.userMessageId,
       content: projectPromptContentParts(event.content),
+      clientMetadata: event.clientMetadata ?? prev?.clientMetadata,
       createdAt: prev?.createdAt ?? nowIso(),
     }));
     return [{ op: 'prompt.upsert', prompt }];
@@ -1366,6 +1367,7 @@ export class AgentTranscriptProjector {
       status: prev !== undefined && isTerminalPromptStatus(prev.status) ? prev.status : event.status,
       userMessageId: event.userMessageId,
       content: projectPromptContentParts(event.content),
+      clientMetadata: event.clientMetadata ?? prev?.clientMetadata,
       createdAt: prev?.createdAt ?? event.createdAt,
       finishedAt: prev?.finishedAt,
       steeredAt: prev?.steeredAt,
@@ -1379,6 +1381,7 @@ export class AgentTranscriptProjector {
       status: 'running',
       userMessageId: prev?.userMessageId,
       content: prev?.content,
+      clientMetadata: prev?.clientMetadata,
       createdAt: prev?.createdAt ?? new Date().toISOString(),
       finishedAt: prev?.finishedAt,
       steeredAt: prev?.steeredAt,
@@ -1392,6 +1395,7 @@ export class AgentTranscriptProjector {
       status: event.reason ?? 'completed',
       userMessageId: prev?.userMessageId,
       content: prev?.content,
+      clientMetadata: prev?.clientMetadata,
       createdAt: prev?.createdAt ?? event.finishedAt,
       finishedAt: event.finishedAt,
       steeredAt: prev?.steeredAt,
@@ -1405,6 +1409,7 @@ export class AgentTranscriptProjector {
       status: 'aborted',
       userMessageId: prev?.userMessageId,
       content: prev?.content,
+      clientMetadata: prev?.clientMetadata,
       createdAt: prev?.createdAt ?? event.abortedAt,
       finishedAt: event.abortedAt,
       steeredAt: prev?.steeredAt,
@@ -1414,11 +1419,13 @@ export class AgentTranscriptProjector {
 
   private onPromptSteered(event: PromptSteeredEvent): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
+    const inputs = new Map(event.inputs?.map((input) => [input.promptId, input]));
     const active = this.upsertPrompt(event.activePromptId, (prev) => ({
       promptId: event.activePromptId,
       status: prev?.status ?? 'running',
       userMessageId: prev?.userMessageId,
       content: projectPromptContentParts(event.content),
+      clientMetadata: event.inputs?.flatMap((input) => input.clientMetadata ?? []),
       createdAt: prev?.createdAt ?? event.steeredAt,
       finishedAt: prev?.finishedAt,
       steeredAt: event.steeredAt,
@@ -1426,12 +1433,14 @@ export class AgentTranscriptProjector {
     ops.push({ op: 'prompt.upsert', prompt: active });
     this.unpairedSteerPromptIds.push([...event.promptIds]);
     for (const promptId of event.promptIds) {
+      const input = inputs.get(promptId);
       const steered = this.upsertPrompt(promptId, (prev) => ({
         promptId,
         status: 'completed',
-        userMessageId: prev?.userMessageId,
-        content: prev?.content,
-        createdAt: prev?.createdAt ?? event.steeredAt,
+        userMessageId: input?.userMessageId ?? prev?.userMessageId,
+        content: input === undefined ? prev?.content : projectPromptContentParts(input.content),
+        clientMetadata: input?.clientMetadata ?? prev?.clientMetadata,
+        createdAt: input?.createdAt ?? prev?.createdAt ?? event.steeredAt,
         finishedAt: event.steeredAt,
         steeredAt: event.steeredAt,
       }));
@@ -1442,12 +1451,12 @@ export class AgentTranscriptProjector {
 
   private onTurnSteered(event: TurnSteerEvent): TranscriptOperation[] {
     const origin = event.origin;
-    if (origin.kind !== 'user') return [];
+    if (origin.kind !== 'user' && origin.kind !== 'skill_activation') return [];
     const frameOrigin = projectTranscriptUserOrigin(origin);
     if (frameOrigin === undefined) return [];
     const turn = this.currentTurn;
     if (turn !== undefined && turn.state !== 'running') return [];
-    const skip = origin.skillActivations?.length ?? 0;
+    const skip = origin.kind === 'user' ? origin.skillActivations?.length ?? 0 : 0;
     const input = skip > 0 ? event.input.slice(skip) : event.input;
     const step = this.currentStep;
     if (step !== undefined && step.state === 'running') {
@@ -1457,14 +1466,14 @@ export class AgentTranscriptProjector {
         step.turnId,
         step.stepId,
         input,
-        this.unpairedSteerPromptIds.shift(),
+        origin.kind === 'user' ? this.unpairedSteerPromptIds.shift() : undefined,
         frameOrigin,
       );
       return ops;
     }
     this.pendingSteers.push({
       input,
-      promptIds: this.unpairedSteerPromptIds.shift(),
+      promptIds: origin.kind === 'user' ? this.unpairedSteerPromptIds.shift() : undefined,
       origin: frameOrigin,
     });
     return [];

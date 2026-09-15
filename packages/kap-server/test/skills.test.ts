@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import {
   IAgentLifecycleService,
+  closeSessionById,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
 import {
@@ -183,6 +184,26 @@ describe('server-v2 /api/v1 skills', () => {
         activated: true,
         skill_name: 'update-config',
       });
+    });
+
+    it('retains rich client metadata and ordered context through a single activation and cold resume', async () => {
+      const id = await createSession();
+      await createMainAgent(id);
+      const metadata = { display_text: 'Example skill · Save button', kimi_code_composer: { version: 1, doc: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'client-only literal' }] }] }, attachments: [], attachmentOrder: [] } };
+      const result = await postJson(`/api/v1/sessions/${id}/skills/update-config:activate`, { args: 'Example argument', content: [{ type: 'text', text: 'Captured page evidence' }, { type: 'text', text: 'Image association' }], metadata });
+      expect(result.body.code).toBe(0);
+      const messages = await getJson<{ items: { role: string; content: { type: string; text?: string }[]; metadata?: { origin?: { clientMetadata?: unknown } } }[] }>(`/api/v1/sessions/${id}/messages`);
+      const input = messages.body.data.items.find((message) => message.role === 'user' && message.content.some((part) => part.text?.includes('User activated the skill')));
+      const modelText = input?.content.map((part) => part.text ?? '').join('\n') ?? '';
+      expect(modelText).toContain('Captured page evidence');
+      expect(modelText.indexOf('Image association')).toBeGreaterThan(modelText.indexOf('Captured page evidence'));
+      expect(input?.metadata?.origin?.clientMetadata).toEqual([metadata]);
+      expect(JSON.stringify(input?.content)).not.toContain('client-only literal');
+      await closeSessionById(server!.core.accessor, id);
+      const transcript = await getJson<{ items: { kind: string; origin?: { payload?: { clientMetadata?: unknown } } }[] }>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+      expect(transcript.body.data.items.find((item) => item.kind === 'turn')?.origin?.payload?.clientMetadata).toEqual([metadata]);
+      const session = await getJson<{ title: string }>(`/api/v1/sessions/${id}`);
+      expect(session.body.data.title).toBe(metadata.display_text);
     });
 
     it('derives the session title from the first skill activation', async () => {
