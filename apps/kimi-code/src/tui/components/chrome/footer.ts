@@ -2,7 +2,7 @@
  * Footer/status bar — multi-line status display at the bottom of the TUI.
  *
  * Layout:
- *   Line 1: [Ask When Needed] [plan] <model> <cwd>  <git-badge>  <shortcut hints>
+ *   Line 1: [Ask When Needed] [plan] <goal> <model> <tasks> <cwd> <tps> <git-badge>  <shortcut hints>
  *   Line 2: context: N% (tokens/max)
  */
 
@@ -37,7 +37,7 @@ import {
 /** What the footer's fixed ctrl+o hint offers: expand collapsed tool output, or collapse it again. */
 export type ToolOutputExpandHint = 'expand' | 'collapse';
 
-const DEFAULT_STATUS_LINE_ITEMS = ['mode', 'goal', 'model', 'tasks', 'cwd', 'git'] as const;
+const DEFAULT_STATUS_LINE_ITEMS = ['mode', 'goal', 'model', 'tasks', 'cwd', 'tps', 'git'] as const;
 
 const MAX_CWD_SEGMENTS = 3;
 const GOAL_TIMER_INTERVAL_MS = 1_000;
@@ -428,6 +428,7 @@ export class FooterComponent implements Component {
       model: [],
       tasks: [],
       cwd: [],
+      tps: [],
       git: [],
       tips: [],
     };
@@ -493,6 +494,13 @@ export class FooterComponent implements Component {
     const cwd = shortenCwd(state.workDir);
     if (cwd) slots['cwd'] = [chalk.hex(colors.textDim)(cwd)];
 
+    // Decode TPS of the last measurable step. Absent until the first step long
+    // enough to time completes, so the slot simply stays empty early on.
+    const tps = state.decodeTps;
+    if (tps !== undefined) {
+      slots['tps'] = [chalk.hex(colors.textDim)(`${tps.toFixed(1)} tok/s`)];
+    }
+
     const git = this.gitCache.getStatus();
     if (git !== null) slots['git'] = [formatFooterGitBadge(git, colors)];
 
@@ -510,6 +518,7 @@ export class FooterComponent implements Component {
       contextUsage: state.contextUsage,
       contextTokens: state.contextTokens,
       maxContextTokens: state.maxContextTokens,
+      decodeTps: state.decodeTps ?? null,
       sessionId: state.sessionId,
       version: state.version,
     };
