@@ -98,7 +98,7 @@ export class SessionStateAggregator {
 
   changed(sessionId: string): SessionStateMessage | undefined {
     const next = this.build(sessionId);
-    const { timestamp: _timestamp, ...comparable } = next;
+    const { event_created_at: _eventCreatedAt, ...comparable } = next;
     const json = JSON.stringify(comparable);
     if (json === this.lastEmittedJson) return undefined;
     this.lastEmittedJson = json;
@@ -111,7 +111,7 @@ export class SessionStateAggregator {
     return {
       type: 'session.state',
       session_id: sessionId,
-      timestamp: Date.now(),
+      event_created_at: new Date().toISOString(),
       status: busy ? 'running' : 'idle',
       pending_interaction: this.sessionActivity?.pendingInteraction,
       model: this.model,

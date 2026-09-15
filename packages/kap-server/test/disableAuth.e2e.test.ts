@@ -18,20 +18,6 @@ function rawToString(data: RawData): string {
   return Buffer.from(data as ArrayBuffer).toString('utf8');
 }
 
-function openConn(url: string): Promise<{ ws: WebSocket; firstFrame: unknown }> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
-    ws.once('message', (data) => {
-      try {
-        resolve({ ws, firstFrame: JSON.parse(rawToString(data)) });
-      } catch {
-        resolve({ ws, firstFrame: null });
-      }
-    });
-    ws.once('error', reject);
-  });
-}
-
 describe('server-v2 disableAuth (--dangerous-bypass-auth)', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
@@ -87,9 +73,14 @@ describe('server-v2 disableAuth (--dangerous-bypass-auth)', () => {
   });
 
   it('disableAuth:true lets WebSocket upgrades through without a token', async () => {
-    const v3 = await openConn(`ws://127.0.0.1:${server!.port}/api/v3/ws`);
-    sockets.push(v3.ws);
-    expect(v3.firstFrame).toMatchObject({ type: 'hello' });
+    const ws = new WebSocket(`ws://127.0.0.1:${server!.port}/api/v3/ws`);
+    sockets.push(ws);
+    const firstFrame = new Promise<unknown>((resolve) => {
+      ws.once('message', (data) => resolve(JSON.parse(rawToString(data))));
+    });
+    await new Promise<void>((resolve) => ws.once('open', resolve));
+    ws.send(JSON.stringify({ type: 'ping', request_id: 'r1' }));
+    expect(await firstFrame).toMatchObject({ type: 'response', request_id: 'r1', code: 0 });
   });
 
   it('default boot keeps the gate closed and reports dangerous_bypass_auth: false', async () => {

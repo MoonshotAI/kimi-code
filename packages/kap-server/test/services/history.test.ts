@@ -129,7 +129,7 @@ describe('foldWireHistory turn lifecycle', () => {
       turn_id: 't0',
       text: [{ type: 'text', text: 'fix the bug', meta: {} }],
       status: 'read',
-      timestamp: T0,
+      event_created_at: iso(T0),
     });
     const step = ofType(messages, 'step')[0]!;
     expect(step).toMatchObject({
@@ -299,14 +299,46 @@ describe('foldWireHistory steer', () => {
       turn_id: 't0',
       text: [{ type: 'text', text: 'also B', meta: {} }],
       status: 'read',
-      timestamp: T0 + 2,
+      event_created_at: iso(T0 + 2),
     });
     const betweenSteps = users.find((u) => u.message_id === 't0.u2')!;
     expect(betweenSteps).toMatchObject({
       turn_id: 't0',
       text: [{ type: 'text', text: 'and C', meta: {} }],
       status: 'read',
-      timestamp: T0 + 4,
+      event_created_at: iso(T0 + 4),
+    });
+  });
+
+  it('emits steers read at their record without synthesizing a step', () => {
+    const attached = fold([
+      rec('turn.started', { input: [{ type: 'text', text: 'do A' }], origin: { kind: 'user' } }),
+      loopEvent({ type: 'step.begin', uuid: 'u1', turnId: '0', step: 1 }, T0 + 1),
+      loopEvent({ type: 'step.end', uuid: 'u1' }, T0 + 2),
+      rec('turn.steer', { input: [{ type: 'text', text: 'last' }], origin: { kind: 'user' } }, T0 + 3),
+      rec('turn.ended', { turnId: 0, reason: 'cancelled' }, T0 + 4),
+    ]);
+    expect(ofType(attached, 'step').map((s) => s.step_id)).toEqual(['t0.1']);
+    const steer = ofType(attached, 'user').find((u) => u.message_id === 't0.u1')!;
+    expect(steer).toMatchObject({
+      turn_id: 't0',
+      text: [{ type: 'text', text: 'last', meta: {} }],
+      status: 'read',
+      event_created_at: iso(T0 + 3),
+    });
+
+    const stepFree = fold([
+      rec('turn.started', { input: [{ type: 'text', text: 'do A' }], origin: { kind: 'user' } }),
+      rec('turn.steer', { input: [{ type: 'text', text: 'early' }], origin: { kind: 'user' } }, T0 + 1),
+      rec('turn.ended', { turnId: 0, reason: 'cancelled' }, T0 + 2),
+    ]);
+    expect(ofType(stepFree, 'step')).toHaveLength(0);
+    const early = ofType(stepFree, 'user').find((u) => u.message_id === 't0.u1')!;
+    expect(early).toMatchObject({
+      turn_id: 't0',
+      text: [{ type: 'text', text: 'early', meta: {} }],
+      status: 'read',
+      event_created_at: iso(T0 + 1),
     });
   });
 });
@@ -355,7 +387,7 @@ describe('foldWireHistory task notifications', () => {
       turn_id: 't0',
       text: [{ type: 'text', text: 'Task completed\nbuild finished', meta: {} }],
       status: 'read',
-      timestamp: T0,
+      event_created_at: iso(T0),
       origin: {
         kind: 'task',
         task_id: 'task-1',
@@ -378,7 +410,7 @@ describe('foldWireHistory task notifications', () => {
       turn_id: 't1',
       text: [{ type: 'text', text: 'Task failed\ntests broke', meta: {} }],
       status: 'read',
-      timestamp: T0 + 8,
+      event_created_at: iso(T0 + 8),
       origin: {
         kind: 'task',
         task_id: 'task-2',
@@ -396,7 +428,7 @@ describe('foldWireHistory task notifications', () => {
       turn_id: 't2',
       text: [{ type: 'text', text: 'Restored\nfrom previous session', meta: {} }],
       status: 'read',
-      timestamp: T0 + 11,
+      event_created_at: iso(T0 + 11),
       origin: {
         kind: 'task',
         task_id: 'task-9',
@@ -889,7 +921,7 @@ describe('foldWireHistory queued prompts and legacy messages', () => {
       status: 'unread',
     });
     expect(queued.turn_id).toBeUndefined();
-    expect(queued.timestamp).toBeUndefined();
+    expect(queued.event_created_at).toBeUndefined();
     expect(ofType(messages, 'turn').map((t) => t.turn_id)).toEqual(['t0']);
 
     const aborted = fold([
@@ -1102,7 +1134,7 @@ describe('paginateHistory', () => {
         type: 'turn',
         session_id: SESSION,
         agent_id: 'main',
-        timestamp: T0,
+        event_created_at: iso(T0),
         turn_id: `t${turn}`,
         ordinal: turn,
         status: 'completed',
@@ -1115,14 +1147,14 @@ describe('paginateHistory', () => {
         message_id: `t${turn}.u0`,
         turn_id: `t${turn}`,
         status: 'read',
-        timestamp: T0,
+        event_created_at: iso(T0),
         text: [{ type: 'text', text: `p${turn}`, meta: {} }],
       },
       {
         type: 'step',
         session_id: SESSION,
         agent_id: 'main',
-        timestamp: T0,
+        event_created_at: iso(T0),
         step_id: `t${turn}.1`,
         turn_id: `t${turn}`,
         ordinal: 1,
@@ -1132,7 +1164,7 @@ describe('paginateHistory', () => {
         type: 'assistant',
         session_id: SESSION,
         agent_id: 'main',
-        timestamp: T0,
+        event_created_at: iso(T0),
         message_id: `t${turn}.1.a1`,
         turn_id: `t${turn}`,
         step_id: `t${turn}.1`,

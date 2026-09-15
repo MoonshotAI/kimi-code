@@ -64,7 +64,7 @@ function sessionMessage(
 ): Record<string, unknown> {
   return {
     type: 'session',
-    timestamp: Date.now(),
+    event_created_at: new Date().toISOString(),
     subtype,
     session: {
       workspace_id: 'wd_example_0123456789ab',
@@ -223,7 +223,7 @@ describe('SessionActivityHub', () => {
     for (const subtype of ['created', 'updated', 'deleted']) {
       instances[0]!.emitFrame({
         type: 'workspace',
-        timestamp: Date.now(),
+        event_created_at: new Date().toISOString(),
         subtype,
         workspace: {
           id: 'wd_example_0123456789ab',

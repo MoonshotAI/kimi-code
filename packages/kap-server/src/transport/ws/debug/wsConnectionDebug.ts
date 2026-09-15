@@ -5,15 +5,12 @@ import {
 } from '@moonshot-ai/agent-core-v2/human/xstateInspection';
 import type { WebSocket } from 'ws';
 
-const DEFAULT_HEARTBEAT_INTERVAL_MS = 10_000;
-const HEARTBEAT_MISS_LIMIT = 2;
 const DEFAULT_FLUSH_INTERVAL_MS = 16;
 const DEFAULT_HIGH_WATER_MARK_BYTES = 1 << 20;
 
 export interface WsConnectionDebugOptions {
   readonly socket: WebSocket;
   readonly collector?: XstateInspectionCollector;
-  readonly heartbeatIntervalMs?: number;
   readonly flushIntervalMs?: number;
   readonly highWaterMarkBytes?: number;
 }
@@ -21,7 +18,6 @@ export interface WsConnectionDebugOptions {
 export class WsConnectionDebug {
   private readonly socket: WebSocket;
   private readonly collector: XstateInspectionCollector;
-  private readonly heartbeatIntervalMs: number;
   private readonly flushIntervalMs: number;
   private readonly highWaterMarkBytes: number;
 
@@ -29,25 +25,16 @@ export class WsConnectionDebug {
   private collectorUnsubscribe?: () => void;
   private outbound: XstateInspectionEnvelope[] = [];
   private flushTimer?: ReturnType<typeof setTimeout>;
-  private heartbeatTimer?: ReturnType<typeof setInterval>;
-  private lastPongAt = Date.now();
 
   constructor(opts: WsConnectionDebugOptions) {
     this.socket = opts.socket;
     this.collector = opts.collector ?? xstateInspectionCollector;
-    this.heartbeatIntervalMs = opts.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
     this.flushIntervalMs = opts.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
     this.highWaterMarkBytes = opts.highWaterMarkBytes ?? DEFAULT_HIGH_WATER_MARK_BYTES;
 
     this.socket.on('close', () => this.onClose());
     this.socket.on('error', () => this.onClose());
-    this.socket.on('pong', () => {
-      this.lastPongAt = Date.now();
-    });
     this.socket.on('message', (data) => this.onMessage(data));
-
-    this.heartbeatTimer = setInterval(() => this.onHeartbeat(), this.heartbeatIntervalMs);
-    this.heartbeatTimer.unref?.();
   }
 
   private onMessage(data: unknown): void {
@@ -111,17 +98,6 @@ export class WsConnectionDebug {
     }
   }
 
-  private onHeartbeat(): void {
-    if (Date.now() - this.lastPongAt >= this.heartbeatIntervalMs * HEARTBEAT_MISS_LIMIT) {
-      this.close();
-      return;
-    }
-    try {
-      this.socket.ping();
-    } catch {
-    }
-  }
-
   close(): void {
     if (this.closed) return;
     try {
@@ -135,7 +111,6 @@ export class WsConnectionDebug {
     if (this.closed) return;
     this.closed = true;
     if (this.flushTimer !== undefined) clearTimeout(this.flushTimer);
-    if (this.heartbeatTimer !== undefined) clearInterval(this.heartbeatTimer);
     this.outbound = [];
     this.collectorUnsubscribe?.();
     this.collectorUnsubscribe = undefined;

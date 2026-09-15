@@ -22,9 +22,9 @@
  * snapshot. Global messages (workspace/session/config/…) are not consumed
  * by this store.
  *
- * An upsert whose `timestamp` is strictly older than the held entity's is
- * skipped: a REST page folded before a live update must not rewind it. An
- * upsert without a timestamp (an unread `user` message) is stale once the
+ * An upsert whose `event_created_at` is strictly older than the held entity's
+ * is skipped: a REST page folded before a live update must not rewind it. An
+ * upsert without one (an unread `user` message) is stale once the
  * held entity carries one — unread precedes read, never the reverse — yet
  * always outranks the page when a replace window carries live-only entries
  * over.
@@ -196,7 +196,7 @@ export class ChatStore {
   /**
    * Merge one REST history page. `replace` installs the page as the whole
    * window (entries absent from it are dropped, except ones newer than the
-   * page's newest timestamp — live traffic that outran the fetch);
+   * page's newest `event_created_at` — live traffic that outran the fetch);
    * `prepend` inserts the older slice ahead of the window (deduped by key);
    * `tail` upserts the catch-up slice in page order. system(undo/clear)
    * messages inside a page truncate exactly like live ones.
@@ -314,7 +314,7 @@ export class ChatStore {
       this.state = { ...this.state, entries: [...this.state.entries, { key, message }] };
     } else {
       const held = this.state.entries[index]!.message;
-      if (held === message || isStaleUpsert(held.timestamp, message.timestamp)) return;
+      if (held === message || isStaleUpsert(held.event_created_at, message.event_created_at)) return;
       const entries = [...this.state.entries];
       entries[index] = { key, message };
       this.state = { ...this.state, entries };
@@ -332,7 +332,7 @@ export class ChatStore {
       case 'interaction': {
         const held = this.state.interactions.get(message.interaction_id);
         if (held === message) return;
-        if (held !== undefined && held.timestamp > message.timestamp) return;
+        if (held !== undefined && held.event_created_at > message.event_created_at) return;
         const interactions = new Map([
           ...this.state.interactions,
           [message.interaction_id, message] as const,
@@ -343,7 +343,7 @@ export class ChatStore {
       case 'task': {
         const held = this.state.tasks.get(message.task_id);
         if (held === message) return;
-        if (held !== undefined && held.timestamp > message.timestamp) return;
+        if (held !== undefined && held.event_created_at > message.event_created_at) return;
         const tasks = new Map([...this.state.tasks, [message.task_id, message] as const]);
         this.state = { ...this.state, tasks };
         break;
@@ -351,7 +351,7 @@ export class ChatStore {
       case 'todo': {
         const held = this.state.todos.get(message.todo_id);
         if (held === message) return;
-        if (held !== undefined && held.timestamp > message.timestamp) return;
+        if (held !== undefined && held.event_created_at > message.event_created_at) return;
         const todos = new Map([...this.state.todos, [message.todo_id, message] as const]);
         this.state = { ...this.state, todos };
         break;
@@ -359,7 +359,7 @@ export class ChatStore {
       case 'session.state': {
         const held = this.state.sessionState;
         if (held === message) return;
-        if (held !== undefined && held.timestamp > message.timestamp) return;
+        if (held !== undefined && held.event_created_at > message.event_created_at) return;
         this.state = { ...this.state, sessionState: message };
         break;
       }
@@ -436,13 +436,15 @@ export class ChatStore {
 
   private preferHeld(key: string, message: TimelineMessage): TimelineEntry {
     const held = this.state.entries.find((entry) => entry.key === key);
-    if (held !== undefined && isStaleUpsert(held.message.timestamp, message.timestamp)) return held;
+    if (held !== undefined && isStaleUpsert(held.message.event_created_at, message.event_created_at)) return held;
     return { key, message };
   }
 
-  private newerThan(entries: readonly TimelineEntry[], timestamp: number): TimelineEntry[] {
+  private newerThan(entries: readonly TimelineEntry[], eventCreatedAt: string): TimelineEntry[] {
     return entries.filter(
-      (entry) => entry.message.timestamp === undefined || entry.message.timestamp > timestamp,
+      (entry) =>
+        entry.message.event_created_at === undefined ||
+        entry.message.event_created_at > eventCreatedAt,
     );
   }
 
@@ -478,22 +480,23 @@ function isTimelineMessage(
   }
 }
 
-function maxTimestamp(messages: readonly HistoryMessage[]): number | undefined {
-  let max: number | undefined;
+function maxTimestamp(messages: readonly HistoryMessage[]): string | undefined {
+  let max: string | undefined;
   for (const message of messages) {
-    if (message.timestamp === undefined) continue;
-    if (max === undefined || message.timestamp > max) max = message.timestamp;
+    if (message.event_created_at === undefined) continue;
+    if (max === undefined || message.event_created_at > max) max = message.event_created_at;
   }
   return max;
 }
 
 /**
  * Same-entity version ordering for the idempotent upsert path. Only `user`
- * messages can lack a timestamp (unread = not persisted yet), and the
- * unread → read transition is one-way, so an untimestamped upsert is stale
- * whenever the held entity already carries one.
+ * messages can lack an `event_created_at` (unread = not persisted yet), and
+ * the unread → read transition is one-way, so an undated upsert is stale
+ * whenever the held entity already carries one. Values are ISO 8601 UTC
+ * strings, so plain string comparison is chronological.
  */
-function isStaleUpsert(held: number | undefined, incoming: number | undefined): boolean {
+function isStaleUpsert(held: string | undefined, incoming: string | undefined): boolean {
   if (incoming === undefined) return held !== undefined;
   return held !== undefined && held > incoming;
 }

@@ -2022,7 +2022,7 @@ In `terms` mode the query is tokenized (ASCII words plus CJK n-grams), deduplica
 
 Lists the WebSocket clients currently connected to this server, oldest connection first. No parameters.
 
-On success, `data` is `{ connections }` where each item is `{ id, connected_at, remote_address, user_agent, has_client_hello, subscriptions }`: `connected_at` is an ISO 8601 timestamp, `remote_address` and `user_agent` are `null` when unknown, `has_client_hello` reports whether the client sent its handshake frame, and `subscriptions` lists the session ids the connection is subscribed to.
+On success, `data` is `{ connections }` where each item is `{ id, connected_at, remote_address, user_agent, subscriptions }`: `connected_at` is an ISO 8601 timestamp, `remote_address` and `user_agent` are `null` when unknown, and `subscriptions` lists the session ids the connection is subscribed to.
 
 ### `GET /api/v2/sessions`
 

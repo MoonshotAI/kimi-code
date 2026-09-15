@@ -36,18 +36,18 @@ import { ChatWs } from './ws';
 const T0 = Date.parse('2026-01-01T00:00:00.000Z');
 let tick = 0;
 
-function ts(offsetMs?: number): number {
+function ts(offsetMs?: number): string {
   tick += 1;
-  return T0 + tick * 1000 + (offsetMs ?? 0);
+  return new Date(T0 + tick * 1000 + (offsetMs ?? 0)).toISOString();
 }
 
 const base = { session_id: 's1', agent_id: 'main' } as const;
 
-function turnMsg(n: number, status: 'running' | 'completed' = 'completed', at?: number): TurnMessage {
+function turnMsg(n: number, status: 'running' | 'completed' = 'completed', at?: string): TurnMessage {
   return {
     type: 'turn',
     ...base,
-    timestamp: at ?? ts(),
+    event_created_at: at ?? ts(),
     turn_id: `t${n}`,
     ordinal: n,
     status,
@@ -58,14 +58,14 @@ function turnMsg(n: number, status: 'running' | 'completed' = 'completed', at?: 
 function stepMsg(
   stepId: string,
   status: StepMessage['status'] = 'completed',
-  at?: number,
+  at?: string,
 ): StepMessage {
   const turnId = stepId.split('.')[0] ?? 't1';
   const ordinal = Number(stepId.split('.')[1] ?? '1');
   return {
     type: 'step',
     ...base,
-    timestamp: at ?? ts(),
+    event_created_at: at ?? ts(),
     step_id: stepId,
     turn_id: turnId,
     ordinal,
@@ -73,12 +73,12 @@ function stepMsg(
   };
 }
 
-function userMsg(stepId: string, text: string, at?: number): UserMessage {
+function userMsg(stepId: string, text: string, at?: string): UserMessage {
   const turnId = stepId.split('.')[0] ?? 't1';
   return {
     type: 'user',
     ...base,
-    timestamp: at ?? ts(),
+    event_created_at: at ?? ts(),
     message_id: `${stepId}.u0`,
     turn_id: turnId,
     text: [{ type: 'text', text, meta: {} }],
@@ -90,13 +90,13 @@ function assistantMsg(
   stepId: string,
   text: string,
   status: 'streaming' | 'completed' = 'completed',
-  at?: number,
+  at?: string,
 ): AssistantMessage {
   const turnId = stepId.split('.')[0] ?? 't1';
   return {
     type: 'assistant',
     ...base,
-    timestamp: at ?? ts(),
+    event_created_at: at ?? ts(),
     message_id: `${stepId}.a0`,
     turn_id: turnId,
     step_id: stepId,
@@ -114,7 +114,7 @@ function toolCallMsg(
   return {
     type: 'tool_call',
     ...base,
-    timestamp: ts(),
+    event_created_at: ts(),
     tool_call_id: id,
     turn_id: turnId,
     step_id: stepId,
@@ -132,7 +132,7 @@ function systemMsg(
   return {
     type: 'system',
     ...base,
-    timestamp: ts(),
+    event_created_at: ts(),
     system_id: systemId,
     subtype,
     payload,
@@ -143,7 +143,7 @@ function interactionMsg(id: string, toolCallId?: string): InteractionMessage {
   return {
     type: 'interaction',
     ...base,
-    timestamp: ts(),
+    event_created_at: ts(),
     interaction_id: id,
     kind: 'approval',
     status: 'pending',
@@ -155,7 +155,7 @@ function taskMsg(id: string, status: TaskMessage['status'] = 'running'): TaskMes
   return {
     type: 'task',
     ...base,
-    timestamp: ts(),
+    event_created_at: ts(),
     task_id: id,
     kind: 'shell',
     status,
@@ -236,21 +236,12 @@ class FakeWs implements WsLike {
   sentFrames(): Record<string, unknown>[] {
     return this.sent.map((data) => JSON.parse(data) as Record<string, unknown>);
   }
-
-  hello(): void {
-    this.serverFrame({
-      type: 'hello',
-      protocol_version: '3',
-      server_id: 'srv',
-      capabilities: ['step_replay_v1'],
-    });
-  }
 }
 
 function makeWs(handlers: Partial<ConstructorParameters<typeof ChatWs>[0]['handlers']> = {}) {
   const seen = {
     messages: [] as ServerMessage[],
-    acks: [] as { code: number; msg?: string }[],
+    responses: [] as { code: number; msg?: string }[],
     protocolErrors: [] as { code: number; msg: string }[],
     invalid: 0,
     reconnects: 0,
@@ -267,9 +258,9 @@ function makeWs(handlers: Partial<ConstructorParameters<typeof ChatWs>[0]['handl
         seen.messages.push(message);
         handlers.onMessage?.(message);
       },
-      onAck: (code, msg) => {
-        seen.acks.push({ code, msg });
-        handlers.onAck?.(code, msg);
+      onResponse: (code, msg) => {
+        seen.responses.push({ code, msg });
+        handlers.onResponse?.(code, msg);
       },
       onProtocolError: (code, msg) => {
         seen.protocolErrors.push({ code, msg });
@@ -376,49 +367,47 @@ describe('fetchHistoryPage', () => {
 // ---------------------------------------------------------------- ws
 
 describe('ChatWs', () => {
-  it('connects with the bearer subprotocol and subscribes after the server hello', () => {
+  it('connects with the bearer subprotocol and subscribes on open without waiting for a handshake', () => {
     FakeWs.reset();
     makeWs();
     const sock = FakeWs.instances[0]!;
     expect(sock.url).toBe('ws://h:1/api/v3/ws');
     expect(sock.protocols).toEqual(['kimi-code.bearer.tok']);
-    sock.open();
     expect(sock.sent).toHaveLength(0);
-    sock.hello();
-    expect(sock.sentFrames()[0]).toEqual({
+    sock.open();
+    const frame = sock.sentFrames()[0]!;
+    expect(frame).toMatchObject({
       type: 'subscribe',
-      id: 1,
       session_id: 's1',
       agent_ids: ['main'],
     });
+    expect(typeof frame['request_id']).toBe('string');
   });
 
-  it('fires onAck on the subscribe ack and forwards entity messages', () => {
+  it('fires onResponse on the subscribe response and forwards entity messages', () => {
     FakeWs.reset();
     const { seen } = makeWs();
     const sock = FakeWs.instances[0]!;
     sock.open();
-    sock.hello();
-    sock.serverFrame({ type: 'ack', id: 1, code: 0 });
-    expect(seen.acks).toEqual([{ code: 0 }]);
+    sock.serverFrame({ type: 'response', request_id: sock.sentFrames()[0]!['request_id'], code: 0 });
+    expect(seen.responses).toEqual([{ code: 0 }]);
     sock.serverFrame(turnMsg(1, 'running'));
     sock.serverFrame({
       type: 'session.state',
       session_id: 's1',
-      timestamp: ts(),
+      event_created_at: ts(),
       status: 'idle',
     });
     expect(seen.messages.map((m) => m.type)).toEqual(['turn', 'session.state']);
   });
 
-  it('surfaces protocol error frames and ignores acks for other ids', () => {
+  it('surfaces protocol error frames and ignores responses for other request ids', () => {
     FakeWs.reset();
     const { seen } = makeWs();
     const sock = FakeWs.instances[0]!;
     sock.open();
-    sock.hello();
-    sock.serverFrame({ type: 'ack', id: 99, code: 0 });
-    expect(seen.acks).toHaveLength(0);
+    sock.serverFrame({ type: 'response', request_id: 'someone-else', code: 0 });
+    expect(seen.responses).toHaveLength(0);
     sock.serverFrame({ type: 'error', code: 1008, msg: 'slow consumer' });
     expect(seen.protocolErrors).toEqual([{ code: 1008, msg: 'slow consumer' }]);
   });
@@ -428,31 +417,31 @@ describe('ChatWs', () => {
     const { seen } = makeWs();
     const sock = FakeWs.instances[0]!;
     sock.open();
-    sock.hello();
     sock.serverFrame({ type: 'turn.supercharged', whatever: true });
     sock.serverFrame({ type: 'turn', turn_id: 42 });
     expect(seen.messages).toHaveLength(0);
     expect(seen.invalid).toBe(1);
   });
 
-  it('re-subscribes after a drop and fires onAck per subscribe', async () => {
+  it('re-subscribes after a drop and fires onResponse per subscribe', async () => {
     FakeWs.reset();
     const { seen } = makeWs();
     const first = FakeWs.instances[0]!;
     first.open();
-    first.hello();
-    first.serverFrame({ type: 'ack', id: 1, code: 0 });
-    expect(seen.acks).toHaveLength(1);
+    const firstRequestId = first.sentFrames()[0]!['request_id'];
+    first.serverFrame({ type: 'response', request_id: firstRequestId, code: 0 });
+    expect(seen.responses).toHaveLength(1);
     first.emit('close');
     await vi.waitFor(() => {
       expect(FakeWs.instances.length).toBeGreaterThan(1);
     });
     const second = FakeWs.instances[1]!;
     second.open();
-    second.hello();
-    expect(second.sentFrames()[0]).toMatchObject({ type: 'subscribe', id: 2 });
-    second.serverFrame({ type: 'ack', id: 2, code: 0 });
-    expect(seen.acks).toHaveLength(2);
+    const secondFrame = second.sentFrames()[0]!;
+    expect(secondFrame).toMatchObject({ type: 'subscribe' });
+    expect(secondFrame['request_id']).not.toBe(firstRequestId);
+    second.serverFrame({ type: 'response', request_id: secondFrame['request_id'], code: 0 });
+    expect(seen.responses).toHaveLength(2);
   });
 
   it('stays closed after close()', () => {
@@ -478,10 +467,10 @@ describe('ChatStore', () => {
     expect(turn.status).toBe('completed');
   });
 
-  it('skips an upsert whose timestamp is older than the held entity', () => {
+  it('skips an upsert whose event_created_at is older than the held entity', () => {
     const store = makeStore();
-    store.applyLive(assistantMsg('t1.1', 'hello world', 'streaming', Date.parse('2026-01-01T00:00:10.000Z')));
-    store.applyLive(assistantMsg('t1.1', 'hel', 'streaming', Date.parse('2026-01-01T00:00:05.000Z')));
+    store.applyLive(assistantMsg('t1.1', 'hello world', 'streaming', '2026-01-01T00:00:10.000Z'));
+    store.applyLive(assistantMsg('t1.1', 'hel', 'streaming', '2026-01-01T00:00:05.000Z'));
     const held = store.getState().entries[0]!.message as AssistantMessage;
     expect(held.text).toBe('hello world');
   });
@@ -491,7 +480,7 @@ describe('ChatStore', () => {
     store.applyLive({
       type: 'assistant.delta',
       ...base,
-      timestamp: ts(),
+      event_created_at: ts(),
       message_id: 't1.1.a0',
       text: 'orphan',
     });
@@ -500,14 +489,14 @@ describe('ChatStore', () => {
     store.applyLive({
       type: 'assistant.delta',
       ...base,
-      timestamp: ts(),
+      event_created_at: ts(),
       message_id: 't1.1.a0',
       text: 'hel',
     });
     store.applyLive({
       type: 'assistant.delta',
       ...base,
-      timestamp: ts(),
+      event_created_at: ts(),
       message_id: 't1.1.a0',
       text: 'lo',
     });
@@ -521,7 +510,7 @@ describe('ChatStore', () => {
     store.applyLive({
       type: 'assistant.delta',
       ...base,
-      timestamp: ts(),
+      event_created_at: ts(),
       message_id: 't1.1.a0',
       text: 'partial',
     });
@@ -537,21 +526,21 @@ describe('ChatStore', () => {
     store.applyLive({
       type: 'tool_call.delta',
       ...base,
-      timestamp: ts(),
+      event_created_at: ts(),
       tool_call_id: 'call_1',
       input_text: '{"command"',
     });
     store.applyLive({
       type: 'tool_call.delta',
       ...base,
-      timestamp: ts(),
+      event_created_at: ts(),
       tool_call_id: 'call_1',
       input_text: ':"ls"}',
     });
     store.applyLive({
       type: 'tool.progress',
       ...base,
-      timestamp: ts(),
+      event_created_at: ts(),
       tool_call_id: 'call_1',
       progress: { kind: 'stdout', text: 'file.txt' },
     });
@@ -604,19 +593,19 @@ describe('ChatStore', () => {
     store.applyLive({
       type: 'todo',
       ...base,
-      timestamp: ts(),
+      event_created_at: ts(),
       todo_id: 'todo',
       items: [{ title: 'x', status: 'pending' }],
     });
     store.applyLive({
       type: 'session.state',
       session_id: 's1',
-      timestamp: ts(),
+      event_created_at: ts(),
       status: 'running',
     });
     store.applyLive({
       type: 'workspace',
-      timestamp: ts(),
+      event_created_at: ts(),
       subtype: 'updated',
       workspace: {
         id: 'wd_test_0123456789ab',
@@ -637,10 +626,10 @@ describe('ChatStore', () => {
 
   it('replace installs the page as the window and keeps entries newer than the page', () => {
     const store = makeStore();
-    store.applyLive(turnMsg(9, 'running', Date.parse('2026-01-01T00:00:09.000Z')));
-    store.applyLive(turnMsg(1, 'completed', Date.parse('2026-01-01T00:00:01.000Z')));
+    store.applyLive(turnMsg(9, 'running', '2026-01-01T00:00:09.000Z'));
+    store.applyLive(turnMsg(1, 'completed', '2026-01-01T00:00:01.000Z'));
     store.applyHistoryPage(
-      [turnMsg(1, 'completed', Date.parse('2026-01-01T00:00:01.500Z')), stepMsg('t1.1', 'completed', Date.parse('2026-01-01T00:00:02.000Z'))],
+      [turnMsg(1, 'completed', '2026-01-01T00:00:01.500Z'), stepMsg('t1.1', 'completed', '2026-01-01T00:00:02.000Z')],
       'replace',
     );
     expect(entryKeys(store.getState().entries)).toEqual(['turn:t1', 'step:t1.1', 'turn:t9']);
@@ -757,7 +746,7 @@ describe('ChatChannel', () => {
     return { channel, sock: FakeWs.instances[0]! };
   }
 
-  it('serializes the initial refresh with the ack catch-up behind one queue', async () => {
+  it('serializes the initial refresh with the subscribe-response catch-up behind one queue', async () => {
     const newest = okEnvelope({ messages: [turnMsg(1), stepMsg('t1.1')], has_more: false });
     const { calls, fetchImpl } = scriptedFetch({ noCursor: [newest] });
     let releaseFirst: () => void = () => {};
@@ -775,8 +764,7 @@ describe('ChatChannel', () => {
     const { channel, sock } = makeChannel(gatedFetch);
     channel.start();
     sock.open();
-    sock.hello();
-    sock.serverFrame({ type: 'ack', id: 1, code: 0 });
+    sock.serverFrame({ type: 'response', request_id: sock.sentFrames()[0]!['request_id'], code: 0 });
     releaseFirst();
     await vi.waitFor(() => {
       expect(calls).toHaveLength(3);
@@ -797,8 +785,7 @@ describe('ChatChannel', () => {
     const aliveChannel = makeChannel(alive.fetchImpl);
     aliveChannel.channel.start();
     aliveChannel.sock.open();
-    aliveChannel.sock.hello();
-    aliveChannel.sock.serverFrame({ type: 'ack', id: 1, code: 0 });
+    aliveChannel.sock.serverFrame({ type: 'response', request_id: aliveChannel.sock.sentFrames()[0]!['request_id'], code: 0 });
     await vi.waitFor(() => {
       expect(aliveChannel.channel.store.getState().entries.length).toBeGreaterThan(0);
     });
@@ -816,8 +803,7 @@ describe('ChatChannel', () => {
     const goneChannel = makeChannel(gone.fetchImpl);
     goneChannel.channel.start();
     goneChannel.sock.open();
-    goneChannel.sock.hello();
-    goneChannel.sock.serverFrame({ type: 'ack', id: 1, code: 0 });
+    goneChannel.sock.serverFrame({ type: 'response', request_id: goneChannel.sock.sentFrames()[0]!['request_id'], code: 0 });
     await vi.waitFor(() => {
       expect(
         goneChannel.channel.trail.getEntries().some((e) => e.kind === 'event' && e.event === 'catchup-refresh'),
@@ -843,7 +829,7 @@ describe('projectPlans', () => {
       {
         type: 'interaction',
         ...base,
-        timestamp: ts(),
+        event_created_at: ts(),
         interaction_id: 'ix-1',
         kind: 'approval',
         status: 'approved',

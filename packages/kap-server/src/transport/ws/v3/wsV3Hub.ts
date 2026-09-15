@@ -49,17 +49,17 @@ export class WsV3Hub {
       recoveryPending: true,
     };
     conn.trackSubscription(frame.session_id, sub);
-    lane.addSubscriber(sub, frame.id);
+    lane.addSubscriber(sub, frame.request_id);
     if (previous !== undefined) lane.removeSubscriber(previous);
   }
 
-  unsubscribeSession(conn: WsConnectionV3, sessionId: string, requestId: number): void {
+  unsubscribeSession(conn: WsConnectionV3, sessionId: string, requestId: string): void {
     const sub = conn.subscriptionFor(sessionId);
     if (sub !== undefined) {
       conn.untrackSubscription(sessionId);
       this.lanes.get(sessionId)?.removeSubscriber(sub);
     }
-    conn.enqueue({ type: 'ack', id: requestId, code: ErrorCode.SUCCESS });
+    conn.enqueue({ type: 'response', request_id: requestId, code: ErrorCode.SUCCESS });
   }
 
   dropConnection(conn: WsConnectionV3): void {

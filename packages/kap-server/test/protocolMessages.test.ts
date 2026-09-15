@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ContractViolation,
-  ackMessageSchema,
   agentStateMessageSchema,
   assistantDeltaMessageSchema,
   assistantMessageSchema,
@@ -13,13 +12,14 @@ import {
   entityId,
   entityKey,
   errorMessageSchema,
-  helloMessageSchema,
   historyQuerySchema,
   historyResponseSchema,
   interactionMessageSchema,
   modelCatalogMessageSchema,
   parseServerMessage,
+  pingMessageSchema,
   pluginMessageSchema,
+  responseMessageSchema,
   serverMessageSchema,
   sessionMessageSchema,
   sessionStateMessageSchema,
@@ -50,16 +50,16 @@ const TS_MS = 1_756_963_200_000;
 const timeline = {
   session_id: 'sess_1',
   agent_id: 'agent_1',
-  timestamp: TS_MS,
+  event_created_at: TS,
 };
 
 const sessionScope = {
   session_id: 'sess_1',
-  timestamp: TS_MS,
+  event_created_at: TS,
 };
 
 const globalScope = {
-  timestamp: TS_MS,
+  event_created_at: TS,
 };
 
 
@@ -108,7 +108,7 @@ const user = {
   message_id: 't1.u0',
   turn_id: 't1',
   status: 'read',
-  timestamp: TS_MS,
+  event_created_at: TS,
   text: [{ type: 'text', text: 'hello', meta: {} }],
 };
 
@@ -241,7 +241,7 @@ const agentState = {
   session_id: 'sess_1',
   agent_id: 'agent-1',
   profile: { kind: 'coder' },
-  timestamp: TS_MS,
+  event_created_at: TS,
   origin: { kind: 'tool-agent', tool_call_id: 'call_1', parent_agent_id: 'main' },
   created_at: TS,
   status: 'running',
@@ -303,16 +303,14 @@ const capability = {
   capability_id: 'cap1',
 };
 
-const hello = {
-  type: 'hello',
-  protocol_version: '3',
-  server_id: 'srv1',
-  capabilities: ['step_replay_v1'],
+const ping = {
+  type: 'ping',
+  request_id: 'req-1',
 };
 
-const ack = {
-  type: 'ack',
-  id: 1,
+const response = {
+  type: 'response',
+  request_id: 'req-1',
   code: 0,
 };
 
@@ -324,13 +322,13 @@ const error = {
 
 const subscribe = {
   type: 'subscribe',
-  id: 1,
+  request_id: 'req-1',
   session_id: 'sess_1',
 };
 
 const unsubscribe = {
   type: 'unsubscribe',
-  id: 2,
+  request_id: 'req-2',
   session_id: 'sess_1',
 };
 
@@ -360,8 +358,7 @@ const serverCases = [
   ['model_catalog', modelCatalogMessageSchema, modelCatalog],
   ['plugin', pluginMessageSchema, plugin],
   ['capability', capabilityMessageSchema, capability],
-  ['hello', helloMessageSchema, hello],
-  ['ack', ackMessageSchema, ack],
+  ['response', responseMessageSchema, response],
   ['error', errorMessageSchema, error],
 ] as const;
 
@@ -386,11 +383,11 @@ const serverNegativeCases = [
   ['workspace bad id', workspaceMessageSchema, { ...workspace, workspace: { ...workspace.workspace, id: 'ws_1' } }],
   ['config missing config', configMessageSchema, { ...config, config: undefined }],
   ['config.warning missing warnings', configWarningMessageSchema, { ...configWarning, warnings: undefined }],
-  ['model_catalog missing timestamp', modelCatalogMessageSchema, { ...modelCatalog, timestamp: undefined }],
-  ['plugin missing timestamp', pluginMessageSchema, { ...plugin, timestamp: undefined }],
+  ['model_catalog missing event_created_at', modelCatalogMessageSchema, { ...modelCatalog, event_created_at: undefined }],
+  ['plugin missing event_created_at', pluginMessageSchema, { ...plugin, event_created_at: undefined }],
   ['capability bad capability_id', capabilityMessageSchema, { ...capability, capability_id: 7 }],
-  ['hello missing capabilities', helloMessageSchema, { ...hello, capabilities: undefined }],
-  ['ack bad code', ackMessageSchema, { ...ack, code: '0' }],
+  ['response bad code', responseMessageSchema, { ...response, code: '0' }],
+  ['response bad request_id', responseMessageSchema, { ...response, request_id: 1 }],
   ['error missing msg', errorMessageSchema, { ...error, msg: undefined }],
 ] as const;
 
@@ -434,7 +431,8 @@ describe('serverMessageSchema', () => {
 });
 
 describe('clientMessageSchema', () => {
-  it('accepts subscribe and unsubscribe', () => {
+  it('accepts ping, subscribe and unsubscribe', () => {
+    expect(clientMessageSchema.safeParse(ping).success).toBe(true);
     expect(clientMessageSchema.safeParse(subscribe).success).toBe(true);
     expect(clientMessageSchema.safeParse(unsubscribe).success).toBe(true);
     expect(subscribeMessageSchema.safeParse({ ...subscribe, agent_ids: ['a1'], omit: ['assistant.delta'] }).success).toBe(true);
@@ -442,14 +440,16 @@ describe('clientMessageSchema', () => {
 
   it('rejects entity and server-only control messages', () => {
     expect(clientMessageSchema.safeParse(turn).success).toBe(false);
-    expect(clientMessageSchema.safeParse(hello).success).toBe(false);
-    expect(clientMessageSchema.safeParse(ack).success).toBe(false);
+    expect(clientMessageSchema.safeParse(response).success).toBe(false);
+    expect(clientMessageSchema.safeParse(error).success).toBe(false);
   });
 
   it('rejects malformed subscriptions', () => {
-    expect(subscribeMessageSchema.safeParse({ ...subscribe, id: '1' }).success).toBe(false);
+    expect(subscribeMessageSchema.safeParse({ ...subscribe, request_id: 1 }).success).toBe(false);
+    expect(subscribeMessageSchema.safeParse({ ...subscribe, request_id: '' }).success).toBe(false);
     expect(subscribeMessageSchema.safeParse({ ...subscribe, session_id: undefined }).success).toBe(false);
     expect(unsubscribeMessageSchema.safeParse({ ...unsubscribe, session_id: '' }).success).toBe(false);
+    expect(pingMessageSchema.safeParse({ ...ping, request_id: '' }).success).toBe(false);
   });
 });
 
@@ -525,13 +525,13 @@ describe('historyResponseSchema', () => {
   });
 });
 
-describe('timestamp contract', () => {
-  it('requires epoch-millisecond timestamps on every message base', () => {
-    expect(turnMessageSchema.safeParse({ ...turn, timestamp: TS }).success).toBe(false);
-    expect(turnMessageSchema.safeParse({ ...turn, timestamp: TS_MS }).success).toBe(true);
-    expect(assistantDeltaMessageSchema.safeParse({ ...assistantDelta, timestamp: TS }).success).toBe(false);
-    expect(configMessageSchema.safeParse({ ...config, timestamp: TS }).success).toBe(false);
-    expect(configMessageSchema.safeParse({ ...config, timestamp: TS_MS }).success).toBe(true);
+describe('event_created_at contract', () => {
+  it('requires ISO 8601 event_created_at strings on every message base', () => {
+    expect(turnMessageSchema.safeParse({ ...turn, event_created_at: TS_MS }).success).toBe(false);
+    expect(turnMessageSchema.safeParse({ ...turn, event_created_at: TS }).success).toBe(true);
+    expect(assistantDeltaMessageSchema.safeParse({ ...assistantDelta, event_created_at: TS_MS }).success).toBe(false);
+    expect(configMessageSchema.safeParse({ ...config, event_created_at: TS_MS }).success).toBe(false);
+    expect(configMessageSchema.safeParse({ ...config, event_created_at: TS }).success).toBe(true);
   });
 
   it('normalizes offset datetimes to UTC on field-level time fields', () => {

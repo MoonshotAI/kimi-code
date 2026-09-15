@@ -1,11 +1,11 @@
 /**
  * Minimal `/api/v3/ws` client for the GLOBAL messages — no subscriptions.
  *
- * The server sends `hello` right after the upgrade and fans every global
- * message (`session` / `workspace` / `config` / `config.warning` /
- * `model_catalog` / `plugin` / `capability`) out to every established
- * connection, so this client subscribes to nothing and sends nothing: it
- * dispatches the coarse per-session facts to the consumer:
+ * The server fans every global message (`session` / `workspace` / `config` /
+ * `config.warning` / `model_catalog` / `plugin` / `capability`) out to every
+ * established connection with no handshake frame, so this client subscribes
+ * to nothing and sends nothing: it dispatches the coarse per-session facts
+ * to the consumer:
  *
  *   - `session` (created / updated / archived / deleted) → forwarded whole;
  *     the embedded SessionInfo carries `busy` / `main_turn_active` /
@@ -17,8 +17,7 @@
  * subscribe-gated server-side and never arrives here; the transcript chat
  * channel has its own socket (`src/transcript/ws.ts`). Global messages are
  * live-only — a drop loses whatever fired meanwhile, so the consumer answers
- * `onReconnected` with a REST re-seed. Heartbeat is the WS protocol-level
- * ping/pong, handled by the WebSocket implementation itself.
+ * `onReconnected` with a REST re-seed.
  *
  * Every frame is validated against the shared `serverMessageSchema`: a frame
  * whose `type` is not in the schema is a future message type and is ignored
@@ -44,8 +43,6 @@ const KNOWN_GLOBAL_TYPES: ReadonlySet<string> = new Set([
   'model_catalog',
   'plugin',
   'capability',
-  'hello',
-  'ack',
   'error',
 ]);
 

@@ -2022,7 +2022,7 @@ PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳�
 
 列出当前连接到本服务的 WebSocket 客户端，按连接时间最早在前。无参数。
 
-成功时 `data` 为 `{ connections }`，每项为 `{ id, connected_at, remote_address, user_agent, has_client_hello, subscriptions }`：`connected_at` 为 ISO 8601 时间戳；`remote_address` 与 `user_agent` 未知时为 `null`；`has_client_hello` 报告客户端是否已发送握手帧；`subscriptions` 列出该连接订阅的会话 id。
+成功时 `data` 为 `{ connections }`，每项为 `{ id, connected_at, remote_address, user_agent, subscriptions }`：`connected_at` 为 ISO 8601 时间戳；`remote_address` 与 `user_agent` 未知时为 `null`；`subscriptions` 列出该连接订阅的会话 id。
 
 ### `GET /api/v2/sessions`
 

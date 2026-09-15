@@ -10,7 +10,7 @@
  *    then re-cover the previously loaded window with `before_turn` pages.
  *  - Live + recovery payload: every WS message is applied to the store
  *    as it lands; recovery and live are the same path.
- *  - Subscribe ack (initial and every reconnect): `after_step` catch-up
+ *  - Subscribe response (initial and every reconnect): `after_step` catch-up
  *    anchored at the newest TERMINAL step (the server answers with the
  *    slice after that step's last entity, so the step that was streaming
  *    at disconnect is re-read in full; overlap is idempotent). An empty
@@ -76,13 +76,13 @@ export class ChatChannel {
           this.store.applyLive(message);
           this.trail.recordWs(message, this.store.getState());
         },
-        onAck: (code, msg) => {
+        onResponse: (code, msg) => {
           if (code === 0) {
-            this.trail.recordEvent('ack', undefined, this.store.getState());
+            this.trail.recordEvent('response', undefined, this.store.getState());
             this.scheduleCatchUp();
             return;
           }
-          this.trail.recordEvent('ack-error', msg, this.store.getState());
+          this.trail.recordEvent('response-error', msg, this.store.getState());
           this.opts.onLoadError?.(new Error(`subscribe rejected (${code}): ${msg ?? ''}`));
         },
         onProtocolError: (code, msg) => {
@@ -120,7 +120,7 @@ export class ChatChannel {
     );
   }
 
-  /** Force a WS reconnect (debug/testing): the ack re-triggers the after_step catch-up. */
+  /** Force a WS reconnect (debug/testing): the response re-triggers the after_step catch-up. */
   reconnect(delayMs = 0): void {
     this.ws.reconnect(delayMs);
   }

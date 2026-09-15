@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-import { ackMessageSchema } from './ack';
 import { agentStateMessageSchema } from './agent-state';
 import { assistantMessageSchema } from './assistant';
 import { assistantDeltaMessageSchema, type AssistantDelta } from './assistant-delta';
@@ -8,10 +7,11 @@ import { capabilityMessageSchema } from './capability';
 import { configMessageSchema } from './config';
 import { configWarningMessageSchema } from './config-warning';
 import { errorMessageSchema } from './error';
-import { helloMessageSchema } from './hello';
 import { interactionMessageSchema } from './interaction';
 import { modelCatalogMessageSchema } from './model-catalog';
+import { pingMessageSchema } from './ping';
 import { pluginMessageSchema } from './plugin';
+import { responseMessageSchema } from './response';
 import { sessionMessageSchema } from './session';
 import { sessionStateMessageSchema } from './session-state';
 import { stepMessageSchema } from './step';
@@ -53,8 +53,7 @@ export const serverMessageSchema = z.discriminatedUnion('type', [
   modelCatalogMessageSchema,
   pluginMessageSchema,
   capabilityMessageSchema,
-  helloMessageSchema,
-  ackMessageSchema,
+  responseMessageSchema,
   errorMessageSchema,
 ]);
 
@@ -63,6 +62,7 @@ export type ServerMessage = z.infer<typeof serverMessageSchema>;
 export type DeltaMessage = AssistantDelta | ThinkingDelta | ToolCallDelta | ToolProgress;
 
 export const clientMessageSchema = z.discriminatedUnion('type', [
+  pingMessageSchema,
   subscribeMessageSchema,
   unsubscribeMessageSchema,
 ]);

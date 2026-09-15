@@ -1,23 +1,24 @@
 /**
  * Minimal `/api/v3/ws` client for the message protocol.
  *
- * Handshake per the protocol contract: the server sends `hello` right after
- * the upgrade, the client answers with `subscribe` (`{id, session_id,
- * agent_ids?, omit?}`), the server replies with `ack` (matched by `id`) and
- * then streams the recovery payload followed by live traffic — one ordered
- * session sequence, no cursors anywhere. Heartbeat is the WS protocol-level
- * ping/pong, handled by the WebSocket implementation itself.
+ * There is no handshake: once the socket is open the client sends
+ * `subscribe` (`{request_id, session_id, agent_ids?, omit?}`) right away and
+ * the server replies with `response` (matched by `request_id`) and then
+ * streams the recovery payload followed by live traffic — one ordered
+ * session sequence, no cursors anywhere. Liveness is application-level: the
+ * client may send `{type: 'ping', request_id}` and the server answers with a
+ * `response` carrying the same `request_id`.
  *
  * Every data frame is validated against the shared
- * `serverMessageSchema`; control frames (`hello` / `ack` / `error`) are
+ * `serverMessageSchema`; control frames (`response` / `error`) are
  * handled here, everything else is forwarded through `onMessage`. The union
  * is open: a frame whose `type` is not in the current schema is a future
  * message type and is ignored silently; a frame that names a known type but
  * fails validation is a server bug and surfaces via `onInvalidFrame`.
  *
  * A drop is answered with a backoff reconnect and a fresh subscribe — the
- * recovery payload is idempotent, so the consumer's only job on `onAck` is
- * to run its REST tail catch-up. The bearer token rides the
+ * recovery payload is idempotent, so the consumer's only job on `onResponse`
+ * is to run its REST tail catch-up. The bearer token rides the
  * `kimi-code.bearer.<token>` subprotocol at the upgrade (the only
  * credential channel a browser WebSocket has).
  */
@@ -51,16 +52,15 @@ const KNOWN_MESSAGE_TYPES: ReadonlySet<string> = new Set([
   'model_catalog',
   'plugin',
   'capability',
-  'hello',
-  'ack',
+  'response',
   'error',
 ]);
 
 export interface ChatWsHandlers {
   /** Any validated non-control server message (entity, delta, state, global). */
   onMessage: (message: ServerMessage) => void;
-  /** The subscribe ack (code 0 = subscribed) — fires on every (re)subscribe. */
-  onAck: (code: number, msg?: string) => void;
+  /** The subscribe response (code 0 = subscribed) — fires on every (re)subscribe. */
+  onResponse: (code: number, msg?: string) => void;
   /** Protocol-level `error` frame (auth failure, unknown frame, slow consumer). */
   onProtocolError: (code: number, msg: string) => void;
   /** A frame naming a KNOWN type failed schema validation (server bug). */
@@ -99,7 +99,7 @@ export class ChatWs {
   private manualClose = false;
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
-  private subscribeId = 0;
+  private subscribeRequestId: string | undefined;
 
   constructor(opts: ChatWsOptions) {
     this.wsUrl = toWsV3Url(opts.url);
@@ -163,6 +163,14 @@ export class ChatWs {
     this.ws = ws;
     ws.addEventListener('open', () => {
       this.reconnectAttempt = 0;
+      this.subscribeRequestId = crypto.randomUUID();
+      this.send({
+        type: 'subscribe',
+        request_id: this.subscribeRequestId,
+        session_id: this.sessionId,
+        agent_ids: this.agentIds !== undefined && this.agentIds.length > 0 ? [...this.agentIds] : undefined,
+        omit: this.omit !== undefined && this.omit.length > 0 ? [...this.omit] : undefined,
+      });
     });
     ws.addEventListener('message', (event: { data: unknown }) => {
       this.onMessage(event.data);
@@ -193,20 +201,9 @@ export class ChatWs {
     }
     const message = parsed.data;
     switch (message.type) {
-      case 'hello': {
-        this.subscribeId += 1;
-        this.send({
-          type: 'subscribe',
-          id: this.subscribeId,
-          session_id: this.sessionId,
-          agent_ids: this.agentIds !== undefined && this.agentIds.length > 0 ? [...this.agentIds] : undefined,
-          omit: this.omit !== undefined && this.omit.length > 0 ? [...this.omit] : undefined,
-        });
-        return;
-      }
-      case 'ack': {
-        if (message.id === this.subscribeId) {
-          this.handlers.onAck(message.code, message.msg);
+      case 'response': {
+        if (message.request_id === this.subscribeRequestId) {
+          this.handlers.onResponse(message.code, message.msg);
         }
         return;
       }

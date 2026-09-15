@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { epochMsSchema, isoDateTimeSchema } from './base';
+import { isoDateTimeSchema } from './base';
 
 export const agentStatusSchema = z.enum(['idle', 'running', 'compacting']);
 
@@ -33,7 +33,7 @@ export const agentStateMessageSchema = z.object({
   session_id: z.string().min(1),
   agent_id: z.string().min(1),
   profile: z.object({ kind: z.string() }),
-  timestamp: epochMsSchema,
+  event_created_at: isoDateTimeSchema,
   origin: agentStateOriginSchema,
   created_at: isoDateTimeSchema,
   ended_at: isoDateTimeSchema.optional(),
