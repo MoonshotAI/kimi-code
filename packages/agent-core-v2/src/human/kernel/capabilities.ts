@@ -14,7 +14,7 @@ export interface DurableSlice {
 }
 
 export interface DurableBackend {
-  registerSlice(slice: DurableSlice): Promise<() => void>;
+  registerSlice(slice: DurableSlice): () => void;
   dispatch(event: { type: string } & Record<string, unknown>): Promise<unknown>;
   subscribe(listener: (state: unknown) => void): () => void;
   getState(): unknown;
@@ -63,16 +63,9 @@ export function acquireDurableManager(node: UnitNode): DurableManager {
   const sliceName = node.recipe.name;
   const entries = new Map<string, ShallowRef<unknown>>();
   const initials = new Map<string, unknown>();
-  let unregister: (() => void) | undefined;
-  let registered = false;
   let inFlight = 0;
-  const pending: Array<{
-    readonly patch: Record<string, unknown>;
-    readonly resolve: () => void;
-    readonly reject: (error: unknown) => void;
-  }> = [];
   const resync = (): void => {
-    if (!registered || inFlight > 0) {
+    if (inFlight > 0) {
       return;
     }
     const combined = backend.getState() as Record<string, unknown> | undefined;
@@ -108,58 +101,30 @@ export function acquireDurableManager(node: UnitNode): DurableManager {
   const extraReducers = node.internals.get('durableReducers') as
     | ReadonlyMap<string, (draft: any, event: any) => void>
     | undefined;
-  void backend
-    .registerSlice({
-      name: sliceName,
-      initialState: () =>
-        Object.fromEntries([...entries.keys()].map((key) => [key, initials.get(key)])),
-      reducers: {
-        'store.patched': (draft, event) => {
-          if ((event as { store?: unknown }).store === sliceName) {
-            Object.assign(draft, (event as { patch?: Record<string, unknown> }).patch);
-          }
-        },
-        ...(extraReducers === undefined ? {} : Object.fromEntries(extraReducers)),
-      },
-    })
-    .then(async (dispose) => {
-      unregister = dispose;
-      while (pending.length > 0) {
-        for (const entry of pending.splice(0)) {
-          inFlight += 1;
-          try {
-            await backend.dispatch({ type: 'store.patched', store: sliceName, patch: entry.patch });
-            entry.resolve();
-          } catch (error) {
-            report(error);
-            entry.reject(error);
-          } finally {
-            inFlight -= 1;
-          }
+  const unregister = backend.registerSlice({
+    name: sliceName,
+    initialState: () =>
+      Object.fromEntries([...entries.keys()].map((key) => [key, initials.get(key)])),
+    reducers: {
+      'store.patched': (draft, event) => {
+        if ((event as { store?: unknown }).store === sliceName) {
+          Object.assign(draft, (event as { patch?: Record<string, unknown> }).patch);
         }
-      }
-      registered = true;
-      resync();
-    })
-    .catch(report);
+      },
+      ...(extraReducers === undefined ? {} : Object.fromEntries(extraReducers)),
+    },
+  });
   const unsubscribe = backend.subscribe(() => resync());
   const manager: DurableManager = {
     sliceName,
     entries,
     initials,
-    dispatch: (patch) => {
-      if (!registered) {
-        return new Promise<void>((resolve, reject) => {
-          pending.push({ patch, resolve, reject });
-        });
-      }
-      return trackedDispatch(patch);
-    },
+    dispatch: trackedDispatch,
   };
   node.internals.set('durables', manager);
   pushCleanup(node, () => {
     unsubscribe();
-    unregister?.();
+    unregister();
   });
   return manager;
 }

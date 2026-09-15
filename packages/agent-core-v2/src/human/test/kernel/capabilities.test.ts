@@ -37,9 +37,9 @@ function createMemoryBackend(): {
     registerSlice(slice) {
       slices.set(slice.name, slice);
       state = { ...state, [slice.name]: slice.initialState() };
-      return Promise.resolve(() => {
+      return () => {
         slices.delete(slice.name);
-      });
+      };
     },
     dispatch(event) {
       dispatched.push(event);
@@ -88,7 +88,7 @@ describe('useDurable', () => {
     expect(() => mountRoot(needs)).toThrow('useDurable requires an event store backend');
   });
 
-  it('queues pre-registration patches, dispatches later sets, and resyncs from backend state', async () => {
+  it('dispatches sets immediately and resyncs from backend state', async () => {
     const { backend, dispatched } = createMemoryBackend();
     let durable: Ref<number> | undefined;
     const todos = createUnit('todos', () => {
@@ -102,8 +102,6 @@ describe('useDurable', () => {
     });
     mountRoot(root);
     expect(durable?.value).toBe(2);
-    expect(dispatched).toHaveLength(0);
-    await flush();
     expect(dispatched.map((event) => event['patch'])).toEqual([{ count: 1 }, { count: 2 }]);
     expect(sliceState(backend, 'todos')).toEqual({ count: 2 });
 
@@ -161,7 +159,7 @@ describe('useDurableReducer', () => {
     expect(sliceState(backend, 'todos')).toEqual({ count: 0 });
   });
 
-  it('drains patches queued while the registration drain is in flight', async () => {
+  it('dispatches nested sets issued while a dispatch is in flight', async () => {
     const { backend, dispatched } = createMemoryBackend();
     let durable: Ref<number> | undefined;
     let nested = false;
