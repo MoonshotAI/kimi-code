@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Stop /usage and /status from showing a missing-session warning before the first message.
+Fix /usage showing a wrong error message when no session has been created yet.
