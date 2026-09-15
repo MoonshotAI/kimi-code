@@ -245,7 +245,6 @@ const agentState = {
   origin: { kind: 'tool-agent', tool_call_id: 'call_1', parent_agent_id: 'main' },
   created_at: TS,
   status: 'running',
-  turn: { status: 'acting' },
 };
 
 const sessionState = {
