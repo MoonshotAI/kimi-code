@@ -477,6 +477,12 @@ export abstract class TuiBase extends Container implements TUI {
 	private immediateRenderScheduled = false;
 	private renderTimer: NodeJS.Timeout | undefined;
 	private lastRenderAt = 0;
+	/**
+	 * Set by requestImmediateRender (keyboard input / forced renders) and
+	 * consumed by the next doRender. Lets subclasses exempt input-driven
+	 * frames from rate limits meant for automatic renders.
+	 */
+	private interactiveRenderPending = false;
 	private static readonly MIN_RENDER_INTERVAL_MS = 16;
 	private showHardwareCursor = false;
 	private clearOnShrink = false;
@@ -966,11 +972,15 @@ export abstract class TuiBase extends Container implements TUI {
 	private requestImmediateRender(): void {
 		this.cancelRenderTimer();
 		this.renderRequested = true;
+		this.interactiveRenderPending = true;
 		if (this.immediateRenderScheduled) return;
 		this.immediateRenderScheduled = true;
 		process.nextTick(() => {
 			this.immediateRenderScheduled = false;
-			if (this.stopped || !this.renderRequested) return;
+			if (this.stopped || !this.renderRequested) {
+				this.interactiveRenderPending = false;
+				return;
+			}
 			// A previously queued scheduleRender() can create a timer before this
 			// callback runs. User input must preempt that throttled frame.
 			this.cancelRenderTimer();
@@ -978,6 +988,13 @@ export abstract class TuiBase extends Container implements TUI {
 			this.lastRenderAt = performance.now();
 			this.doRender();
 		});
+	}
+
+	/** Whether this frame was requested by user input; cleared once read. */
+	protected consumeInteractiveRender(): boolean {
+		const pending = this.interactiveRenderPending;
+		this.interactiveRenderPending = false;
+		return pending;
 	}
 
 	private cancelRenderTimer(): void {

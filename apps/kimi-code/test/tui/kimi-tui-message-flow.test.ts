@@ -4442,6 +4442,57 @@ command = "vim"
     expect(transcript).not.toContain('more lines');
   });
 
+  it('finalizes the ! card and stops its 1s tick when the engine auto-backgrounds the command', async () => {
+    let resolveCmd!: (value: {
+      stdout: string;
+      stderr: string;
+      isError: boolean;
+      backgrounded?: boolean;
+    }) => void;
+    const runShellCommand = vi.fn(
+      () =>
+        new Promise<{ stdout: string; stderr: string; isError: boolean; backgrounded?: boolean }>(
+          (resolve) => {
+            resolveCmd = resolve;
+          },
+        ),
+    );
+    const session = makeSession({ runShellCommand });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.inputMode = 'bash';
+    driver.state.editor.inputMode = 'bash';
+
+    // Fake timers must be installed before the card is created so its 1s tick
+    // interval is observable; what matters is the card's public render output.
+    vi.useFakeTimers();
+    try {
+      driver.handleUserInput('sleep 300');
+      await Promise.resolve();
+      const outputEntry = driver.state.transcriptEntries.at(-1);
+      expect(outputEntry).toBeDefined();
+
+      // The engine's foreground timeout moves the command to the background and
+      // resolves with backgrounded metadata instead of final output.
+      resolveCmd({ stdout: 'task_id: task-1', stderr: '', isError: false, backgrounded: true });
+      await vi.advanceTimersByTimeAsync(0);
+
+      const settled = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
+      expect(settled).toContain('Moved to background.');
+      expect(settled).not.toContain('(ctrl+b to run in background)');
+      expect(outputEntry!.content).toBe('Moved to background.');
+
+      // The card's tick is dead: advancing past several tick intervals must
+      // not change anything it renders. A still-running card would keep
+      // bumping its `(Ns)` elapsed timer and re-render every second.
+      vi.advanceTimersByTime(5000);
+      const after = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
+      expect(after).toBe(settled);
+      expect(after).not.toMatch(/\(\d+s\)/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('renders cron fired events as distinct transcript entries', async () => {
     const { driver } = await makeDriver();
 

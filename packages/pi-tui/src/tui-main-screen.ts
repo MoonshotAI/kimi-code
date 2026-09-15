@@ -1,7 +1,9 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { performance } from "node:perf_hooks";
 import { deleteKittyImage, isImageLine } from "./terminal-image.ts";
+import type { Terminal } from "./terminal.ts";
 import { SEGMENT_RESET, type TUI, TuiBase, type TuiStopOptions } from "./tui.ts";
 import { asciiVisibleWidth, normalizeTerminalOutput, sliceByColumn, visibleWidth } from "./utils.ts";
 
@@ -123,6 +125,22 @@ export interface TuiMainScreenRenderState {
 	previousViewportTop: number;
 }
 
+export interface TuiMainScreenOptions {
+	/**
+	 * Opt in to guarded handling of changes the differential renderer cannot
+	 * reach (first changed line above the viewport, content shrinking, kitty
+	 * pre-clear fallback). Off (default) matches upstream: every fallback does
+	 * an immediate clear-full-redraw including the scrollback (ESC[2J/H/3J +
+	 * the whole transcript). On: in-place edits confined above the viewport
+	 * are adopted without redrawing and spanning edits are clamped to the
+	 * visible range; automatic fallback redraws keep the scrollback
+	 * (ESC[3J stays reserved for explicit actions like resize), are
+	 * rate-limited to one per 2s with deferrals merged into a single trailing
+	 * redraw, and input-driven frames bypass the limit.
+	 */
+	guardedAutomaticFullRedraws?: boolean;
+}
+
 /** TUI implementation that renders into the terminal's main screen and scrollback. */
 export class TuiMainScreen extends TuiBase implements TUI {
 	readonly mode = "regular" as const;
@@ -144,6 +162,26 @@ export class TuiMainScreen extends TuiBase implements TUI {
 	private hardwareCursorRow = 0;
 	private maxLinesRendered = 0;
 	private previousViewportTop = 0;
+	private static readonly MIN_AUTO_FULL_REDRAW_INTERVAL_MS = 2000;
+	/**
+	 * Rate limiter for automatic clear-full-redraws (see autoFullRender in
+	 * doRender). Explicit full redraws (first render, resize, forced renders)
+	 * are never limited. Initialized one window in the past so the first
+	 * automatic redraw is never deferred by a young process clock.
+	 */
+	private lastAutoFullRedrawAt = -TuiMainScreen.MIN_AUTO_FULL_REDRAW_INTERVAL_MS;
+	private autoFullRedrawTimer: NodeJS.Timeout | undefined;
+	private readonly guardedAutomaticFullRedraws: boolean;
+
+	constructor(
+		terminal: Terminal,
+		showHardwareCursor?: boolean,
+		logDirectory?: string,
+		options?: TuiMainScreenOptions,
+	) {
+		super(terminal, showHardwareCursor, logDirectory);
+		this.guardedAutomaticFullRedraws = options?.guardedAutomaticFullRedraws ?? false;
+	}
 
 	captureRenderState(): TuiMainScreenRenderState {
 		return {
@@ -180,6 +218,10 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		this.hardwareCursorRow = 0;
 		this.maxLinesRendered = 0;
 		this.previousViewportTop = 0;
+		if (this.autoFullRedrawTimer !== undefined) {
+			clearTimeout(this.autoFullRedrawTimer);
+			this.autoFullRedrawTimer = undefined;
+		}
 	}
 
 	protected override beforeTerminalStop(options: TuiStopOptions): void {
@@ -264,6 +306,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 
 	protected doRender(): void {
 		if (this.stopped) return;
+		const interactive = this.consumeInteractiveRender();
 		const width = this.terminal.columns;
 		const height = this.terminal.rows;
 		const widthChanged = this.previousWidth !== 0 && this.previousWidth !== width;
@@ -328,14 +371,19 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		}
 		newLines = processedLines;
 
-		// Helper to clear scrollback and viewport and render all new lines
-		const fullRender = (clear: boolean): void => {
+		// Helper to clear the viewport and render all new lines. clearScrollback
+		// additionally wipes the terminal scrollback (ESC[3J); with the guarded
+		// policy opted in it is reserved for explicit user actions (terminal
+		// resize, forced re-render) so an automatic redraw storm cannot destroy
+		// the user's history. Without the opt-in every clear-full-redraw wipes
+		// the scrollback, matching upstream.
+		const fullRender = (clear: boolean, clearScrollback = false): void => {
 			this.fullRedrawCount += 1;
 			const output = new BoundedTerminalWriter((data) => this.terminal.write(data));
 			output.append("\x1b[?2026h"); // Begin synchronized output
 			if (clear) {
 				output.append(this.deleteKittyImages(this.previousKittyImageIds));
-				output.append("\x1b[2J\x1b[H\x1b[3J"); // Clear screen, home, then clear scrollback
+				output.append(clearScrollback ? "\x1b[2J\x1b[H\x1b[3J" : "\x1b[2J\x1b[H"); // Clear screen and home, maybe scrollback
 			}
 			for (let i = 0; i < newLines.length; i++) {
 				if (i > 0) output.append("\r\n");
@@ -384,6 +432,61 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			fs.appendFileSync(logPath, msg);
 		};
 
+		// Automatic clear-full-redraws are the fallback for changes the
+		// differential path cannot reach. With guardedAutomaticFullRedraws off
+		// (the default) they behave exactly like upstream: an immediate
+		// clear-full-redraw including the scrollback. With the opt-in they are
+		// rate-limited to one per MIN_AUTO_FULL_REDRAW_INTERVAL_MS and keep the
+		// scrollback; requests arriving inside the window are merged into a
+		// single trailing redraw. Explicit full renders (resize, forced renders)
+		// never come through here. State is left untouched when deferring, so
+		// the trailing render re-detects the same change.
+		const autoFullRender = (reason: string): void => {
+			// Without the opt-in, behavior matches upstream: an immediate
+			// clear-full-redraw that also wipes the scrollback.
+			if (!this.guardedAutomaticFullRedraws) {
+				logRedraw(reason);
+				fullRender(true, true);
+				return;
+			}
+			// Input-driven frames must never be delayed by the rate limit:
+			// deferring swallows the render while leaving previousLines stale,
+			// which would also swallow every subsequent frame (typed text,
+			// overlay interaction) until the trailing timer fired. Render now,
+			// cancel the pending trailing redraw, and leave the rate-limit
+			// clock untouched so the automatic storm guard is unaffected.
+			if (interactive) {
+				if (this.autoFullRedrawTimer !== undefined) {
+					clearTimeout(this.autoFullRedrawTimer);
+					this.autoFullRedrawTimer = undefined;
+				}
+				logRedraw(`${reason} (interactive, bypassing rate limit)`);
+				fullRender(true);
+				return;
+			}
+			const elapsed = performance.now() - this.lastAutoFullRedrawAt;
+			if (
+				this.autoFullRedrawTimer === undefined &&
+				elapsed >= TuiMainScreen.MIN_AUTO_FULL_REDRAW_INTERVAL_MS
+			) {
+				this.lastAutoFullRedrawAt = performance.now();
+				logRedraw(reason);
+				fullRender(true);
+				return;
+			}
+			logRedraw(`${reason} (deferred, full redraw rate-limited)`);
+			if (this.autoFullRedrawTimer !== undefined) return;
+			this.autoFullRedrawTimer = setTimeout(
+				() => {
+					this.autoFullRedrawTimer = undefined;
+					if (this.stopped) return;
+					this.requestRender();
+				},
+				TuiMainScreen.MIN_AUTO_FULL_REDRAW_INTERVAL_MS - elapsed,
+			);
+			this.autoFullRedrawTimer.unref();
+		};
+
 		// First render - just output everything without clearing (assumes clean screen)
 		if (this.previousLines.length === 0 && !widthChanged && !heightChanged) {
 			logRedraw("first render");
@@ -392,9 +495,10 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		}
 
 		// Width changes always need a full re-render because wrapping changes.
+		// A resize is an explicit user action, so the scrollback is cleared too.
 		if (widthChanged) {
 			logRedraw(`terminal width changed (${this.previousWidth} -> ${width})`);
-			fullRender(true);
+			fullRender(true, true);
 			return;
 		}
 
@@ -403,7 +507,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		// In that environment, a full redraw causes the entire history to replay on every toggle.
 		if (heightChanged && !isTermuxSession()) {
 			logRedraw(`terminal height changed (${this.previousHeight} -> ${height})`);
-			fullRender(true);
+			fullRender(true, true);
 			return;
 		}
 
@@ -411,8 +515,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		// (overlays need the padding, so only do this when no overlays are active)
 		// Configurable via setClearOnShrink()
 		if (this.getClearOnShrink() && newLines.length < this.maxLinesRendered && !this.hasOverlayEntries) {
-			logRedraw(`clearOnShrink (maxLinesRendered=${this.maxLinesRendered})`);
-			fullRender(true);
+			autoFullRender(`clearOnShrink (maxLinesRendered=${this.maxLinesRendered})`);
 			return;
 		}
 
@@ -472,8 +575,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				// Move to end of new content (clamp to 0 for empty content)
 				const targetRow = Math.max(0, newLines.length - 1);
 				if (targetRow < prevViewportTop) {
-					logRedraw(`deleted lines moved viewport up (${targetRow} < ${prevViewportTop})`);
-					fullRender(true);
+					autoFullRender(`deleted lines moved viewport up (${targetRow} < ${prevViewportTop})`);
 					return;
 				}
 				const lineDiff = computeLineDiff(targetRow);
@@ -483,8 +585,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				// Clear extra lines without scrolling
 				const extraLines = this.previousLines.length - newLines.length;
 				if (extraLines > height) {
-					logRedraw(`extraLines > height (${extraLines} > ${height})`);
-					fullRender(true);
+					autoFullRender(`extraLines > height (${extraLines} > ${height})`);
 					return;
 				}
 				const clearStartOffset = newLines.length === 0 ? 0 : 1;
@@ -516,11 +617,48 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		}
 
 		// Differential rendering can only touch what was actually visible.
-		// If the first changed line is above the previous viewport, we need a full redraw.
+		// If the first changed line is above the previous viewport, upstream needs
+		// a full redraw. The guarded policy (opt in via TuiMainScreenOptions)
+		// avoids it when the frame length is unchanged and no Kitty images are
+		// involved, which keeps the line-index-to-screen-row mapping intact:
+		// edits confined above the viewport change nothing on screen, so the new
+		// frame is adopted without writing anything (the stale rows only linger
+		// in scrollback, reconciled by the next explicit full redraw), and edits
+		// spanning into the viewport are clamped to the visible range and
+		// rendered differentially. A ticking card scrolled above the viewport
+		// used to force a clear-full-redraw of the whole transcript on every tick.
 		if (firstChanged < prevViewportTop) {
-			logRedraw(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
-			fullRender(true);
-			return;
+			if (!this.guardedAutomaticFullRedraws) {
+				autoFullRender(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
+				return;
+			}
+			const countsMatch = newLines.length === this.previousLines.length;
+			let hasImages = false;
+			if (countsMatch) {
+				for (let i = firstChanged; i <= lastChanged; i++) {
+					if (isImageLine(newLines[i]!) || isImageLine(this.previousLines[i]!)) {
+						hasImages = true;
+						break;
+					}
+				}
+			}
+			if (countsMatch && !hasImages) {
+				if (lastChanged < prevViewportTop) {
+					this.positionHardwareCursor(cursorPos, newLines.length);
+					this.previousLines = newLines;
+					this.previousRawLines = rawLines;
+					this.previousLineImageIds = lineImageIds;
+					this.previousKittyImageIds = this.unionKittyImageIds(lineImageIds);
+					this.previousWidth = width;
+					this.previousHeight = height;
+					this.previousViewportTop = prevViewportTop;
+					return;
+				}
+				firstChanged = prevViewportTop;
+			} else {
+				autoFullRender(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
+				return;
+			}
 		}
 
 		// Render from first changed line to end
@@ -564,10 +702,9 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			if (imageReservedRows > 1) {
 				const imageStartScreenRow = i - viewportTop;
 				if (imageStartScreenRow < 0 || imageStartScreenRow + imageReservedRows > height) {
-					logRedraw(
+					autoFullRender(
 						`kitty image pre-clear would scroll (${imageStartScreenRow} + ${imageReservedRows} > ${height})`,
 					);
-					fullRender(true);
 					return;
 				}
 

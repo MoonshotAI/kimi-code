@@ -145,7 +145,7 @@ export {
 	type ViewportTUI,
 } from "./tui.ts";
 export { TuiAltScreen, type TuiAltScreenOptions } from "./tui-alt-screen.ts";
-export { TuiMainScreen, type TuiMainScreenRenderState } from "./tui-main-screen.ts";
+export { TuiMainScreen, type TuiMainScreenOptions, type TuiMainScreenRenderState } from "./tui-main-screen.ts";
 // Utilities
 export {
 	getOsc8LinkAtColumn,
