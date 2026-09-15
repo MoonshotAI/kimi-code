@@ -15,6 +15,8 @@ export class AgentStateTracker {
   private finishReason: AgentFinishReason | undefined;
   private running = false;
   private compacting = false;
+  private model: string | undefined;
+  private thinkingEffort: string | undefined;
 
   constructor(
     readonly agentId: string,
@@ -109,6 +111,19 @@ export class AgentStateTracker {
     return true;
   }
 
+  feedStatus(event: { model?: string; thinkingEffort?: string }): boolean {
+    let changed = false;
+    if (event.model !== undefined && event.model !== this.model) {
+      this.model = event.model;
+      changed = true;
+    }
+    if (event.thinkingEffort !== undefined && event.thinkingEffort !== this.thinkingEffort) {
+      this.thinkingEffort = event.thinkingEffort;
+      changed = true;
+    }
+    return changed;
+  }
+
   runStarted(): boolean {
     return this.turnStarted();
   }
@@ -158,6 +173,8 @@ export class AgentStateTracker {
       ended_at: this.endedAt,
       status,
       finish_reason: this.finishReason,
+      model: this.model,
+      thinking_effort: this.thinkingEffort,
     };
   }
 }

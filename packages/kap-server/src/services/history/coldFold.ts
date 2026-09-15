@@ -163,8 +163,6 @@ interface TaskDraft {
   error?: string;
   stateReason?: string;
   usage?: StepUsage;
-  model?: string;
-  thinkingEffort?: string;
   at: number;
 }
 
@@ -1111,8 +1109,6 @@ export function foldWireHistory(
           startedAt?: unknown;
           endedAt?: unknown;
           stopReason?: unknown;
-          model?: unknown;
-          thinkingEffort?: unknown;
         }
       | undefined;
     if (info === undefined || typeof info.taskId !== 'string') return;
@@ -1138,9 +1134,6 @@ export function foldWireHistory(
       error: prev?.error,
       stateReason: typeof info.stopReason === 'string' ? info.stopReason : prev?.stateReason,
       usage: prev?.usage,
-      model: typeof info.model === 'string' ? info.model : prev?.model,
-      thinkingEffort:
-        typeof info.thinkingEffort === 'string' ? info.thinkingEffort : prev?.thinkingEffort,
       at: recordAtMs,
     };
     tasks.set(taskId, draft);
@@ -1460,8 +1453,6 @@ export function foldWireHistory(
         error: tool.status === 'error' ? (tool.error ?? outputText) : undefined,
         stateReason: tool.status === 'running' ? 'interrupted' : undefined,
         usage: undefined,
-        model: typeof args['model'] === 'string' ? args['model'] : undefined,
-        thinkingEffort: typeof args['thinking'] === 'string' ? args['thinking'] : undefined,
         at: tool.at,
       });
       tool.taskId = agentTaskId;
@@ -1501,8 +1492,6 @@ export function foldWireHistory(
           tool.agentRefs = [...tool.agentRefs, { agent_id: member.agentId, role: 'member' }];
         }
       }
-      const model = typeof args['model'] === 'string' ? args['model'] : undefined;
-      const thinkingEffort = typeof args['thinking'] === 'string' ? args['thinking'] : undefined;
       const swarmDescription =
         typeof args['description'] === 'string' ? args['description'] : undefined;
       let insertOffset = 1;
@@ -1548,8 +1537,6 @@ export function foldWireHistory(
                 ? 'interrupted'
                 : undefined),
           usage: undefined,
-          model,
-          thinkingEffort,
           at: tool.at,
         });
         const toolIndex = order.indexOf(`tool:${tool.toolCallId}`);
@@ -1726,8 +1713,6 @@ export function foldWireHistory(
           error: draft.error,
           state_reason: draft.stateReason,
           usage: draft.usage,
-          model: draft.model,
-          thinking_effort: draft.thinkingEffort,
         });
         break;
       }

@@ -1050,8 +1050,6 @@ describe('SessionSwarmService metadata compatibility', () => {
       expect.objectContaining({
         type: 'subagent.spawned',
         subagentId: 'agent-existing',
-        model: 'stale-model',
-        thinkingEffort: 'medium',
       }),
     );
     expect(runAgent).toHaveBeenCalledWith(
@@ -1085,7 +1083,6 @@ describe('SessionSwarmService metadata compatibility', () => {
       expect.objectContaining({
         type: 'subagent.spawned',
         subagentId: 'agent-new',
-        model: 'provider/pool',
       }),
     );
   });

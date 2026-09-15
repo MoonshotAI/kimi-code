@@ -292,12 +292,6 @@ function toWireTask(
   if (info.kind === 'process' && 'command' in info && typeof info.command === 'string') {
     base.command = info.command;
   }
-  if (info.kind === 'agent' && info.model !== undefined) {
-    base.model = info.model;
-  }
-  if (info.kind === 'agent' && info.thinkingEffort !== undefined) {
-    base.thinking_effort = info.thinkingEffort;
-  }
   if (info.kind === 'agent' && info.agentId !== undefined) {
     base.agent_id = info.agentId;
   }

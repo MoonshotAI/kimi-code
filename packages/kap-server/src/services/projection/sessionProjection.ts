@@ -304,17 +304,14 @@ export class SessionProjection {
     this.agentStates.set(agentId, tracker);
     const running = loop?.snapshot().state === 'running';
     const createdAt = new Date().toISOString();
+    const profile = handle.accessor.get(IAgentProfileService) as IAgentProfileService | undefined;
     if (agentId === MAIN_AGENT_ID) {
-      const profile = handle.accessor.get(IAgentProfileService) as IAgentProfileService | undefined;
       tracker.seedMain(profile?.data().profileName ?? '', createdAt, running);
     } else {
       const scopeContext = handle.accessor.get(IAgentScopeContext) as
         | { forkedFrom?: string }
         | undefined;
       if (scopeContext?.forkedFrom !== undefined && scopeContext.forkedFrom.length > 0) {
-        const profile = handle.accessor.get(IAgentProfileService) as
-          | IAgentProfileService
-          | undefined;
         tracker.seedBtw(profile?.data().profileName ?? '', createdAt, running);
       } else {
         const mainHandle = this.agentHandle(MAIN_AGENT_ID);
@@ -325,11 +322,15 @@ export class SessionProjection {
             (info) =>
               info.kind === 'agent' && (info as { agentId?: string }).agentId === agentId,
           );
-        const profile = handle.accessor.get(IAgentProfileService) as
-          | IAgentProfileService
-          | undefined;
         tracker.seedToolFromTask(profile?.data().profileName ?? '', createdAt, link);
       }
+    }
+    if (profile !== undefined) {
+      const model = profile.getModel();
+      tracker.feedStatus({
+        model: model.length > 0 ? model : undefined,
+        thinkingEffort: profile.getEffectiveThinkingLevel(),
+      });
     }
     this.emitAgentState(agentId);
   }
@@ -385,6 +386,12 @@ export class SessionProjection {
 
   private onAgentStateEvent(agentId: string, event: ProjectionBusEvent): void {
     switch (event.type) {
+      case 'agent.status.updated': {
+        const status = event as { model?: string; thinkingEffort?: string };
+        const tracker = this.agentStates.get(agentId);
+        if (tracker?.feedStatus(status) === true) this.emitAgentState(agentId);
+        return;
+      }
       case 'subagent.spawned': {
         const spawned = event as {
           subagentId: string;

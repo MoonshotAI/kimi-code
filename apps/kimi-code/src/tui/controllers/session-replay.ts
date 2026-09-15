@@ -24,7 +24,6 @@ import type {
 import { formatErrorMessage, isTodoItemShape } from '../utils/event-payload';
 import { formatBackgroundAgentTranscript } from '../utils/background-agent-status';
 import { formatBackgroundTaskTranscript } from '../utils/background-task-status';
-import { modelDisplayName } from '../components/dialogs/model-selector';
 import { buildGoalCompletionMessage } from '../utils/goal-completion';
 import { PERMISSION_MODE_DISPLAY_NAMES } from '../utils/permission-mode';
 import { formatBashOutputForDisplay } from '../utils/shell-output';
@@ -202,7 +201,7 @@ export class SessionReplayRenderer {
 
   private hydrateBackgroundState(agent: ResumedAgentState): void {
     const { state, sessionEventHandler } = this.host;
-    const projection = replayBackgroundProjection(agent.background, state.appState.availableModels);
+    const projection = replayBackgroundProjection(agent.background);
     sessionEventHandler.subAgentEventHandler.backgroundAgentMetadata = new Map(
       projection.backgroundAgentMetadata,
     );
@@ -803,19 +802,6 @@ export class SessionReplayRenderer {
       agentId: origin.taskId,
       parentToolCallId: origin.taskId,
       description: task?.description,
-      model:
-        task?.model === undefined
-          ? undefined
-          : modelDisplayName(
-              task.model,
-              this.host.state.appState.availableModels[task.model],
-            ),
-      effort:
-        task?.thinkingEffort === undefined ||
-        task.thinkingEffort === 'off' ||
-        task.thinkingEffort === 'on'
-          ? undefined
-          : task.thinkingEffort,
     };
     let status = formatBackgroundAgentTranscript(
       origin.status === 'completed' ? 'completed' : 'failed',

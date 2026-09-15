@@ -19,8 +19,6 @@ export const taskMessageSchema = z.object({
   error: z.string().optional(),
   state_reason: z.string().optional(),
   usage: stepUsageSchema.optional(),
-  model: z.string().optional(),
-  thinking_effort: z.string().optional(),
 });
 
 export type TaskMessage = z.infer<typeof taskMessageSchema>;

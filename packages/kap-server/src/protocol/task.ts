@@ -25,8 +25,6 @@ export const taskSchema = z.object({
   completed_at: isoDateTimeSchema.optional(),
   output_preview: z.string().optional(),
   output_bytes: z.number().int().nonnegative().optional(),
-  model: z.string().optional(),
-  thinking_effort: z.string().optional(),
   agent_id: z.string().optional(),
   subagent_type: z.string().optional(),
   parent_tool_call_id: z.string().optional(),

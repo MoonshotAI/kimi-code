@@ -660,8 +660,6 @@ describe('AgentMessageProjector', () => {
         swarmIndex: 1,
         runInBackground: false,
         description: 'team #1 (coder)',
-        model: 'k2',
-        thinkingEffort: 'high',
       }),
       sink,
     );
@@ -691,8 +689,6 @@ describe('AgentMessageProjector', () => {
       detached: false,
       child_agent_id: 'sub-d1',
       description: 'team #1 (coder)',
-      model: 'k2',
-      thinking_effort: 'high',
     });
     expect(memberTasks[1]).toMatchObject({ task_id: 'sub-d2', child_agent_id: 'sub-d2' });
     feed(
@@ -1290,6 +1286,8 @@ describe('SessionProjection', () => {
       type: 'agent.state',
       origin: { kind: 'main' },
       status: 'idle',
+      model: 'kimi-k2',
+      thinking_effort: 'on',
     });
     expect(ofType(received, 'agent.state').some((m) => m.agent_id !== 'main')).toBe(false);
 
@@ -1297,7 +1295,7 @@ describe('SessionProjection', () => {
     agent.bus.emit(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'go' }) as Event2<any>);
     agent.bus.emit(ev({ type: 'turn.step.started', turnId: 1, step: 1 }) as Event2<any>);
     agent.bus.emit(ev({ type: 'assistant.delta', turnId: 1, delta: 'Hi' }) as Event2<any>);
-    agent.bus.emit(ev({ type: 'agent.status.updated', agentId: 'main', model: 'kimi-k2' }) as Event2<any>);
+    agent.bus.emit(ev({ type: 'agent.status.updated', agentId: 'main', model: 'kimi-k2', thinkingEffort: 'high' }) as Event2<any>);
     agent.bus.emit(ev({ type: 'agent.status.updated', agentId: 'main', planMode: true }) as Event2<any>);
     agent.bus.emit(
       ev({ type: 'plan.revision', agentId: 'main', id: 'r0', version: 1, key: 'boom', sha256: 'x', bytes: 1 }) as Event2<any>,
@@ -1383,7 +1381,7 @@ describe('SessionProjection', () => {
     const mainIdle = ofType(received, 'agent.state')
       .filter((m) => m.agent_id === 'main')
       .at(-1)!;
-    expect(mainIdle).toMatchObject({ status: 'idle' });
+    expect(mainIdle).toMatchObject({ status: 'idle', model: 'kimi-k2', thinking_effort: 'high' });
 
     const childState = ofType(received, 'agent.state')
       .filter((m) => m.agent_id === 'agent-1')
@@ -1393,6 +1391,8 @@ describe('SessionProjection', () => {
       origin: { kind: 'tool-agent', tool_call_id: 'call_a', parent_agent_id: 'main' },
       status: 'idle',
       finish_reason: 'completed',
+      model: 'kimi-k2',
+      thinking_effort: 'on',
     });
     expect(typeof childState.ended_at).toBe('string');
     const swarmState = ofType(received, 'agent.state')

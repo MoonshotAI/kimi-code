@@ -135,8 +135,6 @@ interface TaskRecord {
   error?: string;
   stateReason?: string;
   usage?: StepUsage;
-  model?: string;
-  thinkingEffort?: string;
 }
 
 interface InteractionRecord {
@@ -371,8 +369,6 @@ export class AgentMessageProjector {
       childAgentId: agentInfo?.agentId ?? prev?.childAgentId,
       outputTail: prev?.outputTail ?? '',
       startedAt: prev?.startedAt ?? epochMsToIso(info.startedAt),
-      model: agentInfo?.model ?? prev?.model,
-      thinkingEffort: agentInfo?.thinkingEffort ?? prev?.thinkingEffort,
     }));
     const childAgentId = agentInfo?.agentId;
     if (info.kind === 'agent' && typeof childAgentId === 'string' && childAgentId.length > 0) {
@@ -1133,8 +1129,6 @@ export class AgentMessageProjector {
       usage: prev?.usage,
       error: prev?.error,
       stateReason: info.stopReason ?? prev?.stateReason,
-      model: agentInfo?.model ?? prev?.model,
-      thinkingEffort: agentInfo?.thinkingEffort ?? prev?.thinkingEffort,
     }));
     if (event.type === 'task.started') {
       const childAgentId = agentInfo?.agentId;
@@ -1239,8 +1233,6 @@ export class AgentMessageProjector {
     swarmIndex?: number;
     runInBackground: boolean;
     taskId?: string;
-    model?: string;
-    thinkingEffort?: string;
   }): ServerMessage[] {
     const ops = this.settlePendingClear();
     const tool = this.tools.get(event.parentToolCallId);
@@ -1269,8 +1261,6 @@ export class AgentMessageProjector {
       childAgentId: event.subagentId,
       outputTail: prev?.outputTail ?? '',
       startedAt: prev?.startedAt ?? tool?.startedAt ?? epochMsToIso(event.time),
-      model: event.model ?? prev?.model,
-      thinkingEffort: event.thinkingEffort ?? prev?.thinkingEffort,
     }));
     ops.push(this.taskOp(task));
     return ops;
@@ -1979,8 +1969,6 @@ export class AgentMessageProjector {
       error: task.error,
       state_reason: task.stateReason,
       usage: task.usage,
-      model: task.model,
-      thinking_effort: task.thinkingEffort,
     };
   }
 
@@ -2131,8 +2119,6 @@ function agentInfoOf(info: AgentTaskInfo):
       agentId?: string;
       taskId: string;
       parentToolCallId?: string;
-      model?: string;
-      thinkingEffort?: string;
     }
   | undefined {
   if (info.kind !== 'agent') return undefined;

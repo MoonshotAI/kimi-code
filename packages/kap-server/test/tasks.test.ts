@@ -163,8 +163,6 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
               kind: 'agent',
               agentId: 'sub-1',
               subagentType: 'explore',
-              model: 'provider/secondary',
-              thinkingEffort: 'low',
               parentToolCallId,
             };
           case 'question':
@@ -219,8 +217,6 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
       session_id: id,
       kind: 'subagent',
       status: 'running',
-      model: 'provider/secondary',
-      thinking_effort: 'low',
       agent_id: 'sub-1',
       subagent_type: 'explore',
       parent_tool_call_id: agentId,

@@ -1952,7 +1952,6 @@ describe('Agent tool execution contract', () => {
       expect.objectContaining({
         type: 'subagent.spawned',
         subagentId: 'agent-child',
-        model: 'provider/fast',
       }),
     );
   });
@@ -2277,8 +2276,6 @@ describe('Agent tool execution contract', () => {
     expect(events.find((event) => event.type === 'subagent.spawned')).toMatchObject({
       parentAgentId: 'main',
       callerAgentId: 'main',
-      model: 'provider/secondary',
-      thinkingEffort: 'off',
     });
     expect(telemetryRecords).toContainEqual({
       event: 'subagent_created',
