@@ -1060,6 +1060,56 @@ describe("CombinedAutocompleteProvider", () => {
 			assert.strictEqual(applied.lines[0], 'cat "other dir""my dir/file.txt"');
 		});
 
+		test("matches session affinity case-insensitively", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "/goal N";
+			const item = { value: "next", label: "next" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "n");
+
+			assert.strictEqual(applied.lines[0], "/goal next");
+		});
+
+		test("expands a slash argument growing case-divergently", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "/goal Next mo";
+			const item = { value: "next manage", label: "next manage" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "next m");
+
+			assert.strictEqual(applied.lines[0], "/goal next manage");
+		});
+
+		test("expands a slash argument whose active last word is quote-framed", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = '/goal next "n';
+			const item = { value: "next manage", label: "next manage" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "next m");
+
+			assert.strictEqual(applied.lines[0], "/goal next manage");
+		});
+
+		test("does not expand over a quoted last word the user already closed", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = '/goal next "done"';
+			const item = { value: "next manage", label: "next manage" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "next m");
+
+			assert.strictEqual(applied.lines[0], '/goal next "done"next manage');
+		});
+
+		test("does not expand past content after a quoted last word", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = '/goal next "do" x';
+			const item = { value: "next manage", label: "next manage" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "next m");
+
+			assert.strictEqual(applied.lines[0], '/goal next "do" next manage');
+		});
+
 		test("replaces a shrunk slash command argument as one range", () => {
 			const provider = new CombinedAutocompleteProvider([], process.cwd());
 			const line = "/goal next";

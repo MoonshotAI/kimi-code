@@ -63,11 +63,14 @@ export function resolveCompletionPrefix(
 		structuralAlive ||
 		textBeforeCursor
 			.split(/[ \t"'=]+/)
-			.some(
-				(token) =>
-					token !== "" &&
-					affinityPrefixes.some((candidate) => token.startsWith(candidate) || candidate.startsWith(token)),
-			);
+			.some((token) => {
+				if (token === "") return false;
+				const lowerToken = token.toLowerCase();
+				return affinityPrefixes.some((candidate) => {
+					const lowerCandidate = candidate.toLowerCase();
+					return lowerToken.startsWith(lowerCandidate) || lowerCandidate.startsWith(lowerToken);
+				});
+			});
 	if (!sessionAlive) {
 		return "";
 	}
@@ -77,7 +80,9 @@ export function resolveCompletionPrefix(
 			textBeforeCursor.startsWith("/") && spaceIndex !== -1 && !textBeforeCursor.slice(1, spaceIndex).includes("/");
 		if (isSlashArgumentContext) {
 			const argumentText = textBeforeCursor.slice(spaceIndex + 1);
-			const grownSuffix = argumentText.startsWith(prefix) ? argumentText.slice(prefix.length) : null;
+			const lowerArgument = argumentText.toLowerCase();
+			const lowerPrefix = prefix.toLowerCase();
+			const grownSuffix = lowerArgument.startsWith(lowerPrefix) ? argumentText.slice(prefix.length) : null;
 			if (grownSuffix !== null) {
 				let suffix = grownSuffix;
 				if (findUnclosedQuoteStart(prefix) !== null && suffix.endsWith('"')) {
@@ -88,30 +93,32 @@ export function resolveCompletionPrefix(
 					return argumentText;
 				}
 			}
-			if (prefix.startsWith(argumentText)) {
+			if (lowerPrefix.startsWith(lowerArgument)) {
 				return argumentText;
 			}
 			let commonLength = 0;
-			const limit = Math.min(argumentText.length, prefix.length);
-			while (commonLength < limit && argumentText[commonLength] === prefix[commonLength]) {
+			const limit = Math.min(lowerArgument.length, lowerPrefix.length);
+			while (commonLength < limit && lowerArgument[commonLength] === lowerPrefix[commonLength]) {
 				commonLength += 1;
 			}
-			if (commonLength > 0 && argumentText[commonLength - 1] === " ") {
+			if (commonLength > 0 && commonLength < prefix.length && argumentText[commonLength - 1] === " ") {
 				const activeWord = argumentText.slice(commonLength);
-				if (activeWord !== "" && ![...activeWord].some((ch) => PATH_DELIMITERS.has(ch))) {
+				const framesQuotedWord = activeWord.startsWith('"') && findUnclosedQuoteStart(activeWord) !== null;
+				if (activeWord !== "" && (framesQuotedWord || ![...activeWord].some((ch) => PATH_DELIMITERS.has(ch)))) {
 					return argumentText;
 				}
 			}
 		}
 	}
+	const snapshotQuoted = prefix.startsWith('"') || prefix.startsWith('@"');
 	if (textBeforeCursor.endsWith('"')) {
 		const closedQuotedPrefix = extractQuotedPrefix(textBeforeCursor.slice(0, -1));
-		if (closedQuotedPrefix) {
+		if (closedQuotedPrefix && (snapshotQuoted || closedQuotedPrefix.startsWith("@"))) {
 			return `${closedQuotedPrefix}"`;
 		}
 	}
 	const quotedPrefix = extractQuotedPrefix(textBeforeCursor);
-	if (quotedPrefix) {
+	if (quotedPrefix && (snapshotQuoted || quotedPrefix.startsWith("@") || quotedPrefix === '"')) {
 		return quotedPrefix;
 	}
 	const lastDelimiterIndex = findLastDelimiter(textBeforeCursor);
