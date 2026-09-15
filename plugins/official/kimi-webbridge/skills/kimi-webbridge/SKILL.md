@@ -152,7 +152,7 @@ Read [operations.md](references/operations.md) when the daemon or extension is u
 
 ## Version mismatches
 
-If a tool returns an error containing **"Please update the"** (for example "Please update the Kimi Browser Extension" or the older "Please update the Kimi WebBridge extension"), the user's browser extension is older than this skill. Don't try to reconcile versions yourself — just tell the user, in their language, to update the extension and retry:
+If a tool returns an error containing **"Please update the Kimi Browser Extension"** or the older **"Please update the Kimi WebBridge extension"**, the user's browser extension is older than this skill. Don't try to reconcile versions yourself — just tell the user, in their language, to update the extension and retry:
 
 - English: https://www.kimi.com/features/webbridge
 - 中文: https://www.kimi.com/zh-cn/features/webbridge
