@@ -69,7 +69,7 @@ export const kimiOpenAITrait: OpenAITrait = {
 
   toolMessageConversion: 'keep_parts',
 
-  cacheKey: (key) => ({ prompt_cache_key: key }),
+  encodeCacheKey: (key) => ({ prompt_cache_key: key }),
 
   thinking: (thinking) => {
     const config: KimiThinkingConfig =

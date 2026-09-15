@@ -74,7 +74,7 @@ export function prepareOpenAIResponsesRequest(
   let kwargs: Record<string, unknown> = {};
   if (input.cacheKey !== undefined) {
     kwargs =
-      trait?.cacheKey?.(input.cacheKey, ctx) ?? encodeOpenAIResponsesCacheKey(input.cacheKey);
+      trait?.encodeCacheKey?.(input.cacheKey, ctx) ?? encodeOpenAIResponsesCacheKey(input.cacheKey);
   }
   if (input.thinking !== undefined) {
     kwargs = applyThinking(kwargs, input.thinking, trait?.thinking, ctx, (t) =>

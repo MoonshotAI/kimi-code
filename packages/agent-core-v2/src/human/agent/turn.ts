@@ -636,7 +636,7 @@ export function createTurnMachine(
               proposal: proposeRecovery(recovery, {
                 error: event.error,
                 messages: baseMessages(context),
-                applied: context.appliedRecoveries,
+                appliedRecoveries: context.appliedRecoveries,
                 credentialProvider: context.input.request.credentialProvider,
               }),
             })),

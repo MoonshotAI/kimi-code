@@ -28,8 +28,8 @@ import {
   encodeGoogleGenAIMaxOutputTokens,
   encodeGoogleGenAIRequest,
   encodeGoogleGenAIThinking,
-  messagesToGoogleGenAIContents,
-  toolToGoogleGenAI,
+  lowerGoogleGenAIMessages,
+  defaultGoogleGenAITool,
   type GoogleGenAIRequestParams,
 } from './format';
 
@@ -67,10 +67,10 @@ export function prepareGoogleGenAIRequest(
   }
   kwargs = shake(assign(kwargs, input.extraParams?.googleGenai ?? {}));
 
-  const contents = messagesToGoogleGenAIContents(input.messages);
+  const contents = lowerGoogleGenAIMessages(input.messages);
   const merged = trait?.mergeHistory?.(contents, ctx) ?? contents;
   const tools = input.tools.map(
-    (tool) => trait?.convertTool?.(tool, ctx) ?? toolToGoogleGenAI(tool),
+    (tool) => trait?.convertTool?.(tool, ctx) ?? defaultGoogleGenAITool(tool),
   );
   const params = assembleGoogleGenAIRequest(input, { contents: merged, tools, kwargs });
   const finalParams = trait?.buildParams?.(params, ctx) ?? params;

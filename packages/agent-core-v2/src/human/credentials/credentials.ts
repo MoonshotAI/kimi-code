@@ -54,10 +54,10 @@ export function applyCredential(
 const CREDENTIALS_RECOVERY_ID = 'credentials';
 
 export const credentialsRecovery: LlmRecovery = {
-  propose: ({ error, applied, credentialProvider }) => {
+  propose: ({ error, appliedRecoveries, credentialProvider }) => {
     if (
       credentialProvider?.canRecover?.(error) !== true ||
-      applied.some((record) => record.strategy === CREDENTIALS_RECOVERY_ID)
+      appliedRecoveries.some((record) => record.strategy === CREDENTIALS_RECOVERY_ID)
     ) {
       return undefined;
     }

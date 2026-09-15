@@ -25,7 +25,7 @@ import { buildToolNameById, lowerMessage } from './lower';
 import type { GoogleContent } from './contract';
 import { sortToolRunByCallOrder } from './patterns';
 
-export function toolToGoogleGenAI(tool: ToolDescription): Record<string, unknown> {
+export function defaultGoogleGenAITool(tool: ToolDescription): Record<string, unknown> {
   return {
     functionDeclarations: [
       {
@@ -37,7 +37,7 @@ export function toolToGoogleGenAI(tool: ToolDescription): Record<string, unknown
   };
 }
 
-export function messagesToGoogleGenAIContents(messages: readonly Message[]): GoogleContent[] {
+export function lowerGoogleGenAIMessages(messages: readonly Message[]): GoogleContent[] {
   const normalized = applyPatterns(messages, [sortToolRunByCallOrder]);
   const toolNameById = buildToolNameById(normalized);
   const lowered = normalized.flatMap((message) => lowerMessage(message, { toolNameById }));

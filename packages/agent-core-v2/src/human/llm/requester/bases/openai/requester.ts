@@ -75,7 +75,7 @@ export function prepareOpenAIRequest(
   const ctx: TraitContext = { model: input.model };
   let kwargs: Record<string, unknown> = {};
   if (input.cacheKey !== undefined) {
-    kwargs = trait?.cacheKey?.(input.cacheKey, ctx) ?? encodeOpenAICacheKey(input.cacheKey);
+    kwargs = trait?.encodeCacheKey?.(input.cacheKey, ctx) ?? encodeOpenAICacheKey(input.cacheKey);
   }
   let preserveThinking = false;
   if (input.thinking !== undefined) {

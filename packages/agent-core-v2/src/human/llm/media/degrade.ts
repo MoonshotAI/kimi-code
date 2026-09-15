@@ -72,9 +72,9 @@ const MEDIA_RECOVERY_ID = 'media-degrade';
 
 export function createMediaDegradeRecovery(): LlmRecovery {
   return {
-    propose: ({ error, messages, applied }) => {
+    propose: ({ error, messages, appliedRecoveries }) => {
       const done = new Set(
-        applied.filter((r) => r.strategy === MEDIA_RECOVERY_ID).map((r) => r.action),
+        appliedRecoveries.filter((r) => r.strategy === MEDIA_RECOVERY_ID).map((r) => r.action),
       );
       if (error.kind === 'image_format') {
         if (!done.has('stripped')) {
