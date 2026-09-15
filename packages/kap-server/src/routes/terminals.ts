@@ -221,6 +221,9 @@ function sendMappedError(
       case ErrorCodes.FS_PATH_ESCAPES:
         reply.send(errEnvelope(ErrorCode.FS_PATH_ESCAPES_SESSION, err.message, requestId, err.stack));
         return;
+      case ErrorCodes.WIRE_VERSION_TOO_LOW:
+        reply.send(errEnvelope(ErrorCode.WIRE_VERSION_TOO_LOW, err.message, requestId, err.stack));
+        return;
     }
   }
   if (err instanceof Error && err.message.startsWith('Path outside workspace')) {

@@ -922,6 +922,9 @@ function sendMappedError(reply: Reply, req: { id: string }, err: unknown): void 
       case ErrorCodes.OS_FS_PERMISSION_DENIED:
         reply.send(errEnvelope(ErrorCode.FS_PERMISSION_DENIED, err.message, requestId, err.stack));
         return;
+      case ErrorCodes.WIRE_VERSION_TOO_LOW:
+        reply.send(errEnvelope(ErrorCode.WIRE_VERSION_TOO_LOW, err.message, requestId, err.stack));
+        return;
     }
   }
   log?.error({ err }, 'fs request failed');

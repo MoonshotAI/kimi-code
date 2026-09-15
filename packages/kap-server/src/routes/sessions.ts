@@ -753,6 +753,7 @@ export function registerSessionsRoutes(
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'Get realtime session status (best-effort in this slice)',
       tags: ['sessions'],
@@ -782,6 +783,7 @@ export function registerSessionsRoutes(
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'Get the current session goal (null when none is active)',
       tags: ['sessions'],

@@ -393,6 +393,9 @@ function sendMappedError(
       case ErrorCodes.VALIDATION_FAILED:
         reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId, err.stack));
         return;
+      case ErrorCodes.WIRE_VERSION_TOO_LOW:
+        reply.send(errEnvelope(ErrorCode.WIRE_VERSION_TOO_LOW, err.message, requestId, err.stack));
+        return;
     }
   }
   throw err;

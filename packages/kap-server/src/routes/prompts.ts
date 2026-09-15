@@ -642,6 +642,9 @@ function sendMappedError(
       case 'skill.type_unsupported':
         reply.send(errEnvelope(ErrorCode.SKILL_NOT_ACTIVATABLE, err.message, requestId, err.stack));
         return;
+      case 'wire.version_too_low':
+        reply.send(errEnvelope(ErrorCode.WIRE_VERSION_TOO_LOW, err.message, requestId, err.stack));
+        return;
     }
   }
   log?.error({ err }, 'prompt request failed');
