@@ -461,17 +461,20 @@ describe('AgentRecords persistence metadata', () => {
     expect((failure as Error).message).toContain(WIRE_PROTOCOL_VERSION);
   });
 
-  it('rejects replaying records without a registered migration path', async () => {
+  it('rejects a journal whose min_protocol_version is malformed', async () => {
     persistence.records.push(
       {
         type: 'metadata',
-        protocol_version: '0.9',
+        protocol_version: '1.5',
+        min_protocol_version: 1.5,
         created_at: 1,
       },
     );
 
     expectResumeMatches = false;
-    await expect(ctx.restorePersisted()).rejects.toThrow('Missing wire migration for version 0.9');
+    await expect(ctx.restorePersisted()).rejects.toMatchObject({
+      code: 'storage.corrupted',
+    });
   });
 
   it('restores goal.* records during replay', async () => {

@@ -71,6 +71,7 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'List pending question requests for a session',
       tags: ['questions'],
@@ -111,6 +112,7 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
         [ErrorCode.QUESTION_DISMISSED]: {
           dataSchema: questionDismissResultSchema,
         },
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'Resolve or dismiss a question',
       tags: ['questions'],

@@ -300,6 +300,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         [ErrorCode.FS_GREP_TIMEOUT]: {},
         [ErrorCode.FS_GIT_UNAVAILABLE]: {},
         [ErrorCode.FS_ALREADY_EXISTS]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description:
         'Filesystem action dispatcher. Supported actions: list, read, list_many, stat, stat_many, mkdir, search, grep, git_status, diff, open, open-in, reveal.',
@@ -582,6 +583,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         [ErrorCode.VALIDATION_FAILED]: {},
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
         [ErrorCode.FS_PATH_ESCAPES_SESSION]: {},
       },
       description: 'Download a file from the session workspace',

@@ -73,6 +73,7 @@ export function registerTerminalsRoutes(app: TerminalsRouteHost, core: Scope): v
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'List terminals for a session',
       tags: ['terminals'],
@@ -103,6 +104,7 @@ export function registerTerminalsRoutes(app: TerminalsRouteHost, core: Scope): v
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
         [ErrorCode.FS_PATH_ESCAPES_SESSION]: {},
       },
       description: 'Create a terminal for a session',
@@ -137,6 +139,7 @@ export function registerTerminalsRoutes(app: TerminalsRouteHost, core: Scope): v
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.TERMINAL_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'Get a terminal by ID',
       tags: ['terminals'],
@@ -167,6 +170,7 @@ export function registerTerminalsRoutes(app: TerminalsRouteHost, core: Scope): v
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.TERMINAL_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'Close a terminal',
       tags: ['terminals'],

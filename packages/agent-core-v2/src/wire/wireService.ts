@@ -337,6 +337,16 @@ export class WireService extends Service implements IWireService, IAgentJournal 
             { details: { scope: this.wireScope, key: AGENT_WIRE_RECORD_KEY } },
           );
         } else if (
+          sourceRecord.min_protocol_version !== undefined &&
+          (typeof sourceRecord.min_protocol_version !== 'string' ||
+            !/^\d+(\.\d+)*$/.test(sourceRecord.min_protocol_version))
+        ) {
+          throw new StorageError(
+            StorageErrors.codes.STORAGE_CORRUPTED,
+            'Agent wire metadata is malformed',
+            { details: { scope: this.wireScope, key: AGENT_WIRE_RECORD_KEY } },
+          );
+        } else if (
           typeof sourceRecord.min_protocol_version === 'string' &&
           isWireReaderVersionBelow(sourceRecord.min_protocol_version)
         ) {
