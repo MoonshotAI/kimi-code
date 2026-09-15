@@ -1,14 +1,24 @@
 import type { BearerTokenProvider } from '@moonshot-ai/kimi-code-oauth';
-import type {
-  ModelCapability,
-  ProviderConfig as KosongProviderConfig,
-  ProviderRequestAuth,
-} from '@moonshot-ai/kosong';
+import type { ModelCapability } from '@moonshot-ai/agent-core-v2';
 
 import type { ModelAlias, OAuthRef, ProviderType } from '#/config/index';
 import type { Logger } from '#/logging/index';
 
 export type { BearerTokenProvider };
+
+export interface ProviderRequestAuth {
+  apiKey?: string;
+  headers?: Record<string, string>;
+}
+
+export interface ProviderConfig {
+  type: string;
+  model: string;
+  baseUrl?: string;
+  apiKey?: string;
+  defaultHeaders?: Record<string, string>;
+  generationKwargs?: Record<string, unknown>;
+}
 
 export type OAuthTokenProviderResolver = (
   providerName: string,
@@ -17,7 +27,7 @@ export type OAuthTokenProviderResolver = (
 
 export interface ResolvedRuntimeProvider {
   readonly providerName: string;
-  readonly provider: KosongProviderConfig;
+  readonly provider: ProviderConfig;
   readonly modelCapabilities: ModelCapability;
   readonly alwaysThinking?: boolean;
   readonly supportEfforts?: readonly string[];

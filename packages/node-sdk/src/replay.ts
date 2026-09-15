@@ -1,7 +1,7 @@
-import type { SessionSummary as V2SessionSummary } from '@moonshot-ai/agent-core-v2';
+import type { ModelCapability, SessionSummary as V2SessionSummary } from '@moonshot-ai/agent-core-v2';
 import type { GoalChange, GoalSnapshot } from '@moonshot-ai/agent-core-v2/features/goal/types';
 import type { PlanData } from '@moonshot-ai/agent-core-v2/features/plan/plan';
-import type { ModelCapability, ProviderConfig } from '@moonshot-ai/kosong';
+import type { ProviderConfig } from '#/model-provider';
 import type { CompactionResult } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/types';
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 

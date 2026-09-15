@@ -2,7 +2,7 @@ import {
   BUDGET_THINKING_EFFORTS,
   matchKnownAnthropicModelProfile,
   matchUnknownClaudeProfile,
-} from '@moonshot-ai/kosong/providers/anthropic-profile';
+} from '@moonshot-ai/agent-core-v2/human/llm/requester/bases/anthropic/profile';
 
 import type { ModelAlias, ProviderType } from './schema';
 

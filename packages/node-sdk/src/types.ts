@@ -4,7 +4,7 @@ import type {
   ShellEnvironment,
 } from '@moonshot-ai/agent-core-v2/app/sessionExport/sessionExport';
 import type { KimiHostIdentity, OAuthRefreshOutcome } from '@moonshot-ai/kimi-code-oauth';
-import type { ContentPart } from '@moonshot-ai/kosong';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2';
 
 import type { ResumeSessionResult } from '#/replay';
 import type { PermissionMode } from '#/permission';
@@ -117,7 +117,7 @@ export type { KimiHostIdentity, OAuthRefreshOutcome };
 // hosts name them through `KimiHarnessOptions.uiCapabilities`, so the type is public here.
 export type { HostUiCapability };
 export type { TelemetryClient, TelemetryContextPatch, TelemetryProperties };
-export type { ContentPart, Role, ThinkingEffort, ToolCall } from '@moonshot-ai/kosong';
+export type { ContentPart, Role, ThinkingEffort, ToolCall } from '@moonshot-ai/agent-core-v2';
 
 export type { PermissionMode };
 
