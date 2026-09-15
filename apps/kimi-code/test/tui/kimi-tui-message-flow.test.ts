@@ -4663,6 +4663,71 @@ command = "vim"
     expect(transcript).toContain('FINAL-ANSWER');
   });
 
+  it('anchors the fold boundary to the notification turn when another task terminates mid-turn', async () => {
+    const { driver } = await makeDriver();
+    const emit = (event: Event) => driver.sessionEventHandler.handleEvent(event, () => {});
+    let entrySeq = 0;
+    const entry = (kind: 'user' | 'assistant', content: string, turnId?: string) => {
+      entrySeq += 1;
+      driver.appendTranscriptEntry({
+        id: `task-anchor-${entrySeq}`,
+        kind,
+        turnId,
+        renderMode: kind === 'assistant' ? 'markdown' : 'plain',
+        content,
+      });
+    };
+    const terminate = (taskId: string) =>
+      emit({
+        type: 'background.task.terminated',
+        agentId: 'main',
+        info: {
+          taskId,
+          kind: 'process',
+          description: `task ${taskId}`,
+          status: 'completed',
+          exitCode: 0,
+          startedAt: 0,
+          endedAt: 1,
+        },
+      } as unknown as Event);
+    const taskOrigin = (taskId: string) => ({
+      kind: 'task',
+      taskId,
+      status: 'completed',
+      notificationId: `ntf-${taskId}`,
+    });
+
+    entry('user', 'first question');
+    emit({ type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event);
+    entry('assistant', 'working', '1');
+    entry('assistant', 'USER-FINAL', '1');
+    emit({ type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event);
+
+    // task 1 terminates while idle; its notification turn opens and starts
+    // answering, then task 2 terminates mid-turn and its terminal card lands
+    // inside turn 2's output.
+    terminate('task-1');
+    emit({ type: 'turn.started', agentId: 'main', turnId: 2, origin: taskOrigin('task-1') } as Event);
+    entry('assistant', 'report one intro', '2');
+    terminate('task-2');
+    entry('assistant', 'REPORT-ONE-FINAL', '2');
+    emit({ type: 'turn.ended', agentId: 'main', turnId: 2, reason: 'completed' } as Event);
+
+    // task 2's notification missed turn 2's last drain, so it opens its own
+    // turn. When that turn ends, the fold must start at this turn's boundary —
+    // not at task 2's card mounted mid-turn-2 — or REPORT-ONE-FINAL folds away.
+    emit({ type: 'turn.started', agentId: 'main', turnId: 3, origin: taskOrigin('task-2') } as Event);
+    entry('assistant', 'report two intro', '3');
+    entry('assistant', 'report two middle', '3');
+    entry('assistant', 'REPORT-TWO-FINAL', '3');
+    emit({ type: 'turn.ended', agentId: 'main', turnId: 3, reason: 'completed' } as Event);
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('REPORT-ONE-FINAL');
+    expect(transcript).toContain('REPORT-TWO-FINAL');
+  });
+
   it('coalesces assistant delta component updates', async () => {
     vi.useFakeTimers();
     try {
