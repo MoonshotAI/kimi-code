@@ -6,6 +6,7 @@ import { buildMcpStatusReportLines } from '../components/messages/mcp-status-pan
 import { buildStatusReportLines } from '../components/messages/status-panel';
 import { buildUsageReportLines, UsagePanelComponent, type ManagedUsageReport } from '../components/messages/usage-panel';
 import { isExperimentalFlagEnabled } from './experimental-flags';
+import { quotaUsageRows } from '#/utils/usage/usage-format';
 import {
   FEEDBACK_ISSUE_URL,
   FEEDBACK_STATUS_CANCELLED,
@@ -248,5 +249,5 @@ async function loadManagedUsageReport(host: SlashCommandHost): Promise<ManagedUs
   if (res.kind === 'error') {
     return { error: res.message };
   }
-  return { usage: { summary: res.summary, limits: res.limits, extraUsage: res.extraUsage } };
+  return { usage: { rows: quotaUsageRows(res.quota), extraUsage: res.quota.extraUsage } };
 }

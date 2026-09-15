@@ -14,7 +14,7 @@ const CONFIG_NAME = 'survey_popup';
  *  built-in defaults. */
 export interface SurveyPopupConfig {
   probability: number;
-  /** Model gate: exact match, `"*"` opens for every model, `[]` closes both arms. */
+  /** Model gate: exact match against the resolved managed (kimi-for-coding) model id, `"*"` opens for every model, `[]` closes both arms. */
   on_for_models: string[];
   min_time_before_feedback_ms: number;
   min_user_turns_before_feedback: number;
@@ -39,7 +39,7 @@ export const DEFAULT_SURVEY_POPUP_CONFIG: SurveyPopupConfig = {
   min_time_between_global_feedback_ms: 100_000_000,
   long_context_survey_threshold: 200_000,
   long_context_probability: 0.2,
-  long_context_trigger_mode: 'cumulative',
+  long_context_trigger_mode: 'virtual_context',
 };
 
 const FIELD_SCHEMAS = {

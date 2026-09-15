@@ -1207,6 +1207,38 @@ describe('SessionSwarmService metadata compatibility', () => {
       expect.objectContaining({ type: 'subagent.spawned' }),
     );
   });
+
+  it('does not produce an unhandled rejection when the batch fails with a non-user abort', async () => {
+    agents['agent-a'] = { labels: { parentAgentId: 'main' } };
+    handles.set('agent-a', agentHandle('agent-a', lifecycle, eventBus));
+    const blocker = createControlledPromise<{ summary: string }>();
+    runAgent.mockImplementation((agent, request, options) => {
+      options?.onReady?.();
+      return {
+        agentId: (agent as AgentContext).agentId,
+        turn: {} as never,
+        completion: blocker,
+      };
+    });
+    const rejections: unknown[] = [];
+    const listener = (reason: unknown): void => {
+      rejections.push(reason);
+    };
+    process.on('unhandledRejection', listener);
+    try {
+      const service = ix.get(ISessionSwarmService);
+      const running = service.run({
+        callerAgentId: 'main',
+        tasks: [resumeSessionTask('agent-a')],
+      });
+      service.cancel({ callerAgentId: 'main' });
+      await expect(running).rejects.toThrow();
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(rejections).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', listener);
+    }
+  });
 });
 
 function spawnSessionTask(swarmItem?: string): SessionSwarmSpawnTask {
