@@ -4561,6 +4561,108 @@ command = "vim"
     expect(transcript).toContain('cron report final');
   });
 
+  it('keeps the previous turn’s final answer mounted when a task-notification turn completes', async () => {
+    const { driver } = await makeDriver();
+    const emit = (event: Event) => driver.sessionEventHandler.handleEvent(event, () => {});
+    let entrySeq = 0;
+    const entry = (kind: 'user' | 'assistant', content: string, turnId?: string) => {
+      entrySeq += 1;
+      driver.appendTranscriptEntry({
+        id: `task-fold-${entrySeq}`,
+        kind,
+        turnId,
+        renderMode: kind === 'assistant' ? 'markdown' : 'plain',
+        content,
+      });
+    };
+
+    entry('user', 'what is the answer?');
+    emit({ type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event);
+    entry('assistant', 'working on it', '1');
+    entry('assistant', 'FINAL-ANSWER', '1');
+    emit({ type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event);
+
+    expect(stripSgr(renderTranscript(driver))).toContain('FINAL-ANSWER');
+
+    emit({
+      type: 'background.task.terminated',
+      agentId: 'main',
+      info: {
+        taskId: 'task-1',
+        kind: 'process',
+        description: 'nightly sync',
+        status: 'completed',
+        exitCode: 0,
+        startedAt: 0,
+        endedAt: 1,
+      },
+    } as unknown as Event);
+    const taskOrigin = {
+      kind: 'task',
+      taskId: 'task-1',
+      status: 'completed',
+      notificationId: 'ntf-1',
+    };
+    emit({ type: 'turn.started', agentId: 'main', turnId: 2, origin: taskOrigin } as Event);
+    entry('assistant', 'task report part one', '2');
+    entry('assistant', 'task report final', '2');
+    emit({ type: 'turn.ended', agentId: 'main', turnId: 2, reason: 'completed' } as Event);
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('task report final');
+    expect(transcript).toContain('FINAL-ANSWER');
+  });
+
+  it('keeps the previous turn’s final answer mounted when a background-agent notification turn completes', async () => {
+    const { driver } = await makeDriver();
+    const emit = (event: Event) => driver.sessionEventHandler.handleEvent(event, () => {});
+    let entrySeq = 0;
+    const entry = (kind: 'user' | 'assistant', content: string, turnId?: string) => {
+      entrySeq += 1;
+      driver.appendTranscriptEntry({
+        id: `agent-task-fold-${entrySeq}`,
+        kind,
+        turnId,
+        renderMode: kind === 'assistant' ? 'markdown' : 'plain',
+        content,
+      });
+    };
+
+    entry('user', 'what is the answer?');
+    emit({ type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event);
+    entry('assistant', 'working on it', '1');
+    entry('assistant', 'FINAL-ANSWER', '1');
+    emit({ type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event);
+
+    emit({
+      type: 'background.task.terminated',
+      agentId: 'main',
+      info: {
+        taskId: 'task-9',
+        kind: 'agent',
+        agentId: 'agent-9',
+        description: 'scout the fleet',
+        status: 'completed',
+        startedAt: 0,
+        endedAt: 1,
+      },
+    } as unknown as Event);
+    const taskOrigin = {
+      kind: 'task',
+      taskId: 'task-9',
+      status: 'completed',
+      notificationId: 'ntf-9',
+    };
+    emit({ type: 'turn.started', agentId: 'main', turnId: 2, origin: taskOrigin } as Event);
+    entry('assistant', 'agent report part one', '2');
+    entry('assistant', 'agent report final', '2');
+    emit({ type: 'turn.ended', agentId: 'main', turnId: 2, reason: 'completed' } as Event);
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('agent report final');
+    expect(transcript).toContain('FINAL-ANSWER');
+  });
+
   it('coalesces assistant delta component updates', async () => {
     vi.useFakeTimers();
     try {

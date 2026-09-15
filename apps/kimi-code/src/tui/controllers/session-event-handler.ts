@@ -1244,9 +1244,11 @@ export class SessionEventHandler {
         }
       }
       if (!this.backgroundTaskTranscriptedTerminal.has(info.taskId)) {
-        if (info.kind === 'process' || info.kind === 'question') {
-          this.appendBackgroundTaskEntry(info);
-        }
+        // Mount a terminal card for every task kind. `agent` tasks only flip
+        // their original tool card above, which leaves the task-notification
+        // turn without a fold-segment boundary — its completion would fold
+        // the previous turn's final answer into the step summary.
+        this.appendBackgroundTaskEntry(info);
         this.backgroundTaskTranscriptedTerminal.add(info.taskId);
       }
       this.syncBackgroundTaskBadge();
