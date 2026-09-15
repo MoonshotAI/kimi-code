@@ -8,9 +8,9 @@ export const WS_DEBUG_PATH = '/api/v1/debug/ws';
 
 export interface RegisterWsDebugOptions {
   readonly collector?: XstateInspectionCollector;
-  readonly heartbeatIntervalMs?: number;
   readonly flushIntervalMs?: number;
   readonly highWaterMarkBytes?: number;
+  readonly idleTimeoutMs?: number;
 }
 
 export function registerWsDebug(opts: RegisterWsDebugOptions = {}): WebSocketServer {
@@ -21,9 +21,9 @@ export function registerWsDebug(opts: RegisterWsDebugOptions = {}): WebSocketSer
     const conn = new WsConnectionDebug({
       socket,
       collector: opts.collector,
-      heartbeatIntervalMs: opts.heartbeatIntervalMs,
       flushIntervalMs: opts.flushIntervalMs,
       highWaterMarkBytes: opts.highWaterMarkBytes,
+      idleTimeoutMs: opts.idleTimeoutMs,
     });
     connections.add(conn);
     socket.on('close', () => {

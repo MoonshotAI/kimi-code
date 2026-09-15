@@ -1832,8 +1832,8 @@ export class AgentMessageProjector {
     return record;
   }
 
-  private base(): { session_id: string; agent_id: string; timestamp: number } {
-    return { session_id: this.sessionId, agent_id: this.agentId, timestamp: Date.now() };
+  private base(): { session_id: string; agent_id: string; event_created_at: string } {
+    return { session_id: this.sessionId, agent_id: this.agentId, event_created_at: nowIso() };
   }
 
   private turnOp(turn: TurnRecord): TurnMessage {
@@ -1941,7 +1941,7 @@ export class AgentMessageProjector {
       message_id: user.messageId,
       turn_id: user.turnId,
       status: user.status,
-      timestamp: user.timestamp,
+      event_created_at: user.timestamp === undefined ? undefined : epochMsToIso(user.timestamp),
       text: user.text,
       attachment_ids: user.attachmentIds,
       skill_activations: user.skillActivations,

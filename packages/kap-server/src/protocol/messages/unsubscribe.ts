@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 export const unsubscribeMessageSchema = z.object({
   type: z.literal('unsubscribe'),
-  id: z.number().int().nonnegative(),
+  request_id: z.string().min(1),
   session_id: z.string().min(1),
 });
 

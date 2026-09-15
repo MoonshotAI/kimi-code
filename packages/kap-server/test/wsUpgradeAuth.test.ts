@@ -43,20 +43,6 @@ interface ConnectOptions {
   readonly headers?: Record<string, string>;
 }
 
-function openConn(url: string, opts?: ConnectOptions): Promise<{ ws: WebSocket; firstFrame: unknown }> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url, opts?.protocols, { headers: opts?.headers });
-    ws.once('message', (data) => {
-      try {
-        resolve({ ws, firstFrame: JSON.parse(rawToString(data)) });
-      } catch {
-        resolve({ ws, firstFrame: null });
-      }
-    });
-    ws.once('error', reject);
-  });
-}
-
 function expectRejected(url: string, opts?: ConnectOptions): Promise<void> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url, opts?.protocols, { headers: opts?.headers });
@@ -101,16 +87,21 @@ describe('WS upgrade auth', () => {
   }
 
   describe('/api/v3/ws', () => {
-    const firstType = 'hello';
     const url = (): string => v3Url();
 
-    it('accepts a valid bearer subprotocol and echoes it', async () => {
-      const { ws, firstFrame } = await openConn(url(), {
-        protocols: [`kimi-code.bearer.${token()}`],
-      });
+    it('accepts a valid bearer subprotocol, echoes it and answers ping without a handshake frame', async () => {
+      const ws = new WebSocket(url(), [`kimi-code.bearer.${token()}`]);
       sockets.push(ws);
+      const received: Record<string, unknown>[] = [];
+      ws.on('message', (data) => {
+        received.push(JSON.parse(rawToString(data)) as Record<string, unknown>);
+      });
+      await new Promise<void>((resolve) => ws.once('open', resolve));
       expect(ws.protocol).toBe(`kimi-code.bearer.${token()}`);
-      expect(firstFrame).toMatchObject({ type: firstType });
+      expect(received).toHaveLength(0);
+      ws.send(JSON.stringify({ type: 'ping', request_id: 'r1' }));
+      const response = await waitForFrame(received, (frame) => frame['type'] === 'response');
+      expect(response).toMatchObject({ request_id: 'r1', code: 0 });
     });
 
     it('rejects a wrong bearer token', async () => {

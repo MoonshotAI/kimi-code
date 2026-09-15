@@ -136,7 +136,7 @@ describe('AgentMessageProjector', () => {
       turn_id: 't1',
       text: [{ type: 'text', text: 'fix the bug', meta: {} }],
       status: 'read',
-      timestamp: T0,
+      event_created_at: new Date(T0).toISOString(),
     });
 
     const step = ofType(messages, 'step')[0]!;
@@ -190,7 +190,7 @@ describe('AgentMessageProjector', () => {
     });
     const userDone = ofType(messages, 'user').at(-1)!;
     expect(userDone.status).toBe('read');
-    expect(userDone.timestamp).toBe(T0);
+    expect(userDone.event_created_at).toBe(new Date(T0).toISOString());
     expect(projector.takeEndedTurnOrdinals()).toEqual([1]);
   });
 
@@ -302,14 +302,14 @@ describe('AgentMessageProjector', () => {
       turn_id: 't1',
       text: [{ type: 'text', text: 'also B', meta: {} }],
       status: 'read',
-      timestamp: T0,
+      event_created_at: new Date(T0).toISOString(),
     });
     const betweenSteps = users.find((u) => u.message_id === 't1.u2');
     expect(betweenSteps).toMatchObject({
       turn_id: 't1',
       text: [{ type: 'text', text: 'and C', meta: {} }],
       status: 'read',
-      timestamp: T0,
+      event_created_at: new Date(T0).toISOString(),
     });
   });
 
@@ -348,7 +348,7 @@ describe('AgentMessageProjector', () => {
       message_id: 't1.u1',
       text: [{ type: 'text', text: 'fire now', meta: { contentType: 'text/xml' } }],
       status: 'read',
-      timestamp: T0,
+      event_created_at: new Date(T0).toISOString(),
       origin: { kind: 'cron', cron_id: 'job-2', schedule: '0 * * * *' },
     });
 
@@ -409,7 +409,7 @@ describe('AgentMessageProjector', () => {
       turn_id: 't1',
       text: [{ type: 'text', text: 'Task completed\nbuild finished', meta: {} }],
       status: 'read',
-      timestamp: T0,
+      event_created_at: new Date(T0).toISOString(),
       origin: {
         kind: 'task',
         task_id: 'task-1',
@@ -442,7 +442,7 @@ describe('AgentMessageProjector', () => {
       turn_id: 't1',
       text: [{ type: 'text', text: 'Task failed\ntests broke', meta: {} }],
       status: 'read',
-      timestamp: T0,
+      event_created_at: new Date(T0).toISOString(),
       origin: {
         kind: 'task',
         task_id: 'task-2',
@@ -473,7 +473,7 @@ describe('AgentMessageProjector', () => {
       message_id: 't0.u1',
       turn_id: 't0',
       status: 'read',
-      timestamp: T0,
+      event_created_at: new Date(T0).toISOString(),
       origin: { kind: 'task', task_id: 'task-9', title: 'Restored' },
     });
   });
@@ -916,7 +916,7 @@ describe('AgentMessageProjector', () => {
       status: 'unread',
     });
     expect(queued.turn_id).toBeUndefined();
-    expect(queued.timestamp).toBeUndefined();
+    expect(queued.event_created_at).toBeUndefined();
     expect([...new Set(ofType(sink, 'turn').map((t) => t.turn_id))]).toEqual(['t0']);
 
     feed(
@@ -941,7 +941,7 @@ describe('AgentMessageProjector', () => {
       turn_id: 't1',
       text: [{ type: 'text', text: 'second', meta: {} }],
       status: 'read',
-      timestamp: T0,
+      event_created_at: new Date(T0).toISOString(),
     });
     expect([...new Set(ofType(sink, 'turn').map((t) => t.turn_id))]).toEqual(['t0', 't1']);
   });

@@ -15,9 +15,9 @@ import { tailTrunc } from './truncate';
 const T0 = Date.parse('2026-01-01T00:00:00.000Z');
 let tick = 0;
 
-function ts(): number {
+function ts(): string {
   tick += 1;
-  return T0 + tick * 1000;
+  return new Date(T0 + tick * 1000).toISOString();
 }
 
 function turnMsg(n: number, status: 'running' | 'completed' = 'completed'): TurnMessage {
@@ -25,7 +25,7 @@ function turnMsg(n: number, status: 'running' | 'completed' = 'completed'): Turn
     type: 'turn',
     session_id: 's1',
     agent_id: 'main',
-    timestamp: ts(),
+    event_created_at: ts(),
     turn_id: `t${n}`,
     ordinal: n,
     status,
@@ -38,7 +38,7 @@ function stepMsg(stepId: string, status: 'running' | 'completed'): StepMessage {
     type: 'step',
     session_id: 's1',
     agent_id: 'main',
-    timestamp: ts(),
+    event_created_at: ts(),
     step_id: stepId,
     turn_id: stepId.split('.')[0] ?? 't1',
     ordinal: Number(stepId.split('.')[1] ?? '1'),
@@ -139,7 +139,7 @@ describe('diffValue', () => {
       sessionState: {
         type: 'session.state',
         session_id: 's1',
-        timestamp: ts(),
+        event_created_at: ts(),
         status: 'running',
         goal: { objective: 'ship it', status: 'active' },
         modes: { plan: { review_path: '/tmp/plan.md' } },
@@ -167,7 +167,7 @@ describe('serializeState', () => {
             type: 'task',
             session_id: 's1',
             agent_id: 'main',
-            timestamp: ts(),
+            event_created_at: ts(),
             task_id: 'b-task',
             kind: 'shell',
             status: 'running',
@@ -181,7 +181,7 @@ describe('serializeState', () => {
             type: 'task',
             session_id: 's1',
             agent_id: 'main',
-            timestamp: ts(),
+            event_created_at: ts(),
             task_id: 'a-task',
             kind: 'tool',
             status: 'completed',
@@ -246,7 +246,7 @@ describe('AuditTrail', () => {
       notified += 1;
     });
     trail.recordEvent('cancel', undefined, EMPTY_CHAT_STATE);
-    trail.recordEvent('ack', undefined, EMPTY_CHAT_STATE);
+    trail.recordEvent('response', undefined, EMPTY_CHAT_STATE);
     expect(notified).toBe(2);
     unsubscribe();
     trail.recordEvent('reconnect', undefined, EMPTY_CHAT_STATE);

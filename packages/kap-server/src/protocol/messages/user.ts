@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { epochMsSchema } from './base';
+import { isoDateTimeSchema } from './base';
 import { userMessageOriginSchema } from './user-message-origin';
 
 export const contentPartSchema = z.object({
@@ -25,7 +25,7 @@ export const userMessageSchema = z.object({
   message_id: z.string().min(1),
   turn_id: z.string().min(1).optional(),
   status: z.enum(['unread', 'read']),
-  timestamp: epochMsSchema.optional(),
+  event_created_at: isoDateTimeSchema.optional(),
   text: z.array(contentPartSchema),
   attachment_ids: z.array(z.string().min(1)).optional(),
   skill_activations: z.array(skillActivationSchema).optional(),

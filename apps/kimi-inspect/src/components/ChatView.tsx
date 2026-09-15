@@ -10,7 +10,7 @@
  *    are applied to the store through the same idempotent replace-by-id
  *    path (delta family appended by id, entity content authoritative), so
  *    there is no reset/buffer/cursor machinery.
- *  - Every subscribe ack (initial and reconnect) triggers an `after_step`
+ *  - Every subscribe response (initial and reconnect) triggers an `after_step`
  *    catch-up from the newest terminal step; an empty catch-up whose
  *    anchor vanished (undo/clear while away) falls back to a full refresh.
  *
@@ -585,7 +585,7 @@ function collectTaskIds(entries: readonly TimelineEntry[]): Set<string> {
 function latestTodoOf(todos: ReadonlyMap<string, TodoMessage>): TodoMessage | undefined {
   let latest: TodoMessage | undefined;
   for (const todo of todos.values()) {
-    if (latest === undefined || todo.timestamp > latest.timestamp) latest = todo;
+    if (latest === undefined || todo.event_created_at > latest.event_created_at) latest = todo;
   }
   return latest;
 }

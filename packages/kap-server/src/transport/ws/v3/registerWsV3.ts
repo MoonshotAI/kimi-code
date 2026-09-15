@@ -26,10 +26,9 @@ export const WS_PATH_V3 = '/api/v3/ws';
 export interface RegisterWsV3Options {
   readonly registry: IConnectionRegistry;
   readonly projection: ProjectionService;
-  readonly serverId: string;
   readonly logger?: WsV3Logger;
   readonly maxOutboundMessages?: number;
-  readonly heartbeatIntervalMs?: number;
+  readonly idleTimeoutMs?: number;
 }
 
 export interface WsV3Registration {
@@ -120,10 +119,9 @@ export function registerWsV3(core: Scope, opts: RegisterWsV3Options): WsV3Regist
       connectionRegistry: opts.registry,
       remoteAddress: req.socket.remoteAddress ?? null,
       userAgent: req.headers['user-agent'] ?? null,
-      serverId: opts.serverId,
       logger: opts.logger,
       maxOutboundMessages: opts.maxOutboundMessages,
-      heartbeatIntervalMs: opts.heartbeatIntervalMs,
+      idleTimeoutMs: opts.idleTimeoutMs,
     });
     socket.on('close', () => opts.registry.remove(conn.id));
   });

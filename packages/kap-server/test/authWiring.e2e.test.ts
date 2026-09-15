@@ -15,20 +15,6 @@ function rawToString(data: RawData): string {
   return Buffer.from(data as ArrayBuffer).toString('utf8');
 }
 
-function openConn(url: string, protocols: string[]): Promise<{ ws: WebSocket; firstFrame: unknown }> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url, protocols);
-    ws.once('message', (data) => {
-      try {
-        resolve({ ws, firstFrame: JSON.parse(rawToString(data)) });
-      } catch {
-        resolve({ ws, firstFrame: null });
-      }
-    });
-    ws.once('error', reject);
-  });
-}
-
 function expectRejected(url: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
@@ -116,13 +102,18 @@ describe('production auth wiring', () => {
     expect(body.code).toBe(40101);
   });
 
-  it('gates WS: hello with the token, rejected without', async () => {
+  it('gates WS: ping answered with the token, rejected without', async () => {
     const token = (await readFile(join(home as string, 'server.token'), 'utf8')).trim();
     const wsUrl = `ws://127.0.0.1:${(server as RunningServer).port}/api/v3/ws`;
 
-    const { ws, firstFrame } = await openConn(wsUrl, [`kimi-code.bearer.${token}`]);
+    const ws = new WebSocket(wsUrl, [`kimi-code.bearer.${token}`]);
     sockets.push(ws);
-    expect(firstFrame).toMatchObject({ type: 'hello' });
+    const firstFrame = new Promise<unknown>((resolve) => {
+      ws.once('message', (data) => resolve(JSON.parse(rawToString(data))));
+    });
+    await new Promise<void>((resolve) => ws.once('open', resolve));
+    ws.send(JSON.stringify({ type: 'ping', request_id: 'r1' }));
+    expect(await firstFrame).toMatchObject({ type: 'response', request_id: 'r1', code: 0 });
 
     await expectRejected(wsUrl);
   });

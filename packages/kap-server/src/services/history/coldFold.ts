@@ -1761,7 +1761,8 @@ export function foldWireHistory(
           message_id: draft.messageId,
           turn_id: draft.turnId,
           status: draft.timestamp === undefined ? 'unread' : 'read',
-          timestamp: draft.timestamp,
+          event_created_at:
+            draft.timestamp === undefined ? undefined : new Date(draft.timestamp).toISOString(),
           text: draft.text,
           attachment_ids: draft.attachmentIds,
           skill_activations: draft.skillActivations,
@@ -1931,8 +1932,12 @@ function splitKey(key: string): [string, string] {
 function baseFields(
   options: ColdFoldOptions,
   timestamp: number,
-): { session_id: string; agent_id: string; timestamp: number } {
-  return { session_id: options.sessionId, agent_id: options.agentId, timestamp };
+): { session_id: string; agent_id: string; event_created_at: string } {
+  return {
+    session_id: options.sessionId,
+    agent_id: options.agentId,
+    event_created_at: new Date(timestamp).toISOString(),
+  };
 }
 
 function parseNotificationXmlText(text: string): TaskNotificationPayload | undefined {

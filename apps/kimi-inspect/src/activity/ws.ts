@@ -1,11 +1,13 @@
 /**
  * Minimal `/api/v3/ws` client for the GLOBAL messages — no subscriptions.
  *
- * The server sends `hello` right after the upgrade and fans every global
- * message (`session` / `workspace` / `config` / `config.warning` /
- * `model_catalog` / `plugin` / `capability`) out to every established
- * connection, so this client subscribes to nothing and sends nothing: it
- * dispatches the coarse per-session facts to the consumer:
+ * The server fans every global message (`session` / `workspace` / `config` /
+ * `config.warning` / `model_catalog` / `plugin` / `capability`) out to every
+ * established connection with no handshake frame, so this client subscribes
+ * to nothing; its only outbound traffic is the application-level heartbeat
+ * (an interval `ping` answered by a `response`, dropped into the reconnect
+ * path when replies go missing). Inbound it dispatches the coarse
+ * per-session facts to the consumer:
  *
  *   - `session` (created / updated / archived / deleted) → forwarded whole;
  *     the embedded SessionInfo carries `busy` / `main_turn_active` /
@@ -17,8 +19,7 @@
  * subscribe-gated server-side and never arrives here; the transcript chat
  * channel has its own socket (`src/transcript/ws.ts`). Global messages are
  * live-only — a drop loses whatever fired meanwhile, so the consumer answers
- * `onReconnected` with a REST re-seed. Heartbeat is the WS protocol-level
- * ping/pong, handled by the WebSocket implementation itself.
+ * `onReconnected` with a REST re-seed.
  *
  * Every frame is validated against the shared `serverMessageSchema`: a frame
  * whose `type` is not in the schema is a future message type and is ignored
@@ -32,6 +33,7 @@
 
 import { serverMessageSchema, type SessionMessage } from '@moonshot-ai/kap-server/protocol';
 
+import { WsHeartbeat } from '../channel/heartbeat';
 import type { WsLike, WsLikeCtor } from '../channel/wsLike';
 
 const WS_BEARER_PROTOCOL_PREFIX = 'kimi-code.bearer.';
@@ -44,8 +46,6 @@ const KNOWN_GLOBAL_TYPES: ReadonlySet<string> = new Set([
   'model_catalog',
   'plugin',
   'capability',
-  'hello',
-  'ack',
   'error',
 ]);
 
@@ -71,6 +71,8 @@ export interface GlobalEventsWsOptions {
   readonly WebSocketImpl?: WsLikeCtor;
   /** Base delay (ms) for the reconnect backoff. Default `500`. */
   readonly reconnectDelayMs?: number;
+  /** Heartbeat ping interval (ms). Default `10000`. */
+  readonly heartbeatIntervalMs?: number;
 }
 
 export class GlobalEventsWs {
@@ -79,6 +81,7 @@ export class GlobalEventsWs {
   private readonly handlers: GlobalEventsWsHandlers;
   private readonly WsCtor: WsLikeCtor;
   private readonly reconnectDelayMs: number;
+  private readonly heartbeat: WsHeartbeat;
 
   private ws: WsLike | undefined;
   private manualClose = false;
@@ -95,12 +98,23 @@ export class GlobalEventsWs {
     }
     this.WsCtor = ctor;
     this.reconnectDelayMs = opts.reconnectDelayMs ?? 500;
+    this.heartbeat = new WsHeartbeat({
+      intervalMs: opts.heartbeatIntervalMs,
+      sendPing: (requestId) => this.send({ type: 'ping', request_id: requestId }),
+      onTimeout: () => {
+        const ws = this.ws;
+        this.ws = undefined;
+        ws?.close();
+        this.scheduleReconnect();
+      },
+    });
     this.connect();
   }
 
   /** Tear the socket down permanently. */
   close(): void {
     this.manualClose = true;
+    this.heartbeat.stop();
     if (this.reconnectTimer !== undefined) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = undefined;
@@ -128,6 +142,7 @@ export class GlobalEventsWs {
       // Established (first connect and every reconnect alike): live messages
       // may have been missed — the consumer re-seeds from REST.
       this.handlers.onReconnected();
+      this.heartbeat.start();
     });
     ws.addEventListener('message', (event: { data: unknown }) => {
       this.onMessage(event.data);
@@ -136,6 +151,7 @@ export class GlobalEventsWs {
       // Stale socket (a manual close already cleared `this.ws`).
       if (this.ws !== ws) return;
       this.ws = undefined;
+      this.heartbeat.stop();
       if (!this.manualClose) this.scheduleReconnect();
     });
     ws.addEventListener('error', () => {
@@ -169,6 +185,10 @@ export class GlobalEventsWs {
         this.handlers.onWorkspaceChanged?.();
         return;
       }
+      case 'response': {
+        this.heartbeat.consume(message.request_id);
+        return;
+      }
       default:
         return;
     }
@@ -183,6 +203,15 @@ export class GlobalEventsWs {
       this.connect();
     }, delay);
     this.reconnectTimer.unref?.();
+  }
+
+  private send(frame: Record<string, unknown>): void {
+    const ws = this.ws;
+    if (ws === undefined || ws.readyState !== this.WsCtor.OPEN) return;
+    try {
+      ws.send(JSON.stringify(frame));
+    } catch {
+    }
   }
 }
 

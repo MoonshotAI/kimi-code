@@ -5,8 +5,8 @@
  *
  *  - Timeline (draggable slider + entry list): every REST history page,
  *    every WS message (entity / delta / state), and every channel event
- *    (subscribe ack, reconnect, catch-up fallback, prompt/cancel), with its
- *    timestamp.
+ *    (subscribe response, reconnect, catch-up fallback, prompt/cancel), with
+ *    its timestamp.
  *  - Detail tabs for the selected entry: `Diff` (structural diff vs the
  *    previous entry — added/modified/removed colored), `State` (the full
  *    store state at that point: entity timeline plus the interaction /

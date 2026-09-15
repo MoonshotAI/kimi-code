@@ -37,7 +37,7 @@ export class SessionLane {
     return this.subscribers.size;
   }
 
-  addSubscriber(sub: LaneSubscriber, requestId: number): void {
+  addSubscriber(sub: LaneSubscriber, requestId: string): void {
     this.subscribers.add(sub);
     this.enqueue(async () => {
       if (this.disposed || !this.subscribers.has(sub)) return;
@@ -47,8 +47,8 @@ export class SessionLane {
           this.subscribers.delete(sub);
           sub.conn.untrackSubscription(this.sessionId);
           sub.conn.enqueue({
-            type: 'ack',
-            id: requestId,
+            type: 'response',
+            request_id: requestId,
             code: ErrorCode.SESSION_NOT_FOUND,
             msg: `session ${this.sessionId} does not exist`,
           });
@@ -56,7 +56,7 @@ export class SessionLane {
           return;
         }
         this.ensureAttached();
-        sub.conn.enqueue({ type: 'ack', id: requestId, code: ErrorCode.SUCCESS });
+        sub.conn.enqueue({ type: 'response', request_id: requestId, code: ErrorCode.SUCCESS });
         if (this.attachDisposable !== undefined) {
           for (const message of this.deps.projection.recoveryMessages(this.sessionId)) {
             if (passesSubscriptionFilter(sub.filter, message)) sub.conn.enqueue(message);
@@ -71,8 +71,8 @@ export class SessionLane {
           'ws v3: subscription recovery failed, subscriber keeps live traffic without recovery',
         );
         sub.conn.enqueue({
-          type: 'ack',
-          id: requestId,
+          type: 'response',
+          request_id: requestId,
           code: ErrorCode.INTERNAL_ERROR,
           msg: 'subscription recovery failed',
         });

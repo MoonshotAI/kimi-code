@@ -464,7 +464,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const { wss: wssV3, hub: wsV3Hub } = registerWsV3(core, {
     registry: connectionRegistry,
     projection: projectionService,
-    serverId: registration.serverId,
     logger,
   });
 
