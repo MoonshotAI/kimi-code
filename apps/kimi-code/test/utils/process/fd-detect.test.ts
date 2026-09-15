@@ -7,6 +7,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { detectFdPath, getFdAssetName } from '#/utils/process/fd-detect';
 import { getBinDir } from '#/utils/paths';
 
+const mocks = vi.hoisted(() => ({
+  resolveCommandPath: vi.fn(),
+  spawnSync: vi.fn(),
+}));
+
+vi.mock('#/utils/process/resolve-command', () => ({
+  resolveCommandPath: mocks.resolveCommandPath,
+}));
+vi.mock('node:child_process', () => ({ spawnSync: mocks.spawnSync }));
+
 const originalEnv = { ...process.env };
 let tempHome: string | undefined;
 
@@ -16,6 +26,7 @@ afterEach(() => {
     tempHome = undefined;
   }
   process.env = { ...originalEnv };
+  vi.clearAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -43,6 +54,20 @@ describe('getFdAssetName', () => {
 });
 
 describe('detectFdPath', () => {
+  it('returns the absolute resolved path for a system fd binary', () => {
+    tempHome = mkdtempSync(join(tmpdir(), 'kimi-fd-home-'));
+    process.env['KIMI_CODE_HOME'] = tempHome;
+    mocks.resolveCommandPath.mockImplementation((name: string) =>
+      name === 'fd' ? '/usr/local/bin/fd' : undefined,
+    );
+    mocks.spawnSync.mockReturnValue({ status: 0 });
+
+    expect(detectFdPath()).toBe('/usr/local/bin/fd');
+    expect(mocks.spawnSync).toHaveBeenCalledWith('/usr/local/bin/fd', ['--version'], {
+      stdio: 'ignore',
+    });
+  });
+
   it('prefers the managed fd binary under KIMI_CODE_HOME', () => {
     tempHome = mkdtempSync(join(tmpdir(), 'kimi-fd-home-'));
     process.env['KIMI_CODE_HOME'] = tempHome;

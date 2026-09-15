@@ -1,19 +1,28 @@
-/**
- * `kimi migrate` sub-command.
- *
- * A bare, flagless subcommand: it launches the native pi-tui migration screen
- * (the same one shown on first launch), then exits. The screen collects the
- * migration scope interactively, so there are no CLI options. The actual
- * launch is delegated to a host-provided handler.
- */
-
 import type { Command } from 'commander';
 
-export function registerMigrateCommand(parent: Command, onMigrate: () => void): void {
+export interface MigrateCommandOptions {
+  readonly run: boolean;
+  readonly configOnly: boolean;
+}
+
+export function registerMigrateCommand(
+  parent: Command,
+  onMigrate: (options: MigrateCommandOptions) => void,
+): void {
   parent
     .command('migrate')
     .description('Migrate data from a legacy kimi-cli installation into kimi-code.')
-    .action(() => {
-      onMigrate();
+    .option(
+      '--run',
+      'Run the migration non-interactively and print step-by-step logs. Migrates everything unless --config-only is also given.',
+      false,
+    )
+    .option(
+      '--config-only',
+      'With --run: migrate config, MCP servers, REPL history and skills, but skip chat sessions.',
+      false,
+    )
+    .action((options: { run?: boolean; configOnly?: boolean }) => {
+      onMigrate({ run: options.run === true, configOnly: options.configOnly === true });
     });
 }

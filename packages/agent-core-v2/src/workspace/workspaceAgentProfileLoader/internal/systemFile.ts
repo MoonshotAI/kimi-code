@@ -1,28 +1,12 @@
-/**
- * `workspaceAgentProfileLoader` domain — `SYSTEM.md` global main-agent prompt override.
- *
- * `<brandHome>/SYSTEM.md` (default `~/.kimi-code/SYSTEM.md`, moves with
- * `KIMI_CODE_HOME`) permanently replaces the builtin default profile's system
- * prompt while the file exists and is non-empty. Only the prompt is replaced —
- * tools and description are copied from the builtin default — and explicit
- * intent still wins: higher-priority sources (project `agent.md`,
- * `--agent-file`) override it, and binding a different profile ignores it.
- * The body is a prompt template rendered against the shared variable table:
- * `${var}` placeholders substitute live context, and
- * `${base_prompt}` embeds the builtin default prompt. A missing or empty file
- * yields no profile; a read failure degrades to `warn` instead of rejecting,
- * so a transient fs error never poisons a session. Pure logic; no scoped
- * state.
- */
-
 import { join } from 'pathe';
 
 import {
   DEFAULT_AGENT_PROFILE_NAME,
+  normalizeAgentProfile,
   type AgentProfile,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import {
-  renderPromptTemplate,
+  renderPromptTemplateResult,
   skillActiveFor,
 } from '#/app/agentProfileCatalog/profile-shared';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -57,16 +41,16 @@ export async function loadSystemMdProfile(
   const skillActive =
     (builtinDefault.tools === undefined || skillActiveFor(builtinDefault.tools)) &&
     !(builtinDefault.disallowedTools ?? []).includes('Skill');
-  return {
+  return normalizeAgentProfile({
     name: DEFAULT_AGENT_PROFILE_NAME,
     description: builtinDefault.description,
     override: true,
     tools: builtinDefault.tools,
     disallowedTools: builtinDefault.disallowedTools,
     subagents: builtinDefault.subagents,
-    systemPrompt: (context) =>
-      renderPromptTemplate(text, context, { skillActive }, (ctx) =>
-        builtinDefault.systemPrompt(ctx),
+    renderSystemPrompt: (context) =>
+      renderPromptTemplateResult(text, context, { skillActive }, (ctx) =>
+        builtinDefault.renderSystemPrompt(ctx),
       ),
-  };
+  });
 }

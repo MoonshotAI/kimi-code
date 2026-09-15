@@ -1,5 +1,7 @@
 import * as vscode from "vscode";
 
+import { OAuthAccessDeniedError } from "@moonshot-ai/kimi-code-oauth";
+
 import { Events, Methods } from "../../shared/bridge";
 import type { LoginResult } from "../../shared/legacy-sdk";
 import type { LoginStatus } from "../../shared/types";
@@ -27,9 +29,10 @@ export const authHandlers: Record<string, Handler<any, any>> = {
       await updateLoginContext(ctx.harness).catch((statusError: unknown) => {
         ctx.logError("Unable to refresh login status after a failed login", statusError);
       });
+      const message = error instanceof Error ? error.message : String(error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: error instanceof OAuthAccessDeniedError ? `Login cancelled: ${message}` : message,
       };
     }
   },

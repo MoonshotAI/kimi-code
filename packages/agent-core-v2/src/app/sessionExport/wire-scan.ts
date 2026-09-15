@@ -1,11 +1,3 @@
-/**
- * `sessionExport` domain — persisted wire activity scanner.
- *
- * Reads both legacy root `wire.jsonl` logs and v2 per-agent
- * `agents/<agentId>/wire.jsonl` logs to derive activity timestamps for the
- * export manifest without depending on live Agent services.
- */
-
 import { open, readdir, type FileHandle } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { Readable } from 'node:stream';

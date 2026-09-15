@@ -52,6 +52,32 @@ describe('tasks route', () => {
     expect(((await res.json()) as { tasks: unknown[] }).tasks).toEqual([]);
   });
 
+  it('GET /:id/tasks includes legacy main tasks and reports an empty output file as existing', async () => {
+    const { home, sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
+    cleanup = c;
+    const dir = join(sessionDir, 'tasks');
+    await mkdir(join(dir, 'bash-87654321'), { recursive: true });
+    await writeFile(join(dir, 'bash-87654321.json'), JSON.stringify({
+      task_id: 'bash-87654321', command: 'legacy', description: 'legacy main task',
+      pid: 8, started_at: 100, ended_at: 200, exit_code: 0, status: 'completed',
+    }));
+    await writeFile(join(dir, 'bash-87654321', 'output.log'), '');
+
+    const res = await tasksRoute(home).request('/session_fixture/tasks');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      tasks: { task: { taskId: string }; agentId: string; outputSizeBytes: number; outputExists: boolean }[];
+    };
+    expect(body.tasks).toEqual([
+      expect.objectContaining({
+        task: expect.objectContaining({ taskId: 'bash-87654321' }),
+        agentId: 'main',
+        outputSizeBytes: 0,
+        outputExists: true,
+      }),
+    ]);
+  });
+
   it('GET /:id/tasks/:taskId/output pages by byte window', async () => {
     const { home, sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
     cleanup = c;
@@ -66,6 +92,24 @@ describe('tasks route', () => {
     expect(body.eof).toBe(false);
     expect(body.offset).toBe(0);
     expect(body.nextOffset).toBe(8);
+  });
+
+  it('GET output falls back to the legacy session-root task log', async () => {
+    const { home, sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
+    cleanup = c;
+    const dir = join(sessionDir, 'tasks', 'bash-87654321');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'output.log'), 'legacy output');
+
+    const res = await tasksRoute(home).request(
+      '/session_fixture/tasks/bash-87654321/output?offset=0&limit=100',
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      size: 13,
+      content: 'legacy output',
+      eof: true,
+    });
   });
 
   it('GET output returns empty window for a task with no log', async () => {

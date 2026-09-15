@@ -1,9 +1,3 @@
-/**
- *   POST   /v1/files                  (multipart upload)
- *   GET    /v1/files/{file_id}        (binary stream)
- *   DELETE /v1/files/{file_id}
- */
-
 import { z } from 'zod';
 
 import { fileMetaSchema } from '@moonshot-ai/agent-core-v2/app/file/fileService';

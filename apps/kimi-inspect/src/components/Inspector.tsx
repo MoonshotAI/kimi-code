@@ -20,7 +20,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { serviceByName } from '../channel';
 import { useConnection } from '../connection';
 import { type AnyService } from '../panels';
-import { fetchTranscriptPlan, type TranscriptPlanInfo } from '../transcript/api';
+import { fetchAgentRuntimeBinding } from '../snapshots/api';
+import { fetchFullHistory } from '../transcript/api';
+import { projectPlans, type PlanInfo } from '../transcript/plan';
 import { ActionButton, Badge, ErrorLine } from '../ui';
 import { ScopePanels } from './ServicePanels';
 
@@ -57,6 +59,12 @@ export function Inspector({
 
   // Keep the selected agent valid as the registry changes.
   const effectiveAgent = agentIds.includes(agentId) ? agentId : agentIds[0]!;
+  const runtimeBinding = useQuery({
+    queryKey: ['agent-runtime-binding', klient.baseUrl, sessionId, effectiveAgent],
+    queryFn: () => fetchAgentRuntimeBinding(klient, sessionId as string, effectiveAgent),
+    enabled: sessionId !== null && ready,
+    refetchInterval: 1_000,
+  });
   useEffect(() => {
     if (effectiveAgent !== agentId) onAgentChange(effectiveAgent);
   }, [effectiveAgent, agentId, onAgentChange]);
@@ -131,6 +139,29 @@ export function Inspector({
           </div>
         ) : (
           <>
+            <div className="mb-3 rounded border border-neutral-800 bg-neutral-950/40 p-2 text-[11px]">
+              <div className="mb-1 flex items-center gap-2 font-semibold uppercase tracking-wider text-neutral-500">
+                Runtime binding
+                {runtimeBinding.data !== undefined ? (
+                  <Badge tone={runtimeBinding.data.available ? 'green' : 'red'}>
+                    {runtimeBinding.data.available ? 'available' : 'unavailable'}
+                  </Badge>
+                ) : null}
+              </div>
+              <div className="grid grid-cols-[80px_minmax(0,1fr)] gap-1 font-mono">
+                <span className="text-neutral-600">workspace</span>
+                <span className="break-all text-neutral-300">{runtimeBinding.data?.binding.workspaceId ?? 'loading…'}</span>
+                <span className="text-neutral-600">runtime</span>
+                <span className="break-all text-neutral-300">{runtimeBinding.data?.binding.runtimeId ?? 'loading…'}</span>
+                <span className="text-neutral-600">generation</span>
+                <span className="break-all text-neutral-300">{runtimeBinding.data?.runtime?.generation ?? 'unavailable'}</span>
+                <span className="text-neutral-600">status</span>
+                <span className="text-neutral-300">{runtimeBinding.data?.runtime?.status ?? 'unavailable'}</span>
+                <span className="text-neutral-600">capabilities</span>
+                <span className="text-neutral-300">{runtimeBinding.data?.runtime?.capabilities.join(', ') ?? 'none'}</span>
+              </div>
+              {runtimeBinding.isError ? <ErrorLine error={runtimeBinding.error} /> : null}
+            </div>
             <PlanCard sessionId={sessionId} agentId={effectiveAgent} />
             <ScopePanels
               scope="agent"
@@ -145,20 +176,21 @@ export function Inspector({
 }
 
 // ---------------------------------------------------------------------------
-// Plan lookup — `GET /api/v1/sessions/{id}/transcript/plan`: the reviewed plan
-// of one ExitPlanMode tool call, queried by tool_call_id (copy it from a tool
-// frame in the chat view). Read-only, fetched on demand like everything else
-// here.
+// Plan lookup — derived from the message stream (`GET /sessions/{id}/history`
+// full read + client-side `projectPlans`): the reviewed plan of one
+// ExitPlanMode tool call, found by tool_call_id (copy it from a tool frame in
+// the chat view), or every plan of the agent. Read-only, fetched on demand
+// like everything else here.
 // ---------------------------------------------------------------------------
 
 function PlanCard({ sessionId, agentId }: { sessionId: string; agentId: string }) {
   const { baseUrl, config } = useConnection();
   const [toolCallId, setToolCallId] = useState('');
-  const [result, setResult] = useState<readonly TranscriptPlanInfo[] | null>(null);
+  const [result, setResult] = useState<readonly PlanInfo[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
 
-  // A plan belongs to one agent's transcript — stale results from another
+  // A plan belongs to one agent's timeline — stale results from another
   // session/agent are misleading, so reset on switch.
   useEffect(() => {
     setResult(null);
@@ -170,16 +202,14 @@ function PlanCard({ sessionId, agentId }: { sessionId: string; agentId: string }
     try {
       setError(null);
       const token = config.token.trim();
+      const messages = await fetchFullHistory({
+        baseUrl,
+        token: token === '' ? undefined : token,
+        sessionId,
+        agentId,
+      });
       const id = toolCallId.trim();
-      setResult(
-        await fetchTranscriptPlan({
-          baseUrl,
-          token: token === '' ? undefined : token,
-          sessionId,
-          agentId,
-          toolCallId: id === '' ? undefined : id,
-        }),
-      );
+      setResult(projectPlans(messages, id === '' ? undefined : id));
     } catch (error) {
       setResult(null);
       setError(error);
@@ -226,7 +256,7 @@ function PlanCard({ sessionId, agentId }: { sessionId: string; agentId: string }
   );
 }
 
-function PlanEntryView({ entry }: { entry: TranscriptPlanInfo }) {
+function PlanEntryView({ entry }: { entry: PlanInfo }) {
   const review = entry.review;
   return (
     <div className="mt-2">

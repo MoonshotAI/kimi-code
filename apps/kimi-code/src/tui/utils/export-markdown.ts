@@ -41,7 +41,7 @@ export function formatContentPartMd(part: ContentPart): string {
     case 'text':
       return part.text;
     case 'think':
-      if (!part.think.trim()) return '';
+      if (part.hidden === true || !part.think.trim()) return '';
       return `<details><summary>Thinking</summary>\n\n${part.think}\n\n</details>`;
     case 'image_url':
       return '[image]';
@@ -139,6 +139,9 @@ function formatTurnMd(messages: readonly ContextMessage[], turnNumber: number): 
 
     if (msg.role === 'user') {
       lines.push('### User', '');
+      // A daemon-ref media part is self-contained and renders as
+      // `[image]`/`[video]` below; a standalone `<media path>` tag is user
+      // text and exports verbatim.
       for (const part of msg.content) {
         const text = formatContentPartMd(part);
         if (text.trim()) {

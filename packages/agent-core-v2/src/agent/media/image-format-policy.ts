@@ -1,42 +1,23 @@
-/**
- * `media` domain — provider-accepted image formats, the single source
- * of truth.
- *
- * Model providers accept only PNG, JPEG, GIF, and WebP image blocks. An
- * `image_url` part carrying any other MIME (AVIF, HEIC, BMP, TIFF, ICO, …)
- * is rejected by the API — and because prompts and tool results persist in
- * the session history, that one part makes every subsequent request fail
- * too ("session poisoning"). Every ingestion point therefore refuses
- * unsupported formats instead of passing the bytes through.
- *
- * The policy is deliberately a closed set, not a denylist: a format is only
- * ever sent when it is known to be accepted. Supporting a new format means
- * adding it to {@link MODEL_ACCEPTED_IMAGE_MIMES}; tailoring the refusal
- * guidance for a newly-seen unsupported format means adding one row to
- * {@link UNSUPPORTED_IMAGE_FORMATS}.
- *
- * Inbound MIME strings are normalized for the DECISION
- * ({@link normalizeImageMime}: case, whitespace, `image/jpg`), but every
- * call site must forward the CANONICAL MIME into the session — strict
- * provider whitelists (e.g. Anthropic's) reject the raw alias, which would
- * re-create the very session poisoning this module exists to prevent.
- *
- * Scope: only inline `data:` images can be gated. A remote http(s) image URL
- * (an MCP `resource_link`, a REST `source.kind: 'url'` part) carries no
- * bytes to inspect, and providers that support URL images fetch them
- * server-side; those pass through unchanged.
- */
+import { providerImagePolicy } from '#human/llm/media/image-formats';
 
 import { IMAGE_MIME_BY_SUFFIX, sniffMediaFromMagic } from './file-type';
 
-export const MODEL_ACCEPTED_IMAGE_MIMES: ReadonlySet<string> = new Set([
-  'image/png',
-  'image/jpeg',
-  'image/gif',
-  'image/webp',
-]);
+const IMAGE_FORMAT_LABELS: Readonly<Record<string, string>> = Object.freeze({
+  'image/png': 'PNG',
+  'image/jpeg': 'JPEG',
+  'image/gif': 'GIF',
+  'image/webp': 'WebP',
+  'image/bmp': 'BMP',
+  'image/heic': 'HEIC',
+  'image/heif': 'HEIF',
+});
 
-const ACCEPTED_FORMATS_TEXT = 'PNG, JPEG, GIF, and WebP';
+function acceptedFormatsText(providerType: string | undefined): string {
+  const labels = [...providerImagePolicy(providerType).acceptedMimes].map(
+    (mime) => IMAGE_FORMAT_LABELS[mime] ?? mime,
+  );
+  return `${labels.slice(0, -1).join(', ')}, and ${labels.at(-1)}`;
+}
 
 interface UnsupportedImageFormatInfo {
   readonly linuxDecoder?: { readonly command: string; readonly packageName: string };
@@ -70,7 +51,7 @@ export function resolveEffectiveImageMime(declaredMime: string, header: Uint8Arr
   return sniffed !== null ? sniffed.mimeType : declaredMime;
 }
 
-export function unsupportedImageMimeFromUrl(url: string): string | null {
+export function unsupportedImageMimeFromUrl(url: string, providerType?: string): string | null {
   let path = url;
   const query = path.indexOf('?');
   if (query !== -1) path = path.slice(0, query);
@@ -80,7 +61,7 @@ export function unsupportedImageMimeFromUrl(url: string): string | null {
   if (dot === -1) return null;
   const ext = path.slice(dot).toLowerCase();
   const mime = ext === '.svg' ? 'image/svg+xml' : IMAGE_MIME_BY_SUFFIX[ext];
-  if (mime === undefined || isModelAcceptedImageMime(mime)) return null;
+  if (mime === undefined || isModelAcceptedImageMime(mime, providerType)) return null;
   return mime;
 }
 
@@ -94,8 +75,8 @@ export function isDataUrl(url: string): boolean {
   return url.toLowerCase().startsWith('data:');
 }
 
-export function isModelAcceptedImageMime(mimeType: string): boolean {
-  return MODEL_ACCEPTED_IMAGE_MIMES.has(normalizeImageMime(mimeType));
+export function isModelAcceptedImageMime(mimeType: string, providerType?: string): boolean {
+  return providerImagePolicy(providerType).acceptedMimes.has(normalizeImageMime(mimeType));
 }
 
 export function buildImageConversionGuidance(
@@ -106,6 +87,28 @@ export function buildImageConversionGuidance(
   const converted = path.replace(/\.[^./\\]+$/, '') + '.jpg';
   return (
     `"${path}" is an ${mimeType} image, which the provider does not accept. ` +
+    'Convert it to JPEG first, then read the converted file. ' +
+    imageConversionCommand(
+      path,
+      converted,
+      osKind,
+      UNSUPPORTED_IMAGE_FORMATS[normalizeImageMime(mimeType)],
+    )
+  );
+}
+
+export function buildOversizedImageConversionGuidance(
+  path: string,
+  mimeType: string,
+  osKind: string,
+  byteLength: number,
+  inlineByteBudget: number,
+): string {
+  const converted = path.replace(/\.[^./\\]+$/, '') + '.jpg';
+  return (
+    `"${path}" is a ${String(byteLength)}-byte ${mimeType} image, over the ` +
+    `${String(inlineByteBudget)}-byte per-image limit, and this format cannot be ` +
+    'downsampled locally. ' +
     'Convert it to JPEG first, then read the converted file. ' +
     imageConversionCommand(
       path,
@@ -149,14 +152,18 @@ function imageConversionCommand(
   }
 }
 
-export function buildUnsupportedImageNotice(mimeType: string, name?: string): string {
+export function buildUnsupportedImageNotice(
+  mimeType: string,
+  name?: string,
+  providerType?: string,
+): string {
   const what =
     name === undefined || name.length === 0
       ? `unsupported image format ${mimeType}`
       : `"${name}" uses unsupported image format ${mimeType}`;
   return (
-    `[Image omitted: ${what}. Model providers accept only ${ACCEPTED_FORMATS_TEXT} — ` +
-    'convert it to PNG or JPEG and try again.]'
+    `[Image omitted: ${what}. The current model provider accepts only ` +
+    `${acceptedFormatsText(providerType)} — convert it to PNG or JPEG and try again.]`
   );
 }
 

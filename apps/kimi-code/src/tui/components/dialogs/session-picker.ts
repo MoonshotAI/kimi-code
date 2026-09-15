@@ -13,6 +13,7 @@ import {
 import { formatSessionLabel } from '#/migration/index';
 import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
+import { printableChar } from '#/tui/utils/printable-key';
 import { SearchableList } from '#/tui/utils/searchable-list';
 
 export interface SessionRow {
@@ -81,7 +82,7 @@ function sessionSearchText(session: SessionRow): string {
 export class SessionPickerComponent extends Container implements Focusable {
   private sessions: SessionRow[];
   private currentSessionId: string;
-  private onSelect: (session: SessionRow) => void;
+  private onSelect: (session: SessionRow) => void | Promise<void>;
   private onCancel: () => void;
   private onToggleScope?: (selectedSessionId: string) => void;
   private maxVisibleSessions: number;
@@ -89,7 +90,11 @@ export class SessionPickerComponent extends Container implements Focusable {
   private visibleCount: number;
   private scope: 'cwd' | 'all';
   private loading: boolean;
+  private hasMore: boolean;
+  private loadingMore: boolean;
   private list: SearchableList<SessionRow>;
+  private deleteState?: { session: SessionRow; phase: 'confirm' | 'deleting' };
+  private selectInFlight = false;
 
   focused = false;
 
@@ -100,12 +105,22 @@ export class SessionPickerComponent extends Container implements Focusable {
     scope?: 'cwd' | 'all';
     initialSelectedSessionId?: string;
     pageSize?: number;
-    onSelect: (session: SessionRow) => void;
+    onSelect: (session: SessionRow) => void | Promise<void>;
     onCancel: () => void;
     onCtrlC?: () => void;
     onCtrlD?: () => void;
     onToggleScope?: (selectedSessionId: string) => void;
     maxVisibleSessions?: number;
+    /** More pages exist on the backend (keyset paging). */
+    hasMore?: boolean;
+    /** A follow-up page fetch is in flight. */
+    loadingMore?: boolean;
+    /** Fired when the cursor reaches the end of every row fetched so far. */
+    onLoadMore?: () => void;
+    /** Fired when a search query becomes active while pages remain unfetched. */
+    onSearchDrain?: () => void;
+    /** Fired after the user confirms deletion with `y`; the picker clears its delete state once the request settles. */
+    onDeleteRequest?: (session: SessionRow) => Promise<void>;
   }) {
     super();
     this.sessions = opts.sessions;
@@ -117,6 +132,10 @@ export class SessionPickerComponent extends Container implements Focusable {
     this.onToggleScope = opts.onToggleScope;
     this.maxVisibleSessions = opts.maxVisibleSessions ?? 4;
     this.pageSize = Math.max(1, opts.pageSize ?? 50);
+    this.hasMore = opts.hasMore ?? false;
+    this.loadingMore = opts.loadingMore ?? false;
+    this.onLoadMore = opts.onLoadMore;
+    this.onSearchDrain = opts.onSearchDrain;
     const initialIndex = this.resolveInitialSelectedIndex(opts.initialSelectedSessionId);
     this.list = new SearchableList({
       items: this.sessions,
@@ -129,10 +148,32 @@ export class SessionPickerComponent extends Container implements Focusable {
     this.visibleCount = Math.min(this.sessions.length, initialLoadedPages * this.pageSize);
     this.onCtrlC = opts.onCtrlC;
     this.onCtrlD = opts.onCtrlD;
+    this.onDeleteRequest = opts.onDeleteRequest;
   }
 
   private readonly onCtrlC?: () => void;
   private readonly onCtrlD?: () => void;
+  private readonly onLoadMore?: () => void;
+  private readonly onSearchDrain?: () => void;
+  private readonly onDeleteRequest?: (session: SessionRow) => Promise<void>;
+
+  /** Appends a freshly fetched page, keeping the cursor and active query. */
+  appendSessions(rows: SessionRow[]): void {
+    this.sessions = [...this.sessions, ...rows];
+    this.list.setItems(this.sessions);
+    // Rows arriving while a query is active must become visible without
+    // waiting for the next keypress; only grow, never shrink the window.
+    this.visibleCount = Math.max(
+      this.visibleCount,
+      Math.min(this.list.view().items.length, this.pageSize),
+    );
+  }
+
+  /** Updates the backend-paging facts after an in-flight fetch settles. */
+  setPaging(hasMore: boolean, loadingMore: boolean): void {
+    this.hasMore = hasMore;
+    this.loadingMore = loadingMore;
+  }
 
   private resolveInitialSelectedIndex(initialSelectedSessionId: string | undefined): number {
     if (initialSelectedSessionId === undefined) return 0;
@@ -152,6 +193,11 @@ export class SessionPickerComponent extends Container implements Focusable {
     const view = this.list.view();
     if (view.query !== previousQuery) {
       this.visibleCount = Math.min(view.items.length, this.pageSize);
+      // A fresh query only searches the pages fetched so far; ask the host to
+      // drain the rest in the background so search covers every session.
+      if (view.query.length > 0 && previousQuery.length === 0 && this.hasMore) {
+        this.onSearchDrain?.();
+      }
       return;
     }
 
@@ -159,9 +205,25 @@ export class SessionPickerComponent extends Container implements Focusable {
     if (view.selectedIndex >= loadedCount - 1 && loadedCount < view.items.length) {
       this.visibleCount = Math.min(view.items.length, this.visibleCount + this.pageSize);
     }
+    // The cursor reached the end of everything fetched: pull the next page.
+    if (
+      this.hasMore &&
+      !this.loadingMore &&
+      view.items.length > 0 &&
+      view.selectedIndex >= view.items.length - 1
+    ) {
+      this.onLoadMore?.();
+    }
   }
 
   handleInput(data: string): void {
+    if (this.deleteState !== undefined) {
+      this.handleDeleteInput(data);
+      return;
+    }
+    // A selection runs resume/switch asynchronously; input during that window
+    // (e.g. Ctrl+X delete) would race the session swap.
+    if (this.selectInFlight) return;
     if (matchesKey(data, Key.ctrl('c'))) {
       this.onCtrlC?.();
       return;
@@ -174,6 +236,14 @@ export class SessionPickerComponent extends Container implements Focusable {
       this.onToggleScope?.(this.list.selected()?.id ?? this.currentSessionId);
       return;
     }
+    if (matchesKey(data, Key.ctrl('x'))) {
+      const selected = this.list.selected();
+      if (selected !== undefined && this.onDeleteRequest !== undefined) {
+        this.deleteState = { session: selected, phase: 'confirm' };
+        this.invalidate();
+      }
+      return;
+    }
     if (matchesKey(data, Key.escape)) {
       if (this.list.clearQuery()) {
         this.visibleCount = Math.min(this.filteredSessions().length, this.pageSize);
@@ -184,7 +254,16 @@ export class SessionPickerComponent extends Container implements Focusable {
     }
     if (matchesKey(data, Key.enter)) {
       const session = this.list.selected();
-      if (session) this.onSelect(session);
+      if (session) {
+        const selection = this.onSelect(session);
+        if (selection !== undefined) {
+          this.selectInFlight = true;
+          const clear = (): void => {
+            this.selectInFlight = false;
+          };
+          void selection.then(clear, clear);
+        }
+      }
       return;
     }
 
@@ -192,6 +271,54 @@ export class SessionPickerComponent extends Container implements Focusable {
     if (this.list.handleKey(data)) {
       this.syncVisibleCount(previousQuery);
     }
+  }
+
+  private handleDeleteInput(data: string): void {
+    const state = this.deleteState;
+    if (state === undefined || state.phase === 'deleting') return;
+    const k = printableChar(data);
+    if (matchesKey(data, Key.escape) || k === 'n' || k === 'N') {
+      this.deleteState = undefined;
+      this.invalidate();
+      return;
+    }
+    if (k === 'y' || k === 'Y') {
+      this.deleteState = { session: state.session, phase: 'deleting' };
+      this.invalidate();
+      const sessionId = state.session.id;
+      const clear = (): void => {
+        if (this.deleteState?.session.id !== sessionId) return;
+        this.deleteState = undefined;
+        this.invalidate();
+      };
+      // then(clear, clear): rejections settle too — the host has already surfaced the failure.
+      void this.onDeleteRequest?.(state.session).then(clear, clear);
+    }
+  }
+
+  private renderDeleteStateLine(width: number): string {
+    const state = this.deleteState;
+    if (state === undefined) return '';
+    const rawTitle = (state.session.title ?? state.session.id).trim() || state.session.id;
+    const label = singleLine(
+      formatSessionLabel({ title: rawTitle, metadata: state.session.metadata }),
+    );
+    const prefix = state.phase === 'confirm' ? 'Delete session "' : 'Deleting session "';
+    const suffix = state.phase === 'confirm' ? '"? [y/N]' : '"…';
+    const labelBudget = Math.max(0, width - visibleWidth(prefix) - visibleWidth(suffix));
+    const shown = truncateToWidth(label, labelBudget, ELLIPSIS);
+    // The suffix carries the confirm/cancel keys: it survives by truncating
+    // the head (prefix + label) instead of the composed line.
+    const head = truncateToWidth(
+      prefix + shown,
+      Math.max(0, width - visibleWidth(suffix)),
+      ELLIPSIS,
+    );
+    const styled =
+      state.phase === 'confirm'
+        ? currentTheme.boldFg('warning', head + suffix)
+        : currentTheme.fg('textMuted', head + suffix);
+    return truncateToWidth(styled, width, ELLIPSIS);
   }
 
   override render(width: number): string[] {
@@ -217,7 +344,7 @@ export class SessionPickerComponent extends Container implements Focusable {
     if (this.loading) {
       lines.push(currentTheme.boldFg('primary', truncateToWidth(title, width, ELLIPSIS)));
       lines.push(
-        currentTheme.fg('textMuted', truncateToWidth('Loading sessions...', width, ELLIPSIS)),
+        currentTheme.fg('textMuted', truncateToWidth('Loading sessions…', width, ELLIPSIS)),
       );
       lines.push(currentTheme.fg('primary', '─'.repeat(width)));
       return lines;
@@ -246,6 +373,7 @@ export class SessionPickerComponent extends Container implements Focusable {
       ...(view.query.length > 0 ? ['Backspace clear'] : []),
       '↑↓ navigate',
       scopeHint,
+      ...(this.onDeleteRequest !== undefined ? ['Ctrl+X delete'] : []),
       'Enter select',
       'Esc cancel',
     ].filter((item): item is string => item !== undefined);
@@ -287,16 +415,35 @@ export class SessionPickerComponent extends Container implements Focusable {
     }
 
     const filteredCount = view.items.length;
-    if (loadedSessions.length > visibleSessions.length || view.query.length > 0) {
+    if (
+      loadedSessions.length > visibleSessions.length ||
+      view.query.length > 0 ||
+      this.hasMore ||
+      this.loadingMore
+    ) {
       lines.push('');
+      const moreSuffix = this.loadingMore
+        ? ' · loading more…'
+        : this.hasMore
+          ? view.query.length > 0
+            ? ' · searching all…'
+            : ' · scroll for more'
+          : '';
       const totalSuffix =
         view.query.length > 0
           ? `${String(loadedSessions.length)} loaded / ${String(filteredCount)} matches`
-          : loadedSessions.length === this.sessions.length
-            ? `${String(loadedSessions.length)} sessions`
-            : `${String(loadedSessions.length)} loaded / ${String(this.sessions.length)} sessions`;
-      const footer = `Showing ${String(visibleStart + 1)}-${String(visibleStart + visibleSessions.length)} of ${totalSuffix}`;
+          : this.hasMore || this.loadingMore
+            ? `${String(loadedSessions.length)} loaded`
+            : loadedSessions.length === this.sessions.length
+              ? `${String(loadedSessions.length)} sessions`
+              : `${String(loadedSessions.length)} loaded / ${String(this.sessions.length)} sessions`;
+      const footer = `Showing ${String(visibleStart + 1)}-${String(visibleStart + visibleSessions.length)} of ${totalSuffix}${moreSuffix}`;
       lines.push(currentTheme.fg('textMuted', truncateToWidth(footer, width, ELLIPSIS)));
+    }
+
+    if (this.deleteState !== undefined) {
+      lines.push('');
+      lines.push(this.renderDeleteStateLine(width));
     }
 
     lines.push(currentTheme.fg('primary', '─'.repeat(width)));

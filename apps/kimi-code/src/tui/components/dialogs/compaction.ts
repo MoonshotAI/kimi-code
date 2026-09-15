@@ -165,7 +165,7 @@ export class CompactionComponent extends Container {
       return `${bullet}${label}`;
     }
     const bullet = this.blinkOn ? currentTheme.fg('text', STATUS_BULLET) : '  ';
-    const label = currentTheme.boldFg('primary', 'Compacting context...');
+    const label = currentTheme.boldFg('primary', 'Compacting context…');
     const tip = this.tip ? currentTheme.fg('textDim', ` · Tip: ${this.tip}`) : '';
     return `${bullet}${label}${tip}`;
   }

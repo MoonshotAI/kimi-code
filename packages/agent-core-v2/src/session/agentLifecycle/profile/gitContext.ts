@@ -1,22 +1,7 @@
-/**
- * Git context collection for explore agents.
- *
- * `collectGitContext` produces a `<git-context>` block that is prepended to a
- * fresh explore agent's prompt so it can orient itself in the repository
- * before searching. Every git probe is best-effort: probes fail in perfectly
- * normal states (no `origin` remote, no commits yet, detached HEAD, older
- * Git), so a failed probe is logged and its section omitted rather than
- * dropping the whole block. The block is omitted entirely only when nothing
- * useful was collected. The one explicit state surfaced to the agent is
- * `reason="not-a-repo"`, so it doesn't waste turns probing git history in a
- * non-repo directory. Remote URLs are sanitized so internal infrastructure
- * is not surfaced to the model.
- */
-
 import type { Readable } from 'node:stream';
 
 import type { ILogger } from '#/_base/log/log';
-import type { IProcess, ISessionProcessRunner } from '#/session/process/processRunner';
+import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 
 const GIT_TIMEOUT_MS = 5_000;
 const MAX_DIRTY_FILES = 20;
@@ -43,12 +28,12 @@ type GitResult =
 type TaggedGitResult = { readonly args: readonly string[]; readonly result: GitResult };
 
 export async function collectGitContext(
-  runner: ISessionProcessRunner,
+  process: IHostProcessService,
   cwd: string,
   log?: ILogger,
 ): Promise<string> {
   const revParseArgs = ['rev-parse', '--is-inside-work-tree'] as const;
-  const revParse = await runGit(runner, cwd, revParseArgs);
+  const revParse = await runGit(process, cwd, revParseArgs);
   if (!revParse.ok) {
     if (revParse.kind === 'command-failed' && isNotARepo(revParse.stderr)) {
       return `<git-context status="unavailable" reason="not-a-repo"/>`;
@@ -64,7 +49,7 @@ export async function collectGitContext(
     ['log', '-3', '--format=%h %s'],
   ] as const;
   const [remote, branch, status, gitLog] = (await Promise.all(
-    commandArgs.map(async (args) => ({ args, result: await runGit(runner, cwd, args) })),
+    commandArgs.map(async (args) => ({ args, result: await runGit(process, cwd, args) })),
   )) as unknown as [TaggedGitResult, TaggedGitResult, TaggedGitResult, TaggedGitResult];
 
   for (const { args, result } of [remote, branch, status, gitLog]) {
@@ -181,13 +166,13 @@ function logGitFailure(
 }
 
 async function runGit(
-  runner: ISessionProcessRunner,
+  process: IHostProcessService,
   cwd: string,
   args: readonly string[],
 ): Promise<GitResult> {
-  let proc: IProcess | undefined;
+  let proc: IHostProcess | undefined;
   try {
-    proc = await runner.exec(['git', '-C', cwd, ...args]);
+    proc = await process.spawn('git', ['-C', cwd, ...args], { cwd });
   } catch {
     return { ok: false, kind: 'spawn-error' };
   }
@@ -235,7 +220,7 @@ async function collectStream(stream: Readable): Promise<string> {
   return Buffer.concat(chunks).toString('utf-8');
 }
 
-async function disposeProcess(proc: IProcess): Promise<void> {
+async function disposeProcess(proc: IHostProcess): Promise<void> {
   try {
     await proc.dispose();
   } catch {

@@ -1,0 +1,26 @@
+name: 功能建议
+description: 为 Kimi Code 提议新功能
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Kimi Code 缺少你想要的某个功能？欢迎在这里提议。
+
+        提交功能建议前：
+        1. 先搜索已有 issue，如有类似功能，点 👍 而不是新开 issue。
+        2. Kimi Code 团队会在排序或拒绝新功能时尽量平衡社区的不同需求，请理解并非所有功能都会被接受。
+        3. 不要提交 feature PR。不接受外部功能 PR——功能在本 issue 中讨论和决定；如被接受，由团队实现或明确邀请你来贡献。
+
+  - type: textarea
+    id: feature
+    attributes:
+      label: 你希望看到什么功能？
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: 补充信息
+      description: 还有什么想让我们知道的？

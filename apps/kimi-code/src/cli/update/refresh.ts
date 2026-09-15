@@ -11,13 +11,15 @@ export interface RefreshUpdateCacheDeps {
   readonly fetchLatest: () => Promise<FetchLatestResult>;
   readonly writeCache: (cache: UpdateCache) => Promise<void>;
   readonly now: () => Date;
+  readonly timeoutMs?: number;
 }
 
 export async function refreshUpdateCache(
   overrides: Partial<RefreshUpdateCacheDeps> = {},
 ): Promise<UpdateCache> {
   const resolved: RefreshUpdateCacheDeps = {
-    fetchLatest: overrides.fetchLatest ?? (() => fetchLatestFromCdn()),
+    fetchLatest:
+      overrides.fetchLatest ?? (() => fetchLatestFromCdn(undefined, overrides.timeoutMs)),
     writeCache: overrides.writeCache ?? writeUpdateCache,
     now: overrides.now ?? (() => new Date()),
   };

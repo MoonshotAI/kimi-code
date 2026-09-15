@@ -1,35 +1,24 @@
-/**
- * `wire` domain — the single Agent-scoped wire aggregate contract.
- *
- * The service owns one Agent's replayable model state and its journal as one
- * consistency boundary: restore reads, validates, migrates, rewrites, replays,
- * rehydrates, and then runs the ordered restore hook. Seal initializes a fresh
- * journal before session metadata makes the Agent visible to legacy readers.
- * Live dispatch applies an Op and appends its record. Callers do not coordinate
- * journal and model state through separate services.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import type { Hooks } from '#/hooks';
 
-import type { DeepReadonly, ModelDef } from './model';
-import type { Op } from './op';
+import type { IAgentJournal } from './journal';
+import type { RecordDehydrator, WireRecord } from './record';
 
-export type WireHooks = {
-  readonly onDidRestore: Record<string, never>;
-};
+export { ForkLineError, type ForkLineFailure } from './tree';
+import type { WireLine } from './tree';
 
-export interface IWireService {
+export interface IWireService extends IAgentJournal {
   readonly _serviceBrand: undefined;
 
-  readonly hooks: Hooks<WireHooks>;
-
-  dispatch(...ops: Op[]): void;
   seal(): Promise<void>;
-  restore(): Promise<void>;
+  appendRecord(record: WireRecord, dehydrate?: RecordDehydrator): void;
+  readJournal(): AsyncIterable<WireRecord>;
+  readRestorable(): AsyncIterable<WireRecord>;
+  readHumanChain(): readonly WireLine[];
   flush(): Promise<void>;
-
-  getModel<S>(model: ModelDef<S>): DeepReadonly<S>;
+  drainPersisted(): Promise<void>;
+  lineCount(): number;
+  lastContextClearLine(): number | undefined;
+  journalPath(): string | undefined;
 }
 
 export const IWireService: ServiceIdentifier<IWireService> =

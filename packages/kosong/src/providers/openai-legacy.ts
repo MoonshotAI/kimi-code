@@ -114,7 +114,7 @@ export interface OpenAILegacyGenerationKwargs {
 }
 interface OpenAIMessage {
   role: string;
-  content?: string | OpenAIContentPart[] | undefined;
+  content?: string | OpenAIContentPart[] | null | undefined;
   tool_calls?: OpenAIToolCallOut[] | undefined;
   tool_call_id?: string | undefined;
   name?: string | undefined;
@@ -225,6 +225,14 @@ function convertMessage(
       id: tc.id,
       function: { name: tc.name, arguments: tc.arguments },
     }));
+  }
+
+  // A missing `content` key is dropped by JSON.stringify, and strict
+  // chat-completions validators (e.g. LiteLLM) reject such assistant messages
+  // with a 422. OpenAI's own responses echo `content: null` alongside
+  // tool_calls, so normalize the absent field to that spec-legal shape.
+  if (message.role === 'assistant' && result.content === undefined) {
+    result.content = null;
   }
 
   if (message.toolCallId !== undefined) {

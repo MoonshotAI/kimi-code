@@ -40,6 +40,9 @@ describe('Event public types', () => {
     expectTypeOf<EventByType<'turn.step.completed'>['llmClientConsumeMs']>().toEqualTypeOf<
       number | undefined
     >();
+    expectTypeOf<EventByType<'turn.step.completed'>['llmClientBlockedMs']>().toEqualTypeOf<
+      number | undefined
+    >();
   });
 
   it('narrows subagent lifecycle events by type', () => {
@@ -75,7 +78,10 @@ describe('Event public types', () => {
         case 'event.workspace.updated':
         case 'event.workspace.deleted':
         case 'event.config.changed':
+        case 'event.config.warning':
         case 'event.model_catalog.changed':
+        case 'event.plugin.changed':
+        case 'event.capability.changed':
         case 'goal.updated':
         case 'skill.activated':
         case 'plugin_command.activated':

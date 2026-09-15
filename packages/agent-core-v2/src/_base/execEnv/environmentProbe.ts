@@ -1,19 +1,3 @@
-/**
- * `_base/execEnv` — OS / shell probe.
- *
- * Detects the host operating system, architecture, kernel release, and a
- * usable POSIX shell path. The result is a pure function of injected probes
- * (`platform` / `arch` / `release` / `env` / `isFile` / `execFileText`) so the
- * same suite runs identically on any host OS. `probeHostEnvironmentFromNode()`
- * bundles the Node defaults for production callers and memoises the promise.
- *
- * On Windows the probe expects bash from Git for Windows or MSYS2. If it
- * cannot be located the function throws a plain `Error` with the checked paths
- * in the message. Set `KIMI_SHELL_PATH` to override.
- *
- * Kept as a pure helper with no DI dependencies.
- */
-
 import { execFile as nodeExecFile } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
 import { access } from 'node:fs/promises';
@@ -23,6 +7,16 @@ import * as nodePath from 'node:path';
 export type OsKind = string;
 export type ShellName = 'bash' | 'sh';
 export type PathClass = 'posix' | 'win32';
+
+export class ProbeShellNotFoundError extends Error {
+  readonly checked: readonly string[];
+
+  constructor(message: string, checked: readonly string[]) {
+    super(message);
+    this.name = 'ProbeShellNotFoundError';
+    this.checked = checked;
+  }
+}
 
 export interface HostEnvironmentInfo {
   readonly osKind: OsKind;
@@ -181,8 +175,9 @@ async function locateWindowsGitBash(deps: HostEnvironmentProbeDeps): Promise<str
     }
   }
 
-  throw new Error(
-    `Git Bash was not found on this Windows host. Install Git for Windows from https://gitforwindows.org/ or set KIMI_SHELL_PATH to a bash.exe. Checked: ${checked.join(', ')}.`,
+  throw new ProbeShellNotFoundError(
+    'Git Bash was not found on this Windows host. Install Git for Windows from https://gitforwindows.org/ or set KIMI_SHELL_PATH to a bash.exe.',
+    checked,
   );
 }
 

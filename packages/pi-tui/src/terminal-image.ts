@@ -1,4 +1,7 @@
 import { execSync } from "node:child_process";
+import { homedir } from "node:os";
+import { isAbsolute } from "node:path";
+import { pathToFileURL } from "node:url";
 
 export type ImageProtocol = "kitty" | "iterm2" | null;
 
@@ -29,6 +32,7 @@ export interface ImageRenderOptions {
 }
 
 let cachedCapabilities: TerminalCapabilities | null = null;
+let capabilityOverrides: Partial<TerminalCapabilities> = {};
 
 // Default cell dimensions - updated by TUI when terminal responds to query
 let cellDimensions: CellDimensions = { widthPx: 9, heightPx: 18 };
@@ -62,12 +66,13 @@ function probeTmuxHyperlinks(): boolean {
 	}
 }
 
-export function detectCapabilities(tmuxForwardsHyperlink: () => boolean = probeTmuxHyperlinks): TerminalCapabilities {
+function detectCapabilitiesFromEnvironment(tmuxForwardsHyperlink: () => boolean): TerminalCapabilities {
 	const termProgram = process.env['TERM_PROGRAM']?.toLowerCase() || "";
 	const terminalEmulator = process.env['TERMINAL_EMULATOR']?.toLowerCase() || "";
 	const term = process.env['TERM']?.toLowerCase() || "";
 	const colorTerm = process.env['COLORTERM']?.toLowerCase() || "";
 	const hasTrueColorHint = colorTerm === "truecolor" || colorTerm === "24bit";
+	const isWindowsConsole = process.platform === "win32";
 
 	// Emit OSC 8 hyperlinks only when tmux confirms it forwards.
 	// Image protocols are unreliable under tmux, so leave `images: null`.
@@ -105,15 +110,18 @@ export function detectCapabilities(tmuxForwardsHyperlink: () => boolean = probeT
 		return { images: null, trueColor: true, hyperlinks: true };
 	}
 
-	if (termProgram === "vscode") {
-		return { images: null, trueColor: true, hyperlinks: true };
-	}
-
-	if (termProgram === "alacritty") {
+	if (termProgram === "alacritty" || termProgram === "vscode" || termProgram === "zed") {
 		return { images: null, trueColor: true, hyperlinks: true };
 	}
 
 	if (terminalEmulator === "jetbrains-jediterm") {
+		return { images: null, trueColor: true, hyperlinks: false };
+	}
+
+	// Windows Terminal does not always set WT_SESSION, for example when it hosts
+	// a cmd.exe launched directly from Win+R. Modern Windows consoles support
+	// truecolor; keep hyperlinks off unless we positively detected support above.
+	if (isWindowsConsole) {
 		return { images: null, trueColor: true, hyperlinks: false };
 	}
 
@@ -124,14 +132,56 @@ export function detectCapabilities(tmuxForwardsHyperlink: () => boolean = probeT
 	return { images: null, trueColor: hasTrueColorHint, hyperlinks: false };
 }
 
+function parseBooleanCapabilityOverride(value: string | undefined): boolean | undefined {
+	return value === "1" ? true : value === "0" ? false : undefined;
+}
+
+export function detectCapabilities(tmuxForwardsHyperlink: () => boolean = probeTmuxHyperlinks): TerminalCapabilities {
+	const hyperlinks = parseBooleanCapabilityOverride(process.env['PI_HYPERLINKS']);
+	const detected = detectCapabilitiesFromEnvironment(
+		hyperlinks === undefined ? tmuxForwardsHyperlink : () => hyperlinks,
+	);
+	const imageProtocol = process.env['PI_IMAGE_PROTOCOL']?.toLowerCase();
+	const images =
+		imageProtocol === "kitty" || imageProtocol === "iterm2"
+			? imageProtocol
+			: imageProtocol === "none" || imageProtocol === "0"
+				? null
+				: undefined;
+	const trueColor = parseBooleanCapabilityOverride(process.env['PI_TRUE_COLOR']);
+	return {
+		...detected,
+		...(images !== undefined ? { images } : {}),
+		...(trueColor !== undefined ? { trueColor } : {}),
+		...(hyperlinks !== undefined ? { hyperlinks } : {}),
+	};
+}
+
 export function getCapabilities(): TerminalCapabilities {
 	if (!cachedCapabilities) {
-		cachedCapabilities = detectCapabilities();
+		const hyperlinks = capabilityOverrides.hyperlinks;
+		cachedCapabilities = {
+			...detectCapabilities(hyperlinks === undefined ? undefined : () => hyperlinks),
+			...capabilityOverrides,
+		};
 	}
 	return cachedCapabilities;
 }
 
 export function resetCapabilitiesCache(): void {
+	cachedCapabilities = null;
+}
+
+/** Override selected auto-detected capabilities. */
+export function setCapabilityOverrides(overrides: Partial<TerminalCapabilities>): void {
+	if (
+		capabilityOverrides.images === overrides.images &&
+		capabilityOverrides.trueColor === overrides.trueColor &&
+		capabilityOverrides.hyperlinks === overrides.hyperlinks
+	) {
+		return;
+	}
+	capabilityOverrides = { ...overrides };
 	cachedCapabilities = null;
 }
 
@@ -224,6 +274,11 @@ export function deleteAllKittyImages(): string {
 	return "\x1b_Ga=d,d=A,q=2\x1b\\";
 }
 
+/** Delete all visible Kitty placements while retaining their uploaded image data. */
+export function deleteAllKittyPlacements(): string {
+	return "\x1b_Ga=d,d=a,q=2\x1b\\";
+}
+
 export function encodeITerm2(
 	base64Data: string,
 	options: {
@@ -234,7 +289,10 @@ export function encodeITerm2(
 		inline?: boolean;
 	} = {},
 ): string {
-	const params: string[] = [`inline=${options.inline !== false ? 1 : 0}`];
+	const params: string[] = [
+		`inline=${options.inline !== false ? 1 : 0}`,
+		`size=${Buffer.byteLength(base64Data, "base64")}`,
+	];
 
 	if (options.width !== undefined) params.push(`width=${options.width}`);
 	if (options.height !== undefined) params.push(`height=${options.height}`);
@@ -252,6 +310,126 @@ export function encodeITerm2(
 export interface ImageCellSize {
 	columns: number;
 	rows: number;
+}
+
+export interface KittyImageMetadata extends ImageCellSize {
+	imageId: number;
+	widthPx: number;
+	heightPx: number;
+}
+
+interface RegisteredKittyImageMetadata extends KittyImageMetadata {
+	transmissionGeneration: number;
+}
+
+export interface KittyImagePlacement {
+	imageId: number;
+	transmissionGeneration: number;
+	transmissionBytes: number;
+	estimatedDecodedBytes: number;
+	sequence: string;
+	replacementLine: string;
+}
+
+const kittyImageMetadata = new Map<number, RegisteredKittyImageMetadata>();
+let kittyTransmissionGeneration = 0;
+
+export function registerKittyImageMetadata(metadata: KittyImageMetadata): void {
+	kittyTransmissionGeneration += 1;
+	kittyImageMetadata.delete(metadata.imageId);
+	kittyImageMetadata.set(metadata.imageId, { ...metadata, transmissionGeneration: kittyTransmissionGeneration });
+	if (kittyImageMetadata.size > 1000) {
+		const oldestImageId = kittyImageMetadata.keys().next().value;
+		if (oldestImageId !== undefined) kittyImageMetadata.delete(oldestImageId);
+	}
+}
+
+function getRegisteredKittyImageMetadata(line: string): RegisteredKittyImageMetadata | undefined {
+	const controls = /\x1b_G([^;]*);/.exec(line)?.[1];
+	if (!controls) return undefined;
+	const imageId = /(?:^|,)i=(\d+)(?:,|$)/.exec(controls)?.[1];
+	return imageId === undefined ? undefined : kittyImageMetadata.get(Number.parseInt(imageId, 10));
+}
+
+export function getKittyImageMetadata(line: string): KittyImageMetadata | undefined {
+	const metadata = getRegisteredKittyImageMetadata(line);
+	if (!metadata) return undefined;
+	return {
+		imageId: metadata.imageId,
+		columns: metadata.columns,
+		rows: metadata.rows,
+		widthPx: metadata.widthPx,
+		heightPx: metadata.heightPx,
+	};
+}
+
+const KITTY_PLACEMENT_CONTROL_KEYS = new Set([
+	"i",
+	"p",
+	"x",
+	"y",
+	"w",
+	"h",
+	"X",
+	"Y",
+	"c",
+	"r",
+	"C",
+	"U",
+	"z",
+	"P",
+	"Q",
+	"H",
+	"V",
+]);
+
+/** Build a placement-only command for an image line emitted by {@link renderImage}. */
+export function getKittyImagePlacement(line: string): KittyImagePlacement | undefined {
+	const match = /\x1b_G([^;]*);/.exec(line);
+	const metadata = getRegisteredKittyImageMetadata(line);
+	if (!match || !metadata) return undefined;
+
+	let commandStart = match.index;
+	let commandControls = match[1]!;
+	let transmissionEnd: number;
+	while (true) {
+		const terminator = line.indexOf("\x1b\\", commandStart + KITTY_PREFIX.length);
+		if (terminator === -1) return undefined;
+		transmissionEnd = terminator + 2;
+		if (!/(?:^|,)m=1(?:,|$)/.test(commandControls)) break;
+		commandStart = transmissionEnd;
+		if (!line.startsWith(KITTY_PREFIX, commandStart)) return undefined;
+		const controlsEnd = line.indexOf(";", commandStart + KITTY_PREFIX.length);
+		if (controlsEnd === -1) return undefined;
+		commandControls = line.slice(commandStart + KITTY_PREFIX.length, controlsEnd);
+	}
+
+	const controls = match[1]!
+		.split(",")
+		.filter((control) => KITTY_PLACEMENT_CONTROL_KEYS.has(control.split("=", 1)[0] ?? ""));
+	const sequence = `\x1b_Ga=p,q=2,${controls.join(",")}\x1b\\`;
+	return {
+		imageId: metadata.imageId,
+		transmissionGeneration: metadata.transmissionGeneration,
+		transmissionBytes: transmissionEnd - match.index,
+		estimatedDecodedBytes: metadata.widthPx * metadata.heightPx * 4,
+		sequence,
+		replacementLine: `${line.slice(0, match.index)}${sequence}${line.slice(transmissionEnd)}`,
+	};
+}
+
+export function cropKittyImageLine(line: string, hiddenRows: number, visibleRows: number): string {
+	const metadata = getKittyImageMetadata(line);
+	const match = /\x1b_G([^;]*);/.exec(line);
+	if (!metadata || !match || hiddenRows < 0 || hiddenRows >= metadata.rows || visibleRows <= 0) return line;
+	const croppedRows = Math.min(visibleRows, metadata.rows - hiddenRows);
+	if (hiddenRows === 0 && croppedRows === metadata.rows) return line;
+	const sourceY = Math.floor((metadata.heightPx * hiddenRows) / metadata.rows);
+	const sourceEnd = Math.ceil((metadata.heightPx * (hiddenRows + croppedRows)) / metadata.rows);
+	const sourceHeight = Math.max(1, Math.min(metadata.heightPx, sourceEnd) - sourceY);
+	const controls = match[1]!.split(",").filter((control) => !/^[yhr]=/.test(control));
+	controls.push(`y=${sourceY}`, `h=${sourceHeight}`, `r=${croppedRows}`);
+	return `${line.slice(0, match.index)}\x1b_G${controls.join(",")};${line.slice(match.index + match[0].length)}`;
 }
 
 export function calculateImageCellSize(
@@ -433,7 +611,7 @@ export function renderImage(
 	base64Data: string,
 	imageDimensions: ImageDimensions,
 	options: ImageRenderOptions = {},
-): { sequence: string; rows: number; imageId?: number } | null {
+): { sequence: string; columns: number; rows: number; imageId?: number } | null {
 	const caps = getCapabilities();
 
 	if (!caps.images) {
@@ -444,13 +622,22 @@ export function renderImage(
 	const size = calculateImageCellSize(imageDimensions, maxWidth, options.maxHeightCells, getCellDimensions());
 
 	if (caps.images === "kitty") {
+		if (options.imageId !== undefined) {
+			registerKittyImageMetadata({
+				imageId: options.imageId,
+				columns: size.columns,
+				rows: size.rows,
+				widthPx: imageDimensions.widthPx,
+				heightPx: imageDimensions.heightPx,
+			});
+		}
 		const sequence = encodeKitty(base64Data, {
 			columns: size.columns,
 			rows: size.rows,
 			imageId: options.imageId,
 			moveCursor: options.moveCursor,
 		});
-		return { sequence, rows: size.rows, imageId: options.imageId };
+		return { sequence, columns: size.columns, rows: size.rows, imageId: options.imageId };
 	}
 
 	if (caps.images === "iterm2") {
@@ -459,7 +646,7 @@ export function renderImage(
 			height: "auto",
 			preserveAspectRatio: options.preserveAspectRatio ?? true,
 		});
-		return { sequence, rows: size.rows };
+		return { sequence, columns: size.columns, rows: size.rows };
 	}
 
 	return null;
@@ -479,9 +666,30 @@ export function hyperlink(text: string, url: string): string {
 	return `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\`;
 }
 
+/** Shorten home-prefixed absolute paths to ~/... for compact display. */
+function shortenImagePath(filename: string): string {
+	const home = homedir();
+	if (home && (filename === home || filename.startsWith(`${home}/`) || filename.startsWith(`${home}\\`))) {
+		return `~${filename.slice(home.length)}`;
+	}
+	return filename;
+}
+
+/**
+ * Text fallback when the terminal cannot render inline images.
+ * Absolute paths are shown shortened (~/...) and, when OSC 8 hyperlinks are
+ * available, linked to file:// so the full path remains openable.
+ */
 export function imageFallback(mimeType: string, dimensions?: ImageDimensions, filename?: string): string {
 	const parts: string[] = [];
-	if (filename) parts.push(filename);
+	if (filename) {
+		const display = shortenImagePath(filename);
+		if (getCapabilities().hyperlinks && isAbsolute(filename)) {
+			parts.push(hyperlink(display, pathToFileURL(filename).href));
+		} else {
+			parts.push(display);
+		}
+	}
 	parts.push(`[${mimeType}]`);
 	if (dimensions) parts.push(`${dimensions.widthPx}x${dimensions.heightPx}`);
 	return `[Image: ${parts.join(" ")}]`;

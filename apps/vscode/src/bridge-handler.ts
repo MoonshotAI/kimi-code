@@ -37,14 +37,21 @@ export class BridgeHandler {
     private readonly showLogs: ShowLogsFn,
     private readonly writeLog: (message: string) => void,
   ) {
-    this.runtime = new KimiRuntime({
-      version: VSCodeSettings.getExtensionConfig().version,
-      broadcast,
-      captureBaseline: (session, filePath, webviewIds) => {
-        this.captureFileBaseline(session, filePath, webviewIds);
-      },
-      log: (message, error) => this.logRuntimeError(message, error),
-    });
+    try {
+      this.runtime = new KimiRuntime({
+        version: VSCodeSettings.getExtensionConfig().version,
+        broadcast,
+        captureBaseline: (session, filePath, webviewIds) => {
+          this.captureFileBaseline(session, filePath, webviewIds);
+        },
+        log: (message, error) => this.logRuntimeError(message, error),
+      });
+    } catch (error) {
+      throw new Error(
+        `Failed to start the Kimi engine: ${error instanceof Error ? error.message : String(error)}.`,
+        { cause: error },
+      );
+    }
     this.baselineManager = new BaselineManager(globalStoragePath, this.runtime.harness.homeDir);
     this.fileManager = new FileManager(this.baselineManager, broadcast);
   }

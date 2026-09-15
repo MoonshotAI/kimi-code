@@ -1,5 +1,11 @@
 # @moonshot-ai/transcript
 
+## 0.0.2
+
+### Patch Changes
+
+- [#3289](https://github.com/MoonshotAI/kimi-code/pull/3289) [`f143130`](https://github.com/MoonshotAI/kimi-code/commit/f143130c072e9dba8d60ef40c49d4305b93ab2fe) Thanks [@liruifengv](https://github.com/liruifengv)! - Carry the orchestrator's prompt on subagent turns: `isDisplayablePromptOrigin` now accepts `system_trigger/subagent`, so live `turn.started` events include the prompt, and cold rebuild folds the opening input (text and attachments) into turns opened by subagent run messages. Other system triggers (goal_continuation, stop_hook, loadable-tools) remain promptless.
+
 ## 0.0.1
 
 ### Patch Changes

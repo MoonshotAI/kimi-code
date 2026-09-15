@@ -1,5 +1,6 @@
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { randomBytes } from 'node:crypto';
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,30 +11,55 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { resetUnexpectedErrorHandler, setUnexpectedErrorHandler } from '#/_base/errors/unexpectedError';
+import { ILogService } from '#/_base/log/log';
+import { Event2 } from '#/app/event/event2';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { defineModel } from '#/wire/model';
-import { IWireService } from '#/wire/wire';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { IEventDispatcher } from '#/state/eventDispatcher';
+import { defineState } from '#/state/state';
+import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
+import { humanEventType } from '#/wire/human';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
-import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from './stubs';
+import {
+  attachTodoService,
+  registerTestAgentWire,
+  registerTestEventDispatcher,
+  restoreTestEventDispatcher,
+  testWireScope,
+} from './stubs';
 
 const SCOPE = 'wire';
 const KEY = 'round-trip';
 
-const CounterModel = defineModel('compat.counter', () => ({ value: 0 }));
-const TagsModel = defineModel('compat.tags', () => ({ tags: [] as string[] }));
+class CompatCounterSet extends Event2<{ value: number }> {
+  static override readonly type = 'compat.counter.set';
+  static override readonly durable = true;
+  static override readonly schema = z.object({ value: z.number() });
+}
+interface CompatCounterSet extends z.infer<typeof CompatCounterSet.schema> {}
 
-const counterSet = CounterModel.defineOp('compat.counter.set', {
-  schema: z.object({ value: z.number() }),
-  apply: (_s, p) => ({ value: p.value }),
-});
-const tagsAdd = TagsModel.defineOp('compat.tags.add', {
-  schema: z.object({ tag: z.string() }),
-  apply: (s, p) => ({ tags: [...s.tags, p.tag] }),
-});
+class CompatTagsAdd extends Event2<{ tag: string }> {
+  static override readonly type = 'compat.tags.add';
+  static override readonly durable = true;
+  static override readonly schema = z.object({ tag: z.string() });
+}
+interface CompatTagsAdd extends z.infer<typeof CompatTagsAdd.schema> {}
+
+const compatCounterKey = defineState('compat.counter', () => ({ value: 0 }))
+  .replayable({ schema: z.object({ value: z.number() }) })
+  .on(CompatCounterSet, (s, e) => {
+    s.value = e.value;
+  });
+
+const compatTagsKey = defineState('compat.tags', (): { tags: string[] } => ({ tags: [] }))
+  .replayable({ schema: z.object({ tags: z.array(z.string()) }) })
+  .on(CompatTagsAdd, (s, e) => {
+    s.tags.push(e.tag);
+  });
 
 const cleanups: string[] = [];
 const disposables: DisposableStore[] = [];
@@ -52,15 +78,43 @@ async function makeDir(): Promise<string> {
   return dir;
 }
 
-function makeContainer(storage: IFileSystemStorageService, logKey: string) {
+interface CapturedLogEntry {
+  readonly level: string;
+  readonly message: string;
+  readonly payload?: unknown;
+}
+
+function captureLog(entries: CapturedLogEntry[]): ILogService {
+  const logger: ILogService = {
+    _serviceBrand: undefined,
+    level: 'debug',
+    error: (message, payload) => entries.push({ level: 'error', message, payload }),
+    warn: (message, payload) => entries.push({ level: 'warn', message, payload }),
+    info: () => {},
+    debug: () => {},
+    child: () => logger,
+    setLevel: () => {},
+    flush: async () => {},
+  };
+  return logger;
+}
+
+function makeContainer(storage: IFileSystemStorageService, logKey: string, logEntries?: CapturedLogEntry[]) {
   const store = new DisposableStore();
   disposables.push(store);
   const ix = store.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, storage);
+  ix.stub(ILogService, captureLog(logEntries ?? []));
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   const log = ix.get(IAppendLogStore);
-  const wire = registerTestAgentWire(ix, testWireScope(SCOPE, logKey), { log });
-  return { ix, wire, log };
+  registerTestAgentWire(ix, testWireScope(SCOPE, logKey), { log });
+  const dispatcher = registerTestEventDispatcher(ix);
+  const todo = attachTodoService(ix);
+  store.add({ dispose: () => { todo.dispose(); } });
+  const agentState = ix.get(IAgentStateService);
+  agentState.contributeState(compatCounterKey);
+  agentState.contributeState(compatTagsKey);
+  return { ix, dispatcher, agentState, todo, log };
 }
 
 function makeReader(storage: IFileSystemStorageService): IAppendLogStore {
@@ -72,45 +126,67 @@ function makeReader(storage: IFileSystemStorageService): IAppendLogStore {
   return ix.get(IAppendLogStore);
 }
 
-async function collect(log: IAppendLogStore): Promise<WireRecord[]> {
+async function collect(log: IAppendLogStore, key: string): Promise<WireRecord[]> {
   const out: WireRecord[] = [];
-  for await (const record of log.read<WireRecord>(testWireScope(SCOPE, KEY), AGENT_WIRE_RECORD_KEY)) {
+  for await (const record of log.read<WireRecord>(testWireScope(SCOPE, key), AGENT_WIRE_RECORD_KEY)) {
     out.push(record);
   }
   return out;
 }
 
+async function readRawLines(dir: string, key: string): Promise<unknown[]> {
+  const raw = await readFile(join(dir, testWireScope(SCOPE, key), AGENT_WIRE_RECORD_KEY), 'utf8');
+  return raw
+    .split('\n')
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line));
+}
+
 describe('wire.jsonl round-trip', () => {
-  it('persists { type, ...payload } and rebuilds equal state via replay on a fresh service', async () => {
+  it('persists durable events as flat { type, ...payload, time } records and rebuilds equal state on restore', async () => {
     const dir = await makeDir();
     const storage = new FileStorageService(dir);
     const live = makeContainer(storage, KEY);
 
-    live.wire.dispatch(counterSet({ value: 3 }));
-    live.wire.dispatch(tagsAdd({ tag: 'a' }), tagsAdd({ tag: 'b' }));
-    await live.log.flush();
+    await live.dispatcher.dispatch(new CompatCounterSet({ value: 3 }, 1700000000003));
+    await live.dispatcher.dispatch(new CompatTagsAdd({ tag: 'a' }, 1700000000004));
+    await live.dispatcher.dispatch(new CompatTagsAdd({ tag: 'b' }, 1700000000005));
+    await live.dispatcher.flush();
 
-    const records = await collect(makeReader(storage));
-
+    const records = await collect(makeReader(storage), KEY);
     expect(records).toEqual([
-      { type: 'compat.counter.set', value: 3, time: expect.any(Number) },
-      { type: 'compat.tags.add', tag: 'a', time: expect.any(Number) },
-      { type: 'compat.tags.add', tag: 'b', time: expect.any(Number) },
+      { type: 'compat.counter.set', value: 3, time: 1700000000003 },
+      { type: 'compat.tags.add', tag: 'a', time: 1700000000004 },
+      { type: 'compat.tags.add', tag: 'b', time: 1700000000005 },
     ]);
     for (const record of records) {
       expect('payload' in record).toBe(false);
     }
+    expect(await readRawLines(dir, KEY)).toEqual(records);
 
-    const replayTarget = makeContainer(storage, 'replay-target');
+    const replayLog: CapturedLogEntry[] = [];
+    const replayTarget = makeContainer(storage, 'replay-target', replayLog);
     const withUnknown: WireRecord[] = [
       ...records,
+      {
+        type: 'agent.message.appended',
+        kind: 'event',
+        message: { role: 'user', content: [{ type: 'text', text: 'machine mirror' }] },
+        time: 1700000000006,
+      },
+      {
+        type: 'human.agent.message.appended',
+        kind: 'event',
+        message: { role: 'user', content: [{ type: 'text', text: 'legacy machine mirror' }] },
+        time: 1700000000007,
+      },
       { type: 'compat.unknown.nope', foo: 1 },
     ];
     const unexpected: unknown[] = [];
     setUnexpectedErrorHandler((error) => unexpected.push(error));
     try {
-      await restoreTestAgentWire(
-        replayTarget.wire,
+      await restoreTestEventDispatcher(
+        replayTarget.dispatcher,
         replayTarget.log,
         testWireScope(SCOPE, 'replay-target'),
         withUnknown,
@@ -119,10 +195,64 @@ describe('wire.jsonl round-trip', () => {
       resetUnexpectedErrorHandler();
     }
 
-    expect(unexpected).toHaveLength(1);
-    expect(replayTarget.wire.getModel(CounterModel)).toEqual(
-      live.wire.getModel(CounterModel),
+    expect(unexpected).toHaveLength(0);
+    expect(replayLog.map((entry) => entry.message)).toEqual([
+      "Unknown wire record type 'compat.unknown.nope' skipped during restore",
+    ]);
+    expect(replayLog[0]?.payload).toMatchObject({
+      code: 'wire.unknown_record',
+      type: 'compat.unknown.nope',
+    });
+    expect(humanEventType('agent.turn.ended', 'agent')).toBe('turn.ended');
+    expect(humanEventType('human.agent.turn.ended', 'agent')).toBe('turn.ended');
+    expect(humanEventType('agent.switched', 'agent')).toBeUndefined();
+    expect(replayTarget.agentState.get(compatCounterKey)).toEqual(
+      live.agentState.get(compatCounterKey),
     );
-    expect(replayTarget.wire.getModel(TagsModel)).toEqual(live.wire.getModel(TagsModel));
+    expect(replayTarget.agentState.get(compatTagsKey)).toEqual(
+      live.agentState.get(compatTagsKey),
+    );
+  });
+
+  it('replays a v1.0-era journal through the full migration chain and heals it to the current version', async () => {
+    const dir = await makeDir();
+    const storage = new FileStorageService(dir);
+    const seed = makeReader(storage);
+    seed.append(testWireScope(SCOPE, 'legacy'), AGENT_WIRE_RECORD_KEY, {
+      type: 'metadata',
+      protocol_version: '1.0',
+      created_at: 1,
+    });
+    seed.append(testWireScope(SCOPE, 'legacy'), AGENT_WIRE_RECORD_KEY, {
+      type: 'tools.update_store',
+      key: 'todo',
+      value: [{ title: 'legacy todo', status: 'pending' }],
+      time: 2,
+    });
+    seed.append(testWireScope(SCOPE, 'legacy'), AGENT_WIRE_RECORD_KEY, {
+      type: 'compat.counter.set',
+      value: 7,
+      time: 3,
+    });
+    await seed.close();
+
+    const legacy = makeContainer(storage, 'legacy');
+    await legacy.dispatcher.restore();
+
+    expect(legacy.agentState.get(compatCounterKey)).toEqual({ value: 7 });
+    expect(legacy.todo.get()).toEqual([
+      { title: 'legacy todo', status: 'pending' },
+    ]);
+
+    expect(await collect(makeReader(storage), 'legacy')).toEqual([
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      {
+        type: 'tools.update_store',
+        key: 'todo',
+        value: [{ title: 'legacy todo', status: 'pending' }],
+        time: 2,
+      },
+      { type: 'compat.counter.set', value: 7, time: 3 },
+    ]);
   });
 });

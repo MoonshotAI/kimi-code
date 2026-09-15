@@ -79,9 +79,6 @@ export const ToolInputDisplaySchema = z.discriminatedUnion('kind', [
     kind: z.literal('goal_start'),
     objective: z.string(),
     completionCriterion: z.string().optional(),
-    // Current permission mode at approval time. The client uses it to pick the
-    // start menu (manual vs yolo); `auto` never reaches this display because it
-    // auto-approves the goal without a prompt.
     mode: z.enum(['manual', 'yolo']),
   }),
   z.object({

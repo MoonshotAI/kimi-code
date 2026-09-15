@@ -1,26 +1,36 @@
-import type { ContentPart } from '#/kosong/contract/message';
-import type { Tool as KosongTool } from '#/kosong/contract/tool';
+import type { ContentPart, ToolDescription as KosongTool } from '#human/llm/message';
 import { Jimp } from 'jimp';
 import { CallToolResultSchema, ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { abortError } from '#/_base/utils/abort';
-import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
+import type { Event2 } from '#/app/event/event2';
+import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { McpConnectionManager, McpServerEntry } from '#/mcpCore/connection-manager';
+import type { McpServerConfig } from '#/mcpCore/config-schema';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
+import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { AgentMcpService } from '#/agent/mcp/mcpService';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
+import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
+import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
+import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
 import type { MCPClient, MCPToolDefinition } from '#/mcpCore/types';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IWireService } from '#/wire/wire';
 import type { WireRecord } from '#/wire/record';
-import { McpDiscoveryModel } from '#/agent/mcp/mcpDiscoveryOps';
+import { mcpDiscoveryKey } from '#/agent/mcp/mcpDiscoveryOps';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
@@ -35,23 +45,25 @@ import { createTestAgent, mcpServices, type TestAgentContext } from '../../harne
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
 import { stubToolResultTruncationService } from '../toolResultTruncation/stubs';
-import { recordingWireLog, registerTestAgentWire } from '../../wire/stubs';
+import {
+  recordingWireLog,
+  registerTestAgentWire,
+  registerTestEventDispatcher,
+} from '../../wire/stubs';
 
 import { discoverTools, executeTool, fakeMcpClient } from '../../mcpCore/stubs';
-
-const MCP_OUTPUT_TRUNCATED_TEXT =
-  '\n\n[Output truncated: exceeded 100000 character limit. ' +
-  'Use pagination or more specific queries to get remaining content.]';
 
 interface ResolvedServer {
   readonly client: MCPClient;
   readonly tools: readonly KosongTool[];
   readonly rawTools: readonly MCPToolDefinition[];
   readonly enabledNames: ReadonlySet<string>;
+  readonly deferred: boolean;
 }
 
 class FakeMcpManager {
   private readonly entries = new Map<string, McpServerEntry>();
+  private readonly configs = new Map<string, McpServerConfig>();
   private readonly resolvedEntries = new Map<string, ResolvedServer>();
   private readonly listeners = new Set<(entry: McpServerEntry) => void>();
   readonly oauthService: McpOAuthService | undefined;
@@ -62,6 +74,14 @@ class FakeMcpManager {
 
   list(): readonly McpServerEntry[] {
     return [...this.entries.values()];
+  }
+
+  get(name: string): McpServerEntry | undefined {
+    return this.entries.get(name);
+  }
+
+  configOf(name: string): McpServerConfig | undefined {
+    return this.configs.get(name);
   }
 
   resolved(name: string): ResolvedServer | undefined {
@@ -112,6 +132,7 @@ class FakeMcpManager {
     tools: readonly KosongTool[],
     enabledNames = new Set(tools.map((tool) => tool.name)),
     rawTools?: readonly MCPToolDefinition[],
+    deferred = false,
   ): void {
     const resolvedRawTools =
       rawTools ??
@@ -125,6 +146,7 @@ class FakeMcpManager {
       tools,
       rawTools: resolvedRawTools,
       enabledNames,
+      deferred,
     });
   }
 
@@ -140,7 +162,10 @@ class FakeMcpManager {
     this.emit(entry);
   }
 
-  needsAuth(name = 'needs-auth'): void {
+  needsAuth(name = 'needs-auth', options: { readonly deferred?: boolean } = {}): void {
+    if (options.deferred !== undefined) {
+      this.configs.set(name, { deferred: options.deferred } as unknown as McpServerConfig);
+    }
     const entry: McpServerEntry = {
       name,
       transport: 'http',
@@ -175,6 +200,14 @@ class FakeMcpManager {
     this.entries.delete(name);
   }
 
+  markRemoved(name: string): void {
+    const current = this.entries.get(name);
+    if (current === undefined) return;
+    const entry: McpServerEntry = { ...current, status: 'removed', toolCount: 0 };
+    this.entries.set(name, entry);
+    this.emit(entry);
+  }
+
   private emit(entry: McpServerEntry): void {
     for (const listener of this.listeners) {
       listener(entry);
@@ -185,9 +218,10 @@ class FakeMcpManager {
 describe('AgentMcpService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
-  let events: DomainEvent[];
+  let events: Event2[];
   let telemetryEvents: TelemetryRecord[];
   let wire: IWireService;
+  let dispatcher: IEventDispatcher;
   let wireRecordListeners: Set<(record: WireRecord) => void>;
 
   beforeEach(() => {
@@ -208,27 +242,33 @@ describe('AgentMcpService', () => {
     ix.stub(IAgentToolResultTruncationService, stubToolResultTruncationService());
     ix.stub(IAgentLoopService, stubLoopWithHooks());
     ix.set(IAgentStateService, new AgentStateService());
+    ix.stub(IAgentProfileService, { getModelProviderType: () => undefined });
     wire = registerTestAgentWire(ix, 'mcp-test', {
       eventBus: ix.get(IEventBus),
       log: recordingWireLog([], (record) => {
         for (const listener of wireRecordListeners) listener(record);
       }),
     });
+    dispatcher = registerTestEventDispatcher(ix);
   });
   afterEach(() => {
     disposables.dispose();
   });
 
-  function createService(manager: FakeMcpManager): AgentMcpService {
+  function createService(
+    manager: FakeMcpManager,
+    ready: Promise<void> = Promise.resolve(),
+    isBaselineServer: (name: string) => boolean = () => true,
+  ): IAgentMcpService {
     ix.stub(ISessionMcpHandle, {
       _serviceBrand: undefined,
-      ready: Promise.resolve(),
+      ready,
       connectionManager: manager as unknown as McpConnectionManager,
+      isBaselineServer,
     } satisfies ISessionMcpHandle);
     ix.stub(ISessionContext, { sessionDir: '/tmp/kimi-code-mcp-test' });
-    const svc = ix.createInstance(AgentMcpService);
-    disposables.add(svc);
-    return svc;
+    ix.set(IAgentMcpService, new SyncDescriptor(AgentMcpService));
+    return ix.get(IAgentMcpService);
   }
 
   it('delegates list / status events to the connection manager', async () => {
@@ -249,9 +289,32 @@ describe('AgentMcpService', () => {
     expect(statuses).toEqual(['s1:connected', 's2:connected', 's1:disabled']);
   });
 
+  it('holds the LLM step until the session MCP handle is ready', async () => {
+    const manager = new FakeMcpManager();
+    let releaseReady!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      releaseReady = resolve;
+    });
+    createService(manager, ready);
+
+    const loop = ix.get(IAgentLoopService);
+    let settled = false;
+    const step = loop.hooks.onWillBeginStep
+      .run({ turnId: 1, step: 1, firstStepOfTurn: true, signal: new AbortController().signal })
+      .then(() => {
+        settled = true;
+      });
+
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    releaseReady();
+    await step;
+    expect(settled).toBe(true);
+  });
+
   it('resolves through the IAgentMcpService binding with no manager', () => {
     const created = createService(new FakeMcpManager());
-    ix.set(IAgentMcpService, created);
     const svc = ix.get(IAgentMcpService);
     expect(svc).toBe(created);
     expect(svc.list()).toEqual([]);
@@ -270,11 +333,104 @@ describe('AgentMcpService', () => {
       'mcp__local_server__echo',
       'mcp__local_server__noop',
     ]);
+    expect(infos.every((info) => info.disclosure === 'inline')).toBe(true);
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'tool.list.updated',
         reason: 'mcp.connected',
         serverName: 'local server',
+      }),
+    );
+  });
+
+  it('connects registered MCP tools to the session attachment store', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'mcp-session-attachments-'));
+    try {
+      const storage = new FileStorageService(home);
+      const context = makeSessionContext({
+        sessionId: 'session', workspaceId: 'workspace', cwd: home,
+        sessionDir: join(home, 'sessions/session'), sessionScope: 'sessions/session',
+      });
+      ix.stub(ISessionMediaStore, new SessionMediaStoreService(context, storage, new JsonAtomicDocumentStore(storage)));
+      const bytes = Buffer.from('%PDF-1.4\nexample\n%%EOF');
+      const client: MCPClient = {
+        async listTools() { return [{ name: 'report', description: 'Example report', inputSchema: { type: 'object' } }]; },
+        async callTool() { return { isError: false, content: [{ type: 'resource', resource: {
+          uri: 'example://report', mimeType: 'application/pdf', blob: bytes.toString('base64'),
+        } }] }; },
+        async ping() {},
+      };
+      const manager = new FakeMcpManager();
+      manager.setResolved('example', client, await discoverTools(client));
+      createService(manager);
+      manager.connect('example');
+      const tool = ix.get(IAgentToolRegistryService).resolve('mcp__example__report');
+      const output = await executeTool(tool!, {
+        turnId: 1, toolCallId: 'report', args: {}, signal: new AbortController().signal,
+      });
+      const text = renderToolResultForModel(output).map((part) => part.type === 'text' ? part.text : '').join('\n');
+      const path = /Original attachment saved at: ("[^\n]+")/.exec(text)?.[1];
+      expect(path).toBeDefined();
+      expect((await readFile(JSON.parse(path!) as string)).equals(bytes)).toBe(true);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('registers tools of a deferred=true server with deferred disclosure', async () => {
+    const manager = new FakeMcpManager();
+    const client = fakeMcpClient();
+    manager.setResolved('s', client, await discoverTools(client), undefined, undefined, true);
+    createService(manager);
+
+    manager.connect('s');
+
+    const infos = ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp');
+    expect(infos.length).toBeGreaterThan(0);
+    expect(infos.every((info) => info.disclosure === 'deferred')).toBe(true);
+  });
+
+  it('ignores status changes from servers outside the session baseline', async () => {
+    const manager = new FakeMcpManager();
+    const lateClient = fakeMcpClient();
+    manager.setResolved('late server', lateClient, await discoverTools(lateClient));
+    const baseClient = fakeMcpClient();
+    manager.setResolved('base server', baseClient, await discoverTools(baseClient));
+    createService(manager, Promise.resolve(), (name) => name === 'base server');
+
+    const mcpToolNames = () =>
+      ix
+        .get(IAgentToolRegistryService)
+        .list()
+        .filter((tool) => tool.source === 'mcp')
+        .map((tool) => tool.name);
+
+    manager.connect('late server');
+
+    expect(mcpToolNames()).toEqual([]);
+    expect(
+      events.filter(
+        (event) => event.type === 'mcp.server.status' || event.type === 'tool.list.updated',
+      ),
+    ).toEqual([]);
+
+    manager.connect('base server');
+
+    expect(mcpToolNames().toSorted()).toEqual([
+      'mcp__base_server__echo',
+      'mcp__base_server__noop',
+    ]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'mcp.server.status',
+        server: expect.objectContaining({ name: 'base server', status: 'connected' }),
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'tool.list.updated',
+        reason: 'mcp.connected',
+        serverName: 'base server',
       }),
     );
   });
@@ -310,6 +466,48 @@ describe('AgentMcpService', () => {
         serverName: 's',
       }),
     );
+  });
+
+  it('keeps tools registered when the server is tombstoned as removed, and calls fail with a removal notice', async () => {
+    const manager = new FakeMcpManager();
+    const counter = { calls: 0 };
+    const client = countingClient(fakeMcpClient(), counter);
+    manager.setResolved('s', client, await discoverTools(client));
+    createService(manager);
+    manager.connect('s');
+    expect(ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp')).toHaveLength(2);
+
+    manager.markRemoved('s');
+
+    const registered = ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp');
+    expect(registered).toHaveLength(2);
+    expect(events).not.toContainEqual(
+      expect.objectContaining({ type: 'tool.list.updated', reason: 'mcp.disconnected' }),
+    );
+
+    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    expect(echo).toBeDefined();
+    const result = await executeTool(echo!, {
+      turnId: 1,
+      toolCallId: 'tc-removed',
+      args: { text: 'hello world' },
+      signal: new AbortController().signal,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('has been removed');
+    expect(counter.calls).toBe(0);
+  });
+
+  it('does not register tools for a server tombstoned before the agent attached', async () => {
+    const manager = new FakeMcpManager();
+    const client = fakeMcpClient();
+    manager.setResolved('s', client, await discoverTools(client));
+    manager.connect('s');
+    manager.markRemoved('s');
+
+    createService(manager);
+
+    expect(ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp')).toEqual([]);
   });
 
   it('reports same-server qualified-name collisions and keeps only the first tool', async () => {
@@ -477,10 +675,6 @@ describe('AgentMcpService', () => {
     createService(manager);
     manager.connect('s');
 
-    // The connection drops while no call is in flight: the manager marks the
-    // server failed. The tools must stay registered so the next call reaches
-    // the adapter and its reconnect-and-retry path instead of failing with
-    // "tool not found".
     manager.fail('s');
 
     const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
@@ -547,8 +741,6 @@ describe('AgentMcpService', () => {
         signal: new AbortController().signal,
       }),
     ).rejects.toThrow('Connection closed');
-    // The tools stay registered after the failed reconnect so a later call
-    // can try healing the server again instead of hitting "tool not found".
     expect(ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp')).toHaveLength(2);
   });
 
@@ -730,9 +922,6 @@ describe('AgentMcpService', () => {
     const registry = ix.get(IAgentToolRegistryService);
     const staleEcho = registry.resolve('mcp__s__echo');
 
-    // Resolve the stale tool first, then heal the server the way a parallel
-    // call's reconnect would: the resolved entry swaps to a fresh client and
-    // the registry re-seeds, leaving `staleEcho` bound to the dead client.
     manager.setResolved('s', freshClient, await discoverTools(freshClient));
     manager.connect('s');
 
@@ -893,7 +1082,7 @@ describe('AgentMcpService', () => {
     expect(reconnects).toBe(0);
   });
 
-  it('truncates oversized MCP text output through the wrapped tool path', async () => {
+  it('passes oversized MCP text through for the pipeline to shape', async () => {
     const manager = new FakeMcpManager();
     const client: MCPClient = {
       async listTools() {
@@ -926,7 +1115,7 @@ describe('AgentMcpService', () => {
     });
 
     expect(result.isError).toBeUndefined();
-    expect(result.output).toBe('x'.repeat(100_000) + MCP_OUTPUT_TRUNCATED_TEXT);
+    expect(result.output).toBe('x'.repeat(100_001));
   });
 
   it('wraps MCP image output in mcp_tool_result companions through the wrapped tool path', async () => {
@@ -1060,7 +1249,7 @@ describe('AgentMcpService', () => {
     expect(receivedSignal).toBe(controller.signal);
   });
 
-  it('registers a synthetic authenticate tool when a server needs auth', () => {
+  it('registers a synthetic authenticate tool deferred when the server declares deferred: true', () => {
     const oauthService = {
       beginAuthorization: async () => ({
         authorizationUrl: new URL('https://example.com/authorize'),
@@ -1071,15 +1260,45 @@ describe('AgentMcpService', () => {
     const manager = new FakeMcpManager({ oauthService });
     createService(manager);
 
-    manager.needsAuth();
+    manager.needsAuth('needs-auth', { deferred: true });
 
     const tools = ix.get(IAgentToolRegistryService).list();
     expect(tools).toEqual([
       expect.objectContaining({
         name: 'mcp__needs-auth__authenticate',
         source: 'mcp',
+        disclosure: 'deferred',
       }),
     ]);
+  });
+
+  it('registers the synthetic authenticate tool for a server that settled needs-auth before attach', () => {
+    const oauthService = {
+      beginAuthorization: async () => ({
+        authorizationUrl: new URL('https://example.com/authorize'),
+        complete: async () => {},
+        cancel: async () => {},
+      }),
+    } as unknown as McpOAuthService;
+    const manager = new FakeMcpManager({ oauthService });
+    manager.needsAuth();
+
+    createService(manager);
+
+    const tools = ix.get(IAgentToolRegistryService).list();
+    expect(tools).toEqual([
+      expect.objectContaining({
+        name: 'mcp__needs-auth__authenticate',
+        source: 'mcp',
+        disclosure: 'inline',
+      }),
+    ]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'mcp.server.status',
+        server: expect.objectContaining({ name: 'needs-auth', status: 'needs-auth' }),
+      }),
+    );
   });
 
   it('keeps tools registered when a connected server fails so later calls can heal', async () => {
@@ -1159,8 +1378,8 @@ describe('AgentMcpService', () => {
     try {
       manager.connect('grafana');
       expect(records).toHaveLength(0);
-      await wire.restore();
-      await wire.flush();
+      await dispatcher.restore();
+      await dispatcher.flush();
       expect(records).toHaveLength(1);
       expect(records[0]).toMatchObject({
         type: 'mcp.tools_discovered',
@@ -1199,8 +1418,8 @@ describe('AgentMcpService', () => {
     try {
       manager.connect('grafana');
       expect(records).toHaveLength(0);
-      await wire.restore();
-      await wire.flush();
+      await dispatcher.restore();
+      await dispatcher.flush();
       expect(records).toHaveLength(1);
     } finally {
       off.dispose();
@@ -1226,8 +1445,8 @@ describe('AgentMcpService', () => {
       manager.connect('grafana');
       enabledNames.clear();
       enabledNames.add('mutated_after_observation');
-      await wire.restore();
-      await wire.flush();
+      await dispatcher.restore();
+      await dispatcher.flush();
 
       expect(records).toHaveLength(1);
       expect(records[0]).toMatchObject({
@@ -1254,8 +1473,8 @@ describe('AgentMcpService', () => {
     );
     createService(manager);
     manager.connect('graf.ana');
-    await wire.restore();
-    await wire.flush();
+    await dispatcher.restore();
+    await dispatcher.flush();
 
     const { records, off } = collectDiscoveries();
     try {

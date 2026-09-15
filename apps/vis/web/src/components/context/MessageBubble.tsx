@@ -28,8 +28,8 @@ function UserBubble({ m }: { m: ProjectedMessage }) {
   const origin = m.message.origin;
   const originKind = origin?.kind;
   // Badge every origin that is not a plain user prompt. This covers
-  // skill_activation, background_task, cron_job, cron_missed, retry,
-  // system_trigger, injection, hook_result, compaction_summary, etc.
+  // skill_activation, task (v2; v1: background_task), cron_job, cron_missed,
+  // retry, system_trigger, injection, hook_result, compaction_summary, etc.
   const showsOriginBadge = originKind !== undefined && originKind !== 'user';
   return (
     <article className={baseClass()} style={{ borderLeftColor: 'var(--color-user)' }}>

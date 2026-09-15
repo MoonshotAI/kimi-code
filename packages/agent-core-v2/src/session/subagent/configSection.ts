@@ -1,50 +1,7 @@
-/**
- * `subagent` domain — subagent config-section schema, env binding, and
- * timeout / model resolution.
- *
- * Owns the `[subagent]` configuration section (`timeout_ms` on disk) together
- * with the `KIMI_SUBAGENT_TIMEOUT_MS` env override (precedence: env >
- * config.toml > 2h default). While
- * the env var is set, `stripEnvBoundFields` restores the env-free raw value
- * before persistence, so the override never leaks into `config.toml`. Per-run
- * timeouts resolve through `resolveSubagentTimeoutMs`, and the timeout
- * message renders with `formatSubagentTimeoutDescription`.
- *
- * The model half of the spawn binding is the secondary model (the
- * `[secondary_model]` section on disk): when its
- * experiment is enabled and the model is set, newly spawned subagents bind to
- * it by default instead of inheriting the caller's model, and the
- * `Agent`/`AgentSwarm` tools let the parent model pick per spawn via their
- * `model` parameter. When unset, spawning behavior is unchanged (subagents
- * inherit the caller's model). A recipe with patch fields binds the
- * synthesized derived entry (`SECONDARY_DERIVED_MODEL_ID`); a pointer-only
- * recipe binds the pointed entry directly. `default_effort` is passed as the
- * explicit subagent thinking; without it the subagent resolves thinking
- * naturally (global thinking config → the bound model's default effort)
- * rather than inheriting the caller's level. Both tools resolve spawn
- * bindings through `resolveSubagentBinding`, advertise the pair via
- * `buildSubagentModelDescriptions`, and wrap spawn failures with
- * `wrapSubagentModelError`; while the experiment is off they also strip the
- * no-op `model` parameter from their advertised schemas via
- * `stripSubagentModelParameter`. Self-registered at module load via
- * `registerConfigSection`.
- */
-
 import { z } from 'zod';
 
 import { Error2, ErrorCodes, isError2 } from '#/errors';
-import type { AgentModelPreference } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { isPlainObject } from '#/app/config/toml';
-import type { IFlagService } from '#/app/flag/flag';
-import {
-  SECONDARY_MODEL_ENV,
-  SECONDARY_MODEL_SECTION,
-} from '#/app/kosongConfig/configSection';
-import {
-  SECONDARY_DERIVED_MODEL_ID,
-  secondaryModelPatch,
-} from '#/app/kosongConfig/secondaryModelOverlay';
-import { type SecondaryModelConfig } from '#/app/kosongConfig/configSection';
 import {
   type EnvBindings,
   envBindings,
@@ -52,16 +9,43 @@ import {
   type IConfigService,
 } from '#/app/config/config';
 import { registerConfigSection } from '#/app/config/configSectionContributions';
-
-import { SECONDARY_MODEL_FLAG_ID } from './flag';
+import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
+import type { IModelCatalog, Model } from '#/llm-adapter/model/catalog';
+import {
+  declaredDefaultEffortForModel,
+  modelSupportsThinking,
+  modelSupportsThinkingEffort,
+  normalizeRequestedThinkingEffort,
+  type ThinkingConfig,
+} from '#/llm-adapter/model/thinking';
 
 export const SUBAGENT_SECTION = 'subagent';
+export const SECONDARY_MODEL_SECTION = 'secondaryModel';
 
 export const SubagentConfigSchema = z.object({
   timeoutMs: z.number().int().min(0).optional(),
 });
 
 export type SubagentConfig = z.infer<typeof SubagentConfigSchema>;
+
+export const SecondaryModelConfigSchema = z.object({
+  defaultModel: z.string().min(1).optional(),
+  models: z.record(z.string(), z.string()).optional(),
+  force: z.boolean().optional(),
+  model: z.string().min(1).optional(),
+  maxContextSize: z.number().int().min(1).optional(),
+  maxInputSize: z.number().int().min(1).optional(),
+  maxOutputSize: z.number().int().min(1).optional(),
+  capabilities: z.array(z.string()).optional(),
+  displayName: z.string().optional(),
+  reasoningKey: z.string().optional(),
+  adaptiveThinking: z.boolean().optional(),
+  supportEfforts: z.array(z.string()).optional(),
+  defaultEffort: z.string().optional(),
+  offEffort: z.string().optional(),
+});
+
+export type SecondaryModelConfig = z.infer<typeof SecondaryModelConfigSchema>;
 
 export const DEFAULT_SUBAGENT_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 
@@ -87,6 +71,8 @@ registerConfigSection(SUBAGENT_SECTION, SubagentConfigSchema, {
   stripEnv: stripSubagentEnv,
 });
 
+registerConfigSection(SECONDARY_MODEL_SECTION, SecondaryModelConfigSchema);
+
 export function resolveSubagentTimeoutMs(config: IConfigService): number {
   return (
     config.get<SubagentConfig | undefined>(SUBAGENT_SECTION)?.timeoutMs ??
@@ -94,60 +80,287 @@ export function resolveSubagentTimeoutMs(config: IConfigService): number {
   );
 }
 
-export type SubagentModelChoice = AgentModelPreference;
+export const PRIMARY_SUBAGENT_MODEL_CHOICE = 'primary';
 
-export function resolveSecondaryModel(
-  config: IConfigService,
-  flags: IFlagService,
-): SecondaryModelConfig | undefined {
-  if (!flags.enabled(SECONDARY_MODEL_FLAG_ID)) return undefined;
-  return config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
+export interface SubagentModelPool {
+  readonly defaultModel?: string;
+  readonly models: Record<string, string>;
 }
+
+export function resolveSubagentModelPool(config: IConfigService): SubagentModelPool | undefined {
+  const section = config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
+  if (section?.models !== undefined) {
+    return { defaultModel: section.defaultModel, models: section.models };
+  }
+  if (section?.defaultModel !== undefined) {
+    return { defaultModel: section.defaultModel, models: { [section.defaultModel]: '' } };
+  }
+  if (section?.model !== undefined) {
+    return { defaultModel: section.model, models: { [section.model]: '' } };
+  }
+  return undefined;
+}
+
+export const SECONDARY_MODEL_FORCE_REQUIRES_DEFAULT_MESSAGE =
+  '[secondary_model].default_model is required when [secondary_model].force is set';
+
+export const SECONDARY_MODEL_FORCE_EXCLUDES_MODELS_MESSAGE =
+  '[secondary_model].force cannot be combined with [secondary_model.models]: the pool table only exists to offer the main agent a choice, and force removes that choice';
+
+export function isSubagentModelForced(config: IConfigService): boolean {
+  return config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION)?.force === true;
+}
+
+export function exposesSubagentModelChoice(config: IConfigService): boolean {
+  if (isSubagentModelForced(config)) return false;
+  return resolveSubagentModelPool(config) !== undefined;
+}
+
+export const SECONDARY_MODEL_DEFAULT_MODEL_REQUIRED_MESSAGE =
+  '[secondary_model].default_model is required when [secondary_model.models] is configured';
+
+export const SECONDARY_MODEL_PRIMARY_MODEL_RESERVED_MESSAGE = `[secondary_model.models] key "${PRIMARY_SUBAGENT_MODEL_CHOICE}" is reserved: it always binds the caller's own model. Rename the pool entry.`;
+
+export function assertValidSubagentModelPool(
+  pool: SubagentModelPool,
+  modelCatalog: IModelCatalog,
+): void {
+  if (Object.hasOwn(pool.models, PRIMARY_SUBAGENT_MODEL_CHOICE)) {
+    throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_PRIMARY_MODEL_RESERVED_MESSAGE, {
+      details: {
+        section: SECONDARY_MODEL_SECTION,
+        field: 'models',
+        model: PRIMARY_SUBAGENT_MODEL_CHOICE,
+      },
+    });
+  }
+  const aliases = Object.keys(pool.models);
+  if (pool.defaultModel === undefined) {
+    throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_DEFAULT_MODEL_REQUIRED_MESSAGE, {
+      details: { section: SECONDARY_MODEL_SECTION, field: 'defaultModel' },
+    });
+  }
+  if (!Object.hasOwn(pool.models, pool.defaultModel)) {
+    throw new Error2(
+      ErrorCodes.CONFIG_INVALID,
+      `[secondary_model].default_model "${pool.defaultModel}" is not a [secondary_model.models] key. Available models: ${aliases.join(', ')}.`,
+      { details: { model: pool.defaultModel, availableModels: aliases } },
+    );
+  }
+  for (const alias of aliases) {
+    try {
+      modelCatalog.get(alias);
+    } catch (error) {
+      throw new Error2(
+        ErrorCodes.CONFIG_INVALID,
+        `[secondary_model.models] entry "${alias}" could not be resolved: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error, details: { model: alias } },
+      );
+    }
+  }
+}
+
+export function assertValidSubagentModelConfig(
+  config: IConfigService,
+  modelCatalog: IModelCatalog,
+): void {
+  const section = config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
+  if (section?.force === true) {
+    if (section.models !== undefined) {
+      throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_FORCE_EXCLUDES_MODELS_MESSAGE, {
+        details: { section: SECONDARY_MODEL_SECTION, field: 'force' },
+      });
+    }
+    if (section.defaultModel === undefined && section.model === undefined) {
+      throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_FORCE_REQUIRES_DEFAULT_MESSAGE, {
+        details: { section: SECONDARY_MODEL_SECTION, field: 'defaultModel' },
+      });
+    }
+  }
+  const pool = resolveSubagentModelPool(config);
+  if (pool !== undefined) assertValidSubagentModelPool(pool, modelCatalog);
+  assertValidSubagentDefaultEffort(section, pool, modelCatalog);
+}
+
+function assertValidSubagentDefaultEffort(
+  section: SecondaryModelConfig | undefined,
+  pool: SubagentModelPool | undefined,
+  modelCatalog: IModelCatalog,
+): void {
+  const effort =
+    section?.defaultEffort === undefined
+      ? undefined
+      : normalizeRequestedThinkingEffort(section.defaultEffort);
+  if (effort === undefined || pool === undefined) return;
+  for (const alias of Object.keys(pool.models)) {
+    const model = modelCatalog.get(alias);
+    if (effort === 'off' && model.alwaysThinking === true) {
+      throw new Error2(
+        ErrorCodes.CONFIG_INVALID,
+        `[secondary_model].default_effort "off" cannot disable thinking for model "${alias}", which always reasons. Choose a concrete thinking effort instead of "off".`,
+        {
+          details: {
+            section: SECONDARY_MODEL_SECTION,
+            field: 'defaultEffort',
+            model: alias,
+            effort,
+          },
+        },
+      );
+    }
+    if (modelSupportsThinkingEffort(effort, model, true)) continue;
+    if (!modelSupportsThinking(model)) {
+      throw new Error2(
+        ErrorCodes.CONFIG_INVALID,
+        `[secondary_model].default_effort "${effort}" is set but model "${alias}" does not support thinking.`,
+        {
+          details: {
+            section: SECONDARY_MODEL_SECTION,
+            field: 'defaultEffort',
+            model: alias,
+            effort,
+          },
+        },
+      );
+    }
+    throw new Error2(
+      ErrorCodes.CONFIG_INVALID,
+      `[secondary_model].default_effort "${effort}" is not supported by model "${alias}". Supported efforts: ${model.supportEfforts?.join(', ')}.`,
+      {
+        details: {
+          section: SECONDARY_MODEL_SECTION,
+          field: 'defaultEffort',
+          model: alias,
+          effort,
+        },
+      },
+    );
+  }
+}
+
+export type SubagentModelSource = 'forced' | 'primary_override' | 'inherited' | 'secondary_pool';
 
 export function resolveSubagentBinding(
   config: IConfigService,
-  flags: IFlagService,
   own: { modelAlias: string; thinkingLevel: string },
-  requested?: SubagentModelChoice,
-): { model: string; thinking?: string } {
-  const secondary = resolveSecondaryModel(config, flags);
-  if (requested !== 'primary' && secondary?.model !== undefined) {
-    return {
-      model:
-        secondaryModelPatch(secondary) === undefined
-          ? secondary.model
-          : SECONDARY_DERIVED_MODEL_ID,
-      thinking: secondary.defaultEffort,
-    };
+  requested?: string,
+): { model: string; thinking?: string; modelSource: SubagentModelSource } {
+  const section = config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
+  if (section?.force === true) {
+    if (section.models !== undefined) {
+      throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_FORCE_EXCLUDES_MODELS_MESSAGE, {
+        details: { section: SECONDARY_MODEL_SECTION, field: 'force' },
+      });
+    }
+    const forcedModel = section.defaultModel ?? section.model;
+    if (forcedModel === undefined) {
+      throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_FORCE_REQUIRES_DEFAULT_MESSAGE, {
+        details: { section: SECONDARY_MODEL_SECTION, field: 'defaultModel' },
+      });
+    }
+    if (requested !== undefined) {
+      throw new Error2(
+        ErrorCodes.CONFIG_INVALID,
+        `Invalid model "${requested}": [secondary_model].force is set, so every subagent binds "${forcedModel}" (omit the model parameter).`,
+        { details: { model: requested } },
+      );
+    }
+    return { model: forcedModel, thinking: section.defaultEffort, modelSource: 'forced' };
   }
-  return { model: own.modelAlias, thinking: own.thinkingLevel };
+  if (requested === PRIMARY_SUBAGENT_MODEL_CHOICE) {
+    return { model: own.modelAlias, thinking: own.thinkingLevel, modelSource: 'primary_override' };
+  }
+  const pool = resolveSubagentModelPool(config);
+  if (pool === undefined) {
+    if (requested !== undefined) {
+      throw new Error2(
+        ErrorCodes.CONFIG_INVALID,
+        `Invalid model "${requested}": no [secondary_model.models] pool is configured, so subagents inherit the caller's model (pass "primary" or omit the model parameter).`,
+        { details: { model: requested } },
+      );
+    }
+    return { model: own.modelAlias, thinking: own.thinkingLevel, modelSource: 'inherited' };
+  }
+  if (Object.hasOwn(pool.models, PRIMARY_SUBAGENT_MODEL_CHOICE)) {
+    throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_PRIMARY_MODEL_RESERVED_MESSAGE, {
+      details: {
+        section: SECONDARY_MODEL_SECTION,
+        field: 'models',
+        model: PRIMARY_SUBAGENT_MODEL_CHOICE,
+      },
+    });
+  }
+  const choice = requested ?? pool.defaultModel;
+  if (choice === undefined) {
+    throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_DEFAULT_MODEL_REQUIRED_MESSAGE, {
+      details: { section: SECONDARY_MODEL_SECTION, field: 'defaultModel' },
+    });
+  }
+  if (!Object.hasOwn(pool.models, choice)) {
+    const available = [...Object.keys(pool.models), PRIMARY_SUBAGENT_MODEL_CHOICE];
+    throw new Error2(
+      ErrorCodes.CONFIG_INVALID,
+      `Invalid model "${choice}". Available models: ${available.join(', ')}.`,
+      { details: { model: choice, availableModels: available } },
+    );
+  }
+  return { model: choice, thinking: section?.defaultEffort, modelSource: 'secondary_pool' };
+}
+
+export function resolveSubagentThinking(
+  config: IConfigService,
+  model: Model | undefined,
+  explicit: string | undefined,
+): string | undefined {
+  if (explicit !== undefined) return explicit;
+  if (config.get<ThinkingConfig>(THINKING_SECTION)?.enabled === false) return undefined;
+  return declaredDefaultEffortForModel(model);
 }
 
 export function buildSubagentModelDescriptions(
   config: IConfigService,
-  flags: IFlagService,
   callerModelAlias: string | undefined,
 ): string | undefined {
-  const secondaryModel = resolveSecondaryModel(config, flags)?.model;
-  if (secondaryModel === undefined || callerModelAlias === undefined) return undefined;
-  return [
-    'Available models (pass via model):',
-    `- secondary: ${secondaryModel} (default) — the configured secondary model; prefer it for routine subagent tasks`,
-    `- primary: ${callerModelAlias} — the main model you are running on; use it for hard, quality-sensitive subagent tasks`,
-  ].join('\n');
+  if (!exposesSubagentModelChoice(config)) return undefined;
+  const pool = resolveSubagentModelPool(config)!;
+  const lines = ['Available models (pass via model):'];
+  const defaultModel = pool.defaultModel;
+  for (const alias of orderedPoolAliases(pool)) {
+    const marker = alias === defaultModel ? ' [default]' : '';
+    lines.push(formatPoolLine(`${alias}${marker}`, pool.models[alias]!));
+  }
+  const primaryLabel =
+    callerModelAlias === undefined
+      ? PRIMARY_SUBAGENT_MODEL_CHOICE
+      : `${PRIMARY_SUBAGENT_MODEL_CHOICE} (= ${callerModelAlias})`;
+  lines.push(
+    `- ${primaryLabel}: your current model and thinking level`,
+  );
+  lines.push("Pool entries don't inherit your thinking level.");
+  return lines.join('\n');
 }
 
-/**
- * Strip the `model` property from a subagent collaboration tool's advertised
- * JSON schema. While the `secondary-model` experiment is off the parameter is
- * a silent no-op, so the schema the model sees (and the args validator
- * compiled from the same advertised schema) drops it entirely — the
- * secondary-model concept never enters the prompt, and a stray `model`
- * argument is rejected instead of silently inheriting the caller's model.
- * Returns the input unchanged when there is no `model` property; otherwise a
- * shallow copy — the input is never mutated, so callers can keep both
- * variants as shared constants.
- */
+export function buildSubagentModelSummary(config: IConfigService): string | undefined {
+  if (!exposesSubagentModelChoice(config)) return undefined;
+  const pool = resolveSubagentModelPool(config)!;
+  const labels = orderedPoolAliases(pool).map((alias) =>
+    alias === pool.defaultModel ? `${alias} [default]` : alias,
+  );
+  labels.push(`${PRIMARY_SUBAGENT_MODEL_CHOICE} (your current model and thinking level)`);
+  return `Available models (pass via model): ${labels.join(', ')}.`;
+}
+
+function orderedPoolAliases(pool: SubagentModelPool): string[] {
+  const aliases = Object.keys(pool.models);
+  const defaultModel = pool.defaultModel;
+  if (defaultModel === undefined || !Object.hasOwn(pool.models, defaultModel)) return aliases;
+  return [defaultModel, ...aliases.filter((alias) => alias !== defaultModel)];
+}
+
+function formatPoolLine(label: string, description: string): string {
+  return description === '' ? `- ${label}` : `- ${label}: ${description}`;
+}
+
 export function stripSubagentModelParameter(
   parameters: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -163,6 +376,21 @@ export function stripSubagentModelParameter(
   return next;
 }
 
+export function stripSubagentForkParameter(
+  parameters: Record<string, unknown>,
+): Record<string, unknown> {
+  const properties = parameters['properties'];
+  if (!isPlainObject(properties) || !('fork' in properties)) return parameters;
+  const nextProperties = { ...properties };
+  delete nextProperties['fork'];
+  const next: Record<string, unknown> = { ...parameters, properties: nextProperties };
+  const required = parameters['required'];
+  if (Array.isArray(required) && required.includes('fork')) {
+    next['required'] = required.filter((entry) => entry !== 'fork');
+  }
+  return next;
+}
+
 export function wrapSubagentModelError(
   error: unknown,
   boundModel: string,
@@ -171,22 +399,17 @@ export function wrapSubagentModelError(
   if (boundModel === callerModelAlias) return error;
   if (!isError2(error) || error.code !== ErrorCodes.CONFIG_INVALID) return error;
   if (error.details?.['model'] !== boundModel) return error;
-  const displayModel =
-    boundModel === SECONDARY_DERIVED_MODEL_ID
-      ? `the derived entry "${SECONDARY_DERIVED_MODEL_ID}"`
-      : `"${boundModel}"`;
   return new Error2(
     error.code,
-    `${error.message} (secondary model ${displayModel} comes from [secondary_model].model / ${SECONDARY_MODEL_ENV} — check that it names a valid [models] entry)`,
+    `${error.message} (subagent model "${boundModel}" comes from [secondary_model.models] — check that it names a valid [models] entry)`,
     {
       cause: error,
       name: error.name,
       details: {
         ...error.details,
-        secondaryModel: boundModel,
-        secondaryModelConfig: {
-          section: 'secondaryModel.model',
-          environment: SECONDARY_MODEL_ENV,
+        subagentModel: boundModel,
+        subagentModelConfig: {
+          section: 'secondary_model.models',
         },
       },
     },

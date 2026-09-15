@@ -1,45 +1,14 @@
-/**
- * `/workspaces` route handlers — server-v2 port.
- *
- * Implements the v1 `/api/v1/workspaces` wire contract on top of
- * `agent-core-v2` services. Backed by `IWorkspaceService` (App scope) for the
- * catalog, `IHostFileSystem` to validate roots, and
- * `IWorkspaceSessions` to derive `session_count`.
- *
- *   GET    /workspaces                    list
- *   POST   /workspaces                    register (idempotent on root)
- *   PATCH  /workspaces/{workspace_id}     rename (display name only)
- *   DELETE /workspaces/{workspace_id}     unregister
- *   GET    /workspaces/{workspace_id}/trust    read the trust state
- *   POST   /workspaces/{workspace_id}/trust    mark the workspace trusted
- *   POST   /workspaces/{workspace_id}/untrust  revoke trust
- *
- * The trust routes resolve the workspace's live handler
- * (`IWorkspaceLifecycleService.handlerFor`, materializing it on demand) and
- * read/flip the Workspace-scope `IWorkspaceTrust`; while untrusted, the
- * handler's project-level MCP config files are not loaded.
- *
- * **Wire fidelity**: the v1 `workspaceSchema` carries more fields than v2's
- * `Workspace` (`{ id, root, name, createdAt, lastOpenedAt }`). The handler
- * projects the v2 record onto the v1 shape, deriving the extra fields:
- *   - `created_at` / `last_opened_at` — from the registry's in-memory
- *     timestamps (reset on restart; the registry is still a skeleton).
- *   - `session_count` — count of persisted sessions for the workspace, summed
- *     across every id spelling of the same root (`IWorkspaceSessions.count`
- *     folds the alias set) so legacy split buckets count once for the
- *     workspace, not per bucket.
- */
-
 import {
+  IBootstrapService,
   IHostFileSystem,
-  IWorkspaceLifecycleService,
+  IWorkspaceInstanceManager,
   IWorkspaceService,
   IWorkspaceSessions,
   IWorkspaceTrust,
   type Scope,
   type Workspace,
 } from '@moonshot-ai/agent-core-v2';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, join, normalize, resolve } from 'node:path';
 
 import { z } from 'zod';
 
@@ -48,6 +17,8 @@ import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import {
+  addDirRequestSchema,
+  addDirResponseSchema,
   createWorkspaceRequestSchema,
   createWorkspaceResponseSchema,
   deleteWorkspaceResponseSchema,
@@ -301,6 +272,84 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
     untrustRoute.options,
     untrustRoute.handler as Parameters<WorkspaceRouteHost['post']>[2],
   );
+
+  const addDirRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/workspaces/{workspace_id}/add-dir',
+      params: workspaceIdParamSchema,
+      body: addDirRequestSchema,
+      success: { data: addDirResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.FS_PATH_NOT_FOUND]: {},
+        [ErrorCode.WORKSPACE_NOT_FOUND]: {},
+      },
+      description: 'Add an additional directory to the workspace',
+      tags: ['workspaces'],
+    },
+    async (req, reply) => {
+      const { workspace_id } = req.params;
+      const ws = await core.accessor.get(IWorkspaceService).get(workspace_id);
+      if (ws === undefined) {
+        reply.send(
+          errEnvelope(ErrorCode.WORKSPACE_NOT_FOUND, `workspace ${workspace_id} does not exist`, req.id),
+        );
+        return;
+      }
+      const resolved = resolveAdditionalDirPath(core, ws.root, req.body.path);
+      const hostFs = core.accessor.get(IHostFileSystem);
+      try {
+        const stat = await hostFs.stat(resolved);
+        if (!stat.isDirectory) {
+          reply.send(
+            errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, `path ${req.body.path} is not a directory`, req.id),
+          );
+          return;
+        }
+      } catch {
+        reply.send(
+          errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, `path ${req.body.path} does not exist`, req.id),
+        );
+        return;
+      }
+      const workspace = await core
+        .accessor.get(IWorkspaceInstanceManager)
+        .getOrCreate({ workspaceId: workspace_id, root: ws.root });
+      const result = await workspace.program.dirs.addDir({
+        path: req.body.path,
+        persist: req.body.persist,
+      });
+      reply.send(
+        okEnvelope(
+          {
+            project_root: result.projectRoot,
+            config_path: result.configPath,
+            additional_dirs: [...result.additionalDirs],
+            persisted: result.persisted,
+          },
+          req.id,
+        ),
+      );
+    },
+  );
+  app.post(
+    addDirRoute.path,
+    addDirRoute.options,
+    addDirRoute.handler as Parameters<WorkspaceRouteHost['post']>[2],
+  );
+}
+
+function resolveAdditionalDirPath(core: Scope, root: string, input: string): string {
+  const trimmed = input.trim();
+  const osHomeDir = core.accessor.get(IBootstrapService).osHomeDir;
+  const expanded =
+    trimmed === '~'
+      ? osHomeDir
+      : trimmed.startsWith('~/')
+        ? join(osHomeDir, trimmed.slice(2))
+        : trimmed;
+  return isAbsolute(expanded) ? normalize(expanded) : resolve(root, expanded);
 }
 
 type TrustReply = { send(payload: unknown): unknown };
@@ -318,17 +367,13 @@ async function resolveTrust(
     );
     return undefined;
   }
-  const handle = await core
-    .accessor.get(IWorkspaceLifecycleService)
-    .handlerFor({ workspaceId, root: ws.root });
-  return handle.accessor.get(IWorkspaceTrust);
+  const workspace = await core
+    .accessor.get(IWorkspaceInstanceManager)
+    .getOrCreate({ workspaceId, root: ws.root });
+  return workspace.program.trust;
 }
 
-// ---------------------------------------------------------------------------
-// Projection — v2 `Workspace` onto the v1 wire `workspaceSchema`.
-// ---------------------------------------------------------------------------
-
-async function toWireWorkspace(core: Scope, ws: Workspace): Promise<WorkspaceWire> {
+export async function toWireWorkspace(core: Scope, ws: Workspace): Promise<WorkspaceWire> {
   const sessionCount = await core.accessor.get(IWorkspaceSessions).count(ws.id);
   return {
     id: ws.id,

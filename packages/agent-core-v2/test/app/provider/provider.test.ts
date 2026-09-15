@@ -1,13 +1,3 @@
-/**
- * `provider` config-section tests — the `providers` section registration
- * (schema + env bindings + strip hook, self-registered by the app/kosongConfig
- * persistence wrapper) and the TOML/env helper transforms.
- *
- * The registry itself (`ProviderService`) is a pure in-memory store covered
- * by `test/kosong/provider/providerService.test.ts`; persistence through the
- * config bridge is covered by `test/app/kosongConfig/kosongConfigService.test.ts`.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { ConfigRegistry } from '#/app/config/configService';

@@ -80,6 +80,9 @@ export interface ModelSelectorOptions {
    * line; wraps instead of truncating when it exceeds the width (e.g. the
    * mid-conversation switch cost notice). */
   readonly warning?: string;
+  /** Set to false to hide the Thinking footer and disable ←/→ effort
+   * switching — for pickers whose selection carries no thinking level. */
+  readonly thinkingControl?: boolean;
   readonly onSelect: (selection: ModelSelection) => void;
   /** When provided, Alt+S invokes this instead of onSelect — used to apply the
    * choice to the current session only, without persisting it as the default. */
@@ -134,7 +137,7 @@ export function effortLabel(effort: string): string {
  * middle `support_efforts` entry, else `'on'` for boolean models, `'off'` when
  * thinking is unsupported.
  */
-function defaultThinkingEffortFor(model: ModelAlias): ThinkingEffort {
+export function defaultThinkingEffortFor(model: ModelAlias): ThinkingEffort {
   if (thinkingAvailability(model) === 'unsupported') return 'off';
   const efforts = effortsOf(model);
   if (efforts.length > 0) {
@@ -225,7 +228,10 @@ export class ModelSelectorComponent extends Container implements Focusable {
     }
 
     // Left/Right move the active thinking effort within the model's segments.
-    if (matchesKey(data, Key.left) || matchesKey(data, Key.right)) {
+    if (
+      this.opts.thinkingControl !== false &&
+      (matchesKey(data, Key.left) || matchesKey(data, Key.right))
+    ) {
       const selected = this.selectedChoice();
       if (selected !== undefined) {
         const segments = segmentsFor(selected.model);
@@ -352,13 +358,13 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
     lines.push('');
     const selected = this.selectedChoice();
-    if (selected !== undefined) {
+    if (selected !== undefined && this.opts.thinkingControl !== false) {
       const canSwitch = segmentsFor(selected.model).length > 1;
       const thinkingHeader = canSwitch ? ' Thinking  (←→ to switch)' : ' Thinking';
       lines.push(currentTheme.fg('textMuted', thinkingHeader));
       lines.push(this.renderThinkingControl(selected));
+      lines.push('');
     }
-    lines.push('');
     lines.push(currentTheme.fg('primary', '─'.repeat(width)));
     return lines.map((line) => truncateToWidth(line, width));
   }

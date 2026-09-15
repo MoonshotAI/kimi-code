@@ -16,8 +16,9 @@
  */
 
 import { Container } from '@moonshot-ai/pi-tui';
-import type { Component } from '@moonshot-ai/pi-tui';
+import type { Component, TuiMouseDispatchResult, TuiMouseEvent } from '@moonshot-ai/pi-tui';
 
+import { prefixPreservingOsc133Zone } from '#/tui/utils/osc133';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 interface TranscriptRenderCache {
@@ -68,7 +69,9 @@ export class GutterContainer extends Container {
         prefixed.push(cache.prefixed[i]!);
       } else {
         allReused = false;
-        prefixed.push(lines.map((line) => lead + line));
+        // OSC 133 zone markers must stay at byte 0 for the fullscreen
+        // renderer's prompt navigation, so the gutter goes after them.
+        prefixed.push(lines.map((line) => prefixPreservingOsc133Zone(line, lead)));
       }
       i++;
     }
@@ -88,5 +91,13 @@ export class GutterContainer extends Container {
     }
 
     return out;
+  }
+
+  // Mouse events arrive in this container's frame, which includes the
+  // gutters; children render at the shrunk inner width after the left pad,
+  // so translate before delegating or clicks land a gutter-width off.
+  override handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
+    const inner = Math.max(1, event.width - this.leftPad - this.rightPad);
+    return super.handleMouse({ ...event, x: event.x - this.leftPad, width: inner });
   }
 }

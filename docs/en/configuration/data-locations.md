@@ -1,6 +1,6 @@
 # Data locations
 
-Kimi Code CLI stores all runtime data — the config file, session history, login credentials, and diagnostic logs — under `~/.kimi-code/`. This page helps you understand where each type of data lives, what it is for, and how to clean up or relocate it when needed.
+Kimi Code CLI stores the config file, session history, login credentials, diagnostic logs, and other runtime data under `~/.kimi-code/`. This page helps you understand where each type of data lives, what it is for, and how to clean up or relocate it when needed.
 
 ## Data root directory
 
@@ -16,7 +16,7 @@ If you need to move the data directory elsewhere (for example, to isolate config
 export KIMI_CODE_HOME="$HOME/.config/kimi-code"
 ```
 
-Once set, **all** Kimi Code data — config, sessions, logs, OAuth credentials, Kimi-specific user Skills, global `AGENTS.md`, and more — lands under the new path. For the full reference on `KIMI_CODE_HOME`, see [Environment variables](./env-vars.md).
+Once set, **all** Kimi Code data lands under the new path: config, sessions, logs, OAuth credentials, Kimi-specific user Skills, global `AGENTS.md`, and more. For the full reference on `KIMI_CODE_HOME`, see [Environment variables](./env-vars.md).
 
 ::: tip Note
 
@@ -80,7 +80,7 @@ Inside each session directory:
 - **`agents/main/plans/`**: plan files written in Plan mode, named by plan id (`<id>.md`).
 - **`agents/agent-0/` etc.**: sub-Agent instance directories, each containing their own `wire.jsonl`.
 - **`logs/kimi-code.log`**: diagnostic log for this session; only present when a diagnostic event occurs.
-- **`tasks/`**: background task persistence — `tasks/<task_id>.json` stores status/pid/exit code; `tasks/<task_id>/output.log` stores output.
+- **`tasks/`**: background task persistence. `tasks/<task_id>.json` stores status/pid/exit code; `tasks/<task_id>/output.log` stores output.
 - **`cron/`**: scheduled task persistence; reloaded into the scheduler when the session is resumed with `kimi --session`. See [Scheduled tasks](../reference/tools.md#scheduled-tasks).
 
 ## Built-in tool cache

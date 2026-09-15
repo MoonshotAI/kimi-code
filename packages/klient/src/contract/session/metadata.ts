@@ -22,29 +22,33 @@ export const sessionMetaSchema = z.object({
   id: z.string(),
   version: z.number().optional(),
   title: z.string().optional(),
-  isCustomTitle: z.boolean().optional(),
+  titleKind: z.enum(['replaceable', 'generated', 'custom']).optional(),
   lastPrompt: z.string().optional(),
   createdAt: z.number(),
   updatedAt: z.number(),
   archived: z.boolean(),
+  archivedAt: z.number().optional(),
   cwd: z.string().optional(),
   forkedFrom: z.string().optional(),
   agents: z.record(z.string(), agentMetaSchema).optional(),
   custom: z.record(z.string(), z.unknown()).optional(),
+  lastTurnReason: z.enum(['completed', 'cancelled', 'failed']).optional(),
 });
 
 /** `Partial<Omit<SessionMeta, 'id' | 'createdAt'>>` — every key optional. */
 export const sessionMetaPatchSchema = z.object({
   version: z.number().optional(),
   title: z.string().optional(),
-  isCustomTitle: z.boolean().optional(),
+  titleKind: z.enum(['replaceable', 'generated', 'custom']).optional(),
   lastPrompt: z.string().optional(),
   updatedAt: z.number().optional(),
   archived: z.boolean().optional(),
+  archivedAt: z.number().optional(),
   cwd: z.string().optional(),
   forkedFrom: z.string().optional(),
   agents: z.record(z.string(), agentMetaSchema).optional(),
   custom: z.record(z.string(), z.unknown()).optional(),
+  lastTurnReason: z.enum(['completed', 'cancelled', 'failed']).optional(),
 });
 
 /** `keyof SessionMeta` — keep in sync with `sessionMetaSchema`. */
@@ -52,15 +56,17 @@ export const sessionMetaKeySchema = z.enum([
   'id',
   'version',
   'title',
-  'isCustomTitle',
+  'titleKind',
   'lastPrompt',
   'createdAt',
   'updatedAt',
   'archived',
+  'archivedAt',
   'cwd',
   'forkedFrom',
   'agents',
   'custom',
+  'lastTurnReason',
 ]);
 
 export const sessionMetadataChangedEventSchema = z.object({

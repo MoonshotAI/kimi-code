@@ -1,13 +1,3 @@
-/**
- * `authLegacy` domain (L7 edge adapter) — v1-compatible auth readiness summary.
- *
- * Implements the `GET /api/v1/auth` `AuthSummary` wire contract on top of the
- * native v2 services (`IProviderService`, `IConfigService`, `IOAuthService`).
- * This adapter exists only so v1 clients keep working against server-v2.
- * Bound at App scope — it is a stateless projector over the global provider /
- * model / credential state.
- */
-
 import { z } from 'zod';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -27,9 +17,8 @@ export const managedProviderSummarySchema = z.object({
 export type ManagedProviderSummary = z.infer<typeof managedProviderSummarySchema>;
 
 export const authSummarySchema = z.object({
-  ready: z.boolean(),
+  models_ready: z.boolean(),
   providers_count: z.number().int().nonnegative(),
-  default_model: z.string().nullable(),
   managed_provider: managedProviderSummarySchema.nullable(),
 });
 export type AuthSummary = z.infer<typeof authSummarySchema>;

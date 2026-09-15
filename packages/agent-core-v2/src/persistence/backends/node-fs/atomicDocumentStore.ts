@@ -1,17 +1,8 @@
-/**
- * `JsonAtomicDocumentStore` — node-fs backend for `IAtomicDocumentStore`.
- *
- * JSON and TOML codec implementations plus the `AtomicDocumentStoreBase`,
- * `JsonAtomicDocumentStore`, and `TomlAtomicDocumentStore` classes. Reads and
- * writes bytes through `IFileSystemStorageService`. Bound at
- * App scope.
- */
-
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { Event } from '#/_base/event';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import { IFileSystemStorageService, StorageError, StorageErrors } from '#/persistence/interface/storage';
 import {
@@ -49,7 +40,7 @@ class AtomicDocumentStoreBase implements IAtomicDocumentStore {
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    private readonly storage: IFileSystemStorageService,
+    protected readonly storage: IFileSystemStorageService,
     private readonly codec: DocumentCodec,
   ) {}
 
@@ -82,10 +73,6 @@ class AtomicDocumentStoreBase implements IAtomicDocumentStore {
     return this.storage.list(scope, prefix);
   }
 
-  watch(scope: string, key: string): Event<void> {
-    return this.storage.watch?.(scope, key) ?? (Event.None as Event<void>);
-  }
-
   acquire(_scope: string, _key: string): IDisposable {
     return toDisposable(() => {});
   }
@@ -97,9 +84,21 @@ export class JsonAtomicDocumentStore extends AtomicDocumentStoreBase {
   }
 }
 
-export class TomlAtomicDocumentStore extends AtomicDocumentStoreBase {
+export class TomlAtomicDocumentStore
+  extends AtomicDocumentStoreBase
+  implements IAtomicTomlDocumentStore
+{
   constructor(@IFileSystemStorageService storage: IFileSystemStorageService) {
     super(storage, tomlDocumentCodec);
+  }
+
+  async getText(scope: string, key: string): Promise<string | undefined> {
+    const bytes = await this.storage.read(scope, key);
+    return bytes === undefined ? undefined : textDecoder.decode(bytes);
+  }
+
+  async setText(scope: string, key: string, text: string): Promise<void> {
+    await this.storage.write(scope, key, textEncoder.encode(text), { atomic: true });
   }
 }
 

@@ -1,26 +1,18 @@
-/**
- * `tool` domain — foundational tool model contract.
- *
- * Owns the tool model shared by every tool domain: the static metadata
- * (`ToolSource` / `ToolDefinition` / `ToolInfo`), the `ExecutableTool`
- * contract every tool implements (`resolveExecution` → `ToolExecution` →
- * `execute(ctx)`), the `ExecutableToolContext` it runs against, the raw and
- * finalized results (`ExecutableToolResult` / `ToolResult`), the streaming
- * `ToolUpdate`, and the `AgentTool` service interface every DI-registered
- * agent tool implements. Also owns the `ToolAccesses`
- * resource-access declarations an execution emits so the host scheduler can
- * run non-conflicting calls concurrently (together with their conflict
- * semantics), and the `isMcpToolName` name predicate. The `stopTurn` /
- * `stopBatchAfterThis` fields are internal loop-control hints stripped
- * before persistence. No scoped service.
- */
-
-import type { ContentPart, ToolCall } from '#/kosong/contract/message';
-import type { Tool } from '#/kosong/contract/tool';
-import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
-import type { ToolInputDisplay } from '@moonshot-ai/protocol';
+import type { ContentPart, ToolCall, ToolDescription as Tool } from '#human/llm/message';
+import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 export type ExecutableToolOutput = string | ContentPart[];
+
+export const DEFAULT_TOOL_RESULT_MAX_CHARS = 50_000;
+
+export const DEFAULT_TOOL_RESULT_MAX_RETAINED_CHARS = 10_000_000;
+
+export interface ToolResultSpill {
+  readonly outputPath?: string;
+  readonly totalChars?: number;
+  readonly suffix?: string;
+}
 
 export type ToolDeliveryKind = 'steer';
 
@@ -40,18 +32,24 @@ export interface ExecutableToolSuccessResult {
   readonly output: ExecutableToolOutput;
   readonly isError?: false | undefined;
   readonly stopTurn?: boolean | undefined;
+  readonly stopTurnReason?: string;
   readonly truncated?: boolean | undefined;
   readonly note?: string;
   readonly delivery?: ToolDelivery | undefined;
+  readonly spill?: ToolResultSpill;
+  readonly spillExempt?: true;
 }
 
 export interface ExecutableToolErrorResult {
   readonly output: ExecutableToolOutput;
   readonly isError: true;
   readonly stopTurn?: boolean | undefined;
+  readonly stopTurnReason?: string;
   readonly truncated?: boolean | undefined;
   readonly note?: string;
   readonly delivery?: ToolDelivery | undefined;
+  readonly spill?: ToolResultSpill;
+  readonly spillExempt?: true;
 }
 
 export type ExecutableToolResult = ExecutableToolSuccessResult | ExecutableToolErrorResult;
@@ -62,7 +60,10 @@ export interface ToolUpdate {
   percent?: number | undefined;
   customKind?: string | undefined;
   customData?: unknown;
+  replace?: boolean;
 }
+
+export const MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE = 'mcp.oauth.authorization_url';
 
 export interface ExecutableToolContext {
   readonly turnId: number;
@@ -70,6 +71,7 @@ export interface ExecutableToolContext {
   readonly trace?: LLMRequestTrace;
   readonly metadata?: unknown;
   readonly signal: AbortSignal;
+  readonly steerSignal?: AbortSignal;
   readonly onUpdate?: ((update: ToolUpdate) => void) | undefined;
   readonly onForegroundTaskStart?: ((taskId: string) => void) | undefined;
 }

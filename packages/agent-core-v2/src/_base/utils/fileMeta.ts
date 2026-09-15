@@ -1,18 +1,10 @@
-/**
- * File content metadata helpers — binary detection, line counting, etag, and
- * extension-based mime / language guessing.
- *
- * Pure functions over bytes, text, and stat-like shapes; no io happens here.
- * Binary detection samples the leading `FS_BINARY_SAMPLE_BYTES` of a file and
- * flags it as binary when the non-printable fraction exceeds
- * `FS_BINARY_NONPRINTABLE_FRACTION`; etags are built from any stat-like shape
- * carrying `size` / `mtimeMs` / `ino` (`FileMetaStat`).
- */
-
 import { extname } from 'node:path';
 
+import { classifyTextSample } from '#/_base/text/encoding';
+
+export { FS_BINARY_NONPRINTABLE_FRACTION } from '#/_base/text/encoding';
+
 export const FS_BINARY_SAMPLE_BYTES = 4096;
-export const FS_BINARY_NONPRINTABLE_FRACTION = 0.3;
 
 export interface FileMetaStat {
   readonly size: number;
@@ -21,16 +13,7 @@ export interface FileMetaStat {
 }
 
 export function detectBinary(buf: Uint8Array): boolean {
-  if (buf.length === 0) return false;
-  let nonPrintable = 0;
-  for (let i = 0; i < buf.length; i++) {
-    const b = buf[i]!;
-    if (b === 0) return true;
-    if (b === 9 || b === 10 || b === 13) continue;
-    if (b >= 32 && b <= 126) continue;
-    nonPrintable++;
-  }
-  return nonPrintable / buf.length > FS_BINARY_NONPRINTABLE_FRACTION;
+  return classifyTextSample(buf).isBinary;
 }
 
 export function countLines(text: string): number {
@@ -80,6 +63,29 @@ export function guessMime(path: string, isBinary: boolean): string {
   const mapped = EXT_TO_MIME[ext];
   if (mapped !== undefined) return mapped;
   return isBinary ? 'application/octet-stream' : 'text/plain';
+}
+
+const APPLICATION_TEXT_ALIASES: Readonly<Record<string, string>> = {
+  'application/javascript': 'text/javascript',
+  'application/x-javascript': 'text/javascript',
+  'application/ecmascript': 'text/javascript',
+  'application/yaml': 'text/yaml',
+  'application/x-yaml': 'text/yaml',
+  'application/sql': 'text/plain',
+  'application/graphql': 'text/plain',
+  'application/x-www-form-urlencoded': 'text/plain',
+};
+
+export function textExtensionForMime(mimeType: string): string | undefined {
+  const mime = mimeType.split(';')[0]!.trim().toLowerCase();
+  if (mime === 'application/json' || mime.endsWith('+json')) return '.json';
+  if (mime === 'application/xml' || mime.endsWith('+xml')) return '.xml';
+  if (mime.endsWith('+yaml')) return '.yaml';
+  if (mime === 'application/toml') return '.toml';
+  if (mime === 'text/csv') return '.csv';
+  const textMime = APPLICATION_TEXT_ALIASES[mime] ?? mime;
+  if (!textMime.startsWith('text/')) return undefined;
+  return Object.entries(EXT_TO_MIME).find(([, value]) => value === textMime)?.[0] ?? '.txt';
 }
 
 const EXT_TO_LANGUAGE: Readonly<Record<string, string>> = {

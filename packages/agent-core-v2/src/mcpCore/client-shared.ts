@@ -1,7 +1,3 @@
-/**
- * `mcpCore` domain — shared MCP client helpers — request options, liveness probes, result conversion.
- */
-
 import { getCoreVersion } from '#/_base/version';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 
@@ -79,11 +75,21 @@ export function toMcpToolDefinition(tool: SdkListedTool): MCPToolDefinition {
 
 export function toMcpToolResult(result: unknown): MCPToolResult {
   if (typeof result === 'object' && result !== null && 'content' in result) {
-    const typed = result as { content: unknown; isError?: unknown };
+    const typed = result as {
+      content: unknown;
+      isError?: unknown;
+      structuredContent?: unknown;
+      _meta?: unknown;
+    };
     if (Array.isArray(typed.content)) {
       return {
         content: typed.content as MCPToolResult['content'],
         isError: typed.isError === true,
+        structuredContent: typed.structuredContent,
+        _meta:
+          typeof typed._meta === 'object' && typed._meta !== null
+            ? (typed._meta as Record<string, unknown>)
+            : undefined,
       };
     }
   }

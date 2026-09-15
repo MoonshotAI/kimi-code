@@ -2,7 +2,6 @@
   "$schema": "https://developer.microsoft.com/json-schemas/api-extractor/v7/api-extractor.schema.json",
   "mainEntryPointFilePath": "<projectFolder>/.tmp-api-extractor/dts/node-sdk/src/index.d.ts",
   "bundledPackages": [
-    "@moonshot-ai/agent-core",
     "@moonshot-ai/kaos",
     "@moonshot-ai/kimi-code-oauth",
     "@moonshot-ai/kosong"

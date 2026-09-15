@@ -1,17 +1,9 @@
-/**
- * `GET /api/v1/connections` (server-v2) — wire-contract test.
- *
- * Clients attach to `/api/v1/ws`. The no-handshake case uses a raw `ws`
- * socket (no `client_hello`); the handshake + subscription cases send
- * `client_hello` / `unsubscribe` control frames per the v1 ws protocol.
- */
-
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { connectionsListResponseSchema } from '../src/protocol/rest-connection';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -31,14 +23,14 @@ describe('server-v2 GET /api/v1/connections', () => {
   let base: string;
   let wsUrl: string;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-connections-'));
     server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
     base = `http://127.0.0.1:${server.port}`;
     wsUrl = `ws://127.0.0.1:${server.port}/api/v1/ws`;
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -73,7 +65,6 @@ describe('server-v2 GET /api/v1/connections', () => {
     return new Promise((resolve, reject) => {
       const token = (server as RunningServer).authTokenService.getToken();
       const ws = new WebSocket(wsUrl, [`kimi-code.bearer.${token}`]);
-      // Resolve on the server's first (`server_hello`) frame.
       ws.once('message', () => resolve(ws));
       ws.once('error', reject);
     });
@@ -125,7 +116,6 @@ describe('server-v2 GET /api/v1/connections', () => {
         id: 'h1',
         payload: { client_id: 'connections-test', subscriptions: [sessionId] },
       });
-      // Let the `client_hello` register server-side.
       await new Promise((r) => setTimeout(r, 50));
 
       let connections = await listConnections();

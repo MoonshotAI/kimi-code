@@ -1,9 +1,10 @@
 /* eslint-disable import/first -- vi.mock setup must run before the imports it stubs out. */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   spawnSync: vi.fn(),
   execFile: vi.fn(),
+  resolveCommandPath: vi.fn(),
 }));
 
 vi.mock('node:child_process', () => ({
@@ -11,7 +12,15 @@ vi.mock('node:child_process', () => ({
   spawnSync: mocks.spawnSync,
 }));
 
+vi.mock('#/utils/process/resolve-command', () => ({
+  resolveCommandPath: mocks.resolveCommandPath,
+}));
+
 import { createGitStatusCache, formatGitBadge } from '#/utils/git/git-status';
+
+beforeEach(() => {
+  mocks.resolveCommandPath.mockImplementation((command: string) => `/usr/bin/${command}`);
+});
 
 afterEach(() => {
   vi.useRealTimers();
@@ -198,6 +207,47 @@ describe('git status cache', () => {
       diffDeleted: 1,
       pullRequest: null,
     });
+  });
+
+  it('returns null without spawning when git cannot be resolved to a safe path', () => {
+    mocks.resolveCommandPath.mockReturnValue(undefined);
+    expect(createGitStatusCache('/tmp/repo').getStatus()).toBeNull();
+    expect(mocks.spawnSync).not.toHaveBeenCalled();
+    expect(mocks.execFile).not.toHaveBeenCalled();
+  });
+
+  it('spawns git and gh through their resolved absolute paths', async () => {
+    mocks.execFile.mockImplementation(
+      (
+        _cmd: string,
+        _args: string[],
+        _options: unknown,
+        callback: (error: Error | null, stdout: string, stderr: string) => void,
+      ) => {
+        callback(new Error('no pull request'), '', '');
+      },
+    );
+    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
+      if (args.includes('rev-parse')) return { status: 0, stdout: 'true\n' };
+      if (args.includes('branch')) return { status: 0, stdout: 'main\n' };
+      if (args.includes('status')) return { status: 0, stdout: '## main...origin/main\n' };
+      return { status: 1, stdout: '' };
+    });
+
+    const cache = createGitStatusCache('/tmp/repo');
+    expect(cache.getStatus()).not.toBeNull();
+    await Promise.resolve();
+
+    expect(mocks.resolveCommandPath).toHaveBeenCalledWith('git', '/tmp/repo');
+    for (const call of mocks.spawnSync.mock.calls) {
+      expect(call[0]).toBe('/usr/bin/git');
+    }
+    expect(mocks.execFile).toHaveBeenCalledWith(
+      '/usr/bin/gh',
+      expect.any(Array),
+      expect.anything(),
+      expect.any(Function),
+    );
   });
 
   it('returns null when the working directory is not a git repo and formats badges', () => {

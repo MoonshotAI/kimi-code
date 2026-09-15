@@ -41,15 +41,17 @@ export interface TabbedModelSelectorOptions {
   readonly selectedValue?: string;
   readonly currentThinkingEffort: string;
   /** Forwarded to each inner selector; overrides the default ' Select a model'
-   * title line (e.g. the secondary-model picker). */
+   * title line. */
   readonly title?: string;
   /** When set, the tab for this provider id is initially active instead of the
    * tab derived from `currentValue`. */
   readonly initialTabId?: string;
-  /** Forwarded to each inner selector; when set, warning-colored lines are
-   * rendered directly below the key-hint line, wrapping as needed (e.g. the
-   * mid-conversation switch cost notice). */
+  /** When set, warning-colored lines are rendered directly below the key-hint
+   * line, wrapping as needed (e.g. the mid-conversation switch cost notice). */
   readonly warning?: string;
+  /** Forwarded to each inner selector; set to false to hide the Thinking
+   * footer and disable ←/→ effort switching. */
+  readonly thinkingControl?: boolean;
   readonly onSelect: (selection: ModelSelection) => void;
   /** Forwarded to each inner selector; when set, Alt+S applies the choice to
    * the current session only without persisting it as the default. */
@@ -187,6 +189,7 @@ function makeSelector(
     searchable: true,
     providerSwitchHint: true,
     warning: opts.warning,
+    thinkingControl: opts.thinkingControl,
     onSelect: opts.onSelect,
     onSessionOnlySelect: opts.onSessionOnlySelect,
     onCancel: opts.onCancel,

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DisposableStore } from '#/_base/di/lifecycle';
+import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import type { TestInstantiationService } from '#/_base/di/test';
 import { UserCancellationError } from '#/_base/utils/abort';
@@ -16,17 +16,25 @@ import {
 } from '#/agent/permissionRules/permissionRules';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { AgentToolApprovalService } from '#/agent/toolApproval/toolApprovalService';
+import {
+  AgentToolApprovalService,
+  PermissionApprovalRequested,
+  PermissionApprovalResolved,
+} from '#/agent/toolApproval/toolApprovalService';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
+import type { Event2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { ToolCall } from '#/kosong/contract/message';
+import { OrderedHookSlot } from '#/hooks';
+import type { ToolCall } from '#human/llm/message';
 import {
-  ISessionApprovalService,
   type ApprovalRequest,
   type ApprovalResponse,
-} from '#/session/approval/approval';
+} from '#/agent/interaction/approval';
+import { INTERACTION_TAG_SESSION_ID } from '#/human/interaction/interaction';
+import { interactions } from '#/human/interaction/facade';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import { stubPermissionModeService } from '../permissionMode/stubs';
@@ -116,13 +124,23 @@ describe('AgentToolApprovalService', () => {
         }));
         reg.defineInstance(ITelemetryService, recordingTelemetry(records));
         reg.defineInstance(IEventBus, eventBus);
+        const dispatcher: IEventDispatcher = {
+          _serviceBrand: undefined,
+          hooks: { onDidRestore: new OrderedHookSlot() },
+          dispatch: async (event: Event2) => {
+            eventBus.publish(event, ix.get(IAgentScopeContext).agentContext);
+          },
+        } as unknown as IEventDispatcher;
+        reg.defineInstance(IEventDispatcher, dispatcher);
         reg.define(IAgentToolApprovalService, AgentToolApprovalService);
       },
       strict: true,
     });
+    (eventBus as EventBusService).activateAgent(ix.get(IAgentScopeContext).agentContext);
   });
   afterEach(() => {
     disposables.dispose();
+    interactions.purgeSession('test-session');
   });
 
   function make(): IAgentToolApprovalService {
@@ -133,13 +151,24 @@ describe('AgentToolApprovalService', () => {
     request: (approval: ApprovalRequest) => Promise<ApprovalResponse>,
   ): ReturnType<typeof vi.fn<(approval: ApprovalRequest) => Promise<ApprovalResponse>>> {
     const requestSpy = vi.fn(request);
-    ix.set(ISessionApprovalService, {
-      _serviceBrand: undefined,
-      request: requestSpy,
-      enqueue: (approval) => ({ ...approval, id: approval.id ?? 'approval-1' }),
-      decide: () => {},
-      listPending: () => [],
-    });
+    const seen = new Set<string>();
+    disposables.add(
+      toDisposable(
+        interactions.onDidChangePending(() => {
+          for (const pending of interactions.findAll({
+            kind: 'approval',
+            resolved: false,
+            tags: { [INTERACTION_TAG_SESSION_ID]: 'test-session' },
+          })) {
+            if (seen.has(pending.id)) continue;
+            seen.add(pending.id);
+            void requestSpy(pending.payload as ApprovalRequest).then((response) => {
+              interactions.respond(pending.id, response);
+            });
+          }
+        }),
+      ),
+    );
     return requestSpy;
   }
 
@@ -149,8 +178,8 @@ describe('AgentToolApprovalService', () => {
   } {
     const requested = vi.fn();
     const resolved = vi.fn();
-    disposables.add(eventBus.subscribe('permission.approval.requested', requested));
-    disposables.add(eventBus.subscribe('permission.approval.resolved', resolved));
+    disposables.add(eventBus.subscribe(PermissionApprovalRequested, requested));
+    disposables.add(eventBus.subscribe(PermissionApprovalResolved, resolved));
     return { requested, resolved };
   }
 
@@ -159,6 +188,7 @@ describe('AgentToolApprovalService', () => {
       IAgentScopeContext,
       makeAgentScopeContext({ agentId: 'sub-1', agentScope: 'sub-1' }),
     );
+    (eventBus as EventBusService).activateAgent(ix.get(IAgentScopeContext).agentContext);
   }
 
   describe('resolvePermissionResolution', () => {
@@ -230,44 +260,9 @@ describe('AgentToolApprovalService', () => {
         veto: { output: 'Plan review handled.' },
       });
     });
-
-    it('runs the ask round-trip for ask resolutions', async () => {
-      useBroker(async () => ({ decision: 'approved' }));
-      const svc = make();
-      await expect(
-        svc.resolvePermissionResolution(ask(), makeContext('Bash'), 'p'),
-      ).resolves.toBeUndefined();
-    });
   });
 
   describe('requestToolApproval', () => {
-    it('auto-approves when no approval broker is registered', async () => {
-      const events = subscribeApprovalEvents();
-      const svc = make();
-
-      await expect(
-        svc.requestToolApproval(makeContext('Bash', { command: 'printf hi' }), ask(), 'fallback-ask'),
-      ).resolves.toBeUndefined();
-
-      expect(events.requested).not.toHaveBeenCalled();
-      expect(events.resolved).not.toHaveBeenCalled();
-      expect(recorded).toHaveLength(1);
-      expect(recorded[0]).toMatchObject({
-        toolName: 'Bash',
-        sessionApprovalRule: undefined,
-        result: { decision: 'approved' },
-      });
-      expect(records).toContainEqual({
-        event: 'permission_approval_result',
-        properties: expect.objectContaining({
-          policy_name: 'fallback-ask',
-          tool_name: 'Bash',
-          result: 'approved',
-          session_cache_written: false,
-        }),
-      });
-    });
-
     it('publishes approval events around the broker round-trip', async () => {
       const events = subscribeApprovalEvents();
       const request = useBroker(async () => ({
@@ -281,38 +276,44 @@ describe('AgentToolApprovalService', () => {
       ).resolves.toBeUndefined();
 
       expect(request).toHaveBeenCalledTimes(1);
-      expect(events.requested).toHaveBeenCalledWith({
-        type: 'permission.approval.requested',
-        sessionId: 'test-session',
-        agentId: 'main',
-        turnId: 1,
-        toolCallId: 'call-Bash',
-        toolName: 'Bash',
-        action: 'Approve Bash',
-        toolInput: { command: 'printf first' },
-        display: {
-          kind: 'generic',
-          summary: 'Approve Bash',
-          detail: { command: 'printf first' },
-        },
-      });
-      expect(events.resolved).toHaveBeenCalledWith({
-        type: 'permission.approval.resolved',
-        sessionId: 'test-session',
-        agentId: 'main',
-        turnId: 1,
-        toolCallId: 'call-Bash',
-        toolName: 'Bash',
-        action: 'Approve Bash',
-        toolInput: { command: 'printf first' },
-        display: {
-          kind: 'generic',
-          summary: 'Approve Bash',
-          detail: { command: 'printf first' },
-        },
-        decision: 'approved',
-        selectedLabel: 'Approve once',
-      });
+      expect(events.requested).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'permission.approval.requested',
+          id: expect.stringMatching(/^approval_/),
+          sessionId: 'test-session',
+          agentId: 'main',
+          turnId: 1,
+          toolCallId: 'call-Bash',
+          toolName: 'Bash',
+          action: 'Approve Bash',
+          toolInput: { command: 'printf first' },
+          display: {
+            kind: 'generic',
+            summary: 'Approve Bash',
+            detail: { command: 'printf first' },
+          },
+        }),
+      );
+      expect(events.resolved).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'permission.approval.resolved',
+          id: expect.stringMatching(/^approval_/),
+          sessionId: 'test-session',
+          agentId: 'main',
+          turnId: 1,
+          toolCallId: 'call-Bash',
+          toolName: 'Bash',
+          action: 'Approve Bash',
+          toolInput: { command: 'printf first' },
+          display: {
+            kind: 'generic',
+            summary: 'Approve Bash',
+            detail: { command: 'printf first' },
+          },
+          decision: 'approved',
+          selectedLabel: 'Approve once',
+        }),
+      );
     });
 
     it('uses the execution description and display when provided', async () => {
@@ -331,6 +332,7 @@ describe('AgentToolApprovalService', () => {
       );
 
       expect(request).toHaveBeenCalledWith({
+        id: expect.stringMatching(/^approval_/),
         sessionId: 'test-session',
         agentId: 'main',
         turnId: 1,
@@ -339,6 +341,19 @@ describe('AgentToolApprovalService', () => {
         action: 'clean build output',
         display,
       });
+    });
+
+    it('mints one interaction id shared by the broker request and the events', async () => {
+      const events = subscribeApprovalEvents();
+      const request = useBroker(async () => ({ decision: 'approved' }));
+      const svc = make();
+
+      await svc.requestToolApproval(makeContext('Bash'), ask(), 'fallback-ask');
+
+      const brokerId = request.mock.calls[0]![0].id;
+      expect(brokerId).toMatch(/^approval_/);
+      expect(events.requested.mock.calls[0]![0]).toMatchObject({ id: brokerId });
+      expect(events.resolved.mock.calls[0]![0]).toMatchObject({ id: brokerId });
     });
 
     it('records a session-scope approval rule when approved for session', async () => {
@@ -503,14 +518,18 @@ describe('AgentToolApprovalService', () => {
     it('tracks approval transport errors before rethrowing', async () => {
       const events = subscribeApprovalEvents();
       const error = new Error('approval transport closed');
-      useBroker(async () => {
-        throw error;
-      });
+      useBroker(() => new Promise<ApprovalResponse>(() => {}));
       const svc = make();
+      const controller = new AbortController();
 
-      await expect(
-        svc.requestToolApproval(makeContext('ExitPlanMode'), ask(), 'exit-plan-mode-review-ask'),
-      ).rejects.toThrow('approval transport closed');
+      const promise = svc.requestToolApproval(
+        makeContext('ExitPlanMode', {}, { signal: controller.signal }),
+        ask(),
+        'exit-plan-mode-review-ask',
+      );
+      const expectation = expect(promise).rejects.toThrow('approval transport closed');
+      controller.abort(error);
+      await expectation;
 
       expect(records).toContainEqual({
         event: 'permission_approval_result',
@@ -530,18 +549,18 @@ describe('AgentToolApprovalService', () => {
     });
 
     it('folds resolveError continuations into the result instead of rethrowing', async () => {
-      useBroker(async () => {
-        throw new Error('approval transport closed');
-      });
+      useBroker(() => new Promise<ApprovalResponse>(() => {}));
       const svc = make();
+      const controller = new AbortController();
 
-      await expect(
-        svc.requestToolApproval(
-          makeContext('ExitPlanMode'),
-          ask({ resolveError: () => ({ kind: 'deny', message: 'review unavailable' }) }),
-          'exit-plan-mode-review-ask',
-        ),
-      ).resolves.toEqual({
+      const promise = svc.requestToolApproval(
+        makeContext('ExitPlanMode', {}, { signal: controller.signal }),
+        ask({ resolveError: () => ({ kind: 'deny', message: 'review unavailable' }) }),
+        'exit-plan-mode-review-ask',
+      );
+      controller.abort(new Error('approval transport closed'));
+
+      await expect(promise).resolves.toEqual({
         veto: { output: 'review unavailable', isError: true },
       });
     });

@@ -1,15 +1,3 @@
-/**
- * `git` domain — git work-tree discovery.
- *
- * Walks up from a directory to find the enclosing git work tree: the nearest
- * ancestor containing a `.git` entry, either a directory (plain repository)
- * or a file holding a `gitdir:` pointer (linked worktree / submodule) whose
- * target is resolved into `controlDirPath`. Entries that are neither — or
- * files without a parseable pointer — do not count and the walk continues.
- * All filesystem access goes through the os `IHostFileSystem` and paths are
- * pathe-normalized (Windows-aware, forward slashes). Pure functions.
- */
-
 import { dirname, isAbsolute, join, normalize } from 'pathe';
 
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';

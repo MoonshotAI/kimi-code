@@ -1,8 +1,3 @@
-/**
- * `llmProtocol` error contract — provider error classification, normalization,
- * and retry metadata shared by generation and swarm recovery.
- */
-
 import {
   APIConnectionError,
   APIContextOverflowError,
@@ -21,7 +16,7 @@ import {
   isToolExchangeAdjacencyError,
   normalizeAPIStatusError,
   parseRetryAfterMs,
-} from '#/kosong/contract/errors';
+} from '#/llm-adapter/contract/errors';
 import { describe, expect, it } from 'vitest';
 
 describe('ChatProviderError', () => {

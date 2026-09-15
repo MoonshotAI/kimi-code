@@ -1,17 +1,3 @@
-/**
- * `/files/*` REST routes — multipart upload, binary download, and delete.
- *
- *   POST   /files            upload a file (multipart/form-data) → FileMeta
- *   GET    /files/{file_id}  download a file (binary stream)
- *   DELETE /files/{file_id}  delete a file → { deleted: true }
- *
- * Backed by the v2 `IFileService` (Core scope), which stores bytes in
- * `IBlobStore` and the metadata index alongside them. Uploads stream straight
- * to the store with no size cap (local single-user deployment), and the route
- * mirrors the v1 server's wire behavior (envelope codes 40407 / 41301,
- * content-disposition) while resolving the store through `core.accessor.get`.
- */
-
 import multipart from '@fastify/multipart';
 
 import {
@@ -23,6 +9,7 @@ import {
 import { z } from 'zod';
 
 import { requestLog } from '../lib/requestLog';
+import { buildContentDisposition } from '../lib/contentDisposition';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import { errEnvelope, okEnvelope } from '../protocol/envelope';
@@ -76,10 +63,6 @@ interface FilesReply {
 export function registerFilesRoutes(app: FilesRouteHost, core: Scope): void {
   app.register(multipart, {
     limits: {
-      // No upload size cap — local single-user deployment. The limit must be
-      // set explicitly: @fastify/multipart defaults `fileSize` to Fastify's
-      // `bodyLimit` (1 MiB) when it is left undefined, and silently truncates
-      // the file stream at that size.
       fileSize: Number.MAX_SAFE_INTEGER,
       files: 1,
     },
@@ -164,9 +147,6 @@ export function registerFilesRoutes(app: FilesRouteHost, core: Scope): void {
           .header('accept-ranges', 'bytes')
           .header('etag', `"${meta.id}-${size}"`);
 
-        // Browsers load <video>/<audio> via byte-range requests (Range: bytes=…).
-        // Without 206 Partial Content + Content-Range the media stalls at 0:00
-        // and refuses to play or seek, so honor Range when the client sends one.
         const range = parseRange(
           readRangeHeader((req as unknown as FastifyRequestLike).headers['range']),
           size,
@@ -263,22 +243,11 @@ function readRangeHeader(value: string | string[] | undefined): string | undefin
   return Array.isArray(value) ? value[0] : value;
 }
 
-function buildContentDisposition(name: string, mediaType?: string): string {
-  const disposition = /^(image|video|audio)\//.test(mediaType ?? '') ? 'inline' : 'attachment';
-  if (/^[\w. ()+[\]-]+$/.test(name)) {
-    return `${disposition}; filename="${name}"`;
-  }
-  return disposition;
-}
-
 interface ByteRange {
   start: number;
   end: number;
 }
 
-/** Parse a `Range: bytes=start-end` header against the file size. Returns
- *  undefined for a missing / malformed / unsatisfiable range, in which case the
- *  caller serves the whole file with 200 (browsers accept that response). */
 function parseRange(header: string | undefined, size: number): ByteRange | undefined {
   if (!header || size <= 0) return undefined;
   const m = /^bytes=(\d*)-(\d*)$/i.exec(header.trim());
@@ -290,7 +259,6 @@ function parseRange(header: string | undefined, size: number): ByteRange | undef
   let start: number;
   let end: number;
   if (startStr === '') {
-    // Suffix range: `bytes=-N` -> the last N bytes.
     const suffix = Number(endStr);
     if (!Number.isFinite(suffix) || suffix <= 0) return undefined;
     start = Math.max(size - suffix, 0);

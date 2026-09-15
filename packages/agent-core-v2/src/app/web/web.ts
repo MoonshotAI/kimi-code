@@ -1,11 +1,3 @@
-/**
- * `web` domain — URL fetching with an optional OAuth-backed backend.
- *
- * Declares the `IWebFetchService` seam that yields the `UrlFetcher` behind
- * the built-in `FetchURL` tool, so `FetchURL` works both with and without
- * OAuth. Bound at App scope.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 import type { UrlFetcher } from './tools/fetch-url-types';

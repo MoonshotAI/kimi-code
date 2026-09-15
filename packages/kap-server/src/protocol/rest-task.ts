@@ -1,9 +1,3 @@
-/**
- *   GET  /v1/sessions/{session_id}/tasks                 query: {status?}
- *   GET  /v1/sessions/{session_id}/tasks/{task_id}       query: {with_output?, output_bytes?}
- *   POST /v1/sessions/{session_id}/tasks/{task_id}:cancel
- */
-
 import { z } from 'zod';
 
 import { taskSchema, taskStatusSchema } from './task';
@@ -31,6 +25,12 @@ export const cancelTaskResultSchema = z.object({
   cancelled: z.literal(true),
 });
 export type CancelTaskResult = z.infer<typeof cancelTaskResultSchema>;
+
+export const detachTaskResultSchema = z.object({
+  detached: z.boolean(),
+  status: taskStatusSchema,
+});
+export type DetachTaskResult = z.infer<typeof detachTaskResultSchema>;
 
 export const taskAlreadyFinishedDataSchema = z.object({
   cancelled: z.literal(false),

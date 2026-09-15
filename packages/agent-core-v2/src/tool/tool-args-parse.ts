@@ -1,12 +1,3 @@
-/**
- * `tool` domain — tool-call arguments parsing.
- *
- * Decodes the provider's raw `arguments` payload into a plain value. A
- * payload that fails JSON parsing is normalized to `{}` and flagged with
- * `parseFailed`, so callers can tell "the model sent an empty object" apart
- * from "the model sent malformed text". Pure helper; no scoped service.
- */
-
 export function parseToolCallArguments(raw: unknown): {
   readonly data: unknown;
   readonly parseFailed: boolean;

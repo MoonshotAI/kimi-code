@@ -299,6 +299,12 @@ export class QuestionDialogComponent extends Container implements Focusable {
     this.reviewMessage = undefined;
 
     if (this.isOtherOption(questionIdx, optionIdx)) {
+      if (question.multi_select && this.multiSelections[questionIdx]?.has(optionIdx)) {
+        this.multiSelections[questionIdx].delete(optionIdx);
+        this.lastAnswerMethod = method;
+        this.updateAnswer(questionIdx);
+        return;
+      }
       this.enterOtherInput(questionIdx);
       return;
     }
@@ -463,7 +469,7 @@ export class QuestionDialogComponent extends Container implements Focusable {
         appendWrapped(lines, '   ', '   ', bodyLine, renderWidth, dim);
       }
       if (bodyLines.length > visibleBodyLines.length) {
-        lines.push(dim(`   ... ${String(bodyLines.length - visibleBodyLines.length)} more lines`));
+        lines.push(dim(`   … ${String(bodyLines.length - visibleBodyLines.length)} more lines`));
       }
     }
 

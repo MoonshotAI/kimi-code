@@ -1,59 +1,3 @@
-/**
- * `/api/v1/fs::browse` + `/api/v1/fs::home` + `/api/v1/fs::content` route
- * handlers — server-v2 port.
- *
- * The folder-picker pair mirrors `packages/server/src/routes/workspaceFs.ts`
- * path-for-path: two distinct `GET` routes backed by `agent-core-v2`'s native
- * `IHostFolderBrowser` (Core scope), translating its domain errors to wire
- * codes (server-align.md Case A):
- *
- *   - `HostFolderNotAbsoluteError` → 40001 validation.failed
- *   - `HostFolderNotFoundError`    → 40409 fs.path_not_found
- *   - `HostFolderPermissionError`  → 40411 fs.permission_denied
- *
- * `fs::mkdir` is another server-v2 addition with no v1 counterpart: it creates
- * a directory by absolute path (the folder picker's "new folder" backend). It
- * is TEMPORARILY implemented directly on `node:fs/promises.mkdir` here in the
- * transport layer; the engine deliberately has no "unconfined write" domain
- * Service, same as the read side.
- *
- * `fs::content` is a server-v2 addition with no v1 counterpart: it serves ANY
- * absolute path on the host as a raw byte stream, so the global bearer auth
- * is its only access gate. The response is plain file content (no envelope)
- * with a best-effort `Content-Type`, `ETag` / `If-None-Match` caching, and
- * single-range `Range` support — the same serving semantics as the session
- * `fs/{path}:download` route, so browsers can render previews directly.
- * All file handling lives here in the transport layer on top of the os
- * `IHostFileSystem` primitives — the engine deliberately has no "unconfined
- * read" domain Service. The mime / etag helpers are shared with the engine's
- * `workspaceFs` via `agent-core-v2/_base/utils/fileMeta` so both surfaces label
- * content the same way. `IHostFileSystem` failures arrive as coded `os.fs.*`
- * errors and are mapped here:
- *
- *   - not absolute                        → 40001 validation.failed
- *   - `os.fs.not_found` / `not_directory` → 40409 fs.path_not_found
- *   - `os.fs.permission_denied`           → 40411 fs.permission_denied
- *   - directory target                    → 40906 fs.is_directory
- *
- * Routes:
- *
- *   GET /fs::browse?path=<abs-path>    list sub-directories (v1 mirror)
- *   GET /fs::home                      $HOME + recent workspace roots (v1 mirror)
- *   GET /fs::content?path=<abs-path>   raw content of any host file (server-v2 addition)
- *   POST /fs::mkdir { path }           create a directory by absolute path (server-v2 addition)
- *
- * **Wire path vs source path.** The source path strings carry a double colon
- * (`/fs::browse`, `/fs::home`) because that is the v1 declaration this mirror
- * must match. Fastify's router (find-my-way) treats the first `:` in a segment
- * as a static/param split, so these registrations are served on the wire as
- * **single-colon** URLs — `/api/v1/fs:browse` and `/api/v1/fs:home`. That is
- * byte-for-byte the v1 contract (see `packages/protocol/src/rest/fsBrowse.ts`,
- * which documents `GET /v1/fs:browse` / `GET /v1/fs:home`). `/fs::content`
- * follows the same single-colon wire convention. A single `/fs:action`
- * parametric dispatcher is NOT a faithful mirror: it accepts the double-colon
- * URL that v1 404s on and rejects the single-colon URL v1 serves.
- */
-
 import { createReadStream, type ReadStream } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
@@ -76,10 +20,10 @@ import {
 } from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
 import {
   buildEtag,
-  detectBinary,
   FS_BINARY_SAMPLE_BYTES,
   guessMime,
 } from '@moonshot-ai/agent-core-v2/_base/utils/fileMeta';
+import { classifyTextSample } from '@moonshot-ai/agent-core-v2/_base/text/encoding';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -222,10 +166,6 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
   );
 }
 
-// ---------------------------------------------------------------------------
-// fs:content — host-side arbitrary file serving, implemented in the transport layer.
-// ---------------------------------------------------------------------------
-
 const fsContentQuerySchema = z.object({
   path: z.string().min(1),
 });
@@ -268,9 +208,6 @@ async function handleFsContent(
     );
     return;
   }
-  // Only regular files are served: device nodes (/dev/zero streams forever),
-  // FIFOs (reads block), sockets, and /proc-style zero-size virtual files
-  // would otherwise hang or produce malformed responses.
   if (!st.isFile) {
     reply.send(
       errEnvelope(
@@ -282,14 +219,13 @@ async function handleFsContent(
     return;
   }
 
-  // Sample the leading bytes only to refine the mime fallback for unknown
-  // extensions (octet-stream vs text/plain), mirroring session fs downloads.
   let isBinary = false;
   try {
     const sampleSize = Math.min(FS_BINARY_SAMPLE_BYTES, st.size);
     const sample =
       sampleSize === 0 ? new Uint8Array() : await hostFs.readBytes(abs, sampleSize);
-    isBinary = detectBinary(sample);
+    const classification = classifyTextSample(sample);
+    isBinary = classification.isBinary || classification.encoding !== 'utf-8';
   } catch (err) {
     sendOsFsError(reply, requestId, err, path);
     return;
@@ -312,7 +248,6 @@ async function handleFsContent(
     try {
       stream.destroy();
     } catch {
-      // best-effort
     }
   };
 
@@ -332,10 +267,6 @@ async function handleFsContent(
   stream.on('error', onStreamError(stream));
   return reply.send(stream) as unknown as void;
 }
-
-// ---------------------------------------------------------------------------
-// fs:mkdir — host-side directory creation, temporarily on node fs directly.
-// ---------------------------------------------------------------------------
 
 const fsMkdirBodySchema = z.object({
   path: z.string().min(1),
@@ -363,9 +294,6 @@ async function handleFsMkdir(
     return;
   }
 
-  // Non-recursive on purpose: the folder picker creates one level at a time,
-  // and a missing parent surfacing as fs.path_not_found beats silently
-  // creating a deep tree the user mistyped.
   try {
     await mkdir(path);
   } catch (err) {
@@ -395,7 +323,6 @@ async function handleFsMkdir(
   reply.send(okEnvelope({ path }, requestId));
 }
 
-/** Map a coded `os.fs.*` failure from `IHostFileSystem` onto the wire codes. */
 function sendOsFsError(
   reply: { send(payload: unknown): unknown },
   requestId: string,

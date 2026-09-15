@@ -8,10 +8,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { registerExportCommand } from '#/cli/sub/export';
 import { createKimiCodeHostIdentity } from '#/cli/version';
-import { createKimiHarness, log } from '@moonshot-ai/kimi-code-sdk';
-import { __resetRootLoggerForTest } from '../../../../packages/agent-core/src/logging/logger';
+import { createKimiHarness } from '@moonshot-ai/kimi-code-sdk';
 
-const SESSION_LOG = 'logs/kimi-code.log';
 const GLOBAL_LOG = 'logs/global/kimi-code.log';
 const MAIN_WIRE = 'agents/main/wire.jsonl';
 const ENABLED = process.env['KIMI_E2E'] === '1';
@@ -22,7 +20,6 @@ let oldHome: string | undefined;
 let oldLogLevel: string | undefined;
 
 beforeEach(async () => {
-  await __resetRootLoggerForTest();
   homeDir = await mkdtemp(join(tmpdir(), 'kimi-cli-log-home-'));
   workDir = await mkdtemp(join(tmpdir(), 'kimi-cli-log-work-'));
   oldHome = process.env['KIMI_CODE_HOME'];
@@ -32,7 +29,6 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await __resetRootLoggerForTest();
   if (oldHome === undefined) {
     delete process.env['KIMI_CODE_HOME'];
   } else {
@@ -48,33 +44,44 @@ afterEach(async () => {
 });
 
 describe.skipIf(!ENABLED)('local logging export e2e', () => {
-  it('exports session log and global log by default, and allows skipping global log', async () => {
+  it('exports the main wire and global log by default, and allows skipping global log', async () => {
     const harness = createKimiHarness({
       homeDir,
       identity: createKimiCodeHostIdentity('0.1.1'),
     });
     try {
+      await harness.setConfig({
+        providers: {
+          local: {
+            type: 'openai',
+            baseUrl: 'https://model.example.test/v1',
+            apiKey: 'sk-test',
+          },
+        },
+        models: {
+          'fake-model': {
+            provider: 'local',
+            model: 'fake-model',
+            maxContextSize: 262144,
+          },
+        },
+        defaultModel: 'fake-model',
+      });
       const session = await harness.createSession({
         id: 'ses_cli_logging_export',
         workDir,
+        model: 'fake-model',
       });
-      log.warn('cli logging export marker', { sessionId: session.id });
-      log.warn('cli global marker');
 
       const defaultZip = join(workDir, 'default.zip');
       await runKimiExport([session.id, '-o', defaultZip]);
       const defaultEntries = readZipEntries(await readFile(defaultZip));
       expect(defaultEntries.has(MAIN_WIRE)).toBe(true);
-      expect(defaultEntries.has(SESSION_LOG)).toBe(true);
       expect(defaultEntries.has(GLOBAL_LOG)).toBe(true);
-      expect(defaultEntries.get(SESSION_LOG)!.toString('utf-8')).toContain(
-        'cli logging export marker',
-      );
-      expect(defaultEntries.get(GLOBAL_LOG)!.toString('utf-8')).toContain('cli global marker');
+      expect(defaultEntries.get(GLOBAL_LOG)!.toString('utf-8').length).toBeGreaterThan(0);
       const defaultManifest = JSON.parse(
         defaultEntries.get('manifest.json')!.toString('utf-8'),
       ) as Record<string, unknown>;
-      expect(defaultManifest['sessionLogPath']).toBe(SESSION_LOG);
       expect(defaultManifest['globalLogPath']).toBe(GLOBAL_LOG);
 
       const noGlobalZip = join(workDir, 'no-global.zip');

@@ -1,8 +1,3 @@
-/**
- * `@moonshot-ai/kap-server` public surface — the Kimi Code server backed by the
- * DI × Scope agent engine (`@moonshot-ai/agent-core-v2`).
- */
-
 export { startServer } from './start';
 export type { ServerHostIdentity, ServerStartOptions, RunningServer } from './start';
 export { okEnvelope, errEnvelope } from './envelope';

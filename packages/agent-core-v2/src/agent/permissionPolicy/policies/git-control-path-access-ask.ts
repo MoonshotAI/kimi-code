@@ -1,8 +1,7 @@
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { IGitService } from '#/app/git/git';
 import type { IGitService as GitService } from '#/app/git/git';
-import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import type { IHostEnvironment as HostEnvironment } from '#/os/interface/hostEnvironment';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { ISessionWorkspaceContext as WorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type {
@@ -19,7 +18,7 @@ export class GitControlPathAccessAskPermissionPolicyService implements Permissio
   readonly name = 'git-control-path-access-ask';
 
   constructor(
-    @IHostEnvironment private readonly env: HostEnvironment,
+    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @ISessionWorkspaceContext private readonly workspace: WorkspaceContext,
     @IGitService private readonly git: GitService,
   ) {}
@@ -29,7 +28,9 @@ export class GitControlPathAccessAskPermissionPolicyService implements Permissio
   ): Promise<PermissionPolicyResult | undefined> {
     const cwd = this.workspace.workDir;
     if (cwd.length === 0) return undefined;
-    const pathClass = this.env.pathClass;
+    const lease = this.runtime.acquire();
+    const pathClass = lease.runtime.environment.pathClass;
+    lease.dispose();
     const accesses = fileAccesses(context);
     if (accesses.length === 0) return undefined;
 

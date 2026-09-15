@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { bridge } from "@/services";
 
 interface UseInputHistoryOptions {
@@ -7,13 +8,16 @@ interface UseInputHistoryOptions {
   onHeightChange?: () => void;
 }
 
-export function useInputHistory({ text, setText, onHeightChange }: UseInputHistoryOptions) {
-  const [history, setHistory] = useState<string[]>([]);
-  const [index, setIndex] = useState(-1);
+const INPUT_HISTORY_KEY = ["inputHistory"] as const;
+const NO_HISTORY: string[] = [];
 
-  useEffect(() => {
-    void bridge.getInputHistory().then(setHistory);
-  }, []);
+export function useInputHistory({ text, setText, onHeightChange }: UseInputHistoryOptions) {
+  const queryClient = useQueryClient();
+  const { data: history = NO_HISTORY } = useQuery({
+    queryKey: INPUT_HISTORY_KEY,
+    queryFn: () => bridge.getInputHistory(),
+  });
+  const [index, setIndex] = useState(-1);
 
   const add = useCallback((input: string) => {
     const trimmed = input.trim();
@@ -22,9 +26,9 @@ export function useInputHistory({ text, setText, onHeightChange }: UseInputHisto
     }
 
     void bridge.addInputHistory(trimmed);
-    setHistory((prev) => (prev[prev.length - 1] === trimmed ? prev : [...prev, trimmed]));
+    queryClient.setQueryData<string[]>(INPUT_HISTORY_KEY, (prev) => (prev?.[prev.length - 1] === trimmed ? prev : [...(prev ?? []), trimmed]));
     setIndex(-1);
-  }, []);
+  }, [queryClient]);
 
   const handleKey = useCallback(
     (e: React.KeyboardEvent): boolean => {

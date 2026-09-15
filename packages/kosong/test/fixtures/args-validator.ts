@@ -3,7 +3,7 @@ import Ajv, { type ErrorObject, type ValidateFunction } from 'ajv';
 /**
  * Test-only schema validator. Kosong's e2e tests need a way to validate tool
  * arguments inside the SimpleToolset fixture, but kosong itself no longer
- * ships a runtime validator (the real one moved to agent-core). Fixtures
+ * ships a runtime validator (the real one lives in agent-core-v2). Fixtures
  * stick with draft-07 since kosong's own test schemas don't exercise newer
  * dialects.
  */

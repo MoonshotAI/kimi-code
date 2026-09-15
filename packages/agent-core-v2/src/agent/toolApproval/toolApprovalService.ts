@@ -1,21 +1,12 @@
-/**
- * `toolApproval` domain — `IAgentToolApprovalService` implementation.
- *
- * Owns the approval round-trip: publishes
- * `permission.approval.requested/resolved` through `eventBus`, awaits the
- * session approval broker (absent broker = auto-approve), records
- * session-scope approval rules through `permissionRules`, reports
- * `permission_approval_result` through `telemetry`, and folds ask
- * continuations back into authorize results. Bound at Agent scope.
- */
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+import { randomUUID } from 'node:crypto';
 
-import { IInstantiationService } from '#/_base/di/instantiation';
-import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { abortable, isUserCancellation } from '#/_base/utils/abort';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type {
-  ApprovalRequest,
   ApprovalResponse,
   PermissionPolicyResolution,
   PermissionPolicyResult,
@@ -27,38 +18,55 @@ import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
-import { IEventBus } from '#/app/event/eventBus';
+import { AgentEvent2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { ISessionApprovalService } from '#/session/approval/approval';
+import {
+  INTERACTION_TAG_AGENT_ID,
+  INTERACTION_TAG_SESSION_ID,
+  INTERACTION_TAG_TOOL_CALL_ID,
+  INTERACTION_TAG_TURN_ID,
+  type InteractionTags,
+} from '#/human/interaction/interaction';
+import { interactions } from '#/human/interaction/facade';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import { IAgentToolApprovalService } from './toolApproval';
 
-export type PermissionApprovalRequestContext = ApprovalRequest & {
+export interface PermissionApprovalRequestedPayload {
+  readonly id?: string;
   readonly sessionId?: string;
-  readonly agentId?: string;
+  readonly agentId: string;
   readonly turnId: number;
+  readonly toolCallId: string;
+  readonly toolName: string;
+  readonly action: string;
+  readonly display: ToolInputDisplay;
   readonly toolInput: unknown;
-};
-
-export type PermissionApprovalResultContext = PermissionApprovalRequestContext &
-  (
-    | ApprovalResponse
-    | {
-        readonly decision: 'error';
-        readonly error: string;
-      }
-  );
-
-declare module '#/app/event/eventBus' {
-  interface DomainEventMap {
-    'permission.approval.requested': PermissionApprovalRequestContext;
-    'permission.approval.resolved': PermissionApprovalResultContext;
-  }
 }
 
-export class AgentToolApprovalService extends Disposable implements IAgentToolApprovalService {
+export class PermissionApprovalRequested extends AgentEvent2<PermissionApprovalRequestedPayload> {
+  static override readonly type = 'permission.approval.requested';
+  static override readonly observable = true;
+}
+export interface PermissionApprovalRequested extends PermissionApprovalRequestedPayload {}
+
+export interface PermissionApprovalResolvedPayload extends PermissionApprovalRequestedPayload {
+  readonly decision: 'approved' | 'rejected' | 'cancelled' | 'error';
+  readonly scope?: 'session';
+  readonly feedback?: string;
+  readonly selectedLabel?: string;
+  readonly error?: string;
+}
+
+export class PermissionApprovalResolved extends AgentEvent2<PermissionApprovalResolvedPayload> {
+  static override readonly type = 'permission.approval.resolved';
+  static override readonly observable = true;
+}
+export interface PermissionApprovalResolved extends PermissionApprovalResolvedPayload {}
+
+export class AgentToolApprovalService extends Service implements IAgentToolApprovalService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
@@ -66,9 +74,8 @@ export class AgentToolApprovalService extends Disposable implements IAgentToolAp
     @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
     @IAgentPermissionRulesService private readonly rulesService: IAgentPermissionRulesService,
     @ISessionContext private readonly session: ISessionContext,
-    @IInstantiationService private readonly instantiation: IInstantiationService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IEventBus private readonly eventBus: IEventBus,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
   ) {
     super();
   }
@@ -113,6 +120,7 @@ export class AgentToolApprovalService extends Disposable implements IAgentToolAp
         detail: context.args,
       } as ToolInputDisplay);
     const approvalRequest = {
+      id: `approval_${randomUUID()}`,
       sessionId: this.session.sessionId,
       agentId: this.scopeContext.agentId,
       turnId: context.turnId,
@@ -124,61 +132,67 @@ export class AgentToolApprovalService extends Disposable implements IAgentToolAp
     const approvalContext = {
       ...approvalRequest,
       toolInput: context.args,
-    } satisfies PermissionApprovalRequestContext;
+    } satisfies PermissionApprovalRequestedPayload;
     const startedAt = Date.now();
 
+    const tags: InteractionTags = {
+      [INTERACTION_TAG_AGENT_ID]: this.scopeContext.agentId,
+      [INTERACTION_TAG_SESSION_ID]: this.session.sessionId,
+      [INTERACTION_TAG_TURN_ID]: context.turnId,
+      [INTERACTION_TAG_TOOL_CALL_ID]: context.toolCall.id,
+    };
     let response: ApprovalResponse;
-    const approvalService = this.tryApprovalService();
-    if (approvalService === undefined) {
-      response = { decision: 'approved' };
-    } else {
-      this.eventBus.publish({ type: 'permission.approval.requested', ...approvalContext });
-      try {
-        response = await abortable(
-          approvalService.request(approvalRequest),
-          context.signal,
-        );
-        context.signal.throwIfAborted();
-      } catch (error) {
-        if (isUserCancellation(error)) throw error;
-        this.telemetry.track2('permission_approval_result', {
-          turn_id: context.turnId,
-          tool_call_id: context.toolCall.id,
-          policy_name: origin,
-          tool_name: name,
-          permission_mode: this.modeService.mode,
-          result: 'error',
-          approval_surface: display.kind,
-          duration_ms: Date.now() - startedAt,
-          session_cache_written: false,
-          has_feedback: false,
-          trace_id: context.trace?.traceId,
-        });
-        this.eventBus.publish({
-          type: 'permission.approval.resolved',
+    void this.dispatcher.dispatch(new PermissionApprovalRequested(approvalContext));
+    try {
+      response = await abortable(
+        interactions.request<typeof approvalRequest, ApprovalResponse>({
+          id: approvalRequest.id,
+          kind: 'approval',
+          payload: approvalRequest,
+          tags,
+        }),
+        context.signal,
+      );
+      context.signal.throwIfAborted();
+    } catch (error) {
+      if (isUserCancellation(error)) throw error;
+      this.telemetry.track2('permission_approval_result', {
+        turn_id: context.turnId,
+        tool_call_id: context.toolCall.id,
+        policy_name: origin,
+        tool_name: name,
+        permission_mode: this.modeService.mode,
+        result: 'error',
+        approval_surface: display.kind,
+        duration_ms: Date.now() - startedAt,
+        session_cache_written: false,
+        has_feedback: false,
+        trace_id: context.trace?.traceId,
+      });
+      void this.dispatcher.dispatch(
+        new PermissionApprovalResolved({
           ...approvalContext,
           decision: 'error',
           error: error instanceof Error ? error.message : String(error),
-        });
-        const resolved = result.resolveError?.(error);
-        if (resolved !== undefined) {
-          return this.resolvePermissionResolution(resolved, context, origin);
-        }
-        throw error;
+        }),
+      );
+      const resolved = result.resolveError?.(error);
+      if (resolved !== undefined) {
+        return this.resolvePermissionResolution(resolved, context, origin);
       }
+      throw error;
     }
 
     const sessionApprovalRule =
       response.decision === 'approved' && response.scope === 'session'
         ? context.execution.approvalRule
         : undefined;
-    if (approvalService !== undefined) {
-      this.eventBus.publish({
-        type: 'permission.approval.resolved',
+    void this.dispatcher.dispatch(
+      new PermissionApprovalResolved({
         ...approvalContext,
         ...response,
-      });
-    }
+      }),
+    );
     this.rulesService.recordApprovalResult({
       turnId: context.turnId,
       toolCallId: context.toolCall.id,
@@ -238,16 +252,6 @@ export class AgentToolApprovalService extends Disposable implements IAgentToolAp
       return `${message} Try a different approach — don't retry the same call, don't attempt to bypass the restriction.`;
     }
     return message;
-  }
-
-  private tryApprovalService(): ISessionApprovalService | undefined {
-    try {
-      return this.instantiation.invokeFunction(
-        (accessor) => accessor.get(ISessionApprovalService) as ISessionApprovalService | undefined,
-      );
-    } catch {
-      return undefined;
-    }
   }
 
   private usesWorkerRejectionGuidance(): boolean {

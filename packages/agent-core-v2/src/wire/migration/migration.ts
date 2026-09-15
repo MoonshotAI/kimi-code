@@ -1,5 +1,7 @@
 import type { WireRecord } from '#/wire/record';
 
+import { WireError, WireErrors } from '../errors';
+
 import { migrateV1_0ToV1_1 } from './v1.1';
 import { migrateV1_1ToV1_2 } from './v1.2';
 import { migrateV1_2ToV1_3 } from './v1.3';
@@ -46,7 +48,11 @@ export function resolveWireMigrations(readVersion: string): readonly WireMigrati
   while (compareWireVersions(version, WIRE_PROTOCOL_VERSION) < 0) {
     const migration = findMigration(version);
     if (migration === undefined) {
-      throw new Error(`Missing wire migration for version ${version}`);
+      throw new WireError(
+        WireErrors.codes.WIRE_MIGRATION_MISSING,
+        `Missing wire migration for version ${version}`,
+        { details: { version } },
+      );
     }
     migrations.push(migration);
     version = migration.targetVersion;

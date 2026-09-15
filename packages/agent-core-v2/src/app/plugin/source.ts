@@ -1,5 +1,7 @@
 import path from 'node:path';
 
+import { Error2, ErrorCodes } from '#/errors';
+
 export interface GithubRef {
   readonly kind: 'branch' | 'tag' | 'sha';
   readonly value: string;
@@ -24,7 +26,11 @@ export function resolveInstallSource(source: string): ResolvedSource {
     return { kind: 'zip-url', path: trimmed };
   }
   if (!path.isAbsolute(trimmed)) {
-    throw new Error(`Plugin root must be an absolute path (got "${source}")`);
+    throw new Error2(
+      ErrorCodes.VALIDATION_FAILED,
+      `Plugin root must be an absolute path (got "${source}")`,
+      { details: { source } },
+    );
   }
   return { kind: 'local-path', path: trimmed };
 }

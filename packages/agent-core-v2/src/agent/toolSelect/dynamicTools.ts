@@ -1,45 +1,17 @@
-/**
- * `toolSelect` domain — predicates and shaping helpers for the
- * select_tools progressive-disclosure protocol context.
- *
- * Exposes pure helpers for recognizing injected tool-schema messages,
- * folding loadable-tool announcements, rendering announcement text, and
- * stripping dynamic-tool protocol context from an outgoing history view.
- *
- * Two kinds of messages carry the protocol state in the history:
- *   - dynamic tool schema messages: `role: 'system'` messages whose `tools`
- *     field holds full tool definitions (origin
- *     `{kind: 'injection', variant: 'dynamic_tool_schema'}`) — tool loading is
- *     protocol context, not conversation. v2's undo cuts histories at the
- *     first real user prompt it finds regardless of origin: schema messages
- *     survive only when the cut lands before them.
- *   - loadable-tools announcements: `<tools_added>/<tools_removed>` system
- *     reminders (origin `{kind: 'system_trigger', name: 'loadable-tools'}`) —
- *     undo removes them (they are not `injection`-origin), and the next
- *     turn-boundary diff self-heals by re-announcing the folded delta.
- *
- * The loaded-tool ledger is the history itself: there is deliberately no
- * separate persisted ledger, so undo/compaction/resume all self-heal by
- * re-folding. Everything here anchors on `origin` or the `tools` field, so
- * callers that need to filter MUST run before `project()` — projection
- * strips `origin`.
- */
-
 import type { ContextMessage } from '#/agent/contextMemory/types';
 
 export const DYNAMIC_TOOL_SCHEMA_VARIANT = 'dynamic_tool_schema';
 
-export const LOADABLE_TOOLS_TRIGGER = 'loadable-tools';
+export const LOADABLE_TOOLS_VARIANT = 'loadable-tools';
 
 export function isDynamicToolSchemaMessage(message: ContextMessage): boolean {
   return message.tools !== undefined && message.tools.length > 0;
 }
 
 export function isLoadableToolsAnnouncement(message: ContextMessage): boolean {
-  return (
-    message.origin?.kind === 'system_trigger' &&
-    message.origin.name === LOADABLE_TOOLS_TRIGGER
-  );
+  const origin = message.origin;
+  if (origin?.kind === 'injection') return origin.variant === LOADABLE_TOOLS_VARIANT;
+  return origin?.kind === 'system_trigger' && origin.name === LOADABLE_TOOLS_VARIANT;
 }
 
 export function stripDynamicToolContext(

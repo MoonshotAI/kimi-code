@@ -6,7 +6,7 @@
  * VS Code host APIs are the only stubbed boundary.
  * Run: pnpm --filter kimi-code exec vitest run --config vitest.config.ts test/workspace-paths.test.ts
  */
-import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -153,12 +153,6 @@ let extraRoots: string[];
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "kimi-vscode-workspace-paths-"));
   vscodeHost.workspaceFolders.splice(0, vscodeHost.workspaceFolders.length, { uri: vscodeHost.Uri.file(root) });
-  vscodeHost.readDirectory.mockImplementation(async (uri: { fsPath: string }) =>
-    (await readdir(uri.fsPath, { withFileTypes: true })).map((entry) => [
-      entry.name,
-      entry.isDirectory() ? 2 : entry.isSymbolicLink() ? 64 : 1,
-    ]),
-  );
   vscodeHost.stat.mockImplementation((uri: { fsPath: string }) => stat(uri.fsPath));
   vscodeHost.readFile.mockImplementation((uri: { fsPath: string }) => readFile(uri.fsPath));
   vscodeHost.findFiles.mockResolvedValue([]);
@@ -177,58 +171,6 @@ afterEach(async () => {
 });
 
 describe("Webview workspace paths (selected-directory containment)", () => {
-  it("returns no entries when directory traversal is requested", async () => {
-    const workDir = join(root, "project");
-    await mkdir(workDir);
-
-    const files = await getProjectFiles(workDir, { directory: "../" });
-
-    expect(files).toEqual([]);
-    expect(vscodeHost.readDirectory).not.toHaveBeenCalled();
-  });
-
-  it("returns no entries when an absolute directory is requested", async () => {
-    const workDir = join(root, "project");
-    await mkdir(workDir);
-
-    const files = await getProjectFiles(workDir, { directory: join(root, "outside") });
-
-    expect(files).toEqual([]);
-    expect(vscodeHost.readDirectory).not.toHaveBeenCalled();
-  });
-
-  it("returns no entries when a Windows absolute directory is requested", async () => {
-    const workDir = join(root, "project");
-    await mkdir(workDir);
-
-    const files = await getProjectFiles(workDir, { directory: "C:\\outside" });
-
-    expect(files).toEqual([]);
-    expect(vscodeHost.readDirectory).not.toHaveBeenCalled();
-  });
-
-  it("returns no entries when a Windows drive-relative directory is requested", async () => {
-    const workDir = join(root, "project");
-    await mkdir(workDir);
-
-    const files = await getProjectFiles(workDir, { directory: "C:outside" });
-
-    expect(files).toEqual([]);
-    expect(vscodeHost.readDirectory).not.toHaveBeenCalled();
-  });
-
-  it("omits a symlink when its target is outside the selected working directory", async () => {
-    const workDir = join(root, "project");
-    const outside = join(root, "outside");
-    await Promise.all([mkdir(workDir), mkdir(outside)]);
-    await writeFile(join(outside, "secret.txt"), "secret");
-    await symlink(outside, join(workDir, "outside-link"));
-
-    const files = await getProjectFiles(workDir, { directory: "." });
-
-    expect(files).toEqual([]);
-  });
-
   it("searches within the selected subdirectory using work-directory-relative results", async () => {
     const workDir = join(root, "project", "subproject");
     const inside = join(workDir, "src", "inside.ts");
@@ -244,26 +186,40 @@ describe("Webview workspace paths (selected-directory containment)", () => {
     expect(files).toEqual([{ path: "src/inside.ts", name: "inside.ts", isDirectory: false }]);
   });
 
-  it("normalizes native Windows separators during directory navigation", async () => {
+  it("maps engine suggestions without touching the local file search", async () => {
     const workDir = join(root, "project");
-    await mkdir(join(workDir, "src", "nested"), { recursive: true });
-    await writeFile(join(workDir, "src", "nested", "app.ts"), "app");
+    await mkdir(workDir);
+    const ctx = createContext(vscodeHost.Uri.file(workDir));
+    const suggestFiles = vi.mocked(ctx.harness.suggestFiles);
+    suggestFiles.mockResolvedValue({
+      items: [
+        { path: "src/app.ts", name: "app.ts", kind: "file", matchPositions: [4, 5, 6] },
+        { path: "src", name: "src", kind: "directory", matchPositions: [] },
+      ],
+      truncated: false,
+    });
 
-    const files = await getProjectFiles(workDir, { directory: "src\\nested" });
+    const files = await fileHandlers[Methods.GetProjectFiles]!({ query: "app" }, ctx);
 
-    expect(files).toEqual([{ path: "src/nested/app.ts", name: "app.ts", isDirectory: false }]);
+    expect(suggestFiles).toHaveBeenCalledWith(workDir, { query: "app", limit: 20 });
+    expect(vscodeHost.findFiles).not.toHaveBeenCalled();
+    expect(files).toEqual([
+      { path: "src/app.ts", name: "app.ts", isDirectory: false, matchPositions: [4, 5, 6] },
+      { path: "src", name: "src", isDirectory: true, matchPositions: [] },
+    ]);
   });
 
-  it("preserves the remote workspace URI while listing a directory", async () => {
-    const remoteRoot = vscodeHost.Uri.remote("ssh-remote+example", "/workspace/project");
-    vscodeHost.readDirectory.mockResolvedValue([["remote.ts", 1]]);
-    const ctx = createContext(remoteRoot);
+  it("degrades to an empty list when engine suggestions fail", async () => {
+    const workDir = join(root, "project");
+    await mkdir(workDir);
+    const ctx = createContext(vscodeHost.Uri.file(workDir));
+    vi.mocked(ctx.harness.suggestFiles).mockRejectedValue(new Error("engine down"));
 
-    const files = await fileHandlers[Methods.GetProjectFiles]!({ directory: "." }, ctx);
+    const files = await fileHandlers[Methods.GetProjectFiles]!({ query: "app" }, ctx);
 
-    const requestedUri = vscodeHost.readDirectory.mock.calls[0]?.[0];
-    expect(requestedUri).toMatchObject({ scheme: "vscode-remote", authority: "ssh-remote+example" });
-    expect(files).toEqual([{ path: "remote.ts", name: "remote.ts", isDirectory: false }]);
+    expect(files).toEqual([]);
+    expect(ctx.logError).toHaveBeenCalled();
+    expect(vscodeHost.findFiles).not.toHaveBeenCalled();
   });
 
   it("refuses to open a symlink whose target lies outside the selected working directory", async () => {
@@ -461,7 +417,7 @@ describe("native workspace path comparison (Windows drive and UNC semantics)", (
   });
 });
 
-async function getProjectFiles(workDir: string, params: { query?: string; directory?: string }) {
+async function getProjectFiles(workDir: string, params: { query?: string }) {
   return fileHandlers[Methods.GetProjectFiles]!(params, createContext(vscodeHost.Uri.file(workDir)));
 }
 
@@ -476,7 +432,9 @@ function createContext(workDirUri: InstanceType<typeof vscodeHost.Uri>): Handler
     requireWorkDir: () => workDirUri.fsPath,
     requireWorkDirUri: () => workDirUri as vscode.Uri,
     fileManager,
-  } as HandlerContext;
+    harness: { suggestFiles: vi.fn(async () => undefined) },
+    logError: vi.fn(),
+  } as unknown as HandlerContext;
 }
 
 function createBridge(): BridgeHandler {

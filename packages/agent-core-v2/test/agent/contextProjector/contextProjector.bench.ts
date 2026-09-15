@@ -1,16 +1,3 @@
-/**
- * Benchmark for the context projection rewrite (two-pass -> single-pass with
- * slot backfill, and O(k²) -> O(k) adjacent user-prompt merging).
- *
- * `projectLegacy` below is the previous implementation, copied verbatim so the
- * comparison stays runnable after the old code is gone. The "new" side goes
- * through the real `AgentContextProjectorService`, so it measures exactly the
- * projection path.
- *
- * Run:
- *   pnpm --filter @moonshot-ai/agent-core-v2 exec vitest bench test/contextProjector/projector.bench.ts
- */
-
 import { bench, describe } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -21,7 +8,8 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentContextProjectorService } from '#/agent/contextProjector/contextProjector';
 import { AgentContextProjectorService } from '#/agent/contextProjector/contextProjectorService';
 import { ErrorCodes, Error2 } from '#/errors';
-import type { ContentPart, Message, TextPart, ToolCall } from '#/kosong/contract/message';
+import type { Message } from '#/llm-adapter/contract/message';
+import type { ContentPart, TextPart, ToolCall } from '#human/llm/message';
 
 const noopLogger: ILogger = {
   error: () => {},
@@ -37,7 +25,6 @@ const noopLogService: ILogService = {
   setLevel: () => {},
   flush: () => Promise.resolve(),
 };
-
 
 function projectLegacy(history: readonly ContextMessage[]): Message[] {
   const openCalls = new Map<string, ToolCall>();
@@ -146,7 +133,6 @@ function stripContextMetadata(message: ContextMessage): Message {
   };
 }
 
-
 function makeExchangeHistory(exchanges: number, callsPerStep: number): ContextMessage[] {
   const history: ContextMessage[] = [];
   for (let i = 0; i < exchanges; i++) {
@@ -199,7 +185,6 @@ function createProjector(disposables: DisposableStore): IAgentContextProjectorSe
   ix.set(IAgentContextProjectorService, new SyncDescriptor(AgentContextProjectorService));
   return ix.get(IAgentContextProjectorService);
 }
-
 
 const disposables = new DisposableStore();
 const projector = createProjector(disposables);

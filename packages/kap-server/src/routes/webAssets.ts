@@ -1,6 +1,6 @@
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
-import { extname, join, normalize, resolve, sep } from 'node:path';
+import { extname, join, normalize, relative, resolve, sep } from 'node:path';
 
 import type { FastifyReply, FastifyRequest } from 'fastify';
 
@@ -56,8 +56,18 @@ async function serveWebAsset(
 
   return reply
     .type(mimeType(filePath))
+    .header('Cache-Control', cacheControl(assetsDir, filePath))
     .header('Content-Length', String(fileInfo.size))
     .send(createReadStream(filePath));
+}
+
+function cacheControl(assetsDir: string, filePath: string): string {
+  const assetPath = relative(assetsDir, filePath);
+  const fileName = filePath.slice(filePath.lastIndexOf(sep) + 1);
+  if (assetPath.startsWith(`assets${sep}`) && /[-.][A-Za-z0-9_-]{8}\.[^.]+$/.test(fileName)) {
+    return 'public, max-age=31536000, immutable';
+  }
+  return 'no-cache';
 }
 
 async function resolveStaticFile(

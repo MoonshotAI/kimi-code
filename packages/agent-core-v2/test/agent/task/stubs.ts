@@ -1,10 +1,3 @@
-/**
- * Scenario: shared Agent task test wiring and per-agent persistence addressing.
- *
- * Exposes the test manager contract and builds persistence beneath the main
- * agent scope so fixtures cannot accidentally seed session-wide task records.
- */
-
 import { join } from 'pathe';
 
 import {

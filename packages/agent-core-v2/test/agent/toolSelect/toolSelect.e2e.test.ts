@@ -1,23 +1,3 @@
-/**
- * Scenario (v1 `tool-select.e2e.test.ts` headline parity): progressive tool
- * disclosure converges the provider-visible table for MCP and opted-in user
- * tools, keeps it byte-stable across loads, makes a loaded tool dispatchable
- * the next step, and self-heals the loaded-ledger across undo.
- *
- * Responsibilities: assert v1 contract at the provider wire, not via service
- * internals: the manifest announcement reaches the model, `select_tools`
- * loads a schema into the next request, the top-level table never changes
- * across loads, the record carries the disclosure gate (v1 recorder parity,
- * F2), and a tail-slicing undo re-enables re-injection (F1). Wiring:
- * testAgent harness with scripted provider, real toolSelect / executor /
- * projector / announcer services; harness builds the Agent scope without
- * `AgentLifecycleService.create`, so the eager-instantiation production
- * would do (agentLifecycleService create) is forced here the same way.
- * The flag env is stubbed before `createTestAgent` snapshots it into
- * bootstrap, and module imports register the flag / tool contributions the
- * way `src/index.ts` does in production.
- * Run: ../../node_modules/.bin/vitest run test/toolSelect/toolSelect.e2e.test.ts
- */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
@@ -29,6 +9,7 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
+import { IAgentToolSelectSchemasService } from '#/agent/toolSelect/toolSelectSchemas';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import '#/agent/tools/select-tools/selectToolsTool';
 
@@ -113,11 +94,15 @@ describe('progressive tool disclosure end-to-end', () => {
     ctx = createTestAgent();
     ctx.get(IAgentToolSelectService);
     ctx.get(IAgentToolSelectAnnouncementsService);
+    ctx.get(IAgentToolSelectSchemasService);
     ctx.get(IAgentToolExecutorService);
     ctx.configure({ modelCapabilities: DISCLOSURE_CAPABILITIES });
+    await ctx.restorePersisted();
     await ctx.rpc.setPermission({ mode: 'yolo' });
     alpha = new StubMcpTool(MCP_ALPHA);
-    registration = ctx.get(IAgentToolRegistryService).register(alpha, { source: 'mcp' });
+    registration = ctx
+      .get(IAgentToolRegistryService)
+      .register(alpha, { source: 'mcp', disclosure: 'deferred' });
   });
 
   afterEach(async () => {
@@ -223,7 +208,7 @@ describe('progressive tool disclosure end-to-end', () => {
     );
   });
 
-  it('re-injects a selected schema after undo slices the tail of the loaded exchange', async () => {
+  it('keeps the selected schema across undo and reports it as already available on reselect', async () => {
     ctx.get(IAgentContextMemoryService).append({
       role: 'user',
       content: [{ type: 'text', text: 'earlier question' }],
@@ -239,7 +224,7 @@ describe('progressive tool disclosure end-to-end', () => {
     await ctx.get(IAgentConversationUndoService).undo(1);
     const afterUndo = ctx.get(IAgentContextMemoryService).get();
     expect(afterUndo.some((message) => message.tools?.some((tool) => tool.name === MCP_ALPHA))).toBe(
-      false,
+      true,
     );
 
     ctx.mockNextResponse(selectToolsCall('call_select_2', [MCP_ALPHA]));
@@ -251,7 +236,7 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(
       afterReload.some((message) => message.tools?.some((tool) => tool.name === MCP_ALPHA)),
     ).toBe(true);
-    expect(historyText(afterReload)).toContain('Loaded: mcp__srv__alpha');
-    expect(historyText(afterReload)).not.toContain('Already available: mcp__srv__alpha');
+    expect(historyText(afterReload)).toContain('Already available: mcp__srv__alpha');
+    expect(historyText(afterReload)).not.toContain('Loaded: mcp__srv__alpha');
   });
 });

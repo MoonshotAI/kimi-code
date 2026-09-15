@@ -82,10 +82,8 @@ describe('ModelCatalogRefreshScheduler', () => {
     );
 
     await scheduler.start();
-    // refreshOnStart=false → no startup refresh.
     await vi.advanceTimersByTimeAsync(999);
     expect(catalog.refreshProviderModels).not.toHaveBeenCalled();
-    // interval=1000 → first interval refresh at 1000ms.
     await vi.advanceTimersByTimeAsync(1);
     expect(catalog.refreshProviderModels).toHaveBeenCalledTimes(1);
   });

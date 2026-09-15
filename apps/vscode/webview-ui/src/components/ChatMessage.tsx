@@ -30,7 +30,7 @@ function ThinkingIndicator() {
   return (
     <div className="flex items-center gap-2 mt-1 text-blue-500/80 py-1">
       <IconLoader3 className="size-3.5 animate-spin" />
-      <span className="text-[11px] font-medium tracking-wide">Processing...</span>
+      <span className="text-[11px] font-medium tracking-wide">Processing…</span>
     </div>
   );
 }

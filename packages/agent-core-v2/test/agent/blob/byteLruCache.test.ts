@@ -1,14 +1,3 @@
-/**
- * Scenario: the byte-bounded LRU cache used by the agent blob service.
- *
- * Responsibilities asserted: hit returns the stored value, miss is undefined,
- * least-recently-used eviction on overflow, recency refresh on get, oversize
- * payloads are never cached, replacement re-accounts size, and multiple entries
- * evict to make room. Pure data-structure tests — no DI, no IO.
- *
- * Run: `pnpm test -- test/blob/byteLruCache.test.ts`
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { ByteLruCache } from '#/agent/blob/byteLruCache';

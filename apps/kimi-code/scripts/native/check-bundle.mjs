@@ -1,10 +1,8 @@
+import { existsSync, readFileSync } from 'node:fs';
 import { builtinModules } from 'node:module';
-import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-import { nativeJsBundlePath } from './paths.mjs';
-
-const bundlePath = nativeJsBundlePath();
-const text = readFileSync(bundlePath, 'utf-8');
+import { nativeIntermediatesDir, nativeJsBundlePath } from './paths.mjs';
 
 const builtins = new Set([
   ...builtinModules,
@@ -23,18 +21,8 @@ const optionalRuntimeRequires = new Set([
   'utf-8-validate',
 ]);
 const optionalRelativeRuntimeRequires = new Set(['./crypto/build/Release/sshcrypto.node']);
-const handledNativeRuntimeRequires = new Set();
 
-function isAllowedSpecifier(specifier) {
-  if (builtins.has(specifier) || specifier.startsWith('node:')) return true;
-  if (optionalRuntimeRequires.has(specifier)) return true;
-  if (handledNativeRuntimeRequires.has(specifier)) return true;
-  return false;
-}
-
-const errors = [];
-
-function executableLines() {
+function executableLines(text) {
   return text
     .split('\n')
     .map((line) => line.trim())
@@ -45,48 +33,52 @@ function executableLines() {
     });
 }
 
-for (const line of executableLines()) {
-  for (const match of line.matchAll(/(?<![.\w])require\(\s*["']([^"']+)["']\s*\)/g)) {
-    const specifier = match[1];
-    if (specifier.startsWith('.') || specifier.startsWith('/')) {
-      if (optionalRelativeRuntimeRequires.has(specifier)) continue;
-      errors.push(`relative require remains: ${specifier}`);
-      continue;
-    }
-    if (!isAllowedSpecifier(specifier)) {
-      errors.push(`external require remains: ${specifier}`);
-    }
-  }
+function checkBundle(bundlePath, { worker = false } = {}) {
+  if (!existsSync(bundlePath)) return [`bundle does not exist: ${bundlePath}`];
+  const text = readFileSync(bundlePath, 'utf-8');
+  const errors = [];
+  const allowedExternal = worker ? new Set() : optionalRuntimeRequires;
+  const allowedRelative = worker ? new Set() : optionalRelativeRuntimeRequires;
 
-  for (const match of line.matchAll(/(?<![.\w])import\(\s*["']([^"']+)["']\s*\)/g)) {
-    const specifier = match[1];
+  const checkSpecifier = (specifier, kind) => {
     if (specifier.startsWith('.') || specifier.startsWith('/')) {
-      errors.push(`relative dynamic import remains: ${specifier}`);
-      continue;
+      if (!allowedRelative.has(specifier)) errors.push(`relative ${kind} remains: ${specifier}`);
+      return;
     }
-    if (!isAllowedSpecifier(specifier)) {
-      errors.push(`external dynamic import remains: ${specifier}`);
+    if (!builtins.has(specifier) && !specifier.startsWith('node:') && !allowedExternal.has(specifier)) {
+      errors.push(`external ${kind} remains: ${specifier}`);
     }
-  }
+  };
 
-  if (line.startsWith('import ')) {
-    for (const match of line.matchAll(/\bfrom\s+["']([^"']+)["']/g)) {
-      const specifier = match[1];
-      if (specifier.startsWith('.') || specifier.startsWith('/')) {
-        errors.push(`relative import remains: ${specifier}`);
-        continue;
+  for (const line of executableLines(text)) {
+    for (const match of line.matchAll(/(?<![.\w])require\(\s*["']([^"']+)["']\s*\)/g)) {
+      checkSpecifier(match[1], 'require');
+    }
+    for (const match of line.matchAll(/(?<![.\w])import\(\s*["']([^"']+)["']\s*\)/g)) {
+      checkSpecifier(match[1], 'dynamic import');
+    }
+    if (line.startsWith('import ')) {
+      for (const match of line.matchAll(/\bfrom\s+["']([^"']+)["']/g)) {
+        checkSpecifier(match[1], 'import');
       }
-      if (!isAllowedSpecifier(specifier)) {
-        errors.push(`external import remains: ${specifier}`);
-      }
+      const sideEffect = line.match(/^import\s*["']([^"']+)["']/);
+      if (sideEffect) checkSpecifier(sideEffect[1], 'import');
     }
   }
+  return errors;
 }
 
-if (errors.length > 0) {
-  console.error(`Native JS bundle check failed for ${bundlePath}:`);
-  for (const error of errors) {
-    console.error(`- ${error}`);
-  }
-  process.exit(1);
+const bundles = [
+  { path: nativeJsBundlePath(), worker: false },
+  { path: resolve(nativeIntermediatesDir(), 'text-build-worker.mjs'), worker: true },
+  { path: resolve(nativeIntermediatesDir(), 'search-worker.mjs'), worker: true },
+];
+let failed = false;
+for (const bundle of bundles) {
+  const errors = checkBundle(bundle.path, { worker: bundle.worker });
+  if (errors.length === 0) continue;
+  failed = true;
+  console.error(`Native JS bundle check failed for ${bundle.path}:`);
+  for (const error of errors) console.error(`- ${error}`);
 }
+if (failed) process.exit(1);

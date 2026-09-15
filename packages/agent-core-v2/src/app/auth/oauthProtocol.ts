@@ -1,16 +1,7 @@
-/**
- * `auth` domain — the v1 OAuth wire DTO schemas.
- *
- * Request/response shapes of the v1 `/oauth/*` endpoints plus the managed
- * OAuth provider model-refresh response, defined as zod schemas so the
- * transports validate against a shared contract. New endpoints use the
- * camelCase domain contract owned by the oauth package (re-exported below);
- * legacy snake_case schemas stay local.
- */
-
 import { z } from 'zod';
 
 import { isoDateTimeSchema } from '#/_base/utils/isoDateTime';
+import { kimiRegionSchema } from '@moonshot-ai/kimi-code-oauth';
 
 export const oauthFlowStatusEnum = z.enum([
   'pending',
@@ -74,6 +65,11 @@ export const oauthLogoutResponseSchema = z.object({
 });
 export type OAuthLogoutResponse = z.infer<typeof oauthLogoutResponseSchema>;
 
+export const oauthRegionResultSchema = z.object({
+  region: kimiRegionSchema,
+});
+export type OAuthRegionResult = z.infer<typeof oauthRegionResultSchema>;
+
 const providerRefreshChangeSchema = z.object({
   provider_id: z.string().min(1),
   provider_name: z.string().min(1),
@@ -95,55 +91,9 @@ export type RefreshOAuthProviderModelsResponse = z.infer<
   typeof refreshOAuthProviderModelsResponseSchema
 >;
 
-
-export const usageWindowSchema = z.object({
-  duration: z.number().int(),
-  unit: z.enum(['minute', 'hour', 'day', 'week']),
-});
-export type UsageWindow = z.infer<typeof usageWindowSchema>;
-
-export const usageRowSchema = z.object({
-  name: z.string().optional(),
-  window: usageWindowSchema.optional(),
-  used: z.number().int(),
-  limit: z.number().int(),
-  reset_at: z.string().optional(),
-});
-export type UsageRow = z.infer<typeof usageRowSchema>;
-
-export const boosterWalletSchema = z.object({
-  balance_cents: z.number().int(),
-  total_cents: z.number().int(),
-  monthly_charge_limit_enabled: z.boolean(),
-  monthly_charge_limit_cents: z.number().int(),
-  monthly_used_cents: z.number().int(),
-  currency: z.string(),
-});
-export type BoosterWallet = z.infer<typeof boosterWalletSchema>;
-
-export const managedUsageOkSchema = z.object({
-  kind: z.literal('ok'),
-  summary: usageRowSchema.nullable(),
-  limits: z.array(usageRowSchema),
-  extra_usage: boosterWalletSchema.nullable(),
-});
-export type ManagedUsageOk = z.infer<typeof managedUsageOkSchema>;
-
-export const managedUsageErrorSchema = z.object({
-  kind: z.literal('error'),
-  message: z.string(),
-  status: z.number().int().optional(),
-});
-export type ManagedUsageError = z.infer<typeof managedUsageErrorSchema>;
-
-export const managedUsageResultSchema = z.discriminatedUnion('kind', [
-  managedUsageOkSchema,
-  managedUsageErrorSchema,
-]);
-export type ManagedUsageResult = z.infer<typeof managedUsageResultSchema>;
-
-
 export {
+  managedUsageResultSchema,
+  type ManagedUsageResult,
   managedUserInfoResultSchema,
   type ManagedUserInfoResult,
 } from '@moonshot-ai/kimi-code-oauth';

@@ -1,6 +1,4 @@
-/**
- * Timeout outcome promise — resolves with a fixed value after a delay.
- */
+import { setClampedTimeout } from './timer';
 
 const NEVER = new Promise<never>(() => {});
 
@@ -17,7 +15,7 @@ export function timeoutOutcome<Outcome>(
     timeoutMs === undefined || timeoutMs <= 0
       ? NEVER
       : new Promise((resolve) => {
-          timeout = setTimeout(() => {
+          timeout = setClampedTimeout(() => {
             timeout = undefined;
             resolve(outcome);
           }, timeoutMs);

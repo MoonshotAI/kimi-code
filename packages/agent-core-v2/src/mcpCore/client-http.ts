@@ -1,7 +1,4 @@
-/**
- * `mcpCore` domain — Streamable HTTP transport MCP client.
- */
-
+import { ErrorCodes, Error2 } from '#/errors';
 import type { McpServerHttpConfig } from './config-schema';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
@@ -18,6 +15,7 @@ import {
   type UnexpectedCloseReason,
 } from './client-shared';
 import { buildMcpRemoteHeaders } from './client-remote';
+import { createMcpOAuthFetch } from './oauth/provider';
 import type { MCPClient, MCPToolDefinition, MCPToolResult } from './types';
 
 export interface HttpMcpClientOptions {
@@ -50,7 +48,7 @@ export class HttpMcpClient implements MCPClient {
 
     this.transport = new StreamableHTTPClientTransport(new URL(config.url), {
       requestInit: headers !== undefined ? { headers } : undefined,
-      fetch: options.fetch,
+      fetch: createMcpOAuthFetch(options.oauthProvider, options.fetch),
       authProvider: options.oauthProvider,
     });
     this.client = new Client({
@@ -63,7 +61,7 @@ export class HttpMcpClient implements MCPClient {
 
   async connect(): Promise<void> {
     if (this.closed) {
-      throw new Error('MCP HTTP client is closed');
+      throw new Error2(ErrorCodes.MCP_STARTUP_FAILED, 'MCP HTTP client is closed');
     }
     if (this.started) return;
     this.started = true;
@@ -79,7 +77,7 @@ export class HttpMcpClient implements MCPClient {
     }
     if (this.closed) {
       await this.closeStartedClient();
-      throw new Error('MCP HTTP client was closed during startup');
+      throw new Error2(ErrorCodes.MCP_STARTUP_FAILED, 'MCP HTTP client was closed during startup');
     }
     this.ready = true;
   }

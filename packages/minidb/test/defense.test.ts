@@ -48,9 +48,11 @@ test('encodeFrame rejects a non-buffer meta', () => {
 
 // --- codec.decodeBatchOps bounds checks ------------------------------------
 
-test('decodeBatchOps returns [] for a body shorter than the count field', () => {
-  assert.deepEqual(decodeBatchOps(Buffer.alloc(0)), []);
-  assert.deepEqual(decodeBatchOps(Buffer.alloc(1)), []);
+test('decodeBatchOps rejects a body shorter than the count field', () => {
+  // Strict structure validation (stage 11, review #9): a body that cannot
+  // even carry the op count is malformed — never a silent empty batch.
+  assert.throws(() => decodeBatchOps(Buffer.alloc(0)), /batch body truncated: op count/);
+  assert.throws(() => decodeBatchOps(Buffer.alloc(1)), /batch body truncated: op count/);
 });
 
 test('decodeBatchOps throws on a truncated op header', () => {

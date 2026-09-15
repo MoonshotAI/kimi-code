@@ -1,6 +1,6 @@
 /**
  * `sessionApprovalService` — session-scope approval broker. Mirrors
- * `agent-core-v2/session/approval/approval.ts`. `ApprovalRequest.display` is
+ * `agent-core-v2/agent/interaction/approval.ts`. `ApprovalRequest.display` is
  * the protocol `ToolInputDisplay` union (huge); it crosses the wire
  * uninspected, so it is `z.unknown()` here.
  */

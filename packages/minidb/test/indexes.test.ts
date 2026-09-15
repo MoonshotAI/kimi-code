@@ -46,10 +46,10 @@ test('unique index rejects duplicates', async () => {
   try {
     const db = await MiniDb.open({ dir, valueCodec: 'json' });
     await db.createIndex('byEmail', { field: 'email', unique: true });
-    await db.set('a', { email: 'x@y.com' });
-    await assert.rejects(() => db.set('b', { email: 'x@y.com' }), UniqueViolationError);
+    await db.set('a', { email: 'user@example.test' });
+    await assert.rejects(() => db.set('b', { email: 'user@example.test' }), UniqueViolationError);
     // Re-setting the same key with the same value is allowed.
-    await db.set('a', { email: 'x@y.com' });
+    await db.set('a', { email: 'user@example.test' });
     assert.equal(db.size, 1);
     await db.close();
   } finally {

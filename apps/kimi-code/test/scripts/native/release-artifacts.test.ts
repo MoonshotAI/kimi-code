@@ -1,13 +1,15 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFile } from 'node:child_process';
+import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
-import { inflateRawSync } from 'node:zlib';
+import { inflateRawSync, zstdDecompressSync } from 'node:zlib';
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { ZipFile } from 'yazl';
 
 import { appRoot } from '../../../scripts/native/paths.mjs';
 
@@ -92,8 +94,17 @@ function findEndOfCentralDirectory(zip: Buffer): number {
 describe('native release artifacts', () => {
   afterEach(() => {
     rmSync(resolve(appRoot, 'dist-native/bin', target), { recursive: true, force: true });
-    rmSync(resolve(artifactsDir, `kimi-code-${target}.zip`), { force: true });
-    rmSync(resolve(artifactsDir, `kimi-code-${target}.zip.sha256`), { force: true });
+    for (const name of [
+      `kimi-code-${target}.zip`,
+      `kimi-code-${target}.zip.sha256`,
+      `kimi-code-${target}.zst`,
+      `kimi-code-${target}.zst.sha256`,
+      `kimi-code-${target}.tar.gz`,
+      `kimi-code-${target}.tar.gz.sha256`,
+      'manifest.json',
+    ]) {
+      rmSync(resolve(artifactsDir, name), { force: true });
+    }
   });
 
   it('packages the native binary as a zip archive and checksums the archive', async () => {
@@ -117,34 +128,90 @@ describe('native release artifacts', () => {
     );
   });
 
-  it('produces a manifest from zip archive checksums', async () => {
-    const releaseDir = await mkdtemp(join(tmpdir(), 'kimi-manifest-zip-'));
-    const archiveBytes = Buffer.from('fake zip bytes');
-    const checksum = sha256(archiveBytes);
-    await writeFile(join(releaseDir, 'kimi-code-darwin-arm64.zip'), archiveBytes);
-    await writeFile(
-      join(releaseDir, 'kimi-code-darwin-arm64.zip.sha256'),
-      `${checksum}  kimi-code-darwin-arm64.zip\n`,
+  it('produces compressed artifacts and a manifest paired with the bare binary', async () => {
+    const binaryContent = 'native binary payload\n';
+    mkdirSync(resolve(appRoot, 'dist-native/bin', target), { recursive: true });
+    writeFileSync(fakeBinary, binaryContent, { mode: 0o755 });
+    await execFileAsync(process.execPath, [packageScript], {
+      cwd: appRoot,
+      env: { ...process.env, KIMI_CODE_BUILD_TARGET: target },
+    });
+
+    await execFileAsync(process.execPath, [manifestScript, artifactsDir, '@moonshot-ai/kimi-code@0.5.0']);
+
+    const zstBytes = readFileSync(resolve(artifactsDir, `kimi-code-${target}.zst`));
+    expect(zstdDecompressSync(zstBytes).toString('utf-8')).toBe(binaryContent);
+    const tarballPath = resolve(artifactsDir, `kimi-code-${target}.tar.gz`);
+    expect(existsSync(tarballPath)).toBe(true);
+    expect(readFileSync(`${tarballPath}.sha256`, 'utf-8')).toBe(
+      `${sha256(readFileSync(tarballPath))}  kimi-code-${target}.tar.gz\n`,
     );
 
-    await execFileAsync(process.execPath, [manifestScript, releaseDir, '@moonshot-ai/kimi-code@0.5.0']);
-
     const manifest = JSON.parse(
-      await readFile(join(releaseDir, 'manifest.json'), 'utf-8'),
+      readFileSync(resolve(artifactsDir, 'manifest.json'), 'utf-8'),
     ) as {
       version: string;
       tag: string;
-      platforms: Record<string, { filename: string; checksum: string }>;
+      platforms: Record<
+        string,
+        { filename: string; checksum: string; compressed: { filename: string; checksum: string } }
+      >;
     };
     expect(manifest).toEqual({
       version: '0.5.0',
       tag: '@moonshot-ai/kimi-code@0.5.0',
       platforms: {
-        'darwin-arm64': {
-          filename: 'kimi-code-darwin-arm64.zip',
-          checksum,
+        [target]: {
+          filename: `kimi-code-${target}`,
+          checksum: sha256(Buffer.from(binaryContent)),
+          compressed: { filename: `kimi-code-${target}.zst`, checksum: sha256(zstBytes) },
         },
       },
     });
+  });
+
+  it('keeps the .exe suffix in Windows manifest filenames', async () => {
+    const releaseDir = await mkdtemp(join(tmpdir(), 'kimi-manifest-win32-'));
+    try {
+      const binaryContent = Buffer.from('fake windows binary');
+      const zip = new ZipFile();
+      zip.addBuffer(binaryContent, 'kimi.exe');
+      zip.end();
+      await pipeline(
+        zip.outputStream,
+        createWriteStream(join(releaseDir, 'kimi-code-win32-x64.zip')),
+      );
+      await writeFile(
+        join(releaseDir, 'kimi-code-win32-x64.zip.sha256'),
+        `${'b'.repeat(64)}  kimi-code-win32-x64.zip\n`,
+      );
+
+      await execFileAsync(process.execPath, [manifestScript, releaseDir, 'v0.5.0']);
+
+      const manifest = JSON.parse(await readFile(join(releaseDir, 'manifest.json'), 'utf-8')) as {
+        platforms: Record<
+          string,
+          { filename: string; checksum: string; compressed: { filename: string } }
+        >;
+      };
+      const entry = manifest.platforms['win32-x64'];
+      if (entry === undefined) throw new Error('missing win32-x64 manifest entry');
+      expect(entry.filename).toBe('kimi-code-win32-x64.exe');
+      expect(entry.checksum).toBe(sha256(binaryContent));
+      expect(entry.compressed.filename).toBe('kimi-code-win32-x64.zst');
+    } finally {
+      rmSync(releaseDir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails when no zip sidecars exist', async () => {
+    const releaseDir = await mkdtemp(join(tmpdir(), 'kimi-manifest-empty-'));
+    try {
+      await expect(
+        execFileAsync(process.execPath, [manifestScript, releaseDir, 'v0.5.0']),
+      ).rejects.toThrow();
+    } finally {
+      rmSync(releaseDir, { recursive: true, force: true });
+    }
   });
 });

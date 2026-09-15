@@ -54,7 +54,7 @@ export function WireRowDetail({ entry }: WireRowDetailProps) {
             className={`font-mono text-[10px] ${
               view === 'projected' ? 'text-fg-0' : 'text-fg-3 hover:text-fg-1'
             }`}
-            title="Same line after vis applied the agent-core migration chain"
+            title="Same line after vis applied the engine's wire migration chain"
           >
             {view === 'projected' ? '[ hide projected ]' : '[ {…} projected ]'}
           </button>

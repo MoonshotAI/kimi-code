@@ -1,25 +1,8 @@
-/**
- * Host environment probe — MSYS2 bash detection.
- *
- * Pins the Windows shell probe against native MSYS2 toolchains: a git whose
- * `git --exec-path` reports an `ucrt64` / `clang64` / `clangarm64` prefix
- * (e.g. `C:/msys64/ucrt64/libexec/git-core`) must walk back to the MSYS2 root
- * and resolve the shared bash at `usr\bin\bash.exe`, instead of failing to
- * detect any shell.
- *
- * All tests expect `probeHostEnvironment()` to be a pure function of injected
- * platform probes (no ambient state) so the same suite runs identically on
- * macOS/Linux/Windows CI runners.
- *
- * Ported from `packages/kaos/test/environment.test.ts` (the MSYS2 cases added
- * by the bash-detection fix); the v1 file carries the full POSIX / Git for
- * Windows / Scoop shim matrix, which the vendored probe shares verbatim.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import {
   probeHostEnvironment,
+  ProbeShellNotFoundError,
   type HostEnvironmentProbeDeps,
 } from '#/_base/execEnv/environmentProbe';
 
@@ -95,5 +78,21 @@ describe('probeHostEnvironment', () => {
     );
     expect(env.shellName).toBe('bash');
     expect(env.shellPath).toBe('C:\\msys64\\usr\\bin\\bash.exe');
+  });
+
+  it('throws ProbeShellNotFoundError when Git Bash is missing on Windows', async () => {
+    const rejected: unknown = await probeHostEnvironment(
+      stubDeps({
+        platform: 'win32',
+        env: { PATH: 'C:\\Windows\\System32' },
+        existingPaths: [],
+      }),
+    ).catch((error: unknown) => error);
+
+    expect(rejected).toBeInstanceOf(ProbeShellNotFoundError);
+    const probeError = rejected as ProbeShellNotFoundError;
+    expect(probeError.message).toContain('https://gitforwindows.org/');
+    expect(probeError.message).not.toContain('Checked:');
+    expect(probeError.checked.length).toBeGreaterThan(0);
   });
 });

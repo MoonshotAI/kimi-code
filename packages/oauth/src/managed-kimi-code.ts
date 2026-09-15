@@ -13,10 +13,12 @@ export const KIMI_CODE_PROVIDER_NAME = 'managed:kimi-code';
 export const KIMI_CODE_OAUTH_KEY = 'oauth/kimi-code';
 const KIMI_CODE_SCOPED_OAUTH_KEY_PREFIX = 'oauth/kimi-code-env-';
 
-export type ManagedKimiCodeProtocol = 'kimi' | 'anthropic';
+export type ManagedKimiCodeProtocol = 'kimi' | 'anthropic' | 'openai_responses';
 
 export function parseModelProtocol(value: unknown): ManagedKimiCodeProtocol | undefined {
-  return value === 'anthropic' ? 'anthropic' : undefined;
+  if (value === 'anthropic') return 'anthropic';
+  if (value === 'response') return 'openai_responses';
+  return undefined;
 }
 
 /**
@@ -35,6 +37,7 @@ export interface ManagedKimiCodeModelInfo {
   readonly supportsImageIn: boolean;
   readonly supportsVideoIn: boolean;
   readonly supportsToolUse?: boolean;
+  readonly supportsDynamicTools?: boolean;
   readonly supportsThinkingType?: SupportsThinkingType;
   readonly supportEfforts?: readonly string[];
   readonly defaultEffort?: string;
@@ -247,6 +250,7 @@ function capabilitiesForModel(model: ManagedKimiCodeModelInfo): string[] | undef
   if (model.supportsImageIn) caps.add('image_in');
   if (model.supportsVideoIn) caps.add('video_in');
   if (model.supportsToolUse ?? true) caps.add('tool_use');
+  if (model.supportsDynamicTools === true) caps.add('dynamically_loaded_tools');
   return caps.size > 0 ? [...caps] : undefined;
 }
 
@@ -436,6 +440,7 @@ function toModelInfo(item: unknown): ManagedKimiCodeModelInfo | undefined {
     supportsImageIn: Boolean(item['supports_image_in']),
     supportsVideoIn: Boolean(item['supports_video_in']),
     supportsToolUse,
+    supportsDynamicTools: item['supports_dynamic_tools'] === true,
     supportsThinkingType: parseSupportsThinkingType(item['supports_thinking_type']),
     supportEfforts: thinkEfforts.supportEfforts,
     defaultEffort: thinkEfforts.defaultEffort,

@@ -19,11 +19,11 @@ import {
   IWorkspaceService,
   type Workspace,
 } from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
-import { IWorkspaceTrust } from '@moonshot-ai/agent-core-v2/workspace/workspaceTrust/workspaceTrust';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import type { InspectClient } from '../channel';
+import { fetchWorkspaceSnapshot } from '../snapshots/api';
 import { ErrorLine } from '../ui';
 
 function normalizePath(path: string): string {
@@ -75,8 +75,8 @@ export function WorkspaceDirBrowser(props: {
       const entries = await Promise.all(
         workspaceList.map(async (ws) => {
           try {
-            const trusted = await klient.workspace(ws.id).service(IWorkspaceTrust).get();
-            return [normalizePath(ws.root), trusted] as const;
+            const snapshot = await fetchWorkspaceSnapshot(klient, ws.id);
+            return [normalizePath(ws.root), snapshot.program.trusted] as const;
           } catch {
             return [normalizePath(ws.root), undefined] as const;
           }

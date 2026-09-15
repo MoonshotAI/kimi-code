@@ -1,36 +1,7 @@
-/**
- * `/sessions/{sid}/approvals*` route handlers — server-v2 port.
- *
- * Implements the v1 `/api/v1/sessions/{sid}/approvals` wire contract on top of
- * `agent-core-v2` services. Backed by the Session-scoped `ISessionApprovalService`
- * (for `decide`) and `ISessionInteractionService` (for the pending list, including the
- * `createdAt` metadata the facade does not surface).
- *
- *   GET  /sessions/{sid}/approvals?status=pending   data: { items: ApprovalRequest[] }
- *   POST /sessions/{sid}/approvals/{aid}            body: ApprovalResponse
- *                                                   data: { resolved: true, resolved_at }
- *
- * Error mapping (REST.md §3.6):
- *   - 40401 (session.not_found)        — no live session matches {sid}
- *   - 40404 (approval.not_found)       — no pending approval matches {aid}
- *   - 40902 (approval.already_resolved)— duplicate resolve; custom envelope
- *                                        `{code:40902, data:{resolved:false}}`
- *   - 40001 (validation.failed)        — bad body via the Zod preHandler
- *
- * **Idempotency**: the interaction kernel remembers recently-resolved ids (60s
- * window). A re-POST of a just-resolved id hits `isRecentlyResolved` → 40902;
- * an id that never existed (or fell out of the window) → 40404.
- *
- * **Wire fidelity gaps**:
- *   - `expires_at` — v2 interactions never expire; we emit a stable derived
- *     value (`created_at + 24h`) because the wire schema requires it.
- *   - `tool_call_id` / `session_id` — v2 marks them optional on the payload;
- *     we fall back to the interaction id / path session id when absent.
- */
-
 import {
-  ISessionApprovalService,
-  ISessionInteractionService,
+  INTERACTION_TAG_SESSION_ID,
+  INTERACTION_TAG_TURN_ID,
+  interactions,
   resumeSessionById,
   type ApprovalRequest,
   type ApprovalResponse,
@@ -81,7 +52,6 @@ const approvalParamsSchema = z.object({
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
-/** Stable, derived expiry horizon: v2 approvals do not expire. */
 const APPROVAL_EXPIRY_MS = 24 * 60 * 60 * 1000;
 
 export function registerApprovalsRoutes(app: ApprovalRouteHost, core: Scope): void {
@@ -108,7 +78,11 @@ export function registerApprovalsRoutes(app: ApprovalRouteHost, core: Scope): vo
         );
         return;
       }
-      const pending = handle.accessor.get(ISessionInteractionService).listPending('approval');
+      const pending = interactions.findAll({
+        kind: 'approval',
+        resolved: false,
+        tags: { [INTERACTION_TAG_SESSION_ID]: session_id },
+      });
       const items = pending.map((i) => toWireApproval(i, session_id));
       reply.send(okEnvelope({ items }, req.id));
     },
@@ -142,13 +116,23 @@ export function registerApprovalsRoutes(app: ApprovalRouteHost, core: Scope): vo
         );
         return;
       }
-      const interaction = handle.accessor.get(ISessionInteractionService);
-      const isPending = interaction
-        .listPending('approval')
-        .some((i) => i.id === approval_id);
+      const isPending =
+        interactions.findOne({
+          id: approval_id,
+          kind: 'approval',
+          resolved: false,
+          tags: { [INTERACTION_TAG_SESSION_ID]: session_id },
+        }) !== undefined;
 
       if (!isPending) {
-        if (interaction.isRecentlyResolved(approval_id)) {
+        if (
+          interactions.findOne({
+            id: approval_id,
+            kind: 'approval',
+            resolved: true,
+            tags: { [INTERACTION_TAG_SESSION_ID]: session_id },
+          }) !== undefined
+        ) {
           reply.send({
             code: ErrorCode.APPROVAL_ALREADY_RESOLVED,
             msg: `approval ${approval_id} already resolved`,
@@ -170,8 +154,7 @@ export function registerApprovalsRoutes(app: ApprovalRouteHost, core: Scope): vo
         feedback: body.feedback,
         selectedLabel: body.selected_label,
       };
-      handle.accessor.get(ISessionApprovalService).decide(approval_id, response);
-      // Security-sensitive: record who resolved what, and how.
+      interactions.respond(approval_id, response);
       requestLog(req)?.info(
         { session_id, approval_id, decision: response.decision, scope: response.scope },
         'approval decided',
@@ -188,11 +171,6 @@ export function registerApprovalsRoutes(app: ApprovalRouteHost, core: Scope): vo
   );
 }
 
-// ---------------------------------------------------------------------------
-// Projection — v2 interaction (approval kind) onto the v1 wire
-// `approvalRequestSchema`.
-// ---------------------------------------------------------------------------
-
 export function toWireApproval(interaction: Interaction, sessionId: string): {
   approval_id: string;
   session_id: string;
@@ -205,10 +183,11 @@ export function toWireApproval(interaction: Interaction, sessionId: string): {
   expires_at: string;
 } {
   const p = interaction.payload as ApprovalRequest;
+  const turnId = interaction.tags[INTERACTION_TAG_TURN_ID];
   return {
     approval_id: interaction.id,
     session_id: sessionId,
-    turn_id: interaction.origin.turnId,
+    turn_id: typeof turnId === 'number' ? turnId : undefined,
     tool_call_id: p.toolCallId ?? interaction.id,
     tool_name: p.toolName,
     action: p.action,

@@ -8,6 +8,7 @@ import { ImageThumbnail } from '#/tui/components/media/image-thumbnail';
 import { USER_MESSAGE_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import type { ImageAttachment } from '#/tui/utils/image-attachment-store';
+import { markOsc133Zone } from '#/tui/utils/osc133';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 export class UserMessageComponent implements Component {
@@ -77,15 +78,17 @@ export class UserMessageComponent implements Component {
       }
     }
 
-    const rendered = lines.map((line) => {
-      // Inline image sequences (Kitty / iTerm2) carry their own placement
-      // information and have zero visible width, but pi-tui's truncateToWidth
-      // treats the embedded base64 payload as visible text and would chop the
-      // escape sequence in half, leaving garbage like "0m...". Skip truncation
-      // for those lines; the image itself already respects maxWidthCells.
-      if (isImageLine(line)) return line;
-      return truncateToWidth(line, safeWidth, '…');
-    });
+    const rendered = markOsc133Zone(
+      lines.map((line) => {
+        // Inline image sequences (Kitty / iTerm2) carry their own placement
+        // information and have zero visible width, but pi-tui's truncateToWidth
+        // treats the embedded base64 payload as visible text and would chop the
+        // escape sequence in half, leaving garbage like "0m...". Skip truncation
+        // for those lines; the image itself already respects maxWidthCells.
+        if (isImageLine(line)) return line;
+        return truncateToWidth(line, safeWidth, '…');
+      }),
+    );
     if (isRenderCacheEnabled()) {
       this.renderCache = { width: safeWidth, lines: rendered };
     }

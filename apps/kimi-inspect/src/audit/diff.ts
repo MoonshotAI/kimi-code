@@ -1,13 +1,14 @@
 /**
- * Structural diff over serialized `AgentState` values (see `serialize.ts`).
+ * Structural diff over serialized `ChatState` values (see `serialize.ts`).
  *
  * The audit panel diffs two adjacent, immutable states. Because the store
  * is copy-on-write, untouched subtrees share references — the reference
  * equality fast path below collapses them to `unchanged` without walking.
  *
- * Arrays of transcript entities are matched by their id field (turnId,
- * stepId, frameId, …) rather than by index, so an upsert in the middle of
- * the timeline does not turn into a cascade of spurious modifications.
+ * Arrays of protocol entities are matched by their id field (turn_id,
+ * step_id, message_id, tool_call_id, …) rather than by index, so an upsert
+ * in the middle of the timeline does not turn into a cascade of spurious
+ * modifications.
  */
 
 export type DiffStatus = 'unchanged' | 'added' | 'removed' | 'modified';
@@ -27,21 +28,22 @@ export interface DiffNode {
 }
 
 /**
- * Id fields checked in priority order — MOST SPECIFIC FIRST. A step carries
- * both `turnId` and `stepId`, and a frame can carry `taskId` alongside its
- * `frameId`; matching the wrong one mislabels the node and, worse, collides
- * siblings in the children map (two steps of one turn both keyed `t1`).
+ * Id fields checked in priority order — MOST SPECIFIC FIRST. An interaction
+ * carries both `interaction_id` and `tool_call_id`, a tool call can carry
+ * `task_id` / `todo_id` alongside its `tool_call_id`, and every timeline
+ * entity carries `turn_id`; matching the wrong one mislabels the node and,
+ * worse, collides siblings in the children map (two tool calls of one task
+ * both keyed by that task id).
  */
 const ID_FIELDS = [
-  'frameId',
-  'stepId',
-  'interactionId',
-  'attachmentId',
-  'todoId',
-  'markerId',
-  'refId',
-  'turnId',
-  'taskId',
+  'message_id',
+  'interaction_id',
+  'tool_call_id',
+  'task_id',
+  'todo_id',
+  'system_id',
+  'step_id',
+  'turn_id',
 ] as const;
 
 function elementId(element: unknown): string | undefined {

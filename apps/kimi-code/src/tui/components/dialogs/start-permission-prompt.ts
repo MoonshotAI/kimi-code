@@ -99,9 +99,9 @@ function styleLabel(label: string, selected: boolean): string {
 
 function styleModeNames(text: string, baseToken: 'text' | 'textMuted'): string {
   return text
-    .split(/(\b(?:Manual|Auto|YOLO)\b)/g)
+    .split(/(\b(?:Always Ask|Ask When Needed|Never Ask)\b)/g)
     .map((part) => {
-      if (part === 'Manual' || part === 'Auto' || part === 'YOLO') return currentTheme.boldFg('textStrong', part);
+      if (part === 'Always Ask' || part === 'Ask When Needed' || part === 'Never Ask') return currentTheme.boldFg('textStrong', part);
       return currentTheme.fg(baseToken, part);
     })
     .join('');

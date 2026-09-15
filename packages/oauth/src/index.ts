@@ -1,6 +1,7 @@
 export {
   DeviceCodeExpiredError,
   DeviceCodeTimeoutError,
+  OAuthAccessDeniedError,
   OAuthConnectionError,
   OAuthError,
   OAuthUnauthorizedError,
@@ -36,10 +37,22 @@ export {
   KIMI_CODE_PLATFORM,
   parseKimiCodeCustomHeaders,
   readKimiDeviceId,
+  replaceUserAgentProduct,
 } from './identity';
 export type { KimiHostIdentity, KimiIdentityOptions } from './identity';
 
 export { KIMI_CODE_FLOW_CONFIG } from './constants';
+
+export {
+  KIMI_REGION_MARKER_FILENAME,
+  KIMI_REGION_PROFILES,
+  kimiCdnContentUrl,
+  kimiRegionLoginHosts,
+  kimiRegionProfile,
+  kimiRegionSchema,
+  resolveKimiRegion,
+} from './region';
+export type { KimiRegion, KimiRegionProfile, ResolveKimiRegionOptions } from './region';
 
 export {
   applyManagedApiKeyProviderModels,
@@ -94,21 +107,35 @@ export type {
 } from './managed-userinfo';
 
 export {
+  boosterWalletInfoSchema,
   fetchManagedUsage,
   formatDuration,
   isManagedKimiCode,
   isManagedKimiCodeBaseUrl,
   kimiCodeBaseUrl,
   kimiCodeUsageUrl,
+  managedQuotaEntrySchema,
+  managedQuotaSchema,
+  managedQuotaUsagesSchema,
+  managedUsageResultSchema,
   parseManagedUsagePayload,
 } from './managed-usage';
 export type {
+  BoosterWalletInfo,
   FetchManagedUsageError,
   FetchManagedUsageResult,
-  ParsedManagedUsage,
-  UsageRow,
-  UsageWindow,
+  ManagedQuota,
+  ManagedQuotaEntry,
+  ManagedQuotaUsages,
+  ManagedUsageResult,
 } from './managed-usage';
+
+export { fetchChatTitle, kimiCodeToolsUrl } from './managed-tools';
+export type {
+  FetchChatTitleError,
+  FetchChatTitleOk,
+  FetchChatTitleResult,
+} from './managed-tools';
 
 export { fetchSubmitFeedback, kimiCodeFeedbackUrl } from './managed-feedback';
 export type {
@@ -169,8 +196,8 @@ export type {
 
 export { KimiOAuthToolkit, resolveKimiTokenStorageName } from './toolkit';
 export type {
-  AuthManagedUserInfoResult,
   AuthManagedUsageResult,
+  AuthManagedUserInfoResult,
   AuthProviderStatus,
   AuthStatus,
   BearerTokenProvider,
@@ -189,3 +216,6 @@ export type {
   RefreshProviderScope,
   RefreshResult,
 } from './refreshProviderModels';
+
+export type { OAuthTokenTransactionOptions } from './oauth-token-transaction';
+export { OAuthTokenTransaction } from './oauth-token-transaction';

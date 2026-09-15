@@ -15,6 +15,7 @@ const DEFAULT_OUT_DIR = resolve(DEFAULT_PLUGINS_ROOT, 'cdn');
 const SENTINEL = '.kimi-plugin-marketplace-build.json';
 const SKIP_DIRS = new Set(['.git', 'node_modules']);
 const SKIP_FILES = new Set(['.DS_Store']);
+const EXTRA_CDN_PLUGIN_SOURCES = ['./official/kimi-webbridge'];
 
 const isMain = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
@@ -55,6 +56,15 @@ export async function buildPluginMarketplaceCdn({ pluginsRoot, outDir }) {
       if (version !== undefined) stamped = { ...stamped, version };
     }
     plugins.push(stamped);
+    if (result.archive !== undefined) archives.push(result.archive);
+  }
+
+  // WebBridge is injected by v2 clients rather than listed in the remote
+  // catalog, but its managed plugin still needs a CDN artifact.
+  for (const source of EXTRA_CDN_PLUGIN_SOURCES) {
+    const archive = stripRelativePrefix(withZipExtension(source));
+    if (archives.includes(archive)) continue;
+    const result = await materializeEntrySource(source, pluginsRoot, outDir);
     if (result.archive !== undefined) archives.push(result.archive);
   }
 

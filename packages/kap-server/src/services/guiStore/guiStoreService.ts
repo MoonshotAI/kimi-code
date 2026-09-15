@@ -1,7 +1,3 @@
-/**
- * `GuiStoreService` — persistent TOML-backed implementation of `IGuiStoreService`.
- */
-
 import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -10,7 +6,6 @@ import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 
 import { IGuiStoreService } from './guiStore';
 
-/** Minimal logger surface — keeps the store decoupled from the server logger. */
 export interface GuiStoreLogger {
   warn(obj: unknown, msg: string): void;
 }

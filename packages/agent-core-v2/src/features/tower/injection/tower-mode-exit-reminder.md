@@ -1,0 +1,1 @@
+Tower mode is no longer active. The tower orchestration restrictions are lifted and your normal capabilities (including TodoList) are restored; the tower tool set remains available. The `.tower/` workspace state — comms, worktrees, and the activity log — is preserved on disk. Re-enter tower mode with `/tower on`.

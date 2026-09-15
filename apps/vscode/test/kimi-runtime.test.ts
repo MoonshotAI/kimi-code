@@ -20,10 +20,26 @@ import type {
   SessionSummary,
   ThinkingEffort,
 } from "@moonshot-ai/kimi-code-sdk";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { Events } from "../shared/bridge";
 import { KimiRuntime, type OpenSessionOptions } from "../src/runtime/kimi-runtime";
+
+const sdkFactories = vi.hoisted(() => {
+  const harness = { homeDir: "/tmp/kimi-runtime-home", close: vi.fn(async () => undefined) };
+  return {
+    harness,
+    createKimiHarness: vi.fn(() => harness),
+  };
+});
+
+vi.mock("@moonshot-ai/kimi-code-sdk", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@moonshot-ai/kimi-code-sdk")>();
+  return {
+    ...original,
+    createKimiHarness: sdkFactories.createKimiHarness,
+  };
+});
 
 interface FakeSessionBoundary {
   readonly session: Session;
@@ -246,6 +262,27 @@ function createRuntime(
 }
 
 describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
+  it("creates the harness through the SDK factory when none is injected", async () => {
+    const runtime = new KimiRuntime({
+      version: "0.6.0",
+      broadcast: () => undefined,
+      captureBaseline: () => undefined,
+      log: () => undefined,
+    });
+    expect(sdkFactories.createKimiHarness).toHaveBeenCalledOnce();
+    expect(sdkFactories.createKimiHarness).toHaveBeenCalledWith({
+      homeDir: undefined,
+      identity: {
+        productName: "kimi-code-vscode",
+        version: "0.6.0",
+        platform: "kimi_code_vscode",
+      },
+      uiMode: "vscode",
+    });
+    expect(runtime.harness).toBe(sdkFactories.harness as unknown as KimiHarness);
+    await runtime.dispose();
+  });
+
   it("forwards the requested settings when creating an SDK session", async () => {
     const { runtime, sdk } = createRuntime();
 
@@ -343,6 +380,91 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
     expect(boundary.handlerInstallations).toEqual({ approval: 1, question: 1 });
   });
 
+  it("does not double-wrap the SDK session when two opens race for it", async () => {
+    const sdk = createFakeHarness();
+    const broadcasts: { event: string; data: unknown; webviewId?: string }[] = [];
+    const runtime = new KimiRuntime({
+      version: "0.6.0",
+      harness: sdk.harness,
+      broadcast: (event, data, webviewId) => {
+        broadcasts.push({ event, data, webviewId });
+      },
+      captureBaseline: () => undefined,
+      log: () => undefined,
+    });
+    const boundary = sdk.addSession("saved-1", "/workspace");
+
+    const [first, second] = await Promise.all([
+      runtime.openSession(openOptions({ sessionId: "saved-1" })),
+      runtime.openSession(openOptions({ sessionId: "saved-1" })),
+    ]);
+
+    expect(second).toBe(first);
+    expect(boundary.subscriptionCount()).toBe(1);
+
+    boundary.emit({
+      type: "assistant.delta",
+      sessionId: "saved-1",
+      agentId: "main",
+      turnId: 1,
+      delta: "Hello",
+    });
+
+    const parts = broadcasts.filter(
+      ({ data }) => (data as { type?: string }).type === "ContentPart",
+    );
+    expect(parts).toHaveLength(1);
+  });
+
+  it("coalesces two concurrent new-session opens for one view onto one session", async () => {
+    const { runtime, sdk } = createRuntime();
+
+    const [first, second] = await Promise.all([
+      runtime.openSession(openOptions()),
+      runtime.openSession(openOptions()),
+    ]);
+
+    expect(second).toBe(first);
+    expect(sdk.createInputs).toHaveLength(1);
+    expect(first.subscribers).toEqual(["view-1"]);
+  });
+
+  it("does not double-wrap the SDK session when two attaches race for it", async () => {
+    const sdk = createFakeHarness();
+    const broadcasts: { event: string; data: unknown; webviewId?: string }[] = [];
+    const runtime = new KimiRuntime({
+      version: "0.6.0",
+      harness: sdk.harness,
+      broadcast: (event, data, webviewId) => {
+        broadcasts.push({ event, data, webviewId });
+      },
+      captureBaseline: () => undefined,
+      log: () => undefined,
+    });
+    const boundary = sdk.addSession("saved-1", "/workspace");
+
+    const [first, second] = await Promise.all([
+      runtime.attachResumedSession("view-1", boundary.session),
+      runtime.attachResumedSession("view-1", boundary.session),
+    ]);
+
+    expect(second).toBe(first);
+    expect(boundary.subscriptionCount()).toBe(1);
+
+    boundary.emit({
+      type: "assistant.delta",
+      sessionId: "saved-1",
+      agentId: "main",
+      turnId: 1,
+      delta: "Hello",
+    });
+
+    const parts = broadcasts.filter(
+      ({ data }) => (data as { type?: string }).type === "ContentPart",
+    );
+    expect(parts).toHaveLength(1);
+  });
+
   it("preserves the resumed session's model instead of reapplying the configured default", async () => {
     const { runtime, sdk } = createRuntime();
     const session = sdk.addSession("saved-1", "/workspace", { model: "old-model" });
@@ -387,7 +509,12 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
       event: Events.StreamEvent,
       data: {
         type: "StatusUpdate",
-        payload: { model: "kimi-test", thinking_effort: "max", plan_mode: true },
+        payload: {
+          model: "kimi-test",
+          thinking_effort: "max",
+          plan_mode: true,
+          context_usage: 0,
+        },
         _sessionId: "saved-1",
       },
       webviewId: "view-1",

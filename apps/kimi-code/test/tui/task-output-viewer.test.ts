@@ -111,6 +111,17 @@ describe('TaskOutputViewer — rendering', () => {
     expect(out).toContain('delta');
     expect(out).toContain('echo');
   });
+
+  it('does not pass terminal controls from task output into the framed body', () => {
+    const rendered = makeViewer({
+      output: 'Downloading wheel 25%\rDownloading wheel 75%\u001B[2Jdone',
+    }).render(120);
+    const raw = rendered.join('\n');
+
+    expect(raw).not.toContain('\r');
+    expect(raw).not.toContain('\u001B[2J');
+    expect(strip(raw)).toContain('Downloading wheel 25%Downloading wheel 75%done');
+  });
 });
 
 describe('TaskOutputViewer — scrolling', () => {

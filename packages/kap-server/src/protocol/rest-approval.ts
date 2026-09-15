@@ -1,8 +1,3 @@
-/**
- *   GET  /v1/sessions/{session_id}/approvals?status=pending
- *   POST /v1/sessions/{session_id}/approvals/{approval_id}
- */
-
 import { z } from 'zod';
 
 import { isoDateTimeSchema } from '@moonshot-ai/agent-core-v2/_base/utils/isoDateTime';

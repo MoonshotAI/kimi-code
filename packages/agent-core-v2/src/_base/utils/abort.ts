@@ -1,8 +1,3 @@
-/**
- * Abort-signal helpers — user-cancellation errors, abortable promises, signal
- * linking, and deadline abort signals.
- */
-
 export function abortError(message = 'Aborted'): Error {
   const error = new Error(message);
   error.name = 'AbortError';

@@ -11,7 +11,7 @@ function normalizeBackgroundField(value: string | undefined): string | undefined
   const collapsed = value.trim().replaceAll(/\s+/g, ' ');
   if (collapsed.length === 0) return undefined;
   if (collapsed.length <= MAX_BACKGROUND_FIELD_LENGTH) return collapsed;
-  return `${collapsed.slice(0, MAX_BACKGROUND_FIELD_LENGTH - 3)}...`;
+  return `${collapsed.slice(0, MAX_BACKGROUND_FIELD_LENGTH - 1)}…`;
 }
 
 export function formatBackgroundAgentTranscript(
@@ -28,9 +28,12 @@ export function formatBackgroundAgentTranscript(
         ? `${subject} completed in background`
         : `${subject} failed in background`;
   const tail = phase === 'failed' ? normalizeBackgroundField(extras?.error) : undefined;
-  const detailParts = [normalizeBackgroundField(meta.description), tail].filter(
-    (part): part is string => part !== undefined,
-  );
+  const detailParts = [
+    normalizeBackgroundField(meta.model),
+    normalizeBackgroundField(meta.effort),
+    normalizeBackgroundField(meta.description),
+    tail,
+  ].filter((part): part is string => part !== undefined);
 
   return {
     phase,

@@ -1,7 +1,3 @@
-/**
- * `mcpCore` domain — error codes.
- */
-
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 
 export const McpErrors = {
@@ -10,6 +6,7 @@ export const McpErrors = {
     MCP_SERVER_DISABLED: 'mcp.server_disabled',
     MCP_STARTUP_FAILED: 'mcp.startup_failed',
     MCP_TOOL_NAME_COLLISION: 'mcp.tool_name_collision',
+    MCP_OAUTH_FAILED: 'mcp.oauth_failed',
   },
 } as const satisfies ErrorDomain;
 

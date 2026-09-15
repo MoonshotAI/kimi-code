@@ -1,16 +1,3 @@
-/**
- * `blob` domain — byte-bounded LRU cache.
- *
- * A small, dependency-free cache whose capacity is measured in **bytes** rather
- * than entries. Hits refresh an entry to most-recently-used; inserts evict the
- * least-recently-used entries until the payload fits. A single payload larger
- * than `maxBytes` is never cached.
- *
- * Module-private helper; not part of the package surface. Owned as a value
- * (not a DI service) so each agent keeps its own cache. Promote to a shared
- * util only when a second caller appears.
- */
-
 export class ByteLruCache {
   private readonly map = new Map<string, Buffer>();
   private currentBytes = 0;

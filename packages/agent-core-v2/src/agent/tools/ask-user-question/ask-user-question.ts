@@ -1,15 +1,3 @@
-/**
- * `tools` domain — `IAskUserQuestionTool` contract (the
- * `AskUserQuestion` tool).
- *
- * Public contract of the `AskUserQuestion` structured user question tool:
- * the input zod schemas the model-facing parameters are derived from
- * (including the background-asking variant and the uniqueness validation
- * shared by both the schema refinement and the runtime re-check) and the
- * `IAskUserQuestionTool` DI decorator that the implementation registers
- * against via `registerAgentToolService`. Bound at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';
@@ -99,7 +87,6 @@ export const AskUserQuestionInputSchema: z.ZodType<AskUserQuestionInput> =
     (data) => questionUniquenessError(data.questions) === null,
     { message: QUESTION_UNIQUENESS_MESSAGE },
   );
-
 
 export interface IAskUserQuestionTool extends AgentTool<AskUserQuestionInput> {
   readonly _serviceBrand: undefined;

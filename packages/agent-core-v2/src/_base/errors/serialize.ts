@@ -1,13 +1,3 @@
-/**
- * `errors` domain (cross-cutting) — wire serialization of thrown values.
- *
- * Converts between thrown values and the portable `ErrorPayload` that crosses
- * process / language boundaries, recursively through the `cause` chain. Knows
- * only coded errors and the core codes: business-domain translation (e.g.
- * provider API errors) happens at the owning domain's boundary before errors
- * reach this layer, so `_base/errors` never imports a business domain.
- */
-
 import { CoreErrors, errorInfo, isErrorCode } from './codes';
 import type { ErrorCode } from '#/errors';
 import { Error2 } from './errors';

@@ -36,8 +36,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { bootstrap, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-core-v2';
 
 import { TEST_CLIENT_IDENTITY } from '../helpers/engine.js';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
-import { IModelService } from '@moonshot-ai/agent-core-v2/kosong/model/model';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import { IModelService } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
 
 import type { Klient } from '../../src/index.js';
 import type { AgentHandle } from '../../src/core/klient.js';
@@ -93,7 +93,8 @@ const M_GOOGLE = 'matrix-google';
 
 const KIMI_PROVIDER = 'matrix-kimi-provider';
 
-const IMAGE_BAD_MIME_URL = 'data:image/bmp;base64,QUJD'; // bmp is outside every base's allowlist
+const IMAGE_BAD_MIME_URL = 'data:image/tiff;base64,QUJD'; // tiff is outside every provider's accepted set
+const IMAGE_KIMI_ONLY_MIME_URL = 'data:image/bmp;base64,QUJD'; // bmp is accepted by Kimi alone
 const IMAGE_BAD_BASE64_URL = 'data:image/png;base64,%%%not-base64%%%';
 const VIDEO_HTTP_URL = 'https://example.com/clip.mp4';
 const VIDEO_BAD_MIME_URL = 'data:video/x-ms-wmv;base64,QUJD';
@@ -476,7 +477,17 @@ async function promptAndWait(ctx: CaseContext, input: readonly ContentPart[]): P
 function openAiMessages(callIndex: number): Record<string, unknown>[] {
   const body = requests[callIndex]?.json as { messages?: Record<string, unknown>[] } | undefined;
   expect(body?.messages, `request #${callIndex} should carry a messages array`).toBeDefined();
-  return body!.messages!;
+  return body!.messages!.filter((message) => !isDateReminderMessage(message));
+}
+
+const DATE_REMINDER_MARKERS = [
+  'The current date is restated in a reminder whenever it changes',
+  'Rely on this reminder over any earlier date statement',
+];
+
+function isDateReminderMessage(message: Record<string, unknown>): boolean {
+  const serialized = JSON.stringify(message);
+  return DATE_REMINDER_MARKERS.some((marker) => serialized.includes(marker));
 }
 
 // ---------------------------------------------------------------------------
@@ -535,15 +546,15 @@ describe('l1: klient input validation', () => {
 describe('image blocks with invalid data', () => {
   it('a data-URL image with an unaccepted mime is replaced at prompt ingestion on EVERY provider (l2)', async () => {
     // PromptStepRequest gates image parts through gateImageFormatParts before
-    // the turn starts: image/bmp never reaches any provider's conversion
+    // the turn starts: image/tiff never reaches any provider's conversion
     // layer — it becomes a text notice, the request goes out without the
     // image, and the turn completes. This is the engine's "session
-    // poisoning" defense and is provider-independent.
+    // poisoning" defense and holds for every provider.
     const cases = [
-      { label: 'bmp-openai', model: M_OPENAI, reply: OK_OPENAI },
-      { label: 'bmp-kimi', model: M_KIMI, reply: OK_OPENAI },
-      { label: 'bmp-anthropic', model: M_ANTHROPIC, reply: OK_ANTHROPIC },
-      { label: 'bmp-google', model: M_GOOGLE, reply: OK_GOOGLE },
+      { label: 'tiff-openai', model: M_OPENAI, reply: OK_OPENAI },
+      { label: 'tiff-kimi', model: M_KIMI, reply: OK_OPENAI },
+      { label: 'tiff-anthropic', model: M_ANTHROPIC, reply: OK_ANTHROPIC },
+      { label: 'tiff-google', model: M_GOOGLE, reply: OK_GOOGLE },
     ] as const;
     for (const { label, model, reply } of cases) {
       const ctx = await newCase(model, label);
@@ -554,8 +565,31 @@ describe('image blocks with invalid data', () => {
       ]);
       expect(requests, label).toHaveLength(1);
       const wireText = JSON.stringify(requests[0]?.json);
-      expect(wireText, label).toContain('unsupported image format image/bmp');
-      expect(wireText, label).not.toContain('image/bmp;base64');
+      expect(wireText, label).toContain('unsupported image format image/tiff');
+      expect(wireText, label).not.toContain('image/tiff;base64');
+      expect(ctx.payloads('prompt.completed')[0]?.['reason'], label).toBe('completed');
+    }
+  }, 60_000);
+
+  it('a data-URL image in a Kimi-only format reaches a Kimi model but is replaced elsewhere (l2)', async () => {
+    // The accepted set is keyed by the provider the agent is bound to: Kimi
+    // takes BMP/HEIC/HEIF on top of the baseline, the other providers do not.
+    const cases = [
+      { label: 'bmp-kimi', model: M_KIMI, reply: OK_OPENAI, accepted: true },
+      { label: 'bmp-openai', model: M_OPENAI, reply: OK_OPENAI, accepted: false },
+      { label: 'bmp-anthropic', model: M_ANTHROPIC, reply: OK_ANTHROPIC, accepted: false },
+    ] as const;
+    for (const { label, model, reply, accepted } of cases) {
+      const ctx = await newCase(model, label);
+      resetMock(queueScript(reply));
+      await promptAndWait(ctx, [
+        { type: 'text', text: 'what is this?' },
+        { type: 'image_url', imageUrl: { url: IMAGE_KIMI_ONLY_MIME_URL } },
+      ]);
+      expect(requests, label).toHaveLength(1);
+      const wireText = JSON.stringify(requests[0]?.json);
+      expect(wireText.includes('image/bmp;base64'), label).toBe(accepted);
+      expect(wireText.includes('unsupported image format image/bmp'), label).toBe(!accepted);
       expect(ctx.payloads('prompt.completed')[0]?.['reason'], label).toBe('completed');
     }
   }, 60_000);
@@ -681,6 +715,47 @@ describe('image blocks with invalid data', () => {
     expect(secondBlocks.some((block) => (block as { type?: string }).type === 'image')).toBe(false);
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
+// Daemon file references (kimi-file://): engine-side resolution before the
+// provider wire.
+// ---------------------------------------------------------------------------
+
+describe('daemon file references (kimi-file://)', () => {
+  it('a kimi-file image reference reaches the provider as a data URL, never verbatim', async () => {
+    // Regression for the duplicated resolver-token shadowing: the legacy
+    // video-only resolver won the shared DI token on the production import
+    // order, so image kimi-file refs leaked to the provider unchanged and
+    // gateways rejected the unknown scheme with a 400 ("unsupported image
+    // url"), which the media-strip fallback then mistook for a bad image.
+    const cases = [
+      { label: 'kimifile-image-openai', model: M_OPENAI_VISION, reply: OK_OPENAI },
+      { label: 'kimifile-image-kimi', model: M_KIMI, reply: OK_OPENAI },
+    ] as const;
+    for (const { label, model, reply } of cases) {
+      const meta = await klient.global.files.save({
+        data: new Uint8Array(Buffer.from(PNG_1X1_BASE64, 'base64')),
+        filename: 'pasted-image.png',
+        mimeType: 'image/png',
+        expiresInSec: 3600,
+      });
+      const ctx = await newCase(model, label);
+      resetMock(queueScript(reply));
+      await promptAndWait(ctx, [
+        { type: 'image_url', imageUrl: { url: `kimi-file://${meta.id}` } },
+        { type: 'text', text: 'what is this?' },
+      ]);
+      expect(requests, label).toHaveLength(1);
+      expect(JSON.stringify(requests[0]?.json), label).not.toContain(`kimi-file://${meta.id}`);
+      const content = openAiMessages(0).at(-1)?.['content'] as unknown[];
+      const imagePart = content.find(
+        (part) => (part as { type?: string }).type === 'image_url',
+      ) as { image_url?: { url?: string } } | undefined;
+      expect(imagePart?.image_url?.url ?? '', label).toMatch(/^data:image\/png;base64,/);
+      expect(ctx.payloads('prompt.completed')[0]?.['reason'], label).toBe('completed');
+    }
+  }, 60_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -841,7 +916,7 @@ describe('video blocks', () => {
     // "Unsupported media type for base64 video" does NOT match the
     // image-format non-retryable patterns, so stepRetry claims it. Cap the
     // retries at 2 attempts (1 re-run, ~500ms backoff) for the suite's sake.
-    await klient.global.config.set({ domain: 'loopControl', patch: { maxRetriesPerStep: 2 } });
+    await klient.global.config.set({ domain: 'loopControl', patch: { maxAttemptsPerStep: 2 } });
     try {
       const ctx = await newCase(M_ANTHROPIC, 'anthropic-video-mime');
       resetMock(queueScript(OK_ANTHROPIC));
@@ -871,7 +946,7 @@ describe('video blocks', () => {
       expect(ctx.eventNames()).toEqual(['turn.started', 'turn.ended', 'error', 'prompt.completed']);
       expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('failed');
     } finally {
-      await klient.global.config.set({ domain: 'loopControl', patch: { maxRetriesPerStep: 10 } });
+      await klient.global.config.set({ domain: 'loopControl', patch: { maxAttemptsPerStep: 10 } });
     }
   }, 30_000);
 });

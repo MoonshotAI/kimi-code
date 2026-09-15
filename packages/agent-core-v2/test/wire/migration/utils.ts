@@ -52,6 +52,6 @@ export function wireSnapshot(records: readonly WireMigrationRecord[]) {
         args,
       };
     }),
-    { uuidLabels: new Map(), msgLabels: new Map() },
+    { uuidLabels: new Map(), msgLabels: new Map(), interactionLabels: new Map() },
   );
 }

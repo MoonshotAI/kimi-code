@@ -1,11 +1,3 @@
-/**
- * `mcpConfig` domain — registers MCP timeout preferences into `config`.
- *
- * Owns the global MCP startup and tool-call timeout preferences, including
- * their environment bindings and persistence guard. Registered into `config`
- * at module load. Bound at App scope.
- */
-
 import { z } from 'zod';
 
 import { type EnvBindings, envBindings, stripEnvBoundFields } from '#/app/config/config';

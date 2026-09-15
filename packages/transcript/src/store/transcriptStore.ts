@@ -1,19 +1,8 @@
-/**
- * TranscriptStore — the session-level root.
- *
- * Owns one AgentTranscript per agent, created lazily. Per-agent granularity
- * subscriptions are a transport (L3) concern and deliberately absent here;
- * this layer only guarantees that an agent's transcript exists on demand and
- * that roster changes are observable (so the server can fan out, and clients
- * can render an agent picker).
- */
-
 import type { AgentId } from '../model/ids';
 import { AgentTranscript, type Disposable } from './agentTranscript';
 
 export interface AgentDescriptor {
   readonly agentId: AgentId;
-  /** Engine metadata, mirrored for display (e.g. 'main' | 'sub' | swarm member). */
   readonly type?: 'main' | 'sub' | 'independent';
   readonly parentAgentId?: AgentId;
   readonly label?: string;
@@ -30,7 +19,6 @@ export class TranscriptStore {
 
   constructor(readonly sessionId: string) { }
 
-  /** Lazily create (or fetch) the transcript for an agent. */
   ensureAgent(agentId: AgentId, descriptor?: AgentDescriptor): AgentTranscript {
     let transcript = this.#agents.get(agentId);
     if (!transcript) {
@@ -48,14 +36,12 @@ export class TranscriptStore {
     return this.#agents.get(agentId);
   }
 
-  /** Drop an agent entirely (disposed sub-agent, swarm member cleaned up). */
   removeAgent(agentId: AgentId): boolean {
     const removed = this.#agents.delete(agentId);
     if (this.#descriptors.delete(agentId) || removed) this.#emitRoster();
     return removed;
   }
 
-  /** Merge or replace an agent's roster descriptor. */
   describeAgent(descriptor: AgentDescriptor): void {
     if (this.#descriptors.get(descriptor.agentId) !== descriptor) {
       this.#descriptors.set(descriptor.agentId, descriptor);

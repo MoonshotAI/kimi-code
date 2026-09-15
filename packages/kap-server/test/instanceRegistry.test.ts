@@ -1,12 +1,3 @@
-/**
- * Server instance registry semantics — the always-on kap-server discovery
- * mechanism (no feature flag; every instance registers itself).
- *
- * Hermetic strategy: every test uses a tmpdir instances dir so the real
- * `~/.kimi-code/server/instances` is never touched. Dead-pid simulation uses
- * `0x7fffffff` (guaranteed ESRCH on Linux/macOS).
- */
-
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -25,7 +16,6 @@ import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 let tmpDir: string;
 let instancesDir: string;
 
-/** Max signed-32 pid; the kernel never allocates it, so `kill(pid, 0)` → ESRCH. */
 const DEAD_PID = 0x7fffffff;
 
 beforeEach(() => {
@@ -134,7 +124,6 @@ describe('createInstanceRegistry — register / release', () => {
 describe('createInstanceRegistry — stale sweep on register', () => {
   it('removes dead-pid entries and keeps live ones when registering', async () => {
     const registry = createInstanceRegistry({ instancesDir, now: () => 1 });
-    // Pre-seed a stale (dead pid) and a live entry before registering.
     writeInstance('stale', { pid: DEAD_PID });
     writeInstance('live-peer', { pid: process.pid, started_at: 500 });
 
@@ -165,7 +154,6 @@ describe('createInstanceRegistry — listLive', () => {
 
     const live = await registry.listLive();
     expect(live.map((i) => i.serverId)).toEqual(['older', 'newer']);
-    // Dead entry lazily removed as a side effect.
     expect(existsSync(join(instancesDir, 'dead.json'))).toBe(false);
   });
 
@@ -189,7 +177,6 @@ describe('createInstanceRegistry — update', () => {
     const after = readInstance(reg.serverId);
     expect(after.port).toBe(58628);
     expect(after.heartbeat_at).toBe(2000);
-    // Other fields preserved.
     expect(after.pid).toBe(process.pid);
     expect(after.started_at).toBe(1000);
     await reg.release();
@@ -213,8 +200,6 @@ describe('createInstanceRegistry — heartbeat', () => {
     let tick = 0;
     const registry = createInstanceRegistry({
       instancesDir,
-      // 1ms cadence keeps a write in flight at almost every moment, so
-      // `release()` is exercised against the recreate-after-unlink race.
       heartbeatIntervalMs: 1,
       now: () => ++tick,
     });
@@ -226,8 +211,6 @@ describe('createInstanceRegistry — heartbeat', () => {
     expect(later).toBeGreaterThan(first);
 
     await reg.release();
-    // File is gone after release, and a heartbeat write that was in flight
-    // when release() ran must not recreate it.
     expect(existsSync(join(instancesDir, `${reg.serverId}.json`))).toBe(false);
     await sleep(30);
     expect(existsSync(join(instancesDir, `${reg.serverId}.json`))).toBe(false);
@@ -262,7 +245,6 @@ describe('convenience readers', () => {
   });
 });
 
-
 describe('startServer — instance registry wiring', () => {
   let home: string | undefined;
   const servers: RunningServer[] = [];
@@ -284,7 +266,6 @@ describe('startServer — instance registry wiring', () => {
     const b = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
     servers.push(b);
 
-    // Each instance binds its own (ephemeral) port and registers it.
     expect(b.port).not.toBe(a.port);
 
     const live = await listLiveServerInstances(home);
@@ -293,7 +274,6 @@ describe('startServer — instance registry wiring', () => {
     expect(live.map((i) => i.port).sort((x, y) => x - y)).toEqual(
       [a.port, b.port].sort((x, y) => x - y),
     );
-    // The legacy single-instance lock is never created.
     expect(existsSync(join(home, 'server', 'lock'))).toBe(false);
   });
 

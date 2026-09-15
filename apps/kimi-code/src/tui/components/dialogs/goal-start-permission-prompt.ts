@@ -14,19 +14,19 @@ export interface GoalStartPermissionPromptOptions {
 export const GOAL_START_MANUAL_OPTIONS: readonly StartPermissionOption[] = [
   {
     value: 'auto',
-    label: 'Switch to Auto and start',
+    label: 'Switch to Never Ask and start',
     description:
       'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically, and questions are skipped.',
   },
   {
     value: 'yolo',
-    label: 'Switch to YOLO and start',
+    label: 'Switch to Ask When Needed and start',
     description:
       'Tools and plan changes are approved automatically. Kimi Code may still ask you questions.',
   },
   {
     value: 'manual',
-    label: 'Start in Manual',
+    label: 'Start in Always Ask',
     description:
       'Keep approvals on. Kimi Code will ask before risky actions, so the goal may stop and wait for you.',
   },
@@ -40,13 +40,13 @@ export const GOAL_START_MANUAL_OPTIONS: readonly StartPermissionOption[] = [
 export const GOAL_START_YOLO_OPTIONS: readonly StartPermissionOption[] = [
   {
     value: 'auto',
-    label: 'Switch to Auto and start',
+    label: 'Switch to Never Ask and start',
     description:
       'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically, and questions are skipped.',
   },
   {
     value: 'yolo',
-    label: 'Keep YOLO and start',
+    label: 'Keep Ask When Needed and start',
     description:
       'Tools and plan changes stay approved automatically. Kimi Code may still ask you questions.',
   },
@@ -66,15 +66,15 @@ const MANUAL_OPTIONS = GOAL_START_MANUAL_OPTIONS;
 const YOLO_OPTIONS = GOAL_START_YOLO_OPTIONS;
 
 const MANUAL_NOTICE_LINES = [
-  'Manual mode asks you before Kimi Code runs commands, edits files, or takes other risky actions.',
-  'Manual mode is not suitable for unattended goal work.',
+  'Always Ask mode asks you before Kimi Code runs commands, edits files, or takes other risky actions.',
+  'Always Ask mode is not suitable for unattended goal work.',
   'You can go back without losing your command.',
 ] as const;
 
 const YOLO_NOTICE_LINES = [
-  'YOLO mode approves tools and plan changes automatically.',
-  'YOLO mode can still stop for questions.',
-  'Switch to Auto if you want questions skipped during goal work.',
+  'Ask When Needed mode approves tools and plan changes automatically.',
+  'Ask When Needed mode can still stop for questions.',
+  'Switch to Never Ask if you want questions skipped during goal work.',
 ] as const;
 
 export class GoalStartPermissionPromptComponent extends StartPermissionPromptComponent {
@@ -82,7 +82,7 @@ export class GoalStartPermissionPromptComponent extends StartPermissionPromptCom
     super({
       title:
         opts.mode === 'yolo'
-          ? 'Start a goal in YOLO mode?'
+          ? 'Start a goal in Ask When Needed mode?'
           : 'Start a goal with approvals on?',
       noticeLines: opts.mode === 'yolo' ? YOLO_NOTICE_LINES : MANUAL_NOTICE_LINES,
       options: opts.mode === 'yolo' ? YOLO_OPTIONS : MANUAL_OPTIONS,

@@ -1,11 +1,47 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Error2, isError2, type Error2Options } from '#/_base/errors/errors';
-import type { FinishReason } from '#/kosong/contract/provider';
-import type { TokenUsage } from '#/kosong/contract/usage';
+import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { FinishReason } from '#human/llm/finish-reason';
+import type { ContentPart } from '#human/llm/message';
+import type { TokenUsage } from '#human/llm/usage';
 import type { Hooks } from '#/hooks';
+import type { UserEntry } from '#human/agent/turn';
 import { LoopErrors } from './errors';
-import type { StepRequest } from './stepRequest';
+import type {
+  MachineEngine,
+  MachineEngineAttachBundle,
+  MachineEngineAttachRef,
+  MachineEngineRetrySnapshot,
+  MachineEngineToolCallSnapshot,
+} from './machine/engine';
+
+export interface AgentActivityTurnSnapshot {
+  readonly turnId: number;
+  readonly phase: 'running' | 'tool_call' | 'retrying';
+  readonly step: number;
+  readonly ending: boolean;
+  readonly endingReason?: 'aborted';
+  readonly retry?: MachineEngineRetrySnapshot;
+  readonly activeToolCalls: readonly MachineEngineToolCallSnapshot[];
+  readonly since?: number;
+}
+
+export interface AgentActivitySnapshot {
+  readonly turn?: AgentActivityTurnSnapshot;
+}
+
+export interface LoopSnapshot {
+  readonly state: 'idle' | 'running';
+  readonly activeTurnId?: number;
+  readonly activePromptId?: string;
+  readonly queue: readonly UserEntry[];
+  readonly notificationCount: number;
+  readonly paused: boolean;
+  readonly hasPendingRequests: boolean;
+  readonly turn?: AgentActivityTurnSnapshot;
+  readonly activeTraceId?: string;
+}
 
 export type LoopErrorCode = (typeof LoopErrors.codes)[keyof typeof LoopErrors.codes];
 
@@ -32,6 +68,7 @@ export function isMaxStepsExceededError(error: unknown): boolean {
 export interface BeforeStepContext {
   readonly turnId: number;
   readonly step: number;
+  readonly firstStepOfTurn: boolean;
   readonly signal: AbortSignal;
 }
 
@@ -42,14 +79,12 @@ export interface AfterStepContext extends BeforeStepContext {
 }
 
 export interface LoopErrorContext {
-  readonly currentStep?: Step;
   readonly turnId: number;
   readonly step?: number;
   readonly stepId?: string;
   readonly signal: AbortSignal;
   readonly error: unknown;
-  readonly failedDriver?: StepRequest;
-  retry(request: StepRequest, options?: StepEnqueueOptions): Step;
+  retry(): void;
 }
 
 export interface LoopErrorHandler {
@@ -63,17 +98,12 @@ export interface LoopErrorHandlerRegistrationOptions {
   readonly after?: string;
 }
 
-export interface LoopRunOptions {
-  readonly turnId: number;
-  readonly signal?: AbortSignal;
-  readonly onStarted?: (step: number) => void;
-}
-
 export type LoopRunResult =
   | {
       readonly type: 'completed';
       readonly steps: number;
       readonly truncated: boolean;
+      readonly stopReason?: string;
     }
   | {
       readonly type: 'failed';
@@ -88,24 +118,8 @@ export type LoopRunResult =
 
 export type TurnResult = LoopRunResult;
 
-export type StepState = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
-
-export type StepResult =
-  | { readonly type: 'completed' }
-  | { readonly type: 'failed'; readonly error: unknown }
-  | { readonly type: 'cancelled'; readonly reason: unknown };
-
-export interface Step {
-  readonly id: string;
-  readonly turnId: number;
-  readonly state: StepState;
-  readonly signal: AbortSignal;
-  readonly result: Promise<StepResult>;
-  cancel(reason?: unknown): boolean;
-}
-
 export interface Turn {
-  readonly id: number;
+  readonly id?: number;
   readonly state?: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
   readonly signal: AbortSignal;
   readonly ready: Promise<void>;
@@ -113,44 +127,104 @@ export interface Turn {
   cancel(reason?: unknown): boolean;
 }
 
-export interface StepAssignment {
-  readonly turn: Turn;
-  readonly step: Step;
+export interface LoopSubmitOptions {
+  readonly steerIfActive?: boolean;
+  readonly onMaterialize?: () => void;
 }
 
-export interface EnqueueReceipt {
-  readonly assigned: Promise<StepAssignment>;
-  abort(reason?: unknown): boolean;
+export interface LoopSubmitResult {
+  readonly id: string;
 }
 
-export interface AgentLoopStatus {
-  readonly state: 'idle' | 'running';
-  readonly activeTurnId?: number;
-  readonly pendingTurnIds: readonly number[];
-  readonly hasPendingRequests: boolean;
-  readonly activeTraceId?: string;
+export interface LoopCancelTarget {
+  readonly turnId?: number;
+  readonly promptId?: string;
 }
 
-export interface StepEnqueueOptions {
-  readonly at?: 'head' | 'tail';
+export type PromptState =
+  | 'pending'
+  | 'running'
+  | 'steered'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'blocked';
+
+export interface PromptCompletion {
+  readonly promptId: string;
+  readonly result: TurnResult | undefined;
+  readonly state: Extract<PromptState, 'completed' | 'failed' | 'cancelled' | 'blocked'>;
+}
+
+export interface PromptSnapshot {
+  readonly id: string;
+  readonly userMessageId: string;
+  readonly createdAt: string;
+  readonly state: PromptState;
+  readonly message: ContextMessage;
+}
+
+export interface PromptHandle extends PromptSnapshot {
+  readonly launched: Promise<Turn | undefined>;
+  readonly completion: Promise<PromptCompletion>;
+}
+
+export interface PromptPayload {
+  readonly input: readonly ContentPart[];
+  readonly promptId?: string;
+}
+
+export interface SteerPayload {
+  readonly input: readonly ContentPart[];
+}
+
+export interface PromptLaunchResult {
+  readonly turn_id: number;
+}
+
+export interface PromptSubmitContext {
+  readonly promptMessage: ContextMessage;
+  readonly isSteer: boolean;
+  block: boolean;
+}
+
+export interface LoopNotify {
+  readonly message?: ContextMessage;
+  readonly turnScoped?: boolean;
+  readonly bypassMaxSteps?: boolean;
+  readonly onConsume?: () => void;
+  readonly onDrop?: () => void;
+}
+
+export interface LoopNotifyHandle {
+  readonly dropped: boolean;
+  drop(): void;
 }
 
 export interface IAgentLoopService {
   readonly _serviceBrand: undefined;
 
-  enqueue(request: StepRequest, options?: StepEnqueueOptions): EnqueueReceipt;
+  submit(input: UserEntry, options?: LoopSubmitOptions): LoopSubmitResult;
 
-  run(options: LoopRunOptions): Promise<LoopRunResult>;
+  steer(promptIds: readonly string[]): Promise<void>;
 
-  status(): AgentLoopStatus;
+  cancel(target?: LoopCancelTarget, reason?: unknown): boolean;
 
-  cancel(turnId?: number, reason?: unknown): boolean;
-
-  tryAcquireQuiescence(): IDisposable | undefined;
+  snapshot(): LoopSnapshot;
 
   settled(): Promise<void>;
 
-  hasPendingRequests(): boolean;
+  tryAcquireQuiescence(): IDisposable | undefined;
+
+  notify(note?: LoopNotify): LoopNotifyHandle;
+
+  buildAttachBundle(): MachineEngineAttachBundle;
+
+  attachEngine(ref: MachineEngineAttachRef, bundle: MachineEngineAttachBundle): MachineEngine;
+
+  resetMachineEngine(): Promise<void>;
+
+  promptHandle(id: string): PromptHandle | undefined;
 
   registerLoopErrorHandler(
     handler: LoopErrorHandler,
@@ -160,6 +234,7 @@ export interface IAgentLoopService {
   readonly hooks: Hooks<{
     onWillBeginStep: BeforeStepContext;
     onDidFinishStep: AfterStepContext;
+    onBeforeSubmitPrompt: PromptSubmitContext;
   }>;
 }
 

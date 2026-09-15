@@ -1,11 +1,3 @@
-/**
- * `workspaceAgentProfileLoader` domain — agent-file config sections.
- *
- * Registers the top-level config domain `extraAgentDirs`: additional
- * directories scanned for agent Markdown files. Values stay camelCase in
- * memory; TOML uses the snake_case key `extra_agent_dirs`.
- */
-
 import { z } from 'zod';
 
 import { registerConfigSection } from '#/app/config/configSectionContributions';

@@ -1,11 +1,3 @@
-/**
- * `_base.lifecycle` — in-memory lifecycle transitions with guarded async transactions.
- *
- * Provides a domain-independent state holder that enters a transition state before
- * asynchronous work begins and coordinates explicit commit, rollback, cleanup, and
- * compensation actions. It has no persistence, event, DI, or scope dependencies.
- */
-
 export type LifecycleTransitionErrorReason =
   | 'invalid_state'
   | 'transition_conflict'

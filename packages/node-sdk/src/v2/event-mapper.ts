@@ -14,22 +14,20 @@
  * `IEventService` (`session.meta.updated`) is unwrapped from its
  * `{type, payload}` envelope.
  */
-import type { Event } from '@moonshot-ai/agent-core';
-import type { DomainEvent } from '@moonshot-ai/agent-core-v2';
+import type { Event } from '@moonshot-ai/agent-core-v2/events';
+import type { Event2 } from '@moonshot-ai/agent-core-v2';
 
 /**
  * DomainEvent types the v1 SDK event stream never carries:
- * - v2-internal facts with no v1 protocol counterpart: `agent.activity.updated`
- *   (kap-server folds it into the `agent.status.updated` phase slice at the WS
- *   edge), `context.spliced`, `task.notified`, `plan.revision`, and the
- *   `permission.approval.*` pair (v1 surfaces approvals through the
- *   `requestApproval` callback, never as events).
+ * - v2-internal facts with no v1 protocol counterpart: `context.spliced`,
+ *   `task.notified`, `plan.revision`, and the `permission.approval.*` pair
+ *   (v1 surfaces approvals through the `requestApproval` callback, never as
+ *   events).
  * - `prompt.*`: the v2 prompt service publishes them on the agent bus, but in
  *   v1 they are synthesized by the daemon services layer onto the global
  *   `IEventService` — the in-process SDK client never sees them.
  */
 const DROPPED_DOMAIN_EVENT_TYPES: ReadonlySet<string> = new Set([
-  'agent.activity.updated',
   'context.spliced',
   'task.notified',
   'plan.revision',
@@ -38,6 +36,7 @@ const DROPPED_DOMAIN_EVENT_TYPES: ReadonlySet<string> = new Set([
   'prompt.submitted',
   'prompt.completed',
   'prompt.aborted',
+  'prompt.started',
   'prompt.steered',
 ]);
 
@@ -61,13 +60,19 @@ const RENAMED_DOMAIN_EVENT_TYPES: Readonly<Record<string, string>> = {
  * counterpart.
  */
 export function translateDomainEvent(
-  event: DomainEvent,
+  event: Event2<any>,
   sessionId: string,
   agentId: string,
 ): Event | undefined {
   if (DROPPED_DOMAIN_EVENT_TYPES.has(event.type)) return undefined;
   const type = RENAMED_DOMAIN_EVENT_TYPES[event.type] ?? event.type;
-  return { ...event, type, sessionId, agentId } as unknown as Event;
+  if (event.type === 'turn.started') {
+    const { promptAttachments: _internal, ...publicFields } = event as Event2<any> & {
+      promptAttachments?: unknown;
+    };
+    return Object.assign({}, publicFields, { type, sessionId, agentId }) as unknown as Event;
+  }
+  return Object.assign({}, event, { type, sessionId, agentId }) as unknown as Event;
 }
 
 /**
@@ -78,12 +83,10 @@ export function translateDomainEvent(
  * other global-bus type is a daemon/WS-edge event the in-process v1 client
  * never saw.
  */
-export function translateGlobalEvent(event: {
-  readonly type: string;
-  readonly payload: unknown;
-}): Event | undefined {
-  if (event.type !== 'session.meta.updated' || typeof event.payload !== 'object') {
+export function translateGlobalEvent(event: Event2<any>): Event | undefined {
+  const payload = (event as { readonly payload?: unknown }).payload;
+  if (event.type !== 'session.meta.updated' || typeof payload !== 'object') {
     return undefined;
   }
-  return { type: event.type, ...event.payload } as unknown as Event;
+  return { type: event.type, ...payload } as unknown as Event;
 }

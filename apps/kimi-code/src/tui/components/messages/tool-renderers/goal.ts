@@ -160,7 +160,7 @@ function formatGoalToolArgument(
   }
 }
 
-function parseGoalToolOutput(output: string): GoalSnapshotView | null | undefined {
+export function parseGoalToolOutput(output: string): GoalSnapshotView | null | undefined {
   const goal = parseGoalValue(output);
   if (goal === undefined || goal === null) return goal;
   const objective = stringField(goal, 'objective');

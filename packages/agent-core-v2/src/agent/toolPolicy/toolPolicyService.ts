@@ -1,18 +1,6 @@
-/**
- * `toolPolicy` domain — Agent-scope tool authorization service.
- *
- * Intersects the workspace os-level veto (the seeded `sessionToolPolicyGate`,
- * which outranks everything below it), the bound profile policy, global
- * `[tools]` configuration, and Session denylist (composed by
- * `isToolActiveComposed`), and installs the resulting
- * authorization check into the L3 executor preflight so direct tool calls
- * cannot bypass schema filtering. Disclosure entries retain their implicit
- * availability when a profile allowlist omits them, while explicit deny
- * layers still apply.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentProfileService, ProfileError, ProfileErrors } from '#/agent/profile/profile';
 import { TOOLS_SECTION, type ToolsConfig } from './configSection';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';

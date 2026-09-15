@@ -17,6 +17,8 @@ describe('status panel report lines', () => {
       thinkingEffort: 'on',
       permissionMode: 'manual',
       planMode: false,
+      towerMode: false,
+      towerAvailable: true,
       contextUsage: 0.25,
       contextTokens: 2500,
       maxContextTokens: 10000,
@@ -38,12 +40,10 @@ describe('status panel report lines', () => {
         contextUsage: 0.25,
       },
       managedUsage: {
-        summary: null,
-        limits: [
+        rows: [
           {
-            window: { duration: 5, unit: 'hour' },
-            used: 8,
-            limit: 100,
+            name: '5h limit',
+            usedRatio: 0.08,
             resetAt: new Date(Date.now() + 3600_000).toISOString(),
           },
         ],
@@ -54,7 +54,7 @@ describe('status panel report lines', () => {
     expect(output).toContain('>_ Kimi Code (v1.2.3)');
     expect(output).toContain('Model        Kimi K2 (thinking high)');
     expect(output).toContain('Directory    /tmp/project');
-    expect(output).toContain('Permissions  auto');
+    expect(output).toContain('Permissions  Never Ask');
     expect(output).toContain('Plan mode    on');
     expect(output).toContain('Session      ses-1');
     expect(output).toContain('Title        Implement status');
@@ -69,6 +69,58 @@ describe('status panel report lines', () => {
     expect(output).not.toContain('Runtime');
   });
 
+  it('prefers the fetched status tower mode over the cached value', () => {
+    const lines = buildStatusReportLines({
+      version: '1.2.3',
+      model: 'k2',
+      workDir: '/tmp/project',
+      sessionId: 'ses-1',
+      sessionTitle: null,
+      thinkingEffort: 'off',
+      permissionMode: 'manual',
+      planMode: false,
+      towerMode: false,
+      towerAvailable: true,
+      contextUsage: 0,
+      contextTokens: 0,
+      maxContextTokens: 0,
+      availableModels: {},
+      status: {
+        model: 'k2',
+        thinkingEffort: 'off',
+        permission: 'manual',
+        planMode: false,
+        towerMode: true,
+        contextTokens: 0,
+        maxContextTokens: 0,
+        contextUsage: 0,
+      },
+    }).map(strip);
+
+    expect(lines.join('\n')).toContain('Tower mode   on');
+  });
+
+  it('omits the tower mode row when the experiment is unavailable', () => {
+    const lines = buildStatusReportLines({
+      version: '1.2.3',
+      model: 'k2',
+      workDir: '/tmp/project',
+      sessionId: 'ses-1',
+      sessionTitle: null,
+      thinkingEffort: 'off',
+      permissionMode: 'manual',
+      planMode: false,
+      towerMode: false,
+      towerAvailable: false,
+      contextUsage: 0,
+      contextTokens: 0,
+      maxContextTokens: 0,
+      availableModels: {},
+    }).map(strip);
+
+    expect(lines.join('\n')).not.toContain('Tower mode');
+  });
+
   it('formats extra usage section in status report', () => {
     const lines = buildStatusReportLines({
       version: '1.2.3',
@@ -79,13 +131,14 @@ describe('status panel report lines', () => {
       thinkingEffort: 'off',
       permissionMode: 'manual',
       planMode: false,
+      towerMode: false,
+      towerAvailable: true,
       contextUsage: 0,
       contextTokens: 0,
       maxContextTokens: 0,
       availableModels: {},
       managedUsage: {
-        summary: null,
-        limits: [],
+        rows: [],
         extraUsage: {
           balanceCents: 15000,
           totalCents: 20000,
@@ -117,6 +170,8 @@ describe('status panel report lines', () => {
       thinkingEffort: 'off',
       permissionMode: 'manual',
       planMode: false,
+      towerMode: false,
+      towerAvailable: true,
       contextUsage: 0,
       contextTokens: 0,
       maxContextTokens: 0,

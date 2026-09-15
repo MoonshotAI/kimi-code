@@ -1,333 +1,53 @@
-/**
- * Scenario: Node SDK sessions persist and list through the public harness.
- * Responsibilities: workDir scoping, index recovery, fork metadata, and native path-safe listing.
- * Wiring: real in-process harness/session storage; no remote provider calls.
- * Run: pnpm exec vitest run test/list-sessions.test.ts
- */
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
-import { afterEach, describe, expect, it } from 'vitest';
-
-import { createKimiHarness } from '#/index';
-import type { KimiError } from '#/index';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  SessionStore,
-  encodeWorkDirKey,
-  normalizeWorkDir,
-  sessionIndexPath,
-} from '../../agent-core/src/session/store';
+  drainQueryStoreDisposals,
+  drainSessionIndexMirror,
+  ISessionIndex,
+  ISessionIndexMirror,
+} from '@moonshot-ai/agent-core-v2';
+
+import { createKimiHarness, SDKRpcClientV2 } from '#/index';
+import type { KimiError } from '#/index';
+
 import { TEST_IDENTITY } from './test-identity';
 
 const tempDirs: string[] = [];
 
 afterEach(async () => {
   for (const dir of tempDirs.splice(0)) {
-    await rm(dir, { recursive: true, force: true });
+    await removeTempDir(dir);
   }
 });
+
+async function removeTempDir(dir: string): Promise<void> {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try {
+      await rm(dir, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOTEMPTY' && code !== 'EBUSY' && code !== 'EPERM') {
+        throw error;
+      }
+      await delay(10);
+    }
+  }
+
+  await rm(dir, { recursive: true, force: true });
+}
 
 async function makeTempDir(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'kimi-sdk-list-'));
   tempDirs.push(dir);
   return dir;
 }
-
-async function writeSessionState(
-  sessionDir: string,
-  state: Record<string, unknown>,
-): Promise<string> {
-  const statePath = join(sessionDir, 'state.json');
-  await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, 'utf-8');
-  return statePath;
-}
-
-describe('SessionStore.list', () => {
-  it('returns an empty array when the workDir bucket does not exist', async () => {
-    const homeDir = await makeTempDir();
-    const workDir = await makeTempDir();
-    const store = new SessionStore(homeDir);
-
-    await expect(store.list({ workDir })).resolves.toEqual([]);
-  });
-
-  it('creates workDir-scoped session directories and a root session index', async () => {
-    const homeDir = await makeTempDir();
-    const workDir = await makeTempDir();
-    const store = new SessionStore(homeDir);
-
-    const summary = await store.create({ id: 'ses_list_full', workDir });
-
-    expect(summary).toMatchObject({
-      id: 'ses_list_full',
-      workDir: normalizeWorkDir(workDir),
-      title: undefined,
-    });
-    expect(summary.sessionDir).not.toBe(join(homeDir, 'sessions', 'ses_list_full'));
-    expect(basename(summary.sessionDir)).toBe('ses_list_full');
-    const workdirKey = basename(dirname(summary.sessionDir));
-    expect(workdirKey).toBe(encodeWorkDirKey(workDir));
-    expect(workdirKey.length).toBeLessThan(70);
-    expect(existsSync(join(summary.sessionDir, 'state.json'))).toBe(false);
-
-    const indexRaw = await readFile(sessionIndexPath(homeDir), 'utf-8');
-    expect(indexRaw).toContain('"sessionId":"ses_list_full"');
-    expect(indexRaw).toContain(summary.sessionDir);
-    expect(indexRaw).toContain(`"workDir":"${normalizeWorkDir(workDir)}"`);
-  });
-
-  it('forks a session directory, rewrites metadata, and drops reserved goal state', async () => {
-    const homeDir = await makeTempDir();
-    const workDir = await makeTempDir();
-    const store = new SessionStore(homeDir);
-
-    const source = await store.create({ id: 'ses_fork_source', workDir });
-    const sourceAgentDir = join(source.sessionDir, 'agents', 'main');
-    const sourceSubagentDir = join(source.sessionDir, 'agents', 'agent-1');
-    await mkdir(sourceAgentDir, { recursive: true });
-    await mkdir(sourceSubagentDir, { recursive: true });
-    await writeFile(join(sourceAgentDir, 'wire.jsonl'), '{"type":"context.clear"}\n', 'utf-8');
-    await writeFile(join(sourceSubagentDir, 'wire.jsonl'), '{"type":"context.clear"}\n', 'utf-8');
-    await writeFile(
-      join(source.sessionDir, 'upcoming-goals.json'),
-      `${JSON.stringify({ version: 1, goals: [{ id: 'queued-1', objective: 'source queued goal' }] })}\n`,
-      'utf-8',
-    );
-    await writeSessionState(source.sessionDir, {
-      createdAt: '2030-01-01T00:00:00.000Z',
-      updatedAt: '2030-01-01T00:00:00.000Z',
-      title: 'Source title',
-      isCustomTitle: true,
-      agents: {
-        main: {
-          homedir: sourceAgentDir,
-          type: 'main',
-        },
-        'agent-1': {
-          homedir: sourceSubagentDir,
-          type: 'subagent',
-          parentAgentId: 'main',
-        },
-      },
-      custom: {
-        source: true,
-        goal: {
-          goalId: 'source-goal',
-          objective: 'source objective',
-          status: 'active',
-          turnsUsed: 0,
-          tokensUsed: 0,
-          budgetLimits: {},
-        },
-      },
-    });
-
-    const fork = await store.fork({
-      sourceId: source.id,
-      targetId: 'ses_fork_child',
-      title: 'Fork title',
-      metadata: {
-        child: true,
-        goal: {
-          goalId: 'metadata-goal',
-          objective: 'metadata objective',
-          status: 'active',
-          turnsUsed: 0,
-          tokensUsed: 0,
-          budgetLimits: {},
-        },
-      },
-    });
-
-    const forkState = JSON.parse(await readFile(join(fork.sessionDir, 'state.json'), 'utf-8')) as {
-      title?: string;
-      isCustomTitle?: boolean;
-      forkedFrom?: string;
-      agents?: { main?: { homedir?: string } };
-      custom?: Record<string, unknown>;
-    };
-    expect(forkState.title).toBe('Fork title');
-    expect(forkState.isCustomTitle).toBe(true);
-    expect(forkState.forkedFrom).toBe(source.id);
-    expect(forkState.agents?.main?.homedir).toBe(
-      normalizeWorkDir(join(fork.sessionDir, 'agents', 'main')),
-    );
-    expect(forkState.custom).toMatchObject({ source: true, child: true });
-    expect(forkState.custom).not.toHaveProperty('goal');
-    expect(existsSync(join(fork.sessionDir, 'upcoming-goals.json'))).toBe(false);
-    expect(existsSync(join(source.sessionDir, 'upcoming-goals.json'))).toBe(true);
-    const forkWire = await readFile(join(fork.sessionDir, 'agents', 'main', 'wire.jsonl'), 'utf-8');
-    expect(forkWire
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line) as Record<string, unknown>)).toEqual([
-      { type: 'context.clear' },
-      { type: 'forked', time: expect.any(Number) },
-    ]);
-    const forkSubagentWire = await readFile(
-      join(fork.sessionDir, 'agents', 'agent-1', 'wire.jsonl'),
-      'utf-8',
-    );
-    expect(forkSubagentWire
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line) as Record<string, unknown>)).toEqual([
-      { type: 'context.clear' },
-      { type: 'forked', time: expect.any(Number) },
-    ]);
-
-    const sourceState = JSON.parse(
-      await readFile(join(source.sessionDir, 'state.json'), 'utf-8'),
-    ) as { forkedFrom?: string };
-    expect(sourceState.forkedFrom).toBeUndefined();
-    const sessions = await store.list({ workDir });
-    expect(sessions.map((session) => session.id).toSorted()).toEqual([
-      source.id,
-      fork.id,
-    ].toSorted());
-  });
-
-  it('returns only sessions from the requested workDir bucket', async () => {
-    const homeDir = await makeTempDir();
-    const workDir = await makeTempDir();
-    const otherWorkDir = await makeTempDir();
-    const store = new SessionStore(homeDir);
-
-    await store.create({ id: 'ses_list_a', workDir });
-    await store.create({ id: 'ses_other_workdir', workDir: otherWorkDir });
-
-    const sessions = await store.list({ workDir });
-    expect(sessions.map((session) => session.id)).toEqual(['ses_list_a']);
-  });
-
-  it('uses the workDir bucket before the session index when sessionId is provided', async () => {
-    const homeDir = await makeTempDir();
-    const workDir = await makeTempDir();
-    const store = new SessionStore(homeDir);
-
-    const local = await store.create({ id: 'ses_bucket_hit', workDir });
-    await rm(sessionIndexPath(homeDir), { force: true });
-
-    const sessions = await store.list({ workDir, sessionId: local.id });
-    expect(sessions.map((session) => session.id)).toEqual([local.id]);
-  });
-
-  it('falls back to the session index when a workDir-scoped sessionId is not in that bucket', async () => {
-    const homeDir = await makeTempDir();
-    const workDir = await makeTempDir();
-    const otherWorkDir = await makeTempDir();
-    const store = new SessionStore(homeDir);
-
-    await store.create({ id: 'ses_local', workDir });
-    const other = await store.create({ id: 'ses_index_fallback', workDir: otherWorkDir });
-
-    const sessions = await store.list({ workDir, sessionId: other.id });
-    expect(sessions).toHaveLength(1);
-    expect(sessions[0]).toMatchObject({
-      id: other.id,
-      workDir: normalizeWorkDir(otherWorkDir),
-    });
-  });
-
-  it('lists every indexed session when no filters are provided', async () => {
-    const homeDir = await makeTempDir();
-    const workDir = await makeTempDir();
-    const otherWorkDir = await makeTempDir();
-    const store = new SessionStore(homeDir);
-
-    await store.create({ id: 'ses_all_a', workDir });
-    await store.create({ id: 'ses_all_b', workDir: otherWorkDir });
-
-    const sessions = await store.list();
-    expect(sessions.map((session) => session.id).toSorted()).toEqual([
-      'ses_all_a',
-      'ses_all_b',
-    ]);
-  });
-
-  it('returns an empty array when a sessionId filter is unknown', async () => {
-    const homeDir = await makeTempDir();
-    const store = new SessionStore(homeDir);
-
-    await expect(store.list({ sessionId: 'ses_missing' })).resolves.toEqual([]);
-  });
-
-  it('reads title from customTitle before title', async () => {
-    const homeDir = await makeTempDir();
-    const workDir = await makeTempDir();
-    const store = new SessionStore(homeDir);
-
-    const custom = await store.create({ id: 'ses_custom_title', workDir });
-    await writeSessionState(custom.sessionDir, {
-      title: 'Base Title',
-      customTitle: 'Custom Title',
-    });
-    const fallback = await store.create({ id: 'ses_fallback_title', workDir });
-    await writeSessionState(fallback.sessionDir, {
-      title: 'Fallback Title',
-    });
-
-    const sessions = await store.list({ workDir });
-    expect(sessions.find((session) => session.id === custom.id)?.title).toBe('Custom Title');
-    expect(sessions.find((session) => session.id === fallback.id)?.title).toBe('Fallback Title');
-  });
-
-  it('keeps sessions visible when state.json is missing or malformed', async () => {
-    const homeDir = await makeTempDir();
-    const workDir = await makeTempDir();
-    const store = new SessionStore(homeDir);
-
-    await store.create({ id: 'ses_no_state', workDir });
-    const malformed = await store.create({ id: 'ses_bad_state', workDir });
-    await writeFile(join(malformed.sessionDir, 'state.json'), '{bad json', 'utf-8');
-
-    const sessions = await store.list({ workDir });
-    expect(sessions.map((session) => session.id).toSorted()).toEqual([
-      'ses_bad_state',
-      'ses_no_state',
-    ]);
-    expect(sessions.every((session) => session.title === undefined)).toBe(true);
-  });
-
-  it('sorts by filesystem activity descending', async () => {
-    const homeDir = await makeTempDir();
-    const workDir = await makeTempDir();
-    const store = new SessionStore(homeDir);
-
-    const oldSession = await store.create({ id: 'ses_old', workDir });
-    const newSession = await store.create({ id: 'ses_new', workDir });
-    const oldTime = new Date('2030-04-18T12:00:00Z');
-    const newTime = new Date('2030-04-18T12:00:10Z');
-    await writeFile(join(oldSession.sessionDir, 'wire.jsonl'), '{}\n', 'utf-8');
-    await writeFile(join(newSession.sessionDir, 'wire.jsonl'), '{}\n', 'utf-8');
-    await utimes(join(oldSession.sessionDir, 'wire.jsonl'), oldTime, oldTime);
-    await utimes(join(newSession.sessionDir, 'wire.jsonl'), newTime, newTime);
-
-    const sessions = await store.list({ workDir });
-    expect(sessions.map((session) => session.id)).toEqual(['ses_new', 'ses_old']);
-  });
-
-  it('does not scan legacy flat session directories', async () => {
-    const homeDir = await makeTempDir();
-    const workDir = await makeTempDir();
-    await mkdir(join(homeDir, 'sessions', 'ses_legacy_flat'), { recursive: true });
-    await writeSessionState(join(homeDir, 'sessions', 'ses_legacy_flat'), {
-      session_id: 'ses_legacy_flat',
-      workspace_dir: workDir,
-      custom_title: 'Legacy Flat',
-    });
-
-    const store = new SessionStore(homeDir);
-    await expect(store.list({ workDir })).resolves.toEqual([]);
-    await expect(store.get('ses_legacy_flat')).rejects.toMatchObject({
-      name: 'KimiError',
-      code: 'session.not_found',
-    });
-  });
-});
 
 describe('KimiHarness.listSessions', () => {
   it('rejects whitespace-only workDir with request.work_dir_required', async () => {
@@ -427,6 +147,184 @@ describe('KimiHarness.listSessions', () => {
       expect(sessions.map((item) => item.id)).toEqual([session.id]);
     } finally {
       await harness.close();
+    }
+  });
+});
+
+describe('SDKRpcClientV2.listSessionsPage', () => {
+  it('pages through the listing with keyset cursors (read model off)', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    vi.stubEnv('KIMI_CODE_PERSISTENCE_MINIDB_READMODEL', '0');
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      for (let i = 0; i < 5; i += 1) {
+        const created = await client.createSession({ id: `ses_page_${i}`, workDir });
+        await client.closeSession({ sessionId: created.id });
+      }
+
+      const page1 = await client.listSessionsPage({ workDir, limit: 2 });
+      expect(page1.items).toHaveLength(2);
+      expect(page1.nextCursor).toBe(page1.items.at(-1)?.id);
+
+      const page2 = await client.listSessionsPage({ workDir, limit: 2, before: page1.nextCursor });
+      expect(page2.items).toHaveLength(2);
+      expect(page2.nextCursor).toBe(page2.items.at(-1)?.id);
+
+      const page3 = await client.listSessionsPage({ workDir, limit: 2, before: page2.nextCursor });
+      expect(page3.items).toHaveLength(1);
+      expect(page3.nextCursor).toBeUndefined();
+
+      const pagedIds = [...page1.items, ...page2.items, ...page3.items].map((item) => item.id);
+      expect(new Set(pagedIds)).toEqual(
+        new Set([0, 1, 2, 3, 4].map((i) => `ses_page_${String(i)}`)),
+      );
+      // Draining pages yields exactly the unpaged listing, in the same order.
+      const full = await client.listSessions({ workDir });
+      expect(pagedIds).toEqual(full.map((item) => item.id));
+    } finally {
+      await client.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('answers an empty terminal page for an unknown cursor', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    vi.stubEnv('KIMI_CODE_PERSISTENCE_MINIDB_READMODEL', '0');
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      const created = await client.createSession({ id: 'ses_cursor_probe', workDir });
+      await client.closeSession({ sessionId: created.id });
+
+      await expect(
+        client.listSessionsPage({ workDir, before: 'ses_unknown' }),
+      ).resolves.toEqual({ items: [], nextCursor: undefined });
+    } finally {
+      await client.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('drains follow-up pages when the mapping drops entries (read model on)', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    vi.stubEnv('KIMI_CODE_PERSISTENCE_MINIDB_READMODEL', '1');
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      for (let i = 0; i < 3; i += 1) {
+        const created = await client.createSession({ id: `ses_drain_${i}`, workDir });
+        await client.closeSession({ sessionId: created.id });
+      }
+      const index = client.engineAccessor.get(ISessionIndex);
+      await index.prepare();
+      // A summary whose workDir can no longer be resolved (unknown workspace,
+      // no cwd) is dropped by the mapping; the page must still fill.
+      client.engineAccessor.get(ISessionIndexMirror).record({
+        id: 'ses_ghost',
+        workspaceId: 'ws_missing',
+        createdAt: 1,
+        updatedAt: Date.now() + 60_000,
+        archived: false,
+      });
+      await drainSessionIndexMirror();
+
+      const page1 = await client.listSessionsPage({ limit: 2 });
+      expect(page1.items).toHaveLength(2);
+      expect(page1.items.some((item) => item.id === 'ses_ghost')).toBe(false);
+      expect(page1.nextCursor).toBeDefined();
+
+      const page2 = await client.listSessionsPage({ limit: 2, before: page1.nextCursor });
+      expect(page2.items).toHaveLength(1);
+      expect(page2.items[0]?.id).not.toBe('ses_ghost');
+      expect(page2.nextCursor).toBeUndefined();
+
+      const ids = [...page1.items, ...page2.items].map((item) => item.id).toSorted();
+      expect(ids).toEqual(['ses_drain_0', 'ses_drain_1', 'ses_drain_2']);
+    } finally {
+      await client.close();
+      // Dispose fired the mirror/query-store async closes; await them before
+      // the shared afterEach removes the temp home.
+      await drainSessionIndexMirror();
+      await drainQueryStoreDisposals();
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
+describe('SDKRpcClientV2 search-index separation', () => {
+  // The global full-text search database (`<homeDir>/search-index`) belongs
+  // to the kap-server search surface. The TUI-side chain (rpc client →
+  // klient → `ISessionIndex`) must list, resume and continue sessions without
+  // ever opening it — including while the session read model is still
+  // preparing.
+
+  it('listSessions / resumeSession never open the global search index (read model off)', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    vi.stubEnv('KIMI_CODE_PERSISTENCE_MINIDB_READMODEL', '0');
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      const created = await client.createSession({ id: 'ses_search_sep_off', workDir });
+      await client.closeSession({ sessionId: created.id });
+
+      const sessions = await client.listSessions({ workDir });
+      expect(sessions.map((item) => item.id)).toEqual([created.id]);
+      const resumed = await client.resumeSession({ id: created.id });
+      expect(resumed.id).toBe(created.id);
+
+      expect(existsSync(join(homeDir, 'search-index'))).toBe(false);
+      // With the read model off, the session query-store is never opened either.
+      expect(existsSync(join(homeDir, 'cache', 'query-store'))).toBe(false);
+    } finally {
+      await client.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('listSessions / resumeSession never open the global search index (read model on)', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    vi.stubEnv('KIMI_CODE_PERSISTENCE_MINIDB_READMODEL', '1');
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      const created = await client.createSession({ id: 'ses_search_sep_on', workDir });
+      await client.closeSession({ sessionId: created.id });
+
+      // The read model is still preparing here: the first list kicks the
+      // background projection and answers from authoritative metadata, the
+      // resume reads the authoritative document — neither waits for, nor
+      // opens, any full-text index.
+      const sessions = await client.listSessions({ workDir });
+      expect(sessions.map((item) => item.id)).toEqual([created.id]);
+      const resumed = await client.resumeSession({ id: created.id });
+      expect(resumed.id).toBe(created.id);
+
+      expect(existsSync(join(homeDir, 'search-index'))).toBe(false);
+
+      // Settle the kicked projection before close so teardown never races it,
+      // and prove the read model really did engage (the flag took effect).
+      const status = await client.engineAccessor.get(ISessionIndex).prepare();
+      expect(status.state).toBe('ready');
+      expect(existsSync(join(homeDir, 'cache', 'query-store'))).toBe(true);
+      expect(existsSync(join(homeDir, 'search-index'))).toBe(false);
+    } finally {
+      await client.close();
+      // Dispose fired the mirror/query-store async closes; await them before
+      // the shared afterEach removes the temp home.
+      await drainSessionIndexMirror();
+      await drainQueryStoreDisposals();
+      vi.unstubAllEnvs();
     }
   });
 });

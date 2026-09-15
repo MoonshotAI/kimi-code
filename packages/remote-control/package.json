@@ -1,0 +1,50 @@
+{
+  "name": "@moonshot-ai/remote-control",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Kimi Remote Control tunnel client: registers this machine with the relay and forwards HTTP/WebSocket traffic to the local server.",
+  "license": "MIT",
+  "author": "Moonshot AI",
+  "homepage": "https://github.com/MoonshotAI/kimi-code/tree/main/packages/remote-control#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MoonshotAI/kimi-code.git",
+    "directory": "packages/remote-control"
+  },
+  "bugs": {
+    "url": "https://github.com/MoonshotAI/kimi-code/issues"
+  },
+  "keywords": [
+    "kimi",
+    "remote-control",
+    "relay",
+    "tunnel"
+  ],
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "imports": {
+    "#/*": "./src/*.ts"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@moonshot-ai/agent-core-v2": "workspace:^",
+    "@moonshot-ai/kimi-code-oauth": "workspace:^",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.0"
+  }
+}

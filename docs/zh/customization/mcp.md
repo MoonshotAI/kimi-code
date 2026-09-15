@@ -1,6 +1,12 @@
 # Model Context Protocol
 
-[Model Context Protocol（MCP）](https://modelcontextprotocol.io/) 是一个开放协议，让模型可以安全地调用外部进程或服务暴露的工具——例如读取 GitHub issues、查询数据库、操作本地文件系统。Kimi Code CLI 作为 MCP client 接入这些外部工具，并把它们与内置工具（`Read`、`Bash`、`Grep` 等）一起暴露给 Agent 使用，行为上没有差异。
+[Model Context Protocol（MCP）](https://modelcontextprotocol.io/) 是一个开放协议，让模型可以安全地调用外部进程或服务暴露的工具：读取 GitHub issues、查询数据库、操作本地文件系统。Kimi Code CLI 作为 MCP client 接入这些外部工具，把它们与内置工具一起暴露给 Agent 使用，行为上没有差异。
+
+MCP 工具结果可以包含文本（`content`）和结构化数据（`structuredContent`）。Kimi Code CLI 会将两者提供给 Agent，只有能够确认某个文本块已包含同一份完整 JSON 值时，才省略重复的结构化内容。文本摘要和媒体不会替代结构化记录。
+
+Kimi Code CLI 会保留因格式或大小限制而无法直接交付的内嵌 MCP 附件。内嵌图片、音频和视频即使能够原样交付也会保存，因为后续供应商协议转换或历史精简可能省略它们。模型支持相应内容时，即使工作区文件系统不可用，也仍可读取会话附件。原件随会话保存在媒体存储中，不会被图片缓存淘汰。保存的原件（包括图片压缩前的原图）均提供绝对路径和稳定的 `kimi-file://` 引用。将引用作为 `path` 传给 `Read` 或 `ReadMediaFile`，即使工作区 runtime 无法访问会话存储，也能直接从当前会话存储读取字节。分页续读会保留该引用，包括 fork 后的会话。对于 `Read` 无法打开的二进制格式，错误信息会在可用时提供服务端本地路径；外部转换工具必须能够访问该文件系统。CSV、HTML、JSON 和普通 SVG 等文本附件使用可读取的扩展名。
+
+附件路径和压缩说明共用工具输出预算。较长的清单会保存为文本文件，结果中保留简短指针，即使伴随的文本被截短，该指针仍然可见；Agent 可将清单的 `kimi-file://` 引用传给 `Read`，分页读取完整内容。取消工具调用会停止后续附件处理，并通知正在进行的写入操作。如果解码或保存失败，结果会明确说明原件未能保留，并保留其他可用输出。资源链接不会被自动下载。
 
 ## 接入方式
 
@@ -8,7 +14,7 @@ Kimi Code CLI 支持三种 MCP server 接入方式：
 
 - **stdio**：CLI 以子进程方式启动本地 MCP server，通过标准输入输出通信。适合本地命令行工具。
 - **HTTP**：CLI 连接一个已在运行的 HTTP 端点。适合远程服务或需要持久运行的进程。
-- **SSE**：CLI 连接旧式 HTTP+SSE 端点（Server-Sent Events，一种流式 HTTP 机制）。新 MCP server 优先使用 HTTP；只有服务仍仅暴露旧式 SSE 传输时，才设置 `transport: "sse"`。
+- **SSE**：CLI 连接旧式 HTTP+SSE 端点。新 MCP server 优先使用 HTTP；只有服务仍仅暴露旧式 SSE 传输时，才设置 `transport: "sse"`。
 
 ## 配置
 
@@ -20,6 +26,10 @@ MCP server 配置写在 `mcp.json` 中，分两层：
 同名条目以项目级为准，覆盖用户级。
 
 在 TUI 中运行 `/mcp-config` 可以交互式地新增、编辑或删除 server，无需手动编辑 JSON 文件。运行 `/mcp` 可查看当前所有 server 的连接状态。
+
+从配置中删除某个 server 不会打断进行中的会话：该 server 在 `/mcp` 中仍显示为 `removed`，其工具在这些会话中保持可见，但调用会失败并返回移除提示；新会话则完全不会注册这些工具。反过来，编辑 `mcp.json` 或安装 plugin 新增的 server 也不会注册到已打开的会话，只会加入之后创建的会话。
+
+当 Kimi Code 在不受信任的文件夹中发现项目级 MCP server 时，工作区信任提示会显示每个 server 的传输方式和启动目标。提示默认选中 `Trust this folder`；核对列出的命令与参数或远程 URL 后确认即可，选择 `Don't trust` 则该工作区的项目级 MCP server 不会启用。
 
 `mcp.json` 的结构：
 
@@ -52,6 +62,7 @@ MCP server 配置写在 `mcp.json` 中，分两层：
 | `headers` | `Record<string, string>` | HTTP、SSE | 附加到每次请求的静态请求头 |
 | `bearerTokenEnvVar` | `string` | HTTP、SSE | 存放 bearer token 的环境变量名 |
 | `enabled` | `boolean` | 全部 | 设为 `false` 可禁用该 server |
+| `deferred` | `boolean` | 全部 | 实验功能：设为 `true` 时该 server 的工具由模型按需加载，默认 `false`（始终直接暴露）。前提与行为见 [按需加载工具](#按需加载工具) |
 | `startupTimeoutMs` | `number` | 全部 | 连接超时，取值范围为 `1` 到 `2147483647` 毫秒，默认 `30000` |
 | `toolTimeoutMs` | `number` | 全部 | 单次工具调用超时，取值范围为 `1` 到 `2147483647` 毫秒 |
 | `enabledTools` | `string[]` | 全部 | 工具白名单 |
@@ -61,17 +72,41 @@ MCP server 配置写在 `mcp.json` 中，分两层：
 
 HTTP 与 SSE server 支持通过 `headers` 或 `bearerTokenEnvVar` 提供静态凭证。需要 OAuth 时，运行 `/mcp-config login <server-name>` 完成浏览器授权。
 
-Plugins 也可以在 manifest 中声明 MCP servers。Plugin 声明的 servers 默认启用，可以在 `/plugins` 中禁用或重新启用，然后开启新会话。详见 [Plugins](./plugins.md)。
+Plugins 也可以在 manifest 中声明 MCP servers。Plugin 声明的 servers 默认启用，可以在 `/plugins` 中禁用或重新启用：禁用或移除后，已打开会话中的工具调用会失败并返回移除提示；新增或启用 server 会立即连接到已打开的会话。详见 [Plugins](./plugins.md#plugin-中的-mcp-servers)。
 
 ::: warning 注意
 项目级 `.kimi-code/mcp.json` 中的 stdio 条目会在会话启动时执行本地命令，只在你信任的仓库里启用。
 :::
 
+## 按需加载工具
+
+默认情况下，server 的所有工具都会直接进入模型的顶层工具列表；接入的 server 较多、或单个 server 暴露的工具较多时，这些工具定义会持续占用上下文。把 server 标记为 deferred 后，它的工具不再进入顶层工具列表：模型先看到一份可加载工具清单，需要时通过内置的 `select_tools` 工具加载完整定义，加载后同一轮即可调用。
+
+按需加载是实验功能，同时满足两个前提才会生效：
+
+- 启用 `tool-select` 实验标志：设置环境变量 `KIMI_CODE_EXPERIMENTAL_TOOL_SELECT=1`，或在 `config.toml` 的 `[experimental]` 下写 `tool-select = true`；总开关 `KIMI_CODE_EXPERIMENTAL_FLAG=1` 会一并启用。
+- 当前模型声明了 `dynamically_loaded_tools` 能力：官方模型自动声明；其他模型可在 `config.toml` 的 `capabilities` 中追加，见 [配置文件](../configuration/config-files.md#models)。
+
+满足前提后，在 `mcp.json` 的 server 条目里设 `deferred: true`：
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "url": "https://mcp.example.com/mcp",
+      "deferred": true
+    }
+  }
+}
+```
+
+未设置 `deferred` 的 server 不受影响，工具始终直接暴露；前提不满足时该字段被忽略，行为相同。需要 OAuth 授权的 server 在完成授权前暴露的认证工具也遵循这个字段。
+
 ## 工具命名与权限
 
 MCP 工具按 `mcp__<server>__<tool>` 格式命名，例如 `mcp__github__create_issue`。权限规则中支持 `*` 和 `**` 通配，例如 `mcp__github__*` 命中该 server 下所有工具。MCP 工具参数不参与权限匹配。
 
-未命中权限规则的调用会触发审批请求；在审批弹窗中选择"Approve for this session"后，本次会话内的后续同类调用自动放行。
+未命中权限规则的调用会触发审批请求；在审批弹窗中选择“Approve for this session”后，本次会话内的后续同类调用自动放行。
 
 也可以在 `config.toml` 的 `[[permission.rules]]` 中预置永久规则：
 
@@ -85,7 +120,7 @@ decision = "deny"
 pattern = "mcp__filesystem__write_file"
 ```
 
-权限规则的完整语法见[配置文件](../configuration/config-files.md#permission)。
+权限规则的完整语法见 [配置文件](../configuration/config-files.md#permission)。
 
 ## 安全性
 
@@ -96,7 +131,7 @@ pattern = "mcp__filesystem__write_file"
 - 对高风险工具（写文件、执行命令等）维持手动审批，避免用 `mcp__*` 通配放行全部工具
 
 ::: warning 注意
-在 YOLO 模式下，MCP 工具调用会被自动批准。仅在完全信任所接入的 MCP server 时使用此模式。
+在 [YOLO 模式](../guides/interaction.md#三种权限模式)下，MCP 工具调用会被自动批准。仅在完全信任所接入的 MCP server 时使用此模式。
 :::
 
 ## 下一步

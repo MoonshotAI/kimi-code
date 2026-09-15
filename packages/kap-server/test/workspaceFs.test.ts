@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -39,10 +39,8 @@ describe('server-v2 /api/v1 fs folder picker', () => {
   let instancesDir: string | undefined;
   let base: string;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-'));
-    // Keep the instance registry OUTSIDE the browsed homeDir so the folder
-    // picker only sees the test fixtures.
     instancesDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-instances-'));
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
@@ -55,7 +53,7 @@ describe('server-v2 /api/v1 fs folder picker', () => {
     base = `http://127.0.0.1:${server.port}`;
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -103,10 +101,6 @@ describe('server-v2 /api/v1 fs folder picker', () => {
   });
 
   it('does not serve the double-colon URL (v1 parity: only /fs:browse is valid)', async () => {
-    // v1 registers the source path `/fs::browse`, but find-my-way serves it on
-    // the wire as single-colon `/fs:browse`; the double-colon form 404s. This
-    // guards against reintroducing a `/fs:action` parametric dispatcher that
-    // would accept the non-v1 double-colon URL.
     const res = await fetch(`${base}/api/v1/fs::browse`, {
       headers: authHeaders(server as RunningServer),
     } as never);
@@ -114,7 +108,7 @@ describe('server-v2 /api/v1 fs folder picker', () => {
   });
 
   it('lists only directories and filters files', async () => {
-    const root = home as string;
+    const root = await mkdtemp(join(home as string, 'browse-filter-'));
     await mkdir(join(root, 'alpha'));
     await mkdir(join(root, 'beta'));
     await writeFile(join(root, 'README.md'), 'hi');
@@ -133,7 +127,7 @@ describe('server-v2 /api/v1 fs folder picker', () => {
   });
 
   it('sorts dot-directories after regular ones', async () => {
-    const root = home as string;
+    const root = await mkdtemp(join(home as string, 'browse-dots-'));
     await mkdir(join(root, '.zeta'));
     await mkdir(join(root, 'alpha'));
 
@@ -189,7 +183,7 @@ describe('server-v2 /api/v1 fs:mkdir', () => {
   let instancesDir: string | undefined;
   let base: string;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fsmkdir-'));
     instancesDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fsmkdir-instances-'));
     server = await startServer({
@@ -203,7 +197,7 @@ describe('server-v2 /api/v1 fs:mkdir', () => {
     base = `http://127.0.0.1:${server.port}`;
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -291,7 +285,7 @@ describe('server-v2 /api/v1 fs:content', () => {
   let instancesDir: string | undefined;
   let base: string;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fscontent-'));
     instancesDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fscontent-instances-'));
     server = await startServer({
@@ -305,7 +299,7 @@ describe('server-v2 /api/v1 fs:content', () => {
     base = `http://127.0.0.1:${server.port}`;
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -328,9 +322,6 @@ describe('server-v2 /api/v1 fs:content', () => {
     path: string,
     headers: Record<string, string> = {},
   ): Promise<Response> {
-    // `connection: close` keeps every fetch on its own short-lived socket so
-    // undici never pools an idle keep-alive connection that would hold
-    // `server.close()` open in afterEach.
     return fetch(contentUrl(path), {
       headers: { connection: 'close', ...authHeaders(server as RunningServer), ...headers },
     } as never);
@@ -356,6 +347,17 @@ describe('server-v2 /api/v1 fs:content', () => {
     const res = await getContent(file);
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toContain('text/plain');
+  });
+
+  it('serves a UTF-8 Chinese .log file as text/plain', async () => {
+    const file = join(dir as string, 'server.log');
+    const log = '2026-08-16 INFO 启动完成 ✅\n'.repeat(100);
+    await writeFile(file, log);
+
+    const res = await getContent(file);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/plain');
+    expect(await res.text()).toBe(log);
   });
 
   it('serves binary files byte-for-byte with an octet-stream fallback mime', async () => {
@@ -420,7 +422,6 @@ describe('server-v2 /api/v1 fs:content', () => {
     expect(body.code).toBe(40906);
   });
 
-  // /dev/null is a character device, not a regular file.
   it.skipIf(process.platform === 'win32')('rejects non-regular files (40001)', async () => {
     const res = await getContent('/dev/null');
     const body = (await res.json()) as Envelope<null>;

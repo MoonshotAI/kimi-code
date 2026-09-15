@@ -1,8 +1,3 @@
-/**
- *   Event:   { type, seq, session_id?, timestamp, payload }
- *   Control: { type, id?, payload }
- *   Ack:     { type: 'ack', id, code, msg, payload }
- */
 import { z } from 'zod';
 
 import { isoDateTimeSchema } from '@moonshot-ai/agent-core-v2/_base/utils/isoDateTime';
@@ -10,22 +5,8 @@ import { transcriptGradeSpecSchema, transcriptSeqSchema } from '@moonshot-ai/tra
 
 import { eventSchema } from './events-zod';
 
-/**
- * WS protocol version. v2 (breaking, IM-style multi-device sync):
- *   - per-session cursors are `{ seq, epoch }` instead of a bare seq
- *   - `seq` is durable (journal offset, survives daemon restarts)
- *   - volatile events carry `volatile: true` and do not advance `seq`
- *   - `resync_required` gains the `epoch_changed` reason + `epoch` field
- */
 export const WS_PROTOCOL_VERSION = 2;
 
-/**
- * Per-session sync cursor. `seq` is the last durable event seq the client
- * has applied (journal offset). `epoch` identifies the journal incarnation
- * (changes when a session's journal is recreated); a cursor whose epoch does
- * not match the server's current epoch is invalid and triggers
- * `resync_required(epoch_changed)`. `epoch` is absent on a fresh cursor.
- */
 export const sessionCursorSchema = z.object({
   seq: z.number().int().nonnegative(),
   epoch: z.string().min(1).optional(),
@@ -43,14 +24,6 @@ export const wsEventEnvelopeSchema = <T extends z.ZodTypeAny>(payload: T) =>
     seq: z.number().int().nonnegative(),
     epoch: z.string().optional(),
     volatile: z.boolean().optional(),
-    /**
-     * For volatile text-delta frames (`assistant.delta` / `thinking.delta`):
-     * the cumulative character offset of this delta within the in-flight
-     * turn's accumulated stream. Clients align against
-     * `snapshot.in_flight_turn.*_text.length` — `offset < local length` is a
-     * duplicate (skip), `offset > local length` means deltas were missed
-     * (re-snapshot).
-     */
     offset: z.number().int().nonnegative().optional(),
     session_id: z.string().optional(),
     timestamp: isoDateTimeSchema,
@@ -76,11 +49,6 @@ export const wsAckEnvelopeSchema = <T extends z.ZodTypeAny>(payload: T) =>
 export const serverHelloPayloadSchema = z.object({
   ws_connection_id: z.string(),
   protocol_version: z.number().int().positive(),
-  /**
-   * Legacy servers advertise their ping interval here. kap-server dropped the
-   * server-initiated heartbeat and omits this field — clients must treat it as
-   * advisory and not require it.
-   */
   heartbeat_ms: z.number().int().positive().optional(),
   max_event_buffer_size: z.number().int().positive(),
   capabilities: z.object({
@@ -97,32 +65,14 @@ export const serverHelloMessageSchema = z.object({
 
 export type ServerHelloMessage = z.infer<typeof serverHelloMessageSchema>;
 
-/**
- * Per-session agent allowlist for fine-grained v1 event subscriptions. Keys are
- * session ids, values are the non-empty set of agent ids the client wants to
- * receive events for within that session. Sessions absent from the map (or the
- * whole field omitted) fall back to receiving every agent — the legacy
- * session-grained behavior.
- */
 export const agentFilterSchema = z.record(z.string(), z.array(z.string()).min(1));
 
 export type AgentFilter = z.infer<typeof agentFilterSchema>;
 
-/**
- * `client_hello` is the handshake: only `client_id` is required. The
- * subscription fields below are legacy compatibility — new clients send just
- * `client_id` here and use `subscribe` frames (which carry the same
- * per-session cursors / agent allowlist).
- * @deprecated Inline subscriptions on `client_hello` are kept for older
- * clients; prefer `subscribe`.
- */
 export const clientHelloPayloadSchema = z.object({
   client_id: z.string(),
-  /** @deprecated Legacy inline subscriptions — use `subscribe` instead. */
   subscriptions: z.array(z.string()).optional(),
-  /** @deprecated Legacy inline replay cursors — use `subscribe` instead. */
   cursors: cursorsBySessionSchema.optional(),
-  /** @deprecated Legacy inline agent allowlist — use `subscribe` instead. */
   agent_filter: agentFilterSchema.optional(),
 });
 
@@ -137,7 +87,6 @@ export type ClientHelloMessage = z.infer<typeof clientHelloMessageSchema>;
 export const clientHelloAckPayloadSchema = z.object({
   accepted_subscriptions: z.array(z.string()),
   resync_required: z.array(z.string()),
-  /** Server-side current cursor per accepted session ({seq, epoch}). */
   cursors: cursorsBySessionSchema.optional(),
 });
 
@@ -145,15 +94,9 @@ export const helloAckPayloadSchema = clientHelloAckPayloadSchema;
 
 export const clientHelloAckMessageSchema = wsAckEnvelopeSchema(clientHelloAckPayloadSchema);
 
-export const watchFsConfigSchema = z.object({
-  paths: z.array(z.string()),
-  recursive: z.boolean().optional(),
-});
-
 export const subscribePayloadSchema = z.object({
   session_ids: z.array(z.string()),
   cursors: cursorsBySessionSchema.optional(),
-  watch_fs: z.record(z.string(), watchFsConfigSchema).optional(),
   agent_filter: agentFilterSchema.optional(),
 });
 
@@ -165,12 +108,6 @@ export const subscribeMessageSchema = z.object({
 
 export type SubscribeMessage = z.infer<typeof subscribeMessageSchema>;
 
-/**
- * `subscribe_v2` — the transcript subscription channel. Owns ONLY the
- * per-agent transcript grades (and the optional op-batch seq cursor) for one
- * session; legacy event subscription stays on `client_hello` / `subscribe`.
- * The grade/seq schemas are owned by `@moonshot-ai/transcript`.
- */
 export const subscribeV2PayloadSchema = z.object({
   session_id: z.string().min(1),
   transcript: transcriptGradeSpecSchema,
@@ -185,11 +122,6 @@ export const subscribeV2MessageSchema = z.object({
 
 export type SubscribeV2Message = z.infer<typeof subscribeV2MessageSchema>;
 
-/**
- * `unsubscribe_v2` — the agent-grained counterpart of `subscribe_v2`:
- * detaches the listed agents' transcript streams (`agent_ids` absent = the
- * whole session's stream) without touching the legacy event subscription.
- */
 export const unsubscribeV2PayloadSchema = z.object({
   session_id: z.string().min(1),
   agent_ids: z.array(z.string().min(1)).min(1).optional(),
@@ -207,7 +139,6 @@ export const subscribeAckPayloadSchema = z.object({
   accepted: z.array(z.string()),
   not_found: z.array(z.string()),
   resync_required: z.array(z.string()),
-  /** Server-side current cursor per accepted session ({seq, epoch}). */
   cursors: cursorsBySessionSchema.optional(),
 });
 
@@ -232,68 +163,6 @@ export type UnsubscribeMessage = z.infer<typeof unsubscribeMessageSchema>;
 export const unsubscribeAckPayloadSchema = subscribeAckPayloadSchema;
 
 export const unsubscribeAckMessageSchema = wsAckEnvelopeSchema(unsubscribeAckPayloadSchema);
-
-export const watchFsAddPayloadSchema = z.object({
-  session_id: z.string(),
-  paths: z.array(z.string()),
-  recursive: z.boolean().optional(),
-});
-
-export const watchFsAddMessageSchema = z.object({
-  type: z.literal('watch_fs_add'),
-  id: z.string(),
-  payload: watchFsAddPayloadSchema,
-});
-
-export type WatchFsAddMessage = z.infer<typeof watchFsAddMessageSchema>;
-
-export const watchFsRemovePayloadSchema = z.object({
-  session_id: z.string(),
-  paths: z.array(z.string()),
-});
-
-export const watchFsRemoveMessageSchema = z.object({
-  type: z.literal('watch_fs_remove'),
-  id: z.string(),
-  payload: watchFsRemovePayloadSchema,
-});
-
-export type WatchFsRemoveMessage = z.infer<typeof watchFsRemoveMessageSchema>;
-
-export const watchFsAckPayloadSchema = z.object({
-  watched_paths: z.array(z.string()).optional(),
-  current_count: z.number().int().nonnegative().optional(),
-});
-
-export const watchFsAckMessageSchema = wsAckEnvelopeSchema(watchFsAckPayloadSchema);
-
-/**
- * Filesystem change-notification payloads, ported verbatim from the v1
- * protocol's `fs.ts` (agent-core-v2 only carries the plain types). Emitted by
- * the `watch_fs` notification path on subscribed sessions.
- */
-export const fsChangeKindSchema = z.enum(['file', 'directory', 'symlink']);
-export type FsChangeKind = z.infer<typeof fsChangeKindSchema>;
-
-export const fsChangeActionSchema = z.enum(['created', 'modified', 'deleted']);
-export type FsChangeAction = z.infer<typeof fsChangeActionSchema>;
-
-export const fsChangeEntrySchema = z.object({
-  path: z.string(),
-  change: fsChangeActionSchema,
-  kind: fsChangeKindSchema,
-  size_delta: z.number().int().optional(),
-  etag: z.string().optional(),
-});
-export type FsChangeEntry = z.infer<typeof fsChangeEntrySchema>;
-
-export const fsChangeEventSchema = z.object({
-  changes: z.array(fsChangeEntrySchema),
-  coalesced_window_ms: z.number().int().positive(),
-  truncated: z.boolean().optional(),
-  count: z.number().int().nonnegative().optional(),
-});
-export type FsChangeEvent = z.infer<typeof fsChangeEventSchema>;
 
 export const abortPayloadSchema = z.object({
   session_id: z.string(),
@@ -452,7 +321,6 @@ export const resyncRequiredPayloadSchema = z.object({
   session_id: z.string(),
   reason: z.enum(['buffer_overflow', 'session_recreated', 'epoch_changed']),
   current_seq: z.number().int().nonnegative(),
-  /** Current journal epoch — the client should adopt it after resyncing. */
   epoch: z.string().min(1).optional(),
 });
 
@@ -517,8 +385,6 @@ export const clientControlMessageSchema = z.discriminatedUnion('type', [
   subscribeV2MessageSchema,
   unsubscribeMessageSchema,
   unsubscribeV2MessageSchema,
-  watchFsAddMessageSchema,
-  watchFsRemoveMessageSchema,
   abortMessageSchema,
   terminalAttachMessageSchema,
   terminalDetachMessageSchema,
@@ -594,22 +460,6 @@ export const clientControlOperations = [
     messageSchema: unsubscribeMessageSchema,
     ackSchema: unsubscribeAckMessageSchema,
     description: 'Remove one or more session event stream subscriptions.',
-  },
-  {
-    type: 'watch_fs_add',
-    direction: 'client_to_server',
-    kind: 'control',
-    messageSchema: watchFsAddMessageSchema,
-    ackSchema: watchFsAckMessageSchema,
-    description: 'Add filesystem watch paths for a subscribed session.',
-  },
-  {
-    type: 'watch_fs_remove',
-    direction: 'client_to_server',
-    kind: 'control',
-    messageSchema: watchFsRemoveMessageSchema,
-    ackSchema: watchFsAckMessageSchema,
-    description: 'Remove filesystem watch paths for a subscribed session.',
   },
   {
     type: 'abort',

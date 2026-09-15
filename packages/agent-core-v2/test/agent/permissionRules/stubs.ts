@@ -1,12 +1,3 @@
-/**
- * `permissionRules` test stubs — shared doubles for
- * `IAgentPermissionRulesService`.
- *
- * Lives under `test/` (not `src/`) so test-support code stays out of the
- * production tree. Import from a relative path (`./stubs` or
- * `../permissionRules/stubs`).
- */
-
 import type {
   IAgentPermissionRulesService,
   PermissionRule,

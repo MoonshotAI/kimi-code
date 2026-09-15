@@ -1,7 +1,3 @@
-/**
- * Reconcile marks running persisted tasks from a prior process as lost.
- */
-
 import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
@@ -83,13 +79,15 @@ describe('Background reconcile — stale ghost detection', () => {
     await background.loadFromDisk();
     await background.reconcile();
 
-    expect(emittedEvents).toContainEqual({
-      type: 'task.terminated',
-      info: expect.objectContaining({
-        taskId: 'bash-stale000',
-        status: 'lost',
+    expect(emittedEvents).toContainEqual(
+      expect.objectContaining({
+        type: 'task.terminated',
+        info: expect.objectContaining({
+          taskId: 'bash-stale000',
+          status: 'lost',
+        }),
       }),
-    });
+    );
   });
 
   it('second reconcile does not emit a duplicate termination event', async () => {

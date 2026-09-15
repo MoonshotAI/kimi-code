@@ -68,6 +68,8 @@ function makeHost(options: { createGoalRejects?: boolean } = {}) {
       setTurnId: vi.fn(),
       flushNow: vi.fn(),
       resetToolUi: vi.fn(),
+      clearNotifyPanel: vi.fn(),
+      markNotifyPanelEnded: vi.fn(),
       finalizeTurn: vi.fn(),
       hasActiveTurn: vi.fn(() => false),
       hasThinkingDraft: vi.fn(() => false),
@@ -86,6 +88,9 @@ function makeHost(options: { createGoalRejects?: boolean } = {}) {
     showStatus: vi.fn(),
     showNotice: vi.fn(),
     track: vi.fn(),
+    recordSessionActivity: vi.fn(),
+    noteStepUsage: vi.fn(),
+    noteCompactionFinished: vi.fn(),
     mountEditorReplacement: vi.fn(),
     restoreEditor: vi.fn(),
     restoreInputText: vi.fn(),
@@ -94,6 +99,7 @@ function makeHost(options: { createGoalRejects?: boolean } = {}) {
     sendQueuedMessage: vi.fn(),
     shiftQueuedMessage: vi.fn(),
     btwPanelController: { routeEvent: vi.fn(() => false) },
+    surveyController: { notifyCompactionFinished: vi.fn() },
     tasksBrowserController: {},
   };
   host.setAppState.mockImplementation((patch: Record<string, unknown>) => {

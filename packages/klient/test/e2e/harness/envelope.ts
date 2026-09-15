@@ -2,10 +2,11 @@
  * REST envelope helpers — unwrap `{ code, msg, data, request_id }` into either
  * a typed `data` or an `EnvelopeError` thrown by the caller.
  *
- * Mirrors `packages/protocol/src/envelope.ts` so the server's wire shape and
- * this client's parsing stay in lockstep.
+ * Mirrors `packages/kap-server/src/protocol/envelope.ts` so the server's wire
+ * shape and this client's parsing stay in lockstep.
  */
-import { ErrorCode, ErrorCodeReason, type Envelope } from '@moonshot-ai/protocol';
+import { type Envelope } from '@moonshot-ai/kap-server/protocol/envelope';
+import { ErrorCode } from '@moonshot-ai/kap-server/protocol/error-codes';
 
 /**
  * Thrown when an HTTP call lands but `envelope.code !== 0`.
@@ -21,7 +22,11 @@ export class EnvelopeError<T = unknown> extends Error {
   readonly data: T | null;
 
   constructor(envelope: Envelope<T>) {
-    const reason = ErrorCodeReason[envelope.code as ErrorCode] ?? 'unknown';
+    const reason =
+      Object.entries(ErrorCode)
+        .find(([, value]) => value === envelope.code)?.[0]
+        ?.toLowerCase()
+        .replaceAll('_', '.') ?? 'unknown';
     super(`server returned code=${envelope.code} (${reason}): ${envelope.msg}`);
     this.name = 'EnvelopeError';
     this.code = envelope.code;

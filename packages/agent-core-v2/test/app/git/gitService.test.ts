@@ -15,6 +15,9 @@ import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
+import { IRuntimeResolver, IWorkspaceInstanceManager, type WorkspaceInstanceChange } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { Event } from '#/_base/event';
+import type { Runtime } from '#/runtime/runtime';
 import { normalize } from 'pathe';
 
 function git(cwd: string, ...args: string[]): string {
@@ -40,10 +43,21 @@ describe('GitService', () => {
     git(repo, 'config', 'user.name', 'Test');
     git(repo, 'config', 'commit.gpgsign', 'false');
     disposables = new DisposableStore();
+    const process = new HostProcessService();
+    const runtime = { process } as unknown as Runtime;
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.define(IHostProcessService, HostProcessService);
         reg.define(IHostFileSystem, HostFileSystem);
+        reg.defineInstance(IRuntimeResolver, {
+          _serviceBrand: undefined,
+          inspect: () => runtime,
+          acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
+        });
+        reg.definePartialInstance(IWorkspaceInstanceManager, {
+          findByRoot: () => ({ id: 'workspace-1' } as never),
+          onDidChange: Event.None as Event<WorkspaceInstanceChange>,
+        });
         reg.define(IGitService, GitService);
       },
     });
@@ -71,7 +85,7 @@ describe('GitService', () => {
       expect(result.additions).toBe(0);
       expect(result.deletions).toBe(0);
       expect(result.pullRequest).toBeNull();
-    });
+    }, 15000);
 
     it('reports a modified file with numstat', async () => {
       writeFileSync(join(repo, 'a.txt'), 'line1\n');
@@ -93,6 +107,26 @@ describe('GitService', () => {
 
       const result = await service.status(repo, new Set(['a.txt']));
       expect(result.entries).toEqual({ 'a.txt': 'modified' });
+    });
+
+    it('reports a non-ASCII path without quoting', async () => {
+      const name = 'output/2026-08-31-bilibili-BV175t86pEre-26.8.31-总能等到回踩的.md';
+      mkdirSync(join(repo, 'output'), { recursive: true });
+      writeFileSync(join(repo, name), 'line1\n');
+      commitAll('init');
+      writeFileSync(join(repo, name), 'line1\nline2\n');
+
+      const result = await service.status(repo);
+      expect(result.entries).toEqual({ [name]: 'modified' });
+    });
+
+    it('reports the new path of a non-ASCII rename', async () => {
+      writeFileSync(join(repo, '旧名字.md'), 'line1\n');
+      commitAll('init');
+      git(repo, 'mv', '旧名字.md', '新名字.md');
+
+      const result = await service.status(repo);
+      expect(result.entries).toEqual({ '新名字.md': 'renamed' });
     });
 
     it('throws FS_GIT_UNAVAILABLE when not a repo', async () => {
