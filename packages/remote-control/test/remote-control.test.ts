@@ -22,6 +22,7 @@ import {
   buildRemoteControlUrl,
   filterForwardRequestHeaders,
   parseRawHttpRequest,
+  prefersGzipEncoding,
   reconnectDelayMs,
   resolveRemoteControlRelayOrigin,
   rewriteRemoteControlResponse,
@@ -84,6 +85,25 @@ describe('Remote Control URLs', () => {
 });
 
 describe('Remote Control HTTP forwarding', () => {
+  it('negotiates gzip against the identity weight, not just its own', () => {
+    const accepts = (value?: string): boolean =>
+      prefersGzipEncoding(value === undefined ? [] : [['Accept-Encoding', value]]);
+    expect(accepts(undefined)).toBe(false);
+    expect(accepts('gzip, deflate, br')).toBe(true);
+    expect(accepts('identity, gzip')).toBe(true);
+    expect(accepts('gzip;q=0.5, identity;q=0.5')).toBe(true);
+    expect(accepts('identity;q=1, gzip;q=0.1')).toBe(false);
+    expect(accepts('gzip;q=0')).toBe(false);
+    expect(accepts('gzip;q=abc')).toBe(false);
+    expect(accepts('identity;q=0')).toBe(false);
+    expect(accepts('*')).toBe(true);
+    expect(accepts('*;q=0')).toBe(false);
+    expect(accepts('gzip;q=0.1, *')).toBe(false);
+    expect(accepts('*;q=0.1, gzip;q=0.5')).toBe(true);
+    expect(accepts('gzip;q=0, *;q=1')).toBe(false);
+    expect(accepts('GZIP ; Q=0.9 , Identity ; q=0.8')).toBe(true);
+  });
+
   it('parses raw requests and replaces relay credentials with local bearer auth', () => {
     const parsed = parseRawHttpRequest(
       Buffer.from(

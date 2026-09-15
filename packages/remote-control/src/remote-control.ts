@@ -265,20 +265,35 @@ export function rewriteRemoteControlResponse(
   return body;
 }
 
-function acceptsGzipEncoding(headers: readonly [string, string][]): boolean {
-  let wildcard = false;
+/**
+ * RFC 9110 §12.5.3 content-coding negotiation narrowed to the two representations the
+ * tunnel can produce. gzip is chosen only when the client accepts it and does not weight
+ * identity higher: an unlisted identity is still acceptable but carries no explicit
+ * preference, so a listed gzip wins over it, while a wildcard supplies the weight of
+ * whichever coding the client did not name. Ties go to gzip.
+ */
+export function prefersGzipEncoding(headers: readonly [string, string][]): boolean {
+  let gzip: number | undefined;
+  let identity: number | undefined;
+  let wildcard: number | undefined;
   for (const [name, value] of headers) {
     if (name.toLowerCase() !== 'accept-encoding') continue;
     for (const token of value.split(',')) {
-      const [encoding, ...params] = token.trim().toLowerCase().split(';');
-      if (encoding !== 'gzip' && encoding !== '*') continue;
-      const quality = params.map((param) => param.trim()).find((param) => param.startsWith('q='));
-      const acceptable = quality === undefined || Number(quality.slice(2)) > 0;
-      if (encoding === 'gzip') return acceptable;
-      wildcard = wildcard || acceptable;
+      const [rawEncoding, ...params] = token.toLowerCase().split(';');
+      const encoding = rawEncoding!.trim();
+      if (encoding !== 'gzip' && encoding !== 'identity' && encoding !== '*') continue;
+      const param = params.map((entry) => entry.trim()).find((entry) => entry.startsWith('q='));
+      const parsed = param === undefined ? 1 : Number(param.slice(2));
+      const quality = Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+      if (encoding === 'gzip') gzip ??= quality;
+      else if (encoding === 'identity') identity ??= quality;
+      else wildcard ??= quality;
     }
   }
-  return wildcard;
+  const gzipQuality = gzip ?? wildcard ?? 0;
+  if (gzipQuality <= 0) return false;
+  const identityQuality = identity ?? wildcard;
+  return identityQuality === undefined || gzipQuality >= identityQuality;
 }
 
 function isGzipCompressibleType(contentType: string): boolean {
@@ -971,7 +986,7 @@ function requestLocalHttp(
               }
               if (!varyCovers) headers.push('Vary', 'Accept-Encoding');
             }
-            if (negotiated && acceptsGzipEncoding(parsed.headers)) {
+            if (negotiated && prefersGzipEncoding(parsed.headers)) {
               body = await gzipAsync(body);
               headers.push('Content-Encoding', 'gzip');
               // A strong validator names exact bytes, so it cannot describe the gzip
