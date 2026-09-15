@@ -498,6 +498,7 @@ export const transcriptOpsCatchupResponseSchema = z.object({
   ),
   latest_seq: transcriptSeqSchema,
   complete: z.boolean(),
+  has_more: z.boolean().default(false),
 });
 
 export const transcriptUserMessageSchema = z.object({

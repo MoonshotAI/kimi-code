@@ -26,6 +26,7 @@ import {
   type Scope,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
+import { parseNonNegativeIntEnv } from '@moonshot-ai/agent-core-v2/_base/utils/env';
 import {
   createKimiDefaultHeaders,
   kimiRegionProfile,
@@ -59,7 +60,7 @@ import {
 import { extractWsBearerToken } from './transport/ws/bearerProtocol';
 import { SessionEventBroadcaster } from './transport/ws/v1/sessionEventBroadcaster';
 import type { ConfigWarningItem } from './transport/ws/v1/events';
-import { registerWsV1, WS_PATH as WS_PATH_V1 } from './transport/ws/v1/registerWsV1';
+import { parseWsTuning, registerWsV1, WS_PATH as WS_PATH_V1 } from './transport/ws/v1/registerWsV1';
 import { registerWsDebug, WS_DEBUG_PATH } from './transport/ws/debug/registerWsDebug';
 import { registerWsV3, WS_PATH_V3 } from './transport/ws/v3/registerWsV3';
 import { getServerVersion } from './version';
@@ -348,12 +349,19 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   };
 
   const connectionRegistry = new ConnectionRegistry();
-  const transcriptService = new TranscriptService({ homeDir, core, logger });
+  const transcriptService = new TranscriptService({
+    homeDir,
+    core,
+    logger,
+    opsBatchMs: parseNonNegativeIntEnv((opts.env ?? process.env)['KIMI_CODE_TRANSCRIPT_OPS_BATCH_MS']),
+  });
   core.accessor.get(IGlobalSearchService).setLiveTranscriptSource(transcriptService);
+  const wsTuning = parseWsTuning(opts.env ?? process.env);
   const broadcaster = new SessionEventBroadcaster({
     eventsDir: join(homeDir, 'server', 'events'),
     core,
     logger,
+    maxBufferSize: wsTuning.maxBufferSize,
     transcriptService,
   });
   const projectionService = new ProjectionService({ homeDir, core, logger });
@@ -463,7 +471,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
             : undefined,
     },
     onShutdown: () => {
-      void close().catch((err: unknown) => logger.error({ err }, 'server close failed'));
+      void close().catch((error: unknown) => logger.error({ error }, 'server close failed'));
     },
     connectionRegistry,
     broadcaster,
@@ -481,6 +489,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     registry: connectionRegistry,
     broadcaster,
     logger,
+    ...wsTuning,
   });
   const wssDebug = debugEndpoints ? registerWsDebug() : undefined;
 
@@ -624,7 +633,15 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   process.on('unhandledRejection', onUnhandledRejection);
   process.on('uncaughtException', onUncaughtException);
 
-  return { app, core, connectionRegistry, authTokenService, host, port: boundPort, close };
+  return {
+    app,
+    core,
+    connectionRegistry,
+    authTokenService,
+    host,
+    port: boundPort,
+    close,
+  };
 }
 
 export const PORT_RETRY_LIMIT = 100;

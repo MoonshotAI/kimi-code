@@ -90,6 +90,16 @@ jobs:
         # committed (synced from the code-app repo) — just verify it is in place.
         run: node apps/kimi-code/scripts/check-web-assets.mjs
 
+      - name: Precompress Kimi web assets
+        # Emit .br/.gz siblings next to the bundle so the embedded server can
+        # answer Accept-Encoding negotiation without compressing on the fly.
+        run: node apps/kimi-code/scripts/precompress-web-assets.mjs
+
+      - name: Verify precompressed Kimi web assets
+        # Fail early if an entry bundle is missing its .br sibling instead of
+        # shipping a binary that falls back to on-the-fly compression.
+        run: node apps/kimi-code/scripts/precompress-web-assets.mjs --check
+
       - name: Build native executable (release profile, macOS signed)
         if: runner.os == 'macOS' && inputs.sign-macos
         run: pnpm --filter @moonshot-ai/kimi-code run build:native:release

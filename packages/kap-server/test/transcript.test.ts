@@ -79,6 +79,7 @@ interface OpsCatchupContract {
   batches: { seq: number; ops: { op: string }[] }[];
   latest_seq: number;
   complete: boolean;
+  has_more: boolean;
 }
 
 interface UserMessagesContract {
@@ -900,6 +901,153 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       `/api/v1/sessions/${id}/transcript/ops?agent_id=main&since_seq=99999`,
     );
     expect(stale.body.data.complete).toBe(false);
+    expect(stale.body.data.has_more).toBe(false);
+  });
+
+  it('caps the ops route at limit batches and pages the rest with has_more', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+
+    const bound = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+    const base = bound.body.data.seq!;
+
+    const bus = mainAgentBus(id);
+    bus.publish(serverEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    bus.publish(serverEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+
+    const all = await getJson<OpsCatchupContract>(
+      `/api/v1/sessions/${id}/transcript/ops?agent_id=main&since_seq=${base}`,
+    );
+    expect(all.body.data.has_more).toBe(false);
+    const allSeqs = all.body.data.batches.map((batch) => batch.seq);
+    expect(allSeqs.length).toBeGreaterThanOrEqual(2);
+
+    const first = await getJson<OpsCatchupContract>(
+      `/api/v1/sessions/${id}/transcript/ops?agent_id=main&since_seq=${base}&limit=1`,
+    );
+    expect(first.body.code).toBe(0);
+    expect(first.body.data.batches.map((batch) => batch.seq)).toEqual([base + 1]);
+    expect(first.body.data).toMatchObject({
+      has_more: true,
+      complete: true,
+      latest_seq: base + 1,
+    });
+
+    const rest = await getJson<OpsCatchupContract>(
+      `/api/v1/sessions/${id}/transcript/ops?agent_id=main&since_seq=${base + 1}&limit=500`,
+    );
+    expect(rest.body.data.batches.map((batch) => batch.seq)).toEqual(allSeqs.slice(1));
+    expect(rest.body.data).toMatchObject({
+      has_more: false,
+      complete: true,
+      latest_seq: all.body.data.latest_seq,
+    });
+  });
+
+  it('returns every journaled batch when limit is omitted, even past the 500 cap', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+
+    const bound = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+    const base = bound.body.data.seq!;
+
+    const bus = mainAgentBus(id);
+    for (let turnId = 1; turnId <= 260; turnId += 1) {
+      bus.publish(serverEvent({ type: 'turn.started', turnId, origin: { kind: 'user' } }));
+      bus.publish(serverEvent({ type: 'turn.ended', turnId, reason: 'completed' }));
+    }
+
+    const unsized = await getJson<OpsCatchupContract>(
+      `/api/v1/sessions/${id}/transcript/ops?agent_id=main&since_seq=${base}`,
+    );
+    expect(unsized.body.code).toBe(0);
+    expect(unsized.body.data.batches.length).toBeGreaterThan(500);
+    expect(unsized.body.data).toMatchObject({ has_more: false, complete: true });
+    expect(unsized.body.data.latest_seq).toBe(unsized.body.data.batches.at(-1)!.seq);
+
+    const capped = await getJson<OpsCatchupContract>(
+      `/api/v1/sessions/${id}/transcript/ops?agent_id=main&since_seq=${base}&limit=500`,
+    );
+    expect(capped.body.data.batches).toHaveLength(500);
+    expect(capped.body.data.has_more).toBe(true);
+  });
+
+  it('rejects an out-of-range limit on the ops route with 40001', async () => {
+    const id = await createSession();
+    const zero = await getJson<null>(
+      `/api/v1/sessions/${id}/transcript/ops?agent_id=main&since_seq=0&limit=0`,
+    );
+    expect(zero.body.code).toBe(40001);
+    const tooLarge = await getJson<null>(
+      `/api/v1/sessions/${id}/transcript/ops?agent_id=main&since_seq=0&limit=501`,
+    );
+    expect(tooLarge.body.code).toBe(40001);
+  });
+
+  it('serves streamed deltas as one coalesced ops batch after the batching window', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+    await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+
+    const bus = mainAgentBus(id);
+    bus.publish(serverEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    bus.publish(serverEvent({ type: 'turn.step.started', turnId: 1, step: 1 }));
+    bus.publish(serverEvent({ type: 'assistant.delta', turnId: 1, delta: 'Hel' }));
+    const opened = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+    const base = opened.body.data.seq!;
+
+    bus.publish(serverEvent({ type: 'assistant.delta', turnId: 1, delta: 'lo' }));
+    bus.publish(serverEvent({ type: 'assistant.delta', turnId: 1, delta: ' wor' }));
+    bus.publish(serverEvent({ type: 'assistant.delta', turnId: 1, delta: 'ld' }));
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    const catchup = await getJson<OpsCatchupContract>(
+      `/api/v1/sessions/${id}/transcript/ops?agent_id=main&since_seq=${base}`,
+    );
+    expect(catchup.body.data.complete).toBe(true);
+    expect(catchup.body.data.latest_seq).toBe(base + 1);
+    expect(catchup.body.data.batches).toEqual([
+      {
+        seq: base + 1,
+        ops: [
+          {
+            op: 'append',
+            target: expect.objectContaining({ type: 'frame', turnId: 't1' }),
+            offset: 3,
+            text: 'lo world',
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('flushes buffered deltas when the live transcript watermark is read, leaving no seq gap', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+    await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+
+    const bus = mainAgentBus(id);
+    bus.publish(serverEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    bus.publish(serverEvent({ type: 'turn.step.started', turnId: 1, step: 1 }));
+    bus.publish(serverEvent({ type: 'assistant.delta', turnId: 1, delta: 'Hel' }));
+    const opened = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+    const base = opened.body.data.seq!;
+
+    bus.publish(serverEvent({ type: 'assistant.delta', turnId: 1, delta: 'lo' }));
+    bus.publish(serverEvent({ type: 'assistant.delta', turnId: 1, delta: ' world' }));
+    const read = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+    expect(read.body.data.seq).toBe(base + 1);
+
+    const catchup = await getJson<OpsCatchupContract>(
+      `/api/v1/sessions/${id}/transcript/ops?agent_id=main&since_seq=${base}`,
+    );
+    expect(catchup.body.data.latest_seq).toBe(base + 1);
+    expect(catchup.body.data.batches).toEqual([
+      {
+        seq: base + 1,
+        ops: [expect.objectContaining({ op: 'append', offset: 3, text: 'lo world' })],
+      },
+    ]);
   });
 
   it('answers complete:false for a cold session and 40401 for an unknown one on the ops route', async () => {
