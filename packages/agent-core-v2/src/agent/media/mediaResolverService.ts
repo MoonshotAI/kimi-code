@@ -143,7 +143,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       if (memoed !== undefined) return memoed;
       return this.resolveImageUncached(ref, requester, inlineKey, undefined, signal);
     }
-    const cacheKey = `image\0${ref.fileId}\0${providerKey}\0${await accountHashFor(model)}`;
+    const cacheKey = `image\0${ref.fileId}\0${providerKey}\0${model.baseUrl ?? ''}\0${await accountHashFor(model)}`;
     const memoed = this.resolved.get(cacheKey);
     if (memoed !== undefined) return memoed;
     const cachedLlmFileId = await this.readCachedUpload(IMAGE_CACHE_SCOPE, cacheKey);
@@ -285,7 +285,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     const cacheKey =
       requester.uploadVideo === undefined
         ? `${ref.fileId}\0${providerKey}`
-        : `${ref.fileId}\0${providerKey}\0${await accountHashFor(model)}`;
+        : `${ref.fileId}\0${providerKey}\0${model.baseUrl ?? ''}\0${await accountHashFor(model)}`;
 
     const memoed = this.resolved.get(cacheKey);
     if (memoed !== undefined) return this.memoedOutcome(ref, memoed);

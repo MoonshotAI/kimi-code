@@ -163,6 +163,7 @@ function requester(opts: {
   imageIn?: boolean;
   protocol?: Protocol;
   providerType?: string;
+  baseUrl?: string;
   uploadVideo?: ModelRequester['uploadVideo'];
   uploadImage?: ModelRequester['uploadImage'];
   credentials?: LlmCredentialProvider;
@@ -173,6 +174,7 @@ function requester(opts: {
       name: 'stub',
       aliases: [],
       protocol: opts.protocol ?? 'openai',
+      baseUrl: opts.baseUrl,
       headers: {},
       capabilities: {
         video_in: opts.videoIn ?? true,
@@ -438,6 +440,31 @@ describe('AgentMediaResolverService video strategy', () => {
 
     const accountB = requester({ uploadVideo: upload, credentials: staticCredentials('key-b') });
     const out = await res.resolve([message], accountB);
+
+    expect(firstPart(out)).toEqual(msPart('prov-1'));
+    expect(upload).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-uploads when the endpoint changes for the same account', async () => {
+    const upload = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
+    const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]));
+    const message = videoMessage(buildKimiFileUrl(FILE_ID));
+    const endpointA = requester({
+      uploadVideo: upload,
+      credentials: staticCredentials('key-a'),
+      baseUrl: 'https://a.example.test/v1',
+    });
+
+    await res.resolve([message], endpointA);
+    await res.resolve([message], endpointA);
+    expect(upload).toHaveBeenCalledTimes(1);
+
+    const endpointB = requester({
+      uploadVideo: upload,
+      credentials: staticCredentials('key-a'),
+      baseUrl: 'https://b.example.test/v1',
+    });
+    const out = await res.resolve([message], endpointB);
 
     expect(firstPart(out)).toEqual(msPart('prov-1'));
     expect(upload).toHaveBeenCalledTimes(2);
@@ -822,6 +849,17 @@ describe('AgentMediaResolverService image upload', () => {
     ).rejects.toThrow('unauthorized');
   });
 
+  it('rethrows an auth failure exposed through the SDK status field', async () => {
+    const upload = vi.fn(async () => {
+      throw Object.assign(new Error('unauthorized'), { status: 401 });
+    });
+    const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
+
+    await expect(
+      res.resolve([imageMessage(buildKimiFileUrl(FILE_ID))], requester({ uploadImage: upload })),
+    ).rejects.toThrow('unauthorized');
+  });
+
   it('keeps the inline base64 part when the requester has no image uploader', async () => {
     const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
 
@@ -845,6 +883,31 @@ describe('AgentMediaResolverService image upload', () => {
 
     const accountB = requester({ uploadImage: upload, credentials: staticCredentials('key-b') });
     const out = await res.resolve([message], accountB);
+
+    expect(firstPart(out)).toEqual(msImagePart('img-1'));
+    expect(upload).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-uploads when the endpoint changes for the same account', async () => {
+    const upload = vi.fn(async (): Promise<ImageURLPart> => msImagePart('img-1'));
+    const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
+    const message = imageMessage(buildKimiFileUrl(FILE_ID));
+    const endpointA = requester({
+      uploadImage: upload,
+      credentials: staticCredentials('key-a'),
+      baseUrl: 'https://a.example.test/v1',
+    });
+
+    await res.resolve([message], endpointA);
+    await res.resolve([message], endpointA);
+    expect(upload).toHaveBeenCalledTimes(1);
+
+    const endpointB = requester({
+      uploadImage: upload,
+      credentials: staticCredentials('key-a'),
+      baseUrl: 'https://b.example.test/v1',
+    });
+    const out = await res.resolve([message], endpointB);
 
     expect(firstPart(out)).toEqual(msImagePart('img-1'));
     expect(upload).toHaveBeenCalledTimes(2);
