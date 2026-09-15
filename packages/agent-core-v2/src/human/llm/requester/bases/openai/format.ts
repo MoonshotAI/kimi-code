@@ -157,7 +157,7 @@ export interface OpenAILoweredMessage {
   readonly message: OpenAIWireMessage;
 }
 
-export function lowerOpenAIRequest(
+export function lowerOpenAIMessages(
   input: FormatRequestInput,
   options: OpenAILowerOptions,
 ): OpenAILoweredMessage[] {
@@ -215,6 +215,7 @@ export function createOpenAIFormat(): OpenAIProtocolFormat {
   return {
     createStreamParser(options?: OpenAIStreamParserOptions) {
       const bufferedToolCalls = new Map<number | string, BufferedStreamToolCall>();
+      let seenReasoningContent = false;
 
       function convertStreamToolCall(
         toolCall: OpenAIRawStreamToolCallDelta,
@@ -303,12 +304,20 @@ export function createOpenAIFormat(): OpenAIProtocolFormat {
         const reasoningDetails =
           options?.reasoningKey === undefined ? extractReasoningDetails(delta) : undefined;
         if (reasoningDetails !== undefined) {
-          for (const part of convertReasoningDetails(reasoningDetails)) {
+          const inline = extractReasoning(delta, 'reasoning_content');
+          if (inline !== undefined) {
+            seenReasoningContent = true;
+            sink.onDelta({ type: 'think', think: inline.value });
+          }
+          for (const part of convertReasoningDetails(reasoningDetails, seenReasoningContent)) {
             sink.onDelta(part);
           }
         } else {
           const reasoning = extractReasoning(delta);
           if (reasoning !== undefined) {
+            if (reasoning.key === 'reasoning_content') {
+              seenReasoningContent = true;
+            }
             sink.onDelta({ type: 'think', think: reasoning.value });
           }
         }
@@ -342,12 +351,12 @@ function isOpenAIInsufficientQuotaError(error: RawOpenAISDKAPIError): boolean {
 
 export function convertOpenAIError(
   error: unknown,
-  convertErrorHook?: (error: unknown) => LlmRemoteErrorMessage | undefined,
+  classifyErrorHook?: (error: unknown) => LlmRemoteErrorMessage | undefined,
 ): LlmRemoteErrorMessage {
   if (isAbortError(error)) {
     return toLlmErrorMessage(error);
   }
-  const hooked = convertErrorHook?.(error);
+  const hooked = classifyErrorHook?.(error);
   if (hooked !== undefined) {
     return hooked;
   }

@@ -59,7 +59,7 @@ export interface IAgentTowerService {
   readonly isActive: boolean;
   readonly requestedBase: string | undefined;
   enter(base?: string): Promise<TowerEnterResult>;
-  exit(): void;
+  exit(): Promise<void>;
 }
 
 export const IAgentTowerService = createDecorator<IAgentTowerService>('agentTowerService');

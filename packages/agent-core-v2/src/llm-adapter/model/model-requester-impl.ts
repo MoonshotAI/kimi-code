@@ -6,11 +6,11 @@ import { AsyncEventQueue } from '#/_base/asyncEventQueue';
 import type { LlmErrorMessage } from '#human/llm/errors';
 import { emptyResponseError } from '#human/llm/empty-response';
 import { NO_FINISH, type FinishInfo } from '#human/llm/finish-reason';
-import type { ProviderMediaContribution, VideoUploadInput } from '#human/llm/media/upload';
-import { createMessageAccumulator, type VideoURLPart } from '#human/llm/message';
+import type { ProviderMediaContribution, ImageUploadInput, VideoUploadInput } from '#human/llm/media/upload';
+import { createMessageAccumulator, type ImageURLPart, type VideoURLPart } from '#human/llm/message';
 import type { LlmModel } from '#human/llm/model';
 import type { ProtocolName } from '#human/llm/protocol/base';
-import { applyCredential, resolveModelCredentials } from '#human/credentials/credentials';
+import { applyCredential } from '#human/credentials/credentials';
 import {
   type ExtraParams,
   type LlmRequestConfig,
@@ -23,6 +23,7 @@ import type { TokenUsage } from '#human/llm/usage';
 import {
   ChatProviderError,
   errorFromLlmMessage,
+  ImageUploadUnsupportedError,
   isAbortError,
   llmMessageFromError,
   traceIdFromHeadersRecord,
@@ -107,8 +108,25 @@ export class ModelRequesterImpl implements ModelRequester {
       );
     }
     const video = typeof input === 'string' ? readVideoFile(input) : input;
-    const model = await resolveModelCredentials(resolved.model, this.model.credentials);
+    const credential = await this.model.credentialProvider?.resolve();
+    const model = applyCredential(resolved.model, credential);
     return uploader(video, { model, signal: options?.signal });
+  }
+
+  async uploadImage(
+    input: ImageUploadInput,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<ImageURLPart> {
+    const resolved = this.resolve();
+    const uploader = resolved.media?.uploadImage;
+    if (uploader === undefined) {
+      throw new ImageUploadUnsupportedError(
+        `Model "${this.model.id}" (protocol=${this.model.protocol}) does not support image upload`,
+      );
+    }
+    const credential = await this.model.credentialProvider?.resolve();
+    const model = applyCredential(resolved.model, credential);
+    return uploader(input, { model, signal: options?.signal });
   }
 
   private async runRequest(
@@ -157,7 +175,7 @@ export class ModelRequesterImpl implements ModelRequester {
       usedContextTokens: params?.usedContextTokens,
     };
 
-    const credential = await this.model.credentials?.resolve();
+    const credential = await this.model.credentialProvider?.resolve();
     await requester.generate(
       { ...config, model: applyCredential(resolved.model, credential) },
       content,

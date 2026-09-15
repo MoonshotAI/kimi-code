@@ -22,6 +22,7 @@ import {
   createMaxStepsExceededError,
   IAgentLoopService,
   type AfterStepContext,
+  type PromptHandle,
 } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -877,7 +878,11 @@ describe('AgentGoalService core workflow hooks', () => {
   ): Promise<ReturnType<typeof vi.fn<() => boolean>>> {
     const abort = vi.fn<() => boolean>(() => abortResult);
     const turn: StubTurn = { ...makeTurn(41), result: new Promise<never>(() => {}), cancel: () => abort() };
-    vi.spyOn(loopService, 'submit').mockReturnValue({ turn });
+    vi.spyOn(loopService, 'submit').mockReturnValue({ id: 'p' });
+    vi.spyOn(loopService, 'promptHandle').mockReturnValue({
+      launched: Promise.resolve(turn),
+      completion: new Promise(() => {}),
+    } as unknown as PromptHandle);
 
     await goals.createGoal({ objective: 'finish the task' });
     await goals.markBlocked({ reason: 'need credentials' });
@@ -1060,7 +1065,7 @@ describe('AgentGoalService core workflow hooks', () => {
       turnsUsed: 0,
       tokensUsed: 0,
     });
-    expect(loopService.hasPendingRequests()).toBe(false);
+    expect(loopService.snapshot().hasPendingRequests).toBe(false);
     expect(loopService.launches).toEqual([]);
   });
 
@@ -1081,7 +1086,7 @@ describe('AgentGoalService core workflow hooks', () => {
       stopTurn: false,
     });
 
-    expect(loopService.hasPendingRequests()).toBe(false);
+    expect(loopService.snapshot().hasPendingRequests).toBe(false);
     expect(goals.getGoal().goal).toMatchObject({
       goalId: replacement.goalId,
       status: 'active',
@@ -1184,7 +1189,7 @@ describe('AgentGoalService core workflow hooks', () => {
     await goals.cancelGoal();
 
     expect(abort).toHaveBeenCalledOnce();
-    expect(cancel).toHaveBeenCalledWith(41, expect.any(Error));
+    expect(cancel).toHaveBeenCalledWith({ turnId: 41 }, expect.any(Error));
     expect(isUserCancellation(cancel.mock.calls[0]?.[1])).toBe(false);
   });
 
@@ -1209,7 +1214,7 @@ describe('AgentGoalService core workflow hooks', () => {
         await runGoalStep(loopService, turn);
       }
       endTurn(eventBus, turn);
-      expect(loopService.status()).toMatchObject({ state: 'idle', hasPendingRequests: false });
+      expect(loopService.snapshot()).toMatchObject({ state: 'idle', hasPendingRequests: false });
 
       const resumed = await goals.resumeGoal({ continueIfBlocked: true });
 
@@ -1418,7 +1423,7 @@ describe('AgentGoalService core workflow hooks', () => {
     };
     await loopService.hooks.onDidFinishStep.run(afterStep);
 
-    expect(loopService.hasPendingRequests()).toBe(true);
+    expect(loopService.snapshot().hasPendingRequests).toBe(true);
     expect(goals.getGoal().goal).toMatchObject({ status: 'blocked', turnsUsed: 1 });
   });
 
@@ -1552,7 +1557,7 @@ describe('AgentGoalService core workflow hooks', () => {
     await runTerminalUpdateGoalResult(toolExecutor, turn, 'complete', 'outcome prompt');
     await loopService.hooks.onDidFinishStep.run(afterStep);
 
-    expect(loopService.hasPendingRequests()).toBe(true);
+    expect(loopService.snapshot().hasPendingRequests).toBe(true);
     expect(goals.getGoal().goal).toBeNull();
     expect(loopService.launches).toEqual([]);
     expect(JSON.stringify(context.get())).not.toContain('goal_completion_summary');
@@ -1570,7 +1575,7 @@ describe('AgentGoalService core workflow hooks', () => {
     };
     await loopService.hooks.onDidFinishStep.run(secondAfterStep);
     endTurn(eventBus, turn);
-    expect(loopService.hasPendingRequests()).toBe(false);
+    expect(loopService.snapshot().hasPendingRequests).toBe(false);
   });
 
   it('pauses active goals after failed turns', async () => {
@@ -1651,7 +1656,7 @@ describe('AgentGoalService core workflow hooks', () => {
 
     await vi.waitFor(() => expect(loopService.launches).toHaveLength(1));
     expect(goals.getGoal().goal?.status).toBe('active');
-    expect(loopService.hasPendingRequests()).toBe(true);
+    expect(loopService.snapshot().hasPendingRequests).toBe(true);
   });
 });
 

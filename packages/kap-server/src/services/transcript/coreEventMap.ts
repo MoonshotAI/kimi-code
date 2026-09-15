@@ -25,12 +25,11 @@ import type { WarningIssued } from '@moonshot-ai/agent-core-v2/agent/profile/pro
 import type {
   PromptAborted,
   PromptCompleted,
+  PromptQueued,
   PromptStarted,
   PromptSteered,
   PromptSubmitted,
-} from '@moonshot-ai/agent-core-v2/agent/prompt/promptService';
-import type { PromptAccepted } from '@moonshot-ai/agent-core-v2/agent/prompt/promptOps';
-import type { PromptQueued } from '@moonshot-ai/agent-core-v2/agent/prompt/promptService';
+} from '@moonshot-ai/agent-core-v2/agent/prompt/promptEvents';
 import type {
   ShellCompleted,
   ShellOutput,
@@ -55,6 +54,7 @@ import type { AgentStatusUpdated } from '@moonshot-ai/agent-core-v2/agent/usage/
 import type { PlanRevision } from '@moonshot-ai/agent-core-v2/features/plan/planOps';
 import type { SubagentSuspended } from '@moonshot-ai/agent-core-v2/features/swarm/session/sessionSwarmService';
 import type {
+  SubagentCancelled,
   SubagentCompleted,
   SubagentFailed,
   SubagentSpawned,
@@ -99,7 +99,6 @@ export interface ProjectorInteraction {
 
 type PlanRevisionEvent = { readonly type: 'plan.revision' } & PlanRevision;
 
-type PromptAcceptedEvent = { readonly type: 'prompt.accepted' } & PromptAccepted;
 type PromptQueuedEvent = { readonly type: 'prompt.queued' } & PromptQueued;
 type PromptSubmittedEvent = { readonly type: 'prompt.submitted' } & PromptSubmitted;
 type PromptStartedEvent = { readonly type: 'prompt.started' } & PromptStarted;
@@ -134,10 +133,10 @@ export type ProjectorBusEvent =
   | ({ readonly type: 'subagent.started' } & SubagentStarted)
   | ({ readonly type: 'subagent.completed' } & SubagentCompleted)
   | ({ readonly type: 'subagent.failed' } & SubagentFailed)
+  | ({ readonly type: 'subagent.cancelled' } & SubagentCancelled)
   | ({ readonly type: 'subagent.suspended' } & SubagentSuspended)
   | ({ readonly type: 'goal.updated' } & GoalUpdated)
   | ({ readonly type: 'agent.status.updated' } & AgentStatusUpdated)
-  | PromptAcceptedEvent
   | PromptQueuedEvent
   | PromptSubmittedEvent
   | PromptStartedEvent
@@ -333,14 +332,13 @@ export class AgentTranscriptProjector {
       case 'subagent.started':
       case 'subagent.completed':
       case 'subagent.failed':
+      case 'subagent.cancelled':
       case 'subagent.suspended':
         return this.onSubagentRun(event);
       case 'goal.updated':
         return this.onGoalUpdated(event);
       case 'agent.status.updated':
         return this.onAgentStatusUpdated(event);
-      case 'prompt.accepted':
-        return this.onPromptAccepted(event);
       case 'prompt.queued':
         return this.onPromptQueued(event);
       case 'prompt.submitted':
@@ -1119,7 +1117,7 @@ export class AgentTranscriptProjector {
   }
 
   private onSubagentRun(event: {
-    type: 'subagent.started' | 'subagent.completed' | 'subagent.failed' | 'subagent.suspended';
+    type: 'subagent.started' | 'subagent.completed' | 'subagent.failed' | 'subagent.cancelled' | 'subagent.suspended';
     subagentId: string;
     resultSummary?: string;
     usage?: StepUsage;
@@ -1131,7 +1129,9 @@ export class AgentTranscriptProjector {
         ? 'completed'
         : event.type === 'subagent.failed'
           ? 'failed'
-          : 'running';
+          : event.type === 'subagent.cancelled'
+            ? 'killed'
+            : 'running';
     const taskKey = this.subagentTaskIds.get(event.subagentId) ?? event.subagentId;
     const task = this.upsertTask(taskKey, (prev) => ({
       taskId: taskKey,
@@ -1143,7 +1143,9 @@ export class AgentTranscriptProjector {
       outputTail: prev?.outputTail ?? '',
       startedAt: prev?.startedAt ?? nowIso(),
       endedAt:
-        event.type === 'subagent.completed' || event.type === 'subagent.failed'
+        event.type === 'subagent.completed' ||
+        event.type === 'subagent.failed' ||
+        event.type === 'subagent.cancelled'
           ? nowIso()
           : prev?.endedAt,
       resultSummary: event.resultSummary ?? prev?.resultSummary,
@@ -1165,7 +1167,9 @@ export class AgentTranscriptProjector {
         outputTail: prev?.outputTail ?? '',
         startedAt: prev?.startedAt ?? nowIso(),
         endedAt:
-          event.type === 'subagent.completed' || event.type === 'subagent.failed'
+          event.type === 'subagent.completed' ||
+          event.type === 'subagent.failed' ||
+          event.type === 'subagent.cancelled'
             ? nowIso()
             : prev?.endedAt,
         resultSummary: event.resultSummary ?? prev?.resultSummary,
@@ -1352,20 +1356,6 @@ export class AgentTranscriptProjector {
     eventPayload: unknown,
   ): TranscriptOperation {
     return this.markerOp('notice', { level, message, event: eventPayload });
-  }
-
-  private onPromptAccepted(event: PromptAcceptedEvent): TranscriptOperation[] {
-    const prompt = this.upsertPrompt(event.promptId, () => ({
-      promptId: event.promptId,
-      status: 'running',
-      userMessageId: event.promptId,
-      content:
-        event.content === undefined
-          ? undefined
-          : projectPromptContentParts(event.content as readonly ContentPart[]),
-      createdAt: nowIso(),
-    }));
-    return [{ op: 'prompt.upsert', prompt }];
   }
 
   private onPromptQueued(event: PromptQueuedEvent): TranscriptOperation[] {

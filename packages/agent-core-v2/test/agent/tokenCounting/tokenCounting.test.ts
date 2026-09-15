@@ -26,12 +26,13 @@ describe('Agent token counting', () => {
   let profile: IAgentProfileService;
   let usage: TestAgentContext['usage'];
 
-  beforeEach(() => {
+  beforeEach(async () => {
     ctx = createTestAgent();
     context = ctx.get(IAgentContextMemoryService);
     tokenCounting = ctx.tokenCounting;
     profile = ctx.get(IAgentProfileService);
     usage = ctx.usage;
+    await ctx.restorePersisted();
   });
 
   afterEach(async () => {

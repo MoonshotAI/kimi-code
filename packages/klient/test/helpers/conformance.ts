@@ -14,9 +14,6 @@ import { join } from 'node:path';
 import { Service } from '@moonshot-ai/agent-core-v2/_base/di/service';
 import { CommandContribution } from '@moonshot-ai/agent-core-v2/agent/command/commandContribution';
 import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureManager';
-import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionLookup';
-import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
-import { IAgentPromptService, reservePrompt } from '@moonshot-ai/agent-core-v2/agent/prompt/prompt';
 
 import type { Klient } from '../../src/index.js';
 import type { TestEngine } from './engine.js';
@@ -560,25 +557,24 @@ export function defineKlientConformance(
       }
     });
 
-    it('propagates prompt id conflicts with the same 40927 error', async () => {
+    it('treats a client-chosen promptId as a pure correlation id', async () => {
       const created = await target.klient.global.sessions.create({
         workDir: process.cwd(),
-        title: 'conformance prompt conflict',
+        title: 'conformance prompt correlation',
       });
-      const session = getLiveSessionById(target.app.accessor, created.id);
-      if (session === undefined) throw new Error('conformance session was not materialized');
-      await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
-      const main = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
-      const reservation = reservePrompt(main.accessor.get(IAgentPromptService), 'submission-1');
       try {
-        await expect(
-          target.klient.session(created.id).agent('main').prompt({
-            input: [{ type: 'text', text: 'duplicate' }],
-            promptId: 'submission-1',
-          }),
-        ).rejects.toMatchObject({ name: 'RPCError', code: 40927 });
+        const agent = target.klient.session(created.id).agent('main');
+        const first = await agent.prompt({
+          input: [{ type: 'text', text: 'first' }],
+          promptId: 'submission-1',
+        });
+        expect(first).toEqual({ turn_id: 0 });
+        const second = await agent.prompt({
+          input: [{ type: 'text', text: 'duplicate' }],
+          promptId: 'submission-1',
+        });
+        expect(second === undefined || typeof second.turn_id === 'number').toBe(true);
       } finally {
-        reservation.dispose();
         await target.klient.session(created.id).close();
       }
     });

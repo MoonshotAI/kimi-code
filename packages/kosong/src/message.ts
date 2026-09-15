@@ -11,6 +11,7 @@ export interface ThinkPart {
   type: 'think';
   think: string;
   encrypted?: string; // Provider-specific reasoning signature
+  hidden?: boolean;
 }
 
 export interface ImageURLPart {

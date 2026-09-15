@@ -60,7 +60,7 @@ const CATALOG = {
     },
     {
       id: 'kimi-webbridge',
-      displayName: 'Kimi WebBridge',
+      displayName: 'Kimi Browser Extension',
       source: 'https://cdn.example.test/kimi-webbridge.zip',
     },
     {

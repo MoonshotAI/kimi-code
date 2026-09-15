@@ -7,7 +7,7 @@ import type { GoogleContent } from './contract';
 export interface GoogleGenAITrait {
   readonly thinking?: ThinkingStrategy;
 
-  maxCompletionTokens?(
+  encodeMaxCompletionTokens?(
     maxCompletionTokens: number,
     ctx: TraitContext,
   ): Record<string, unknown> | undefined;

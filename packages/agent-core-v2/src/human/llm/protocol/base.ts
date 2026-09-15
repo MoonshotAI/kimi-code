@@ -13,7 +13,7 @@ export interface TraitContext {
 export interface ProtocolRequesterOptions<TTrait> {
   readonly connection?: ProviderConnection;
   readonly trait?: TTrait;
-  readonly convertError?: LlmErrorClassifier;
+  readonly classifyError?: LlmErrorClassifier;
 }
 
 export interface ProtocolBase<TTrait = unknown> {

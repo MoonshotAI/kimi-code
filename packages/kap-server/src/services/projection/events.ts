@@ -28,8 +28,7 @@ import type {
   PromptStarted,
   PromptSteered,
   PromptSubmitted,
-} from '@moonshot-ai/agent-core-v2/agent/prompt/promptService';
-import type { PromptAccepted } from '@moonshot-ai/agent-core-v2/agent/prompt/promptOps';
+} from '@moonshot-ai/agent-core-v2/agent/prompt/promptEvents';
 import type {
   ShellCompleted,
   ShellOutput,
@@ -54,6 +53,7 @@ import type { AgentStatusUpdated } from '@moonshot-ai/agent-core-v2/agent/usage/
 import type { PlanRevision } from '@moonshot-ai/agent-core-v2/features/plan/planOps';
 import type { SubagentSuspended } from '@moonshot-ai/agent-core-v2/features/swarm/session/sessionSwarmService';
 import type {
+  SubagentCancelled,
   SubagentCompleted,
   SubagentFailed,
   SubagentSpawned,
@@ -84,10 +84,10 @@ export type ProjectionBusEvent =
   | ({ readonly type: 'subagent.started' } & SubagentStarted)
   | ({ readonly type: 'subagent.completed' } & SubagentCompleted)
   | ({ readonly type: 'subagent.failed' } & SubagentFailed)
+  | ({ readonly type: 'subagent.cancelled' } & SubagentCancelled)
   | ({ readonly type: 'subagent.suspended' } & SubagentSuspended)
   | ({ readonly type: 'goal.updated' } & GoalUpdated)
   | ({ readonly type: 'agent.status.updated' } & AgentStatusUpdated)
-  | ({ readonly type: 'prompt.accepted' } & PromptAccepted)
   | ({ readonly type: 'prompt.queued' } & PromptQueued)
   | ({ readonly type: 'prompt.submitted' } & PromptSubmitted)
   | ({ readonly type: 'prompt.started' } & PromptStarted)

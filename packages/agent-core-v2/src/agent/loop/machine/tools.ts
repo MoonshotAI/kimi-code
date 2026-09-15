@@ -12,7 +12,7 @@ import type {
   ToolUpdate as AgentToolUpdate,
 } from '#/tool/toolContract';
 import type { ContentPart, ToolCall } from '#human/llm/message';
-import type { ToolExecuteInput, ToolResult, ToolUpdate } from '#human/tool/executor';
+import type { ToolExecuteInput, ToolExecutor, ToolResult, ToolUpdate } from '#human/tool/executor';
 import type { ToolDefinition } from '#human/tool/tool';
 
 const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
@@ -32,7 +32,7 @@ export interface ToolResultExtras {
 
 export interface CreateMachineToolsOptions {
   readonly toolExecutor: IAgentToolExecutorService;
-  readonly toolInfos: readonly ToolInfo[];
+  readonly toolInfos: () => readonly ToolInfo[];
   readonly turnId: () => number;
   readonly steerSignal?: () => AbortSignal | undefined;
   readonly trace?: () => LLMRequestTrace | undefined;
@@ -43,7 +43,9 @@ export interface CreateMachineToolsOptions {
 
 export interface MachineTools {
   readonly tools: ToolDefinition[];
+  readonly executor: ToolExecutor;
   readonly extras: ReadonlyMap<string, ToolResultExtras>;
+  sync(): void;
   beginBatch(expectedCalls?: readonly ToolCall[]): void;
   handleProgress(toolCallId: string, update: AgentToolUpdate): void;
 }
@@ -61,10 +63,26 @@ function toContentParts(output: string | ContentPart[]): ContentPart[] {
 export function createMachineTools(options: CreateMachineToolsOptions): MachineTools {
   const extras = new Map<string, ToolResultExtras>();
   const progressHandlers = new Map<string, ((update: ToolUpdate) => void) | undefined>();
-  const knownNames = new Set(options.toolInfos.map((info) => info.name));
+  const definitions = new Map<string, ToolDefinition>();
+  const tools: ToolDefinition[] = [];
   const pending = new Map<string, PendingEntry>();
   let expectedIds: readonly string[] | undefined;
   let batchInFlight = false;
+
+  const materialize = (): void => {
+    for (const info of options.toolInfos()) {
+      if (definitions.has(info.name)) continue;
+      const definition: ToolDefinition = {
+        name: info.name,
+        description: info.description,
+        parameters: info.parameters ?? EMPTY_TOOL_PARAMETERS,
+        deferred: info.disclosure === 'deferred' ? true : undefined,
+        execute,
+      };
+      definitions.set(info.name, definition);
+      tools.push(definition);
+    }
+  };
 
   const settleEntry = (entry: PendingEntry, result: ToolResult): void => {
     entry.removeAbortListener();
@@ -222,15 +240,24 @@ export function createMachineTools(options: CreateMachineToolsOptions): MachineT
   };
 
   return {
-    tools: options.toolInfos.map((info) => ({
-      name: info.name,
-      description: info.description,
-      parameters: info.parameters ?? EMPTY_TOOL_PARAMETERS,
-      deferred: info.disclosure === 'deferred' ? true : undefined,
-      execute,
-    })),
+    tools,
+    executor: {
+      execute: async (input) => {
+        materialize();
+        const tool = definitions.get(input.toolCall.name);
+        if (tool === undefined) {
+          return {
+            content: [{ type: 'text', text: `unknown tool: ${input.toolCall.name}` }],
+            isError: true,
+          };
+        }
+        return tool.execute(input);
+      },
+    },
     extras,
+    sync: materialize,
     beginBatch: (expectedCalls) => {
+      materialize();
       if (expectedCalls === undefined) {
         expectedIds = undefined;
         const stale = [...pending.values()];
@@ -239,7 +266,7 @@ export function createMachineTools(options: CreateMachineToolsOptions): MachineT
         return;
       }
       expectedIds = [
-        ...new Set(expectedCalls.filter((call) => knownNames.has(call.name)).map((call) => call.id)),
+        ...new Set(expectedCalls.filter((call) => definitions.has(call.name)).map((call) => call.id)),
       ];
       flushIfReady();
     },

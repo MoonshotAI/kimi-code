@@ -186,7 +186,7 @@ export interface AnthropicLoweredMessage {
   readonly message: AnthropicWireMessage;
 }
 
-export function lowerAnthropicRequest(
+export function lowerAnthropicMessages(
   input: FormatRequestInput,
   acceptedMimes: ReadonlySet<string>,
 ): AnthropicLoweredMessage[] {
@@ -346,12 +346,12 @@ export const anthropicFormat: ProtocolFormat<AnthropicRawStreamEvent> = createAn
 
 export function convertAnthropicError(
   error: unknown,
-  convertErrorHook?: (error: unknown) => LlmRemoteErrorMessage | undefined,
+  classifyErrorHook?: (error: unknown) => LlmRemoteErrorMessage | undefined,
 ): LlmRemoteErrorMessage {
   if (isAbortError(error)) {
     return toLlmErrorMessage(error);
   }
-  const hooked = convertErrorHook?.(error);
+  const hooked = classifyErrorHook?.(error);
   if (hooked !== undefined) {
     return hooked;
   }

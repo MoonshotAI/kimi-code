@@ -397,7 +397,7 @@ export interface OpenAIResponsesLowerOptions {
   readonly extractText: boolean;
 }
 
-export function lowerOpenAIResponsesRequest(
+export function lowerOpenAIResponsesMessages(
   input: FormatRequestInput,
   options: OpenAIResponsesLowerOptions,
 ): ResponsesInputItem[] {

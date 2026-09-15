@@ -168,6 +168,7 @@ describe('promptWithSkills', () => {
 
   it('undoes the bundled prompt as a single anchor', async () => {
     ctx = agentWithSkills();
+    await ctx.restorePersisted();
     ctx.mockNextResponse({ type: 'text', text: 'done' });
     await ctx.rpc.promptWithSkills({
       input: [{ type: 'text', text: 'Review this change.' }],
@@ -181,7 +182,7 @@ describe('promptWithSkills', () => {
     expect(ctx.context.get()).toHaveLength(0);
   });
 
-  it('reserves the bundled prompt id against later prompt_id reuse', async () => {
+  it('accepts later prompt_id reuse of a bundled prompt id as a pure correlation id', async () => {
     ctx = agentWithSkills();
     ctx.mockNextResponse({ type: 'text', text: 'done' });
     const launched = await ctx.rpc.promptWithSkills({
@@ -190,11 +191,12 @@ describe('promptWithSkills', () => {
     });
     await ctx.untilTurnEnd();
 
-    await expect(
-      ctx.rpc.prompt({
-        input: [{ type: 'text', text: 'again' }],
-        promptId: launched.prompt_id,
-      }),
-    ).rejects.toThrow(/already in use/i);
+    ctx.mockNextResponse({ type: 'text', text: 'again done' });
+    const reused = await ctx.rpc.prompt({
+      input: [{ type: 'text', text: 'again' }],
+      promptId: launched.prompt_id,
+    });
+    expect(reused).toEqual({ turn_id: 1 });
+    await ctx.untilTurnEnd();
   });
 });

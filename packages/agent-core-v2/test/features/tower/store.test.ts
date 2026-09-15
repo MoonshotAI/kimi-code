@@ -1717,7 +1717,7 @@ describe('roster', () => {
   it('rejects duplicate agent names', async () => {
     await store.registerAgent(rosterEntry({ name: 'w1', kind: 'worker' }));
     await expect(
-      store.registerAgent(rosterEntry({ name: 'w1', kind: 'reviewer' })),
+      store.registerAgent(rosterEntry({ name: 'w1', kind: 'reviewer', agentId: 'agent-w1-reviewer' })),
     ).rejects.toThrow(/already registered/);
   });
 
@@ -1727,6 +1727,98 @@ describe('roster', () => {
     expect(store.resolveCallerName(state, 'main')).toBe('tower');
     expect(store.resolveCallerName(state, 'agent-w1')).toBe('w1');
     expect(() => store.resolveCallerName(state, 'agent-99')).toThrow(TowerProtocolError);
+  });
+
+  it('re-registering an agent id retires the stale entry so identity follows the latest registration', async () => {
+    await store.registerAgent(
+      rosterEntry({ name: 'worker-old', kind: 'worker', agentId: 'agent-1', sessionId: 'session-a' }),
+    );
+    await store.registerAgent(
+      rosterEntry({ name: 'worker-new', kind: 'worker', agentId: 'agent-1', sessionId: 'session-b' }),
+    );
+
+    const state = await store.load();
+    expect(state.roster.agents.map((agent) => agent.name)).toEqual(['worker-new']);
+    expect(store.resolveCallerName(state, 'agent-1')).toBe('worker-new');
+  });
+
+  async function seedDuplicatedRoster(): Promise<void> {
+    const file = store.abs(STATE_FILE);
+    const state = JSON.parse(await readFile(file, 'utf8')) as TowerState;
+    state.roster.agents.push(
+      rosterEntry({
+        name: 'worker-old',
+        kind: 'worker',
+        agentId: 'agent-1',
+        sessionId: 'session-a',
+        spawnedAt: '2026-09-13T08:00:00.000Z',
+      }),
+      rosterEntry({
+        name: 'worker-new',
+        kind: 'worker',
+        agentId: 'agent-1',
+        sessionId: 'session-b',
+        spawnedAt: '2026-09-14T03:00:00.000Z',
+      }),
+    );
+    await writeFile(file, `${JSON.stringify(state, null, 2)}\n`);
+  }
+
+  it('resolves a duplicated agent id to its latest roster entry — stale sessions lose', async () => {
+    await seedDuplicatedRoster();
+
+    const state = await store.load();
+    expect(store.resolveCallerName(state, 'agent-1')).toBe('worker-new');
+    expect(store.resolveAgent(state, 'agent-1')?.name).toBe('worker-new');
+  });
+
+  it('marks and clears death on the latest entry when an agent id is duplicated', async () => {
+    await seedDuplicatedRoster();
+
+    const died = await store.markAgentDied('agent-1', 'failed');
+    expect(died?.name).toBe('worker-new');
+    let state = await store.load();
+    expect(state.roster.agents[0]?.diedAt).toBeUndefined();
+    expect(state.roster.agents[1]?.diedAt).toBeDefined();
+
+    expect(await store.clearAgentDied('agent-1')).toBe(true);
+    state = await store.load();
+    expect(state.roster.agents[1]?.diedAt).toBeUndefined();
+  });
+});
+
+describe('adopt', () => {
+  it('retires a foreign session roster without requiring TowerInit', async () => {
+    await store.init('session-a');
+    await store.registerAgent(rosterEntry({ name: 'w1', kind: 'worker', sessionId: 'session-a' }));
+
+    const retired = await store.adopt('session-b');
+
+    expect(retired).toEqual(['w1']);
+    const state = await store.load();
+    expect(state.sessionId).toBe('session-b');
+    expect(state.roster.agents).toEqual([]);
+  });
+
+  it('keeps the roster when the adopting session already owns the workspace', async () => {
+    await store.init('session-a');
+    await store.registerAgent(rosterEntry({ name: 'w1', kind: 'worker', sessionId: 'session-a' }));
+
+    expect(await store.adopt('session-a')).toEqual([]);
+    expect((await store.load()).roster.agents).toHaveLength(1);
+  });
+
+  it('no-ops on an uninitialized workspace', async () => {
+    expect(await store.adopt('session-b')).toEqual([]);
+    expect(await store.isInitialized()).toBe(false);
+  });
+
+  it('propagates an unreadable state file instead of treating it as uninitialized', async () => {
+    await store.init('session-a');
+    await rm(store.abs(STATE_FILE), { recursive: true, force: true });
+    await mkdir(store.abs(STATE_FILE));
+
+    await expect(store.adopt('session-b')).rejects.toThrow();
   });
 });
 

@@ -11,7 +11,6 @@ import {
   IAgentLoopService,
   IAgentPermissionModeService,
   IAgentProfileService,
-  IAgentPromptService,
   IAgentScopeContext,
   IAgentTaskService,
   IAuthSummaryService,
@@ -185,25 +184,6 @@ function makeFakeHarness() {
         }),
       },
     ],
-    [
-      IAgentPromptService,
-      {
-        enqueue: vi.fn(async () => {
-          // Emit a native assistant delta on the main agent bus, then complete.
-          for (const listener of [...eventListeners]) {
-            listener({ type: 'assistant.delta', turnId: 1, delta: 'hello world' } as unknown as Event2<any>);
-          }
-          return {
-            launched: Promise.resolve({
-              id: 1,
-              result: Promise.resolve({ type: 'completed' }),
-            }),
-          };
-        }),
-        drain: vi.fn(async () => {}),
-        list: vi.fn(() => ({ launching: false, active: undefined, pending: [] })),
-      },
-    ],
     [IAgentTaskService, { list: vi.fn(() => []), stopAllOnExit: vi.fn(async () => []) }],
     [IAgentCronService, { getNextFireTime: vi.fn(() => null) }],
     [IAgentGoalService, goal],
@@ -211,7 +191,30 @@ function makeFakeHarness() {
     [
       IAgentLoopService,
       {
-        status: vi.fn(() => ({ state: 'idle', pendingPromptIds: [] })),
+        submit: vi.fn(() => {
+          // Emit a native assistant delta on the main agent bus, then complete.
+          for (const listener of [...eventListeners]) {
+            listener({ type: 'assistant.delta', turnId: 1, delta: 'hello world' } as unknown as Event2<any>);
+          }
+          return { id: 'p1' };
+        }),
+        promptHandle: vi.fn(() => ({
+          launched: Promise.resolve({
+            id: 1,
+            result: Promise.resolve({ type: 'completed' }),
+          }),
+        })),
+        snapshot: vi.fn(() => ({
+          state: 'idle',
+          activeTurnId: undefined,
+          activePromptId: undefined,
+          queue: [],
+          notificationCount: 0,
+          paused: false,
+          hasPendingRequests: false,
+          turn: undefined,
+          activeTraceId: undefined,
+        })),
         cancel: vi.fn(() => false),
         settled: vi.fn(async () => {}),
         tryAcquireQuiescence: vi.fn(() => ({ dispose: vi.fn() })),
@@ -346,14 +349,10 @@ describe('runV2Print', () => {
 
     await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
 
-    const promptService = agentServices.get(IAgentPromptService) as { enqueue: ReturnType<typeof vi.fn> };
-    expect(promptService.enqueue).toHaveBeenCalledWith({
-      message: {
-        role: 'user',
-        content: [{ type: 'text', text: 'say hello' }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
+    const promptService = agentServices.get(IAgentLoopService) as { submit: ReturnType<typeof vi.fn> };
+    expect(promptService.submit).toHaveBeenCalledWith({
+      message: { role: 'user', content: [{ type: 'text', text: 'say hello' }] },
+      meta: { origin: { kind: 'user' }, tracked: true },
     });
     // Version banner is first, then the rendered assistant output.
     expect(stderr.write).toHaveBeenNthCalledWith(1, 'kimi version 1.2.3-test\n');
@@ -685,10 +684,10 @@ describe('runV2Print', () => {
     const stderr = writer();
     const { app, agentServices } = makeFakeHarness();
 
-    const promptService = agentServices.get(IAgentPromptService) as {
-      enqueue: ReturnType<typeof vi.fn>;
+    const promptService = agentServices.get(IAgentLoopService) as {
+      promptHandle: ReturnType<typeof vi.fn>;
     };
-    promptService.enqueue.mockResolvedValueOnce({
+    promptService.promptHandle.mockReturnValueOnce({
       launched: Promise.resolve({
         id: 1,
         result: Promise.resolve({
@@ -719,10 +718,10 @@ describe('runV2Print', () => {
     const stderr = writer();
     const { app, agentServices } = makeFakeHarness();
 
-    const promptService = agentServices.get(IAgentPromptService) as {
-      enqueue: ReturnType<typeof vi.fn>;
+    const promptService = agentServices.get(IAgentLoopService) as {
+      promptHandle: ReturnType<typeof vi.fn>;
     };
-    promptService.enqueue.mockResolvedValueOnce({
+    promptService.promptHandle.mockReturnValueOnce({
       launched: Promise.resolve({
         id: 1,
         result: Promise.resolve({
@@ -752,12 +751,22 @@ describe('runV2Print', () => {
 
     const order: string[] = [];
     const loop = agentServices.get(IAgentLoopService) as {
-      status: ReturnType<typeof vi.fn>;
+      snapshot: ReturnType<typeof vi.fn>;
       cancel: ReturnType<typeof vi.fn>;
       settled: ReturnType<typeof vi.fn>;
       tryAcquireQuiescence: ReturnType<typeof vi.fn>;
     };
-    loop.status.mockReturnValue({ state: 'running', pendingPromptIds: [] });
+    loop.snapshot.mockReturnValue({
+      state: 'running',
+      activeTurnId: undefined,
+      activePromptId: undefined,
+      queue: [],
+      notificationCount: 0,
+      paused: false,
+      hasPendingRequests: false,
+      turn: undefined,
+      activeTraceId: undefined,
+    });
     loop.cancel.mockImplementation(() => {
       if (!order.includes('cancel')) order.push('cancel');
       return true;
@@ -781,15 +790,15 @@ describe('runV2Print', () => {
       order.push('flush');
     });
 
-    // A turn still in flight when the signal arrives: the prompt queue reports
-    // the launch window, then the running prompt, then goes empty.
-    const promptService = agentServices.get(IAgentPromptService) as {
-      enqueue: ReturnType<typeof vi.fn>;
-      drain: ReturnType<typeof vi.fn>;
-      list: ReturnType<typeof vi.fn>;
+    // A turn still in flight when the signal arrives: the queue snapshot reports
+    // the pending item, then the running prompt, then goes empty.
+    const promptService = agentServices.get(IAgentLoopService) as {
+      promptHandle: ReturnType<typeof vi.fn>;
+      snapshot: ReturnType<typeof vi.fn>;
+      cancel: ReturnType<typeof vi.fn>;
     };
     let settleTurn!: (result: unknown) => void;
-    promptService.enqueue.mockResolvedValueOnce({
+    promptService.promptHandle.mockReturnValueOnce({
       launched: Promise.resolve({
         id: 1,
         result: new Promise((resolve) => {
@@ -798,14 +807,44 @@ describe('runV2Print', () => {
       }),
     });
     let promptPhase: 'launching' | 'active' | 'empty' = 'launching';
-    promptService.list = vi.fn(() => {
+    promptService.snapshot = vi.fn(() => {
       if (promptPhase === 'launching') {
-        return { launching: true, active: undefined, pending: [] };
+        return {
+          state: 'running',
+          activeTurnId: undefined,
+          activePromptId: undefined,
+          queue: [{ id: 'p1', message: { role: 'user', content: [] } }],
+          notificationCount: 0,
+          paused: false,
+          hasPendingRequests: true,
+          turn: undefined,
+          activeTraceId: undefined,
+        };
       }
       if (promptPhase === 'active') {
-        return { launching: false, active: { id: 'p1' }, pending: [] };
+        return {
+          state: 'running',
+          activeTurnId: 1,
+          activePromptId: 'p1',
+          queue: [],
+          notificationCount: 0,
+          paused: false,
+          hasPendingRequests: false,
+          turn: undefined,
+          activeTraceId: undefined,
+        };
       }
-      return { launching: false, active: undefined, pending: [] };
+      return {
+        state: 'idle',
+        activeTurnId: undefined,
+        activePromptId: undefined,
+        queue: [],
+        notificationCount: 0,
+        paused: false,
+        hasPendingRequests: false,
+        turn: undefined,
+        activeTraceId: undefined,
+      };
     });
 
     const handlers = new Map<string, () => Promise<void>>();
@@ -839,7 +878,7 @@ describe('runV2Print', () => {
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
     await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(promptService.drain).toHaveBeenCalled();
+    expect(promptService.cancel).toHaveBeenCalled();
     expect(order).toEqual(['stop', 'cancel', 'settled']);
     promptPhase = 'active';
     await new Promise((resolve) => setTimeout(resolve, 30));

@@ -2,23 +2,29 @@ import { createHash } from 'node:crypto';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { WarningIssued } from '#/agent/profile/profileOps';
 import { IFileService } from '#/app/file/fileService';
 import { LifecycleScope } from '#/app/scopes';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { Message } from '#/llm-adapter/contract/message';
+import { ImageUploadUnsupportedError } from '#/llm-adapter/contract/errors';
 import type { ContentPart } from '#human/llm/message';
+import type { Model } from '#/llm-adapter/model/catalog';
 import type { ModelRequester } from '#/llm-adapter/model/model-requester';
 import { runWithCredentialRecovery } from '#/llm-adapter/model/credential-recovery';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 
 import { detectFileType, MEDIA_SNIFF_BYTES } from './file-type';
-import { isModelAcceptedImageMime, normalizeImageMime } from './image-format-policy';
+import { isDataUrl, isModelAcceptedImageMime, normalizeImageMime } from './image-format-policy';
 import {
   buildMediaPathTag,
   type DaemonFileRef,
   daemonFileRefFromPart,
   matchSingleMediaPathTag,
+  parseDaemonFileUrl,
 } from './mediaRef';
 import { ISessionMediaStore } from './sessionMediaStore';
 import { IAgentMediaResolverService } from './mediaResolver';
@@ -26,11 +32,12 @@ import { createVideoUploader } from './registerMediaTools';
 import {
   inlineVideoPart,
   inlineVideoSupportedForProtocol,
-  isVideoUploadAuthError,
+  isMediaUploadAuthError,
   isVideoUploadUnsupportedError,
 } from './videoUpload';
 
-const CACHE_SCOPE = 'video-upload-cache';
+const VIDEO_CACHE_SCOPE = 'video-upload-cache';
+const IMAGE_CACHE_SCOPE = 'image-upload-cache';
 const PROVIDER_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const VIDEO_UNAVAILABLE_TEXT =
   '[video omitted: the uploaded file is no longer available]';
@@ -38,6 +45,8 @@ const IMAGE_UNAVAILABLE_TEXT =
   '[image omitted: the uploaded file is no longer available]';
 const IMAGE_MEMO_MAX_BYTES = 8 * 1024 * 1024;
 const IMAGE_MEMO_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
+const REQUEST_MEDIA_BUDGET_BYTES = 20 * 1024 * 1024;
+const REQUEST_MEDIA_BUDGET_LOW_BYTES = 10 * 1024 * 1024;
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -46,6 +55,20 @@ export const mediaResolvedKey = defineState<Map<string, ContentPart>>(
   'media.resolved',
   () => new Map(),
 );
+
+export const mediaBudgetDroppedKey = defineState<Set<string>>(
+  'media.budgetDropped',
+  () => new Set(),
+);
+
+interface MediaBudgetEntry {
+  readonly messageIndex: number;
+  readonly partIndex: number;
+  readonly key: string;
+  readonly fileId?: string;
+  readonly kind: 'image' | 'video';
+  readonly bytes: number;
+}
 
 export class AgentMediaResolverService implements IAgentMediaResolverService {
   declare readonly _serviceBrand: undefined;
@@ -56,12 +79,19 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly states: IAgentStateService,
     @ISessionMediaStore private readonly mediaStore: ISessionMediaStore,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {
     this.states.contributeState(mediaResolvedKey);
+    this.states.contributeState(mediaBudgetDroppedKey);
   }
 
   private get resolved(): Map<string, ContentPart> {
     return this.states.get(mediaResolvedKey);
+  }
+
+  private get budgetDropped(): Set<string> {
+    return this.states.get(mediaBudgetDroppedKey);
   }
 
   private readonly imageMemo = new Map<
@@ -69,46 +99,136 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     { part: ContentPart; bytes: number; mimeType: string }
   >();
   private imageMemoBytes = 0;
+  private readonly imageUploadUnsupported = new Set<string>();
 
   async resolve(
     messages: readonly Message[],
     requester: ModelRequester,
     signal?: AbortSignal,
   ): Promise<readonly Message[]> {
-    if (!messages.some(hasDaemonFileMediaPart)) return messages;
-
     let changed = false;
     const out: Message[] = [];
+    const budgetEntries: MediaBudgetEntry[] = [];
     for (const message of messages) {
-      if (!hasDaemonFileMediaPart(message)) {
-        out.push(message);
-        continue;
-      }
       const content: ContentPart[] = [];
+      let messageChanged = false;
       let sawVideoRef = false;
       for (const part of message.content) {
         const daemonPart = daemonFileRefFromPart(part);
         if (daemonPart === undefined) {
+          const entry = inlineMediaBudgetEntry(part, out.length, content.length);
+          if (entry !== undefined) budgetEntries.push(entry);
           content.push(part);
           continue;
         }
+        messageChanged = true;
         sawVideoRef ||= daemonPart.kind === 'video';
         const resolved =
           daemonPart.kind === 'video'
             ? await this.resolveVideoPart(daemonPart.ref, requester, signal)
             : await this.resolveImagePart(daemonPart.ref, requester, signal);
+        budgetEntries.push({
+          messageIndex: out.length,
+          partIndex: content.length,
+          key: daemonPart.ref.fileId,
+          fileId: daemonPart.ref.fileId,
+          kind: daemonPart.kind,
+          bytes: inlinePartBytes(resolved),
+        });
         content.push(resolved);
       }
-      out.push({
-        ...message,
-        content:
-          content.length > 0
-            ? content
-            : [unavailableMediaText(sawVideoRef ? 'video' : 'image')],
-      });
-      changed = true;
+      out.push(
+        messageChanged
+          ? {
+              ...message,
+              content:
+                content.length > 0
+                  ? content
+                  : [unavailableMediaText(sawVideoRef ? 'video' : 'image')],
+            }
+          : message,
+      );
+      changed ||= messageChanged;
     }
+    changed = (await this.applyMediaBudget(out, budgetEntries)) || changed;
     return changed ? out : messages;
+  }
+
+  async displayPaths(messages: readonly Message[]): Promise<ReadonlyMap<string, string>> {
+    const paths = new Map<string, string>();
+    for (const message of messages) {
+      for (const part of message.content) {
+        if (part.type !== 'image_url' && part.type !== 'video_url') continue;
+        const url = part.type === 'image_url' ? part.imageUrl.url : part.videoUrl.url;
+        const ref = parseDaemonFileUrl(url);
+        if (ref === undefined || paths.has(url)) continue;
+        const path = await this.displayPath(ref);
+        if (path !== undefined) paths.set(url, path);
+      }
+    }
+    return paths;
+  }
+
+  private async applyMediaBudget(
+    out: Message[],
+    entries: readonly MediaBudgetEntry[],
+  ): Promise<boolean> {
+    if (entries.length === 0) return false;
+    let changed = false;
+    const dropped = this.budgetDropped;
+    const pending = new Map<string, number>();
+    for (const entry of entries) {
+      if (dropped.has(entry.key)) {
+        await this.replaceWithMediaTag(out, entry);
+        changed = true;
+        continue;
+      }
+      pending.set(entry.key, (pending.get(entry.key) ?? 0) + entry.bytes);
+    }
+    let total = 0;
+    for (const bytes of pending.values()) total += bytes;
+    if (total <= REQUEST_MEDIA_BUDGET_BYTES) return changed;
+
+    const droppedNow = new Set<string>();
+    for (const [key, bytes] of pending) {
+      if (total <= REQUEST_MEDIA_BUDGET_LOW_BYTES) break;
+      if (bytes === 0) continue;
+      dropped.add(key);
+      droppedNow.add(key);
+      total -= bytes;
+    }
+    for (const entry of entries) {
+      if (droppedNow.has(entry.key)) await this.replaceWithMediaTag(out, entry);
+    }
+    const hasUntrackedInlineMedia = entries.some(
+      (entry) => droppedNow.has(entry.key) && entry.fileId === undefined,
+    );
+    try {
+      void this.dispatcher.dispatch(
+        new WarningIssued({
+          agentId: this.scopeContext.agentId,
+          code: 'media-budget-exceeded',
+          message:
+            `Conversation media exceeded the ${String(REQUEST_MEDIA_BUDGET_BYTES / (1024 * 1024))} MB ` +
+            `per-request budget; ${String(droppedNow.size)} older media item(s) were omitted` +
+            (hasUntrackedInlineMedia ? '.' : ' and remain available at their saved paths.'),
+        }),
+      );
+    } catch {
+    }
+    return true;
+  }
+
+  private async replaceWithMediaTag(out: Message[], entry: MediaBudgetEntry): Promise<void> {
+    const message = out[entry.messageIndex]!;
+    const content = [...message.content];
+    if (entry.fileId === undefined) {
+      content[entry.partIndex] = budgetOmittedMedia(entry.kind);
+    } else {
+      const path = await this.displayPath({ fileId: entry.fileId });
+      content[entry.partIndex] = entry.kind === 'video' ? videoTag(path) : degradedImage(path);
+    }
+    out[entry.messageIndex] = { ...message, content };
   }
 
   private displayPath(ref: DaemonFileRef): Promise<string | undefined> {
@@ -120,17 +240,48 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     requester: ModelRequester,
     signal: AbortSignal | undefined,
   ): Promise<ContentPart> {
-    if (!requester.model.capabilities.image_in) {
+    const model = requester.model;
+    if (!model.capabilities.image_in) {
       this.telemetry.track2('media_resolve_fallback', {
         kind: 'image',
         reason: 'unsupported',
-        model: requester.model.name,
+        model: model.name,
       });
       return degradedImage(await this.displayPath(ref));
     }
-    const cacheKey = `image\0${ref.fileId}`;
-    const memoed = this.memoedImage(cacheKey, requester.model.providerType);
+    const providerKey = model.providerType ?? model.protocol;
+    const uploader = this.imageUploadUnsupported.has(providerKey)
+      ? undefined
+      : requester.uploadImage?.bind(requester);
+    const inlineKey = `image\0${ref.fileId}`;
+    if (uploader === undefined) {
+      const memoed = this.memoedImage(inlineKey, model.providerType);
+      if (memoed !== undefined) return memoed;
+      return this.resolveImageUncached(ref, requester, inlineKey, undefined, signal);
+    }
+    const cacheKey = `image\0${ref.fileId}\0${providerKey}\0${model.protocol}\0${model.baseUrl ?? ''}\0${await accountHashFor(model)}`;
+    const memoed = this.resolved.get(cacheKey);
     if (memoed !== undefined) return memoed;
+    const cachedLlmFileId = await this.readCachedUpload(IMAGE_CACHE_SCOPE, cacheKey);
+    if (cachedLlmFileId !== undefined) {
+      const part: ContentPart = {
+        type: 'image_url',
+        imageUrl: { url: `ms://${cachedLlmFileId}`, id: cachedLlmFileId },
+      };
+      this.resolved.set(cacheKey, part);
+      return part;
+    }
+    return this.resolveImageUncached(ref, requester, inlineKey, { uploader, cacheKey }, signal);
+  }
+
+  private async resolveImageUncached(
+    ref: DaemonFileRef,
+    requester: ModelRequester,
+    inlineKey: string,
+    upload: { readonly uploader: ImageUploader; readonly cacheKey: string } | undefined,
+    signal: AbortSignal | undefined,
+  ): Promise<ContentPart> {
+    const model = requester.model;
     const path = await this.displayPath(ref);
 
     let source: { readonly bytes: Buffer; readonly filename: string };
@@ -141,7 +292,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       this.telemetry.track2('media_resolve_fallback', {
         kind: 'image',
         reason: 'read_failed',
-        model: requester.model.name,
+        model: model.name,
       });
       return degradedImage(path);
     }
@@ -152,16 +303,18 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       'media',
     );
     const mimeType = normalizeImageMime(fileType.mimeType);
-    if (
-      fileType.kind !== 'image' ||
-      !isModelAcceptedImageMime(mimeType, requester.model.providerType)
-    ) {
+    if (fileType.kind !== 'image' || !isModelAcceptedImageMime(mimeType, model.providerType)) {
       this.telemetry.track2('media_resolve_fallback', {
         kind: 'image',
         reason: 'invalid',
-        model: requester.model.name,
+        model: model.name,
       });
       return degradedImage(path);
+    }
+
+    if (upload !== undefined) {
+      const uploaded = await this.uploadImagePart(requester, source, mimeType, upload, signal);
+      if (uploaded !== undefined) return uploaded;
     }
 
     const part: ContentPart = {
@@ -169,9 +322,48 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       imageUrl: { url: `data:${mimeType};base64,${source.bytes.toString('base64')}` },
     };
     if (source.bytes.length <= IMAGE_MEMO_MAX_BYTES) {
-      this.memoizeImage(cacheKey, part, source.bytes.length, mimeType);
+      this.memoizeImage(inlineKey, part, source.bytes.length, mimeType);
     }
     return part;
+  }
+
+  private async uploadImagePart(
+    requester: ModelRequester,
+    source: { readonly bytes: Buffer; readonly filename: string },
+    mimeType: string,
+    upload: { readonly uploader: ImageUploader; readonly cacheKey: string },
+    signal: AbortSignal | undefined,
+  ): Promise<ContentPart | undefined> {
+    const model = requester.model;
+    try {
+      const uploaded = await runWithCredentialRecovery(
+        model.credentialProvider,
+        () =>
+          upload.uploader(
+            { data: source.bytes, mimeType, filename: source.filename },
+            { signal },
+          ),
+        signal,
+      );
+      const llmFileId = uploaded.imageUrl.id ?? msFileIdFromUrl(uploaded.imageUrl.url);
+      if (llmFileId !== undefined) {
+        await this.writeCachedUpload(IMAGE_CACHE_SCOPE, upload.cacheKey, llmFileId);
+      }
+      this.resolved.set(upload.cacheKey, uploaded);
+      return uploaded;
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      if (isMediaUploadAuthError(error)) throw error;
+      if (error instanceof ImageUploadUnsupportedError) {
+        this.imageUploadUnsupported.add(model.providerType ?? model.protocol);
+      }
+      this.telemetry.track2('media_resolve_fallback', {
+        kind: 'image',
+        reason: 'upload_failed',
+        model: model.name,
+      });
+      return undefined;
+    }
   }
 
   private memoedImage(cacheKey: string, providerType: string | undefined): ContentPart | undefined {
@@ -189,6 +381,11 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     bytes: number,
     mimeType: string,
   ): void {
+    const previous = this.imageMemo.get(cacheKey);
+    if (previous !== undefined) {
+      this.imageMemo.delete(cacheKey);
+      this.imageMemoBytes -= previous.bytes;
+    }
     this.imageMemo.set(cacheKey, { part, bytes, mimeType });
     this.imageMemoBytes += bytes;
     for (const [key, entry] of this.imageMemo) {
@@ -206,7 +403,10 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     const model = requester.model;
     if (!model.capabilities.video_in) return videoTag(await this.displayPath(ref));
     const providerKey = model.providerType ?? model.protocol;
-    const cacheKey = `${ref.fileId}\0${providerKey}`;
+    const cacheKey =
+      requester.uploadVideo === undefined
+        ? `${ref.fileId}\0${providerKey}`
+        : `${ref.fileId}\0${providerKey}\0${model.protocol}\0${model.baseUrl ?? ''}\0${await accountHashFor(model)}`;
 
     const memoed = this.resolved.get(cacheKey);
     if (memoed !== undefined) return this.memoedOutcome(ref, memoed);
@@ -231,7 +431,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     cacheKey: string,
     signal: AbortSignal | undefined,
   ): Promise<{ part: ContentPart; memoize: boolean }> {
-    const cachedLlmFileId = await this.readCachedUpload(cacheKey);
+    const cachedLlmFileId = await this.readCachedUpload(VIDEO_CACHE_SCOPE, cacheKey);
     if (cachedLlmFileId !== undefined) {
       return {
         part: { type: 'video_url', videoUrl: { url: `ms://${cachedLlmFileId}`, id: cachedLlmFileId } },
@@ -273,16 +473,16 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
 
     try {
       const uploaded = await runWithCredentialRecovery(
-        requester.model.credentials,
+        requester.model.credentialProvider,
         () => uploader({ data: bytes, mimeType, filename }, { signal }),
         signal,
       );
       const llmFileId = uploaded.videoUrl.id ?? msFileIdFromUrl(uploaded.videoUrl.url);
-      if (llmFileId !== undefined) await this.writeCachedUpload(cacheKey, llmFileId);
+      if (llmFileId !== undefined) await this.writeCachedUpload(VIDEO_CACHE_SCOPE, cacheKey, llmFileId);
       return { part: uploaded, memoize: true };
     } catch (error) {
       if (signal?.aborted) throw error;
-      if (isVideoUploadAuthError(error)) throw error;
+      if (isMediaUploadAuthError(error)) throw error;
       this.telemetry.track2('media_resolve_fallback', {
         kind: 'video',
         reason: 'upload_failed',
@@ -315,23 +515,87 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     }
   }
 
-  private async readCachedUpload(cacheKey: string): Promise<string | undefined> {
-    const data = await this.blobs.get(CACHE_SCOPE, blobKey(cacheKey)).catch(() => undefined);
+  private async readCachedUpload(scope: string, cacheKey: string): Promise<string | undefined> {
+    const data = await this.blobs.get(scope, blobKey(cacheKey)).catch(() => undefined);
     if (data === undefined) return undefined;
     const llmFileId = textDecoder.decode(data);
     return PROVIDER_ID_RE.test(llmFileId) ? llmFileId : undefined;
   }
 
-  private async writeCachedUpload(cacheKey: string, llmFileId: string): Promise<void> {
+  private async writeCachedUpload(
+    scope: string,
+    cacheKey: string,
+    llmFileId: string,
+  ): Promise<void> {
     if (!PROVIDER_ID_RE.test(llmFileId)) return;
-    await this.blobs.put(CACHE_SCOPE, blobKey(cacheKey), textEncoder.encode(llmFileId)).catch(
+    await this.blobs.put(scope, blobKey(cacheKey), textEncoder.encode(llmFileId)).catch(
       () => undefined,
     );
   }
 }
 
-function hasDaemonFileMediaPart(message: Message): boolean {
-  return message.content.some((part) => daemonFileRefFromPart(part) !== undefined);
+type ImageUploader = NonNullable<ModelRequester['uploadImage']>;
+
+async function accountHashFor(model: Model): Promise<string> {
+  let identity: string | undefined;
+  const authorization = model.headers['Authorization'];
+  if (authorization !== undefined) {
+    identity = `authorization\0${authorization.trim()}`;
+  } else {
+    try {
+      const apiKey = (await model.credentialProvider?.resolve())?.apiKey;
+      if (apiKey !== undefined && apiKey.length > 0) {
+        identity = `api-key\0${stableJwtSubject(apiKey) ?? apiKey}`;
+      }
+    } catch {
+      identity = undefined;
+    }
+  }
+  if (identity === undefined) return 'no-key';
+  return createHash('sha256').update(identity).digest('hex').slice(0, 16);
+}
+
+function stableJwtSubject(token: string): string | undefined {
+  const parts = token.split('.');
+  if (parts.length !== 3) return undefined;
+  try {
+    const payload: unknown = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8'));
+    if (typeof payload !== 'object' || payload === null) return undefined;
+    const sub = (payload as { sub?: unknown }).sub;
+    if (typeof sub === 'string' && sub.length > 0) return sub;
+    const userId = (payload as { user_id?: unknown }).user_id;
+    if (typeof userId === 'string' && userId.length > 0) return userId;
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function inlineMediaBudgetEntry(
+  part: ContentPart,
+  messageIndex: number,
+  partIndex: number,
+): MediaBudgetEntry | undefined {
+  if (part.type !== 'image_url' && part.type !== 'video_url') return undefined;
+  const url = part.type === 'image_url' ? part.imageUrl.url : part.videoUrl.url;
+  if (!isDataUrl(url)) return undefined;
+  const kind = part.type === 'image_url' ? 'image' : 'video';
+  const hash = createHash('sha256').update(kind).update('\0').update(url).digest('hex');
+  return { messageIndex, partIndex, key: `inline\0${hash}`, kind, bytes: url.length };
+}
+
+function inlinePartBytes(part: ContentPart): number {
+  if (part.type === 'image_url') {
+    return isDataUrl(part.imageUrl.url) ? part.imageUrl.url.length : 0;
+  }
+  if (part.type === 'video_url') {
+    return isDataUrl(part.videoUrl.url) ? part.videoUrl.url.length : 0;
+  }
+  return 0;
+}
+
+function budgetOmittedMedia(kind: 'image' | 'video'): ContentPart {
+  return { type: 'text', text: `[${kind} omitted: dropped to fit the request media budget]` };
 }
 
 function degradedImage(path: string | undefined): ContentPart {
