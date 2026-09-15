@@ -686,8 +686,8 @@ describe('AgentConversationUndoService', () => {
     await undo.undo(1);
 
     const redelivered = ctx.context.get().filter((message) => message.origin?.kind === 'task');
-    expect(redelivered.map((message) => (message.origin as TaskOrigin).taskId).sort()).toEqual(
-      [taskA, taskB].sort(),
+    expect(redelivered.map((message) => (message.origin as TaskOrigin).taskId).toSorted()).toEqual(
+      [taskA, taskB].toSorted(),
     );
   });
 
