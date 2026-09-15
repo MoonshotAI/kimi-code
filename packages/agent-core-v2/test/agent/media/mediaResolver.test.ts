@@ -174,6 +174,7 @@ function requester(opts: {
   protocol?: Protocol;
   providerType?: string;
   baseUrl?: string;
+  headers?: Record<string, string>;
   uploadVideo?: ModelRequester['uploadVideo'];
   uploadImage?: ModelRequester['uploadImage'];
   credentials?: LlmCredentialProvider;
@@ -185,7 +186,7 @@ function requester(opts: {
       aliases: [],
       protocol: opts.protocol ?? 'openai',
       baseUrl: opts.baseUrl,
-      headers: {},
+      headers: opts.headers ?? {},
       capabilities: {
         video_in: opts.videoIn ?? true,
         image_in: opts.imageIn ?? true,
@@ -973,6 +974,58 @@ describe('AgentMediaResolverService image upload', () => {
     expect(upload).toHaveBeenCalledTimes(2);
   });
 
+  it('re-uploads when the protocol changes the effective files endpoint', async () => {
+    const ids = ['openai-image', 'anthropic-image'];
+    let nextId = 0;
+    const upload = vi.fn(async (): Promise<ImageURLPart> => msImagePart(ids[nextId++]!));
+    const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
+    const message = imageMessage(buildKimiFileUrl(FILE_ID));
+    const openai = requester({
+      uploadImage: upload,
+      credentials: staticCredentials('key-a'),
+      protocol: 'openai',
+      baseUrl: 'https://api.example.test',
+    });
+    const anthropic = requester({
+      uploadImage: upload,
+      credentials: staticCredentials('key-a'),
+      protocol: 'anthropic',
+      baseUrl: 'https://api.example.test',
+    });
+
+    await res.resolve([message], openai);
+    const out = await res.resolve([message], anthropic);
+
+    expect(firstPart(out)).toEqual(msImagePart('anthropic-image'));
+    expect(upload).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-uploads when the effective authorization changes', async () => {
+    const ids = ['account-a-image', 'account-b-image'];
+    let nextId = 0;
+    const upload = vi.fn(async (): Promise<ImageURLPart> => msImagePart(ids[nextId++]!));
+    const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
+    const message = imageMessage(buildKimiFileUrl(FILE_ID));
+    const accountA = requester({
+      uploadImage: upload,
+      credentials: staticCredentials('catalog-key'),
+      baseUrl: 'https://api.example.test/v1',
+      headers: { Authorization: 'Bearer account-a' },
+    });
+    const accountB = requester({
+      uploadImage: upload,
+      credentials: staticCredentials('catalog-key'),
+      baseUrl: 'https://api.example.test/v1',
+      headers: { Authorization: 'Bearer account-b' },
+    });
+
+    await res.resolve([message], accountA);
+    const out = await res.resolve([message], accountB);
+
+    expect(firstPart(out)).toEqual(msImagePart('account-b-image'));
+    expect(upload).toHaveBeenCalledTimes(2);
+  });
+
   it('stops probing the upload endpoint after the requester declares image upload unsupported', async () => {
     const upload = vi.fn(async (): Promise<ImageURLPart> => {
       throw new ImageUploadUnsupportedError('no image upload');
@@ -1078,6 +1131,7 @@ describe('AgentMediaResolverService session-canonical display path', () => {
 });
 
 describe('AgentMediaResolverService request media budget', () => {
+  const EIGHT_MIB = 8 * 1024 * 1024;
   const SIX_MIB = 6 * 1024 * 1024;
   const ONE_MIB = 1024 * 1024;
 
@@ -1093,6 +1147,10 @@ describe('AgentMediaResolverService request media budget', () => {
     return ids.map((id) => imageMessage(buildKimiFileUrl(id)));
   }
 
+  function inlineImageMessages(ids: readonly string[]): Message[] {
+    return ids.map((id) => imageMessage(`data:image/png;base64,${id}${'A'.repeat(EIGHT_MIB)}`));
+  }
+
   function partTypes(messages: readonly Message[]): string[] {
     return messages.map((message) => message.content[0]!.type);
   }
@@ -1100,6 +1158,20 @@ describe('AgentMediaResolverService request media budget', () => {
   function warnings(events: readonly Event2[]): Event2[] {
     return events.filter((event) => event.type === 'warning');
   }
+
+  it('omits the oldest inline media without daemon file references', async () => {
+    const events: Event2[] = [];
+    const res = resolver(new Map(), sessionDir, undefined, events);
+    const messages = inlineImageMessages(['first', 'second', 'third']);
+
+    const out = await res.resolve(messages, requester({}));
+
+    expect(partTypes(out)).toEqual(['text', 'text', 'image_url']);
+    expect(out[2]!.content[0]).toBe(messages[2]!.content[0]);
+    expect(warnings(events)).toEqual([
+      expect.objectContaining({ type: 'warning', code: 'media-budget-exceeded' }),
+    ]);
+  });
 
   it('omits the oldest images in one batch when inline media exceed the budget', async () => {
     const files = imageFiles([

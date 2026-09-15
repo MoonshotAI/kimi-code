@@ -133,7 +133,12 @@ function classifyProjectionPolicy(policy: ProjectionPolicy | undefined): Project
   return 'normal';
 }
 
-function recordProjectionCalls(): {
+function recordProjectionCalls(
+  project: (
+    messages: readonly ContextMessage[],
+    policy: ProjectionPolicy | undefined,
+  ) => readonly Message[] = (messages) => messages,
+): {
   projector: Pick<IAgentContextProjectorService, 'project'>;
   calls: ProjectionKind[];
 } {
@@ -142,7 +147,7 @@ function recordProjectionCalls(): {
     projector: {
       project: (messages: readonly ContextMessage[], policy) => {
         calls.push(classifyProjectionPolicy(policy));
-        return messages;
+        return project(messages, policy);
       },
     },
     calls,
@@ -569,10 +574,20 @@ describe('AgentLLMRequesterService media-stripped resend', () => {
 
   it('warns the user when media are stripped from the retried request', async () => {
     const calls = { value: 0 };
-    const projection = recordProjectionCalls();
+    const projection = recordProjectionCalls((messages, policy) =>
+      typeof policy?.media === 'object' ? history : messages,
+    );
+    const contextMessages: Message[] = [
+      {
+        role: 'user',
+        content: [{ type: 'image_url', imageUrl: { url: 'data:image/png;base64,IMAGE' } }],
+        toolCalls: [],
+      },
+    ];
     const { service, dispatcher, events } = createService(
       createRequester(calls, IMAGE_FORMAT_400),
       projection.projector,
+      { contextMessages },
     );
 
     await service.request();
@@ -731,7 +746,7 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
     }
   });
 
-  it('warns the user when older media are dropped from the retried request', async () => {
+  it('does not warn when the degraded projection leaves the request unchanged', async () => {
     const calls = { value: 0 };
     const projection = recordProjectionCalls();
     const { service, dispatcher, events } = createService(
@@ -742,22 +757,32 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
     await service.request();
     await dispatcher.flush();
 
-    expect(events.filter((event) => event.type === 'warning')).toEqual([
-      expect.objectContaining({
-        type: 'warning',
-        code: 'media-degraded',
-        message:
-          'Provider rejected the request as too large; older media were dropped and the request was retried.',
-      }),
-    ]);
+    expect(events.filter((event) => event.type === 'warning')).toEqual([]);
   });
 
   it('warns for each escalation when the degraded resend is also rejected as too large', async () => {
     const calls = { value: 0 };
-    const projection = recordProjectionCalls();
+    const projection = recordProjectionCalls((messages, policy) => {
+      if (policy?.media === 'degraded') {
+        const message = messages[0]!;
+        return [{ ...message, content: message.content.slice(-2) }];
+      }
+      return typeof policy?.media === 'object' ? history : messages;
+    });
+    const contextMessages: Message[] = [
+      {
+        role: 'user',
+        content: ['ONE', 'TWO', 'THREE'].map((data) => ({
+          type: 'image_url',
+          imageUrl: { url: `data:image/png;base64,${data}` },
+        })),
+        toolCalls: [],
+      },
+    ];
     const { service, dispatcher, events } = createService(
       createRequester(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413]),
       projection.projector,
+      { contextMessages },
     );
 
     await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
@@ -827,21 +852,44 @@ describe('AgentLLMRequesterService combined recovery projections', () => {
     expect(typeof policies[2]?.media).toBe('object');
   });
 
-  it('applies the strict repair on top of degraded media when a structural 400 follows a 413', async () => {
+  it('applies the strict repair on top of degraded media without repeating the media warning', async () => {
     const calls = { value: 0 };
     const policies: (ProjectionPolicy | undefined)[] = [];
-    const { service } = createService(
+    const contextMessages: Message[] = [
+      {
+        role: 'user',
+        content: ['ONE', 'TWO', 'THREE'].map((data) => ({
+          type: 'image_url',
+          imageUrl: { url: `data:image/png;base64,${data}` },
+        })),
+        toolCalls: [],
+      },
+    ];
+    const projector = {
+      project: (messages: readonly ContextMessage[], policy: ProjectionPolicy | undefined) => {
+        policies.push(policy);
+        if (policy?.media !== 'degraded') return messages;
+        const message = messages[0]!;
+        return [{ ...message, content: message.content.slice(policy.structure === 'strict' ? -1 : -2) }];
+      },
+    };
+    const { service, dispatcher, events } = createService(
       createRequester(calls, BODY_TOO_LARGE_413, [STRUCTURAL_400]),
-      createPolicyRecordingProjector({ policies }),
+      projector,
+      { contextMessages },
     );
 
     await service.request();
+    await dispatcher.flush();
 
     expect(calls.value).toBe(3);
     expect(policies).toEqual([
       undefined,
       { media: 'degraded' },
       { structure: 'strict', media: 'degraded' },
+    ]);
+    expect(events.filter((event) => event.type === 'warning')).toEqual([
+      expect.objectContaining({ type: 'warning', code: 'media-degraded' }),
     ]);
   });
 });

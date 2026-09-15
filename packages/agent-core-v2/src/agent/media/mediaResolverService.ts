@@ -63,7 +63,8 @@ export const mediaBudgetDroppedKey = defineState<Set<string>>(
 interface MediaBudgetEntry {
   readonly messageIndex: number;
   readonly partIndex: number;
-  readonly fileId: string;
+  readonly key: string;
+  readonly fileId?: string;
   readonly kind: 'image' | 'video';
   readonly bytes: number;
 }
@@ -104,24 +105,22 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     requester: ModelRequester,
     signal?: AbortSignal,
   ): Promise<readonly Message[]> {
-    if (!messages.some(hasDaemonFileMediaPart)) return messages;
-
     let changed = false;
     const out: Message[] = [];
     const budgetEntries: MediaBudgetEntry[] = [];
     for (const message of messages) {
-      if (!hasDaemonFileMediaPart(message)) {
-        out.push(message);
-        continue;
-      }
       const content: ContentPart[] = [];
+      let messageChanged = false;
       let sawVideoRef = false;
       for (const part of message.content) {
         const daemonPart = daemonFileRefFromPart(part);
         if (daemonPart === undefined) {
+          const entry = inlineMediaBudgetEntry(part, out.length, content.length);
+          if (entry !== undefined) budgetEntries.push(entry);
           content.push(part);
           continue;
         }
+        messageChanged = true;
         sawVideoRef ||= daemonPart.kind === 'video';
         const resolved =
           daemonPart.kind === 'video'
@@ -130,55 +129,64 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
         budgetEntries.push({
           messageIndex: out.length,
           partIndex: content.length,
+          key: daemonPart.ref.fileId,
           fileId: daemonPart.ref.fileId,
           kind: daemonPart.kind,
           bytes: inlinePartBytes(resolved),
         });
         content.push(resolved);
       }
-      out.push({
-        ...message,
-        content:
-          content.length > 0
-            ? content
-            : [unavailableMediaText(sawVideoRef ? 'video' : 'image')],
-      });
-      changed = true;
+      out.push(
+        messageChanged
+          ? {
+              ...message,
+              content:
+                content.length > 0
+                  ? content
+                  : [unavailableMediaText(sawVideoRef ? 'video' : 'image')],
+            }
+          : message,
+      );
+      changed ||= messageChanged;
     }
-    if (!changed) return messages;
-    await this.applyMediaBudget(out, budgetEntries);
-    return out;
+    changed = (await this.applyMediaBudget(out, budgetEntries)) || changed;
+    return changed ? out : messages;
   }
 
   private async applyMediaBudget(
     out: Message[],
     entries: readonly MediaBudgetEntry[],
-  ): Promise<void> {
-    if (entries.length === 0) return;
+  ): Promise<boolean> {
+    if (entries.length === 0) return false;
+    let changed = false;
     const dropped = this.budgetDropped;
     const pending = new Map<string, number>();
     for (const entry of entries) {
-      if (dropped.has(entry.fileId)) {
+      if (dropped.has(entry.key)) {
         await this.replaceWithMediaTag(out, entry);
+        changed = true;
         continue;
       }
-      pending.set(entry.fileId, (pending.get(entry.fileId) ?? 0) + entry.bytes);
+      pending.set(entry.key, (pending.get(entry.key) ?? 0) + entry.bytes);
     }
     let total = 0;
     for (const bytes of pending.values()) total += bytes;
-    if (total <= REQUEST_MEDIA_BUDGET_BYTES) return;
+    if (total <= REQUEST_MEDIA_BUDGET_BYTES) return changed;
 
     const droppedNow = new Set<string>();
-    for (const [fileId, bytes] of pending) {
+    for (const [key, bytes] of pending) {
       if (total <= REQUEST_MEDIA_BUDGET_LOW_BYTES) break;
       if (bytes === 0) continue;
-      dropped.add(fileId);
-      droppedNow.add(fileId);
+      dropped.add(key);
+      droppedNow.add(key);
       total -= bytes;
     }
     for (const entry of entries) {
-      if (droppedNow.has(entry.fileId)) await this.replaceWithMediaTag(out, entry);
+      if (droppedNow.has(entry.key)) await this.replaceWithMediaTag(out, entry);
     }
+    const hasUntrackedInlineMedia = entries.some(
+      (entry) => droppedNow.has(entry.key) && entry.fileId === undefined,
+    );
     try {
       void this.dispatcher.dispatch(
         new WarningIssued({
@@ -186,19 +194,24 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
           code: 'media-budget-exceeded',
           message:
             `Conversation media exceeded the ${String(REQUEST_MEDIA_BUDGET_BYTES / (1024 * 1024))} MB ` +
-            `per-request budget; ${String(droppedNow.size)} older media item(s) were omitted ` +
-            'and remain available at their saved paths.',
+            `per-request budget; ${String(droppedNow.size)} older media item(s) were omitted` +
+            (hasUntrackedInlineMedia ? '.' : ' and remain available at their saved paths.'),
         }),
       );
     } catch {
     }
+    return true;
   }
 
   private async replaceWithMediaTag(out: Message[], entry: MediaBudgetEntry): Promise<void> {
     const message = out[entry.messageIndex]!;
-    const path = await this.displayPath({ fileId: entry.fileId });
     const content = [...message.content];
-    content[entry.partIndex] = entry.kind === 'video' ? videoTag(path) : degradedImage(path);
+    if (entry.fileId === undefined) {
+      content[entry.partIndex] = budgetOmittedMedia(entry.kind);
+    } else {
+      const path = await this.displayPath({ fileId: entry.fileId });
+      content[entry.partIndex] = entry.kind === 'video' ? videoTag(path) : degradedImage(path);
+    }
     out[entry.messageIndex] = { ...message, content };
   }
 
@@ -230,7 +243,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       if (memoed !== undefined) return memoed;
       return this.resolveImageUncached(ref, requester, inlineKey, undefined, signal);
     }
-    const cacheKey = `image\0${ref.fileId}\0${providerKey}\0${model.baseUrl ?? ''}\0${await accountHashFor(model)}`;
+    const cacheKey = `image\0${ref.fileId}\0${providerKey}\0${model.protocol}\0${model.baseUrl ?? ''}\0${await accountHashFor(model)}`;
     const memoed = this.resolved.get(cacheKey);
     if (memoed !== undefined) return memoed;
     const cachedLlmFileId = await this.readCachedUpload(IMAGE_CACHE_SCOPE, cacheKey);
@@ -372,7 +385,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     const cacheKey =
       requester.uploadVideo === undefined
         ? `${ref.fileId}\0${providerKey}`
-        : `${ref.fileId}\0${providerKey}\0${model.baseUrl ?? ''}\0${await accountHashFor(model)}`;
+        : `${ref.fileId}\0${providerKey}\0${model.protocol}\0${model.baseUrl ?? ''}\0${await accountHashFor(model)}`;
 
     const memoed = this.resolved.get(cacheKey);
     if (memoed !== undefined) return this.memoedOutcome(ref, memoed);
@@ -500,21 +513,25 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
   }
 }
 
-function hasDaemonFileMediaPart(message: Message): boolean {
-  return message.content.some((part) => daemonFileRefFromPart(part) !== undefined);
-}
-
 type ImageUploader = NonNullable<ModelRequester['uploadImage']>;
 
 async function accountHashFor(model: Model): Promise<string> {
-  let apiKey: string | undefined;
-  try {
-    apiKey = (await model.credentials?.resolve())?.apiKey;
-  } catch {
-    apiKey = undefined;
+  let identity: string | undefined;
+  const authorization = model.headers['Authorization'];
+  if (authorization !== undefined) {
+    identity = `authorization\0${authorization.trim()}`;
+  } else {
+    try {
+      const apiKey = (await model.credentials?.resolve())?.apiKey;
+      if (apiKey !== undefined && apiKey.length > 0) {
+        identity = `api-key\0${stableJwtSubject(apiKey) ?? apiKey}`;
+      }
+    } catch {
+      identity = undefined;
+    }
   }
-  if (apiKey === undefined || apiKey.length === 0) return 'no-key';
-  return createHash('sha256').update(stableJwtSubject(apiKey) ?? apiKey).digest('hex').slice(0, 16);
+  if (identity === undefined) return 'no-key';
+  return createHash('sha256').update(identity).digest('hex').slice(0, 16);
 }
 
 function stableJwtSubject(token: string): string | undefined {
@@ -533,6 +550,19 @@ function stableJwtSubject(token: string): string | undefined {
   }
 }
 
+function inlineMediaBudgetEntry(
+  part: ContentPart,
+  messageIndex: number,
+  partIndex: number,
+): MediaBudgetEntry | undefined {
+  if (part.type !== 'image_url' && part.type !== 'video_url') return undefined;
+  const url = part.type === 'image_url' ? part.imageUrl.url : part.videoUrl.url;
+  if (!isDataUrl(url)) return undefined;
+  const kind = part.type === 'image_url' ? 'image' : 'video';
+  const hash = createHash('sha256').update(kind).update('\0').update(url).digest('hex');
+  return { messageIndex, partIndex, key: `inline\0${hash}`, kind, bytes: url.length };
+}
+
 function inlinePartBytes(part: ContentPart): number {
   if (part.type === 'image_url') {
     return isDataUrl(part.imageUrl.url) ? part.imageUrl.url.length : 0;
@@ -541,6 +571,10 @@ function inlinePartBytes(part: ContentPart): number {
     return isDataUrl(part.videoUrl.url) ? part.videoUrl.url.length : 0;
   }
   return 0;
+}
+
+function budgetOmittedMedia(kind: 'image' | 'video'): ContentPart {
+  return { type: 'text', text: `[${kind} omitted: dropped to fit the request media budget]` };
 }
 
 function degradedImage(path: string | undefined): ContentPart {
