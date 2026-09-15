@@ -37,7 +37,7 @@ export interface EventStore<SM extends SliceMap> {
   subscribe(listener: (state: CombinedState<SM>, cause: Cause<SM>) => void): () => void;
 
   dispatch<E extends ExternalEvent>(event: E | readonly E[]): Promise<EntryLine>;
-  registerSlice<S>(slice: Slice<string, S>): Promise<() => void>;
+  registerSlice<S>(slice: Slice<string, S>): () => void;
   reset(journal: StoreJournal): Promise<void>;
   flush(): Promise<void>;
   close(): Promise<void>;
@@ -125,20 +125,26 @@ class EventStoreImpl<SM extends SliceMap> implements EventStore<SM> {
     return result;
   }
 
-  async registerSlice<S>(slice: Slice<string, S>): Promise<() => void> {
+  registerSlice<S>(slice: Slice<string, S>): () => void {
     if (this.phaseValue !== 'open') {
       throw new StoreError('closed', 'store is closed');
     }
     if (this.slices[slice.name] !== undefined) {
       throw new StoreError('duplicate-slice', `slice '${slice.name}' is already registered`);
     }
+    this.slices = { ...this.slices, [slice.name]: slice };
     const op = this.tail.then(async () => {
-      this.slices = { ...this.slices, [slice.name]: slice };
       await this.refold(this.journal);
     });
     this.tail = op.then(noop, noop);
-    await op;
-    this.notify([{ kind: 'slice-joined', name: slice.name }]);
+    void op.then(
+      () => {
+        this.notify([{ kind: 'slice-joined', name: slice.name }]);
+      },
+      (error) => {
+        this.report(error);
+      },
+    );
     return () => {
       const slices = { ...this.slices };
       delete slices[slice.name];

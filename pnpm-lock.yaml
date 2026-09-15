@@ -519,6 +519,9 @@ importers:
       '@mozilla/readability':
         specifier: ^0.6.0
         version: 0.6.0
+      '@vue/reactivity':
+        specifier: ^3.5.35
+        version: 3.5.35
       ajv:
         specifier: ^8.18.0
         version: 8.18.0
