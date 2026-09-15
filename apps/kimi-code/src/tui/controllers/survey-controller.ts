@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import { isManagedKimiCodeBaseUrl } from '@moonshot-ai/kimi-code-oauth';
 import { isTelemetryDisabledByEnv } from '@moonshot-ai/kimi-telemetry';
 import { Key, matchesKey, Spacer } from '@moonshot-ai/pi-tui';
 
@@ -53,6 +54,14 @@ export interface SurveyHost {
   readonly state: TUIState;
   readonly btwPanelController: BtwPanelController;
   track(event: string, props?: Record<string, unknown>): void;
+}
+
+function resolveKfcModelId(appState: TUIState['appState']): string | undefined {
+  const entry = appState.availableModels[appState.model];
+  if (entry === undefined) return undefined;
+  const baseUrl = entry.baseUrl ?? appState.availableProviders[entry.provider]?.baseUrl;
+  if (!isManagedKimiCodeBaseUrl(baseUrl)) return undefined;
+  return entry.model;
 }
 
 export interface SurveyControllerDeps {
@@ -388,7 +397,7 @@ export class SurveyController {
         this.deps.feedbackSurveyDisabled?.() ??
         this.host.state.appState.disableFeedbackSurvey === true,
       telemetryDisabled: (this.deps.telemetryDisabled ?? defaultDeps.telemetryDisabled)(),
-      currentModel: appState.model,
+      kfcModelId: resolveKfcModelId(appState),
       lastUserMessageStartsOrderedList: this.lastUserMessageStartsOrderedList(),
     };
     return {
@@ -588,6 +597,7 @@ export class SurveyController {
     const { appState } = this.host.state;
     return {
       current_model: appState.model,
+      kfc_model_id: resolveKfcModelId(appState),
       user_turn_count: this.userTurnCount,
       cumulative_tokens: appState.cumulativeTokens ?? 0,
       virtual_context_tokens: appState.contextTokens,

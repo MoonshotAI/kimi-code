@@ -193,7 +193,9 @@ export function collectReplayMessageContent(
   for (const part of content) {
     switch (part.type) {
       case 'think':
-        target.thinking.push(part.think);
+        if (part.hidden !== true) {
+          target.thinking.push(part.think);
+        }
         break;
       case 'text':
         target.text.push(part.text);

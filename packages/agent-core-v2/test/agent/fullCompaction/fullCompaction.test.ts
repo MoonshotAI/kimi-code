@@ -101,27 +101,22 @@ const EXACT_COMPACTION_PROFILE: ResolvedAgentProfile = normalizeAgentProfile({
 });
 
 describe('FullCompaction', () => {
-  it('keeps an oversized trailing user message as recent', () => {
+  it('keeps oversized trailing user messages as recent', () => {
     const strategy = testCompactionStrategy();
-    const messages = [
+    const single = [
       textMessage('user', 'old user'),
       textMessage('assistant', 'old assistant'),
       textMessage('user', `pending user ${'x'.repeat(1_200)}`),
     ];
+    expect(strategy.computeCompactCount(single, 'auto')).toBe(2);
 
-    expect(strategy.computeCompactCount(messages, 'auto')).toBe(2);
-  });
-
-  it('keeps consecutive trailing user messages as recent', () => {
-    const strategy = testCompactionStrategy();
-    const messages = [
+    const consecutive = [
       textMessage('user', 'old user'),
       textMessage('assistant', 'old assistant'),
       textMessage('user', `pending user one ${'x'.repeat(1_200)}`),
       textMessage('user', `pending user two ${'x'.repeat(1_200)}`),
     ];
-
-    expect(strategy.computeCompactCount(messages, 'auto')).toBe(2);
+    expect(strategy.computeCompactCount(consecutive, 'auto')).toBe(2);
   });
 
   it('compacts the prefix when the trailing exchange itself is oversized', () => {
@@ -412,7 +407,7 @@ describe('FullCompaction', () => {
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start the active turn' }] });
     const approval = await ctx.takeApprovalRequest();
-    expect(ctx.get(IAgentLoopService).status().activeTurnId).toBeDefined();
+    expect(ctx.get(IAgentLoopService).snapshot().activeTurnId).toBeDefined();
 
     await expect(ctx.rpc.beginCompaction({})).rejects.toMatchObject({
       code: 'compaction.unable',
@@ -427,7 +422,7 @@ describe('FullCompaction', () => {
     ctx.mockNextResponse({ type: 'text', text: 'Turn done.' });
     approval.respond({ decision: 'rejected', selectedLabel: 'reject' });
     await ctx.untilTurnEnd();
-    expect(ctx.get(IAgentLoopService).status().activeTurnId).toBeUndefined();
+    expect(ctx.get(IAgentLoopService).snapshot().activeTurnId).toBeUndefined();
   });
 
   it('projects the compacted prefix before sending the summary request', async () => {
@@ -975,13 +970,13 @@ describe('FullCompaction', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     await failed;
 
-    expect(inputs).toHaveLength(8);
+    expect(inputs).toHaveLength(5);
     expect(inputs[1]!.length).toBeLessThan(inputs[0]!.length);
     expect(records).toContainEqual({
       event: 'compaction_failed',
       properties: expect.objectContaining({
         source: 'manual',
-        retry_count: 4,
+        retry_count: 1,
         error_type: 'APIEmptyResponseError',
       }),
     });
@@ -1406,6 +1401,134 @@ describe('FullCompaction', () => {
         error_type: 'APIConnectionError',
       }),
     });
+    vi.useRealTimers();
+    await ctx.expectResumeMatches();
+  });
+
+  it('honors loopControl.compactionMaxAttempts for retryable generation failures', async () => {
+    vi.useFakeTimers();
+    const records: TelemetryRecord[] = [];
+    const firstAttemptFailed = deferred<void>();
+    let attempts = 0;
+    const generate: GenerateFn = requesterFromGenerateFn(async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        firstAttemptFailed.resolve();
+      }
+      throw new APIConnectionError('socket hang up');
+    });
+    const ctx = testAgent({
+      generate,
+      telemetry: recordingTelemetry(records),
+      initialConfig: {
+        providers: {},
+        loopControl: { compactionMaxAttempts: 2 },
+      },
+    });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const failed = ctx.once('error');
+
+    await ctx.rpc.beginCompaction({});
+    await firstAttemptFailed.promise;
+    await vi.advanceTimersByTimeAsync(60_000);
+    await failed;
+
+    expect(attempts).toBe(2);
+    expect(records).toContainEqual({
+      event: 'compaction_failed',
+      properties: expect.objectContaining({
+        source: 'manual',
+        retry_count: 1,
+        error_type: 'APIConnectionError',
+      }),
+    });
+    vi.useRealTimers();
+    await ctx.expectResumeMatches();
+  });
+
+  it('fails a truncated compaction immediately when compactionMaxAttempts is 1', async () => {
+    let attempts = 0;
+    const generate: GenerateFn = requesterFromGenerateFn(async () => {
+      attempts += 1;
+      return {
+        ...textResult('Partial summary.'),
+        finishReason: 'truncated',
+        rawFinishReason: 'length',
+      };
+    });
+    const ctx = testAgent({
+      generate,
+      initialConfig: {
+        providers: {},
+        loopControl: { compactionMaxAttempts: 1 },
+      },
+    });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const failed = ctx.once('error');
+
+    await ctx.rpc.beginCompaction({});
+    await failed;
+
+    expect(attempts).toBe(1);
+    expect(ctx.newEvents()).toContainEqual(
+      expect.objectContaining({
+        event: 'error',
+        args: expect.objectContaining({
+          code: 'compaction.failed',
+          name: 'Error2',
+        }),
+      }),
+    );
+    await ctx.expectResumeMatches();
+  });
+
+  it('counts requests across recovery paths against compactionMaxAttempts', async () => {
+    vi.useFakeTimers();
+    const firstAttemptFailed = deferred<void>();
+    let attempts = 0;
+    const generate: GenerateFn = requesterFromGenerateFn(async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        firstAttemptFailed.resolve();
+        throw new APIConnectionError('socket hang up');
+      }
+      return {
+        ...textResult('Partial summary.'),
+        finishReason: 'truncated',
+        rawFinishReason: 'length',
+      };
+    });
+    const ctx = testAgent({
+      generate,
+      initialConfig: {
+        providers: {},
+        loopControl: { compactionMaxAttempts: 2 },
+      },
+    });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const failed = ctx.once('error');
+
+    await ctx.rpc.beginCompaction({});
+    await firstAttemptFailed.promise;
+    await vi.advanceTimersByTimeAsync(60_000);
+    await failed;
+
+    expect(attempts).toBe(2);
     vi.useRealTimers();
     await ctx.expectResumeMatches();
   });
@@ -2114,7 +2237,7 @@ describe('FullCompaction', () => {
     });
     const registration = ctx
       .get(IAgentToolRegistryService)
-      .register(mcpTool(LARGE_MCP_TOOL, parameters), { source: 'mcp' });
+      .register(mcpTool(LARGE_MCP_TOOL, parameters), { source: 'mcp', disclosure: 'deferred' });
     try {
       ctx.context.append({
         role: 'system',
@@ -3425,6 +3548,24 @@ describe('FullCompaction context recovery pointer', () => {
       `window 2: lines ${String(secondLines.start)}–${String(secondLines.end)}   ← the conversation this note summarizes`,
     );
     expect(note).toContain(`window 3 (the one you are in now) starts at line ${String(secondLines.end + 1)}`);
+    await ctx.expectResumeMatches();
+  });
+
+  it('renders recovery windows over a journal carrying undo switch edges', async () => {
+    const ctx = recoveryAgent(appService(IFileSystemStorageService, locatedStorage(JOURNAL_HOME)));
+    await ctx.restorePersisted();
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'doomed user two', 'doomed assistant two', 40);
+    await ctx.rpc.undoHistory({ count: 1 });
+    ctx.appendExchange(3, 'recent user three', 'recent assistant three', 40);
+
+    await compactOnce(ctx, 'Summary after undo.');
+
+    const [record] = applyCompactionRecords(ctx);
+    expect(record?.wireLines).toEqual({ start: 1, end: expect.any(Number) });
+    const note = noteText(ctx);
+    expect(note).toContain('## Context Recovery');
+    expect(note).not.toContain('doomed user two');
     await ctx.expectResumeMatches();
   });
 

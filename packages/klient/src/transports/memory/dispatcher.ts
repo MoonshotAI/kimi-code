@@ -31,7 +31,9 @@ import {
   type InteractionRequest,
 } from '@moonshot-ai/agent-core-v2/human/interaction/interaction';
 import { interactions } from '@moonshot-ai/agent-core-v2/human/interaction/facade';
+import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import type { SkillActivationOrigin } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
+import { ITelemetryService } from '@moonshot-ai/agent-core-v2/app/telemetry/telemetry';
 import type {
   PromptWithSkillsInput,
   SkillActivationInput,
@@ -185,6 +187,22 @@ function agentSkillServiceView(agent: IAgentScopeHandle): Record<string, unknown
   };
 }
 
+function agentLoopServiceView(agent: IAgentScopeHandle): Record<string, unknown> {
+  const loop = agent.accessor.get(IAgentLoopService);
+  return {
+    cancelFromUser: (turnId?: number) => {
+      const snapshot = loop.snapshot();
+      if (snapshot.state === 'running') {
+        agent.accessor.get(ITelemetryService).track2('cancel', {
+          from: 'streaming',
+          trace_id: snapshot.activeTraceId,
+        });
+      }
+      loop.cancel(turnId === undefined ? undefined : { turnId });
+    },
+  };
+}
+
 export interface MemoryDispatcher {
   call(scope: ScopeRef, service: string, method: string, args: unknown[]): Promise<unknown>;
   stream(scope: ScopeRef, service: string, method: string, args: unknown[]): AsyncIterable<unknown>;
@@ -329,6 +347,12 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
         throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
       }
       return agentSkillServiceView(resolved.like as IAgentScopeHandle);
+    }
+    if (service === 'agentLoopService') {
+      if (resolved.kind !== 'agent') {
+        throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
+      }
+      return agentLoopServiceView(resolved.like as IAgentScopeHandle);
     }
     const token = serviceTokens[service];
     if (token === undefined) {

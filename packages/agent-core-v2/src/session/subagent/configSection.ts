@@ -13,6 +13,9 @@ import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import type { IModelCatalog, Model } from '#/llm-adapter/model/catalog';
 import {
   declaredDefaultEffortForModel,
+  modelSupportsThinking,
+  modelSupportsThinkingEffort,
+  normalizeRequestedThinkingEffort,
   type ThinkingConfig,
 } from '#/llm-adapter/model/thinking';
 
@@ -176,6 +179,63 @@ export function assertValidSubagentModelConfig(
   }
   const pool = resolveSubagentModelPool(config);
   if (pool !== undefined) assertValidSubagentModelPool(pool, modelCatalog);
+  assertValidSubagentDefaultEffort(section, pool, modelCatalog);
+}
+
+function assertValidSubagentDefaultEffort(
+  section: SecondaryModelConfig | undefined,
+  pool: SubagentModelPool | undefined,
+  modelCatalog: IModelCatalog,
+): void {
+  const effort =
+    section?.defaultEffort === undefined
+      ? undefined
+      : normalizeRequestedThinkingEffort(section.defaultEffort);
+  if (effort === undefined || pool === undefined) return;
+  for (const alias of Object.keys(pool.models)) {
+    const model = modelCatalog.get(alias);
+    if (effort === 'off' && model.alwaysThinking === true) {
+      throw new Error2(
+        ErrorCodes.CONFIG_INVALID,
+        `[secondary_model].default_effort "off" cannot disable thinking for model "${alias}", which always reasons. Choose a concrete thinking effort instead of "off".`,
+        {
+          details: {
+            section: SECONDARY_MODEL_SECTION,
+            field: 'defaultEffort',
+            model: alias,
+            effort,
+          },
+        },
+      );
+    }
+    if (modelSupportsThinkingEffort(effort, model, true)) continue;
+    if (!modelSupportsThinking(model)) {
+      throw new Error2(
+        ErrorCodes.CONFIG_INVALID,
+        `[secondary_model].default_effort "${effort}" is set but model "${alias}" does not support thinking.`,
+        {
+          details: {
+            section: SECONDARY_MODEL_SECTION,
+            field: 'defaultEffort',
+            model: alias,
+            effort,
+          },
+        },
+      );
+    }
+    throw new Error2(
+      ErrorCodes.CONFIG_INVALID,
+      `[secondary_model].default_effort "${effort}" is not supported by model "${alias}". Supported efforts: ${model.supportEfforts?.join(', ')}.`,
+      {
+        details: {
+          section: SECONDARY_MODEL_SECTION,
+          field: 'defaultEffort',
+          model: alias,
+          effort,
+        },
+      },
+    );
+  }
 }
 
 export type SubagentModelSource = 'forced' | 'primary_override' | 'inherited' | 'secondary_pool';

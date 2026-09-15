@@ -195,7 +195,6 @@ export type KimiErrorCode =
   | 'request.prompt_input_empty'
   | 'prompt.id_conflict'
   | 'prompt.not_found'
-  | 'prompt.already_completed'
   | 'session.busy'
   | 'shell.git_bash_not_found'
   | 'workspace.not_found'

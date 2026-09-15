@@ -3,7 +3,6 @@ import { readFile } from 'node:fs/promises';
 
 import {
   IAgentLifecycleService,
-  IAgentPromptService,
   IFlagService,
   ISessionIndex,
   ISessionManager,
@@ -321,10 +320,9 @@ export class TranscriptService {
       session === undefined
         ? undefined
         : session.accessor.get(IAgentLifecycleService).handleOf(agentId);
-    const status = agent?.accessor.get(IAgentLoopService).status();
+    const status = agent?.accessor.get(IAgentLoopService).snapshot();
     if (status?.state !== 'running' || status.activeTurnId === undefined) return undefined;
-    const promptService = agent?.accessor.get(IAgentPromptService);
-    const activePromptId = promptService?.list().active?.id;
+    const activePromptId = status.activePromptId;
     const ordinal = status.activeTurnId;
     const turnId = `t${ordinal}`;
     const existing = transcript.getTurn(turnId);
@@ -351,31 +349,36 @@ export class TranscriptService {
     const agent = getLiveSessionById(this.deps.core.accessor, sessionId)
       ?.accessor.get(IAgentLifecycleService)
       .handleOf(agentId);
-    const promptService = agent === undefined ? undefined : agent.accessor.get(IAgentPromptService);
-    const queue = promptService?.list();
-    if (queue === undefined) return [];
+    if (agent === undefined) return [];
+    const loop = agent.accessor.get(IAgentLoopService);
+    const snapshot = loop.snapshot();
     const ops: TranscriptOperation[] = [];
-    if (queue.active !== undefined) {
+    const activeHandle =
+      snapshot.activePromptId === undefined
+        ? undefined
+        : loop.promptHandle(snapshot.activePromptId);
+    if (activeHandle !== undefined) {
       ops.push({
         op: 'prompt.upsert',
         prompt: {
-          promptId: queue.active.id,
+          promptId: activeHandle.id,
           status: 'running',
-          userMessageId: queue.active.userMessageId,
-          content: projectPromptContentParts(queue.active.message.content),
-          createdAt: queue.active.createdAt,
+          userMessageId: activeHandle.userMessageId,
+          content: projectPromptContentParts(activeHandle.message.content),
+          createdAt: activeHandle.createdAt,
         },
       });
     }
-    for (const pending of queue.pending) {
+    for (const item of snapshot.queue) {
+      if (item.meta?.tracked !== true) continue;
       ops.push({
         op: 'prompt.upsert',
         prompt: {
-          promptId: pending.id,
+          promptId: item.meta?.promptId ?? '',
           status: 'queued',
-          userMessageId: pending.userMessageId,
-          content: projectPromptContentParts(pending.message.content),
-          createdAt: pending.createdAt,
+          userMessageId: item.meta?.userMessageId ?? '',
+          content: projectPromptContentParts(item.message.content),
+          createdAt: item.meta?.createdAt ?? '',
         },
       });
     }
@@ -529,7 +532,7 @@ export class TranscriptService {
       ?.accessor.get(IAgentLifecycleService)
       .handleOf(agentId)
       ?.accessor.get(IAgentLoopService)
-      .status();
+      .snapshot();
     const activity: ActivityMeta = status?.state === 'running' ? 'turn' : 'idle';
     const snapshot = { ...folded, meta: { ...folded.meta, activity } };
     if (snapshot.meta.modes?.tower === undefined) return snapshot;

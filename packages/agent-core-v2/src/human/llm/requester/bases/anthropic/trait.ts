@@ -10,7 +10,7 @@ export interface AnthropicTrait {
 
   readonly thinking?: ThinkingStrategy;
 
-  maxCompletionTokens?(
+  encodeMaxCompletionTokens?(
     maxCompletionTokens: number,
     ctx: TraitContext,
   ): Record<string, unknown> | undefined;

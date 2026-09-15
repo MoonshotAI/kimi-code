@@ -48,10 +48,11 @@ describe('createMachineTools duplicate tool call ids', () => {
     const onBatchError = vi.fn();
     const tools = createMachineTools({
       toolExecutor,
-      toolInfos,
+      toolInfos: () => toolInfos,
       turnId: () => 1,
       onBatchError,
     });
+    tools.sync();
     const bash = tools.tools.find((tool) => tool.name === 'Bash');
     const read = tools.tools.find((tool) => tool.name === 'Read');
     if (bash === undefined || read === undefined) throw new Error('missing tool definitions');
@@ -84,10 +85,11 @@ describe('createMachineTools duplicate tool call ids', () => {
     const onBatchError = vi.fn();
     const tools = createMachineTools({
       toolExecutor,
-      toolInfos,
+      toolInfos: () => toolInfos,
       turnId: () => 1,
       onBatchError,
     });
+    tools.sync();
     const bash = tools.tools.find((tool) => tool.name === 'Bash');
     const read = tools.tools.find((tool) => tool.name === 'Read');
     if (bash === undefined || read === undefined) throw new Error('missing tool definitions');

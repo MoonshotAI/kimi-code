@@ -248,11 +248,11 @@ function seedFold(handle: IAgentScopeHandle): AgentWorkFold {
       ? states.get(turnKey).lastEnded
       : undefined;
   return {
-    turnActive: loop?.status().state === 'running',
+    turnActive: loop?.snapshot().state === 'running',
     background: new Set(tasks?.list(true).map((task) => task.taskId) ?? []),
     compacting: (compaction?.compacting ?? null) !== null,
     lastTurnReason:
-      loop?.status().state === 'running' ? undefined : mapTurnReason(lastEnded?.reason),
+      loop?.snapshot().state === 'running' ? undefined : mapTurnReason(lastEnded?.reason),
   };
 }
 

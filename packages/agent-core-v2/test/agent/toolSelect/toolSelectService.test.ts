@@ -21,7 +21,8 @@ import {
   type AfterStepContext,
   type BeforeStepContext,
   type LoopNotifyHandle,
-  type LoopPromptSubmit,
+  type LoopSnapshot,
+  type PromptSubmitContext,
   type Turn,
 } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
@@ -205,35 +206,40 @@ class FakeLoopService implements IAgentLoopService {
   readonly hooks: IAgentLoopService['hooks'] = {
     onWillBeginStep: new OrderedHookSlot<BeforeStepContext>(),
     onDidFinishStep: new OrderedHookSlot<AfterStepContext>(),
+    onBeforeSubmitPrompt: new OrderedHookSlot<PromptSubmitContext>(),
   };
 
-  cancelFromUser(): void {}
-
-  submit(_prompt: LoopPromptSubmit): { readonly turn: Turn } {
+  submit(): never {
     throw new Error('unused in this suite');
   }
 
-  steer(): undefined {
-    return undefined;
+  steer(): never {
+    throw new Error('unused in this suite');
+  }
+
+  cancel(): never {
+    throw new Error('unused in this suite');
+  }
+
+  snapshot(): LoopSnapshot {
+    return {
+      state: 'idle',
+      activeTurnId: undefined,
+      activePromptId: undefined,
+      queue: [],
+      notificationCount: 0,
+      paused: false,
+      hasPendingRequests: false,
+      turn: undefined,
+      activeTraceId: undefined,
+    };
+  }
+
+  promptHandle(): never {
+    throw new Error('unused in this suite');
   }
 
   notify(): LoopNotifyHandle {
-    throw new Error('unused in this suite');
-  }
-
-  status() {
-    return { state: 'idle' as const, pendingPromptIds: [], hasPendingRequests: false };
-  }
-
-  activitySnapshot() {
-    return {};
-  }
-
-  cancel(_turnId?: number, _reason?: unknown): boolean {
-    throw new Error('unused in this suite');
-  }
-
-  cancelQueued(_queueId: string, _reason?: unknown): boolean {
     throw new Error('unused in this suite');
   }
 
@@ -241,9 +247,15 @@ class FakeLoopService implements IAgentLoopService {
     return toDisposable(() => {});
   }
 
-  hasPendingRequests(): boolean {
-    return false;
+  buildAttachBundle(): never {
+    throw new Error('unused in this suite');
   }
+
+  attachEngine(): never {
+    throw new Error('unused in this suite');
+  }
+
+  async resetMachineEngine(): Promise<void> {}
 
   async settled(): Promise<void> {}
 
@@ -410,8 +422,12 @@ function createExecutorHarness(): ExecutorHarness {
   };
 }
 
-function registerMcp(h: Harness, tool: StubMcpTool): IDisposable {
-  const registration = h.registry.register(tool, { source: 'mcp' });
+function registerMcp(
+  h: Harness,
+  tool: StubMcpTool,
+  disclosure: ToolDisclosure = 'deferred',
+): IDisposable {
+  const registration = h.registry.register(tool, { source: 'mcp', disclosure });
   disposables.add(registration);
   return registration;
 }
@@ -632,6 +648,21 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     expect(byName.get(MCP_ALPHA)?.deferred).toBe(true);
     expect(byName.get('Echo')?.deferred).toBeUndefined();
     expect(byName.get(SELECT_TOOLS_TOOL_NAME)?.deferred).toBeUndefined();
+  });
+
+  it('keeps inline-disclosed MCP tools visible and out of the loadable manifest', () => {
+    const h = createHarness();
+    registerMcp(h, new StubMcpTool(MCP_ALPHA), 'inline');
+    registerMcp(h, new StubMcpTool(MCP_BETA));
+
+    const shaped = h.sut.shapeTools(h.registry.list());
+    const byName = new Map(shaped.map((entry) => [entry.name, entry]));
+    expect(byName.get(MCP_ALPHA)?.deferred).toBeUndefined();
+    expect(byName.has(MCP_BETA)).toBe(false);
+
+    const announcement = h.sut.loadableToolsAnnouncement();
+    expect(announcement).toContain(MCP_BETA);
+    expect(announcement).not.toContain(MCP_ALPHA);
   });
 
   it('defers only opted-in user tools and restores them after selection', () => {
@@ -1093,7 +1124,10 @@ describe('AgentToolSelectService loadable-tools announcements', () => {
   it('diffs registry additions and removals against the folded announcements', async () => {
     const h = createHarness();
     registerMcp(h, new StubMcpTool(MCP_ALPHA));
-    const betaRegistration = h.registry.register(new StubMcpTool(MCP_BETA), { source: 'mcp' });
+    const betaRegistration = h.registry.register(new StubMcpTool(MCP_BETA), {
+      source: 'mcp',
+      disclosure: 'deferred',
+    });
     disposables.add(betaRegistration);
 
     await announce(h);

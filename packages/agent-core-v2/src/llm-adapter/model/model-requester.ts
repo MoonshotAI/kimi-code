@@ -1,10 +1,10 @@
 import type { FinishReason } from '#human/llm/finish-reason';
-import type { VideoUploadInput } from '#human/llm/media/upload';
+import type { ImageUploadInput, VideoUploadInput } from '#human/llm/media/upload';
 import type { ResponseFormat } from '#human/llm/response-format';
 import type { ThinkingEffort } from '#human/llm/thinking';
 import type { TokenUsage } from '#human/llm/usage';
 
-import type { Message, StreamedMessagePart, Tool, VideoURLPart } from '../contract/message';
+import type { Message, StreamedMessagePart, Tool, ImageURLPart, VideoURLPart } from '../contract/message';
 
 import type { Model } from './catalog';
 
@@ -67,6 +67,11 @@ export interface ModelRequester {
     input: string | VideoUploadInput,
     options?: { readonly signal?: AbortSignal },
   ): Promise<VideoURLPart>;
+
+  uploadImage?(
+    input: ImageUploadInput,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<ImageURLPart>;
 }
 
 export function effectiveMaxCompletionTokens(params?: ModelRequestParams): number | undefined {

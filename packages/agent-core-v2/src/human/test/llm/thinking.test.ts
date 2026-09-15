@@ -33,7 +33,7 @@ const messages: readonly Message[] = [createUserMessage('hi')];
 const kimiOpenAI = {
   connection: kimiConnection,
   trait: kimiOpenAITrait,
-  convertError: classifyKimiQuotaError,
+  classifyError: classifyKimiQuotaError,
 } as const;
 
 function modelWith(meta: ModelThinkingMetadata): LlmModel {
@@ -396,6 +396,62 @@ describe('openai requester thinking', () => {
       { type: 'encrypted', encrypted: 'cipher' },
     ]);
     expect(markedAssistant['reasoning_content']).toBe('第一段续第二段');
+
+    const inbound = stubOpenAIClient(
+      chatCompletionChunks([
+        { reasoning_content: '原文一' },
+        { reasoning_content: '原文二' },
+        {
+          reasoning_details: [
+            { index: 0, type: 'summary', summary: '摘' },
+            { index: 1, type: 'encrypted', encrypted: 'cipher' },
+          ],
+        },
+        { content: 'ok' },
+      ]),
+    );
+    const inboundRequester = createOpenAIRequester({
+      ...kimiOpenAI,
+      clientFactory: inbound.clientFactory,
+    });
+    const accumulator = createMessageAccumulator();
+    await inboundRequester.generate(
+      { model },
+      { messages },
+      {
+        signal: new AbortController().signal,
+        onEvent: (event) => {
+          if (event.type === 'llm.streaming.part') {
+            accumulator.push(event.part);
+          }
+        },
+      },
+    );
+    const finished = accumulator.finish();
+    expect(finished.content).toEqual([
+      { type: 'think', think: '原文一原文二' },
+      { type: 'think', think: '摘', detailsIndex: 0, hidden: true },
+      { type: 'think', think: '', encrypted: 'cipher', detailsIndex: 1 },
+      { type: 'text', text: 'ok' },
+    ]);
+
+    const outbound = stubOpenAIClient(chatCompletionChunks());
+    const outboundRequester = createOpenAIRequester({
+      ...kimiOpenAI,
+      clientFactory: outbound.clientFactory,
+    });
+    await outboundRequester.generate(
+      { model, thinking: { effort: 'off' } },
+      { messages: [createUserMessage('hi'), finished] },
+      { signal: new AbortController().signal },
+    );
+    const continued = bodyMessages(outbound.body())[1]!;
+    expect(continued['reasoning_details']).toEqual([
+      { type: 'summary', summary: '摘' },
+      { type: 'encrypted', encrypted: 'cipher' },
+    ]);
+    expect(continued['reasoning_content']).toBe('原文一原文二');
+    expect(continued['content']).toBe('ok');
   });
 
   it('echoes an empty reasoning_content on think-less assistant messages only when keeping all', async () => {
@@ -563,8 +619,9 @@ describe('openai requester thinking', () => {
         ]),
       ),
     ).resolves.toEqual([
-      { type: 'think', think: '第一段续', detailsIndex: 0 },
-      { type: 'think', think: '第二段', detailsIndex: 1 },
+      { type: 'think', think: '第一段' },
+      { type: 'think', think: '第一段续', detailsIndex: 0, hidden: true },
+      { type: 'think', think: '第二段', detailsIndex: 1, hidden: true },
       { type: 'think', think: '', encrypted: 'cipher', detailsIndex: 2 },
       { type: 'text', text: 'ok' },
     ]);
@@ -582,6 +639,63 @@ describe('openai requester thinking', () => {
       ),
     ).resolves.toEqual([
       { type: 'think', think: 'kept', detailsIndex: 1 },
+      { type: 'text', text: 'ok' },
+    ]);
+    await expect(
+      collect(
+        chatCompletionChunks([
+          {
+            reasoning_content: '原文',
+            reasoning_details: [
+              { index: 0, type: 'summary', summary: '摘' },
+              { index: 1, type: 'encrypted', encrypted: 'cipher' },
+            ],
+          },
+          { content: 'ok' },
+        ]),
+      ),
+    ).resolves.toEqual([
+      { type: 'think', think: '原文' },
+      { type: 'think', think: '摘', detailsIndex: 0, hidden: true },
+      { type: 'think', think: '', encrypted: 'cipher', detailsIndex: 1 },
+      { type: 'text', text: 'ok' },
+    ]);
+    await expect(
+      collect(
+        chatCompletionChunks([
+          { reasoning_content: '原文一' },
+          { reasoning_content: '原文二' },
+          { reasoning_details: [{ index: 0, type: 'summary', summary: '摘一' }] },
+          {
+            reasoning_details: [
+              { index: 0, type: 'summary', summary: '摘二' },
+              { index: 1, type: 'encrypted', encrypted: 'cipher' },
+            ],
+          },
+          { content: 'ok' },
+        ]),
+      ),
+    ).resolves.toEqual([
+      { type: 'think', think: '原文一原文二' },
+      { type: 'think', think: '摘一摘二', detailsIndex: 0, hidden: true },
+      { type: 'think', think: '', encrypted: 'cipher', detailsIndex: 1 },
+      { type: 'text', text: 'ok' },
+    ]);
+    await expect(
+      collect(
+        chatCompletionChunks([
+          {
+            reasoning_details: [
+              { index: 0, type: 'summary', summary: '摘' },
+              { index: 1, type: 'encrypted', encrypted: 'cipher' },
+            ],
+          },
+          { content: 'ok' },
+        ]),
+      ),
+    ).resolves.toEqual([
+      { type: 'think', think: '摘', detailsIndex: 0 },
+      { type: 'think', think: '', encrypted: 'cipher', detailsIndex: 1 },
       { type: 'text', text: 'ok' },
     ]);
   });

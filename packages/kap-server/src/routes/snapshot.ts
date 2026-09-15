@@ -1,6 +1,6 @@
 import {
-  IAgentPromptService,
   INTERACTION_TAG_SESSION_ID,
+  IAgentLoopService,
   ISessionContext,
   ISessionMetadata,
   IWorkspaceService,
@@ -160,7 +160,7 @@ async function assembleSnapshot(
 function readCurrentPromptId(main: IAgentScopeHandle | undefined): string | undefined {
   if (main === undefined) return undefined;
   try {
-    return main.accessor.get(IAgentPromptService).list().active?.id;
+    return main.accessor.get(IAgentLoopService).snapshot().activePromptId;
   } catch {
     return undefined;
   }
