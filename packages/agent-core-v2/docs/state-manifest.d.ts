@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 72 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 73 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -74,6 +74,7 @@
 //     mcp.discovery                                   src/agent/mcp/mcpDiscoveryOps.ts
 //     mcp.discoveryWritesReady                        src/agent/mcp/mcpService.ts
 //     mcp.mcpToolsByServer                            src/agent/mcp/mcpService.ts
+//     media.budgetDropped                             src/agent/media/mediaResolverService.ts
 //     media.registeredKey                             src/agent/media/mediaToolsRegistrar.ts
 //     media.resolved                                  src/agent/media/mediaResolverService.ts
 //     permissionMode                                  src/agent/permissionMode/permissionModeOps.ts
@@ -995,6 +996,7 @@ export interface AgentStateSnapshot {
   'mcp.discoveryWritesReady': boolean;
   'mcp.mcpToolsByServer': Map<string, string[]>;
   // src/agent/media/mediaResolverService.ts
+  'media.budgetDropped': Set<string>;
   'media.resolved': Map<string, /* ContentPart — packages/agent-core-v2/src/human/llm/message.ts */ /* TextPart — packages/agent-core-v2/src/human/llm/message.ts */ {
     type: 'text';
     text: string;

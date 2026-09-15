@@ -13,12 +13,15 @@ import {
 } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { createScopedTestHost, createServices, stubPair } from '#/_base/di/test';
+import type { Event2 } from '#/app/event/event2';
 import { buildKimiFileUrl } from '#/agent/media/kimiFileUrl';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { AgentMediaResolverService } from '#/agent/media/mediaResolverService';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { type GetResult, IFileService } from '#/app/file/fileService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
@@ -131,6 +134,13 @@ function blobStore(): IBlobStore {
 
 const telemetry = { track2: () => {} } as unknown as ITelemetryService;
 
+const stubDispatcher = {
+  _serviceBrand: undefined,
+  dispatch: async () => {},
+} as unknown as IEventDispatcher;
+
+const stubScopeContext = makeAgentScopeContext({ agentId: 'main', agentScope: '' });
+
 function stubMediaStore(sessionDir = '/nonexistent-session'): ISessionMediaStore {
   return {
     _serviceBrand: undefined,
@@ -218,6 +228,7 @@ function resolver(
   files: Map<string, { name: string; bytes: Buffer }>,
   sessionDir?: string,
   mediaStore: ISessionMediaStore = stubMediaStore(sessionDir),
+  events: Event2[] = [],
 ): IAgentMediaResolverService {
   const ix = createServices(disposables, {
     base: [registerStateServices],
@@ -226,6 +237,16 @@ function resolver(
       reg.defineInstance(IBlobStore, blobStore());
       reg.defineInstance(ITelemetryService, telemetry);
       reg.defineInstance(ISessionMediaStore, mediaStore);
+      reg.defineInstance(IEventDispatcher, {
+        _serviceBrand: undefined,
+        dispatch: async (event: Event2) => {
+          events.push(event);
+        },
+      } as unknown as IEventDispatcher);
+      reg.defineInstance(
+        IAgentScopeContext,
+        makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
+      );
       reg.define(IAgentMediaResolverService, AgentMediaResolverService);
     },
   });
@@ -276,13 +297,13 @@ describe('AgentMediaResolverService video strategy', () => {
     const message = videoMessage(buildKimiFileUrl(FILE_ID));
 
     const upload1 = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
-    await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore()).resolve(
+    await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore(), stubDispatcher, stubScopeContext).resolve(
       [message],
       requester({ uploadVideo: upload1 }),
     );
 
     const upload2 = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-2'));
-    const out = await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore()).resolve(
+    const out = await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore(), stubDispatcher, stubScopeContext).resolve(
       [message],
       requester({ uploadVideo: upload2 }),
     );
@@ -556,6 +577,8 @@ describe('AgentMediaResolverService image strategy', () => {
       telemetry,
       new AgentStateService(),
       stubMediaStore(),
+      stubDispatcher,
+      stubScopeContext,
     );
 
     await expect(
@@ -675,6 +698,8 @@ describe('AgentMediaResolverService image strategy', () => {
       telemetry,
       new AgentStateService(),
       stubMediaStore(),
+      stubDispatcher,
+      stubScopeContext,
     );
     const message = imageMessage(buildKimiFileUrl(FILE_ID));
     const expected = { type: 'image_url', imageUrl: { url: PNG_DATA_URL } };
@@ -701,6 +726,8 @@ describe('AgentMediaResolverService image strategy', () => {
       telemetry,
       new AgentStateService(),
       stubMediaStore(),
+      stubDispatcher,
+      stubScopeContext,
     );
     const message = imageMessage(buildKimiFileUrl(FILE_ID));
 
@@ -723,6 +750,8 @@ describe('AgentMediaResolverService image strategy', () => {
       telemetry,
       new AgentStateService(),
       stubMediaStore(),
+      stubDispatcher,
+      stubScopeContext,
     );
     const req = requester({});
 
@@ -765,6 +794,8 @@ describe('AgentMediaResolverService image strategy', () => {
         telemetry,
         new AgentStateService(),
         stubMediaStore(sessionDir),
+        stubDispatcher,
+        stubScopeContext,
       );
       const message = imageMessage(buildKimiFileUrl(FILE_ID));
 
@@ -807,13 +838,13 @@ describe('AgentMediaResolverService image upload', () => {
     const message = imageMessage(buildKimiFileUrl(FILE_ID));
 
     const upload1 = vi.fn(async (): Promise<ImageURLPart> => msImagePart('img-1'));
-    await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore()).resolve(
+    await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore(), stubDispatcher, stubScopeContext).resolve(
       [message],
       requester({ uploadImage: upload1 }),
     );
 
     const upload2 = vi.fn(async (): Promise<ImageURLPart> => msImagePart('img-2'));
-    const out = await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore()).resolve(
+    const out = await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore(), stubDispatcher, stubScopeContext).resolve(
       [message],
       requester({ uploadImage: upload2 }),
     );
@@ -1017,6 +1048,143 @@ describe('AgentMediaResolverService session-canonical display path', () => {
   });
 });
 
+describe('AgentMediaResolverService request media budget', () => {
+  const SIX_MIB = 6 * 1024 * 1024;
+  const ONE_MIB = 1024 * 1024;
+
+  function bigPng(size: number): Buffer {
+    return Buffer.concat([PNG_BYTES, Buffer.alloc(size - PNG_BYTES.length)]);
+  }
+
+  function imageFiles(entries: Array<[string, number]>): Map<string, { name: string; bytes: Buffer }> {
+    return new Map(entries.map(([id, size]) => [id, { name: `${id}.png`, bytes: bigPng(size) }]));
+  }
+
+  function imageMessages(ids: readonly string[]): Message[] {
+    return ids.map((id) => imageMessage(buildKimiFileUrl(id)));
+  }
+
+  function partTypes(messages: readonly Message[]): string[] {
+    return messages.map((message) => message.content[0]!.type);
+  }
+
+  function warnings(events: readonly Event2[]): Event2[] {
+    return events.filter((event) => event.type === 'warning');
+  }
+
+  it('omits the oldest images in one batch when inline media exceed the budget', async () => {
+    const files = imageFiles([
+      ['f1', SIX_MIB],
+      ['f2', SIX_MIB],
+      ['f3', SIX_MIB],
+    ]);
+    const p1 = await plantCanonical('f1', '.png', files.get('f1')!.bytes);
+    const p2 = await plantCanonical('f2', '.png', files.get('f2')!.bytes);
+    const events: Event2[] = [];
+    const res = resolver(files, sessionDir, undefined, events);
+
+    const out = await res.resolve(imageMessages(['f1', 'f2', 'f3']), requester({}));
+
+    expect(out[0]!.content).toEqual([{ type: 'text', text: `<image path="${p1}"></image>` }]);
+    expect(out[1]!.content).toEqual([{ type: 'text', text: `<image path="${p2}"></image>` }]);
+    expect(out[2]!.content[0]).toEqual({
+      type: 'image_url',
+      imageUrl: { url: `data:image/png;base64,${files.get('f3')!.bytes.toString('base64')}` },
+    });
+    expect(warnings(events)).toEqual([
+      expect.objectContaining({ type: 'warning', code: 'media-budget-exceeded' }),
+    ]);
+  });
+
+  it('omits every occurrence when the same image appears multiple times', async () => {
+    const files = imageFiles([
+      ['big', 12 * 1024 * 1024],
+      ['small', SIX_MIB],
+    ]);
+    const events: Event2[] = [];
+    const res = resolver(files, sessionDir, undefined, events);
+
+    const out = await res.resolve(imageMessages(['big', 'big', 'small']), requester({}));
+
+    expect(partTypes(out)).toEqual(['text', 'text', 'image_url']);
+  });
+
+  it('keeps the drop set stable while later requests stay under the high watermark', async () => {
+    const files = imageFiles([
+      ['f1', SIX_MIB],
+      ['f2', SIX_MIB],
+      ['f3', SIX_MIB],
+      ['f4', ONE_MIB],
+    ]);
+    await plantCanonical('f1', '.png', files.get('f1')!.bytes);
+    await plantCanonical('f2', '.png', files.get('f2')!.bytes);
+    const events: Event2[] = [];
+    const res = resolver(files, sessionDir, undefined, events);
+    const first3 = imageMessages(['f1', 'f2', 'f3']);
+
+    const first = await res.resolve(first3, requester({}));
+    const second = await res.resolve(
+      [...first3, ...imageMessages(['f4'])],
+      requester({}),
+    );
+
+    expect(second.slice(0, 3)).toEqual(first);
+    expect(second[3]!.content[0]).toEqual({
+      type: 'image_url',
+      imageUrl: { url: `data:image/png;base64,${files.get('f4')!.bytes.toString('base64')}` },
+    });
+    expect(warnings(events)).toHaveLength(1);
+  });
+
+  it('evicts the next batch only after the budget is exceeded again', async () => {
+    const files = imageFiles([
+      ['f1', SIX_MIB],
+      ['f2', SIX_MIB],
+      ['f3', SIX_MIB],
+      ['f5', SIX_MIB],
+      ['f6', SIX_MIB],
+      ['f7', SIX_MIB],
+    ]);
+    const events: Event2[] = [];
+    const res = resolver(files, sessionDir, undefined, events);
+
+    await res.resolve(imageMessages(['f1', 'f2', 'f3']), requester({}));
+    const messages = imageMessages(['f1', 'f2', 'f3', 'f5', 'f6', 'f7']);
+    const out = await res.resolve(messages, requester({}));
+
+    expect(partTypes(out)).toEqual(['text', 'text', 'text', 'text', 'text', 'image_url']);
+    expect(warnings(events)).toHaveLength(2);
+
+    const again = await res.resolve(messages, requester({}));
+    expect(again).toEqual(out);
+    expect(warnings(events)).toHaveLength(2);
+  });
+
+  it('does not count uploaded references toward the budget', async () => {
+    const upload = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
+    const files = imageFiles([
+      ['f1', SIX_MIB],
+      ['f2', SIX_MIB],
+      ['f3', SIX_MIB],
+    ]);
+    files.set('v1', { name: 'clip.mp4', bytes: VIDEO_BYTES });
+    const events: Event2[] = [];
+    const res = resolver(files, sessionDir, undefined, events);
+    const req = requester({ uploadVideo: upload });
+
+    const out = await res.resolve(
+      [videoMessage(buildKimiFileUrl('v1')), ...imageMessages(['f1', 'f2', 'f3'])],
+      req,
+    );
+
+    expect(out[0]!.content[0]).toEqual(msPart('prov-1'));
+    expect(partTypes(out)).toEqual(['video_url', 'text', 'text', 'image_url']);
+
+    const again = await res.resolve([videoMessage(buildKimiFileUrl('v1'))], req);
+    expect(again[0]!.content[0]).toEqual(msPart('prov-1'));
+  });
+});
+
 describe('AgentMediaResolverService scoped registration', () => {
   let host: ReturnType<typeof createScopedTestHost>;
 
@@ -1044,6 +1212,11 @@ describe('AgentMediaResolverService scoped registration', () => {
     return host.child(LifecycleScope.Agent, 'main', [
       stubPair(IAgentStateService, new AgentStateService()),
       stubPair(ISessionMediaStore, stubMediaStore()),
+      stubPair(IEventDispatcher, {
+        _serviceBrand: undefined,
+        dispatch: async () => {},
+      } as unknown as IEventDispatcher),
+      stubPair(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' })),
     ]);
   }
 
