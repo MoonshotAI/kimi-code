@@ -1997,10 +1997,7 @@ describe('AgentTranscriptProjector', () => {
     expect(tx.getPrompt('p1')).toMatchObject({
       status: 'running',
       steeredAt: '2026-01-01T00:00:02.000Z',
-      content: [
-        { type: 'text', text: 'first' },
-        { type: 'text', text: 'second' },
-      ],
+      content: [{ type: 'text', text: 'first' }],
     });
     expect(tx.getPrompt('p2')).toMatchObject({
       status: 'completed',
@@ -2020,10 +2017,7 @@ describe('AgentTranscriptProjector', () => {
     expect(tx.getPrompt('p1')).toMatchObject({
       status: 'completed',
       finishedAt: '2026-01-01T00:00:10.000Z',
-      content: [
-        { type: 'text', text: 'first' },
-        { type: 'text', text: 'second' },
-      ],
+      content: [{ type: 'text', text: 'first' }],
     });
 
     feed(ev({ type: 'prompt.aborted', promptId: 'p3', abortedAt: '2026-01-01T00:00:03.000Z' }));
@@ -2049,11 +2043,37 @@ describe('AgentTranscriptProjector', () => {
     });
   });
 
-  it('projects prompt.steered media content to the wire shape (no daemon ref or path leak)', () => {
+  it('keeps the active prompt’s own content on prompt.steered (no daemon ref or path leak)', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
+    feed(
+      ev({
+        type: 'prompt.submitted',
+        promptId: 'p1',
+        userMessageId: 'm1',
+        status: 'running',
+        content: [{ type: 'text', text: 'original' }],
+        createdAt: '2026-01-01T00:00:00.000Z',
+      }),
+    );
+    feed(
+      ev({
+        type: 'prompt.submitted',
+        promptId: 'p2',
+        userMessageId: 'm2',
+        status: 'queued',
+        content: [
+          { type: 'text', text: 'look at this' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://f_img1?path=%2Fabs%2Fsession%2Fmedia%2Ff_img1.png' },
+          },
+        ],
+        createdAt: '2026-01-01T00:00:01.000Z',
+      }),
+    );
     feed(
       ev({
         type: 'prompt.steered',
@@ -2070,8 +2090,8 @@ describe('AgentTranscriptProjector', () => {
       }),
     );
 
-    const prompt = tx.getPrompt('p1');
-    expect(prompt?.content).toEqual([
+    expect(tx.getPrompt('p1')?.content).toEqual([{ type: 'text', text: 'original' }]);
+    expect(tx.getPrompt('p2')?.content).toEqual([
       { type: 'text', text: 'look at this' },
       { type: 'image', source: { kind: 'session_media', file_id: 'f_img1' } },
     ]);

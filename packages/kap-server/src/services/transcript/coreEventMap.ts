@@ -1418,7 +1418,7 @@ export class AgentTranscriptProjector {
       promptId: event.activePromptId,
       status: prev?.status ?? 'running',
       userMessageId: prev?.userMessageId,
-      content: projectPromptContentParts(event.content),
+      content: prev?.content,
       createdAt: prev?.createdAt ?? event.steeredAt,
       finishedAt: prev?.finishedAt,
       steeredAt: event.steeredAt,
