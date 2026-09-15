@@ -656,4 +656,58 @@ describe("CombinedAutocompleteProvider", () => {
 			assert.strictEqual(applied.lines[0], '"my folder/test.txt"');
 		});
 	});
+
+	describe("applyCompletion with a stale prefix", () => {
+		test("replaces the grown @ token instead of the stale prefix length", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "see @docs/reading";
+			const item = { value: "@docs/readme.md", label: "readme.md" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "@docs/re");
+
+			assert.strictEqual(applied.lines[0], "see @docs/readme.md ");
+			assert.strictEqual(applied.cursorCol, "see @docs/readme.md ".length);
+		});
+
+		test("replaces the grown quoted @ token instead of splitting inside the quotes", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = 'see @"my folder/oth';
+			const item = { value: '@"my folder/other.txt"', label: 'other.txt' };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, '@"my folder/o');
+
+			assert.strictEqual(applied.lines[0], 'see @"my folder/other.txt" ');
+		});
+
+		test("replaces the shrunk @ token after backspacing", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "see @docs/r";
+			const item = { value: "@docs/readme.md", label: "readme.md" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "@docs/re");
+
+			assert.strictEqual(applied.lines[0], "see @docs/readme.md ");
+		});
+
+		test("replaces the grown slash command token", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "/help";
+			const item = { value: "help", label: "help" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "/he");
+
+			assert.strictEqual(applied.lines[0], "/help ");
+			assert.strictEqual(applied.cursorCol, "/help ".length);
+		});
+
+		test("inserts without deleting when the cursor sits after a delimiter", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "see @docs/re ";
+			const item = { value: "@docs/readme.md", label: "readme.md" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "@docs/re");
+
+			assert.strictEqual(applied.lines[0], "see @docs/re @docs/readme.md ");
+		});
+	});
 });

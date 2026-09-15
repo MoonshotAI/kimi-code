@@ -4,6 +4,7 @@ import { basename, join, resolve } from 'node:path';
 import {
   CombinedAutocompleteProvider,
   fuzzyMatch,
+  resolveCompletionPrefix,
   type AutocompleteItem,
   type AutocompleteProvider,
   type AutocompleteSuggestions,
@@ -379,9 +380,10 @@ function isDotPrefixedEntry(item: AutocompleteItem): boolean {
 }
 
 /**
- * Replace `prefix` with `item.value` verbatim, mirroring pi-tui's file-path
- * branch (no trailing space, so a completed directory can be extended with the
- * next `/`). Used in bash mode to avoid pi-tui's slash-command branch, which
+ * Replace the token before the cursor with `item.value` verbatim, mirroring
+ * pi-tui's file-path branch (no trailing space, so a completed directory can
+ * be extended with the next `/`). Used in bash mode to avoid pi-tui's
+ * slash-command branch, which
  * would prepend an extra `/` to a bare leading `/` path. For a quoted
  * directory value (path contains spaces), the cursor stays inside the closing
  * quote so follow-up `/` completion keeps working.
@@ -394,7 +396,8 @@ function applyPathCompletion(
   prefix: string,
 ): { lines: string[]; cursorLine: number; cursorCol: number } {
   const currentLine = lines[cursorLine] ?? '';
-  const beforePrefix = currentLine.slice(0, cursorCol - prefix.length);
+  const effectivePrefix = resolveCompletionPrefix(lines, cursorLine, cursorCol, prefix);
+  const beforePrefix = currentLine.slice(0, cursorCol - effectivePrefix.length);
   const afterCursor = currentLine.slice(cursorCol);
   const newLine = beforePrefix + item.value + afterCursor;
   const newLines = [...lines];

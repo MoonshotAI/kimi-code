@@ -7,6 +7,7 @@ export {
 	type AutocompleteProvider,
 	type AutocompleteSuggestions,
 	CombinedAutocompleteProvider,
+	resolveCompletionPrefix,
 	type SlashCommand,
 } from "./autocomplete.ts";
 // Components

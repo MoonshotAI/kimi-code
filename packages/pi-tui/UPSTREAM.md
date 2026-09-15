@@ -139,6 +139,12 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 
 **Why not in the app:** Slash detection is inside the editor's input handler, before the provider runs.
 
+### stale-prefix-completion-uses-current-token — keep
+
+**Decision:** Accepting a completion deletes the token currently before the cursor, not the prefix snapshotted when the suggestions were produced. When the text before the cursor no longer ends with the stored prefix, the delete range falls back to the current token (quoted prefix, else token after the last delimiter); slash/@/path classification still uses the provider-supplied prefix. The re-derivation is exported as `resolveCompletionPrefix` so host-side providers can apply the same rule.
+
+**Why not in the app:** The accept path (Tab/Enter/list-select handlers) and the prefix ferry live inside the editor and the combined autocomplete provider; the host is only called with the final prefix.
+
 ### marked-completion-enter-does-not-submit — keep
 
 **Decision:** Autocomplete items may carry opaque host data. Confirming a host-marked item with Enter applies the completion and does not submit. Unmarked slash completions still submit on Enter.

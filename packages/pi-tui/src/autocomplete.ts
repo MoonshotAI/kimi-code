@@ -42,6 +42,25 @@ function buildFdPathQuery(query: string): string {
 	return pattern;
 }
 
+export function resolveCompletionPrefix(
+	lines: string[],
+	cursorLine: number,
+	cursorCol: number,
+	prefix: string,
+): string {
+	const currentLine = lines[cursorLine] || "";
+	const textBeforeCursor = currentLine.slice(0, cursorCol);
+	if (textBeforeCursor.endsWith(prefix)) {
+		return prefix;
+	}
+	const quotedPrefix = extractQuotedPrefix(textBeforeCursor);
+	if (quotedPrefix) {
+		return quotedPrefix;
+	}
+	const lastDelimiterIndex = findLastDelimiter(textBeforeCursor);
+	return textBeforeCursor.slice(lastDelimiterIndex === -1 ? 0 : lastDelimiterIndex + 1);
+}
+
 function findLastDelimiter(text: string): number {
 	for (let i = text.length - 1; i >= 0; i -= 1) {
 		if (PATH_DELIMITERS.has(text[i] ?? "")) {
@@ -394,7 +413,8 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		prefix: string,
 	): { lines: string[]; cursorLine: number; cursorCol: number } {
 		const currentLine = lines[cursorLine] || "";
-		const beforePrefix = currentLine.slice(0, cursorCol - prefix.length);
+		const effectivePrefix = resolveCompletionPrefix(lines, cursorLine, cursorCol, prefix);
+		const beforePrefix = currentLine.slice(0, cursorCol - effectivePrefix.length);
 		const afterCursor = currentLine.slice(cursorCol);
 		const isQuotedPrefix = prefix.startsWith('"') || prefix.startsWith('@"');
 		const hasLeadingQuoteAfterCursor = afterCursor.startsWith('"');

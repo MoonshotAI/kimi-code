@@ -545,6 +545,19 @@ describe('FileMentionProvider', () => {
       expect(result.cursorCol).toBe('cd /Applications/'.length);
     });
 
+    it('replaces the grown path token instead of the stale prefix length', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD, [], () => 'bash');
+      const result = provider.applyCompletion(
+        ['cd /Applic'],
+        0,
+        10,
+        { value: '/Applications/', label: 'Applications/' },
+        '/App',
+      );
+      expect(result.lines[0]).toBe('cd /Applications/');
+      expect(result.cursorCol).toBe('cd /Applications/'.length);
+    });
+
     it('keeps the cursor inside the closing quote for a spaced directory', () => {
       const provider = new FileMentionProvider([], workDir, NO_FD, [], () => 'bash');
       const result = provider.applyCompletion(
@@ -678,7 +691,7 @@ describe('FileMentionProvider', () => {
 
       expect(result).not.toBeNull();
       expect(result!.prefix).toBe('/');
-      expect(result!.items.map((item) => item.value).sort()).toEqual([
+      expect(result!.items.map((item) => item.value).toSorted()).toEqual([
         'skill:review',
         'skill:security',
       ]);
@@ -699,7 +712,7 @@ describe('FileMentionProvider', () => {
       const result = await provider.getSuggestions(['first line', '/'], 1, 1, { signal: ctrl() });
 
       expect(result).not.toBeNull();
-      expect(result!.items.map((item) => item.value).sort()).toEqual([
+      expect(result!.items.map((item) => item.value).toSorted()).toEqual([
         'skill:review',
         'skill:security',
       ]);

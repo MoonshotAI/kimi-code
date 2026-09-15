@@ -2638,6 +2638,48 @@ describe("Editor component", () => {
 			assert.ok(!afterMove.includes("message"), "stale argument menu must not survive the cursor move");
 		});
 
+		it("accepts a completion against the current token when the picker's prefix is stale", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const realProvider = new CombinedAutocompleteProvider([], process.cwd());
+
+			const mockProvider: AutocompleteProvider = {
+				getSuggestions: (lines, _cursorLine, cursorCol) => {
+					const before = (lines[0] || "").slice(0, cursorCol);
+					if (before.endsWith("@docs/re")) {
+						return Promise.resolve({
+							items: [{ value: "@docs/readme.md", label: "readme.md" }],
+							prefix: "@docs/re",
+						});
+					}
+					if (before.includes("@docs/rea")) {
+						return new Promise(() => {});
+					}
+					return Promise.resolve(null);
+				},
+				applyCompletion: (lines, cursorLine, cursorCol, item, prefix) =>
+					realProvider.applyCompletion(lines, cursorLine, cursorCol, item, prefix),
+			};
+
+			editor.setAutocompleteProvider(mockProvider);
+
+			for (const ch of "@docs/re") {
+				editor.handleInput(ch);
+			}
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			await flushAutocomplete();
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+
+			for (const ch of "ading") {
+				editor.handleInput(ch);
+			}
+			assert.strictEqual(editor.getText(), "@docs/reading");
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+
+			editor.handleInput("\t");
+
+			assert.strictEqual(editor.getText(), "@docs/readme.md ");
+		});
+
 		it("debounces # autocomplete while typing", async () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 			let suggestionCalls = 0;
