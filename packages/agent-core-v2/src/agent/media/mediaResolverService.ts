@@ -24,6 +24,7 @@ import {
   type DaemonFileRef,
   daemonFileRefFromPart,
   matchSingleMediaPathTag,
+  parseDaemonFileUrl,
 } from './mediaRef';
 import { ISessionMediaStore } from './sessionMediaStore';
 import { IAgentMediaResolverService } from './mediaResolver';
@@ -151,6 +152,21 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     }
     changed = (await this.applyMediaBudget(out, budgetEntries)) || changed;
     return changed ? out : messages;
+  }
+
+  async displayPaths(messages: readonly Message[]): Promise<ReadonlyMap<string, string>> {
+    const paths = new Map<string, string>();
+    for (const message of messages) {
+      for (const part of message.content) {
+        if (part.type !== 'image_url' && part.type !== 'video_url') continue;
+        const url = part.type === 'image_url' ? part.imageUrl.url : part.videoUrl.url;
+        const ref = parseDaemonFileUrl(url);
+        if (ref === undefined || paths.has(url)) continue;
+        const path = await this.displayPath(ref);
+        if (path !== undefined) paths.set(url, path);
+      }
+    }
+    return paths;
   }
 
   private async applyMediaBudget(

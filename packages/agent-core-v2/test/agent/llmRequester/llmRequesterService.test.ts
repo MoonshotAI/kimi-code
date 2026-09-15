@@ -280,7 +280,10 @@ function createService(
 
   ix.stub(IAgentContextMemoryService, context);
   ix.stub(IAgentToolSelectService, toolSelect);
-  ix.stub(IAgentMediaResolverService, options.mediaResolver ?? { resolve: async (messages) => messages });
+  ix.stub(IAgentMediaResolverService, options.mediaResolver ?? {
+    resolve: async (messages) => messages,
+    displayPaths: async () => new Map(),
+  });
   if (projector === undefined) {
     ix.set(
       IAgentContextProjectorService,
@@ -627,8 +630,45 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
     expect(projection.calls).toEqual(['normal', 'degraded']);
   });
 
-  it('falls back to media-stripped when the media-degraded request still receives 413', async () => {
+  it('attaches display paths to degraded older media', async () => {
     const calls = { value: 0 };
+    const capturedInputs: ModelRequestInput[] = [];
+    const imageMessage = (url: string): Message => ({
+      role: 'user',
+      content: [{ type: 'image_url', imageUrl: { url } }],
+      toolCalls: [],
+    });
+    const { service } = createService(
+      createRequester(calls, BODY_TOO_LARGE_413, [], capturedInputs),
+      undefined,
+      {
+        mediaResolver: {
+          resolve: async (messages) => messages,
+          displayPaths: async () => new Map([['kimi-file://f_old', '/session/media/f_old.png']]),
+        },
+      },
+    );
+
+    await service.request({
+      messages: [
+        imageMessage('kimi-file://f_old'),
+        imageMessage('kimi-file://f_keep1'),
+        imageMessage('kimi-file://f_keep2'),
+      ],
+      source: { type: 'turn', turnId: 1, step: 1 },
+    });
+
+    expect(calls.value).toBe(2);
+    const parts = capturedInputs[1]!.messages.flatMap((message) => message.content);
+    const urls = parts
+      .filter((part) => part.type === 'image_url')
+      .map((part) => part.imageUrl.url);
+    expect(urls).toEqual(['kimi-file://f_keep1', 'kimi-file://f_keep2']);
+    const texts = parts.filter((part) => part.type === 'text').map((part) => part.text);
+    expect(texts).toContain('<image path="/session/media/f_old.png"></image>');
+  });
+
+  it('falls back to media-stripped when the media-degraded request still receives 413', async () => {    const calls = { value: 0 };
     const projection = recordProjectionCalls();
     const { service } = createService(
       createRequester(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413]),

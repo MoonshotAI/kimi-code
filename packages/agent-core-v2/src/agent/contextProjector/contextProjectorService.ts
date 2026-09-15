@@ -52,6 +52,7 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
   project(
     messages: readonly ContextMessage[],
     policy: ProjectionPolicy = {},
+    mediaPaths?: ReadonlyMap<string, string>,
   ): readonly Message[] {
     const projected = this.projectWithTrace(
       messages,
@@ -59,8 +60,9 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
     );
     const media = policy.media;
     if (media === undefined) return projected;
-    if (media === 'degraded') return degradeOlderMediaParts(projected, MEDIA_DEGRADE_KEEP_RECENT);
-    return stripMediaPartsBySnapshot(projected, media.strip);
+    if (media === 'degraded')
+      return degradeOlderMediaParts(projected, MEDIA_DEGRADE_KEEP_RECENT, undefined, mediaPaths);
+    return stripMediaPartsBySnapshot(projected, media.strip, mediaPaths);
   }
 
   captureMediaStripSnapshot(messages: readonly ContextMessage[]): MediaStripSnapshot {

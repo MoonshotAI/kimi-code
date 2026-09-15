@@ -1333,3 +1333,31 @@ describe('AgentMediaResolverService scoped registration', () => {
     expect(firstPart(out)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
   });
 });
+
+describe('AgentMediaResolverService displayPaths', () => {
+  it('maps daemon file ref urls to their display paths', async () => {
+    await plantCanonical('f_img', '.png', PNG_BYTES);
+    const service = resolver(new Map(), sessionDir);
+
+    const paths = await service.displayPaths([
+      imageMessage(buildKimiFileUrl('f_img')),
+      imageMessage('data:image/png;base64,AAAA'),
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+    ]);
+
+    expect(paths.get(buildKimiFileUrl('f_img'))).toBe(join(sessionDir, 'media', 'f_img.png'));
+    expect(paths.size).toBe(1);
+  });
+
+  it('omits refs without a display path and dedupes repeated urls', async () => {
+    const service = resolver(new Map(), sessionDir);
+
+    const paths = await service.displayPaths([
+      imageMessage(buildKimiFileUrl('f_missing')),
+      imageMessage(buildKimiFileUrl('f_missing')),
+      videoMessage(buildKimiFileUrl('f_missing')),
+    ]);
+
+    expect(paths.size).toBe(0);
+  });
+});
