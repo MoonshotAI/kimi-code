@@ -8,7 +8,6 @@ import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { type CollectionView } from '#/_base/di/collection';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { AgentSpaceImpl, type AgentSpaceHost } from '#/agent/agentContext/agentSpace';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -27,18 +26,10 @@ import { isHumanRecordType } from '#/wire/human';
 import { AGENT_SWITCHED_TYPE } from '#/wire/tree/index';
 import type { PartsTransformer } from '#/wire/record';
 
-import {
-  AgentModelContribution,
-  agentModelDefinitions,
-  type AgentModel,
-  type AgentModelDefinition,
-} from './agentModel';
 import { IEventDispatcher, type DurableAgentRuntimeParticipant, type RestorePhase } from './eventDispatcher';
 import { StateError, StateErrors } from './errors';
 import {
-  expandedModelAppliers,
   expandedRuntimeFolds,
-  type EventApplier,
   type StateFold,
   type FoldContext,
   type ReplayableStateKey,
@@ -161,24 +152,8 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
   private readonly metas = new Map<ReplayableStateKey<any>, StateMeta>();
   private folded: FoldedEventStateRegistry;
 
-  private activeModelDefs = new Map<string, AgentModelDefinition<any, any>>();
-  private readonly withdrawnModelIds = new Set<string>();
-  private modelTargets = new Map<string, readonly AgentModelDefinition<any, any>[]>();
-  private readonly modelAttachments = new Map<
-    AgentModelDefinition<any, any>,
-    ParticipantAttachment
-  >();
   private readonly participantTargets = new Map<string, ParticipantAttachment[]>();
   private readonly participantAttachments = new Map<string, ParticipantAttachment>();
-
-  private readonly spaceHost: AgentSpaceHost = {
-    isActiveModelDefinition: (definition) =>
-      this.activeModelDefs.get(definition.id) === definition,
-    registerModel: (definition, model) => this.registerModel(definition, model),
-    dispatchModelEvent: (event) => this.dispatch(event),
-    readLegacyState: (key) => this.agentState.get(key),
-  };
-
   restorePhase: RestorePhase = 'new';
   private dispatching = false;
   private disposed = false;
@@ -199,7 +174,6 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     @IAgentStateService private readonly agentState: IAgentStateService,
     @ILogService private readonly logger: ILogService,
     @EventStateContribution view: CollectionView<EventStateContributionRecord>,
-    @AgentModelContribution modelView: CollectionView<AgentModelDefinition<any, any>>,
   ) {
     super();
     this.folded = this.foldContributions(view);
@@ -224,32 +198,6 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
         this.folded = this.foldContributions(view);
       }),
     );
-    this.refoldModels(modelView.items);
-    this._register(
-      modelView.onDidChange(({ added, removed }) => {
-        for (const definition of removed) {
-          this.withdrawnModelIds.add(definition.id);
-          const attachment = this.modelAttachments.get(definition);
-          if (attachment !== undefined) {
-            this.modelAttachments.delete(definition);
-            this.detachParticipant(attachment);
-            this.space()?.retireModel(definition);
-          }
-        }
-        for (const definition of added) {
-          this.withdrawnModelIds.delete(definition.id);
-        }
-        this.refoldModels(modelView.items);
-        this.materializeUndoableModels();
-      }),
-    );
-    this.space()?._attachHost(this.spaceHost);
-    this.materializeUndoableModels();
-  }
-
-  private space(): AgentSpaceImpl | undefined {
-    const space = this.agentScope?.agentContext.space;
-    return space instanceof AgentSpaceImpl ? space : undefined;
   }
 
   private foldContributions(
@@ -380,114 +328,6 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     }
   }
 
-  private refoldModels(records: readonly AgentModelDefinition<any, any>[]): void {
-    const defs = new Map<string, AgentModelDefinition<any, any>>();
-    for (const definition of agentModelDefinitions()) {
-      if (!this.withdrawnModelIds.has(definition.id)) defs.set(definition.id, definition);
-    }
-    for (const definition of records) defs.set(definition.id, definition);
-    this.activeModelDefs = defs;
-    this.rebuildModelTargets();
-  }
-
-  private rebuildModelTargets(): void {
-    const targets = new Map<string, AgentModelDefinition<any, any>[]>();
-    const add = (type: string, definition: AgentModelDefinition<any, any>): void => {
-      const list = targets.get(type);
-      if (list === undefined) {
-        targets.set(type, [definition]);
-        return;
-      }
-      if (!list.includes(definition)) list.push(definition);
-    };
-    const domainOwners = new Map<string, AgentModelDefinition<any, any>>();
-    for (const definition of this.activeModelDefs.values()) {
-      for (const cls of definition.events) {
-        const owner = domainOwners.get(cls.type);
-        if (owner !== undefined && owner !== definition) {
-          throw new BugIndicatingError(
-            `Event '${cls.type}' is applied by both agent models '${owner.id}' and '${definition.id}'`,
-          );
-        }
-        domainOwners.set(cls.type, definition);
-        add(cls.type, definition);
-      }
-    }
-    for (const [definition, attachment] of this.modelAttachments) {
-      if (this.activeModelDefs.get(definition.id) !== definition) continue;
-      for (const cls of attachment.appliers.keys()) add(cls.type, definition);
-    }
-    this.modelTargets = targets;
-  }
-
-  private materializeUndoableModels(): void {
-    const space = this.space();
-    if (space === undefined) return;
-    for (const definition of this.activeModelDefs.values()) {
-      if (!definition.undoable || this.modelAttachments.has(definition)) continue;
-      space.ensureModel(definition);
-    }
-  }
-
-  private registerModel(
-    definition: AgentModelDefinition<any, any>,
-    model: AgentModel<any>,
-  ): void {
-    if (this.modelAttachments.has(definition)) return;
-    const domainAppliers = new Map<Event2Class<any, any>, EventApplier>();
-    for (const [cls, applier] of model._appliersTable()) {
-      domainAppliers.set(cls, (event) => applier.call(model, event));
-    }
-    const customUndo =
-      model.onUndo === undefined ? undefined : (count: number): void => model.onUndo!(count);
-    const expanded = expandedModelAppliers(
-      definition.id,
-      definition.undoable,
-      domainAppliers,
-      customUndo,
-    );
-    const appliers = new Map<Event2Class<any, any>, ParticipantApplier>();
-    for (const [cls, applier] of expanded) {
-      appliers.set(cls, (state, event, ctx) => {
-        model._enterWindow(state, ctx);
-        let windowResult: ReturnType<AgentModel<any>['_exitWindow']>;
-        try {
-          applier(event, ctx);
-        } finally {
-          windowResult = model._exitWindow();
-        }
-        return windowResult.replaced ? windowResult.replacement : undefined;
-      });
-    }
-    const attachment: ParticipantAttachment = {
-      id: definition.id,
-      appliers,
-      meta: { checkpoints: [] },
-      undoable: definition.undoable,
-      initial: model._state(),
-      getState: () => model._state(),
-      commit: (state) => { model._commitState(state); },
-    };
-    this.attachParticipant(attachment);
-    this.modelAttachments.set(definition, attachment);
-    this.rebuildModelTargets();
-  }
-
-  private materializeModel(definition: AgentModelDefinition<any, any>): ParticipantAttachment {
-    const space = this.space();
-    if (space === undefined) {
-      throw new BugIndicatingError(
-        `Agent model '${definition.id}' cannot materialize without an agent space`,
-      );
-    }
-    space.ensureModel(definition);
-    const attachment = this.modelAttachments.get(definition);
-    if (attachment === undefined) {
-      throw new BugIndicatingError(`Agent model '${definition.id}' failed to attach`);
-    }
-    return attachment;
-  }
-
   dispatch(event: Event2<any>): Promise<void> {
     const cls = event.constructor as Event2Class;
     if (
@@ -578,13 +418,6 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
         prepared.push({ key, meta, ctx, next });
       }
     }
-    const modelTargets = this.modelTargets.get(event.type);
-    if (modelTargets !== undefined) {
-      for (const definition of modelTargets) {
-        if (replayUndoable !== undefined && definition.undoable !== replayUndoable) continue;
-        if (!this.modelAttachments.has(definition)) this.materializeModel(definition);
-      }
-    }
     const participantTargets = this.participantTargets.get(event.type);
     const preparedParticipants: PreparedParticipant[] = [];
     if (participantTargets !== undefined) {
@@ -631,7 +464,6 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
       const error = new Error('Event dispatcher disposed while a late attach was pending');
       for (const entry of pending) entry.reject(error);
     }
-    this.space()?._detachHost(this.spaceHost);
     super.dispose();
   }
 

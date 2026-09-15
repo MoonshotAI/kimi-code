@@ -2,6 +2,8 @@
 import { z } from 'zod';
 
 import { AgentEvent2 } from '#/app/event/event2';
+import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
+import { defineState } from '#/state/state';
 
 export interface TokenAnchor {
   readonly length: number;
@@ -78,3 +80,67 @@ export function normalizeAnchorLength(length: number): number {
   if (!Number.isFinite(length)) return 0;
   return Math.max(0, Math.floor(length));
 }
+
+export const ZERO_ANCHOR: TokenAnchor = { length: 0, tokens: 0, measured: true };
+
+export function latestAnchor(state: TokenCountingState, contextLength: number): TokenAnchor {
+  const anchors = state.anchors;
+  for (let i = anchors.length - 1; i >= 0; i--) {
+    const anchor = anchors[i]!;
+    if (anchor.length <= contextLength) return anchor;
+  }
+  return ZERO_ANCHOR;
+}
+
+export const tokenCountingKey = defineState(
+  'tokenCounting',
+  (): TokenCountingState => ({ anchors: [], tokens: 0 }),
+)
+  .replayable({ schema: z.custom<TokenCountingState>() })
+  .on(TokenCountingMeasured, (state, event, ctx) => {
+    const length = normalizeAnchorLength(event.length);
+    const tokens = Math.max(0, event.tokens);
+    const anchor: TokenAnchor = { length, tokens, measured: true };
+    const anchors = [...state.anchors.filter((a) => a.length < length), anchor];
+    if (!(state.tokens === tokens && anchorsEqual(state.anchors, anchors))) {
+      state.anchors = anchors;
+      state.tokens = tokens;
+    }
+    ctx.emit(new AgentStatusUpdated({ agentId: event.agentId, contextTokens: state.tokens }));
+  })
+  .on(TokenCountingTruncated, (state, event, ctx) => {
+    const length = normalizeAnchorLength(event.length);
+    const tokens = Math.max(0, event.tokens);
+    const anchors = state.anchors.filter((a) => a.length <= length);
+    if (!(state.tokens === tokens && anchorsEqual(state.anchors, anchors))) {
+      state.anchors = anchors;
+      state.tokens = tokens;
+    }
+    ctx.emit(new AgentStatusUpdated({ agentId: event.agentId, contextTokens: state.tokens }));
+  })
+  .on(TokenCountingRebased, (state, event, ctx) => {
+    const length = normalizeAnchorLength(event.length);
+    const tokens = Math.max(0, event.tokens);
+    const anchors: TokenAnchor[] = [{ length, tokens, measured: event.measured }];
+    if (!(state.tokens === tokens && anchorsEqual(state.anchors, anchors))) {
+      state.anchors = anchors;
+      state.tokens = tokens;
+    }
+    ctx.emit(new AgentStatusUpdated({ agentId: event.agentId, contextTokens: state.tokens }));
+  })
+  .on(TokenCountingTurnRecorded, (state, event, ctx) => {
+    const length = normalizeAnchorLength(event.length);
+    const tokens = Math.max(0, event.tokens);
+    const pinned = state.anchors.some((anchor) => anchor.length === length);
+    const anchors = pinned
+      ? state.anchors
+      : [
+        ...state.anchors.filter((anchor) => anchor.length < length),
+        { length, tokens, measured: false },
+      ];
+    if (!(state.tokens === tokens && anchorsEqual(state.anchors, anchors))) {
+      state.anchors = anchors;
+      state.tokens = tokens;
+    }
+    ctx.emit(new AgentStatusUpdated({ agentId: event.agentId, contextTokens: state.tokens }));
+  });

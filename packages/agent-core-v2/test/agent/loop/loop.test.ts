@@ -18,6 +18,7 @@ import { createActor } from '#human/xstate2';
 import { createAgentMachine } from '#human/agent/machine';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
+import type { IAgentScopeHandle } from '#/_base/di/scope';
 import {
   IAgentLifecycleService,
   type AgentScopeCreatedEvent,
@@ -2066,6 +2067,7 @@ function submitTurn(loop: IAgentLoopService, text: string): { readonly turn: Tur
 }
 
 function parkedLifecycleStub(): IAgentLifecycleService {
+  const adopted = new Map<string, IAgentScopeHandle>();
   return {
     _serviceBrand: undefined,
     onDidCreate: Event.None as Event<AgentContext>,
@@ -2074,12 +2076,18 @@ function parkedLifecycleStub(): IAgentLifecycleService {
     onDidClose: Event.None as Event<AgentContext>,
     create: () => Promise.reject(new Error('parked lifecycle stub')),
     fork: () => Promise.reject(new Error('parked lifecycle stub')),
-    get: () => undefined,
-    list: () => [],
+    get: (agentId) => {
+      const handle = adopted.get(agentId);
+      return handle === undefined ? undefined : agentContextOf(handle);
+    },
+    list: () => [...adopted.values()].map((handle) => agentContextOf(handle)),
     broadcastPermissionMode: () => {},
     remove: () => Promise.resolve(),
-    handleOf: () => undefined,
-    adopt: (handle) => agentContextOf(handle),
+    handleOf: (agentId) => adopted.get(agentId),
+    adopt: (handle) => {
+      adopted.set(handle.id, handle);
+      return agentContextOf(handle);
+    },
   };
 }
 

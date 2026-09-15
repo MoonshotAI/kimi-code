@@ -383,7 +383,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       if (managed !== undefined) {
         managed.closing = true;
         if (this.roster.get(agentId) === managed) this.roster.delete(agentId);
-        managed.killSpace();
         try {
           await managed.handle.dispose();
         } catch { }
@@ -572,7 +571,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       if (managed !== undefined && managed.context === agent) {
         managed.closing = true;
         this.roster.delete(agent.agentId);
-        managed.killSpace();
       }
       return Promise.reject(error);
     }
@@ -639,7 +637,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     try {
       await handle.accessor.get(IAgentTaskService).stopAllOnExit('Session closed');
       await handle.accessor.get(IEventDispatcher).flush().catch(onUnexpectedError);
-      managed.killSpace();
       const ref = managed.ref;
       if (ref !== undefined) {
         this.sessionActor.send({ type: 'agent.stop', agentId: agent.agentId });

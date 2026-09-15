@@ -2,8 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { IAgentContextMemoryService, IAgentProfileService } from '#/index';
 import { TurnEnded } from '#/agent/loop/turnOps';
-import { TokenCountingMeasured } from '#/agent/tokenCounting/tokenCountingOps';
-import { TokenCountingAgentModelDefinition } from '#/session/tokenCounting/tokenCountingAgentModel';
+import { tokenCountingKey, TokenCountingMeasured } from '#/agent/tokenCounting/tokenCountingOps';
 import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
 import type { TokenUsage } from '#human/llm/usage';
 import { IWireService } from '#/wire/wire';
@@ -16,7 +15,7 @@ function totalOf(usage: TokenUsage | undefined): number {
 }
 
 function tokenCountingState(ctx: TestAgentContext) {
-  return ctx.readModel(TokenCountingAgentModelDefinition, (model) => model._state());
+  return ctx.agentState.get(tokenCountingKey);
 }
 
 describe('Agent token counting', () => {
