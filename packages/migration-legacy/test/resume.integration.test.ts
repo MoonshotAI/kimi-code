@@ -138,11 +138,11 @@ describe('migrated session is discoverable by agent-core-v2', () => {
     expect(stripDisplays([...transcript.entries])).toEqual(stripDisplays(imported));
 
     // The invariant that keeps a live turn from hijacking an imported one:
-    // every turn.prompt advances the restored turn clock by one, so the number
-    // of synthesized turn.prompt records must equal the number of turns the
+    // every turn.started advances the restored turn clock by one, so the number
+    // of synthesized turn.started records must equal the number of turns the
     // imported messages group into. The first live turn after resume then gets
     // an id past every imported turn.
-    const promptCount = records.filter((r) => r.type === 'turn.prompt').length;
+    const promptCount = records.filter((r) => r.type === 'turn.started').length;
     const groupedTurns = countGroupedTurns([...transcript.entries]);
     expect(promptCount).toBe(groupedTurns);
     expect(promptCount).toBeGreaterThan(0);

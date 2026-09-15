@@ -33,9 +33,15 @@ export function foldEventStateContributions(
   const events = new Map<string, Event2Class<any, any>>();
   const folds = new Map<string, StateFoldRegistration[]>();
   const states: ReplayableStateKey<any>[] = [];
+  const addEvent = (cls: Event2Class<any, any>): void => {
+    if (!events.has(cls.type)) events.set(cls.type, cls);
+    for (const alias of cls.aliases) {
+      if (!events.has(alias)) events.set(alias, cls);
+    }
+  };
   const foldBuiltinLayer = (): void => {
     for (const cls of EVENT2_REGISTRY.values()) {
-      events.set(cls.type, cls);
+      addEvent(cls);
     }
     for (const key of replayableKeys) {
       states.push(key);
@@ -46,9 +52,7 @@ export function foldEventStateContributions(
           folds.set(cls.type, list);
         }
         list.push({ key, fold });
-        if (cls.durable && !events.has(cls.type)) {
-          events.set(cls.type, cls);
-        }
+        if (cls.durable) addEvent(cls);
       }
     }
   };

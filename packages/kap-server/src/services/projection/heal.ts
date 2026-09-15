@@ -74,6 +74,7 @@ export function foldTimelineSeed(records: readonly ContextRecord[]): TimelineSee
 
   for (const record of records) {
     switch (record.type) {
+      case 'turn.started':
       case 'turn.prompt': {
         seedEnded = true;
         skipCancelledTurnIds();

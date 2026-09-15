@@ -196,7 +196,8 @@ import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadat
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IWireService } from '#/wire/wire';
 import { WireService } from '#/wire/wireService';
-import { TurnPrompt } from '#/agent/loop/turnOps';
+import { turnKey } from '#/agent/loop/turnOps';
+import { TurnStarted } from '#/agent/loop/turnEvents';
 import { IModelService, type ModelsSection } from '#/llm-adapter/model/model';
 import {
   DEFAULT_MODEL_SECTION,
@@ -1735,8 +1736,9 @@ export class AgentTestContext {
 
   appendUserTurn(text: string): void {
     void this.dispatcher.dispatch(
-      new TurnPrompt({
+      new TurnStarted({
         agentId: 'main',
+        turnId: this.agentState.get(turnKey).nextTurnId,
         input: [{ type: 'text', text }],
         origin: { kind: 'user' },
       }),

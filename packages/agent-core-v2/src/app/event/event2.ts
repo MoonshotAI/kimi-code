@@ -24,6 +24,7 @@ export abstract class Event2<P = Record<string, unknown>> {
   static readonly durable: boolean = false;
   static readonly observable: boolean = false;
   static readonly agentDomain: boolean = false;
+  static readonly aliases: readonly string[] = [];
   declare static readonly schema: z.ZodType<any> | undefined;
 
   readonly type: string;
@@ -62,7 +63,8 @@ export interface Event2Class<P = any, E extends Event2<P> = Event2<P>> {
   readonly durable: boolean;
   readonly observable: boolean;
   readonly agentDomain: boolean;
-  readonly schema: z.ZodType<P> | undefined;
+  readonly aliases: readonly string[];
+  readonly schema: z.ZodType<any> | undefined;
 }
 
 export const EVENT2_REGISTRY = new Map<string, Event2Class<any, any>>();

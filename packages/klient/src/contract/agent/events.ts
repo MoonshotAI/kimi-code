@@ -33,10 +33,10 @@ export const turnStartedEventSchema = z.object({
   turnId: z.number(),
   /** Protocol `PromptOrigin` union — mirrored as `unknown`. */
   origin: z.unknown(),
-  /** The turn's extracted prompt text (present when the turn opened with a text part). */
-  prompt: z.string().optional(),
   /** The prompt record id when the turn was opened by a prompt submission. */
   promptId: z.string().optional(),
+  /** The turn's opening user message content (`ContentPart[]` — mirrored as `unknown[]`). */
+  input: z.array(z.unknown()),
 });
 
 export const turnEndedEventSchema = z.object({

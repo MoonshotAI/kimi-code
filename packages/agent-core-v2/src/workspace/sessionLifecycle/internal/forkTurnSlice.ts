@@ -96,8 +96,12 @@ function isUserVisibleTurnRecord(record: WireRecord): boolean {
   }
 }
 
+function isTurnInputRecordType(type: string): boolean {
+  return type === 'turn.started' || type === 'turn.prompt' || type === 'turn.steer';
+}
+
 function isUserVisibleTurnInputRecord(record: WireRecord): boolean {
-  if (record.type !== 'turn.prompt' && record.type !== 'turn.steer') return false;
+  if (!isTurnInputRecordType(record.type)) return false;
   const origin = asRecord(record['origin']);
   switch (origin?.['kind']) {
     case 'user':
@@ -156,7 +160,7 @@ function turnInputMatchesRecord(
   turnRecord: WireRecord,
   compareContent: boolean,
 ): boolean {
-  if (inputRecord.type !== 'turn.prompt' && inputRecord.type !== 'turn.steer') return false;
+  if (!isTurnInputRecordType(inputRecord.type)) return false;
   if (turnRecord.type !== 'context.append_message') return false;
   const message = asRecord(turnRecord['message']);
   if (message === undefined || message['role'] !== 'user') return false;

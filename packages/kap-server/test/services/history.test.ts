@@ -55,7 +55,7 @@ function ev(payload: Record<string, unknown>): ProjectionBusEvent {
 
 describe('foldWireHistory turn lifecycle', () => {
   const records: ContextRecord[] = [
-    rec('turn.prompt', {
+    rec('turn.started', {
       input: [{ type: 'text', text: 'fix the bug' }],
       origin: { kind: 'user' },
       promptId: 'p1',
@@ -167,7 +167,7 @@ describe('foldWireHistory turn lifecycle', () => {
 
   it('finalizes an unfinished turn by session liveness', () => {
     const inFlight: ContextRecord[] = [
-      rec('turn.prompt', { input: [{ type: 'text', text: 'go' }], origin: { kind: 'user' } }),
+      rec('turn.started', { input: [{ type: 'text', text: 'go' }], origin: { kind: 'user' } }),
       loopEvent({ type: 'step.begin', uuid: 'u1', turnId: '0', step: 1 }, T0 + 1),
       loopEvent({ type: 'content.part', stepUuid: 'u1', part: { type: 'text', text: 'partial' } }, T0 + 2),
       loopEvent(
@@ -216,7 +216,7 @@ describe('foldWireHistory origin classification', () => {
       [11, { kind: 'background_task', taskId: 'task-7' }],
     ];
     const records: ContextRecord[] = prompts.map(([ordinal, origin]) =>
-      rec('turn.prompt', {
+      rec('turn.started', {
         input: [
           ordinal === 1
             ? { type: 'text', text: `p${ordinal}`, contentType: 'text/xml' }
@@ -260,7 +260,7 @@ describe('foldWireHistory origin classification', () => {
 
   it('bundles skill activations into the user message skill_activations without a system message', () => {
     const messages = fold([
-      rec('turn.prompt', {
+      rec('turn.started', {
         input: [
           { type: 'text', text: '/review args' },
           { type: 'text', text: 'check this' },
@@ -285,7 +285,7 @@ describe('foldWireHistory origin classification', () => {
 describe('foldWireHistory steer', () => {
   it('attaches steers to the running step and buffers between steps', () => {
     const messages = fold([
-      rec('turn.prompt', { input: [{ type: 'text', text: 'do A' }], origin: { kind: 'user' } }),
+      rec('turn.started', { input: [{ type: 'text', text: 'do A' }], origin: { kind: 'user' } }),
       loopEvent({ type: 'step.begin', uuid: 'u1', turnId: '0', step: 1 }, T0 + 1),
       rec('turn.steer', { input: [{ type: 'text', text: 'also B' }], origin: { kind: 'user' } }, T0 + 2),
       loopEvent({ type: 'step.end', uuid: 'u1' }, T0 + 3),
@@ -312,7 +312,7 @@ describe('foldWireHistory steer', () => {
 
   it('emits steers read at their record without synthesizing a step', () => {
     const attached = fold([
-      rec('turn.prompt', { input: [{ type: 'text', text: 'do A' }], origin: { kind: 'user' } }),
+      rec('turn.started', { input: [{ type: 'text', text: 'do A' }], origin: { kind: 'user' } }),
       loopEvent({ type: 'step.begin', uuid: 'u1', turnId: '0', step: 1 }, T0 + 1),
       loopEvent({ type: 'step.end', uuid: 'u1' }, T0 + 2),
       rec('turn.steer', { input: [{ type: 'text', text: 'last' }], origin: { kind: 'user' } }, T0 + 3),
@@ -328,7 +328,7 @@ describe('foldWireHistory steer', () => {
     });
 
     const stepFree = fold([
-      rec('turn.prompt', { input: [{ type: 'text', text: 'do A' }], origin: { kind: 'user' } }),
+      rec('turn.started', { input: [{ type: 'text', text: 'do A' }], origin: { kind: 'user' } }),
       rec('turn.steer', { input: [{ type: 'text', text: 'early' }], origin: { kind: 'user' } }, T0 + 1),
       rec('turn.ended', { turnId: 0, reason: 'cancelled' }, T0 + 2),
     ]);
@@ -361,7 +361,7 @@ describe('foldWireHistory task notifications', () => {
     const xml2 = xmlFor('task-2', 'failed', 'Task failed', 'warning', 'tests broke');
     const xml3 = xmlFor('task-9', 'completed', 'Restored', 'info', 'from previous session');
     const messages = fold([
-      rec('turn.prompt', {
+      rec('turn.started', {
         input: [{ type: 'text', text: xml1 }],
         origin: { kind: 'task', taskId: 'task-1', status: 'completed', notificationId: 'task:task-1:completed' },
       }),
@@ -369,7 +369,7 @@ describe('foldWireHistory task notifications', () => {
       loopEvent({ type: 'step.begin', uuid: 'u1', turnId: '0', step: 1 }, T0 + 2),
       loopEvent({ type: 'step.end', uuid: 'u1' }, T0 + 3),
       rec('turn.ended', { turnId: 0, reason: 'completed' }, T0 + 4),
-      rec('turn.prompt', { input: [{ type: 'text', text: 'next' }], origin: { kind: 'user' } }, T0 + 5),
+      rec('turn.started', { input: [{ type: 'text', text: 'next' }], origin: { kind: 'user' } }, T0 + 5),
       loopEvent({ type: 'step.begin', uuid: 'v1', turnId: '1', step: 1 }, T0 + 6),
       loopEvent({ type: 'step.end', uuid: 'v1' }, T0 + 7),
       rec('context.append_message', notificationMessage('task-2', 'failed', xml2), T0 + 8),
@@ -445,7 +445,7 @@ describe('foldWireHistory task notifications', () => {
 
   it('tags user-slash skill prompts and steers with the skill user origin', () => {
     const messages = fold([
-      rec('turn.prompt', {
+      rec('turn.started', {
         input: [{ type: 'text', text: 'review the code' }],
         origin: {
           kind: 'skill_activation',
@@ -493,7 +493,7 @@ describe('foldWireHistory undo and clear', () => {
   function anchorTurn(ordinal: number, promptId: string, time: number): ContextRecord[] {
     return [
       rec(
-        'turn.prompt',
+        'turn.started',
         { input: [{ type: 'text', text: promptId }], origin: { kind: 'user' }, promptId },
         time,
       ),
@@ -555,7 +555,7 @@ describe('foldWireHistory undo and clear', () => {
       rec('goal.create', { objective: 'ship' }, T0 + 10),
       rec('context.clear', {}, T0 + 20),
       rec(
-        'turn.prompt',
+        'turn.started',
         { input: [{ type: 'text', text: 'fresh' }], origin: { kind: 'user' }, promptId: 'p1' },
         T0 + 30,
       ),
@@ -570,7 +570,7 @@ describe('foldWireHistory undo and clear', () => {
 describe('foldWireHistory interactions, facts and modes', () => {
   it('projects approval interactions and links them to their tool call', () => {
     const messages = fold([
-      rec('turn.prompt', { input: [{ type: 'text', text: 'go' }], origin: { kind: 'user' } }),
+      rec('turn.started', { input: [{ type: 'text', text: 'go' }], origin: { kind: 'user' } }),
       loopEvent({ type: 'step.begin', uuid: 'u1', turnId: '0', step: 1 }, T0 + 1),
       loopEvent(
         { type: 'tool.call', stepUuid: 'u1', toolCallId: 'call_1', name: 'Bash', args: '{}' },
@@ -730,7 +730,7 @@ describe('foldWireHistory interactions, facts and modes', () => {
 
   it('links subagent and swarm member tasks to their parent tool call with agent refs', () => {
     const messages = fold([
-      rec('turn.prompt', { input: [{ type: 'text', text: 'go' }], origin: { kind: 'user' } }),
+      rec('turn.started', { input: [{ type: 'text', text: 'go' }], origin: { kind: 'user' } }),
       loopEvent({ type: 'step.begin', uuid: 'u1', turnId: '0', step: 1 }, T0 + 1),
       loopEvent(
         { type: 'tool.call', stepUuid: 'u1', toolCallId: 'call_9', name: 'Agent', args: '{}' },
@@ -776,7 +776,7 @@ describe('foldWireHistory interactions, facts and modes', () => {
       '</agent_swarm_result>',
     ].join('\n');
     const swarmMessages = fold([
-      rec('turn.prompt', { input: [{ type: 'text', text: 'go' }], origin: { kind: 'user' } }),
+      rec('turn.started', { input: [{ type: 'text', text: 'go' }], origin: { kind: 'user' } }),
       loopEvent({ type: 'step.begin', uuid: 'u1', turnId: '0', step: 1 }, T0 + 1),
       loopEvent(
         {
@@ -845,7 +845,7 @@ describe('foldWireHistory queued prompts and legacy messages', () => {
         rec('prompt.accepted', { promptId: 'q1', content: [{ type: 'text', text: 'first' }] }, T0),
         rec('prompt.accepted', { promptId: 'q2', content: [{ type: 'text', text: 'second' }] }, T0 + 1),
         rec(
-          'turn.prompt',
+          'turn.started',
           { input: [{ type: 'text', text: 'first' }], origin: { kind: 'user' }, promptId: 'q1' },
           T0 + 2,
         ),
@@ -990,7 +990,7 @@ describe('foldWireHistory queued prompts and legacy messages', () => {
 describe('foldWireHistory todo restoration', () => {
   it('restores the todo entity from the last done TodoWrite input and reverts with undo', () => {
     const first: ContextRecord[] = [
-      rec('turn.prompt', { input: [{ type: 'text', text: 'one' }], origin: { kind: 'user' }, promptId: 'p0' }),
+      rec('turn.started', { input: [{ type: 'text', text: 'one' }], origin: { kind: 'user' }, promptId: 'p0' }),
       rec(
         'context.append_message',
         {
@@ -1020,7 +1020,7 @@ describe('foldWireHistory todo restoration', () => {
     ];
     const second: ContextRecord[] = [
       rec(
-        'turn.prompt',
+        'turn.started',
         { input: [{ type: 'text', text: 'two' }], origin: { kind: 'user' }, promptId: 'p1' },
         T0 + 10,
       ),
@@ -1234,7 +1234,7 @@ describe('live and cold rebuild id consistency', () => {
         createdAt: iso(T0),
       }),
     );
-    feed(ev({ type: 'turn.started', turnId: 0, promptId: 'p1', origin: { kind: 'user' }, prompt: 'fix the bug' }));
+    feed(ev({ type: 'turn.started', turnId: 0, promptId: 'p1', origin: { kind: 'user' }, input: [{ type: 'text', text: 'fix the bug' }] }));
     feed(ev({ type: 'turn.step.started', turnId: 0, step: 1 }));
     feed(ev({ type: 'thinking.delta', turnId: 0, delta: 'hmm' }));
     feed(ev({ type: 'assistant.delta', turnId: 0, delta: 'Hello' }));
@@ -1294,7 +1294,7 @@ describe('live and cold rebuild id consistency', () => {
         createdAt: iso(T0),
       }),
     );
-    feed(ev({ type: 'turn.started', turnId: 1, promptId: 'p2', origin: { kind: 'user' }, prompt: 'second' }));
+    feed(ev({ type: 'turn.started', turnId: 1, promptId: 'p2', origin: { kind: 'user' }, input: [{ type: 'text', text: 'second' }] }));
     feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
     feed(ev({ type: 'assistant.delta', turnId: 1, delta: 'partial' }));
     feed(ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
@@ -1302,7 +1302,7 @@ describe('live and cold rebuild id consistency', () => {
     feed(ev({ type: 'compaction.completed', result: { summary: 'sum' } }));
 
     const records: ContextRecord[] = [
-      rec('turn.prompt', {
+      rec('turn.started', {
         input: [{ type: 'text', text: 'fix the bug' }],
         origin: { kind: 'user' },
         promptId: 'p1',
@@ -1358,7 +1358,7 @@ describe('live and cold rebuild id consistency', () => {
         },
       }),
       rec('turn.ended', { turnId: 0, reason: 'completed', durationMs: 1500 }),
-      rec('turn.prompt', {
+      rec('turn.started', {
         input: [{ type: 'text', text: 'second' }],
         origin: { kind: 'user' },
         promptId: 'p2',
@@ -1410,7 +1410,7 @@ describe('live and cold rebuild id consistency', () => {
         createdAt: iso(T0),
       }),
     );
-    feed(ev({ type: 'turn.started', turnId: 0, promptId: 'p1', origin: { kind: 'user' }, prompt: 'fix' }));
+    feed(ev({ type: 'turn.started', turnId: 0, promptId: 'p1', origin: { kind: 'user' }, input: [{ type: 'text', text: 'fix' }] }));
     feed(ev({ type: 'turn.step.started', turnId: 0, step: 1 }));
     feed(ev({ type: 'hook.result', turnId: 0, hookEvent: 'PreToolUse', content: 'hook says hi' }));
     feed(ev({ type: 'warning', message: 'careful', code: 'W1' }));
@@ -1436,14 +1436,14 @@ describe('live and cold rebuild id consistency', () => {
         turnId: 1,
         promptId: 'p2',
         origin: { kind: 'skill_activation', trigger: 'user-slash', activationId: 'sk-1', skillName: 'review' },
-        prompt: 'run review',
+        input: [{ type: 'text', text: 'run review' }],
       }),
     );
     feed(ev({ type: 'skill.activated', activationId: 'sk-1', skillName: 'review', trigger: 'user-slash' }));
     feed(ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
 
     const records: ContextRecord[] = [
-      rec('turn.prompt', {
+      rec('turn.started', {
         input: [{ type: 'text', text: 'fix' }],
         origin: { kind: 'user' },
         promptId: 'p1',
@@ -1462,7 +1462,7 @@ describe('live and cold rebuild id consistency', () => {
       rec('context.apply_compaction', { summary: 'sum2', compactedCount: 1 }),
       loopEvent({ type: 'step.end', uuid: 'u1' }),
       rec('turn.ended', { turnId: 0, reason: 'completed' }),
-      rec('turn.prompt', {
+      rec('turn.started', {
         input: [{ type: 'text', text: 'run review' }],
         origin: { kind: 'skill_activation', trigger: 'user-slash', activationId: 'sk-1', skillName: 'review' },
         promptId: 'p2',

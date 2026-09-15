@@ -18,7 +18,7 @@ import type {
   TurnStepRetrying,
   TurnStepStarted,
 } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
-import type { TurnEnded, TurnPrompt, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import type { TurnEnded, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import type { AgentErrorEvent } from '@moonshot-ai/agent-core-v2/agent/mcp/mcpEvents';
 import type { PluginCommandActivated } from '@moonshot-ai/agent-core-v2/agent/pluginCommand/pluginCommand';
 import type { WarningIssued } from '@moonshot-ai/agent-core-v2/agent/profile/profileOps';
@@ -63,7 +63,6 @@ import type {
 
 export type ProjectionBusEvent =
   | ({ readonly type: 'plan.revision' } & PlanRevision)
-  | ({ readonly type: 'turn.prompt' } & TurnPrompt)
   | ({ readonly type: 'turn.started' } & TurnStarted)
   | ({ readonly type: 'turn.ended' } & TurnEnded)
   | ({ readonly type: 'turn.step.started' } & TurnStepStarted)

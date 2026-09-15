@@ -42,7 +42,7 @@ function loopEvent(event: Record<string, unknown>, time: number): string {
 }
 
 const MAIN_WIRE = [
-  rec('turn.prompt', {
+  rec('turn.started', {
     input: [{ type: 'text', text: 'hello world' }],
     origin: { kind: 'user' },
     promptId: 'p0',
@@ -74,7 +74,7 @@ const MAIN_WIRE = [
     },
     T0 + 8,
   ),
-  rec('turn.prompt', {
+  rec('turn.started', {
     input: [{ type: 'text', text: 'second question' }],
     origin: { kind: 'user' },
     promptId: 'p1',
@@ -95,7 +95,7 @@ const MAIN_WIRE = [
 ];
 
 const SUB_WIRE = [
-  rec('turn.prompt', {
+  rec('turn.started', {
     input: [{ type: 'text', text: 'do sub work' }],
     origin: { kind: 'system_trigger', name: 'subagent' },
   }, T0 + 20),
@@ -348,7 +348,7 @@ describe('server /api/v1/sessions/{sid}/history', () => {
     expect(idle.body.data.in_flight).toBeUndefined();
 
     const bus = agent.accessor.get(IEventBus);
-    bus.publish(new TurnStarted({ agentId: 'main', turnId: 0, origin: { kind: 'user' }, prompt: 'hi' }));
+    bus.publish(new TurnStarted({ agentId: 'main', turnId: 0, origin: { kind: 'user' }, input: [{ type: 'text', text: 'hi' }] }));
     bus.publish(new TurnStepStarted({ agentId: 'main', turnId: 0, step: 1 }));
 
     const streaming = await getJson<HistoryWire>(`/api/v1/sessions/${id}/history`);

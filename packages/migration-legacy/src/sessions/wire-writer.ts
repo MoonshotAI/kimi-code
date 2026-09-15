@@ -30,7 +30,7 @@ export async function writeMainAgentWire(sessionDir: string, input: WireWriteInp
   // Bare `context.append_message` records alone leave the engine's turn clock
   // at zero on resume: the first live turn would be numbered t0 and collide
   // with the first imported history turn, which is also numbered t0.
-  // Interleaving synthesized turn.prompt/turn.ended records advances the clock
+  // Interleaving synthesized turn.started/turn.ended records advances the clock
   // past the imported turns, so live turns get fresh ids.
   const turns = splitIntoTurns(input.messages);
   const turnRecords = buildTurnRecords(turns, { agentId: 'main', time: input.createdAtMs });

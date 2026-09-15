@@ -6,6 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createKimiHarness, type Event, type KimiHarness } from '#/index';
+import { turnPromptText } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 
 import { TEST_IDENTITY } from './test-identity';
 
@@ -417,15 +418,17 @@ describe('Session.prompt events', () => {
       unsubscribe();
 
       const spawned = events.find((event) => event.type === 'subagent.spawned');
-      expect(events).toContainEqual(
-        expect.objectContaining({
-          type: 'turn.started',
-          sessionId: session.id,
-          agentId: spawned?.type === 'subagent.spawned' ? spawned.subagentId : undefined,
-          origin: { kind: 'system_trigger', name: 'subagent' },
-          prompt: expect.stringContaining('Task requirements:'),
-        }),
+      const started = events.find(
+        (event) =>
+          event.type === 'turn.started' &&
+          event.agentId === (spawned?.type === 'subagent.spawned' ? spawned.subagentId : undefined),
       );
+      if (started?.type !== 'turn.started') throw new Error('Expected subagent turn.started');
+      expect(started).toMatchObject({
+        sessionId: session.id,
+        origin: { kind: 'system_trigger', name: 'subagent' },
+      });
+      expect(turnPromptText(started.input, started.origin)).toContain('Task requirements:');
     } finally {
       await harness.close();
     }
