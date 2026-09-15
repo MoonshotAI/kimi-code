@@ -184,7 +184,7 @@ describe('check-import-boundaries', () => {
 
   it('allows sibling-package imports outside kosong', () => {
     const violations = checkSource(
-      `import { something } from '@moonshot-ai/kaos';`,
+      `import { something } from '@moonshot-ai/klient';`,
       at('log', 'log.ts'),
     );
     expect(violations).toHaveLength(0);
