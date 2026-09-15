@@ -1,8 +1,8 @@
+import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
 import {
   apiKeyEnvMissingMessage,
   declaredProviderCredential,
-  parseKimiCodeCustomHeaders,
-} from '@moonshot-ai/kimi-code-oauth';
+} from '@moonshot-ai/kimi-code-oauth/provider-credential';
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
