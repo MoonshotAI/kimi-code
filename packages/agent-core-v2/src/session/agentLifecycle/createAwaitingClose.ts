@@ -9,9 +9,11 @@ const CLOSE_WAIT_POLL_MS = 50;
 export async function createAgentAwaitingClose(
   lifecycle: IAgentLifecycleService,
   opts: CreateAgentOptions,
+  signal?: AbortSignal,
 ): Promise<AgentContext> {
   const deadline = Date.now() + resolveSubagentScopeEvictTimeoutMs();
   for (;;) {
+    signal?.throwIfAborted();
     try {
       return await lifecycle.create(opts);
     } catch (error) {

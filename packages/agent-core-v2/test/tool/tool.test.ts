@@ -47,6 +47,7 @@ import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { DEFAULT_SUBAGENT_TIMEOUT_MS, SECONDARY_MODEL_SECTION, SUBAGENT_SECTION } from '#/session/subagent/configSection';
 import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
 import { Error2, ErrorCodes } from '#/errors';
+import { SUBAGENT_SCOPE_EVICT_TIMEOUT_ENV } from '#/session/subagent/subagentScopeCache';
 import type { AgentTaskSettlement } from '#/agent/task/types';
 import { SubagentTask } from '#/agent/tools/agent/subagent-task';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
@@ -2465,6 +2466,39 @@ describe('Agent tool execution contract', () => {
     });
     expect(result.isError).not.toBe(true);
     expect(result.output).toContain('resumed after eviction');
+  });
+
+  it('stops rebuilding an evicted resume target once the caller aborts', async () => {
+    vi.stubEnv(SUBAGENT_SCOPE_EVICT_TIMEOUT_ENV, '1000');
+    try {
+      const lifecycle = createAgentLifecycleStub({
+        createError: new Error2(ErrorCodes.AGENT_ALREADY_EXISTS, 'still closing'),
+      });
+      const context = createAgentToolContext(
+        lifecycle,
+        sessionService(ISessionMetadata, sessionMetadataStub({ 'agent-existing': subagentMeta() })),
+      );
+      const controller = new AbortController();
+
+      const resultPromise = executeAgentTool(
+        context,
+        { prompt: 'Continue', description: 'Continue work', resume: 'agent-existing' },
+        controller.signal,
+      );
+      await vi.waitFor(() => {
+        expect(lifecycle.create).toHaveBeenCalled();
+      });
+      controller.abort(userCancellationReason());
+      const createCallsAtAbort = lifecycle.create.mock.calls.length;
+      const abortedAt = Date.now();
+      const result = await resultPromise;
+
+      expect(result.isError).toBe(true);
+      expect(Date.now() - abortedAt).toBeLessThan(500);
+      expect(lifecycle.create.mock.calls.length).toBe(createCallsAtAbort);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('keeps rejecting resume of an agent id that was never persisted', async () => {

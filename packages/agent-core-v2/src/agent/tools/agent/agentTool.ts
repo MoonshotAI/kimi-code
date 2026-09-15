@@ -298,7 +298,7 @@ export class SubagentTool implements ISubagentTool {
     let displayModelSource: SubagentModelSource | undefined;
     let promptText = args.prompt;
     if (isResume) {
-      const target = await this.resolveResumeTarget(resumeAgentId);
+      const target = await this.resolveResumeTarget(resumeAgentId, controller.signal);
       agentId = target.id;
       const resumed = target.accessor.get(IAgentProfileService).data();
       profileName = resumed.profileName ?? RESUMED_LABEL;
@@ -356,7 +356,10 @@ export class SubagentTool implements ISubagentTool {
     };
   }
 
-  private async resolveResumeTarget(agentId: string): Promise<IAgentScopeHandle> {
+  private async resolveResumeTarget(
+    agentId: string,
+    signal: AbortSignal,
+  ): Promise<IAgentScopeHandle> {
     const meta = (await this.sessionMetadata.read()).agents?.[agentId];
     const live = this.agentLifecycle.handleOf(agentId);
     if (meta === undefined && live === undefined) {
@@ -376,7 +379,7 @@ export class SubagentTool implements ISubagentTool {
         { details: { agentId, callerAgentId: this.callerAgentId } },
       );
     }
-    const target = live ?? (await this.rebuildSubagent(agentId, meta));
+    const target = live ?? (await this.rebuildSubagent(agentId, meta, signal));
     if (target.accessor.get(IAgentLoopService).snapshot().state === 'running') {
       throw new Error2(
         ErrorCodes.AGENT_ALREADY_RUNNING,
@@ -387,12 +390,16 @@ export class SubagentTool implements ISubagentTool {
     return target;
   }
 
-  private async rebuildSubagent(agentId: string, meta: AgentMeta): Promise<IAgentScopeHandle> {
-    await createAgentAwaitingClose(this.agentLifecycle, {
-      agentId,
-      labels: labelsFromAgentMeta(meta),
-      forkedFrom: meta.forkedFrom,
-    });
+  private async rebuildSubagent(
+    agentId: string,
+    meta: AgentMeta,
+    signal: AbortSignal,
+  ): Promise<IAgentScopeHandle> {
+    await createAgentAwaitingClose(
+      this.agentLifecycle,
+      { agentId, labels: labelsFromAgentMeta(meta), forkedFrom: meta.forkedFrom },
+      signal,
+    );
     const rebuilt = this.agentLifecycle.handleOf(agentId);
     if (rebuilt === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent instance "${agentId}" does not exist`, {

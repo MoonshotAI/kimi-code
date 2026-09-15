@@ -193,7 +193,8 @@ export class SessionSwarmService implements ISessionSwarmService {
     const meta = await this.requireOwnedSubagent(callerAgentId, agentId);
     const caller = this.requireHandle(callerAgentId, 'Caller agent');
     const child =
-      this.agentLifecycle.handleOf(agentId) ?? (await this.rebuildSubagent(agentId, meta, caller));
+      this.agentLifecycle.handleOf(agentId) ??
+      (await this.rebuildSubagent(agentId, meta, caller, options.signal));
     this.requireIdleSubagent(agentId, child);
     const profileName =
       child.accessor.get(IAgentProfileService).data().profileName ?? RESUMED_PROFILE_FALLBACK;
@@ -276,12 +277,13 @@ export class SessionSwarmService implements ISessionSwarmService {
     agentId: string,
     meta: AgentMeta,
     caller: IAgentScopeHandle,
+    signal: AbortSignal,
   ): Promise<IAgentScopeHandle> {
-    await createAgentAwaitingClose(this.agentLifecycle, {
-      agentId,
-      labels: labelsFromAgentMeta(meta),
-      forkedFrom: meta.forkedFrom,
-    });
+    await createAgentAwaitingClose(
+      this.agentLifecycle,
+      { agentId, labels: labelsFromAgentMeta(meta), forkedFrom: meta.forkedFrom },
+      signal,
+    );
     const rebuilt = this.agentLifecycle.handleOf(agentId);
     if (rebuilt === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent instance "${agentId}" does not exist`, {

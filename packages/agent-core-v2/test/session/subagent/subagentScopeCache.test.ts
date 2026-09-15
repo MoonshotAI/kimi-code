@@ -6,6 +6,7 @@ import { ScopeUnits, type Fiber } from '#/_base/di/fiber';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
+import { userCancellationReason } from '#/_base/utils/abort';
 import '#/agent/profile/profileService';
 import { Emitter, Event } from '#/_base/event';
 import { Ledger } from '#/_base/lifecycle/ledger';
@@ -808,6 +809,39 @@ describe('SessionSubagentScopeCacheService', () => {
       /already exists/,
     );
     expect(Date.now() - started).toBeLessThan(DEFAULT_SUBAGENT_SCOPE_EVICT_TIMEOUT_MS);
+  });
+
+  it('rebuild stops waiting when the caller aborts while the previous scope is still closing', async () => {
+    vi.stubEnv(SUBAGENT_SCOPE_EVICT_TIMEOUT_ENV, '2000');
+    cacheService('1');
+    const stopAll = createControlledPromise<never[]>();
+    let stopAllCalls = 0;
+    ix.stub(IAgentTaskService, {
+      _serviceBrand: undefined,
+      list: () => [],
+      stopAllOnExit: () => (stopAllCalls++ === 0 ? stopAll : Promise.resolve([])),
+      suppressAllTerminalNotifications: async () => {},
+    } as unknown as IAgentTaskService);
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'agent-1' });
+    await svc.create({ agentId: 'agent-2' });
+
+    completed('agent-1');
+    completed('agent-2');
+    await vi.waitFor(() => {
+      expect(svc.handleOf('agent-1')).toBeUndefined();
+    });
+
+    const controller = new AbortController();
+    const rebuilt = createAgentAwaitingClose(svc, { agentId: 'agent-1' }, controller.signal);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const reason = userCancellationReason();
+    controller.abort(reason);
+    stopAll.resolve([]);
+    await expect(rebuilt).rejects.toBe(reason);
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(svc.handleOf('agent-1')).toBeUndefined();
   });
 
   it('flush during eviction touches only the evicted agent scope log', async () => {
