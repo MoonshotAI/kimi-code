@@ -2,9 +2,13 @@ import { z } from 'zod';
 
 import { epochMsSchema, isoDateTimeSchema } from './base';
 
-export const agentStatusSchema = z.enum(['idle', 'running', 'interrupted', 'completed', 'failed']);
+export const agentStatusSchema = z.enum(['idle', 'running', 'compacting']);
 
 export type AgentStatus = z.infer<typeof agentStatusSchema>;
+
+export const agentFinishReasonSchema = z.enum(['interrupted', 'completed', 'failed']);
+
+export type AgentFinishReason = z.infer<typeof agentFinishReasonSchema>;
 
 export const agentStateOriginSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('btw') }),
@@ -24,12 +28,6 @@ export const agentStateOriginSchema = z.discriminatedUnion('kind', [
 
 export type AgentStateOrigin = z.infer<typeof agentStateOriginSchema>;
 
-export const agentStateTurnSchema = z.object({
-  status: z.enum(['thinking', 'retrying', 'acting', 'aborting', 'compacting']),
-});
-
-export type AgentStateTurn = z.infer<typeof agentStateTurnSchema>;
-
 export const agentStateMessageSchema = z.object({
   type: z.literal('agent.state'),
   session_id: z.string().min(1),
@@ -40,7 +38,7 @@ export const agentStateMessageSchema = z.object({
   created_at: isoDateTimeSchema,
   ended_at: isoDateTimeSchema.optional(),
   status: agentStatusSchema,
-  turn: agentStateTurnSchema.optional(),
+  finish_reason: agentFinishReasonSchema.optional(),
 });
 
 export type AgentStateMessage = z.infer<typeof agentStateMessageSchema>;

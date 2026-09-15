@@ -1315,11 +1315,6 @@ describe('SessionProjection', () => {
       },
     };
     agent.bus.emit(ev({ type: 'turn.acting.started', turnId: 1, step: 1 }) as Event2<any>);
-    expect(
-      ofType(received, 'agent.state').some(
-        (m) => m.agent_id === 'main' && m.turn?.status === 'acting',
-      ),
-    ).toBe(true);
     agent.bus.emit(ev({ type: 'tool.call.started', turnId: 1, toolCallId: 'call_1', name: 'Bash', args: '{}' }) as Event2<any>);
     agent.bus.emit(ev({ type: 'compaction.blocked', turnId: 1 }) as Event2<any>);
     agent.bus.emit(ev({ type: 'compaction.started', trigger: 'auto' }) as Event2<any>);
@@ -1372,22 +1367,11 @@ describe('SessionProjection', () => {
       .filter((m) => m.agent_id === 'main' && m.status === 'running')
       .at(-1)!;
     expect(mainRunning).toBeDefined();
-    const thinkingState = ofType(received, 'agent.state')
-      .filter((m) => m.agent_id === 'main' && m.turn?.status === 'thinking')
-      .at(-1)!;
-    expect(thinkingState).toBeDefined();
-    await vi.waitFor(() => {
-      expect(
-        ofType(received, 'agent.state').some(
-          (m) => m.agent_id === 'main' && m.turn?.status === 'acting',
-        ),
-      ).toBe(true);
-    });
     const mainStates = ofType(received, 'agent.state').filter((m) => m.agent_id === 'main');
-    const compactingStates = mainStates.filter((m) => m.turn?.status === 'compacting');
+    const compactingStates = mainStates.filter((m) => m.status === 'compacting');
     expect(compactingStates).toHaveLength(1);
-    const lastActingIndex = mainStates.findLastIndex((m) => m.turn?.status === 'acting');
-    expect(lastActingIndex).toBeGreaterThan(mainStates.indexOf(compactingStates[0]!));
+    const lastRunningIndex = mainStates.findLastIndex((m) => m.status === 'running');
+    expect(lastRunningIndex).toBeGreaterThan(mainStates.indexOf(compactingStates[0]!));
     const mainIdle = ofType(received, 'agent.state')
       .filter((m) => m.agent_id === 'main')
       .at(-1)!;
@@ -1399,7 +1383,8 @@ describe('SessionProjection', () => {
     expect(childState).toMatchObject({
       profile: { kind: 'coder' },
       origin: { kind: 'tool-agent', tool_call_id: 'call_a', parent_agent_id: 'main' },
-      status: 'completed',
+      status: 'idle',
+      finish_reason: 'completed',
     });
     expect(typeof childState.ended_at).toBe('string');
     const swarmState = ofType(received, 'agent.state')
