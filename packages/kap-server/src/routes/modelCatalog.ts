@@ -13,6 +13,7 @@ import {
   type ProvidersSection,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { reconcileProviderCredentialUpdate } from '@moonshot-ai/kimi-code-oauth';
 import { setDefaultModelResponseSchema } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import { refreshProviderModelsResponseSchema } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
 import {
@@ -235,7 +236,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         [ErrorCode.PROVIDER_ALREADY_EXISTS]: {},
       },
       description:
-        'Create a provider manually (type + credentials + model list). When no global default_model is configured (fresh setup), it is seeded with the new provider default (or first) model; an existing default is never modified.',
+        'Create a provider manually (type + credentials + model list). Credentials are either `api_key` (stored inline) or `api_key_env` (name of an environment variable to read the key from); they are mutually exclusive — submitting both fails validation. When no global default_model is configured (fresh setup), it is seeded with the new provider default (or first) model; an existing default is never modified.',
       tags: ['providers'],
       operationId: 'createProvider',
     },
@@ -256,7 +257,17 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         }
 
         const provider: ProviderConfig = { type: req.body.type };
-        if (req.body.api_key !== undefined) provider.apiKey = req.body.api_key;
+        const credential = reconcileProviderCredentialUpdate(
+          {},
+          { apiKey: req.body.api_key, apiKeyEnv: req.body.api_key_env },
+          id,
+        );
+        if (!credential.ok) {
+          reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, credential.message, req.id));
+          return;
+        }
+        if (credential.apiKey !== undefined) provider.apiKey = credential.apiKey;
+        if (credential.apiKeyEnv !== undefined) provider.apiKeyEnv = credential.apiKeyEnv;
         if (req.body.base_url !== undefined) provider.baseUrl = req.body.base_url;
         if (req.body.default_model !== undefined) {
           provider.defaultModel = `${id}/${req.body.default_model}`;
@@ -314,7 +325,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         [ErrorCode.PROVIDER_ALREADY_EXISTS]: {},
       },
       description:
-        'Replace a provider in one save (type + base_url + model list), optionally renaming it via `new_id` (the providers key, model aliases, default_provider and a default_model pointing at an old alias all migrate). `api_key` is tri-state: omitted keeps the stored key, "" clears it, any other value replaces it. The provider\'s model aliases are rebuilt from `models` — aliases no longer listed disappear from config.toml, other providers\' aliases are untouched. Beyond the rename migration, the global default pointers are never modified. Answers 200 with `{provider}`. OAuth-managed providers are rejected: log out via /oauth/logout instead.',
+        'Replace a provider in one save (type + base_url + model list), optionally renaming it via `new_id` (the providers key, model aliases, default_provider and a default_model pointing at an old alias all migrate). `api_key` is tri-state: omitted keeps the stored key, "" clears it, any other value replaces it. `api_key_env` (name of an environment variable to read the key from instead of storing it) is likewise tri-state and mutually exclusive with `api_key` — setting one clears the other, submitting both fails validation. The provider\'s model aliases are rebuilt from `models` — aliases no longer listed disappear from config.toml, other providers\' aliases are untouched. Beyond the rename migration, the global default pointers are never modified. Answers 200 with `{provider}`. OAuth-managed providers are rejected: log out via /oauth/logout instead.',
       tags: ['providers'],
       operationId: 'replaceProvider',
     },
@@ -358,12 +369,17 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         }
 
         const provider: ProviderConfig = { ...target, type: req.body.type };
-        const submittedApiKey = req.body.api_key?.trim();
-        provider.apiKey = submittedApiKey ?? target.apiKey;
-        provider.apiKeyEnv =
-          submittedApiKey !== undefined && submittedApiKey.length > 0
-            ? undefined
-            : target.apiKeyEnv;
+        const credential = reconcileProviderCredentialUpdate(
+          target,
+          { apiKey: req.body.api_key, apiKeyEnv: req.body.api_key_env },
+          provider_id,
+        );
+        if (!credential.ok) {
+          reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, credential.message, req.id));
+          return;
+        }
+        provider.apiKey = credential.apiKey;
+        provider.apiKeyEnv = credential.apiKeyEnv;
         provider.baseUrl = req.body.base_url;
         provider.defaultModel =
           req.body.default_model !== undefined

@@ -1742,7 +1742,7 @@ describe('AuthSummaryService', () => {
     }
   });
 
-  it('ensureReady throws token_missing when the api_key_env variable is unset', async () => {
+  it('ensureReady throws config.invalid when the api_key_env variable is unset', async () => {
     providers = {
       acme: { type: 'openai', apiKeyEnv: 'KIMI_TEST_ENSURE_READY_KEY' },
     };
@@ -1753,7 +1753,7 @@ describe('AuthSummaryService', () => {
 
     const error = await createSummary().ensureReady().catch((error: unknown) => error);
     expect(error).toMatchObject({
-      code: 'auth.token_missing',
+      code: 'config.invalid',
       details: { provider_id: 'acme' },
     });
     expect((error as Error).message).toContain('acme');

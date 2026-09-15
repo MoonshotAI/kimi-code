@@ -317,7 +317,7 @@ describe('kimi provider add', () => {
         },
       },
     } as unknown as KimiConfig;
-    const { harness, removeCalls, current } = makeHarness(initial);
+    const { harness, current } = makeHarness(initial);
     const { deps, exitCodes } = makeDeps(harness);
 
     await tryRun(() =>
@@ -325,8 +325,10 @@ describe('kimi provider add', () => {
     );
 
     expect(exitCodes).toEqual([]);
-    expect(removeCalls).toContain('kohub');
     // The stale model alias must be gone; the registry's alias must be in.
+    // The batch is applied in memory via `applyCustomRegistryEntries` — the
+    // stale provider record is overwritten and its aliases dropped without a
+    // `removeProvider` RPC.
     expect(current().models?.['kohub/stale-model']).toBeUndefined();
     expect(current().models?.['kohub/claude-opus-4-7']).toBeDefined();
   });

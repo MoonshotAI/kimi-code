@@ -1,4 +1,4 @@
-import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
+import { apiKeyEnvMissingMessage, parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
@@ -460,7 +460,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
           if (apiKey === undefined) {
             throw new Error2(
               CONFIG_INVALID_ERROR_CODE,
-              `Provider "${providerName}" declares api_key_env = "${envName}" in config.toml, but the environment variable is not set or is empty.`,
+              apiKeyEnvMissingMessage(providerName, envName),
             );
           }
           return { apiKey };

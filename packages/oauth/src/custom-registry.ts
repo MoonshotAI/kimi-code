@@ -1,5 +1,6 @@
 import { readApiErrorMessage } from './api-error';
 import { CUSTOM_REGISTRY_MODEL_FIELDS, mergeRefreshedModelAlias } from './model-alias-merge';
+import { nonEmptyString } from './provider-credential';
 import { isRecord } from './utils';
 import type { ManagedKimiConfigShape, ManagedKimiModelAlias } from './managed-kimi-code';
 
@@ -342,12 +343,15 @@ export function applyCustomRegistryProvider(
   config: ManagedKimiConfigShape,
   entry: CustomRegistryProviderEntry,
   source: CustomRegistrySource,
+  priorProviders?: Readonly<Record<string, unknown>>,
 ): void {
   const providerKey = entry.id;
-  const existing = config.providers[providerKey];
+  const existing = (priorProviders?.[providerKey] ?? config.providers[providerKey]) as
+    | Record<string, unknown>
+    | undefined;
   const existingApiKeyEnv =
     existing !== undefined && readCustomRegistrySource(existing)?.url === source.url
-      ? nonEmptyString(existing?.['apiKeyEnv'])
+      ? nonEmptyString(existing['apiKeyEnv'])
       : undefined;
   config.providers[providerKey] =
     existingApiKeyEnv === undefined
@@ -405,12 +409,6 @@ export function applyCustomRegistryProvider(
   config.models = existingModels;
 }
 
-function nonEmptyString(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
 /**
  * Removes a custom-registry provider and every model alias that referenced it.
  * Clears `defaultModel` if it pointed at a removed alias. Mirrors
@@ -441,58 +439,64 @@ export function removeCustomRegistryProvider(
 }
 
 /**
- * Captures the hand-edited `apiKeyEnv` of the given providers before an
- * explicit re-import deletes their records, so {@link restoreProviderApiKeyEnvs}
- * can re-attach the declarations afterwards (mirroring how
- * `registryKeyFromExisting` preserves the registry key across re-imports).
- * Only records owned by the registry being re-imported (`source.url` matches
- * `registryUrl`) are captured — a colliding manual or other-registry provider
- * must not have its binding grafted onto the re-imported record.
+ * Surfaces the credential env var each entry declares via its `env` field, as
+ * `{ [entry.id]: varName }` — a hint only. The binding is never applied
+ * automatically: the registry controls both the variable name and the endpoint
+ * the credential is sent to, so the user must opt in by setting `api_key_env`
+ * in config.toml.
  */
-export function captureProviderApiKeyEnvs(
-  providers: Readonly<Record<string, unknown>>,
-  providerIds: ReadonlySet<string>,
-  registryUrl: string,
+export function credentialEnvHints(
+  entries: readonly CustomRegistryProviderEntry[],
 ): Record<string, string> {
-  const preserved: Record<string, string> = {};
-  for (const id of providerIds) {
-    const provider = providers[id];
-    if (!isRecord(provider)) continue;
-    if (readCustomRegistrySource(provider)?.url !== registryUrl) continue;
-    const apiKeyEnv = nonEmptyString(provider['apiKeyEnv']);
-    if (apiKeyEnv !== undefined) preserved[id] = apiKeyEnv;
+  const hints: Record<string, string> = {};
+  for (const entry of entries) {
+    for (const value of entry.env ?? []) {
+      const envName = nonEmptyString(value);
+      if (envName !== undefined) {
+        hints[entry.id] = envName;
+        break;
+      }
+    }
   }
-  return preserved;
+  return hints;
 }
 
 /**
- * Re-attaches captured `apiKeyEnv` declarations after a re-import: the
- * declaration wins over the inline `apiKey` the apply just wrote, which would
- * otherwise shadow it (and conflict with it).
+ * Removes the providers a re-import of `source.url` will replace: entries that
+ * vanished upstream (same-registry only — a colliding manual or other-registry
+ * provider is left alone) plus every entry's current record, so the follow-up
+ * apply rebuilds them fresh and state upstream no longer declares cannot
+ * linger. Returns the pre-removal snapshot of `config.providers`; pass it to
+ * `applyCustomRegistryEntries` so its provenance check can still preserve
+ * hand-edited `apiKeyEnv` declarations.
  */
-export function restoreProviderApiKeyEnvs(
-  providers: Record<string, unknown>,
-  preserved: Readonly<Record<string, string>>,
-): void {
-  for (const [id, apiKeyEnv] of Object.entries(preserved)) {
-    const record = providers[id];
-    if (!isRecord(record)) continue;
-    delete record['apiKey'];
-    record['apiKeyEnv'] = apiKeyEnv;
+export function removeCustomRegistryEntries(
+  config: ManagedKimiConfigShape,
+  entries: Record<string, CustomRegistryProviderEntry>,
+  source: CustomRegistrySource,
+): Readonly<Record<string, unknown>> {
+  const surviving = new Set(Object.values(entries).map((entry) => entry.id));
+  const prior = { ...config.providers };
+  for (const [providerId, provider] of Object.entries(config.providers)) {
+    if (!isRecord(provider)) continue;
+    if (provider['oauth'] !== undefined) continue;
+    const existingSource = provider['source'];
+    const sameRegistry =
+      isRecord(existingSource) &&
+      existingSource['kind'] === 'apiJson' &&
+      existingSource['url'] === source.url;
+    if (surviving.has(providerId) || sameRegistry) {
+      removeCustomRegistryProvider(config, providerId);
+    }
   }
+  return prior;
 }
 
 /**
- * Applies every entry from a single api.json import in memory. Mirrors the
- * "remove if present, then apply" sequence the Add Platform flow used to do
- * via the `removeProvider` RPC, but stays purely in-memory so callers can
- * persist the whole batch with a single write at the end.
- *
- * Bug fixed: previously the caller interleaved in-memory `applyCustomRegistry-
- * Provider` with the disk-writing `removeProvider` RPC inside a loop. Each
- * RPC re-read disk and returned a fresh config object, discarding entries that
- * had already been merged in-memory from earlier iterations. Re-importing a
- * multi-provider api.json silently lost N-1 of N providers.
+ * Applies every entry from a single api.json import in memory. Pass the
+ * `prior` snapshot returned by {@link removeCustomRegistryEntries} when the
+ * removals already happened (e.g. a caller that persists the removal phase
+ * before the apply phase); without it, the removals are performed here first.
  *
  * Re-import semantics: providers previously imported from the same source URL
  * but no longer present in `entries` are removed (along with their aliases and
@@ -501,32 +505,37 @@ export function restoreProviderApiKeyEnvs(
  * model aliases behind. Matching is by `source.url` only — the apiKey commonly
  * rotates between imports, but the URL is the stable identity of "the same
  * registry".
+ *
+ * Surviving entries are rebuilt from scratch (their records and aliases are
+ * removed first, so state upstream no longer declares does not linger), while
+ * `applyCustomRegistryProvider` still sees the pre-removal snapshot — its
+ * provenance check is the single mechanism that preserves a hand-edited
+ * `apiKeyEnv`. Defaults (`defaultModel`/`defaultProvider`) that still resolve
+ * after the rebuild are restored; a `defaultModel` left dangling is cleared
+ * (with `thinking`, mirroring the refresh path).
  */
 export function applyCustomRegistryEntries(
   config: ManagedKimiConfigShape,
   entries: Record<string, CustomRegistryProviderEntry>,
   source: CustomRegistrySource,
+  prior?: Readonly<Record<string, unknown>>,
 ): void {
-  const surviving = new Set(Object.values(entries).map((entry) => entry.id));
-  const preservedApiKeyEnv = captureProviderApiKeyEnvs(config.providers, surviving, source.url);
-  for (const [providerId, provider] of Object.entries(config.providers)) {
-    if (surviving.has(providerId)) continue;
-    if (!isRecord(provider)) continue;
-    const existingSource = provider['source'];
-    if (
-      isRecord(existingSource) &&
-      existingSource['kind'] === 'apiJson' &&
-      existingSource['url'] === source.url
-    ) {
-      removeCustomRegistryProvider(config, providerId);
-    }
+  const previousDefault = config.defaultModel;
+  const previousDefaultProvider = config['defaultProvider'] as string | undefined;
+  const provenance = prior ?? removeCustomRegistryEntries(config, entries, source);
+  for (const entry of Object.values(entries)) {
+    applyCustomRegistryProvider(config, entry, source, provenance);
   }
 
-  for (const entry of Object.values(entries)) {
-    if (entry.id in config.providers) {
-      removeCustomRegistryProvider(config, entry.id);
-    }
-    applyCustomRegistryProvider(config, entry, source);
+  config.defaultModel =
+    previousDefault !== undefined && config.models?.[previousDefault] !== undefined
+      ? previousDefault
+      : undefined;
+  config['defaultProvider'] =
+    previousDefaultProvider !== undefined && config.providers[previousDefaultProvider] !== undefined
+      ? previousDefaultProvider
+      : undefined;
+  if (previousDefault !== undefined && config.defaultModel === undefined) {
+    config.thinking = undefined;
   }
-  restoreProviderApiKeyEnvs(config.providers, preservedApiKeyEnv);
 }

@@ -123,6 +123,7 @@ function toProviderResponses(value: unknown): Record<string, ProviderResponse> {
       type: typeof provider.type === 'string' ? provider.type : '',
       base_url: nonEmpty(provider.baseUrl),
       default_model: nonEmpty(provider.defaultModel),
+      api_key_env: nonEmpty(provider.apiKeyEnv),
       has_api_key: hasProviderCredential(provider),
     };
   }

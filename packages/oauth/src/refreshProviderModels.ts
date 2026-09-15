@@ -24,6 +24,11 @@ import {
   getOpenPlatformById,
   isOpenPlatformId,
 } from './open-platform';
+import {
+  declaredProviderCredential,
+  apiKeyEnvMissingMessage,
+  nonEmptyString,
+} from './provider-credential';
 import { isRecord } from './utils';
 
 /**
@@ -84,59 +89,38 @@ interface ProviderView {
 }
 
 /**
- * Mirrors the runtime credential resolution for `type: 'kimi'` providers:
- * the inline `apiKey` wins, then a declared `apiKeyEnv` naming an environment
- * variable (read from `process.env` at refresh time), with `env.KIMI_API_KEY`
- * as the documented config-file fallback. A declared `apiKeyEnv` whose
- * variable is unset or empty throws — silently falling through to another key
- * source could send requests (and bill) under the wrong account.
+ * Resolves the Bearer key for `type: 'kimi'` providers: the inline `apiKey`
+ * wins, then a declared `apiKeyEnv` naming an environment variable (read from
+ * `process.env` at refresh time), with `env.KIMI_API_KEY` as the documented
+ * config-file fallback. A declared `apiKeyEnv` whose variable is unset or
+ * empty throws — silently falling through to another key source could send
+ * requests (and bill) under the wrong account.
  *
- * The two credential conflicts the runtime rejects (inline `apiKey` together
- * with `apiKeyEnv`, and `apiKeyEnv` together with `oauth`) throw here too:
- * refresh must not honor a configuration the chat path would refuse, and the
- * open-platform rewrite must never pick one side of a conflict to persist.
+ * Credential conflicts (`apiKey`+`apiKeyEnv`, `apiKeyEnv`+`oauth`,
+ * `apiKey`+`oauth`) throw here too: refresh must not honor a configuration the
+ * chat path would refuse, and the open-platform rewrite must never pick one
+ * side of a conflict to persist.
  */
-function resolveProviderApiKey(provider: ProviderView): string | undefined {
-  const inlineApiKey =
-    typeof provider.apiKey === 'string' && provider.apiKey.trim().length > 0
-      ? provider.apiKey.trim()
-      : undefined;
-  const apiKeyEnv = declaredApiKeyEnv(provider);
-  if (inlineApiKey !== undefined && apiKeyEnv !== undefined) {
-    throw new Error(
-      'Provider has both apiKey and apiKeyEnv set in config.toml - they are mutually exclusive. Remove one.',
-    );
+function resolveProviderApiKey(provider: ProviderView, providerName: string): string | undefined {
+  const declared = declaredProviderCredential(provider, providerName);
+  if (declared.kind === 'conflict') {
+    throw new Error(declared.message);
   }
-  if (apiKeyEnv !== undefined && provider.oauth !== undefined) {
-    throw apiKeyEnvOauthConflictError();
+  if (declared.kind === 'inline') {
+    return declared.apiKey;
   }
-  if (inlineApiKey !== undefined) {
-    return inlineApiKey;
-  }
-  if (apiKeyEnv !== undefined) {
-    const value = process.env[apiKeyEnv];
-    if (typeof value === 'string' && value.trim().length > 0) return value.trim();
-    throw new Error(
-      `Provider declares api_key_env = "${apiKeyEnv}" in config.toml, but the environment variable is not set or is empty.`,
-    );
+  if (declared.kind === 'env') {
+    const value = nonEmptyString(process.env[declared.apiKeyEnv]);
+    if (value === undefined) {
+      throw new Error(apiKeyEnvMissingMessage(providerName, declared.apiKeyEnv));
+    }
+    return value;
   }
   if (isRecord(provider.env)) {
-    const fromEnv = provider.env['KIMI_API_KEY'];
-    if (typeof fromEnv === 'string' && fromEnv.length > 0) return fromEnv;
+    const fromEnv = nonEmptyString(provider.env['KIMI_API_KEY']);
+    if (fromEnv !== undefined) return fromEnv;
   }
   return undefined;
-}
-
-function declaredApiKeyEnv(provider: ProviderView): string | undefined {
-  if (typeof provider.apiKeyEnv !== 'string') return undefined;
-  const trimmed = provider.apiKeyEnv.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function apiKeyEnvOauthConflictError(): Error {
-  return new Error(
-    'Provider has both apiKeyEnv and oauth set in config.toml - they are mutually exclusive. Remove one.',
-  );
 }
 
 function readProvider(
@@ -437,8 +421,9 @@ export async function refreshProviderModels(
     managedProvider.oauth !== undefined
   ) {
     try {
-      if (declaredApiKeyEnv(managedProvider) !== undefined) {
-        throw apiKeyEnvOauthConflictError();
+      const declared = declaredProviderCredential(managedProvider, KIMI_CODE_PROVIDER_NAME);
+      if (declared.kind === 'conflict') {
+        throw new Error(declared.message);
       }
       const auth = resolveKimiCodeRuntimeAuth({
         configuredBaseUrl: managedProvider.baseUrl,
@@ -524,7 +509,8 @@ export async function refreshProviderModels(
     if (providerConfig === undefined) continue;
 
     try {
-      const apiKey = resolveProviderApiKey(providerConfig);
+      const declared = declaredProviderCredential(providerConfig, providerId);
+      const apiKey = resolveProviderApiKey(providerConfig, providerId);
       if (apiKey === undefined) continue;
       let models = await fetchOpenPlatformModels(platform, apiKey);
       models = filterModelsByPrefix(models, platform);
@@ -540,24 +526,8 @@ export async function refreshProviderModels(
         models,
         selectedModel,
         thinking: false,
-        apiKey,
+        credential: declared.kind === 'env' ? { apiKeyEnv: declared.apiKeyEnv } : { apiKey },
       });
-      const apiKeyEnv = declaredApiKeyEnv(providerConfig);
-      if (apiKeyEnv !== undefined) {
-        // `applyOpenPlatformConfig` persists the fetch key inline; an
-        // api_key_env provider must keep its env declaration instead, or the
-        // secret would leak from the environment into config.toml. Only the
-        // inline key is dropped — hand-written fields such as customHeaders
-        // survive the refresh.
-        const { apiKey: _persistedKey, ...rest } = providerConfig as ProviderView &
-          Record<string, unknown>;
-        next.providers[providerId] = {
-          ...rest,
-          type: 'kimi',
-          baseUrl: platform.baseUrl,
-          apiKeyEnv,
-        };
-      }
       const refreshedAliasKeys = providerRefreshAliasKeys(
         config,
         next,
@@ -612,12 +582,19 @@ export async function refreshProviderModels(
     const provider = readProvider(config, providerId);
     if (provider === undefined) continue;
     if (provider.type !== 'kimi') continue;
+    const earlyDeclared = declaredProviderCredential(provider, providerId);
+    if (earlyDeclared.kind === 'conflict') {
+      if (providerId !== KIMI_CODE_PROVIDER_NAME || provider.oauth === undefined) {
+        failed.push({ provider: providerId, reason: earlyDeclared.message });
+      }
+      continue;
+    }
     if (provider.oauth !== undefined) continue;
     if (readCustomRegistrySource(provider) !== undefined) continue;
     if (!isManagedKimiCodeBaseUrl(provider.baseUrl)) continue;
 
     try {
-      const apiKey = resolveProviderApiKey(provider);
+      const apiKey = resolveProviderApiKey(provider, providerId);
       if (apiKey === undefined) continue;
       const models = await fetchManagedKimiCodeModels({
         accessToken: apiKey,

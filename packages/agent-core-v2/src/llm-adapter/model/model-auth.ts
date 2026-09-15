@@ -1,5 +1,9 @@
 import { Error2 } from '#/_base/errors/errors';
 import {
+  credentialConflictMessage,
+  declaredProviderCredential,
+} from '@moonshot-ai/kimi-code-oauth';
+import {
   BUDGET_THINKING_EFFORTS,
   matchKnownAnthropicModelProfile,
   matchUnknownClaudeProfile,
@@ -22,7 +26,10 @@ export function resolveModelAuthMaterial(args: {
 }): ResolvedModelAuthMaterial {
   const modelApiKey = nonEmpty(args.model.apiKey);
   if (modelApiKey !== undefined && args.model.oauth !== undefined) {
-    throw authConflictError('Model', args.modelId, 'apiKey', 'oauth');
+    throw new Error2(
+      CONFIG_INVALID_ERROR_CODE,
+      credentialConflictMessage('Model', args.modelId, 'apiKey', 'oauth'),
+    );
   }
   if (modelApiKey !== undefined) {
     return { apiKey: modelApiKey };
@@ -39,23 +46,22 @@ export function resolveModelAuthMaterial(args: {
     providerAuthType === undefined
       ? {}
       : explainProviderEndpoint(providerAuthType, args.provider?.env ?? {});
-  const inlineApiKey = nonEmpty(args.provider?.apiKey);
-  const apiKeyEnv = nonEmpty(args.provider?.apiKeyEnv);
+  const declared = declaredProviderCredential(args.provider ?? {}, args.providerName);
+  if (declared.kind === 'conflict') {
+    throw new Error2(CONFIG_INVALID_ERROR_CODE, declared.message);
+  }
+  if (declared.kind === 'inline') {
+    return { apiKey: declared.apiKey };
+  }
+  if (declared.kind === 'env') {
+    return { apiKeyEnv: declared.apiKeyEnv };
+  }
   const endpointApiKey = nonEmpty(providerEndpoint.apiKey);
-  if (inlineApiKey !== undefined && apiKeyEnv !== undefined) {
-    throw authConflictError('Provider', args.providerName, 'apiKey', 'apiKeyEnv');
-  }
-  if (apiKeyEnv !== undefined && args.provider?.oauth !== undefined) {
-    throw authConflictError('Provider', args.providerName, 'apiKeyEnv', 'oauth');
-  }
-  if ((inlineApiKey ?? endpointApiKey) !== undefined && args.provider?.oauth !== undefined) {
-    throw authConflictError('Provider', args.providerName, 'apiKey', 'oauth');
-  }
-  if (inlineApiKey !== undefined) {
-    return { apiKey: inlineApiKey };
-  }
-  if (apiKeyEnv !== undefined) {
-    return { apiKeyEnv };
+  if (endpointApiKey !== undefined && args.provider?.oauth !== undefined) {
+    throw new Error2(
+      CONFIG_INVALID_ERROR_CODE,
+      credentialConflictMessage('Provider', args.providerName, 'apiKey', 'oauth'),
+    );
   }
   if (endpointApiKey !== undefined) {
     return { apiKey: endpointApiKey };
@@ -223,11 +229,4 @@ export function resolveModelForReady(
 export function nonEmpty(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
-}
-
-function authConflictError(kind: string, name: string, first: string, second: string): Error2 {
-  return new Error2(
-    CONFIG_INVALID_ERROR_CODE,
-    `${kind} "${name}" has both ${first} and ${second} set in config.toml - they are mutually exclusive. Remove one.`,
-  );
 }

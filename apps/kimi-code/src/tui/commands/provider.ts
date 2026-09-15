@@ -1,5 +1,7 @@
 import {
   applyCustomRegistryEntries,
+  credentialEnvHints,
+  CustomRegistryApiError,
   fetchCustomRegistry,
   type CustomRegistrySource,
   type ManagedKimiConfigShape,
@@ -353,6 +355,13 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
     entries = await fetchCustomRegistry(source, { userAgent: createKimiCodeUserAgent() });
   } catch (error) {
     host.showError(`Failed to import registry: ${formatErrorMessage(error)}`);
+    if (
+      value.apiKey.length === 0 &&
+      error instanceof CustomRegistryApiError &&
+      (error.status === 401 || error.status === 403)
+    ) {
+      host.showStatus('This registry requires authentication — paste its Bearer token.', 'warning');
+    }
     return false;
   }
 
@@ -367,6 +376,8 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
     await host.harness.setConfig({
       providers: config.providers,
       models: config.models,
+      defaultModel: config.defaultModel,
+      defaultProvider: config.defaultProvider,
     });
     await host.authFlow.refreshConfigAfterLogin();
   } catch (error) {
@@ -385,13 +396,11 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
       : `Imported ${String(count)} providers from registry.`,
     'success',
   );
-  for (const entry of Object.values(entries)) {
-    const envKey = firstNonEmptyString(entry.env);
-    if (envKey !== undefined) {
-      host.showStatus(
-        `provider "${entry.id}" declares credential env var "${envKey}" — set api_key_env in config.toml to use it`,
-      );
-    }
+  const hints = credentialEnvHints(Object.values(entries));
+  for (const [id, envName] of Object.entries(hints)) {
+    host.showStatus(
+      `provider "${id}" declares credential env var "${envName}" — set api_key_env in config.toml to use it`,
+    );
   }
 
   // Offer the model selector so the user can pick a default, just like the
@@ -437,12 +446,4 @@ function promptCustomRegistryImport(
     );
     host.mountEditorReplacement(dialog);
   });
-}
-
-function firstNonEmptyString(values: readonly string[] | undefined): string | undefined {
-  for (const value of values ?? []) {
-    const trimmed = value.trim();
-    if (trimmed.length > 0) return trimmed;
-  }
-  return undefined;
 }

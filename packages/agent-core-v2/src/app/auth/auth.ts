@@ -1,3 +1,4 @@
+import { apiKeyEnvMissingMessage } from '@moonshot-ai/kimi-code-oauth';
 import type {
   AuthManagedUserInfoResult,
   AuthManagedUsageResult,
@@ -11,6 +12,7 @@ import type {
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { Error2 } from '#/_base/errors/errors';
 
+import { CONFIG_INVALID_ERROR_CODE } from '#/llm-adapter/contract/errors';
 import type { OAuthRef } from '#/llm-adapter/provider/provider';
 
 import { AuthErrors } from './errors';
@@ -96,11 +98,24 @@ export class AuthProvisioningRequiredError extends Error2 {
 export class AuthTokenMissingError extends Error2 {
   readonly providerId: string;
 
-  constructor(providerId: string, message?: string) {
+  constructor(providerId: string) {
     super(
       AuthErrors.codes.AUTH_TOKEN_MISSING,
-      message ?? `provider ${providerId} has no credential configured`,
+      `provider ${providerId} has no credential configured`,
       { details: { provider_id: providerId }, name: 'AuthTokenMissingError' },
+    );
+    this.providerId = providerId;
+  }
+}
+
+export class AuthCredentialEnvMissingError extends Error2 {
+  readonly providerId: string;
+
+  constructor(providerId: string, envName: string) {
+    super(
+      CONFIG_INVALID_ERROR_CODE,
+      apiKeyEnvMissingMessage(providerId, envName),
+      { details: { provider_id: providerId }, name: 'AuthCredentialEnvMissingError' },
     );
     this.providerId = providerId;
   }

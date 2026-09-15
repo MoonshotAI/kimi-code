@@ -13,11 +13,10 @@
  */
 
 import {
-  applyCustomRegistryProvider,
-  captureProviderApiKeyEnvs,
+  applyCustomRegistryEntries,
+  credentialEnvHints,
   CustomRegistryApiError,
   fetchCustomRegistry,
-  restoreProviderApiKeyEnvs,
   type CustomRegistrySource,
   type ManagedKimiConfigShape,
 } from '@moonshot-ai/kimi-code-oauth';
@@ -101,6 +100,15 @@ export async function handleProviderAdd(
   } catch (error) {
     const suffix = error instanceof CustomRegistryApiError ? ` (HTTP ${String(error.status)})` : '';
     deps.stderr.write(`Failed to fetch registry${suffix}: ${errorMessage(error)}\n`);
+    if (
+      apiKey.length === 0 &&
+      error instanceof CustomRegistryApiError &&
+      (error.status === 401 || error.status === 403)
+    ) {
+      deps.stderr.write(
+        'This registry requires authentication — pass --api-key <key> or set KIMI_REGISTRY_API_KEY.\n',
+      );
+    }
     deps.exit(1);
   }
 
@@ -110,63 +118,35 @@ export async function handleProviderAdd(
     deps.exit(1);
   }
 
-  // `harness.removeProvider` reloads the config from disk on each call (see
-  // `core-impl.ts removeKimiProvider`), so calling it inside the apply loop
-  // would discard providers we already applied in memory but have not yet
-  // persisted. Drop every stale id up front in a single batch instead, then
-  // apply against the resulting fresh config. Capture any hand-edited
-  // api_key_env first — the deletions below would otherwise silently replace
-  // the declaration with the registry key (often empty for public registries).
-  let config = await harness.getConfig();
-  const staleIds = entryList
-    .filter((entry) => config.providers[entry.id] !== undefined)
-    .map((entry) => entry.id);
-  const preservedApiKeyEnv = captureProviderApiKeyEnvs(
-    asManaged(config).providers,
-    new Set(staleIds),
-    source.url,
-  );
-  for (const id of staleIds) {
-    config = await harness.removeProvider(id);
-  }
-
-  const addedProviderIds: string[] = [];
-  let modelCount = 0;
-  for (const entry of entryList) {
-    applyCustomRegistryProvider(asManaged(config), entry, source);
-    addedProviderIds.push(entry.id);
-    modelCount += Object.keys(entry.models).length;
-  }
-  restoreProviderApiKeyEnvs(asManaged(config).providers, preservedApiKeyEnv);
+  // The whole batch is applied in memory and persisted with a single write:
+  // `applyCustomRegistryEntries` removes same-registry providers that no
+  // longer exist upstream, applies each entry over its existing record (which
+  // preserves a hand-edited api_key_env via the provenance check), and clears
+  // a dangling defaultModel — no `removeProvider` RPC per id.
+  const config = await harness.getConfig();
+  applyCustomRegistryEntries(asManaged(config), entries, source);
 
   await harness.setConfig({
     providers: config.providers,
     models: config.models,
+    defaultModel: config.defaultModel,
+    defaultProvider: config.defaultProvider,
   });
 
+  const modelCount = entryList.reduce((total, entry) => total + Object.keys(entry.models).length, 0);
   deps.stdout.write(
-    `Imported ${String(addedProviderIds.length)} provider${addedProviderIds.length === 1 ? '' : 's'} ` +
+    `Imported ${String(entryList.length)} provider${entryList.length === 1 ? '' : 's'} ` +
       `(${String(modelCount)} model${modelCount === 1 ? '' : 's'}) from ${trimmedUrl}:\n`,
   );
-  for (const id of addedProviderIds) {
-    deps.stdout.write(`  - ${id}\n`);
-  }
   for (const entry of entryList) {
-    const envKey = firstNonEmptyString(entry.env);
-    if (envKey !== undefined) {
-      deps.stdout.write(
-        `provider "${entry.id}" declares credential env var "${envKey}" — set api_key_env in config.toml to use it\n`,
-      );
-    }
+    deps.stdout.write(`  - ${entry.id}\n`);
   }
-}
-
-function firstNonEmptyString(values: readonly string[] | undefined): string | undefined {
-  for (const value of values ?? []) {
-    const trimmed = value.trim();
-    if (trimmed.length > 0) return trimmed;
+  const hints = credentialEnvHints(entryList);
+  for (const [id, envName] of Object.entries(hints)) {
+    deps.stdout.write(
+      `provider "${id}" declares credential env var "${envName}" — set api_key_env in config.toml to use it\n`,
+    );
   }
-  return undefined;
 }
 
 export async function handleProviderRemove(
