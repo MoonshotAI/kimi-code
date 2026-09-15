@@ -54,6 +54,11 @@ describe('Remote Control output', () => {
     expect(output).toContain('#token=example-token');
     expect(output).not.toContain('exampl…vice');
     expect(output).not.toContain('Manage devices');
+
+    const tokenless = formatRemoteControlOutput({ ...outputOptions, localServerToken: undefined });
+    expect(tokenless).toContain('http://127.0.0.1:1234/');
+    expect(tokenless).not.toContain('#token=');
+    expect(tokenless).not.toContain('example-token');
   });
 
   it('formats relay and device lifecycle states', () => {

@@ -445,11 +445,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     remoteControl: {
       service: remoteControlManager,
       staticEnableError:
-        exposureClass !== 'loopback'
-          ? 'Remote Control requires a loopback host.'
-          : opts.disableAuth === true
-            ? 'Remote Control cannot be combined with --dangerous-bypass-auth.'
-            : undefined,
+        exposureClass !== 'loopback' ? 'Remote Control requires a loopback host.' : undefined,
     },
     onShutdown: () => {
       void close().catch((err: unknown) => logger.error({ err }, 'server close failed'));

@@ -33,7 +33,7 @@ export type {
 export interface RemoteControlOutputOptions {
   readonly url: string;
   readonly localOrigin: string;
-  readonly localServerToken: string;
+  readonly localServerToken?: string;
   readonly deviceName: string;
   readonly qrCode: string;
   readonly pngPath: string;

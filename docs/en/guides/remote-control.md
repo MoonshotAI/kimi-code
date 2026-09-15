@@ -31,7 +31,7 @@ The Remote Control link is a remote control entry point to this machine — anyo
 Two limitations:
 
 - Only one Remote Control instance can run per machine. Starting it again reports the existing instance and prints the link already in use — see [How to turn off Remote Control](#how-to-turn-off-remote-control) for how to stop the old one
-- Remote Control cannot be combined with `--dangerous-bypass-auth`, and it only binds to the loopback address (`--host` LAN sharing is not supported — remote access goes through the Kimi relay service)
+- Remote Control only binds to the loopback address (`--host` LAN sharing is not supported — remote access goes through the Kimi relay service). With `--dangerous-bypass-auth` the local server performs no authentication, so the relay sign-in is the only access check.
 
 ### Step 2: Connect from another device
 

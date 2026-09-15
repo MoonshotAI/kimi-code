@@ -84,7 +84,7 @@ describe('server-v2 /api/v1/remote-control', () => {
     return (await res.json()) as Envelope<RemoteControlStatusWire>;
   }
 
-  it('starts and stops the tunnel at runtime, dedupes concurrent enables, and tracks relay-initiated shutdown', async () => {
+  it('starts and stops the tunnel at runtime, dedupes concurrent enables, tracks relay-initiated shutdown, and enables under disableAuth', async () => {
     const relay = await startRegisterAckRelay();
     vi.stubEnv('KIMI_CODE_REMOTE_CONTROL_RELAY_URL', `http://127.0.0.1:${relay.port}`);
 
@@ -151,6 +151,64 @@ describe('server-v2 /api/v1/remote-control', () => {
     expect(reenabled.data.state).toBe('on');
 
     await postRemoteControl(false);
+
+    const bypassHome = await mkdtemp(join(tmpdir(), 'kimi-server-v2-rc-bypass-'));
+    await new FileTokenStorage(join(bypassHome, 'credentials')).save(
+      resolveKimiTokenStorageName({ providerName: KIMI_CODE_PROVIDER_NAME }),
+      TOKEN,
+    );
+    const bypassServer = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: bypassHome,
+      logLevel: 'silent',
+      disableAuth: true,
+    });
+    try {
+      const bypassBase = `http://127.0.0.1:${bypassServer.port}`;
+      const enabled = await fetch(`${bypassBase}/api/v1/remote-control`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: true }),
+      });
+      const enabledBody = (await enabled.json()) as Envelope<RemoteControlStatusWire>;
+      expect(enabledBody.code).toBe(0);
+      expect(enabledBody.data.state).toBe('on');
+
+      const bypassSocket = relay.httpSockets.at(-1)!;
+      const bypassResponsePromise = nextJsonMessage(bypassSocket);
+      bypassSocket.send(
+        JSON.stringify({
+          request_id: 'request-bypass',
+          type: 'request',
+          is_last: true,
+          body_base64: Buffer.from(
+            'GET /api/v1/healthz HTTP/1.1\r\nHost: relay.test\r\n\r\n',
+          ).toString('base64'),
+        }),
+      );
+      const bypassMessage = await bypassResponsePromise;
+      const bypassResponse = Buffer.from(
+        bypassMessage['body_base64'] as string,
+        'base64',
+      ).toString();
+      expect(bypassResponse).toContain('HTTP/1.1 200');
+      expect(bypassResponse).toContain('"ok":true');
+
+      const disabled = await fetch(`${bypassBase}/api/v1/remote-control`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: false }),
+      });
+      const disabledBody = (await disabled.json()) as Envelope<RemoteControlStatusWire>;
+      expect(disabledBody.code).toBe(0);
+      expect(disabledBody.data.state).toBe('off');
+    } finally {
+      await bypassServer.close();
+      await rm(bypassHome, { recursive: true, force: true });
+    }
+
     await relay.close();
   });
 
