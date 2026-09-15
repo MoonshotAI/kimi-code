@@ -265,10 +265,14 @@ export class UnitNode implements NodeRef {
     };
   }
 
-  async unmount(): Promise<void> {
-    if (this.state === 'unmounted') {
-      return;
-    }
+  private unmountPromise: Promise<void> | undefined;
+
+  unmount(): Promise<void> {
+    this.unmountPromise ??= this.performUnmount();
+    return this.unmountPromise;
+  }
+
+  private async performUnmount(): Promise<void> {
     this.state = 'unmounted';
     for (const child of this.children.toReversed()) {
       await child.unmount();

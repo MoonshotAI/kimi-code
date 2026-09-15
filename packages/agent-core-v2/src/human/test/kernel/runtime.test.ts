@@ -65,6 +65,62 @@ describe('mount lifecycle', () => {
     expect(log).toHaveLength(5);
   });
 
+  it('awaits an in-progress child unmount when re-entered concurrently', async () => {
+    const order: string[] = [];
+    let releaseCleanup: () => void = () => {};
+    const child = createUnit('child', () => async () => {
+      order.push('child-cleanup-start');
+      await new Promise<void>((resolve) => {
+        releaseCleanup = () => {
+          order.push('child-cleanup-done');
+          resolve();
+        };
+      });
+    });
+    const root = createUnit('root', () => {
+      useNode().mount(child);
+    });
+    const { node } = mountRoot(root);
+    const childNode = node.children[0] as UnitNode;
+    const first = childNode.unmount();
+    const second = childNode.unmount();
+    expect(second).toBe(first);
+    releaseCleanup();
+    await Promise.all([first, second]);
+    expect(order).toEqual(['child-cleanup-start', 'child-cleanup-done']);
+  });
+
+  it('parent unmount waits for a child unmount already in progress', async () => {
+    const order: string[] = [];
+    let releaseCleanup: () => void = () => {};
+    const child = createUnit('child', () => async () => {
+      order.push('child-cleanup-start');
+      await new Promise<void>((resolve) => {
+        releaseCleanup = () => {
+          order.push('child-cleanup-done');
+          resolve();
+        };
+      });
+    });
+    const root = createUnit('root', () => {
+      useNode().mount(child);
+    });
+    const { node } = mountRoot(root);
+    const childNode = node.children[0] as UnitNode;
+    const childUnmount = childNode.unmount();
+    let parentResolved = false;
+    const parentUnmount = node.unmount().then(() => {
+      parentResolved = true;
+    });
+    await flush();
+    expect(parentResolved).toBe(false);
+    releaseCleanup();
+    await parentUnmount;
+    await childUnmount;
+    expect(parentResolved).toBe(true);
+    expect(order).toEqual(['child-cleanup-start', 'child-cleanup-done']);
+  });
+
   it('rolls back a failed mount: error propagates, child detached, cleanups run', async () => {
     const log: string[] = [];
     const bad = createUnit('bad', () => {
