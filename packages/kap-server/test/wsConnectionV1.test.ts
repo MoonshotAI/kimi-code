@@ -994,6 +994,39 @@ describe('WsConnectionV1 outbound buffer', () => {
     conn.close();
   });
 
+  it('closes 1013 when small drains between larger control replies never reach a new low', async () => {
+    const socket = new DrainingSocket();
+    const conn = makeConn(socket, {
+      flushIntervalMs: 16,
+      highWaterMarkBytes: 100,
+      heartbeatIntervalMs: 60_000,
+    });
+    socket.sent = [];
+    const unsubscribe = JSON.stringify({ type: 'unsubscribe', id: 'u1', payload: { session_ids: [] } });
+
+    socket.bufferedAmount = 200;
+    socket.emit('message', Buffer.from(unsubscribe));
+    await vi.advanceTimersByTimeAsync(0);
+    const ackBytes = (socket.sent[0] as string).length;
+    expect(ackBytes).toBeGreaterThan(1);
+
+    let closedAfterMs: number | undefined;
+    for (let elapsed = 1000; elapsed <= MAX_BACKPRESSURE_STALL_MS * 3; elapsed += 1000) {
+      await vi.advanceTimersByTimeAsync(1000);
+      socket.bufferedAmount -= ackBytes + 1;
+      socket.emit('message', Buffer.from(unsubscribe));
+      socket.emit('message', Buffer.from(unsubscribe));
+      await vi.advanceTimersByTimeAsync(0);
+      if (socket.closeCalls.length > 0) {
+        closedAfterMs = elapsed;
+        break;
+      }
+    }
+    expect(socket.closeCalls).toEqual([{ code: 1013, reason: 'slow consumer' }]);
+    expect(closedAfterMs).toBeLessThanOrEqual(MAX_BACKPRESSURE_STALL_MS + 2000);
+    conn.close();
+  });
+
   it('does not close a peer that keeps draining while above the high-water mark', async () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, {

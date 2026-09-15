@@ -92,7 +92,7 @@ export class WsConnectionV1 implements BroadcastTarget {
   private flushTimer?: ReturnType<typeof setTimeout>;
   private backpressureRetryTimer?: ReturnType<typeof setTimeout>;
   private backpressureSince?: number;
-  private backpressureBufferedAmount = 0;
+  private backpressureLowWaterBytes = 0;
 
   private heartbeatTimer?: ReturnType<typeof setInterval>;
   private lastInboundAt = Date.now();
@@ -495,10 +495,10 @@ export class WsConnectionV1 implements BroadcastTarget {
   private deferForBackpressure(): void {
     const now = Date.now();
     const buffered = this.socket.bufferedAmount;
-    if (this.backpressureSince === undefined || buffered < this.backpressureBufferedAmount) {
+    if (this.backpressureSince === undefined || buffered < this.backpressureLowWaterBytes) {
       this.backpressureSince = now;
+      this.backpressureLowWaterBytes = buffered;
     }
-    this.backpressureBufferedAmount = buffered;
     if (now - this.backpressureSince >= MAX_BACKPRESSURE_STALL_MS) {
       this.closeSlowConsumer();
       return;
