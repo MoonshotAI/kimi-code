@@ -111,7 +111,7 @@ import {
   type ToolRegistrationOptions,
 } from '#/agent/toolRegistry/toolRegistry';
 import type { ExecutableTool } from '#/tool/toolContract';
-import { createFeature, createTool, featureSpecs } from '#human/feature/index';
+import { createFeature, featureSpecs } from '#human/feature/index';
 import { AgentScope, createUnit, inject, ref, watchEffect, type EffectScope } from '#human/kernel/index';
 import '#/agent/toolActivation/toolActivationService';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
@@ -618,13 +618,6 @@ describe('AgentLifecycleService', () => {
               unmounted.push('probe');
             };
           }),
-          createTool(
-            'probe.echo',
-            { description: 'echo back', parameters: { type: 'object', properties: {} } },
-            () => ({
-              execute: async () => ({ content: [{ type: 'text', text: 'echo!' }] }),
-            }),
-          ),
         ],
       })(),
     ];
@@ -635,26 +628,10 @@ describe('AgentLifecycleService', () => {
     expect(svc.handleOf('main')).toBeDefined();
     expect(svc.list()).toEqual([main]);
     expect(mounted).toEqual(['probe']);
-    expect(registryRegistrations.map(({ tool }) => tool.name)).toEqual(['probe.echo']);
-    const echo = registryRegistrations[0]?.tool;
-    expect(echo?.parameters).toEqual({ type: 'object', properties: {} });
-    const execution = await echo?.resolveExecution({});
-    expect(execution && 'approvalRule' in execution ? execution.approvalRule : undefined).toBe(
-      'probe.echo',
-    );
-    if (execution !== undefined && 'execute' in execution) {
-      const executed = await execution.execute({
-        turnId: 0,
-        toolCallId: 'call-1',
-        signal: new AbortController().signal,
-      });
-      expect(executed).toEqual({ output: [{ type: 'text', text: 'echo!' }] });
-    }
     await svc.remove(main);
     expect(svc.get('main')).toBeUndefined();
     expect(svc.handleOf('main')).toBeUndefined();
     expect(unmounted).toEqual(['probe']);
-    expect(registryDisposals).toEqual(['probe.echo']);
   });
 
   it('remove flushes the agent wire journal before disposal', async () => {

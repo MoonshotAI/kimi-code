@@ -53,7 +53,6 @@ import { IAgentRuntimeBindingSeed, IAgentRuntimeBindingService } from '#/agent/r
 import '#/agent/runtimeBinding/runtimeBindingService';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IWireService } from '#/wire/wire';
 import { WireService } from '#/wire/wireService';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
@@ -360,7 +359,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         store: bundle.store,
         sessionId: this.ctx.sessionId,
         agentId,
-        toolRegistry: handle.accessor.get(IAgentToolRegistryService),
         scope: agentEffects,
       });
       container.anchorKernelEntry(() => {
@@ -548,7 +546,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         store: bundle.store,
         sessionId: this.ctx.sessionId,
         agentId: agent.agentId,
-        toolRegistry: handle.accessor.get(IAgentToolRegistryService),
         scope: agentEffects,
       });
       (handle.accessor.get(IInstantiationService) as InstantiationService).anchorKernelEntry(

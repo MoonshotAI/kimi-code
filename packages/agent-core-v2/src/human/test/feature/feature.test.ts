@@ -13,21 +13,16 @@ import {
   inject,
   isStoreRecipe,
   ref,
-  shallowRef,
   useDurable,
   type StoreResolution,
 } from '#/kernel/index';
 import { createUserMessage, type SystemMessage } from '#/llm/message';
-import type { ToolDefinition } from '#/tool/tool';
 import {
   AgentContext,
   AgentRuntime,
   createFeature,
-  createTool,
-  isToolRecipe,
   mountAgentFeatures,
   slotEntries,
-  type FeatureToolSink,
 } from '#/feature/index';
 
 const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -72,15 +67,10 @@ function fakeSelf(): {
 describe('feature DSL', () => {
   it('assembles FeatureSpec from store, tool and unit recipes and keys slot entries per tier', () => {
     const counterStore = createStore('counter', () => ({ count: ref(0) }));
-    const echoTool = createTool(
-      'echo',
-      { description: 'echo back', parameters: { type: 'object', properties: {} } },
-      () => ({ execute: async () => ({ content: [] }) }),
-    );
     const watcher = createUnit('watcher', () => {});
     const factory = createFeature<{ seed: number }>(
       'demo',
-      { agent: [counterStore, echoTool], session: watcher },
+      { agent: [counterStore], session: watcher },
       { handle: counterStore },
     );
 
@@ -91,12 +81,8 @@ describe('feature DSL', () => {
     expect(spec.handle).toBe(counterStore);
     expect(isStoreRecipe(counterStore)).toBe(true);
     expect(counterStore.storeName).toBe('counter');
-    expect(isToolRecipe(echoTool)).toBe(true);
-    expect(echoTool.toolName).toBe('echo');
-    expect(echoTool.meta.description).toBe('echo back');
     expect(slotEntries(spec, 'agent').map((entry) => entry.key)).toEqual([
       'demo:store:counter',
-      'demo:tool:echo',
     ]);
     expect(slotEntries(spec, 'agent')[0]?.props).toEqual({ seed: 1 });
     expect(slotEntries(spec, 'session').map((entry) => entry.key)).toEqual(['demo:watcher']);
@@ -165,48 +151,6 @@ describe('feature DSL', () => {
       },
     });
     expect(order).toEqual(['provide', 'child-setup']);
-  });
-
-  it('folds feature tool definitions into the sink and diffs them as the features source changes', async () => {
-    const registered: ToolDefinition[] = [];
-    const unregistered: string[] = [];
-    const sink: FeatureToolSink = {
-      register: (definition) => {
-        registered.push(definition);
-        return () => {
-          unregistered.push(definition.name);
-        };
-      },
-    };
-    const echoTool = createTool(
-      'echo',
-      { description: 'echo back', parameters: { type: 'object', properties: {} } },
-      () => ({
-        execute: async () => ({ content: [{ type: 'text', text: 'echo!' }] }),
-      }),
-    );
-    const source = shallowRef([createFeature('echo', { agent: echoTool })()]);
-    mountAgentFeatures({
-      self: fakeSelf().self,
-      store: testStore(),
-      sessionId: 'sess',
-      agentId: 'agent-0',
-      features: source,
-      toolSink: sink,
-    });
-
-    expect(registered.map((definition) => definition.name)).toEqual(['echo']);
-    const definition = registered[0] as ToolDefinition;
-    expect(definition.description).toBe('echo back');
-    const result = await definition.execute({
-      toolCall: { type: 'function', id: 'call-1', name: 'echo', arguments: '{}' },
-      signal: new AbortController().signal,
-    });
-    expect(result.content).toEqual([{ type: 'text', text: 'echo!' }]);
-
-    source.value = [];
-    await flush();
-    expect(unregistered).toEqual(['echo']);
   });
 
   it('routes useDurable patches through the agent event store backend', async () => {

@@ -2,9 +2,7 @@ import { shallowRef } from '@vue/reactivity';
 
 import { createToken, type StoreRecipe, type UnitRecipe } from '#/kernel/index';
 
-import type { ToolRecipe } from './tool';
-
-export type SlotRecipe = UnitRecipe<any> | ToolRecipe<any, any> | StoreRecipe<any>;
+export type SlotRecipe = UnitRecipe<any> | StoreRecipe<any>;
 
 export interface FeatureSlots {
   readonly app?: SlotRecipe | readonly SlotRecipe[];
