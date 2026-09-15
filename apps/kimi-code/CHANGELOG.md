@@ -1,5 +1,27 @@
 # @moonshot-ai/kimi-code
 
+## 0.43.2
+
+### Patch Changes
+
+- [#3802](https://github.com/MoonshotAI/kimi-code/pull/3802) [`c72a202`](https://github.com/MoonshotAI/kimi-code/commit/c72a20270e5078987a65e63b3741d8c778f4e02e) Thanks [@Grapedge](https://github.com/Grapedge)! - Highlight diff code blocks.
+
+- [#3818](https://github.com/MoonshotAI/kimi-code/pull/3818) [`19ce4b3`](https://github.com/MoonshotAI/kimi-code/commit/19ce4b3f0600c846e2f28828d8169829630fc666) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix /usage showing a wrong error message when no session has been created yet.
+
+- [#3784](https://github.com/MoonshotAI/kimi-code/pull/3784) [`5653c73`](https://github.com/MoonshotAI/kimi-code/commit/5653c739b9c0dbafd1e4b3d36edeb0fe44ec71f4) Thanks [@7Sageer](https://github.com/7Sageer)! - Images sent to Kimi models are uploaded as file references instead of inline data, and a warning is shown when media are dropped from a retried request.
+
+- [#3778](https://github.com/MoonshotAI/kimi-code/pull/3778) [`7d174ac`](https://github.com/MoonshotAI/kimi-code/commit/7d174ac93352ccfc835d186ac7b8185d0194e6b5) Thanks [@huangzheng2016](https://github.com/huangzheng2016)! - Limit memory growth from finished subagents.
+
+- [#3778](https://github.com/MoonshotAI/kimi-code/pull/3778) [`7d174ac`](https://github.com/MoonshotAI/kimi-code/commit/7d174ac93352ccfc835d186ac7b8185d0194e6b5) Thanks [@huangzheng2016](https://github.com/huangzheng2016)! - Report background subagents that time out or are stopped as cancelled instead of failed.
+
+- [#3784](https://github.com/MoonshotAI/kimi-code/pull/3784) [`5653c73`](https://github.com/MoonshotAI/kimi-code/commit/5653c739b9c0dbafd1e4b3d36edeb0fe44ec71f4) Thanks [@7Sageer](https://github.com/7Sageer)! - When accumulated images and videos exceed the request size budget, the oldest media are omitted from requests with a warning instead of failing.
+
+- [#3778](https://github.com/MoonshotAI/kimi-code/pull/3778) [`7d174ac`](https://github.com/MoonshotAI/kimi-code/commit/7d174ac93352ccfc835d186ac7b8185d0194e6b5) Thanks [@huangzheng2016](https://github.com/huangzheng2016)! - Report tools and subagents interrupted by the user as cancelled instead of aborted or failed.
+
+- [#3803](https://github.com/MoonshotAI/kimi-code/pull/3803) [`39a7455`](https://github.com/MoonshotAI/kimi-code/commit/39a74556a662a96293e9838663e91b31dbdc7a0b) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - The built-in browser plugin now appears as "Kimi Browser Extension" in the plugins panel, marketplace catalog, and docs, matching the product rename.
+
+- [#3795](https://github.com/MoonshotAI/kimi-code/pull/3795) [`a7bdabb`](https://github.com/MoonshotAI/kimi-code/commit/a7bdabbe82a089cd8631f6d613c252d96cbab639) Thanks [@Grapedge](https://github.com/Grapedge)! - Feedback surveys now appear at better times in long conversations.
+
 ## 0.43.1
 
 ### Patch Changes
