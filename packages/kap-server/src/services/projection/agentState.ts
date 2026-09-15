@@ -1,21 +1,19 @@
 import type { AgentActivitySnapshot, AgentTaskInfo } from '@moonshot-ai/agent-core-v2';
 
 import type {
+  AgentFinishReason,
   AgentStateMessage,
   AgentStateOrigin,
-  AgentStateTurn,
   AgentStatus,
 } from '../../protocol/messages';
-
-const TERMINAL_STATUSES: ReadonlySet<AgentStatus> = new Set(['completed', 'failed', 'interrupted']);
 
 export class AgentStateTracker {
   private origin: AgentStateOrigin | undefined;
   private profileKind = '';
   private createdAt: string;
   private endedAt: string | undefined;
-  private status: AgentStatus = 'idle';
-  private turn: AgentStateTurn | undefined;
+  private finishReason: AgentFinishReason | undefined;
+  private running = false;
   private compacting = false;
 
   constructor(
@@ -33,14 +31,14 @@ export class AgentStateTracker {
     this.origin = { kind: 'main' };
     this.profileKind = profileKind;
     this.createdAt = createdAt;
-    if (running) this.status = 'running';
+    this.running = running;
   }
 
   seedBtw(profileKind: string, createdAt: string, running: boolean): void {
     this.origin = { kind: 'btw' };
     this.profileKind = profileKind;
     this.createdAt = createdAt;
-    if (running) this.status = 'running';
+    this.running = running;
   }
 
   seedToolSpawned(event: {
@@ -85,16 +83,16 @@ export class AgentStateTracker {
   }
 
   turnStarted(): boolean {
-    if (this.status === 'running') return false;
-    this.status = 'running';
+    if (this.running) return false;
+    this.running = true;
     this.endedAt = undefined;
+    this.finishReason = undefined;
     return true;
   }
 
   turnEnded(): boolean {
-    if (this.status !== 'running') return false;
-    this.status = 'idle';
-    this.turn = undefined;
+    if (!this.running) return false;
+    this.running = false;
     this.compacting = false;
     return true;
   }
@@ -102,9 +100,6 @@ export class AgentStateTracker {
   compactionStarted(): boolean {
     if (this.compacting) return false;
     this.compacting = true;
-    if (this.status !== 'running' || this.turn === undefined) return false;
-    if (this.turn.status === 'compacting') return false;
-    this.turn = { status: 'compacting' };
     return true;
   }
 
@@ -118,10 +113,10 @@ export class AgentStateTracker {
     return this.turnStarted();
   }
 
-  runFinished(status: 'completed' | 'failed', endedAt: string): boolean {
-    if (this.status === status) return false;
-    this.status = status;
-    this.turn = undefined;
+  runFinished(reason: 'completed' | 'failed', endedAt: string): boolean {
+    if (this.finishReason === reason) return false;
+    this.finishReason = reason;
+    this.running = false;
     this.compacting = false;
     this.endedAt = endedAt;
     return true;
@@ -130,42 +125,28 @@ export class AgentStateTracker {
   close(endedAt: string): boolean {
     if (this.endedAt !== undefined) return false;
     this.endedAt = endedAt;
-    this.turn = undefined;
+    this.running = false;
     this.compacting = false;
-    if (TERMINAL_STATUSES.has(this.status)) return true;
-    this.status = 'interrupted';
+    if (this.finishReason !== undefined) return true;
+    this.finishReason = 'interrupted';
     return true;
   }
 
   recompute(snapshot: AgentActivitySnapshot): boolean {
-    if (TERMINAL_STATUSES.has(this.status) && snapshot.turn === undefined) return false;
-    const turn = snapshot.turn;
-    if (turn === undefined) {
-      const changed = this.status === 'running' || this.turn !== undefined;
-      if (this.status === 'running') this.status = 'idle';
-      this.turn = undefined;
-      this.compacting = false;
-      return changed;
+    if (snapshot.turn === undefined) {
+      if (this.finishReason !== undefined) return false;
+      if (!this.running) return false;
+      this.running = false;
+      return true;
     }
-    if (this.status === 'idle') this.status = 'running';
-    const next: AgentStateTurn = {
-      status: this.compacting
-        ? 'compacting'
-        : turn.ending
-          ? 'aborting'
-          : turn.phase === 'retrying'
-            ? 'retrying'
-            : turn.phase === 'tool_call'
-              ? 'acting'
-              : 'thinking',
-    };
-    if (this.turn?.status === next.status) return false;
-    this.turn = next;
+    if (this.running) return false;
+    this.running = true;
     return true;
   }
 
   snapshot(sessionId: string): AgentStateMessage | undefined {
     if (this.origin === undefined) return undefined;
+    const status: AgentStatus = this.compacting ? 'compacting' : this.running ? 'running' : 'idle';
     return {
       type: 'agent.state',
       session_id: sessionId,
@@ -175,8 +156,8 @@ export class AgentStateTracker {
       origin: this.origin,
       created_at: this.createdAt,
       ended_at: this.endedAt,
-      status: this.status,
-      turn: this.turn,
+      status,
+      finish_reason: this.finishReason,
     };
   }
 }
