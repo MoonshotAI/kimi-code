@@ -966,8 +966,6 @@ describe('KimiTUI resume message replay', () => {
     ).toBe(false);
     expect(driver.sessionEventHandler.backgroundTaskTranscriptedTerminal.has('task-bg-timeout'))
       .toBe(true);
-    // The terminal event mounts exactly one status card; the later aborted
-    // `subagent.failed` must not mount a second, contradictory one.
     const terminalCards = driver.state.transcriptEntries.filter(
       (entry) => entry.backgroundAgentStatus !== undefined,
     );

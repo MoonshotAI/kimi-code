@@ -2983,9 +2983,7 @@ export class KimiTUI {
    * task-notification turns mount no user message, so without one of these
    * cards as a boundary their output would share the previous user turn's
    * fold segment — and the completed-turn assistant cap would fold that turn's
-   * final answer into the step summary. `started`-phase task cards are excluded:
-   * they announce work beginning, not a notification turn, and treating them as
-   * boundaries would fragment the active turn's fold segment.
+   * final answer into the step summary.
    */
   private isFoldSegmentBoundaryComponent(child: Component): boolean {
     return (
