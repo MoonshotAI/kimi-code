@@ -19,6 +19,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DefaultCompactionStrategy,
 } from '#/agent/fullCompaction/strategy';
+import { fullCompactionAutoCompactionDisabledKey } from '#/agent/fullCompaction/fullCompactionService';
+import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentStateService } from '#/agent/state/agentState';
 import {
   buildCompactionContinuationText,
   COMPACTION_SUMMARY_PREFIX,
@@ -2369,6 +2372,105 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('disables auto compaction after two ineffective compactions instead of looping', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        max_context_tokens: 2_000,
+      },
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 1_800);
+
+    ctx.mockNextResponse({ type: 'text', text: 'Ineffective compacted summary one.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Answer one.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'loop prompt one' }] });
+    await ctx.untilTurnEnd();
+
+    bumpUsage(ctx, 1_800);
+    ctx.mockNextResponse({ type: 'text', text: 'Ineffective compacted summary two.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Answer two.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'loop prompt two' }] });
+    await ctx.untilTurnEnd();
+
+    bumpUsage(ctx, 1_800);
+    ctx.mockNextResponse({ type: 'text', text: 'Answer three.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'loop prompt three' }] });
+    await ctx.untilTurnEnd();
+
+    const compactionCalls = ctx.llmCalls.filter((call) =>
+      messageText(call.history.at(-1)).includes('Create a handoff summary for the'),
+    );
+    expect(compactionCalls).toHaveLength(2);
+    expect(ctx.llmCalls).toHaveLength(5);
+    const warnings = ctx.allEvents.filter((entry) => entry.event === 'warning');
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.args).toEqual(
+      expect.objectContaining({
+        code: 'auto-compaction-ineffective',
+        message: expect.stringContaining('Auto-compaction disabled'),
+      }),
+    );
+    expect(ctx.get(IAgentStateService).get(fullCompactionAutoCompactionDisabledKey)).toBe(true);
+    await ctx.expectResumeMatches();
+  });
+
+  it('resets the ineffective streak after an effective compaction', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        max_context_tokens: 2_000,
+      },
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 1_800);
+
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary one.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Answer one.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'prompt one' }] });
+    await ctx.untilTurnEnd();
+
+    bumpUsage(ctx, 1_800);
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary two.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Answer two.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'prompt two' }] });
+    await ctx.untilTurnEnd();
+
+    ctx.mockNextResponse({ type: 'text', text: 'Answer three.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'prompt three' }] });
+    await ctx.untilTurnEnd();
+    expect(ctx.allEvents.filter((entry) => entry.event === 'warning')).toHaveLength(0);
+    expect(ctx.get(IAgentStateService).get(fullCompactionAutoCompactionDisabledKey)).toBe(false);
+
+    bumpUsage(ctx, 1_800);
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary three.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Answer four.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'prompt four' }] });
+    await ctx.untilTurnEnd();
+
+    bumpUsage(ctx, 1_800);
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary four.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Answer five.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'prompt five' }] });
+    await ctx.untilTurnEnd();
+
+    bumpUsage(ctx, 1_800);
+    ctx.mockNextResponse({ type: 'text', text: 'Answer six.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'prompt six' }] });
+    await ctx.untilTurnEnd();
+
+    const compactionCalls = ctx.llmCalls.filter((call) =>
+      messageText(call.history.at(-1)).includes('Create a handoff summary for the'),
+    );
+    expect(compactionCalls).toHaveLength(4);
+    expect(ctx.llmCalls).toHaveLength(10);
+    expect(ctx.allEvents.filter((entry) => entry.event === 'warning')).toHaveLength(1);
+    expect(ctx.get(IAgentStateService).get(fullCompactionAutoCompactionDisabledKey)).toBe(true);
+    await ctx.expectResumeMatches();
+  });
+
   it('compacts and retries when the provider reports context overflow', async () => {
     let callCount = 0;
     const inputs: string[][] = [];
@@ -3903,6 +4005,16 @@ function inputHistorySnapshot(history: readonly Message[]): string[] {
 
 function normalizeInputText(text: string): string {
   return text.includes('first-person handoff note') ? '<compaction-instruction>' : text;
+}
+
+function bumpUsage(ctx: TestAgentContext, tokenTotal: number): void {
+  const context = ctx.get(IAgentContextMemoryService);
+  ctx.get(ISessionTokenCountingService).measured(ctx.agentContext, context.get(), [], {
+    inputOther: tokenTotal - 1,
+    output: 1,
+    inputCacheRead: 0,
+    inputCacheCreation: 0,
+  });
 }
 
 describe('prompt deferral during full compaction', () => {

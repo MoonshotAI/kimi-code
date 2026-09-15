@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 72 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 75 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -57,10 +57,13 @@
 //     fileHistory                                     src/features/fileHistory/fileHistoryOps.ts
 //     fullCompaction                                  src/agent/fullCompaction/compactionOps.ts
 //     fullCompaction.activeTurnId                     src/agent/fullCompaction/fullCompactionService.ts
+//     fullCompaction.autoCompactionDisabled           src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.compactionCountInTurn            src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.consecutiveOverflowCompactions   src/agent/fullCompaction/fullCompactionService.ts
+//     fullCompaction.ineffectiveAutoCompactions       src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.lastCompactedTokenCount          src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.observedMaxContextTokensByModel  src/agent/fullCompaction/fullCompactionService.ts
+//     fullCompaction.pendingAutoCompactionCount       src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.wireRanges                       src/agent/fullCompaction/compactionOps.ts
 //     interruptionReminder                            src/agent/interruptionReminder/interruptionReminderOps.ts
 //     llm.requestTrace                                src/agent/llmRequester/llmRequestOps.ts
@@ -917,10 +920,13 @@ export interface AgentStateSnapshot {
   }[];
   // src/agent/fullCompaction/fullCompactionService.ts
   'fullCompaction.activeTurnId': number | undefined;
+  'fullCompaction.autoCompactionDisabled': boolean;
   'fullCompaction.compactionCountInTurn': number;
   'fullCompaction.consecutiveOverflowCompactions': number;
+  'fullCompaction.ineffectiveAutoCompactions': number;
   'fullCompaction.lastCompactedTokenCount': number | null;
   'fullCompaction.observedMaxContextTokensByModel': Map<string, number>;
+  'fullCompaction.pendingAutoCompactionCount': number | null;
   // src/agent/interruptionReminder/interruptionReminderOps.ts
   // replayable · durable — folds: InterruptionReminderRecorded
   'interruptionReminder': null;
