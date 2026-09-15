@@ -440,18 +440,6 @@ export class SessionProjection {
         this.recomputeAgentTurn(agentId);
         return;
       }
-      case 'turn.step.started':
-      case 'turn.acting.started':
-      case 'tool.call.started':
-      case 'tool.result':
-      case 'turn.step.interrupted':
-        this.recomputeAgentTurn(agentId);
-        return;
-      case 'turn.step.retrying':
-        queueMicrotask(() => {
-          if (!this.disposed) this.recomputeAgentTurn(agentId);
-        });
-        return;
       case 'compaction.started': {
         const tracker = this.agentStates.get(agentId);
         if (tracker === undefined) return;
@@ -462,8 +450,7 @@ export class SessionProjection {
       case 'compaction.cancelled': {
         const tracker = this.agentStates.get(agentId);
         if (tracker === undefined) return;
-        tracker.compactionEnded();
-        this.recomputeAgentTurn(agentId);
+        if (tracker.compactionEnded()) this.emitAgentState(agentId);
         return;
       }
       default:
