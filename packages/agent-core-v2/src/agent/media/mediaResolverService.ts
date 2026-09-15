@@ -365,6 +365,11 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     bytes: number,
     mimeType: string,
   ): void {
+    const previous = this.imageMemo.get(cacheKey);
+    if (previous !== undefined) {
+      this.imageMemo.delete(cacheKey);
+      this.imageMemoBytes -= previous.bytes;
+    }
     this.imageMemo.set(cacheKey, { part, bytes, mimeType });
     this.imageMemoBytes += bytes;
     for (const [key, entry] of this.imageMemo) {
