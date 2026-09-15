@@ -740,6 +740,16 @@ describe("CombinedAutocompleteProvider", () => {
 			assert.strictEqual(applied.lines[0], '/goal next "manage"');
 		});
 
+		test("keeps later tokens when a stale path snapshot follows an absolute path command", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "/bin/cat foo/ b";
+			const item = { value: "foo/file.txt", label: "file.txt" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "foo/");
+
+			assert.strictEqual(applied.lines[0], "/bin/cat foo/ foo/file.txt");
+		});
+
 		test("keeps flag text when a stale path snapshot sits in a slash-shaped line", () => {
 			const provider = new CombinedAutocompleteProvider([], process.cwd());
 			const line = "/bin/ls -l /tmp/x";

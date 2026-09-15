@@ -55,7 +55,9 @@ export function resolveCompletionPrefix(
 	}
 	if (!prefix.startsWith("@") && !prefix.startsWith('"')) {
 		const spaceIndex = textBeforeCursor.indexOf(" ");
-		if (textBeforeCursor.startsWith("/") && spaceIndex !== -1) {
+		const isSlashArgumentContext =
+			textBeforeCursor.startsWith("/") && spaceIndex !== -1 && !textBeforeCursor.slice(1, spaceIndex).includes("/");
+		if (isSlashArgumentContext) {
 			const argumentText = textBeforeCursor.slice(spaceIndex + 1);
 			if (argumentText.startsWith(prefix) || prefix.startsWith(argumentText)) {
 				return argumentText;
