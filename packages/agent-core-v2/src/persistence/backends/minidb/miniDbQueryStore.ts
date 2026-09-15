@@ -1,7 +1,7 @@
 import { join } from 'pathe';
 
 import { classifyStorageError, type QueryOptions } from '@moonshot-ai/minidb';
-import { ClusterDb, wipeCluster } from '@moonshot-ai/minidb/cluster';
+import { ClusterDb, LockError, wipeCluster } from '@moonshot-ai/minidb/cluster';
 
 import { Disposable, toDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
@@ -29,6 +29,7 @@ const SHARD_COUNT = 16;
 const LOCK_ACQUIRE_TIMEOUT_MS = 1000;
 const DROP_BATCH_SIZE = 500;
 const TRANSIENT_ESCALATION_LIMIT = 5;
+const CONTENTION_LOG_INTERVAL_MS = 60_000;
 
 function physicalKey(collection: string, key: string): string {
   return `${collection}${SEP}${key}`;
@@ -36,6 +37,11 @@ function physicalKey(collection: string, key: string): string {
 
 function indexName(collection: string, name: string): string {
   return `${collection}:${name}`;
+}
+
+export function isLockContentionError(error: unknown): boolean {
+  if (error instanceof LockError) return true;
+  return error instanceof AggregateError && error.errors.some(isLockContentionError);
 }
 
 const pendingDisposals = new Set<Promise<void>>();
@@ -53,6 +59,7 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
   private transientReadFailures = 0;
   private transientWriteFailures = 0;
   private storeEpochCounter = 0;
+  private lastContentionLogAt = 0;
   private readonly ensuredIndexes = new Set<string>();
 
   constructor(
@@ -140,6 +147,10 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
       return result;
     } catch (error) {
       if (classifyStorageError(error) !== 'rebuild') {
+        if (isLockContentionError(error)) {
+          this.noteLockContention(db, kind, error);
+          throw error;
+        }
         const failures =
           kind === 'write'
             ? (this.transientWriteFailures += 1)
@@ -152,6 +163,25 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
       if (expectedStoreEpoch !== undefined) throw new QueryStoreRebuiltError();
       throw error;
     }
+  }
+
+  private noteLockContention(db: ClusterDb, kind: 'read' | 'write', error: unknown): void {
+    const now = Date.now();
+    if (now - this.lastContentionLogAt < CONTENTION_LOG_INTERVAL_MS) return;
+    this.lastContentionLogAt = now;
+    const stats = db.stats();
+    this.log.warn('minidb query-store lock contention: shard locks held by another process', {
+      dir: this.dir,
+      kind,
+      error: String(error),
+      lockWaits: stats.lockWaits,
+      writerOpens: stats.writerOpens,
+      readerOpens: stats.readerOpens,
+      readerReopens: stats.readerReopens,
+      incrementalCatchups: stats.incrementalCatchups,
+      catchupFramesApplied: stats.catchupFramesApplied,
+      evictions: stats.evictions,
+    });
   }
 
   async put<T>(
