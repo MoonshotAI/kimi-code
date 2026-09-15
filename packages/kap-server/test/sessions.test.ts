@@ -862,7 +862,7 @@ describe('server-v2 /api/v1/sessions', () => {
     const rig = await createBlockedGoalRig();
     try {
       rig.eventBus.publish(
-        new TurnStarted({ agentId: 'main', turnId: 999, origin: { kind: 'user' } }),
+        new TurnStarted({ agentId: 'main', turnId: 999, origin: { kind: 'user' }, input: [] }),
       );
       await postJson<SessionWire>(`/api/v1/sessions/${rig.id}/profile`, {
         agent_config: { goal_control: 'resume' },

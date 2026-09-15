@@ -8,7 +8,7 @@ import {
 } from '#/tui/controllers/staging-leases';
 
 function turnStarted(turnId: number | string, kind: string, promptId?: string): TurnStartedEvent {
-  return { type: 'turn.started', agentId: 'main', turnId, origin: { kind }, promptId } as TurnStartedEvent;
+  return { type: 'turn.started', agentId: 'main', turnId, origin: { kind }, promptId, input: [] } as TurnStartedEvent;
 }
 
 function turnEnded(turnId: number | string): TurnEndedEvent {

@@ -609,6 +609,7 @@ export function foldV2WireRecords(records: readonly V2WireRecord[]): FoldedV2Age
         resetFold();
         break;
       }
+      case 'turn.started':
       case 'turn.prompt': {
         advanceTurnClock(nextTurnId + 1);
         break;

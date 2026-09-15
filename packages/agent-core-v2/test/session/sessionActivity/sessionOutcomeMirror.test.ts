@@ -183,7 +183,7 @@ describe('SessionOutcomeMirror (Session scope)', () => {
   });
 
   const started = (turnId = 1) =>
-    lifecycle.bus.publish(new TurnStarted({ agentId: 'main', turnId, origin: { kind: 'user' } }));
+    lifecycle.bus.publish(new TurnStarted({ agentId: 'main', turnId, origin: { kind: 'user' }, input: [] }));
   const ended = (reason: TurnEnded['reason'], interruptReason?: TurnEnded['interruptReason'], turnId = 1) =>
     lifecycle.bus.publish(new TurnEnded({ agentId: 'main', turnId, reason, interruptReason }));
 

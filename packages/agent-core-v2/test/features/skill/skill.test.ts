@@ -324,7 +324,7 @@ describe('AgentSkillService busy delivery (harness)', () => {
     ]);
 
     const types = persistence.records.map((record) => record.type);
-    expect(types.filter((type) => type === 'turn.prompt')).toHaveLength(2);
+    expect(types.filter((type) => type === 'turn.started')).toHaveLength(2);
     expect(types.filter((type) => type === 'turn.steer')).toHaveLength(1);
     const steer = persistence.records.find((record) => record.type === 'turn.steer');
     expect(steer).toMatchObject({ origin: { kind: 'skill_activation', skillArgs: 'mission-1' } });

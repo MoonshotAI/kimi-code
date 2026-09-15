@@ -275,6 +275,7 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
           // A gap straddling a turn boundary is "waiting for the user"; a gap
           // inside a turn is the agent/tool being slow.
           kind:
+            rec.type === 'turn.started' ||
             rec.type === 'turn.prompt' ||
             (rec.type === 'turn.steer' &&
               (current === null || current.outcome !== undefined))
@@ -287,6 +288,7 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
     }
 
     switch (rec.type) {
+      case 'turn.started':
       case 'turn.prompt':
         pendingSteer = null;
         current = startTurn('prompt', entry.lineNo, t, firstText(rec.input), rec.origin?.kind);
