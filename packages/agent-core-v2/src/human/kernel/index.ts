@@ -6,6 +6,8 @@ export {
   EventContext,
   UnitNode,
   createUnit,
+  currentUnit,
+  hasCurrentUnit,
   inject,
   mountRoot,
   provide,

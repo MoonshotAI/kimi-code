@@ -411,6 +411,10 @@ export function currentUnit(): UnitNode {
   return node;
 }
 
+export function hasCurrentUnit(): boolean {
+  return unitStack.length > 0;
+}
+
 export function runUnit(node: UnitNode): void {
   if (node.state === 'unmounted' || node.state === 'failed') {
     return;
