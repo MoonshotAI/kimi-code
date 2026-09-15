@@ -10,6 +10,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { parseRangeHeader } from '../src/lib/httpRange';
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 
@@ -85,6 +86,14 @@ interface Envelope<T = unknown> {
   request_id?: string;
   details?: unknown;
 }
+
+describe('parseRangeHeader', () => {
+  it('rejects malformed numeric ranges instead of parsing a prefix', () => {
+    expect(parseRangeHeader('bytes=1abc-3', 10)).toBeNull();
+    expect(parseRangeHeader('bytes=1-3xyz', 10)).toBeNull();
+    expect(parseRangeHeader('bytes=1-3', 10)).toEqual({ start: 1, end: 3, length: 3 });
+  });
+});
 
 function buildMultipart(parts: {
   file: { fieldName: string; filename: string; contentType: string; data: Buffer };
@@ -374,6 +383,15 @@ describe('POST /api/v1/files (server-v2)', () => {
     expect(tail.statusCode).toBe(206);
     expect(tail.headers['content-range']).toBe(`bytes 30-${data.length - 1}/${data.length}`);
     expect(tail.rawPayload).toEqual(data.subarray(30));
+
+    const malformed = await appOf(r).inject({
+      method: 'GET',
+      url: `/api/v1/files/${meta.id}`,
+      headers: { range: 'bytes=4abc-9' },
+    });
+    expect(malformed.statusCode).toBe(200);
+    expect(malformed.headers['content-range']).toBeUndefined();
+    expect(malformed.rawPayload).toEqual(data);
   });
 
   it('missing file part → 40001 validation error', async () => {
