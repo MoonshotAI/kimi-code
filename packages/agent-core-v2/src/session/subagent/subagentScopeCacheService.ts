@@ -1,4 +1,5 @@
 import { Disposable } from '#/_base/di/lifecycle';
+import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
@@ -8,6 +9,7 @@ import { IAgentTaskService } from '#/agent/task/task';
 import { SubagentSuspended } from '#/features/swarm/session/sessionSwarmService';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ILogService } from '#/_base/log/log';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { SubagentCancelled, SubagentCompleted, SubagentFailed, SubagentStarted } from './mirrorAgentRun';
 import {
@@ -95,16 +97,15 @@ export class SessionSubagentScopeCacheService
   }
 
   private async evictOverflow(): Promise<void> {
-    if (this.retired.size <= this.capacity) return;
-    const candidates = [...this.retired.entries()].filter(
-      ([, attempts]) => attempts < MAX_EVICT_ATTEMPTS,
-    );
-    for (const [agentId, attempts] of candidates) {
-      if (this.retired.size <= this.capacity) return;
-      if (this.retired.get(agentId) !== attempts) continue;
+    const skipped = new Set<string>();
+    while (this.retired.size > this.capacity) {
+      const candidate = this.oldestCandidate(skipped);
+      if (candidate === undefined) return;
+      const [agentId, attempts] = candidate;
       this.retired.delete(agentId);
       const outcome = await this.evict(agentId);
       if (outcome === 'removed' || outcome === 'missing') continue;
+      skipped.add(agentId);
       if (outcome === 'deferred') {
         this.log.debug('subagent scope eviction deferred; agent still busy', { agentId });
         if (!this.retired.has(agentId)) this.retired.set(agentId, attempts);
@@ -125,14 +126,29 @@ export class SessionSubagentScopeCacheService
     }
   }
 
+  private oldestCandidate(skipped: ReadonlySet<string>): [string, number] | undefined {
+    for (const entry of this.retired) {
+      if (entry[1] < MAX_EVICT_ATTEMPTS && !skipped.has(entry[0])) return entry;
+    }
+    return undefined;
+  }
+
   private async evict(agentId: string): Promise<EvictOutcome> {
     const context = this.agentLifecycle.get(agentId);
     if (context === undefined) return this.closing.has(agentId) ? 'closing' : 'missing';
     const handle = this.agentLifecycle.handleOf(agentId);
     if (handle === undefined) return this.closing.has(agentId) ? 'closing' : 'missing';
-    const snapshot = handle.accessor.get(IAgentLoopService).snapshot();
-    if (snapshot.state === 'running' || snapshot.hasPendingRequests) return 'deferred';
-    if (handle.accessor.get(IAgentTaskService).list(true).length > 0) return 'deferred';
+    if (this.busy(handle)) return 'deferred';
+    try {
+      await handle.accessor.get(IEventDispatcher).flush();
+    } catch (error) {
+      this.log.warn('subagent scope eviction skipped; wire flush failed', { agentId, error });
+      return 'failed';
+    }
+    if (this.agentLifecycle.handleOf(agentId) !== handle) {
+      return this.closing.has(agentId) ? 'closing' : 'missing';
+    }
+    if (this.busy(handle)) return 'deferred';
     const startedAt = Date.now();
     const removal = this.agentLifecycle.remove(context).then(
       () => 'removed' as const,
@@ -165,6 +181,12 @@ export class SessionSubagentScopeCacheService
       error: outcome.error,
     });
     return gone ? 'removed' : 'failed';
+  }
+
+  private busy(handle: IAgentScopeHandle): boolean {
+    const snapshot = handle.accessor.get(IAgentLoopService).snapshot();
+    if (snapshot.state === 'running' || snapshot.hasPendingRequests) return true;
+    return handle.accessor.get(IAgentTaskService).list(true).length > 0;
   }
 }
 

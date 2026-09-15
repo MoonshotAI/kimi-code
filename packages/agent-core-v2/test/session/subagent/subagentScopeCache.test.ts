@@ -78,7 +78,11 @@ import '#/agent/toolActivation/toolActivationService';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
-import { SubagentCancelled, SubagentCompleted } from '#/session/subagent/mirrorAgentRun';
+import {
+  SubagentCancelled,
+  SubagentCompleted,
+  SubagentStarted,
+} from '#/session/subagent/mirrorAgentRun';
 import {
   DEFAULT_SUBAGENT_SCOPE_CACHE_SIZE,
   DEFAULT_SUBAGENT_SCOPE_EVICT_TIMEOUT_MS,
@@ -946,7 +950,11 @@ describe('SessionSubagentScopeCacheService eviction guards', () => {
     ix.get(ISessionSubagentScopeCacheService);
   }
 
-  function loopHandle(agentId: string, snapshot: () => LoopSnapshot): IAgentScopeHandle {
+  function loopHandle(
+    agentId: string,
+    snapshot: () => LoopSnapshot,
+    flush: () => Promise<void> = async () => {},
+  ): IAgentScopeHandle {
     return {
       id: agentId,
       kind: LifecycleScope.Agent,
@@ -956,7 +964,9 @@ describe('SessionSubagentScopeCacheService eviction guards', () => {
             ? ({ _serviceBrand: undefined, snapshot } as unknown as IAgentLoopService)
             : serviceId === IAgentTaskService
               ? ({ _serviceBrand: undefined, list: () => [] } as unknown as IAgentTaskService)
-              : undefined,
+              : serviceId === IEventDispatcher
+                ? ({ _serviceBrand: undefined, flush } as unknown as IEventDispatcher)
+                : undefined,
       } as IAgentScopeHandle['accessor'],
       dispose: () => {},
     };
@@ -1167,5 +1177,74 @@ describe('SessionSubagentScopeCacheService eviction guards', () => {
         (entry) => entry.level === 'warn' && entry.message.includes('timed out'),
       ),
     ).toHaveLength(1);
+  });
+
+  it('evicts the oldest retired scope after an awaited eviction, not one re-retired meanwhile', async () => {
+    startCache();
+    const firstRemoval = createControlledPromise<void>();
+    removeAgent.mockImplementationOnce(async (context: AgentContext) => {
+      closingAgents.add(context.agentId);
+      willClose.fire(context);
+      await firstRemoval;
+      handles.delete(context.agentId);
+      closingAgents.delete(context.agentId);
+      didClose.fire(context);
+    });
+    for (const agentId of ['agent-a', 'agent-b', 'agent-c']) handles.set(agentId, idleHandle(agentId));
+
+    bus.publish(new SubagentCompleted({ subagentId: 'agent-a', resultSummary: 'done' }));
+    bus.publish(new SubagentCompleted({ subagentId: 'agent-b', resultSummary: 'done' }));
+    await vi.waitFor(() => {
+      expect(removeAgent).toHaveBeenCalledOnce();
+    });
+    bus.publish(new SubagentCompleted({ subagentId: 'agent-c', resultSummary: 'done' }));
+    bus.publish(new SubagentStarted({ subagentId: 'agent-b' }));
+    bus.publish(new SubagentCompleted({ subagentId: 'agent-b', resultSummary: 'done again' }));
+    firstRemoval.resolve();
+
+    await vi.waitFor(() => {
+      expect(removeAgent).toHaveBeenCalledTimes(2);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(removeAgent.mock.calls.map((call) => call[0].agentId)).toEqual(['agent-a', 'agent-c']);
+    expect(handles.has('agent-b')).toBe(true);
+  });
+
+  it('keeps a retired scope resident while its wire flush fails and evicts it once the flush succeeds', async () => {
+    startCache();
+    let flushFailures = 1;
+    const flush = vi.fn(async () => {
+      if (flushFailures > 0) {
+        flushFailures -= 1;
+        throw new Error('ENOSPC: no space left on device');
+      }
+    });
+    const idle = (): LoopSnapshot => ({
+      state: 'idle',
+      queue: [],
+      notificationCount: 0,
+      paused: false,
+      hasPendingRequests: false,
+    });
+    handles.set('agent-1', loopHandle('agent-1', idle, flush));
+    handles.set('agent-2', idleHandle('agent-2'));
+
+    bus.publish(new SubagentCompleted({ subagentId: 'agent-1', resultSummary: 'done' }));
+    bus.publish(new SubagentCompleted({ subagentId: 'agent-2', resultSummary: 'done' }));
+    await vi.waitFor(() => {
+      expect(removeAgent).toHaveBeenCalledOnce();
+    });
+    expect(flush).toHaveBeenCalledOnce();
+    expect(removeAgent.mock.calls[0]![0]).toMatchObject({ agentId: 'agent-2' });
+    expect(handles.has('agent-1')).toBe(true);
+
+    handles.set('agent-3', idleHandle('agent-3'));
+    bus.publish(new SubagentCompleted({ subagentId: 'agent-3', resultSummary: 'done' }));
+    await vi.waitFor(() => {
+      expect(removeAgent).toHaveBeenCalledTimes(2);
+    });
+    expect(removeAgent.mock.calls[1]![0]).toMatchObject({ agentId: 'agent-1' });
+    expect(flush).toHaveBeenCalledTimes(2);
+    expect(handles.has('agent-3')).toBe(true);
   });
 });
