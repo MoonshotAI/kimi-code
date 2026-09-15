@@ -229,10 +229,10 @@ export function foldWireHistory(
   const SEED_TURN_RAW_ID = -1;
   let seedEnded = false;
   let phantomUserSeq = 0;
+  let tentativeTurn: number | undefined;
   const cancelledTurnIds = new Set<number>();
   const hiddenTurnIds = new Set<number>();
-  const turnPromptIds = new Map<number, string>();
-  const pendingAnchorTurnIds: number[] = [];
+  const pendingAnchors: { rawId: number; promptId?: string }[] = [];
   const undoAnchors: { rawId: number }[] = [];
   let undoAnchorFloor = 0;
   const activeCancelTurnIds = new Set<number>();
@@ -323,6 +323,100 @@ export function foldWireHistory(
       serverUserSeq: 0,
       attachmentSeq: 0,
     });
+  };
+
+  const rekeyTurn = (oldRaw: number, newRaw: number): void => {
+    const oldId = turnIdOf(oldRaw);
+    const newId = turnIdOf(newRaw);
+    const draft = turns.get(oldId);
+    if (draft === undefined) return;
+    const rekeyId = (id: string): string =>
+      id === oldId ? newId : id.startsWith(`${oldId}.`) ? `${newId}${id.slice(oldId.length)}` : id;
+    turns.delete(oldId);
+    turns.set(newId, {
+      ...draft,
+      turnId: newId,
+      rawId: newRaw,
+      userMessageId: draft.userMessageId === undefined ? undefined : rekeyId(draft.userMessageId),
+      attachmentIds: draft.attachmentIds?.map(rekeyId),
+    });
+    nextTurnId = Math.max(nextTurnId, newRaw + 1);
+    for (let i = 0; i < order.length; i += 1) {
+      const [kind, id] = splitKey(order[i]!);
+      if (kind !== 'turn' && kind !== 'step' && kind !== 'text' && kind !== 'user') continue;
+      const rekeyed = rekeyId(id);
+      if (rekeyed !== id) order[i] = `${kind}:${rekeyed}`;
+    }
+    for (let i = 0; i < timelineIds.length; i += 1) {
+      if (timelineIds[i] === oldId) timelineIds[i] = newId;
+    }
+    const entry = scratchByTurn.get(oldRaw);
+    if (entry !== undefined) {
+      scratchByTurn.delete(oldRaw);
+      scratchByTurn.set(newRaw, entry);
+    }
+    for (const [stepId, step] of steps) {
+      if (step.turnId !== oldId) continue;
+      steps.delete(stepId);
+      const nextStepId = rekeyId(stepId);
+      steps.set(nextStepId, { ...step, stepId: nextStepId, turnId: newId });
+    }
+    for (const [messageId, text] of texts) {
+      if (text.turnId !== oldId) continue;
+      texts.delete(messageId);
+      const nextMessageId = rekeyId(messageId);
+      texts.set(nextMessageId, {
+        ...text,
+        messageId: nextMessageId,
+        turnId: newId,
+        stepId: rekeyId(text.stepId),
+      });
+    }
+    for (const [stepId, entry] of stepTextIds) {
+      const nextStepId = rekeyId(stepId);
+      if (nextStepId === stepId) continue;
+      stepTextIds.delete(stepId);
+      stepTextIds.set(nextStepId, {
+        assistant: entry.assistant === undefined ? undefined : rekeyId(entry.assistant),
+        thinking: entry.thinking === undefined ? undefined : rekeyId(entry.thinking),
+      });
+    }
+    for (const [stepId, seq] of stepTextSeqs) {
+      const nextStepId = rekeyId(stepId);
+      if (nextStepId === stepId) continue;
+      stepTextSeqs.delete(stepId);
+      stepTextSeqs.set(nextStepId, seq);
+    }
+    for (const [toolCallId, tool] of tools) {
+      if (tool.turnId !== oldId) continue;
+      tools.set(toolCallId, { ...tool, turnId: newId, stepId: rekeyId(tool.stepId) });
+    }
+    for (const [messageId, user] of users) {
+      if (user.turnId !== oldId) continue;
+      users.delete(messageId);
+      let nextMessageId = rekeyId(messageId);
+      if (users.has(nextMessageId)) {
+        const entry = scratch(newRaw);
+        do {
+          entry.serverUserSeq += 1;
+          nextMessageId = `${newId}.u${entry.serverUserSeq}`;
+        } while (users.has(nextMessageId));
+      }
+      users.set(nextMessageId, {
+        ...user,
+        messageId: nextMessageId,
+        turnId: newId,
+        attachmentIds: user.attachmentIds?.map(rekeyId),
+      });
+    }
+    for (const anchor of pendingAnchors) {
+      if (anchor.rawId === oldRaw) anchor.rawId = newRaw;
+    }
+    for (const anchor of undoAnchors) {
+      if (anchor.rawId === oldRaw) anchor.rawId = newRaw;
+    }
+    if (hiddenTurnIds.delete(oldRaw)) hiddenTurnIds.add(newRaw);
+    if (currentTurn === oldRaw) currentTurn = newRaw;
   };
 
   const createTextDraft = (
@@ -470,17 +564,16 @@ export function foldWireHistory(
     endSeedZone(record);
     skipCancelledTurnIds();
     const recordTurnId = record['turnId'];
-    const rawId =
-      typeof recordTurnId === 'number' && Number.isInteger(recordTurnId) && recordTurnId >= 0
-        ? recordTurnId
-        : nextTurnId;
+    const explicit =
+      typeof recordTurnId === 'number' && Number.isInteger(recordTurnId) && recordTurnId >= 0;
+    const rawId = explicit ? recordTurnId : nextTurnId;
     nextTurnId = Math.max(nextTurnId, rawId + 1);
+    tentativeTurn = undefined;
     const carriedUserSeq = phantomUserSeq;
     phantomUserSeq = 0;
     const origin = record['origin'];
     const promptId = record['promptId'];
     if (typeof promptId === 'string') {
-      turnPromptIds.set(rawId, promptId);
       queuedPrompts.delete(promptId);
     } else {
       const rawInput = record['input'];
@@ -492,25 +585,55 @@ export function foldWireHistory(
         }
       }
     }
-    if (isUndoAnchorOrigin(origin)) pendingAnchorTurnIds.push(rawId);
+    if (isUndoAnchorOrigin(origin)) {
+      pendingAnchors.push({
+        rawId,
+        promptId: typeof promptId === 'string' ? promptId : undefined,
+      });
+    }
     currentTurn = rawId;
     if (!isVisibleTurnOrigin(origin)) {
       hiddenTurnIds.add(rawId);
       return;
     }
+    hiddenTurnIds.delete(rawId);
     const recordAtMs = atMs(record);
     const recordAtIso = new Date(recordAtMs).toISOString();
     const turnId = turnIdOf(rawId);
     const input = Array.isArray(record['input']) ? (record['input'] as ContentPart[]) : [];
     const skipBlocks = bundledSkillCount(origin);
     const promptText = turnPromptText(input, skipBlocks);
+    const wantsUser = wantsUserMessage(origin, promptText);
+    const taskOrigin = taskNotificationOriginOf(origin);
+    const notification =
+      taskOrigin === undefined ? undefined : parseNotificationXmlText(promptText ?? '');
+    const existing = turns.get(turnId);
+    if (existing !== undefined) {
+      existing.status = 'running';
+      existing.endedAt = undefined;
+      existing.durationMs = undefined;
+      if (wantsUser || taskOrigin !== undefined) {
+        emitSteer(rawId, {
+          input,
+          origin:
+            notification !== undefined
+              ? taskUserOriginOf(taskOrigin?.task_id, notification)
+              : (taskOrigin ?? userOriginOf(origin)),
+          skillActivations: skillActivationsOf(origin),
+          skipBlocks,
+          at: recordAtMs,
+          messageId:
+            typeof promptId === 'string' && !users.has(promptId) ? promptId : undefined,
+          text: notification !== undefined ? notificationTextOf(notification) : undefined,
+        });
+      }
+      return;
+    }
     const attachments = promptAttachmentCount(input, origin);
     const attachmentIds =
       attachments > 0
         ? Array.from({ length: attachments }, (_, i) => attachmentIdOf(turnId, i + 1))
         : undefined;
-    const wantsUser = wantsUserMessage(origin, promptText);
-    const taskOrigin = taskNotificationOriginOf(origin);
     const openingMessageId =
       wantsUser || taskOrigin !== undefined
         ? ((typeof promptId === 'string' ? promptId : undefined) ?? turnUserMessageIdOf(turnId))
@@ -532,9 +655,8 @@ export function foldWireHistory(
       serverUserSeq: carriedUserSeq,
       attachmentSeq: attachments,
     });
+    if (!explicit) tentativeTurn = rawId;
     if (openingMessageId !== undefined) {
-      const notification =
-        taskOrigin === undefined ? undefined : parseNotificationXmlText(promptText ?? '');
       const user: UserDraft = {
         messageId: openingMessageId,
         turnId,
@@ -651,6 +773,14 @@ export function foldWireHistory(
         const turn = Number(e.turnId);
         if (!Number.isInteger(turn)) return;
         stepRefs.set(e.uuid, { turn, step: e.step });
+        if (tentativeTurn !== undefined) {
+          if (turn === tentativeTurn || turns.has(turnIdOf(turn))) {
+            tentativeTurn = undefined;
+          } else {
+            rekeyTurn(tentativeTurn, turn);
+            tentativeTurn = undefined;
+          }
+        }
         const draft = ensureStepDraft(turn, e.step, atMs(record));
         if (draft === undefined) return;
         draft.startedAt = draft.startedAt ?? atIso(record);
@@ -890,24 +1020,21 @@ export function foldWireHistory(
       const messageId = typeof message.id === 'string' ? message.id : undefined;
       const matchingIndex =
         messageId !== undefined
-          ? pendingAnchorTurnIds.findIndex((turnId) => turnPromptIds.get(turnId) === messageId)
+          ? pendingAnchors.findIndex((anchor) => anchor.promptId === messageId)
           : -1;
       const legacyIndex =
         matchingIndex < 0 && messageId !== undefined
-          ? pendingAnchorTurnIds.findIndex((turnId) => !turnPromptIds.has(turnId))
+          ? pendingAnchors.findIndex((anchor) => anchor.promptId === undefined)
           : -1;
-      const matchedTurnId =
+      const matched =
         matchingIndex >= 0
-          ? pendingAnchorTurnIds.splice(matchingIndex, 1)[0]
+          ? pendingAnchors.splice(matchingIndex, 1)[0]
           : legacyIndex >= 0
-            ? pendingAnchorTurnIds.splice(legacyIndex, 1)[0]
+            ? pendingAnchors.splice(legacyIndex, 1)[0]
             : messageId === undefined
-              ? pendingAnchorTurnIds.shift()
+              ? pendingAnchors.shift()
               : undefined;
-      if (matchedTurnId !== undefined && !turnPromptIds.has(matchedTurnId) && messageId !== undefined) {
-        turnPromptIds.set(matchedTurnId, messageId);
-      }
-      undoAnchors.push({ rawId: matchedTurnId ?? nextTurnId });
+      undoAnchors.push({ rawId: matched?.rawId ?? nextTurnId });
       return;
     }
     if (message.role === 'assistant') {
@@ -996,8 +1123,8 @@ export function foldWireHistory(
   const onTurnEnded = (record: ContextRecord): void => {
     const rawId = record['turnId'];
     if (typeof rawId !== 'number' || !Number.isInteger(rawId)) return;
-    const pendingIndex = pendingAnchorTurnIds.indexOf(rawId);
-    if (pendingIndex >= 0) pendingAnchorTurnIds.splice(pendingIndex, 1);
+    const pendingIndex = pendingAnchors.findIndex((anchor) => anchor.rawId === rawId);
+    if (pendingIndex >= 0) pendingAnchors.splice(pendingIndex, 1);
     const draft = turns.get(turnIdOf(rawId));
     if (draft === undefined) return;
     const recordAtMs = atMs(record);
@@ -1039,6 +1166,7 @@ export function foldWireHistory(
     pruneOrder();
     for (let turnId = firstUndone; turnId < nextTurnId; turnId++) hiddenTurnIds.add(turnId);
     if (currentTurn !== undefined && currentTurn >= firstUndone) currentTurn = undefined;
+    if (tentativeTurn !== undefined && tentativeTurn >= firstUndone) tentativeTurn = undefined;
     pushSystem('undo', { removed_ids: removed }, record);
   };
 
@@ -1053,6 +1181,7 @@ export function foldWireHistory(
     pruneOrder();
     undoAnchorFloor = undoAnchors.length;
     currentTurn = undefined;
+    tentativeTurn = undefined;
     scratchByTurn.clear();
     pushSystem('clear', { removed_ids: removed }, record);
   };
