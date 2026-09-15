@@ -1213,6 +1213,7 @@ describe('IExternalHooksRunnerService integration', () => {
           agentId: 'main',
           turnId: 3,
           origin: { kind: 'system_trigger', name: 'goal' },
+          input: [],
         }),
       );
       const queuedContent = [{ type: 'text' as const, text: 'later' }];

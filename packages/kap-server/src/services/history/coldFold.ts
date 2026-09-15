@@ -466,7 +466,7 @@ export function foldWireHistory(
     }
   };
 
-  const onTurnPrompt = (record: ContextRecord): void => {
+  const onTurnStarted = (record: ContextRecord): void => {
     endSeedZone(record);
     skipCancelledTurnIds();
     const recordTurnId = record['turnId'];
@@ -1195,8 +1195,9 @@ export function foldWireHistory(
 
   for (const record of records) {
     switch (record.type) {
+      case 'turn.started':
       case 'turn.prompt':
-        onTurnPrompt(record);
+        onTurnStarted(record);
         break;
       case 'turn.steer':
         onTurnSteer(record);

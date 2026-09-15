@@ -109,7 +109,7 @@ describe('AppendLogStore file persistence', () => {
     const { dir, log } = await createFileAppendLogHarness();
 
     log.append(SCOPE, KEY, {
-      type: 'turn.prompt',
+      type: 'turn.started',
       input: [{ type: 'text', text: 'hello' }],
       origin: { kind: 'user' },
     });
@@ -117,14 +117,14 @@ describe('AppendLogStore file persistence', () => {
 
     const lines = await readLines(join(dir, SCOPE, KEY));
     expect(lines).toHaveLength(1);
-    expect(JSON.parse(lines[0]!)['type']).toBe('turn.prompt');
+    expect(JSON.parse(lines[0]!)['type']).toBe('turn.started');
   });
 
   it('appends to an existing file without injecting records', async () => {
     const dir = await makeDir('wire-jsonl-test');
     const first = createAppendLogHarness(new FileStorageService(dir));
     first.append(SCOPE, KEY, {
-      type: 'turn.prompt',
+      type: 'turn.started',
       input: [{ type: 'text', text: 'one' }],
       origin: { kind: 'user' },
     });
@@ -132,7 +132,7 @@ describe('AppendLogStore file persistence', () => {
 
     const second = createAppendLogHarness(new FileStorageService(dir));
     second.append(SCOPE, KEY, {
-      type: 'turn.prompt',
+      type: 'turn.started',
       input: [{ type: 'text', text: 'two' }],
       origin: { kind: 'user' },
     });
@@ -141,8 +141,8 @@ describe('AppendLogStore file persistence', () => {
     const lines = await readLines(join(dir, SCOPE, KEY));
     expect(lines).toHaveLength(2);
     expect(lines.map((line) => JSON.parse(line)['type'])).toEqual([
-      'turn.prompt',
-      'turn.prompt',
+      'turn.started',
+      'turn.started',
     ]);
   });
 
@@ -154,7 +154,7 @@ describe('AppendLogStore file persistence', () => {
       created_at: 1,
     });
     log.append(SCOPE, KEY, {
-      type: 'turn.prompt',
+      type: 'turn.started',
       input: [{ type: 'text', text: 'hi' }],
       origin: { kind: 'user' },
     });
@@ -166,13 +166,13 @@ describe('AppendLogStore file persistence', () => {
       type: 'metadata',
       protocol_version: WIRE_PROTOCOL_VERSION,
     });
-    expect(records[1]!.type).toBe('turn.prompt');
+    expect(records[1]!.type).toBe('turn.started');
   });
 
   it('rewrites records from the beginning and then appends after them', async () => {
     const { dir, log } = await createFileAppendLogHarness();
     log.append(SCOPE, KEY, {
-      type: 'turn.prompt',
+      type: 'turn.started',
       input: [{ type: 'text', text: 'old' }],
       origin: { kind: 'user' },
     });
@@ -184,13 +184,13 @@ describe('AppendLogStore file persistence', () => {
         created_at: 1,
       },
       {
-        type: 'turn.prompt',
+        type: 'turn.started',
         input: [{ type: 'text', text: 'new' }],
         origin: { kind: 'user' },
       },
     ]);
     log.append(SCOPE, KEY, {
-      type: 'turn.prompt',
+      type: 'turn.started',
       input: [{ type: 'text', text: 'later' }],
       origin: { kind: 'user' },
     });
@@ -199,8 +199,8 @@ describe('AppendLogStore file persistence', () => {
     const lines = await readLines(join(dir, SCOPE, KEY));
     expect(lines.map((line) => JSON.parse(line)['type'])).toEqual([
       'metadata',
-      'turn.prompt',
-      'turn.prompt',
+      'turn.started',
+      'turn.started',
     ]);
     expect(JSON.parse(lines[1]!)['input'][0]['text']).toBe('new');
     expect(JSON.parse(lines[2]!)['input'][0]['text']).toBe('later');
@@ -209,7 +209,7 @@ describe('AppendLogStore file persistence', () => {
   it('rewrites already flushed records from the beginning', async () => {
     const { dir, log } = await createFileAppendLogHarness();
     log.append(SCOPE, KEY, {
-      type: 'turn.prompt',
+      type: 'turn.started',
       input: [{ type: 'text', text: 'old' }],
       origin: { kind: 'user' },
     });
@@ -222,7 +222,7 @@ describe('AppendLogStore file persistence', () => {
         created_at: 1,
       },
       {
-        type: 'turn.prompt',
+        type: 'turn.started',
         input: [{ type: 'text', text: 'new' }],
         origin: { kind: 'user' },
       },
@@ -232,7 +232,7 @@ describe('AppendLogStore file persistence', () => {
     const lines = await readLines(join(dir, SCOPE, KEY));
     expect(lines.map((line) => JSON.parse(line)['type'])).toEqual([
       'metadata',
-      'turn.prompt',
+      'turn.started',
     ]);
     expect(JSON.parse(lines[1]!)['input'][0]['text']).toBe('new');
   });
@@ -241,7 +241,7 @@ describe('AppendLogStore file persistence', () => {
     const { dir, log } = await createFileAppendLogHarness();
 
     log.append(SCOPE, KEY, {
-      type: 'turn.prompt',
+      type: 'turn.started',
       input: [{ type: 'text', text: 'late' }],
       origin: { kind: 'user' },
     });
@@ -249,7 +249,7 @@ describe('AppendLogStore file persistence', () => {
 
     const lines = await readLines(join(dir, SCOPE, KEY));
     expect(lines).toHaveLength(1);
-    expect(JSON.parse(lines[0]!)['type']).toBe('turn.prompt');
+    expect(JSON.parse(lines[0]!)['type']).toBe('turn.started');
   });
 
   it('propagates write failures from flush', async () => {
@@ -258,7 +258,7 @@ describe('AppendLogStore file persistence', () => {
     const log = createAppendLogHarness(new FileStorageService(dir));
 
     log.append(SCOPE, KEY, {
-      type: 'turn.prompt',
+      type: 'turn.started',
       input: [{ type: 'text', text: 'first' }],
       origin: { kind: 'user' },
     });
@@ -273,7 +273,7 @@ describe('wire record append-log persistence', () => {
     const log = createAppendLogHarness(storage);
 
     log.append<WireRecord>(SCOPE, KEY, {
-      type: 'turn.prompt',
+      type: 'turn.started',
       input: [{ type: 'text', text: 'one' }],
       origin: { kind: 'user' },
     });
@@ -315,7 +315,7 @@ describe('WireService seal', () => {
   it('is a no-op on a non-empty log', async () => {
     const { dir, log } = await createFileAppendLogHarness();
     log.append(SCOPE, KEY, {
-      type: 'turn.prompt',
+      type: 'turn.started',
       input: [{ type: 'text', text: 'existing' }],
       origin: { kind: 'user' },
     });
@@ -327,7 +327,7 @@ describe('WireService seal', () => {
 
     const lines = await readLines(join(dir, SCOPE, KEY));
     expect(lines).toHaveLength(1);
-    expect(JSON.parse(lines[0]!)['type']).toBe('turn.prompt');
+    expect(JSON.parse(lines[0]!)['type']).toBe('turn.started');
   });
 
   it('seals only once across repeated calls', async () => {
@@ -368,7 +368,7 @@ describe('WireService migration rewrite', () => {
       created_at: 1,
     });
     log.append<WireRecord>(SCOPE, KEY, {
-      type: 'turn.prompt',
+      type: 'turn.started',
       input: [{ type: 'text', text: 'hi' }],
       origin: { kind: 'user' },
     });

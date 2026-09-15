@@ -88,9 +88,6 @@ import {
   ThinkingDelta,
   ToolCallDelta,
   TurnActingStarted,
-  isDisplayablePromptOrigin,
-  turnPromptAttachments,
-  turnPromptText,
   TurnStarted,
   TurnStepCompleted,
   TurnStepInterrupted,
@@ -98,7 +95,7 @@ import {
   TurnStepStarted,
   type TurnInterruptReason,
 } from './turnEvents';
-import { TurnCancel, TurnEnded, turnKey, TurnPrompt, TurnSteer } from './turnOps';
+import { TurnCancel, TurnEnded, turnKey, TurnSteer } from './turnOps';
 import {
   attachMachineEngine,
   EMPTY_MACHINE_PROMPT,
@@ -1185,27 +1182,15 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const thinkingEffort = this.llmRequester.prepareTurnConfig(id)?.thinkingEffort;
     this.telemetry.setContext({ thinking_effort: thinkingEffort });
     void this.dispatcher.dispatch(
-      new TurnPrompt({
-        agentId: this.scopeContext.agentId,
-        input: prompt.message.content,
-        origin: prompt.origin,
-        promptId: prompt.promptId,
-        turnId: id,
-      }),
-    );
-    turn.state = 'running';
-    void this.dispatcher.dispatch(
       new TurnStarted({
         agentId: this.scopeContext.agentId,
         turnId: id,
         promptId: prompt.promptId,
         origin: prompt.origin,
-        prompt: isDisplayablePromptOrigin(prompt.origin)
-          ? turnPromptText(prompt.message.content, prompt.origin)
-          : undefined,
-        promptAttachments: turnPromptAttachments(prompt.message.content, prompt.origin),
+        input: prompt.message.content,
       }),
     );
+    turn.state = 'running';
     const started: TurnStartedTelemetryEvent = {
       turn_id: id,
       mode: active.mode ?? 'agent',

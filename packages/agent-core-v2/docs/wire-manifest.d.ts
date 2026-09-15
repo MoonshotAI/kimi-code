@@ -79,7 +79,7 @@
 //   tower_mode.exit                    tower, tower.base, tower.owner                        src/features/tower/towerOps.ts
 //   turn.cancel                        turn                                                  src/agent/loop/turnOps.ts
 //   turn.ended                         turn                                                  src/agent/loop/turnOps.ts
-//   turn.prompt                        turn                                                  src/agent/loop/turnOps.ts
+//   turn.started                       turn                                                  src/agent/loop/turnEvents.ts
 //   turn.steer                         turn                                                  src/agent/loop/turnOps.ts
 //   turn.step.interrupted              (none)                                                src/agent/loop/turnEvents.ts
 //   turn.step.retrying                 (none)                                                src/agent/loop/turnEvents.ts
@@ -812,16 +812,16 @@ interface TurnEndedPayload {
 
 /**
  * states: turn
- * owner: src/agent/loop/turnOps.ts
+ * owner: src/agent/loop/turnEvents.ts
  */
-interface TurnPromptPayload {
-  _name: 'turn.prompt';
+interface TurnStartedPayload {
+  _name: 'turn.started';
   agentId: string;
-  input: readonly ContentPart[];
+  turnId?: number;
+  promptId?: string;
   /** PromptOrigin */
   origin: 'user' | 'skill_activation' | 'plugin_command' | 'injection' | 'shell_command' | 'compaction_summary' | 'system_trigger' | 'task' | 'cron_job' | 'cron_missed' | 'hook_result' | 'retry';
-  promptId?: string;
-  turnId?: number;
+  input: readonly ContentPart[];
 }
 
 /**
@@ -938,7 +938,7 @@ interface WirePayloadMap {
   "tower_mode.exit": TowerModeExitPayload;
   "turn.cancel": TurnCancelPayload;
   "turn.ended": TurnEndedPayload;
-  "turn.prompt": TurnPromptPayload;
+  "turn.started": TurnStartedPayload;
   "turn.steer": TurnSteerPayload;
   "turn.step.interrupted": TurnStepInterruptedPayload;
   "turn.step.retrying": TurnStepRetryingPayload;

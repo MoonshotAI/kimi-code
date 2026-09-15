@@ -65,7 +65,7 @@ describe('blob-resolver', () => {
   describe('rehydrateWireEntries', () => {
     it('mutates entry.data but leaves entry.raw untouched', () => {
       const data: Record<string, unknown> = {
-        type: 'turn.prompt',
+        type: 'turn.started',
         input: [
           {
             type: 'image_url',

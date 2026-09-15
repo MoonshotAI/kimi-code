@@ -628,12 +628,12 @@ describe('AgentLifecycleService', () => {
     try {
       const removal = svc.remove(main);
       await entered;
-      bus.publish(new TurnStarted({ agentId: 'main', turnId: 1, origin: { kind: 'user' } }), main);
+      bus.publish(new TurnStarted({ agentId: 'main', turnId: 1, origin: { kind: 'user' }, input: [] }), main);
       expect(seen).toEqual(['delivered']);
       releaseDrain();
       await removal;
       expect(() =>
-        bus.publish(new TurnStarted({ agentId: 'main', turnId: 2, origin: { kind: 'user' } }), main),
+        bus.publish(new TurnStarted({ agentId: 'main', turnId: 2, origin: { kind: 'user' }, input: [] }), main),
       ).toThrow("Agent event 'turn.started' has no active lifecycle context");
       expect(unhandled).toEqual([]);
     } finally {
@@ -665,7 +665,7 @@ describe('AgentLifecycleService', () => {
 
   function publishDisposed(eventBus: ISessionEventBus, scope: IAgentScopeContext): void {
     eventBus.publish(
-      new TurnStarted({ agentId: scope.agentId, turnId: 1, origin: { kind: 'user' } }),
+      new TurnStarted({ agentId: scope.agentId, turnId: 1, origin: { kind: 'user' }, input: [] }),
       scope.agentContext,
     );
   }
@@ -963,7 +963,7 @@ describe('AgentLifecycleService', () => {
 
   it('does not re-seal a wire log that already has records', async () => {
     const existing: WireRecord = {
-      type: 'turn.prompt',
+      type: 'turn.started',
       input: [{ type: 'text', text: 'existing' }],
       origin: { kind: 'user' },
     };

@@ -1217,7 +1217,7 @@ describe('context-projector', () => {
 
   it('ignores v2 lifecycle/task bookkeeping records for context state', () => {
     const entries = [
-      { lineNo: 1, data: { type: 'turn.prompt' as const, agentId: 'main', input: [{ type: 'text' as const, text: 'hi' }], origin: { kind: 'user' as const } }, raw: {} },
+      { lineNo: 1, data: { type: 'turn.started' as const, agentId: 'main', turnId: 1, input: [{ type: 'text' as const, text: 'hi' }], origin: { kind: 'user' as const } }, raw: {} },
       { lineNo: 2, data: { type: 'turn.ended' as const, agentId: 'main', turnId: 1, reason: 'completed' as const }, raw: {} },
       { lineNo: 3, data: { type: 'prompt.completed' as const, agentId: 'main', promptId: 'p1', finishedAt: '2026-09-01T00:00:00Z', reason: 'completed' as const }, raw: {} },
       { lineNo: 4, data: { type: 'interaction.request' as const, agentId: 'main', id: 'i1', kind: 'approval' as const, request: {} }, raw: {} },

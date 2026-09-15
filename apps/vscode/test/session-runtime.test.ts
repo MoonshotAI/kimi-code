@@ -201,6 +201,7 @@ function turnStarted(): Event {
     agentId: "main",
     turnId: 7,
     origin: { kind: "user" },
+    input: [],
   };
 }
 

@@ -1861,7 +1861,7 @@ describe('FullCompaction', () => {
     expect(events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ type: '[wire]', event: 'context.append_message' }),
-        expect.objectContaining({ type: '[wire]', event: 'turn.prompt' }),
+        expect.objectContaining({ type: '[wire]', event: 'turn.started' }),
         expect.objectContaining({ type: '[rpc]', event: 'turn.started' }),
         expect.objectContaining({ type: '[wire]', event: 'full_compaction.begin' }),
         expect.objectContaining({ type: '[rpc]', event: 'compaction.blocked' }),
@@ -1870,7 +1870,7 @@ describe('FullCompaction', () => {
         expect.objectContaining({ type: '[rpc]', event: 'turn.ended' }),
       ]),
     );
-    expect(eventIndex(events, 'turn.prompt')).toBeLessThan(
+    expect(eventIndex(events, 'turn.started')).toBeLessThan(
       eventIndex(events, 'full_compaction.begin'),
     );
     expect(eventIndex(events, 'full_compaction.begin')).toBeLessThan(

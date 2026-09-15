@@ -3,8 +3,14 @@ import {
   readTodoItems,
   type AgentTaskInfo,
   type ContentPart,
+  type PromptOrigin,
   type TokenUsage,
 } from '@moonshot-ai/agent-core-v2';
+import {
+  isDisplayablePromptOrigin,
+  turnPromptAttachments,
+  turnPromptText,
+} from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 
 import type {
   AssistantMessage,
@@ -186,7 +192,6 @@ export class AgentMessageProjector {
   private readonly interactions = new Map<string, InteractionRecord>();
   private readonly users = new Map<string, UserRecord>();
   private readonly prompts = new Map<string, PromptRecord>();
-  private readonly turnPromptInputs = new Map<string, readonly ContentPart[]>();
   private readonly stepOrdinals = new Map<string, number>();
   private readonly stepUsageByTurn = new Map<string, StepUsage[]>();
   private mergedSteers: { text: string; promptIds: string[] }[] = [];
@@ -217,8 +222,6 @@ export class AgentMessageProjector {
         return this.onPlanRevision(event);
       case 'turn.started':
         return this.onTurnStarted(event);
-      case 'turn.prompt':
-        return this.onTurnPrompt(event);
       case 'turn.ended':
         return this.onTurnEnded(event);
       case 'turn.step.started':
@@ -623,23 +626,12 @@ export class AgentMessageProjector {
     return ops;
   }
 
-  private onTurnPrompt(event: {
-    turnId?: number;
-    input: readonly ContentPart[];
-  }): ServerMessage[] {
-    if (typeof event.turnId === 'number') {
-      this.turnPromptInputs.set(turnIdOf(event.turnId), event.input);
-    }
-    return [];
-  }
-
   private onTurnStarted(event: {
     time: number;
     turnId: number;
     promptId?: string;
-    origin: unknown;
-    prompt?: string;
-    promptAttachments?: readonly unknown[];
+    origin: PromptOrigin;
+    input: readonly ContentPart[];
   }): ServerMessage[] {
     const ops = this.settlePendingClear();
     if (this.currentTurn !== undefined && this.currentTurn.status === 'running') {
@@ -650,14 +642,14 @@ export class AgentMessageProjector {
     this.serverUserSeq = this.phantomUserSeq;
     this.phantomUserSeq = 0;
     const origin = this.mapTurnOrigin(event.origin);
-    const attachments = event.promptAttachments ?? [];
+    const attachments = turnPromptAttachments(event.input, event.origin) ?? [];
     const attachmentIds = attachments.map((_, index) => attachmentIdOf(turnId, index + 1));
     this.attachmentSeq = attachmentIds.length;
     const promptRecord = event.promptId === undefined ? undefined : this.prompts.get(event.promptId);
-    const promptInput = this.turnPromptInputs.get(turnId);
-    this.turnPromptInputs.delete(turnId);
     const promptText =
-      event.prompt ??
+      (isDisplayablePromptOrigin(event.origin)
+        ? turnPromptText(event.input, event.origin)
+        : undefined) ??
       (promptRecord === undefined ? undefined : promptTextOf(promptRecord.content));
     const wantsUser = wantsUserMessage(event.origin, promptText);
     const anchor = isUndoAnchorOrigin(event.origin);
@@ -686,12 +678,7 @@ export class AgentMessageProjector {
       const user: UserRecord = {
         messageId: turn.userMessageId,
         turnId,
-        text:
-          promptInput === undefined
-            ? promptRecord === undefined
-              ? textPartsOf(promptText ?? '')
-              : wireContentParts(promptRecord.content)
-            : wireContentParts(promptInput.slice(bundledSkillCount(event.origin))),
+        text: wireContentParts(event.input.slice(bundledSkillCount(event.origin))),
         status: 'read',
         timestamp: event.time,
         origin: userOriginOf(event.origin),

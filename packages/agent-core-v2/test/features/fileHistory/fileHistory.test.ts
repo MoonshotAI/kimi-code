@@ -181,7 +181,7 @@ describe('AgentFileHistoryService', () => {
 
   function startTurn(turnId: number): void {
     eventBus.publish(
-      new TurnStarted({ agentId: 'main', turnId, origin: USER_PROMPT_ORIGIN }),
+      new TurnStarted({ agentId: 'main', turnId, origin: USER_PROMPT_ORIGIN, input: [] }),
       scopeCtx.agentContext,
     );
   }

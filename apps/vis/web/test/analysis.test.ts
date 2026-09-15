@@ -16,7 +16,7 @@ describe('analyzeWire', () => {
   it('folds a session into turns/steps/tools with derived metrics', () => {
     line = 0;
     const entries: WireEntry[] = [
-      e({ type: 'turn.prompt', input: [{ type: 'text', text: 'hello' }], origin: { kind: 'user' } }, 1000),
+      e({ type: 'turn.started', input: [{ type: 'text', text: 'hello' }], origin: { kind: 'user' } }, 1000),
       loop({ type: 'step.begin', uuid: 's1', turnId: 'T1', step: 0 }, 1100),
       loop({ type: 'tool.call', uuid: 'tc1', turnId: 'T1', step: 0, stepUuid: 's1', toolCallId: 'c1', name: 'Read' }, 1200),
       loop({ type: 'tool.result', parentUuid: 'tc1', toolCallId: 'c1', result: { output: 'x'.repeat(50), truncated: true } }, 1500),
@@ -24,7 +24,7 @@ describe('analyzeWire', () => {
       loop({ type: 'step.begin', uuid: 's2', turnId: 'T1', step: 1 }, 1700),
       loop({ type: 'step.end', uuid: 's2', turnId: 'T1', step: 1, finishReason: 'end_turn', usage: { inputOther: 200, output: 50, inputCacheRead: 150, inputCacheCreation: 0 } }, 2000),
       // Big idle gap → waiting for the user, then a second turn that errors.
-      e({ type: 'turn.prompt', input: [{ type: 'text', text: 'again' }], origin: { kind: 'user' } }, 10000),
+      e({ type: 'turn.started', input: [{ type: 'text', text: 'again' }], origin: { kind: 'user' } }, 10000),
       loop({ type: 'step.begin', uuid: 's3', turnId: 'T2', step: 0 }, 10100),
       loop({ type: 'tool.call', uuid: 'tc2', turnId: 'T2', step: 0, stepUuid: 's3', toolCallId: 'c2', name: 'Read' }, 10200),
       loop({ type: 'tool.result', parentUuid: 'tc2', toolCallId: 'c2', result: { output: 'y'.repeat(10), isError: true } }, 10250),

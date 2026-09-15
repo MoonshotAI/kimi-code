@@ -17,7 +17,7 @@ export interface WireRecord {
 
 // Turn boundaries: one turn per user message, plus a fallback turn for a
 // leading non-user run left over from a compaction-truncated context. One
-// synthesized `turn.prompt` per grouped turn makes the restored turn clock
+// synthesized `turn.started` per grouped turn makes the restored turn clock
 // line up with the imported history, so the first live turn after resume
 // never collides with an imported one.
 export function splitIntoTurns(messages: readonly TurnMessage[]): ImportedTurn[] {
@@ -55,8 +55,9 @@ export function buildTurnRecords(
   turns.forEach((turn, turnId) => {
     const opener = turn.opensWithUser ? turn.messages[0] : undefined;
     records.push({
-      type: 'turn.prompt',
+      type: 'turn.started',
       agentId: opts.agentId,
+      turnId,
       input: opener?.content ?? [],
       origin: turn.opensWithUser
         ? { kind: 'user' }

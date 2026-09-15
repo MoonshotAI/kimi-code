@@ -33,11 +33,11 @@ describe('migrateOneSession (tiny-hello-world fixture)', () => {
     const lines = wire.split('\n').filter((l) => l.length > 0);
     expect(lines[0]).toContain('"protocol_version":"1.0"');
     const records = lines.map((l) => JSON.parse(l) as { type: string });
-    // metadata + turn.prompt + 2 messages + turn.ended + token_counting.measured
+    // metadata + turn.started + 2 messages + turn.ended + token_counting.measured
     // (the fixture carries a `_usage` row with token_count 9133)
     expect(records.map((r) => r.type)).toEqual([
       'metadata',
-      'turn.prompt',
+      'turn.started',
       'context.append_message',
       'context.append_message',
       'turn.ended',
@@ -459,7 +459,7 @@ describe('migrateOneSession subagent migration', () => {
       .map((l) => JSON.parse(l) as { type: string });
     expect(subWire.map((r) => r.type)).toEqual([
       'metadata',
-      'turn.prompt',
+      'turn.started',
       'context.append_message',
       'context.append_message',
       'turn.ended',
@@ -474,7 +474,7 @@ describe('migrateOneSession subagent migration', () => {
       .map((l) => JSON.parse(l) as { type: string });
     expect(mainWire.map((r) => r.type)).toEqual([
       'metadata',
-      'turn.prompt',
+      'turn.started',
       'context.append_message',
       'task.started',
       'context.append_message',

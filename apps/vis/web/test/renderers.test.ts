@@ -55,6 +55,7 @@ const HISTORICAL_OR_HEADER_TYPES = new Set([
   'staleGuard.recorded',
   'staleGuard.cleared',
   'prompt.accepted',
+  'turn.prompt',
 ]);
 
 describe('wire renderers', () => {

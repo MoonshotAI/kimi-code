@@ -119,6 +119,7 @@ function pluginCommandTurnStarted() {
       commandName: 'setup',
       trigger: 'user-slash',
     },
+    input: [],
   } as never;
 }
 
