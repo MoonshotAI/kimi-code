@@ -10,7 +10,6 @@
  * DEFAULT_THEME.
  */
 
-import chalk from 'chalk';
 import { plain } from 'cli-highlight';
 import type { Theme } from 'cli-highlight';
 
@@ -19,6 +18,6 @@ import { currentTheme } from './theme';
 export const codeHighlightTheme: Theme = {
   string: plain,
   regexp: plain,
-  addition: (code) => chalk.hex(currentTheme.color('diffAdded'))(code),
-  deletion: (code) => chalk.hex(currentTheme.color('diffRemoved'))(code),
+  addition: (code) => currentTheme.fg('diffAdded', code),
+  deletion: (code) => currentTheme.fg('diffRemoved', code),
 };
