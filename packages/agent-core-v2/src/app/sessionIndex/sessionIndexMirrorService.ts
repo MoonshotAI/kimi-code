@@ -130,6 +130,7 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
   private async flushChunk(): Promise<void> {
     const chunk = [...this.pendingMap.entries()].slice(0, FLUSH_BATCH_SIZE);
     if (chunk.length === 0) return;
+    const startedAt = Date.now();
     try {
       const manifest = await this.queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
       if (manifest === undefined) {
@@ -197,6 +198,7 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
       if (this.consecutiveFailures === 1) {
         this.log.warn('failed to flush session index mirror chunk', {
           pending: this.pendingMap.size,
+          durationMs: Date.now() - startedAt,
           error: String(error),
         });
       }
