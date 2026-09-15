@@ -709,5 +709,65 @@ describe("CombinedAutocompleteProvider", () => {
 
 			assert.strictEqual(applied.lines[0], "see @docs/re @docs/readme.md ");
 		});
+
+		test("replaces a quoted @ token the user closed while the picker was stale", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = 'see @"my folder"';
+			const item = { value: '@"my folder/other.txt"', label: "other.txt" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, '@"my fo');
+
+			assert.strictEqual(applied.lines[0], 'see @"my folder/other.txt" ');
+		});
+
+		test("replaces the whole slash command argument when it grew mid-word", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "/goal next ma";
+			const item = { value: "next manage", label: "next manage" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "next m");
+
+			assert.strictEqual(applied.lines[0], "/goal next manage");
+		});
+
+		test("replaces a slash argument containing a closed quote as one range", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = '/goal next "ma"';
+			const item = { value: 'next "manage"', label: 'next "manage"' };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, 'next "m');
+
+			assert.strictEqual(applied.lines[0], '/goal next "manage"');
+		});
+
+		test("keeps flag text when a stale path snapshot sits in a slash-shaped line", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "/bin/ls -l /tmp/x";
+			const item = { value: "/tmp/xray", label: "xray" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "/tmp");
+
+			assert.strictEqual(applied.lines[0], "/bin/ls -l /tmp/xray");
+		});
+
+		test("does not let the slash argument range swallow a stale @ mention", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "/goal Fix the @checkout d";
+			const item = { value: "@checkout docs/", label: "@checkout docs/" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "@checkout");
+
+			assert.strictEqual(applied.lines[0], "/goal Fix the @checkout @checkout docs/");
+		});
+
+		test("replaces the whole slash command argument when it grew another word", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "/goal next m";
+			const item = { value: "next manage", label: "next manage" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "next");
+
+			assert.strictEqual(applied.lines[0], "/goal next manage");
+		});
 	});
 });

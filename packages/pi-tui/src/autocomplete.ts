@@ -53,6 +53,21 @@ export function resolveCompletionPrefix(
 	if (textBeforeCursor.endsWith(prefix)) {
 		return prefix;
 	}
+	if (!prefix.startsWith("@") && !prefix.startsWith('"')) {
+		const spaceIndex = textBeforeCursor.indexOf(" ");
+		if (textBeforeCursor.startsWith("/") && spaceIndex !== -1) {
+			const argumentText = textBeforeCursor.slice(spaceIndex + 1);
+			if (argumentText.startsWith(prefix) || prefix.startsWith(argumentText)) {
+				return argumentText;
+			}
+		}
+	}
+	if (textBeforeCursor.endsWith('"')) {
+		const closedQuotedPrefix = extractQuotedPrefix(textBeforeCursor.slice(0, -1));
+		if (closedQuotedPrefix) {
+			return `${closedQuotedPrefix}"`;
+		}
+	}
 	const quotedPrefix = extractQuotedPrefix(textBeforeCursor);
 	if (quotedPrefix) {
 		return quotedPrefix;
