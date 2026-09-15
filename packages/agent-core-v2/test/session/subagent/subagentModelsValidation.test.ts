@@ -316,6 +316,22 @@ describe('SessionSubagentModelsValidationService', () => {
     expect(resolve()).toBeUndefined();
   });
 
+  it('constructs fine for an adaptive-thinking pool model without the thinking capability', () => {
+    modelIds.add('provider/adaptive');
+    modelMeta.set('provider/adaptive', {
+      capabilities: { thinking: false },
+      adaptiveThinking: true,
+    });
+    setup({
+      [SECONDARY_MODEL_SECTION]: {
+        defaultModel: 'provider/adaptive',
+        models: { 'provider/adaptive': 'adaptive thinking' },
+        defaultEffort: 'high',
+      },
+    });
+    expect(resolve()).toBeUndefined();
+  });
+
   it('fails session creation when a pool model does not support thinking', () => {
     modelIds.add('provider/plain');
     modelMeta.set('provider/plain', { capabilities: { thinking: false } });

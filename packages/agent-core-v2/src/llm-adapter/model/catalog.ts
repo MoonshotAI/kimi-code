@@ -34,6 +34,7 @@ export interface Model {
   readonly supportEfforts?: readonly string[];
   readonly defaultEffort?: string;
   readonly alwaysThinking: boolean;
+  readonly adaptiveThinking?: boolean;
   readonly providerType?: string;
   readonly providerName: string;
 
