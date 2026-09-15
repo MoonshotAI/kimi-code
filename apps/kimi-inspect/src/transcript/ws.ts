@@ -6,8 +6,9 @@
  * the server replies with `response` (matched by `request_id`) and then
  * streams the recovery payload followed by live traffic — one ordered
  * session sequence, no cursors anywhere. Liveness is application-level: the
- * client may send `{type: 'ping', request_id}` and the server answers with a
- * `response` carrying the same `request_id`.
+ * client pings on an interval (`{type: 'ping', request_id}` answered by a
+ * `response` echoing the `request_id`) and drops the socket into the
+ * reconnect path when replies go missing.
  *
  * Every data frame is validated against the shared
  * `serverMessageSchema`; control frames (`response` / `error`) are
@@ -25,6 +26,7 @@
 
 import { serverMessageSchema, type ServerMessage } from '@moonshot-ai/kap-server/protocol';
 
+import { WsHeartbeat } from '../channel/heartbeat';
 import type { WsLike, WsLikeCtor } from '../channel/wsLike';
 
 const WS_BEARER_PROTOCOL_PREFIX = 'kimi-code.bearer.';
@@ -83,6 +85,8 @@ export interface ChatWsOptions {
   readonly WebSocketImpl?: WsLikeCtor;
   /** Base delay (ms) for the reconnect backoff. Default `500`. */
   readonly reconnectDelayMs?: number;
+  /** Heartbeat ping interval (ms). Default `10000`. */
+  readonly heartbeatIntervalMs?: number;
 }
 
 export class ChatWs {
@@ -94,6 +98,7 @@ export class ChatWs {
   private readonly handlers: ChatWsHandlers;
   private readonly WsCtor: WsLikeCtor;
   private readonly reconnectDelayMs: number;
+  private readonly heartbeat: WsHeartbeat;
 
   private ws: WsLike | undefined;
   private manualClose = false;
@@ -114,12 +119,18 @@ export class ChatWs {
     }
     this.WsCtor = ctor;
     this.reconnectDelayMs = opts.reconnectDelayMs ?? 500;
+    this.heartbeat = new WsHeartbeat({
+      intervalMs: opts.heartbeatIntervalMs,
+      sendPing: (requestId) => this.send({ type: 'ping', request_id: requestId }),
+      onTimeout: () => this.reconnect(),
+    });
     this.connect();
   }
 
   /** Tear the socket down permanently. */
   close(): void {
     this.manualClose = true;
+    this.heartbeat.stop();
     if (this.reconnectTimer !== undefined) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = undefined;
@@ -132,6 +143,7 @@ export class ChatWs {
   /** Force a reconnect (debug/testing): drop the socket and re-subscribe after `delayMs`. */
   reconnect(delayMs = 0): void {
     if (this.manualClose) return;
+    this.heartbeat.stop();
     if (this.reconnectTimer !== undefined) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = undefined;
@@ -171,6 +183,7 @@ export class ChatWs {
         agent_ids: this.agentIds !== undefined && this.agentIds.length > 0 ? [...this.agentIds] : undefined,
         omit: this.omit !== undefined && this.omit.length > 0 ? [...this.omit] : undefined,
       });
+      this.heartbeat.start();
     });
     ws.addEventListener('message', (event: { data: unknown }) => {
       this.onMessage(event.data);
@@ -178,6 +191,7 @@ export class ChatWs {
     ws.addEventListener('close', () => {
       if (this.ws !== ws) return;
       this.ws = undefined;
+      this.heartbeat.stop();
       if (!this.manualClose) this.scheduleReconnect();
     });
     ws.addEventListener('error', () => {});
@@ -202,6 +216,7 @@ export class ChatWs {
     const message = parsed.data;
     switch (message.type) {
       case 'response': {
+        if (this.heartbeat.consume(message.request_id)) return;
         if (message.request_id === this.subscribeRequestId) {
           this.handlers.onResponse(message.code, message.msg);
         }

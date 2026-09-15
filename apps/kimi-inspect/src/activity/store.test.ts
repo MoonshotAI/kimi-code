@@ -90,7 +90,7 @@ function sessionMessage(
 }
 
 describe('SessionActivityStore', () => {
-  it('applies work facts and notifies with a version bump', () => {
+  it('applies work facts with a version bump and ignores identical facts', () => {
     const store = new SessionActivityStore();
     const listener = vi.fn();
     store.subscribe(listener);
@@ -100,18 +100,11 @@ describe('SessionActivityStore', () => {
     expect(store.get('s1')).toEqual(facts({ busy: true, mainTurnActive: true }));
     expect(store.getVersion()).toBe(1);
     expect(listener).toHaveBeenCalledTimes(1);
-  });
 
-  it('ignores identical facts (no bump, no notify)', () => {
-    const store = new SessionActivityStore();
-    const listener = vi.fn();
-    store.applyWorkChanged('s1', facts({ busy: true }));
-    store.subscribe(listener);
-
-    store.applyWorkChanged('s1', facts({ busy: true }));
+    store.applyWorkChanged('s1', facts({ busy: true, mainTurnActive: true }));
 
     expect(store.getVersion()).toBe(1);
-    expect(listener).not.toHaveBeenCalled();
+    expect(listener).toHaveBeenCalledTimes(1);
   });
 
   it('seed replaces the whole map', () => {
@@ -126,6 +119,43 @@ describe('SessionActivityStore', () => {
 });
 
 describe('SessionActivityHub', () => {
+  it('pings on an interval and drops the socket into a reconnect when responses go missing', () => {
+    vi.useFakeTimers();
+    try {
+      const { ctor, instances } = makeFakeWsCtor();
+      const hub = new SessionActivityHub({
+        url: 'http://127.0.0.1:58627',
+        onListChanged: () => {},
+        WebSocketImpl: ctor,
+        fetchImpl: seedFetch([]),
+        heartbeatIntervalMs: 100,
+      });
+      const first = instances[0]!;
+      first.emit('open');
+      const firstFrames = (): Record<string, unknown>[] =>
+        first.sent.map((data) => JSON.parse(data) as Record<string, unknown>);
+
+      vi.advanceTimersByTime(100);
+      const ping = firstFrames().find((frame) => frame['type'] === 'ping')!;
+      expect(typeof ping['request_id']).toBe('string');
+      first.emitFrame({ type: 'response', request_id: ping['request_id'], code: 0 });
+
+      vi.advanceTimersByTime(100);
+      expect(firstFrames().filter((frame) => frame['type'] === 'ping')).toHaveLength(2);
+      expect(instances).toHaveLength(1);
+
+      vi.advanceTimersByTime(100);
+      expect(first.closed).toBe(false);
+      vi.advanceTimersByTime(100);
+      expect(first.closed).toBe(true);
+      vi.advanceTimersByTime(500);
+      expect(instances.length).toBeGreaterThan(1);
+      hub.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('seeds the store from the REST session list when the socket opens', async () => {
     const { ctor, instances } = makeFakeWsCtor();
     const hub = new SessionActivityHub({
@@ -143,8 +173,8 @@ describe('SessionActivityHub', () => {
 
     expect(hub.store.get('s1')).toEqual(facts({ busy: true, mainTurnActive: true }));
     expect(hub.store.get('s2')?.pendingInteraction).toBe('approval');
-    // Nothing goes out — v3 global messages flow to every connection with no
-    // subscribe frame.
+    // No subscribe frame — global messages flow to every connection; only
+    // the periodic heartbeat ping goes out, and none fires within the test.
     expect(instances[0]!.sent).toEqual([]);
     hub.close();
   });

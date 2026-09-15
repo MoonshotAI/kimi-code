@@ -238,7 +238,10 @@ class FakeWs implements WsLike {
   }
 }
 
-function makeWs(handlers: Partial<ConstructorParameters<typeof ChatWs>[0]['handlers']> = {}) {
+function makeWs(
+  handlers: Partial<ConstructorParameters<typeof ChatWs>[0]['handlers']> = {},
+  opts: { heartbeatIntervalMs?: number } = {},
+) {
   const seen = {
     messages: [] as ServerMessage[],
     responses: [] as { code: number; msg?: string }[],
@@ -253,6 +256,7 @@ function makeWs(handlers: Partial<ConstructorParameters<typeof ChatWs>[0]['handl
     agentIds: ['main'],
     WebSocketImpl: FakeWs,
     reconnectDelayMs: 1,
+    heartbeatIntervalMs: opts.heartbeatIntervalMs,
     handlers: {
       onMessage: (message) => {
         seen.messages.push(message);
@@ -367,21 +371,34 @@ describe('fetchHistoryPage', () => {
 // ---------------------------------------------------------------- ws
 
 describe('ChatWs', () => {
-  it('connects with the bearer subprotocol and subscribes on open without waiting for a handshake', () => {
-    FakeWs.reset();
-    makeWs();
-    const sock = FakeWs.instances[0]!;
-    expect(sock.url).toBe('ws://h:1/api/v3/ws');
-    expect(sock.protocols).toEqual(['kimi-code.bearer.tok']);
-    expect(sock.sent).toHaveLength(0);
-    sock.open();
-    const frame = sock.sentFrames()[0]!;
-    expect(frame).toMatchObject({
-      type: 'subscribe',
-      session_id: 's1',
-      agent_ids: ['main'],
-    });
-    expect(typeof frame['request_id']).toBe('string');
+  it('connects with the bearer subprotocol, subscribes on open and keeps the socket alive with ping/response', () => {
+    vi.useFakeTimers();
+    try {
+      FakeWs.reset();
+      makeWs({}, { heartbeatIntervalMs: 100 });
+      const sock = FakeWs.instances[0]!;
+      expect(sock.url).toBe('ws://h:1/api/v3/ws');
+      expect(sock.protocols).toEqual(['kimi-code.bearer.tok']);
+      expect(sock.sent).toHaveLength(0);
+      sock.open();
+      const frame = sock.sentFrames()[0]!;
+      expect(frame).toMatchObject({
+        type: 'subscribe',
+        session_id: 's1',
+        agent_ids: ['main'],
+      });
+      expect(typeof frame['request_id']).toBe('string');
+
+      vi.advanceTimersByTime(100);
+      const ping = sock.sentFrames().find((f) => f['type'] === 'ping')!;
+      expect(typeof ping['request_id']).toBe('string');
+      sock.serverFrame({ type: 'response', request_id: ping['request_id'], code: 0 });
+      vi.advanceTimersByTime(100);
+      expect(sock.sentFrames().filter((f) => f['type'] === 'ping')).toHaveLength(2);
+      expect(FakeWs.instances).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('fires onResponse on the subscribe response and forwards entity messages', () => {
@@ -401,7 +418,7 @@ describe('ChatWs', () => {
     expect(seen.messages.map((m) => m.type)).toEqual(['turn', 'session.state']);
   });
 
-  it('surfaces protocol error frames and ignores responses for other request ids', () => {
+  it('triages inbound frames: protocol errors, foreign responses, unknown and malformed types', () => {
     FakeWs.reset();
     const { seen } = makeWs();
     const sock = FakeWs.instances[0]!;
@@ -410,13 +427,6 @@ describe('ChatWs', () => {
     expect(seen.responses).toHaveLength(0);
     sock.serverFrame({ type: 'error', code: 1008, msg: 'slow consumer' });
     expect(seen.protocolErrors).toEqual([{ code: 1008, msg: 'slow consumer' }]);
-  });
-
-  it('ignores unknown future message types but reports malformed known ones', () => {
-    FakeWs.reset();
-    const { seen } = makeWs();
-    const sock = FakeWs.instances[0]!;
-    sock.open();
     sock.serverFrame({ type: 'turn.supercharged', whatever: true });
     sock.serverFrame({ type: 'turn', turn_id: 42 });
     expect(seen.messages).toHaveLength(0);
@@ -442,6 +452,28 @@ describe('ChatWs', () => {
     expect(secondFrame['request_id']).not.toBe(firstRequestId);
     second.serverFrame({ type: 'response', request_id: secondFrame['request_id'], code: 0 });
     expect(seen.responses).toHaveLength(2);
+  });
+
+  it('drops the socket and re-subscribes when heartbeat responses go missing', () => {
+    vi.useFakeTimers();
+    try {
+      FakeWs.reset();
+      makeWs({}, { heartbeatIntervalMs: 100 });
+      const first = FakeWs.instances[0]!;
+      first.open();
+      vi.advanceTimersByTime(100);
+      expect(first.sentFrames().some((f) => f['type'] === 'ping')).toBe(true);
+      vi.advanceTimersByTime(100);
+      expect(FakeWs.instances).toHaveLength(1);
+      vi.advanceTimersByTime(100);
+      vi.advanceTimersByTime(1);
+      expect(FakeWs.instances.length).toBeGreaterThan(1);
+      const second = FakeWs.instances[1]!;
+      second.open();
+      expect(second.sentFrames()[0]).toMatchObject({ type: 'subscribe', session_id: 's1' });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('stays closed after close()', () => {
