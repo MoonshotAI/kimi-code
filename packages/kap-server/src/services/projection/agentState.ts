@@ -100,13 +100,13 @@ export class AgentStateTracker {
   compactionStarted(): boolean {
     if (this.compacting) return false;
     this.compacting = true;
-    return this.running;
+    return true;
   }
 
   compactionEnded(): boolean {
     if (!this.compacting) return false;
     this.compacting = false;
-    return this.running;
+    return true;
   }
 
   runStarted(): boolean {
@@ -135,10 +135,9 @@ export class AgentStateTracker {
   recompute(snapshot: AgentActivitySnapshot): boolean {
     if (snapshot.turn === undefined) {
       if (this.finishReason !== undefined) return false;
-      const changed = this.running || this.compacting;
+      if (!this.running) return false;
       this.running = false;
-      this.compacting = false;
-      return changed;
+      return true;
     }
     if (this.running) return false;
     this.running = true;
@@ -147,7 +146,7 @@ export class AgentStateTracker {
 
   snapshot(sessionId: string): AgentStateMessage | undefined {
     if (this.origin === undefined) return undefined;
-    const status: AgentStatus = this.running ? (this.compacting ? 'compacting' : 'running') : 'idle';
+    const status: AgentStatus = this.compacting ? 'compacting' : this.running ? 'running' : 'idle';
     return {
       type: 'agent.state',
       session_id: sessionId,

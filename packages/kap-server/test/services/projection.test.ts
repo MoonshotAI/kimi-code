@@ -1326,6 +1326,13 @@ describe('SessionProjection', () => {
     );
     agent.activity = {};
     agent.bus.emit(ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }) as Event2<any>);
+    agent.bus.emit(ev({ type: 'compaction.started', trigger: 'manual' }) as Event2<any>);
+    agent.bus.emit(
+      ev({
+        type: 'compaction.completed',
+        result: { summary: 'compacted', compactedCount: 3, tokensBefore: 10, tokensAfter: 5 },
+      }) as Event2<any>,
+    );
     agent.bus.emit(
       ev({
         type: 'task.started',
@@ -1369,9 +1376,10 @@ describe('SessionProjection', () => {
     expect(mainRunning).toBeDefined();
     const mainStates = ofType(received, 'agent.state').filter((m) => m.agent_id === 'main');
     const compactingStates = mainStates.filter((m) => m.status === 'compacting');
-    expect(compactingStates).toHaveLength(1);
+    expect(compactingStates).toHaveLength(2);
     const lastRunningIndex = mainStates.findLastIndex((m) => m.status === 'running');
     expect(lastRunningIndex).toBeGreaterThan(mainStates.indexOf(compactingStates[0]!));
+    expect(mainStates.at(-2)).toMatchObject({ status: 'compacting' });
     const mainIdle = ofType(received, 'agent.state')
       .filter((m) => m.agent_id === 'main')
       .at(-1)!;
