@@ -196,7 +196,7 @@ export type TurnEvent =
   | { type: 'turn.notify'; messages: HistoryMessage[] }
   | { type: 'turn.pause' }
   | { type: 'turn.continue' }
-  | { type: 'turn.abort' }
+  | { type: 'turn.abort'; reason?: unknown }
   | {
       type: 'turn.failure.triaged';
       cause: Extract<LlmEvent, { type: 'llm.failed.remote' }>;
@@ -706,8 +706,8 @@ export function createTurnMachine(
           'turn.abort': {
             target: 'aborted',
             actions: [
-              ({ context }) => {
-                context.llmScope.abort();
+              ({ context, event }) => {
+                context.llmScope.abort(event.reason);
               },
               'salvageAborted',
             ],

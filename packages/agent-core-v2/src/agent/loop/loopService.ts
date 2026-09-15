@@ -816,7 +816,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const active = this.active;
     if (active === undefined || (turnId !== undefined && active.id !== turnId)) return false;
     if (active.controller.signal.aborted) {
-      this.machineEngine().abort();
+      this.machineEngine().abort(active.controller.signal.reason);
       return true;
     }
     void this.dispatcher.dispatch(
@@ -828,7 +828,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       }),
     );
     active.controller.abort(cancellation);
-    this.machineEngine().abort();
+    this.machineEngine().abort(cancellation);
     return true;
   }
 

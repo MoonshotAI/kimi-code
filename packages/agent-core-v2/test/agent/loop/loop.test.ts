@@ -35,7 +35,7 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { userCancellationReason } from '#/_base/utils/abort';
+import { isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 
 import {
   agentService,
@@ -622,6 +622,49 @@ describe('Agent loop', () => {
       await local.dispose();
     }
   });
+
+  it('forwards the cancellation reason to the signals of running tools', async () => {
+    const local = createTestAgent(permissionModeServices('yolo'));
+    try {
+      const started = deferred();
+      const signals: AbortSignal[] = [];
+      const hangTool: ExecutableTool = {
+        name: 'Hang',
+        description: 'Wait until aborted.',
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+        resolveExecution: () => ({
+          approvalRule: 'Hang',
+          execute: ({ signal }) => {
+            signals.push(signal);
+            started.resolve();
+            return new Promise((_, reject) => {
+              signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+            });
+          },
+        }),
+      };
+      local.get(IAgentProfileService).update({ activeToolNames: ['Hang'] });
+      local.get(IAgentToolRegistryService).register(hangTool);
+      local.mockNextResponse(
+        { type: 'text', text: 'working' },
+        { type: 'function', id: 'call-hang-1', name: 'Hang', arguments: '{}' },
+      );
+
+      const loop = local.get(IAgentLoopService);
+      const { turn } = submitTurn(loop, 'hang until cancelled');
+      await started.promise;
+
+      expect(loop.cancel()).toBe(true);
+      await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
+
+      expect(signals).toHaveLength(1);
+      expect(signals[0]?.aborted).toBe(true);
+      expect(isUserCancellation(signals[0]?.reason)).toBe(true);
+    } finally {
+      await local.dispose();
+    }
+  });
+
 
   it('preserves tool call extras (Gemini thought_signature) through to context', async () => {
     const sigCall: ToolCall = {
