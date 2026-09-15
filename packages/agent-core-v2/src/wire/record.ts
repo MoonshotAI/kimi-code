@@ -1,4 +1,4 @@
-import { WIRE_PROTOCOL_VERSION } from './migration/migration';
+import { WIRE_MIN_READER_VERSION, WIRE_PROTOCOL_VERSION } from './migration/migration';
 
 export const AGENT_WIRE_RECORD_KEY = 'wire.jsonl';
 
@@ -23,6 +23,7 @@ export interface WireRecord {
 export interface WireMetadataRecord extends WireRecord {
   readonly type: 'metadata';
   readonly protocol_version: string;
+  readonly min_protocol_version?: string;
   readonly created_at: number;
 }
 
@@ -40,6 +41,7 @@ export function createWireMetadataRecord(now = Date.now()): WireMetadataRecord {
     type: 'metadata',
     protocol_version: WIRE_PROTOCOL_VERSION,
     created_at: now,
+    min_protocol_version: WIRE_MIN_READER_VERSION,
   };
 }
 

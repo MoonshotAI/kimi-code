@@ -5,6 +5,7 @@ export const WireErrors = {
   codes: {
     WIRE_UNKNOWN_RECORD: 'wire.unknown_record',
     WIRE_MIGRATION_MISSING: 'wire.migration_missing',
+    WIRE_VERSION_TOO_LOW: 'wire.version_too_low',
     RECORDS_WRITE_FAILED: 'records.write_failed',
   },
   info: {
@@ -19,6 +20,12 @@ export const WireErrors = {
       retryable: false,
       public: true,
       action: 'The wire file predates the supported migration chain; start a new session.',
+    },
+    'wire.version_too_low': {
+      title: 'Wire protocol upgrade required',
+      retryable: false,
+      public: true,
+      action: 'Upgrade kimi-code to a newer version to resume this session.',
     },
     'records.write_failed': {
       title: 'Wire journal write failed',
