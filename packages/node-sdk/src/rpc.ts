@@ -22,7 +22,6 @@ import type { BeginGlobalMcpServerAuthResult } from '#/mcp';
 import type {
   AddAdditionalDirInput,
   AddAdditionalDirResult,
-  AgentCommandInfo,
   AgentRuntimeBinding,
   AppMcpServerInspection,
   BackgroundTaskInfo,
@@ -141,11 +140,6 @@ export interface ActivateSkillRpcInput extends SessionIdRpcInput {
 export interface ActivatePluginCommandRpcInput extends SessionIdRpcInput {
   readonly pluginId: string;
   readonly commandName: string;
-  readonly args?: string | undefined;
-}
-
-export interface RunCommandRpcInput extends SessionIdRpcInput {
-  readonly name: string;
   readonly args?: string | undefined;
 }
 
@@ -435,10 +429,6 @@ export abstract class SDKRpcClientBase {
   abstract activateSkill(input: ActivateSkillRpcInput): Promise<void>;
 
   abstract activatePluginCommand(input: ActivatePluginCommandRpcInput): Promise<void>;
-
-  abstract listCommands(input: SessionIdRpcInput): Promise<readonly AgentCommandInfo[]>;
-
-  abstract runCommand(input: RunCommandRpcInput): Promise<void>;
 
   abstract getRuntime(input: SessionIdRpcInput): Promise<AgentRuntimeBinding>;
 

@@ -50,8 +50,6 @@ import type {
   PromptPayload,
   SteerPayload,
 } from '#/agent/loop/loop';
-import type { AgentCommandInfo } from '#/agent/command/agentCommand';
-import { IAgentCommandService } from '#/agent/command/agentCommand';
 import type { AgentContextData } from '#/agent/contextMemory/types';
 import type { CreateGoalInput, GoalSnapshot, GoalToolResult } from '#/features/goal/types';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
@@ -78,7 +76,6 @@ interface DetachTaskPayload { readonly taskId: string }
 interface EnterSwarmPayload { readonly trigger: SwarmModeTrigger }
 interface GetTaskOutputPayload { readonly taskId: string; readonly tail?: number }
 interface GetTasksPayload { readonly activeOnly?: boolean; readonly limit?: number }
-interface RunCommandPayload { readonly name: string; readonly args?: string }
 interface SetActiveToolsPayload { readonly names: readonly string[] }
 interface SetModelPayload { readonly model: string }
 interface SetPermissionPayload { readonly mode: PermissionMode }
@@ -362,8 +359,6 @@ interface AgentRpcPassthroughAPI {
   cancelCompaction: (payload: EmptyPayload) => void;
   activateSkill: (payload: SkillActivationInput) => Promisable<PromptLaunchResult>;
   activatePluginCommand: (payload: ActivatePluginCommandPayload) => Promisable<void>;
-  listCommands: (payload: EmptyPayload) => readonly AgentCommandInfo[];
-  runCommand: (payload: RunCommandPayload) => Promisable<void>;
   getContext: (payload: EmptyPayload) => AgentContextData;
   getTools: (payload: EmptyPayload) => readonly ToolInfo[];
   runShellCommand: (payload: RunShellCommandPayload) => Promisable<ShellCommandResult>;
@@ -2200,8 +2195,6 @@ export class AgentTestContext {
       activateSkill: (payload) => this.get(IAgentSkillService).activate(payload),
       activatePluginCommand: (payload) =>
         this.get(IAgentPluginCommandService).activate(payload),
-      listCommands: () => this.get(IAgentCommandService).list(),
-      runCommand: (payload) => this.get(IAgentCommandService).run(payload.name, payload.args),
       getContext: () => ({
         history: this.get(IAgentContextMemoryService).get(),
         tokenCount: this.tokenCounting.statusSize(),

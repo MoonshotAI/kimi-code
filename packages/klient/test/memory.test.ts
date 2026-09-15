@@ -13,7 +13,6 @@ defineKlientConformance('memory', async () => {
   const klient = createKlient({ scope: app });
   return {
     klient,
-    app,
     cleanup: async () => {
       await klient.close();
       app.dispose();

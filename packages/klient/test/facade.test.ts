@@ -308,15 +308,11 @@ describe('session skills routing', () => {
 
     channel.results.set('agentPromptService.submit', { turn_id: 1 });
     channel.results.set('agentPromptService.submitSteer', { turn_id: 1 });
-    channel.results.set('agentCommandService.list', []);
     await agent.prompt({ input: [{ type: 'text', text: 'hi' }] });
     await agent.steer({ input: [{ type: 'text', text: 'steer' }] });
     await agent.cancel({ turnId: 2 });
     await agent.cancel();
     await agent.setPermission('yolo');
-    await agent.listCommands();
-    await agent.runCommand({ name: 'cmd', args: 'a b' });
-    await agent.runCommand({ name: 'plain' });
 
     expect(channel.calls).toEqual([
       {
@@ -334,9 +330,6 @@ describe('session skills routing', () => {
       { scope, service: 'agentLoopService', method: 'cancelFromUser', args: [2] },
       { scope, service: 'agentLoopService', method: 'cancelFromUser', args: [] },
       { scope, service: 'agentPermissionModeService', method: 'setModeAndBroadcast', args: ['yolo'] },
-      { scope, service: 'agentCommandService', method: 'list', args: [] },
-      { scope, service: 'agentCommandService', method: 'run', args: ['cmd', 'a b'] },
-      { scope, service: 'agentCommandService', method: 'run', args: ['plain'] },
     ]);
   });
 
