@@ -50,7 +50,7 @@ export function resolveCompletionPrefix(
 ): string {
 	const currentLine = lines[cursorLine] || "";
 	const textBeforeCursor = currentLine.slice(0, cursorCol);
-	if (textBeforeCursor.endsWith(prefix)) {
+	if (prefix !== "" && textBeforeCursor.endsWith(prefix)) {
 		return prefix;
 	}
 	if (!prefix.startsWith("@") && !prefix.startsWith('"') && prefix.includes(" ")) {
@@ -59,9 +59,8 @@ export function resolveCompletionPrefix(
 			textBeforeCursor.startsWith("/") && spaceIndex !== -1 && !textBeforeCursor.slice(1, spaceIndex).includes("/");
 		if (isSlashArgumentContext) {
 			const argumentText = textBeforeCursor.slice(spaceIndex + 1);
-			const trimmedArgument = argumentText.trimEnd();
-			const grownSuffix = trimmedArgument.startsWith(prefix) ? trimmedArgument.slice(prefix.length) : null;
-			if ((grownSuffix !== null && !grownSuffix.includes(" ")) || prefix.startsWith(trimmedArgument)) {
+			const grownSuffix = argumentText.startsWith(prefix) ? argumentText.slice(prefix.length) : null;
+			if ((grownSuffix !== null && !grownSuffix.includes(" ")) || prefix.startsWith(argumentText)) {
 				return argumentText;
 			}
 		}

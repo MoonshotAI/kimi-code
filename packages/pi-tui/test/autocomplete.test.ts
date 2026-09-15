@@ -800,6 +800,36 @@ describe("CombinedAutocompleteProvider", () => {
 			assert.strictEqual(applied.lines[0], "/goal next m next manage");
 		});
 
+		test("replaces the token grown from an empty snapshot prefix", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "/goal s";
+			const item = { value: "status", label: "status" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "");
+
+			assert.strictEqual(applied.lines[0], "/goal status");
+		});
+
+		test("inserts at an untouched empty token from an empty snapshot prefix", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "/goal ";
+			const item = { value: "status", label: "status" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "");
+
+			assert.strictEqual(applied.lines[0], "/goal status");
+		});
+
+		test("inserts after the delimiter when the argument snapshot is already finished", () => {
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			const line = "/goal next ma ";
+			const item = { value: "next manage", label: "next manage" };
+
+			const applied = provider.applyCompletion([line], 0, line.length, item, "next m");
+
+			assert.strictEqual(applied.lines[0], "/goal next ma next manage");
+		});
+
 		test("replaces a shrunk slash command argument as one range", () => {
 			const provider = new CombinedAutocompleteProvider([], process.cwd());
 			const line = "/goal next";
