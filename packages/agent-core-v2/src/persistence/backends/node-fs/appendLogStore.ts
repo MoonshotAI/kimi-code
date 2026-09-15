@@ -24,6 +24,7 @@ const NEWLINE = 0x0a;
 
 interface RecoveryState {
   readonly failedBatch: readonly unknown[];
+  readonly failedAtSize: number;
   attempts: number;
   timer: ReturnType<typeof setTimeout> | undefined;
 }
@@ -160,7 +161,12 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
       } catch (error) {
         state.storageFailure = { error };
         if (state.recovery === undefined && isRecoverableStorageError(error)) {
-          state.recovery = { failedBatch: state.pending.slice(), attempts: 0, timer: undefined };
+          state.recovery = {
+            failedBatch: state.pending.slice(),
+            failedAtSize: 0,
+            attempts: 0,
+            timer: undefined,
+          };
           this.scheduleRecovery(scope, key, state);
         }
         throw error;
@@ -308,7 +314,7 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
         scope,
         key,
         state,
-        this.reconcileCommittedTail(scope, key, state, recovery.failedBatch),
+        this.reconcileCommittedTail(scope, key, state, recovery),
         { value: false },
       );
       state.storageFailure = undefined;
@@ -333,23 +339,40 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
     scope: string,
     key: string,
     state: LogState,
-    failedBatch: readonly unknown[],
+    recovery: RecoveryState,
   ): Promise<boolean> {
-    const encoded = encodeBatch(failedBatch);
+    const encoded = encodeBatch(recovery.failedBatch);
     if (encoded.byteLength === 0) return false;
     const epoch = state.cutoverEpoch;
+    const boundary = recovery.failedAtSize;
     const size = await this.storage.size(scope, key);
-    if (size === undefined || size === 0) return false;
-    const window = Math.min(size, encoded.byteLength);
-    const tail = new Uint8Array(window);
-    let offset = 0;
-    for await (const chunk of this.storage.readStream(scope, key, {
-      start: size - window,
-      end: size - 1,
-    })) {
-      tail.set(chunk, offset);
-      offset += chunk.byteLength;
+    if (size === undefined || size === boundary) {
+      if (size !== undefined && size > 0) {
+        let lastByte = 0;
+        for await (const chunk of this.storage.readStream(scope, key, {
+          start: size - 1,
+          end: size - 1,
+        })) {
+          lastByte = chunk[chunk.byteLength - 1] ?? 0;
+        }
+        if (lastByte !== NEWLINE) {
+          throw new StorageError(
+            StorageErrors.codes.STORAGE_CORRUPTED,
+            'append-log tail does not match the failed batch; automatic recovery aborted',
+            { details: { scope, key } },
+          );
+        }
+      }
+      return false;
     }
+    if (size < boundary) {
+      throw new StorageError(
+        StorageErrors.codes.STORAGE_CORRUPTED,
+        'append-log recovery aborted: log shrank while reconciling',
+        { details: { scope, key } },
+      );
+    }
+    const committed = size - boundary;
     if (state.cutoverEpoch !== epoch) {
       throw new StorageError(
         StorageErrors.codes.STORAGE_CORRUPTED,
@@ -357,30 +380,42 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
         { details: { scope, key } },
       );
     }
-    const overlap = committedTailOverlap(tail, encoded);
-    if (overlap === encoded.byteLength) {
-      state.pending.splice(0, failedBatch.length);
-      return false;
+    if (committed > encoded.byteLength) {
+      throw new StorageError(
+        StorageErrors.codes.STORAGE_CORRUPTED,
+        'append-log recovery aborted: log grew past the failed batch',
+        { details: { scope, key } },
+      );
     }
-    if (overlap > 0) {
-      const full = await this.storage.read(scope, key);
-      if (full === undefined || full.byteLength !== size) {
-        throw new StorageError(
-          StorageErrors.codes.STORAGE_CORRUPTED,
-          'append-log recovery aborted: log changed while reconciling',
-          { details: { scope, key } },
-        );
-      }
-      await this.storage.write(scope, key, full.subarray(0, size - overlap), { atomic: true });
-      return false;
+    const tail = new Uint8Array(committed);
+    let offset = 0;
+    for await (const chunk of this.storage.readStream(scope, key, {
+      start: boundary,
+      end: size - 1,
+    })) {
+      tail.set(chunk.subarray(0, Math.min(chunk.byteLength, committed - offset)), offset);
+      offset += chunk.byteLength;
     }
-    if (tail[tail.byteLength - 1] !== NEWLINE) {
+    if (offset !== committed || !bytesEqual(tail, encoded.subarray(0, committed))) {
       throw new StorageError(
         StorageErrors.codes.STORAGE_CORRUPTED,
         'append-log tail does not match the failed batch; automatic recovery aborted',
         { details: { scope, key } },
       );
     }
+    if (committed === encoded.byteLength) {
+      state.pending.splice(0, recovery.failedBatch.length);
+      return false;
+    }
+    const full = await this.storage.read(scope, key);
+    if (full === undefined || full.byteLength !== size) {
+      throw new StorageError(
+        StorageErrors.codes.STORAGE_CORRUPTED,
+        'append-log recovery aborted: log changed while reconciling',
+        { details: { scope, key } },
+      );
+    }
+    await this.storage.write(scope, key, full.subarray(0, boundary), { atomic: true });
     return false;
   }
 
@@ -438,6 +473,7 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
     let wrote = false;
     while (state.pending.length > 0) {
       const batch = state.pending.slice();
+      const sizeBefore = await this.storage.size(scope, key);
       try {
         await this.storage.append(scope, key, encodeBatch(batch), { durable: true });
         wrote = true;
@@ -445,7 +481,12 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
       } catch (error) {
         state.storageFailure = { error };
         if (state.recovery === undefined && isRecoverableStorageError(error)) {
-          state.recovery = { failedBatch: batch, attempts: 0, timer: undefined };
+          state.recovery = {
+            failedBatch: batch,
+            failedAtSize: sizeBefore ?? 0,
+            attempts: 0,
+            timer: undefined,
+          };
           this.scheduleRecovery(scope, key, state);
         }
         throw error;
@@ -472,16 +513,12 @@ function encodeBatch(records: readonly unknown[]): Uint8Array {
   return textEncoder.encode(content);
 }
 
-function committedTailOverlap(existing: Uint8Array, batch: Uint8Array): number {
-  const max = Math.min(existing.byteLength, batch.byteLength);
-  for (let k = max; k > 0; k--) {
-    const before = existing.byteLength - k;
-    if (before !== 0 && existing[before - 1] !== NEWLINE) continue;
-    let i = 0;
-    while (i < k && existing[before + i] === batch[i]) i++;
-    if (i === k) return k;
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.byteLength !== b.byteLength) return false;
+  for (let i = 0; i < a.byteLength; i++) {
+    if (a[i] !== b[i]) return false;
   }
-  return 0;
+  return true;
 }
 
 registerScopedService(

@@ -1176,5 +1176,34 @@ describe('AppendLogStore', () => {
       expect(attempts).toBe(2);
       await expect(record.flush()).rejects.toBe(permanent);
     });
+
+    it('does not confuse pre-existing identical content with a committed batch', async () => {
+      const failure = diskFull();
+      record.append<Rec>(SCOPE, KEY, { n: 1 });
+      await record.flush();
+
+      let attempts = 0;
+      const originalAppend = storage.append.bind(storage);
+      storage.append = async (...args) => {
+        attempts++;
+        if (attempts === 1) throw failure;
+        return originalAppend(...args);
+      };
+      let reportFailure!: () => void;
+      const reportedFailure = new Promise<void>((resolve) => {
+        reportFailure = resolve;
+      });
+      const recovered = watchRecovery();
+
+      record.append<Rec>(SCOPE, KEY, { n: 1 }, { onError: reportFailure });
+      await reportedFailure;
+
+      await vi.advanceTimersByTimeAsync(1000);
+      await recovered;
+      await record.flush();
+
+      expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 1 }, { n: 1 }]);
+      expect(attempts).toBe(2);
+    });
   });
 });
