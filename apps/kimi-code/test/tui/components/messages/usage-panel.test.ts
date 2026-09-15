@@ -235,14 +235,31 @@ describe('UsagePanelComponent', () => {
     expect(new Set(extraRows.map((line) => line.length)).size).toBe(1);
   });
 
-  it('shows an empty-hint instead of an error when there is no session yet', () => {
-    const lines = buildUsageReportLines({
-      contextUsage: 0,
-      contextTokens: 0,
-      maxContextTokens: 1_000_000,
-    }).map(strip);
+  it('shows an empty-hint instead of an error when there is no session yet', async () => {
+    const { showUsage } = await import('#/tui/commands/info');
+    const added: string[] = [];
+    const host = {
+      session: undefined,
+      state: {
+        appState: {
+          model: 'kimi',
+          availableModels: {},
+          contextUsage: 0,
+          contextTokens: 0,
+          maxContextTokens: 1_000_000,
+        },
+        transcriptContainer: {
+          addChild: (component: { render(width: number): string[] }) => {
+            added.push(...component.render(80).map(strip));
+          },
+        },
+        ui: { requestRender: () => {} },
+      },
+    };
 
-    const output = lines.join('\n');
+    await showUsage(host as never);
+
+    const output = added.join('\n');
     expect(output).toContain('No token usage recorded yet.');
     expect(output).not.toContain('No active session');
   });
