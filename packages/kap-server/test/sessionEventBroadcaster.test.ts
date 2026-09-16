@@ -14,6 +14,7 @@ import {
   INTERACTION_TAG_SESSION_ID,
   LifecycleScope,
   IAgentLifecycleService,
+  IAgentConversationUndoParticipantRegistry,
   IAgentLoopService,
   IAgentProfileService,
   IAgentScopeContext,
@@ -121,6 +122,9 @@ class FakeAgentHandle {
     this.context = scope.agentContext;
     this.services.set(IAgentScopeContext, scope);
     this.services.set(IEventBus, this.bus);
+    this.services.set(IAgentConversationUndoParticipantRegistry, {
+      register: () => ({ dispose: () => {} }),
+    });
     this.services.set(IAgentLoopService, {
       snapshot: () => ({
         state: this.activity.turn === undefined ? 'idle' : 'running',
