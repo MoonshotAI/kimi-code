@@ -61,6 +61,7 @@ const contextCompactionBaseShape = {
   summaryOutputTokens: z.number().optional(),
   keptUserMessageCount: z.number().optional(),
   keptHeadUserMessageCount: z.number().optional(),
+  appendedUserMessageCount: z.number().optional(),
   droppedCount: z.number().optional(),
   legacyTail: z.boolean().optional(),
   wireLines: z

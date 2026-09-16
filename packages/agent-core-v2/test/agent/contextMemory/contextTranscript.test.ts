@@ -52,6 +52,7 @@ function compaction(
   compactedCount: number,
   keptUserMessageCount?: number,
   keptHeadUserMessageCount?: number,
+  appendedUserMessageCount?: number,
 ): WireRecord {
   return {
     type: 'context.apply_compaction',
@@ -62,6 +63,7 @@ function compaction(
     tokensAfter: 100,
     ...(keptUserMessageCount === undefined ? {} : { keptUserMessageCount }),
     ...(keptHeadUserMessageCount === undefined ? {} : { keptHeadUserMessageCount }),
+    ...(appendedUserMessageCount === undefined ? {} : { appendedUserMessageCount }),
   };
 }
 
@@ -392,6 +394,22 @@ describe('live fold parity', () => {
     expect(transcript.foldedLength).toBe(live.length);
     expect(live[2]!.origin).toEqual({ kind: 'compaction_summary' });
     expect(live[3]!.origin).toEqual({ kind: 'injection', variant: 'compaction_continuation' });
+  });
+
+  it('tracks the live context length when a message lands during compaction', () => {
+    const records: WireRecord[] = [
+      appendMessage(userMessage('u1')),
+      ...assistantStep('s1', 'a1'),
+      appendMessage(userMessage('u2')),
+      ...assistantStep('s2', 'a2'),
+      appendMessage(userMessage('u-during-compaction')),
+      compaction('SUM', 4, 2, undefined, 1),
+    ];
+    const live = foldLive(records);
+    const transcript = reduceContextTranscript(records);
+    expect(live.map((m) => m.role)).toEqual(['user', 'user', 'user', 'user', 'user']);
+    expect(live[4]!.content).toEqual([{ type: 'text', text: 'u-during-compaction' }]);
+    expect(transcript.foldedLength).toBe(live.length);
   });
 
   it('settles a frame left open by a failed attempt when compaction lands mid-fold', () => {
