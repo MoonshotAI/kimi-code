@@ -492,6 +492,19 @@ describe('FileMentionProvider', () => {
     expect(dir.lines[0]).toBe('hey @src/');
   });
 
+  it('does not recut a path item just because the cursor is on an @ token', () => {
+    const provider = new FileMentionProvider([], workDir, NO_FD);
+    const result = provider.applyCompletion(
+      ['@'],
+      0,
+      1,
+      { value: 'README.md', label: 'README.md' },
+      '',
+    );
+
+    expect(result.lines[0]).toBe('@README.md');
+  });
+
   it('still applies path completion for a directory whose name starts with @', () => {
     const provider = new FileMentionProvider([], workDir, NO_FD);
     const line = 'cd ';
