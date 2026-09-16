@@ -27,7 +27,6 @@ export interface ConnectOptions {
   readonly clientVersion: string;
   readonly minExecutorVersion?: string;
   readonly initializeTimeoutMs?: number;
-  readonly onDiagnostic?: (line: string) => void;
 }
 
 export interface ConnectionCloseInfo {
@@ -67,13 +66,10 @@ export class RemoteExecConnection {
   private handshakeTimer: NodeJS.Timeout | undefined;
   private closeInfo: ConnectionCloseInfo | undefined;
 
-  private constructor(
-    private readonly pipe: BytePipe,
-    private readonly diagnostic: (line: string) => void,
-  ) {}
+  private constructor(private readonly pipe: BytePipe) {}
 
   static async connect(pipe: BytePipe, options: ConnectOptions): Promise<RemoteExecConnection> {
-    const connection = new RemoteExecConnection(pipe, options.onDiagnostic ?? (() => {}));
+    const connection = new RemoteExecConnection(pipe);
     return connection.handshake(options);
   }
 

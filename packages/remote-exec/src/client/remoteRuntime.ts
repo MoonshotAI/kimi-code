@@ -71,7 +71,6 @@ export class RemoteRuntime implements Runtime {
         clientVersion: options.clientVersion ?? '0.0.0',
         minExecutorVersion: options.minExecutorVersion,
         initializeTimeoutMs: options.initializeTimeoutMs,
-        onDiagnostic: options.onDiagnostic,
       });
     } catch (error) {
       bridge.close();
