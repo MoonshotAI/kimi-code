@@ -223,7 +223,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
 
       let preparedMedia: PromptMediaPreparation | undefined;
       try {
-        const attachments = [...(req.body.content ?? []), ...(req.body.attachments ?? [])];
+        const attachments = req.body.attachments ?? [];
         const attachmentParts: ContentPart[] = [];
         if (attachments.length > 0) {
           if (contentHasPathRefs(attachments)) {
@@ -286,9 +286,9 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         preparedMedia = undefined;
         requestLog(req)?.info({ session_id, skill_name: parsed.id }, 'skill activated');
         reply.send(okEnvelope({ activated: true, skill_name: parsed.id }, req.id));
-      } catch (err) {
+      } catch (error) {
         await preparedMedia?.discard();
-        sendMappedError(reply, req.id, err);
+        sendMappedError(reply, req.id, error);
       }
     },
   );

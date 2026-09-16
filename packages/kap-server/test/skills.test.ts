@@ -190,7 +190,7 @@ describe('server-v2 /api/v1 skills', () => {
       const id = await createSession();
       await createMainAgent(id);
       const metadata = { display_text: 'Example skill · Save button', kimi_code_composer: { version: 1, doc: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'client-only literal' }] }] }, attachments: [], attachmentOrder: [] } };
-      const result = await postJson(`/api/v1/sessions/${id}/skills/update-config:activate`, { args: 'Example argument', content: [{ type: 'text', text: 'Captured page evidence' }, { type: 'text', text: 'Image association' }], metadata });
+      const result = await postJson(`/api/v1/sessions/${id}/skills/update-config:activate`, { args: 'Example argument', attachments: [{ type: 'text', text: 'Captured page evidence' }, { type: 'text', text: 'Image association' }], metadata });
       expect(result.body.code).toBe(0);
       const messages = await getJson<{ items: { role: string; content: { type: string; text?: string }[]; metadata?: { origin?: { clientMetadata?: unknown } } }[] }>(`/api/v1/sessions/${id}/messages`);
       const input = messages.body.data.items.find((message) => message.role === 'user' && message.content.some((part) => part.text?.includes('User activated the skill')));
@@ -204,6 +204,25 @@ describe('server-v2 /api/v1 skills', () => {
       expect(transcript.body.data.items.find((item) => item.kind === 'turn')?.origin?.payload?.clientMetadata).toEqual([metadata]);
       const session = await getJson<{ title: string }>(`/api/v1/sessions/${id}`);
       expect(session.body.data.title).toBe(metadata.display_text);
+    });
+
+    it('keeps ordered text parts among activation attachments', async () => {
+      const id = await createSession();
+      await createMainAgent(id);
+      const result = await postJson(`/api/v1/sessions/${id}/skills/update-config:activate`, {
+        args: 'Example argument',
+        attachments: [
+          { type: 'text', text: 'First context block' },
+          { type: 'text', text: 'Second context block' },
+        ],
+      });
+      expect(result.body.code).toBe(0);
+      const messages = await getJson<{ items: { role: string; content: { type: string; text?: string }[] }[] }>(`/api/v1/sessions/${id}/messages`);
+      const input = messages.body.data.items.find((message) => message.role === 'user' && message.content.some((part) => part.text?.includes('User activated the skill')));
+      const text = input?.content.map((part) => part.text ?? '').join('\n') ?? '';
+      expect(text).toContain('args="Example argument"');
+      expect(text).toContain('First context block');
+      expect(text.indexOf('Second context block')).toBeGreaterThan(text.indexOf('First context block'));
     });
 
     it('derives the session title from the first skill activation', async () => {
