@@ -11,7 +11,6 @@ import { SseMcpClient } from './client-sse';
 import type { UnexpectedCloseReason } from './client-shared';
 import { StdioMcpClient } from './client-stdio';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
-import type { StoredMcpOAuthTokens } from '#/mcpCore/oauth/provider';
 import { assertMcpInputSchema, type MCPClient, type MCPToolDefinition } from './types';
 
 export type McpServerStatus = 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth' | 'removed';
@@ -312,24 +311,18 @@ export class McpConnectionManager implements McpConnectionView {
     if (client !== undefined && entry.client !== client) return false;
     const attemptId = entry.attemptId;
     const oauthService = this.oauthService;
-    const tokens =
+    const rejectedGrant =
       oauthService !== undefined && isRemoteMcpConfig(entry.config)
-        ? ((await oauthService.getProvider(name, entry.config.url).tokens()) as
-            | StoredMcpOAuthTokens
-            | undefined)
+        ? await oauthService.peekRejectedGrant(name, entry.config.url)
         : undefined;
     if (!this.isCurrent(entry, attemptId)) return false;
-    if (tokens !== undefined && isConcurrentGrant(tokens)) return false;
+    if (rejectedGrant?.concurrent === true) return false;
     await this.closeClient(entry);
     if (!this.isCurrent(entry, attemptId)) return false;
-    entry.status = 'needs-auth';
-    entry.error = `${entry.name} requires OAuth — run /mcp-config login ${entry.name}`;
-    entry.tools = undefined;
-    entry.enabledNames = undefined;
-    entry.rawTools = undefined;
-    if (tokens !== undefined && oauthService !== undefined && isRemoteMcpConfig(entry.config)) {
+    this.flipToNeedsAuth(entry);
+    if (rejectedGrant !== undefined && oauthService !== undefined && isRemoteMcpConfig(entry.config)) {
       try {
-        await oauthService.invalidateTokensIfCurrent(name, entry.config.url, tokens);
+        await oauthService.invalidateTokensIfCurrent(name, entry.config.url, rejectedGrant.tokens);
       } catch (invalidateError) {
         this.log.warn('mcp oauth token invalidation failed', {
           server: name,
@@ -341,6 +334,14 @@ export class McpConnectionManager implements McpConnectionView {
     if (!this.isCurrent(entry, attemptId)) return false;
     this.emit(entry);
     return true;
+  }
+
+  private flipToNeedsAuth(entry: InternalEntry): void {
+    entry.status = 'needs-auth';
+    entry.error = `${entry.name} requires OAuth — run /mcp-config login ${entry.name}`;
+    entry.tools = undefined;
+    entry.enabledNames = undefined;
+    entry.rawTools = undefined;
   }
 
   async shutdown(): Promise<void> {
@@ -385,15 +386,14 @@ export class McpConnectionManager implements McpConnectionView {
         return;
       }
       if (this.shouldMarkNeedsAuth(entry, error)) {
-        entry.status = 'needs-auth';
-        entry.error = `${entry.name} requires OAuth — run /mcp-config login ${entry.name}`;
+        this.flipToNeedsAuth(entry);
       } else {
         entry.status = 'failed';
         entry.error = formatStartupError(error, client);
+        entry.tools = undefined;
+        entry.enabledNames = undefined;
+        entry.rawTools = undefined;
       }
-      entry.tools = undefined;
-      entry.enabledNames = undefined;
-      entry.rawTools = undefined;
       await this.closeClient(entry);
     }
     if (!this.isCurrent(entry, attemptId)) return;
@@ -574,15 +574,6 @@ function isUnauthorizedLikeError(error: unknown): boolean {
   if (typeof code === 'number' && code === 401) return true;
   if (typeof code === 'string' && code === '401') return true;
   return /\b401\b/.test(error.message) || /unauthorized/i.test(error.message);
-}
-
-const CONCURRENT_GRANT_GRACE_MS = 10_000;
-
-function isConcurrentGrant(tokens: StoredMcpOAuthTokens): boolean {
-  return (
-    typeof tokens.obtained_at === 'number' &&
-    Date.now() - tokens.obtained_at < CONCURRENT_GRANT_GRACE_MS
-  );
 }
 
 function formatStartupError(error: unknown, client: RuntimeMcpClient | undefined): string {

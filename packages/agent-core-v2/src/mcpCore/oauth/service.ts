@@ -509,6 +509,17 @@ export class McpOAuthService {
     return this.getProvider(serverName, serverUrl).clearTokensIfCurrent(expected);
   }
 
+  async peekRejectedGrant(
+    serverName: string,
+    serverUrl: string | URL,
+  ): Promise<{ readonly tokens: StoredMcpOAuthTokens; readonly concurrent: boolean } | undefined> {
+    const tokens = (await this.getProvider(serverName, serverUrl).tokens()) as
+      | StoredMcpOAuthTokens
+      | undefined;
+    if (tokens === undefined) return undefined;
+    return { tokens, concurrent: isConcurrentGrant(tokens) };
+  }
+
   forgetProvider(serverName: string, serverUrl: string | URL): void {
     this.providers.delete(mcpOAuthStoreKey(serverName, serverUrl));
   }
@@ -661,6 +672,15 @@ async function readStoreMeta(
     return undefined;
   }
   return { serverName, serverUrl };
+}
+
+const CONCURRENT_GRANT_GRACE_MS = 10_000;
+
+function isConcurrentGrant(tokens: StoredMcpOAuthTokens): boolean {
+  return (
+    typeof tokens.obtained_at === 'number' &&
+    Date.now() - tokens.obtained_at < CONCURRENT_GRANT_GRACE_MS
+  );
 }
 
 function wrapAuthError(prefix: string, error: unknown): Error2 {
