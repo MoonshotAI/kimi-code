@@ -1017,6 +1017,23 @@ describe('telemetry bootstrap', () => {
     expect(statSync(spool).isFile()).toBe(true);
   });
 
+  it('drops events queued before initialization when bootstrap starts paused', async () => {
+    const fetchImpl = vi.fn(async () => new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchImpl);
+
+    track('queued_before_init');
+    initializeTelemetry({
+      homeDir: await tempHome(),
+      deviceId: 'dev',
+      appName: 'kimi-code-cli',
+      version: '1.2.3',
+      initiallyEnabled: false,
+    });
+    await shutdownTelemetry();
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it('resumes intake after a paused start without re-initialization', async () => {
     const fetchImpl = vi.fn(async () => new Response('', { status: 200 }));
     vi.stubGlobal('fetch', fetchImpl);

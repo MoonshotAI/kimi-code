@@ -90,7 +90,10 @@ export class TelemetryClient {
 
   setEnabled(enabled: boolean): void {
     this.disabled = !enabled;
-    if (!enabled) this.sink?.clearBuffer();
+    if (!enabled) {
+      this.queue = [];
+      this.sink?.clearBuffer();
+    }
   }
 
   track(event: string, properties: TelemetryProperties = {}): void {
