@@ -7,13 +7,13 @@ import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
+import { AgentUsageService } from '#/agent/usage/agentUsageService';
 import { AgentCacheProbeService } from '#/agent/usage/cacheProbeService';
 import {
   type UsageRecordedContext,
   type UsageStatus,
 } from '#/agent/usage/usage';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
-import { SessionUsageService } from '#/session/usage/sessionUsageService';
 import type { Event2 } from '#/app/event/event2';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
@@ -50,7 +50,7 @@ beforeEach(() => {
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.set(IAgentStateService, new AgentStateService());
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
-  ix.set(ISessionUsageService, new SyncDescriptor(SessionUsageService));
+  ix.set(ISessionUsageService, new SyncDescriptor(AgentUsageService));
   log = ix.get(IAppendLogStore);
   registerTestAgentWire(ix, testWireScope(SCOPE, KEY), {
     log,
@@ -81,7 +81,7 @@ function createFreshHost(logKey: string): {
   const freshIx = disposables.add(new TestInstantiationService());
   freshIx.stub(IFileSystemStorageService, new InMemoryStorageService());
   freshIx.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-  freshIx.set(ISessionUsageService, new SyncDescriptor(SessionUsageService));
+  freshIx.set(ISessionUsageService, new SyncDescriptor(AgentUsageService));
   const freshLog = freshIx.get(IAppendLogStore);
   registerTestAgentWire(freshIx, testWireScope(SCOPE, logKey), {
     log: freshLog,

@@ -68,10 +68,10 @@
 //   task.started                       task                                                  src/agent/task/taskOps.ts
 //   task.terminated                    task                                                  src/agent/task/taskOps.ts
 //   task.waitDelivered                 task.notificationDelivery                             src/agent/task/taskOps.ts
-//   token_counting.measured            (none)                                                src/agent/tokenCounting/tokenCountingOps.ts
-//   token_counting.rebased             (none)                                                src/agent/tokenCounting/tokenCountingOps.ts
-//   token_counting.truncated           (none)                                                src/agent/tokenCounting/tokenCountingOps.ts
-//   token_counting.turn_recorded       (none)                                                src/agent/tokenCounting/tokenCountingOps.ts
+//   token_counting.measured            tokenCounting                                         src/agent/tokenCounting/tokenCountingOps.ts
+//   token_counting.rebased             tokenCounting                                         src/agent/tokenCounting/tokenCountingOps.ts
+//   token_counting.truncated           tokenCounting                                         src/agent/tokenCounting/tokenCountingOps.ts
+//   token_counting.turn_recorded       tokenCounting                                         src/agent/tokenCounting/tokenCountingOps.ts
 //   tools.register_user_tool           userTool                                              src/agent/userTool/userToolOps.ts
 //   tools.reset_active_tools           profile.activeTools                                   src/agent/profile/profileOps.ts
 //   tools.set_active_tools             profile.activeTools                                   src/agent/profile/profileOps.ts
@@ -85,7 +85,7 @@
 //   turn.steer                         turn                                                  src/agent/loop/turnOps.ts
 //   turn.step.interrupted              (none)                                                src/agent/loop/turnEvents.ts
 //   turn.step.retrying                 (none)                                                src/agent/loop/turnEvents.ts
-//   usage.record                       (none)                                                src/agent/usage/usageOps.ts
+//   usage.record                       usage                                                 src/agent/usage/usageOps.ts
 
 /**
  * states: profile
@@ -625,7 +625,7 @@ interface TaskWaitDeliveredPayload {
 }
 
 /**
- * states: (none)
+ * states: tokenCounting
  * owner: src/agent/tokenCounting/tokenCountingOps.ts
  */
 interface TokenCountingMeasuredPayload {
@@ -636,7 +636,7 @@ interface TokenCountingMeasuredPayload {
 }
 
 /**
- * states: (none)
+ * states: tokenCounting
  * owner: src/agent/tokenCounting/tokenCountingOps.ts
  */
 interface TokenCountingRebasedPayload {
@@ -648,7 +648,7 @@ interface TokenCountingRebasedPayload {
 }
 
 /**
- * states: (none)
+ * states: tokenCounting
  * owner: src/agent/tokenCounting/tokenCountingOps.ts
  */
 interface TokenCountingTruncatedPayload {
@@ -659,7 +659,7 @@ interface TokenCountingTruncatedPayload {
 }
 
 /**
- * states: (none)
+ * states: tokenCounting
  * owner: src/agent/tokenCounting/tokenCountingOps.ts
  */
 interface TokenCountingTurnRecordedPayload {
@@ -872,7 +872,7 @@ interface TurnStepRetryingPayload {
 }
 
 /**
- * states: (none)
+ * states: usage
  * owner: src/agent/usage/usageOps.ts
  */
 interface UsageRecordPayload {

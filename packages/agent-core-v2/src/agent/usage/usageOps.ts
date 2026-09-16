@@ -2,7 +2,8 @@
 import { z } from 'zod';
 
 import { AgentEvent2 } from '#/app/event/event2';
-import { type TokenUsage } from '#human/llm/usage';
+import { defineState } from '#/state/state';
+import { addUsage, type TokenUsage } from '#human/llm/usage';
 
 export type UsageRecordScope = 'session' | 'turn';
 
@@ -32,3 +33,11 @@ export interface UsageRecord {
 export function copyUsage(usage: TokenUsage): TokenUsage {
   return { ...usage };
 }
+
+export const usageKey = defineState('usage', (): UsageModelState => ({ byModel: {} }))
+  .replayable({ schema: z.custom<UsageModelState>() })
+  .on(UsageRecord, (state, event) => {
+    const current = state.byModel[event.model];
+    state.byModel[event.model] =
+      current === undefined ? copyUsage(event.usage) : addUsage(current, event.usage);
+  });
