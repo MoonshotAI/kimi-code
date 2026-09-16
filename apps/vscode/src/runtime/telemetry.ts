@@ -38,6 +38,13 @@ export interface VscodeTelemetryOptions {
   readonly homeDir?: string;
   readonly version: string;
   readonly log?: (message: string) => void;
+  /**
+   * Editor-level telemetry gate (VS Code's global Telemetry Level).
+   * Undefined means the gate is not consulted (tests, non-editor hosts).
+   */
+  readonly isEditorTelemetryEnabled?: () => boolean;
+  /** Editor gate change hook; re-initializes the pipeline when it fires. */
+  readonly onEditorTelemetryChange?: (listener: (enabled: boolean) => void) => void;
 }
 
 export interface VscodeTelemetry {
@@ -55,17 +62,32 @@ export function initializeVscodeTelemetry(options: VscodeTelemetryOptions): Vsco
   // The auth facade only exists after the harness is built; flushes always
   // happen on timers, well after the binding, so a deferred lookup is enough.
   let auth: KimiAuthFacade | undefined;
-  initializeTelemetry({
-    homeDir,
-    deviceId,
-    enabled: readTelemetryEnabled(resolveConfigPath({ homeDir })),
-    appName: VSCODE_TELEMETRY_APP_NAME,
-    version: options.version,
-    uiMode: VSCODE_TELEMETRY_UI_MODE,
-    endpoint: () => kimiRegionProfile(resolveVscodeTelemetryRegion(homeDir)).telemetryEndpoint,
-    getAccessToken: async () =>
-      auth === undefined ? null : (await auth.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME)) ?? null,
-    onUnexpectedError: (error) => options.log?.(`telemetry property dropped: ${String(error)}`),
+  // Both gates must pass: the Kimi config toggle and the editor-level
+  // Telemetry Level. `enabled` is false only on an explicit opt-out.
+  const configEnabled = readTelemetryEnabled(resolveConfigPath({ homeDir }));
+  let editorEnabled = options.isEditorTelemetryEnabled?.() ?? true;
+  const boot = (): void =>
+    initializeTelemetry({
+      homeDir,
+      deviceId,
+      enabled: configEnabled === false || !editorEnabled ? false : undefined,
+      appName: VSCODE_TELEMETRY_APP_NAME,
+      version: options.version,
+      uiMode: VSCODE_TELEMETRY_UI_MODE,
+      endpoint: () => kimiRegionProfile(resolveVscodeTelemetryRegion(homeDir)).telemetryEndpoint,
+      getAccessToken: async () =>
+        auth === undefined
+          ? null
+          : (await auth.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME)) ?? null,
+      onUnexpectedError: (error) => options.log?.(`telemetry property dropped: ${String(error)}`),
+    });
+  boot();
+  // Toggling the editor setting must not strand the old pipeline: a fresh
+  // initialize either disables the singleton outright or reattaches a sink,
+  // stopping the previous periodic flush.
+  options.onEditorTelemetryChange?.((enabled) => {
+    editorEnabled = enabled;
+    boot();
   });
   return {
     client: {

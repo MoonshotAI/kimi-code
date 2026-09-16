@@ -35,6 +35,15 @@ export interface KimiRuntimeOptions {
    * pipeline (`ui_mode: "vscode"`); tests substitute a stub.
    */
   readonly telemetry?: VscodeTelemetry;
+  /**
+   * Editor-level telemetry gate (VS Code's global Telemetry Level),
+   * forwarded to the default pipeline. Ignored when a telemetry pipeline
+   * is injected.
+   */
+  readonly editorTelemetry?: {
+    readonly isEnabled: () => boolean;
+    readonly onDidChange: (listener: (enabled: boolean) => void) => void;
+  };
 }
 
 export interface OpenSessionOptions {
@@ -69,6 +78,8 @@ export class KimiRuntime {
         homeDir: options.homeDir,
         version: options.version,
         log: (message) => this.log(message),
+        isEditorTelemetryEnabled: options.editorTelemetry?.isEnabled,
+        onEditorTelemetryChange: options.editorTelemetry?.onDidChange,
       });
     this.harness =
       options.harness ??

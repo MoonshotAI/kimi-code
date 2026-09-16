@@ -72,6 +72,27 @@ describe("initializeVscodeTelemetry", () => {
     flushTelemetrySync();
     await expect(readdir(join(homeDir, "telemetry"))).rejects.toThrow();
   });
+
+  it("honors the editor-level telemetry gate, including runtime changes", () => {
+    let editorEnabled = false;
+    let listener: ((enabled: boolean) => void) | undefined;
+    initializeVscodeTelemetry({
+      homeDir,
+      version: "0.7.5",
+      isEditorTelemetryEnabled: () => editorEnabled,
+      onEditorTelemetryChange: (registered) => {
+        listener = registered;
+      },
+    });
+
+    expect(getDefaultTelemetryClient().getSink()).toBeNull();
+
+    listener?.(true);
+    expect(getDefaultTelemetryClient().getSink()).not.toBeNull();
+
+    listener?.(false);
+    expect(getDefaultTelemetryClient().getSink()).toBeNull();
+  });
 });
 
 async function writeConfig(dir: string, text: string): Promise<void> {

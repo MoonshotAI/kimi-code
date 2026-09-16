@@ -45,6 +45,14 @@ export class BridgeHandler {
           this.captureFileBaseline(session, filePath, webviewIds);
         },
         log: (message, error) => this.logRuntimeError(message, error),
+        editorTelemetry: {
+          isEnabled: () => vscode.env.isTelemetryEnabled,
+          onDidChange: (listener) => {
+            // The bridge handler lives for the whole activation, so the
+            // listener needs no disposal bookkeeping.
+            void vscode.env.onDidChangeTelemetryEnabled(listener);
+          },
+        },
       });
     } catch (error) {
       throw new Error(
