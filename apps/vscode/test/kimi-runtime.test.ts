@@ -59,6 +59,7 @@ function createFakeSession(
   workDir: string,
   initial: Partial<SessionStatus> = {},
   metadata?: JsonObject,
+  closeError?: Error,
 ): FakeSessionBoundary {
   const listeners = new Set<(event: Event) => void>();
   const setModels: string[] = [];
@@ -133,6 +134,7 @@ function createFakeSession(
     },
     async close() {
       closes += 1;
+      if (closeError !== undefined) throw closeError;
     },
   } as unknown as Session;
 
@@ -167,6 +169,7 @@ interface FakeHarnessBoundary {
     workDir: string,
     initial?: Partial<SessionStatus>,
     metadata?: JsonObject,
+    closeError?: Error,
   ): FakeSessionBoundary;
 }
 
@@ -186,8 +189,9 @@ function createFakeHarness(
     workDir: string,
     initial?: Partial<SessionStatus>,
     metadata?: JsonObject,
+    closeError?: Error,
   ) => {
-    const boundary = createFakeSession(id, workDir, initial, metadata);
+    const boundary = createFakeSession(id, workDir, initial, metadata, closeError);
     sessions.set(id, boundary);
     return boundary;
   };
@@ -715,6 +719,42 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
     });
 
     await expect(runtime.dispose()).rejects.toThrow("persistence teardown failed");
+    expect(telemetry.shutdown).toHaveBeenCalledOnce();
+  });
+
+  it("settles every session close before shutting telemetry down", async () => {
+    const telemetry = createStubTelemetry();
+    const sdk = createFakeHarness();
+    let slowCloseSettled = false;
+    sdk.addSession("slow-1", "/workspace", {}, undefined, undefined);
+    sdk.addSession("failing-1", "/workspace", {}, undefined, new Error("session teardown failed"));
+    const slowHarness = {
+      ...sdk.harness,
+      close: vi.fn(async () => undefined),
+    } as unknown as KimiHarness;
+    const runtime = new KimiRuntime({
+      version: "0.6.0",
+      harness: slowHarness,
+      telemetry,
+      broadcast: () => undefined,
+      captureBaseline: () => undefined,
+      log: () => undefined,
+    });
+    const slowBoundary = sdk.sessions.get("slow-1");
+    expect(slowBoundary).toBeDefined();
+    const originalClose = slowBoundary!.session.close.bind(slowBoundary!.session);
+    vi.spyOn(slowBoundary!.session, "close").mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      slowCloseSettled = true;
+      await originalClose();
+    });
+    await runtime.openSession(openOptions({ webviewId: "view-1", sessionId: "slow-1" }));
+    await runtime.openSession(openOptions({ webviewId: "view-2", sessionId: "failing-1" }));
+
+    await expect(runtime.dispose()).rejects.toThrow("session teardown failed");
+
+    expect(slowCloseSettled).toBe(true);
+    expect(slowBoundary!.closeCount()).toBe(1);
     expect(telemetry.shutdown).toHaveBeenCalledOnce();
   });
 

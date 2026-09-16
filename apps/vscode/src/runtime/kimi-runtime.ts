@@ -269,10 +269,17 @@ export class KimiRuntime {
     if (this.closed) return;
     this.closed = true;
     try {
-      await Promise.all([...this.sessions.values()].map((session) => session.close()));
+      // Settle every session close before tearing the pipeline down: a
+      // rejecting close must not strand the others mid-flight, or their
+      // late events land in a shut-down sink.
+      const results = await Promise.allSettled(
+        [...this.sessions.values()].map((session) => session.close()),
+      );
       this.sessions.clear();
       this.sessionByView.clear();
       await this.harness.close();
+      const rejected = results.find((result) => result.status === 'rejected');
+      if (rejected !== undefined) throw rejected.reason;
     } finally {
       await this.telemetry.shutdown();
     }
