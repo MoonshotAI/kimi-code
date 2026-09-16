@@ -168,6 +168,8 @@ export type ProjectorStepOrdinalLookup = (turnId: string) => number | undefined;
 
 export type ProjectorTurnLookup = (turnId: string) => TurnHeader | undefined;
 
+export type ProjectorPromptLookup = (promptId: string) => TranscriptPrompt | undefined;
+
 export type ProjectorItemsLookup = () => readonly TranscriptItem[] | undefined;
 
 export type ProjectorPlanRevisionKey = (key: string) => string;
@@ -177,6 +179,7 @@ export interface ProjectorLookups {
   readonly toolFrame?: ProjectorToolFrameLookup;
   readonly stepOrdinal?: ProjectorStepOrdinalLookup;
   readonly turn?: ProjectorTurnLookup;
+  readonly prompt?: ProjectorPromptLookup;
   readonly items?: ProjectorItemsLookup;
   readonly resolvePlanRevisionKey?: ProjectorPlanRevisionKey;
   readonly activitySnapshot?: () => AgentActivitySnapshot;
@@ -1423,27 +1426,33 @@ export class AgentTranscriptProjector {
 
   private onPromptSteered(event: PromptSteeredEvent): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
-    const active = this.upsertPrompt(event.activePromptId, (prev) => ({
-      promptId: event.activePromptId,
-      status: prev?.status ?? 'running',
-      userMessageId: prev?.userMessageId,
-      content: projectPromptContentParts(event.content),
-      createdAt: prev?.createdAt ?? event.steeredAt,
-      finishedAt: prev?.finishedAt,
-      steeredAt: event.steeredAt,
-    }));
+    const active = this.upsertPrompt(event.activePromptId, (prev) => {
+      const existing = prev ?? this.lookups?.prompt?.(event.activePromptId);
+      return {
+        promptId: event.activePromptId,
+        status: existing?.status ?? 'running',
+        userMessageId: existing?.userMessageId,
+        content: existing?.content,
+        createdAt: existing?.createdAt ?? event.steeredAt,
+        finishedAt: existing?.finishedAt,
+        steeredAt: event.steeredAt,
+      };
+    });
     ops.push({ op: 'prompt.upsert', prompt: active });
     this.unpairedSteerPromptIds.push([...event.promptIds]);
     for (const promptId of event.promptIds) {
-      const steered = this.upsertPrompt(promptId, (prev) => ({
-        promptId,
-        status: 'completed',
-        userMessageId: prev?.userMessageId,
-        content: prev?.content,
-        createdAt: prev?.createdAt ?? event.steeredAt,
-        finishedAt: event.steeredAt,
-        steeredAt: event.steeredAt,
-      }));
+      const steered = this.upsertPrompt(promptId, (prev) => {
+        const existing = prev ?? this.lookups?.prompt?.(promptId);
+        return {
+          promptId,
+          status: 'completed',
+          userMessageId: existing?.userMessageId,
+          content: existing?.content,
+          createdAt: existing?.createdAt ?? event.steeredAt,
+          finishedAt: event.steeredAt,
+          steeredAt: event.steeredAt,
+        };
+      });
       ops.push({ op: 'prompt.upsert', prompt: steered });
     }
     return ops;

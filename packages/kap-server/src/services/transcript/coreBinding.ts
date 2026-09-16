@@ -104,6 +104,7 @@ export function bindSessionTranscript(
           return agentHandle === undefined ? [] : legacyApprovalsOf(agentHandle);
         },
         turn: (turnId) => store.getAgent(agentId)?.getTurn(turnId),
+        prompt: (promptId) => store.getAgent(agentId)?.getPrompt(promptId),
         items: () => store.getAgent(agentId)?.getItems(),
         resolvePlanRevisionKey: (key) =>
           agents.handleOf(agentId)?.accessor.get(IAgentScopeContext).scope(key) ?? key,

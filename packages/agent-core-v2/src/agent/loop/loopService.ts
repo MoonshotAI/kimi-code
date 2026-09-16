@@ -1331,13 +1331,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           sentToMachine: true,
         });
         void this.dispatcher.dispatch(
-          new TurnSteer({
-            agentId: this.scopeContext.agentId,
-            input: gatedContent,
-            origin: merged.origin,
-          }),
-        );
-        void this.dispatcher.dispatch(
           new PromptSteered({
             agentId: this.scopeContext.agentId,
             activePromptId: active.prompt.id,
@@ -1346,6 +1339,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
               stripBundledSkillBlocks(child.projection.message),
             ),
             steeredAt: new Date().toISOString(),
+          }),
+        );
+        void this.dispatcher.dispatch(
+          new TurnSteer({
+            agentId: this.scopeContext.agentId,
+            input: gatedContent,
+            origin: merged.origin,
           }),
         );
         return;

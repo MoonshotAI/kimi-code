@@ -239,6 +239,25 @@ describe('prompt queue', () => {
     await loop.settled();
   });
 
+  it('publishes prompt.steered before turn.steer', async () => {
+    setup();
+    const hold = holdNextStep();
+    ctx.mockNextResponse({ type: 'text', text: 'active' });
+    ctx.mockNextResponse({ type: 'text', text: 'merged' });
+    const order: string[] = [];
+    ctx.get(IEventBus).subscribe(PromptSteered, (event) => order.push(event.type));
+    ctx.get(IEventBus).subscribe(TurnSteer, (event) => order.push(event.type));
+
+    await enqueue(loop, { message: message('active') });
+    await hold.started;
+    const queued = await enqueue(loop, { message: message('queued') });
+    await loop.steer([queued.id]);
+    expect(order).toEqual(['prompt.steered', 'turn.steer']);
+
+    hold.release();
+    await loop.settled();
+  });
+
   it('publishes turn.steer at steer time without altering the wire payload shape', async () => {
     setup();
     const hold = holdNextStep();
