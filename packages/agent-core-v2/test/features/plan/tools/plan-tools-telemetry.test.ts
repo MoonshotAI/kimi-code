@@ -7,6 +7,7 @@ import { type ExitPlanModeInput } from '#/features/plan/tools/exit-plan-mode/exi
 import { ExitPlanModeTool } from '#/features/plan/tools/exit-plan-mode/exitPlanModeTool';
 import type { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { ToolResult } from '#/tool/toolContract';
+import { textOutput, type ExecutableToolResult } from '#/tool/toolContract';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 
@@ -101,7 +102,7 @@ describe('EnterPlanModeTool telemetry', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      output: 'Plan mode is already active. Use ExitPlanMode when the plan is ready.',
+      output: textOutput('Plan mode is already active. Use ExitPlanMode when the plan is ready.'),
     });
   });
 
@@ -121,8 +122,8 @@ describe('EnterPlanModeTool telemetry', () => {
     });
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).toContain('Wait for the host to provide a plan file path');
-    expect(result.output).toContain('no plan file path is available');
+    expect(outputText(result.output)).toContain('Wait for the host to provide a plan file path');
+    expect(outputText(result.output)).toContain('no plan file path is available');
   });
 
   it('uses plan-file guidance when the host provides a plan file path', async () => {
@@ -144,8 +145,8 @@ describe('EnterPlanModeTool telemetry', () => {
     });
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).toContain(`Plan file: ${ACTIVE_PLAN.path}`);
-    expect(result.output).toContain('Write the plan to the plan file with Write or Edit');
+    expect(outputText(result.output)).toContain(`Plan file: ${ACTIVE_PLAN.path}`);
+    expect(outputText(result.output)).toContain('Write the plan to the plan file with Write or Edit');
   });
 
   it('returns an error when entering plan mode fails', async () => {
@@ -171,7 +172,7 @@ describe('EnterPlanModeTool telemetry', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      output: 'Failed to enter plan mode: cannot prepare plan directory',
+      output: textOutput('Failed to enter plan mode: cannot prepare plan directory'),
     });
   });
 
@@ -247,7 +248,7 @@ describe('AgentPlanService EnterPlanMode telemetry', () => {
         }
 
         expect(result[0]?.isError).toBeFalsy();
-        expect(result[0]?.output).toContain('Plan mode is now active');
+        expect(outputText(result[0]!.output)).toContain('Plan mode is now active');
         expect(
           ctx.allEvents.some((event) => event.type === '[rpc]' && event.event === 'requestApproval'),
         ).toBe(false);
@@ -282,8 +283,9 @@ describe('ExitPlanModeTool telemetry', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      output:
+      output: textOutput(
         'ExitPlanMode can only be called while plan mode is active. Use EnterPlanMode (or /plan) first.',
+      ),
     });
   });
 
@@ -307,8 +309,9 @@ describe('ExitPlanModeTool telemetry', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      output:
+      output: textOutput(
         'No plan file found. Write the plan to the current plan file first, then call ExitPlanMode.',
+      ),
     });
   });
 
@@ -385,7 +388,7 @@ describe('ExitPlanModeTool telemetry', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('Failed to exit plan mode');
+    expect(outputText(result.output)).toContain('Failed to exit plan mode');
     expect(exit).toHaveBeenCalledTimes(1);
     expect(track2).toHaveBeenCalledWith('plan_submitted', {
       has_options: false,
@@ -395,3 +398,7 @@ describe('ExitPlanModeTool telemetry', () => {
     });
   });
 });
+
+function outputText(output: ExecutableToolResult['output']): string {
+  return output.map((part) => (part.type === 'text' ? part.text : '')).join('');
+}

@@ -7,7 +7,7 @@ const TOOL_EMPTY_ERROR_STATUS =
 const TOOL_OUTPUT_EMPTY_TEXT = 'Tool output is empty.';
 
 export interface RenderableToolResult {
-  readonly output: string | readonly ContentPart[];
+  readonly output: readonly ContentPart[];
   readonly note?: string;
   readonly isError?: boolean;
 }
@@ -17,23 +17,22 @@ export function renderToolResultForModel(result: RenderableToolResult): ContentP
   if (result.note === undefined || result.note.length === 0) return rendered;
   const only = rendered[0];
   if (rendered.length === 1 && only?.type === 'text') {
-    return [textPart(only.text + '\n' + result.note)];
+    return [{ type: 'text', text: only.text + '\n' + result.note, contentType: only.contentType }];
   }
   return [...rendered, textPart(result.note)];
 }
 
 function renderStatus(result: RenderableToolResult): ContentPart[] {
-  const output = result.output;
-  const single = typeof output === 'string' ? output : singleTextPart(output);
+  const parts = result.output;
+  const single = singleTextPart(parts);
   if (single !== undefined) {
     if (result.isError === true) {
       if (single.length === 0) return [textPart(TOOL_EMPTY_ERROR_STATUS)];
       return [textPart(TOOL_ERROR_STATUS + '\n' + single)];
     }
-    return isEmptyOutputText(single) ? [textPart(TOOL_EMPTY_STATUS)] : [textPart(single)];
+    return isEmptyOutputText(single) ? [textPart(TOOL_EMPTY_STATUS)] : [parts[0]!];
   }
 
-  const parts = output as readonly ContentPart[];
   if (isEmptyEquivalentContentArray(parts)) {
     return [textPart(result.isError === true ? TOOL_EMPTY_ERROR_STATUS : TOOL_EMPTY_STATUS)];
   }

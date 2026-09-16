@@ -2,6 +2,7 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import {
   ToolAccesses,
+  textOutput,
   type ExecutableToolContext,
   type ExecutableToolResult,
   type ToolExecution,
@@ -47,7 +48,7 @@ export class WebSearchTool implements IWebSearchTool {
     if (provider === undefined) {
       return {
         isError: true,
-        output: 'Web search is no longer configured; the provider was removed after this session started.',
+        output: textOutput('Web search is no longer configured; the provider was removed after this session started.'),
       };
     }
     try {
@@ -80,7 +81,7 @@ export class WebSearchTool implements IWebSearchTool {
       if (signal.aborted) throw error;
       return {
         isError: true,
-        output: classifySearchError(error),
+        output: textOutput(classifySearchError(error)),
       };
     }
   }

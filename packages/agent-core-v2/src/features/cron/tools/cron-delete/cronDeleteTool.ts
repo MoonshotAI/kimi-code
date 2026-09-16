@@ -1,4 +1,4 @@
-import { type ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentCronService } from '#/features/cron/cronService';
@@ -29,9 +29,11 @@ export class CronDeleteTool implements ICronDeleteTool {
     if (!ID_PATTERN.test(args.id)) {
       return {
         isError: true,
-        output: `Invalid cron job id ${JSON.stringify(
-          args.id,
-        )} — must be a ULID.`,
+        output: textOutput(
+          `Invalid cron job id ${JSON.stringify(
+            args.id,
+          )} — must be a ULID.`,
+        ),
       };
     }
 
@@ -43,14 +45,14 @@ export class CronDeleteTool implements ICronDeleteTool {
         if (removed.length === 0) {
           return {
             isError: true,
-            output: `No cron job with id ${args.id}.`,
+            output: textOutput(`No cron job with id ${args.id}.`),
           };
         }
 
         this.cron.emitDeleted(args.id, this.scopeContext.agentId);
 
         return {
-          output: `Deleted cron job ${args.id}.`,
+          output: textOutput(`Deleted cron job ${args.id}.`),
           isError: false,
         };
       },

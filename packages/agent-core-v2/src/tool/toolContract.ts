@@ -2,7 +2,11 @@ import type { ContentPart, ToolCall, ToolDescription as Tool } from '#human/llm/
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
-export type ExecutableToolOutput = string | ContentPart[];
+export type ExecutableToolOutput = readonly ContentPart[];
+
+export function textOutput(text: string): ContentPart[] {
+  return [{ type: 'text', text }];
+}
 
 export const DEFAULT_TOOL_RESULT_MAX_CHARS = 50_000;
 

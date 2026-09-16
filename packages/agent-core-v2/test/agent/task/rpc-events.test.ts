@@ -37,6 +37,7 @@ import {
 import { submitPromptTurn } from '../loop/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { executeTool, type TestExecutableToolContext } from '../../tools/fixtures/execute-tool';
+import { textOutput } from '#/tool/toolContract';
 import {
   createAgentTaskPersistence,
   type TaskServiceTestManager,
@@ -516,7 +517,7 @@ describe('AgentTaskService — notification delivery', () => {
     const answer = JSON.stringify({ answers: { 'Which database?': 'Postgres' } });
     const taskId = manager.registerTask(
       new QuestionBackgroundTask(
-        async () => ({ isError: false, output: answer }),
+        async () => ({ isError: false, output: textOutput(answer) }),
         'Which database?',
         { questionCount: 1, taskId: 'call_q' },
       ),
@@ -555,7 +556,7 @@ describe('AgentTaskService — notification delivery', () => {
     });
     const taskId = manager.registerTask(
       new QuestionBackgroundTask(
-        async () => ({ isError: false, output: dismissed }),
+        async () => ({ isError: false, output: textOutput(dismissed) }),
         'Which database?',
         { questionCount: 1, taskId: 'call_q' },
       ),
@@ -582,7 +583,7 @@ describe('AgentTaskService — notification delivery', () => {
     const turnEnd = ctx.untilTurnEnd();
     const taskId = manager.registerTask(
       new QuestionBackgroundTask(
-        async () => ({ isError: false, output: 'not an answer payload' }),
+        async () => ({ isError: false, output: textOutput('not an answer payload') }),
         'Which database?',
         { questionCount: 1, taskId: 'call_q' },
       ),
@@ -612,7 +613,7 @@ describe('AgentTaskService — notification delivery', () => {
       new QuestionBackgroundTask(
         async () => ({
           isError: true,
-          output: 'The connected client does not support interactive questions.',
+          output: textOutput('The connected client does not support interactive questions.'),
         }),
         'Which database?',
         { questionCount: 1, taskId: 'call_q' },

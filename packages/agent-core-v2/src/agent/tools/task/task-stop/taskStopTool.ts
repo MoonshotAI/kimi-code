@@ -1,6 +1,6 @@
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
-import { type ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ToolExecution } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
 import { IAgentTaskService } from '#/agent/task/task';
@@ -24,7 +24,7 @@ export class TaskStopTool implements ITaskStopTool {
       execute: async () => {
         const info = this.tasks.getTask(args.task_id);
         if (!info) {
-          return { isError: true, output: `Task not found: ${args.task_id}` };
+          return { isError: true, output: textOutput(`Task not found: ${args.task_id}`) };
         }
 
         const trimmedReason = args.reason?.trim();
@@ -35,10 +35,11 @@ export class TaskStopTool implements ITaskStopTool {
 
         if (TERMINAL_STATUSES.has(info.status)) {
           return {
-            output:
+            output: textOutput(
               `task_id: ${info.taskId}\n` +
-              `status: ${info.status}\n` +
-              `reason: ${terminalStopReason(info.stopReason)}`,
+                `status: ${info.status}\n` +
+                `reason: ${terminalStopReason(info.stopReason)}`,
+            ),
             isError: false,
           };
         }
@@ -46,14 +47,15 @@ export class TaskStopTool implements ITaskStopTool {
         await this.tasks.suppressTerminalNotification(args.task_id);
         const result = await this.tasks.stop(args.task_id, reason);
         if (!result) {
-          return { isError: true, output: `Failed to stop task: ${args.task_id}` };
+          return { isError: true, output: textOutput(`Failed to stop task: ${args.task_id}`) };
         }
 
         return {
-          output:
+          output: textOutput(
             `task_id: ${result.taskId}\n` +
-            `status: ${result.status}\n` +
-            `reason: ${result.stopReason ?? reason}`,
+              `status: ${result.status}\n` +
+              `reason: ${result.stopReason ?? reason}`,
+          ),
           isError: false,
         };
       },

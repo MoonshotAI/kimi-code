@@ -143,8 +143,11 @@ function formatTurnMd(messages: readonly ContextMessage[], turnNumber: number): 
       lines.push('### User', '');
       // A daemon-ref media part is self-contained and renders as
       // `[image]`/`[video]` below; a standalone `<media path>` tag is user
-      // text and exports verbatim.
+      // text and exports verbatim. Envelope parts (`text/xml`) are model-only
+      // injections such as the image-compression caption and stay out of the
+      // export, same as the replay view.
       for (const part of msg.content) {
+        if (part.type === 'text' && part.contentType === 'text/xml') continue;
         const text = formatContentPartMd(part);
         if (text.trim()) {
           lines.push(text, '');
@@ -194,7 +197,7 @@ function buildOverview(
   for (const msg of history) {
     if (msg.role === 'user' && !isInternalMessage(msg)) {
       const textParts = msg.content
-        .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+        .filter((p): p is { type: 'text'; text: string } => p.type === 'text' && p.contentType !== 'text/xml')
         .map((p) => p.text);
       topic = shorten(textParts.join(' '), 80);
       break;

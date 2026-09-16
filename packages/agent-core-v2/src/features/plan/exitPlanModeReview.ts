@@ -9,6 +9,7 @@ import type {
 } from '#/agent/toolExecutor/toolHooks';
 import type { PlanResolvedEvent, PlanSubmittedEvent } from '#/app/telemetry/events';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
+import { textOutput } from '#/tool/toolContract';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import type { IAgentPlanService } from './plan';
@@ -75,7 +76,7 @@ export class ExitPlanModeReview {
       kind: 'result',
       result: {
         isError: false,
-        output: `Exited plan mode. ${optionPrefix}${formattedPlan}`,
+        output: textOutput(`Exited plan mode. ${optionPrefix}${formattedPlan}`),
       },
     };
   }
@@ -88,7 +89,7 @@ export class ExitPlanModeReview {
         kind: 'result',
         result: {
           isError: false,
-          output: 'Plan approval dismissed. Plan mode remains active.',
+          output: textOutput('Plan approval dismissed. Plan mode remains active.'),
         },
       };
     }
@@ -100,7 +101,7 @@ export class ExitPlanModeReview {
         result: {
           isError: true,
           stopTurn: true,
-          output: 'Plan rejected by user. Plan mode deactivated.',
+          output: textOutput('Plan rejected by user. Plan mode deactivated.'),
         },
       };
     }
@@ -111,10 +112,11 @@ export class ExitPlanModeReview {
         kind: 'result',
         result: {
           isError: false,
-          output:
+          output: textOutput(
             feedback.length > 0
               ? `User rejected the plan. Feedback:\n\n${feedback}`
               : 'User requested revisions. Plan mode remains active.',
+          ),
         },
       };
     }
@@ -124,7 +126,7 @@ export class ExitPlanModeReview {
       result: {
         isError: true,
         stopTurn: true,
-        output: 'Plan rejected by user. Plan mode remains active.',
+        output: textOutput('Plan rejected by user. Plan mode remains active.'),
       },
     };
   }

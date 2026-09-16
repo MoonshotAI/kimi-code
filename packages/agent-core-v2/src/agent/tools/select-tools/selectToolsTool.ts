@@ -1,5 +1,5 @@
 import { toInputJsonSchema } from '#/tool/input-schema';
-import type { ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ToolExecution } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolSelectService, SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
 
@@ -33,7 +33,7 @@ export class SelectToolsTool implements ISelectToolsTool {
       execute: async () => {
         if (!this.toolSelect.enabled()) {
           return {
-            output: 'select_tools is not available for the current model.',
+            output: textOutput('select_tools is not available for the current model.'),
             isError: true,
           };
         }
@@ -48,7 +48,9 @@ export class SelectToolsTool implements ISelectToolsTool {
           lines.push(`Unknown tool: ${name}. Pick from the latest announced tools list.`);
         }
         const isError = toLoad.length === 0 && alreadyAvailable.length === 0;
-        return isError ? { output: lines.join('\n'), isError } : { output: lines.join('\n') };
+        return isError
+          ? { output: textOutput(lines.join('\n')), isError }
+          : { output: textOutput(lines.join('\n')) };
       },
     };
   }

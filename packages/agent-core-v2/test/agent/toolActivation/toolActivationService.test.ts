@@ -38,7 +38,7 @@ import {
 } from '#/agent/toolSelect/toolSelect';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import type { RuntimeCapability } from '#/runtime/runtime';
-import type { AgentTool, ToolExecution } from '#/tool/toolContract';
+import { textOutput, type AgentTool, type ToolExecution } from '#/tool/toolContract';
 import '#/agent/tools/agent/agentTool';
 import '#/agent/tools/ask-user-question/askUserQuestionTool';
 import '#/agent/tools/edit/editTool';
@@ -62,7 +62,7 @@ class StubTool implements AgentTool {
   readonly parameters: Record<string, unknown> = {};
   constructor(readonly name: string) {}
   resolveExecution(): ToolExecution {
-    return { isError: true, output: 'stub' };
+    return { isError: true, output: textOutput('stub') };
   }
 }
 

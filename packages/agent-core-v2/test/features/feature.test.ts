@@ -55,7 +55,7 @@ class TestTool implements ITestTool {
   resolveExecution(): ToolExecution {
     return {
       approvalRule: this.name,
-      execute: async () => ({ output: '' }),
+      execute: async () => ({ output: [] }),
     };
   }
 }

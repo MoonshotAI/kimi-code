@@ -60,7 +60,7 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ToolAccesses } from '#/tool/toolContract';
+import { ToolAccesses, textOutput, type ExecutableToolResult } from '#/tool/toolContract';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
@@ -120,7 +120,7 @@ function hookContext(toolCalls: ToolCall[]): ResolvedToolExecutionHookContext {
     toolCall: toolCalls[0]!,
     toolCalls,
     args: {},
-    execution: { approvalRule: toolCalls[0]!.name, execute: async () => ({ output: '' }) },
+    execution: { approvalRule: toolCalls[0]!.name, execute: async () => ({ output: [] }) },
   };
 }
 
@@ -135,7 +135,7 @@ function writeHookContext(toolName: string, paths: readonly string[]): ResolvedT
     execution: {
       approvalRule: toolName,
       accesses: paths.flatMap((path) => ToolAccesses.writeFile(path)),
-      execute: async () => ({ output: '' }),
+      execute: async () => ({ output: [] }),
     },
   };
 }
@@ -835,7 +835,7 @@ describe('AgentTowerService', () => {
 
     expect(decision).toEqual({
       veto: {
-        output: expect.stringContaining('TodoList is not available while tower mode is active'),
+        output: [expect.objectContaining({ type: 'text', text: expect.stringContaining('TodoList is not available while tower mode is active') })],
         isError: true,
       },
     });
@@ -874,7 +874,7 @@ describe('AgentTowerService', () => {
 
     expect(decision).toEqual({
       veto: {
-        output: expect.stringContaining('The tower experiment is disabled'),
+        output: [expect.objectContaining({ type: 'text', text: expect.stringContaining('The tower experiment is disabled') })],
         isError: true,
       },
     });
@@ -2299,7 +2299,7 @@ describe('AgentTowerService', () => {
       );
 
       expect(decision?.veto?.isError).toBe(true);
-      const output = decision?.veto?.output;
+      const output = outputText(decision?.veto?.output);
       expect(output).toContain(`tower workers may only write inside their own worktree (${worktree})`);
       expect(output).toContain(`${repo}/src/gemm.cpp`);
       expect(output).toContain(`${repo}/.tower/worktrees/wt-2/x.ts`);
@@ -2326,7 +2326,7 @@ describe('AgentTowerService', () => {
       const decision = await fire(writeHookContext('Write', [`${repo}/src/gemm.cpp`]));
 
       expect(decision?.veto?.isError).toBe(true);
-      expect(decision?.veto?.output).toContain(
+      expect(outputText(decision?.veto?.output)).toContain(
         'tower workers may only write inside their own worktree',
       );
       expect(permissionGateRan).toBe(false);
@@ -2674,7 +2674,7 @@ describe('AgentTowerService', () => {
         toolCall: call,
         toolCalls: [call],
         args,
-        execution: { approvalRule: 'Agent', execute: async () => ({ output: '' }) },
+        execution: { approvalRule: 'Agent', execute: async () => ({ output: [] }) },
       };
     }
 
@@ -2687,7 +2687,7 @@ describe('AgentTowerService', () => {
       );
 
       expect(decision?.veto?.isError).toBe(true);
-      expect(decision?.veto?.output).toContain('run_in_background');
+      expect(outputText(decision?.veto?.output)).toContain('run_in_background');
       expect(permissionGateRan).toBe(false);
       expect(formatDenyMessage).toHaveBeenCalledTimes(1);
     });
@@ -2701,7 +2701,7 @@ describe('AgentTowerService', () => {
       );
 
       expect(decision?.veto?.isError).toBe(true);
-      expect(decision?.veto?.output).toContain('run_in_background');
+      expect(outputText(decision?.veto?.output)).toContain('run_in_background');
       expect(permissionGateRan).toBe(false);
     });
 
@@ -2989,3 +2989,7 @@ describe('towerEnterFailureMessage', () => {
     expect(towerEnterFailureMessage(failure)).toBe(message);
   });
 });
+
+function outputText(output: ExecutableToolResult['output'] | undefined): string {
+  return output?.map((part) => (part.type === 'text' ? part.text : '')).join('') ?? '';
+}

@@ -40,7 +40,11 @@ import {
   type AgentRunHandle,
 } from '#/session/subagent/subagent';
 import type { AgentTaskInfo } from '#/agent/task/types';
-import type { ExecutableToolResult } from '#/tool/toolContract';
+import { textOutput, type ExecutableToolResult } from '#/tool/toolContract';
+
+function outputText(output: ExecutableToolResult['output']): string {
+  return output.map((part) => (part.type === 'text' ? part.text : '')).join('');
+}
 
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../../../agent/agentContext/stubs';
@@ -230,7 +234,7 @@ describe('TowerSpawnTool', () => {
     const result = await execute(WORKER_ARGS);
 
     expect(result).toEqual({
-      output: TOWER_MODE_USER_ENABLED_ONLY,
+      output: textOutput(TOWER_MODE_USER_ENABLED_ONLY),
       isError: true,
     });
     expect(createAgent).not.toHaveBeenCalled();
@@ -264,7 +268,7 @@ describe('TowerSpawnTool', () => {
     const result = await execute(WORKER_ARGS);
 
     expect(result).toEqual({
-      output: 'Tower orchestration tools are only supported by the main agent.',
+      output: textOutput('Tower orchestration tools are only supported by the main agent.'),
       isError: true,
     });
     expect(createAgent).not.toHaveBeenCalled();
@@ -276,7 +280,7 @@ describe('TowerSpawnTool', () => {
 
     const result = await execute(WORKER_ARGS);
 
-    expect(result).toEqual({ output: gate.ok === false ? gate.reason : '', isError: true });
+    expect(result).toEqual({ output: textOutput(gate.ok === false ? gate.reason : ''), isError: true });
     expect(createAgent).not.toHaveBeenCalled();
     expect(release).not.toHaveBeenCalled();
 
@@ -290,7 +294,7 @@ describe('TowerSpawnTool', () => {
 
     const result = await execute(WORKER_ARGS);
 
-    expect(result).toEqual({ output: 'tower spawn failed: provider unavailable', isError: true });
+    expect(result).toEqual({ output: textOutput('tower spawn failed: provider unavailable'), isError: true });
     const state = await store.load();
     const mission = state.missions.find((m) => m.id === 'M1');
     expect(mission?.status).toBe('planned');
@@ -303,11 +307,11 @@ describe('TowerSpawnTool', () => {
 
     expect(result.isError).toBeUndefined();
     const worktreeAbs = join(repo, '.tower/worktrees/wt-1');
-    expect(result.output).toContain('agent_id: agent-7');
-    expect(result.output).toContain('task_id: task-1');
-    expect(result.output).toContain('status: running');
-    expect(result.output).toContain(`worktree: ${worktreeAbs}`);
-    expect(result.output).toContain('Agent(resume="agent-7", run_in_background=true');
+    expect(outputText(result.output)).toContain('agent_id: agent-7');
+    expect(outputText(result.output)).toContain('task_id: task-1');
+    expect(outputText(result.output)).toContain('status: running');
+    expect(outputText(result.output)).toContain(`worktree: ${worktreeAbs}`);
+    expect(outputText(result.output)).toContain('Agent(resume="agent-7", run_in_background=true');
 
     expect(createAgent).toHaveBeenCalledWith({
       binding: { profile: 'tower-worker', model: 'kimi-code', thinking: 'off' },
@@ -415,7 +419,7 @@ describe('TowerSpawnTool', () => {
     const result = await execute(WORKER_ARGS);
 
     expect(result.isError).toBeUndefined();
-    expect(result.output).toContain('model: cheap/fast');
+    expect(outputText(result.output)).toContain('model: cheap/fast');
     expect(createAgent).toHaveBeenCalledWith({
       binding: { profile: 'tower-worker', model: 'cheap/fast', thinking: undefined },
       labels: { parentAgentId: 'main' },
@@ -475,7 +479,7 @@ describe('TowerSpawnTool', () => {
     const result = await execute(WORKER_ARGS);
 
     expect(result.isError).toBeUndefined();
-    expect(result.output).toContain('model: kimi-code');
+    expect(outputText(result.output)).toContain('model: kimi-code');
     const activityLog = await readFile(join(repo, '.tower/comms/log/activity.log'), 'utf8');
     expect(activityLog).toMatch(/spawn .*model=kimi-code/);
   });
@@ -490,7 +494,7 @@ describe('TowerSpawnTool', () => {
     });
 
     expect(result.isError).toBeUndefined();
-    expect(result.output).toContain('model: kimi-code');
+    expect(outputText(result.output)).toContain('model: kimi-code');
     expect(createAgent).toHaveBeenCalledWith({
       binding: { profile: 'tower-worker', model: 'kimi-code', thinking: 'off' },
       labels: { parentAgentId: 'main' },
@@ -507,7 +511,7 @@ describe('TowerSpawnTool', () => {
     });
 
     expect(result.isError).toBeUndefined();
-    expect(result.output).toContain('model: cheap/fast');
+    expect(outputText(result.output)).toContain('model: cheap/fast');
     expect(createAgent).toHaveBeenCalledWith({
       binding: { profile: 'tower-worker', model: 'cheap/fast', thinking: undefined },
       labels: { parentAgentId: 'main' },
@@ -522,7 +526,7 @@ describe('TowerSpawnTool', () => {
     });
 
     expect(result.isError).toBeUndefined();
-    expect(result.output).toContain('review_target: feat/build-gemm');
+    expect(outputText(result.output)).toContain('review_target: feat/build-gemm');
     const state = await store.load();
     const entry = state.roster.agents.find((agent) => agent.name === 'reviewer-a');
     expect(entry).toMatchObject({
@@ -548,8 +552,8 @@ describe('TowerSpawnTool', () => {
     const result = await execute(WORKER_ARGS);
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('already registered');
-    expect(result.output).toContain('Agent(resume="agent-old", run_in_background=true');
+    expect(outputText(result.output)).toContain('already registered');
+    expect(outputText(result.output)).toContain('Agent(resume="agent-old", run_in_background=true');
     expect(createAgent).not.toHaveBeenCalled();
   });
 
@@ -557,7 +561,7 @@ describe('TowerSpawnTool', () => {
     const result = await execute({ ...WORKER_ARGS, name: 'tower' });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('reserved');
+    expect(outputText(result.output)).toContain('reserved');
     expect(createAgent).not.toHaveBeenCalled();
     expect(registerTask).not.toHaveBeenCalled();
     expect((await store.load()).roster.agents).toEqual([]);
@@ -571,7 +575,7 @@ describe('TowerSpawnTool', () => {
     const result = await execute({ ...WORKER_ARGS, name: ' tower ' });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('whitespace');
+    expect(outputText(result.output)).toContain('whitespace');
     expect(createAgent).not.toHaveBeenCalled();
     expect(registerTask).not.toHaveBeenCalled();
     expect((await store.load()).roster.agents).toEqual([]);
@@ -583,8 +587,8 @@ describe('TowerSpawnTool', () => {
     const result = await execute(WORKER_ARGS);
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('not owned by any tower mission');
-    expect(result.output).not.toContain('worktree setup warning');
+    expect(outputText(result.output)).toContain('not owned by any tower mission');
+    expect(outputText(result.output)).not.toContain('worktree setup warning');
     expect(createAgent).not.toHaveBeenCalled();
     expect(registerTask).not.toHaveBeenCalled();
     const state = await store.load();
@@ -598,7 +602,7 @@ describe('TowerSpawnTool', () => {
     const result = await execute(WORKER_ARGS);
 
     expect(result.isError).toBeUndefined();
-    expect(result.output).toContain('base snapshot:');
+    expect(outputText(result.output)).toContain('base snapshot:');
     const worktreeAbs = join(repo, '.tower/worktrees/wt-1');
     expect(await readFile(join(worktreeAbs, 'wip.ts'), 'utf8')).toBe('export const wip = 1;\n');
     expect(runAgent).toHaveBeenCalledWith(
@@ -643,7 +647,7 @@ describe('TowerSpawnTool', () => {
     const result = await execute(WORKER_ARGS);
 
     expect(result.isError).toBeUndefined();
-    expect(result.output).not.toContain('base snapshot:');
+    expect(outputText(result.output)).not.toContain('base snapshot:');
     const mission = (await store.load()).missions.find((m) => m.id === 'M1');
     expect(mission?.spawnBase).toBeUndefined();
   });

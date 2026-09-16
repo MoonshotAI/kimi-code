@@ -18,6 +18,7 @@ import { AgentEvent2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { Error2, ErrorCodes } from '#/errors';
 import { createHistoryMessageBuilder } from '#human/agent/historyBuilder';
+import type { ContentPart } from '#human/llm/message';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import {
@@ -115,7 +116,11 @@ export class AgentShellCommandService implements IAgentShellCommandService {
         timeout: SHELL_FOREGROUND_TIMEOUT_S,
       });
       if (execution.isError === true) {
-        const output = typeof execution.output === 'string' ? execution.output : 'Command failed.';
+        const outputText = execution.output
+          .filter((part): part is Extract<ContentPart, { type: 'text' }> => part.type === 'text')
+          .map((part) => part.text)
+          .join('');
+        const output = outputText.length > 0 ? outputText : 'Command failed.';
         this.appendShellOutput('', output);
         isError = true;
         return { stdout: '', stderr: output, isError: true };
@@ -155,13 +160,17 @@ export class AgentShellCommandService implements IAgentShellCommandService {
       });
 
       isError = result.isError === true;
-      if (typeof result.output === 'string' && result.output.startsWith('task_id: ')) {
-        this.notifyBackgrounded(result.output);
+      const outputText = result.output
+        .filter((part): part is Extract<ContentPart, { type: 'text' }> => part.type === 'text')
+        .map((part) => part.text)
+        .join('');
+      if (outputText.startsWith('task_id: ')) {
+        this.notifyBackgrounded(outputText);
         backgrounded = true;
-        return { stdout: result.output, stderr: '', isError: false, backgrounded: true };
+        return { stdout: outputText, stderr: '', isError: false, backgrounded: true };
       }
       if (isError && stdout.length === 0 && stderr.length === 0) {
-        stderr = typeof result.output === 'string' ? result.output : 'Command failed.';
+        stderr = outputText.length > 0 ? outputText : 'Command failed.';
         if (input.commandId !== undefined && stderr.length > 0) {
           void this.dispatcher.dispatch(
             new ShellOutput({

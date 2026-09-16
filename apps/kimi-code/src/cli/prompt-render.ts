@@ -351,8 +351,17 @@ function stringifyJsonValue(value: unknown): string {
 
 function stringifyToolOutput(output: unknown): string {
   if (typeof output === 'string') return output;
+  if (Array.isArray(output) && output.every((part) => isTextPart(part))) {
+    return output.map((part) => part.text).join('');
+  }
   const json = JSON.stringify(output);
   return json ?? String(output);
+}
+
+function isTextPart(part: unknown): part is { type: 'text'; text: string } {
+  return (
+    typeof part === 'object' && part !== null && (part as { type?: unknown }).type === 'text'
+  );
 }
 
 interface PromptJsonResumeMetaMessage {

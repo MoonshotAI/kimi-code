@@ -91,9 +91,10 @@ import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { RuntimeLease } from '#/runtime/runtime';
 import { LocalRuntime } from '#/runtime/localRuntime';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
-import type {
-  ExecutableToolOutput as ToolOutput,
-  ExecutableToolResult,
+import {
+  textOutput,
+  type ExecutableToolOutput as ToolOutput,
+  type ExecutableToolResult,
 } from '#/tool/toolContract';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -1897,7 +1898,7 @@ export class AgentTestContext {
       content: [{ type: 'text', text: 'I will call Lookup.' }],
       toolCalls: [toolCall('call_lookup', 'Lookup', { query: 'moon' })],
     });
-    this.appendToolResult('call_lookup', 'lookup result');
+    this.appendToolResult('call_lookup', textOutput('lookup result'));
   }
 
   appendUnresolvedToolExchange(resolvedToolResults: 0 | 1): void {
@@ -1911,7 +1912,7 @@ export class AgentTestContext {
       ],
     });
     if (resolvedToolResults === 1) {
-      this.appendToolResult('call_unresolved_one', 'one result');
+      this.appendToolResult('call_unresolved_one', textOutput('one result'));
     }
   }
 
@@ -1950,7 +1951,7 @@ export class AgentTestContext {
         toolCall('call_open_two', 'LookupTwo', {}),
       ],
     });
-    this.appendToolResult('call_open_one', 'one result');
+    this.appendToolResult('call_open_one', textOutput('one result'));
   }
 
   appendPartiallyResolvedParallelToolExchange(): void {
@@ -1963,7 +1964,7 @@ export class AgentTestContext {
         toolCall('call_open_two', 'LookupTwo', { query: 'two' }),
       ],
     });
-    this.appendToolResult('call_open_one', 'one result');
+    this.appendToolResult('call_open_one', textOutput('one result'));
   }
 
   compactHistory(): Array<{ readonly role: string; readonly text: string }> {
@@ -2741,8 +2742,7 @@ function toolCall(id: string, name: string, args: unknown): ContextMessage['tool
 }
 
 function contentPartsFromToolOutput(output: ToolOutput): ContentPart[] {
-  if (typeof output !== 'string') return [...output];
-  return [{ type: 'text', text: output }];
+  return [...output];
 }
 
 function createLogService(logger: Logger | undefined, bindings: LogContext = {}): ILogService {

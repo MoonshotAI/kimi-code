@@ -18,6 +18,7 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
+import { textOutput } from '#/tool/toolContract';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
 import {
@@ -290,7 +291,7 @@ describe('AgentUserToolService (wire-backed)', () => {
       args: { query: 'x' },
     });
     interactions.respond(parked[0]!.id, { output: 'done', isError: false });
-    await expect(resultPromise).resolves.toEqual({ output: 'done', isError: false });
+    await expect(resultPromise).resolves.toEqual({ output: textOutput('done'), isError: false });
 
     const controller = new AbortController();
     const aborted = execution.execute({
@@ -306,7 +307,7 @@ describe('AgentUserToolService (wire-backed)', () => {
     expect(abortedRecord).toBeDefined();
     expect(abortedRecord).toMatchObject({
       resolved: true,
-      response: { output: `User tool "${toolA.name}" was aborted.`, isError: true },
+      response: { output: textOutput(`User tool "${toolA.name}" was aborted.`), isError: true },
     });
   });
 

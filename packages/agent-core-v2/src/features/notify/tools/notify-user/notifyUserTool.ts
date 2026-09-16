@@ -1,7 +1,7 @@
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { ToolAccesses, type ToolExecution } from '#/tool/toolContract';
+import { ToolAccesses, textOutput, type ToolExecution } from '#/tool/toolContract';
 import { notifyUserAvailable } from '../../notifyUserAvailability';
 
 import {
@@ -29,7 +29,7 @@ export class NotifyUserTool implements INotifyUserTool {
 
   resolveExecution(args: NotifyUserInput): ToolExecution {
     if (args.message.trim().length === 0) {
-      return { isError: true, output: NOTIFY_USER_EMPTY_MESSAGE };
+      return { isError: true, output: textOutput(NOTIFY_USER_EMPTY_MESSAGE) };
     }
     return {
       description: 'Notifying the user',
@@ -37,8 +37,8 @@ export class NotifyUserTool implements INotifyUserTool {
       approvalRule: this.name,
       execute: async () =>
         notifyUserAvailable(this.flags, this.bootstrap)
-          ? { isError: false, output: NOTIFY_USER_DELIVERED_OUTPUT }
-          : { isError: false, output: NOTIFY_USER_SUPPRESSED_OUTPUT },
+          ? { isError: false, output: textOutput(NOTIFY_USER_DELIVERED_OUTPUT) }
+          : { isError: false, output: textOutput(NOTIFY_USER_SUPPRESSED_OUTPUT) },
     };
   }
 }

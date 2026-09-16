@@ -239,6 +239,10 @@ export function contentPartsToText(content: readonly ContentPart[]): string {
   return content.map(contentPartToText).join('');
 }
 
+export function userVisibleContentParts(content: readonly ContentPart[]): readonly ContentPart[] {
+  return content.filter((part) => part.type !== 'text' || part.contentType !== 'text/xml');
+}
+
 /**
  * agent-core-v2's task domain persists the terminal notification under the
  * 'task' spelling (v1 used 'background_task'); both reach replay verbatim.

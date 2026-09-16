@@ -25,6 +25,7 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import {
   ToolAccesses,
+  textOutput,
   type ExecutableToolContext,
   type ExecutableToolResult,
   type ToolExecution,
@@ -232,16 +233,16 @@ export class SubagentTool implements ISubagentTool {
       resumeAgentId.length > 0 &&
       requestedProfileName !== undefined
     ) {
-      return { output: RESUME_WITH_TYPE_UNAVAILABLE, isError: true };
+      return { output: textOutput(RESUME_WITH_TYPE_UNAVAILABLE), isError: true };
     }
 
     if (args.fork === true) {
       if (!this.flags.enabled(SUBAGENT_FORK_FLAG_ID)) {
-        return { output: FORK_EXPERIMENTAL_UNAVAILABLE, isError: true };
+        return { output: textOutput(FORK_EXPERIMENTAL_UNAVAILABLE), isError: true };
       }
       const forkError = forkIncompatibility(args, this.profile.data());
       if (forkError !== undefined) {
-        return { output: forkError, isError: true };
+        return { output: textOutput(forkError), isError: true };
       }
     }
 
@@ -417,22 +418,22 @@ export class SubagentTool implements ISubagentTool {
       const isResume = resumeAgentId !== undefined && resumeAgentId.length > 0;
 
       if (isResume && requestedProfileName !== undefined) {
-        return { output: RESUME_WITH_TYPE_UNAVAILABLE, isError: true };
+        return { output: textOutput(RESUME_WITH_TYPE_UNAVAILABLE), isError: true };
       }
 
       if (args.fork === true) {
         if (!this.flags.enabled(SUBAGENT_FORK_FLAG_ID)) {
-          return { output: FORK_EXPERIMENTAL_UNAVAILABLE, isError: true };
+          return { output: textOutput(FORK_EXPERIMENTAL_UNAVAILABLE), isError: true };
         }
         const forkError = forkIncompatibility(args, this.profile.data());
         if (forkError !== undefined) {
-          return { output: forkError, isError: true };
+          return { output: textOutput(forkError), isError: true };
         }
       }
 
       const allowBackground = this.canRunInBackground();
       if (runInBackground && !allowBackground) {
-        return { output: BACKGROUND_AGENT_UNAVAILABLE, isError: true };
+        return { output: textOutput(BACKGROUND_AGENT_UNAVAILABLE), isError: true };
       }
       const timeoutMs = resolveSubagentTimeoutMs(this.config);
 
@@ -484,10 +485,11 @@ export class SubagentTool implements ISubagentTool {
         });
         const message = error instanceof Error ? error.message : String(error);
         return {
-          output:
+          output: textOutput(
             isError2(error) && error.code === ErrorCodes.TASK_LIMIT_EXCEEDED
               ? 'Too many background tasks are already running.'
               : message,
+          ),
           isError: true,
         };
       }
@@ -511,19 +513,19 @@ export class SubagentTool implements ISubagentTool {
 
       if (runInBackground) {
         return {
-          output: formatBackgroundAgentResult(taskId, handle, args.description, allowBackground, false),
+          output: textOutput(formatBackgroundAgentResult(taskId, handle, args.description, allowBackground, false)),
         };
       }
 
       const release = await this.tasks.waitForForegroundRelease(taskId);
       if (release === 'detached') {
         return {
-          output: formatBackgroundAgentResult(taskId, handle, args.description, allowBackground, true),
+          output: textOutput(formatBackgroundAgentResult(taskId, handle, args.description, allowBackground, true)),
         };
       }
       return await this.formatForegroundResult(taskId, handle, timeoutMs);
     } catch (error) {
-      return { output: `subagent error: ${launchErrorMessage(error, signal)}`, isError: true };
+      return { output: textOutput(`subagent error: ${launchErrorMessage(error, signal)}`), isError: true };
     }
   }
 
@@ -536,7 +538,7 @@ export class SubagentTool implements ISubagentTool {
     const stopCode = info?.kind === 'agent' ? info.stopCode : undefined;
     if (info?.status === 'completed') {
       return {
-        output: formatForegroundAgentSuccess(handle, await this.tasks.readOutput(taskId), stopCode),
+        output: textOutput(formatForegroundAgentSuccess(handle, await this.tasks.readOutput(taskId), stopCode)),
       };
     }
     const timedOut = info?.status === 'timed_out';
@@ -544,7 +546,7 @@ export class SubagentTool implements ISubagentTool {
       ? `Agent timed out after ${formatSubagentTimeoutDescription(timeoutMs)}.`
       : formatSubagentStoppedMessage(info?.stopReason);
     return {
-      output: formatForegroundAgentFailure(handle, message, failureStopReason(info, stopCode)),
+      output: textOutput(formatForegroundAgentFailure(handle, message, failureStopReason(info, stopCode))),
       isError: true,
     };
   }

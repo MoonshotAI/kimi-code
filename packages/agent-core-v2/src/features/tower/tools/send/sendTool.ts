@@ -3,7 +3,7 @@ import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionEventBus } from '#/app/event/eventBus';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import type { ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ToolExecution } from '#/tool/toolContract';
 
 import { BROADCAST_NAME, TOWER_NAME } from '#/features/tower/protocol/index';
 import { TowerInboxSent } from '#/features/tower/towerOps';
@@ -62,7 +62,7 @@ export class TowerSendTool implements ITowerSendTool {
           const note = undelivered
             ? `\nnote: ${to} has no running task in this session — the message sits in its inbox until you deliver it with Agent(resume="${entry.agentId}", run_in_background=true, prompt="...")`
             : '';
-          return { output: `message sent to ${args.to}\nfile: ${rel}${note}` };
+          return { output: textOutput(`message sent to ${args.to}\nfile: ${rel}${note}`) };
         }),
     };
   }

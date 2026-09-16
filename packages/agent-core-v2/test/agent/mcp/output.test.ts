@@ -14,7 +14,7 @@ import { StdioMcpClient } from '#/mcpCore/client-stdio';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
 import type { MCPClient, MCPContentBlock, MCPToolResult } from '#/mcpCore/types';
-import type { ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ToolExecution } from '#/tool/toolContract';
 import { sniffImageDimensions } from '#/agent/media/file-type';
 
 function modelText(result: Awaited<ReturnType<typeof mcpResultToExecutableOutput>>): string {
@@ -25,10 +25,8 @@ function isPromiseLike(value: ToolExecution | Promise<ToolExecution>): value is 
   return typeof (value as Promise<ToolExecution>).then === 'function';
 }
 
-function parseResultExtras(output: string | ContentPart[]): Record<string, unknown> {
-  const text = typeof output === 'string'
-    ? output
-    : output.map((part) => part.type === 'text' ? part.text : '').join('\n');
+function parseResultExtras(output: readonly ContentPart[]): Record<string, unknown> {
+  const text = output.map((part) => part.type === 'text' ? part.text : '').join('\n');
   const json = /<mcp-result-extras>\n([\s\S]*?)\n<\/mcp-result-extras>/.exec(text)?.[1];
   if (json === undefined) throw new Error('Expected model-visible MCP result extras');
   return JSON.parse(json) as Record<string, unknown>;
@@ -306,12 +304,12 @@ describe('mcpResultToExecutableOutput', () => {
     return { content, isError };
   }
 
-  test('collapses a single text part into a plain string', async () => {
+  test('keeps a single text part as a text part', async () => {
     const out = await mcpResultToExecutableOutput(
       result([{ type: 'text', text: 'hello' }]),
       'mcp__s__t',
     );
-    expect(out).toEqual({ output: 'hello' });
+    expect(out).toEqual({ output: textOutput('hello') });
   });
 
   test('delivers an inline image the bound provider accepts instead of a notice', async () => {
@@ -332,7 +330,7 @@ describe('mcpResultToExecutableOutput', () => {
       result([{ type: 'text', text: 'oops' }], true),
       'mcp__s__t',
     );
-    expect(out).toEqual({ output: 'oops', isError: true });
+    expect(out).toEqual({ output: textOutput('oops'), isError: true });
   });
 
   test('omits structuredContent when a text block already carries its serialization', async () => {
@@ -362,7 +360,7 @@ describe('mcpResultToExecutableOutput', () => {
       },
       'mcp__s__t',
     );
-    expect(out.output).toBe('{\n  "total": 1,\n  "rows": [ { "id": 1 } ]\n}');
+    expect(out.output).toEqual(textOutput('{\n  "total": 1,\n  "rows": [ { "id": 1 } ]\n}'));
   });
 
   test('preserves both values when parsing the text would round a number', async () => {
@@ -516,8 +514,8 @@ describe('mcpResultToExecutableOutput', () => {
       'mcp__s__shot',
     );
     const parts = out.output as ContentPart[];
-    expect(parts[0]).toEqual({ type: 'text', text: '<mcp_tool_result name="mcp__s__shot">' });
-    expect(parts).toContainEqual({ type: 'text', text: '</mcp_tool_result>' });
+    expect(parts[0]).toEqual({ type: 'text', text: '<mcp_tool_result name="mcp__s__shot">', contentType: 'text/xml' });
+    expect(parts).toContainEqual({ type: 'text', text: '</mcp_tool_result>', contentType: 'text/xml' });
     expect(parts.some((part) => part.type === 'image_url')).toBe(true);
     expect(parseResultExtras(out.output)['structuredContent']).toEqual({ foo: 1 });
   });
@@ -574,7 +572,7 @@ describe('mcpResultToExecutableOutput', () => {
       },
       'mcp__s__t',
     );
-    expect(out).toEqual({ output: 'ok' });
+    expect(out).toEqual({ output: textOutput('ok') });
   });
 
   test('returns an empty output array when the content array is empty', async () => {
@@ -606,9 +604,9 @@ describe('mcpResultToExecutableOutput', () => {
     );
     expect(out.isError).toBeUndefined();
     expect(out.output).toEqual([
-      { type: 'text', text: '<mcp_tool_result name="mcp__github__create_pr">' },
+      { type: 'text', text: '<mcp_tool_result name="mcp__github__create_pr">', contentType: 'text/xml' },
       { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAA' } },
-      { type: 'text', text: '</mcp_tool_result>' },
+      { type: 'text', text: '</mcp_tool_result>', contentType: 'text/xml' },
     ]);
   });
 
@@ -635,8 +633,8 @@ describe('mcpResultToExecutableOutput', () => {
       'mcp__s__t',
     );
     const parts = out.output as ContentPart[];
-    expect(parts[0]).toEqual({ type: 'text', text: '<mcp_tool_result name="mcp__s__t">' });
-    expect(parts.at(-1)).toEqual({ type: 'text', text: '</mcp_tool_result>' });
+    expect(parts[0]).toEqual({ type: 'text', text: '<mcp_tool_result name="mcp__s__t">', contentType: 'text/xml' });
+    expect(parts.at(-1)).toEqual({ type: 'text', text: '</mcp_tool_result>', contentType: 'text/xml' });
   });
 
   test('passes oversized text through untouched for the truncation pipeline to shape', async () => {
@@ -644,7 +642,7 @@ describe('mcpResultToExecutableOutput', () => {
       result([{ type: 'text', text: 'x'.repeat(100_001) }]),
       'mcp__s__t',
     );
-    expect(out.output).toBe('x'.repeat(100_001));
+    expect(out.output).toEqual(textOutput('x'.repeat(100_001)));
     expect(out.truncated).toBeUndefined();
     expect(out.spill).toBeUndefined();
   });
@@ -683,11 +681,11 @@ describe('mcpResultToExecutableOutput', () => {
     );
     const parts = out.output as ContentPart[];
     expect(parts).toHaveLength(4);
-    expect(parts[0]).toEqual({ type: 'text', text: '<mcp_tool_result name="mcp__s__big">' });
+    expect(parts[0]).toEqual({ type: 'text', text: '<mcp_tool_result name="mcp__s__big">', contentType: 'text/xml' });
     expect(parts[1]?.type).toBe('text');
     expect((parts[1] as { text: string }).text).toContain('image_url dropped');
     expect((parts[1] as { text: string }).text).toContain('10 MB per-part limit');
-    expect(parts[2]).toEqual({ type: 'text', text: '</mcp_tool_result>' });
+    expect(parts[2]).toEqual({ type: 'text', text: '</mcp_tool_result>', contentType: 'text/xml' });
     const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
     expect(joined).not.toContain('Output truncated');
     expect(out.truncated).toBe(true);
@@ -918,7 +916,7 @@ describe('createMcpTool', () => {
       signal: new AbortController().signal,
     });
 
-    expect(result).toEqual({ output: 'ok' });
+    expect(result).toEqual({ output: textOutput('ok') });
     expect(result.truncated).toBeUndefined();
   });
 
@@ -1001,10 +999,8 @@ describe('mcpResultToExecutableOutput over a real stdio server', () => {
     }
   }
 
-  function joinedText(output: string | ContentPart[]): string {
-    return typeof output === 'string'
-      ? output
-      : output.map((p) => (p.type === 'text' ? p.text : '')).join('');
+  function joinedText(output: readonly ContentPart[]): string {
+    return output.map((p) => (p.type === 'text' ? p.text : '')).join('');
   }
 
   test('dual-emitting servers reach the model once, through content', async () => {

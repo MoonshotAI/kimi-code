@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { SkillActivationOrigin } from '#/agent/contextMemory/types';
 import { renderModelToolSkillPrompt } from '#/features/skill/prompt';
 import { IAgentSkillService } from '#/features/skill/skillService';
-import type { ExecutableToolResult, ToolDeliveryMessage, ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ExecutableToolResult, type ToolDeliveryMessage, type ToolExecution } from '#/tool/toolContract';
 import { isInlineSkillType } from '#/features/skill/catalog/types';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -126,11 +126,11 @@ export async function executeModelSkill(
   };
   skillService.recordModelToolActivation(origin);
   return {
-    output: `Skill "${skill.name}" loaded inline. Follow its instructions.`,
+    output: textOutput(`Skill "${skill.name}" loaded inline. Follow its instructions.`),
     delivery: { kind: 'steer', message },
   };
 }
 
 function errorResult(message: string): ExecutableToolResult {
-  return { isError: true, output: message };
+  return { isError: true, output: textOutput(message) };
 }

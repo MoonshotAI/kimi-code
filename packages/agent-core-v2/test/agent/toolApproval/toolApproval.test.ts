@@ -36,6 +36,7 @@ import { interactions } from '#/human/interaction/facade';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
+import { textOutput } from '#/tool/toolContract';
 
 import { stubPermissionModeService } from '../permissionMode/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
@@ -73,7 +74,7 @@ function makeContext(
       description: options.description ?? `Approve ${toolName}`,
       display: options.display,
       approvalRule: options.approvalRule ?? toolName,
-      execute: () => Promise.resolve({ output: '' }),
+      execute: () => Promise.resolve({ output: [] }),
     },
   };
 }
@@ -219,7 +220,7 @@ describe('AgentToolApprovalService', () => {
           makeContext('Bash'),
           'p',
         ),
-      ).resolves.toEqual({ veto: { output: 'nope', isError: true } });
+      ).resolves.toEqual({ veto: { output: textOutput('nope'), isError: true } });
     });
 
     it('uses a default reason when a deny has no message', async () => {
@@ -227,7 +228,7 @@ describe('AgentToolApprovalService', () => {
       await expect(
         svc.resolvePermissionResolution({ kind: 'deny' }, makeContext('Bash'), 'p'),
       ).resolves.toEqual({
-        veto: { output: 'Tool "Bash" was denied by permission policy.', isError: true },
+        veto: { output: textOutput('Tool "Bash" was denied by permission policy.'), isError: true },
       });
     });
 
@@ -241,7 +242,7 @@ describe('AgentToolApprovalService', () => {
           'p',
         ),
       ).resolves.toEqual({
-        veto: { output: `nope ${RETRY_GUIDANCE}`, isError: true },
+        veto: { output: textOutput(`nope ${RETRY_GUIDANCE}`), isError: true },
       });
     });
 
@@ -251,13 +252,13 @@ describe('AgentToolApprovalService', () => {
         svc.resolvePermissionResolution(
           {
             kind: 'result',
-            result: { output: 'Plan review handled.' },
+            result: { output: textOutput('Plan review handled.') },
           },
           makeContext('ExitPlanMode'),
           'p',
         ),
       ).resolves.toEqual({
-        veto: { output: 'Plan review handled.' },
+        veto: { output: textOutput('Plan review handled.') },
       });
     });
   });
@@ -415,7 +416,7 @@ describe('AgentToolApprovalService', () => {
         svc.requestToolApproval(makeContext('Bash'), ask(), 'fallback-ask'),
       ).resolves.toEqual({
         veto: {
-          output: 'Tool "Bash" was not run because the user rejected the approval request.',
+          output: textOutput('Tool "Bash" was not run because the user rejected the approval request.'),
           isError: true,
         },
       });
@@ -430,9 +431,10 @@ describe('AgentToolApprovalService', () => {
         svc.requestToolApproval(makeContext('Bash'), ask(), 'fallback-ask'),
       ).resolves.toEqual({
         veto: {
-          output:
+          output: textOutput(
             'Tool "Bash" was not run because the user rejected the approval request.' +
             ` Reason: too broad ${RETRY_GUIDANCE}`,
+          ),
           isError: true,
         },
       });
@@ -446,7 +448,7 @@ describe('AgentToolApprovalService', () => {
         svc.requestToolApproval(makeContext('Bash'), ask(), 'fallback-ask'),
       ).resolves.toMatchObject({
         veto: {
-          output: expect.stringContaining('approval request was cancelled'),
+          output: [expect.objectContaining({ type: 'text', text: expect.stringContaining('approval request was cancelled') })],
           isError: true,
         },
       });
@@ -490,13 +492,13 @@ describe('AgentToolApprovalService', () => {
             ask({
               resolveApproval: () => ({
                 kind: 'result',
-                result: { output: 'Plan review handled.' },
+                result: { output: textOutput('Plan review handled.') },
               }),
             }),
             'exit-plan-mode-review-ask',
           ),
         ).resolves.toEqual({
-          veto: { output: 'Plan review handled.' },
+          veto: { output: textOutput('Plan review handled.') },
         });
 
         expect(records).toContainEqual({
@@ -561,7 +563,7 @@ describe('AgentToolApprovalService', () => {
       controller.abort(new Error('approval transport closed'));
 
       await expect(promise).resolves.toEqual({
-        veto: { output: 'review unavailable', isError: true },
+        veto: { output: textOutput('review unavailable'), isError: true },
       });
     });
 

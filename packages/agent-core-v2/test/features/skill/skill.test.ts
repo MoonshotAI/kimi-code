@@ -13,6 +13,11 @@ import {
 } from '#/features/skill/tools/skill';
 import { SkillTool } from '#/features/skill/tools/skillTool';
 import { executeTool } from '../../tools/fixtures/execute-tool';
+import { textOutput, type ExecutableToolResult } from '#/tool/toolContract';
+
+function outputText(output: ExecutableToolResult['output']): string {
+  return output.map((part) => (part.type === 'text' ? part.text : '')).join('');
+}
 import { stubSkill } from './catalog/stubs';
 import {
   createTestAgent,
@@ -161,7 +166,7 @@ describe('SkillTool', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      output: 'Skill "missing" not found in the current skill listing.',
+      output: textOutput('Skill "missing" not found in the current skill listing.'),
     });
   });
 
@@ -175,7 +180,7 @@ describe('SkillTool', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      output: 'Skill "private" can only be triggered by the user (model invocation is disabled).',
+      output: textOutput('Skill "private" can only be triggered by the user (model invocation is disabled).'),
     });
   });
 
@@ -189,7 +194,7 @@ describe('SkillTool', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      output: 'Skill "flow-only" is not an inline skill and cannot be invoked by the model in v1.',
+      output: textOutput('Skill "flow-only" is not an inline skill and cannot be invoked by the model in v1.'),
     });
   });
 
@@ -200,9 +205,9 @@ describe('SkillTool', () => {
     );
 
     expect(result).toMatchObject({
-      output: 'Skill "commit" loaded inline. Follow its instructions.',
+      output: textOutput('Skill "commit" loaded inline. Follow its instructions.'),
     });
-    expect(result.output).not.toContain('# Commit');
+    expect(outputText(result.output)).not.toContain('# Commit');
     expect(ctx.context.get()).toHaveLength(0);
     expect(result.delivery?.kind).toBe('steer');
     expect(result.delivery?.message.origin).toMatchObject({

@@ -4,7 +4,7 @@ import { TowerProtocolError } from '#/features/tower/protocol/index';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import type { ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ToolExecution } from '#/tool/toolContract';
 
 import { newTowerStore, runTowerTool, TOWER_MAIN_AGENT_ONLY } from '../support';
 import DESCRIPTION from './teardown.md?raw';
@@ -30,7 +30,7 @@ export class TowerTeardownTool implements ITowerTeardownTool {
     if (this.scopeContext.agentId !== MAIN_AGENT_ID) {
       return {
         isError: true,
-        output: TOWER_MAIN_AGENT_ONLY,
+        output: textOutput(TOWER_MAIN_AGENT_ONLY),
       };
     }
     return {
@@ -54,12 +54,14 @@ export class TowerTeardownTool implements ITowerTeardownTool {
           }
           const report = await store.teardown({ force: args.force });
           return {
-            output: [
-              'tower teardown:',
-              ...report.map((line) => `- ${line}`),
-              '',
-              'Tower mode stays active — the next objective starts with TowerInit, and the human can turn the mode off with /tower off. .tower/comms/ (state, inbox, findings, reviews, activity log) is kept as the audit trail — remove it by hand only if you are sure.',
-            ].join('\n'),
+            output: textOutput(
+              [
+                'tower teardown:',
+                ...report.map((line) => `- ${line}`),
+                '',
+                'Tower mode stays active — the next objective starts with TowerInit, and the human can turn the mode off with /tower off. .tower/comms/ (state, inbox, findings, reviews, activity log) is kept as the audit trail — remove it by hand only if you are sure.',
+              ].join('\n'),
+            ),
           };
         }),
     };

@@ -1,7 +1,7 @@
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { GOAL_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '#/agent/tools/mainAgentOnly';
-import { type ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ToolExecution } from '#/tool/toolContract';
 
 import { IAgentGoalService } from '#/features/goal/goalService';
 import { goalResultForModel } from '#/features/goal/tools/serialize';
@@ -28,7 +28,7 @@ export class GetGoalTool implements IGetGoalTool {
       approvalRule: this.name,
       execute: async () => {
         const result = this.goal.getGoal();
-        return { output: JSON.stringify(goalResultForModel(result), null, 2) };
+        return { output: textOutput(JSON.stringify(goalResultForModel(result), null, 2)) };
       },
     };
   }

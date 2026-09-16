@@ -1,4 +1,4 @@
-import type { ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 
 import {
@@ -44,7 +44,7 @@ export class TodoListTool implements ITodoListTool {
       approvalRule: this.name,
       execute: async () => {
         if (args.todos === undefined) {
-          return { isError: false, output: renderTodoList(this.todo.get()) };
+          return { isError: false, output: textOutput(renderTodoList(this.todo.get())) };
         }
 
         const next: readonly TodoItem[] = args.todos.map((todo) => ({
@@ -57,7 +57,7 @@ export class TodoListTool implements ITodoListTool {
           stored.length === 0
             ? 'Todo list cleared.'
             : `Todo list updated.\n${renderTodoList(stored)}\n\n${TODO_LIST_WRITE_REMINDER.trim()}`;
-        return { isError: false, output };
+        return { isError: false, output: textOutput(output) };
       },
     };
   }

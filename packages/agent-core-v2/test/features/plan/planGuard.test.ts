@@ -26,7 +26,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ToolCall } from '#human/llm/message';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ToolAccesses } from '#/tool/toolContract';
+import { ToolAccesses, textOutput, type ExecutableToolResult } from '#/tool/toolContract';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
@@ -81,7 +81,7 @@ function hookContext(
       accesses: input.accesses,
       display: input.display,
       approvalRule: toolName,
-      execute: async () => ({ output: '' }),
+      execute: async () => ({ output: [] }),
     },
   };
 }
@@ -257,8 +257,8 @@ describe('AgentPlanService plan-guard listener', () => {
         );
 
         expect(decision?.veto?.isError).toBe(true);
-        expect(decision?.veto?.output).toContain('current plan file');
-        expect(decision?.veto?.output).toContain('ExitPlanMode');
+        expect(outputText(decision?.veto?.output)).toContain('current plan file');
+        expect(outputText(decision?.veto?.output)).toContain('ExitPlanMode');
         expect(formatDenyMessage).toHaveBeenCalledWith(
           expect.stringContaining(PLAN_PATH),
         );
@@ -291,7 +291,7 @@ describe('AgentPlanService plan-guard listener', () => {
       );
 
       expect(decision?.veto?.isError).toBe(true);
-      expect(decision?.veto?.output).toContain('current plan file');
+      expect(outputText(decision?.veto?.output)).toContain('current plan file');
       expect(permissionRan).toBe(false);
     });
 
@@ -300,8 +300,8 @@ describe('AgentPlanService plan-guard listener', () => {
       const decision = await run(hookContext('TaskStop', { args: { task_id: 'bash-abc12345' } }));
 
       expect(decision?.veto?.isError).toBe(true);
-      expect(decision?.veto?.output).toContain('TaskStop');
-      expect(decision?.veto?.output).toContain('ExitPlanMode');
+      expect(outputText(decision?.veto?.output)).toContain('TaskStop');
+      expect(outputText(decision?.veto?.output)).toContain('ExitPlanMode');
       expect(permissionRan).toBe(false);
     });
 
@@ -312,8 +312,8 @@ describe('AgentPlanService plan-guard listener', () => {
         const decision = await run(hookContext(toolName, { args: {} }));
 
         expect(decision?.veto?.isError).toBe(true);
-        expect(decision?.veto?.output).toContain(toolName);
-        expect(decision?.veto?.output).toContain('plan mode');
+        expect(outputText(decision?.veto?.output)).toContain(toolName);
+        expect(outputText(decision?.veto?.output)).toContain('plan mode');
         expect(permissionRan).toBe(false);
       },
     );
@@ -369,13 +369,13 @@ describe('AgentPlanService plan-guard listener', () => {
       );
 
       expect(decision?.veto?.isError).toBe(false);
-      expect(decision?.veto?.output).toContain(
+      expect(outputText(decision?.veto?.output)).toContain(
         'Selected approach: Approach B',
       );
-      expect(decision?.veto?.output).toContain(
+      expect(outputText(decision?.veto?.output)).toContain(
         'Execute ONLY the selected approach',
       );
-      expect(decision?.veto?.output).toContain('## Approved Plan:\n# Plan');
+      expect(outputText(decision?.veto?.output)).toContain('## Approved Plan:\n# Plan');
       expect(records).toContainEqual({
         event: 'plan_submitted',
         properties: { has_options: true, mode: 'plan' },
@@ -393,10 +393,10 @@ describe('AgentPlanService plan-guard listener', () => {
         hookContext('ExitPlanMode', { display: planReviewDisplay() }),
       );
 
-      expect(decision?.veto?.output).toContain(
+      expect(outputText(decision?.veto?.output)).toContain(
         `Plan saved to: ${PLAN_PATH}`,
       );
-      expect(decision?.veto?.output).not.toContain('Selected approach:');
+      expect(outputText(decision?.veto?.output)).not.toContain('Selected approach:');
       expect(records).toContainEqual({
         event: 'plan_resolved',
         properties: { outcome: 'approved', mode: 'agent' },
@@ -412,8 +412,8 @@ describe('AgentPlanService plan-guard listener', () => {
         }),
       );
 
-      expect(decision?.veto?.output).toContain('## Approved Plan:\n# Draft Plan');
-      expect(decision?.veto?.output).not.toContain('Plan saved to:');
+      expect(outputText(decision?.veto?.output)).toContain('## Approved Plan:\n# Draft Plan');
+      expect(outputText(decision?.veto?.output)).not.toContain('Plan saved to:');
     });
 
     it('exits plan mode with a stopping error result when the user chooses Reject and Exit', async () => {
@@ -426,7 +426,7 @@ describe('AgentPlanService plan-guard listener', () => {
       expect(decision?.veto).toMatchObject({
         isError: true,
         stopTurn: true,
-        output: 'Plan rejected by user. Plan mode deactivated.',
+        output: textOutput('Plan rejected by user. Plan mode deactivated.'),
       });
       expect(records).toContainEqual({
         event: 'plan_resolved',
@@ -447,7 +447,7 @@ describe('AgentPlanService plan-guard listener', () => {
       );
 
       expect(decision?.veto?.isError).toBe(false);
-      expect(decision?.veto?.output).toContain('Add verification.');
+      expect(outputText(decision?.veto?.output)).toContain('Add verification.');
       expect(records).toContainEqual({
         event: 'plan_resolved',
         properties: { outcome: 'revise', has_feedback: true, mode: 'plan' },
@@ -465,7 +465,7 @@ describe('AgentPlanService plan-guard listener', () => {
       expect(decision?.veto).toMatchObject({
         isError: true,
         stopTurn: true,
-        output: 'Plan rejected by user. Plan mode remains active.',
+        output: textOutput('Plan rejected by user. Plan mode remains active.'),
       });
       expect(records).toContainEqual({
         event: 'plan_resolved',
@@ -483,7 +483,7 @@ describe('AgentPlanService plan-guard listener', () => {
 
       expect(decision?.veto).toMatchObject({
         isError: false,
-        output: 'Plan approval dismissed. Plan mode remains active.',
+        output: textOutput('Plan approval dismissed. Plan mode remains active.'),
       });
       expect(records).toContainEqual({
         event: 'plan_resolved',
@@ -550,3 +550,7 @@ describe('AgentPlanService plan-guard listener', () => {
     });
   });
 });
+
+function outputText(output: ExecutableToolResult['output'] | undefined): string {
+  return output?.map((part) => (part.type === 'text' ? part.text : '')).join('') ?? '';
+}

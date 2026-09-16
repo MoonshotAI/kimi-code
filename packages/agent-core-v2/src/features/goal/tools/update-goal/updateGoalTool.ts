@@ -1,7 +1,7 @@
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { GOAL_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '#/agent/tools/mainAgentOnly';
-import { type ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ToolExecution } from '#/tool/toolContract';
 
 import { IAgentGoalService } from '#/features/goal/goalService';
 import {
@@ -33,7 +33,7 @@ export class UpdateGoalTool implements IUpdateGoalTool {
     if (!isUpdateGoalStatus(args.status)) {
       return {
         isError: true,
-        output: 'Invalid goal status. Use `active`, `complete`, or `blocked`.',
+        output: textOutput('Invalid goal status. Use `active`, `complete`, or `blocked`.'),
       };
     }
 
@@ -48,35 +48,35 @@ export class UpdateGoalTool implements IUpdateGoalTool {
       execute: async ({ turnId }) => {
         const goalAtExecution = this.goal.getGoal().goal;
         if (goalAtExecution === null || (currentGoal === null && status === 'active')) {
-          return { output: missingGoalOutput(status) };
+          return { output: textOutput(missingGoalOutput(status)) };
         }
         if (
           goalAtExecution.goalId !== currentGoal?.goalId &&
           !this.goal.isGoalToolTarget(turnId, goalAtExecution.goalId)
         ) {
-          return { output: changedGoalOutput(status) };
+          return { output: textOutput(changedGoalOutput(status)) };
         }
         if (status === 'active') {
           await this.goal.resumeGoal({}, 'model');
-          return { output: 'Goal resumed.' };
+          return { output: textOutput('Goal resumed.') };
         }
         if (status === 'complete') {
           const completed = await this.goal.markComplete({}, 'model');
           if (completed === null) {
-            return { output: 'Goal not completed: no active goal.' };
+            return { output: textOutput('Goal not completed: no active goal.') };
           }
-          return { output: buildGoalCompletionSummaryPrompt(completed), stopTurn: true };
+          return { output: textOutput(buildGoalCompletionSummaryPrompt(completed)), stopTurn: true };
         }
         if (status === 'blocked') {
           const blocked = await this.goal.markBlocked({}, 'model');
           if (blocked === null) {
-            return { output: 'Goal not blocked: no active goal.' };
+            return { output: textOutput('Goal not blocked: no active goal.') };
           }
-          return { output: buildGoalBlockedReasonPrompt(blocked), stopTurn: true };
+          return { output: textOutput(buildGoalBlockedReasonPrompt(blocked)), stopTurn: true };
         }
         return {
           isError: true,
-          output: 'Invalid goal status. Use `active`, `complete`, or `blocked`.',
+          output: textOutput('Invalid goal status. Use `active`, `complete`, or `blocked`.'),
         };
       },
     };

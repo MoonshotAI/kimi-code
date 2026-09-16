@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
 import { createServices } from '#/_base/di/test';
+import { textOutput } from '#/tool/toolContract';
 import type {
   ExecutableTool,
   ExecutableToolContext,
@@ -290,7 +291,7 @@ async function executeTool<Input>(
         : `Tool "${tool.name}" failed to resolve execution: ${
             error instanceof Error ? error.message : String(error)
           }`;
-    return { isError: true, output };
+    return { isError: true, output: textOutput(output) };
   }
   if (execution.isError === true) return execution;
   return execution.execute(executionContext);
@@ -303,11 +304,7 @@ function isPromiseLike(
 }
 
 function toolContentString(result: ExecutableToolResult): string {
-  const c = result.output;
-  if (typeof c !== 'string') {
-    throw new TypeError(`expected string content, got ${typeof c}`);
-  }
-  return c;
+  return result.output.map((part) => (part.type === 'text' ? part.text : '')).join('');
 }
 
 afterEach(() => {
@@ -477,7 +474,7 @@ describe('GrepTool', () => {
       'hit',
       '/workspace',
     );
-    expect(result.output).toBe('src/a.ts');
+    expect(toolContentString(result)).toBe('src/a.ts');
   });
 
   it('can search an additional directory when path is explicit', async () => {
@@ -495,7 +492,7 @@ describe('GrepTool', () => {
       'hit',
       '/extra',
     );
-    expect(result.output).toBe('/extra/pkg/b.ts');
+    expect(toolContentString(result)).toBe('/extra/pkg/b.ts');
   });
 
   it('keeps non-workspace grep result paths absolute in content and count modes', async () => {
@@ -524,7 +521,7 @@ describe('GrepTool', () => {
 
     const result = await executeTool(tool, context({ pattern: 'missing' }));
 
-    expect(result.output).toBe('No non-sensitive matches found');
+    expect(toolContentString(result)).toBe('No non-sensitive matches found');
   });
 
   it('sorts files_with_matches by mtime before pagination after sensitive filtering', async () => {
@@ -640,7 +637,7 @@ describe('GrepTool', () => {
       context({ pattern: 'hit', head_limit: 0 }, abortController.signal),
     );
 
-    expect(result).toMatchObject({ isError: true, output: 'Grep aborted' });
+    expect(result).toMatchObject({ isError: true, output: textOutput('Grep aborted') });
     expect(stat.mock.calls.length).toBeLessThan(filePaths.length);
   });
 
@@ -811,7 +808,7 @@ describe('GrepTool', () => {
     const result = await executeTool(tool, context({ pattern: 'hit', path: '../outside' }));
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('absolute path');
+    expect(toolContentString(result)).toContain('absolute path');
     expect(exec).not.toHaveBeenCalled();
   });
 
@@ -878,9 +875,9 @@ describe('GrepTool', () => {
       'hit',
       '/workspace',
     );
-    expect(result.output).toContain('src/main.ts:10:hit');
-    expect(result.output).not.toContain('SECRET=hit');
-    expect(result.output).toContain('Filtered 1 sensitive file(s): .env');
+    expect(toolContentString(result)).toContain('src/main.ts:10:hit');
+    expect(toolContentString(result)).not.toContain('SECRET=hit');
+    expect(toolContentString(result)).toContain('Filtered 1 sensitive file(s): .env');
   });
 
   it('uses null-delimited content paths for sensitive filtering', async () => {
@@ -997,7 +994,7 @@ describe('GrepTool', () => {
       'workspace',
       '/workspace',
     );
-    expect(result.output).toBe('/workspace/not-a-path');
+    expect(toolContentString(result)).toBe('/workspace/not-a-path');
   });
 
   it('uses the backend path class when filtering sensitive grep results', async () => {
@@ -1014,9 +1011,9 @@ describe('GrepTool', () => {
 
     const result = await executeTool(tool, context({ pattern: 'hit', output_mode: 'content' }));
 
-    expect(result.output).toContain('src/main.ts:10:hit');
-    expect(result.output).not.toContain('SECRET=hit');
-    expect(result.output).toContain('Filtered 1 sensitive file(s): .env');
+    expect(toolContentString(result)).toContain('src/main.ts:10:hit');
+    expect(toolContentString(result)).not.toContain('SECRET=hit');
+    expect(toolContentString(result)).toContain('Filtered 1 sensitive file(s): .env');
   });
 
   it('uses the backend path class for Windows content output without line numbers', async () => {
@@ -1214,10 +1211,10 @@ describe('GrepTool', () => {
       context({ pattern: 'hit', output_mode: 'content', offset: 1, head_limit: 2 }),
     );
 
-    expect(result.output).toContain('b.ts:2:hit');
-    expect(result.output).toContain('c.ts:3:hit');
-    expect(result.output).not.toContain('a.ts:1:hit');
-    expect(result.output).toContain('Use offset=3 to see more');
+    expect(toolContentString(result)).toContain('b.ts:2:hit');
+    expect(toolContentString(result)).toContain('c.ts:3:hit');
+    expect(toolContentString(result)).not.toContain('a.ts:1:hit');
+    expect(toolContentString(result)).toContain('Use offset=3 to see more');
   });
 
   it('limits grep output to 250 lines by default', async () => {
@@ -1282,7 +1279,7 @@ describe('GrepTool', () => {
 
     expect(result).toEqual({
       isError: true,
-      output: 'Grep timed out after 20s. Try a more specific path or pattern.',
+      output: textOutput('Grep timed out after 20s. Try a more specific path or pattern.'),
     });
     expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
   });
@@ -1558,8 +1555,8 @@ describe('GrepTool', () => {
     const result = await executeTool(tool, context({ pattern: '[' }));
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('Failed to grep: error: unclosed character class');
-    expect(result.output).toContain('ripgrep stderr:');
+    expect(toolContentString(result)).toContain('Failed to grep: error: unclosed character class');
+    expect(toolContentString(result)).toContain('ripgrep stderr:');
     expect(exec).toHaveBeenCalledTimes(1);
   });
 
@@ -1569,7 +1566,7 @@ describe('GrepTool', () => {
 
     const result = await executeTool(tool, context({ pattern: 'hit' }));
 
-    expect(result).toEqual({ isError: true, output: 'Failed to grep: ripgrep exited with code 2' });
+    expect(result).toEqual({ isError: true, output: textOutput('Failed to grep: ripgrep exited with code 2') });
   });
 
   it('marks ripgrep stderr as truncated when error output exceeds the cap', async () => {
@@ -1581,8 +1578,8 @@ describe('GrepTool', () => {
     const result = await executeTool(tool, context({ pattern: 'hit' }));
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('Failed to grep: error: very large failure');
-    expect(result.output).toContain('[stderr truncated at 10485760 bytes]');
+    expect(toolContentString(result)).toContain('Failed to grep: error: very large failure');
+    expect(toolContentString(result)).toContain('[stderr truncated at 10485760 bytes]');
   });
 
   it('returns a locator error when ripgrep cannot be resolved', async () => {
@@ -1592,7 +1589,7 @@ describe('GrepTool', () => {
 
     const result = await executeTool(tool, context({ pattern: 'hit' }));
 
-    expect(result).toEqual({ isError: true, output: 'rg unavailable: download failed' });
+    expect(result).toEqual({ isError: true, output: textOutput('rg unavailable: download failed') });
     expect(exec).not.toHaveBeenCalled();
   });
 
@@ -1625,7 +1622,7 @@ describe('GrepTool', () => {
 
     expect(result).toEqual({
       isError: true,
-      output: 'rg unavailable: spawn /mock/rg ENOENT',
+      output: textOutput('rg unavailable: spawn /mock/rg ENOENT'),
     });
   });
 
@@ -1635,7 +1632,7 @@ describe('GrepTool', () => {
 
     const result = await executeTool(tool, context({ pattern: 'hit' }));
 
-    expect(result).toEqual({ isError: true, output: 'permission denied' });
+    expect(result).toEqual({ isError: true, output: textOutput('permission denied') });
   });
 
   it('aborts while resolving the ripgrep path without spawning', async () => {
@@ -1669,7 +1666,7 @@ describe('GrepTool', () => {
       }),
     ]);
 
-    expect(result).toEqual({ isError: true, output: 'Grep aborted' });
+    expect(result).toEqual({ isError: true, output: textOutput('Grep aborted') });
     expect(exec).not.toHaveBeenCalled();
   });
 
@@ -1767,8 +1764,8 @@ describe('GrepTool', () => {
       context({ pattern: 'match', output_mode: 'content', head_limit: 0 }),
     );
 
-    expect(result.output).toContain('the result set is incomplete');
-    expect(result.output).toContain('Narrow the pattern, path, or glob filters');
+    expect(toolContentString(result)).toContain('the result set is incomplete');
+    expect(toolContentString(result)).toContain('Narrow the pattern, path, or glob filters');
   });
 
   it('matches a pattern spanning a newline when multiline is set', async () => {
@@ -1815,7 +1812,7 @@ describe('GrepTool', () => {
     );
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('Failed to grep');
+    expect(toolContentString(result)).toContain('Failed to grep');
   });
 
   it('returns content when searching a single file path', async () => {
@@ -2113,7 +2110,7 @@ describe('GrepTool', () => {
 
     const result = await executeTool(tool, context({ pattern: 'hit' }, controller.signal));
 
-    expect(result).toEqual({ isError: true, output: 'Grep aborted' });
+    expect(result).toEqual({ isError: true, output: textOutput('Grep aborted') });
     expect(exec).toHaveBeenCalledTimes(1);
     expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
   });
@@ -2126,7 +2123,7 @@ describe('GrepTool', () => {
 
     const result = await executeTool(tool, context({ pattern: 'hit' }, controller.signal));
 
-    expect(result).toEqual({ isError: true, output: 'Aborted before search started' });
+    expect(result).toEqual({ isError: true, output: textOutput('Aborted before search started') });
     expect(exec).not.toHaveBeenCalled();
   });
 });

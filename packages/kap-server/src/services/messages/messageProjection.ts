@@ -14,7 +14,7 @@ function toProtocolRole(role: ContextMessage['role']): MessageRole {
 function mapContentPart(part: ContextMessage['content'][number]): MessageContent {
   switch (part.type) {
     case 'text':
-      return { type: 'text', text: part.text };
+      return { type: 'text', text: part.text, contentType: part.contentType };
     case 'think': {
       const sig = part.encrypted;
       return sig !== undefined
@@ -108,7 +108,7 @@ export function projectPromptContentParts(content: readonly ContentPart[]): Mess
       });
       continue;
     }
-    if (part.type === 'text') parts.push({ type: 'text', text: part.text });
+    if (part.type === 'text') parts.push({ type: 'text', text: part.text, contentType: part.contentType });
     else if (part.type === 'image_url') {
       const match = /^data:([^;]+);base64,(.*)$/.exec(part.imageUrl.url);
       parts.push(match === null

@@ -1260,7 +1260,7 @@ describe('server-v2 /api/v1/sessions', () => {
     if (firstExecution.isError === true) throw new Error(JSON.stringify(firstExecution.output));
     const first = await firstExecution.execute({ turnId: 1, toolCallId: 'read-first', signal: new AbortController().signal });
     expect(first.isError).not.toBe(true);
-    let recovered = (first.output as string).replaceAll(/^\d+\t/gm, '');
+    let recovered = first.output.map((p) => (p.type === 'text' ? p.text : '')).join('').replaceAll(/^\d+\t/gm, '');
     const firstNext = /Next Read: (\{[^\n]*\})/.exec(first.note ?? '')?.[1];
     expect(firstNext).toBeDefined();
     args = ReadInputSchema.parse(JSON.parse(firstNext!));
@@ -1281,7 +1281,7 @@ describe('server-v2 /api/v1/sessions', () => {
       const read = await execution.execute({ turnId: 1, toolCallId: `read-${String(pages++)}`, signal: new AbortController().signal });
       expect(read.isError).not.toBe(true);
       if ((args.column_offset ?? 0) === 0) recovered += '\n';
-      recovered += (read.output as string).replaceAll(/^\d+\t/gm, '');
+      recovered += read.output.map((p) => (p.type === 'text' ? p.text : '')).join('').replaceAll(/^\d+\t/gm, '');
       const next = /Next Read: (\{[^\n]*\})/.exec(read.note ?? '')?.[1];
       args = next === undefined ? undefined : ReadInputSchema.parse(JSON.parse(next));
     }

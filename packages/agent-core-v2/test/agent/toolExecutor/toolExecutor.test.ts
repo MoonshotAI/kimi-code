@@ -14,6 +14,7 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, TestInstantiationService } from '#/_base/di/test';
 import {
   ToolAccesses,
+  textOutput,
   type ExecutableTool,
   type ExecutableToolContext,
   type ExecutableToolResult,
@@ -135,7 +136,7 @@ describe('AgentToolExecutorService', () => {
 
     expect(results).toEqual([
       expect.objectContaining({
-        output: 'hi',
+        output: textOutput('hi'),
         stopTurn: false,
       }),
     ]);
@@ -173,7 +174,7 @@ describe('AgentToolExecutorService', () => {
     expect(results).toEqual([
       expect.objectContaining({
         isError: true,
-        output: 'Tool "blocked" is disabled',
+        output: textOutput('Tool "blocked" is disabled'),
       }),
     ]);
     expect(tool.calls).toEqual([]);
@@ -231,23 +232,23 @@ describe('AgentToolExecutorService', () => {
   it('truncates final tool results before publishing protocol events', async () => {
     truncateForModel = async (input) => ({
       ...input.result,
-      output: 'truncated output',
+      output: textOutput('truncated output'),
       truncated: true,
     });
-    const tool = new TestTool('large', { result: { output: 'raw output' } });
+    const tool = new TestTool('large', { result: { output: textOutput('raw output') } });
     registry.register(tool);
 
     const results = await execute([toolCall('call_large', 'large', {})]);
 
     expect(results[0]).toMatchObject({
-      output: 'truncated output',
+      output: textOutput('truncated output'),
       truncated: true,
     });
     expect(protocolEvents).toContainEqual(
       expect.objectContaining({
         type: 'tool.result',
         toolCallId: 'call_large',
-        output: 'truncated output',
+        output: textOutput('truncated output'),
       }),
     );
   });
@@ -255,7 +256,7 @@ describe('AgentToolExecutorService', () => {
   it('preserves internal result notes without exposing them on protocol tool.result events', async () => {
     const tool = new TestTool('captioned', {
       result: {
-        output: 'image sent',
+        output: textOutput('image sent'),
         note: '<system>Image compressed.</system>',
       },
     });
@@ -264,7 +265,7 @@ describe('AgentToolExecutorService', () => {
     const results = await execute([toolCall('call_captioned', 'captioned', {})]);
 
     expect(results[0]).toMatchObject({
-      output: 'image sent',
+      output: textOutput('image sent'),
       note: '<system>Image compressed.</system>',
     });
     const protocolResult = protocolEvents.find(
@@ -273,7 +274,7 @@ describe('AgentToolExecutorService', () => {
     expect(protocolResult).toMatchObject({
       type: 'tool.result',
       toolCallId: 'call_captioned',
-      output: 'image sent',
+      output: textOutput('image sent'),
     });
     expect(protocolResult as unknown as Record<string, unknown>).not.toHaveProperty('note');
   });
@@ -281,7 +282,7 @@ describe('AgentToolExecutorService', () => {
   it('drops malformed notes and non-true truncated flags from internal results', async () => {
     const tool = new TestTool('malformed-meta', {
       result: {
-        output: 'image sent',
+        output: textOutput('image sent'),
         note: 123,
         truncated: false,
       } as unknown as ExecutableToolResult,
@@ -290,7 +291,7 @@ describe('AgentToolExecutorService', () => {
 
     const results = await execute([toolCall('call_malformed_meta', 'malformed-meta', {})]);
 
-    expect(results[0]).toMatchObject({ output: 'image sent' });
+    expect(results[0]).toMatchObject({ output: textOutput('image sent') });
     expect(results[0] as unknown as Record<string, unknown>).not.toHaveProperty('note');
     expect(results[0] as unknown as Record<string, unknown>).not.toHaveProperty('truncated');
   });
@@ -300,7 +301,7 @@ describe('AgentToolExecutorService', () => {
 
     expect(results).toEqual([
       expect.objectContaining({
-        output: 'Tool "missing" not found',
+        output: textOutput('Tool "missing" not found'),
         isError: true,
       }),
     ]);
@@ -336,7 +337,7 @@ describe('AgentToolExecutorService', () => {
 
     expect(results).toEqual([
       expect.objectContaining({
-        output: expect.stringContaining('Invalid args for tool "strict"'),
+        output: [expect.objectContaining({ type: 'text', text: expect.stringContaining('Invalid args for tool "strict"') })],
         isError: true,
       }),
     ]);
@@ -371,7 +372,7 @@ describe('AgentToolExecutorService', () => {
 
     expect(rejected).toEqual([
       expect.objectContaining({
-        output: expect.stringContaining('Invalid args for tool "dynamic"'),
+        output: [expect.objectContaining({ type: 'text', text: expect.stringContaining('Invalid args for tool "dynamic"') })],
         isError: true,
       }),
     ]);
@@ -414,7 +415,7 @@ describe('AgentToolExecutorService', () => {
 
     expect(results).toEqual([
       expect.objectContaining({
-        output: expect.stringContaining('Invalid args for tool "strict"'),
+        output: [expect.objectContaining({ type: 'text', text: expect.stringContaining('Invalid args for tool "strict"') })],
         isError: true,
       }),
     ]);
@@ -448,7 +449,7 @@ describe('AgentToolExecutorService', () => {
     expect(tool.calls).toEqual([]);
     expect(results).toEqual([
       expect.objectContaining({
-        output: expect.stringContaining('Invalid args for tool "strict"'),
+        output: [expect.objectContaining({ type: 'text', text: expect.stringContaining('Invalid args for tool "strict"') })],
         isError: true,
       }),
     ]);
@@ -463,7 +464,7 @@ describe('AgentToolExecutorService', () => {
 
     expect(results).toEqual([
       expect.objectContaining({
-        output: 'Tool "missing" not found',
+        output: textOutput('Tool "missing" not found'),
         isError: true,
       }),
     ]);
@@ -477,14 +478,14 @@ describe('AgentToolExecutorService', () => {
     const tool = new TestTool('echo');
     registry.register(tool);
     executor.onBeforeExecuteTool((event) => {
-      event.veto({ output: 'forbidden', isError: true });
+      event.veto({ output: textOutput('forbidden'), isError: true });
     });
 
     const results = await execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
 
     expect(results).toEqual([
       expect.objectContaining({
-        output: 'forbidden',
+        output: textOutput('forbidden'),
         isError: true,
       }),
     ]);
@@ -498,7 +499,7 @@ describe('AgentToolExecutorService', () => {
     registry.register(second);
     executor.onBeforeExecuteTool((event) => {
       if (event.toolCall.id !== 'call_first') return;
-      event.veto({ output: 'synthetic' });
+      event.veto({ output: textOutput('synthetic') });
     });
 
     const results = await execute([
@@ -507,8 +508,8 @@ describe('AgentToolExecutorService', () => {
     ]);
 
     expect(results).toEqual([
-      expect.objectContaining({ output: 'synthetic' }),
-      expect.objectContaining({ output: 'second result' }),
+      expect.objectContaining({ output: textOutput('synthetic') }),
+      expect.objectContaining({ output: textOutput('second result') }),
     ]);
     expect(first.calls).toEqual([]);
     expect(second.calls).toHaveLength(1);
@@ -527,9 +528,9 @@ describe('AgentToolExecutorService', () => {
 
     expect(results).toHaveLength(2);
     expect(results).toEqual(expect.arrayContaining([
-      expect.objectContaining({ output: 'first result', stopBatchAfterThis: true }),
+      expect.objectContaining({ output: textOutput('first result'), stopBatchAfterThis: true }),
       expect.objectContaining({
-        output: 'Tool skipped because a previous tool call stopped the turn.',
+        output: textOutput('Tool skipped because a previous tool call stopped the turn.'),
         isError: true,
       }),
     ]));
@@ -548,7 +549,7 @@ describe('AgentToolExecutorService', () => {
       execute: async () => {
         slowStarted.resolve();
         await slowRelease.promise;
-        return { output: 'slow' };
+        return { output: textOutput('slow') };
       },
     });
     const fast = new TestTool('fast', {
@@ -556,7 +557,7 @@ describe('AgentToolExecutorService', () => {
       execute: async () => {
         fastStarted.resolve();
         await fastRelease.promise;
-        return { output: 'fast' };
+        return { output: textOutput('fast') };
       },
     });
     registry.register(slow);
@@ -571,8 +572,7 @@ describe('AgentToolExecutorService', () => {
         ],
         { turnId: 0, signal: new AbortController().signal },
       )) {
-        const output = item.result.output;
-        yielded.push(typeof output === 'string' ? output : JSON.stringify(output));
+        yielded.push(outputText(item.result.output));
         if (yielded.length === 1) firstYielded.resolve();
       }
     })();
@@ -625,7 +625,7 @@ describe('AgentToolExecutorService', () => {
 
     expect(results).toEqual([
       expect.objectContaining({
-        output: 'Tool "fail" failed: tool blew up',
+        output: textOutput('Tool "fail" failed: tool blew up'),
         isError: true,
       }),
     ]);
@@ -641,7 +641,7 @@ describe('AgentToolExecutorService', () => {
 
     expect(results).toEqual([
       expect.objectContaining({
-        output: 'Tool "corrupt" returned no result.',
+        output: textOutput('Tool "corrupt" returned no result.'),
         isError: true,
       }),
     ]);
@@ -659,7 +659,7 @@ describe('AgentToolExecutorService', () => {
     const tool = new TestTool('progress', {
       execute: async (ctx) => {
         for (const update of updates) ctx.onUpdate?.(update);
-        return { output: 'done' };
+        return { output: textOutput('done') };
       },
     });
     registry.register(tool);
@@ -711,8 +711,8 @@ describe('AgentToolExecutorService', () => {
       ]),
     );
     expect(results).toEqual([
-      expect.objectContaining({ output: 'Tool "first" was aborted', isError: true }),
-      expect.objectContaining({ output: 'Tool "second" was aborted', isError: true }),
+      expect.objectContaining({ output: textOutput('Tool "first" was aborted'), isError: true }),
+      expect.objectContaining({ output: textOutput('Tool "second" was aborted'), isError: true }),
     ]);
   });
 
@@ -776,7 +776,7 @@ describe('AgentToolExecutorService', () => {
 
     expect(results).toEqual([
       expect.objectContaining({
-        output: 'onDidExecuteTool hook failed for "echo": finalize crashed',
+        output: textOutput('onDidExecuteTool hook failed for "echo": finalize crashed'),
         isError: true,
       }),
     ]);
@@ -795,7 +795,7 @@ describe('AgentToolExecutorService', () => {
 
     expect(results).toEqual([
       expect.objectContaining({
-        output: 'done',
+        output: textOutput('done'),
         stopTurn: true,
       }),
     ]);
@@ -805,14 +805,14 @@ describe('AgentToolExecutorService', () => {
     const tool = new TestTool('echo');
     registry.register(tool);
     executor.hooks.onDidExecuteTool.register('replace-result', async (ctx) => {
-      ctx.result = { output: 'hook output', isError: true };
+      ctx.result = { output: textOutput('hook output'), isError: true };
     });
 
     const results = await execute([toolCall('call_echo', 'echo', { text: 'raw output' })]);
 
     expect(results).toEqual([
       expect.objectContaining({
-        output: 'hook output',
+        output: textOutput('hook output'),
         isError: true,
       }),
     ]);
@@ -820,7 +820,7 @@ describe('AgentToolExecutorService', () => {
       type: 'tool.result',
       toolCallId: 'call_echo',
       result: expect.objectContaining({
-        output: 'hook output',
+        output: textOutput('hook output'),
         isError: true,
       }),
     });
@@ -833,14 +833,14 @@ describe('AgentToolExecutorService', () => {
       origin: { kind: 'skill_activation', skillName: 'commit', trigger: 'model-tool' },
     };
     const tool = new TestTool('skillish', {
-      result: { output: 'ack', delivery: { kind: 'steer', message } },
+      result: { output: textOutput('ack'), delivery: { kind: 'steer', message } },
     });
     registry.register(tool);
 
     const results = await execute([toolCall('call_skillish', 'skillish', {})]);
 
     expect(results).toHaveLength(1);
-    expect(results[0]!.output).toBe('ack');
+    expect(results[0]!.output).toEqual(textOutput('ack'));
     expect(results[0]!.delivery).toMatchObject({
       kind: 'steer',
       message: { content: [{ type: 'text', text: 'injected' }] },
@@ -854,16 +854,16 @@ describe('onBeforeExecuteTool veto semantics', () => {
     registry.register(tool);
     const later = vi.fn();
     executor.onBeforeExecuteTool((event) => {
-      event.veto({ output: 'first', isError: true });
+      event.veto({ output: textOutput('first'), isError: true });
     });
     executor.onBeforeExecuteTool((event) => {
       later();
-      event.veto({ output: 'second', isError: true });
+      event.veto({ output: textOutput('second'), isError: true });
     });
 
     const results = await execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
 
-    expect(results).toEqual([expect.objectContaining({ output: 'first', isError: true })]);
+    expect(results).toEqual([expect.objectContaining({ output: textOutput('first'), isError: true })]);
     expect(later).not.toHaveBeenCalled();
     expect(tool.calls).toEqual([]);
   });
@@ -877,12 +877,12 @@ describe('onBeforeExecuteTool veto semantics', () => {
     });
     executor.onBeforeExecuteTool((event) => {
       later();
-      event.veto({ output: 'denied', isError: true });
+      event.veto({ output: textOutput('denied'), isError: true });
     });
 
     const results = await execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
 
-    expect(results).toEqual([expect.objectContaining({ output: 'hi' })]);
+    expect(results).toEqual([expect.objectContaining({ output: textOutput('hi') })]);
     expect(later).not.toHaveBeenCalled();
     expect(tool.calls).toHaveLength(1);
   });
@@ -908,12 +908,12 @@ describe('onBeforeExecuteTool veto semantics', () => {
       event.waitUntil(askFactory);
     });
     executor.onBeforeExecuteTool((event) => {
-      event.veto({ output: 'disabled', isError: true });
+      event.veto({ output: textOutput('disabled'), isError: true });
     });
 
     const results = await execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
 
-    expect(results).toEqual([expect.objectContaining({ output: 'disabled', isError: true })]);
+    expect(results).toEqual([expect.objectContaining({ output: textOutput('disabled'), isError: true })]);
     expect(askFactory).not.toHaveBeenCalled();
     expect(tool.calls).toEqual([]);
   });
@@ -931,7 +931,7 @@ describe('onBeforeExecuteTool veto semantics', () => {
     executor.onBeforeExecuteTool((event) => {
       event.waitUntil(async () => {
         fulfilled.push('second');
-        return { veto: { output: 'second-denied', isError: true } };
+        return { veto: { output: textOutput('second-denied'), isError: true } };
       });
     });
     executor.onBeforeExecuteTool((event) => {
@@ -945,7 +945,7 @@ describe('onBeforeExecuteTool veto semantics', () => {
 
     expect(fulfilled).toEqual(['first', 'second']);
     expect(results).toEqual([
-      expect.objectContaining({ output: 'second-denied', isError: true }),
+      expect.objectContaining({ output: textOutput('second-denied'), isError: true }),
     ]);
     expect(tool.calls).toEqual([]);
   });
@@ -959,7 +959,7 @@ describe('onBeforeExecuteTool veto semantics', () => {
 
     const results = await execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
 
-    expect(results).toEqual([expect.objectContaining({ output: 'hi' })]);
+    expect(results).toEqual([expect.objectContaining({ output: textOutput('hi') })]);
     expect(tool.calls).toHaveLength(1);
   });
 
@@ -978,7 +978,7 @@ describe('onBeforeExecuteTool veto semantics', () => {
     expect(() => closed.waitUntil(async () => undefined)).toThrow(
       'waitUntil can NOT be called asynchronously',
     );
-    expect(() => closed.veto({ output: 'x', isError: true })).toThrow(
+    expect(() => closed.veto({ output: textOutput('x'), isError: true })).toThrow(
       'veto can NOT be called asynchronously',
     );
   });
@@ -999,7 +999,7 @@ describe('onWillExecuteTool', () => {
 
     gate.resolve();
     const results = await pending;
-    expect(results).toEqual([expect.objectContaining({ output: 'hi' })]);
+    expect(results).toEqual([expect.objectContaining({ output: textOutput('hi') })]);
     expect(tool.calls).toHaveLength(1);
   });
 
@@ -1009,12 +1009,12 @@ describe('onWillExecuteTool', () => {
     const willListener = vi.fn();
     executor.onWillExecuteTool(willListener);
     executor.onBeforeExecuteTool((event) => {
-      event.veto({ output: 'nope', isError: true });
+      event.veto({ output: textOutput('nope'), isError: true });
     });
 
     const results = await execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
 
-    expect(results).toEqual([expect.objectContaining({ output: 'nope', isError: true })]);
+    expect(results).toEqual([expect.objectContaining({ output: textOutput('nope'), isError: true })]);
     expect(willListener).not.toHaveBeenCalled();
   });
 });
@@ -1132,9 +1132,8 @@ describe('truncation pipeline', () => {
 
     expect(result?.truncated).toBe(true);
     expect(result).not.toHaveProperty('spill');
-    const rendered = result?.output;
-    expect(typeof rendered).toBe('string');
-    if (typeof rendered !== 'string') throw new Error('expected string output');
+    if (result === undefined) throw new Error('expected string output');
+    const rendered = outputText(result.output);
     expect(rendered).toContain('Tool output exceeded 50000 characters');
     expect(rendered).toContain('tool_name: noisy');
     expect(rendered).toContain('tool_call_id: call_noisy');
@@ -1160,16 +1159,16 @@ describe('truncation pipeline', () => {
 
     expect(result?.isError).not.toBe(true);
     expect(result?.truncated).toBe(true);
-    if (typeof result?.output !== 'string') throw new Error('expected Glob text');
-    const path = renderedOutputPath(result.output);
+    if (result === undefined) throw new Error('expected Glob text');
+    const path = renderedOutputPath(outputText(result.output));
     let args: ReadInput | undefined = { path, max_chars: 8000 };
     const recovered: string[] = [];
     let pages = 0;
     while (args !== undefined && pages < 20) {
       const [page] = await execute([toolCall(`read_glob_${String(pages++)}`, 'Read', args)]);
       expect(page?.isError).not.toBe(true);
-      if (typeof page?.output !== 'string') throw new Error('expected Read text');
-      recovered.push(...page.output.replaceAll(/^\d+\t/gm, '').split('\n').filter(Boolean));
+      if (page === undefined) throw new Error('expected Read text');
+      recovered.push(...outputText(page.output).replaceAll(/^\d+\t/gm, '').split('\n').filter(Boolean));
       const next = /Next Read: (\{[^\n]*\})/.exec(page.note ?? '')?.[1];
       args = next === undefined ? undefined : ReadInputSchema.parse(JSON.parse(next));
     }
@@ -1202,18 +1201,19 @@ describe('truncation pipeline', () => {
           pattern: '*.ts', path: root, head_limit: 0, offset,
         })]);
         expect(page?.isError).not.toBe(true);
-        if (typeof page?.output !== 'string') throw new Error('expected Glob output');
-        expect(page.output).toContain('the full output was saved to a file');
-        const continuation = /Continue with the same search arguments and offset=(\d+)\./.exec(page.output)?.[1];
+        if (page === undefined) throw new Error('expected Glob output');
+        const globText = outputText(page.output);
+        expect(globText).toContain('the full output was saved to a file');
+        const continuation = /Continue with the same search arguments and offset=(\d+)\./.exec(globText)?.[1];
         if (continuation !== undefined) expect(Number(continuation)).toBeGreaterThan(offset);
         offset = continuation === undefined ? 0 : Number(continuation);
-        let args: ReadInput | undefined = { path: renderedOutputPath(page.output), max_chars: 500_000 };
+        let args: ReadInput | undefined = { path: renderedOutputPath(globText), max_chars: 500_000 };
         let reads = 0;
         while (args !== undefined && reads < 40) {
           const [read] = await execute([toolCall(`read_large_${String(globPages)}_${String(reads++)}`, 'Read', args)]);
           expect(read?.isError).not.toBe(true);
-          if (typeof read?.output !== 'string') throw new Error('expected Read output');
-          recovered.push(...read.output.replaceAll(/^\d+\t/gm, '').split('\n').filter((line) => line.startsWith(root + '/')));
+          if (read === undefined) throw new Error('expected Read output');
+          recovered.push(...outputText(read.output).replaceAll(/^\d+\t/gm, '').split('\n').filter((line) => line.startsWith(root + '/')));
           const next = /Next Read: (\{[^\n]*\})/.exec(read.note ?? '')?.[1];
           args = next === undefined ? undefined : ReadInputSchema.parse(JSON.parse(next));
         }
@@ -1287,8 +1287,8 @@ describe('truncation pipeline', () => {
     while (args !== undefined && pages < 30) {
       const [read] = await execute([toolCall(`read_batch_${String(pages++)}`, 'Read', args)]);
       expect(read?.isError).not.toBe(true);
-      if (typeof read?.output !== 'string') throw new Error('expected Read output');
-      recovered += read.output.replaceAll(/^\d+\t/gm, '') + '\n';
+      if (read === undefined) throw new Error('expected Read output');
+      recovered += outputText(read.output).replaceAll(/^\d+\t/gm, '') + '\n';
       const next = /Next Read: (\{[^\n]*\})/.exec(read.note ?? '')?.[1];
       args = next === undefined ? undefined : ReadInputSchema.parse(JSON.parse(next));
     }
@@ -1338,7 +1338,8 @@ describe('truncation pipeline', () => {
     expect(crop?.isError).not.toBe(true);
     const [pdf] = await execute([toolCall('read_pdf', 'Read', { path: refs[1] })]);
     expect(pdf?.isError).toBe(true);
-    expect(pdf?.output).toContain(paths[1]);
+    if (pdf === undefined) throw new Error('expected Read output');
+    expect(outputText(pdf.output)).toContain(paths[1]);
     expect(readFileSync(paths[1]!).equals(bytes[1]!)).toBe(true);
   });
 
@@ -1363,10 +1364,10 @@ describe('truncation pipeline', () => {
     const text = renderToolResultForModel(result).map((part) => part.type === 'text' ? part.text : '').join('\n');
     const reference = JSON.parse(/Attachment reference: ("[^\n]+")/.exec(text)![1]!) as string;
     const [attachment] = await execute([toolCall('read_attachment', 'Read', { path: reference })]);
-    expect(attachment?.output).toBe('1\tsession attachment');
+    expect(attachment?.output).toEqual(textOutput('1\tsession attachment'));
     expect(clientRead).not.toHaveBeenCalled();
     const [workspace] = await execute([toolCall('read_workspace', 'Read', { path: workspaceFile })]);
-    expect(workspace?.output).toBe('1\tunsaved client buffer');
+    expect(workspace?.output).toEqual(textOutput('1\tunsaved client buffer'));
     expect(clientRead).toHaveBeenCalledTimes(1);
   });
 
@@ -1408,12 +1409,12 @@ describe('truncation pipeline', () => {
     while (args !== undefined && pages < 30) {
       const [page] = await execute([toolCall(`read_mcp_${String(pages++)}`, 'Read', args)]);
       expect(page?.isError).not.toBe(true);
-      if (typeof page?.output !== 'string') throw new Error('expected Read text');
+      if (page === undefined) throw new Error('expected Read text');
       const pageText = renderToolResultForModel(page)
         .map((part) => part.type === 'text' ? part.text : '').join('\n');
       expect(pageText.length).toBeLessThanOrEqual(16_000);
       if (recovered.length > 0 && (args.column_offset ?? 0) === 0) recovered += '\n';
-      recovered += page.output.replaceAll(/^\d+\t/gm, '');
+      recovered += outputText(page.output).replaceAll(/^\d+\t/gm, '');
       const next = /Next Read: (\{[^\n]*\})/.exec(page.note ?? '')?.[1];
       args = next === undefined ? undefined : ReadInputSchema.parse(JSON.parse(next));
     }
@@ -1441,9 +1442,8 @@ describe('truncation pipeline', () => {
     const [result] = await execute([toolCall('call_failing_noisy', 'failing-noisy', {})]);
 
     expect(result?.isError).toBe(true);
-    const rendered = result?.output;
-    expect(typeof rendered).toBe('string');
-    if (typeof rendered !== 'string') throw new Error('expected string output');
+    if (result === undefined) throw new Error('expected string output');
+    const rendered = outputText(result.output);
     expect(rendered).toContain('Command failed with exit code: 1.');
     expect(readFileSync(renderedOutputPath(rendered), 'utf8')).toBe(
       `${fullOutput}\nCommand failed with exit code: 1.`,
@@ -1464,9 +1464,8 @@ describe('truncation pipeline', () => {
     const [result] = await execute([toolCall('call_successful_noisy', 'successful-noisy', {})]);
 
     expect(result?.isError).not.toBe(true);
-    const rendered = result?.output;
-    expect(typeof rendered).toBe('string');
-    if (typeof rendered !== 'string') throw new Error('expected string output');
+    if (result === undefined) throw new Error('expected string output');
+    const rendered = outputText(result.output);
     expect(rendered).toContain('Command executed successfully.');
     expect(readFileSync(renderedOutputPath(rendered), 'utf8')).toBe(fullOutput);
   });
@@ -1487,9 +1486,8 @@ describe('truncation pipeline', () => {
 
     expect(result?.truncated).toBe(true);
     expect(result).not.toHaveProperty('spill');
-    const rendered = result?.output;
-    expect(typeof rendered).toBe('string');
-    if (typeof rendered !== 'string') throw new Error('expected string output');
+    if (result === undefined) throw new Error('expected string output');
+    const rendered = outputText(result.output);
     expect(rendered).toContain('short line');
     expect(rendered).toContain('[...truncated]');
     expect(rendered).toContain(
@@ -1500,11 +1498,11 @@ describe('truncation pipeline', () => {
 
   it('passes spill-exempt results through the truncation pipeline unchanged', async () => {
     const output = `SPILL_CHUNK\n${`${'y'.repeat(100)}\n`.repeat(600)}`;
-    registry.register(new TestTool('reader', { result: { output, spillExempt: true } }));
+    registry.register(new TestTool('reader', { result: { output: textOutput(output), spillExempt: true } }));
 
     const [result] = await execute([toolCall('call_reader', 'reader', {})]);
 
-    expect(result?.output).toBe(output);
+    expect(result?.output).toEqual(textOutput(output));
     expect(result?.truncated).toBeUndefined();
   });
 
@@ -1516,13 +1514,13 @@ describe('truncation pipeline', () => {
     const [result] = await execute([toolCall('call_read_paper', 'Read', { path })]);
 
     expect(result?.isError).not.toBe(true);
-    expect(typeof result?.output).toBe('string');
-    if (typeof result?.output !== 'string') throw new TypeError('expected Read text');
-    expect(result.output.length).toBeGreaterThan(50_000);
-    expect(result.output.replaceAll(/^\d+\t/gm, '')).toBe(content.trimEnd());
+    if (result === undefined) throw new TypeError('expected Read text');
+    const text = outputText(result.output);
+    expect(text.length).toBeGreaterThan(50_000);
+    expect(text.replaceAll(/^\d+\t/gm, '')).toBe(content.trimEnd());
     expect(result.truncated).toBeUndefined();
     expect(result.note).toContain('Requested range complete.');
-    expect(result.output).not.toContain('output_path:');
+    expect(text).not.toContain('output_path:');
   });
 
   it('recovers a large line through the model-facing Read pipeline without shell tools', async () => {
@@ -1535,13 +1533,14 @@ describe('truncation pipeline', () => {
     for (let page = 0; args !== undefined && page < 30; page += 1) {
       const [result] = await execute([toolCall(`read_fragment_${String(page)}`, 'Read', args)]);
       expect(result?.isError).not.toBe(true);
-      if (typeof result?.output !== 'string') throw new TypeError('expected Read text');
-      expect(result.output.startsWith('1\t')).toBe(true);
+      if (result === undefined) throw new TypeError('expected Read text');
+      const text = outputText(result.output);
+      expect(text.startsWith('1\t')).toBe(true);
       const visible = renderToolResultForModel(result)
         .map((part) => part.type === 'text' ? part.text : '').join('');
       expect(visible.length).toBeLessThanOrEqual(100_000);
-      if (page === 0) expect(result.output.length).toBeGreaterThan(50_000);
-      fragments.push(result.output.slice(2));
+      if (page === 0) expect(text.length).toBeGreaterThan(50_000);
+      fragments.push(text.slice(2));
       const next = result.note?.match(/Next Read: (\{[^\n]*\})/);
       args = next === undefined || next === null ? undefined : ReadInputSchema.parse(JSON.parse(next[1]!));
     }
@@ -1562,7 +1561,7 @@ describe('truncation pipeline', () => {
     const [result] = await execute([toolCall('read_lossy', 'Read', { path, n_lines: 1, max_chars: 1200 })]);
 
     expect(result?.isError).not.toBe(true);
-    expect(result?.output).toBe('1\tgood');
+    expect(result?.output).toEqual(textOutput('1\tgood'));
     if (result === undefined) throw new Error('expected a Read result');
     const visible = renderToolResultForModel(result)
       .map((part) => part.type === 'text' ? part.text : '').join('');
@@ -1582,12 +1581,14 @@ describe('truncation pipeline', () => {
 
     expect(defaultResult?.isError).not.toBe(true);
     expect(largerResult?.isError).not.toBe(true);
-    if (typeof defaultResult?.output !== 'string' || typeof largerResult?.output !== 'string') {
+    if (defaultResult === undefined || largerResult === undefined) {
       throw new TypeError('expected Read text');
     }
-    expect(defaultResult.output.length + 1 + (defaultResult.note?.length ?? 0)).toBeLessThanOrEqual(1500);
-    expect(largerResult.output.length + 1 + (largerResult.note?.length ?? 0)).toBeLessThanOrEqual(3000);
-    expect(largerResult.output.length).toBeGreaterThan(defaultResult.output.length);
+    const defaultText = outputText(defaultResult.output);
+    const largerText = outputText(largerResult.output);
+    expect(defaultText.length + 1 + (defaultResult.note?.length ?? 0)).toBeLessThanOrEqual(1500);
+    expect(largerText.length + 1 + (largerResult.note?.length ?? 0)).toBeLessThanOrEqual(3000);
+    expect(largerText.length).toBeGreaterThan(defaultText.length);
     expect(largerResult.note).toContain('Requested max_chars=10000 was capped at the configured maximum 3000.');
     expect(readFileSync(join(homeDir, 'config.toml'), 'utf8')).toContain('default_max_chars = 1500');
   });
@@ -1597,6 +1598,10 @@ function renderedOutputPath(output: string): string {
   const match = /^output_path: (.+)$/m.exec(output);
   if (match === null) throw new Error('expected tool output to include output_path');
   return match[1]!;
+}
+
+function outputText(output: ToolResult['output']): string {
+  return output.map((part) => (part.type === 'text' ? part.text : '')).join('');
 }
 
 async function execute(
@@ -1700,7 +1705,7 @@ class TestTool implements ExecutableTool<Record<string, unknown>> {
           return this.options.execute(ctx, args);
         }
         return this.options.result ?? {
-          output: typeof args['text'] === 'string' ? args['text'] : `${this.name} result`,
+          output: textOutput(typeof args['text'] === 'string' ? args['text'] : `${this.name} result`),
         };
       },
     };
@@ -1744,7 +1749,7 @@ class ControlledTool implements ExecutableTool<Record<string, unknown>> {
           ctx.signal.addEventListener('abort', onAbort);
           setTimeout(() => {
             ctx.signal.removeEventListener('abort', onAbort);
-            resolve({ output: `${this.name} result` });
+            resolve({ output: textOutput(`${this.name} result`) });
           }, 50);
         });
       },

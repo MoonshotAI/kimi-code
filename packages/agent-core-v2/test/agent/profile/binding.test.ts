@@ -31,6 +31,7 @@ import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { IWireService } from '#/wire/wire';
+import { textOutput } from '#/tool/toolContract';
 import type { ExecutableTool, ToolExecution, ToolResult, ToolSource } from '#/tool/toolContract';
 
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
@@ -874,7 +875,7 @@ describe('AgentToolPolicyService executor enforcement', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      output: 'Tool "PolicyProbe" is disabled by the active tool policy',
+      output: textOutput('Tool "PolicyProbe" is disabled by the active tool policy'),
     });
     expect(probe.calls).toBe(0);
   });
@@ -889,7 +890,7 @@ describe('AgentToolPolicyService executor enforcement', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      output: `Tool "${probe.name}" is disabled by the active tool policy`,
+      output: textOutput(`Tool "${probe.name}" is disabled by the active tool policy`),
     });
     expect(probe.calls).toBe(0);
   });
@@ -914,7 +915,7 @@ describe('AgentToolPolicyService executor enforcement', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      output: 'Tool "PolicyProbe" is disabled by the active tool policy',
+      output: textOutput('Tool "PolicyProbe" is disabled by the active tool policy'),
     });
     expect(probe.calls).toBe(0);
   });
@@ -947,7 +948,7 @@ describe('AgentToolPolicyService executor enforcement', () => {
 
     const result = await executeDirectToolCall(ctx, SELECT_TOOLS_TOOL_NAME);
 
-    expect(result).toMatchObject({ output: 'executed' });
+    expect(result).toMatchObject({ output: textOutput('executed') });
     expect(result.isError).toBeFalsy();
     expect(probe.calls).toBe(1);
   });
@@ -984,7 +985,7 @@ describe('AgentToolPolicyService executor enforcement', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      output: `Tool "${SELECT_TOOLS_TOOL_NAME}" is disabled by the active tool policy`,
+      output: textOutput(`Tool "${SELECT_TOOLS_TOOL_NAME}" is disabled by the active tool policy`),
     });
     expect(probe.calls).toBe(0);
   });
@@ -1119,7 +1120,7 @@ class PolicyProbeTool implements ExecutableTool<Record<string, never>> {
       approvalRule: this.name,
       execute: async () => {
         this.calls += 1;
-        return { isError: false, output: 'executed' };
+        return { isError: false, output: textOutput('executed') };
       },
     };
   }

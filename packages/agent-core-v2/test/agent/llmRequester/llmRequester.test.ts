@@ -1,5 +1,6 @@
 import { APIConnectionError, APIStatusError } from '#/llm-adapter/contract/errors';
 import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
+import { textOutput } from '#/tool/toolContract';
 import type { StreamedMessagePart, ToolDescription as Tool } from '#human/llm/message';
 import { emptyUsage } from '#human/llm/usage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -296,7 +297,7 @@ describe('LLMRequester service migration coverage', () => {
 
       await ctx.untilToolCall({
         content: 'moon-result',
-        output: 'moon-result',
+        output: textOutput('moon-result'),
       });
 
       expect(protocolEvents(ctx, 'tool.call.delta').map((event) => event.args)).toEqual([

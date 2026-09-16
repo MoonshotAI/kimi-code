@@ -1,4 +1,4 @@
-import type { ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ToolExecution } from '#/tool/toolContract';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 
@@ -11,5 +11,5 @@ export function mainAgentOnlyExecution(
   output: string,
 ): ToolExecution | undefined {
   if (scopeContext.agentId === MAIN_AGENT_ID) return undefined;
-  return { isError: true, output };
+  return { isError: true, output: textOutput(output) };
 }

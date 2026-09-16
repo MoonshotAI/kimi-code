@@ -1,6 +1,6 @@
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
-import type { ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ExecutableToolResult, type ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentPlanService } from '#/features/plan/plan';
@@ -70,8 +70,9 @@ export class ExitPlanModeTool implements IExitPlanModeTool {
     if (status === null) {
       return {
         isError: true,
-        output:
+        output: textOutput(
           'ExitPlanMode can only be called while plan mode is active. Use EnterPlanMode (or /plan) first.',
+        ),
       };
     }
 
@@ -91,7 +92,7 @@ export class ExitPlanModeTool implements IExitPlanModeTool {
       });
       return {
         isError: false,
-        output: `Exited plan mode. ${formatAutoApprovedPlanForOutput(resolvedPlan.plan, resolvedPlan.path)}`,
+        output: textOutput(`Exited plan mode. ${formatAutoApprovedPlanForOutput(resolvedPlan.plan, resolvedPlan.path)}`),
       };
     }
 
@@ -100,7 +101,7 @@ export class ExitPlanModeTool implements IExitPlanModeTool {
     });
     return {
       isError: false,
-      output: `Exited plan mode. ${formatPlanForOutput(resolvedPlan.plan, resolvedPlan.path)}`,
+      output: textOutput(`Exited plan mode. ${formatPlanForOutput(resolvedPlan.plan, resolvedPlan.path)}`),
     };
   }
 
@@ -111,7 +112,7 @@ export class ExitPlanModeTool implements IExitPlanModeTool {
       const message = error instanceof Error ? error.message : 'Failed to exit plan mode.';
       return {
         isError: true,
-        output: `Failed to exit plan mode: ${message}`,
+        output: textOutput(`Failed to exit plan mode: ${message}`),
       };
     }
   }
@@ -125,7 +126,7 @@ export class ExitPlanModeTool implements IExitPlanModeTool {
       const message = error instanceof Error ? error.message : 'Failed to read plan file.';
       return {
         ok: false,
-        error: { isError: true, output: `Failed to read plan file: ${message}` },
+        error: { isError: true, output: textOutput(`Failed to read plan file: ${message}`) },
       };
     }
 
@@ -143,10 +144,11 @@ export class ExitPlanModeTool implements IExitPlanModeTool {
       ok: false,
       error: {
         isError: true,
-        output:
+        output: textOutput(
           path === null
             ? 'No plan file found. Write the plan to the current plan file first, then call ExitPlanMode.'
             : `No plan file found. Write your plan to ${path} first, then call ExitPlanMode.`,
+        ),
       },
     };
   }

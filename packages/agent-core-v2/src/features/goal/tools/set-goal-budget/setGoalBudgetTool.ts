@@ -1,7 +1,7 @@
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { GOAL_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '#/agent/tools/mainAgentOnly';
-import { type ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ToolExecution } from '#/tool/toolContract';
 
 import { IAgentGoalService } from '#/features/goal/goalService';
 import type { GoalBudgetLimits, GoalSnapshot } from '#/features/goal/types';
@@ -46,32 +46,34 @@ export class SetGoalBudgetTool implements ISetGoalBudgetTool {
       execute: async ({ turnId }) => {
         const currentGoal = this.goal.getGoal().goal;
         if (currentGoal === null) {
-          return { output: 'Goal budget not set: no current goal.' };
+          return { output: textOutput('Goal budget not set: no current goal.') };
         }
         if (
           currentGoal.goalId !== goalAtResolution?.goalId &&
           !this.goal.isGoalToolTarget(turnId, currentGoal.goalId)
         ) {
-          return { output: 'Goal budget not set: the current goal changed.' };
+          return { output: textOutput('Goal budget not set: the current goal changed.') };
         }
         if (budget === null) {
           return {
-            output:
+            output: textOutput(
               `Goal budget not set: ${formatBudget(normalizedArgs.value, normalizedArgs.unit)} is not a ` +
-              'reasonable goal budget.',
+                'reasonable goal budget.',
+            ),
           };
         }
         const snapshot = await this.goal.setBudgetLimits({ budgetLimits: budget }, 'model');
         if (snapshot.budget.overBudget) {
           return {
-            output:
+            output: textOutput(
               `Goal budget set: ${formatBudget(normalizedArgs.value, normalizedArgs.unit)}. ` +
-              'The goal has already reached this budget and will stop now.',
+                'The goal has already reached this budget and will stop now.',
+            ),
             stopTurn: true,
           };
         }
         return {
-          output: `Goal budget set: ${formatBudget(normalizedArgs.value, normalizedArgs.unit)}.`,
+          output: textOutput(`Goal budget set: ${formatBudget(normalizedArgs.value, normalizedArgs.unit)}.`),
         };
       },
     };

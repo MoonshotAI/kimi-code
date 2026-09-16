@@ -1,4 +1,4 @@
-import type { ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentPlanService } from '#/features/plan/plan';
@@ -30,7 +30,7 @@ export class EnterPlanModeTool implements IEnterPlanModeTool {
         if (before !== null) {
           return {
             isError: true,
-            output: 'Plan mode is already active. Use ExitPlanMode when the plan is ready.',
+            output: textOutput('Plan mode is already active. Use ExitPlanMode when the plan is ready.'),
           };
         }
 
@@ -38,14 +38,14 @@ export class EnterPlanModeTool implements IEnterPlanModeTool {
           await this.planMode.enter();
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Failed to enter plan mode.';
-          return { isError: true, output: `Failed to enter plan mode: ${message}` };
+          return { isError: true, output: textOutput(`Failed to enter plan mode: ${message}`) };
         }
 
         this.telemetry.track2('plan_enter_resolved', {
           outcome: 'auto_approved',
         });
         const after = await this.planMode.status();
-        return { output: enteredPlanModeMessage(after?.path ?? null) };
+        return { output: textOutput(enteredPlanModeMessage(after?.path ?? null)) };
       },
     };
   }

@@ -14,6 +14,7 @@ import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
+import { textOutput } from '#/tool/toolContract';
 import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult, ToolExecution, ToolResult } from '#/tool/toolContract';
 import type { ToolDidExecuteContext, ResolvedToolExecutionHookContext, BeforeExecuteDecision } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolDedupeService, type ToolDedupeResult } from '#/agent/toolDedupe/toolDedupe';
@@ -124,11 +125,15 @@ function createHarness(
 }
 
 function okResult(text: string): ToolDedupeResult {
-  return { output: text };
+  return { output: textOutput(text) };
 }
 
 function errResult(text: string): ToolDedupeResult {
-  return { output: text, isError: true };
+  return { output: textOutput(text), isError: true };
+}
+
+function outputText(output: ExecutableToolResult['output']): string {
+  return output.map((part) => (part.type === 'text' ? part.text : '')).join('');
 }
 
 function toolCall(id: string, name: string, args: unknown): ToolCall {
@@ -148,7 +153,7 @@ class EchoTool implements ExecutableTool<Record<string, unknown>> {
   constructor(
     readonly name = 'Echo',
     private readonly resultFor: (args: Record<string, unknown>) => ExecutableToolResult = (args) => ({
-      output: typeof args['text'] === 'string' ? args['text'] : '',
+      output: typeof args['text'] === 'string' ? textOutput(args['text']) : [],
     }),
   ) {}
 
@@ -218,7 +223,7 @@ async function runStep(
 }
 
 function dummyExecution(): ResolvedToolExecutionHookContext['execution'] {
-  return { approvalRule: 'x', execute: async () => ({ output: '' }) };
+  return { approvalRule: 'x', execute: async () => ({ output: [] }) };
 }
 
 function willCtx(
@@ -269,7 +274,7 @@ describe('AgentToolDedupeService', () => {
       expect(b1).toBeUndefined();
 
       const b2 = await h.fireBefore(willCtx('c2', 'Read', { path: '/a' }));
-      expect(b2?.veto).toEqual({ output: '' });
+      expect(b2?.veto).toEqual({ output: [] });
 
       const d1 = didCtx('c1', 'Read', { path: '/a' }, okResult('FILE_A'));
       await h.executor.hooks.onDidExecuteTool.run(d1);
@@ -286,7 +291,7 @@ describe('AgentToolDedupeService', () => {
 
       await h.fireBefore(willCtx('c1', 'Bash', { cmd: 'x' }));
       const b2 = await h.fireBefore(willCtx('c2', 'Bash', { cmd: 'x' }));
-      expect(b2?.veto).toEqual({ output: '' });
+      expect(b2?.veto).toEqual({ output: [] });
 
       const d1 = didCtx('c1', 'Bash', { cmd: 'x' }, errResult('boom'));
       await h.executor.hooks.onDidExecuteTool.run(d1);
@@ -306,7 +311,7 @@ describe('AgentToolDedupeService', () => {
       ]);
 
       expect(tool.calls).toHaveLength(1);
-      expect(results.map((result) => result.result.output)).toEqual(['A', 'A']);
+      expect(results.map((result) => result.result.output)).toEqual([textOutput('A'), textOutput('A')]);
     });
 
     it('wires through ToolExecutor hooks and replaces same-step placeholders', async () => {
@@ -327,7 +332,7 @@ describe('AgentToolDedupeService', () => {
       }
 
       expect(tool.calls).toHaveLength(1);
-      expect(results.map((result) => result.output)).toEqual(['same', 'same']);
+      expect(results.map((result) => result.output)).toEqual([textOutput('same'), textOutput('same')]);
       expect(telemetryEvents).toContainEqual({
         event: 'tool_call_dedup_detected',
         properties: expect.objectContaining({
@@ -361,52 +366,52 @@ describe('AgentToolDedupeService', () => {
       const h = createHarness();
       registerRead(h);
       const last = await runStreak(h, 2);
-      expect(typeof last.output).toBe('string');
-      expect(last.output as string).not.toContain('<system-reminder>');
+      expect(last.output.every((part) => part.type === 'text')).toBe(true);
+      expect(outputText(last.output)).not.toContain('<system-reminder>');
     });
 
     it('injects reminder1 at exactly 3 consecutive', async () => {
       const h = createHarness();
       registerRead(h);
       const last = await runStreak(h, 3);
-      expect(last.output as string).toContain('<system-reminder>');
-      expect(last.output as string).toContain('what new information you expect');
-      expect(last.output as string).not.toContain('Choose exactly one');
+      expect(outputText(last.output)).toContain('<system-reminder>');
+      expect(outputText(last.output)).toContain('what new information you expect');
+      expect(outputText(last.output)).not.toContain('Choose exactly one');
     });
 
     it('keeps injecting reminder1 at 4 consecutive', async () => {
       const h = createHarness();
       registerRead(h);
       const last = await runStreak(h, 4);
-      expect(last.output as string).toContain('<system-reminder>');
-      expect(last.output as string).toContain('what new information you expect');
+      expect(outputText(last.output)).toContain('<system-reminder>');
+      expect(outputText(last.output)).toContain('what new information you expect');
     });
 
     it('injects reminder2 at exactly 5 consecutive', async () => {
       const h = createHarness();
       registerRead(h);
       const last = await runStreak(h, 5);
-      expect(last.output as string).toContain('<system-reminder>');
-      expect(last.output as string).toContain('issued 5 times in a row');
-      expect(last.output as string).toContain('Choose exactly one of the following');
-      expect(last.output as string).toContain('Falsification check');
+      expect(outputText(last.output)).toContain('<system-reminder>');
+      expect(outputText(last.output)).toContain('issued 5 times in a row');
+      expect(outputText(last.output)).toContain('Choose exactly one of the following');
+      expect(outputText(last.output)).toContain('Falsification check');
     });
 
     it.each([6, 7])('keeps injecting reminder2 at %i consecutive', async (streak) => {
       const h = createHarness();
       registerRead(h);
       const last = await runStreak(h, streak);
-      expect(last.output as string).toContain('<system-reminder>');
-      expect(last.output as string).toContain(`issued ${String(streak)} times in a row`);
-      expect(last.output as string).toContain('Choose exactly one of the following');
+      expect(outputText(last.output)).toContain('<system-reminder>');
+      expect(outputText(last.output)).toContain(`issued ${String(streak)} times in a row`);
+      expect(outputText(last.output)).toContain('Choose exactly one of the following');
     });
 
     it('injects the dead-end reminder at exactly 8 consecutive', async () => {
       const h = createHarness();
       registerRead(h);
       const last = await runStreak(h, 8);
-      expect(last.output as string).toContain('<system-reminder>');
-      expect(last.output as string).toContain('without any further tool calls');
+      expect(outputText(last.output)).toContain('<system-reminder>');
+      expect(outputText(last.output)).toContain('without any further tool calls');
     });
 
     it('resets streak when a different call is interleaved', async () => {
@@ -417,7 +422,7 @@ describe('AgentToolDedupeService', () => {
       }
       await runStep(h, 1, 3, [toolCall('b1', 'Read', { p: 2 })]);
       const [last] = await runStep(h, 1, 4, [toolCall('c1', 'Read', { p: 1 })]);
-      expect(last!.result.output as string).not.toContain('<system-reminder>');
+      expect(outputText(last!.result.output)).not.toContain('<system-reminder>');
     });
 
     it('same-step dups inherit reminder1 when streak triggers on original', async () => {
@@ -434,10 +439,10 @@ describe('AgentToolDedupeService', () => {
 
       expect(tool.calls.length).toBe(callsBefore + 1);
       const byId = new Map(results.map((result) => [result.toolCallId, result.result]));
-      expect(byId.get('orig')!.output as string).toContain('<system-reminder>');
-      expect(byId.get('orig')!.output as string).toContain('what new information you expect');
-      expect(byId.get('dup')!.output as string).toContain('<system-reminder>');
-      expect(byId.get('dup')!.output as string).toContain('what new information you expect');
+      expect(outputText(byId.get('orig')!.output)).toContain('<system-reminder>');
+      expect(outputText(byId.get('orig')!.output)).toContain('what new information you expect');
+      expect(outputText(byId.get('dup')!.output)).toContain('<system-reminder>');
+      expect(outputText(byId.get('dup')!.output)).toContain('what new information you expect');
     });
 
     it('same-step spam alone does not trigger reminder', async () => {
@@ -448,7 +453,7 @@ describe('AgentToolDedupeService', () => {
       );
       const results = await runStep(h, 1, 1, calls);
       const original = results.find((result) => result.toolCallId === 'orig')!.result;
-      expect(original.output as string).not.toContain('<system-reminder>');
+      expect(outputText(original.output)).not.toContain('<system-reminder>');
     });
   });
 
@@ -461,7 +466,7 @@ describe('AgentToolDedupeService', () => {
         await runStep(h, 1, i + 1, [toolCall(`p${String(i)}`, 'X', {})]);
       }
       const [final] = await runStep(h, 1, 3, [toolCall('final', 'X', {})]);
-      expect(final!.result.output).toBe('hello' + REMINDER_TEXT_1);
+      expect(final!.result.output).toEqual(textOutput('hello' + REMINDER_TEXT_1));
     });
 
     it('appends reminder2 to a trailing text part at streak 5', async () => {
@@ -472,7 +477,7 @@ describe('AgentToolDedupeService', () => {
         await runStep(h, 1, i + 1, [toolCall(`p${String(i)}`, 'X', { a: 1 })]);
       }
       const [final] = await runStep(h, 1, 5, [toolCall('final', 'X', { a: 1 })]);
-      expect(final!.result.output).toBe('hello' + makeReminderText2(5));
+      expect(final!.result.output).toEqual(textOutput('hello' + makeReminderText2(5)));
     });
 
     it('pushes a new text part when trailing part is non-text', async () => {
@@ -492,20 +497,20 @@ describe('AgentToolDedupeService', () => {
 
     it('preserves isError flag when injecting reminder', async () => {
       const h = createHarness();
-      const tool = new EchoTool('X', () => ({ output: 'boom', isError: true }));
+      const tool = new EchoTool('X', () => ({ output: textOutput('boom'), isError: true }));
       h.registry.register(tool);
       for (let i = 0; i < 2; i += 1) {
         await runStep(h, 1, i + 1, [toolCall(`p${String(i)}`, 'X', {})]);
       }
       const [final] = await runStep(h, 1, 3, [toolCall('final', 'X', {})]);
       expect(final!.result.isError).toBe(true);
-      expect(final!.result.output as string).toContain('<system-reminder>');
+      expect(outputText(final!.result.output)).toContain('<system-reminder>');
     });
 
     it('mirrors the reminder into spill.suffix for results carrying a spill', async () => {
       const h = createHarness();
       const tool = new EchoTool('X', () => ({
-        output: 'truncated view',
+        output: textOutput('truncated view'),
         truncated: true,
         spill: { outputPath: '/tmp/log' },
       }));
@@ -520,7 +525,7 @@ describe('AgentToolDedupeService', () => {
     it('appends the reminder after an existing spill suffix', async () => {
       const h = createHarness();
       const tool = new EchoTool('X', () => ({
-        output: 'truncated view',
+        output: textOutput('truncated view'),
         truncated: true,
         spill: { outputPath: '/tmp/log', suffix: 'Command failed with exit code: 1.' },
       }));
@@ -544,7 +549,7 @@ describe('AgentToolDedupeService', () => {
       expect(b1).toBeUndefined();
 
       const b2 = await h.fireBefore(willCtx('c2', 'Read', { b: 2, a: 1 }));
-      expect(b2?.veto).toEqual({ output: '' });
+      expect(b2?.veto).toEqual({ output: [] });
 
       const d1 = didCtx('c1', 'Read', { a: 1, b: 2 }, okResult('SAME'));
       await h.executor.hooks.onDidExecuteTool.run(d1);
@@ -562,7 +567,7 @@ describe('AgentToolDedupeService', () => {
       const b1 = await h.fireBefore(willCtx('c1', 'Read', { path: '/a' }));
       expect(b1).toBeUndefined();
       const b2 = await h.fireBefore(willCtx('c2', 'Read', { path: '/a' }));
-      expect(b2?.veto).toEqual({ output: '' });
+      expect(b2?.veto).toEqual({ output: [] });
 
       const d1 = didCtx('c1', 'Read', { path: '/REWRITTEN' }, okResult('A'));
       await h.executor.hooks.onDidExecuteTool.run(d1);
@@ -589,7 +594,7 @@ describe('AgentToolDedupeService', () => {
       expect(b1).toBeUndefined();
       const b2 = await h.fireBefore(willCtx('dup', 'Read', { p: 1 }));
       const placeholder = b2!.veto!;
-      expect(placeholder).toEqual({ output: '' });
+      expect(placeholder).toEqual({ output: [] });
 
       await beforeStep(h, 1, 2);
       const d2 = didCtx('dup', 'Read', { p: 1 }, placeholder);
@@ -616,9 +621,9 @@ describe('AgentToolDedupeService', () => {
       const h = createHarness();
       h.registry.register(new EchoTool('Read'));
       const last = await runStreak(h, 8);
-      expect(last.output as string).toContain('<system-reminder>');
-      expect(last.output as string).toContain('Write your final response now');
-      expect(last.output as string).toContain('without any further tool calls');
+      expect(outputText(last.output)).toContain('<system-reminder>');
+      expect(outputText(last.output)).toContain('Write your final response now');
+      expect(outputText(last.output)).toContain('without any further tool calls');
       expect(last.isError).toBeUndefined();
       expect(stopTurnOf(last)).toBeFalsy();
     });
@@ -629,7 +634,7 @@ describe('AgentToolDedupeService', () => {
         const h = createHarness();
         h.registry.register(new EchoTool('Read'));
         const last = await runStreak(h, streak);
-        expect(last.output as string).toContain('Write your final response now');
+        expect(outputText(last.output)).toContain('Write your final response now');
         expect(last.isError).toBeUndefined();
         expect(stopTurnOf(last)).toBeFalsy();
       },
@@ -639,7 +644,7 @@ describe('AgentToolDedupeService', () => {
       const h = createHarness();
       h.registry.register(new EchoTool('Read'));
       const last = await runStreak(h, 12);
-      expect(last.output as string).toContain('Write your final response now');
+      expect(outputText(last.output)).toContain('Write your final response now');
       expect(last.isError).toBeUndefined();
       expect(stopTurnOf(last)).toBe(true);
     });
@@ -656,12 +661,12 @@ describe('AgentToolDedupeService', () => {
       const h = createHarness();
       h.registry.register(new EchoTool('Read'));
       const last = await runStreak(h, 8);
-      expect(last.output as string).toContain(REMINDER_TEXT_3.trim());
+      expect(outputText(last.output)).toContain(REMINDER_TEXT_3.trim());
     });
 
     it('keeps an error result error when force-stopping', async () => {
       const h = createHarness();
-      h.registry.register(new EchoTool('Read', () => ({ output: 'boom', isError: true })));
+      h.registry.register(new EchoTool('Read', () => ({ output: textOutput('boom'), isError: true })));
       let last: ToolResult | undefined;
       for (let i = 0; i < 12; i += 1) {
         const [result] = await runStep(h, 1, i + 1, [toolCall(`c${String(i)}`, 'Read', { p: 1 })]);
@@ -669,7 +674,7 @@ describe('AgentToolDedupeService', () => {
       }
       expect(last!.isError).toBe(true);
       expect(stopTurnOf(last!)).toBe(true);
-      expect(last!.output as string).toContain('Write your final response now');
+      expect(outputText(last!.output)).toContain('Write your final response now');
     });
   });
 
@@ -720,7 +725,7 @@ describe('AgentToolDedupeService', () => {
         stopTurn: true,
         stopTurnReason: REPEAT_BREAKER_STOP_REASON,
       });
-      expect(vetoed!.result.output as string).toContain(HANDOFF_VETO_TEXT);
+      expect(outputText(vetoed!.result.output)).toContain(HANDOFF_VETO_TEXT);
       expect(tool.calls).toHaveLength(12);
       expect(h.loop.queue.hasPendingRequests()).toBe(false);
       expect(
@@ -832,7 +837,7 @@ describe('AgentToolDedupeService', () => {
       await runStep(h, 7, 5, [toolCall('b2', 'B', {})]);
       const [last] = await runStep(h, 7, 6, [toolCall('c2', 'C', {})]);
 
-      expect(last!.result.output as string).not.toContain('<system-reminder>');
+      expect(outputText(last!.result.output)).not.toContain('<system-reminder>');
       expect(telemetryEvents.filter((e) => e.event === 'tool_call_turn_repeat')).toEqual([
         expect.objectContaining({
           event: 'tool_call_turn_repeat',
@@ -916,7 +921,7 @@ describe('AgentToolDedupeService', () => {
 
       const [result] = await runStep(h, 7, 3, [toolCall('a2', 'Read', { path: '/a' })]);
 
-      expect(result!.result.output as string).not.toContain('<system-reminder>');
+      expect(outputText(result!.result.output)).not.toContain('<system-reminder>');
       expect(telemetryEvents.filter((e) => e.event === 'tool_call_dedup_detected')).toHaveLength(0);
       expect(telemetryEvents.filter((e) => e.event === 'tool_call_repeat')).toHaveLength(0);
     });
@@ -1003,7 +1008,7 @@ describe('AgentToolDedupeService', () => {
 
       const [firstInNewTurn] = await runStep(h, 2, 1, [toolCall('b1', 'Read', { p: 1 })]);
 
-      expect(firstInNewTurn!.result.output as string).not.toContain('<system-reminder>');
+      expect(outputText(firstInNewTurn!.result.output)).not.toContain('<system-reminder>');
       expect(telemetryEvents.filter((e) => e.event === 'tool_call_repeat')).toHaveLength(0);
       expect(telemetryEvents.filter((e) => e.event === 'tool_call_dedup_detected')).toHaveLength(0);
     });
@@ -1035,7 +1040,7 @@ describe('AgentToolDedupeService', () => {
           approvalRule: this.name,
           execute: async () => {
             this.calls.push(args);
-            return { output: 'ran' };
+            return { output: textOutput('ran') };
           },
         };
       }
@@ -1061,7 +1066,7 @@ describe('AgentToolDedupeService', () => {
       expect(tool.calls).toHaveLength(0);
       expect(last!.isError).toBe(true);
       expect(last!.stopTurn).toBe(true);
-      expect(last!.output as string).toContain(REMINDER_TEXT_3.trim());
+      expect(outputText(last!.output)).toContain(REMINDER_TEXT_3.trim());
       const actions = telemetryEvents
         .filter((e) => e.event === 'tool_call_repeat')
         .map((e) => e.properties?.['action']);

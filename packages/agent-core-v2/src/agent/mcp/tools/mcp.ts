@@ -3,7 +3,7 @@ import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import { Error2, ErrorCodes, toErrorMessage } from '#/errors';
 import { isAbortError } from '#/_base/utils/abort';
 
-import type { ExecutableTool, ExecutableToolContext } from '#/tool/toolContract';
+import { textOutput, type ExecutableTool, type ExecutableToolContext } from '#/tool/toolContract';
 import { mcpResultToExecutableOutput, type McpOutputOptions } from '#/agent/mcp/output';
 import type { MCPClient, MCPToolResult } from '#/mcpCore/types';
 import {
@@ -39,9 +39,10 @@ export function createMcpTool(
       execute: async (context) => {
         if (options.isRemoved?.() === true) {
           return {
-            output:
+            output: textOutput(
               `MCP server for tool "${qualifiedName}" has been removed ` +
-              `(plugin uninstalled or config deleted). Do not call this tool again.`,
+                `(plugin uninstalled or config deleted). Do not call this tool again.`,
+            ),
             isError: true,
           };
         }

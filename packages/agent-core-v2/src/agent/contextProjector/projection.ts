@@ -340,7 +340,7 @@ function projectedContent(source: ContextMessage, onAnomaly?: OnAnomaly): Conten
   const content =
     source.role === 'tool'
       ? renderToolResultForModel({
-          output: outputFromToolContent(source.content),
+          output: source.content,
           isError: source.isError,
           note: source.note,
         })
@@ -376,11 +376,6 @@ function cleanContent(
     );
   }
   return [...content];
-}
-
-function outputFromToolContent(content: readonly ContentPart[]): string | readonly ContentPart[] {
-  const only = content[0];
-  return content.length === 1 && only?.type === 'text' ? only.text : content;
 }
 
 const TOOL_INTERRUPTED_TEXT =

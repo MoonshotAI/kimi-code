@@ -2,7 +2,7 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import type { ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ToolExecution } from '#/tool/toolContract';
 
 import { newTowerStore, runTowerTool, TOWER_MAIN_AGENT_ONLY } from '../support';
 import DESCRIPTION from './merge.md?raw';
@@ -23,7 +23,7 @@ export class TowerMergeTool implements ITowerMergeTool {
     if (this.scopeContext.agentId !== MAIN_AGENT_ID) {
       return {
         isError: true,
-        output: TOWER_MAIN_AGENT_ONLY,
+        output: textOutput(TOWER_MAIN_AGENT_ONLY),
       };
     }
     return {
@@ -35,10 +35,12 @@ export class TowerMergeTool implements ITowerMergeTool {
           const { mergeCommit, conflictsWith, noop } = await store.merge(args.branch);
           if (noop === true) {
             return {
-              output: [
-                `${args.branch} is a read-only survey with a zero-diff branch — mission marked merged, no git merge needed.`,
-                'Continue with the remaining missions in Dependency Flow order.',
-              ].join('\n'),
+              output: textOutput(
+                [
+                  `${args.branch} is a read-only survey with a zero-diff branch — mission marked merged, no git merge needed.`,
+                  'Continue with the remaining missions in Dependency Flow order.',
+                ].join('\n'),
+              ),
             };
           }
           const lines = [
@@ -57,7 +59,7 @@ export class TowerMergeTool implements ITowerMergeTool {
           } else {
             lines.push('The mission is now marked merged. Continue with the remaining missions in Dependency Flow order.');
           }
-          return { output: lines.join('\n') };
+          return { output: textOutput(lines.join('\n')) };
         }),
     };
   }

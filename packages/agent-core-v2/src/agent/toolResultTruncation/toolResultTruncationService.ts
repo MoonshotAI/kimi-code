@@ -5,6 +5,7 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import {
   DEFAULT_TOOL_RESULT_MAX_CHARS,
   DEFAULT_TOOL_RESULT_MAX_RETAINED_CHARS,
+  textOutput,
   type ExecutableToolResult,
 } from '#/tool/toolContract';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -146,10 +147,6 @@ function shapeOutput(
   output: ExecutableToolResult['output'],
   maxLineChars: number,
 ): ShapedOutput {
-  if (typeof output === 'string') {
-    const shaped = shapeStringPerLine(output, maxLineChars);
-    return { output: shaped.text, textChars: shaped.text.length, hasMedia: false };
-  }
   const out: ContentPart[] = [];
   let textChars = 0;
   let hasMedia = false;
@@ -205,9 +202,8 @@ function mergeSpillPointer(
   output: ExecutableToolResult['output'],
   pointer: string,
 ): ExecutableToolResult['output'] {
-  if (typeof output === 'string') return pointer;
   const mediaParts = output.filter((part) => part.type !== 'text' && part.type !== 'think');
-  if (mediaParts.length === 0) return pointer;
+  if (mediaParts.length === 0) return textOutput(pointer);
   return [{ type: 'text', text: pointer }, ...mediaParts];
 }
 
@@ -237,9 +233,6 @@ function appendToToolResultOutput(
   output: ExecutableToolResult['output'],
   note: string,
 ): ExecutableToolResult['output'] {
-  if (typeof output === 'string') {
-    return output.endsWith('\n') || output.length === 0 ? `${output}${note}` : `${output}\n${note}`;
-  }
   const parts = [...output];
   const last = parts.at(-1);
   if (last !== undefined && last.type === 'text') {

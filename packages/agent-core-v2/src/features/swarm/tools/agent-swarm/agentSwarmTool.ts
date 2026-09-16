@@ -1,5 +1,6 @@
 import {
   ToolAccesses,
+  textOutput,
   type ExecutableToolContext,
   type ExecutableToolResult,
   type ToolExecution,
@@ -128,11 +129,11 @@ export class AgentSwarmTool implements IAgentSwarmTool {
       this.swarmMode.enter('tool');
       const result = await this.runSwarm(args, context.signal, context.toolCallId);
       return {
-        output: result,
+        output: textOutput(result),
       };
     } catch (error) {
       return {
-        output: error instanceof Error ? error.message : String(error),
+        output: textOutput(error instanceof Error ? error.message : String(error)),
         isError: true,
       };
     }

@@ -2,6 +2,7 @@ import { readUtf8Lines } from '#/_base/execEnv/decodeText';
 import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { parseDaemonFileUrl } from '#/agent/media/mediaRef';
 import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
+import type { ContentPart } from '#human/llm/message';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 
 export interface FileReadSource {
@@ -13,8 +14,16 @@ export interface FileReadSource {
 }
 
 export function withAttachmentLocation(result: ExecutableToolResult, source: FileReadSource): ExecutableToolResult {
-  if (!result.isError || source.localPath === undefined || typeof result.output !== 'string') return result;
-  return { ...result, output: `${result.output}\nServer-local attachment path: ${JSON.stringify(source.localPath)}` };
+  if (!result.isError || source.localPath === undefined) return result;
+  const note = `Server-local attachment path: ${JSON.stringify(source.localPath)}`;
+  const parts: ContentPart[] = [...result.output];
+  const last = parts.at(-1);
+  if (last !== undefined && last.type === 'text') {
+    parts[parts.length - 1] = { type: 'text', text: `${last.text}\n${note}` };
+  } else {
+    parts.push({ type: 'text', text: note });
+  }
+  return { ...result, output: parts };
 }
 
 export function runtimeFileSource(fs: IHostFileSystem, path: string): FileReadSource {

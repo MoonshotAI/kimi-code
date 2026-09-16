@@ -345,6 +345,11 @@ describe('buildExportMarkdown', () => {
         content: [
           { type: 'text', text: 'what is this? ' },
           {
+            type: 'text',
+            text: '<system>Image compressed to fit model limits: original 3164x1960 image/png (1.1 MB) -> sent 2000x1239 image/png (274 KB).</system>',
+            contentType: 'text/xml',
+          },
+          {
             type: 'image_url',
             imageUrl: { url: 'kimi-file://f_1?path=%2FUsers%2Falice%2Fmedia%2Ff_1.png' },
           },
@@ -363,6 +368,7 @@ describe('buildExportMarkdown', () => {
     });
     expect(md).toContain('what is this?');
     expect(md).toContain('[image]');
+    expect(md).not.toContain('Image compressed');
     expect(md).not.toContain('/Users/alice');
     expect(md).not.toContain('kimi-file');
     expect(md).not.toContain('<image path=');

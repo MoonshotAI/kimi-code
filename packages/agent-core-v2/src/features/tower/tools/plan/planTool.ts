@@ -3,7 +3,7 @@ import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentTowerService } from '#/features/tower/tower';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import type { ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ToolExecution } from '#/tool/toolContract';
 
 import {
   newTowerStore,
@@ -30,7 +30,7 @@ export class TowerPlanTool implements ITowerPlanTool {
     if (this.scopeContext.agentId !== MAIN_AGENT_ID) {
       return {
         isError: true,
-        output: TOWER_MAIN_AGENT_ONLY,
+        output: textOutput(TOWER_MAIN_AGENT_ONLY),
       };
     }
     return {
@@ -40,7 +40,7 @@ export class TowerPlanTool implements ITowerPlanTool {
         runTowerTool(async () => {
           if (!this.tower.isActive) {
             return {
-              output: TOWER_MODE_USER_ENABLED_ONLY,
+              output: textOutput(TOWER_MODE_USER_ENABLED_ONLY),
               isError: true,
             };
           }
@@ -51,15 +51,17 @@ export class TowerPlanTool implements ITowerPlanTool {
               `| ${m.id} | ${m.title} | ${m.kind} | ${m.branch} | ${m.worktree} | ${m.scope.join(', ')} |`,
           );
           return {
-            output: [
-              `planned ${String(missions.length)} mission(s):`,
-              '',
-              '| ID | Mission | Kind | Branch | Worktree | Scope |',
-              '| -- | ------- | ---- | ------ | -------- | ----- |',
-              ...rows,
-              '',
-              'Next: TowerSpawn one worker per mission (workers get their worktree path and mission briefing automatically), plus reviewers for the branches. Survey missions need no reviewer — they close with a zero-diff TowerMerge.',
-            ].join('\n'),
+            output: textOutput(
+              [
+                `planned ${String(missions.length)} mission(s):`,
+                '',
+                '| ID | Mission | Kind | Branch | Worktree | Scope |',
+                '| -- | ------- | ---- | ------ | -------- | ----- |',
+                ...rows,
+                '',
+                'Next: TowerSpawn one worker per mission (workers get their worktree path and mission briefing automatically), plus reviewers for the branches. Survey missions need no reviewer — they close with a zero-diff TowerMerge.',
+              ].join('\n'),
+            ),
           };
         }),
     };

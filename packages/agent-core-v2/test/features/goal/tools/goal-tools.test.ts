@@ -22,6 +22,11 @@ import {
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IEventBus } from '#/app/event/eventBus';
 import { TurnStarted } from '#/agent/loop/turnEvents';
+import { textOutput, type ExecutableToolResult } from '#/tool/toolContract';
+
+function outputText(output: ExecutableToolResult['output']): string {
+  return output.map((part) => (part.type === 'text' ? part.text : '')).join('');
+}
 
 import {
   agentService,
@@ -79,7 +84,7 @@ describe('goal tools', () => {
       signal,
     });
 
-    expect(result.output).toBe('Goal not created: the current goal changed.');
+    expect(result.output).toEqual(textOutput('Goal not created: the current goal changed.'));
     expect(goals.getGoal().goal).toMatchObject({
       goalId: replacement.goalId,
       objective: 'new task',
@@ -100,7 +105,7 @@ describe('goal tools', () => {
       signal,
     });
 
-    expect(result.output).toBe('Goal not created: the current goal changed.');
+    expect(result.output).toEqual(textOutput('Goal not created: the current goal changed.'));
     expect(goals.getGoal().goal).toMatchObject({
       goalId: created.goalId,
       objective: 'external task',
@@ -115,7 +120,7 @@ describe('goal tools', () => {
 
     expect(result.isError).toBeFalsy();
     expect(result.stopTurn).toBeFalsy();
-    expect(result.output).toBe('Goal budget not set: no current goal.');
+    expect(result.output).toEqual(textOutput('Goal budget not set: no current goal.'));
   });
 
   it('SetGoalBudget returns stop signals when the requested limit is already exhausted', async () => {
@@ -129,7 +134,7 @@ describe('goal tools', () => {
     const result = await execution.execute({ turnId: 0, toolCallId: 'call_1', signal });
 
     expect(result.stopTurn).toBe(true);
-    expect(result.output).toContain('will stop now');
+    expect(outputText(result.output)).toContain('will stop now');
     expect(goals.getGoal().goal).toMatchObject({
       status: 'blocked',
       budget: { overBudget: true },
@@ -147,7 +152,7 @@ describe('goal tools', () => {
     const result = await execution.execute({ turnId: 0, toolCallId: 'call_1', signal });
 
     expect(result.stopTurn).toBeFalsy();
-    expect(result.output).toBe('Goal budget set: 5 turns.');
+    expect(result.output).toEqual(textOutput('Goal budget set: 5 turns.'));
     expect(goals.getGoal().goal).toMatchObject({
       status: 'active',
       budget: { turnBudget: 5, overBudget: false },
@@ -162,7 +167,7 @@ describe('goal tools', () => {
 
     const result = await execution.execute({ turnId: 0, toolCallId: 'call_old_budget', signal });
 
-    expect(result.output).toBe('Goal budget not set: the current goal changed.');
+    expect(result.output).toEqual(textOutput('Goal budget not set: the current goal changed.'));
     expect(goals.getGoal().goal).toMatchObject({
       goalId: replacement.goalId,
       budget: { turnBudget: null },
@@ -176,7 +181,7 @@ describe('goal tools', () => {
 
     const result = await execution.execute({ turnId: 0, toolCallId: 'call_old_budget', signal });
 
-    expect(result.output).toBe('Goal budget not set: the current goal changed.');
+    expect(result.output).toEqual(textOutput('Goal budget not set: the current goal changed.'));
     expect(goals.getGoal().goal).toMatchObject({
       goalId: created.goalId,
       budget: { turnBudget: null },
@@ -193,8 +198,8 @@ describe('goal tools', () => {
       1,
     );
 
-    expect(results[0]?.result.output).toBe(
-      'Goal changed since this turn started; ignored stale goal tool call.',
+    expect(results[0]?.result.output).toEqual(
+      textOutput('Goal changed since this turn started; ignored stale goal tool call.'),
     );
     expect(goals.getGoal().goal).toMatchObject({
       goalId: replacement.goalId,
@@ -213,8 +218,8 @@ describe('goal tools', () => {
       2,
     );
 
-    expect(results.find((result) => result.toolName === 'SetGoalBudget')?.result.output).toBe(
-      'Goal budget set: 5 turns.',
+    expect(results.find((result) => result.toolName === 'SetGoalBudget')?.result.output).toEqual(
+      textOutput('Goal budget set: 5 turns.'),
     );
     expect(goals.getGoal().goal).toMatchObject({
       objective: 'new task',
@@ -234,8 +239,8 @@ describe('goal tools', () => {
       3,
     );
 
-    expect(results.find((result) => result.toolName === 'SetGoalBudget')?.result.output).toBe(
-      'Goal budget set: 5 turns.',
+    expect(results.find((result) => result.toolName === 'SetGoalBudget')?.result.output).toEqual(
+      textOutput('Goal budget set: 5 turns.'),
     );
     expect(goals.getGoal().goal).toMatchObject({
       objective: 'new task',
@@ -264,7 +269,7 @@ describe('goal tools', () => {
     const execution = updateGoalTool.resolveExecution({ status: 'paused' } as never);
     expect(execution).toMatchObject({
       isError: true,
-      output: 'Invalid goal status. Use `active`, `complete`, or `blocked`.',
+      output: textOutput('Invalid goal status. Use `active`, `complete`, or `blocked`.'),
     });
     expect(goals.getGoal().goal?.status).toBe('active');
   });
@@ -276,9 +281,9 @@ describe('goal tools', () => {
     const result = await execution.execute({ turnId: 0, toolCallId: 'call_c', signal });
 
     expect(result.stopTurn).toBe(true);
-    expect(result.output).toContain('Goal completed successfully');
-    expect(result.output).toContain('Worked');
-    expect(result.output).toContain('Write a concise final message for the user');
+    expect(outputText(result.output)).toContain('Goal completed successfully');
+    expect(outputText(result.output)).toContain('Worked');
+    expect(outputText(result.output)).toContain('Write a concise final message for the user');
   });
 
   it('UpdateGoal blocked returns the blocked-reason prompt and stops the turn', async () => {
@@ -288,9 +293,9 @@ describe('goal tools', () => {
     const result = await execution.execute({ turnId: 0, toolCallId: 'call_b', signal });
 
     expect(result.stopTurn).toBe(true);
-    expect(result.output).toContain('Goal blocked.');
-    expect(result.output).toContain('Worked');
-    expect(result.output).toContain('concrete blocker');
+    expect(outputText(result.output)).toContain('Goal blocked.');
+    expect(outputText(result.output)).toContain('Worked');
+    expect(outputText(result.output)).toContain('concrete blocker');
   });
 
   it('UpdateGoal does not apply a delayed outcome to a replacement goal', async () => {
@@ -301,7 +306,7 @@ describe('goal tools', () => {
 
     const result = await execution.execute({ turnId: 0, toolCallId: 'call_old_outcome', signal });
 
-    expect(result.output).toBe('Goal not completed: the current goal changed.');
+    expect(result.output).toEqual(textOutput('Goal not completed: the current goal changed.'));
     expect(result.stopTurn).toBeFalsy();
     expect(goals.getGoal().goal).toMatchObject({
       goalId: replacement.goalId,
@@ -320,7 +325,7 @@ describe('goal tools', () => {
       signal,
     });
 
-    expect(result.output).toBe('Goal not completed: the current goal changed.');
+    expect(result.output).toEqual(textOutput('Goal not completed: the current goal changed.'));
     expect(result.stopTurn).toBeFalsy();
     expect(goals.getGoal().goal).toMatchObject({
       goalId: created.goalId,
@@ -346,7 +351,7 @@ describe('goal tools', () => {
       );
 
       const outcome = results.find((result) => result.toolName === 'UpdateGoal')?.result;
-      expect(outcome?.output).toContain(expectedOutput);
+      expect(outputText(outcome!.output)).toContain(expectedOutput);
       expect(outcome?.stopTurn).toBe(true);
       expect(goals.getGoal().goal?.status ?? null).toBe(expectedCurrentStatus);
     },
@@ -369,7 +374,7 @@ describe('goal tools', () => {
       );
 
       const outcome = results.find((result) => result.toolName === 'UpdateGoal')?.result;
-      expect(outcome?.output).toContain(expectedOutput);
+      expect(outputText(outcome!.output)).toContain(expectedOutput);
       expect(outcome?.stopTurn).toBe(true);
       expect(goals.getGoal().goal?.status ?? null).toBe(expectedCurrentStatus);
     },
@@ -379,17 +384,17 @@ describe('goal tools', () => {
     const done = updateGoalTool.resolveExecution({ status: 'complete' });
     if (done.isError === true) throw new Error('execution should not be an error');
     const doneResult = await done.execute({ turnId: 0, toolCallId: 'call_n1', signal });
-    expect(doneResult.output).toBe('Goal not completed: no active goal.');
+    expect(doneResult.output).toEqual(textOutput('Goal not completed: no active goal.'));
 
     const blocked = updateGoalTool.resolveExecution({ status: 'blocked' });
     if (blocked.isError === true) throw new Error('execution should not be an error');
     const blockedResult = await blocked.execute({ turnId: 0, toolCallId: 'call_n2', signal });
-    expect(blockedResult.output).toBe('Goal not blocked: no active goal.');
+    expect(blockedResult.output).toEqual(textOutput('Goal not blocked: no active goal.'));
 
     const resumed = updateGoalTool.resolveExecution({ status: 'active' });
     if (resumed.isError === true) throw new Error('execution should not be an error');
     const resumedResult = await resumed.execute({ turnId: 0, toolCallId: 'call_n3', signal });
-    expect(resumedResult.output).toBe('Goal not resumed: no current goal.');
+    expect(resumedResult.output).toEqual(textOutput('Goal not resumed: no current goal.'));
   });
 
   async function countGoalTurn(turnId: number): Promise<void> {

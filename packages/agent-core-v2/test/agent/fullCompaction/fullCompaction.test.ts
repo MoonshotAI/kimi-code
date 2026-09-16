@@ -47,6 +47,7 @@ import {
   type ResolvedAgentProfile,
   type ToolExecution,
 } from '#/index';
+import { textOutput } from '#/tool/toolContract';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IWireService } from '#/wire/wire';
 import { IAgentTodoService } from '#/features/todo/todoService';
@@ -3852,7 +3853,7 @@ function mcpTool(
     resolveExecution(): ToolExecution {
       return {
         approvalRule: name,
-        execute: async () => ({ output: 'mcp ok' }),
+        execute: async () => ({ output: textOutput('mcp ok') }),
       };
     },
   };

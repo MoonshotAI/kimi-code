@@ -38,8 +38,7 @@ export class QuestionBackgroundTask implements AgentTask {
   async start(sink: AgentTaskSink): Promise<void> {
     try {
       const result = await this.run(sink.signal);
-      const output =
-        typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
+      const output = result.output.map((p) => (p.type === 'text' ? p.text : '')).join('');
       if (result.isError === true) {
         await sink.settle({ status: 'failed', stopReason: output });
         return;

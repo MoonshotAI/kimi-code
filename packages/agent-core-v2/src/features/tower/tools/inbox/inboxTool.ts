@@ -1,7 +1,7 @@
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import type { ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ToolExecution } from '#/tool/toolContract';
 
 import { callerName, newTowerStore, runTowerTool } from '../support';
 import DESCRIPTION from './inbox.md?raw';
@@ -31,7 +31,7 @@ export class TowerInboxTool implements ITowerInboxTool {
           const caller = callerName(this.scopeContext.agentId, store, state);
           const items = await store.readInbox(caller, args.limit ?? DEFAULT_LIMIT);
           if (items.length === 0) {
-            return { output: `inbox empty for ${caller}` };
+            return { output: textOutput(`inbox empty for ${caller}`) };
           }
           const sections = items.map((item) =>
             [
@@ -47,11 +47,13 @@ export class TowerInboxTool implements ITowerInboxTool {
             ].join('\n'),
           );
           return {
-            output: [
-              `${String(items.length)} message(s) for ${caller} (newest first):`,
-              '',
-              sections.join('\n\n---\n\n'),
-            ].join('\n'),
+            output: textOutput(
+              [
+                `${String(items.length)} message(s) for ${caller} (newest first):`,
+                '',
+                sections.join('\n\n---\n\n'),
+              ].join('\n'),
+            ),
           };
         }),
     };

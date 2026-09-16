@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import type { ExecutableTool, ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ExecutableTool, type ToolExecution } from '#/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
@@ -52,7 +52,7 @@ class StubMcpTool implements ExecutableTool<Record<string, unknown>> {
       approvalRule: this.name,
       execute: async () => {
         this.calls += 1;
-        return { output: 'mcp ok' };
+        return { output: textOutput('mcp ok') };
       },
     };
   }
@@ -182,7 +182,7 @@ describe('progressive tool disclosure end-to-end', () => {
     ctx.mockNextResponse({ type: 'text', text: 'done' });
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'create a dashboard' }] });
-    await ctx.untilToolCall({ output: 'dashboard-created' });
+    await ctx.untilToolCall({ output: textOutput('dashboard-created') });
     await ctx.untilTurnEnd();
 
     const firstWire = ctx.llmCalls[0]!;

@@ -19,7 +19,7 @@ import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
 import { RuntimeRegistry } from '#/runtime/runtimeRegistry';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ExecutableToolContext, type ExecutableToolResult, type ToolExecution } from '#/tool/toolContract';
 
 const signal = new AbortController().signal;
 const PERMISSIVE_WORKSPACE = stubWorkspaceContext('/');
@@ -44,11 +44,7 @@ function readNote(status: string): string {
 }
 
 function toolContentString(result: ExecutableToolResult): string {
-  const c = result.output;
-  if (typeof c !== 'string') {
-    throw new TypeError(`expected string content, got ${typeof c}`);
-  }
-  return c;
+  return result.output.map((part) => (part.type === 'text' ? part.text : '')).join('');
 }
 
 function createTestEnv(home = '/home'): IHostEnvironment {
@@ -165,7 +161,7 @@ async function execute(tool: ReadTool, args: ReadInput): Promise<ExecutableToolR
         : `Tool "${tool.name}" failed to resolve execution: ${
             error instanceof Error ? error.message : String(error)
           }`;
-    return { isError: true, output };
+    return { isError: true, output: textOutput(output) };
   }
   if (execution.isError === true) return execution;
   const ctx: ExecutableToolContext = {
@@ -264,7 +260,7 @@ describe('ReadTool', () => {
     const result = await execute(toolWithContent('🙂tail'), { path: '/tmp/column.txt', ...offsets });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('column_offset');
+    expect(toolContentString(result)).toContain('column_offset');
   });
 
   it('resumes mixed short and long lines without changing the requested ending line', async () => {
@@ -390,7 +386,7 @@ describe('ReadTool', () => {
     const result = await execute(tool, { path: '/tmp/a.txt' });
 
     expect(result).toMatchObject({
-      output: '1\talpha\n2\tbeta',
+      output: textOutput('1\talpha\n2\tbeta'),
       note: readNote(
         '2 lines read from file starting from line 1. Total lines in file: 2. Requested range complete. Effective max_chars: 100000. End of file reached.',
       ),
@@ -412,7 +408,7 @@ describe('ReadTool', () => {
 
     const result = await execute(tool, { path: '/tmp/a.txt' });
 
-    expect(result.output).toBe(['1\talpha', '2\tbeta'].join('\n'));
+    expect(toolContentString(result)).toBe(['1\talpha', '2\tbeta'].join('\n'));
     expect(result.note).toBe(
       readNote(
         '2 lines read from file starting from line 1. Total lines in file: 2. Requested range complete. Effective max_chars: 100000. End of file reached.',
@@ -425,7 +421,7 @@ describe('ReadTool', () => {
 
     const result = await execute(tool, { path: '/tmp/a.txt' });
 
-    expect(result.output).toBe(['1\talpha\\r', '2\tbeta', '3\tgamma\\rdone'].join('\n'));
+    expect(toolContentString(result)).toBe(['1\talpha\\r', '2\tbeta', '3\tgamma\\rdone'].join('\n'));
     expect(result.note).toBe(
       readNote(
         '3 lines read from file starting from line 1. Total lines in file: 3. Requested range complete. Effective max_chars: 100000. End of file reached. Mixed or lone carriage-return line endings are shown as \\r. Use exact \\r\\n or \\r escapes in Edit.old_string for those lines.',
@@ -439,7 +435,7 @@ describe('ReadTool', () => {
     const result = await execute(tool, { path: '/tmp/a.txt', line_offset: 2, n_lines: 2 });
 
     expect(result).toMatchObject({
-      output: '2\tb\n3\tc',
+      output: textOutput('2\tb\n3\tc'),
       note: readNote('2 lines read from file starting from line 2. Total lines in file: 5. Requested range complete. Effective max_chars: 100000.'),
     });
   });
@@ -450,7 +446,7 @@ describe('ReadTool', () => {
     const result = await execute(tool, { path: '/tmp/a.txt', line_offset: 20 });
 
     expect(result).toMatchObject({
-      output: '',
+      output: textOutput(''),
       note: readNote('No lines read from file. Total lines in file: 2. Requested range complete. Effective max_chars: 100000. End of file reached.'),
     });
   });
@@ -461,7 +457,7 @@ describe('ReadTool', () => {
     const result = await execute(tool, { path: '/tmp/a.txt', line_offset: -3 });
 
     expect(result).toMatchObject({
-      output: '3\tc\n4\td\n5\te',
+      output: textOutput('3\tc\n4\td\n5\te'),
       note: readNote(
         '3 lines read from file starting from line 3. Total lines in file: 5. Requested range complete. Effective max_chars: 100000. End of file reached.',
       ),
@@ -474,7 +470,7 @@ describe('ReadTool', () => {
 
     const result = await execute(tool, { path: '/tmp/tail.log', line_offset: -3, n_lines: nLines });
 
-    expect(result.output).toBe('3\tc\n4\td\n5\te');
+    expect(toolContentString(result)).toBe('3\tc\n4\td\n5\te');
     expect(result.note).toContain('Requested range complete.');
     expect(readLines).toHaveBeenCalledTimes(1);
   });
@@ -484,7 +480,7 @@ describe('ReadTool', () => {
 
     const result = await execute(tool, { path: '/tmp/a.txt', line_offset: -5, n_lines: 2 });
 
-    expect(result.output).toBe('1\ta\n2\tb');
+    expect(toolContentString(result)).toBe('1\ta\n2\tb');
     expect(result.note).toBe(
       readNote('2 lines read from file starting from line 1. Total lines in file: 5. Requested range complete. Effective max_chars: 100000.'),
     );
@@ -508,7 +504,7 @@ describe('ReadTool', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      output: 'File changed while reading its tail. Retry Read with the updated file.',
+      output: textOutput('File changed while reading its tail. Retry Read with the updated file.'),
     });
     expect(result.note).toBeUndefined();
   });
@@ -531,7 +527,7 @@ describe('ReadTool', () => {
     const result = await execute(tool, { path: '/tmp/growing.log', line_offset: -1 });
 
     expect(result.isError).not.toBe(true);
-    expect(result.output).toBe('4\td');
+    expect(toolContentString(result)).toBe('4\td');
     expect(result.note).toContain('Total lines in file: 4.');
     expect(result.note).toContain('End of file reached.');
     expect(readLines).toHaveBeenCalledTimes(1);
@@ -547,7 +543,7 @@ describe('ReadTool', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      output: 'File changed while reading its tail. Retry Read with the updated file.',
+      output: textOutput('File changed while reading its tail. Retry Read with the updated file.'),
     });
     expect(result.note).toBeUndefined();
   });
@@ -575,7 +571,7 @@ describe('ReadTool', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      output: 'File changed while reading its tail. Retry Read with the updated file.',
+      output: textOutput('File changed while reading its tail. Retry Read with the updated file.'),
     });
     expect(result.note).toBeUndefined();
   });
@@ -587,7 +583,7 @@ describe('ReadTool', () => {
     const result = await execute(tool, { path: '../../outside.txt' });
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('absolute path');
+    expect(toolContentString(result)).toContain('absolute path');
     expect(readText).not.toHaveBeenCalled();
   });
 
@@ -607,7 +603,7 @@ describe('ReadTool', () => {
     const result = await execute(tool, { path: '../../skills/SKILL.md' });
 
     expect(result.isError ?? false).toBe(false);
-    expect(result.output).toBe('1\tskill body');
+    expect(toolContentString(result)).toBe('1\tskill body');
   });
 
   it('allows explicit absolute paths outside the workspace', async () => {
@@ -616,7 +612,7 @@ describe('ReadTool', () => {
 
     const result = await execute(tool, { path: '/tmp/external.txt' });
 
-    expect(result.output).toBe('1\texternal');
+    expect(toolContentString(result)).toBe('1\texternal');
     expect(result.note).toBe(
       readNote(
         '1 line read from file starting from line 1. Total lines in file: 1. Requested range complete. Effective max_chars: 100000. End of file reached.',
@@ -634,7 +630,7 @@ describe('ReadTool', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      output: '"/workspace/missing.txt" does not exist.',
+      output: textOutput('"/workspace/missing.txt" does not exist.'),
     });
     expect(readBytes).not.toHaveBeenCalled();
     expect(readLines).not.toHaveBeenCalled();
@@ -650,7 +646,7 @@ describe('ReadTool', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      output: '"/workspace/src" is not a file.',
+      output: textOutput('"/workspace/src" is not a file.'),
     });
     expect(readBytes).not.toHaveBeenCalled();
     expect(readLines).not.toHaveBeenCalled();
@@ -662,7 +658,7 @@ describe('ReadTool', () => {
 
     const result = await execute(tool, { path: '~/notes/today.txt' });
 
-    expect(result.output).toBe('1\thome note');
+    expect(toolContentString(result)).toBe('1\thome note');
     expect(result.note).toBe(
       readNote(
         '1 line read from file starting from line 1. Total lines in file: 1. Requested range complete. Effective max_chars: 100000. End of file reached.',
@@ -679,7 +675,7 @@ describe('ReadTool', () => {
     const result = await execute(tool, { path: '/workspace/.env' });
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('sensitive-file pattern');
+    expect(toolContentString(result)).toContain('sensitive-file pattern');
     expect(readText).not.toHaveBeenCalled();
   });
 
@@ -832,7 +828,7 @@ describe('ReadTool', () => {
     const result = await execute(createReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE), { path });
 
     expect(result.isError).not.toBe(true);
-    expect(result.output).toBe('1\t\uFFFD');
+    expect(toolContentString(result)).toBe('1\t\uFFFD');
     expect(result.note).toContain('Lossy UTF-16 decoding');
     expect(result.note).toContain('may differ from the original file');
     expect(result.note).toContain('Requested range complete.');
@@ -846,7 +842,7 @@ describe('ReadTool', () => {
     const result = await execute(createReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE), { path: '/tmp/literal.txt' });
 
     expect(result.isError).not.toBe(true);
-    expect(result.output).toBe(`1\t${content}`);
+    expect(toolContentString(result)).toBe(`1\t${content}`);
     expect(result.note).not.toContain('Lossy');
   });
 
@@ -911,8 +907,8 @@ describe('ReadTool', () => {
     const result = await execute(tool, { path: '/tmp/notes.TXT' });
 
     expect(result.isError).not.toBe(true);
-    expect(result.output).toContain('1\thello');
-    expect(result.output).toContain('2\tworld');
+    expect(toolContentString(result)).toContain('1\thello');
+    expect(toolContentString(result)).toContain('2\tworld');
     expect(result.note).toContain('Detected file encoding: UTF-16 LE');
   });
 
@@ -924,7 +920,7 @@ describe('ReadTool', () => {
     const result = await execute(tool, { path: '/tmp/cjk.txt' });
 
     expect(result.isError).not.toBe(true);
-    expect(result.output).toContain('1\t你好世界');
+    expect(toolContentString(result)).toContain('1\t你好世界');
     expect(result.note).toContain('Detected file encoding: UTF-16 LE');
   });
 
@@ -936,8 +932,8 @@ describe('ReadTool', () => {
     const result = await execute(tool, { path: '/tmp/no-bom.txt' });
 
     expect(result.isError).not.toBe(true);
-    expect(result.output).toContain('1\tfirst');
-    expect(result.output).toContain('2\tsecond');
+    expect(toolContentString(result)).toContain('1\tfirst');
+    expect(toolContentString(result)).toContain('2\tsecond');
     expect(result.note).toContain('Detected file encoding: UTF-16 LE');
   });
 
@@ -955,7 +951,7 @@ describe('ReadTool', () => {
     const result = await execute(tool, { path: '/tmp/be.txt' });
 
     expect(result.isError).not.toBe(true);
-    expect(result.output).toContain('1\tbig endian');
+    expect(toolContentString(result)).toContain('1\tbig endian');
     expect(result.note).toContain('Detected file encoding: UTF-16 BE');
   });
 
@@ -970,8 +966,8 @@ describe('ReadTool', () => {
     const result = await execute(tool, { path: '/tmp/tail.txt', line_offset: -1 });
 
     expect(result.isError).not.toBe(true);
-    expect(result.output).toContain('3\tthree');
-    expect(result.output).not.toContain('1\tone');
+    expect(toolContentString(result)).toContain('3\tthree');
+    expect(toolContentString(result)).not.toContain('1\tone');
     expect(result.note).toContain('Detected file encoding: UTF-16 LE');
   });
 
@@ -996,7 +992,7 @@ describe('ReadTool', () => {
     const result = await execute(tool, { path: '/tmp/long.txt' });
 
     expect(result.isError).not.toBe(true);
-    expect(result.output).toBe(`1\t${long}\n2\tshort\n3\t${long}`);
+    expect(toolContentString(result)).toBe(`1\t${long}\n2\tshort\n3\t${long}`);
     expect(result.note).toContain('Requested range complete.');
     expect(result.truncated).toBeUndefined();
   });
@@ -1078,7 +1074,7 @@ describe('ReadTool', () => {
     });
 
     expect(result.isError).not.toBe(true);
-    expect(result.output).toBe(`1\t${huge}`);
+    expect(toolContentString(result)).toBe(`1\t${huge}`);
     expect(result.note).toContain('Requested range complete.');
     expect(result.spillExempt).toBe(true);
   });
@@ -1093,7 +1089,7 @@ describe('ReadTool', () => {
     });
 
     expect(result.isError).not.toBe(true);
-    expect(result.output).toBe(`2\t${huge}`);
+    expect(toolContentString(result)).toBe(`2\t${huge}`);
     expect(result.note).toContain('End of file reached.');
   });
 
@@ -1102,7 +1098,7 @@ describe('ReadTool', () => {
     const tool = toolWithContent([long, 'short'].join('\n'));
     const result = await execute(tool, { path: '/tmp/ordinary.txt' });
 
-    expect(result.output).toBe(`1\t${long}\n2\tshort`);
+    expect(toolContentString(result)).toBe(`1\t${long}\n2\tshort`);
     expect(result.truncated).toBeUndefined();
     expect(result.spillExempt).toBe(true);
   });
@@ -1161,7 +1157,7 @@ describe('ReadTool', () => {
     const result = await execute(toolWithContent(content), { path: '/tmp/big.txt' });
 
     expect(result.isError).not.toBe(true);
-    expect(result.output).toContain('1001\tline 1001');
+    expect(toolContentString(result)).toContain('1001\tline 1001');
     expect(result.note).toContain('Requested range complete.');
     expect(result.truncated).toBeUndefined();
   });
@@ -1214,7 +1210,7 @@ describe('ReadTool', () => {
     const result = await execute(tool, { path: '/extra/notes.txt' });
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).toContain('1\textra-dir note');
+    expect(toolContentString(result)).toContain('1\textra-dir note');
   });
 
   it('reports nonexistent files with the expected does-not-exist phrasing', async () => {
@@ -1224,8 +1220,8 @@ describe('ReadTool', () => {
     const result = await execute(tool, { path: '/workspace/ghost.txt' });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('does not exist');
-    expect(result.output).toMatch(/not found|does not exist/i);
+    expect(toolContentString(result)).toContain('does not exist');
+    expect(toolContentString(result)).toMatch(/not found|does not exist/i);
   });
 
   it('returns empty output and Total lines: 0 for an empty file', async () => {
@@ -1234,7 +1230,7 @@ describe('ReadTool', () => {
     const result = await execute(tool, { path: '/tmp/empty.txt' });
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).toBe('');
+    expect(toolContentString(result)).toBe('');
     expect(result.note).toBe(
       readNote('No lines read from file. Total lines in file: 0. Requested range complete. Effective max_chars: 100000. End of file reached.'),
     );
@@ -1244,8 +1240,8 @@ describe('ReadTool', () => {
     const result = await execute(toolWithContent(''), { path: '/tmp/empty.txt', max_chars: 150 });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('too small');
-    expect(result.output).toContain('Increase max_chars');
+    expect(toolContentString(result)).toContain('too small');
+    expect(toolContentString(result)).toContain('Increase max_chars');
   });
 
   it('reads unicode (CJK + emoji + accented Latin) without loss', async () => {
@@ -1254,8 +1250,8 @@ describe('ReadTool', () => {
     const result = await execute(tool, { path: '/tmp/unicode.txt' });
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).toContain('1\tHello 世界 🌍');
-    expect(result.output).toContain('2\tUnicode test: café, naïve, résumé');
+    expect(toolContentString(result)).toContain('1\tHello 世界 🌍');
+    expect(toolContentString(result)).toContain('2\tUnicode test: café, naïve, résumé');
   });
 
   it('schema validation rejects n_lines=0 and n_lines=-1 with an n_lines-keyed error', () => {
@@ -1290,7 +1286,7 @@ describe('ReadTool', () => {
     const result = await execute(tool, { path: '/workspace/.gitignore' });
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).toContain('node_modules/');
+    expect(toolContentString(result)).toContain('node_modules/');
   });
 
   it('negative line_offset exceeding total lines returns the entire file', async () => {
@@ -1299,8 +1295,8 @@ describe('ReadTool', () => {
     const result = await execute(tool, { path: '/tmp/short.txt', line_offset: -100 });
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).toContain('1\ta');
-    expect(result.output).toContain('5\te');
+    expect(toolContentString(result)).toContain('1\ta');
+    expect(toolContentString(result)).toContain('5\te');
     expect(result.note).toContain('Total lines in file: 5. Requested range complete. Effective max_chars: 100000.');
   });
 
@@ -1319,7 +1315,7 @@ describe('ReadTool', () => {
     const result = await execute(tool, { path: '/tmp/last.txt', line_offset: -1 });
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).toContain('5\te');
+    expect(toolContentString(result)).toContain('5\te');
     expect(result.note).toContain('1 line read from file starting from line 5.');
   });
 
@@ -1331,7 +1327,7 @@ describe('ReadTool', () => {
     });
 
     expect(result.isError).not.toBe(true);
-    expect(result.output).toBe(`3\tshort\n4\t${longLine}\n5\tshort`);
+    expect(toolContentString(result)).toBe(`3\tshort\n4\t${longLine}\n5\tshort`);
     expect(result.truncated).toBeUndefined();
   });
 

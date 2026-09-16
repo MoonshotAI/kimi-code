@@ -12,6 +12,7 @@ import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import { inspectAgentRuntime, type IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import {
   ToolAccesses,
+  textOutput,
   type AgentTool,
   type ExecutableToolResult,
   type ToolExecution,
@@ -226,7 +227,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
 
   resolveExecution(args: ReadMediaFileInput): ToolExecution | Promise<ToolExecution> {
     if (!args.path) {
-      return { isError: true, output: 'File path cannot be empty.' };
+      return { isError: true, output: textOutput('File path cannot be empty.') };
     }
     if (isDaemonFileUrl(args.path)) {
       return this.attachmentExecution(args);
@@ -258,7 +259,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
         const lease = this.runtime.acquire(['fs']);
         try {
           if (lease.runtime.identity.generation !== inspected.identity.generation) {
-            return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
+            return { isError: true, output: textOutput('Runtime changed before execution. Retry the tool call.') };
           }
           return await this.execution(args, runtimeFileSource(lease.runtime.fs!, path), env);
         } finally {
@@ -288,7 +289,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     env: Pick<HostEnvironmentInfo, 'osKind'>,
   ): Promise<ExecutableToolResult> {
     if (!args.path) {
-      return { isError: true, output: 'File path cannot be empty.' };
+      return { isError: true, output: textOutput('File path cannot be empty.') };
     }
 
     try {
@@ -299,24 +300,26 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
       if (fileType.kind === 'text') {
         return {
           isError: true,
-          output: `"${args.path}" is a text file. Use Read to read text files.`,
+          output: textOutput(`"${args.path}" is a text file. Use Read to read text files.`),
         };
       }
       if (fileType.kind === 'unknown') {
         return {
           isError: true,
-          output:
+          output: textOutput(
             `"${args.path}" is not a supported image or video file. ` +
-            'Use Read for text files, or Bash or an MCP tool for other binary formats.',
+              'Use Read for text files, or Bash or an MCP tool for other binary formats.',
+          ),
         };
       }
 
       if (fileType.kind === 'image' && !this.capabilities.image_in) {
         return {
           isError: true,
-          output:
+          output: textOutput(
             'The current model does not support image input. ' +
-            'Tell the user to use a model with image input capability.',
+              'Tell the user to use a model with image input capability.',
+          ),
         };
       }
       if (
@@ -325,35 +328,37 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
       ) {
         return {
           isError: true,
-          output: buildImageConversionGuidance(source.localPath ?? args.path, fileType.mimeType, env.osKind),
+          output: textOutput(buildImageConversionGuidance(source.localPath ?? args.path, fileType.mimeType, env.osKind)),
         };
       }
       if (fileType.kind === 'video' && !this.capabilities.video_in) {
         return {
           isError: true,
-          output:
+          output: textOutput(
             'The current model does not support video input. ' +
-            'Tell the user to use a model with video input capability.',
+              'Tell the user to use a model with video input capability.',
+          ),
         };
       }
 
       const stat = await source.stat();
       if (stat.size === 0) {
-        return { isError: true, output: `"${args.path}" is empty.` };
+        return { isError: true, output: textOutput(`"${args.path}" is empty.`) };
       }
       if (stat.size > MAX_MEDIA_BYTES) {
         return {
           isError: true,
-          output:
+          output: textOutput(
             `"${args.path}" is ${String(stat.size)} bytes, which exceeds the ` +
-            `maximum ${String(MAX_MEDIA_MEGABYTES)}MB for media files.`,
+              `maximum ${String(MAX_MEDIA_MEGABYTES)}MB for media files.`,
+          ),
         };
       }
 
       if (fileType.kind === 'video' && (args.region !== undefined || args.full_resolution === true)) {
         return {
           isError: true,
-          output: 'region and full_resolution apply only to image files.',
+          output: textOutput('region and full_resolution apply only to image files.'),
         };
       }
 
@@ -364,7 +369,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
       ) {
         return {
           isError: true,
-          output: buildImageDecodeLimitError(stat.size),
+          output: textOutput(buildImageDecodeLimitError(stat.size)),
         };
       }
 
@@ -376,7 +381,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
       ) {
         return {
           isError: true,
-          output: buildFullResolutionLimitError(args.path, stat.size, this.inlineImageByteBudget),
+          output: textOutput(buildFullResolutionLimitError(args.path, stat.size, this.inlineImageByteBudget)),
         };
       }
 
@@ -393,10 +398,12 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
       ) {
         return {
           isError: true,
-          output: buildImageDeliveryLimitError({
-            finalBytes: stat.size,
-            ...imageDeliveryLimits,
-          }),
+          output: textOutput(
+            buildImageDeliveryLimitError({
+              finalBytes: stat.size,
+              ...imageDeliveryLimits,
+            }),
+          ),
         };
       }
 
@@ -412,7 +419,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
             telemetrySource: 'read_media',
           });
           if (!outcome.ok) {
-            return { isError: true, output: `Cannot read region from "${args.path}": ${outcome.error}` };
+            return { isError: true, output: textOutput(`Cannot read region from "${args.path}": ${outcome.error}`) };
           }
           const base64 = Buffer.from(outcome.data).toString('base64');
           mediaPart = {
@@ -433,10 +440,12 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
           if (data.length > this.inlineImageByteBudget) {
             return {
               isError: true,
-              output: buildFullResolutionLimitError(
-                args.path,
-                data.length,
-                this.inlineImageByteBudget,
+              output: textOutput(
+                buildFullResolutionLimitError(
+                  args.path,
+                  data.length,
+                  this.inlineImageByteBudget,
+                ),
               ),
             };
           }
@@ -466,12 +475,14 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
             if (compressed.finalByteLength > inlineLimit) {
               return {
                 isError: true,
-                output: buildOversizedImageConversionGuidance(
-                  source.localPath ?? args.path,
-                  fileType.mimeType,
-                  env.osKind,
-                  compressed.finalByteLength,
-                  inlineLimit,
+                output: textOutput(
+                  buildOversizedImageConversionGuidance(
+                    source.localPath ?? args.path,
+                    fileType.mimeType,
+                    env.osKind,
+                    compressed.finalByteLength,
+                    inlineLimit,
+                  ),
                 ),
               };
             }
@@ -481,11 +492,13 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
           ) {
             return {
               isError: true,
-              output: buildImageDeliveryLimitError({
-                finalBytes: compressed.finalByteLength,
-                readByteBudget,
-                maxEdge,
-              }),
+              output: textOutput(
+                buildImageDeliveryLimitError({
+                  finalBytes: compressed.finalByteLength,
+                  readByteBudget,
+                  maxEdge,
+                }),
+              ),
             };
           }
           const base64 = Buffer.from(compressed.data).toString('base64');
@@ -531,7 +544,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     } catch (error) {
       return {
         isError: true,
-        output: `Failed to read ${args.path}: ${error instanceof Error ? error.message : String(error)}`,
+        output: textOutput(`Failed to read ${args.path}: ${error instanceof Error ? error.message : String(error)}`),
       };
     }
   }

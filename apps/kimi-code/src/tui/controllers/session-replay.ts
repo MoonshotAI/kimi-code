@@ -48,6 +48,7 @@ import {
   pluginCommandFromOrigin,
   toolCallFromReplayMessage,
   toolResultOutput,
+  userVisibleContentParts,
   type BackgroundTaskNotificationOrigin,
   type ReplayRenderContext,
   type SkillActivationProjection,
@@ -429,7 +430,7 @@ export class SessionReplayRenderer {
     }
     this.advanceTurn(context);
     this.host.appendTranscriptEntry(
-      replayEntry(context, 'user', contentPartsToText(message.content), 'plain'),
+      replayEntry(context, 'user', contentPartsToText(userVisibleContentParts(message.content)), 'plain'),
     );
   }
 
@@ -447,7 +448,7 @@ export class SessionReplayRenderer {
       this.renderHookResult(context, hookResult);
     }
     this.host.appendTranscriptEntry(
-      replayEntry(context, 'user', contentPartsToText(stripBundledSkillParts(message)), 'plain'),
+      replayEntry(context, 'user', contentPartsToText(userVisibleContentParts(stripBundledSkillParts(message))), 'plain'),
     );
   }
 

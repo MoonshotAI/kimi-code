@@ -19,6 +19,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
   DEFAULT_TOOL_RESULT_MAX_RETAINED_CHARS,
   ToolAccesses,
+  textOutput,
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
@@ -124,7 +125,7 @@ export class GlobTool implements IGlobTool {
         const lease = this.runtime.acquire(['fs', 'process']);
         try {
           if (lease.runtime.identity.generation !== inspected.identity.generation) {
-            return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
+            return { isError: true, output: textOutput('Runtime changed before execution. Retry the tool call.') };
           }
           return await this.execution(
             lease.runtime.fs!,
@@ -156,17 +157,17 @@ export class GlobTool implements IGlobTool {
     try {
       const st = await fs.stat(searchRoot);
       if (!st.isDirectory) {
-        return { isError: true, output: `${searchRoot} is not a directory` };
+        return { isError: true, output: textOutput(`${searchRoot} is not a directory`) };
       }
     } catch (error) {
       if (errorCode(error) === 'ENOENT') {
-        return { isError: true, output: `${searchRoot} does not exist` };
+        return { isError: true, output: textOutput(`${searchRoot} does not exist`) };
       }
-      return { isError: true, output: error instanceof Error ? error.message : String(error) };
+      return { isError: true, output: textOutput(error instanceof Error ? error.message : String(error)) };
     }
 
     if (signal.aborted) {
-      return { isError: true, output: 'Glob aborted' };
+      return { isError: true, output: textOutput('Glob aborted') };
     }
 
     let rgPath: string;
@@ -184,30 +185,30 @@ export class GlobTool implements IGlobTool {
       }
     } catch (error) {
       if (signal.aborted) {
-        return { isError: true, output: 'Glob aborted' };
+        return { isError: true, output: textOutput('Glob aborted') };
       }
       this.telemetry.track2('glob_tool_rg_fallback', { outcome: 'failed' });
-      return { isError: true, output: rgUnavailableMessage(error) };
+      return { isError: true, output: textOutput(rgUnavailableMessage(error)) };
     }
 
     let run;
     try {
       run = await runRgOnce(processService, buildRgArgs(rgPath, args), signal, { cwd: searchRoot });
     } catch (error) {
-      return { isError: true, output: formatSpawnError(error) };
+      return { isError: true, output: textOutput(formatSpawnError(error)) };
     }
     if (run.kind === 'aborted') {
-      return { isError: true, output: 'Glob aborted' };
+      return { isError: true, output: textOutput('Glob aborted') };
     }
 
     if (shouldRetryRipgrepEagain(run)) {
       try {
         run = await runRgOnce(processService, buildRgArgs(rgPath, args, true), signal, { cwd: searchRoot });
       } catch (error) {
-        return { isError: true, output: formatSpawnError(error) };
+        return { isError: true, output: textOutput(formatSpawnError(error)) };
       }
       if (run.kind === 'aborted') {
-        return { isError: true, output: 'Glob aborted' };
+        return { isError: true, output: textOutput('Glob aborted') };
       }
     }
 
@@ -217,12 +218,12 @@ export class GlobTool implements IGlobTool {
     if (exitCode !== 0 && exitCode !== 1 && !timedOut) {
       const rawPathsBeforeError = splitCompletePaths(stdoutText, true);
       if (rawPathsBeforeError.length === 0) {
-        return { isError: true, output: formatGlobError(searchRoot, stderrText) };
+        return { isError: true, output: textOutput(formatGlobError(searchRoot, stderrText)) };
       }
       traversalWarning = formatGlobWarning(stderrText);
     }
     if (signal.aborted) {
-      return { isError: true, output: 'Glob aborted' };
+      return { isError: true, output: textOutput('Glob aborted') };
     }
 
     const rawPaths = splitCompletePaths(stdoutText, bufferTruncated || timedOut).map((p) =>
@@ -318,11 +319,11 @@ export class GlobTool implements IGlobTool {
     if (candidates.length > 0 && displayLines.length === 0) {
       return {
         isError: true,
-        output: 'Glob cannot fit a complete path and its diagnostics within the output limit. Narrow the search path or pattern.',
+        output: textOutput('Glob cannot fit a complete path and its diagnostics within the output limit. Narrow the search path or pattern.'),
       };
     }
     const notices = pageNotices(displayLines.length, displayLines.length < candidates.length);
-    return { output: [...notices.lines, ...displayLines, ...notices.footer].join('\n') };
+    return { output: textOutput([...notices.lines, ...displayLines, ...notices.footer].join('\n')) };
   }
 }
 

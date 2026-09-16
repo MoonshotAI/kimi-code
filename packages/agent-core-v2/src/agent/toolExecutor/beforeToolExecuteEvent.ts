@@ -2,10 +2,11 @@ import { Emitter } from '#/_base/event';
 import { BugIndicatingError } from '#/errors';
 import type { ToolCall } from '#human/llm/message';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
-import type {
-  ExecutableTool,
-  ExecutableToolResult,
-  RunnableToolExecution,
+import {
+  textOutput,
+  type ExecutableTool,
+  type ExecutableToolResult,
+  type RunnableToolExecution,
 } from '#/tool/toolContract';
 
 import type {
@@ -17,7 +18,7 @@ import type {
 type PendingVetoFactory = () => Promise<BeforeExecuteDecision | undefined>;
 
 export function denyToolExecution(reason: string): ExecutableToolResult {
-  return { output: reason, isError: true };
+  return { output: textOutput(reason), isError: true };
 }
 
 export class BeforeToolExecuteEventImpl implements BeforeToolExecuteEvent {

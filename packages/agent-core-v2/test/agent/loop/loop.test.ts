@@ -34,7 +34,7 @@ import {
   TurnStepStarted,
 } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
-import type { ExecutableTool } from '#/tool/toolContract';
+import { textOutput, type ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IEventBus } from '#/app/event/eventBus';
@@ -287,7 +287,7 @@ describe('Agent loop', () => {
       parameters: { type: 'object', properties: {}, additionalProperties: false },
       resolveExecution: () => ({
         approvalRule: 'Work',
-        execute: async () => ({ output: 'should never run' }),
+        execute: async () => ({ output: textOutput('should never run') }),
       }),
     };
     ctx.get(IAgentToolRegistryService).register(workTool);
@@ -475,7 +475,7 @@ describe('Agent loop', () => {
       },
       resolveExecution: () => ({
         approvalRule: 'Lookup',
-        execute: async () => ({ output: 'lookup-result' }),
+        execute: async () => ({ output: textOutput('lookup-result') }),
       }),
     };
 
@@ -527,8 +527,8 @@ describe('Agent loop', () => {
       [wire] permission.record_approval_result   { "turnId": 0, "toolCallId": "call_lookup", "toolName": "Lookup", "action": "Approve Lookup", "result": { "decision": "approved", "selectedLabel": "approve" }, "agentId": "main", "time": "<time>" }
       [emit] tool.call.started                   { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "moon" } }
       [wire] context.append_loop_event           { "agentId": "main", "event": { "type": "tool.call", "uuid": "<uuid-3>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "moon" } }, "time": "<time>" }
-      [emit] tool.result                         { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "output": "lookup-result" }
-      [wire] context.append_loop_event           { "agentId": "main", "event": { "type": "tool.result", "parentUuid": "<uuid-3>", "toolCallId": "call_lookup", "result": { "output": "lookup-result" } }, "time": "<time>" }
+      [emit] tool.result                         { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "output": [ { "type": "text", "text": "lookup-result" } ] }
+      [wire] context.append_loop_event           { "agentId": "main", "event": { "type": "tool.result", "parentUuid": "<uuid-3>", "toolCallId": "call_lookup", "result": { "output": [ { "type": "text", "text": "lookup-result" } ] } }, "time": "<time>" }
       [emit] turn.step.completed                 { "time": "<time>", "agentId": "main", "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 4, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use", "providerFinishReason": "tool_calls", "rawFinishReason": "tool_calls" }
       [wire] context.append_loop_event           { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "finishReason": "tool_use", "usage": { "inputOther": 4, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-1", "providerFinishReason": "tool_calls", "rawFinishReason": "tool_calls" }, "time": "<time>" }
       [emit] turn.step.started                   { "time": "<time>", "agentId": "main", "turnId": 0, "step": 2, "stepId": "<uuid-4>" }
@@ -569,7 +569,7 @@ describe('Agent loop', () => {
         parameters: { type: 'object', properties: {}, additionalProperties: false },
         resolveExecution: () => ({
           approvalRule: 'Fast',
-          execute: async () => ({ output: 'fast result' }),
+          execute: async () => ({ output: textOutput('fast result') }),
         }),
       };
       const slowTool: ExecutableTool = {
@@ -582,7 +582,7 @@ describe('Agent loop', () => {
             slowStarted.resolve();
             await slowGate.promise;
             slowSawAbort = signal.aborted;
-            return { output: 'slow result' };
+            return { output: textOutput('slow result') };
           },
         }),
       };
@@ -649,7 +649,7 @@ describe('Agent loop', () => {
       },
       resolveExecution: () => ({
         approvalRule: 'Lookup',
-        execute: async () => ({ output: 'lookup-result' }),
+        execute: async () => ({ output: textOutput('lookup-result') }),
       }),
     };
 
@@ -755,7 +755,7 @@ describe('Agent loop', () => {
       },
       resolveExecution: () => ({
         approvalRule: 'Lookup',
-        execute: async () => ({ output: 'lookup-result' }),
+        execute: async () => ({ output: textOutput('lookup-result') }),
       }),
     };
     profile.update({ activeToolNames: ['Lookup'] });
@@ -820,7 +820,7 @@ describe('Agent loop', () => {
       parameters: { type: 'object', properties: {}, additionalProperties: false },
       resolveExecution: () => ({
         approvalRule: 'Stopper',
-        execute: async () => ({ output: 'stopped', stopTurn: true, stopTurnReason: 'demo_reason' }),
+        execute: async () => ({ output: textOutput('stopped'), stopTurn: true, stopTurnReason: 'demo_reason' }),
       }),
     };
     profile.update({ activeToolNames: ['Stopper'] });
@@ -1438,7 +1438,7 @@ describe('turn telemetry', () => {
         parameters: { type: 'object', properties: {}, additionalProperties: false },
         resolveExecution: () => ({
           approvalRule: 'Work',
-          execute: async () => ({ output: 'should never run' }),
+          execute: async () => ({ output: textOutput('should never run') }),
         }),
       };
       local.get(IAgentToolRegistryService).register(workTool);
@@ -1904,8 +1904,9 @@ describe('interruption reminder', () => {
       expect(toolResults.filter((event) => event.toolCallId === 'call-work-2')).toEqual([
         expect.objectContaining({
           result: {
-            output:
+            output: textOutput(
               'The user manually interrupted "Work" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user\'s next instruction.',
+            ),
             isError: true,
           },
         }),
@@ -2194,11 +2195,11 @@ function registerAbortableWorkTool(
       accesses: [],
       execute: async ({ signal }) => {
         executions += 1;
-        if (executions === 1) return { output: 'first step complete' };
+        if (executions === 1) return { output: textOutput('first step complete') };
         slowToolStarted.resolve();
         if (ignoreAbortGate !== undefined) {
           await ignoreAbortGate;
-          return { output: 'second step late result' };
+          return { output: textOutput('second step late result') };
         }
         if (!signal.aborted) {
           await new Promise<void>((resolve) => {
@@ -2211,7 +2212,7 @@ function registerAbortableWorkTool(
             );
           });
         }
-        return { output: 'second step cancelled' };
+        return { output: textOutput('second step cancelled') };
       },
     }),
   };

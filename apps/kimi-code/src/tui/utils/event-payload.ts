@@ -77,7 +77,16 @@ export function argsRecord(args: unknown): Record<string, unknown> {
 
 export function serializeToolResultOutput(output: unknown): string {
   if (typeof output === 'string') return output;
+  if (Array.isArray(output) && output.every((part) => isTextPart(part))) {
+    return output.map((part) => part.text).join('');
+  }
   return JSON.stringify(output, null, 2);
+}
+
+function isTextPart(part: unknown): part is { type: 'text'; text: string } {
+  return (
+    typeof part === 'object' && part !== null && (part as { type?: unknown }).type === 'text'
+  );
 }
 
 export function isTodoItemShape(

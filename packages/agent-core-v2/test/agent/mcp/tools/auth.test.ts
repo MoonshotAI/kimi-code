@@ -7,6 +7,10 @@ import type { ToolUpdate } from '#/tool/toolContract';
 
 import { executeTool } from '../../../mcpCore/stubs';
 
+function outputText(output: Awaited<ReturnType<typeof executeTool>>['output']): string {
+  return output.map((part) => (part.type === 'text' ? part.text : '')).join('');
+}
+
 function fakeOAuthService(
   begin: (
     serverName: string,
@@ -59,7 +63,7 @@ describe('createMcpAuthTool', () => {
     });
     const final = await result;
     expect(final.isError).toBeUndefined();
-    expect(final.output).toMatch(/authenticated successfully/);
+    expect(outputText(final.output)).toMatch(/authenticated successfully/);
     expect(reconnectCalls).toBe(1);
     expect(updates.some((u) => u.text?.includes('https://example.com/authorize'))).toBe(true);
     const authUpdate = updates.find(
@@ -87,7 +91,7 @@ describe('createMcpAuthTool', () => {
     });
     const final = await result;
     expect(final.isError).toBeUndefined();
-    expect(final.output).toMatch(/already had valid OAuth credentials/);
+    expect(outputText(final.output)).toMatch(/already had valid OAuth credentials/);
     expect(reconnectCalls).toBe(1);
   });
 
@@ -101,7 +105,7 @@ describe('createMcpAuthTool', () => {
     });
     const final = await result;
     expect(final.isError).toBe(true);
-    expect(final.output).toMatch(/DCR unsupported/);
+    expect(outputText(final.output)).toMatch(/DCR unsupported/);
   });
 
   it('returns isError and surfaces the URL when complete rejects', async () => {
@@ -118,8 +122,8 @@ describe('createMcpAuthTool', () => {
     });
     const final = await result;
     expect(final.isError).toBe(true);
-    expect(final.output).toMatch(/timed out/);
-    expect(final.output).toMatch(/https:\/\/example\.com\/authorize/);
+    expect(outputText(final.output)).toMatch(/timed out/);
+    expect(outputText(final.output)).toMatch(/https:\/\/example\.com\/authorize/);
   });
 
   it('returns isError when reconnect after success fails', async () => {
@@ -136,6 +140,6 @@ describe('createMcpAuthTool', () => {
     });
     const final = await result;
     expect(final.isError).toBe(true);
-    expect(final.output).toMatch(/reconnect failed/);
+    expect(outputText(final.output)).toMatch(/reconnect failed/);
   });
 });

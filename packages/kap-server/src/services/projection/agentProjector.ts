@@ -1089,7 +1089,7 @@ export class AgentMessageProjector {
     const isError = event.isError === true;
     tool.status = isError ? 'error' : 'done';
     tool.output = event.output;
-    tool.error = isError && typeof event.output === 'string' ? event.output : undefined;
+    tool.error = isError ? toolResultErrorText(event.output) : undefined;
     ops.push(this.toolOp(tool));
     return ops;
   }
@@ -2340,6 +2340,17 @@ export function wireContentParts(content: readonly ContentPart[]): WireContentPa
 
 export function textPartsOf(text: string): WireContentPart[] {
   return [{ type: 'text', text, meta: {} }];
+}
+
+function toolResultErrorText(output: unknown): string | undefined {
+  if (typeof output === 'string') return output;
+  if (!Array.isArray(output)) return undefined;
+  const text = output
+    .filter((part): part is { type: 'text'; text: string } =>
+      typeof part === 'object' && part !== null && (part as { type?: unknown }).type === 'text')
+    .map((part) => part.text)
+    .join('');
+  return text.length > 0 ? text : undefined;
 }
 
 function hookPayload(event: {

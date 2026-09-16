@@ -836,8 +836,9 @@ describe('server-v2 /api/v1 prompts', () => {
 
     const content = submitted.body.data.content as Array<Record<string, unknown>>;
     expect(content).toHaveLength(2);
-    const caption = content[0] as { type: string; text: string };
+    const caption = content[0] as { type: string; text: string; contentType?: string };
     expect(caption.type).toBe('text');
+    expect(caption.contentType).toBe('text/xml');
     expect(caption.text).toContain('Image compressed');
     expect(caption.text).toContain('3600x1800');
     const pathMatch = /saved at "([^"]+)"/.exec(caption.text);
@@ -873,6 +874,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const captionPart = promptMessage?.content[0];
     expect(captionPart?.type).toBe('text');
     expect((captionPart as { type: 'text'; text: string }).text).toContain('Image compressed');
+    expect((captionPart as { type: 'text'; contentType?: string }).contentType).toBe('text/xml');
   });
 
   it('rolls back a compressed upload when a later prompt part fails to resolve', async () => {
@@ -1593,8 +1595,9 @@ describe('server-v2 /api/v1 prompts', () => {
 
       const content = submitted.body.data.content as Array<Record<string, unknown>>;
       expect(content).toHaveLength(2);
-      const caption = content[0] as { type: string; text: string };
+      const caption = content[0] as { type: string; text: string; contentType?: string };
       expect(caption.type).toBe('text');
+      expect(caption.contentType).toBe('text/xml');
       expect(caption.text).toContain('Image compressed');
       expect(caption.text).toContain(`saved at "${sourcePath}"`);
       expect(await readFile(sourcePath)).toEqual(bigPng);
