@@ -300,8 +300,8 @@ export class AgentMcpService extends Service implements IAgentMcpService {
             reconnect: (signal) => this.reconnectForToolCall(serverName, client, signal),
             isRemoved: () =>
               this.mcpHandle.connectionManager.get(serverName)?.status === 'removed',
-            onUnauthorized: (error) =>
-              this.mcpHandle.connectionManager.markNeedsAuth(serverName, error),
+            onUnauthorized: (error, failedClient) =>
+              this.mcpHandle.connectionManager.markNeedsAuth(serverName, error, failedClient),
           }),
           { source: 'mcp', disclosure: deferred ? 'deferred' : 'inline' },
         ),

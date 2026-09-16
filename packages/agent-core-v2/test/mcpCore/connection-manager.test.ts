@@ -22,6 +22,7 @@ import { Error2 } from '#/errors';
 import { KIMI_MCP_CLIENT_NAME } from '#/mcpCore/client-shared';
 import { McpConnectionManager, type McpConnectionManagerOptions, type McpServerEntry } from '#/mcpCore/connection-manager';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
+import type { MCPClient } from '#/mcpCore/types';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import type { RuntimeBinding } from '#/runtime/runtime';
@@ -1114,6 +1115,32 @@ describe('McpConnectionManager', () => {
       ]);
     } finally {
       releaseClose?.();
+      await cm.shutdown();
+      connect.mockRestore();
+      listTools.mockRestore();
+    }
+  }, 15000);
+
+  it('rejects a stale 401 report when the entry has already moved to a new client', async () => {
+    const connect = vi.spyOn(Client.prototype, 'connect').mockResolvedValue();
+    const listTools = vi.spyOn(Client.prototype, 'listTools').mockResolvedValue({ tools: [] });
+    const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+    const cm = createManager({ oauthService });
+    const internals = () =>
+      (cm as unknown as { entries: Map<string, { client?: MCPClient }> }).entries.get('hyper')
+        ?.client;
+    try {
+      await cm.connectAll({ hyper: { transport: 'http', url: 'https://example.test/mcp' } });
+      const clientA = internals();
+      await cm.reconnect('hyper');
+      const clientB = internals();
+      expect(clientB).not.toBe(clientA);
+      const error = Object.assign(new Error('HTTP 401'), { code: 401 });
+      await expect(cm.markNeedsAuth('hyper', error, clientA)).resolves.toBe(false);
+      expect(cm.get('hyper')?.status).toBe('connected');
+      await expect(cm.markNeedsAuth('hyper', error, clientB)).resolves.toBe(true);
+      expect(cm.get('hyper')?.status).toBe('needs-auth');
+    } finally {
       await cm.shutdown();
       connect.mockRestore();
       listTools.mockRestore();

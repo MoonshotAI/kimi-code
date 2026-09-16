@@ -45,9 +45,10 @@ describe('createMcpTool', () => {
 
   it('reports 401 to onUnauthorized and throws guidance towards the authenticate tool', async () => {
     const error = unauthorizedError();
+    const client = failingClient(error);
     const reconnect = vi.fn();
     const onUnauthorized = vi.fn().mockResolvedValue(true);
-    const tool = createMcpTool('mcp__hyper__echo', echoTool, failingClient(error), {
+    const tool = createMcpTool('mcp__hyper__echo', echoTool, client, {
       serverName: 'hyper',
       reconnect,
       onUnauthorized,
@@ -60,14 +61,15 @@ describe('createMcpTool', () => {
         signal: new AbortController().signal,
       }),
     ).rejects.toThrow(/mcp__hyper__authenticate/);
-    expect(onUnauthorized).toHaveBeenCalledWith(error);
+    expect(onUnauthorized).toHaveBeenCalledWith(error, client);
     expect(reconnect).not.toHaveBeenCalled();
   });
 
   it('propagates the original error when onUnauthorized declines it', async () => {
     const error = unauthorizedError();
+    const client = failingClient(error);
     const onUnauthorized = vi.fn().mockResolvedValue(false);
-    const tool = createMcpTool('mcp__hyper__echo', echoTool, failingClient(error), {
+    const tool = createMcpTool('mcp__hyper__echo', echoTool, client, {
       serverName: 'hyper',
       onUnauthorized,
     });
@@ -79,7 +81,7 @@ describe('createMcpTool', () => {
         signal: new AbortController().signal,
       }),
     ).rejects.toThrow('HTTP 401: Unauthorized');
-    expect(onUnauthorized).toHaveBeenCalledWith(error);
+    expect(onUnauthorized).toHaveBeenCalledWith(error, client);
   });
 
   it('routes a 401 from the liveness-probe retry through onUnauthorized', async () => {
@@ -108,8 +110,8 @@ describe('createMcpTool', () => {
         signal: new AbortController().signal,
       }),
     ).rejects.toThrow(/mcp__hyper__authenticate/);
-    expect(onUnauthorized).toHaveBeenCalledWith(transportError);
-    expect(onUnauthorized).toHaveBeenCalledWith(error);
+    expect(onUnauthorized).toHaveBeenCalledWith(transportError, client);
+    expect(onUnauthorized).toHaveBeenCalledWith(error, client);
     expect(reconnect).not.toHaveBeenCalled();
   });
 
@@ -140,6 +142,6 @@ describe('createMcpTool', () => {
         signal: new AbortController().signal,
       }),
     ).rejects.toThrow(/mcp__hyper__authenticate/);
-    expect(onUnauthorized).toHaveBeenCalledWith(error);
+    expect(onUnauthorized).toHaveBeenCalledWith(error, freshClient);
   });
 });

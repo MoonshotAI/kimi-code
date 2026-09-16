@@ -95,10 +95,10 @@ class FakeMcpManager {
 
   reconnectHandler: (name: string) => Promise<void> = async () => {};
 
-  markNeedsAuthHandler: (name: string, error: unknown) => Promise<boolean> = async () => false;
+  markNeedsAuthHandler: (name: string, error: unknown, client?: MCPClient) => Promise<boolean> = async () => false;
 
-  async markNeedsAuth(name: string, error: unknown): Promise<boolean> {
-    return this.markNeedsAuthHandler(name, error);
+  async markNeedsAuth(name: string, error: unknown, client?: MCPClient): Promise<boolean> {
+    return this.markNeedsAuthHandler(name, error, client);
   }
 
   async reconnect(name: string): Promise<void> {

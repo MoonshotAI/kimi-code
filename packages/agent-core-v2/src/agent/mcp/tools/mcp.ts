@@ -22,7 +22,7 @@ interface McpToolOptions {
   readonly providerType?: () => string | undefined;
   readonly reconnect?: (signal?: AbortSignal) => Promise<MCPClient | undefined>;
   readonly isRemoved?: () => boolean;
-  readonly onUnauthorized?: (error: unknown) => Promise<boolean>;
+  readonly onUnauthorized?: (error: unknown, client: MCPClient) => Promise<boolean>;
 }
 
 export function createMcpTool(
@@ -52,7 +52,7 @@ export function createMcpTool(
         try {
           result = await callTool(client, args, context.signal);
         } catch (error) {
-          await throwIfUnauthorized(options, qualifiedName, error);
+          await throwIfUnauthorized(options, qualifiedName, error, client);
           result = await retryAfterReconnect(
             error,
             client,
@@ -79,8 +79,9 @@ async function throwIfUnauthorized(
   options: McpToolOptions,
   qualifiedName: string,
   error: unknown,
+  client: MCPClient,
 ): Promise<void> {
-  if ((await options.onUnauthorized?.(error)) !== true) return;
+  if ((await options.onUnauthorized?.(error, client)) !== true) return;
   const serverName = options.serverName ?? qualifiedName;
   throw new Error2(
     ErrorCodes.MCP_OAUTH_FAILED,
@@ -118,7 +119,7 @@ async function retryAfterReconnect(
       try {
         return await callTool(client, args, context.signal);
       } catch (retryError) {
-        await throwIfUnauthorized(options, qualifiedName, retryError);
+        await throwIfUnauthorized(options, qualifiedName, retryError, client);
         if (isUnrecoverable(retryError)) {
           throw retryError;
         }
@@ -147,7 +148,7 @@ async function retryAfterReconnect(
   try {
     return await callTool(freshClient, args, context.signal);
   } catch (finalError) {
-    await throwIfUnauthorized(options, qualifiedName, finalError);
+    await throwIfUnauthorized(options, qualifiedName, finalError, freshClient);
     throw finalError;
   }
 }
