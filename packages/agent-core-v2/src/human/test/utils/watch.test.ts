@@ -181,6 +181,39 @@ describe('watch signal mode', () => {
     ]);
   });
 
+  it('does not invalidate when an ignored native signal path is a child starting with two dots', () => {
+    const rig = signalRig();
+    const events: WatchChange[] = [];
+    handle = rig.service.watch('/repo', {
+      signal: true,
+      ignored: (path) => path.includes('..cache'),
+    });
+    handle.onDidChange((event) => events.push(event));
+
+    rig.attempt(0).emit(join('..cache', 'index.json'));
+
+    expect(events).toEqual([]);
+  });
+
+  it('maps resolved children starting with two dots back to the requested path', () => {
+    const rig = signalRig({
+      platform: 'win32',
+      resolvePath: (path) => path.replace('/RUNNER~1/', '/runneradmin/'),
+    });
+    const ignoredPaths: string[] = [];
+    handle = rig.service.watch('/Users/RUNNER~1/repo', {
+      signal: true,
+      ignored: (path) => {
+        ignoredPaths.push(path);
+        return false;
+      },
+    });
+
+    rig.attempt(0).emit(join('..cache', 'index.json'));
+
+    expect(ignoredPaths).toEqual([join('/Users/RUNNER~1/repo', '..cache/index.json')]);
+  });
+
   it('increases the retry delay after consecutive native failures', () => {
     const rig = signalRig();
     handle = rig.service.watch('/repo', { signal: true });

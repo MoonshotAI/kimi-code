@@ -1,5 +1,5 @@
 import { watch as fsWatch, realpathSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 
 import { FSWatcher } from 'chokidar';
 
@@ -500,7 +500,7 @@ function resolveLongPath(path: string): string {
 function requestedPath(watched: string, requested: string, changed: string): string {
   const rel = relative(watched, changed);
   if (rel === '') return requested;
-  if (rel.startsWith('..') || isAbsolute(rel)) return changed;
+  if (isOutside(rel)) return changed;
   return join(requested, rel);
 }
 
@@ -508,6 +508,10 @@ function resolveNativeSignalPath(root: string, filename: string | null): string 
   if (filename === null || filename === '' || filename === basename(root)) return root;
   const absPath = isAbsolute(filename) ? filename : join(root, filename);
   const rel = relative(root, absPath);
-  if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) return absPath;
+  if (!isOutside(rel)) return absPath;
   return root;
+}
+
+function isOutside(rel: string): boolean {
+  return rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel);
 }
