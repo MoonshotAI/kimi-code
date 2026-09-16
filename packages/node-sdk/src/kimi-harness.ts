@@ -150,7 +150,7 @@ export class KimiHarness {
     if (planMode === true) {
       await session.setPlanMode(true);
     }
-    const createModel = await this.sessionModel(session);
+    const createModel = (await this.sessionModel(session)) ?? null;
     this.trackSessionStarted(summary.id, false, createModel, sessionStartedProperties);
     this.trackSessionEvent(session.id, 'session_new', createModel);
     return session;
@@ -213,7 +213,7 @@ export class KimiHarness {
       },
     });
     this.activeSessions.set(session.id, session);
-    const resumeModel = await this.sessionModel(session);
+    const resumeModel = (await this.sessionModel(session)) ?? null;
     this.trackSessionStarted(summary.id, true, resumeModel, sessionStartedProperties);
     this.trackSessionEvent(session.id, 'session_resume', resumeModel);
     return session;
@@ -226,7 +226,7 @@ export class KimiHarness {
       await active.reloadSession({
         forcePluginSessionStartReminder: input.forcePluginSessionStartReminder,
       });
-      this.trackSessionEvent(active.id, 'session_reload', await this.sessionModel(active));
+      this.trackSessionEvent(active.id, 'session_reload', (await this.sessionModel(active)) ?? null);
       return active;
     }
 
@@ -246,7 +246,7 @@ export class KimiHarness {
       },
     });
     this.activeSessions.set(session.id, session);
-    const reloadModel = await this.sessionModel(session);
+    const reloadModel = (await this.sessionModel(session)) ?? null;
     this.trackSessionStarted(summary.id, true, reloadModel);
     this.trackSessionEvent(session.id, 'session_reload', reloadModel);
     return session;
@@ -272,7 +272,7 @@ export class KimiHarness {
       },
     });
     this.activeSessions.set(session.id, session);
-    const forkModel = await this.sessionModel(session);
+    const forkModel = (await this.sessionModel(session)) ?? null;
     this.trackSessionStarted(summary.id, true, forkModel);
     this.trackSessionEvent(session.id, 'session_fork', forkModel);
     return session;
@@ -639,25 +639,21 @@ export class KimiHarness {
     }
   }
 
-  private trackSessionEvent(eventSessionId: string, event: string, model?: string): void {
-    // A missing model clears ambient model context (null), not inherits it:
-    // the best-effort lookup must never attribute a session event to the
-    // host's default or a previous session's model.
-    withTelemetryContext(this.telemetry, {
-      sessionId: eventSessionId,
-      model: model !== undefined && model.length > 0 ? model : null,
-    }).track(event);
+  private trackSessionEvent(eventSessionId: string, event: string, model?: string | null): void {
+    // null is an explicit ambient clear (lifecycle events whose model lookup
+    // failed); undefined inherits the sink's model (export and friends).
+    withTelemetryContext(this.telemetry, { sessionId: eventSessionId, model }).track(event);
   }
 
   private trackSessionStarted(
     eventSessionId: string,
     resumed: boolean,
-    model: string | undefined,
+    model: string | null,
     sessionScoped?: TelemetryProperties,
   ): void {
     withTelemetryContext(this.telemetry, {
       sessionId: eventSessionId,
-      model: model !== undefined && model.length > 0 ? model : null,
+      model,
     }).track('session_started', {
       ...this.sessionStartedProperties,
       ...sessionScoped,

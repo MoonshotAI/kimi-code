@@ -158,6 +158,9 @@ export class TelemetryClient {
     sink.stopPeriodicFlush();
     if (options.timeoutMs === undefined) {
       await sink.flush();
+      // A fire-and-forget backlog retry (e.g. started right after auth
+      // binding) must not outlive the host either.
+      await sink.joinRetry();
       return;
     }
     const controller = new AbortController();
@@ -172,6 +175,7 @@ export class TelemetryClient {
     } finally {
       clearTimeout(timer);
     }
+    await sink.joinRetry();
   }
 
   resetForTests(): void {

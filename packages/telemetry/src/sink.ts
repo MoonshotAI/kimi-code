@@ -39,6 +39,7 @@ export class EventSink {
   private activeBatch: readonly EnrichedTelemetryEvent[] | null = null;
   private sendController: AbortController | null = null;
   private retryController: AbortController | null = null;
+  private retryPromise: Promise<void> | null = null;
   private tail: Promise<void> = Promise.resolve();
 
   constructor(options: EventSinkOptions) {
@@ -91,11 +92,18 @@ export class EventSink {
     // stop a retry request mid-flight, not just the periodic flush.
     const controller = new AbortController();
     this.retryController = controller;
-    try {
-      await this.transport.retryDiskEvents(controller.signal);
-    } finally {
-      this.retryController = null;
-    }
+    this.retryPromise = this.transport
+      .retryDiskEvents(controller.signal)
+      .catch(() => {})
+      .finally(() => {
+        this.retryController = null;
+      });
+    await this.retryPromise;
+  }
+
+  /** Await a backlog retry started earlier (e.g. right after auth binding). */
+  async joinRetry(): Promise<void> {
+    await this.retryPromise;
   }
 
   clearBuffer(): void {
