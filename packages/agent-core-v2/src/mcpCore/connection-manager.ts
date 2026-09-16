@@ -328,7 +328,15 @@ export class McpConnectionManager implements McpConnectionView {
     entry.enabledNames = undefined;
     entry.rawTools = undefined;
     if (tokens !== undefined && oauthService !== undefined && isRemoteMcpConfig(entry.config)) {
-      await oauthService.invalidate(name, entry.config.url, 'tokens');
+      try {
+        await oauthService.invalidateTokensIfCurrent(name, entry.config.url, tokens);
+      } catch (invalidateError) {
+        this.log.warn('mcp oauth token invalidation failed', {
+          server: name,
+          reason:
+            invalidateError instanceof Error ? invalidateError.message : String(invalidateError),
+        });
+      }
     }
     if (!this.isCurrent(entry, attemptId)) return false;
     this.emit(entry);

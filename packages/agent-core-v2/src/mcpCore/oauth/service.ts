@@ -1,4 +1,5 @@
 import { auth, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
+import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
 
 import type { ILogger as Logger } from '#/_base/log/log';
 import { ErrorCodes, Error2, isError2 } from '#/errors';
@@ -498,6 +499,14 @@ export class McpOAuthService {
     scope: 'all' | 'client' | 'tokens' | 'discovery' = 'all',
   ): Promise<void> {
     return this.getProvider(serverName, serverUrl).clearCredentials(scope);
+  }
+
+  invalidateTokensIfCurrent(
+    serverName: string,
+    serverUrl: string | URL,
+    expected: OAuthTokens,
+  ): Promise<boolean> {
+    return this.getProvider(serverName, serverUrl).clearTokensIfCurrent(expected);
   }
 
   forgetProvider(serverName: string, serverUrl: string | URL): void {

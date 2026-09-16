@@ -1251,10 +1251,10 @@ describe('McpConnectionManager', () => {
     const invalidateReached = new Promise<void>((resolve) => {
       markInvalidateReached = resolve;
     });
-    vi.spyOn(oauthService, 'invalidate').mockImplementation(() => {
+    vi.spyOn(oauthService, 'invalidateTokensIfCurrent').mockImplementation(() => {
       markInvalidateReached();
-      return new Promise<void>((resolve) => {
-        releaseInvalidate = resolve;
+      return new Promise<boolean>((resolve) => {
+        releaseInvalidate = () => resolve(true);
       });
     });
     try {
@@ -1278,6 +1278,93 @@ describe('McpConnectionManager', () => {
       await cm.shutdown();
       connect.mockRestore();
       listTools.mockRestore();
+    }
+  }, 15000);
+
+  it('preserves a grant that lands between the snapshot read and the invalidation', async () => {
+    const server = await startAnonymousDiscoveryHttpMcpServer();
+    const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+    const cm = createManager({ oauthService });
+    let releaseClose: (() => void) | undefined;
+    let markCloseReached!: () => void;
+    const closeReached = new Promise<void>((resolve) => {
+      markCloseReached = resolve;
+    });
+    try {
+      await cm.connectAll({
+        hyper: { transport: 'http', url: server.url, startupTimeoutMs: 5_000 },
+      });
+      expect(cm.get('hyper')?.status).toBe('connected');
+      await oauthService.getProvider('hyper', server.url).saveTokens({
+        access_token: 'rejected-access-token',
+        token_type: 'Bearer',
+        obtained_at: Date.now() - 60_000,
+      } as StoredMcpOAuthTokens);
+      const internal = (
+        cm as unknown as { entries: Map<string, { client?: MCPClient }> }
+      ).entries.get('hyper')?.client;
+      if (internal === undefined) throw new Error('expected a client');
+      const originalClose = (internal as unknown as { close: () => Promise<void> }).close.bind(
+        internal,
+      );
+      (internal as unknown as { close: () => Promise<void> }).close = async () => {
+        markCloseReached();
+        await new Promise<void>((resolve) => {
+          releaseClose = resolve;
+        });
+        await originalClose();
+      };
+      const error = Object.assign(new Error('HTTP 401'), { code: 401 });
+      const mark = cm.markNeedsAuth('hyper', error, internal);
+      await closeReached;
+      await oauthService.getProvider('hyper', server.url).saveTokens({
+        access_token: 'fresh-access-token',
+        token_type: 'Bearer',
+      });
+      releaseClose!();
+      await expect(mark).resolves.toBe(true);
+      expect(cm.get('hyper')?.status).toBe('needs-auth');
+      const tokens = await oauthService.getProvider('hyper', server.url).tokens();
+      expect(tokens?.access_token).toBe('fresh-access-token');
+    } finally {
+      releaseClose?.();
+      await cm.shutdown();
+      await server.close();
+    }
+  }, 15000);
+
+  it('emits needs-auth even when the credential invalidation fails', async () => {
+    const server = await startAnonymousDiscoveryHttpMcpServer();
+    const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+    vi.spyOn(oauthService, 'invalidateTokensIfCurrent').mockRejectedValue(
+      new Error('disk full'),
+    );
+    const cm = createManager({ oauthService });
+    const seen: Array<{ name: string; status: McpServerEntry['status'] }> = [];
+    cm.onStatusChange((e) => seen.push({ name: e.name, status: e.status }));
+    try {
+      await cm.connectAll({
+        hyper: { transport: 'http', url: server.url, startupTimeoutMs: 5_000 },
+      });
+      expect(cm.get('hyper')?.status).toBe('connected');
+      await oauthService.getProvider('hyper', server.url).saveTokens({
+        access_token: 'stale-access-token',
+        token_type: 'Bearer',
+        obtained_at: Date.now() - 60_000,
+      } as StoredMcpOAuthTokens);
+      const client = cm.resolved('hyper')?.client;
+      if (client === undefined) throw new Error('expected a connected client');
+      const error = Object.assign(new Error('HTTP 401'), { code: 401 });
+      await expect(cm.markNeedsAuth('hyper', error, client)).resolves.toBe(true);
+      expect(cm.get('hyper')?.status).toBe('needs-auth');
+      expect(seen.filter((s) => s.name === 'hyper').map((s) => s.status)).toEqual([
+        'pending',
+        'connected',
+        'needs-auth',
+      ]);
+    } finally {
+      await cm.shutdown();
+      await server.close();
     }
   }, 15000);
 });
