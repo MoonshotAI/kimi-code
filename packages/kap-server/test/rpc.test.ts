@@ -290,14 +290,23 @@ describe('server-v2 /api/v1/debug RPC', () => {
     expect(legacy.status).toBe(404);
   });
 
-  it('rejects createOrTouch for a missing root directory (40409)', async () => {
+  it('createOrTouch registers a missing root directory (validity deferred to first binding)', async () => {
     const missing = join(home as string, 'never-created');
-    const { body } = await call<null>(
+    const created = await call<{ id: string; root: string }>(
       'POST',
       rpc('core', IWorkspaceService, 'createOrTouch'),
       missing,
     );
-    expect(body.code).toBe(40409);
+    expect(created.body.code).toBe(0);
+    expect(created.body.data.root).toBe(missing);
+
+    const got = await call<{ id: string; root: string }>(
+      'GET',
+      rpc('core', IWorkspaceService, 'get'),
+      created.body.data.id,
+    );
+    expect(got.body.code).toBe(0);
+    expect(got.body.data.root).toBe(missing);
   });
 
   it('renames a workspace via update', async () => {

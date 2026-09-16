@@ -267,5 +267,22 @@ describe('server-v2 /api/v1 runtime routes', () => {
       });
       expect(missing.body.code).toBe(40420);
     }, 90_000);
+
+    it('defers workspace root validation to the first runtime binding', async () => {
+      const missingRoot = join(home as string, 'never-created');
+      const created = await call<SessionWire>('POST', '/api/v1/sessions', { metadata: { cwd: missingRoot } });
+      expect(created.body.code).toBe(0);
+      const id = created.body.data.id;
+
+      const bound = await call<null>('POST', `/api/v1/sessions/${id}/runtime`, {
+        runtime_id: 'loop',
+        cwd: missingRoot,
+      });
+      expect(bound.body.code).toBe(40001);
+      expect(bound.body.msg).toContain(missingRoot);
+
+      const binding = await call<RuntimeBindingWire>('GET', `/api/v1/sessions/${id}/runtime`);
+      expect(binding.body.data.runtime_id).toBe('local');
+    }, 90_000);
   });
 });
