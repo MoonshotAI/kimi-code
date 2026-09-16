@@ -17,6 +17,7 @@ import {
   ISessionSkillCatalog,
   ISkillDiscovery,
   ITelemetryService,
+  IRuntimeResolver,
   IWorkspaceService,
   InMemorySkillCatalog,
   isError2,
@@ -47,8 +48,10 @@ import {
   contentToCoreParts,
   resolvePromptMediaFiles,
   resolvePromptSessionMediaRefs,
+  runtimeAttachmentsTarget,
   type PromptMediaPreparation,
 } from '../lib/promptMedia';
+import type { RuntimeLease } from '@moonshot-ai/agent-core-v2/runtime/runtime';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
@@ -255,19 +258,32 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
           );
           const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
           const sessionDir = resolved.handle.accessor.get(ISessionContext).sessionDir;
-          preparedMedia = await resolvePromptMediaFiles(
-            resolvedSessionMedia,
-            core.accessor.get(IFileService),
-            core.accessor.get(IBootstrapService).cacheDir,
-            {
-              telemetry,
-              providerType: (await ensureMainAgentHandle(resolved.handle)).accessor
-                .get(IAgentProfileService)
-                .getModelProviderType(),
-              resolveOriginalsDir: async () => sessionMediaOriginalsDir(sessionDir),
-              resolveAttachmentsDir: async () => join(sessionDir, 'attachments'),
-            },
-          );
+          const mainAgent = await ensureMainAgentHandle(resolved.handle);
+          const binding = mainAgent.accessor.get(IAgentRuntimeBindingService).get();
+          let attachmentsLease: RuntimeLease | undefined;
+          try {
+            preparedMedia = await resolvePromptMediaFiles(
+              resolvedSessionMedia,
+              core.accessor.get(IFileService),
+              core.accessor.get(IBootstrapService).cacheDir,
+              {
+                telemetry,
+                providerType: mainAgent.accessor
+                  .get(IAgentProfileService)
+                  .getModelProviderType(),
+                resolveOriginalsDir: async () => sessionMediaOriginalsDir(sessionDir),
+                resolveAttachmentsDir: async () => join(sessionDir, 'attachments'),
+                resolveAttachmentsTarget: binding.runtimeId === 'local'
+                  ? undefined
+                  : async () => {
+                      attachmentsLease ??= core.accessor.get(IRuntimeResolver).acquire(binding, ['fs']);
+                      return runtimeAttachmentsTarget(attachmentsLease.runtime);
+                    },
+              },
+            );
+          } finally {
+            attachmentsLease?.dispose();
+          }
           attachmentParts.push(...contentToCoreParts(preparedMedia.content));
         }
         const mainAgent = await ensureMainAgentHandle(resolved.handle);

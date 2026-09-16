@@ -1,12 +1,17 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { IModelCatalog, IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2';
+import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
+import type { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
+import { FakeRuntime } from '@moonshot-ai/agent-core-v2/runtime/fakeRuntime';
+import { afterAll, beforeAll, beforeEach, afterEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
+import { fakeModelCatalog } from './helpers/fakeModelCatalog';
 
 interface Envelope<T> {
   code: number;
@@ -118,7 +123,7 @@ describe('server-v2 /api/v1 fs folder picker', () => {
     );
     expect(body.code).toBe(0);
     expect(body.data.path).toBe(await realpath(root));
-    const names = body.data.entries.map((e) => e.name).sort();
+    const names = body.data.entries.map((e) => e.name).toSorted();
     expect(names).toEqual(['alpha', 'beta']);
     for (const entry of body.data.entries) {
       expect(entry.is_dir).toBe(true);
@@ -433,5 +438,229 @@ describe('server-v2 /api/v1 fs:content', () => {
       headers: authHeaders(server as RunningServer),
     } as never);
     expect(res.status).toBe(404);
+  });
+});
+
+function mappingHostFs(remoteRoot: string): IHostFileSystem {
+  const inner = new HostFileSystem();
+  const map = (path: string): string => join(remoteRoot, path);
+  const unmap = (path: string): string =>
+    path === remoteRoot
+      ? '/'
+      : path.startsWith(`${remoteRoot}/`)
+        ? path.slice(remoteRoot.length)
+        : path;
+  return {
+    _serviceBrand: undefined,
+    readText: (path, options) => inner.readText(map(path), options),
+    writeText: (path, data) => inner.writeText(map(path), data),
+    appendText: (path, data) => inner.appendText(map(path), data),
+    readBytes: (path, n, offset) => inner.readBytes(map(path), n, offset),
+    writeBytes: (path, data) => inner.writeBytes(map(path), data),
+    readLines: (path, options) => inner.readLines(map(path), options),
+    createExclusive: (path, data) => inner.createExclusive(map(path), data),
+    stat: (path) => inner.stat(map(path)),
+    lstat: (path) => inner.lstat(map(path)),
+    readdir: (path) => inner.readdir(map(path)),
+    mkdir: (path, options) => inner.mkdir(map(path), options),
+    remove: (path) => inner.remove(map(path)),
+    realpath: async (path) => unmap(await inner.realpath(map(path))),
+  };
+}
+
+describe('server-v2 /api/v1 fs:content and fs:mkdir with runtime_id', () => {
+  let server: RunningServer | undefined;
+  let home: string | undefined;
+  let localRoot: string | undefined;
+  let remoteRoot: string | undefined;
+  let provider: { dispose(): void | Promise<void> } | undefined;
+  let base: string;
+
+  beforeAll(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fsrt-home-'));
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      seeds: [[IModelCatalog, fakeModelCatalog()]],
+    });
+    base = `http://127.0.0.1:${server.port}`;
+  });
+
+  beforeEach(async () => {
+    localRoot = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-fsrt-local-')));
+    remoteRoot = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-fsrt-remote-')));
+    const res = await fetch(`${base}/api/v1/sessions`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ metadata: { cwd: localRoot } }),
+    } as never);
+    const created = (await res.json()) as Envelope<{ id: string }>;
+    if (created.code !== 0) throw new Error(`session create failed: ${created.msg}`);
+    provider = await server!.core.accessor.get(IWorkspaceInstanceManager).addProvider({
+      id: 'remote-test-provider',
+      imports: { root: [], imports: [], local: [] },
+      attach: async (context, host) => {
+        const runtime = Object.assign(
+          new FakeRuntime(
+            { workspaceId: context.id, runtimeId: 'remote-test', generation: 'remote-generation' },
+            { capabilities: ['fs'] },
+          ),
+          { fs: mappingHostFs(remoteRoot as string) },
+        );
+        const registration = host.registerRuntime(runtime);
+        return { dispose: () => registration.remove() };
+      },
+    });
+  });
+
+  afterEach(async () => {
+    if (provider !== undefined) {
+      await provider.dispose();
+      provider = undefined;
+    }
+    if (localRoot !== undefined) {
+      await rm(localRoot, { recursive: true, force: true });
+      localRoot = undefined;
+    }
+    if (remoteRoot !== undefined) {
+      await rm(remoteRoot, { recursive: true, force: true });
+      remoteRoot = undefined;
+    }
+  });
+
+  afterAll(async () => {
+    if (server !== undefined) {
+      await server.close();
+      server = undefined;
+    }
+    if (home !== undefined) {
+      await rm(home, { recursive: true, force: true });
+      home = undefined;
+    }
+  });
+
+  function contentUrl(path: string, runtimeId?: string): string {
+    const query = new URLSearchParams({ path });
+    if (runtimeId !== undefined) query.set('runtime_id', runtimeId);
+    return `${base}/api/v1/fs:content?${query.toString()}`;
+  }
+
+  async function postMkdir(body: unknown): Promise<Envelope<{ path: string } | null>> {
+    const res = await fetch(`${base}/api/v1/fs:mkdir`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    } as never);
+    return (await res.json()) as Envelope<{ path: string } | null>;
+  }
+
+  it('serves file content from the selected runtime fs', async () => {
+    await writeFile(join(remoteRoot as string, 'remote-only.txt'), 'remote-bytes');
+
+    const res = await fetch(contentUrl('/remote-only.txt', 'remote-test'), {
+      headers: { connection: 'close', ...authHeaders(server as RunningServer) },
+    } as never);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-length')).toBe('12');
+    expect(await res.text()).toBe('remote-bytes');
+  });
+
+  it('reads stat, sample, and body from the runtime fs when the path exists on both filesystems', async () => {
+    const requestPath = join(localRoot as string, 'shared.txt');
+    const remoteFile = join(remoteRoot as string, requestPath);
+    await mkdir(dirname(remoteFile), { recursive: true });
+    await writeFile(remoteFile, 'remote-bytes');
+    await writeFile(requestPath, 'local-decoy');
+
+    const res = await fetch(contentUrl(requestPath, 'remote-test'), {
+      headers: { connection: 'close', ...authHeaders(server as RunningServer) },
+    } as never);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-length')).toBe('12');
+    expect(await res.text()).toBe('remote-bytes');
+  });
+
+  it('honors range requests against the runtime fs', async () => {
+    await writeFile(join(remoteRoot as string, 'long.txt'), '0123456789');
+
+    const res = await fetch(contentUrl('/long.txt', 'remote-test'), {
+      headers: { connection: 'close', range: 'bytes=2-5', ...authHeaders(server as RunningServer) },
+    } as never);
+    expect(res.status).toBe(206);
+    expect(res.headers.get('content-range')).toBe('bytes 2-5/10');
+    expect(res.headers.get('content-length')).toBe('4');
+    expect(await res.text()).toBe('2345');
+  });
+
+  it('answers If-None-Match with 304 against the runtime fs etag', async () => {
+    await writeFile(join(remoteRoot as string, 'cached.txt'), 'cache me');
+
+    const first = await fetch(contentUrl('/cached.txt', 'remote-test'), {
+      headers: { connection: 'close', ...authHeaders(server as RunningServer) },
+    } as never);
+    const etag = first.headers.get('etag') as string;
+    expect(typeof etag).toBe('string');
+
+    const res = await fetch(contentUrl('/cached.txt', 'remote-test'), {
+      headers: { connection: 'close', 'if-none-match': etag, ...authHeaders(server as RunningServer) },
+    } as never);
+    expect(res.status).toBe(304);
+    expect(res.headers.get('etag')).toBe(etag);
+    expect(await res.text()).toBe('');
+  });
+
+  it('keeps serving the server-local filesystem when runtime_id is local', async () => {
+    const file = join(localRoot as string, 'local.txt');
+    await writeFile(file, 'local-bytes');
+
+    const res = await fetch(contentUrl(file, 'local'), {
+      headers: { connection: 'close', ...authHeaders(server as RunningServer) },
+    } as never);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('local-bytes');
+  });
+
+  it('maps an unknown content runtime_id to RUNTIME_NOT_FOUND', async () => {
+    const res = await fetch(contentUrl('/remote-only.txt', 'no-such-runtime'), {
+      headers: { connection: 'close', ...authHeaders(server as RunningServer) },
+    } as never);
+    const body = (await res.json()) as Envelope<null>;
+    expect(body.code).toBe(40420);
+  });
+
+  it('creates directories on the runtime fs, never on the server-local disk', async () => {
+    const requestPath = join(localRoot as string, 'made-remote');
+    await mkdir(join(remoteRoot as string, localRoot as string), { recursive: true });
+
+    const body = await postMkdir({ path: requestPath, runtime_id: 'remote-test' });
+    expect(body.code).toBe(0);
+    expect(body.data?.path).toBe(requestPath);
+
+    const remoteStat = await stat(join(remoteRoot as string, requestPath));
+    expect(remoteStat.isDirectory()).toBe(true);
+    await expect(stat(requestPath)).rejects.toThrow();
+  });
+
+  it('rejects mkdir on an existing runtime path (40919)', async () => {
+    const requestPath = join(localRoot as string, 'already-here');
+    await mkdir(join(remoteRoot as string, requestPath), { recursive: true });
+
+    const body = await postMkdir({ path: requestPath, runtime_id: 'remote-test' });
+    expect(body.code).toBe(40919);
+  });
+
+  it('rejects mkdir with a missing runtime parent (40409)', async () => {
+    const requestPath = join(localRoot as string, 'no-such-parent', 'child');
+
+    const body = await postMkdir({ path: requestPath, runtime_id: 'remote-test' });
+    expect(body.code).toBe(40409);
+  });
+
+  it('maps an unknown mkdir runtime_id to RUNTIME_NOT_FOUND', async () => {
+    const body = await postMkdir({ path: join(localRoot as string, 'x'), runtime_id: 'no-such-runtime' });
+    expect(body.code).toBe(40420);
   });
 });

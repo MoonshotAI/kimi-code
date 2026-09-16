@@ -12,6 +12,7 @@ import {
   IEventBus,
   IEventService,
   IFileService,
+  IRuntimeResolver,
   ISessionMediaStore,
   ISessionMetadata,
   ISessionSkillCatalog,
@@ -56,8 +57,10 @@ import {
   contentToCoreParts,
   resolvePromptMediaFiles,
   resolvePromptSessionMediaRefs,
+  runtimeAttachmentsTarget,
   type PromptMediaPreparation,
 } from '../lib/promptMedia';
+import type { RuntimeLease } from '@moonshot-ai/agent-core-v2/runtime/runtime';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
@@ -243,25 +246,37 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         reservation = reservePromptId(session_id, req.body.prompt_id);
 
         const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
-        preparedMedia = await resolvePromptMediaFiles(
-          resolvedSessionMedia,
-          core.accessor.get(IFileService),
-          core.accessor.get(IBootstrapService).cacheDir,
-          {
-            telemetry,
-            providerType: resolved.profile.getModelProviderType(req.body.model),
-            resolveOriginalsDir: async () => {
-              const session = await resumeSessionById(core.accessor, session_id);
-              if (session === undefined) return undefined;
-              return sessionMediaOriginalsDir(session.accessor.get(ISessionContext).sessionDir);
+        const binding = resolved.binding.get();
+        let attachmentsLease: RuntimeLease | undefined;
+        try {
+          preparedMedia = await resolvePromptMediaFiles(
+            resolvedSessionMedia,
+            core.accessor.get(IFileService),
+            core.accessor.get(IBootstrapService).cacheDir,
+            {
+              telemetry,
+              providerType: resolved.profile.getModelProviderType(req.body.model),
+              resolveOriginalsDir: async () => {
+                const session = await resumeSessionById(core.accessor, session_id);
+                if (session === undefined) return undefined;
+                return sessionMediaOriginalsDir(session.accessor.get(ISessionContext).sessionDir);
+              },
+              resolveAttachmentsDir: async () => {
+                const session = await resumeSessionById(core.accessor, session_id);
+                if (session === undefined) return undefined;
+                return join(session.accessor.get(ISessionContext).sessionDir, 'attachments');
+              },
+              resolveAttachmentsTarget: binding.runtimeId === 'local'
+                ? undefined
+                : async () => {
+                    attachmentsLease ??= core.accessor.get(IRuntimeResolver).acquire(binding, ['fs']);
+                    return runtimeAttachmentsTarget(attachmentsLease.runtime);
+                  },
             },
-            resolveAttachmentsDir: async () => {
-              const session = await resumeSessionById(core.accessor, session_id);
-              if (session === undefined) return undefined;
-              return join(session.accessor.get(ISessionContext).sessionDir, 'attachments');
-            },
-          },
-        );
+          );
+        } finally {
+          attachmentsLease?.dispose();
+        }
         const resolvedContent = preparedMedia.content;
         const promptAttachments =
           preparedMedia.attachments.length > 0 ? preparedMedia.attachments : undefined;
