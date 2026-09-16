@@ -42,6 +42,7 @@ import {
   extractReasoning,
   extractReasoningDetails,
 } from './reasoning-key';
+import { isOfficialOpenAIBaseUrl } from '../openai-base-url';
 
 export function responseFormatToOpenAI(format: ResponseFormat): Record<string, unknown> {
   if (format.type === 'json_object') {
@@ -58,8 +59,11 @@ export function responseFormatToOpenAI(format: ResponseFormat): Record<string, u
   };
 }
 
-export function encodeOpenAICacheKey(cacheKey: string): Record<string, unknown> {
-  return { prompt_cache_key: cacheKey };
+export function encodeOpenAICacheKey(
+  cacheKey: string,
+  baseUrl?: string,
+): Record<string, unknown> {
+  return isOfficialOpenAIBaseUrl(baseUrl) ? { prompt_cache_key: cacheKey } : {};
 }
 
 export function encodeOpenAIThinkHistoryKwargs(): Record<string, unknown> {

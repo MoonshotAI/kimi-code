@@ -316,9 +316,9 @@ export function kimiCodeEnvOAuthHost(env: ManagedKimiEnv = process.env): string 
 }
 
 // Base URLs that share the default `oauth/kimi-code` credential slot.
-const SHARED_DEFAULT_BASE_URLS: readonly string[] = [
+const SHARED_DEFAULT_BASE_URLS: readonly string[] = new Set([
   normalizeEndpoint(DEFAULT_KIMI_CODE_BASE_URL),
-];
+]);
 
 export function resolveKimiCodeOAuthKey(options: {
   readonly oauthHost?: string | undefined;
@@ -328,7 +328,7 @@ export function resolveKimiCodeOAuthKey(options: {
   const baseUrl = defaultBaseUrl(options.baseUrl);
   const defaultOauthHost = normalizeEndpoint(DEFAULT_KIMI_CODE_OAUTH_HOST);
 
-  if (oauthHost === defaultOauthHost && SHARED_DEFAULT_BASE_URLS.includes(baseUrl)) {
+  if (oauthHost === defaultOauthHost && SHARED_DEFAULT_BASE_URLS.has(baseUrl)) {
     return KIMI_CODE_OAUTH_KEY;
   }
 
