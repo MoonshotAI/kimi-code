@@ -47,14 +47,19 @@ export class EventSink {
   }
 
   accept(event: TelemetryEvent): void {
-    // The per-event model rides in the envelope context and wins over the
-    // sink's reconciled model; a null model keeps the sink's value.
+    // The per-event model rides in the envelope context: a string wins over
+    // the sink's reconciled model, an explicit null clears it (forwarded
+    // app-scoped events must not inherit it), and undefined keeps it.
     const { model, ...rest } = event;
     const enriched: EnrichedTelemetryEvent = {
       ...rest,
       context: { ...this.context },
     };
-    setPrimitive(enriched.context, 'model', model ?? undefined);
+    if (model === null) {
+      delete enriched.context['model'];
+    } else {
+      setPrimitive(enriched.context, 'model', model);
+    }
     this.buffer.push(enriched);
     if (this.buffer.length >= this.flushThreshold) {
       void this.flush().catch(() => {});

@@ -493,10 +493,10 @@ describe('EventSink', () => {
     expect(transport.saved[0]?.[1]?.context).toMatchObject({ model: 'reconciled-model' });
   });
 
-  it('lets a per-event model win over the sink context model', () => {
+  it('lets a per-event model win over the sink context model, and null clears it', () => {
     const transport = new RecordingTransport();
     const sink = makeSink(transport);
-    const event = (id: string, model: string | null): TelemetryEvent => ({
+    const event = (id: string, model: string | null | undefined): TelemetryEvent => ({
       event_id: id,
       device_id: 'dev',
       session_id: 'ses',
@@ -509,10 +509,12 @@ describe('EventSink', () => {
     sink.setModel('reconciled-model');
     sink.accept(event('e1', 'scoped-model'));
     sink.accept(event('e2', null));
+    sink.accept(event('e3', undefined));
     sink.flushSync();
 
     expect(transport.saved[0]?.[0]?.context).toMatchObject({ model: 'scoped-model' });
-    expect(transport.saved[0]?.[1]?.context).toMatchObject({ model: 'reconciled-model' });
+    expect('model' in (transport.saved[0]?.[1]?.context ?? {})).toBe(false);
+    expect(transport.saved[0]?.[2]?.context).toMatchObject({ model: 'reconciled-model' });
   });
 
   it('joins an in-flight flush before a later flush resolves', async () => {

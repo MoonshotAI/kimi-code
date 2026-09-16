@@ -310,7 +310,9 @@ function toTelemetryEvent(event: PendingTelemetryEvent): TelemetryEvent {
     event_id: event.event_id,
     device_id: event.device_id,
     session_id: event.session_id,
-    model: event.model,
+    // An explicit scoped null is an intentional clear; an unset context
+    // degrades to undefined so the sink's reconciled model still applies.
+    model: event.contextOverrides?.model === true ? event.model : (event.model ?? undefined),
     event: event.event,
     timestamp: event.timestamp,
     properties: event.properties,
