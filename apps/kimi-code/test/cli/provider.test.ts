@@ -376,6 +376,69 @@ describe('kimi provider add', () => {
     expect(final.models?.['kohub-responses/legacy-model']).toBeUndefined();
   });
 
+  it('keeps the previous default model when the re-imported registry still lists it (#3739)', async () => {
+    mockRegistryFetch();
+    const initial: KimiConfig = {
+      providers: {
+        kohub: {
+          type: 'anthropic',
+          baseUrl: 'https://registry.example.test',
+          apiKey: 'old',
+        },
+      },
+      models: {
+        'kohub/claude-opus-4-7': {
+          provider: 'kohub',
+          model: 'claude-opus-4-7',
+          maxContextSize: 1024,
+          capabilities: [],
+        },
+      },
+      defaultModel: 'kohub/claude-opus-4-7',
+    } as unknown as KimiConfig;
+    const { harness, current, setConfigCalls } = makeHarness(initial);
+    const { deps, exitCodes } = makeDeps(harness);
+
+    await tryRun(() =>
+      handleProviderAdd(deps, REGISTRY_URL, { apiKey: 'sk-new' }),
+    );
+
+    expect(exitCodes).toEqual([]);
+    expect(current().defaultModel).toBe('kohub/claude-opus-4-7');
+    expect(setConfigCalls[0]?.defaultModel).toBe('kohub/claude-opus-4-7');
+  });
+
+  it('clears the default only when the re-imported registry drops the model', async () => {
+    mockRegistryFetch();
+    const initial: KimiConfig = {
+      providers: {
+        kohub: {
+          type: 'anthropic',
+          baseUrl: 'https://registry.example.test',
+          apiKey: 'old',
+        },
+      },
+      models: {
+        'kohub/stale-model': {
+          provider: 'kohub',
+          model: 'stale-model',
+          maxContextSize: 1024,
+          capabilities: [],
+        },
+      },
+      defaultModel: 'kohub/stale-model',
+    } as unknown as KimiConfig;
+    const { harness, current } = makeHarness(initial);
+    const { deps, exitCodes } = makeDeps(harness);
+
+    await tryRun(() =>
+      handleProviderAdd(deps, REGISTRY_URL, { apiKey: 'sk-new' }),
+    );
+
+    expect(exitCodes).toEqual([]);
+    expect(current().defaultModel).toBeUndefined();
+  });
+
   it('reads the api key from KIMI_REGISTRY_API_KEY when --api-key is omitted', async () => {
     const fetchMock = mockRegistryFetch();
     const { harness } = makeHarness({ providers: {} } as KimiConfig);
