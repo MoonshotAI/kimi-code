@@ -37,7 +37,7 @@ import {
 /** What the footer's fixed ctrl+o hint offers: expand collapsed tool output, or collapse it again. */
 export type ToolOutputExpandHint = 'expand' | 'collapse';
 
-const DEFAULT_STATUS_LINE_ITEMS = ['mode', 'goal', 'model', 'tasks', 'cwd', 'git'] as const;
+const DEFAULT_STATUS_LINE_ITEMS = ['mode', 'goal', 'model', 'tasks', 'runtime', 'cwd', 'git'] as const;
 
 const MAX_CWD_SEGMENTS = 3;
 const GOAL_TIMER_INTERVAL_MS = 1_000;
@@ -427,6 +427,7 @@ export class FooterComponent implements Component {
       goal: [],
       model: [],
       tasks: [],
+      runtime: [],
       cwd: [],
       git: [],
       tips: [],
@@ -490,10 +491,27 @@ export class FooterComponent implements Component {
     }
     slots['tasks'] = taskBadges;
 
+    // Runtime slot (experimental remote runtime): the local runtime renders
+    // nothing; a remote binding shows its `type:id` identifier ahead of the
+    // cwd — error-colored while disconnected.
+    const runtime = state.runtime;
+    const remote = runtime !== undefined && runtime.runtimeId !== 'local';
+    if (remote) {
+      const tone =
+        runtime.status === 'disconnected'
+          ? colors.error
+          : runtime.status === 'ready'
+            ? colors.textDim
+            : colors.warning;
+      slots['runtime'] = [chalk.hex(tone)(`${runtime.type}:${runtime.runtimeId}`)];
+    }
+
     const cwd = shortenCwd(state.workDir);
     if (cwd) slots['cwd'] = [chalk.hex(colors.textDim)(cwd)];
 
-    const git = this.gitCache.getStatus();
+    // The git badge reads the local filesystem; a remote-bound session's
+    // repository state lives on the target host, so the slot stays hidden.
+    const git = remote ? null : this.gitCache.getStatus();
     if (git !== null) slots['git'] = [formatFooterGitBadge(git, colors)];
 
     return slots;

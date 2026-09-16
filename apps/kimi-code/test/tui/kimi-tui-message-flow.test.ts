@@ -53,6 +53,8 @@ import type { SessionReplayRenderer } from '#/tui/controllers/session-replay';
 import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
 import type { SurveyController } from '#/tui/controllers/survey-controller';
 import { handleFeedbackCommand } from '#/tui/commands/info';
+import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
+import { RuntimeManagerComponent } from '#/tui/components/dialogs/runtime-manager';
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { openUrl } from '#/utils/open-url';
 import { createFeedbackArchivePath } from '../../src/feedback/archive';
@@ -139,6 +141,7 @@ interface MessageDriver {
   closeSession(reason: string): Promise<void>;
   setSession(session: unknown): Promise<void>;
   syncRuntimeState(session?: unknown): Promise<void>;
+  refreshRuntimeSlot(session?: unknown): Promise<void>;
   getCurrentSessionId(): string;
 }
 
@@ -2288,6 +2291,26 @@ command = "vim"
     expect(harness.auth.submitFeedback).toHaveBeenCalledOnce();
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('Feedback ID: 7');
+  });
+
+  it('drops the codebase attachment option with a hint for remote-bound sessions', async () => {
+    const { driver, harness } = await makeDriver(makeSession());
+    driver.state.appState.runtime = { runtimeId: 'dev-box', type: 'ssh', status: 'ready' };
+    setExperimentalFeatures([{ id: 'remote_runtime', enabled: true }]);
+    try {
+      const feedbackDriver = driver as unknown as FeedbackDriver;
+      vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+      vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'none');
+      harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 9 });
+
+      await handleFeedbackCommand(feedbackDriver as any);
+
+      expect(promptFeedbackAttachment).toHaveBeenCalledWith(expect.anything(), true);
+      const transcript = stripSgr(renderTranscript(driver));
+      expect(transcript).toContain('Codebase attachment is not supported for remote sessions');
+    } finally {
+      setExperimentalFeatures([]);
+    }
   });
 
   it('tracks successful feedback submissions only after the request succeeds', async () => {
@@ -9224,5 +9247,101 @@ describe('KimiTUI session rating survey', () => {
       vi.useRealTimers();
       vi.restoreAllMocks();
     }
+  });
+});
+
+describe('KimiTUI runtime slot (experimental remote runtime)', () => {
+  afterEach(() => {
+    setExperimentalFeatures([]);
+  });
+
+  function runtimeSession(overrides: Record<string, unknown> = {}) {
+    return makeSession({
+      getRuntime: vi.fn(async () => ({
+        workspaceId: 'ws-1',
+        runtimeId: 'dev-box',
+        cwd: '/home/me/projects',
+      })),
+      listRuntimes: vi.fn(async () => ({
+        workspaceId: 'ws-1',
+        runtimes: [
+          { runtimeId: 'local', type: 'local', status: 'ready', generation: 'g0', capabilities: [] },
+          { runtimeId: 'dev-box', type: 'ssh', status: 'ready', generation: 'g1', capabilities: ['fs'] },
+        ],
+        sshHosts: [],
+      })),
+      ...overrides,
+    });
+  }
+
+  it('keeps the slot empty when the remote_runtime flag is off', async () => {
+    const { driver } = await makeDriver(runtimeSession());
+    await driver.refreshRuntimeSlot();
+    expect(driver.state.appState.runtime).toBeUndefined();
+  });
+
+  it('syncs the binding and connection status into appState when the flag is on', async () => {
+    const { driver } = await makeDriver(runtimeSession());
+    setExperimentalFeatures([{ id: 'remote_runtime', enabled: true }]);
+    await driver.refreshRuntimeSlot();
+    expect(driver.state.appState.runtime).toEqual({
+      runtimeId: 'dev-box',
+      type: 'ssh',
+      status: 'ready',
+      cwd: '/home/me/projects',
+    });
+  });
+
+  it('shows a one-shot disconnect notice with reconnect guidance', async () => {
+    const session = runtimeSession({
+      listRuntimes: vi.fn(async () => ({
+        workspaceId: 'ws-1',
+        runtimes: [
+          { runtimeId: 'local', type: 'local', status: 'ready', generation: 'g0', capabilities: [] },
+          { runtimeId: 'dev-box', type: 'ssh', status: 'disconnected', generation: 'g1', capabilities: ['fs'] },
+        ],
+        sshHosts: [],
+      })),
+    });
+    const { driver } = await makeDriver(session);
+    setExperimentalFeatures([{ id: 'remote_runtime', enabled: true }]);
+    await driver.refreshRuntimeSlot();
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('Runtime ssh:dev-box disconnected');
+    expect(transcript).toContain('Use /runtime to reconnect.');
+
+    await driver.refreshRuntimeSlot();
+    const after = stripSgr(renderTranscript(driver));
+    expect(after.split('Runtime ssh:dev-box disconnected').length - 1).toBe(1);
+  });
+
+  it('clears the slot when the flag is toggled off mid-session', async () => {
+    const { driver } = await makeDriver(runtimeSession());
+    setExperimentalFeatures([{ id: 'remote_runtime', enabled: true }]);
+    await driver.refreshRuntimeSlot();
+    expect(driver.state.appState.runtime).toBeDefined();
+
+    setExperimentalFeatures([]);
+    await driver.refreshRuntimeSlot();
+    expect(driver.state.appState.runtime).toBeUndefined();
+  });
+
+  it('opens the runtime manager when /runtime is typed with the flag on', async () => {
+    const { driver } = await makeDriver(runtimeSession());
+    setExperimentalFeatures([{ id: 'remote_runtime', enabled: true }]);
+    driver.handleUserInput('/runtime');
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(RuntimeManagerComponent);
+    });
+  });
+
+  it('sends /runtime as a plain message when the flag is off', async () => {
+    const { driver, session } = await makeDriver(runtimeSession());
+    driver.handleUserInput('/runtime');
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalled();
+    });
+    expect(driver.state.editorContainer.children[0]).not.toBeInstanceOf(RuntimeManagerComponent);
   });
 });

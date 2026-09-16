@@ -278,6 +278,14 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'runtime',
+    aliases: ['runtimes'],
+    description: 'Manage runtimes (local machine and remote environments)',
+    priority: 60,
+    availability: 'idle-only',
+    experimentalFlag: 'remote_runtime',
+  },
+  {
     name: 'add-dir',
     aliases: [],
     description: 'Add or list an additional workspace directory',

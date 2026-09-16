@@ -276,6 +276,23 @@ describe('resolveSlashCommandInput', () => {
       input: '/tower Ship feature X',
     });
   });
+
+  it('resolves /runtime to the builtin command when the remote_runtime flag is enabled', () => {
+    setExperimentalFeatures([{ id: 'remote_runtime', enabled: true }]);
+
+    expect(resolve('/runtime')).toMatchObject({
+      kind: 'builtin',
+      name: 'runtime',
+      args: '',
+    });
+  });
+
+  it('does not resolve /runtime as a builtin when the remote_runtime flag is disabled', () => {
+    expect(resolve('/runtime')).toEqual({
+      kind: 'message',
+      input: '/runtime',
+    });
+  });
 });
 
 describe('goal command resolution', () => {

@@ -20,6 +20,18 @@ export interface SlashAutocompleteCommand extends SlashCommand {
   readonly aliases?: readonly string[];
 }
 
+/**
+ * Async `@` mention suggestions backed by the engine's fs suggest (remote
+ * runtimes list files on the target host, where the local fd scan is blind).
+ * Returns `null` when the endpoint is unavailable or the query has no hits —
+ * the caller then keeps the mention list closed rather than falling back to
+ * local files a remote session cannot see.
+ */
+export type MentionSuggester = (
+  query: string,
+  signal: AbortSignal,
+) => Promise<readonly AutocompleteItem[] | null>;
+
 interface FsMentionCandidate {
   readonly path: string;
   readonly absolutePath: string;
@@ -48,6 +60,7 @@ export class FileMentionProvider implements AutocompleteProvider {
     additionalDirs: readonly string[] = [],
     private readonly getInputMode: () => 'prompt' | 'bash' = () => 'prompt',
     private readonly skillCommandNames?: ReadonlySet<string>,
+    private readonly mentionSuggester?: MentionSuggester,
   ) {
     this.additionalDirs = additionalDirs.map((dir) => normalizePath(resolve(workDir, dir)));
     // Build an expanded list that includes alias entries so that
@@ -78,6 +91,14 @@ export class FileMentionProvider implements AutocompleteProvider {
     // runs, so the file list never opens.
     const atPrefix = extractAtPrefix(textBeforeCursor);
     if (atPrefix !== null) {
+      // A remote-bound session completes `@` from the target host's fs (the
+      // local fd scan would list files the runtime cannot see). The hook is
+      // only installed for remote sessions; local behavior is unchanged.
+      if (this.mentionSuggester !== undefined) {
+        const items = await this.mentionSuggester(atPrefix.slice(1), options.signal).catch(() => null);
+        if (items === null || items.length === 0 || options.signal.aborted) return null;
+        return { prefix: atPrefix, items: [...items] };
+      }
       // fd backs `@` completion across every root (cwd + additional dirs). Fall
       // back to the filesystem scanner when fd is unavailable, not executable
       // (e.g. the managed binary was removed or lost execute permission), or if

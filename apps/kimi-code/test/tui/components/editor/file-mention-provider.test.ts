@@ -678,7 +678,7 @@ describe('FileMentionProvider', () => {
 
       expect(result).not.toBeNull();
       expect(result!.prefix).toBe('/');
-      expect(result!.items.map((item) => item.value).sort()).toEqual([
+      expect(result!.items.map((item) => item.value).toSorted()).toEqual([
         'skill:review',
         'skill:security',
       ]);
@@ -699,7 +699,7 @@ describe('FileMentionProvider', () => {
       const result = await provider.getSuggestions(['first line', '/'], 1, 1, { signal: ctrl() });
 
       expect(result).not.toBeNull();
-      expect(result!.items.map((item) => item.value).sort()).toEqual([
+      expect(result!.items.map((item) => item.value).toSorted()).toEqual([
         'skill:review',
         'skill:security',
       ]);
@@ -778,5 +778,83 @@ describe('FileMentionProvider', () => {
       expect(result.lines[0]).toBe('hello /skill:review ');
       expect(result.cursorCol).toBe('hello /skill:review '.length);
     });
+  });
+});
+
+describe('FileMentionProvider mentionSuggester (remote runtime)', () => {
+  let suggestDir: string;
+
+  beforeEach(() => {
+    suggestDir = mkdtempSync(join(tmpdir(), 'kimi-file-mention-remote-'));
+  });
+
+  afterEach(() => {
+    rmSync(suggestDir, { recursive: true, force: true });
+  });
+
+  it('routes @ completion through the suggester when one is installed', async () => {
+    const suggester = vi.fn(async (query: string) => [
+      { value: '@src/app.ts', label: 'app.ts', description: 'src/app.ts' },
+      { value: '@src/util/', label: 'util/', description: 'src/util/' },
+    ]);
+    const provider = new FileMentionProvider(
+      [],
+      suggestDir,
+      NO_FD,
+      [],
+      () => 'prompt',
+      undefined,
+      suggester,
+    );
+    const result = await provider.getSuggestions(['@sr'], 0, 3, { signal: ctrl() });
+
+    expect(suggester).toHaveBeenCalledWith('sr', expect.any(AbortSignal));
+    expect(result).not.toBeNull();
+    expect(result!.prefix).toBe('@sr');
+    expect(result!.items.map((item) => item.value)).toEqual(['@src/app.ts', '@src/util/']);
+  });
+
+  it('keeps the local fd/fs path when no suggester is installed', async () => {
+    writeFileSync(join(suggestDir, 'README.md'), 'readme');
+    const provider = new FileMentionProvider([], suggestDir, NO_FD);
+    const result = await provider.getSuggestions(['@RE'], 0, 3, { signal: ctrl() });
+
+    expect(result).not.toBeNull();
+    expect(result!.items.map((item) => item.value)).toContain('@README.md');
+  });
+
+  it('returns null (no list, no local fallback) when the suggester reports unavailable', async () => {
+    writeFileSync(join(suggestDir, 'README.md'), 'readme');
+    const suggester = vi.fn(async () => null);
+    const provider = new FileMentionProvider(
+      [],
+      suggestDir,
+      NO_FD,
+      [],
+      () => 'prompt',
+      undefined,
+      suggester,
+    );
+    const result = await provider.getSuggestions(['@RE'], 0, 3, { signal: ctrl() });
+
+    expect(result).toBeNull();
+  });
+
+  it('returns null when the suggester throws (endpoint unreachable)', async () => {
+    writeFileSync(join(suggestDir, 'README.md'), 'readme');
+    const suggester = vi.fn(async () => {
+      throw new Error('endpoint unavailable');
+    });
+    const provider = new FileMentionProvider(
+      [],
+      suggestDir,
+      NO_FD,
+      [],
+      () => 'prompt',
+      undefined,
+      suggester,
+    );
+    const result = await provider.getSuggestions(['@RE'], 0, 3, { signal: ctrl() });
+    expect(result).toBeNull();
   });
 });
