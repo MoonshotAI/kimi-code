@@ -101,9 +101,25 @@ export class EventSink {
     await this.retryPromise;
   }
 
-  /** Await a backlog retry started earlier (e.g. right after auth binding). */
-  async joinRetry(): Promise<void> {
-    await this.retryPromise;
+  /** Await a backlog retry started earlier (e.g. right after auth binding),
+      giving up as soon as the caller's signal aborts. */
+  async joinRetry(signal?: AbortSignal): Promise<void> {
+    const retry = this.retryPromise;
+    if (retry === null) return;
+    if (signal === undefined) {
+      await retry;
+      return;
+    }
+    await Promise.race([
+      retry,
+      new Promise<void>((resolve) => {
+        if (signal.aborted) {
+          resolve();
+          return;
+        }
+        signal.addEventListener('abort', () => resolve(), { once: true });
+      }),
+    ]);
   }
 
   clearBuffer(): void {

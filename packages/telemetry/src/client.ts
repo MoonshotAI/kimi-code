@@ -170,12 +170,16 @@ export class TelemetryClient {
     timer.unref?.();
     try {
       await sink.flush(controller.signal);
+      await sink.joinRetry(controller.signal);
     } catch {
       sink.flushSync();
     } finally {
       clearTimeout(timer);
+      // Whatever the deadline cut short must not outlive the host: the flush
+      // fallback already persisted the buffer, and retry files stay on disk
+      // for a future launch.
+      sink.abortInFlight();
     }
-    await sink.joinRetry();
   }
 
   resetForTests(): void {

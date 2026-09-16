@@ -623,8 +623,27 @@ describe('EventSink', () => {
     expect(captured.signal?.aborted).toBe(true);
   });
 
-  it('aborts the backlog retry and marks aborted sends for discard on opt-out', async () => {
-    const captured: { retrySignal?: AbortSignal; discardCalled: boolean } = { discardCalled: false };
+  it('joinRetry gives up once the caller signal aborts', async () => {
+    let releaseRetry: (() => void) | undefined;
+    const transport: TelemetryTransport = {
+      send: async () => undefined,
+      saveToDisk: () => undefined,
+      retryDiskEvents: () =>
+        new Promise<void>((resolve) => {
+          releaseRetry = resolve;
+        }),
+    };
+    const sink = makeSink(transport);
+    void sink.retryDiskEvents();
+
+    const controller = new AbortController();
+    controller.abort();
+    // The retry never settles, but the join respects the aborted signal.
+    await expect(sink.joinRetry(controller.signal)).resolves.toBeUndefined();
+    releaseRetry?.();
+  });
+
+  it('aborts the backlog retry and marks aborted sends for discard on opt-out', async () => {    const captured: { retrySignal?: AbortSignal; discardCalled: boolean } = { discardCalled: false };
     const transport: TelemetryTransport = {
       send: () => new Promise<void>(() => {}),
       saveToDisk: () => undefined,
