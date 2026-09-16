@@ -513,7 +513,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
           },
         }),
       )
-      .catch(() => undefined);
+      .catch((error) => {
+        app.accessor.get(ILogService).warn('remote runtime provider attach failed', { error });
+        return undefined;
+      });
     this.klient = createKlient({ scope: app });
     this.configReady = app.accessor.get(IConfigService).ready;
     this.installEngineTelemetry(options.telemetry);
