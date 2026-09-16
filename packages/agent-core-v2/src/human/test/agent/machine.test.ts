@@ -1281,10 +1281,10 @@ describe('agent machine prompt gate', () => {
         }),
       },
     });
-    const blocked: (string | undefined)[] = [];
-    const failed: unknown[] = [];
-    actor.on('prompt.blocked', (event) => blocked.push(event.queueItemId));
-    actor.on('prompt.gate_failed', (event) => failed.push(event.error));
+    const blocked: { queueItemId?: string; reason: string; error?: unknown }[] = [];
+    actor.on('prompt.blocked', (event) => {
+      blocked.push({ queueItemId: event.queueItemId, reason: event.reason, error: event.error });
+    });
     actor.start();
 
     actor.send({ type: 'input.submit', entry: { message: createUserMessage('original'), meta: { promptId: 'g1' } } });
@@ -1300,8 +1300,10 @@ describe('agent machine prompt gate', () => {
     gateImpl = () => true;
     actor.send({ type: 'input.submit', entry: { message: createUserMessage('blocked'), meta: { promptId: 'g2' } } });
     await vi.waitFor(() => {
-      expect(blocked).toEqual(['g2']);
+      expect(blocked).toHaveLength(1);
     });
+    expect(blocked[0]?.queueItemId).toBe('g2');
+    expect(blocked[0]?.reason).toBe('gate');
     expect(actor.getSnapshot().context.queue).toHaveLength(0);
     expect(store.getState().history).toHaveLength(2);
 
@@ -1310,9 +1312,11 @@ describe('agent machine prompt gate', () => {
     };
     actor.send({ type: 'input.submit', entry: { message: createUserMessage('explode'), meta: { promptId: 'g3' } } });
     await vi.waitFor(() => {
-      expect(failed).toHaveLength(1);
+      expect(blocked).toHaveLength(2);
     });
-    expect(String(failed[0])).toContain('gate down');
+    expect(blocked[1]?.queueItemId).toBe('g3');
+    expect(blocked[1]?.reason).toBe('error');
+    expect(String(blocked[1]?.error)).toContain('gate down');
     expect(actor.getSnapshot().context.queue).toHaveLength(0);
     expect(store.getState().history).toHaveLength(2);
     expect(actor.getSnapshot().matches('idle')).toBe(true);

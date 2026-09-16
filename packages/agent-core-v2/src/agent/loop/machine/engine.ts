@@ -108,8 +108,13 @@ export type MachineEngineEvent =
   | { readonly type: 'toolFailed'; readonly toolCallId: string; readonly error: unknown }
   | { readonly type: 'toolAborted'; readonly toolCallId: string }
   | { readonly type: 'toolBatchFailed'; readonly error: unknown }
-  | { readonly type: 'promptBlocked'; readonly queueItemId?: string; readonly entry?: UserEntry }
-  | { readonly type: 'promptGateFailed'; readonly queueItemId?: string; readonly error: unknown; readonly entry?: UserEntry }
+  | {
+      readonly type: 'promptBlocked';
+      readonly queueItemId?: string;
+      readonly entry?: UserEntry;
+      readonly reason: 'gate' | 'error';
+      readonly error?: unknown;
+    }
   | { readonly type: 'promptSteered'; readonly queueItemIds: readonly string[]; readonly entries: readonly UserEntry[] }
   | { readonly type: 'aborting' };
 
@@ -463,10 +468,13 @@ export function attachMachineEngine(
       publish({ type: 'toolAborted', toolCallId: event.toolCallId });
     }),
     ref.on('prompt.blocked', (event) => {
-      publish({ type: 'promptBlocked', queueItemId: event.queueItemId, entry: event.entry });
-    }),
-    ref.on('prompt.gate_failed', (event) => {
-      publish({ type: 'promptGateFailed', queueItemId: event.queueItemId, error: event.error, entry: event.entry });
+      publish({
+        type: 'promptBlocked',
+        queueItemId: event.queueItemId,
+        entry: event.entry,
+        reason: event.reason,
+        error: event.error,
+      });
     }),
     ref.on('prompt.steered', (event) => {
       publish({ type: 'promptSteered', queueItemIds: event.queueItemIds, entries: event.entries });

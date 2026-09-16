@@ -118,8 +118,13 @@ export type AgentEmitted =
       branchId: string;
     }
   | { type: 'turn.aborted'; messages: HistoryMessage[]; branchId: string }
-  | { type: 'prompt.blocked'; queueItemId?: string; entry?: UserEntry }
-  | { type: 'prompt.gate_failed'; queueItemId?: string; error: unknown; entry?: UserEntry }
+  | {
+      type: 'prompt.blocked';
+      queueItemId?: string;
+      entry?: UserEntry;
+      reason: 'gate' | 'error';
+      error?: unknown;
+    }
   | { type: 'prompt.steered'; queueItemIds: string[]; entries: UserEntry[] }
   | { type: 'context.reset'; branchId: string }
   | { type: 'agent.attached' }
@@ -666,10 +671,11 @@ export function createAgentMachine({
                   target: 'ready',
                   actions: [
                     emit(({ context, event }) => ({
-                      type: 'prompt.gate_failed' as const,
+                      type: 'prompt.blocked' as const,
                       queueItemId: context.queue[0]?.meta?.promptId,
-                      error: event.output.error,
                       entry: context.queue[0],
+                      reason: 'error' as const,
+                      error: event.output.error,
                     })),
                     assign(({ context }) => ({ queue: context.queue.slice(1) })),
                   ],
@@ -682,6 +688,7 @@ export function createAgentMachine({
                       type: 'prompt.blocked' as const,
                       queueItemId: context.queue[0]?.meta?.promptId,
                       entry: context.queue[0],
+                      reason: 'gate' as const,
                     })),
                     assign(({ context }) => ({ queue: context.queue.slice(1) })),
                   ],
@@ -703,10 +710,11 @@ export function createAgentMachine({
                 target: 'ready',
                 actions: [
                   emit(({ context, event }) => ({
-                    type: 'prompt.gate_failed' as const,
+                    type: 'prompt.blocked' as const,
                     queueItemId: context.queue[0]?.meta?.promptId,
-                    error: event.error,
                     entry: context.queue[0],
+                    reason: 'error' as const,
+                    error: event.error,
                   })),
                   assign(({ context }) => ({ queue: context.queue.slice(1) })),
                 ],

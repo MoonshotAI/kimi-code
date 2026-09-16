@@ -1247,11 +1247,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         return;
       }
       case 'promptBlocked': {
-        this.settleGateRejectedPrompt(event.queueItemId, event.entry, 'blocked');
-        return;
-      }
-      case 'promptGateFailed': {
-        this.settleGateRejectedPrompt(event.queueItemId, event.entry, 'failed');
+        this.settleGateRejectedPrompt(
+          event.queueItemId,
+          event.entry,
+          event.reason === 'error' ? 'failed' : 'blocked',
+        );
         return;
       }
       case 'promptSteered': {
