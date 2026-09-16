@@ -122,15 +122,16 @@ export function shQuote(value: string): string {
 }
 
 interface RemoteBinPlan {
-  // Path the launcher should invoke after the install. For docker with the
-  // default remoteBin this is the absolute home-based path: `docker exec`
-  // takes argv without a shell, so the `~` form can never work there.
+  // Path the launcher should invoke after the install. ssh keeps the tilde
+  // form (the remote shell expands it); docker needs the absolute home-based
+  // path (docker exec takes argv without a shell).
   readonly invokePath: string;
-  // ssh: shell expressions embedded in the remote command string (already
-  // quoted); docker: literal absolute paths (argv passes through untouched).
-  readonly binDirExpr: string;
-  readonly destExpr: string;
-  readonly tmpExpr: string;
+  // Verbatim absolute paths on the target. They are used unquoted in the scp
+  // target (OpenSSH ≥ 9.0 scp speaks SFTP — no remote shell, no expansion) and
+  // sh-quoted at the remote-command use sites.
+  readonly binDir: string;
+  readonly dest: string;
+  readonly tmp: string;
 }
 
 function remoteBinPlan(
@@ -140,48 +141,28 @@ function remoteBinPlan(
   const uuid = randomUUID();
   const remoteBin = launcher.remoteBin;
   const isDefault = remoteBin === undefined || remoteBin === DEFAULT_REMOTE_BIN;
-  if (launcher.type === 'ssh') {
-    if (isDefault) {
-      // The remote shell expands $HOME even inside double quotes, and the
-      // constant suffix needs no quoting.
-      const dir = '"$HOME"/.kimi-code/bin';
-      return {
-        invokePath: DEFAULT_REMOTE_BIN,
-        binDirExpr: dir,
-        destExpr: `${dir}/kimi`,
-        tmpExpr: `${dir}/.kimi-install-${uuid}`,
-      };
-    }
-    const dir = posixDirname(remoteBin);
-    return {
-      invokePath: remoteBin,
-      binDirExpr: shQuote(dir),
-      destExpr: shQuote(remoteBin),
-      tmpExpr: shQuote(`${dir}/.kimi-install-${uuid}`),
-    };
-  }
   if (isDefault) {
     if (homeDir === undefined || homeDir.length === 0) {
       throw new ExecutorInstallError(
         'probe',
-        `could not determine the container user's home directory on ${launcherLabel(launcher)}; ` +
+        `could not determine the remote home directory on ${launcherLabel(launcher)}; ` +
           'set remoteBin to an absolute path in the runtime declaration to skip the probe',
       );
     }
     const dir = `${homeDir}/.kimi-code/bin`;
     return {
-      invokePath: `${dir}/kimi`,
-      binDirExpr: dir,
-      destExpr: `${dir}/kimi`,
-      tmpExpr: `${dir}/.kimi-install-${uuid}`,
+      invokePath: launcher.type === 'ssh' ? DEFAULT_REMOTE_BIN : `${dir}/kimi`,
+      binDir: dir,
+      dest: `${dir}/kimi`,
+      tmp: `${dir}/.kimi-install-${uuid}`,
     };
   }
   const dir = posixDirname(remoteBin);
   return {
     invokePath: remoteBin,
-    binDirExpr: dir,
-    destExpr: remoteBin,
-    tmpExpr: `${dir}/.kimi-install-${uuid}`,
+    binDir: dir,
+    dest: remoteBin,
+    tmp: `${dir}/.kimi-install-${uuid}`,
   };
 }
 
@@ -247,42 +228,30 @@ async function probeRemoteEnvironment(
   runner: LocalRunner,
 ): Promise<ProbedEnvironment> {
   const label = launcherLabel(launcher);
-  if (launcher.type === 'ssh') {
-    const result = await runStep(
-      'probe',
-      runner,
-      {
-        program: 'ssh',
-        args: [...sshBaseArgs(), launcher.host, 'uname -sm'],
-        timeoutMs: PROBE_TIMEOUT_MS,
-      },
-      `probing the target environment on ${label}`,
-    );
-    const target = parseUname(result.stdout);
-    if (target === undefined) {
-      throw new ExecutorInstallError(
-        'probe',
-        `probing the target environment on ${label}: unsupported or unrecognized target platform ` +
-          `(uname output ${JSON.stringify(result.stdout.trim())})`,
-      );
-    }
-    return { target };
-  }
+  const unameAndHome = 'uname -sm; printf "%s\\n" "$HOME"';
+  const request: LocalRunRequest =
+    launcher.type === 'ssh'
+      ? {
+          program: 'ssh',
+          args: [...sshBaseArgs(), launcher.host, unameAndHome],
+          timeoutMs: PROBE_TIMEOUT_MS,
+        }
+      : {
+          program: 'docker',
+          args: [
+            ...dockerBaseArgs(launcher.context),
+            'exec',
+            launcher.container,
+            'sh',
+            '-c',
+            unameAndHome,
+          ],
+          timeoutMs: PROBE_TIMEOUT_MS,
+        };
   const result = await runStep(
     'probe',
     runner,
-    {
-      program: 'docker',
-      args: [
-        ...dockerBaseArgs(launcher.context),
-        'exec',
-        launcher.container,
-        'sh',
-        '-c',
-        'uname -sm; printf "\\n%s" "$HOME"',
-      ],
-      timeoutMs: PROBE_TIMEOUT_MS,
-    },
+    request,
     `probing the target environment on ${label}`,
   );
   const target = parseUname(result.stdout);
@@ -293,8 +262,13 @@ async function probeRemoteEnvironment(
         `(uname output ${JSON.stringify(result.stdout.trim())})`,
     );
   }
-  const homeDir = result.stdout.trim().split('\n')[1]?.trim();
-  return { target, homeDir: homeDir === '' ? undefined : homeDir };
+  const lines = result.stdout
+    .trim()
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const homeDir = lines.length > 1 ? lines.at(-1) : undefined;
+  return { target, homeDir };
 }
 
 async function probeInstalledVersion(
@@ -306,12 +280,12 @@ async function probeInstalledVersion(
     launcher.type === 'ssh'
       ? {
           program: 'ssh',
-          args: [...sshBaseArgs(), launcher.host, `${plan.destExpr} --version`],
+          args: [...sshBaseArgs(), launcher.host, `${shQuote(plan.dest)} --version`],
           timeoutMs: PROBE_TIMEOUT_MS,
         }
       : {
           program: 'docker',
-          args: [...dockerBaseArgs(launcher.context), 'exec', launcher.container, plan.destExpr, '--version'],
+          args: [...dockerBaseArgs(launcher.context), 'exec', launcher.container, plan.dest, '--version'],
           timeoutMs: PROBE_TIMEOUT_MS,
         };
   let result: LocalRunResult;
@@ -336,7 +310,7 @@ async function prepareRemote(
       runner,
       {
         program: 'ssh',
-        args: [...sshBaseArgs(), launcher.host, `mkdir -p ${plan.binDirExpr}`],
+        args: [...sshBaseArgs(), launcher.host, `mkdir -p ${shQuote(plan.binDir)}`],
       },
       what,
     );
@@ -347,7 +321,7 @@ async function prepareRemote(
     runner,
     {
       program: 'docker',
-      args: [...dockerBaseArgs(launcher.context), 'exec', launcher.container, 'mkdir', '-p', plan.binDirExpr],
+      args: [...dockerBaseArgs(launcher.context), 'exec', launcher.container, 'mkdir', '-p', plan.binDir],
     },
     what,
   );
@@ -362,12 +336,14 @@ async function uploadToRemote(
 ): Promise<void> {
   const what = `uploading the executor to ${launcherLabel(launcher)}`;
   if (launcher.type === 'ssh') {
+    // The scp target must be a verbatim absolute path: OpenSSH ≥ 9.0 scp
+    // speaks SFTP by default — no remote shell, no `$HOME`/`~` expansion.
     await runStep(
       'upload',
       runner,
       {
         program: 'scp',
-        args: [...SSH_CONFIG_OPTIONS, localPath, `${launcher.host}:${plan.tmpExpr}`],
+        args: [...SSH_CONFIG_OPTIONS, localPath, `${launcher.host}:${plan.tmp}`],
         timeoutMs: UPLOAD_TIMEOUT_MS,
       },
       what,
@@ -380,7 +356,7 @@ async function uploadToRemote(
     runner,
     {
       program: 'docker',
-      args: [...dockerBaseArgs(launcher.context), 'cp', localPath, `${launcher.container}:${plan.tmpExpr}`],
+      args: [...dockerBaseArgs(launcher.context), 'cp', localPath, `${launcher.container}:${plan.tmp}`],
       timeoutMs: UPLOAD_TIMEOUT_MS,
     },
     what,
@@ -406,7 +382,7 @@ async function activateRemote(
         args: [
           ...sshBaseArgs(),
           launcher.host,
-          `chmod 755 ${plan.tmpExpr} && mv -f ${plan.tmpExpr} ${plan.destExpr}`,
+          `chmod 755 ${shQuote(plan.tmp)} && mv -f ${shQuote(plan.tmp)} ${shQuote(plan.dest)}`,
         ],
       },
       what,
@@ -427,8 +403,8 @@ async function activateRemote(
         '-c',
         'chmod 755 "$1" && mv -f "$1" "$2"',
         'kimi-install',
-        plan.tmpExpr,
-        plan.destExpr,
+        plan.tmp,
+        plan.dest,
       ],
     },
     what,
@@ -445,11 +421,11 @@ async function cleanupRemote(
     launcher.type === 'ssh'
       ? {
           program: 'ssh',
-          args: [...sshBaseArgs(), launcher.host, `rm -f ${plan.tmpExpr}`],
+          args: [...sshBaseArgs(), launcher.host, `rm -f ${shQuote(plan.tmp)}`],
         }
       : {
           program: 'docker',
-          args: [...dockerBaseArgs(launcher.context), 'exec', launcher.container, 'rm', '-f', plan.tmpExpr],
+          args: [...dockerBaseArgs(launcher.context), 'exec', launcher.container, 'rm', '-f', plan.tmp],
         };
   await runner(request).catch(() => {});
 }

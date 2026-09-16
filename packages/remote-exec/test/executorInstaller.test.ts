@@ -79,12 +79,13 @@ function createFakeRunner(options: FakeRemoteOptions = {}): {
   const uploadedBytes: Buffer[] = [];
   let installedVersion = options.preinstalled;
   const uname = options.uname ?? 'Linux x86_64';
+  const home = options.home ?? '/home/test';
   const runner: LocalRunner = async (request: LocalRunRequest) => {
     requests.push({ program: request.program, args: request.args });
     const fail = options.fail;
     const last = request.args.at(-1) ?? '';
     if (request.program === 'ssh') {
-      if (last === 'uname -sm') return fail?.probe ?? ok({ stdout: `${uname}\n` });
+      if (last.includes('uname -sm')) return fail?.probe ?? ok({ stdout: `${uname}\n${home}` });
       if (last.endsWith('--version')) {
         if (fail?.version !== undefined) return fail.version;
         return installedVersion === undefined
@@ -172,38 +173,45 @@ describe('installExecutor — ssh', () => {
     });
 
     const [probe, existing, prepare, upload, activate, postCheck] = fake.requests;
-    expect(probe).toEqual({ program: 'ssh', args: [...SSH_PREFIX, 'dev-box', 'uname -sm'] });
+    expect(probe).toEqual({
+      program: 'ssh',
+      args: [...SSH_PREFIX, 'dev-box', 'uname -sm; printf "%s\\n" "$HOME"'],
+    });
     expect(existing).toEqual({
       program: 'ssh',
-      args: [...SSH_PREFIX, 'dev-box', '"$HOME"/.kimi-code/bin/kimi --version'],
+      args: [...SSH_PREFIX, 'dev-box', `'/home/test/.kimi-code/bin/kimi' --version`],
     });
     expect(prepare).toEqual({
       program: 'ssh',
-      args: [...SSH_PREFIX, 'dev-box', 'mkdir -p "$HOME"/.kimi-code/bin'],
+      args: [...SSH_PREFIX, 'dev-box', `mkdir -p '/home/test/.kimi-code/bin'`],
     });
 
     expect(upload!.program).toBe('scp');
     const scpTarget = upload!.args.at(-1)!;
-    expect(scpTarget).toMatch(
-      /^dev-box:"\$HOME"\/\.kimi-code\/bin\/\.kimi-install-[0-9a-f-]{36}$/,
-    );
+    // OpenSSH ≥ 9.0 scp speaks SFTP — no remote shell — so the target must be
+    // a verbatim absolute path: no `$HOME`, no tilde, no quoting.
+    expect(scpTarget).toMatch(/^dev-box:\/home\/test\/\.kimi-code\/bin\/\.kimi-install-[0-9a-f-]{36}$/);
+    expect(scpTarget).not.toContain('$');
+    expect(scpTarget).not.toContain('~');
+    expect(scpTarget).not.toContain(`'`);
+    expect(scpTarget).not.toContain('"');
     const scpSource = upload!.args.at(-2)!;
     expect(fake.uploadedBytes).toHaveLength(1);
     expect(Buffer.compare(fake.uploadedBytes[0]!, Buffer.from(BINARY_BYTES))).toBe(0);
     await expect(stat(scpSource)).rejects.toThrow();
 
-    const tmpExpr = scpTarget.slice('dev-box:'.length);
+    const tmpPath = scpTarget.slice('dev-box:'.length);
     expect(activate).toEqual({
       program: 'ssh',
       args: [
         ...SSH_PREFIX,
         'dev-box',
-        `chmod 755 ${tmpExpr} && mv -f ${tmpExpr} "$HOME"/.kimi-code/bin/kimi`,
+        `chmod 755 '${tmpPath}' && mv -f '${tmpPath}' '/home/test/.kimi-code/bin/kimi'`,
       ],
     });
     expect(postCheck).toEqual({
       program: 'ssh',
-      args: [...SSH_PREFIX, 'dev-box', '"$HOME"/.kimi-code/bin/kimi --version'],
+      args: [...SSH_PREFIX, 'dev-box', `'/home/test/.kimi-code/bin/kimi' --version`],
     });
     expect(progress.some((line) => line.includes('verified sha256'))).toBe(true);
   });
@@ -222,10 +230,10 @@ describe('installExecutor — ssh', () => {
     expect(existing!.args.at(-1)).toBe(`'/opt/kimi/bin/kimi' --version`);
     expect(prepare!.args.at(-1)).toBe(`mkdir -p '/opt/kimi/bin'`);
     const scpTarget = upload!.args.at(-1)!;
-    expect(scpTarget).toMatch(/^dev-box:'\/opt\/kimi\/bin\/\.kimi-install-[0-9a-f-]{36}'$/);
-    const tmpExpr = scpTarget.slice('dev-box:'.length);
+    expect(scpTarget).toMatch(/^dev-box:\/opt\/kimi\/bin\/\.kimi-install-[0-9a-f-]{36}$/);
+    const tmpPath = scpTarget.slice('dev-box:'.length);
     expect(activate!.args.at(-1)).toBe(
-      `chmod 755 ${tmpExpr} && mv -f ${tmpExpr} '/opt/kimi/bin/kimi'`,
+      `chmod 755 '${tmpPath}' && mv -f '${tmpPath}' '/opt/kimi/bin/kimi'`,
     );
   });
 
@@ -271,7 +279,7 @@ describe('installExecutor — docker', () => {
     const [probe, existing, prepare, upload, activate, postCheck] = fake.requests;
     expect(probe).toEqual({
       program: 'docker',
-      args: ['exec', 'myapp-dev', 'sh', '-c', 'uname -sm; printf "\\n%s" "$HOME"'],
+      args: ['exec', 'myapp-dev', 'sh', '-c', 'uname -sm; printf "%s\\n" "$HOME"'],
     });
     expect(existing).toEqual({
       program: 'docker',

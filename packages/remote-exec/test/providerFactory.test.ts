@@ -351,7 +351,9 @@ describe('factory auto-install trigger', () => {
     return async (request: LocalRunRequest) => {
       const last = request.args.at(-1) ?? '';
       if (request.program === 'ssh') {
-        if (last === 'uname -sm') return { code: 0, signal: null, stdout: 'Linux x86_64\n', stderr: '' };
+        if (last.includes('uname -sm')) {
+          return { code: 0, signal: null, stdout: 'Linux x86_64\n/home/test', stderr: '' };
+        }
         if (last.endsWith('--version')) {
           return installedVersion === undefined
             ? { code: 127, signal: null, stdout: '', stderr: 'kimi: command not found' }

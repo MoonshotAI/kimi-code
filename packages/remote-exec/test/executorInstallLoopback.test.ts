@@ -35,11 +35,13 @@ HOME="$FAKE_REMOTE_HOME" sh -c "$cmd"
 `;
 
 const FAKE_SCP = `#!/usr/bin/env bash
+# SFTP-protocol semantics: the remote path is used verbatim — no shell, no
+# expansion (OpenSSH ≥ 9.0 default). A target like "$HOME"/... must fail here.
 args=("$@")
 src="\${args[-2]}"
 dst="\${args[-1]}"
 remote="\${dst#*:}"
-HOME="$FAKE_REMOTE_HOME" sh -c "cp \\"$src\\" $remote"
+cp "$src" "$remote"
 `;
 
 interface LoopbackContext {

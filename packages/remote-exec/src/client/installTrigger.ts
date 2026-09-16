@@ -124,6 +124,21 @@ export function upgradeExecutorGuidance(context: {
   );
 }
 
+// The install succeeded but the reconnect still failed — the executor is
+// present on the target, so the guidance points at diagnosing the executor
+// itself rather than at installing.
+export function reconnectAfterInstallGuidance(context: {
+  readonly launcher: LauncherSpec;
+  readonly install: ExecutorInstallResult;
+}): string {
+  return (
+    `The executor ${context.install.version} was installed at ${context.install.remoteBin} on ` +
+    `${launcherLabel(context.launcher)}, but the reconnect still failed. The executor is present on ` +
+    'the target — check why it does not answer the handshake (run it manually on the target and ' +
+    'inspect its stderr), then reconnect the runtime.'
+  );
+}
+
 function withGuidance(error: unknown, guidance: string): HandshakeError {
   const base =
     error instanceof Error
@@ -157,7 +172,8 @@ export interface ConnectWithAutoInstallOptions {
 // connect retry; the retry uses the concrete install path (docker needs the
 // absolute home-based path, its exec has no `~` expansion). `command`
 // runtimes are never auto-installed — a missing executor there fails with
-// guidance. A too-old executor gets upgrade guidance, not an auto-upgrade.
+// guidance. A too-old executor gets upgrade guidance, not an auto-upgrade. A
+// failed install or a failed retry both surface the guidance error.
 export async function connectWithAutoInstall<T>(
   attempt: (launcher: LauncherSpec) => Promise<T>,
   options: ConnectWithAutoInstallOptions,
@@ -237,6 +253,13 @@ export async function connectWithAutoInstall<T>(
       `executor ${install.version} ${install.alreadyInstalled ? 'found' : 'installed'} at ${install.remoteBin}; reconnecting...`,
     );
     const retryLauncher: LauncherSpec = { ...launcher, remoteBin: install.remoteBin };
-    return attempt(retryLauncher);
+    try {
+      return await attempt(retryLauncher);
+    } catch (retryError) {
+      throw withGuidance(
+        retryError,
+        reconnectAfterInstallGuidance({ launcher: retryLauncher, install }),
+      );
+    }
   }
 }

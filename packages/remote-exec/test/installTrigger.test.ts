@@ -49,7 +49,9 @@ function createSshRunner(): { runner: LocalRunner; requests: LocalRunRequest[] }
     requests.push(request);
     const last = request.args.at(-1) ?? '';
     if (request.program === 'ssh') {
-      if (last === 'uname -sm') return { code: 0, signal: null, stdout: 'Linux x86_64\n', stderr: '' };
+      if (last.includes('uname -sm')) {
+        return { code: 0, signal: null, stdout: 'Linux x86_64\n/home/test', stderr: '' };
+      }
       if (last.endsWith('--version')) {
         return installedVersion === undefined
           ? { code: 127, signal: null, stdout: '', stderr: 'kimi: command not found' }
@@ -203,7 +205,7 @@ describe('connectWithAutoInstall', () => {
     expect(message).toContain('Connection refused');
   });
 
-  it('surfaces the retry error unchanged when the connect still fails after a successful install', async () => {
+  it('surfaces the guidance error when the connect still fails after a successful install', async () => {
     const fake = createSshRunner();
     const retryError = new HandshakeError('initialize timed out after 10000ms', { kind: 'timeout' });
     let calls = 0;
@@ -222,7 +224,13 @@ describe('connectWithAutoInstall', () => {
     }).catch((error: unknown) => error);
 
     expect(attempt).toHaveBeenCalledTimes(2);
-    expect(error).toBe(retryError);
+    expect(error).toBeInstanceOf(HandshakeError);
+    expect(error).not.toBe(retryError);
+    const wrapped = error as HandshakeError;
+    expect(wrapped.kind).toBe('timeout');
+    expect(wrapped.message).toContain('initialize timed out after 10000ms');
+    expect(wrapped.message).toContain('executor 1.2.3 was installed at');
+    expect(wrapped.message).toContain('reconnect still failed');
   });
 
   it('refuses auto-install for command runtimes and fails with guidance', async () => {

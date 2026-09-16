@@ -122,10 +122,19 @@ export class CdnExecutorArtifactLocator implements ExecutorArtifactLocator {
     const timeout = setTimeout(() => {
       controller.abort();
     }, this.manifestTimeoutMs);
-    let response: Response;
+    // The timeout must stay armed until the BODY is fully consumed: a CDN or
+    // proxy can deliver headers within the limit and then stall mid-body.
+    let manifest: ReleaseManifest;
     try {
-      response = await this.fetchImpl(url, { signal: controller.signal });
+      const response = await this.fetchImpl(url, { signal: controller.signal });
+      if (!response.ok) {
+        throw new ArtifactLocatorError(
+          `executor manifest for ${version} returned HTTP ${String(response.status)} (${url})`,
+        );
+      }
+      manifest = parseManifest(await response.json(), url);
     } catch (error) {
+      if (error instanceof ArtifactLocatorError) throw error;
       throw new ArtifactLocatorError(
         `failed to fetch the executor manifest for ${version}: ${error instanceof Error ? error.message : String(error)}`,
         { cause: error },
@@ -133,12 +142,6 @@ export class CdnExecutorArtifactLocator implements ExecutorArtifactLocator {
     } finally {
       clearTimeout(timeout);
     }
-    if (!response.ok) {
-      throw new ArtifactLocatorError(
-        `executor manifest for ${version} returned HTTP ${String(response.status)} (${url})`,
-      );
-    }
-    const manifest = parseManifest(await response.json(), url);
     // A stale endpoint answering another release's manifest would apply its
     // checksums to this version's binary and fail every verification.
     if (manifest.version !== version) {
@@ -184,10 +187,18 @@ export async function downloadExecutorArtifact(
   const timeout = setTimeout(() => {
     controller.abort();
   }, options.timeoutMs ?? DOWNLOAD_TIMEOUT_MS);
-  let response: Response;
+  // The timeout must stay armed until the BODY is fully written to disk: a
+  // CDN or proxy can deliver headers within the limit and then stall mid-body.
   try {
-    response = await fetchImpl(artifact.url, { signal: controller.signal });
+    const response = await fetchImpl(artifact.url, { signal: controller.signal });
+    if (!response.ok || response.body === null) {
+      throw new ArtifactLocatorError(
+        `executor download from ${artifact.url} returned HTTP ${String(response.status)}`,
+      );
+    }
+    await pipeline(Readable.fromWeb(response.body as never), createWriteStream(destPath));
   } catch (error) {
+    if (error instanceof ArtifactLocatorError) throw error;
     throw new ArtifactLocatorError(
       `failed to download ${artifact.url}: ${error instanceof Error ? error.message : String(error)}`,
       { cause: error },
@@ -195,12 +206,6 @@ export async function downloadExecutorArtifact(
   } finally {
     clearTimeout(timeout);
   }
-  if (!response.ok || response.body === null) {
-    throw new ArtifactLocatorError(
-      `executor download from ${artifact.url} returned HTTP ${String(response.status)}`,
-    );
-  }
-  await pipeline(Readable.fromWeb(response.body as never), createWriteStream(destPath));
   const actualSha256 = createHash('sha256').update(await readFile(destPath)).digest('hex');
   if (actualSha256 !== artifact.sha256) {
     throw new ArtifactLocatorError(

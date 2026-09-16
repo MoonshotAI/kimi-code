@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import { readFile, rm } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 
 import { afterAll, describe, expect, it, vi } from 'vitest';
 
@@ -136,6 +137,30 @@ describe('CdnExecutorArtifactLocator', () => {
     });
     await expect(locator.locate(target, '1.2.3')).rejects.toThrow(ArtifactLocatorError);
   });
+
+  it('aborts a manifest body that stalls mid-response instead of hanging', async () => {
+    // Models undici: aborting the fetch signal errors the body stream.
+    const fetchImpl = vi.fn(async (_url: unknown, init?: { signal?: AbortSignal }) => {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"version":'));
+          init?.signal?.addEventListener('abort', () => {
+            controller.error(new DOMException('Aborted', 'AbortError'));
+          });
+        },
+      });
+      return new Response(stream, { status: 200 });
+    }) as unknown as typeof fetch;
+    const locator = new CdnExecutorArtifactLocator({
+      cdnBaseUrl: 'https://cdn.example.test',
+      fetchImpl,
+      manifestTimeoutMs: 50,
+    });
+
+    await expect(locator.locate(target, '1.2.3')).rejects.toThrow(
+      /failed to fetch the executor manifest/,
+    );
+  });
 });
 
 describe('downloadExecutorArtifact', () => {
@@ -168,5 +193,26 @@ describe('downloadExecutorArtifact', () => {
   it('rejects on a download HTTP error', async () => {
     const fetchImpl = vi.fn(async () => new Response('nope', { status: 403 })) as unknown as typeof fetch;
     await expect(downloadWith(artifact, fetchImpl)).rejects.toThrow(/HTTP 403/);
+  });
+
+  it('aborts a body that stalls mid-download instead of hanging', async () => {
+    // Models undici: aborting the fetch signal errors the body stream.
+    const fetchImpl = vi.fn(async (_url: unknown, init?: { signal?: AbortSignal }) => {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('partial-body'));
+          init?.signal?.addEventListener('abort', () => {
+            controller.error(new DOMException('Aborted', 'AbortError'));
+          });
+        },
+      });
+      return new Response(stream, { status: 200 });
+    }) as unknown as typeof fetch;
+    const destDir = await mkdtemp(join(tmpdir(), 'kimi-executor-stall-'));
+    tempDirs.push(destDir);
+
+    await expect(
+      downloadExecutorArtifact(artifact, { fetchImpl, timeoutMs: 50, destDir }),
+    ).rejects.toThrow(/failed to download/);
   });
 });

@@ -92,8 +92,9 @@ handshake failures and acts on them:
   (docker exec "executable file not found"), or the handshake **timed out**.
   For typed `ssh`/`docker` runtimes with an artifact locator configured, the
   trigger runs **one** auto-install attempt and then retries the connect
-  **exactly once**; a failed install or a failed retry surfaces as a
-  `HandshakeError` carrying the original failure plus install guidance.
+  **exactly once**; a failed install surfaces the original failure plus
+  install guidance, and a failed retry surfaces the retry failure plus
+  reconnect guidance (the executor is present — diagnose it on the target).
   `command` runtimes are never auto-installed — they fail with manual install
   guidance.
 - **Too-old executor** — the handshake answered but `executorVersion <
@@ -102,18 +103,21 @@ handshake failures and acts on them:
   guidance; no auto-upgrade is performed.
 
 `installExecutor` (ssh/docker) runs: probe the target environment (`uname
--sm`, plus the container user's `$HOME` for docker) → skip when a usable
-executor already answers `--version` at the destination → locate the artifact
-→ download with pinned SHA-256 verification (same discipline as rgLocator) →
-upload to a unique tmp path (`scp` / `docker cp`) → `chmod 755` + atomic
-`mv -f` into the destination (tmp+rename, so a half-install never presents as
-success) → post-check that the installed binary runs `--version` at or above
-the minimum. Every step failure throws `ExecutorInstallError` naming the step,
-argv, exit code and bounded stderr, and the remote tmp file is removed
-best-effort. The default destination is `~/.kimi-code/bin/kimi` (ssh: expanded
-by the remote shell as `$HOME`; docker: the probed container-user absolute
-home path — `docker exec` has no tilde expansion, and the connect retry uses
-that absolute path). A custom `remoteBin` is installed at that literal path.
+-sm` and the remote `$HOME`) → skip when a usable executor already answers
+`--version` at the destination → locate the artifact → download with pinned
+SHA-256 verification (same discipline as rgLocator) → upload to a unique tmp
+path (`scp` / `docker cp`) → `chmod 755` + atomic `mv -f` into the destination
+(tmp+rename, so a half-install never presents as success) → post-check that
+the installed binary runs `--version` at or above the minimum. Every step
+failure throws `ExecutorInstallError` naming the step, argv, exit code and
+bounded stderr, and the remote tmp file is removed best-effort. The default
+destination is `~/.kimi-code/bin/kimi` (ssh: the launcher invocation keeps the
+tilde form for the remote shell, while the scp upload targets the probed
+absolute home path verbatim — OpenSSH ≥ 9.0 scp speaks SFTP with no remote
+shell, so `$HOME`/`~` would never expand; docker: the probed container-user
+absolute home path — `docker exec` has no tilde expansion, and the connect
+retry uses that absolute path). A custom `remoteBin` is installed at that
+literal path.
 
 ### Artifact locator — injection point
 
