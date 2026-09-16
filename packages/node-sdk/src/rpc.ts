@@ -239,7 +239,14 @@ export abstract class SDKRpcClientBase {
 
   abstract supportsAtomicSectionReplace(): boolean;
 
-  abstract replaceConfigSections(sections: Record<string, unknown>): Promise<void>;
+  abstract replaceConfigSections(
+    sections: Record<string, unknown>,
+    options?: {
+      readonly preserveUnknown?: boolean;
+      readonly exactKeys?: Readonly<Record<string, readonly string[]>>;
+      readonly expectedValues?: Readonly<Record<string, unknown>>;
+    },
+  ): Promise<void>;
 
   abstract uploadFile(data: Uint8Array, options: UploadFileOptions): Promise<FileMeta>;
 

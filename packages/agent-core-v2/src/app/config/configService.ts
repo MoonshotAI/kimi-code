@@ -24,6 +24,7 @@ import {
   type ConfigInspectValue,
   type ConfigMerge,
   type ConfigOverlayRegisteredEvent,
+  type ConfigReplaceSectionsOptions,
   type ConfigSchema,
   type ConfigSection,
   type ConfigSectionRegisteredEvent,
@@ -62,6 +63,19 @@ type OnDeprecatedEnv = (oldName: string, newName: string) => void;
 
 function isEnvBinding(value: unknown): value is EnvBinding {
   return typeof value === 'string' || (isPlainObject(value) && 'env' in value);
+}
+
+function mergeExactEntries(
+  current: unknown,
+  submitted: Record<string, unknown>,
+  exact: readonly string[],
+): Record<string, unknown> {
+  const merged = isPlainObject(current) ? { ...current } : {};
+  for (const key of exact) {
+    delete merged[key];
+    if (Object.hasOwn(submitted, key)) merged[key] = submitted[key];
+  }
+  return merged;
 }
 
 function parseBoundRaw(binding: EnvBinding, raw: string): unknown {
@@ -463,19 +477,26 @@ export class ConfigService extends Disposable implements IConfigService {
   async replaceSections(
     sections: Readonly<Record<string, unknown>>,
     target: ConfigTarget = ConfigTarget.User,
+    options: ConfigReplaceSectionsOptions = {},
   ): Promise<void> {
     await this.ready;
     const domains = Object.keys(sections);
     if (domains.length === 0) return;
     if (target === ConfigTarget.Memory) {
+      this.assertExpectedValues(this.memory, options.expectedValues);
       const staged: ResolvedConfig = { ...this.memory };
       for (const domain of domains) {
-        const value = sections[domain];
-        if (value === undefined || value === null) {
+        const submitted = sections[domain];
+        if (submitted === undefined || submitted === null) {
           delete staged[domain];
-        } else {
-          staged[domain] = this.registry.validate(domain, value);
+          continue;
         }
+        const exact = options.exactKeys?.[domain];
+        const value =
+          exact === undefined || !isPlainObject(submitted)
+            ? submitted
+            : mergeExactEntries(staged[domain], submitted, exact);
+        staged[domain] = this.registry.validate(domain, value);
       }
       this.memory = staged;
       this.commit('set', domains);
@@ -483,19 +504,57 @@ export class ConfigService extends Disposable implements IConfigService {
     }
     await this.enqueueStateTransition(async () => {
       this.assertPersistable();
-      await this.persistDomains(domains, (stagedRaw, stagedRawSnake) => {
-        for (const domain of domains) {
-          const value = sections[domain] === null ? undefined : sections[domain];
-          const stripped = this.stripEnv(domain, value, stagedRaw, stagedRawSnake);
-          if (stripped === undefined) {
-            delete stagedRaw[domain];
-          } else {
-            stagedRaw[domain] = this.registry.validate(domain, stripped);
+      await this.persistDomains(
+        domains,
+        (stagedRaw, stagedRawSnake) => {
+          for (const domain of domains) {
+            const submitted = sections[domain] === null ? undefined : sections[domain];
+            const exact = options.exactKeys?.[domain];
+            const value =
+              exact === undefined || !isPlainObject(submitted)
+                ? submitted
+                : mergeExactEntries(stagedRaw[domain], submitted, exact);
+            const stripped = this.stripEnv(domain, value, stagedRaw, stagedRawSnake);
+            if (stripped === undefined) {
+              delete stagedRaw[domain];
+            } else {
+              stagedRaw[domain] = this.registry.validate(domain, stripped);
+            }
           }
-        }
-      });
+        },
+        options.preserveUnknown !== false,
+        options.exactKeys,
+        options.expectedValues,
+      );
       this.rebuildEffective('set', domains);
     });
+  }
+
+  private assertExpectedValues(
+    current: ResolvedConfig,
+    expectedValues: Readonly<Record<string, unknown>> | undefined,
+  ): void {
+    if (expectedValues === undefined) return;
+    const changed: string[] = [];
+    for (const [domain, rawExpected] of Object.entries(expectedValues)) {
+      const expected = rawExpected === null ? undefined : rawExpected;
+      const currentValue = current[domain];
+      const normalizedCurrent =
+        currentValue === undefined && isPlainObject(expected)
+          ? this.registry.validate(domain, {})
+          : currentValue === undefined
+            ? undefined
+            : this.registry.validate(domain, currentValue);
+      const normalizedExpected =
+        expected === undefined ? undefined : this.registry.validate(domain, expected);
+      if (!deepEqual(normalizedCurrent, normalizedExpected)) changed.push(domain);
+    }
+    if (changed.length === 0) return;
+    throw new Error2(
+      ErrorCodes.CONFIG_INVALID,
+      'Configuration changed while this update was being prepared; retry the operation.',
+      { details: { domains: changed } },
+    );
   }
 
   private stripEnv(
@@ -804,6 +863,9 @@ export class ConfigService extends Disposable implements IConfigService {
   private async persistDomains(
     domains: readonly string[],
     rebase: (stagedRaw: ResolvedConfig, stagedRawSnake: ResolvedConfig) => void,
+    preserveUnknown = true,
+    exactKeys?: Readonly<Record<string, readonly string[]>>,
+    expectedValues?: Readonly<Record<string, unknown>>,
   ): Promise<void> {
     this.assertPersistable();
     let onDisk: ResolvedConfig = {};
@@ -835,12 +897,25 @@ export class ConfigService extends Disposable implements IConfigService {
     }
     const stagedRawSnake = cloneRecord(onDisk);
     const stagedRaw = transformTomlData(onDisk, this.registry);
+    this.assertExpectedValues(stagedRaw, expectedValues);
     const previousSnake: ResolvedConfig = {};
     for (const domain of domains) {
       const snakeKey = camelToSnake(domain);
       previousSnake[snakeKey] = stagedRawSnake[snakeKey];
     }
     rebase(stagedRaw, stagedRawSnake);
+    if (!preserveUnknown) {
+      for (const domain of domains) {
+        const snakeDomain = camelToSnake(domain);
+        const keys = exactKeys?.[domain];
+        const rawDomain = stagedRawSnake[snakeDomain];
+        if (keys !== undefined && isPlainObject(rawDomain)) {
+          for (const key of keys) delete rawDomain[key];
+        } else {
+          delete stagedRawSnake[snakeDomain];
+        }
+      }
+    }
     for (const domain of domains) {
       applySectionToToml(stagedRawSnake, domain, stagedRaw[domain], this.registry);
     }

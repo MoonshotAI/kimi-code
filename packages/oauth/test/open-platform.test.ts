@@ -447,6 +447,43 @@ describe('applyOpenPlatformConfig', () => {
     expect(config.thinking).toEqual({ enabled: true });
     expect(config.thinking?.effort).toBeUndefined();
   });
+
+  it('drops custom-registry provenance when materializing an open platform', () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        'moonshot-cn': {
+          type: 'openai',
+          baseUrl: 'https://registry.example.test/v1',
+          apiKey: 'sk-registry',
+          source: {
+            kind: 'apiJson',
+            url: 'https://registry.example.test/api.json',
+            apiKey: 'sk-registry',
+          },
+        },
+      },
+    };
+    const platform = getOpenPlatformById('moonshot-cn')!;
+    const models = [
+      {
+        id: 'kimi-k2',
+        contextLength: 131072,
+        supportsReasoning: false,
+        supportsImageIn: false,
+        supportsVideoIn: false,
+      },
+    ];
+
+    applyOpenPlatformConfig(config, {
+      platform,
+      models,
+      selectedModel: models[0]!,
+      thinking: false,
+      credential: { apiKey: 'sk-registry' },
+    });
+
+    expect(config.providers['moonshot-cn']).not.toHaveProperty('source');
+  });
 });
 
 describe('removeOpenPlatformConfig', () => {

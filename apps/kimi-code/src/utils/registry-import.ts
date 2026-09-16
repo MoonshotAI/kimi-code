@@ -1,17 +1,12 @@
 /**
- * Persists a custom-registry (api.json) import onto the harness as two
- * replacement `replaceConfigSections` writes, shared by the CLI `kimi provider
- * add` flow and the TUI registry dialog. The first write persists the removal
- * phase — required because the models/providers writeback merges fields from
- * the raw TOML, so rebuilt records only come out fresh if the old ones were
- * purged from disk first. The second writes the rebuilt records and the
- * restored (or cleared) default pointers and thinking state; failures roll
- * back to the original sections.
+ * Persists a custom-registry (api.json) import onto the harness as one atomic
+ * replacement of every affected config section, shared by the CLI `kimi
+ * provider add` flow and the TUI registry dialog.
  */
 
 import {
   applyCustomRegistryEntries,
-  removeCustomRegistryEntries,
+  customRegistryReplacementKeys,
   type CustomRegistryProviderEntry,
   type CustomRegistrySource,
   type ManagedKimiConfigShape,
@@ -23,34 +18,48 @@ export async function persistRegistryImport(
   entries: Record<string, CustomRegistryProviderEntry>,
   source: CustomRegistrySource,
 ): Promise<void> {
-  const config = await harness.getConfig();
-  const original = structuredClone(config);
-  const removal = removeCustomRegistryEntries(asManaged(config), entries, source);
-  try {
-    await harness.replaceConfigSections({
-      providers: config.providers,
-      models: config.models,
-    });
-    applyCustomRegistryEntries(asManaged(config), entries, source, removal);
-    await harness.replaceConfigSections({
-      providers: config.providers,
-      models: config.models,
-      defaultModel: config.defaultModel,
-      defaultProvider: config.defaultProvider,
-      thinking: config.thinking,
-    });
-  } catch (error) {
-    await harness.replaceConfigSections({
-      providers: original.providers,
-      models: original.models,
-      defaultModel: original.defaultModel,
-      defaultProvider: original.defaultProvider,
-      thinking: original.thinking,
-    });
-    throw error;
+  if (Object.keys(entries).length === 0) {
+    throw new Error('Custom registry contained no usable providers.');
   }
+  const config = await harness.getConfig();
+  const next = structuredClone(config);
+  const replacementKeys = customRegistryReplacementKeys(asManaged(config), entries, source);
+  applyCustomRegistryEntries(asManaged(next), entries, source);
+  const sections: Record<string, unknown> = {
+    providers: next.providers,
+    models: next.models,
+  };
+  const expectedValues: Record<string, unknown> = {};
+  if (next.defaultModel !== config.defaultModel) {
+    sections['defaultModel'] = next.defaultModel;
+    expectedValues['defaultModel'] = config.defaultModel;
+  }
+  if (next.defaultProvider !== config.defaultProvider) {
+    sections['defaultProvider'] = next.defaultProvider;
+    expectedValues['defaultProvider'] = config.defaultProvider;
+  }
+  if (JSON.stringify(next.thinking) !== JSON.stringify(config.thinking)) {
+    sections['thinking'] = next.thinking;
+    expectedValues['thinking'] = persistedThinking(config.thinking);
+  }
+  await harness.replaceConfigSections(sections, {
+    preserveUnknown: false,
+    exactKeys: replacementKeys,
+    expectedValues,
+  });
 }
 
 function asManaged(config: unknown): ManagedKimiConfigShape {
   return config as ManagedKimiConfigShape;
+}
+
+function persistedThinking(
+  thinking: ManagedKimiConfigShape['thinking'],
+): ManagedKimiConfigShape['thinking'] {
+  if (thinking === undefined) return undefined;
+  const persisted: NonNullable<ManagedKimiConfigShape['thinking']> = {};
+  if (thinking.enabled !== undefined) persisted.enabled = thinking.enabled;
+  if (thinking.effort !== undefined) persisted.effort = thinking.effort;
+  if (thinking['keep'] !== undefined) persisted['keep'] = thinking['keep'];
+  return persisted;
 }

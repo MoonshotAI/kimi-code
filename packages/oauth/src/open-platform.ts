@@ -179,6 +179,7 @@ export function applyOpenPlatformConfig(
     apiKey: _droppedKey,
     apiKeyEnv: _droppedEnv,
     oauth: _droppedOAuth,
+    source: _droppedSource,
     ...preserved
   } = (existing ?? {}) as Record<string, unknown>;
   config.providers[providerKey] = {

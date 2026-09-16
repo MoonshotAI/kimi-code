@@ -83,6 +83,7 @@ import type { IBootstrapService } from '@moonshot-ai/agent-core-v2/app/bootstrap
 import type {
   ConfigDiagnostic,
   ConfigInspectValue,
+  ConfigReplaceSectionsOptions,
   ConfigTarget,
 } from '@moonshot-ai/agent-core-v2/app/config/config';
 import type {
@@ -251,6 +252,7 @@ import {
 import {
   configDiagnosticSchema,
   configInspectValueSchema,
+  configReplaceSectionsOptionsSchema,
   configTargetSchema,
 } from '../src/contract/global/config.js';
 import {
@@ -364,6 +366,10 @@ const _workspaceUpdate: AssertWire<typeof workspaceUpdateSchema, WorkspaceUpdate
 const _configInspectValue: AssertEngineToWire<typeof configInspectValueSchema, ConfigInspectValue> =
   true;
 const _configDiagnostic: AssertWire<typeof configDiagnosticSchema, ConfigDiagnostic> = true;
+const _configReplaceSectionsOptions: AssertWire<
+  typeof configReplaceSectionsOptionsSchema,
+  ConfigReplaceSectionsOptions
+> = true;
 const _configTarget: AssertWire<typeof configTargetSchema, ConfigTargetValues> = true;
 
 // capabilities.ts

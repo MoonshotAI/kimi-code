@@ -177,6 +177,7 @@ export {
   CustomRegistryApiError,
   CUSTOM_REGISTRY_DEFAULT_CAPABILITIES,
   CUSTOM_REGISTRY_DEFAULT_MAX_CONTEXT,
+  customRegistryReplacementKeys,
   fetchCustomRegistry,
   removeCustomRegistryEntries,
   removeCustomRegistryProvider,
@@ -186,6 +187,7 @@ export type {
   CustomRegistryProviderEntry,
   CustomRegistryProviderType,
   CustomRegistryRemoval,
+  CustomRegistryReplacementKeys,
   CustomRegistrySource,
   FetchCustomRegistryOptions,
 } from './custom-registry';

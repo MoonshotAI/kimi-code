@@ -23,6 +23,12 @@ export const configDiagnosticSchema = z.object({
   message: z.string(),
 });
 
+export const configReplaceSectionsOptionsSchema = z.object({
+  preserveUnknown: z.boolean().optional(),
+  exactKeys: z.record(z.string(), z.array(z.string())).optional(),
+  expectedValues: z.record(z.string(), z.unknown()).optional(),
+});
+
 export const configContract = {
   get: { input: z.tuple([z.string()]), output: z.unknown() },
   inspect: { input: z.tuple([z.string()]), output: configInspectValueSchema },
@@ -36,7 +42,11 @@ export const configContract = {
     output: noResult,
   },
   replaceSections: {
-    input: z.tuple([z.record(z.string(), z.unknown()), configTargetSchema.optional()]),
+    input: z.tuple([
+      z.record(z.string(), z.unknown()),
+      configTargetSchema.optional(),
+      configReplaceSectionsOptionsSchema.optional(),
+    ]),
     output: noResult,
   },
   reload: { input: z.tuple([]), output: noResult },

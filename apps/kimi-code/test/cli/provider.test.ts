@@ -44,12 +44,21 @@ class ExitCalled extends Error {
   }
 }
 
+interface ReplaceConfigSectionsOptions {
+  readonly preserveUnknown?: boolean;
+  readonly exactKeys?: Readonly<Record<string, readonly string[]>>;
+  readonly expectedValues?: Readonly<Record<string, unknown>>;
+}
+
 interface FakeHarness {
   ensureConfigFile: () => Promise<void>;
   getConfig: () => Promise<KimiConfig>;
   setConfig: (patch: Partial<KimiConfig>) => Promise<KimiConfig>;
   removeProvider: (providerId: string) => Promise<KimiConfig>;
-  replaceConfigSections: (sections: Record<string, unknown>) => Promise<void>;
+  replaceConfigSections: (
+    sections: Record<string, unknown>,
+    options?: ReplaceConfigSectionsOptions,
+  ) => Promise<void>;
   close: () => Promise<void>;
 }
 
@@ -59,6 +68,7 @@ function makeHarness(initial: KimiConfig): {
   setConfigCalls: Array<Partial<KimiConfig>>;
   removeCalls: string[];
   replaceSectionCalls: Array<Record<string, unknown>>;
+  replaceSectionOptionCalls: Array<ReplaceConfigSectionsOptions | undefined>;
 } {
   // `persisted` simulates the on-disk config; the real RPC's `removeProvider`
   // reads from / writes to disk on every call. Tests must
@@ -69,6 +79,7 @@ function makeHarness(initial: KimiConfig): {
   const setConfigCalls: Array<Partial<KimiConfig>> = [];
   const removeCalls: string[] = [];
   const replaceSectionCalls: Array<Record<string, unknown>> = [];
+  const replaceSectionOptionCalls: Array<ReplaceConfigSectionsOptions | undefined> = [];
   const harness: FakeHarness = {
     ensureConfigFile: async () => {},
     getConfig: async () => structuredClone(persisted),
@@ -103,8 +114,11 @@ function makeHarness(initial: KimiConfig): {
       if (removedDefault) persisted = { ...persisted, defaultModel: undefined };
       return structuredClone(persisted);
     },
-    replaceConfigSections: async (sections) => {
+    replaceConfigSections: async (sections, options) => {
       replaceSectionCalls.push(structuredClone(sections));
+      replaceSectionOptionCalls.push(
+        options === undefined ? undefined : structuredClone(options),
+      );
       // Replacement semantics: a section present here replaces wholesale, and
       // an `undefined` value clears the key; absent sections are untouched.
       persisted = { ...persisted, ...sections } as KimiConfig;
@@ -117,6 +131,7 @@ function makeHarness(initial: KimiConfig): {
     setConfigCalls,
     removeCalls,
     replaceSectionCalls,
+    replaceSectionOptionCalls,
   };
 }
 
@@ -257,7 +272,7 @@ const CATALOG_BODY = {
 };
 
 describe('kimi provider add', () => {
-  it('restores the original config when the rebuilt registry write fails', async () => {
+  it('rejects an empty registry at the shared persistence boundary', async () => {
     const initial = {
       providers: {
         kohub: {
@@ -273,32 +288,71 @@ describe('kimi provider add', () => {
       defaultModel: 'kohub/old',
     } as unknown as KimiConfig;
     const { harness, current, replaceSectionCalls } = makeHarness(initial);
-    const originalReplace = harness.replaceConfigSections;
-    let writes = 0;
-    harness.replaceConfigSections = async (sections) => {
-      writes++;
-      if (writes === 2) throw new Error('rebuild failed');
-      await originalReplace(sections);
-    };
 
     await expect(
       persistRegistryImport(
         harness as unknown as Parameters<typeof persistRegistryImport>[0],
-        {
-          kohub: {
-            id: 'kohub',
-            name: 'KoHub',
-            api: 'https://new.example.test/v1',
-            type: 'openai',
-            models: { fresh: { id: 'fresh' } },
-          },
-        },
-        { kind: 'apiJson', url: REGISTRY_URL, apiKey: 'new' },
+        {},
+        { kind: 'apiJson', url: REGISTRY_URL, apiKey: '' },
       ),
-    ).rejects.toThrow('rebuild failed');
+    ).rejects.toThrow(/no usable providers/i);
 
+    expect(replaceSectionCalls).toEqual([]);
     expect(current()).toEqual(initial);
-    expect(replaceSectionCalls).toHaveLength(2);
+  });
+
+  it('commits the rebuilt registry in one atomic section replacement', async () => {
+    const initial = {
+      providers: {
+        kohub: {
+          type: 'openai',
+          baseUrl: 'https://old.example.test/v1',
+          apiKey: 'old',
+          source: { kind: 'apiJson', url: REGISTRY_URL, apiKey: 'old' },
+        },
+      },
+      models: {
+        'kohub/old': { provider: 'kohub', model: 'old', maxContextSize: 1024 },
+      },
+      defaultModel: 'kohub/old',
+      thinking: { forcedEffort: 'max' },
+    } as unknown as KimiConfig;
+    const { harness, current, replaceSectionCalls, replaceSectionOptionCalls } =
+      makeHarness(initial);
+
+    await persistRegistryImport(
+      harness as unknown as Parameters<typeof persistRegistryImport>[0],
+      {
+        kohub: {
+          id: 'kohub',
+          name: 'KoHub',
+          api: 'https://new.example.test/v1',
+          type: 'openai',
+          models: { fresh: { id: 'fresh' } },
+        },
+      },
+      { kind: 'apiJson', url: REGISTRY_URL, apiKey: 'new' },
+    );
+
+    expect(replaceSectionCalls).toHaveLength(1);
+    expect(replaceSectionOptionCalls).toEqual([
+      {
+        preserveUnknown: false,
+        exactKeys: {
+          providers: ['kohub'],
+          models: ['kohub/old', 'kohub/fresh'],
+          thinking: ['enabled', 'effort', 'keep'],
+        },
+        expectedValues: { defaultModel: 'kohub/old', thinking: {} },
+      },
+    ]);
+    expect(current().providers['kohub']).toMatchObject({
+      baseUrl: 'https://new.example.test/v1',
+      apiKey: 'new',
+    });
+    expect(current().models?.['kohub/fresh']).toBeDefined();
+    expect(current().models?.['kohub/old']).toBeUndefined();
+    expect(current().defaultModel).toBeUndefined();
   });
 
   it('imports providers and models from a custom registry, persisting source on each provider', async () => {
@@ -340,10 +394,8 @@ describe('kimi provider add', () => {
       model: 'gpt-5.5',
     });
 
-    // The two replaceConfigSections writes (purge, then rebuilt records)
-    // should both carry providers and models.
-    expect(replaceSectionCalls).toHaveLength(2);
-    expect(Object.keys(replaceSectionCalls[1]?.['providers'] ?? {}).toSorted()).toEqual([
+    expect(replaceSectionCalls).toHaveLength(1);
+    expect(Object.keys(replaceSectionCalls[0]?.['providers'] ?? {}).toSorted()).toEqual([
       'kohub',
       'kohub-responses',
     ]);
@@ -381,9 +433,6 @@ describe('kimi provider add', () => {
     );
 
     expect(exitCodes).toEqual([]);
-    // The stale model alias must be gone; the registry's alias must be in.
-    // Removals are persisted through the two-phase `replaceConfigSections`
-    // writes, not per-id `removeProvider` RPCs.
     expect(current().models?.['kohub/stale-model']).toBeUndefined();
     expect(current().models?.['kohub/claude-opus-4-7']).toBeDefined();
   });
@@ -417,24 +466,16 @@ describe('kimi provider add', () => {
     await tryRun(() => handleProviderAdd(deps, REGISTRY_URL, {}));
 
     expect(exitCodes).toEqual([]);
-    // The vanished provider and its alias are gone from disk...
     expect(current().providers['gone']).toBeUndefined();
     expect(current().models?.['gone/m1']).toBeUndefined();
-    // ...the dangling default_model was cleared, with its thinking state...
     expect(current().defaultModel).toBeUndefined();
     expect(current().thinking).toBeUndefined();
-    // ...and the purge was persisted as a replacement write before the rebuilt records.
-    expect(replaceSectionCalls).toHaveLength(2);
-    expect(replaceSectionCalls[0]).not.toHaveProperty('defaultModel');
-    expect(replaceSectionCalls[1]).toHaveProperty('defaultModel', undefined);
-    expect(replaceSectionCalls[1]).toHaveProperty('thinking', undefined);
+    expect(replaceSectionCalls).toHaveLength(1);
+    expect(replaceSectionCalls[0]).toHaveProperty('defaultModel', undefined);
+    expect(replaceSectionCalls[0]).toHaveProperty('thinking', undefined);
   });
 
-  it('preserves newly-imported providers when a later registry entry replaces an existing id', async () => {
-    // Regression test for the codex P1: `harness.removeProvider` re-reads
-    // from disk on each call, so applying the loop body without flushing
-    // would silently drop providers added earlier in the same iteration.
-    // The handler now removes every stale id up front in a single batch.
+  it('preserves every provider when a registry entry replaces an existing id', async () => {
     mockRegistryFetch();
     const initial: KimiConfig = {
       providers: {
@@ -539,6 +580,32 @@ describe('kimi provider add', () => {
         headers: expect.objectContaining({ Authorization: 'Bearer sk-env-token' }),
       }),
     );
+  });
+
+  it('does not change the config when the registry has no usable providers', async () => {
+    mockRegistryFetch({});
+    const initial: KimiConfig = {
+      providers: {
+        kohub: {
+          type: 'openai',
+          baseUrl: 'https://registry.example.test/v1',
+          apiKey: 'sk-old',
+          source: { kind: 'apiJson', url: REGISTRY_URL, apiKey: 'sk-old' },
+        },
+      },
+      models: {
+        'kohub/m1': { provider: 'kohub', model: 'm1', maxContextSize: 1024 },
+      },
+      defaultModel: 'kohub/m1',
+    } as unknown as KimiConfig;
+    const { harness, current, replaceSectionCalls } = makeHarness(initial);
+    const { deps, exitCodes } = makeDeps(harness);
+
+    await tryRun(() => handleProviderAdd(deps, REGISTRY_URL, {}));
+
+    expect(exitCodes).toEqual([1]);
+    expect(replaceSectionCalls).toEqual([]);
+    expect(current()).toEqual(initial);
   });
 
   it('imports a public registry without an api key, sending no Authorization header', async () => {

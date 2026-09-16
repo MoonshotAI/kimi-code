@@ -505,7 +505,11 @@ export async function refreshProviderModels(
   // ---------------------------------------------------------------------------
   // 2. Open Platforms (moonshot-cn, moonshot-ai, …)
   // ---------------------------------------------------------------------------
-  const openPlatformIds = Object.keys(config.providers).filter((id) => isOpenPlatformId(id));
+  const openPlatformIds = Object.keys(config.providers).filter((id) => {
+    if (!isOpenPlatformId(id)) return false;
+    const provider = readProvider(config, id);
+    return provider !== undefined && readCustomRegistrySource(provider) === undefined;
+  });
   for (const providerId of openPlatformIds) {
     if (targetId !== undefined && targetId !== providerId) continue;
     const platform = getOpenPlatformById(providerId);
@@ -671,10 +675,9 @@ export async function refreshProviderModels(
     }
   >();
   for (const providerId of Object.keys(config.providers)) {
-    if (providerId === KIMI_CODE_PROVIDER_NAME) continue;
-    if (isOpenPlatformId(providerId)) continue;
     const provider = readProvider(config, providerId);
     if (provider === undefined) continue;
+    if (provider.oauth !== undefined) continue;
     const source = readCustomRegistrySource(provider);
     if (source === undefined) continue;
     const key = customRegistrySourceKey(source);
@@ -702,6 +705,9 @@ export async function refreshProviderModels(
     if (targetId !== undefined && !providerIds.includes(targetId)) continue;
     try {
       const { entries, source } = await fetchCustomRegistryFromSources(sources, host.userAgent);
+      if (Object.keys(entries).length === 0) {
+        throw new Error(`Custom registry at ${source.url} contained no usable providers.`);
+      }
       config = await rebaseSelectionAfterFetch(host, config);
       // Build the whole batch on one clone so that several changed providers
       // from the same source do not overwrite each other's aliases, and so the
@@ -720,16 +726,52 @@ export async function refreshProviderModels(
         remoteEntries.map((entry) => [entry.id, entry]),
       );
       const providerIdsToSync = new Set(providerIds);
+      const rejectedProviderIds = new Set<string>();
       // Only pull in newly-appeared providers from the registry when running an
       // unscoped refresh; a scoped refresh must not add siblings.
       if (targetId === undefined) {
-        for (const entry of remoteEntries) providerIdsToSync.add(entry.id);
+        for (const entry of remoteEntries) {
+          if (
+            entry.id === KIMI_CODE_PLATFORM_ID ||
+            entry.id === KIMI_CODE_PROVIDER_NAME ||
+            isOpenPlatformId(entry.id)
+          ) {
+            rejectedProviderIds.add(entry.id);
+            failed.push({
+              provider: entry.id,
+              reason: `Custom registry provider id "${entry.id}" is reserved by Kimi Code.`,
+            });
+            continue;
+          }
+          const existing = readProvider(config, entry.id);
+          if (existing?.oauth !== undefined) {
+            rejectedProviderIds.add(entry.id);
+            failed.push({
+              provider: entry.id,
+              reason: `Custom registry provider "${entry.id}" is managed by OAuth; log out before importing it.`,
+            });
+            continue;
+          }
+          providerIdsToSync.add(entry.id);
+        }
       }
 
       for (const providerId of providerIdsToSync) {
+        if (rejectedProviderIds.has(providerId)) continue;
         if (targetId !== undefined && providerId !== targetId) continue;
         const entry = remoteEntriesByProviderId.get(providerId);
         if (entry === undefined) {
+          if (
+            providerId === KIMI_CODE_PLATFORM_ID ||
+            providerId === KIMI_CODE_PROVIDER_NAME ||
+            isOpenPlatformId(providerId)
+          ) {
+            failed.push({
+              provider: providerId,
+              reason: `Custom registry provider id "${providerId}" is reserved by Kimi Code.`,
+            });
+            continue;
+          }
           const oldIds = collectModelIdsForAliases(config, providerAliasKeys(config, providerId));
           removeCustomRegistryProvider(next, providerId);
           changedProviders.push({
@@ -743,13 +785,28 @@ export async function refreshProviderModels(
         }
 
         const existingProvider = readProvider(config, providerId);
+        if (existingProvider?.oauth !== undefined) {
+          failed.push({
+            provider: providerId,
+            reason: `Custom registry provider "${providerId}" is managed by OAuth; log out before importing it.`,
+          });
+          continue;
+        }
         const declared = declaredProviderCredential(existingProvider ?? {}, providerId);
         if (declared.kind === 'conflict') {
           failed.push({ provider: providerId, reason: declared.message });
           continue;
         }
         const existed = existingProvider !== undefined;
-        applyCustomRegistryProvider(next, entry, source);
+        try {
+          applyCustomRegistryProvider(next, entry, source);
+        } catch (error) {
+          failed.push({
+            provider: providerId,
+            reason: error instanceof Error ? error.message : String(error),
+          });
+          continue;
+        }
         const refreshedAliasKeys = providerRefreshAliasKeys(config, next, providerId, `${providerId}/`);
         if (existed) {
           restoreProviderAliases(next, preserveUserProviderAliases(config, providerId, refreshedAliasKeys));

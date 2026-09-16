@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 
 import { pluginManifestSchema } from '../src/contract/global/plugins.js';
 import { mcpServerAuthFlowHandleSchema } from '../src/contract/global/mcpManagement.js';
+import { catalogContract } from '../src/contract/global/catalog.js';
 import { providersContract } from '../src/contract/global/providers.js';
 import { createSessionOptionsSchema } from '../src/contract/session/lifecycle.js';
 import { promptPayloadSchema } from '../src/contract/agent/schemas.js';
@@ -106,5 +107,19 @@ describe('provider contract validation', () => {
     expect(providersContract.list.output.parse({ acme: wire })).toMatchObject({
       acme: { apiKeyEnv: 'ACME_API_KEY' },
     });
+  });
+
+  it('round-trips api_key_env through provider catalog output', () => {
+    const provider = {
+      id: 'acme',
+      type: 'openai',
+      api_key_env: 'ACME_API_KEY',
+      has_api_key: true,
+      status: 'connected',
+      models: ['acme/model'],
+    };
+
+    expect(catalogContract.listProviders.output.parse([provider])).toEqual([provider]);
+    expect(catalogContract.getProvider.output.parse(provider)).toEqual(provider);
   });
 });

@@ -948,6 +948,160 @@ describe('refreshProviderModels api_key_env credentials', () => {
       host.dispose();
     }
   });
+
+  it('does not delete a source-backed OAuth provider during registry refresh', async () => {
+    const registryUrl = 'https://registry.example.test/api.json';
+    const provider = {
+      type: 'kimi',
+      baseUrl: 'https://api.example.test/v1',
+      oauth: { storage: 'file', key: 'oauth/kimi-code' },
+      source: { kind: 'apiJson', url: registryUrl, apiKey: '' },
+    };
+    const { host, config, discovery, providers } = await createHost({
+      providers: { [KIMI_CODE_PROVIDER_NAME]: provider },
+      models: { 'kimi-code/kimi-k2': { provider: KIMI_CODE_PROVIDER_NAME, model: 'kimi-k2', maxContextSize: 1000 } },
+    });
+    const replaceSections = vi.spyOn(config, 'replaceSections');
+    try {
+      const result = await discovery.refreshProviderModels({ scope: 'all' });
+      expect(result.changed).toEqual([]);
+      expect(result.unchanged).toEqual([]);
+      expect(result.failed).toEqual([
+        expect.objectContaining({ provider: KIMI_CODE_PROVIDER_NAME }),
+      ]);
+      expect(replaceSections).not.toHaveBeenCalled();
+      expect(providers.list()[KIMI_CODE_PROVIDER_NAME]).toEqual(provider);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('keeps an env-backed registry provider unchanged when its endpoint changes', async () => {
+    vi.stubEnv('KIMI_TEST_REGISTRY_PROVIDER_KEY', 'sk-provider');
+    const registryUrl = 'https://registry.example.test/api.json';
+    const fetchMock = vi.fn(async (_input: unknown) =>
+      new Response(
+        JSON.stringify({
+          acme: {
+            id: 'acme',
+            name: 'Acme',
+            api: 'https://changed.example.test/v1',
+            type: 'openai',
+            models: { m1: { id: 'm1' } },
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const provider = {
+      type: 'openai',
+      baseUrl: 'https://trusted.example.test/v1',
+      apiKeyEnv: 'KIMI_TEST_REGISTRY_PROVIDER_KEY',
+      source: { kind: 'apiJson', url: registryUrl, apiKey: '' },
+    };
+    const { host, config, discovery, providers } = await createHost({
+      providers: { acme: provider },
+      models: { 'acme/m1': { provider: 'acme', model: 'm1', maxContextSize: 1000 } },
+    });
+    const replaceSections = vi.spyOn(config, 'replaceSections');
+    try {
+      const result = await discovery.refreshProviderModels({ scope: 'all' });
+      expect(result.changed).toEqual([]);
+      expect(result.failed).toEqual([
+        expect.objectContaining({ provider: 'acme', reason: expect.stringMatching(/endpoint/i) }),
+      ]);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(registryUrl);
+      expect(replaceSections).not.toHaveBeenCalled();
+      expect(providers.list()['acme']).toEqual(provider);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('keeps custom-registry providers unchanged when refresh returns no usable providers', async () => {
+    const registryUrl = 'https://registry.example.test/api.json';
+    const fetchMock = vi.fn(async (_input: unknown) =>
+      new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const provider = {
+      type: 'openai',
+      baseUrl: 'https://acme.example.test/v1',
+      apiKey: 'sk-provider',
+      source: { kind: 'apiJson', url: registryUrl, apiKey: '' },
+    };
+    const { host, config, discovery, providers, models } = await createHost({
+      providers: { acme: provider },
+      models: { 'acme/m1': { provider: 'acme', model: 'm1', maxContextSize: 1000 } },
+    });
+    const replaceSections = vi.spyOn(config, 'replaceSections');
+    try {
+      const result = await discovery.refreshProviderModels({ scope: 'all' });
+      expect(result.changed).toEqual([]);
+      expect(result.failed).toEqual([
+        expect.objectContaining({
+          provider: 'acme',
+          reason: expect.stringMatching(/no usable providers/i),
+        }),
+      ]);
+      expect(replaceSections).not.toHaveBeenCalled();
+      expect(providers.list()['acme']).toEqual(provider);
+      expect(models.list()['acme/m1']).toBeDefined();
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('never routes a source-backed reserved id through the open-platform endpoint', async () => {
+    vi.stubEnv('KIMI_TEST_REGISTRY_PROVIDER_KEY', 'sk-provider');
+    const registryUrl = 'https://registry.example.test/api.json';
+    const fetchMock = vi.fn(async (_input: unknown) =>
+      new Response(
+        JSON.stringify({
+          shadow: {
+            id: 'moonshot-cn',
+            name: 'Shadow Moonshot',
+            api: 'https://registry-provider.example.test/v1',
+            type: 'openai',
+            models: { m1: { id: 'm1' } },
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const provider = {
+      type: 'openai',
+      baseUrl: 'https://registry-provider.example.test/v1',
+      apiKeyEnv: 'KIMI_TEST_REGISTRY_PROVIDER_KEY',
+      source: { kind: 'apiJson', url: registryUrl, apiKey: '' },
+    };
+    const { host, config, discovery, providers } = await createHost({
+      providers: { 'moonshot-cn': provider },
+      models: {
+        'moonshot-cn/m1': { provider: 'moonshot-cn', model: 'm1', maxContextSize: 1000 },
+      },
+    });
+    const replaceSections = vi.spyOn(config, 'replaceSections');
+    try {
+      const result = await discovery.refreshProviderModels({ scope: 'all' });
+      expect(result.changed).toEqual([]);
+      expect(result.failed).toEqual([
+        expect.objectContaining({
+          provider: 'moonshot-cn',
+          reason: expect.stringMatching(/reserved/i),
+        }),
+      ]);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(registryUrl);
+      expect(replaceSections).not.toHaveBeenCalled();
+      expect(providers.list()['moonshot-cn']).toEqual(provider);
+    } finally {
+      host.dispose();
+    }
+  });
 });
 
 describe('refreshProviderModels defaultModel self-heal', () => {

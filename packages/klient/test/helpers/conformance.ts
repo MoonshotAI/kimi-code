@@ -237,6 +237,72 @@ export function defineKlientConformance(
       }
     });
 
+    it('config replaceSections forwards exact replacement and guards across the transport', async () => {
+      const config = target.klient.global.config;
+      const beforeProviders = await config.inspect<Record<string, unknown>>('providers');
+      const beforeModels = await config.inspect<Record<string, unknown>>('models');
+      const beforeGuard = await config.inspect<unknown>('conformanceGuard');
+      try {
+        await config.replaceSections({
+          sections: {
+            providers: {
+              ...beforeProviders.userValue,
+              'conf-owned': { type: 'openai', apiKey: 'old' },
+              'conf-keep': { type: 'openai', apiKey: 'keep' },
+            },
+            models: {
+              ...beforeModels.userValue,
+              'conf-owned/m1': { provider: 'conf-owned', model: 'm1', maxContextSize: 100 },
+              'conf-keep/m1': { provider: 'conf-keep', model: 'm1', maxContextSize: 100 },
+            },
+          },
+        });
+        await config.replaceSections({
+          sections: {
+            providers: {
+              'conf-owned': { type: 'openai', apiKey: 'new' },
+              'conf-stale': { type: 'openai', apiKey: 'stale' },
+            },
+            models: {
+              'conf-owned/m1': { provider: 'conf-owned', model: 'm1', maxContextSize: 200 },
+              'conf-stale/m1': { provider: 'conf-stale', model: 'm1', maxContextSize: 100 },
+            },
+          },
+          preserveUnknown: false,
+          exactKeys: {
+            providers: ['conf-owned'],
+            models: ['conf-owned/m1'],
+          },
+        });
+
+        const providers = await config.inspect<Record<string, Record<string, unknown>>>('providers');
+        const models = await config.inspect<Record<string, Record<string, unknown>>>('models');
+        expect(providers.userValue?.['conf-owned']?.['apiKey']).toBe('new');
+        expect(providers.userValue?.['conf-keep']).toBeDefined();
+        expect(providers.userValue?.['conf-stale']).toBeUndefined();
+        expect(models.userValue?.['conf-owned/m1']?.['maxContextSize']).toBe(200);
+        expect(models.userValue?.['conf-keep/m1']).toBeDefined();
+        expect(models.userValue?.['conf-stale/m1']).toBeUndefined();
+
+        await config.replaceSections({ sections: { conformanceGuard: 'current' } });
+        await expect(
+          config.replaceSections({
+            sections: { conformanceGuard: 'next' },
+            expectedValues: { conformanceGuard: undefined },
+          }),
+        ).rejects.toThrow(/changed.*retry/i);
+        expect((await config.inspect('conformanceGuard')).userValue).toBe('current');
+      } finally {
+        await config.replaceSections({
+          sections: {
+            providers: beforeProviders.userValue,
+            models: beforeModels.userValue,
+            conformanceGuard: beforeGuard.userValue,
+          },
+        });
+      }
+    });
+
     it('hostFs.home() returns the host home and recent roots', async () => {
       const home = await target.klient.global.hostFs.home();
       expect(home.home.length).toBeGreaterThan(0);

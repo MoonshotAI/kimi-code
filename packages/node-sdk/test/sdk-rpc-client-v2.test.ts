@@ -994,6 +994,60 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  it('replaces config sections exactly when unknown-field preservation is disabled', async () => {
+    const { harness } = await makeHarness();
+    try {
+      await harness.setConfig({
+        providers: {
+          a: {
+            type: 'openai',
+            baseUrl: 'https://a.example.test/v1',
+            apiKey: 'sk-a',
+            customHeaders: { 'X-Old': 'value' },
+          },
+        },
+      });
+
+      await harness.replaceConfigSections(
+        {
+          providers: {
+            a: {
+              type: 'openai',
+              baseUrl: 'https://a.example.test/v1',
+              apiKey: 'sk-b',
+            },
+          },
+        },
+        { preserveUnknown: false },
+      );
+
+      const next = await harness.getConfig({ reload: true });
+      expect(next.providers['a']).toEqual({
+        type: 'openai',
+        baseUrl: 'https://a.example.test/v1',
+        apiKey: 'sk-b',
+      });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('rejects an atomic section replacement prepared from stale config', async () => {
+    const { harness } = await makeHarness();
+    try {
+      await harness.setConfig({ defaultModel: 'provider/model' });
+      await expect(
+        harness.replaceConfigSections(
+          { defaultModel: undefined },
+          { expectedValues: { defaultModel: undefined } },
+        ),
+      ).rejects.toThrow(/changed.*retry/i);
+      expect((await harness.getConfig({ reload: true })).defaultModel).toBe('provider/model');
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('round-trips the secondaryModel pool field to the [secondary_model] config section', async () => {
     const { harness, homeDir } = await makeHarness();
     try {

@@ -1,9 +1,9 @@
 import {
   applyCustomRegistryEntries,
   credentialEnvHints,
+  customRegistryReplacementKeys,
   fetchCustomRegistry,
   reconcileProviderCredentialUpdate,
-  removeCustomRegistryEntries,
   type CustomRegistryProviderEntry,
   type CustomRegistrySource,
   type ManagedKimiConfigShape,
@@ -246,26 +246,50 @@ export class ModelsDevImportService implements IModelsDevImportService {
     next.defaultModel = previousDefault;
     next['defaultProvider'] = previousDefaultProvider;
     next.thinking = previousThinking;
-    const removal = removeCustomRegistryEntries(next, entries, source);
-    await config.replace(PROVIDERS_SECTION, next.providers as ProvidersSection);
-    await config.replace(MODELS_SECTION, (next.models ?? {}) as ModelsSection);
-    applyCustomRegistryEntries(next, entries, source, removal);    await config.replace(PROVIDERS_SECTION, next.providers as ProvidersSection);
-    await config.replace(MODELS_SECTION, (next.models ?? {}) as ModelsSection);
-    if (next.defaultModel !== previousDefault) {
-      await config.replace(DEFAULT_MODEL_SECTION, next.defaultModel);
-    }
-    if (next['defaultProvider'] !== previousDefaultProvider) {
-      await config.replace(DEFAULT_PROVIDER_SECTION, next['defaultProvider']);
-    }
-    if (next.thinking !== previousThinking) {
-      await config.replace(THINKING_SECTION, next.thinking);
+    const replacementKeys = customRegistryReplacementKeys(next, entries, source);
+    try {
+      applyCustomRegistryEntries(next, entries, source);
+    } catch (error) {
+      throw new Error2(
+        codes.REGISTRY_IMPORT_INVALID,
+        `custom registry at ${url} cannot be imported: ${truncateUpstreamMessage(error)}`,
+      );
     }
 
     const firstEntry = Object.values(entries)[0];
     const firstModelKey = firstEntry === undefined ? undefined : Object.keys(firstEntry.models)[0];
     const hadDefault = previousDefault !== undefined && previousDefault.trim().length > 0;
     if (!hadDefault && firstEntry !== undefined && firstModelKey !== undefined) {
-      await seedDefaultModelWhenUnset(config, `${firstEntry.id}/${firstModelKey}`);
+      next.defaultModel = `${firstEntry.id}/${firstModelKey}`;
+    }
+    const sections: Record<string, unknown> = {
+      [PROVIDERS_SECTION]: next.providers,
+      [MODELS_SECTION]: next.models,
+    };
+    const expectedValues: Record<string, unknown> = {};
+    if (next.defaultModel !== previousDefault) {
+      sections[DEFAULT_MODEL_SECTION] = next.defaultModel;
+      expectedValues[DEFAULT_MODEL_SECTION] = previousDefault;
+    }
+    if (next['defaultProvider'] !== previousDefaultProvider) {
+      sections[DEFAULT_PROVIDER_SECTION] = next['defaultProvider'];
+      expectedValues[DEFAULT_PROVIDER_SECTION] = previousDefaultProvider;
+    }
+    if (JSON.stringify(next.thinking) !== JSON.stringify(previousThinking)) {
+      sections[THINKING_SECTION] = next.thinking;
+      expectedValues[THINKING_SECTION] = previousThinking;
+    }
+    try {
+      await config.replaceSections(sections, undefined, {
+        preserveUnknown: false,
+        exactKeys: replacementKeys,
+        expectedValues,
+      });
+    } catch (error) {
+      throw new Error2(
+        codes.REGISTRY_IMPORT_INVALID,
+        `custom registry at ${url} cannot be imported: ${truncateUpstreamMessage(error)}`,
+      );
     }
 
     const imported = [];

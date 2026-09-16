@@ -365,17 +365,16 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
   }
 
   const addedProviderIds = Object.values(entries).map((entry) => entry.id);
+  const count = addedProviderIds.length;
+  if (count === 0) {
+    host.showStatus('Registry contained no providers.');
+    return false;
+  }
   try {
     await persistRegistryImport(host.harness, entries, source);
     await host.authFlow.refreshConfigAfterLogin();
   } catch (error) {
     host.showError(`Failed to apply registry: ${formatErrorMessage(error)}`);
-    return false;
-  }
-
-  const count = addedProviderIds.length;
-  if (count === 0) {
-    host.showStatus('Registry contained no providers.');
     return false;
   }
   host.showStatus(

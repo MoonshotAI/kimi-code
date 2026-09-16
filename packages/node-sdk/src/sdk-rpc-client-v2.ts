@@ -810,9 +810,21 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return true;
   }
 
-  override async replaceConfigSections(sections: Record<string, unknown>): Promise<void> {
+  override async replaceConfigSections(
+    sections: Record<string, unknown>,
+    options?: {
+      readonly preserveUnknown?: boolean;
+      readonly exactKeys?: Readonly<Record<string, readonly string[]>>;
+      readonly expectedValues?: Readonly<Record<string, unknown>>;
+    },
+  ): Promise<void> {
     await this.configReady;
-    await this.klient.global.config.replaceSections({ sections });
+    await this.klient.global.config.replaceSections({
+      sections,
+      preserveUnknown: options?.preserveUnknown,
+      exactKeys: options?.exactKeys,
+      expectedValues: options?.expectedValues,
+    });
   }
 
   override async listPlugins(): Promise<readonly PluginSummary[]> {
@@ -955,9 +967,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * cannot deadlock.
    */
   private runSessionAccessAll<T>(sessionIds: readonly string[], work: () => Promise<T>): Promise<T> {
-    const keys = [...new Set(sessionIds)].sort();
+    const keys = [...new Set(sessionIds)].toSorted();
     let chained: () => Promise<T> = work;
-    for (const key of [...keys].reverse()) {
+    for (const key of [...keys].toReversed()) {
       const inner = chained;
       chained = () => this.runSessionAccess(key, inner);
     }

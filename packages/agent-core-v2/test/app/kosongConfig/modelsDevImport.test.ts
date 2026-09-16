@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createScopedTestHost } from '#/_base/di/test';
 import { Error2, isError2 } from '#/_base/errors/errors';
@@ -422,8 +422,17 @@ describe('IModelsDevImportService', () => {
         'acme-old/gpt-y': { provider: 'acme-old', model: 'gpt-y', maxContextSize: 128000 },
       },
     });
+    const replaceSections = vi.spyOn(config, 'replaceSections');
+    const replace = vi.spyOn(config, 'replace');
 
     const result = await imports.importCustomRegistry({ url: REGISTRY_URL, apiKey: 'tok-2' });
+    expect(replaceSections).toHaveBeenCalledTimes(1);
+    expect(replaceSections).toHaveBeenCalledWith(
+      expect.any(Object),
+      undefined,
+      expect.objectContaining({ expectedValues: { defaultModel: undefined } }),
+    );
+    expect(replace).not.toHaveBeenCalled();
     expect(result.modelsImported).toBe(1);
     expect(result.providers.map((provider) => provider.id)).toEqual(['acme-gpt']);
 
@@ -460,6 +469,7 @@ describe('IModelsDevImportService', () => {
       providers: {
         'acme-gpt': {
           type: 'openai',
+          baseUrl: 'https://acme.example/v1',
           apiKeyEnv: 'ACME_OWN_KEY',
           source: { kind: 'apiJson', url: REGISTRY_URL, apiKey: '' },
         },
@@ -497,6 +507,50 @@ describe('IModelsDevImportService', () => {
       imports.importCustomRegistry({ url: REGISTRY_URL }),
       codes.PROVIDER_OAUTH_MANAGED,
     );
+  });
+
+  it('maps reserved provider ids to provider.registry_import_invalid without changing config', async () => {
+    setModelsDevUpstreamForTest({
+      fetchImpl: fetchJson({
+        shadow: {
+          id: 'moonshot-cn',
+          name: 'Shadow Moonshot',
+          api: 'https://shadow.example/v1',
+          type: 'openai',
+          models: { m1: { id: 'm1' } },
+        },
+      }),
+    });
+    const initial = { providers: { acme: { type: 'openai', apiKey: 'sk-acme' } }, models: {} };
+    const { config, imports } = createHost(initial);
+
+    await expectError2(
+      imports.importCustomRegistry({ url: REGISTRY_URL }),
+      codes.REGISTRY_IMPORT_INVALID,
+    );
+    expect(config.getAll()).toEqual(initial);
+  });
+
+  it('maps registry endpoint changes to provider.registry_import_invalid without changing config', async () => {
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJson(REGISTRY_DOC) });
+    const initial = {
+      providers: {
+        'acme-gpt': {
+          type: 'openai',
+          baseUrl: 'https://old.example/v1',
+          apiKeyEnv: 'ACME_API_KEY',
+          source: { kind: 'apiJson', url: REGISTRY_URL, apiKey: '' },
+        },
+      },
+      models: {},
+    };
+    const { config, imports } = createHost(initial);
+
+    await expectError2(
+      imports.importCustomRegistry({ url: REGISTRY_URL }),
+      codes.REGISTRY_IMPORT_INVALID,
+    );
+    expect(config.getAll()).toEqual(initial);
   });
 
   it('maps an unreachable registry to provider.registry_import_invalid', async () => {

@@ -155,11 +155,16 @@ export interface GlobalConfigFacade {
   /**
    * Replace several domains in ONE atomic write (the engine's
    * `IConfigService.replaceSections`): a domain mapped to `undefined` is
-   * cleared, domains absent from `sections` are left untouched.
+   * cleared, domains absent from `sections` are left untouched. Set
+   * `preserveUnknown` to false when the supplied domains are complete snapshots.
+   * When an `expectedValues` entry no longer matches, the entire write fails.
    */
   replaceSections(input: {
     sections: Record<string, unknown>;
     target?: ConfigTargetLiteral;
+    preserveUnknown?: boolean;
+    exactKeys?: Readonly<Record<string, readonly string[]>>;
+    expectedValues?: Readonly<Record<string, unknown>>;
   }): Promise<void>;
   reload(): Promise<void>;
   diagnostics(): Promise<readonly ConfigDiagnostic[]>;
@@ -386,7 +391,7 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
       const scalars = Object.fromEntries(
         ENV_SCALAR_PROPERTIES.map((prop, index) => [prop, values[index]]),
       );
-      const identity = values[values.length - 1] as { version: string };
+      const identity = values.at(-1) as { version: string };
       return { ...scalars, clientVersion: identity.version } as unknown as KlientEnvInfo;
     });
     return envPromise;
@@ -432,7 +437,7 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
         // `null` is the wire encoding of "clear this domain" — JSON
         // round-trips cannot carry `undefined` (see IConfigService.replace).
         call('configService', 'replace', [domain, value === undefined ? null : value, target]) as Promise<void>,
-      replaceSections: ({ sections, target }) =>
+      replaceSections: ({ sections, target, preserveUnknown, exactKeys, expectedValues }) =>
         call('configService', 'replaceSections', [
           Object.fromEntries(
             Object.entries(sections).map(([domain, value]) => [
@@ -441,6 +446,19 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
             ]),
           ),
           target,
+          {
+            preserveUnknown,
+            exactKeys,
+            expectedValues:
+              expectedValues === undefined
+                ? undefined
+                : Object.fromEntries(
+                    Object.entries(expectedValues).map(([domain, value]) => [
+                      domain,
+                      value === undefined ? null : value,
+                    ]),
+                  ),
+          },
         ]) as Promise<void>,
       reload: () => call('configService', 'reload', []) as Promise<void>,
       diagnostics: () =>
