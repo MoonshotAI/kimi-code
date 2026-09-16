@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { Emitter } from '#/_base/event';
 import type { LiveRef } from '#/_base/di/instantiation';
 import type { ISessionEventBus } from '#/app/event/eventBus';
+import type { IFlagService } from '#/app/flag/flag';
 import { AgentRuntimeService, snapshotAgentRuntimeBinding } from '#/agent/runtimeBinding/agentRuntime';
 import { AgentRuntimeBindingService, agentRuntimeBindingKey } from '#/agent/runtimeBinding/runtimeBindingService';
 import { runtimeBindingKey, type RuntimeSetBinding } from '#/agent/runtimeBinding/runtimeBindingOps';
@@ -12,7 +13,12 @@ import { FakeRuntime } from '#/runtime/fakeRuntime';
 import type { Runtime, RuntimeBinding, RuntimeCapability, RuntimeLease } from '#/runtime/runtime';
 import { RuntimeError, RuntimeRegistry } from '#/runtime/runtimeRegistry';
 import { makeSessionContext } from '#/session/sessionContext/sessionContext';
+import { SessionStateService } from '#/session/state/sessionStateService';
 import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import {
+  workspaceContextAdditionalDirsKey,
+  workspaceContextWorkDirKey,
+} from '#/session/workspaceContext/workspaceContextService';
 import type { IEventDispatcher } from '#/state/eventDispatcher';
 import type {
   IRuntimeResolver,
@@ -139,6 +145,11 @@ function setup(options: { agentId?: string; sessionCwd?: string } = {}) {
     onDidChange: workspaceChanges.event,
     get: () => ({ runtimes: registry }),
   } as unknown as IWorkspaceInstanceManager;
+  const sessionState = new SessionStateService();
+  sessionState.contributeState(workspaceContextWorkDirKey);
+  sessionState.contributeState(workspaceContextAdditionalDirsKey);
+  sessionState.set(workspaceContextWorkDirKey, session.cwd);
+  const flags = { _serviceBrand: undefined, enabled: () => false } as unknown as IFlagService;
   return {
     registry,
     resolver,
@@ -154,7 +165,9 @@ function setup(options: { agentId?: string; sessionCwd?: string } = {}) {
     activeToolCalls,
     loopState,
     publishBus,
-    agentRuntime: new AgentRuntimeService(scopeContext, binding, resolver, workspaces, eventBus),
+    sessionState,
+    flags,
+    agentRuntime: new AgentRuntimeService(scopeContext, binding, resolver, workspaces, eventBus, session, sessionState, flags),
   };
 }
 
@@ -428,5 +441,161 @@ describe('AgentRuntimeBindingService', () => {
     const lease = agentRuntime.acquire();
     expect(lease.runtime.identity.runtimeId).toBe('remote');
     lease.dispose();
+  });
+});
+
+describe('AgentRuntimeBindingService.connectAndSwitch', () => {
+  function connectableRuntime(
+    registry: RuntimeRegistry,
+    runtimeId: string,
+    options: { readonly stat?: (path: string) => Promise<{ isDirectory: boolean }> } = {},
+  ) {
+    const calls: string[] = [];
+    const fake = new FakeRuntime(
+      { workspaceId: 'workspace', runtimeId, generation: `${runtimeId}-pending` },
+      { status: 'disconnected', capabilities: ['fs', 'process'] },
+    );
+    const connectable = Object.assign(fake, {
+      connect: async () => {
+        calls.push('connect');
+        fake.setStatus('ready');
+      },
+      fs: {
+        stat: options.stat ?? (async () => ({ isDirectory: true })),
+      },
+      process: {},
+    });
+    registry.register(connectable);
+    return { fake: connectable, calls };
+  }
+
+  it('connects a disconnected runtime, validates the cwd with the target fs, and commits', async () => {
+    const { registry, binding, dispatched } = setup();
+    const stats: string[] = [];
+    const { calls } = connectableRuntime(registry, 'connectable', {
+      stat: async (path) => {
+        stats.push(path);
+        return { isDirectory: true };
+      },
+    });
+
+    await expect(binding.connectAndSwitch('connectable', '/remote/work')).resolves.toEqual({
+      workspaceId: 'workspace',
+      runtimeId: 'connectable',
+      cwd: '/remote/work',
+    });
+    expect(calls).toEqual(['connect']);
+    expect(stats).toEqual(['/remote/work']);
+    expect(binding.current).toMatchObject({ runtimeId: 'connectable', cwd: '/remote/work' });
+    expect(dispatched.at(-1)).toMatchObject({ runtimeId: 'connectable', cwd: '/remote/work' });
+  });
+
+  it('keeps the old binding when the connect fails', async () => {
+    const { registry, binding } = setup();
+    const fake = new FakeRuntime(
+      { workspaceId: 'workspace', runtimeId: 'failing', generation: 'failing-pending' },
+      { status: 'disconnected', capabilities: [] },
+    );
+    registry.register(Object.assign(fake, {
+      connect: async () => {
+        throw new Error('executor process exited before the handshake completed (code 255, signal null): ssh: connect failed');
+      },
+    }));
+
+    await expect(binding.connectAndSwitch('failing', '/remote/work')).rejects.toThrow(/code 255/);
+    expect(binding.current).toEqual({ workspaceId: 'workspace', runtimeId: 'local' });
+  });
+
+  it('keeps the old binding and reports runtime.invalid_cwd when the cwd check fails', async () => {
+    const { registry, binding, dispatched } = setup();
+    connectableRuntime(registry, 'invalid-stat', {
+      stat: async (path) => {
+        throw new Error(`ENOENT: ${path}`);
+      },
+    });
+
+    await expect(binding.connectAndSwitch('invalid-stat', '/missing')).rejects.toThrowError(
+      expect.objectContaining<Partial<RuntimeError>>({ code: 'runtime.invalid_cwd' }),
+    );
+    expect(binding.current).toEqual({ workspaceId: 'workspace', runtimeId: 'local' });
+    expect(dispatched).toHaveLength(0);
+  });
+
+  it('rejects a non-directory cwd and a missing cwd for non-local runtimes', async () => {
+    const { registry, binding } = setup();
+    connectableRuntime(registry, 'non-dir', { stat: async () => ({ isDirectory: false }) });
+
+    await expect(binding.connectAndSwitch('non-dir', '/remote/file')).rejects.toThrowError(
+      expect.objectContaining<Partial<RuntimeError>>({ code: 'runtime.invalid_cwd' }),
+    );
+    await expect(binding.connectAndSwitch('non-dir')).rejects.toThrowError(
+      expect.objectContaining<Partial<RuntimeError>>({ code: 'runtime.invalid_cwd' }),
+    );
+    expect(binding.current).toEqual({ workspaceId: 'workspace', runtimeId: 'local' });
+  });
+
+  it('raises runtime.unavailable for a disconnected runtime that cannot connect', async () => {
+    const { registry, binding } = setup();
+    registry.register(runtime('offline', 'offline-one', 'disconnected'));
+
+    await expect(binding.connectAndSwitch('offline', '/work')).rejects.toThrowError(
+      expect.objectContaining<Partial<RuntimeError>>({ code: 'runtime.unavailable' }),
+    );
+    expect(binding.current).toEqual({ workspaceId: 'workspace', runtimeId: 'local' });
+  });
+
+  it('skips connecting when the target is already available', async () => {
+    const { registry, binding } = setup();
+    const stats: string[] = [];
+    const fake = new FakeRuntime(
+      { workspaceId: 'workspace', runtimeId: 'already-ready', generation: 'already-ready-one' },
+      { status: 'ready', capabilities: ['fs', 'process'] },
+    );
+    registry.register(Object.assign(fake, {
+      connect: async () => {
+        throw new Error('must not be called');
+      },
+      fs: {
+        stat: async (path: string) => {
+          stats.push(path);
+          return { isDirectory: true };
+        },
+      },
+      process: {},
+    }));
+
+    await expect(binding.connectAndSwitch('already-ready', '/remote/work')).resolves.toMatchObject({
+      runtimeId: 'already-ready',
+      cwd: '/remote/work',
+    });
+    expect(stats).toEqual(['/remote/work']);
+  });
+});
+
+describe('AgentRuntimeService reconnect', () => {
+  it('delegates to the connect method of the bound runtime', async () => {
+    const { registry, binding, agentRuntime } = setup();
+    const calls: string[] = [];
+    const fake = new FakeRuntime(
+      { workspaceId: 'workspace', runtimeId: 'reconnectable', generation: 'reconnectable-one' },
+      { status: 'ready', capabilities: ['process'] },
+    );
+    registry.register(Object.assign(fake, {
+      connect: async () => {
+        calls.push('connect');
+      },
+      process: {},
+    }));
+    binding.switch('reconnectable');
+
+    await agentRuntime.reconnect();
+    expect(calls).toEqual(['connect']);
+  });
+
+  it('raises runtime.unavailable when the bound runtime cannot reconnect', async () => {
+    const { agentRuntime } = setup();
+    await expect(agentRuntime.reconnect()).rejects.toThrowError(
+      expect.objectContaining<Partial<RuntimeError>>({ code: 'runtime.unavailable' }),
+    );
   });
 });

@@ -4,7 +4,7 @@ import type { Runtime, RuntimeBinding, RuntimeCapability, RuntimeLease } from '.
 
 export const RUNTIME_DRAIN_TIMEOUT_MS = 5_000;
 
-export type RuntimeErrorCode = 'runtime.not_found' | 'runtime.unavailable' | 'runtime.capability_unavailable' | 'runtime.conflict';
+export type RuntimeErrorCode = 'runtime.not_found' | 'runtime.unavailable' | 'runtime.capability_unavailable' | 'runtime.conflict' | 'runtime.invalid_cwd';
 
 export class RuntimeError extends Error {
   constructor(readonly code: RuntimeErrorCode, message: string) {
@@ -212,7 +212,7 @@ export class RuntimeRegistry {
     this.disposing = true;
     const generations = [...this.currentGenerations.values()];
     this.currentGenerations.clear();
-    for (const generation of generations.reverse()) await this.drain(generation);
+    for (const generation of generations.toReversed()) await this.drain(generation);
     this.changeEmitter.dispose();
   }
 
@@ -306,7 +306,7 @@ export class RuntimeRegistry {
         current: generation.runtime,
         status: 'draining',
       });
-      const resources = [...generation.resources].reverse();
+      const resources = [...generation.resources].toReversed();
       generation.resources.clear();
       for (const resource of resources) {
         try {

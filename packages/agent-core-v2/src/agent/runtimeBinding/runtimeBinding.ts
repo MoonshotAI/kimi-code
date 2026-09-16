@@ -9,6 +9,7 @@ export interface IAgentRuntimeBindingService {
   get(): RuntimeBinding;
   set(binding: RuntimeBinding): RuntimeBinding;
   switch(runtimeId: string, cwd?: string): RuntimeBinding;
+  connectAndSwitch(runtimeId: string, cwd?: string): Promise<RuntimeBinding>;
 }
 
 export const IAgentRuntimeBindingService: ServiceIdentifier<IAgentRuntimeBindingService> = createDecorator<IAgentRuntimeBindingService>('agentRuntimeBindingService');

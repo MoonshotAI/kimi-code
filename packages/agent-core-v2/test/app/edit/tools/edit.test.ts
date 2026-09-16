@@ -89,6 +89,8 @@ function buildTool(
       track: (resource) => resource,
       dispose: () => {},
     }),
+    reconnect: async () => {},
+    workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
   };
   return new EditTool(ix.get(IFileEditService), runtime, workspace);
 }

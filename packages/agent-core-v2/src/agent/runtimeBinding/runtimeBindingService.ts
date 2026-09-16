@@ -10,7 +10,7 @@ import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { LOCAL_RUNTIME_ID, type RuntimeBinding } from '#/runtime/runtime';
-import { RuntimeError } from '#/runtime/runtimeRegistry';
+import { RuntimeError, runtimeStatusAllows } from '#/runtime/runtimeRegistry';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -115,6 +115,47 @@ export class AgentRuntimeBindingService implements IAgentRuntimeBindingService {
     this.assertSwitchAllowed();
     const lease = this.resolver.acquire(binding, []);
     lease.dispose();
+    return this.commit(binding);
+  }
+
+  async connectAndSwitch(runtimeId: string, cwd?: string): Promise<RuntimeBinding> {
+    const binding: RuntimeBinding = { workspaceId: this.session.workspaceId, runtimeId, cwd };
+    this.assertSessionWorkspace(binding);
+    this.assertSwitchAllowed();
+    if (runtimeId !== LOCAL_RUNTIME_ID && cwd === undefined) {
+      throw new RuntimeError('runtime.invalid_cwd', `binding runtime ${runtimeId} requires a cwd`);
+    }
+    const inspected = this.resolver.inspect(binding);
+    if (!runtimeStatusAllows(inspected, [])) {
+      if (typeof inspected.connect !== 'function') {
+        throw new RuntimeError('runtime.unavailable', `runtime ${runtimeId} is ${inspected.status}`);
+      }
+      await inspected.connect();
+    }
+    const lease = this.resolver.acquire(binding, []);
+    try {
+      if (runtimeId !== LOCAL_RUNTIME_ID && cwd !== undefined) {
+        const fs = lease.runtime.fs;
+        if (fs === undefined) {
+          throw new RuntimeError('runtime.capability_unavailable', `runtime ${runtimeId} does not provide fs`);
+        }
+        const stat = await fs.stat(cwd).catch((error: unknown) => {
+          throw new RuntimeError(
+            'runtime.invalid_cwd',
+            `cwd ${cwd} is not readable on runtime ${runtimeId}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        });
+        if (!stat.isDirectory) {
+          throw new RuntimeError('runtime.invalid_cwd', `cwd ${cwd} is not a directory on runtime ${runtimeId}`);
+        }
+      }
+    } finally {
+      lease.dispose();
+    }
+    return this.commit(binding);
+  }
+
+  private commit(binding: RuntimeBinding): RuntimeBinding {
     if (
       binding.workspaceId === this.current.workspaceId &&
       binding.runtimeId === this.current.runtimeId &&

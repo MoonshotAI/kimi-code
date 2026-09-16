@@ -12,6 +12,7 @@ import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
+import type { Runtime } from '#/runtime/runtime';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
@@ -112,7 +113,7 @@ export class GrepTool implements IGrepTool {
           if (lease.runtime.identity.generation !== inspected.identity.generation) {
             return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
           }
-          return await this.execution(lease.runtime.process!, lease.runtime.fs!, env, workspace, args, signal, searchPaths);
+          return await this.execution(lease.runtime, lease.runtime.process!, lease.runtime.fs!, env, workspace, args, signal, searchPaths);
         } finally {
           lease.dispose();
         }
@@ -121,6 +122,7 @@ export class GrepTool implements IGrepTool {
   }
 
   private async execution(
+    runtime: Runtime,
     processService: IHostProcessService,
     fs: IHostFileSystem,
     env: IHostEnvironment,
@@ -139,6 +141,7 @@ export class GrepTool implements IGrepTool {
       const resolution = await ensureRgPath(this.createRgProbe(processService), {
         signal,
         allowCachedFallback: true,
+        runtime,
       });
       rgPath = resolution.path;
       if (resolution.source !== 'system-path') {

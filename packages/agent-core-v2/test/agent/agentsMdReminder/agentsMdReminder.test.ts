@@ -223,6 +223,8 @@ function createHarness(
           track: (resource) => resource,
           dispose: () => {},
         }),
+        reconnect: async () => {},
+        workspaceRoots: () => ({ workDir: homeDir, additionalDirs: [] }),
       } satisfies IAgentRuntimeService);
       reg.defineInstance(IBashParserService, new BashParserService());
       reg.defineInstance(

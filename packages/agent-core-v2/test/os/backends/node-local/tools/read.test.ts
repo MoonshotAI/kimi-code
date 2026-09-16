@@ -87,6 +87,8 @@ function createReadTool(
     isAvailable: () => true,
     inspect: () => runtime,
     acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
+    reconnect: async () => {},
+    workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
   };
   return new ReadTool(resolver, workspace, skillCatalog, truncation, stubConfigService());
 }
@@ -1360,6 +1362,8 @@ describe('ReadTool', () => {
       },
       inspect: () => registry.inspect(binding),
       acquire: (required = []) => registry.acquire(binding, required),
+      reconnect: async () => {},
+      workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
     };
     const tool = new ReadTool(
       runtime,

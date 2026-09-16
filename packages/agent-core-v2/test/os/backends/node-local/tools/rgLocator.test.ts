@@ -8,6 +8,7 @@ import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  detectRemoteTarget,
   detectTarget,
   ensureRgPath,
   extractRgFromZip,
@@ -16,6 +17,8 @@ import {
   verifyArchiveChecksum,
   type RgProbe,
 } from '#/os/backends/node-local/tools/rgLocator';
+import { FakeRuntime } from '#/runtime/fakeRuntime';
+import type { Runtime } from '#/runtime/runtime';
 
 vi.mock('tar', () => ({ extract: vi.fn() }));
 
@@ -91,6 +94,157 @@ describe('findExistingRg', () => {
 
     expect(result).toEqual({ path: systemRg, source: 'system-path' });
     expect(probe.exec).not.toHaveBeenCalled();
+  });
+});
+
+describe('detectRemoteTarget', () => {
+  it('maps handshake environment values to ripgrep artifact triples', () => {
+    expect(detectRemoteTarget('macOS', 'arm64')).toBe('aarch64-apple-darwin');
+    expect(detectRemoteTarget('macOS', 'x64')).toBe('x86_64-apple-darwin');
+    expect(detectRemoteTarget('Linux', 'x64')).toBe('x86_64-unknown-linux-musl');
+    expect(detectRemoteTarget('Linux', 'arm64')).toBe('aarch64-unknown-linux-gnu');
+    expect(detectRemoteTarget('Windows', 'x64')).toBeUndefined();
+    expect(detectRemoteTarget('Linux', 'mips')).toBeUndefined();
+  });
+});
+
+describe('ensureRgPath remote runtime branch', () => {
+  let savedFetch: typeof globalThis.fetch | undefined;
+  beforeEach(() => {
+    savedFetch = globalThis.fetch;
+  });
+  afterEach(() => {
+    if (savedFetch === undefined) {
+      delete (globalThis as unknown as { fetch?: typeof fetch }).fetch;
+    } else {
+      globalThis.fetch = savedFetch;
+    }
+    vi.restoreAllMocks();
+  });
+
+  function remoteRuntime(
+    runtimeId: string,
+    options: { readonly generation?: string; readonly osKind?: string; readonly osArch?: string; readonly withFs?: boolean } = {},
+  ): Runtime {
+    const runtime = new FakeRuntime(
+      { workspaceId: 'workspace', runtimeId, generation: options.generation ?? `${runtimeId}-g1` },
+      {
+        capabilities: ['fs', 'process'],
+        environment: {
+          osKind: options.osKind ?? 'Linux',
+          osArch: options.osArch ?? 'x64',
+          homeDir: '/home/remote',
+        },
+      },
+    );
+    if (options.withFs !== false) {
+      Object.assign(runtime, {
+        fs: {
+          mkdir: vi.fn(async () => {}),
+          writeBytes: vi.fn(async () => {}),
+          rename: vi.fn(async () => {}),
+          remove: vi.fn(async () => {}),
+        },
+        process: {},
+      });
+    }
+    return runtime;
+  }
+
+  it('resolves rg from the target PATH via the runtime probe', async () => {
+    const probe = probeWith(() => 0);
+    const runtime = remoteRuntime('remote-system');
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const resolution = await ensureRgPath(probe, { runtime, allowCachedFallback: true });
+
+    expect(resolution).toEqual({ path: 'rg', source: 'system-path' });
+    expect(probe.exec).toHaveBeenCalledWith(['rg', '--version']);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('resolves the cached binary from the target share bin', async () => {
+    const probe = probeWith((args) => (args[0] === 'rg' ? -1 : 0));
+    const runtime = remoteRuntime('remote-cached');
+
+    const resolution = await ensureRgPath(probe, { runtime, allowCachedFallback: true });
+
+    expect(resolution).toEqual({ path: '/home/remote/.kimi-code/bin/rg', source: 'share-bin-cached' });
+  });
+
+  it('caches the resolution per runtime generation and re-probes a new generation', async () => {
+    const probe = probeWith(() => 0);
+    const first = remoteRuntime('remote-gen', { generation: 'g1' });
+    const second = remoteRuntime('remote-gen', { generation: 'g2' });
+
+    await ensureRgPath(probe, { runtime: first });
+    await ensureRgPath(probe, { runtime: first });
+    expect(probe.exec).toHaveBeenCalledTimes(1);
+
+    await ensureRgPath(probe, { runtime: second });
+    expect(probe.exec).toHaveBeenCalledTimes(2);
+  });
+
+  it('requires allowCachedFallback before touching the share bin or the network', async () => {
+    const probe = noRgProbe();
+    const runtime = remoteRuntime('remote-no-fallback');
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(ensureRgPath(probe, { runtime })).rejects.toThrow(/on PATH/);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(runtime.fs!.mkdir as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+  });
+
+  it('surfaces download failures as diagnosable errors and retries on the next call', async () => {
+    const probe = noRgProbe();
+    const runtime = remoteRuntime('remote-download-fails');
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('network unreachable')) as typeof fetch;
+
+    await expect(ensureRgPath(probe, { runtime, allowCachedFallback: true })).rejects.toThrow(
+      /network unreachable/,
+    );
+
+    const retryProbe = probeWith((args) => (args[0] === 'rg' ? 0 : -1));
+    const resolution = await ensureRgPath(retryProbe, { runtime, allowCachedFallback: true });
+    expect(resolution).toEqual({ path: 'rg', source: 'system-path' });
+  });
+
+  it('rejects unsupported target environments before downloading', async () => {
+    const probe = noRgProbe();
+    const runtime = remoteRuntime('remote-unsupported', { osKind: 'Windows', osArch: 'x64' });
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(ensureRgPath(probe, { runtime, allowCachedFallback: true })).rejects.toThrow(
+      /Unsupported platform\/arch/,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps the local flow for the local runtime', async () => {
+    const probe = noRgProbe();
+    const runtime = new FakeRuntime(
+      { workspaceId: 'workspace', runtimeId: 'local', generation: 'local-g1' },
+      { capabilities: ['fs', 'process'] },
+    );
+    const fakeShare = join(tmpdir(), `kimi-rg-local-${String(Date.now())}-${String(Math.random()).slice(2)}`);
+    mkdirSync(join(fakeShare, 'bin'), { recursive: true });
+    const savedPath = process.env['PATH'];
+    process.env['PATH'] = '';
+    try {
+      writeFileSync(join(fakeShare, 'bin', process.platform === 'win32' ? 'rg.exe' : 'rg'), 'fake rg');
+      const resolution = await ensureRgPath(probe, { runtime, shareDir: fakeShare, allowCachedFallback: true });
+      expect(resolution.source).toBe('share-bin-cached');
+    } finally {
+      if (savedPath === undefined) {
+        delete process.env['PATH'];
+      } else {
+        process.env['PATH'] = savedPath;
+      }
+      rmSync(fakeShare, { recursive: true, force: true });
+    }
   });
 });
 

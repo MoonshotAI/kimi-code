@@ -219,7 +219,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
               agentId: MAIN_AGENT_ID,
               binding: opts.mainAgentBinding,
               runtimeId: opts.runtimeId,
-              runtimeCwd: opts.runtimeId === undefined || opts.runtimeId === LOCAL_RUNTIME_ID ? undefined : opts.workDir,
+              runtimeCwd:
+                opts.runtimeCwd ??
+                (opts.runtimeId === undefined || opts.runtimeId === LOCAL_RUNTIME_ID ? undefined : opts.workDir),
             });
       if (this.config.get<boolean>(DEFAULT_PLAN_MODE_SECTION) === true) {
         const planAgent = main ?? (await ensureMainAgent(handle));
