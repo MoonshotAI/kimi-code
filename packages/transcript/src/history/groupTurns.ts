@@ -4,7 +4,7 @@ import type { TranscriptFrame, TranscriptUserOrigin } from '../model/frame';
 import type { TranscriptItem, TranscriptMarker } from '../model/item';
 import type { TurnOrigin } from '../model/turn';
 import { daemonFileRefFromPairingPart } from '../contract/mediaRef';
-import { projectTranscriptUserOrigin } from '../contract/origin';
+import { projectTranscriptSkillActivationProvenance, projectTranscriptUserOrigin } from '../contract/origin';
 
 export type HistoryMediaSource =
   | { readonly kind: 'url'; readonly url: string }
@@ -239,7 +239,7 @@ export function groupMessagesIntoSnapshot(
       }
       const markerKey = originKind !== undefined ? MARKER_USER_ORIGINS[originKind] : undefined;
       if (markerKey !== undefined && !isUserSlashPrompt(message)) {
-        pushMarker(markerKey, { text: textOf(message), origin: message.origin });
+        pushMarker(markerKey, { text: textOf(message), origin: markerOrigin(message.origin) });
         continue;
       }
       const contentKey = JSON.stringify(message.content ?? []);
@@ -254,7 +254,7 @@ export function groupMessagesIntoSnapshot(
           const block = parts[index];
           pushMarker('skill', {
             text: block !== undefined && block.type === 'text' && 'text' in block ? block.text : '',
-            origin: { kind: 'skill_activation', trigger: 'user-slash', ...activation },
+            origin: { kind: 'skill_activation', ...projectTranscriptSkillActivationProvenance(activation), trigger: 'user-slash' },
           });
         });
         const opening = foldTurnOpeningInput({ ...message, content: parts.slice(bundled.length) });
@@ -269,7 +269,7 @@ export function groupMessagesIntoSnapshot(
       }
       if (markerKey !== undefined) {
         const opening = isUserSlashPrompt(message) ? foldTurnOpeningInput(message) : undefined;
-        pushMarker(markerKey, { text: opening?.text ?? textOf(message), origin: message.origin });
+        pushMarker(markerKey, { text: opening?.text ?? textOf(message), origin: markerOrigin(message.origin) });
         if (opening !== undefined) {
           startTurn(mapOrigin(message), opening.text, opening.attachmentIds, triggerPromptIdOf(message));
         }
@@ -298,7 +298,7 @@ export function groupMessagesIntoSnapshot(
           const block = parts[index];
           pushMarker('skill', {
             text: block !== undefined && block.type === 'text' && 'text' in block ? block.text : '',
-            origin: { kind: 'skill_activation', trigger: 'user-slash', ...activation },
+            origin: { kind: 'skill_activation', ...projectTranscriptSkillActivationProvenance(activation), trigger: 'user-slash' },
           });
         });
         const callerMessage = { ...message, content: parts.slice(bundled.length) };
@@ -468,6 +468,11 @@ function mapOrigin(message: HistoryMessage): TurnOrigin {
     default:
       return { kind: 'other', payload: origin };
   }
+}
+
+function markerOrigin(origin: HistoryMessage['origin']): unknown {
+  if (origin?.kind !== 'skill_activation') return origin;
+  return { kind: 'skill_activation', ...projectTranscriptSkillActivationProvenance(origin) };
 }
 
 interface BundledSkillActivation {
