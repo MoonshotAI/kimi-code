@@ -567,6 +567,8 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `GET /api/v1/sessions/{session_id}/warnings` | 会话级告警 |
 | `GET /api/v1/sessions/{session_id}/runtime` | 读取 main agent 的运行时绑定 |
 | `POST /api/v1/sessions/{session_id}/runtime` | 切换 main agent 的运行时绑定 |
+| `POST /api/v1/sessions/{session_id}/runtime/reconnect` | 重连已绑定的运行时（实验性远程运行时） |
+| `GET /api/v1/sessions/{session_id}/runtimes` | 列出会话工作区已注册的运行时 |
 | `POST /api/v1/sessions/{session_id}/export` | 导出会话与诊断信息（zip 流，不走信封） |
 | `GET /api/v1/sessions/{session_id}/snapshot` | 客户端重建用全量快照（含 `as_of_seq` 与 `epoch`） |
 | `GET /api/v1/sessions/{session_id}/media/{file_id}` | 按文件 id 下载提示词媒体（二进制） |
@@ -841,23 +843,53 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
 
-成功时，`data` 为 `{ workspace_id, runtime_id }`。
+成功时，`data` 为 `{ workspace_id, runtime_id, cwd? }`；`cwd` 是被绑定运行时上的工作目录，绑定带有该值时返回。
 
 - `40401`：会话不存在
 
 #### `POST /api/v1/sessions/{session_id}/runtime`
 
-切换 main agent 的运行时绑定。
+切换 main agent 的运行时绑定。切换到非 `local` 运行时属于实验功能，需要启用 `remote_runtime` 实验开关（见 [远程运行时](../guides/remote-runtime.md)）；新绑定持久化之前会先建立连接，并用目标文件系统校验给定的 `cwd`——失败时保留原绑定。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
 | `runtime_id` | body | string | **必填。** 目标运行时 id |
+| `cwd` | body | string | 目标运行时上的工作目录；默认取该条目配置的 `defaultCwd` |
 
-成功时，`data` 为新的绑定 `{ workspace_id, runtime_id }`。
+成功时，`data` 为新的绑定 `{ workspace_id, runtime_id, cwd? }`。
 
+- `40001`：给定的 `cwd` 在目标运行时上不是有效目录
+- `40401`：会话不存在
 - `40420`：不存在该 `runtime_id` 的运行时
+- `40901`：会话有正在执行的轮次或待审批调用，切换在轮次边界生效
 - `40926`：运行时存在但不可用
+
+#### `POST /api/v1/sessions/{session_id}/runtime/reconnect`
+
+在断连后显式重连 main agent 已绑定的运行时（实验性远程运行时）。远程运行时不会自动重连，也绝不静默回退到 `local`——连接断开后，工具调用会以运行时不可用错误失败，直到通过本端点（或 `/runtime` 对话框）重新建立连接。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **必填。** 会话 id |
+
+成功时，`data` 为当前绑定 `{ workspace_id, runtime_id, cwd? }`。
+
+- `40401`：会话不存在
+- `40420`：不存在该 `runtime_id` 的运行时
+- `40926`：运行时存在但不可用（`remote_runtime` 实验开关未启用时也返回此错误）
+
+#### `GET /api/v1/sessions/{session_id}/runtimes`
+
+列出会话工作区已注册的运行时，以及从 `~/.ssh/config` 发现的、可作为新声明候选的 SSH 主机。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **必填。** 会话 id |
+
+成功时，`data` 为 `{ workspace_id, runtimes, ssh_hosts }`。`runtimes` 每项为 `{ runtime_id, type, status, generation, capabilities, default_cwd? }`，其中 `type` 取 `local` / `ssh` / `docker` / `command` 之一，`status` 取 `connecting` / `ready` / `degraded` / `disconnected` / `draining` / `disposed` 之一，`capabilities` 从 `fs` / `process` / `terminal` 中取值。`ssh_hosts` 为主机名列表（`remote_runtime` 实验开关未启用时为空）。
+
+- `40401`：会话不存在
 
 #### `POST /api/v1/sessions/{session_id}/export`
 

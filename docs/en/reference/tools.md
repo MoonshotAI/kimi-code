@@ -63,6 +63,8 @@ Foreground mode blocks the current turn until the command completes or times out
 
 **`FetchURL`** accepts a single `url` parameter and returns the page content. For HTML pages, the host extracts the body text rather than returning the full HTML; plain text or Markdown pages are passed through directly. Also requires a host-provided implementation.
 
+Both web tools always run from the machine running Kimi Code, even when the session is bound to a [remote runtime](../guides/remote-runtime.md) — requests never egress from the target environment.
+
 ## Plan Mode
 
 | Tool | Default Approval | Description |
