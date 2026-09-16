@@ -113,6 +113,7 @@ function promptMetadataTextFromUserMessage(message: ContextMessage): string | un
   const bundled = message.origin?.kind === 'user' ? (message.origin.skillActivations?.length ?? 0) : 0;
   return promptMetadataTextFromContentParts(
     bundled === 0 ? message.content : message.content.slice(bundled),
+    message.origin?.kind === 'user' ? message.origin.clientMetadata : undefined,
   );
 }
 

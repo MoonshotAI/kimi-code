@@ -265,6 +265,55 @@ describe('prompt queue', () => {
     await loop.settled();
   });
 
+  it('keeps each steered prompt client metadata in FIFO order without adding it to model content', async () => {
+    setup();
+    const hold = holdNextStep();
+    const eventBus = ctx.get(IEventBus);
+    const events: TurnSteer[] = [];
+    const submitted: PromptSubmitted[] = [];
+    const queued: PromptQueued[] = [];
+    const steered: PromptSteered[] = [];
+    eventBus.subscribe(PromptSubmitted, (event) => submitted.push(event));
+    eventBus.subscribe(PromptQueued, (event) => queued.push(event));
+    eventBus.subscribe(PromptSteered, (event) => steered.push(event));
+    eventBus.subscribe(TurnSteer, (event) => events.push(event));
+    await enqueue(loop, { message: message('active') });
+    await hold.started;
+    const first = { composer: { version: 1, refId: 'first' } };
+    const second = { composer: { version: 1, refId: 'second' } };
+    const one = await enqueue(loop, { message: { ...message('one'), origin: { kind: 'user', clientMetadata: [first] } } });
+    const two = await enqueue(loop, { message: { ...message('two'), origin: { kind: 'user', clientMetadata: [second] } } });
+    await loop.steer([two.id, one.id]);
+    await Promise.resolve();
+    expect(events[0]?.origin).toMatchObject({ kind: 'user', clientMetadata: [first, second] });
+    expect(submitted.find((event) => event.promptId === one.id)?.clientMetadata).toEqual([first]);
+    expect(queued.find((event) => event.promptId === two.id)?.clientMetadata).toEqual([second]);
+    expect(PromptSteered.schema.parse(steered[0]).promptIds).toEqual([one.id, two.id]);
+    expect(events[0]?.input).toEqual([{ type: 'text', text: 'one' }, { type: 'text', text: 'two' }]);
+    hold.release();
+    await loop.settled();
+  });
+
+  it('keeps plain inputs beside composer metadata in a mixed steer', async () => {
+    setup();
+    const hold = holdNextStep();
+    const eventBus = ctx.get(IEventBus);
+    const events: TurnSteer[] = [];
+    eventBus.subscribe(TurnSteer, (event) => events.push(event));
+    await enqueue(loop, { message: message('active') });
+    await hold.started;
+    const metadata = { display_text: 'Save button', kimi_code_composer: { version: 1 } };
+    const one = await enqueue(loop, { message: message('[literal](example.md)') });
+    const two = await enqueue(loop, { message: { ...message('browser wire'), origin: { kind: 'user', clientMetadata: [metadata] } } });
+    const three = await enqueue(loop, { message: message('last instruction') });
+    await loop.steer([three.id, two.id, one.id]);
+    await Promise.resolve();
+    expect(events[0]?.origin).toMatchObject({ clientMetadata: [{ display_text: '[literal](example.md)' }, metadata, { display_text: 'last instruction' }] });
+    expect(events[0]?.input).toEqual([{ type: 'text', text: '[literal](example.md)' }, { type: 'text', text: 'browser wire' }, { type: 'text', text: 'last instruction' }]);
+    hold.release();
+    await loop.settled();
+  });
+
   it('publishes prompt identities before each steered user message', async () => {
     setup();
     const hold = holdNextStep();

@@ -196,6 +196,16 @@ Deprecated — only stops a server started by a version before 0.28.0. Those ver
 
 Generate a new persistent bearer token (written to `~/.kimi-code/server.token`); the previous token stops working immediately. The token is shared by the whole home directory, so every running instance picks the new one up on its next auth check — no restart needed.
 
+### `kimi install-app`
+
+Print the Kimi Code desktop app page and open it in the default browser, so you can download and install the desktop app without leaving the terminal. The URL follows the active region: `https://www.kimi.com/code` on the mainland region, `https://www.kimi.ai/code` on the global region.
+
+```sh
+kimi install-app
+```
+
+This subcommand has no flags. The same page is also reachable from the TUI with the `/desktop` (alias `/install-desktop`) slash command.
+
 ### `kimi doctor`
 
 Validate `config.toml` and `tui.toml` without starting the TUI or modifying either file. By default, the command checks the files under `KIMI_CODE_HOME` (or `~/.kimi-code` when the environment variable is unset). Missing default files are reported as skipped because built-in defaults can apply.

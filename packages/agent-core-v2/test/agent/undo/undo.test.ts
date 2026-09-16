@@ -623,6 +623,13 @@ describe('AgentConversationUndoService', () => {
     await ctx.get(IAgentConversationUndoService).undo(1);
     await expect(metadata.read()).resolves.toMatchObject({ lastPrompt: undefined });
 
+  });
+
+  it.each([undefined, 'Save button · Rename it'])('uses the newest pending prompt as lastPrompt after undo (display=%s)', async (displayText) => {
+    await setup();
+    const metadata = ctx.get(ISessionMetadata);
+    await metadata.ready;
+    ctx.appendTurnExchange('u1', 'a1');
     ctx.appendTurnExchange('u2', 'a2');
     ctx.appendTurnExchange('u3', 'a3');
     const list = vi.spyOn(ctx.get(IAgentLoopService), 'snapshot').mockReturnValue({
@@ -637,7 +644,7 @@ describe('AgentConversationUndoService', () => {
           },
           meta: {
             promptId: 'queued',
-            origin: { kind: 'user' },
+            origin: { kind: 'user', clientMetadata: displayText === undefined ? undefined : [{ display_text: displayText }] } as PromptOrigin,
             tracked: true,
             createdAt: new Date(0).toISOString(),
             userMessageId: 'queued',
@@ -653,7 +660,7 @@ describe('AgentConversationUndoService', () => {
 
     try {
       await ctx.get(IAgentConversationUndoService).undo(1);
-      await expect(metadata.read()).resolves.toMatchObject({ lastPrompt: 'queued prompt' });
+      await expect(metadata.read()).resolves.toMatchObject({ lastPrompt: displayText ?? 'queued prompt' });
     } finally {
       list.mockRestore();
     }
@@ -725,8 +732,8 @@ describe('AgentConversationUndoService', () => {
     await undo.undo(1);
 
     const redelivered = ctx.context.get().filter((message) => message.origin?.kind === 'task');
-    expect(redelivered.map((message) => (message.origin as TaskOrigin).taskId).sort()).toEqual(
-      [taskA, taskB].sort(),
+    expect(redelivered.map((message) => (message.origin as TaskOrigin).taskId).toSorted()).toEqual(
+      [taskA, taskB].toSorted(),
     );
   });
 

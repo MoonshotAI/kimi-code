@@ -1,7 +1,8 @@
-import { readdirSync } from 'node:fs';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readdirSync, realpathSync } from 'node:fs';
+import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -14,6 +15,8 @@ import {
 } from '#/utils/watch';
 
 const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+const longTempDir = (prefix: string): Promise<string> =>
+  mkdtemp(join(realpathSync.native(tmpdir()), prefix));
 
 class TestNativeWatcher {
   private errorListener: ((error: NodeJS.ErrnoException) => void) | undefined;
@@ -34,6 +37,7 @@ class TestNativeWatcher {
 }
 
 interface TestNativeAttempt {
+  readonly root: string;
   readonly watcher: TestNativeWatcher;
   emit(filename: string | null): void;
 }
@@ -44,7 +48,12 @@ interface TestRetry {
   run(): void;
 }
 
-function signalRig(options?: { readonly synchronousFailures?: number; readonly nativeCode?: string }): {
+function signalRig(options?: {
+  readonly synchronousFailures?: number;
+  readonly nativeCode?: string;
+  readonly platform?: NodeJS.Platform;
+  readonly resolvePath?: (path: string) => string;
+}): {
   readonly service: ReturnType<typeof createWatchService>;
   readonly attempts: TestNativeAttempt[];
   readonly retries: TestRetry[];
@@ -55,8 +64,9 @@ function signalRig(options?: { readonly synchronousFailures?: number; readonly n
   const retries: TestRetry[] = [];
   let synchronousFailures = options?.synchronousFailures ?? 0;
   const runtime: WatchRuntime = {
-    platform: 'darwin',
-    watchNative: (_root, listener) => {
+    platform: options?.platform ?? 'darwin',
+    resolvePath: options?.resolvePath,
+    watchNative: (root, listener) => {
       if (synchronousFailures > 0) {
         synchronousFailures -= 1;
         throw Object.assign(new Error('native watch creation failed'), {
@@ -65,6 +75,7 @@ function signalRig(options?: { readonly synchronousFailures?: number; readonly n
       }
       const watcher = new TestNativeWatcher();
       attempts.push({
+        root,
         watcher,
         emit: (filename) => {
           listener('rename', filename);
@@ -141,6 +152,68 @@ describe('watch signal mode', () => {
     expect(events).toEqual([]);
   });
 
+  it('watches the resolved root and reports changes under the requested path', () => {
+    const rig = signalRig({
+      platform: 'win32',
+      resolvePath: (path) => path.replace('/RUNNER~1/', '/runneradmin/'),
+    });
+    const events: WatchChange[] = [];
+    const ignoredPaths: string[] = [];
+    handle = rig.service.watch('/Users/RUNNER~1/repo', {
+      signal: true,
+      ignored: (path) => {
+        ignoredPaths.push(path);
+        return path.includes('node_modules');
+      },
+    });
+    handle.onDidChange((event) => events.push(event));
+
+    rig.attempt(0).emit('node_modules/pkg/index.js');
+    rig.attempt(0).emit('src/index.ts');
+
+    expect(rig.attempt(0).root).toBe('/Users/runneradmin/repo');
+    expect(ignoredPaths).toEqual([
+      join('/Users/RUNNER~1/repo', 'node_modules/pkg/index.js'),
+      join('/Users/RUNNER~1/repo', 'src/index.ts'),
+    ]);
+    expect(events).toEqual([
+      { path: '/Users/RUNNER~1/repo', action: 'modified', kind: 'directory' },
+    ]);
+  });
+
+  it('does not invalidate when an ignored native signal path is a child starting with two dots', () => {
+    const rig = signalRig();
+    const events: WatchChange[] = [];
+    handle = rig.service.watch('/repo', {
+      signal: true,
+      ignored: (path) => path.includes('..cache'),
+    });
+    handle.onDidChange((event) => events.push(event));
+
+    rig.attempt(0).emit(join('..cache', 'index.json'));
+
+    expect(events).toEqual([]);
+  });
+
+  it('maps resolved children starting with two dots back to the requested path', () => {
+    const rig = signalRig({
+      platform: 'win32',
+      resolvePath: (path) => path.replace('/RUNNER~1/', '/runneradmin/'),
+    });
+    const ignoredPaths: string[] = [];
+    handle = rig.service.watch('/Users/RUNNER~1/repo', {
+      signal: true,
+      ignored: (path) => {
+        ignoredPaths.push(path);
+        return false;
+      },
+    });
+
+    rig.attempt(0).emit(join('..cache', 'index.json'));
+
+    expect(ignoredPaths).toEqual([join('/Users/RUNNER~1/repo', '..cache/index.json')]);
+  });
+
   it('increases the retry delay after consecutive native failures', () => {
     const rig = signalRig();
     handle = rig.service.watch('/repo', { signal: true });
@@ -208,7 +281,7 @@ describe('watch signal mode', () => {
   });
 
   it('falls back to chokidar when native recursive watch is unavailable on the platform', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'watch-fallback-'));
+    const root = await longTempDir('watch-fallback-');
     const rig = signalRig();
     const events: WatchChange[] = [];
     try {
@@ -230,8 +303,49 @@ describe('watch signal mode', () => {
     }
   });
 
+  it('reports chokidar changes under the requested path when the watched root resolves elsewhere', async () => {
+    const base = await longTempDir('watch-resolved-');
+    const target = join(base, 'long-name');
+    const requested = join(base, 'LONG~1');
+    await mkdir(target);
+    await symlink(target, requested, 'junction');
+    const resolvedTarget = await realpath(target);
+    const service = createWatchService({
+      platform: 'win32',
+      resolvePath: (path) => (path === requested ? resolvedTarget : path),
+      watchNative: () => {
+        throw new Error('native watch must not be used without signal mode');
+      },
+      scheduleRetry: () => ({ dispose: () => {} }),
+      reportError: () => undefined,
+    });
+    const events: WatchChange[] = [];
+    const ignoredPaths: string[] = [];
+    try {
+      handle = service.watch(requested, {
+        depth: 0,
+        ignored: (path) => {
+          ignoredPaths.push(path);
+          return false;
+        },
+      });
+      handle.onDidChange((event) => events.push(event));
+      await handle.ready;
+
+      await writeFile(join(target, 'config.toml'), 'x');
+
+      await expect
+        .poll(() => events.some((e) => e.path === join(requested, 'config.toml') && e.action === 'created'))
+        .toBe(true);
+      expect(events.every((e) => e.path.startsWith(requested))).toBe(true);
+      expect(ignoredPaths.every((path) => path.startsWith(requested))).toBe(true);
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
   it('uses chokidar for signal watches on platforms without native recursive watch', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'watch-linux-signal-'));
+    const root = await longTempDir('watch-linux-signal-');
     let nativeCalls = 0;
     const service = createWatchService({
       platform: 'linux',
@@ -361,6 +475,39 @@ describe('watch chokidar mode', () => {
 
     expect(events).toHaveLength(0);
   });
+
+  it.skipIf(process.platform !== 'win32')(
+    'reports changes under an 8.3 short path on Windows',
+    async () => {
+      root = await mkdtemp(join(tmpdir(), 'watch-'));
+      const long = join(root, 'long directory name');
+      await mkdir(long);
+      const short = execFileSync('cmd.exe', ['/d', '/s', '/c', `"for %I in ("${long}") do @echo %~sI"`], {
+        encoding: 'utf8',
+        windowsVerbatimArguments: true,
+      }).trim();
+      expect(basename(short)).toMatch(/~\d/);
+      expect(existsSync(short)).toBe(true);
+      await writeFile(join(long, 'config.toml'), 'v1');
+      const events: WatchChange[] = [];
+      handle = watch(short, { depth: 0 });
+      handle.onDidChange((e) => events.push(e));
+      await handle.ready;
+
+      await writeFile(join(long, 'config.toml'), 'v2');
+      await writeFile(join(long, 'added.toml'), 'v1');
+
+      await expect
+        .poll(() => events, { timeout: 10000 })
+        .toEqual(
+          expect.arrayContaining([
+            { path: join(short, 'config.toml'), action: 'modified', kind: 'file' },
+            { path: join(short, 'added.toml'), action: 'created', kind: 'file' },
+          ]),
+        );
+    },
+    30000,
+  );
 
   it.skipIf(process.platform !== 'darwin')(
     'signal mode keeps the fd footprint bounded on a fat subtree',

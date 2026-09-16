@@ -665,6 +665,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         agentId: this.scopeContext.agentId,
         promptId: input.promptId,
         content: stripBundledSkillBlocks(input.message),
+        clientMetadata: input.origin.clientMetadata,
         queueLength: (this.engine?.snapshot().queue.length ?? 0) + 1,
       }),
     );
@@ -688,6 +689,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         userMessageId: input.userMessageId,
         status,
         content: stripBundledSkillBlocks(input.message),
+        clientMetadata: input.origin.clientMetadata,
         createdAt: input.createdAt,
       }),
     );

@@ -157,6 +157,7 @@ export interface WorkspaceStateSnapshot {
         readonly mermaid?: string;
         readonly d2?: string;
         readonly productSpecific?: boolean;
+        readonly scopes?: readonly (/* SkillScope — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'tui' | 'web')[];
         readonly experimentalFlag?: string;
       }[];
       readonly skipped?: readonly /* SkippedSkill — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
@@ -194,6 +195,7 @@ export interface WorkspaceStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly scopes?: readonly (/* SkillScope — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'tui' | 'web')[];
       readonly experimentalFlag?: string;
     }) => void;
     register: (skill: /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
@@ -221,6 +223,7 @@ export interface WorkspaceStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly scopes?: readonly (/* SkillScope — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'tui' | 'web')[];
       readonly experimentalFlag?: string;
     }, options?: {
       readonly replace?: boolean;
@@ -256,6 +259,7 @@ export interface WorkspaceStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly scopes?: readonly (/* SkillScope — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'tui' | 'web')[];
       readonly experimentalFlag?: string;
     } | undefined;
     getPluginSkill: (pluginId: string, name: string) => /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
@@ -283,6 +287,7 @@ export interface WorkspaceStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly scopes?: readonly (/* SkillScope — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'tui' | 'web')[];
       readonly experimentalFlag?: string;
     } | undefined;
     renderSkillPrompt: (skill: /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
@@ -310,6 +315,7 @@ export interface WorkspaceStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly scopes?: readonly (/* SkillScope — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'tui' | 'web')[];
       readonly experimentalFlag?: string;
     }, rawArgs: string, context?: {
       readonly sessionId?: string;
@@ -339,6 +345,7 @@ export interface WorkspaceStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly scopes?: readonly (/* SkillScope — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'tui' | 'web')[];
       readonly experimentalFlag?: string;
     }[];
     listInvocableSkills: () => readonly /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
@@ -366,6 +373,7 @@ export interface WorkspaceStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly scopes?: readonly (/* SkillScope — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'tui' | 'web')[];
       readonly experimentalFlag?: string;
     }[];
     getSkillRoots: () => readonly string[];
@@ -422,6 +430,7 @@ export interface SessionStateSnapshot {
         readonly mermaid?: string;
         readonly d2?: string;
         readonly productSpecific?: boolean;
+        readonly scopes?: readonly (/* SkillScope — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'tui' | 'web')[];
         readonly experimentalFlag?: string;
       }[];
       readonly skipped?: readonly /* SkippedSkill — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
@@ -459,6 +468,7 @@ export interface SessionStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly scopes?: readonly (/* SkillScope — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'tui' | 'web')[];
       readonly experimentalFlag?: string;
     }) => void;
     register: (skill: /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
@@ -486,6 +496,7 @@ export interface SessionStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly scopes?: readonly (/* SkillScope — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'tui' | 'web')[];
       readonly experimentalFlag?: string;
     }, options?: {
       readonly replace?: boolean;
@@ -521,6 +532,7 @@ export interface SessionStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly scopes?: readonly (/* SkillScope — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'tui' | 'web')[];
       readonly experimentalFlag?: string;
     } | undefined;
     getPluginSkill: (pluginId: string, name: string) => /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
@@ -548,6 +560,7 @@ export interface SessionStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly scopes?: readonly (/* SkillScope — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'tui' | 'web')[];
       readonly experimentalFlag?: string;
     } | undefined;
     renderSkillPrompt: (skill: /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
@@ -575,6 +588,7 @@ export interface SessionStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly scopes?: readonly (/* SkillScope — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'tui' | 'web')[];
       readonly experimentalFlag?: string;
     }, rawArgs: string, context?: {
       readonly sessionId?: string;
@@ -604,6 +618,7 @@ export interface SessionStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly scopes?: readonly (/* SkillScope — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'tui' | 'web')[];
       readonly experimentalFlag?: string;
     }[];
     listInvocableSkills: () => readonly /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
@@ -631,6 +646,7 @@ export interface SessionStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly scopes?: readonly (/* SkillScope — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'tui' | 'web')[];
       readonly experimentalFlag?: string;
     }[];
     getSkillRoots: () => readonly string[];
@@ -757,6 +773,7 @@ export interface AgentStateSnapshot {
     readonly providerMessageId?: string;
     readonly origin?: /* UserPromptOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
       readonly kind: 'user';
+      readonly clientMetadata?: readonly Readonly<Record<string, unknown>>[];
       readonly skillActivations?: readonly /* BundledSkillActivation — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
         readonly activationId: string;
         readonly skillName: string;
@@ -773,6 +790,7 @@ export interface AgentStateSnapshot {
       }[];
     } | /* SkillActivationOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
       readonly kind: 'skill_activation';
+      readonly clientMetadata?: readonly Readonly<Record<string, unknown>>[];
       readonly activationId: string;
       readonly skillName: string;
       readonly skillArgs?: string;

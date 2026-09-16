@@ -6,6 +6,7 @@ import { Disposable, toDisposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { ILogService } from '#/_base/log/log';
+import { setRootActorErrorReporter } from '#/human/xstate2';
 import { Error2, ErrorCodes } from '#/errors';
 import { LifecycleScope } from '#/app/scopes';
 import {
@@ -130,6 +131,9 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     @ILogService private readonly logger: ILogService,
   ) {
     super();
+    setRootActorErrorReporter((err) => {
+      this.logger.error('root actor stopped on aborted operation', err);
+    });
     this.sessionActor.start();
     this._register(toDisposable(() => this.sessionActor.stop()));
     const restartedSubscription = this.sessionActor.on('agent.restarted', (event) => {

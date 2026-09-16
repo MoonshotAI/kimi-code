@@ -15,6 +15,7 @@ export interface PromptFileAttachment {
 
 export interface UserPromptOrigin {
   readonly kind: 'user';
+  readonly clientMetadata?: readonly Readonly<Record<string, unknown>>[];
   readonly skillActivations?: readonly BundledSkillActivation[];
   readonly attachments?: readonly PromptFileAttachment[];
 }
@@ -32,6 +33,7 @@ export interface BundledSkillActivation {
 
 export interface SkillActivationOrigin {
   readonly kind: 'skill_activation';
+  readonly clientMetadata?: readonly Readonly<Record<string, unknown>>[];
   readonly activationId: string;
   readonly skillName: string;
   readonly skillArgs?: string | undefined;

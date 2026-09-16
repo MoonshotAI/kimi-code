@@ -62,6 +62,7 @@ import type {
 } from '@moonshot-ai/agent-core-v2/session/subagent/mirrorAgentRun';
 import {
   projectTranscriptUserOrigin,
+  projectTranscriptUserTurnOrigin,
   type AgentRef,
   type AgentUsageMeta,
   type StepHeader,
@@ -105,6 +106,7 @@ type PromptCompletedEvent = { readonly type: 'prompt.completed' } & PromptComple
 type PromptAbortedEvent = { readonly type: 'prompt.aborted' } & PromptAborted;
 type PromptSteeredEvent = { readonly type: 'prompt.steered' } & PromptSteered;
 type TurnSteerEvent = { readonly type: 'turn.steer' } & TurnSteer;
+type SteerFileAttachment = { readonly name: string; readonly mediaType: string; readonly size: number };
 
 export type ProjectorBusEvent =
   | PlanRevisionEvent
@@ -197,6 +199,7 @@ export class AgentTranscriptProjector {
   private pendingTaskNotifications: { text: string; taskId: string | undefined }[] = [];
   private pendingSteers: {
     input: readonly ContentPart[];
+    files: readonly SteerFileAttachment[];
     promptIds: readonly string[] | undefined;
     origin: TranscriptUserOrigin;
   }[] = [];
@@ -470,6 +473,7 @@ export class AgentTranscriptProjector {
           turnId,
           this.currentStep.stepId,
           pending.input,
+          pending.files,
           pending.promptIds,
           pending.origin,
         );
@@ -560,7 +564,7 @@ export class AgentTranscriptProjector {
     }
     this.pendingTaskNotifications = [];
     for (const pending of this.pendingSteers) {
-      this.steerUserFrame(ops, turnId, stepId, pending.input, pending.promptIds, pending.origin);
+      this.steerUserFrame(ops, turnId, stepId, pending.input, pending.files, pending.promptIds, pending.origin);
     }
     this.pendingSteers = [];
     return ops;
@@ -1081,19 +1085,22 @@ export class AgentTranscriptProjector {
     } else {
       this.subagentTaskIds.delete(event.subagentId);
     }
-    const task = this.upsertTask(taskKey, (prev) => ({
-      taskId: taskKey,
-      kind: 'subagent',
-      state: 'running',
-      detached: event.runInBackground,
-      description: event.description ?? prev?.description,
-      agentId: event.subagentId,
-      outputTail: prev?.outputTail ?? '',
-      startedAt: prev?.startedAt ?? nowIso(),
-      endedAt: prev?.endedAt,
-      model: event.model ?? prev?.model,
-      thinkingEffort: event.thinkingEffort ?? prev?.thinkingEffort,
-    }));
+    const task = this.upsertTask(taskKey, (prev) => {
+      const newGeneration = prev !== undefined && prev.state !== 'running';
+      return {
+        taskId: taskKey,
+        kind: 'subagent',
+        state: 'running',
+        detached: event.runInBackground,
+        description: event.description ?? prev?.description,
+        agentId: event.subagentId,
+        outputTail: prev?.outputTail ?? '',
+        startedAt: newGeneration ? nowIso() : (prev?.startedAt ?? nowIso()),
+        endedAt: newGeneration ? undefined : prev?.endedAt,
+        model: event.model ?? prev?.model,
+        thinkingEffort: event.thinkingEffort ?? prev?.thinkingEffort,
+      };
+    });
     const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
     const hit =
       this.toolFrames.get(event.parentToolCallId) ?? this.adoptToolFrame(event.parentToolCallId);
@@ -1120,6 +1127,10 @@ export class AgentTranscriptProjector {
     error?: string;
     reason?: string;
   }): TranscriptOperation[] {
+    const terminal =
+      event.type === 'subagent.completed' ||
+      event.type === 'subagent.failed' ||
+      event.type === 'subagent.cancelled';
     const state: TranscriptTask['state'] =
       event.type === 'subagent.completed'
         ? 'completed'
@@ -1128,53 +1139,31 @@ export class AgentTranscriptProjector {
           : event.type === 'subagent.cancelled'
             ? 'killed'
             : 'running';
-    const taskKey = this.subagentTaskIds.get(event.subagentId) ?? event.subagentId;
-    const task = this.upsertTask(taskKey, (prev) => ({
-      taskId: taskKey,
-      kind: 'subagent',
-      state,
-      detached: prev?.detached ?? true,
-      description: prev?.description,
-      agentId: event.subagentId,
-      outputTail: prev?.outputTail ?? '',
-      startedAt: prev?.startedAt ?? nowIso(),
-      endedAt:
-        event.type === 'subagent.completed' ||
-        event.type === 'subagent.failed' ||
-        event.type === 'subagent.cancelled'
-          ? nowIso()
-          : prev?.endedAt,
-      resultSummary: event.resultSummary ?? prev?.resultSummary,
-      usage: event.usage ?? prev?.usage,
-      error: event.error ?? prev?.error,
-      stateReason: event.reason ?? prev?.stateReason,
-      model: prev?.model,
-      thinkingEffort: prev?.thinkingEffort,
-    }));
-    const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
-    if (taskKey !== event.subagentId && this.tasks.has(event.subagentId)) {
-      const agentTask = this.upsertTask(event.subagentId, (prev) => ({
-        taskId: event.subagentId,
+    const build = (taskId: string) => (prev: TranscriptTask | undefined): TranscriptTask => {
+      const newGeneration = !terminal && prev !== undefined && prev.state !== 'running';
+      return {
+        taskId,
         kind: 'subagent',
         state,
         detached: prev?.detached ?? true,
         description: prev?.description,
         agentId: event.subagentId,
         outputTail: prev?.outputTail ?? '',
-        startedAt: prev?.startedAt ?? nowIso(),
-        endedAt:
-          event.type === 'subagent.completed' ||
-          event.type === 'subagent.failed' ||
-          event.type === 'subagent.cancelled'
-            ? nowIso()
-            : prev?.endedAt,
-        resultSummary: event.resultSummary ?? prev?.resultSummary,
-        usage: event.usage ?? prev?.usage,
-        error: event.error ?? prev?.error,
-        stateReason: event.reason ?? prev?.stateReason,
+        startedAt: newGeneration ? nowIso() : (prev?.startedAt ?? nowIso()),
+        endedAt: terminal ? nowIso() : newGeneration ? undefined : prev?.endedAt,
+        resultSummary: newGeneration ? undefined : (event.resultSummary ?? prev?.resultSummary),
+        usage: newGeneration ? undefined : (event.usage ?? prev?.usage),
+        error: newGeneration ? undefined : (event.error ?? prev?.error),
+        stateReason: event.reason ?? (newGeneration ? undefined : prev?.stateReason),
         model: prev?.model,
         thinkingEffort: prev?.thinkingEffort,
-      }));
+      };
+    };
+    const taskKey = this.subagentTaskIds.get(event.subagentId) ?? event.subagentId;
+    const task = this.upsertTask(taskKey, build(taskKey));
+    const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
+    if (taskKey !== event.subagentId && this.tasks.has(event.subagentId)) {
+      const agentTask = this.upsertTask(event.subagentId, build(event.subagentId));
       ops.push({ op: 'task.upsert', task: agentTask });
     }
     return ops;
@@ -1328,6 +1317,7 @@ export class AgentTranscriptProjector {
       status: 'queued',
       userMessageId: prev?.userMessageId,
       content: prev?.content ?? projectPromptContentParts(event.content),
+      clientMetadata: event.clientMetadata ?? prev?.clientMetadata,
       createdAt: prev?.createdAt ?? nowIso(),
     }));
     return [{ op: 'prompt.upsert', prompt }];
@@ -1339,6 +1329,7 @@ export class AgentTranscriptProjector {
       status: prev !== undefined && isTerminalPromptStatus(prev.status) ? prev.status : event.status,
       userMessageId: event.userMessageId,
       content: projectPromptContentParts(event.content),
+      clientMetadata: event.clientMetadata ?? prev?.clientMetadata,
       createdAt: prev?.createdAt ?? event.createdAt,
       finishedAt: prev?.finishedAt,
       steeredAt: prev?.steeredAt,
@@ -1352,6 +1343,7 @@ export class AgentTranscriptProjector {
       status: 'running',
       userMessageId: prev?.userMessageId,
       content: prev?.content,
+      clientMetadata: prev?.clientMetadata,
       createdAt: prev?.createdAt ?? new Date().toISOString(),
       finishedAt: prev?.finishedAt,
       steeredAt: prev?.steeredAt,
@@ -1365,6 +1357,7 @@ export class AgentTranscriptProjector {
       status: event.reason ?? 'completed',
       userMessageId: prev?.userMessageId,
       content: prev?.content,
+      clientMetadata: prev?.clientMetadata,
       createdAt: prev?.createdAt ?? event.finishedAt,
       finishedAt: event.finishedAt,
       steeredAt: prev?.steeredAt,
@@ -1378,6 +1371,7 @@ export class AgentTranscriptProjector {
       status: 'aborted',
       userMessageId: prev?.userMessageId,
       content: prev?.content,
+      clientMetadata: prev?.clientMetadata,
       createdAt: prev?.createdAt ?? event.abortedAt,
       finishedAt: event.abortedAt,
       steeredAt: prev?.steeredAt,
@@ -1392,6 +1386,7 @@ export class AgentTranscriptProjector {
       status: prev?.status ?? 'running',
       userMessageId: prev?.userMessageId,
       content: prev?.content ?? projectPromptContentParts(event.content),
+      clientMetadata: prev?.clientMetadata,
       createdAt: prev?.createdAt ?? event.steeredAt,
       finishedAt: prev?.finishedAt,
       steeredAt: event.steeredAt,
@@ -1404,6 +1399,7 @@ export class AgentTranscriptProjector {
         status: 'completed',
         userMessageId: prev?.userMessageId,
         content: prev?.content,
+        clientMetadata: prev?.clientMetadata,
         createdAt: prev?.createdAt ?? event.steeredAt,
         finishedAt: event.steeredAt,
         steeredAt: event.steeredAt,
@@ -1415,13 +1411,14 @@ export class AgentTranscriptProjector {
 
   private onTurnSteered(event: TurnSteerEvent): TranscriptOperation[] {
     const origin = event.origin;
-    if (origin.kind !== 'user') return [];
+    if (origin.kind !== 'user' && origin.kind !== 'skill_activation') return [];
     const frameOrigin = projectTranscriptUserOrigin(origin);
     if (frameOrigin === undefined) return [];
     const turn = this.currentTurn;
     if (turn !== undefined && turn.state !== 'running') return [];
-    const skip = origin.skillActivations?.length ?? 0;
+    const skip = origin.kind === 'user' ? origin.skillActivations?.length ?? 0 : 0;
     const input = skip > 0 ? event.input.slice(skip) : event.input;
+    const files = origin.attachments ?? [];
     const step = this.currentStep;
     if (step !== undefined && step.state === 'running') {
       const ops: TranscriptOperation[] = [];
@@ -1430,14 +1427,16 @@ export class AgentTranscriptProjector {
         step.turnId,
         step.stepId,
         input,
-        this.unpairedSteerPromptIds.shift(),
+        files,
+        origin.kind === 'user' ? this.unpairedSteerPromptIds.shift() : undefined,
         frameOrigin,
       );
       return ops;
     }
     this.pendingSteers.push({
       input,
-      promptIds: this.unpairedSteerPromptIds.shift(),
+      files,
+      promptIds: origin.kind === 'user' ? this.unpairedSteerPromptIds.shift() : undefined,
       origin: frameOrigin,
     });
     return [];
@@ -1448,6 +1447,7 @@ export class AgentTranscriptProjector {
     turnId: string,
     stepId: string,
     input: readonly ContentPart[],
+    files: readonly SteerFileAttachment[],
     promptIds: readonly string[] | undefined,
     origin: TranscriptUserOrigin,
   ): void {
@@ -1470,6 +1470,16 @@ export class AgentTranscriptProjector {
               ? part.videoUrl.name
               : undefined,
         source: { kind: 'session_media', fileId: ref.ref.fileId },
+      };
+      ops.push({ op: 'attachment.upsert', attachment });
+      attachmentIds.push(attachment.attachmentId);
+    }
+    for (const file of files) {
+      const attachment: TranscriptAttachment = {
+        attachmentId: `${stepId}.att${++this.attachmentOrdinal}`,
+        mediaType: file.mediaType,
+        name: file.name,
+        size: file.size,
       };
       ops.push({ op: 'attachment.upsert', attachment });
       attachmentIds.push(attachment.attachmentId);
@@ -1565,7 +1575,7 @@ function mapTurnOrigin(origin: unknown): TurnOrigin {
   const kind = typeof candidate?.kind === 'string' ? candidate.kind : undefined;
   switch (kind) {
     case 'user':
-      return { kind: 'user', payload: origin };
+      return projectTranscriptUserTurnOrigin(origin);
     case 'cron_job':
     case 'cron_missed': {
       const jobId = (candidate as { jobId?: unknown }).jobId;

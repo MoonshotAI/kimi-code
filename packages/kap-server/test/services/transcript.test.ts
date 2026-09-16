@@ -1229,6 +1229,146 @@ describe('AgentTranscriptProjector', () => {
     expect(tx.getTask('agent-1')).toMatchObject({ kind: 'subagent', state: 'running' });
   });
 
+  it('resets the agent-run generation stamps when a completed subagent is resumed for rework', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    feed(
+      ev({
+        type: 'subagent.spawned',
+        subagentId: 'agent-1',
+        subagentName: 'worker',
+        parentToolCallId: 'call-1',
+        description: 'tower worker',
+        runInBackground: true,
+      }),
+    );
+    feed(
+      ev({
+        type: 'task.started',
+        info: {
+          taskId: 'task-9',
+          kind: 'agent',
+          description: 'tower worker',
+          status: 'running',
+          detached: true,
+          agentId: 'agent-1',
+          startedAt: 1_700_000_000_000,
+          endedAt: null,
+        },
+      }),
+    );
+    feed(ev({ type: 'subagent.completed', subagentId: 'agent-1', resultSummary: 'done' }));
+    feed(
+      ev({
+        type: 'task.terminated',
+        info: {
+          taskId: 'task-9',
+          kind: 'agent',
+          description: 'tower worker',
+          status: 'completed',
+          detached: true,
+          agentId: 'agent-1',
+          startedAt: 1_700_000_000_000,
+          endedAt: 1_700_000_001_000,
+        },
+      }),
+    );
+    const firstRun = tx.getTask('agent-1');
+    expect(firstRun).toMatchObject({ state: 'completed', resultSummary: 'done' });
+
+    feed(
+      ev({
+        type: 'subagent.spawned',
+        subagentId: 'agent-1',
+        subagentName: 'worker',
+        parentToolCallId: 'call-2',
+        description: 'tower worker',
+        runInBackground: true,
+        taskId: 'task-10',
+      }),
+    );
+    feed(ev({ type: 'subagent.started', subagentId: 'agent-1' }));
+
+    const resumed = tx.getTask('agent-1');
+    expect(resumed).toMatchObject({ kind: 'subagent', state: 'running' });
+    expect(resumed?.endedAt).toBeUndefined();
+    expect(resumed?.resultSummary).toBeUndefined();
+    expect(resumed?.error).toBeUndefined();
+    expect((resumed?.startedAt ?? '') >= (firstRun?.endedAt ?? '')).toBe(true);
+    expect(tx.getTask('task-9')).toMatchObject({
+      state: 'completed',
+      resultSummary: 'done',
+      endedAt: new Date(1_700_000_001_000).toISOString(),
+    });
+    expect(tx.getTask('task-10')).toMatchObject({
+      kind: 'subagent',
+      state: 'running',
+      agentId: 'agent-1',
+    });
+  });
+
+  it('clears the terminal stamps when a terminal subagent is respawned without a task id', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    feed(
+      ev({
+        type: 'subagent.spawned',
+        subagentId: 'agent-1',
+        subagentName: 'worker',
+        parentToolCallId: 'call-1',
+        description: 'scan',
+        runInBackground: false,
+      }),
+    );
+    feed(ev({ type: 'subagent.completed', subagentId: 'agent-1', resultSummary: 'done' }));
+    const finished = tx.getTask('agent-1');
+    expect(finished).toMatchObject({ state: 'completed', resultSummary: 'done' });
+
+    feed(
+      ev({
+        type: 'subagent.spawned',
+        subagentId: 'agent-1',
+        subagentName: 'worker',
+        parentToolCallId: 'call-2',
+        description: 'scan again',
+        runInBackground: false,
+      }),
+    );
+
+    const respawned = tx.getTask('agent-1');
+    expect(respawned).toMatchObject({ kind: 'subagent', state: 'running' });
+    expect(respawned?.endedAt).toBeUndefined();
+    expect(respawned?.resultSummary).toBeUndefined();
+    expect((respawned?.startedAt ?? '') >= (finished?.endedAt ?? '')).toBe(true);
+  });
+
+  it('keeps the run stamps when subagent.started arrives for an already-running task', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    feed(
+      ev({
+        type: 'subagent.spawned',
+        subagentId: 'agent-1',
+        subagentName: 'explore',
+        parentToolCallId: 'call-1',
+        description: 'Inspect files',
+        runInBackground: true,
+        taskId: 'task-9',
+      }),
+    );
+    feed(ev({ type: 'subagent.started', subagentId: 'agent-1' }));
+    const startedAt = tx.getTask('task-9')?.startedAt;
+    feed(ev({ type: 'subagent.started', subagentId: 'agent-1' }));
+
+    expect(tx.getTask('task-9')).toMatchObject({ state: 'running', startedAt });
+  });
+
   it('recovers the agent → task association from a backfilled task.started', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
@@ -1899,6 +2039,18 @@ describe('AgentTranscriptProjector', () => {
     expect(entity?.request).toEqual({ toolCallId: 'call_x' });
   });
 
+  it('preserves queue metadata through prompt lifecycle updates', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+    const metadata = [{ display_text: 'Save button', kimi_code_composer: { version: 1, doc: { type: 'doc' } } }];
+    feed(ev({ type: 'prompt.submitted', promptId: 'p1', userMessageId: 'm1', status: 'queued', content: [{ type: 'text', text: 'wire' }], clientMetadata: metadata, createdAt: '2026-01-01T00:00:00.000Z' }));
+    feed(ev({ type: 'prompt.queued', promptId: 'p1', content: [{ type: 'text', text: 'wire' }], queueLength: 1, clientMetadata: metadata }));
+    feed(ev({ type: 'prompt.started', promptId: 'p1' }));
+    feed(ev({ type: 'prompt.completed', promptId: 'p1', finishedAt: '2026-01-01T00:00:02.000Z', reason: 'completed' }));
+    expect(tx.getPrompt('p1')?.clientMetadata).toEqual(metadata);
+  });
+
   it('projects prompt submitted/completed/aborted/steered as global queue entities', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
@@ -2157,9 +2309,96 @@ describe('AgentTranscriptProjector', () => {
       },
     });
     expect(JSON.stringify(frame)).not.toContain('/private/');
-    expect(frame?.kind === 'text' ? frame.attachmentIds : undefined).toEqual([
+    const attachmentIds = frame?.kind === 'text' ? frame.attachmentIds : undefined;
+    expect(attachmentIds).toHaveLength(2);
+    expect(attachmentIds?.[0]).toBe(
       attachmentOp?.op === 'attachment.upsert' ? attachmentOp.attachment.attachmentId : undefined,
-    ]);
+    );
+    expect(tx.getAttachment(attachmentIds![1]!)).toEqual({
+      attachmentId: attachmentIds![1],
+      mediaType: 'text/plain',
+      name: 'secret.txt',
+      size: 12,
+    });
+    expect(JSON.stringify([...tx.getAttachments().values()])).not.toContain('/private/');
+  });
+
+  it('records a user slash skill activation steered into a running turn without taking a queued prompt id', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+    const origin = { kind: 'skill_activation' as const, activationId: 'act-1', trigger: 'user-slash' as const, skillName: 'example-skill', skillArgs: 'args' };
+    feed(ev({ type: 'turn.started', turnId: 5, origin: { kind: 'user' }, prompt: 'active' }));
+    feed(ev({ type: 'turn.step.started', turnId: 5, step: 1 }));
+    feed(ev({ type: 'prompt.steered', activePromptId: 'active', promptIds: ['queued'], content: [{ type: 'text', text: 'queued input' }], steeredAt: '2026-01-01T00:00:02.000Z' }));
+    feed(ev({ type: 'turn.steer', input: [{ type: 'text', text: 'User activated the skill' }], origin }));
+    feed(ev({ type: 'turn.steer', input: [{ type: 'text', text: 'queued input' }], origin: { kind: 'user' } }));
+    const frames = turnOps('t5', tx.getItems()).steps[0]!.frames;
+    expect(frames[0]).toMatchObject({ role: 'user', text: 'User activated the skill', origin: { kind: 'skill_activation', trigger: 'user-slash', skillName: 'example-skill' } });
+    expect((frames[0] as { promptIds?: readonly string[] }).promptIds).toBeUndefined();
+    expect(frames[1]).toMatchObject({ text: 'queued input', promptIds: ['queued'] });
+  });
+
+  it('projects origin file attachments on steered frames for user prompts and slash skills', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+    const file = { name: 'notes.pdf', mediaType: 'application/pdf', size: 42, path: '/tmp/notes.pdf' };
+    feed(ev({ type: 'turn.started', turnId: 7, origin: { kind: 'user' }, prompt: 'active' }));
+    feed(ev({ type: 'turn.step.started', turnId: 7, step: 1 }));
+    feed(ev({ type: 'turn.steer', input: [{ type: 'text', text: 'User activated the skill' }], origin: { kind: 'skill_activation', activationId: 'act-3', trigger: 'user-slash', skillName: 'example-skill', attachments: [file] } }));
+    feed(ev({ type: 'prompt.steered', activePromptId: 'active', promptIds: ['queued'], content: [{ type: 'text', text: 'see file' }], steeredAt: '2026-01-01T00:00:02.000Z' }));
+    feed(ev({ type: 'turn.steer', input: [{ type: 'text', text: 'see file' }], origin: { kind: 'user', attachments: [file] } }));
+    const frames = turnOps('t7', tx.getItems()).steps[0]!.frames as { attachmentIds?: readonly string[] }[];
+    expect(frames).toHaveLength(2);
+    for (const frame of frames) {
+      expect(frame.attachmentIds).toHaveLength(1);
+      expect(tx.getAttachment(frame.attachmentIds![0]!)).toMatchObject({ name: 'notes.pdf', mediaType: 'application/pdf', size: 42 });
+    }
+  });
+
+  it('still ignores a model-triggered skill activation steer', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+    feed(ev({ type: 'turn.started', turnId: 6, origin: { kind: 'user' }, prompt: 'active' }));
+    feed(ev({ type: 'turn.step.started', turnId: 6, step: 1 }));
+    feed(ev({ type: 'turn.steer', input: [{ type: 'text', text: 'model tool activation' }], origin: { kind: 'skill_activation', activationId: 'act-2', trigger: 'model-tool', skillName: 'example-skill' } }));
+    expect(turnOps('t6', tx.getItems()).steps[0]!.frames).toHaveLength(0);
+  });
+
+  it('projects a live user turn payload without server-local paths', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const clientMetadata = [{ display_text: 'Visible prompt' }];
+    tx.apply(projector.map(ev({
+      type: 'turn.started',
+      turnId: 9,
+      prompt: 'visible prompt',
+      origin: {
+        kind: 'user',
+        clientMetadata,
+        skillActivations: [{ activationId: 'a1', skillName: 'deploy', skillArgs: 'now', skillPath: '/private/deploy/SKILL.md' }],
+        attachments: [{ name: 'notes.pdf', mediaType: 'application/pdf', size: 42, path: '/private/notes.pdf' }],
+      },
+    })));
+    const turn = turnOps('t9', tx.getItems());
+    expect(turn.origin).toEqual({ kind: 'user', payload: { kind: 'user', clientMetadata, skillActivations: [{ skillName: 'deploy', skillArgs: 'now' }] } });
+    expect(JSON.stringify(turn)).not.toContain('/private/');
+  });
+
+  it('keeps client metadata on a steered slash skill frame', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+    const clientMetadata = [{ display_text: 'Save button' }];
+    feed(ev({ type: 'turn.started', turnId: 8, origin: { kind: 'user' }, prompt: 'active' }));
+    feed(ev({ type: 'turn.step.started', turnId: 8, step: 1 }));
+    feed(ev({ type: 'turn.steer', input: [{ type: 'text', text: 'User skill context' }], origin: { kind: 'skill_activation', activationId: 'act-4', trigger: 'user-slash', skillName: 'example-skill', clientMetadata } }));
+    expect(turnOps('t8', tx.getItems()).steps[0]!.frames[0]).toMatchObject({
+      role: 'user',
+      origin: { kind: 'skill_activation', skillName: 'example-skill', clientMetadata },
+    });
   });
 
   it('ignores turn.steer for non-user origins and for turns that are not running', () => {
@@ -2653,6 +2892,51 @@ describe('AgentTranscriptProjector', () => {
         text: 'steered in',
         origin: { kind: 'user' },
       });
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('readColdSnapshot opens a new turn for a steer reissued after abort instead of folding it into the cancelled turn', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-steer-abort-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const records = [
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'run a long sleep' }], toolCalls: [], origin: { kind: 'user' }, id: 'msg_p1' }, time: 1000 },
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'run a long sleep' }], origin: { kind: 'user' }, promptId: 'msg_p1', turnId: 0, time: 1001 },
+        { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'starting' }], toolCalls: [] }, time: 2000 },
+        { type: 'turn.steer', input: [{ type: 'text', text: '1' }], origin: { kind: 'user' }, time: 3000 },
+        { type: 'turn.ended', turnId: 0, reason: 'cancelled', time: 4000 },
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: '1' }], toolCalls: [], origin: { kind: 'user' }, id: 'msg_p2' }, time: 4001 },
+        { type: 'turn.prompt', input: [{ type: 'text', text: '1' }], origin: { kind: 'user' }, promptId: 'msg_p2', turnId: 1, time: 4002 },
+        { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'ignored as requested' }], toolCalls: [] }, time: 5000 },
+        { type: 'turn.ended', turnId: 1, reason: 'completed', time: 6000 },
+      ];
+      await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+
+      const snapshot = await coldTranscriptService(home).readColdSnapshot('s1', 'main');
+      const turns = snapshot!.items.filter((item) => item.kind === 'turn');
+      expect(turns).toHaveLength(2);
+      const [cancelled, followUp] = turns;
+      if (cancelled?.kind !== 'turn' || followUp?.kind !== 'turn') throw new Error('expected turns');
+      expect(cancelled.prompt).toBe('run a long sleep');
+      expect(
+        cancelled.steps
+          .flatMap((step) => step.frames)
+          .some((frame) => frame.kind === 'text' && frame.role === 'user' && frame.text === '1'),
+      ).toBe(false);
+      expect(followUp.prompt).toBe('1');
+      expect(
+        followUp.steps
+          .flatMap((step) => step.frames)
+          .some(
+            (frame) =>
+              frame.kind === 'text' &&
+              frame.role === 'assistant' &&
+              frame.text === 'ignored as requested',
+          ),
+      ).toBe(true);
     } finally {
       await rm(home, { recursive: true, force: true });
     }

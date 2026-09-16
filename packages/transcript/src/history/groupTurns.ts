@@ -4,7 +4,7 @@ import type { TranscriptFrame, TranscriptUserOrigin } from '../model/frame';
 import type { TranscriptItem, TranscriptMarker } from '../model/item';
 import type { TurnOrigin } from '../model/turn';
 import { daemonFileRefFromPairingPart } from '../contract/mediaRef';
-import { projectTranscriptUserOrigin } from '../contract/origin';
+import { projectTranscriptUserOrigin, projectTranscriptUserTurnOrigin } from '../contract/origin';
 
 export type HistoryMediaSource =
   | { readonly kind: 'url'; readonly url: string }
@@ -71,6 +71,7 @@ export function groupMessagesIntoSnapshot(
   options?: {
     readonly taskOriginTurnTaskIds?: ReadonlySet<string>;
     readonly steeredContents?: ReadonlyMap<string, ReadonlyMap<string, number>>;
+    readonly turnPromptIds?: ReadonlySet<string>;
   },
 ): AgentTranscriptSnapshot {
   const items: TranscriptItem[] = [];
@@ -244,7 +245,9 @@ export function groupMessagesIntoSnapshot(
       }
       const contentKey = JSON.stringify(message.content ?? []);
       const steerKind = originKind ?? 'user';
-      const steeredByKind = steeredContents.get(contentKey);
+      const opensAsTurnPrompt =
+        message.id !== undefined && options?.turnPromptIds?.has(message.id) === true;
+      const steeredByKind = opensAsTurnPrompt ? undefined : steeredContents.get(contentKey);
       const steeredRemaining = steeredByKind?.get(steerKind) ?? 0;
       if (steeredByKind !== undefined && steeredRemaining > 0) {
         steeredByKind.set(steerKind, steeredRemaining - 1);
@@ -463,6 +466,7 @@ function mapOrigin(message: HistoryMessage): TurnOrigin {
     case 'shell_command':
       return { kind: 'user', payload: origin };
     case 'user':
+      return projectTranscriptUserTurnOrigin(origin);
     case undefined:
       return { kind: 'user' };
     default:

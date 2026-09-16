@@ -1,5 +1,5 @@
-import { watch as fsWatch } from 'node:fs';
-import { basename, isAbsolute, join, relative } from 'node:path';
+import { watch as fsWatch, realpathSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 
 import { FSWatcher } from 'chokidar';
 
@@ -47,6 +47,7 @@ export interface NativeFsWatcher {
 
 export interface WatchRuntime {
   readonly platform: NodeJS.Platform;
+  readonly resolvePath?: (path: string) => string;
   watchNative(
     root: string,
     listener: (eventType: string, filename: string | null) => void,
@@ -70,6 +71,8 @@ const NATIVE_RETRY_MAX_MS = 30000;
 
 const NODE_WATCH_RUNTIME: WatchRuntime = {
   platform: process.platform,
+  resolvePath: (path) =>
+    process.platform === 'win32' && /~\d/.test(path) ? resolveLongPath(path) : path,
   watchNative: (root, listener) =>
     fsWatch(root, { persistent: false, recursive: true }, listener),
   scheduleRetry: (callback, delayMs) => {
@@ -383,6 +386,7 @@ class XStateWatchHandle implements WatchHandle {
     private readonly root: WatchRootActorRef,
     private readonly id: string,
     private readonly ref: WatchActorRef,
+    private readonly toRequestedPath: (path: string) => string,
     private readonly release: () => void,
   ) {
     this.ready = new Promise<void>((resolve, reject) => {
@@ -392,7 +396,8 @@ class XStateWatchHandle implements WatchHandle {
     void this.ready.catch(() => undefined);
     this.subscriptions.push(
       ref.on('change', (emitted) => {
-        for (const listener of this.listeners) listener(emitted.change);
+        const change = { ...emitted.change, path: this.toRequestedPath(emitted.change.path) };
+        for (const listener of this.listeners) listener(change);
       }),
       ref.subscribe((snapshot) => this.onSnapshot(snapshot.context)),
     );
@@ -446,10 +451,22 @@ export function createWatchService(runtime: WatchRuntime = NODE_WATCH_RUNTIME): 
       }
       const actor = root;
       const id = `watch-${nextId++}`;
-      actor.send({ type: 'watch.subscribe', id, path, options });
+      const watched = runtime.resolvePath?.(path) ?? path;
+      const toRequestedPath = (changed: string): string =>
+        watched === path ? changed : requestedPath(watched, path, changed);
+      const ignored = options?.ignored;
+      actor.send({
+        type: 'watch.subscribe',
+        id,
+        path: watched,
+        options:
+          ignored === undefined
+            ? options
+            : { ...options, ignored: (changed) => ignored(toRequestedPath(changed)) },
+      });
       const ref = actor.getSnapshot().context.subscriptions[id];
       if (ref === undefined) throw new Error(`watch subscription "${id}" was not started`);
-      return new XStateWatchHandle(actor, id, ref, () => {
+      return new XStateWatchHandle(actor, id, ref, toRequestedPath, () => {
         if (Object.keys(actor.getSnapshot().context.subscriptions).length === 0) {
           actor.stop();
           if (root === actor) root = undefined;
@@ -465,10 +482,36 @@ export function watch(path: string, options?: WatchOptions): WatchHandle {
   return defaultService.watch(path, options);
 }
 
+function resolveLongPath(path: string): string {
+  const missing: string[] = [];
+  let current = path;
+  for (;;) {
+    try {
+      return join(realpathSync.native(current), ...missing);
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) return path;
+      missing.unshift(basename(current));
+      current = parent;
+    }
+  }
+}
+
+function requestedPath(watched: string, requested: string, changed: string): string {
+  const rel = relative(watched, changed);
+  if (rel === '') return requested;
+  if (isOutside(rel)) return changed;
+  return join(requested, rel);
+}
+
 function resolveNativeSignalPath(root: string, filename: string | null): string {
   if (filename === null || filename === '' || filename === basename(root)) return root;
   const absPath = isAbsolute(filename) ? filename : join(root, filename);
   const rel = relative(root, absPath);
-  if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) return absPath;
+  if (!isOutside(rel)) return absPath;
   return root;
+}
+
+function isOutside(rel: string): boolean {
+  return rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel);
 }

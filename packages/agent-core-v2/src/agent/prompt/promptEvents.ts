@@ -1,3 +1,4 @@
+import type { UserPromptOrigin } from '#/agent/contextMemory/types';
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
@@ -104,6 +105,7 @@ export interface PromptQueuedPayload {
   readonly promptId: string;
   readonly content: ContentPart[];
   readonly queueLength: number;
+  readonly clientMetadata?: UserPromptOrigin['clientMetadata'];
 }
 
 export class PromptQueued extends AgentEvent2<PromptQueuedPayload> {
@@ -119,6 +121,7 @@ export interface PromptSubmittedPayload {
   readonly status: 'running' | 'queued';
   readonly content: ContentPart[];
   readonly createdAt: string;
+  readonly clientMetadata?: UserPromptOrigin['clientMetadata'];
 }
 
 export class PromptSubmitted extends AgentEvent2<PromptSubmittedPayload> {

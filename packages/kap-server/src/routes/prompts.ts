@@ -291,19 +291,21 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           }
         }
         const parts = contentToCoreParts(resolvedContent);
+        const clientMetadata = req.body.metadata === undefined ? undefined : [structuredClone(req.body.metadata)];
         if (req.body.skills !== undefined) {
           if (req.body.agent_id !== undefined && req.body.agent_id !== MAIN_AGENT_ID) {
             await applyPromptMetadataUpdate({
               metadata: session.accessor.get(ISessionMetadata),
               eventService: core.accessor.get(IEventService),
               sessionId: session_id,
-            }, promptMetadataTextFromContentParts(parts));
+            }, promptMetadataTextFromContentParts(parts, clientMetadata));
           }
           const settlement = watchPromptSettlements(resolved.events);
           let result: PromptWithSkillsResult;
           try {
             result = await resolved.skill.promptWithSkills({
               input: parts,
+              clientMetadata,
               skills: req.body.skills,
               attachments: promptAttachments,
             });
@@ -321,6 +323,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
                 status: result.state,
                 content: projectPromptContentParts(parts),
                 created_at: result.created_at,
+                metadata: clientMetadata?.[0],
               },
               req.id,
             ),
@@ -331,13 +334,13 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           metadata: session.accessor.get(ISessionMetadata),
           eventService: core.accessor.get(IEventService),
           sessionId: session_id,
-        }, promptMetadataTextFromContentParts(parts));
+        }, promptMetadataTextFromContentParts(parts, clientMetadata));
         const status = resolved.prompt.snapshot();
         const { id } = resolved.prompt.submit({
           message: { role: 'user', content: parts },
           meta: {
             promptId: reservation.id,
-            origin: { kind: 'user', attachments: promptAttachments } as PromptOrigin,
+            origin: { kind: 'user', attachments: promptAttachments, clientMetadata } as PromptOrigin,
             tracked: true,
           },
         });
@@ -505,6 +508,7 @@ export function projectPromptSnapshot(prompt: {
     status,
     content: projectPromptContentParts(content),
     created_at: prompt.createdAt,
+    metadata: origin?.kind === 'user' || origin?.kind === 'skill_activation' ? origin.clientMetadata?.[0] : undefined,
   };
 }
 

@@ -359,7 +359,7 @@ describe('transcript contract e2e', () => {
       return tx.prompts.some((p) => p.status === 'queued') && tx.prompts.some((p) => p.status === 'running');
     });
     const mid = await getTranscript(server!, base, sid);
-    expect(mid.prompts.map((p) => p.status).sort()).toEqual(['queued', 'running']);
+    expect(mid.prompts.map((p) => p.status).toSorted()).toEqual(['queued', 'running']);
 
     await until('both settled', async () => {
       const tx = await getTranscript(server!, base, sid);
@@ -538,17 +538,17 @@ describe('transcript contract e2e', () => {
     expect(reset.meta).toEqual(snapshot.meta);
     const byId = (xs: any[], key: string): Record<string, unknown> =>
       Object.fromEntries(xs.map((x) => [x[key], x]));
-    expect(Object.keys(byId(reset.tasks ?? [], 'taskId')).sort()).toEqual(
-      Object.keys(byId(snapshot.tasks, 'taskId')).sort(),
+    expect(Object.keys(byId(reset.tasks ?? [], 'taskId')).toSorted()).toEqual(
+      Object.keys(byId(snapshot.tasks, 'taskId')).toSorted(),
     );
-    expect(Object.keys(byId(reset.interactions ?? [], 'interactionId')).sort()).toEqual(
-      Object.keys(byId(snapshot.interactions, 'interactionId')).sort(),
+    expect(Object.keys(byId(reset.interactions ?? [], 'interactionId')).toSorted()).toEqual(
+      Object.keys(byId(snapshot.interactions, 'interactionId')).toSorted(),
     );
-    expect(Object.keys(byId(reset.prompts ?? [], 'promptId')).sort()).toEqual(
-      Object.keys(byId(snapshot.prompts, 'promptId')).sort(),
+    expect(Object.keys(byId(reset.prompts ?? [], 'promptId')).toSorted()).toEqual(
+      Object.keys(byId(snapshot.prompts, 'promptId')).toSorted(),
     );
-    expect(Object.keys(byId(reset.todos ?? [], 'todoId')).sort()).toEqual(
-      Object.keys(byId(snapshot.todos, 'todoId')).sort(),
+    expect(Object.keys(byId(reset.todos ?? [], 'todoId')).toSorted()).toEqual(
+      Object.keys(byId(snapshot.todos, 'todoId')).toSorted(),
     );
     channel.close();
   });

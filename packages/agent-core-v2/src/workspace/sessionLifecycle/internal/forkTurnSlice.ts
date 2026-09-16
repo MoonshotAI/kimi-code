@@ -193,7 +193,7 @@ function promptMetadataFromTurnRecord(record: WireRecord): string | undefined {
   if (origin?.['kind'] === 'skill_activation') {
     const name = origin['skillName'];
     if (typeof name !== 'string') return undefined;
-    return promptMetadataTextFromText(slashCommandText(`/${name}`, origin['skillArgs']));
+    return promptMetadataTextFromContentParts([{ type: 'text', text: slashCommandText(`/${name}`, origin['skillArgs']) }], origin['clientMetadata']);
   }
   if (origin?.['kind'] === 'plugin_command') {
     const pluginId = origin['pluginId'];
@@ -209,6 +209,7 @@ function promptMetadataFromTurnRecord(record: WireRecord): string | undefined {
   const bundled = origin?.['kind'] === 'user' && Array.isArray(activations) ? activations.length : 0;
   return promptMetadataTextFromContentParts(
     (bundled === 0 ? content : content.slice(bundled)) as readonly ContentPart[],
+    origin?.['kind'] === 'user' ? origin['clientMetadata'] : undefined,
   );
 }
 
