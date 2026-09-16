@@ -2145,6 +2145,40 @@ describe('AgentTranscriptProjector', () => {
     });
   });
 
+  it('keeps restored prompt content when steering after a late projector attach', () => {
+    const prompts = new Map([
+      [
+        'p1',
+        {
+          promptId: 'p1',
+          status: 'running' as const,
+          content: [{ type: 'text', text: 'first' }],
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    ]);
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID, {
+      prompt: (promptId) => prompts.get(promptId),
+    });
+    const tx = new AgentTranscript('main');
+    tx.apply(
+      projector.map(
+        ev({
+          type: 'prompt.steered',
+          activePromptId: 'p1',
+          promptIds: ['p2'],
+          content: [{ type: 'text', text: 'second' }],
+          steeredAt: '2026-01-01T00:00:02.000Z',
+        }),
+      ),
+    );
+    expect(tx.getPrompt('p1')).toMatchObject({
+      status: 'running',
+      steeredAt: '2026-01-01T00:00:02.000Z',
+      content: [{ type: 'text', text: 'first' }],
+    });
+  });
+
   it('projects prompt.steered media content to the wire shape (no daemon ref or path leak)', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
