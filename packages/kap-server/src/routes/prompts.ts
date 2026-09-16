@@ -58,6 +58,7 @@ import {
   resolvePromptMediaFiles,
   resolvePromptSessionMediaRefs,
   runtimeAttachmentsTarget,
+  runtimeOriginalsTarget,
   type PromptMediaPreparation,
 } from '../lib/promptMedia';
 import type { RuntimeLease } from '@moonshot-ai/agent-core-v2/runtime/runtime';
@@ -247,7 +248,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
 
         const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
         const binding = resolved.binding.get();
-        let attachmentsLease: RuntimeLease | undefined;
+        let runtimeLease: RuntimeLease | undefined;
         try {
           preparedMedia = await resolvePromptMediaFiles(
             resolvedSessionMedia,
@@ -261,6 +262,12 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
                 if (session === undefined) return undefined;
                 return sessionMediaOriginalsDir(session.accessor.get(ISessionContext).sessionDir);
               },
+              resolveOriginalsTarget: binding.runtimeId === 'local'
+                ? undefined
+                : async () => {
+                    runtimeLease ??= core.accessor.get(IRuntimeResolver).acquire(binding, ['fs']);
+                    return runtimeOriginalsTarget(runtimeLease.runtime);
+                  },
               resolveAttachmentsDir: async () => {
                 const session = await resumeSessionById(core.accessor, session_id);
                 if (session === undefined) return undefined;
@@ -269,13 +276,13 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
               resolveAttachmentsTarget: binding.runtimeId === 'local'
                 ? undefined
                 : async () => {
-                    attachmentsLease ??= core.accessor.get(IRuntimeResolver).acquire(binding, ['fs']);
-                    return runtimeAttachmentsTarget(attachmentsLease.runtime);
+                    runtimeLease ??= core.accessor.get(IRuntimeResolver).acquire(binding, ['fs']);
+                    return runtimeAttachmentsTarget(runtimeLease.runtime);
                   },
             },
           );
         } finally {
-          attachmentsLease?.dispose();
+          runtimeLease?.dispose();
         }
         const resolvedContent = preparedMedia.content;
         const promptAttachments =

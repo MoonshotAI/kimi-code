@@ -132,6 +132,7 @@ export function contentToCoreParts(content: WireContent): ContentPart[] {
 
 export interface ResolvePromptMediaOptions {
   readonly resolveOriginalsDir?: () => Promise<string | undefined>;
+  readonly resolveOriginalsTarget?: () => Promise<PromptAttachmentsTarget | undefined>;
   readonly resolveAttachmentsDir?: () => Promise<string | undefined>;
   readonly resolveAttachmentsTarget?: () => Promise<PromptAttachmentsTarget | undefined>;
   readonly telemetry?: ITelemetryService;
@@ -145,6 +146,14 @@ export interface PromptAttachmentsTarget {
 }
 
 export function runtimeAttachmentsTarget(runtime: Runtime): PromptAttachmentsTarget {
+  return runtimeTempDirTarget(runtime, 'attachments');
+}
+
+export function runtimeOriginalsTarget(runtime: Runtime): PromptAttachmentsTarget {
+  return runtimeTempDirTarget(runtime, 'original-images');
+}
+
+function runtimeTempDirTarget(runtime: Runtime, subdir: string): PromptAttachmentsTarget {
   const tempDir = (runtime.environment as Runtime['environment'] & { tempDir?: string }).tempDir;
   if (tempDir === undefined || runtime.fs === undefined) {
     throw new Error2(
@@ -153,7 +162,7 @@ export function runtimeAttachmentsTarget(runtime: Runtime): PromptAttachmentsTar
     );
   }
   return {
-    dir: runtime.path.join(tempDir, 'kimi-code', 'attachments'),
+    dir: runtime.path.join(tempDir, 'kimi-code', subdir),
     fs: runtime.fs,
     path: runtime.path,
   };
@@ -229,14 +238,19 @@ export async function resolvePromptMediaFiles(
     );
   };
   let changed = false;
-  let originalsDir: string | undefined;
-  let originalsDirResolved = false;
-  const resolveOriginalsDir = async (): Promise<string | undefined> => {
-    if (!originalsDirResolved) {
-      originalsDirResolved = true;
-      originalsDir = await options.resolveOriginalsDir?.().catch(() => undefined);
+  let originals: { readonly dir?: string; readonly fs?: IHostFileSystem } | undefined;
+  let originalsResolved = false;
+  const resolveOriginals = async (): Promise<{ readonly dir?: string; readonly fs?: IHostFileSystem } | undefined> => {
+    if (!originalsResolved) {
+      originalsResolved = true;
+      const target = await options.resolveOriginalsTarget?.();
+      if (target !== undefined) {
+        originals = { dir: target.dir, fs: target.fs };
+      } else {
+        originals = { dir: await options.resolveOriginalsDir?.().catch(() => undefined) };
+      }
     }
-    return originalsDir;
+    return originals;
   };
   let attachmentsSink: AttachmentSink | undefined;
   const resolveAttachmentsSink = async (): Promise<AttachmentSink> => {
@@ -285,11 +299,11 @@ export async function resolvePromptMediaFiles(
           telemetrySource: 'prompt_inline',
         });
         if (compressed.changed) {
-          const dir = await resolveOriginalsDir();
+          const originals = await resolveOriginals();
           const originalPath = await persistOriginalImage(
             Buffer.from(part.source.data, 'base64'),
             part.source.media_type,
-            { dir },
+            { dir: originals?.dir, fs: originals?.fs },
           );
           content.push({
             type: 'text',
@@ -500,8 +514,8 @@ export async function resolvePromptMediaFiles(
           telemetrySource: 'prompt_file',
         });
         if (compressed.changed) {
-          const dir = await resolveOriginalsDir();
-          const originalPath = await persistOriginalImage(data, mediaType, { dir });
+          const originals = await resolveOriginals();
+          const originalPath = await persistOriginalImage(data, mediaType, { dir: originals?.dir, fs: originals?.fs });
           content.push({
             type: 'text',
             text: buildImageCompressionCaption({

@@ -24,6 +24,7 @@ import {
   MAX_IMAGE_DECODE_BYTES,
   closeSessionById,
   getLiveSessionById,
+  sessionMediaOriginalsDir,
 } from '@moonshot-ai/agent-core-v2';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import { FakeRuntime } from '@moonshot-ai/agent-core-v2/runtime/fakeRuntime';
@@ -1674,6 +1675,36 @@ describe('server-v2 /api/v1 prompts', () => {
       expect(await readFile(attachedPath)).toEqual(data);
 
       await expectNoLocalAttachments(id);
+    } finally {
+      await remote.dispose();
+    }
+  });
+
+  it('persists compressed image originals into the bound runtime tempDir, never the server-local session dir', async () => {
+    const id = await createSession(home as string);
+    const remote = await bindRemoteRuntime(id);
+    try {
+      const bigPng = solidPng(3600, 1800);
+      const uploaded = await uploadFile(bigPng, 'image/png', 'big.png');
+
+      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'image', source: { kind: 'file', file_id: uploaded.id } }],
+      });
+      expect(submitted.body.code).toBe(0);
+
+      const content = submitted.body.data.content as Array<Record<string, unknown>>;
+      expect(content).toHaveLength(2);
+      const caption = content[0] as { type: string; text: string };
+      expect(caption.text).toContain('Image compressed');
+      const pathMatch = /saved at "([^"]+)"/.exec(caption.text);
+      expect(pathMatch).not.toBeNull();
+      const originalPath = pathMatch![1]!;
+      expect(dirname(originalPath)).toBe(join(remote.remoteTempDir, 'kimi-code', 'original-images'));
+      expect(await readFile(originalPath)).toEqual(bigPng);
+
+      const session = getLiveSessionById(server!.core.accessor, id);
+      const localOriginalsDir = sessionMediaOriginalsDir(session!.accessor.get(ISessionContext).sessionDir);
+      await expect(readdir(localOriginalsDir)).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
       await remote.dispose();
     }

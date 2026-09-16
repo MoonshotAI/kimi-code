@@ -33,6 +33,7 @@ import type {
   SessionPlan,
   SessionStatus,
   SessionSummary,
+  SessionRuntimesInfo,
   SessionTodoItem,
   SessionUsage,
   SkillSummary,
@@ -257,14 +258,38 @@ export class Session {
     return this.rpc.getRuntime({ sessionId: this.id });
   }
 
-  async switchRuntime(runtimeId: string): Promise<AgentRuntimeBinding> {
+  async switchRuntime(runtimeId: string, options?: { cwd?: string }): Promise<AgentRuntimeBinding> {
     this.ensureOpen();
     const normalized = normalizeRequiredString(
       runtimeId,
       'Session runtime cannot be empty',
       ErrorCodes.REQUEST_INVALID,
     );
-    return this.rpc.switchRuntime({ sessionId: this.id, runtimeId: normalized });
+    const cwd = normalizeOptionalString(options?.cwd);
+    return this.rpc.switchRuntime({ sessionId: this.id, runtimeId: normalized, cwd });
+  }
+
+  /**
+   * Explicitly reconnect the currently bound runtime (experimental remote
+   * runtime). Replaces the connection handle and drains old leases; the
+   * binding itself is unchanged. Rejects when the bound runtime is local or
+   * unavailable.
+   */
+  async reconnectRuntime(): Promise<AgentRuntimeBinding> {
+    this.ensureOpen();
+    return this.rpc.reconnectRuntime({ sessionId: this.id });
+  }
+
+  /**
+   * List the runtimes registered for this session's workspace (experimental
+   * remote runtime): `local` plus every declared runtime with its connection
+   * status, plus the ssh host candidates discovered from `~/.ssh/config` for
+   * the runtime-add flow. With the `remote_runtime` flag off this reports only
+   * the local runtime and no ssh candidates.
+   */
+  async listRuntimes(): Promise<SessionRuntimesInfo> {
+    this.ensureOpen();
+    return this.rpc.listRuntimes({ sessionId: this.id });
   }
 
   async setThinking(effort: ThinkingEffort): Promise<void> {

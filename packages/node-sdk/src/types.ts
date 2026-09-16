@@ -3,6 +3,10 @@ import type {
   ExportSessionManifest,
   ShellEnvironment,
 } from '@moonshot-ai/agent-core-v2/app/sessionExport/sessionExport';
+import type {
+  RuntimeCapability as SessionRuntimeCapability,
+  RuntimeStatus as SessionRuntimeStatus,
+} from '@moonshot-ai/agent-core-v2/runtime/runtime';
 import type { Kaos } from '@moonshot-ai/kaos';
 import type { KimiHostIdentity, OAuthRefreshOutcome } from '@moonshot-ai/kimi-code-oauth';
 import type { ContentPart } from '@moonshot-ai/kosong';
@@ -24,6 +28,29 @@ export type Unsubscribe = () => void;
 export interface AgentRuntimeBinding {
   readonly workspaceId: string;
   readonly runtimeId: string;
+  readonly cwd?: string;
+}
+
+export type {
+  RuntimeCapability as SessionRuntimeCapability,
+  RuntimeStatus as SessionRuntimeStatus,
+} from '@moonshot-ai/agent-core-v2/runtime/runtime';
+
+export type SessionRuntimeType = 'local' | 'ssh' | 'docker' | 'command';
+
+export interface SessionRuntimeInfo {
+  readonly runtimeId: string;
+  readonly type: SessionRuntimeType;
+  readonly status: SessionRuntimeStatus;
+  readonly generation: string;
+  readonly capabilities: readonly SessionRuntimeCapability[];
+  readonly defaultCwd?: string;
+}
+
+export interface SessionRuntimesInfo {
+  readonly workspaceId: string;
+  readonly runtimes: readonly SessionRuntimeInfo[];
+  readonly sshHosts: readonly string[];
 }
 
 export type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
@@ -139,10 +166,17 @@ export interface WorkspaceTrustMcpServerInfo {
   readonly url?: string;
 }
 
+export interface WorkspaceTrustRuntimeInfo {
+  readonly id: string;
+  readonly commandLine: string;
+}
+
 export interface WorkspaceTrustInfo {
   readonly trusted: boolean;
   /** Safe descriptions of project-level MCP servers that trusting would enable. */
   readonly gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[];
+  /** Project-declared remote runtimes that trusting would register, with their full launch command lines. */
+  readonly gatedRuntimes: readonly WorkspaceTrustRuntimeInfo[];
 }
 
 /**
@@ -244,6 +278,18 @@ export interface CreateSessionOptions {
    * interactive / SDK sessions.
    */
   readonly drainAgentTasksOnStop?: boolean;
+  /**
+   * Initial runtime binding for the main agent (experimental remote runtime):
+   * a runtime declared in the `[runtimes]` config section or the project's
+   * `.kimi-code/runtimes.toml`. Requires the `remote_runtime` experimental
+   * flag; omit to start on the local runtime (or the configured default).
+   */
+  readonly runtimeId?: string;
+  /**
+   * Working directory on the target runtime for the initial binding. Defaults
+   * to `workDir` when `runtimeId` names a non-local runtime.
+   */
+  readonly runtimeCwd?: string;
 }
 
 export interface RenameSessionInput {

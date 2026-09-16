@@ -52,6 +52,16 @@
  *   the engine has no import capability of its own. `createSession`'s
  *   `model` / `thinking` / `permission` options are applied in this batch
  *   too (default-profile bind + permission mode).
+ * - `getRuntime` / `switchRuntime` / `reconnectRuntime` / `listRuntimes` →
+ *   agent-scope services (`IAgentRuntimeBindingService` /
+ *   `IAgentRuntimeService`) and the workspace instance's runtime registry —
+ *   the klient contract's `runtimeBindingSchema` predates the binding `cwd`
+ *   and would strip it over the wire. `switchRuntime` with the
+ *   `remote_runtime` flag on is the engine's `connectAndSwitch` (explicit
+ *   connect + target-fs cwd validation); flag off keeps the legacy sync
+ *   `switch` and rejects a caller-supplied `cwd`. `createSession`'s
+ *   `runtimeId` / `runtimeCwd` options ride the engine's own
+ *   `mainAgentBinding` + runtime seed path.
  * - `prompt` / `steer` / `runShellCommand` / `cancelShellCommand` → the
  *   `klient.session(id).agent(id)` facade; `activatePluginCommand` →
  *   `IAgentPluginCommandService` through the agent scope; `activateSkill` →
@@ -162,6 +172,8 @@ import {
   IAgentPluginCommandService,
   IAgentProfileService,
   IAgentReminderService,
+  IAgentRuntimeBindingService,
+  IAgentRuntimeService,
   IAgentSkillService,
   IAgentSwarmService,
   IAgentTaskService,
@@ -170,6 +182,7 @@ import {
   IAgentToolRegistryService,
   type HostUiCapability,
   IAgentTowerService,
+  IAtomicDocumentStore,
   IBootstrapService,
   IConfigService,
   IEventService,
@@ -200,7 +213,11 @@ import {
   followSessionLifecycles,
   getLiveSessionById,
   isError2,
+  previewProjectRuntimeDeclarations,
   programForSession,
+  readSshConfigHosts,
+  REMOTE_RUNTIME_FLAG_ID,
+  resolveWorkspaceRuntimeDeclarations,
   resumeSessionById,
   sessionDirOf,
   workspacePersistenceScope,
@@ -224,6 +241,7 @@ import {
   type IDisposable,
   type ISessionScopeHandle,
   type McpManagedServer,
+  type RemoteRuntimeEntry,
   type Scope,
   type ServicesAccessor,
   type SessionSummary as V2SessionSummary,
@@ -309,6 +327,7 @@ import type {
   SessionStatus,
   SessionSummary,
   SessionSummaryPage,
+  SessionRuntimesInfo,
   SessionTodoItem,
   SessionUsage,
   SkillSummary,
@@ -317,6 +336,7 @@ import type {
   TelemetryClient,
   UploadFileOptions,
   WorkspaceTrustInfo,
+  WorkspaceTrustRuntimeInfo,
 } from '#/types';
 import {
   diagnosticsToConfigDiagnostics,
@@ -692,7 +712,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       .get(IWorkspaceInstanceManager)
       .getOrCreate({ root: workDir });
     const trusted = await handler.program.trust.get();
-    if (trusted) return { trusted: true, gatedMcpServers: [] };
+    if (trusted) return { trusted: true, gatedMcpServers: [], gatedRuntimes: [] };
+    const gatedRuntimes = await this.previewGatedRuntimes(workDir);
     try {
       const fs = this.engineAccessor.get(IHostFileSystem);
       const [paths, loaded] = await Promise.all([
@@ -709,9 +730,27 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         .filter(([name]) => projectPaths.has(loaded.origins[name] ?? ''))
         .map(([name, config]) => describeWorkspaceMcpServer(name, config))
         .toSorted((a, b) => a.name.localeCompare(b.name));
-      return { trusted: false, gatedMcpServers };
+      return { trusted: false, gatedMcpServers, gatedRuntimes };
     } catch {
-      return { trusted: false, gatedMcpServers: [] };
+      return { trusted: false, gatedMcpServers: [], gatedRuntimes };
+    }
+  }
+
+  /**
+   * Display-only preview of the project-declared runtimes trusting would
+   * register (the engine never loads project declarations while untrusted).
+   * Flag off or an unreadable/invalid project file degrades to an empty list,
+   * matching the MCP preview's best-effort semantics.
+   */
+  private async previewGatedRuntimes(workDir: string): Promise<readonly WorkspaceTrustRuntimeInfo[]> {
+    if (!this.engineAccessor.get(IFlagService).enabled(REMOTE_RUNTIME_FLAG_ID)) return [];
+    try {
+      return await previewProjectRuntimeDeclarations(
+        this.engineAccessor.get(IHostFileSystem),
+        workDir,
+      );
+    } catch {
+      return [];
     }
   }
 
@@ -1322,6 +1361,18 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   private async doCreateSession(input: CreateSessionOptions): Promise<SessionSummary> {
     const workDir = normalizeRequiredWorkDir('createSession', input.workDir);
+    if (input.runtimeCwd !== undefined && input.runtimeId === undefined) {
+      throw new KimiError(ErrorCodes.REQUEST_INVALID, 'createSession runtimeCwd requires runtimeId');
+    }
+    if (
+      input.runtimeId !== undefined &&
+      !this.engineAccessor.get(IFlagService).enabled(REMOTE_RUNTIME_FLAG_ID)
+    ) {
+      throw new KimiError(
+        ErrorCodes.REQUEST_INVALID,
+        'createSession runtimeId requires the remote_runtime experimental flag',
+      );
+    }
     if (input.id !== undefined) {
       const existing =
         this.liveSession(input.id) ??
@@ -1337,6 +1388,15 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       sessionId: input.id,
       workDir,
       additionalDirs: input.additionalDirs,
+      runtimeId: input.runtimeId,
+      runtimeCwd: input.runtimeCwd,
+      mainAgentBinding: input.runtimeId === undefined
+        ? undefined
+        : {
+            profile: DEFAULT_AGENT_PROFILE_NAME,
+            model: input.model,
+            thinking: input.thinking,
+          },
     });
     // Wired before the optional main-agent materialization so a profile-bind
     // warning (oversized AGENTS.md) reaches the listeners like v1's create.
@@ -1779,14 +1839,103 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return agent.runCommand({ name: input.name, args: input.args });
   }
 
+  /**
+   * Through the agent scope (`IAgentRuntimeBindingService.get`) — the klient
+   * contract's `runtimeBindingSchema` predates the binding `cwd` and would
+   * strip it over the wire.
+   */
   override async getRuntime(input: SessionIdRpcInput): Promise<AgentRuntimeBinding> {
-    const agent = await this.agentFacade(input.sessionId);
-    return agent.getRuntime();
+    const agent = await this.agentScope(input.sessionId);
+    return agent.accessor.get(IAgentRuntimeBindingService).get();
   }
 
+  /**
+   * Agent scope (`IAgentRuntimeBindingService`). With the experimental flag
+   * on this is `connectAndSwitch` (explicit connect, target-fs cwd
+   * validation); with it off the legacy sync `switch` keeps its exact
+   * behavior and a `cwd` is rejected instead of silently dropped.
+   */
   override async switchRuntime(input: SwitchSessionRuntimeRpcInput): Promise<AgentRuntimeBinding> {
-    const agent = await this.agentFacade(input.sessionId);
-    return agent.switchRuntime(input.runtimeId);
+    const agent = await this.agentScope(input.sessionId);
+    const service = agent.accessor.get(IAgentRuntimeBindingService);
+    if (!this.engineAccessor.get(IFlagService).enabled(REMOTE_RUNTIME_FLAG_ID)) {
+      if (input.cwd !== undefined) {
+        throw new KimiError(
+          ErrorCodes.REQUEST_INVALID,
+          'switchRuntime cwd requires the remote_runtime experimental flag',
+        );
+      }
+      return service.switch(input.runtimeId);
+    }
+    return service.connectAndSwitch(input.runtimeId, input.cwd);
+  }
+
+  /**
+   * Agent scope (`IAgentRuntimeService.reconnect`) — no klient facade exists.
+   * The engine rejects runtimes without a connect path (local, disposed).
+   */
+  override async reconnectRuntime(input: SessionIdRpcInput): Promise<AgentRuntimeBinding> {
+    const agent = await this.agentScope(input.sessionId);
+    await agent.accessor.get(IAgentRuntimeService).reconnect();
+    return agent.accessor.get(IAgentRuntimeBindingService).get();
+  }
+
+  /**
+   * The workspace instance's runtime registry snapshot (status / generation /
+   * capabilities) joined with the resolved declarations (type / defaultCwd),
+   * plus the ssh host candidates for the runtime-add flow. Flag off: only the
+   * local runtime is ever registered, declarations and ssh discovery stay
+   * unread.
+   */
+  override async listRuntimes(input: SessionIdRpcInput): Promise<SessionRuntimesInfo> {
+    const session = this.requireLiveSession(input.sessionId);
+    const context = session.accessor.get(ISessionContext);
+    const manager = this.engineAccessor.get(IWorkspaceInstanceManager);
+    const instance =
+      manager.get(context.workspaceId) ??
+      (await manager.getOrCreate({ root: context.cwd }));
+    const enabled = this.engineAccessor.get(IFlagService).enabled(REMOTE_RUNTIME_FLAG_ID);
+    const declarations = enabled ? await this.resolveRuntimeDeclarationEntries(instance.root) : new Map<string, RemoteRuntimeEntry>();
+    return {
+      workspaceId: context.workspaceId,
+      runtimes: instance.runtimes.snapshot().runtimes.map((runtime) => {
+        const entry = declarations.get(runtime.runtimeId);
+        return {
+          runtimeId: runtime.runtimeId,
+          type: runtimeEntryType(runtime.runtimeId, entry),
+          status: runtime.status,
+          generation: runtime.generation,
+          capabilities: [...runtime.capabilities],
+          defaultCwd: entry?.defaultCwd,
+        };
+      }),
+      sshHosts: enabled ? await this.resolveSshHostCandidates() : [],
+    };
+  }
+
+  private async resolveRuntimeDeclarationEntries(root: string): Promise<ReadonlyMap<string, RemoteRuntimeEntry>> {
+    try {
+      const resolved = await resolveWorkspaceRuntimeDeclarations({
+        config: this.engineAccessor.get(IConfigService),
+        fs: this.engineAccessor.get(IHostFileSystem),
+        docs: this.engineAccessor.get(IAtomicDocumentStore),
+        root,
+      });
+      return new Map(resolved.entries.map((declaration) => [declaration.id, declaration.entry]));
+    } catch {
+      return new Map();
+    }
+  }
+
+  private async resolveSshHostCandidates(): Promise<readonly string[]> {
+    try {
+      return await readSshConfigHosts(
+        this.engineAccessor.get(IHostFileSystem),
+        this.engineAccessor.get(IBootstrapService).osHomeDir,
+      );
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -2804,4 +2953,13 @@ function describeWorkspaceMcpServer(
     };
   }
   return { name, transport: config.transport, url: config.url };
+}
+
+function runtimeEntryType(
+  runtimeId: string,
+  entry: RemoteRuntimeEntry | undefined,
+): SessionRuntimesInfo['runtimes'][number]['type'] {
+  if (runtimeId === 'local') return 'local';
+  if (entry === undefined || 'command' in entry) return 'command';
+  return entry.type;
 }
