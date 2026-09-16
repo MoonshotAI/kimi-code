@@ -1396,4 +1396,30 @@ describe('McpConnectionManager', () => {
       await server.close();
     }
   }, 15000);
+
+  it('treats a grant stamped in the future as not concurrent', async () => {
+    const server = await startAnonymousDiscoveryHttpMcpServer();
+    const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+    const cm = createManager({ oauthService });
+    try {
+      await cm.connectAll({
+        hyper: { transport: 'http', url: server.url, startupTimeoutMs: 5_000 },
+      });
+      expect(cm.get('hyper')?.status).toBe('connected');
+      await oauthService.getProvider('hyper', server.url).saveTokens({
+        access_token: 'future-stamped-token',
+        token_type: 'Bearer',
+        obtained_at: Date.now() + 60_000,
+      } as StoredMcpOAuthTokens);
+      const client = cm.resolved('hyper')?.client;
+      if (client === undefined) throw new Error('expected a connected client');
+      const error = Object.assign(new Error('HTTP 401'), { code: 401 });
+      await expect(cm.markNeedsAuth('hyper', error, client)).resolves.toBe(true);
+      expect(cm.get('hyper')?.status).toBe('needs-auth');
+      expect(await oauthService.hasTokens('hyper', server.url)).toBe(false);
+    } finally {
+      await cm.shutdown();
+      await server.close();
+    }
+  }, 15000);
 });

@@ -677,9 +677,9 @@ async function readStoreMeta(
 const CONCURRENT_GRANT_GRACE_MS = 10_000;
 
 function isConcurrentGrant(tokens: StoredMcpOAuthTokens, now: number): boolean {
-  return (
-    typeof tokens.obtained_at === 'number' && now - tokens.obtained_at < CONCURRENT_GRANT_GRACE_MS
-  );
+  if (typeof tokens.obtained_at !== 'number') return false;
+  const age = now - tokens.obtained_at;
+  return age >= 0 && age < CONCURRENT_GRANT_GRACE_MS;
 }
 
 function wrapAuthError(prefix: string, error: unknown): Error2 {
