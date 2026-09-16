@@ -551,6 +551,33 @@ describe('EventSink', () => {
     await shutdownFlush;
     expect(joined).toBe(true);
   });
+
+  it('stops waiting for an in-flight flush once the caller signal aborts', async () => {
+    let releaseSend: (() => void) | undefined;
+    const transport: TelemetryTransport = {
+      send: () =>
+        new Promise<void>((resolve) => {
+          releaseSend = resolve;
+        }),
+      saveToDisk: () => undefined,
+      retryDiskEvents: async () => undefined,
+    };
+    const sink = makeSink(transport, 1);
+    sink.accept({
+      event_id: 'e1',
+      device_id: 'dev',
+      session_id: 'ses',
+      event: 'first',
+      timestamp: 1,
+      properties: {},
+    });
+    await vi.waitFor(() => expect(releaseSend).toBeDefined());
+
+    const controller = new AbortController();
+    controller.abort();
+    // The send never resolves, but the join must respect the already-aborted signal.
+    await expect(sink.flush(controller.signal)).resolves.toBeUndefined();
+  });
 });
 
 describe('payload assembly', () => {

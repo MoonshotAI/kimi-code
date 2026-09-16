@@ -90,12 +90,10 @@ export class EventSink {
     // Join any timer- or threshold-triggered flush already in flight: a
     // shutdown-time flush must not resolve while a request still holds the
     // last events, or the host may unload before they land or spool to disk.
+    // The join still honors the caller's abort signal — that send started
+    // without it, and a shutdown timeout must cap the wait regardless.
     if (this.inFlight !== null) {
-      try {
-        await this.inFlight;
-      } catch {
-        // The original owner surfaces the failure; joining is about ordering.
-      }
+      await raceWithSignal(this.inFlight, signal);
     }
     if (this.buffer.length === 0) return;
     const events = this.buffer;
@@ -148,4 +146,22 @@ function setPrimitive(
   if (value === undefined) return;
   if (typeof value === 'string' && value.length === 0) return;
   target[key] = value;
+}
+
+/** Await a send already in flight, but give up as soon as the signal aborts. */
+function raceWithSignal(promise: Promise<void>, signal?: AbortSignal): Promise<void> {
+  const settled = promise.catch(() => {
+    // The original owner surfaces the failure; joining is about ordering.
+  });
+  if (signal === undefined) return settled;
+  return Promise.race([
+    settled,
+    new Promise<void>((resolve) => {
+      if (signal.aborted) {
+        resolve();
+        return;
+      }
+      signal.addEventListener('abort', () => resolve(), { once: true });
+    }),
+  ]);
 }
