@@ -1940,20 +1940,14 @@ describe('AgentTranscriptProjector', () => {
         type: 'prompt.steered',
         activePromptId: 'p1',
         promptIds: ['p2'],
-        content: [
-          { type: 'text', text: 'first' },
-          { type: 'text', text: 'second' },
-        ],
+        content: [{ type: 'text', text: 'second' }],
         steeredAt: '2026-01-01T00:00:02.000Z',
       }),
     );
     expect(tx.getPrompt('p1')).toMatchObject({
       status: 'running',
       steeredAt: '2026-01-01T00:00:02.000Z',
-      content: [
-        { type: 'text', text: 'first' },
-        { type: 'text', text: 'second' },
-      ],
+      content: [{ type: 'text', text: 'first' }],
     });
     expect(tx.getPrompt('p2')).toMatchObject({
       status: 'completed',
@@ -1973,10 +1967,7 @@ describe('AgentTranscriptProjector', () => {
     expect(tx.getPrompt('p1')).toMatchObject({
       status: 'completed',
       finishedAt: '2026-01-01T00:00:10.000Z',
-      content: [
-        { type: 'text', text: 'first' },
-        { type: 'text', text: 'second' },
-      ],
+      content: [{ type: 'text', text: 'first' }],
     });
 
     feed(ev({ type: 'prompt.aborted', promptId: 'p3', abortedAt: '2026-01-01T00:00:03.000Z' }));
