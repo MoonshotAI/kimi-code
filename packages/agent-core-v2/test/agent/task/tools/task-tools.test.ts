@@ -12,6 +12,7 @@ import {
   type ForegroundTaskReleaseReason,
   type RegisterAgentTaskOptions,
 } from '#/agent/task/task';
+import type { ExecutableToolResult } from '#/tool/toolContract';
 import { type AgentTaskStatus, TERMINAL_STATUSES } from '#/agent/task/types';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { TaskListInputSchema } from '#/agent/tools/task/task-list/task-list';
@@ -50,9 +51,8 @@ function context<Input>(
   return { turnId: 0, toolCallId: taskId, args, signal: executionSignal };
 }
 
-function outputString(result: { readonly output: string | readonly unknown[] }): string {
-  expect(typeof result.output).toBe('string');
-  return result.output as string;
+function outputString(result: ExecutableToolResult): string {
+  return result.output.map((part) => (part.type === 'text' ? part.text : '')).join('');
 }
 
 function processTask(

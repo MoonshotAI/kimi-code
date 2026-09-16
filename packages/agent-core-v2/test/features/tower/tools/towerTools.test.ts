@@ -18,7 +18,11 @@ import { IAgentTowerService } from '#/features/tower/tower';
 import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
 import { TowerStore } from '#/features/tower/protocol/index';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import type { ExecutableTool } from '#/tool/toolContract';
+import { textOutput, type ExecutableTool, type ExecutableToolResult } from '#/tool/toolContract';
+
+function outputText(output: ExecutableToolResult['output']): string {
+  return output.map((part) => (part.type === 'text' ? part.text : '')).join('');
+}
 
 import { ITowerInitTool } from '#/features/tower/tools/init/init';
 import { TowerInitTool } from '#/features/tower/tools/init/initTool';
@@ -187,7 +191,7 @@ describe('TowerInitTool', () => {
     const result = await run(ix.get(ITowerInitTool), {});
 
     expect(result.isError).toBe(true);
-    expect(result.output).toBe(TOWER_MODE_USER_ENABLED_ONLY);
+    expect(result.output).toEqual(textOutput(TOWER_MODE_USER_ENABLED_ONLY));
     expect(towerActive).toBe(false);
     expect((await stat(join(repo, '.tower')).catch(() => undefined))).toBeUndefined();
   });
@@ -198,8 +202,8 @@ describe('TowerInitTool', () => {
     const result = await run(ix.get(ITowerInitTool), {});
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).toContain('tower workspace initialized');
-    expect(result.output).toContain('base branch: main');
+    expect(outputText(result.output)).toContain('tower workspace initialized');
+    expect(outputText(result.output)).toContain('base branch: main');
     expect((await stat(join(repo, '.tower/comms'))).isDirectory()).toBe(true);
     expect(towerActive).toBe(true);
   });
@@ -211,8 +215,8 @@ describe('TowerInitTool', () => {
     const result = await run(ix.get(ITowerInitTool), { base: 'develop' });
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).toContain('base branch: develop');
-    expect(result.output).toContain('the main checkout is on "main", not base "develop"');
+    expect(outputText(result.output)).toContain('base branch: develop');
+    expect(outputText(result.output)).toContain('the main checkout is on "main", not base "develop"');
     const state = await new TowerStore(repo).load();
     expect(state.base).toBe('develop');
   });
@@ -225,7 +229,7 @@ describe('TowerInitTool', () => {
     const result = await run(ix.get(ITowerInitTool), {});
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).toContain('base branch: develop');
+    expect(outputText(result.output)).toContain('base branch: develop');
     const state = await new TowerStore(repo).load();
     expect(state.base).toBe('develop');
   });
@@ -249,7 +253,7 @@ describe('TowerInitTool', () => {
     const second = await run(ix.get(ITowerInitTool), { base: 'develop' });
 
     expect(second.isError).toBeFalsy();
-    expect(second.output).toContain('requested base "develop" ignored');
+    expect(outputText(second.output)).toContain('requested base "develop" ignored');
     const state = await new TowerStore(repo).load();
     expect(state.base).toBe('main');
   });
@@ -260,7 +264,7 @@ describe('TowerInitTool', () => {
     const result = await run(ix.get(ITowerInitTool), { base: 'origin/main' });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('does not exist as a local branch');
+    expect(outputText(result.output)).toContain('does not exist as a local branch');
   });
 
   it('is idempotent — a second run reports already-initialized and keeps state', async () => {
@@ -271,7 +275,7 @@ describe('TowerInitTool', () => {
 
     const second = await run(ix.get(ITowerInitTool), {});
     expect(second.isError).toBeFalsy();
-    expect(second.output).toContain('tower workspace already initialized');
+    expect(outputText(second.output)).toContain('tower workspace already initialized');
     const state = await new TowerStore(repo).load();
     expect(state.missions).toHaveLength(1);
   });
@@ -291,7 +295,7 @@ describe('TowerInitTool', () => {
     const second = await run(ix.get(ITowerInitTool), {});
 
     expect(second.isError).toBeFalsy();
-    expect(second.output).toContain('retired its stale roster entries: agent-build');
+    expect(outputText(second.output)).toContain('retired its stale roster entries: agent-build');
     const state = await store.load();
     expect(state.sessionId).toBe('session-next');
     expect(state.roster.agents).toEqual([]);
@@ -305,7 +309,7 @@ describe('TowerInitTool', () => {
     const result = await run(ix.get(ITowerInitTool), {});
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('owned by a live session (session-test)');
+    expect(outputText(result.output)).toContain('owned by a live session (session-test)');
     const state = await new TowerStore(repo).load();
     expect(state.sessionId).toBe('session-test');
   });
@@ -317,13 +321,13 @@ describe('TowerInitTool', () => {
 
     const blocked = await run(ix.get(ITowerInitTool), {});
     expect(blocked.isError).toBe(true);
-    expect(blocked.output).toContain('owned by a live session (session-test)');
+    expect(outputText(blocked.output)).toContain('owned by a live session (session-test)');
 
     await new TowerStore(repo).release('session-test');
 
     const adopted = await run(ix.get(ITowerInitTool), {});
     expect(adopted.isError).toBeFalsy();
-    expect(adopted.output).toContain('tower workspace already initialized');
+    expect(outputText(adopted.output)).toContain('tower workspace already initialized');
     const state = await new TowerStore(repo).load();
     expect(state.sessionId).toBe('session-next');
   });
@@ -336,7 +340,7 @@ describe('TowerPlanTool', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toBe(TOWER_MODE_USER_ENABLED_ONLY);
+    expect(result.output).toEqual(textOutput(TOWER_MODE_USER_ENABLED_ONLY));
   });
 
   it('plans missions on a real repo once tower mode is active', async () => {
@@ -350,9 +354,9 @@ describe('TowerPlanTool', () => {
     });
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).toContain('planned 2 mission(s):');
-    expect(result.output).toContain('| M1 | Build engine | build | feat/build-engine | wt-1 | src/engine/** |');
-    expect(result.output).toContain('| M2 | Build UI | build | feat/build-ui | wt-2 | src/ui/** |');
+    expect(outputText(result.output)).toContain('planned 2 mission(s):');
+    expect(outputText(result.output)).toContain('| M1 | Build engine | build | feat/build-engine | wt-1 | src/engine/** |');
+    expect(outputText(result.output)).toContain('| M2 | Build UI | build | feat/build-ui | wt-2 | src/ui/** |');
   });
 
   it('passes mission context through to the stored mission', async () => {
@@ -385,9 +389,9 @@ describe('TowerPlanTool', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('feat/build-engine');
-    expect(result.output).toContain('already used by M1');
-    expect(result.output).toContain('change the title');
+    expect(outputText(result.output)).toContain('feat/build-engine');
+    expect(outputText(result.output)).toContain('already used by M1');
+    expect(outputText(result.output)).toContain('change the title');
     expect((await new TowerStore(repo).load()).missions).toHaveLength(1);
   });
 
@@ -403,7 +407,7 @@ describe('TowerPlanTool', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('already used by M1 (abandoned)');
+    expect(outputText(result.output)).toContain('already used by M1 (abandoned)');
     expect((await new TowerStore(repo).load()).missions).toHaveLength(1);
   });
 });
@@ -415,8 +419,8 @@ describe('TowerTeardownTool', () => {
     const result = await run(ix.get(ITowerTeardownTool), {});
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).toContain('tower teardown:');
-    expect(result.output).toContain('Tower mode stays active');
+    expect(outputText(result.output)).toContain('tower teardown:');
+    expect(outputText(result.output)).toContain('Tower mode stays active');
     expect(towerActive).toBe(true);
   });
 
@@ -428,7 +432,7 @@ describe('TowerTeardownTool', () => {
     const result = await run(ix.get(ITowerTeardownTool), {});
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('dismantle that session');
+    expect(outputText(result.output)).toContain('dismantle that session');
     expect((await new TowerStore(repo).load()).sessionId).toBe('session-test');
   });
 
@@ -439,13 +443,13 @@ describe('TowerTeardownTool', () => {
 
     const blocked = await run(ix.get(ITowerTeardownTool), {});
     expect(blocked.isError).toBe(true);
-    expect(blocked.output).toContain('dismantle that session');
+    expect(outputText(blocked.output)).toContain('dismantle that session');
 
     await new TowerStore(repo).release('session-test');
 
     const result = await run(ix.get(ITowerTeardownTool), {});
     expect(result.isError).toBeFalsy();
-    expect(result.output).toContain('tower teardown:');
+    expect(outputText(result.output)).toContain('tower teardown:');
   });
 });
 
@@ -475,19 +479,19 @@ describe('TowerSendTool + TowerInboxTool', () => {
     currentAgentId = 'agent-w1';
     const w1Inbox = await run(ix.get(ITowerInboxTool), {});
     expect(w1Inbox.isError).toBeFalsy();
-    expect(w1Inbox.output).toContain('2 message(s) for w1');
-    expect(w1Inbox.output).toContain('subject: for w1');
-    expect(w1Inbox.output).toContain('subject: broadcast');
-    expect(w1Inbox.output).not.toContain('subject: for w2');
+    expect(outputText(w1Inbox.output)).toContain('2 message(s) for w1');
+    expect(outputText(w1Inbox.output)).toContain('subject: for w1');
+    expect(outputText(w1Inbox.output)).toContain('subject: broadcast');
+    expect(outputText(w1Inbox.output)).not.toContain('subject: for w2');
 
     currentAgentId = 'agent-w1';
     await run(ix.get(ITowerSendTool), { to: 'tower', subject: 'report', body: 'd' });
 
     currentAgentId = 'main';
     const towerInbox = await run(ix.get(ITowerInboxTool), {});
-    expect(towerInbox.output).toContain('4 message(s) for tower');
+    expect(outputText(towerInbox.output)).toContain('4 message(s) for tower');
     for (const subject of ['for w1', 'for w2', 'broadcast', 'report']) {
-      expect(towerInbox.output).toContain(`subject: ${subject}`);
+      expect(outputText(towerInbox.output)).toContain(`subject: ${subject}`);
     }
   });
 
@@ -511,15 +515,15 @@ describe('TowerSendTool + TowerInboxTool', () => {
     currentAgentId = 'agent-w1';
     const inbox = await run(ix.get(ITowerInboxTool), {});
     expect(inbox.isError).toBeFalsy();
-    expect(inbox.output).toContain('message(s) for w1');
-    expect(inbox.output).toContain('subject: for current w1');
-    expect(inbox.output).not.toContain('subject: for stale identity');
+    expect(outputText(inbox.output)).toContain('message(s) for w1');
+    expect(outputText(inbox.output)).toContain('subject: for current w1');
+    expect(outputText(inbox.output)).not.toContain('subject: for stale identity');
 
     const sent = await run(ix.get(ITowerSendTool), { to: 'tower', subject: 'report', body: 'c' });
     expect(sent.isError).toBeFalsy();
     currentAgentId = 'main';
     const towerInbox = await run(ix.get(ITowerInboxTool), {});
-    expect(towerInbox.output).toContain('from: w1');
+    expect(outputText(towerInbox.output)).toContain('from: w1');
   });
 
   it('maps a TowerProtocolError (unknown recipient) to an isError result', async () => {
@@ -530,28 +534,28 @@ describe('TowerSendTool + TowerInboxTool', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('unknown recipient "ghost"');
-    expect(result.output).toContain('known: tower, all, w1, w2');
+    expect(outputText(result.output)).toContain('unknown recipient "ghost"');
+    expect(outputText(result.output)).toContain('known: tower, all, w1, w2');
   });
 
   it('notes when the tower messages a roster agent that has no running task to deliver it', async () => {
     const idle = await run(ix.get(ITowerSendTool), { to: 'w1', subject: 'wake', body: 'x' });
     expect(idle.isError).toBeFalsy();
-    expect(idle.output).toContain('w1 has no running task');
-    expect(idle.output).toContain('Agent(resume="agent-w1", run_in_background=true');
+    expect(outputText(idle.output)).toContain('w1 has no running task');
+    expect(outputText(idle.output)).toContain('Agent(resume="agent-w1", run_in_background=true');
 
     liveAgentTaskIds.push('agent-w1');
     const busy = await run(ix.get(ITowerSendTool), { to: 'w1', subject: 'wake', body: 'x' });
-    expect(busy.output).not.toContain('has no running task');
+    expect(outputText(busy.output)).not.toContain('has no running task');
   });
 
   it('skips the delivery note for broadcasts and for sends from workers', async () => {
     const broadcast = await run(ix.get(ITowerSendTool), { to: 'all', subject: 'b', body: 'x' });
-    expect(broadcast.output).not.toContain('has no running task');
+    expect(outputText(broadcast.output)).not.toContain('has no running task');
 
     currentAgentId = 'agent-w1';
     const fromWorker = await run(ix.get(ITowerSendTool), { to: 'w2', subject: 'b', body: 'x' });
-    expect(fromWorker.output).not.toContain('has no running task');
+    expect(outputText(fromWorker.output)).not.toContain('has no running task');
   });
 });
 
@@ -562,9 +566,9 @@ describe('TowerStatusTool', () => {
     const result = await run(ix.get(ITowerStatusTool), {});
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).toContain('# Tower status — base: main (mode: branch), you are: tower');
-    expect(result.output).toContain('(no missions planned — use TowerPlan)');
-    expect(result.output).toContain('budget: 2 agent(s) · inflight: 0 · spawns open');
+    expect(outputText(result.output)).toContain('# Tower status — base: main (mode: branch), you are: tower');
+    expect(outputText(result.output)).toContain('(no missions planned — use TowerPlan)');
+    expect(outputText(result.output)).toContain('budget: 2 agent(s) · inflight: 0 · spawns open');
   });
 
   it('marks dead roster agents and warns about the missions they own', async () => {
@@ -586,11 +590,11 @@ describe('TowerStatusTool', () => {
     const result = await run(ix.get(ITowerStatusTool), {});
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).toContain('w1 (worker) — agent agent-w1, mission M1');
-    expect(result.output).toContain('💀 failed');
-    expect(result.output).toContain('## Dead workers');
-    expect(result.output).toContain('M1 owner w1 died (failed)');
-    expect(result.output).toContain('Agent(resume="agent-w1", run_in_background=true');
+    expect(outputText(result.output)).toContain('w1 (worker) — agent agent-w1, mission M1');
+    expect(outputText(result.output)).toContain('💀 failed');
+    expect(outputText(result.output)).toContain('## Dead workers');
+    expect(outputText(result.output)).toContain('M1 owner w1 died (failed)');
+    expect(outputText(result.output)).toContain('Agent(resume="agent-w1", run_in_background=true');
   });
 });
 
@@ -612,7 +616,7 @@ describe('tool registration', () => {
     for (const [id, args] of cases) {
       const result = await run(ix.get(id), args as never);
       expect(result.isError).toBe(true);
-      expect(result.output).toBe('Tower orchestration tools are only supported by the main agent.');
+      expect(outputText(result.output)).toBe('Tower orchestration tools are only supported by the main agent.');
     }
     expect(towerActive).toBe(false);
     expect((await stat(join(repo, '.tower')).catch(() => undefined))).toBeUndefined();

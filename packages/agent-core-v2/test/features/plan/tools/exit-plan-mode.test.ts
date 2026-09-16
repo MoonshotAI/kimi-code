@@ -11,6 +11,11 @@ import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 
 import { executeTool } from '../../../tools/fixtures/execute-tool';
+import type { ExecutableToolResult } from '#/tool/toolContract';
+
+function outputText(output: ExecutableToolResult['output']): string {
+  return output.map((part) => (part.type === 'text' ? part.text : '')).join('');
+}
 
 const signal = new AbortController().signal;
 
@@ -158,7 +163,7 @@ describe('ExitPlanMode option output', () => {
 
     expect(exit).toHaveBeenCalledTimes(1);
     expect(result.isError).toBeFalsy();
-    expect(result.output).toContain('Exited plan mode');
+    expect(outputText(result.output)).toContain('Exited plan mode');
   });
 
   it('marks the direct-execution output as auto-approved, not user-reviewed, in auto mode', async () => {
@@ -175,10 +180,10 @@ describe('ExitPlanMode option output', () => {
     );
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).toContain('## Plan (auto-approved, not user-reviewed):');
-    expect(result.output).not.toContain('## Approved Plan:');
-    expect(result.output).toContain('the user has NOT explicitly approved it');
-    expect(result.output).toContain('# Plan');
+    expect(outputText(result.output)).toContain('## Plan (auto-approved, not user-reviewed):');
+    expect(outputText(result.output)).not.toContain('## Approved Plan:');
+    expect(outputText(result.output)).toContain('the user has NOT explicitly approved it');
+    expect(outputText(result.output)).toContain('# Plan');
   });
 
   it('keeps the user-approved output when a rule lets the call through outside auto mode', async () => {
@@ -195,8 +200,8 @@ describe('ExitPlanMode option output', () => {
     );
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).toContain('## Approved Plan:');
-    expect(result.output).not.toContain('auto-approved');
+    expect(outputText(result.output)).toContain('## Approved Plan:');
+    expect(outputText(result.output)).not.toContain('auto-approved');
     expect(telemetry.track2).toHaveBeenCalledWith('plan_resolved', {
       outcome: 'approved',
     });
@@ -216,7 +221,7 @@ describe('ExitPlanMode option output', () => {
     );
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).not.toContain('User feedback:');
+    expect(outputText(result.output)).not.toContain('User feedback:');
   });
 
   it('records a revision once per submission when the review display resolves', async () => {
@@ -255,7 +260,7 @@ describe('ExitPlanMode option output', () => {
 
     expect(recordRevision).toHaveBeenCalledTimes(1);
     expect(result.isError).toBeFalsy();
-    expect(result.output).toContain('Exited plan mode');
+    expect(outputText(result.output)).toContain('Exited plan mode');
   });
 
   it('skips revision recording when the plan content is empty', async () => {
@@ -278,6 +283,6 @@ describe('ExitPlanMode option output', () => {
 
     expect(recordRevision).not.toHaveBeenCalled();
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('No plan file found');
+    expect(outputText(result.output)).toContain('No plan file found');
   });
 });

@@ -7,6 +7,11 @@ import {
   TodoListInputSchema,
 } from '#/features/todo/tools/todo-list/todo-list';
 import { executeTool } from '../../../tools/fixtures/execute-tool';
+import { textOutput, type ExecutableToolResult } from '#/tool/toolContract';
+
+function outputText(output: ExecutableToolResult['output']): string {
+  return output.map((part) => (part.type === 'text' ? part.text : '')).join('');
+}
 
 import { createTestAgent, type TestAgentContext } from '../../../harness';
 
@@ -63,8 +68,8 @@ describe('TodoListTool', () => {
     });
 
     expect(result).toMatchObject({ isError: false });
-    expect(result.output).toContain('Current todo list');
-    expect(result.output).toContain('[in_progress] existing');
+    expect(outputText(result.output)).toContain('Current todo list');
+    expect(outputText(result.output)).toContain('[in_progress] existing');
     expect(todos()).toEqual([{ title: 'existing', status: 'in_progress' }]);
   });
 
@@ -84,13 +89,13 @@ describe('TodoListTool', () => {
     input[0] = { title: 'leaked', status: 'done' };
 
     expect(result).toMatchObject({ isError: false });
-    expect(result.output).toContain('Todo list updated');
-    expect(result.output).toContain('[pending] first');
-    expect(result.output).toContain('[in_progress] second');
-    expect(result.output).toContain(
+    expect(outputText(result.output)).toContain('Todo list updated');
+    expect(outputText(result.output)).toContain('[pending] first');
+    expect(outputText(result.output)).toContain('[in_progress] second');
+    expect(outputText(result.output)).toContain(
       'Ensure that you continue to use the todo list to track progress.',
     );
-    expect(result.output).toContain('exactly one task in_progress');
+    expect(outputText(result.output)).toContain('exactly one task in_progress');
     expect(todos()).toEqual([
       { title: 'first', status: 'pending' },
       { title: 'second', status: 'in_progress' },
@@ -109,8 +114,8 @@ describe('TodoListTool', () => {
     });
 
     expect(result).toMatchObject({ isError: false });
-    expect(result.output).toContain('[done] shipped');
-    expect(result.output).not.toContain('[completed]');
+    expect(outputText(result.output)).toContain('[done] shipped');
+    expect(outputText(result.output)).not.toContain('[completed]');
   });
 
   it('clear mode empties the list without adding the progress-tracking reminder', async () => {
@@ -124,7 +129,7 @@ describe('TodoListTool', () => {
       signal,
     });
 
-    expect(result).toMatchObject({ isError: false, output: 'Todo list cleared.' });
+    expect(result).toMatchObject({ isError: false, output: textOutput('Todo list cleared.') });
     expect(todos()).toEqual([]);
   });
 

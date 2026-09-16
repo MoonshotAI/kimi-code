@@ -80,10 +80,7 @@ describe('FetchURLTool abort signal', () => {
     const result = await execute(tool, 'https://example.com', controller.signal);
 
     expect(result.isError).toBe(true);
-    if (typeof result.output !== 'string') {
-      throw new Error('expected string error output');
-    }
-    expect(result.output).toContain('boom');
+    expect(outputText(result.output)).toContain('boom');
   });
 });
 
@@ -98,8 +95,7 @@ describe('FetchURLTool output note', () => {
     });
     const result = await execute(tool, 'https://example.com', new AbortController().signal);
     expect(result.isError).toBe(false);
-    if (typeof result.output !== 'string') throw new Error('expected string output');
-    return result.output;
+    return outputText(result.output);
   }
 
   it('puts the passthrough note and citation reminder at the front of output', async () => {
@@ -153,3 +149,7 @@ describe('LocalFetchURLProvider abort signal', () => {
     expect((init as RequestInit | undefined)?.signal).toBe(controller.signal);
   });
 });
+
+function outputText(output: ExecutableToolResult['output']): string {
+  return output.map((part) => (part.type === 'text' ? part.text : '')).join('');
+}

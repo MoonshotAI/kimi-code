@@ -27,6 +27,11 @@ import type {
   QuestionTaskInfo,
 } from '#/agent/tools/ask-user-question/question-background-task';
 import { executeTool } from '../../../tools/fixtures/execute-tool';
+import { textOutput, type ExecutableToolResult } from '#/tool/toolContract';
+
+function outputText(output: ExecutableToolResult['output']): string {
+  return output.map((part) => (part.type === 'text' ? part.text : '')).join('');
+}
 
 const signal = new AbortController().signal;
 const TASK_TOOLS = new Set(['TaskList', 'TaskOutput', 'TaskStop']);
@@ -187,7 +192,7 @@ describe('AskUserQuestionTool', () => {
       signal,
     });
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('unique');
+    expect(outputText(result.output)).toContain('unique');
     expect(request).not.toHaveBeenCalled();
   });
 
@@ -208,7 +213,7 @@ describe('AskUserQuestionTool', () => {
       signal,
     });
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('unique');
+    expect(outputText(result.output)).toContain('unique');
     expect(request).not.toHaveBeenCalled();
   });
 
@@ -269,8 +274,9 @@ describe('AskUserQuestionTool', () => {
 
     expect(result).toEqual({
       isError: true,
-      output:
+      output: textOutput(
         'Background questions are not available for this agent because TaskList, TaskOutput, and TaskStop are not enabled.',
+      ),
     });
     expect(registerTask).not.toHaveBeenCalled();
     expect(request).not.toHaveBeenCalled();
@@ -288,7 +294,7 @@ describe('AskUserQuestionTool', () => {
 
     expect(result).toEqual({
       isError: false,
-      output: JSON.stringify({ answers: { Postgres: true } }),
+      output: textOutput(JSON.stringify({ answers: { Postgres: true } })),
     });
     expect(request).toHaveBeenCalledOnce();
   });
@@ -308,10 +314,12 @@ describe('AskUserQuestionTool', () => {
 
     expect(result).toEqual({
       isError: false,
-      output: JSON.stringify({
-        answers: {},
-        note: 'User dismissed the question without answering.',
-      }),
+      output: textOutput(
+        JSON.stringify({
+          answers: {},
+          note: 'User dismissed the question without answering.',
+        }),
+      ),
     });
   });
 
@@ -326,7 +334,7 @@ describe('AskUserQuestionTool', () => {
     });
 
     expect(result.isError).toBe(false);
-    expect(result.output).toBe(JSON.stringify({ answers: { Postgres: true } }));
+    expect(outputText(result.output)).toBe(JSON.stringify({ answers: { Postgres: true } }));
     expect(request).toHaveBeenCalledWith(
       {
         turnId: 0,
@@ -399,7 +407,7 @@ describe('AskUserQuestionTool', () => {
     });
 
     expect(result).toMatchObject({ isError: false });
-    expect(result.output).toBe(JSON.stringify({ answers: { 'Which database?': 'SQLite' } }));
+    expect(outputText(result.output)).toBe(JSON.stringify({ answers: { 'Which database?': 'SQLite' } }));
     expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
       answered: 1,
       method: 'number_key',
@@ -438,8 +446,8 @@ describe('AskUserQuestionTool', () => {
     });
 
     expect(result).toMatchObject({ isError: false });
-    expect(result.output).toContain('dismissed');
-    expect(result.output).toContain('answers');
+    expect(outputText(result.output)).toContain('dismissed');
+    expect(outputText(result.output)).toContain('answers');
     expect(telemetryTrack).toHaveBeenCalledWith('question_dismissed', { trace_id: undefined });
   });
 
@@ -457,7 +465,7 @@ describe('AskUserQuestionTool', () => {
 
     await expect(result).resolves.toMatchObject({ isError: false });
     const settled = await result;
-    const output = typeof settled.output === 'string' ? settled.output : '';
+    const output = outputText(settled.output);
     expect(JSON.parse(output)).toEqual({
       answers: {},
       note: 'User dismissed the question without answering.',
@@ -491,7 +499,7 @@ describe('AskUserQuestionTool', () => {
       });
 
       expect(result.isError).toBe(false);
-      expect(result.output).toBe(
+      expect(outputText(result.output)).toBe(
         [
           'task_id: q_test_task_id',
           'status: running',

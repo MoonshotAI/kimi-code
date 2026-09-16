@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { ToolOutputAccumulator } from '#/tool/output-accumulator';
+import { textOutput } from '#/tool/toolContract';
 
 describe('ToolOutputAccumulator', () => {
   it('concatenates writes and tracks counters', () => {
@@ -10,7 +11,7 @@ describe('ToolOutputAccumulator', () => {
     builder.write(' world');
 
     const result = builder.ok();
-    expect(result.output).toBe('Hello world');
+    expect(result.output).toEqual(textOutput('Hello world'));
     expect(result.isError).toBe(false);
     expect(builder.nChars).toBe(11);
     expect(builder.totalChars).toBe(11);
@@ -22,14 +23,14 @@ describe('ToolOutputAccumulator', () => {
 
     const result = builder.ok('Operation completed');
 
-    expect(result.output).toBe('Operation completed.');
+    expect(result.output).toEqual(textOutput('Operation completed.'));
   });
 
   it('appends a trailing period to an unpunctuated message', () => {
     const builder = new ToolOutputAccumulator();
 
-    expect(builder.ok('Done').output).toBe('Done.');
-    expect(builder.ok('Done.').output).toBe('Done.');
+    expect(builder.ok('Done').output).toEqual(textOutput('Done.'));
+    expect(builder.ok('Done.').output).toEqual(textOutput('Done.'));
   });
 
   it('keeps normal success messages out of non-empty output', () => {
@@ -38,7 +39,7 @@ describe('ToolOutputAccumulator', () => {
     builder.write('ok\n');
     const result = builder.ok('Command executed successfully.');
 
-    expect(result.output).toBe('ok\n');
+    expect(result.output).toEqual(textOutput('ok\n'));
   });
 
   it('carries the completion message in spill metadata for oversized output', () => {
@@ -47,7 +48,7 @@ describe('ToolOutputAccumulator', () => {
     builder.write('x'.repeat(50_001));
     const result = builder.ok('Command executed successfully.');
 
-    expect(result.output).toBe('x'.repeat(50_001));
+    expect(result.output).toEqual(textOutput('x'.repeat(50_001)));
     expect(result.spill).toEqual({ suffix: 'Command executed successfully.' });
   });
 
@@ -57,7 +58,7 @@ describe('ToolOutputAccumulator', () => {
     builder.write('Some output');
     const result = builder.error('Something went wrong');
 
-    expect(result.output).toBe('Some output\nSomething went wrong');
+    expect(result.output).toEqual(textOutput('Some output\nSomething went wrong'));
     expect(result.isError).toBe(true);
   });
 
@@ -67,13 +68,13 @@ describe('ToolOutputAccumulator', () => {
     builder.write('out\n');
     const result = builder.error('Failed');
 
-    expect(result.output).toBe('out\nFailed');
+    expect(result.output).toEqual(textOutput('out\nFailed'));
   });
 
   it('uses the error message as output when there is no output', () => {
     const builder = new ToolOutputAccumulator();
 
-    expect(builder.error('Failed').output).toBe('Failed');
+    expect(builder.error('Failed').output).toEqual(textOutput('Failed'));
   });
 
   it('passes brief through on ok and error', () => {
@@ -90,7 +91,7 @@ describe('ToolOutputAccumulator', () => {
     builder.write('y'.repeat(5));
 
     const result = builder.ok();
-    expect(result.output).toBe('x'.repeat(10_000_000));
+    expect(result.output).toEqual(textOutput('x'.repeat(10_000_000)));
     expect(builder.nChars).toBe(10_000_000);
     expect(builder.totalChars).toBe(10_000_005);
     expect(result.spill).toEqual({ totalChars: 10_000_005 });
@@ -103,7 +104,7 @@ describe('ToolOutputAccumulator', () => {
     const result = builder.error('Command failed');
 
     expect(result.spill).toEqual({ totalChars: 10_000_001, suffix: 'Command failed' });
-    expect(result.output).toContain('Command failed');
+    expect(result.output).toEqual([expect.objectContaining({ type: 'text', text: expect.stringContaining('Command failed') })]);
   });
 
   it('keeps the error message out of spill while everything fits in retention', () => {

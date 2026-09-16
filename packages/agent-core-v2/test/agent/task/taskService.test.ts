@@ -18,6 +18,7 @@ import {
   type AgentTask,
   type AgentTaskInfo,
 } from '#/agent/task/task';
+import type { ExecutableToolResult } from '#/tool/toolContract';
 import { renderNotificationXml } from '#/agent/task/notificationXml';
 import { AgentTaskService, taskNotificationDeliveryKey } from '#/agent/task/taskService';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
@@ -391,9 +392,8 @@ describe('AgentTaskService', () => {
     return { turnId: 0, toolCallId: taskId, args, signal: new AbortController().signal };
   }
 
-  function waitResultString(result: { readonly output: string | readonly unknown[] }): string {
-    expect(typeof result.output).toBe('string');
-    return result.output as string;
+  function waitResultString(result: ExecutableToolResult): string {
+    return result.output.map((part) => (part.type === 'text' ? part.text : '')).join('');
   }
 
   function pendingSubagentTask(agentId: string, description: string): {

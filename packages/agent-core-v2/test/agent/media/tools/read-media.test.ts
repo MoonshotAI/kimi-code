@@ -38,6 +38,7 @@ import { AgentStateService } from '#/agent/state/agentStateService';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import {
   ToolAccesses,
+  textOutput,
   type ExecutableToolContext,
   type ExecutableToolResult,
   type ToolExecution,
@@ -308,7 +309,7 @@ describe('ReadMediaFileTool', () => {
   it('rejects empty paths', async () => {
     const result = await execute(makeTool({}), { path: '' });
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('File path cannot be empty');
+    expect(outputText(result.output)).toContain('File path cannot be empty');
   });
 
   it('redirects text files to the Read tool', async () => {
@@ -317,7 +318,7 @@ describe('ReadMediaFileTool', () => {
       { path: '/workspace/note.txt' },
     );
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('Use Read');
+    expect(outputText(result.output)).toContain('Use Read');
   });
 
   it('rejects unsupported binary formats', async () => {
@@ -326,7 +327,7 @@ describe('ReadMediaFileTool', () => {
       { path: '/workspace/archive.zip' },
     );
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('not a supported image or video file');
+    expect(outputText(result.output)).toContain('not a supported image or video file');
   });
 
   it('returns a text/image/text wrap plus a <system> note for PNG files', async () => {
@@ -386,11 +387,12 @@ describe('ReadMediaFileTool', () => {
 
     expect(result).toEqual({
       isError: true,
-      output:
+      output: textOutput(
         'Image is too large to send safely after compression (262168 bytes; limit 262144 bytes and 2000px on the longest edge). ' +
         'The original image was not sent to the model. Do not retry the same file unchanged. ' +
         'Use Bash or an available image-processing tool to create a smaller copy within both limits, ' +
         'then call ReadMediaFile on the smaller copy.',
+      ),
     });
   });
 
@@ -402,11 +404,12 @@ describe('ReadMediaFileTool', () => {
 
     expect(result).toEqual({
       isError: true,
-      output:
+      output: textOutput(
         'Image is too large to send safely after compression (24 bytes; limit 262144 bytes and 2000px on the longest edge). ' +
         'The original image was not sent to the model. Do not retry the same file unchanged. ' +
         'Use Bash or an available image-processing tool to create a smaller copy within both limits, ' +
         'then call ReadMediaFile on the smaller copy.',
+      ),
     });
   });
 
@@ -420,11 +423,12 @@ describe('ReadMediaFileTool', () => {
 
     expect(result).toEqual({
       isError: true,
-      output:
+      output: textOutput(
         'Image is too large to send safely after compression (67108865 bytes; limit 262144 bytes and 2000px on the longest edge). ' +
         'The original image was not sent to the model. Do not retry the same file unchanged. ' +
         'Use Bash or an available image-processing tool to create a smaller copy within both limits, ' +
         'then call ReadMediaFile on the smaller copy.',
+      ),
     });
     expect(vi.mocked(fs.readBytes)).toHaveBeenCalledOnce();
     expect(vi.mocked(fs.readBytes)).toHaveBeenCalledWith('/workspace/huge.png', 512);
@@ -457,11 +461,12 @@ describe('ReadMediaFileTool', () => {
 
     expect(result).toEqual({
       isError: true,
-      output:
+      output: textOutput(
         'Image is too large to process safely for region or full_resolution (67108865 bytes; safe decode limit 67108864 bytes). ' +
         'The original image was not sent to the model. Do not retry the same file unchanged. ' +
         'Use Bash or an available image-processing tool to create a smaller copy or crop the needed ' +
         'region into a separate image, then call ReadMediaFile on the resulting file.',
+      ),
     });
     expect(vi.mocked(fs.readBytes)).toHaveBeenCalledOnce();
     expect(vi.mocked(fs.readBytes)).toHaveBeenCalledWith('/workspace/huge.png', 512);
@@ -512,7 +517,7 @@ describe('ReadMediaFileTool', () => {
       region: { x: 5000, y: 0, width: 100, height: 100 },
     });
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('2100x2100');
+    expect(outputText(result.output)).toContain('2100x2100');
   });
 
   it('serves full_resolution when the bytes fit the per-image budget', async () => {
@@ -542,10 +547,11 @@ describe('ReadMediaFileTool', () => {
     });
     expect(result).toEqual({
       isError: true,
-      output:
+      output: textOutput(
         '"/workspace/huge.png" is 4194328 bytes (4.0 MB), over the 3932160-byte (3.8 MB) ' +
         'per-image limit, so full_resolution cannot be honored. ' +
         'Use region to view a crop at full fidelity instead.',
+      ),
     });
     expect(vi.mocked(fs.readBytes)).toHaveBeenCalledOnce();
     expect(vi.mocked(fs.readBytes)).toHaveBeenCalledWith('/workspace/huge.png', 512);
@@ -564,11 +570,12 @@ describe('ReadMediaFileTool', () => {
 
     expect(result).toEqual({
       isError: true,
-      output:
+      output: textOutput(
         'Image is too large to process safely for region or full_resolution (67108865 bytes; safe decode limit 67108864 bytes). ' +
         'The original image was not sent to the model. Do not retry the same file unchanged. ' +
         'Use Bash or an available image-processing tool to create a smaller copy or crop the needed ' +
         'region into a separate image, then call ReadMediaFile on the resulting file.',
+      ),
     });
     expect(vi.mocked(fs.readBytes)).toHaveBeenCalledOnce();
     expect(vi.mocked(fs.readBytes)).toHaveBeenCalledWith('/workspace/huge.png', 512);
@@ -664,7 +671,7 @@ describe('ReadMediaFileTool', () => {
       { path: '/workspace/sample.png' },
     );
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('does not support image input');
+    expect(outputText(result.output)).toContain('does not support image input');
   });
 
   it('wraps a video as a data URL when no uploader is provided', async () => {
@@ -693,14 +700,14 @@ describe('ReadMediaFileTool', () => {
       region: { x: 0, y: 0, width: 10, height: 10 },
     });
     expect(withRegion.isError).toBe(true);
-    expect(withRegion.output).toMatch(/image files/i);
+    expect(outputText(withRegion.output)).toMatch(/image files/i);
 
     const withFullResolution = await execute(tool, {
       path: '/workspace/clip.mp4',
       full_resolution: true,
     });
     expect(withFullResolution.isError).toBe(true);
-    expect(withFullResolution.output).toMatch(/image files/i);
+    expect(outputText(withFullResolution.output)).toMatch(/image files/i);
   });
 
   it('uses the video uploader when provided', async () => {
@@ -745,7 +752,7 @@ describe('ReadMediaFileTool', () => {
       { path: '/workspace/clip.mp4' },
     );
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('401 Unauthorized');
+    expect(outputText(result.output)).toContain('401 Unauthorized');
   });
 
   it('surfaces the by-design no-hook error instead of falling back to inline', async () => {
@@ -761,7 +768,7 @@ describe('ReadMediaFileTool', () => {
       { path: '/workspace/clip.mp4' },
     );
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('does not support video upload');
+    expect(outputText(result.output)).toContain('does not support video upload');
   });
 
   it('falls back to inline for a no-hook provider whose wire carries video', async () => {
@@ -796,7 +803,7 @@ describe('ReadMediaFileTool', () => {
       { path: '/workspace/sample.png' },
     );
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('is empty');
+    expect(outputText(result.output)).toContain('is empty');
   });
 
   it('rejects files larger than the media limit', async () => {
@@ -806,7 +813,7 @@ describe('ReadMediaFileTool', () => {
       { path: '/workspace/sample.png' },
     );
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('exceeds the maximum');
+    expect(outputText(result.output)).toContain('exceeds the maximum');
   });
 });
 
@@ -1180,10 +1187,10 @@ describe('createVideoUploader', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('image/heic');
-    expect(result.output).toContain('Convert it to JPEG first');
-    expect(result.output).toContain('/workspace/photo.jpg');
-    expect(result.output).toMatch(/sips -s format jpeg|heif-convert|magick/);
+    expect(outputText(result.output)).toContain('image/heic');
+    expect(outputText(result.output)).toContain('Convert it to JPEG first');
+    expect(outputText(result.output)).toContain('/workspace/photo.jpg');
+    expect(outputText(result.output)).toMatch(/sips -s format jpeg|heif-convert|magick/);
   });
 
   function ftypBytes(brand: string): Buffer {
@@ -1201,11 +1208,11 @@ describe('createVideoUploader', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('image/avif');
-    expect(result.output).toContain('Convert it to JPEG first');
-    expect(result.output).toContain('/workspace/photo.jpg');
-    expect(result.output).toMatch(/sips -s format jpeg|magick/);
-    expect(result.output).not.toContain('heif-convert');
+    expect(outputText(result.output)).toContain('image/avif');
+    expect(outputText(result.output)).toContain('Convert it to JPEG first');
+    expect(outputText(result.output)).toContain('/workspace/photo.jpg');
+    expect(outputText(result.output)).toMatch(/sips -s format jpeg|magick/);
+    expect(outputText(result.output)).not.toContain('heif-convert');
   });
 
   function kimiTool(files: Record<string, FakeFile>): ReadMediaFileTool {
@@ -1244,11 +1251,11 @@ describe('createVideoUploader', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('image/heic');
-    expect(result.output).toContain(String(5 * 1024 * 1024));
-    expect(result.output).not.toContain('does not accept');
-    expect(result.output).toContain('/workspace/photo.jpg');
-    expect(result.output).toMatch(/sips -s format jpeg|heif-convert|magick/);
+    expect(outputText(result.output)).toContain('image/heic');
+    expect(outputText(result.output)).toContain(String(5 * 1024 * 1024));
+    expect(outputText(result.output)).not.toContain('does not accept');
+    expect(outputText(result.output)).toContain('/workspace/photo.jpg');
+    expect(outputText(result.output)).toMatch(/sips -s format jpeg|heif-convert|magick/);
   });
 
   it('still refuses formats outside the kimi set with conversion guidance', async () => {
@@ -1256,7 +1263,11 @@ describe('createVideoUploader', () => {
     const result = await execute(tool, { path: '/workspace/photo.avif' });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('image/avif');
-    expect(result.output).toContain('Convert it to JPEG first');
+    expect(outputText(result.output)).toContain('image/avif');
+    expect(outputText(result.output)).toContain('Convert it to JPEG first');
   });
 });
+
+function outputText(output: ExecutableToolResult['output']): string {
+  return output.map((part) => (part.type === 'text' ? part.text : '')).join('');
+}

@@ -57,6 +57,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 
 import { McpOAuthService as McpOAuthServiceV2 } from '@moonshot-ai/agent-core-v2/mcpCore/oauth/service';
+import { textOutput } from '@moonshot-ai/agent-core-v2/tool/toolContract';
 
 import { TEST_IDENTITY } from './test-identity';
 import { recordingTelemetry, type TelemetryRecord } from './telemetry';
@@ -1125,8 +1126,8 @@ key = "${titleOAuthRef.key}"
             ).toEqual({
               isError: false,
               output: nextEnabled
-                ? 'Update shown to the user.'
-                : 'Notifications are disabled; the update was not displayed.',
+                ? textOutput('Update shown to the user.')
+                : textOutput('Notifications are disabled; the update was not displayed.'),
             });
           }
           await current.accessor.get(IAgentLifecycleService).create({

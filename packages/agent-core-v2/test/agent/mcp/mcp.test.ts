@@ -28,6 +28,7 @@ import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDo
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
 import type { MCPClient, MCPToolDefinition } from '#/mcpCore/types';
 import { IEventDispatcher } from '#/state/eventDispatcher';
+import { textOutput } from '#/tool/toolContract';
 import { IWireService } from '#/wire/wire';
 import type { WireRecord } from '#/wire/record';
 import { mcpDiscoveryKey } from '#/agent/mcp/mcpDiscoveryOps';
@@ -494,7 +495,7 @@ describe('AgentMcpService', () => {
       signal: new AbortController().signal,
     });
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('has been removed');
+    expect(result.output).toEqual([expect.objectContaining({ type: 'text', text: expect.stringContaining('has been removed') })]);
     expect(counter.calls).toBe(0);
   });
 
@@ -589,7 +590,7 @@ describe('AgentMcpService', () => {
       signal: new AbortController().signal,
     });
     expect(result.isError).toBeUndefined();
-    expect(result.output).toBe('hello world');
+    expect(result.output).toEqual(textOutput('hello world'));
   });
 
   function throwingClient(
@@ -655,7 +656,7 @@ describe('AgentMcpService', () => {
     });
 
     expect(result.isError).toBeUndefined();
-    expect(result.output).toBe('hello again');
+    expect(result.output).toEqual(textOutput('hello again'));
     expect(freshCounter.calls).toBe(1);
     expect(reconnects).toBe(1);
   });
@@ -687,7 +688,7 @@ describe('AgentMcpService', () => {
     });
 
     expect(result.isError).toBeUndefined();
-    expect(result.output).toBe('back from the dead');
+    expect(result.output).toEqual(textOutput('back from the dead'));
     expect(freshCounter.calls).toBe(1);
     expect(reconnects).toBe(1);
   });
@@ -827,8 +828,8 @@ describe('AgentMcpService', () => {
       }),
     ]);
 
-    expect(echoResult.output).toBe('one');
-    expect(noopResult.output).toBe('ok');
+    expect(echoResult.output).toEqual(textOutput('one'));
+    expect(noopResult.output).toEqual(textOutput('ok'));
     expect(reconnects).toBe(1);
   });
 
@@ -872,7 +873,7 @@ describe('AgentMcpService', () => {
     await expect(firstCall).rejects.toThrow('cancelled by test');
 
     reconnectReleased.resolve();
-    await expect(secondCall).resolves.toMatchObject({ output: 'ok' });
+    await expect(secondCall).resolves.toMatchObject({ output: textOutput('ok') });
     expect(reconnects).toBe(1);
   });
 
@@ -903,7 +904,7 @@ describe('AgentMcpService', () => {
     });
 
     expect(result.isError).toBeUndefined();
-    expect(result.output).toBe('hello again');
+    expect(result.output).toEqual(textOutput('hello again'));
     expect(reconnects).toBe(1);
   });
 
@@ -933,7 +934,7 @@ describe('AgentMcpService', () => {
     });
 
     expect(result.isError).toBeUndefined();
-    expect(result.output).toBe('late call');
+    expect(result.output).toEqual(textOutput('late call'));
     expect(reconnects).toBe(0);
   });
 
@@ -1002,7 +1003,7 @@ describe('AgentMcpService', () => {
     });
 
     expect(result.isError).toBeUndefined();
-    expect(result.output).toBe('hello again');
+    expect(result.output).toEqual(textOutput('hello again'));
     expect(calls).toBe(2);
     expect(reconnects).toBe(0);
   });
@@ -1039,7 +1040,7 @@ describe('AgentMcpService', () => {
     });
 
     expect(result.isError).toBeUndefined();
-    expect(result.output).toBe('hello again');
+    expect(result.output).toEqual(textOutput('hello again'));
     expect(calls).toBe(2);
     expect(reconnects).toBe(1);
   });
@@ -1115,7 +1116,7 @@ describe('AgentMcpService', () => {
     });
 
     expect(result.isError).toBeUndefined();
-    expect(result.output).toBe('x'.repeat(100_001));
+    expect(result.output).toEqual(textOutput('x'.repeat(100_001)));
   });
 
   it('wraps MCP image output in mcp_tool_result companions through the wrapped tool path', async () => {

@@ -19,6 +19,7 @@ import {
   NOTIFY_USER_SUPPRESSED_OUTPUT,
 } from '#/features/notify/tools/notify-user/notifyUserTool';
 import { executeTool } from '../../../tools/fixtures/execute-tool';
+import { textOutput } from '#/tool/toolContract';
 
 import { createTestAgent, type TestAgentContext } from '../../../harness';
 
@@ -96,7 +97,7 @@ describe('NotifyUserTool', () => {
       signal,
     });
 
-    expect(result).toEqual({ isError: false, output: NOTIFY_USER_DELIVERED_OUTPUT });
+    expect(result).toEqual({ isError: false, output: textOutput(NOTIFY_USER_DELIVERED_OUTPUT) });
   });
 
   it('rejects a whitespace-only message before execution', async () => {
@@ -109,7 +110,7 @@ describe('NotifyUserTool', () => {
       signal,
     });
 
-    expect(result).toEqual({ isError: true, output: NOTIFY_USER_EMPTY_MESSAGE });
+    expect(result).toEqual({ isError: true, output: textOutput(NOTIFY_USER_EMPTY_MESSAGE) });
   });
 
   it('acknowledges without displaying after the feature is disabled', async () => {
@@ -120,12 +121,12 @@ describe('NotifyUserTool', () => {
     if (!('execute' in disabled)) throw new Error('Expected executable tool');
     expect(await disabled.execute({ signal } as never)).toEqual({
       isError: false,
-      output: NOTIFY_USER_SUPPRESSED_OUTPUT,
+      output: textOutput(NOTIFY_USER_SUPPRESSED_OUTPUT),
     });
     if (!('execute' in execution)) throw new Error('Expected executable tool');
     expect(await execution.execute({ signal } as never)).toEqual({
       isError: false,
-      output: NOTIFY_USER_SUPPRESSED_OUTPUT,
+      output: textOutput(NOTIFY_USER_SUPPRESSED_OUTPUT),
     });
   });
 
@@ -135,7 +136,7 @@ describe('NotifyUserTool', () => {
     if (!('execute' in execution)) throw new Error('Expected executable tool');
     expect(await execution.execute({ signal } as never)).toEqual({
       isError: false,
-      output: NOTIFY_USER_SUPPRESSED_OUTPUT,
+      output: textOutput(NOTIFY_USER_SUPPRESSED_OUTPUT),
     });
   });
 });
