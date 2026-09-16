@@ -32,6 +32,13 @@ export interface TelemetryBootstrapOptions {
    * without re-initialization.
    */
   readonly endpoint?: string | (() => string);
+  /**
+   * Retry previously spooled disk events right after initialization
+   * (default). Hosts whose credentials are bound only after boot pass false
+   * and trigger the retry themselves once a token is available, so the
+   * backlog's first send does not go out unauthenticated.
+   */
+  readonly retryDiskEvents?: boolean;
 }
 
 export function isTelemetryDisabledByEnv(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -85,5 +92,7 @@ export function initializeTelemetry(options: TelemetryBootstrapOptions): void {
   client.setSystemMetricsCollector(systemMetricsCollector);
   systemMetricsCollector.start();
 
-  void sink.retryDiskEvents().catch(() => {});
+  if (options.retryDiskEvents !== false) {
+    void sink.retryDiskEvents().catch(() => {});
+  }
 }

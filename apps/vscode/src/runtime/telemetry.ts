@@ -13,6 +13,7 @@ import {
   type TelemetryClient,
 } from "@moonshot-ai/kimi-code-sdk";
 import {
+  getDefaultTelemetryClient,
   initializeTelemetry,
   setTelemetryContext,
   shutdownTelemetry,
@@ -80,6 +81,9 @@ export function initializeVscodeTelemetry(options: VscodeTelemetryOptions): Vsco
           ? null
           : (await auth.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME)) ?? null,
       onUnexpectedError: (error) => options.log?.(`telemetry property dropped: ${String(error)}`),
+      // The auth facade binds only after the harness is built; the backlog's
+      // first send must wait for a token, or a 4xx would discard it.
+      retryDiskEvents: auth !== undefined,
     });
   boot();
   // Toggling the editor setting must not strand the old pipeline: a fresh
@@ -98,6 +102,9 @@ export function initializeVscodeTelemetry(options: VscodeTelemetryOptions): Vsco
     homeDir,
     bindAuth: (facade) => {
       auth = facade;
+      // Now that a token is available, retry whatever was spooled to disk by
+      // earlier sessions (the initial boot deliberately skipped this).
+      void getDefaultTelemetryClient().getSink()?.retryDiskEvents().catch(() => {});
     },
     shutdown: () => shutdownTelemetry({ timeoutMs: TELEMETRY_SHUTDOWN_TIMEOUT_MS }),
   };

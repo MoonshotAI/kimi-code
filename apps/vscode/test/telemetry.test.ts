@@ -13,7 +13,7 @@ import {
   getDefaultTelemetryClient,
   resetDefaultTelemetryClientForTests,
 } from "@moonshot-ai/kimi-telemetry";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { initializeVscodeTelemetry, resolveVscodeTelemetryRegion } from "../src/runtime/telemetry";
 
@@ -71,6 +71,17 @@ describe("initializeVscodeTelemetry", () => {
     telemetry.client.track("dropped_event");
     flushTelemetrySync();
     await expect(readdir(join(homeDir, "telemetry"))).rejects.toThrow();
+  });
+
+  it("defers disk retries until the auth facade is bound", async () => {
+    const telemetry = initializeVscodeTelemetry({ homeDir, version: "0.7.5" });
+    const sink = getDefaultTelemetryClient().getSink();
+    expect(sink).not.toBeNull();
+    const retrySpy = vi.spyOn(sink!, "retryDiskEvents");
+    expect(retrySpy).not.toHaveBeenCalled();
+
+    telemetry.bindAuth({} as Parameters<typeof telemetry.bindAuth>[0]);
+    expect(retrySpy).toHaveBeenCalledOnce();
   });
 
   it("honors the editor-level telemetry gate, including runtime changes", () => {
