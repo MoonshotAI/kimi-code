@@ -1573,10 +1573,11 @@ describe('SDKRpcClientV2 engine telemetry', () => {
       await session.setPermission('yolo');
       const started = records.find((record) => record.event === 'session_started');
       expect(started?.sessionId).toBe(session.id);
-      const statusModel = (await session.getStatus()).model;
-      expect(started?.model).toBe(statusModel ?? null);
+      // No model was bound at create time: the harness reports an explicit
+      // null rather than materializing the agent for a telemetry lookup.
+      expect(started?.model).toBeNull();
       const created = records.find((record) => record.event === 'session_new');
-      expect(created?.model).toBe(statusModel ?? null);
+      expect(created?.model).toBeNull();
       const forwarded = records.filter((record) => record.event === 'yolo_toggle');
       expect(forwarded.length).toBeGreaterThan(0);
       for (const record of forwarded) {

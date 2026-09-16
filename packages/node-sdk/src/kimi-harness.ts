@@ -150,7 +150,10 @@ export class KimiHarness {
     if (planMode === true) {
       await session.setPlanMode(true);
     }
-    const createModel = (await this.sessionModel(session)) ?? null;
+    // Carry the model from the lifecycle operation; a lazy session (no
+    // model bound yet) reports null rather than materializing the main agent
+    // for a telemetry-only lookup.
+    const createModel = options.model ?? null;
     this.trackSessionStarted(summary.id, false, createModel, sessionStartedProperties);
     this.trackSessionEvent(session.id, 'session_new', createModel);
     return session;
@@ -213,7 +216,10 @@ export class KimiHarness {
       },
     });
     this.activeSessions.set(session.id, session);
-    const resumeModel = (await this.sessionModel(session)) ?? null;
+    // The persisted model is only readable through getStatus(), which
+    // materializes the main agent — telemetry must not cause that. null is an
+    // explicit ambient clear, never a misattribution.
+    const resumeModel: string | null = null;
     this.trackSessionStarted(summary.id, true, resumeModel, sessionStartedProperties);
     this.trackSessionEvent(session.id, 'session_resume', resumeModel);
     return session;
@@ -226,7 +232,7 @@ export class KimiHarness {
       await active.reloadSession({
         forcePluginSessionStartReminder: input.forcePluginSessionStartReminder,
       });
-      this.trackSessionEvent(active.id, 'session_reload', (await this.sessionModel(active)) ?? null);
+      this.trackSessionEvent(active.id, 'session_reload', null);
       return active;
     }
 
@@ -246,7 +252,7 @@ export class KimiHarness {
       },
     });
     this.activeSessions.set(session.id, session);
-    const reloadModel = (await this.sessionModel(session)) ?? null;
+    const reloadModel: string | null = null;
     this.trackSessionStarted(summary.id, true, reloadModel);
     this.trackSessionEvent(session.id, 'session_reload', reloadModel);
     return session;
@@ -272,7 +278,7 @@ export class KimiHarness {
       },
     });
     this.activeSessions.set(session.id, session);
-    const forkModel = (await this.sessionModel(session)) ?? null;
+    const forkModel: string | null = null;
     this.trackSessionStarted(summary.id, true, forkModel);
     this.trackSessionEvent(session.id, 'session_fork', forkModel);
     return session;
@@ -627,16 +633,6 @@ export class KimiHarness {
   async close(): Promise<void> {
     await Promise.all(Array.from(this.activeSessions.values(), (session) => session.close()));
     await this.closeImpl();
-  }
-
-  /** Best-effort model lookup for telemetry enrichment; never part of the
-      lifecycle operation's success path. */
-  private async sessionModel(session: Session): Promise<string | undefined> {
-    try {
-      return (await session.getStatus()).model;
-    } catch {
-      return undefined;
-    }
   }
 
   private trackSessionEvent(eventSessionId: string, event: string, model?: string | null): void {
