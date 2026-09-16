@@ -55,6 +55,8 @@ Key rules:
 - The optional top-level `default` names the runtime new sessions bind to initially; the entry it points at must set `defaultCwd`. Without a `default`, new sessions start on the `local` runtime.
 - The runtime id is the entry's key: at most 64 characters, no leading or trailing whitespace; `local` and `default` are reserved words.
 
+Declarations are picked up live: adding, editing, or removing an entry registers, replaces, or unregisters the runtime without a restart. A removed runtime drains rather than vanishing from under a session that still uses it — the session keeps its connection until in-flight work releases it (bounded to a few seconds), new tool calls fail with `runtime.not_found`, and nothing silently falls back to `local`.
+
 For the full field reference, see [`runtimes`](../configuration/config-files.md#runtimes).
 
 ### Project-declared runtimes and trust
@@ -73,8 +75,8 @@ The runtime binding is per session: it records which runtime the session's tools
 
 The `/runtime` slash command opens the runtime manager, modeled after the provider manager:
 
-- **List**: the `local` runtime plus every declared runtime, with its type, target OS/arch, and connection status.
-- **Add**: create a new declaration from a minimal form — SSH entries can pick from hosts discovered in `~/.ssh/config`; other types or a custom command can be entered directly.
+- **List**: the `local` runtime plus every declared runtime, each row showing its id, type, connection status, and `defaultCwd`. Target OS/arch is not shown yet — it is only known after a connection handshake, so surfacing it in the list is a future enhancement.
+- **Add**: create a new declaration from a minimal form — SSH entries can pick from hosts discovered in `~/.ssh/config`; other types or a custom command can be entered directly. The form writes the entry to `config.toml` and it takes effect immediately: the new runtime appears in the list and can be switched to without a restart.
 - **Switch**: pick a runtime, then enter the working directory on the target (prefilled from the entry's `defaultCwd`). The directory is validated against the target's filesystem by the server; failures are reported inline, and a failed connection shows the exit code and a bounded slice of stderr.
 - **Reconnect**: a runtime in the disconnected state offers an explicit reconnect action.
 
