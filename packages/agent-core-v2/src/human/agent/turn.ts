@@ -193,7 +193,7 @@ export type TurnToolEvent =
 export type TurnEvent =
   | LlmEvent
   | TurnToolEvent
-  | { type: 'turn.notify'; messages: HistoryMessage[] }
+  | { type: 'agent.notify'; messages: HistoryMessage[] }
   | { type: 'turn.pause' }
   | { type: 'turn.continue' }
   | { type: 'turn.abort'; reason?: unknown }
@@ -210,8 +210,7 @@ export type TurnLlmEvent =
 export type TurnSignal =
   | { type: 'step.started'; step: number }
   | { type: 'turn.spawn_tools'; toolCalls: ToolCall[] }
-  | { type: 'turn.drain' }
-  | { type: 'turn.reminders_consumed'; reminders: HistoryMessage[] };
+  | { type: 'turn.drain' };
 
 export type TurnOutput =
   | { type: 'done'; produced: HistoryMessage[] }
@@ -388,12 +387,6 @@ export function createTurnMachine(
       },
       signalParent: ({ self }, params: TurnSignal) => {
         self._parent?.send(params);
-      },
-      signalRemindersConsumed: ({ self, event }) => {
-        if (event.type !== 'turn.notify') return;
-        const reminders = event.messages.filter((entry) => entry.meta?.source === 'reminder');
-        if (reminders.length === 0) return;
-        self._parent?.send({ type: 'turn.reminders_consumed', reminders });
       },
       sendToParent: ({ self }, params: TurnLlmEvent) => {
         self._parent?.send(params);
@@ -827,16 +820,13 @@ export function createTurnMachine(
           params: { type: 'turn.drain' },
         },
         on: {
-          'turn.notify': [
+          'agent.notify': [
             {
               guard: ({ context }) => context.paused,
               target: 'done',
-              actions: [
-                assign(({ context, event }) => ({
-                  produced: [...context.produced, ...event.messages],
-                })),
-                'signalRemindersConsumed',
-              ],
+              actions: assign(({ context, event }) => ({
+                produced: [...context.produced, ...event.messages],
+              })),
             },
             {
               guard: ({ context, event }) =>
@@ -849,16 +839,13 @@ export function createTurnMachine(
             },
             {
               target: 'gating',
-              actions: [
-                assign(({ context, event }) => ({
-                  produced: [...context.produced, ...event.messages],
-                  steps: event.messages.length > 0 ? 1 : context.steps + 1,
-                  attempt: 1,
-                  appliedRecoveries: [],
-                  attemptMessageOverride: undefined,
-                })),
-                'signalRemindersConsumed',
-              ],
+              actions: assign(({ context, event }) => ({
+                produced: [...context.produced, ...event.messages],
+                steps: event.messages.length > 0 ? 1 : context.steps + 1,
+                attempt: 1,
+                appliedRecoveries: [],
+                attemptMessageOverride: undefined,
+              })),
             },
           ],
           'turn.abort': {

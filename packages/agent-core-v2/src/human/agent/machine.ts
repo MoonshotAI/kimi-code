@@ -93,7 +93,6 @@ export type AgentEvent =
   | { type: 'input.close' }
   | { type: 'turn.spawn_tools'; toolCalls: ToolCall[] }
   | { type: 'turn.drain' }
-  | { type: 'turn.reminders_consumed'; reminders: HistoryMessage[] }
   | { type: 'step.started'; step: number }
   | { type: 'store.ready'; state: AgentStoreState; branch: string }
   | { type: 'store.changed'; state: AgentStoreState }
@@ -109,7 +108,7 @@ export type AgentEmitted =
   | { type: 'step.started'; step: number }
   | { type: 'turn.aborting' }
   | { type: 'turn.spawn_tools'; toolCalls: ToolCall[] }
-  | { type: 'turn.reminders_consumed'; reminders: HistoryMessage[] }
+  | { type: 'turn.drained'; messages: HistoryMessage[] }
   | { type: 'turn.done'; messages: HistoryMessage[]; branchId: string }
   | {
       type: 'turn.failed';
@@ -812,8 +811,9 @@ export function createAgentMachine({
           'turn.drain': {
             actions: enqueueActions(({ context, enqueue }) => {
               const messages = [...context.notifications, ...context.reminders];
-              enqueue.sendTo('turn', { type: 'turn.notify' as const, messages });
+              enqueue.sendTo('turn', { type: 'agent.notify' as const, messages });
               if (messages.length === 0) return;
+              enqueue.emit({ type: 'turn.drained' as const, messages });
               enqueue.assign({ notifications: [], reminders: [] });
             }),
           },
@@ -886,9 +886,6 @@ export function createAgentMachine({
             actions: [emit(({ event }) => event), 'forwardToParent'],
           },
           'llm.recovering': {
-            actions: [emit(({ event }) => event), 'forwardToParent'],
-          },
-          'turn.reminders_consumed': {
             actions: [emit(({ event }) => event), 'forwardToParent'],
           },
         },

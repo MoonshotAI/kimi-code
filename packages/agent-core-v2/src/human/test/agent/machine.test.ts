@@ -1037,10 +1037,14 @@ describe('agent machine input.remind', () => {
     );
     const store = await testStore();
     const actor = createTestAgent(store, requester, tools);
-    const consumedKeys: (string | undefined)[][] = [];
-    actor.on('turn.reminders_consumed', (event) => {
-      if (event.type === 'turn.reminders_consumed') {
-        consumedKeys.push(event.reminders.map((entry) => entry.meta?.key));
+    const drainedKeys: (string | undefined)[][] = [];
+    actor.on('turn.drained', (event) => {
+      if (event.type === 'turn.drained') {
+        drainedKeys.push(
+          event.messages
+            .filter((entry) => entry.meta?.source === 'reminder')
+            .map((entry) => entry.meta?.key),
+        );
       }
     });
     actor.start();
@@ -1086,7 +1090,7 @@ describe('agent machine input.remind', () => {
     ]);
     expect(store.getState().history[3]?.meta).toEqual({ source: 'reminder', key: 'todo' });
     expect(actor.getSnapshot().context.reminders).toHaveLength(0);
-    expect(consumedKeys).toEqual([['todo']]);
+    expect(drainedKeys).toEqual([['todo']]);
   });
 });
 

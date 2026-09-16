@@ -108,7 +108,6 @@ export type MachineEngineEvent =
   | { readonly type: 'toolFailed'; readonly toolCallId: string; readonly error: unknown }
   | { readonly type: 'toolAborted'; readonly toolCallId: string }
   | { readonly type: 'toolBatchFailed'; readonly error: unknown }
-  | { readonly type: 'remindersConsumed'; readonly reminders: HistoryMessage[] }
   | { readonly type: 'promptBlocked'; readonly queueItemId?: string; readonly entry?: UserEntry }
   | { readonly type: 'promptGateFailed'; readonly queueItemId?: string; readonly error: unknown; readonly entry?: UserEntry }
   | { readonly type: 'promptSteered'; readonly queueItemIds: readonly string[]; readonly entries: readonly UserEntry[] }
@@ -462,9 +461,6 @@ export function attachMachineEngine(
     }),
     ref.on('tool.aborted', (event) => {
       publish({ type: 'toolAborted', toolCallId: event.toolCallId });
-    }),
-    ref.on('turn.reminders_consumed', (event) => {
-      publish({ type: 'remindersConsumed', reminders: event.reminders });
     }),
     ref.on('prompt.blocked', (event) => {
       publish({ type: 'promptBlocked', queueItemId: event.queueItemId, entry: event.entry });
