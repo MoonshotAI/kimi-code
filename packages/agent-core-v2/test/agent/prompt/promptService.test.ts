@@ -265,6 +265,34 @@ describe('prompt queue', () => {
     await loop.settled();
   });
 
+  it('publishes prompt identities before each steered user message', async () => {
+    setup();
+    const hold = holdNextStep();
+    ctx.mockNextResponse({ type: 'text', text: 'active' });
+    ctx.mockNextResponse({ type: 'text', text: 'merged' });
+    const events: (PromptSteered | TurnSteer)[] = [];
+    ctx.get(IEventBus).subscribe(PromptSteered, (event) => events.push(event));
+    ctx.get(IEventBus).subscribe(TurnSteer, (event) => events.push(event));
+
+    const active = await enqueue(loop, { message: message('active') });
+    await hold.started;
+    const one = await enqueue(loop, { message: message('same text') });
+    const two = await enqueue(loop, { message: message('same text') });
+    await loop.steer([two.id, one.id]);
+    const three = await enqueue(loop, { message: message('same text') });
+    await loop.steer([three.id]);
+
+    hold.release();
+    await loop.settled();
+
+    expect(events).toMatchObject([
+      { type: 'prompt.steered', activePromptId: active.id, promptIds: [one.id, two.id] },
+      { type: 'turn.steer', input: [{ type: 'text', text: 'same text' }, { type: 'text', text: 'same text' }] },
+      { type: 'prompt.steered', activePromptId: active.id, promptIds: [three.id] },
+      { type: 'turn.steer', input: [{ type: 'text', text: 'same text' }] },
+    ]);
+  });
+
   it('aborts pending prompts and settles completion', async () => {
     setup();
     const hold = holdNextStep();
