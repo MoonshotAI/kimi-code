@@ -311,24 +311,26 @@ export class McpConnectionManager implements McpConnectionView {
     if (entry.status === 'needs-auth') return true;
     if (client !== undefined && entry.client !== client) return false;
     const attemptId = entry.attemptId;
-    await this.closeClient(entry);
-    if (!this.isCurrent(entry, attemptId)) return false;
     const oauthService = this.oauthService;
-    if (oauthService !== undefined && isRemoteMcpConfig(entry.config)) {
-      const tokens = (await oauthService.getProvider(name, entry.config.url).tokens()) as
-        | StoredMcpOAuthTokens
-        | undefined;
-      if (tokens !== undefined) {
-        if (isConcurrentGrant(tokens)) return false;
-        await oauthService.invalidate(name, entry.config.url, 'tokens');
-      }
-    }
+    const tokens =
+      oauthService !== undefined && isRemoteMcpConfig(entry.config)
+        ? ((await oauthService.getProvider(name, entry.config.url).tokens()) as
+            | StoredMcpOAuthTokens
+            | undefined)
+        : undefined;
+    if (!this.isCurrent(entry, attemptId)) return false;
+    if (tokens !== undefined && isConcurrentGrant(tokens)) return false;
+    await this.closeClient(entry);
     if (!this.isCurrent(entry, attemptId)) return false;
     entry.status = 'needs-auth';
     entry.error = `${entry.name} requires OAuth — run /mcp-config login ${entry.name}`;
     entry.tools = undefined;
     entry.enabledNames = undefined;
     entry.rawTools = undefined;
+    if (tokens !== undefined && oauthService !== undefined && isRemoteMcpConfig(entry.config)) {
+      await oauthService.invalidate(name, entry.config.url, 'tokens');
+    }
+    if (!this.isCurrent(entry, attemptId)) return false;
     this.emit(entry);
     return true;
   }

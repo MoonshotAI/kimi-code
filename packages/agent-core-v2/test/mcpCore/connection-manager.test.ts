@@ -1090,6 +1090,10 @@ describe('McpConnectionManager', () => {
     const seen: Array<{ name: string; status: McpServerEntry['status'] }> = [];
     cm.onStatusChange((e) => seen.push({ name: e.name, status: e.status }));
     let releaseClose: (() => void) | undefined;
+    let markCloseReached!: () => void;
+    const closeReached = new Promise<void>((resolve) => {
+      markCloseReached = resolve;
+    });
     try {
       await cm.connectAll({ hyper: { transport: 'http', url: 'https://example.test/mcp' } });
       expect(cm.get('hyper')?.status).toBe('connected');
@@ -1097,12 +1101,15 @@ describe('McpConnectionManager', () => {
         cm as unknown as { entries: Map<string, { client?: { close: () => Promise<void> } }> }
       ).entries.get('hyper');
       if (internal?.client === undefined) throw new Error('expected a client');
-      internal.client.close = () =>
-        new Promise<void>((resolve) => {
+      internal.client.close = () => {
+        markCloseReached();
+        return new Promise<void>((resolve) => {
           releaseClose = resolve;
         });
+      };
 
       const mark = cm.markNeedsAuth('hyper', Object.assign(new Error('HTTP 401'), { code: 401 }));
+      await closeReached;
       await cm.reconnect('hyper');
       expect(cm.get('hyper')?.status).toBe('connected');
       releaseClose!();
@@ -1220,6 +1227,7 @@ describe('McpConnectionManager', () => {
       await expect(cm.markNeedsAuth('hyper', error, client)).resolves.toBe(false);
       expect(await oauthService.hasTokens('hyper', server.url)).toBe(true);
       expect(cm.get('hyper')?.status).toBe('connected');
+      expect(cm.resolved('hyper')?.client).toBe(client);
     } finally {
       await cm.shutdown();
       await server.close();
