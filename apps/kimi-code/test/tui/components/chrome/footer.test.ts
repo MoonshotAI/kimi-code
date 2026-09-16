@@ -1,3 +1,8 @@
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import chalk from 'chalk';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -317,6 +322,87 @@ describe('FooterComponent ctrl+o hint beside an inline tips slot', () => {
     const line1 = plain(footer.render(width)[0] ?? '');
     expect(line1.endsWith('ctrl+o expand')).toBe(true);
     expect(line1.length).toBeLessThanOrEqual(width);
+    footer.dispose();
+  });
+});
+
+describe('FooterComponent runtime slot', () => {
+  const ERROR = '38;2;232;84;84'; // colors.error #E85454
+  let repoDir: string;
+  const previousChalkLevel = chalk.level;
+
+  beforeEach(() => {
+    chalk.level = 3;
+  });
+
+  afterEach(() => {
+    chalk.level = previousChalkLevel;
+  });
+
+  function plain(text: string): string {
+    return text.replaceAll(/\[[0-9;]*m/g, '');
+  }
+
+  function line1(footer: FooterComponent, width = 160): string {
+    return plain(footer.render(width)[0] ?? '');
+  }
+
+  beforeEach(() => {
+    // A real repo so the local git slot has a branch to render when visible.
+    repoDir = mkdtempSync(join(tmpdir(), 'kimi-footer-runtime-'));
+    spawnSync('git', ['init', '-b', 'main'], { cwd: repoDir });
+    writeFileSync(join(repoDir, 'a.txt'), 'a');
+    spawnSync('git', ['add', '.'], { cwd: repoDir });
+    spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-m', 'init'], {
+      cwd: repoDir,
+    });
+  });
+
+  afterEach(() => {
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  function footerWith(runtime: AppState['runtime']): FooterComponent {
+    return new FooterComponent({ ...appState, workDir: repoDir, runtime });
+  }
+
+  it('renders no runtime identifier for the local runtime and keeps the git slot', () => {
+    const footer = footerWith({ runtimeId: 'local', type: 'local', status: 'ready' });
+    const rendered = line1(footer);
+    expect(rendered).not.toContain('ssh:');
+    expect(rendered).toContain('main');
+    footer.dispose();
+  });
+
+  it('renders no runtime identifier while the runtime state is unsynced', () => {
+    const footer = footerWith(undefined);
+    const rendered = line1(footer);
+    expect(rendered).not.toContain('ssh:');
+    expect(rendered).toContain('main');
+    footer.dispose();
+  });
+
+  it('shows the remote identifier ahead of the cwd', () => {
+    const footer = footerWith({ runtimeId: 'dev-box', type: 'ssh', status: 'ready' });
+    const rendered = line1(footer);
+    expect(rendered).toContain('ssh:dev-box');
+    expect(rendered.indexOf('ssh:dev-box')).toBeLessThan(rendered.indexOf('kimi-footer-runtime'));
+    footer.dispose();
+  });
+
+  it('hides the local git slot for a remote-bound session', () => {
+    const footer = footerWith({ runtimeId: 'dev-box', type: 'ssh', status: 'ready' });
+    const rendered = line1(footer);
+    expect(rendered).toContain('ssh:dev-box');
+    expect(rendered).not.toContain('main');
+    footer.dispose();
+  });
+
+  it('renders a disconnected remote identifier in the error color', () => {
+    const footer = footerWith({ runtimeId: 'dev-box', type: 'ssh', status: 'disconnected' });
+    const rendered = footer.render(160)[0] ?? '';
+    expect(rendered).toContain('ssh:dev-box');
+    expect(rendered).toContain(ERROR);
     footer.dispose();
   });
 });

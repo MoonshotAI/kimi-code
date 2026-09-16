@@ -5,6 +5,8 @@ import type {
   PermissionMode,
   ProviderConfig,
   PromptPart,
+  SessionRuntimeStatus,
+  SessionRuntimeType,
   ThinkingEffort,
   TokenUsage,
   ToolInputDisplay,
@@ -23,6 +25,13 @@ export interface BannerState {
   subText: string | null;
   display: BannerDisplay;
   ttlHours?: number;
+}
+
+export interface RuntimeSlotState {
+  readonly runtimeId: string;
+  readonly type: SessionRuntimeType;
+  readonly status: SessionRuntimeStatus;
+  readonly cwd?: string;
 }
 
 export interface AppState {
@@ -91,6 +100,12 @@ export interface AppState {
   mcpServersSummary: string | null;
   /** Optional banner shown below the welcome panel; null means no banner to render. */
   banner?: BannerState | null;
+  /**
+   * Current session's runtime binding + connection status (experimental
+   * remote runtime). Undefined while unsynced or when the `remote_runtime`
+   * flag is off — every consumer must treat that as the plain local session.
+   */
+  runtime?: RuntimeSlotState;
 }
 
 export function sumTokenUsage(total: TokenUsage): number {

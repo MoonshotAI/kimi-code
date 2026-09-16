@@ -151,6 +151,7 @@ import {
   type LivePaneState,
   type LoginProgressSpinnerHandle,
   type QueuedMessage,
+  type RuntimeSlotState,
   type SteerInputItem,
   type StepRetryState,
   type TranscriptEntry,
@@ -181,6 +182,7 @@ import { combineSteerInput } from './utils/steer-input';
 import { startupTrace } from '#/utils/startup-trace';
 import { REPLAY_FETCH_TURN_LIMIT } from './utils/message-replay';
 import { hasPatchChanges } from './utils/object-patch';
+import { remoteMentionSuggester } from './utils/remote-mention-suggest';
 import { beginScreenTakeover, endScreenTakeover, type ScreenTakeover } from './utils/screen-takeover';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
 import { formatStepRetryDetail, formatStepRetryLabel } from './utils/step-retry';
@@ -528,6 +530,9 @@ export class KimiTUI {
       this.state.appState.additionalDirs,
       () => this.state.appState.inputMode,
       skillCommandNames,
+      isExperimentalFlagEnabled('remote_runtime')
+        ? remoteMentionSuggester(this.session, this.state.appState.runtime)
+        : undefined,
     );
     this.state.editor.setAutocompleteProvider(provider);
 
@@ -1758,6 +1763,9 @@ export class KimiTUI {
   handleTurnEnded(event: TurnEndedEvent): void {
     this.staging.handleTurnEnded(event);
     this.surveyController.notifyTurnEnded();
+    // A disconnect mid-turn surfaces here: the slot flips to the error color
+    // and the one-shot notice points at /runtime for the explicit reconnect.
+    void this.refreshRuntimeSlot();
   }
 
   releaseStagingMedia(mediaAttachmentIds: readonly number[]): void {
@@ -2405,6 +2413,66 @@ export class KimiTUI {
       goal: goalResult.goal,
     });
     this.syncAdditionalDirs(session);
+    await this.refreshRuntimeSlot(session);
+  }
+
+  /**
+   * Sync the footer runtime slot with the session's current binding and the
+   * runtime registry's connection status (experimental remote runtime). A
+   * no-op with the flag off, so flag-off sessions keep their exact current
+   * behavior. Disconnection surfaces once per transition as a transcript
+   * notice pointing at /runtime.
+   */
+  async refreshRuntimeSlot(session: Session | undefined = this.session): Promise<void> {
+    if (session === undefined) return;
+    if (!isExperimentalFlagEnabled('remote_runtime')) {
+      // A mid-session flag toggle-off (via /experiments + session reload)
+      // drops the slot and the mention suggester with it.
+      if (this.state.appState.runtime !== undefined) {
+        this.setAppState({ runtime: undefined });
+        this.setupAutocomplete();
+      }
+      return;
+    }
+    let binding;
+    let list;
+    try {
+      [binding, list] = await Promise.all([session.getRuntime(), session.listRuntimes()]);
+    } catch {
+      return;
+    }
+    if (this.session !== session) return;
+    const info = list.runtimes.find((entry) => entry.runtimeId === binding.runtimeId);
+    const next: RuntimeSlotState = {
+      runtimeId: binding.runtimeId,
+      type: info?.type ?? (binding.runtimeId === 'local' ? 'local' : 'command'),
+      status: info?.status ?? 'ready',
+      cwd: binding.cwd,
+    };
+    const previous = this.state.appState.runtime;
+    if (
+      previous !== undefined &&
+      previous.runtimeId === next.runtimeId &&
+      previous.type === next.type &&
+      previous.status === next.status &&
+      previous.cwd === next.cwd
+    ) {
+      return;
+    }
+    this.setAppState({ runtime: next });
+    if (previous?.runtimeId !== next.runtimeId || previous?.type !== next.type) {
+      this.setupAutocomplete();
+    }
+    if (
+      next.runtimeId !== 'local' &&
+      next.status === 'disconnected' &&
+      previous?.status !== 'disconnected'
+    ) {
+      this.showNotice(
+        `Runtime ${next.type}:${next.runtimeId} disconnected`,
+        'Use /runtime to reconnect.',
+      );
+    }
   }
 
   // Apply --auto/--yolo/--plan startup flags to a resumed session. The resumed
@@ -2466,7 +2534,7 @@ export class KimiTUI {
     this.session = undefined;
     this.state.swarmModeEntry = undefined;
     this.harness.setTelemetryContext({ sessionId: null });
-    this.setAppState({ goal: null });
+    this.setAppState({ goal: null, runtime: undefined });
     return previous;
   }
 
@@ -4102,13 +4170,15 @@ export class KimiTUI {
   }
 
   private showApprovalPanel(payload: ApprovalPanelData): void {
-    this.patchLivePane({ pendingApproval: { data: payload } });
-    notifyTerminalOnce(this.state, `approval:${payload.id}`, {
+    const environment = this.runtimeEnvironmentBadge();
+    const data = environment === undefined ? payload : { ...payload, environment };
+    this.patchLivePane({ pendingApproval: { data } });
+    notifyTerminalOnce(this.state, `approval:${data.id}`, {
       title: 'Kimi Code approval required',
-      body: payload.tool_name,
+      body: data.tool_name,
     });
     const panel = new ApprovalPanelComponent(
-      { data: payload },
+      { data },
       (response: ApprovalPanelResponse) => {
         this.approvalController.respond(adaptPanelResponse(response));
       },
@@ -4121,6 +4191,13 @@ export class KimiTUI {
     );
     this.activeApprovalPanel = panel;
     this.mountEditorReplacement(panel);
+  }
+
+  /** The approval panel's environment identifier for a remote-bound session. */
+  private runtimeEnvironmentBadge(): string | undefined {
+    const runtime = this.state.appState.runtime;
+    if (runtime === undefined || runtime.runtimeId === 'local') return undefined;
+    return `${runtime.type}:${runtime.runtimeId}`;
   }
 
   private hideApprovalPanel(): void {
