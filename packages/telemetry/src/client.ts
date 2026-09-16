@@ -180,6 +180,7 @@ export class TelemetryClient {
     this.sink = null;
     this.deviceId = null;
     this.sessionId = null;
+    this.model = null;
     this.disabled = false;
     this.unexpectedErrorHandler = null;
   }
