@@ -85,7 +85,12 @@ describe('AgentConversationUndoService', () => {
       id: 'test.notification',
       reconcileAfterUndo: async () => {
         await Promise.resolve();
-        ctx.context.append({ role: 'user', content: [{ type: 'text', text: 'restored notification' }], toolCalls: [], origin: { kind: 'task', taskId: 'task-1' } });
+        ctx.context.append({
+          role: 'user',
+          content: [{ type: 'text', text: 'restored notification' }],
+          toolCalls: [],
+          origin: { kind: 'task', taskId: 'task-1', status: 'completed', notificationId: 'notification-1' },
+        });
         restored = true;
       },
     });
