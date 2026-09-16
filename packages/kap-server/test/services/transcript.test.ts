@@ -2860,6 +2860,51 @@ describe('AgentTranscriptProjector', () => {
     }
   });
 
+  it('readColdSnapshot opens a new turn for a steer reissued after abort instead of folding it into the cancelled turn', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-steer-abort-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const records = [
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'run a long sleep' }], toolCalls: [], origin: { kind: 'user' }, id: 'msg_p1' }, time: 1000 },
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'run a long sleep' }], origin: { kind: 'user' }, promptId: 'msg_p1', turnId: 0, time: 1001 },
+        { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'starting' }], toolCalls: [] }, time: 2000 },
+        { type: 'turn.steer', input: [{ type: 'text', text: '1' }], origin: { kind: 'user' }, time: 3000 },
+        { type: 'turn.ended', turnId: 0, reason: 'cancelled', time: 4000 },
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: '1' }], toolCalls: [], origin: { kind: 'user' }, id: 'msg_p2' }, time: 4001 },
+        { type: 'turn.prompt', input: [{ type: 'text', text: '1' }], origin: { kind: 'user' }, promptId: 'msg_p2', turnId: 1, time: 4002 },
+        { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'ignored as requested' }], toolCalls: [] }, time: 5000 },
+        { type: 'turn.ended', turnId: 1, reason: 'completed', time: 6000 },
+      ];
+      await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+
+      const snapshot = await coldTranscriptService(home).readColdSnapshot('s1', 'main');
+      const turns = snapshot!.items.filter((item) => item.kind === 'turn');
+      expect(turns).toHaveLength(2);
+      const [cancelled, followUp] = turns;
+      if (cancelled?.kind !== 'turn' || followUp?.kind !== 'turn') throw new Error('expected turns');
+      expect(cancelled.prompt).toBe('run a long sleep');
+      expect(
+        cancelled.steps
+          .flatMap((step) => step.frames)
+          .some((frame) => frame.kind === 'text' && frame.role === 'user' && frame.text === '1'),
+      ).toBe(false);
+      expect(followUp.prompt).toBe('1');
+      expect(
+        followUp.steps
+          .flatMap((step) => step.frames)
+          .some(
+            (frame) =>
+              frame.kind === 'text' &&
+              frame.role === 'assistant' &&
+              frame.text === 'ignored as requested',
+          ),
+      ).toBe(true);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('readColdSnapshot preserves safe bundled skill provenance before the first step', async () => {
     const home = await mkdtemp(join(tmpdir(), 'transcript-cold-bundled-steer-'));
     try {

@@ -523,6 +523,7 @@ export class TranscriptService {
     const steeredContents = new Map<string, Map<string, number>>();
     const pendingSteers = new Map<string, Map<string, number>>();
     const matchedSteers: { key: string; kind: string }[] = [];
+    const turnPromptIds = new Set<string>();
     const anchorStack: { taskIdsSnapshot: Set<string>; steerCount: number }[] = [];
     let anchorFloor = 0;
     let sawTurnPrompt = false;
@@ -572,6 +573,8 @@ export class TranscriptService {
       }
       if (record.type !== 'turn.prompt') continue;
       sawTurnPrompt = true;
+      const promptId = (record as { promptId?: unknown }).promptId;
+      if (typeof promptId === 'string') turnPromptIds.add(promptId);
       const origin = (record as { origin?: { kind?: unknown; taskId?: unknown } }).origin;
       if (origin === undefined) continue;
       if (
@@ -588,7 +591,9 @@ export class TranscriptService {
     }
     const base = groupMessagesIntoSnapshot(
       messages,
-      sawTurnPrompt || steeredContents.size > 0 ? { taskOriginTurnTaskIds, steeredContents } : undefined,
+      sawTurnPrompt || steeredContents.size > 0
+        ? { taskOriginTurnTaskIds, steeredContents, turnPromptIds }
+        : undefined,
     );
     const folded = foldWireRecordFacts(projectQuestionInteractionRecords(records, sessionId), base, {
       resolvePlanRevisionKey: (key) =>
