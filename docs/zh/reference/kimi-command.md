@@ -28,7 +28,7 @@ kimi <subcommand> [options]
 | `--agent-file <path>` | | 从 Markdown 文件加载自定义 Agent 并为新会话选中它。不可重复传入，也不能与 `--agent`、`--session` 或 `--continue` 同时使用 |
 | `--add-dir <dir>` | | 为本次会话添加额外的工作目录。相对路径按当前工作目录解析。可重复传入 |
 
-`-r` / `--resume` 是 `--session` 的隐藏别名；`--yes` 和 `--auto-approve` 是 `--yolo` 的隐藏别名，在帮助信息中不显示。隐藏标志 `--runtime <id>` 让新会话绑定到已配置的远程运行时（实验功能，详见 [远程运行时](../guides/remote-runtime.md#kimi---runtime)）。
+`-r` / `--resume` 是 `--session` 的隐藏别名；`--yes` 和 `--auto-approve` 是 `--yolo` 的隐藏别名，在帮助信息中不显示。隐藏标志 `--runtime <id>` 让新会话绑定到已配置的远程运行时（实验功能，详见 [远程运行时](../guides/remote-runtime.md#kimi-runtime)）。
 
 ::: warning 注意
 `--yolo` 会跳过普通工具调用的人工确认，包括文件写入和 Shell 命令执行，请只在受信任的工作目录下使用。Plan 模式的退出审批不会被 `--yolo` 跳过；Plan 模式下的 `Bash` 按普通放行规则处理。
