@@ -446,11 +446,20 @@ function serializeArguments(args: unknown): string {
 
 function serializeToolOutput(output: unknown): string {
   if (typeof output === 'string') return output;
+  if (Array.isArray(output) && output.every((part) => isTextPart(part))) {
+    return output.map((part) => part.text).join('');
+  }
   try {
     return JSON.stringify(output, null, 2) ?? '';
   } catch {
     return String(output);
   }
+}
+
+function isTextPart(part: unknown): part is { type: 'text'; text: string } {
+  return (
+    typeof part === 'object' && part !== null && (part as { type?: unknown }).type === 'text'
+  );
 }
 
 function serializeDetails(details: Record<string, unknown> | undefined): string | undefined {

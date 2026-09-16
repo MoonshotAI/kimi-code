@@ -17,7 +17,7 @@ export function renderToolResultForModel(result: RenderableToolResult): ContentP
   if (result.note === undefined || result.note.length === 0) return rendered;
   const only = rendered[0];
   if (rendered.length === 1 && only?.type === 'text') {
-    return [textPart(only.text + '\n' + result.note)];
+    return [{ type: 'text', text: only.text + '\n' + result.note, contentType: only.contentType }];
   }
   return [...rendered, textPart(result.note)];
 }
@@ -30,7 +30,7 @@ function renderStatus(result: RenderableToolResult): ContentPart[] {
       if (single.length === 0) return [textPart(TOOL_EMPTY_ERROR_STATUS)];
       return [textPart(TOOL_ERROR_STATUS + '\n' + single)];
     }
-    return isEmptyOutputText(single) ? [textPart(TOOL_EMPTY_STATUS)] : [textPart(single)];
+    return isEmptyOutputText(single) ? [textPart(TOOL_EMPTY_STATUS)] : [parts[0]!];
   }
 
   if (isEmptyEquivalentContentArray(parts)) {

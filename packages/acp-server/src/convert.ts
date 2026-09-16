@@ -332,6 +332,12 @@ function composePlanContent(
  * `display` field; diffs attach to `ToolCallStartedEvent.display` and are
  * emitted by `toolCallStartToSessionUpdate`.
  */
+function isTextPart(part: unknown): part is { type: 'text'; text: string } {
+  return (
+    typeof part === 'object' && part !== null && (part as { type?: unknown }).type === 'text'
+  );
+}
+
 export function toolResultToAcpContent(event: ToolResultEvent): ToolCallContent[] {
   const out = event.output;
   // Array output containing the HideOutputMarker tells the adapter to suppress
@@ -346,12 +352,16 @@ export function toolResultToAcpContent(event: ToolResultEvent): ToolCallContent[
     if (out.length === 0) return [];
     return [{ type: 'content', content: { type: 'text', text: out } }];
   }
+  if (Array.isArray(out) && out.every((part) => isTextPart(part))) {
+    const text = out.map((part) => part.text).join('');
+    if (!text) return [];
+    return [{ type: 'content', content: { type: 'text', text } }];
+  }
   // Best-effort stringify for object/array outputs.
   let text: string;
   try {
     text = JSON.stringify(out);
-  } catch {
-    text = '[object]';
+  } catch {    text = '[object]';
   }
   if (!text) return [];
   return [{ type: 'content', content: { type: 'text', text } }];
