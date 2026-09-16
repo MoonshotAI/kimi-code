@@ -90,6 +90,8 @@ export class TelemetryClient {
     this.systemMetricsCollector = null;
     if (this.sink !== null) {
       this.sink.stopPeriodicFlush();
+      // An opt-out stops a request mid-flight too, not just future events.
+      this.sink.abortInFlight();
       this.sink.clearBuffer();
       this.sink = null;
     }

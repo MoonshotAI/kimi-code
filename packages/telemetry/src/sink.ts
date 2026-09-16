@@ -37,6 +37,7 @@ export class EventSink {
   private buffer: EnrichedTelemetryEvent[] = [];
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private activeBatch: readonly EnrichedTelemetryEvent[] | null = null;
+  private sendController: AbortController | null = null;
   private tail: Promise<void> = Promise.resolve();
 
   constructor(options: EventSinkOptions) {
@@ -133,12 +134,25 @@ export class EventSink {
     const events = this.buffer;
     this.buffer = [];
     this.activeBatch = events;
+    // Link the caller's signal with a controller we own, so disable() can
+    // abort the send too — an opt-out must stop a request mid-flight, not
+    // just detach the sink.
+    const controller = new AbortController();
+    this.sendController = controller;
+    const unlink = linkAbortSignal(signal, controller);
     try {
-      await this.transport.send(events, signal);
+      await this.transport.send(events, controller.signal);
     } finally {
+      unlink();
+      this.sendController = null;
       this.activeBatch = null;
       settleSelf();
     }
+  }
+
+  /** Abort the currently running send, if any; the transport spools it. */
+  abortInFlight(): void {
+    this.sendController?.abort();
   }
 
   flushSync(): void {
@@ -183,8 +197,19 @@ function setPrimitive(
   target[key] = value;
 }
 
-/** Await a send already in flight, but reject as soon as the signal aborts. */
-function raceWithSignal(promise: Promise<void>, signal?: AbortSignal): Promise<void> {
+/** Propagate an external signal into a sink-owned controller; returns cleanup. */
+function linkAbortSignal(signal: AbortSignal | undefined, controller: AbortController): () => void {
+  if (signal === undefined) return () => {};
+  if (signal.aborted) {
+    controller.abort();
+    return () => {};
+  }
+  const onAbort = (): void => controller.abort();
+  signal.addEventListener('abort', onAbort, { once: true });
+  return () => signal.removeEventListener('abort', onAbort);
+}
+
+/** Await a send already in flight, but reject as soon as the signal aborts. */function raceWithSignal(promise: Promise<void>, signal?: AbortSignal): Promise<void> {
   const settled = promise.catch(() => {
     // The original owner surfaces the failure; joining is about ordering.
   });

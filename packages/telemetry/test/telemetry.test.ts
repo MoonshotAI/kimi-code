@@ -597,6 +597,32 @@ describe('EventSink', () => {
     expect(shutdownResolved).toBe(true);
   });
 
+  it('aborts the in-flight send when the sink is asked to', async () => {
+    const captured: { signal?: AbortSignal } = {};
+    const transport: TelemetryTransport = {
+      send: (_events, signal) => {
+        captured.signal = signal;
+        return new Promise<void>(() => {});
+      },
+      saveToDisk: () => undefined,
+      retryDiskEvents: async () => undefined,
+    };
+    const sink = makeSink(transport, 1);
+    sink.accept({
+      event_id: 'e1',
+      device_id: 'dev',
+      session_id: 'ses',
+      event: 'first',
+      timestamp: 1,
+      properties: {},
+    });
+    await vi.waitFor(() => expect(captured.signal).toBeDefined());
+
+    sink.abortInFlight();
+
+    expect(captured.signal?.aborted).toBe(true);
+  });
+
   it('stops waiting for an in-flight flush once the caller signal aborts, spooling its batch', async () => {
     let releaseSend: (() => void) | undefined;
     const saved: EnrichedTelemetryEvent[][] = [];
