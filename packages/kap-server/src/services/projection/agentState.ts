@@ -101,7 +101,7 @@ export class AgentStateTracker {
     return this.turnStarted();
   }
 
-  runFinished(status: 'completed' | 'failed', endedAt: string): boolean {
+  runFinished(status: 'completed' | 'failed' | 'interrupted', endedAt: string): boolean {
     if (this.status === status) return false;
     this.status = status;
     this.turn = undefined;

@@ -58,11 +58,19 @@ export type AgentRunSuspendedEvent = {
   readonly reason: string;
 };
 
+export type AgentRunAbandonedEvent = {
+  readonly task: QueuedAgentRunTask;
+  readonly agentId: string;
+  readonly outcome: 'cancelled' | 'failed';
+  readonly error?: string;
+};
+
 export type AgentRunBatchLauncher = {
   spawn(options: AgentSpawnAttemptOptions): Promise<AgentRunAttemptHandle>;
   resume(agentId: string, options: AgentRunAttemptOptions): Promise<AgentRunAttemptHandle>;
   retry(agentId: string, options: AgentRunAttemptOptions): Promise<AgentRunAttemptHandle>;
   suspended?(event: AgentRunSuspendedEvent): void;
+  abandoned?(event: AgentRunAbandonedEvent): void;
 };
 
 type RateLimitedOutcome = {
@@ -364,6 +372,12 @@ export class AgentRunBatch<T> {
     if ('status' in outcome) {
       this.results[attempt.state.index] = outcome;
     } else if (this.isOnlyUnfinishedTask(attempt.state)) {
+      this.launcher.abandoned?.({
+        task: attempt.state.task,
+        agentId: outcome.agentId,
+        outcome: 'failed',
+        error: outcome.error,
+      });
       this.results[attempt.state.index] = {
         task: attempt.state.task,
         agentId: outcome.agentId,
@@ -524,6 +538,7 @@ export class AgentRunBatch<T> {
 
   private finishWithUserCancellation(): void {
     if (this.finished) return;
+    this.abandonSuspended();
 
     this.finish(
       this.states.map((state) => {
@@ -561,9 +576,23 @@ export class AgentRunBatch<T> {
 
   private fail(error: unknown): void {
     if (this.finished) return;
+    this.abandonSuspended();
     this.finished = true;
     this.cleanup();
     this.reject?.(error);
+  }
+
+  private abandonSuspended(): void {
+    for (const state of this.pending) {
+      if (state.agentId === undefined) continue;
+      this.launcher.abandoned?.({ task: state.task, agentId: state.agentId, outcome: 'cancelled' });
+    }
+    for (const attempt of this.active) {
+      if (attempt.ready) continue;
+      const agentId = attempt.state.agentId;
+      if (agentId === undefined) continue;
+      this.launcher.abandoned?.({ task: attempt.state.task, agentId, outcome: 'cancelled' });
+    }
   }
 
   private cleanup(): void {
@@ -598,7 +627,7 @@ export class AgentRunBatch<T> {
         ? undefined
         : setClampedTimeout(() => {
             attempt.timedOut = true;
-            attempt.controller.abort(new Error('Aborted'));
+            attempt.controller.abort(new Error('Subagent timed out.'));
           }, task.timeout);
 
     if (this.controller.signal.aborted) {

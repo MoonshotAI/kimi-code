@@ -28,7 +28,7 @@ import { createMemoryMediaStore } from '#/llm/media/store';
 import type { LlmModel } from '#/llm/model';
 import { createProvider } from '#/llm/provider/definition';
 import type { LlmRequester } from '#/llm/requester/requester';
-import { openAIBase, planOpenAIRequest } from '#/llm/requester/bases/openai/requester';
+import { openAIBase, prepareOpenAIRequest } from '#/llm/requester/bases/openai/requester';
 import { createReadMediaFileTool } from '#/media/tool';
 
 const CAPABILITY: ModelCapability = {
@@ -209,7 +209,7 @@ describe('media stack wiring', () => {
     ]);
     expect(uploadVideo).toHaveBeenCalledTimes(1);
 
-    const wire = planOpenAIRequest({
+    const wire = prepareOpenAIRequest({
       model,
       messages: seenMessages[1] as readonly Message[],
       tools: [],

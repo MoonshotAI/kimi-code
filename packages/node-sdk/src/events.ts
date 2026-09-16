@@ -76,6 +76,7 @@ export type {
   SubagentStartedEvent,
   SubagentCompletedEvent,
   SubagentFailedEvent,
+  SubagentCancelledEvent,
 } from '@moonshot-ai/agent-core-v2/session/subagent/mirrorAgentRun';
 export type { SubagentSuspendedEvent } from '@moonshot-ai/agent-core-v2/features/swarm/session/sessionSwarmService';
 

@@ -73,6 +73,10 @@ class ScopedAppendLogStore implements IAppendLogStore {
     return Promise.resolve();
   }
 
+  flushLog(): Promise<void> {
+    return Promise.resolve();
+  }
+
   close(): Promise<void> {
     return Promise.resolve();
   }

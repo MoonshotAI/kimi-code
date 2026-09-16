@@ -153,7 +153,7 @@ export interface OpenAILoweredMessage {
   readonly message: OpenAIWireMessage;
 }
 
-export function lowerOpenAIRequest(
+export function lowerOpenAIMessages(
   input: FormatRequestInput,
   options: OpenAILowerOptions,
 ): OpenAILoweredMessage[] {
@@ -347,12 +347,12 @@ function isOpenAIInsufficientQuotaError(error: RawOpenAISDKAPIError): boolean {
 
 export function convertOpenAIError(
   error: unknown,
-  convertErrorHook?: (error: unknown) => LlmRemoteErrorMessage | undefined,
+  classifyErrorHook?: (error: unknown) => LlmRemoteErrorMessage | undefined,
 ): LlmRemoteErrorMessage {
   if (isAbortError(error)) {
     return toLlmErrorMessage(error);
   }
-  const hooked = convertErrorHook?.(error);
+  const hooked = classifyErrorHook?.(error);
   if (hooked !== undefined) {
     return hooked;
   }

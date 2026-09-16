@@ -955,9 +955,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * cannot deadlock.
    */
   private runSessionAccessAll<T>(sessionIds: readonly string[], work: () => Promise<T>): Promise<T> {
-    const keys = [...new Set(sessionIds)].sort();
+    const keys = [...new Set(sessionIds)].toSorted();
     let chained: () => Promise<T> = work;
-    for (const key of [...keys].reverse()) {
+    for (const key of [...keys].toReversed()) {
       const inner = chained;
       chained = () => this.runSessionAccess(key, inner);
     }
@@ -2167,7 +2167,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         );
       }
     } else {
-      tower.exit();
+      await tower.exit();
     }
     await agent.accessor.get(IAgentReminderService).reconcileWhenIdle('tower_mode');
   }

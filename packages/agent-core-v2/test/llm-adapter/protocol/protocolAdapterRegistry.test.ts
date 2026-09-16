@@ -172,12 +172,14 @@ describe('resolve gateway routes', () => {
     expect(resolved.model.provider).toBe('openai');
     expect(resolved.model.model).toBe('wire-model');
     expect(typeof resolved.media?.uploadVideo).toBe('function');
+    expect(typeof resolved.media?.uploadImage).toBe('function');
   });
 
   it('routes plain openai without the upload media', () => {
     const resolved = registry.resolve(modelWith({ protocol: 'openai' }));
     expect(resolved.protocol).toBe('openai');
     expect(resolved.media?.uploadVideo).toBeUndefined();
+    expect(resolved.media?.uploadImage).toBeUndefined();
   });
 
   it('reports the wire protocol regardless of beta or vertex provider options', () => {
@@ -198,6 +200,7 @@ describe('resolve gateway routes', () => {
     const resolved = registry.resolve(modelWith({ protocol: 'anthropic', providerType: 'kimi' }));
     expect(resolved.protocol).toBe('anthropic');
     expect(typeof resolved.media?.uploadVideo).toBe('function');
+    expect(typeof resolved.media?.uploadImage).toBe('function');
   });
 
   it('carries thinking metadata and model limits onto the resolved LlmModel', () => {

@@ -26,7 +26,9 @@ export function formatBackgroundAgentTranscript(
       ? `${subject} started in background`
       : phase === 'completed'
         ? `${subject} completed in background`
-        : `${subject} failed in background`;
+        : phase === 'killed'
+          ? `${subject} stopped`
+          : `${subject} failed in background`;
   const tail = phase === 'failed' ? normalizeBackgroundField(extras?.error) : undefined;
   const detailParts = [
     normalizeBackgroundField(meta.model),

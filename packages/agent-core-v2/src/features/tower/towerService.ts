@@ -90,7 +90,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     this.agentState.contributeState(towerBaseKey);
     this._register(
       this.dispatcher.hooks.onDidRestore.register('tower', async (_ctx, next) => {
-        await this.exitForeignTower();
+        await this.reconcileForeignTower();
         this.restoreTowerTools();
         this.reconcileTowerProjection();
         await next();
@@ -196,7 +196,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
         const entry = await store
           .load()
           .then(
-            (state) => state.roster.agents.find((agent) => agent.agentId === resumeId),
+            (state) => store.resolveAgent(state, resumeId),
             () => undefined,
           );
         if (entry === undefined) return;
@@ -219,8 +219,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
         const entry = await store
           .load()
           .then(
-            (state) =>
-              state.roster.agents.find((agent) => agent.agentId === this.agentCtx.agentId),
+            (state) => store.resolveAgent(state, this.agentCtx.agentId),
             () => undefined,
           );
         const slot = entry?.worktree;
@@ -270,13 +269,14 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
           const ownerTitle = await this.resolveOwnerTitle(ownerHandle);
           return { entered: false, reason: 'owned-by-live-session', owner, ownerTitle };
         }
-        ownerHandle.accessor
+        await ownerHandle.accessor
           .get(IAgentLifecycleService)
           .handleOf('main')
           ?.accessor.get(IAgentTowerService)
           .exit();
       }
     }
+    await this.adoptTowerRoster();
     for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
     this.lastPublished = true;
     this.dispatchEnter(base);
@@ -352,18 +352,29 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     );
   }
 
-  exit(): void {
+  async exit(): Promise<void> {
     if (!this.agentState.get(towerKey)) return;
     this.lastPublished = false;
     this.dropInboxWake();
     void this.dispatcher.dispatch(new TowerModeExit({ agentId: this.agentCtx.agentId }));
-    void this.releaseTowerOwnership();
+    await this.releaseTowerOwnership();
   }
 
   private dropInboxWake(): void {
     this.inboxWakeHandle?.drop();
     this.inboxWakeHandle = undefined;
     this.inboxWakeSignals = 0;
+  }
+
+  private async adoptTowerRoster(): Promise<void> {
+    const store = new TowerStore(resolveTowerRepoRoot(this.sessionCtx.cwd));
+    try {
+      await store.adopt(this.sessionCtx.sessionId);
+    } catch (error) {
+      throw new TowerProtocolError(
+        `failed to adopt the tower workspace roster: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   private async releaseTowerOwnership(): Promise<void> {
@@ -387,13 +398,23 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     );
   }
 
-  private async exitForeignTower(): Promise<void> {
+  private async reconcileForeignTower(): Promise<void> {
     if (this.agentCtx.agentId !== 'main') return;
     if (!this.agentState.get(towerKey)) return;
     const owner = await this.resolveTowerOwner();
     if (owner === undefined || owner === this.sessionCtx.sessionId) return;
-    if (this.sessions.get(owner) === undefined) return;
-    this.exit();
+    if (this.sessions.get(owner) === undefined) {
+      try {
+        await this.adoptTowerRoster();
+      } catch (error) {
+        this.log.warn(
+          `failed to adopt tower workspace roster on restore: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        await this.exit();
+      }
+      return;
+    }
+    void this.exit();
   }
 
   private async resolveTowerOwner(): Promise<string | undefined> {

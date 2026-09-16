@@ -281,7 +281,7 @@ describe('plugins selector dialogs', () => {
       {
         ...superpowers,
         id: 'kimi-webbridge',
-        displayName: 'Kimi WebBridge',
+        displayName: 'Kimi Browser Extension',
         source: 'zip-url',
         originalSource: 'https://code.kimi.com/kimi-code/plugins/official/kimi-webbridge.zip',
       },
@@ -464,7 +464,7 @@ describe('plugins selector dialogs', () => {
     // The catalog is still loading, but the built-in Web Bridge entry is shown
     // immediately because it is baked into the TUI, not fetched.
     const out = strip(renderRaw(panel));
-    expect(out).toContain('Kimi WebBridge  open in browser');
+    expect(out).toContain('Kimi Browser Extension  open in browser');
     expect(out).toContain('Loading marketplace');
   });
 
@@ -472,7 +472,7 @@ describe('plugins selector dialogs', () => {
     const { panel } = makePanel({ initialTab: 'official' });
     panel.setMarketplaceError('fetch failed');
     const out = strip(renderRaw(panel));
-    expect(out).toContain('Kimi WebBridge  open in browser');
+    expect(out).toContain('Kimi Browser Extension  open in browser');
     expect(out).toContain('Marketplace unavailable: fetch failed');
   });
 
@@ -480,12 +480,12 @@ describe('plugins selector dialogs', () => {
     // A custom marketplace may legitimately list an entry reusing the
     // kimi-webbridge id: without the capability: marker it must render and
     // install as a plain plugin, not borrow capability status.
-    const capabilities = [makeCapability({ id: 'kimi-webbridge', displayName: 'Kimi WebBridge' })];
+    const capabilities = [makeCapability({ id: 'kimi-webbridge', displayName: 'Kimi Browser Extension' })];
     const entries = [
       {
         id: 'kimi-webbridge',
         tier: 'official' as const,
-        displayName: 'Kimi WebBridge (fork)',
+        displayName: 'Kimi Browser Extension (fork)',
         source: 'https://x/fork.zip',
       },
     ];
@@ -493,7 +493,7 @@ describe('plugins selector dialogs', () => {
     panel.setMarketplace(entries, '/tmp/marketplace.json');
 
     const out = strip(renderRaw(panel));
-    expect(out).toContain('Kimi WebBridge (fork)  install');
+    expect(out).toContain('Kimi Browser Extension (fork)  install');
 
     panel.handleInput('\r');
     expect(onSelect).toHaveBeenCalledWith({
@@ -507,7 +507,7 @@ describe('plugins selector dialogs', () => {
       makeCapability(),
       makeCapability({
         id: 'kimi-webbridge',
-        displayName: 'Kimi WebBridge',
+        displayName: 'Kimi Browser Extension',
         state: 'not_installed',
         steps: [],
       }),
@@ -519,7 +519,7 @@ describe('plugins selector dialogs', () => {
     // suppressed by the real webbridge row).
     const out = strip(renderRaw(panel));
     expect(out).toContain('Kimi Computer Use  install');
-    expect(out).toContain('Kimi WebBridge  install');
+    expect(out).toContain('Kimi Browser Extension  install');
     expect(out).toContain('Background GUI automation');
     expect(out).not.toContain('id kimi-cu');
     expect(out).not.toContain('Official plugin');
@@ -547,7 +547,7 @@ describe('plugins selector dialogs', () => {
 
     const out = strip(renderRaw(panel));
     expect(out).not.toContain('Kimi Computer Use');
-    expect(out).toContain('Kimi WebBridge  open in browser');
+    expect(out).toContain('Kimi Browser Extension  open in browser');
     expect(out).toContain('Loading marketplace');
   });
 
@@ -559,7 +559,7 @@ describe('plugins selector dialogs', () => {
     expect(onSelect).toHaveBeenCalledWith({
       kind: 'open-url',
       url: 'https://www.kimi.com/features/webbridge#local-agent',
-      label: 'Kimi WebBridge',
+      label: 'Kimi Browser Extension',
     });
   });
 
@@ -579,7 +579,7 @@ describe('plugins selector dialogs', () => {
       {
         id: 'kimi-webbridge',
         tier: 'official' as const,
-        displayName: 'Kimi WebBridge',
+        displayName: 'Kimi Browser Extension',
         source: 'capability:kimi-webbridge',
       },
       ...officialEntries,
@@ -589,7 +589,7 @@ describe('plugins selector dialogs', () => {
     const out = strip(renderRaw(panel));
     // Exactly one row, and it is the installable catalog copy — the hardcoded
     // open-in-browser promo is suppressed.
-    expect(out.split('Kimi WebBridge').length - 1).toBe(1);
+    expect(out.split('Kimi Browser Extension').length - 1).toBe(1);
     expect(out).not.toContain('open in browser');
     panel.handleInput('\r'); // index 0 → the real entry installs
     expect(onSelect).toHaveBeenCalledWith({
@@ -606,7 +606,7 @@ describe('plugins selector dialogs', () => {
       {
         id: 'kimi-webbridge',
         tier: 'curated' as const,
-        displayName: 'Kimi WebBridge',
+        displayName: 'Kimi Browser Extension',
         source: 'capability:kimi-webbridge',
       },
     ];
@@ -615,7 +615,7 @@ describe('plugins selector dialogs', () => {
     const out = strip(renderRaw(panel));
     expect(out).toContain('Curated');
     expect(out).toContain('Third-party plugins from our partners.');
-    expect(out).toContain('Kimi WebBridge  install');
+    expect(out).toContain('Kimi Browser Extension  install');
     panel.handleInput('\r');
     expect(onSelect).toHaveBeenCalledWith({
       kind: 'install',
@@ -816,7 +816,7 @@ describe('plugins selector dialogs', () => {
     const capabilities = [
       makeCapability({
         id: 'kimi-webbridge',
-        displayName: 'Kimi WebBridge',
+        displayName: 'Kimi Browser Extension',
         state: 'ready',
         version: 'v1.11.5',
         steps: [
@@ -828,16 +828,16 @@ describe('plugins selector dialogs', () => {
       }),
     ];
     const installed = [
-      { ...superpowers, id: 'kimi-webbridge', displayName: 'Kimi WebBridge', version: '1.11.3' },
+      { ...superpowers, id: 'kimi-webbridge', displayName: 'Kimi Browser Extension', version: '1.11.3' },
     ];
     const { panel } = makePanel({ installed, capabilities, initialTab: 'official' });
     panel.setMarketplace(
-      [{ id: 'kimi-webbridge', displayName: 'Kimi WebBridge', source: 'capability:kimi-webbridge', tier: 'official', builtIn: true }],
+      [{ id: 'kimi-webbridge', displayName: 'Kimi Browser Extension', source: 'capability:kimi-webbridge', tier: 'official', builtIn: true }],
       '/tmp/marketplace.json',
     );
 
     const out = strip(renderRaw(panel));
-    expect(out).toContain('Kimi WebBridge  installed');
+    expect(out).toContain('Kimi Browser Extension  installed');
     expect(out).not.toContain('ready');
     expect(out).not.toContain('v1.11.5');
     expect(out).not.toContain('browser extension');
@@ -847,7 +847,7 @@ describe('plugins selector dialogs', () => {
     const capabilities = [
       makeCapability({
         id: 'kimi-webbridge',
-        displayName: 'Kimi WebBridge',
+        displayName: 'Kimi Browser Extension',
         state: 'partial',
         steps: [
           { id: 'daemon-binary', state: 'ok' },
@@ -859,12 +859,12 @@ describe('plugins selector dialogs', () => {
     ];
     const { panel } = makePanel({ capabilities, initialTab: 'official' });
     panel.setMarketplace(
-      [{ id: 'kimi-webbridge', displayName: 'Kimi WebBridge', source: 'capability:kimi-webbridge', tier: 'official', builtIn: true }],
+      [{ id: 'kimi-webbridge', displayName: 'Kimi Browser Extension', source: 'capability:kimi-webbridge', tier: 'official', builtIn: true }],
       '/tmp/marketplace.json',
     );
 
     const out = strip(renderRaw(panel));
-    expect(out).toContain('Kimi WebBridge  install');
+    expect(out).toContain('Kimi Browser Extension  install');
     expect(out).not.toContain('agent skill');
     expect(out).not.toContain('skill shadows');
   });

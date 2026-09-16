@@ -253,6 +253,7 @@ export class AgentMessageProjector {
         return this.onSubagentSpawned(event);
       case 'subagent.completed':
       case 'subagent.failed':
+      case 'subagent.cancelled':
       case 'subagent.suspended':
         return this.onSubagentRun(event);
       case 'goal.updated':
@@ -1264,7 +1265,7 @@ export class AgentMessageProjector {
   }
 
   private onSubagentRun(event: {
-    type: 'subagent.completed' | 'subagent.failed' | 'subagent.suspended';
+    type: 'subagent.completed' | 'subagent.failed' | 'subagent.cancelled' | 'subagent.suspended';
     time: number;
     subagentId: string;
     resultSummary?: string;
@@ -1282,7 +1283,9 @@ export class AgentMessageProjector {
         ? 'completed'
         : event.type === 'subagent.failed'
           ? 'failed'
-          : 'running';
+          : event.type === 'subagent.cancelled'
+            ? 'killed'
+            : 'running';
     if (terminal) existing.endedAt = epochMsToIso(event.time);
     existing.resultSummary = event.resultSummary ?? existing.resultSummary;
     existing.usage = event.usage === undefined ? existing.usage : toSnakeUsage(event.usage);

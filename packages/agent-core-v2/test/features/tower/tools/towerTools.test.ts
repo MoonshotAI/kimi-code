@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, stat, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, stat, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -137,6 +137,7 @@ beforeEach(async () => {
         },
         exit: () => {
           towerActive = false;
+          return Promise.resolve();
         },
       });
       reg.defineInstance(ISessionManager, {
@@ -488,6 +489,37 @@ describe('TowerSendTool + TowerInboxTool', () => {
     for (const subject of ['for w1', 'for w2', 'broadcast', 'report']) {
       expect(towerInbox.output).toContain(`subject: ${subject}`);
     }
+  });
+
+  it('reads and stamps the mailbox of the latest registration when the agent id collides with a stale roster entry', async () => {
+    const file = join(repo, '.tower/comms/state.json');
+    const state = JSON.parse(await readFile(file, 'utf8')) as {
+      roster: { agents: Record<string, unknown>[] };
+    };
+    state.roster.agents.unshift({
+      name: 'w-stale',
+      kind: 'worker',
+      agentId: 'agent-w1',
+      sessionId: 'session-old',
+      spawnedAt: '2026-09-13T08:00:00.000Z',
+    });
+    await writeFile(file, `${JSON.stringify(state, null, 2)}\n`);
+
+    await run(ix.get(ITowerSendTool), { to: 'w1', subject: 'for current w1', body: 'a' });
+    await run(ix.get(ITowerSendTool), { to: 'w-stale', subject: 'for stale identity', body: 'b' });
+
+    currentAgentId = 'agent-w1';
+    const inbox = await run(ix.get(ITowerInboxTool), {});
+    expect(inbox.isError).toBeFalsy();
+    expect(inbox.output).toContain('message(s) for w1');
+    expect(inbox.output).toContain('subject: for current w1');
+    expect(inbox.output).not.toContain('subject: for stale identity');
+
+    const sent = await run(ix.get(ITowerSendTool), { to: 'tower', subject: 'report', body: 'c' });
+    expect(sent.isError).toBeFalsy();
+    currentAgentId = 'main';
+    const towerInbox = await run(ix.get(ITowerInboxTool), {});
+    expect(towerInbox.output).toContain('from: w1');
   });
 
   it('maps a TowerProtocolError (unknown recipient) to an isError result', async () => {

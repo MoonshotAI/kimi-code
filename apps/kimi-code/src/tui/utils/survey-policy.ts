@@ -43,7 +43,7 @@ export interface SharedArmGateInput {
   readonly terminalHeight: number;
   readonly feedbackSurveyDisabled: boolean;
   readonly telemetryDisabled: boolean;
-  readonly currentModel: string;
+  readonly kfcModelId: string | undefined;
   readonly lastUserMessageStartsOrderedList: boolean;
 }
 
@@ -81,10 +81,10 @@ export type SurveyGateVerdict =
       readonly longContextRollConsumed?: boolean;
     };
 
-function modelGatePasses(onForModels: readonly string[], currentModel: string): boolean {
+function modelGatePasses(onForModels: readonly string[], kfcModelId: string | undefined): boolean {
   if (onForModels.length === 0) return false;
   if (onForModels.includes('*')) return true;
-  return onForModels.includes(currentModel);
+  return kfcModelId !== undefined && onForModels.includes(kfcModelId);
 }
 
 function evaluateSessionArm(input: SurveyGateInput): SurveyGateVerdict {
@@ -113,7 +113,7 @@ function evaluateSessionArm(input: SurveyGateInput): SurveyGateVerdict {
   }
   if (session.feedbackSurveyDisabled) return { show: false, reason: 'feature-disabled' };
   if (session.telemetryDisabled) return { show: false, reason: 'telemetry-disabled' };
-  if (!modelGatePasses(config.on_for_models, session.currentModel)) {
+  if (!modelGatePasses(config.on_for_models, session.kfcModelId)) {
     return { show: false, reason: 'model-gated' };
   }
   if (session.msSinceLastShown === undefined) {
@@ -166,7 +166,7 @@ export function evaluateLongContextArm(input: SurveyGateInput): SurveyGateVerdic
   }
   if (longContext.feedbackSurveyDisabled) return { show: false, reason: 'feature-disabled' };
   if (longContext.telemetryDisabled) return { show: false, reason: 'telemetry-disabled' };
-  if (!modelGatePasses(config.on_for_models, longContext.currentModel)) {
+  if (!modelGatePasses(config.on_for_models, longContext.kfcModelId)) {
     return { show: false, reason: 'model-gated' };
   }
   if (!(config.long_context_survey_threshold > 0)) {
@@ -344,6 +344,7 @@ export interface SurveyEventCoreFields {
 
 export interface SurveyEventEnvironmentFields {
   readonly current_model: string;
+  readonly kfc_model_id?: string;
   readonly user_turn_count: number;
   readonly cumulative_tokens: number;
   readonly virtual_context_tokens: number;
