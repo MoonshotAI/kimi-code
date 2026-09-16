@@ -141,6 +141,9 @@ importers:
       jimp:
         specifier: ^1.6.1
         version: 1.6.1
+      lovely-mermaid:
+        specifier: 0.3.3
+        version: 0.3.3
       pathe:
         specifier: ^2.0.3
         version: 2.0.3
@@ -6853,6 +6856,10 @@ packages:
   loose-envify@1.4.0:
     resolution: {integrity: sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q==}
     hasBin: true
+
+  lovely-mermaid@0.3.3:
+    resolution: {integrity: sha512-EMLJS934qwt2MLO/a5o+T/89HGbuXZPwmCpHIhHO+DVrm+y5tHlEHgpZzlC2o4yW/rFPHRFO9xSMafzqH4wH5A==}
+    engines: {node: '>=18'}
 
   lowlight@1.20.0:
     resolution: {integrity: sha512-8Ktj+prEb1RoCPkEOrPMYUN/nCggB7qAWe3a7OpMjWQkh3l2RD5wKRQ+o8Q8YuI9RG/xs95waaI/E6ym/7NsTw==}
@@ -15592,6 +15599,8 @@ snapshots:
   loose-envify@1.4.0:
     dependencies:
       js-tokens: 4.0.0
+
+  lovely-mermaid@0.3.3: {}
 
   lowlight@1.20.0:
     dependencies:
