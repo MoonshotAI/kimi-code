@@ -1,4 +1,5 @@
 import type { TranscriptSkillActivation, TranscriptUserOrigin } from '../model/frame';
+import type { TurnOrigin } from '../model/turn';
 
 export function projectTranscriptUserOrigin(origin: unknown): TranscriptUserOrigin | undefined {
   const candidate = origin as {
@@ -39,4 +40,8 @@ export function projectTranscriptUserOrigin(origin: unknown): TranscriptUserOrig
     clientMetadata: clientMetadata.length > 0 ? clientMetadata : undefined,
     skillActivations: skillActivations.length > 0 ? skillActivations : undefined,
   };
+}
+
+export function projectTranscriptUserTurnOrigin(origin: unknown): TurnOrigin {
+  return { kind: 'user', payload: projectTranscriptUserOrigin(origin) ?? { kind: 'user' } };
 }

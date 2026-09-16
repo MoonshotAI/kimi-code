@@ -359,6 +359,7 @@ export class TranscriptService {
         ? undefined
         : loop.promptHandle(snapshot.activePromptId);
     if (activeHandle !== undefined) {
+      const activeOrigin = activeHandle.message.origin;
       ops.push({
         op: 'prompt.upsert',
         prompt: {
@@ -367,7 +368,7 @@ export class TranscriptService {
           userMessageId: activeHandle.userMessageId,
           content: projectPromptContentParts(activeHandle.message.content),
           createdAt: activeHandle.createdAt,
-          clientMetadata: activeHandle.message.origin?.kind === 'user' ? activeHandle.message.origin.clientMetadata : undefined,
+          clientMetadata: activeOrigin?.kind === 'user' || activeOrigin?.kind === 'skill_activation' ? activeOrigin.clientMetadata : undefined,
         },
       });
     }

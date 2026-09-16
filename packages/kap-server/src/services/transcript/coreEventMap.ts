@@ -62,6 +62,7 @@ import type {
 } from '@moonshot-ai/agent-core-v2/session/subagent/mirrorAgentRun';
 import {
   projectTranscriptUserOrigin,
+  projectTranscriptUserTurnOrigin,
   type AgentRef,
   type AgentUsageMeta,
   type StepHeader,
@@ -1610,7 +1611,7 @@ function mapTurnOrigin(origin: unknown): TurnOrigin {
   const kind = typeof candidate?.kind === 'string' ? candidate.kind : undefined;
   switch (kind) {
     case 'user':
-      return { kind: 'user', payload: origin };
+      return projectTranscriptUserTurnOrigin(origin);
     case 'cron_job':
     case 'cron_missed': {
       const jobId = (candidate as { jobId?: unknown }).jobId;

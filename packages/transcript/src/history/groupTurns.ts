@@ -4,7 +4,7 @@ import type { TranscriptFrame, TranscriptUserOrigin } from '../model/frame';
 import type { TranscriptItem, TranscriptMarker } from '../model/item';
 import type { TurnOrigin } from '../model/turn';
 import { daemonFileRefFromPairingPart } from '../contract/mediaRef';
-import { projectTranscriptUserOrigin } from '../contract/origin';
+import { projectTranscriptUserOrigin, projectTranscriptUserTurnOrigin } from '../contract/origin';
 
 export type HistoryMediaSource =
   | { readonly kind: 'url'; readonly url: string }
@@ -463,7 +463,7 @@ function mapOrigin(message: HistoryMessage): TurnOrigin {
     case 'shell_command':
       return { kind: 'user', payload: origin };
     case 'user':
-      return { kind: 'user', payload: origin };
+      return projectTranscriptUserTurnOrigin(origin);
     case undefined:
       return { kind: 'user' };
     default:

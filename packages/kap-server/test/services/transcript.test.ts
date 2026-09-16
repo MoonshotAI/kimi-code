@@ -2423,6 +2423,26 @@ describe('AgentTranscriptProjector', () => {
     expect(turnOps('t6', tx.getItems()).steps[0]!.frames).toHaveLength(0);
   });
 
+  it('projects a live user turn payload without server-local paths', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const clientMetadata = [{ display_text: 'Visible prompt' }];
+    tx.apply(projector.map(ev({
+      type: 'turn.started',
+      turnId: 9,
+      prompt: 'visible prompt',
+      origin: {
+        kind: 'user',
+        clientMetadata,
+        skillActivations: [{ activationId: 'a1', skillName: 'deploy', skillArgs: 'now', skillPath: '/private/deploy/SKILL.md' }],
+        attachments: [{ name: 'notes.pdf', mediaType: 'application/pdf', size: 42, path: '/private/notes.pdf' }],
+      },
+    })));
+    const turn = turnOps('t9', tx.getItems());
+    expect(turn.origin).toEqual({ kind: 'user', payload: { kind: 'user', clientMetadata, skillActivations: [{ skillName: 'deploy', skillArgs: 'now' }] } });
+    expect(JSON.stringify(turn)).not.toContain('/private/');
+  });
+
   it('keeps client metadata on a steered slash skill frame', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');

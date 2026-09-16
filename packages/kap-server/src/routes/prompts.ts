@@ -508,7 +508,7 @@ export function projectPromptSnapshot(prompt: {
     status,
     content: projectPromptContentParts(content),
     created_at: prompt.createdAt,
-    metadata: origin?.kind === 'user' ? origin.clientMetadata?.[0] : undefined,
+    metadata: origin?.kind === 'user' || origin?.kind === 'skill_activation' ? origin.clientMetadata?.[0] : undefined,
   };
 }
 

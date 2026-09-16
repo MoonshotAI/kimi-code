@@ -493,6 +493,48 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(plain.content).toEqual([{ type: 'text', text: 'plain question' }]);
   });
 
+  it('projects client metadata for an active skill activation prompt', () => {
+    const metadata = { display_text: 'Save button', kimi_code_composer: { version: 1 } };
+    const projected = projectPromptSnapshot({
+      id: 'msg_skill',
+      userMessageId: 'msg_skill',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      state: 'running',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'User activated the skill' }],
+        toolCalls: [],
+        origin: { kind: 'skill_activation', activationId: 'act-1', skillName: 'update-config', trigger: 'user-slash', clientMetadata: [metadata] },
+      },
+    });
+    expect(projected.metadata).toEqual(metadata);
+  });
+
+  it('backfills active skill activation metadata on the first transcript connection', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const session = getLiveSessionById(server!.core.accessor, id)!;
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    const metadata = [{ display_text: 'Save button', kimi_code_composer: { version: 1 } }];
+    const loop = agent.accessor.get(IAgentLoopService);
+    const handle = {
+      id: 'active-skill',
+      userMessageId: 'active-skill',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      message: { role: 'user', content: [{ type: 'text', text: 'User activated the skill' }], toolCalls: [], origin: { kind: 'skill_activation', activationId: 'act-1', skillName: 'update-config', trigger: 'user-slash', clientMetadata: metadata } },
+    };
+    const listing = vi.spyOn(loop, 'snapshot').mockReturnValue({ ...loop.snapshot(), activePromptId: 'active-skill', queue: [] });
+    const lookup = vi.spyOn(loop, 'promptHandle').mockImplementation((promptId) => (promptId === 'active-skill' ? handle : undefined) as never);
+    try {
+      const result = await call<{ prompts: unknown[] }>('GET', `/api/v1/sessions/${id}/transcript?agent_id=main`);
+      expect(result.body.code).toBe(0);
+      expect(result.body.data.prompts).toContainEqual(expect.objectContaining({ promptId: 'active-skill', status: 'running', clientMetadata: metadata }));
+    } finally {
+      lookup.mockRestore();
+      listing.mockRestore();
+    }
+  });
+
   it('backfills queued prompt metadata on the first transcript connection', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);

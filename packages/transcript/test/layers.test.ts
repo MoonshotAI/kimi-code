@@ -27,6 +27,24 @@ describe('client metadata in transcript user origins', () => {
     expect(projectTranscriptUserOrigin({ ...origin, trigger: 'model-tool' })).toBeUndefined();
   });
 
+  it('rebuilds a user turn payload without server-local paths', () => {
+    const clientMetadata = [{ display_text: 'Visible prompt' }];
+    const origin = {
+      kind: 'user',
+      clientMetadata,
+      skillActivations: [{ activationId: 'a1', skillName: 'deploy', skillArgs: 'now', skillPath: '/private/deploy/SKILL.md' }],
+      attachments: [{ name: 'notes.pdf', mediaType: 'application/pdf', size: 42, path: '/private/notes.pdf' }],
+    };
+    const snapshot = groupMessagesIntoSnapshot([
+      { role: 'user', content: [{ type: 'text', text: 'rendered skill' }, { type: 'text', text: 'visible prompt' }], toolCalls: [], origin },
+      { role: 'assistant', content: [{ type: 'text', text: 'reply' }], toolCalls: [] },
+    ]);
+    const turn = snapshot.items.find((item) => item.kind === 'turn');
+    expect(turn?.origin).toEqual({ kind: 'user', payload: { kind: 'user', clientMetadata, skillActivations: [{ skillName: 'deploy', skillArgs: 'now' }] } });
+    expect(JSON.stringify(turn)).not.toContain('/private/');
+    expect(JSON.stringify(snapshot.attachments)).not.toContain('/private/');
+  });
+
   it('keeps opening prompt metadata when rebuilding history turns', () => {
     const clientMetadata = [{ kimi_code_composer: { version: 1, doc: { type: 'doc' } } }];
     const origin = { kind: 'user', clientMetadata };
