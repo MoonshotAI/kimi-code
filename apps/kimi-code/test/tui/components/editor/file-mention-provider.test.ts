@@ -432,7 +432,7 @@ describe('FileMentionProvider', () => {
     expect(result).not.toBeNull();
     expect(result!.prefix).toBe('@"ac');
     expect(result!.items.map((item) => item.value)).toEqual(
-      expect.arrayContaining(['@actions/', '@activity/']),
+      expect.arrayContaining(['@"actions/"', '@"activity/"']),
     );
   });
 
@@ -571,11 +571,27 @@ describe('FileMentionProvider', () => {
         [line],
         0,
         line.length,
-        { value: '@actions/', label: 'actions/' },
+        { value: '@"actions/"', label: 'actions/' },
         '@"a',
       );
 
-      expect(result.lines[0]).toBe('@actions/');
+      expect(result.lines[0]).toBe('@"actions/"');
+      expect(result.cursorCol).toBe('@"actions/'.length);
+    });
+
+    it('consumes the closing quote after the cursor for a quoted fallback item', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = '@"ac"';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        4,
+        { value: '@"actions/"', label: 'actions/' },
+        '@"ac',
+      );
+
+      expect(result.lines[0]).toBe('@"actions/"');
+      expect(result.cursorCol).toBe('@"actions/'.length);
     });
 
     it('replaces a quoted @ token that contains spaces when the cached prefix is stale', () => {

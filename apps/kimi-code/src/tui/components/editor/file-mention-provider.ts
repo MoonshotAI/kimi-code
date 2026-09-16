@@ -450,7 +450,8 @@ function getFsMentionSuggestions(
 ): AutocompleteSuggestions | null {
   if (signal.aborted) return null;
 
-  const query = atPrefix.startsWith('@"') ? atPrefix.slice(2) : atPrefix.slice(1);
+  const isQuotedPrefix = atPrefix.startsWith('@"');
+  const query = isQuotedPrefix ? atPrefix.slice(2) : atPrefix.slice(1);
   const candidates = collectFsMentionCandidates(workDir, additionalDirs, signal);
   if (candidates.length === 0 || signal.aborted) return null;
 
@@ -459,7 +460,7 @@ function getFsMentionSuggestions(
 
   return {
     prefix: atPrefix,
-    items: ranked.map(toMentionItem),
+    items: ranked.map((candidate) => toMentionItem(candidate, isQuotedPrefix)),
   };
 }
 
@@ -568,9 +569,10 @@ function scoreCandidate(candidate: FsMentionCandidate, lowerQuery: string): numb
   return score;
 }
 
-function toMentionItem(candidate: FsMentionCandidate): AutocompleteItem {
+function toMentionItem(candidate: FsMentionCandidate, isQuotedPrefix: boolean): AutocompleteItem {
   const valuePath = candidate.isDirectory ? `${candidate.path}/` : candidate.path;
-  const value = valuePath.includes(' ') ? `@"${valuePath}"` : `@${valuePath}`;
+  const value =
+    isQuotedPrefix || valuePath.includes(' ') ? `@"${valuePath}"` : `@${valuePath}`;
   const label = `${basename(candidate.path)}${candidate.isDirectory ? '/' : ''}`;
   return {
     value,
