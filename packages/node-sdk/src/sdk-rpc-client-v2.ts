@@ -240,7 +240,7 @@ import type { ExperimentalFeatureState } from '#/flag';
 import { KimiHarness } from '#/kimi-harness';
 import type { BeginGlobalMcpServerAuthResult } from '#/mcp';
 import { limitAgentReplayByTurns } from '#/replay';
-import { noopTelemetryClient, withTelemetryContext, type TelemetryContextPatch } from '#/telemetry';
+import { noopTelemetryClient, withTelemetryContext } from '#/telemetry';
 import {
   SDKRpcClientBase,
   type ActivatePluginCommandRpcInput,
@@ -561,15 +561,13 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         if (this.engineSessionStartedSuppressed && record.event === 'session_started') return;
         const sessionId = record.context['session_id'];
         const model = record.context['model'];
-        const context: TelemetryContextPatch = {
-          sessionId: typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : undefined,
-          model: typeof model === 'string' && model.length > 0 ? model : undefined,
-        };
-        if (context.sessionId !== undefined || context.model !== undefined) {
-          withTelemetryContext(client, context).track(record.event, record.properties);
-          return;
-        }
-        client.track(record.event, record.properties);
+        // Always scope — an explicit null clears the host's ambient context,
+        // so app-scoped engine events without a session/model are never
+        // misattributed to whatever conversation is open.
+        withTelemetryContext(client, {
+          sessionId: typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : null,
+          model: typeof model === 'string' && model.length > 0 ? model : null,
+        }).track(record.event, record.properties);
       },
     });
     void this.configReady.then(() => {

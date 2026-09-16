@@ -37,7 +37,7 @@ export class EventSink {
   private buffer: EnrichedTelemetryEvent[] = [];
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private activeBatch: readonly EnrichedTelemetryEvent[] | null = null;
-  private flushChain: Promise<void> = Promise.resolve();
+  private tail: Promise<void> = Promise.resolve();
 
   constructor(options: EventSinkOptions) {
     this.transport = options.transport;
@@ -88,44 +88,51 @@ export class EventSink {
   }
 
   async flush(signal?: AbortSignal): Promise<void> {
-    // Serialize the complete flush operation: every caller joins the previous
-    // flush — including its send — before deciding there is nothing to send,
-    // so concurrent waiters can never strand a batch mid-flight. The join
-    // honors the caller's abort signal: the previous send started without it,
-    // and a shutdown timeout must cap the wait regardless.
-    const previous = this.flushChain;
-    let release!: () => void;
-    this.flushChain = new Promise<void>((resolve) => {
-      release = resolve;
+    // The chain advances by operation, not by caller: this flush's link
+    // settles only after the previous send settles and this flush's own send
+    // (if any) completes — a caller whose join aborts never releases its
+    // successors early.
+    const previous = this.tail;
+    let settleSelf!: () => void;
+    const self = new Promise<void>((resolve) => {
+      settleSelf = resolve;
     });
+    this.tail = previous.then(
+      () => self,
+      () => self,
+    );
+
+    // The caller's join of the previous operation, bounded by its signal.
+    let joinAborted = false;
     try {
-      try {
-        await raceWithSignal(previous, signal);
-      } catch (error) {
-        // The timeout gave up on a send that still owns its batch: spool that
-        // batch to disk so host unload cannot lose it, then let the caller's
-        // fallback persist whatever remains in the buffer. The in-flight send
-        // may still succeed afterwards — a rare duplicate beats a lost batch.
-        if (this.activeBatch !== null) {
-          try {
-            this.transport.saveToDisk(this.activeBatch);
-          } catch {
-            // Telemetry must never make shutdown fail.
-          }
+      await raceWithSignal(previous, signal);
+    } catch (error) {
+      joinAborted = true;
+      // The timeout gave up on a send that still owns its batch: spool that
+      // batch to disk so host unload cannot lose it. The send may still
+      // succeed afterwards — a rare duplicate beats a lost batch.
+      if (this.activeBatch !== null) {
+        try {
+          this.transport.saveToDisk(this.activeBatch);
+        } catch {
+          // Telemetry must never make shutdown fail.
         }
-        throw error;
       }
-      if (this.buffer.length === 0) return;
-      const events = this.buffer;
-      this.buffer = [];
-      this.activeBatch = events;
-      try {
-        await this.transport.send(events, signal);
-      } finally {
-        this.activeBatch = null;
-      }
+      settleSelf();
+      throw error;
+    }
+    if (this.buffer.length === 0) {
+      settleSelf();
+      return;
+    }
+    const events = this.buffer;
+    this.buffer = [];
+    this.activeBatch = events;
+    try {
+      await this.transport.send(events, signal);
     } finally {
-      release();
+      this.activeBatch = null;
+      settleSelf();
     }
   }
 
