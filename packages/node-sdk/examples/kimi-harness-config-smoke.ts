@@ -9,7 +9,10 @@ import { smokeIdentityFromEnv } from './runtime-smoke-helpers';
 async function main(): Promise<void> {
   const homeDir = await mkdtemp(join(tmpdir(), 'kimi-harness-config-home-'));
   const harness = createKimiHarness({
-  telemetry: false, homeDir, identity: smokeIdentityFromEnv() });
+    telemetry: false,
+    homeDir,
+    identity: smokeIdentityFromEnv(),
+  });
 
   const initial = await harness.getConfig();
   if (Object.keys(initial.providers).length > 0) {

@@ -53,7 +53,7 @@ describe('KimiHarness.listSessions', () => {
   it('rejects whitespace-only workDir with request.work_dir_required', async () => {
     const homeDir = await makeTempDir();
     const harness = createKimiHarness({
-  telemetry: false,
+      telemetry: false,
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -73,7 +73,7 @@ describe('KimiHarness.listSessions', () => {
     const workDir = await makeTempDir();
     const otherWorkDir = await makeTempDir();
     const harness = createKimiHarness({
-  telemetry: false,
+      telemetry: false,
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -98,7 +98,7 @@ describe('KimiHarness.listSessions', () => {
     const workDir = join(root, 'Workspace With Spaces', '项目');
     await mkdir(workDir, { recursive: true });
     const harness = createKimiHarness({
-  telemetry: false,
+      telemetry: false,
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -117,7 +117,7 @@ describe('KimiHarness.listSessions', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({
-  telemetry: false,
+      telemetry: false,
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -139,7 +139,7 @@ describe('KimiHarness.listSessions', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({
-  telemetry: false,
+      telemetry: false,
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -163,7 +163,10 @@ describe('SDKRpcClientV2.listSessionsPage', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const client = new SDKRpcClientV2({
-  telemetry: false, homeDir, identity: TEST_IDENTITY });
+      telemetry: false,
+      homeDir,
+      identity: TEST_IDENTITY,
+    });
 
     try {
       for (let i = 0; i < 5; i += 1) {
@@ -202,7 +205,10 @@ describe('SDKRpcClientV2.listSessionsPage', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const client = new SDKRpcClientV2({
-  telemetry: false, homeDir, identity: TEST_IDENTITY });
+      telemetry: false,
+      homeDir,
+      identity: TEST_IDENTITY,
+    });
 
     try {
       const created = await client.createSession({ id: 'ses_cursor_probe', workDir });
@@ -223,7 +229,10 @@ describe('SDKRpcClientV2.listSessionsPage', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const client = new SDKRpcClientV2({
-  telemetry: false, homeDir, identity: TEST_IDENTITY });
+      telemetry: false,
+      homeDir,
+      identity: TEST_IDENTITY,
+    });
 
     try {
       for (let i = 0; i < 3; i += 1) {
@@ -279,7 +288,10 @@ describe('SDKRpcClientV2 search-index separation', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const client = new SDKRpcClientV2({
-  telemetry: false, homeDir, identity: TEST_IDENTITY });
+      telemetry: false,
+      homeDir,
+      identity: TEST_IDENTITY,
+    });
 
     try {
       const created = await client.createSession({ id: 'ses_search_sep_off', workDir });
@@ -305,7 +317,10 @@ describe('SDKRpcClientV2 search-index separation', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const client = new SDKRpcClientV2({
-  telemetry: false, homeDir, identity: TEST_IDENTITY });
+      telemetry: false,
+      homeDir,
+      identity: TEST_IDENTITY,
+    });
 
     try {
       const created = await client.createSession({ id: 'ses_search_sep_on', workDir });

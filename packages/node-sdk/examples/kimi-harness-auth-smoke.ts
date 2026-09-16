@@ -18,7 +18,10 @@ async function main(): Promise<void> {
   const prompt =
     process.env['KIMI_SDK_AUTH_SMOKE_PROMPT'] ?? 'Reply with exactly: Kimi SDK auth smoke ok';
   const harness = createKimiHarness({
-  telemetry: false, homeDir, identity: smokeIdentityFromEnv() });
+    telemetry: false,
+    homeDir,
+    identity: smokeIdentityFromEnv(),
+  });
 
   process.stdout.write(`home: ${homeDir}\n`);
   process.stdout.write(`workDir: ${workDir}\n`);

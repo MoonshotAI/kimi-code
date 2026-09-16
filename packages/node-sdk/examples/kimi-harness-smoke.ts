@@ -11,7 +11,7 @@ async function main(): Promise<void> {
   const homeDir = await mkdtemp(join(tmpdir(), 'kimi-harness-home-'));
 
   const harness = createKimiHarness({
-  telemetry: false,
+    telemetry: false,
     identity: smokeIdentityFromEnv(),
     homeDir,
   });

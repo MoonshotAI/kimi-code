@@ -46,7 +46,7 @@ afterEach(async () => {
 describe.skipIf(!ENABLED)('local logging export e2e', () => {
   it('exports the main wire and global log by default, and allows skipping global log', async () => {
     const harness = createKimiHarness({
-  telemetry: false,
+      telemetry: false,
       homeDir,
       identity: createKimiCodeHostIdentity('0.1.1'),
     });

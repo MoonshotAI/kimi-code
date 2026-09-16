@@ -678,7 +678,7 @@ describe('FileMentionProvider', () => {
 
       expect(result).not.toBeNull();
       expect(result!.prefix).toBe('/');
-      expect(result!.items.map((item) => item.value).sort()).toEqual([
+      expect(result!.items.map((item) => item.value).toSorted()).toEqual([
         'skill:review',
         'skill:security',
       ]);
@@ -699,7 +699,7 @@ describe('FileMentionProvider', () => {
       const result = await provider.getSuggestions(['first line', '/'], 1, 1, { signal: ctrl() });
 
       expect(result).not.toBeNull();
-      expect(result!.items.map((item) => item.value).sort()).toEqual([
+      expect(result!.items.map((item) => item.value).toSorted()).toEqual([
         'skill:review',
         'skill:security',
       ]);

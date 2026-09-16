@@ -57,7 +57,7 @@ function fakeInitialAppState(): AppState {
 
 function stripAnsi(s: string): string {
   // eslint-disable-next-line no-control-regex
-  return s.replace(/\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07/g, '');
+  return s.replaceAll(/\x1B\[[0-9;?]*[a-zA-Z]|\x1B\][^\x07]*\x07/g, '');
 }
 
 const LONG_MARKDOWN = Array.from(
@@ -154,15 +154,15 @@ describe('fullscreen layout', () => {
     // Zones anchor every user/assistant message, so the nearest previous zone
     // below the fold is the current turn's assistant message, then the user
     // message that started the turn.
-    vt.sendInput('\x1b[1;6A'); // ctrl+shift+up = previous prompt
+    vt.sendInput('\x1B[1;6A'); // ctrl+shift+up = previous prompt
     await vt.waitForRender();
     expect(topRows()[1]).toContain('回答二');
 
-    vt.sendInput('\x1b[1;6A');
+    vt.sendInput('\x1B[1;6A');
     await vt.waitForRender();
     expect(topRows()[1]).toContain('第二轮提问');
 
-    vt.sendInput('\x1b[1;6B'); // ctrl+shift+down = next prompt
+    vt.sendInput('\x1B[1;6B'); // ctrl+shift+down = next prompt
     await vt.waitForRender();
     expect(topRows()[1]).toContain('回答二');
 

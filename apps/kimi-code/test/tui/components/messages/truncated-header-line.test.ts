@@ -88,14 +88,14 @@ describe('renderHeaderContent', () => {
   });
 
   it('keeps ANSI escape sequences atomic and zero-width when cutting', () => {
-    const colored = '\x1b[32mabcdef\x1b[0mghijkl';
+    const colored = '\x1B[32mabcdef\x1B[0mghijkl';
     // 2 (head) + 5 for the middle: the whole opening sequence plus 4 visible
     // cells, then the ellipsis. The sequence is never split or measured.
     const line = renderHeaderContent(
       { head: 'H ', flex: { text: colored, keep: 'head' }, tail: '' },
       7,
     );
-    expect(line).toBe('H \x1b[32mabcd…');
+    expect(line).toBe('H \x1B[32mabcd…');
     expect(visibleWidth(line)).toBeLessThanOrEqual(7);
   });
 

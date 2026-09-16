@@ -142,7 +142,7 @@ describe('handleSessionList', () => {
     const { deps, captured } = stubDeps([
       summary({
         id: 'ses_1',
-        title: 'line one\nline two \u001b[31mred\u001b[0m',
+        title: 'line one\nline two \u001B[31mred\u001B[0m',
         workDir: '/repo\nevil',
       }),
     ]);
@@ -151,7 +151,7 @@ describe('handleSessionList', () => {
 
     const rows = captured.out.trimEnd().split('\n');
     expect(rows).toHaveLength(1);
-    expect(rows[0]).not.toContain('\u001b');
+    expect(rows[0]).not.toContain('\u001B');
     expect(rows[0]).toContain('line one line two  [31mred [0m');
     expect(rows[0]).toContain('/repo evil');
   });

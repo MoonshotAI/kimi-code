@@ -113,7 +113,7 @@ describe('UserMessageComponent', () => {
 
     const lines = component.render(80);
     expect(lines[0]).toMatch(/^\u001B\]133;A\u0007/);
-    expect(lines[lines.length - 1]).toMatch(/^\u001B\]133;B\u0007\u001B\]133;C\u0007/);
+    expect(lines.at(-1)).toMatch(/^\u001B\]133;B\u0007\u001B\]133;C\u0007/);
 
     const cached = component.render(80);
     expect(cached[0]).toBe(lines[0]);

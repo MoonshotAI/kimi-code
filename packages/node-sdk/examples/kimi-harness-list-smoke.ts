@@ -12,7 +12,7 @@ async function main(): Promise<void> {
   const workDirA = await mkdtemp(join(tmpdir(), 'kimi-harness-list-work-a-'));
   const workDirB = await mkdtemp(join(tmpdir(), 'kimi-harness-list-work-b-'));
   const harness = createKimiHarness({
-  telemetry: false,
+    telemetry: false,
     identity: smokeIdentityFromEnv(),
     homeDir,
   });

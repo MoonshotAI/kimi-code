@@ -8,7 +8,10 @@ const label = process.argv[5] ?? 'P';
 
 const identity: any = { productName: 'kimi-code-cli', version: '0.0.1-test', platform: 'kimi_code_cli' };
 const h = createKimiHarness({
-  telemetry: false, identity, homeDir });
+  telemetry: false,
+  identity,
+  homeDir,
+});
 
 try {
   const s = await h.createSession({ workDir, id: sessionId, model: 'kimi-code/kimi-for-coding' });

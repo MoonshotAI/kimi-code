@@ -7,9 +7,15 @@ const sessionId = process.argv[4]!;
 
 const identity: any = { productName: 'kimi-code-cli', version: '0.0.1-test', platform: 'kimi_code_cli' };
 const harnessA = createKimiHarness({
-  telemetry: false, identity, homeDir });
+  telemetry: false,
+  identity,
+  homeDir,
+});
 const harnessB = createKimiHarness({
-  telemetry: false, identity, homeDir });
+  telemetry: false,
+  identity,
+  homeDir,
+});
 
 async function run(label: string, h: KimiHarness): Promise<void> {
   try {

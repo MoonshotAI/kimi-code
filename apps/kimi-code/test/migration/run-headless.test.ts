@@ -117,7 +117,7 @@ describe('runHeadlessMigrate', () => {
     const bucket = createHash('md5').update(workdir).digest('hex');
     await writeFile(
       join(sourceHome(), 'sessions', bucket, '11111111-aaaa-4bbb-8ccc-111111111111', 'context.jsonl'),
-      '"broken\x00line\nnot json at all\n',
+      '"broken\u0000line\nnot json at all\n',
       'utf-8',
     );
     const code = await runHeadlessMigrate(

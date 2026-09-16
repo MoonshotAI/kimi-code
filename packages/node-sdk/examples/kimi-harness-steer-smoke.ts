@@ -11,7 +11,9 @@ const STEER = 'Also include cancellation and permission-mode checks.';
 
 async function main(): Promise<void> {
   const harness = createKimiHarness({
-  telemetry: false, identity: smokeIdentityFromEnv() });
+    telemetry: false,
+    identity: smokeIdentityFromEnv(),
+  });
 
   try {
     const session = await createConfiguredSession(harness);

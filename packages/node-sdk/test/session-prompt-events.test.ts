@@ -139,7 +139,7 @@ describe('Session.prompt events', () => {
       },
     );
     let harness = createKimiHarness({
-  telemetry: false,
+      telemetry: false,
       identity: TEST_IDENTITY,
       homeDir,
       uiCapabilities: ['update_panel'],
@@ -156,7 +156,11 @@ describe('Session.prompt events', () => {
           unsubscribe();
           await harness.close();
           harness = createKimiHarness({
-  telemetry: false, identity: TEST_IDENTITY, homeDir, uiCapabilities: [] });
+            telemetry: false,
+            identity: TEST_IDENTITY,
+            homeDir,
+            uiCapabilities: [],
+          });
           session = await harness.resumeSession({ id: 'ses_notify_continue' });
           unsubscribe = session.onEvent((event) => events.push(event));
         }
@@ -189,7 +193,10 @@ describe('Session.prompt events', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({
-  telemetry: false, identity: TEST_IDENTITY, homeDir });
+      telemetry: false,
+      identity: TEST_IDENTITY,
+      homeDir,
+    });
 
     try {
       await configureFakeProvider(harness);
@@ -222,7 +229,7 @@ describe('Session.prompt events', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({
-  telemetry: false,
+      telemetry: false,
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -287,7 +294,7 @@ describe('Session.prompt events', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({
-  telemetry: false,
+      telemetry: false,
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -333,7 +340,7 @@ describe('Session.prompt events', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({
-  telemetry: false,
+      telemetry: false,
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -361,7 +368,7 @@ describe('Session.prompt events', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({
-  telemetry: false,
+      telemetry: false,
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -408,7 +415,7 @@ describe('Session.prompt events', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({
-  telemetry: false,
+      telemetry: false,
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -443,7 +450,10 @@ describe('Session.prompt events', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({
-  telemetry: false, identity: TEST_IDENTITY, homeDir });
+      telemetry: false,
+      identity: TEST_IDENTITY,
+      homeDir,
+    });
 
     try {
       await configureFakeProvider(harness);
@@ -479,7 +489,7 @@ describe('Session.prompt events', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({
-  telemetry: false,
+      telemetry: false,
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -555,7 +565,10 @@ describe('Session.prompt events', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({
-  telemetry: false, identity: TEST_IDENTITY, homeDir });
+      telemetry: false,
+      identity: TEST_IDENTITY,
+      homeDir,
+    });
 
     try {
       await configureFakeProvider(harness);
@@ -588,7 +601,10 @@ describe('Session.prompt events', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({
-  telemetry: false, identity: TEST_IDENTITY, homeDir });
+      telemetry: false,
+      identity: TEST_IDENTITY,
+      homeDir,
+    });
 
     try {
       await configureFakeProvider(harness);
@@ -631,7 +647,10 @@ describe('Session.prompt events', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({
-  telemetry: false, identity: TEST_IDENTITY, homeDir });
+      telemetry: false,
+      identity: TEST_IDENTITY,
+      homeDir,
+    });
 
     try {
       await configureFakeProvider(harness);
@@ -697,7 +716,10 @@ describe('Session.prompt events', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({
-  telemetry: false, identity: TEST_IDENTITY, homeDir });
+      telemetry: false,
+      identity: TEST_IDENTITY,
+      homeDir,
+    });
 
     try {
       await configureFakeProvider(harness);
@@ -721,7 +743,10 @@ describe('Session.prompt events', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({
-  telemetry: false, identity: TEST_IDENTITY, homeDir });
+      telemetry: false,
+      identity: TEST_IDENTITY,
+      homeDir,
+    });
 
     try {
       await configureFakeProvider(harness);
@@ -742,7 +767,10 @@ describe('Session.prompt events', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({
-  telemetry: false, identity: TEST_IDENTITY, homeDir });
+      telemetry: false,
+      identity: TEST_IDENTITY,
+      homeDir,
+    });
 
     try {
       const source = await harness.createSession({ id: 'ses_turn_fork_negative', workDir });
@@ -762,7 +790,10 @@ describe('Session.prompt events', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({
-  telemetry: false, identity: TEST_IDENTITY, homeDir });
+      telemetry: false,
+      identity: TEST_IDENTITY,
+      homeDir,
+    });
 
     try {
       await configureFakeProvider(harness);
@@ -792,7 +823,7 @@ describe('Session.prompt events', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({
-  telemetry: false,
+      telemetry: false,
       identity: TEST_IDENTITY,
       homeDir,
     });
