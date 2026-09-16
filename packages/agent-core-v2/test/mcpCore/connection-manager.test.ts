@@ -22,6 +22,7 @@ import { Error2 } from '#/errors';
 import { KIMI_MCP_CLIENT_NAME } from '#/mcpCore/client-shared';
 import { McpConnectionManager, type McpConnectionManagerOptions, type McpServerEntry } from '#/mcpCore/connection-manager';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
+import type { StoredMcpOAuthTokens } from '#/mcpCore/oauth/provider';
 import type { MCPClient } from '#/mcpCore/types';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
@@ -1169,11 +1170,13 @@ describe('McpConnectionManager', () => {
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
     } satisfies OAuthClientInformationFull);
-    await provider.saveTokens({
+    const revokedTokens: StoredMcpOAuthTokens = {
       access_token: 'revoked-access-token',
       refresh_token: 'revoked-refresh-token',
       token_type: 'Bearer',
-    } satisfies OAuthTokens);
+      obtained_at: Date.now() - 60_000,
+    };
+    await provider.saveTokens(revokedTokens);
     const cm = createManager({ oauthService });
     try {
       expect(await oauthService.hasTokens('hyper', server.url)).toBe(true);
@@ -1195,6 +1198,78 @@ describe('McpConnectionManager', () => {
     } finally {
       await cm.shutdown();
       await server.close();
+    }
+  }, 15000);
+
+  it('preserves a freshly minted grant instead of flipping into needs-auth', async () => {
+    const server = await startAnonymousDiscoveryHttpMcpServer();
+    const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+    const cm = createManager({ oauthService });
+    try {
+      await cm.connectAll({
+        hyper: { transport: 'http', url: server.url, startupTimeoutMs: 5_000 },
+      });
+      expect(cm.get('hyper')?.status).toBe('connected');
+      await oauthService.getProvider('hyper', server.url).saveTokens({
+        access_token: 'fresh-access-token',
+        token_type: 'Bearer',
+      });
+      const client = cm.resolved('hyper')?.client;
+      if (client === undefined) throw new Error('expected a connected client');
+      const error = Object.assign(new Error('HTTP 401'), { code: 401 });
+      await expect(cm.markNeedsAuth('hyper', error, client)).resolves.toBe(false);
+      expect(await oauthService.hasTokens('hyper', server.url)).toBe(true);
+      expect(cm.get('hyper')?.status).toBe('connected');
+    } finally {
+      await cm.shutdown();
+      await server.close();
+    }
+  }, 15000);
+
+  it('does not emit a stale needs-auth when a reconnect overtakes the credential invalidation', async () => {
+    const connect = vi.spyOn(Client.prototype, 'connect').mockResolvedValue();
+    const listTools = vi.spyOn(Client.prototype, 'listTools').mockResolvedValue({ tools: [] });
+    const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+    await oauthService.getProvider('hyper', 'https://example.test/mcp').saveTokens({
+      access_token: 'stale-access-token',
+      token_type: 'Bearer',
+      obtained_at: Date.now() - 60_000,
+    } as StoredMcpOAuthTokens);
+    const cm = createManager({ oauthService });
+    const seen: Array<{ name: string; status: McpServerEntry['status'] }> = [];
+    cm.onStatusChange((e) => seen.push({ name: e.name, status: e.status }));
+    let releaseInvalidate: (() => void) | undefined;
+    let markInvalidateReached!: () => void;
+    const invalidateReached = new Promise<void>((resolve) => {
+      markInvalidateReached = resolve;
+    });
+    vi.spyOn(oauthService, 'invalidate').mockImplementation(() => {
+      markInvalidateReached();
+      return new Promise<void>((resolve) => {
+        releaseInvalidate = resolve;
+      });
+    });
+    try {
+      await cm.connectAll({ hyper: { transport: 'http', url: 'https://example.test/mcp' } });
+      expect(cm.get('hyper')?.status).toBe('connected');
+      const mark = cm.markNeedsAuth('hyper', Object.assign(new Error('HTTP 401'), { code: 401 }));
+      await invalidateReached;
+      await cm.reconnect('hyper');
+      expect(cm.get('hyper')?.status).toBe('connected');
+      releaseInvalidate!();
+      await expect(mark).resolves.toBe(false);
+      expect(cm.get('hyper')?.status).toBe('connected');
+      expect(seen.filter((s) => s.name === 'hyper').map((s) => s.status)).toEqual([
+        'pending',
+        'connected',
+        'pending',
+        'connected',
+      ]);
+    } finally {
+      releaseInvalidate?.();
+      await cm.shutdown();
+      connect.mockRestore();
+      listTools.mockRestore();
     }
   }, 15000);
 });

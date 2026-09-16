@@ -11,6 +11,7 @@ import { SseMcpClient } from './client-sse';
 import type { UnexpectedCloseReason } from './client-shared';
 import { StdioMcpClient } from './client-stdio';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
+import type { StoredMcpOAuthTokens } from '#/mcpCore/oauth/provider';
 import { assertMcpInputSchema, type MCPClient, type MCPToolDefinition } from './types';
 
 export type McpServerStatus = 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth' | 'removed';
@@ -312,19 +313,22 @@ export class McpConnectionManager implements McpConnectionView {
     const attemptId = entry.attemptId;
     await this.closeClient(entry);
     if (!this.isCurrent(entry, attemptId)) return false;
+    const oauthService = this.oauthService;
+    if (oauthService !== undefined && isRemoteMcpConfig(entry.config)) {
+      const tokens = (await oauthService.getProvider(name, entry.config.url).tokens()) as
+        | StoredMcpOAuthTokens
+        | undefined;
+      if (tokens !== undefined) {
+        if (isConcurrentGrant(tokens)) return false;
+        await oauthService.invalidate(name, entry.config.url, 'tokens');
+      }
+    }
+    if (!this.isCurrent(entry, attemptId)) return false;
     entry.status = 'needs-auth';
     entry.error = `${entry.name} requires OAuth — run /mcp-config login ${entry.name}`;
     entry.tools = undefined;
     entry.enabledNames = undefined;
     entry.rawTools = undefined;
-    const oauthService = this.oauthService;
-    if (
-      oauthService !== undefined &&
-      isRemoteMcpConfig(entry.config) &&
-      (await oauthService.hasTokens(name, entry.config.url))
-    ) {
-      await oauthService.invalidate(name, entry.config.url, 'tokens');
-    }
     this.emit(entry);
     return true;
   }
@@ -560,6 +564,15 @@ function isUnauthorizedLikeError(error: unknown): boolean {
   if (typeof code === 'number' && code === 401) return true;
   if (typeof code === 'string' && code === '401') return true;
   return /\b401\b/.test(error.message) || /unauthorized/i.test(error.message);
+}
+
+const CONCURRENT_GRANT_GRACE_MS = 10_000;
+
+function isConcurrentGrant(tokens: StoredMcpOAuthTokens): boolean {
+  return (
+    typeof tokens.obtained_at === 'number' &&
+    Date.now() - tokens.obtained_at < CONCURRENT_GRANT_GRACE_MS
+  );
 }
 
 function formatStartupError(error: unknown, client: RuntimeMcpClient | undefined): string {
