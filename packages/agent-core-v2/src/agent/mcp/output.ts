@@ -20,10 +20,12 @@ import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { buildDaemonFileUrl, mediaExtensionForMime } from '#/agent/media/mediaRef';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { MCPContentBlock, MCPToolResult } from '#/mcpCore/types';
+import type { RuntimePath } from '#/runtime/runtime';
 
 export interface McpOriginalsTarget {
   readonly fs: IHostFileSystem;
   readonly dir: string;
+  readonly path?: RuntimePath;
 }
 
 export interface McpOutputOptions {
@@ -217,7 +219,7 @@ export async function mcpResultToExecutableOutput(
           bytes,
           mimeType,
           options.originals !== undefined
-            ? { fs: options.originals.fs, dir: options.originals.dir }
+            ? { fs: options.originals.fs, dir: options.originals.dir, path: options.originals.path }
             : options.originalsDir === undefined ? {} : { dir: options.originalsDir },
         );
       },

@@ -238,14 +238,18 @@ export async function resolvePromptMediaFiles(
     );
   };
   let changed = false;
-  let originals: { readonly dir?: string; readonly fs?: IHostFileSystem } | undefined;
+  let originals:
+    | { readonly dir?: string; readonly fs?: IHostFileSystem; readonly path?: RuntimePath }
+    | undefined;
   let originalsResolved = false;
-  const resolveOriginals = async (): Promise<{ readonly dir?: string; readonly fs?: IHostFileSystem } | undefined> => {
+  const resolveOriginals = async (): Promise<
+    { readonly dir?: string; readonly fs?: IHostFileSystem; readonly path?: RuntimePath } | undefined
+  > => {
     if (!originalsResolved) {
       originalsResolved = true;
       const target = await options.resolveOriginalsTarget?.();
       if (target !== undefined) {
-        originals = { dir: target.dir, fs: target.fs };
+        originals = { dir: target.dir, fs: target.fs, path: target.path };
       } else {
         originals = { dir: await options.resolveOriginalsDir?.().catch(() => undefined) };
       }
@@ -303,7 +307,7 @@ export async function resolvePromptMediaFiles(
           const originalPath = await persistOriginalImage(
             Buffer.from(part.source.data, 'base64'),
             part.source.media_type,
-            { dir: originals?.dir, fs: originals?.fs },
+            { dir: originals?.dir, fs: originals?.fs, path: originals?.path },
           );
           content.push({
             type: 'text',
@@ -515,7 +519,7 @@ export async function resolvePromptMediaFiles(
         });
         if (compressed.changed) {
           const originals = await resolveOriginals();
-          const originalPath = await persistOriginalImage(data, mediaType, { dir: originals?.dir, fs: originals?.fs });
+          const originalPath = await persistOriginalImage(data, mediaType, { dir: originals?.dir, fs: originals?.fs, path: originals?.path });
           content.push({
             type: 'text',
             text: buildImageCompressionCaption({

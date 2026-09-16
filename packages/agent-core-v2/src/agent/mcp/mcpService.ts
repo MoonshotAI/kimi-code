@@ -115,7 +115,11 @@ export class AgentMcpService extends Service implements IAgentMcpService {
       const tempDir = lease.runtime.environment.tempDir;
       const fs = lease.runtime.fs;
       if (tempDir === undefined || fs === undefined) return undefined;
-      return { fs, dir: lease.runtime.path.join(tempDir, 'kimi-code', 'original-images') };
+      return {
+        fs,
+        dir: lease.runtime.path.join(tempDir, 'kimi-code', 'original-images'),
+        path: lease.runtime.path,
+      };
     } finally {
       lease.dispose();
     }
