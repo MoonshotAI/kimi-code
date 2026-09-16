@@ -200,8 +200,8 @@ describe('tool select plugin', () => {
     expect(schemaMessage.tools?.map((tool) => tool.name)).toEqual(['get_weather']);
 
     emit({
-      type: 'turn.reminders_consumed',
-      reminders: [
+      type: 'turn.drained',
+      messages: [
         { message: reminded[0]?.message as UserMessage, meta: { source: 'reminder', key: LOADABLE_TOOLS_REMINDER_KEY } },
         { message: schemaMessage, meta: { source: 'reminder', key: DYNAMIC_TOOL_SCHEMA_REMINDER_KEY } },
       ],
