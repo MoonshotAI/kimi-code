@@ -310,6 +310,9 @@ importers:
       '@moonshot-ai/kimi-code-sdk':
         specifier: workspace:^
         version: link:../../packages/node-sdk
+      '@moonshot-ai/kimi-telemetry':
+        specifier: workspace:^
+        version: link:../../packages/telemetry
       '@moonshot-ai/migration-legacy':
         specifier: workspace:^
         version: link:../../packages/migration-legacy
