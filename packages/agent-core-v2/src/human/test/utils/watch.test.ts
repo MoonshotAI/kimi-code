@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readdirSync } from 'node:fs';
+import { readdirSync, realpathSync } from 'node:fs';
 import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,6 +15,8 @@ import {
 } from '#/utils/watch';
 
 const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+const longTempDir = (prefix: string): Promise<string> =>
+  mkdtemp(join(realpathSync.native(tmpdir()), prefix));
 
 class TestNativeWatcher {
   private errorListener: ((error: NodeJS.ErrnoException) => void) | undefined;
@@ -171,8 +173,8 @@ describe('watch signal mode', () => {
 
     expect(rig.attempt(0).root).toBe('/Users/runneradmin/repo');
     expect(ignoredPaths).toEqual([
-      '/Users/RUNNER~1/repo/node_modules/pkg/index.js',
-      '/Users/RUNNER~1/repo/src/index.ts',
+      join('/Users/RUNNER~1/repo', 'node_modules/pkg/index.js'),
+      join('/Users/RUNNER~1/repo', 'src/index.ts'),
     ]);
     expect(events).toEqual([
       { path: '/Users/RUNNER~1/repo', action: 'modified', kind: 'directory' },
@@ -246,7 +248,7 @@ describe('watch signal mode', () => {
   });
 
   it('falls back to chokidar when native recursive watch is unavailable on the platform', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'watch-fallback-'));
+    const root = await longTempDir('watch-fallback-');
     const rig = signalRig();
     const events: WatchChange[] = [];
     try {
@@ -269,11 +271,11 @@ describe('watch signal mode', () => {
   });
 
   it('reports chokidar changes under the requested path when the watched root resolves elsewhere', async () => {
-    const base = await mkdtemp(join(tmpdir(), 'watch-resolved-'));
+    const base = await longTempDir('watch-resolved-');
     const target = join(base, 'long-name');
     const requested = join(base, 'LONG~1');
     await mkdir(target);
-    await symlink(target, requested);
+    await symlink(target, requested, 'junction');
     const resolvedTarget = await realpath(target);
     const service = createWatchService({
       platform: 'win32',
@@ -310,7 +312,7 @@ describe('watch signal mode', () => {
   });
 
   it('uses chokidar for signal watches on platforms without native recursive watch', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'watch-linux-signal-'));
+    const root = await longTempDir('watch-linux-signal-');
     let nativeCalls = 0;
     const service = createWatchService({
       platform: 'linux',
@@ -451,15 +453,20 @@ describe('watch chokidar mode', () => {
         encoding: 'utf8',
       }).trim();
       expect(short).toMatch(/~\d/);
+      await writeFile(join(long, 'config.toml'), 'v1');
       const events: WatchChange[] = [];
       handle = watch(short, { depth: 0 });
       handle.onDidChange((e) => events.push(e));
       await handle.ready;
 
-      await writeFile(join(long, 'config.toml'), 'x');
+      await writeFile(join(long, 'config.toml'), 'v2');
+      await writeFile(join(long, 'added.toml'), 'v1');
 
       await expect
-        .poll(() => events.some((e) => e.path === join(short, 'config.toml') && e.action === 'created'))
+        .poll(() =>
+          events.some((e) => e.path === join(short, 'config.toml') && e.action === 'modified') &&
+          events.some((e) => e.path === join(short, 'added.toml') && e.action === 'created'),
+        )
         .toBe(true);
     },
     30000,
