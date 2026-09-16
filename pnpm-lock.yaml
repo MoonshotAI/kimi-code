@@ -111,6 +111,9 @@ importers:
       '@moonshot-ai/remote-control':
         specifier: workspace:^
         version: link:../../packages/remote-control
+      '@moonshot-ai/remote-exec':
+        specifier: workspace:^
+        version: link:../../packages/remote-exec
       '@moonshot-ai/vis-server':
         specifier: workspace:^
         version: link:../vis/server
