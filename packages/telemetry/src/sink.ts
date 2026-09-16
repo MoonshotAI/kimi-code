@@ -37,6 +37,7 @@ export class EventSink {
   private buffer: EnrichedTelemetryEvent[] = [];
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private activeBatch: readonly EnrichedTelemetryEvent[] | null = null;
+  private discardAborted = false;
   private sendController: AbortController | null = null;
   private retryController: AbortController | null = null;
   private retryPromise: Promise<void> | null = null;
@@ -177,11 +178,14 @@ export class EventSink {
       await raceWithSignal(this.transport.send(events, controller.signal), controller.signal);
     } catch (error) {
       // The deadline cut short a send that may never notice (e.g. a stalled
-      // credential store): persist the batch ourselves before failing.
-      try {
-        this.transport.saveToDisk(events);
-      } catch {
-        // Telemetry must never make shutdown fail.
+      // credential store): persist the batch ourselves before failing —
+      // unless the abort came from an opt-out, which discards it instead.
+      if (!this.discardAborted) {
+        try {
+          this.transport.saveToDisk(events);
+        } catch {
+          // Telemetry must never make shutdown fail.
+        }
       }
       throw error;
     } finally {
@@ -195,6 +199,7 @@ export class EventSink {
   /** Abort the currently running send and backlog retry, if any; the
       transport discards the aborted batch (opt-out semantics). */
   abortInFlight(): void {
+    this.discardAborted = true;
     this.transport.discardAbortedSends?.();
     this.sendController?.abort();
     this.retryController?.abort();

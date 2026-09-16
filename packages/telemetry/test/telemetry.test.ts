@@ -554,6 +554,49 @@ describe('EventSink', () => {
     expect(saved.map((batch) => batch.map((event) => event.event))).toEqual([['stuck']]);
   });
 
+  it('discards the batch when the abort comes from an opt-out', async () => {
+    const saved: EnrichedTelemetryEvent[][] = [];
+    let sendStarted = false;
+    const transport: TelemetryTransport = {
+      send: () => {
+        sendStarted = true;
+        return new Promise<void>(() => {});
+      },
+      saveToDisk: (events) => {
+        saved.push([...events]);
+      },
+      retryDiskEvents: async () => undefined,
+    };
+    const sink = makeSink(transport, 10);
+    sink.accept({
+      event_id: 'e1',
+      device_id: 'dev',
+      session_id: 'ses',
+      event: 'declined',
+      timestamp: 1,
+      properties: {},
+    });
+
+    const flushPromise = sink.flush();
+    await vi.waitFor(() => expect(sendStarted).toBe(true));
+    sink.abortInFlight();
+    await expect(flushPromise).rejects.toThrow('flush join aborted');
+    expect(saved).toEqual([]);
+  });
+
+  it('clears the sink model for an ambient setContext({ model: null })', () => {
+    const transport = new RecordingTransport();
+    const sink = makeSink(transport);
+    const client = new TelemetryClient();
+    client.attachSink(sink);
+
+    client.setContext({ model: null });
+    client.track('cleared');
+    sink.flushSync();
+
+    expect('model' in (transport.saved[0]?.[0]?.context ?? {})).toBe(false);
+  });
+
   it('joins an in-flight flush before a later flush resolves', async () => {
     let releaseSend: (() => void) | undefined;
     const transport: TelemetryTransport = {

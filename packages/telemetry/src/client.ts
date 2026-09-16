@@ -36,13 +36,19 @@ export class TelemetryClient {
   private deviceId: string | null = null;
   private sessionId: string | null = null;
   private model: string | null = null;
+  private modelExplicitlySet = false;
   private disabled = false;
   private unexpectedErrorHandler: ((error: Error) => void) | null = null;
 
   setContext(input: TelemetryContextIds): void {
     if (input.deviceId !== undefined) this.deviceId = input.deviceId;
     if (input.sessionId !== undefined) this.sessionId = input.sessionId;
-    if (input.model !== undefined) this.model = input.model;
+    if (input.model !== undefined) {
+      this.model = input.model;
+      // An ambient null is an explicit clear, not "unset" — remember it so
+      // the sink does not fall back to its configured model.
+      this.modelExplicitlySet = true;
+    }
   }
 
   setUnexpectedErrorHandler(handler: ((error: Error) => void) | null): void {
@@ -124,7 +130,7 @@ export class TelemetryClient {
       contextOverrides: {
         deviceId: context.deviceId !== undefined,
         sessionId: context.sessionId !== undefined,
-        model: context.model !== undefined,
+        model: context.model !== undefined || this.modelExplicitlySet,
       },
     };
     if (this.sink !== null) {
@@ -191,6 +197,7 @@ export class TelemetryClient {
     this.deviceId = null;
     this.sessionId = null;
     this.model = null;
+    this.modelExplicitlySet = false;
     this.disabled = false;
     this.unexpectedErrorHandler = null;
   }
