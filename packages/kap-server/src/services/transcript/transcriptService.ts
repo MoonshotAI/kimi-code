@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 import {
   IAgentLifecycleService,
+  IAgentContextMemoryService,
   IFlagService,
   ISessionIndex,
   ISessionManager,
@@ -68,6 +69,7 @@ interface LiveEntry {
   readonly ready: Promise<void>;
   readonly agentBackfills: Map<string, Promise<void>>;
   readonly opsJournals: Map<string, AgentOpsJournal>;
+  readonly undoGenerations: Map<string, number>;
 }
 
 interface AgentOpsJournal {
@@ -118,8 +120,12 @@ export class TranscriptService {
     const store = new TranscriptStore(sessionId);
     let binding: TranscriptBinding;
     try {
-      binding = bindSessionTranscript(store, session, this.deps.logger, (event) =>
-        this.handleLiveOps(sessionId, event),
+      binding = bindSessionTranscript(
+        store,
+        session,
+        this.deps.logger,
+        (event) => this.handleLiveOps(sessionId, event),
+        (agentId) => this.rebuildAfterUndo(sessionId, agentId),
       );
     } catch (error) {
       if (error instanceof Error && error.message === 'InstantiationService has been disposed') {
@@ -138,6 +144,7 @@ export class TranscriptService {
       })(),
       agentBackfills: new Map(),
       opsJournals: new Map(),
+      undoGenerations: new Map(),
     });
     return store;
   }
@@ -389,6 +396,45 @@ export class TranscriptService {
     return ops;
   }
 
+  private async rebuildAfterUndo(sessionId: string, agentId: string): Promise<void> {
+    const entry = this.live.get(sessionId);
+    if (entry === undefined) return;
+    entry.undoGenerations.set(agentId, (entry.undoGenerations.get(agentId) ?? 0) + 1);
+    const key = `${sessionId}:${agentId}`;
+    const pending = this.healTimers.get(key);
+    if (pending !== undefined) {
+      clearTimeout(pending.timer);
+      this.healTimers.delete(key);
+    }
+    await entry.ready;
+    await entry.agentBackfills.get(agentId);
+    let snapshot: AgentTranscriptSnapshot | undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        snapshot = await this.readColdSnapshot(sessionId, agentId);
+        if (snapshot !== undefined) break;
+      } catch (error) {
+        this.deps.logger?.warn(
+          { sessionId, agentId, err: error instanceof Error ? error.message : error },
+          'transcript: undo history read failed',
+        );
+      }
+    }
+    if (snapshot === undefined) {
+      const agent = getLiveSessionById(this.deps.core.accessor, sessionId)
+        ?.accessor.get(IAgentLifecycleService).handleOf(agentId);
+      if (agent !== undefined) {
+        const current = entry.store.ensureAgent(agentId).snapshot();
+        const retained = groupMessagesIntoSnapshot(agent.accessor.get(IAgentContextMemoryService).get());
+        snapshot = { ...current, items: retained.items, attachments: retained.attachments, prompts: [] };
+      }
+    }
+    if (snapshot === undefined || this.live.get(sessionId) !== entry) return;
+    const ops: TranscriptOperation[] = [{ op: 'reset', agentId, snapshot }];
+    entry.store.ensureAgent(agentId).apply(ops);
+    this.dispatchOps(sessionId, { agentId, ops });
+  }
+
   private async healEndedTurns(
     sessionId: string,
     agentId: string,
@@ -396,6 +442,7 @@ export class TranscriptService {
   ): Promise<void> {
     const entry = this.live.get(sessionId);
     if (entry === undefined) return;
+    const generation = entry.undoGenerations.get(agentId) ?? 0;
     let snapshot: AgentTranscriptSnapshot | undefined;
     try {
       snapshot = await this.readColdSnapshot(sessionId, agentId);
@@ -407,6 +454,7 @@ export class TranscriptService {
       return;
     }
     if (snapshot === undefined || this.live.get(sessionId)?.store !== entry.store) return;
+    if ((entry.undoGenerations.get(agentId) ?? 0) !== generation) return;
     const transcript = entry.store.getAgent(agentId);
     if (transcript === undefined) return;
     const turnOps: TranscriptOperation[] = [];
@@ -477,7 +525,9 @@ export class TranscriptService {
     const messages = [...reduceContextTranscript(records).entries];
     const taskOriginTurnTaskIds = new Set<string>();
     const steeredContents = new Map<string, Map<string, number>>();
-    const anchorStack: { taskIdsSnapshot: Set<string> }[] = [];
+    const pendingSteers = new Map<string, Map<string, number>>();
+    const matchedSteers: { key: string; kind: string }[] = [];
+    const anchorStack: { taskIdsSnapshot: Set<string>; steerCount: number }[] = [];
     let anchorFloor = 0;
     let sawTurnPrompt = false;
     for (const record of records) {
@@ -485,6 +535,7 @@ export class TranscriptService {
         const count = typeof record['count'] === 'number' ? (record['count'] as number) : 0;
         for (let i = 0; i < count && anchorStack.length > anchorFloor; i++) {
           const popped = anchorStack.pop()!;
+          matchedSteers.length = popped.steerCount;
           taskOriginTurnTaskIds.clear();
           for (const id of popped.taskIdsSnapshot) taskOriginTurnTaskIds.add(id);
         }
@@ -497,7 +548,17 @@ export class TranscriptService {
       if (record.type === 'context.append_message') {
         const message = (record as { message?: ContextMessage }).message;
         if (message !== undefined && isUndoAnchor(message)) {
-          anchorStack.push({ taskIdsSnapshot: new Set(taskOriginTurnTaskIds) });
+          anchorStack.push({ taskIdsSnapshot: new Set(taskOriginTurnTaskIds), steerCount: matchedSteers.length });
+        }
+        if (message?.role === 'user') {
+          const key = JSON.stringify(message.content);
+          const kind = message.origin?.kind ?? 'user';
+          const pendingByKind = pendingSteers.get(key);
+          const remaining = pendingByKind?.get(kind) ?? 0;
+          if (remaining > 0) {
+            pendingByKind!.set(kind, remaining - 1);
+            matchedSteers.push({ key, kind });
+          }
         }
         continue;
       }
@@ -507,9 +568,9 @@ export class TranscriptService {
           const key = JSON.stringify(input);
           const steerOrigin = (record as { origin?: { kind?: unknown } }).origin?.kind;
           const kind = typeof steerOrigin === 'string' ? steerOrigin : 'user';
-          const byKind = steeredContents.get(key) ?? new Map<string, number>();
+          const byKind = pendingSteers.get(key) ?? new Map<string, number>();
           byKind.set(kind, (byKind.get(kind) ?? 0) + 1);
-          steeredContents.set(key, byKind);
+          pendingSteers.set(key, byKind);
         }
         continue;
       }
@@ -523,6 +584,11 @@ export class TranscriptService {
       ) {
         taskOriginTurnTaskIds.add(origin.taskId);
       }
+    }
+    for (const steer of matchedSteers) {
+      const byKind = steeredContents.get(steer.key) ?? new Map<string, number>();
+      byKind.set(steer.kind, (byKind.get(steer.kind) ?? 0) + 1);
+      steeredContents.set(steer.key, byKind);
     }
     const base = groupMessagesIntoSnapshot(
       messages,

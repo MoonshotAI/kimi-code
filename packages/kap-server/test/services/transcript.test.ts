@@ -7,6 +7,8 @@ import { promisify } from 'node:util';
 import {
   INTERACTION_TAG_SESSION_ID,
   IAgentLifecycleService,
+  IAgentContextMemoryService,
+  IAgentConversationUndoParticipantRegistry,
   IAgentLoopService,
   IAgentScopeContext,
   IAgentTaskService,
@@ -21,6 +23,8 @@ import {
   interactions,
   makeAgentScopeContext,
   type AgentContext,
+  type ContextMessage,
+  type AgentConversationUndoParticipant,
   type Event2,
   TOWER_FLAG_ID,
   _setTowerFeatureAssembledForTests,
@@ -41,7 +45,7 @@ import {
   type TranscriptTask,
   type TranscriptTurn,
 } from '@moonshot-ai/transcript';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { bindSessionTranscript } from '../../src/services/transcript/coreBinding';
 import { toWireQuestion } from '../../src/protocol/question-wire';
@@ -95,6 +99,45 @@ function coldTranscriptService(home: string): TranscriptService {
 }
 
 describe('AgentTranscriptProjector', () => {
+  it('keeps cron steers grouped while undo removes only the appropriate suffix', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cron-undo-'));
+    const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+    const append = (role: string, text: string, kind?: string) => ({
+      type: 'context.append_message',
+      message: { role, content: [{ type: 'text', text }], toolCalls: [], origin: kind === undefined ? undefined : { kind } },
+    });
+    const steer = (text: string) => ({ type: 'turn.steer', input: [{ type: 'text', text }], origin: { kind: 'cron_job' } });
+    const records: Record<string, unknown>[] = [
+      append('user', 'first prompt', 'user'),
+      append('assistant', 'first answer'),
+      steer('retained cron'),
+      append('user', 'retained cron', 'cron_job'),
+      append('assistant', 'cron answer'),
+      append('user', 'second prompt', 'user'),
+      steer('removed cron'),
+      append('user', 'removed cron', 'cron_job'),
+      append('assistant', 'second answer'),
+    ];
+    try {
+      await mkdir(wireDir, { recursive: true });
+      const service = coldTranscriptService(home);
+      const read = async () => {
+        await writeFile(join(wireDir, 'wire.jsonl'), records.map((record) => JSON.stringify(record)).join('\n') + '\n');
+        return (await service.readColdSnapshot('s1', 'main'))!.items.filter((item) => item.kind === 'turn');
+      };
+      const before = await read();
+      expect(before.map((turn) => turn.prompt)).toEqual(['first prompt', 'second prompt']);
+      records.push({ type: 'context.undo', count: 1 });
+      const after = await read();
+      expect(after.map((turn) => turn.prompt)).toEqual(['first prompt']);
+      expect(after[0]!.steps.flatMap((step) => step.frames).filter((frame) => frame.kind === 'text').map((frame) => frame.text)).toEqual(['first answer', 'retained cron', 'cron answer']);
+      records.push(append('user', 'removed cron', 'cron_job'), append('assistant', 'new cron answer'));
+      expect((await read()).map((turn) => turn.prompt)).toEqual(['first prompt', 'removed cron']);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('projects a full turn: headers, delta appends, flush, tool frames', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
@@ -1644,99 +1687,9 @@ describe('AgentTranscriptProjector', () => {
     expect(markers[7]!.payload).toMatchObject({ start: 1, deleteCount: 2 });
   });
 
-  it('removes trailing turns and the undo marker on context.undone', () => {
-    const tx = new AgentTranscript('main');
-    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID, {
-      items: () => tx.getItems(),
-    });
-    const feed = (event: ProjectorBusEvent): void => {
-      tx.apply(projector.map(event));
-    };
-
-    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'first' }));
-    feed(ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
-    feed(ev({ type: 'turn.started', turnId: 2, origin: { kind: 'user' }, prompt: 'second' }));
-    feed(ev({ type: 'turn.ended', turnId: 2, reason: 'completed' }));
-    feed(ev({ type: 'context.spliced', start: 1, deleteCount: 2, messages: [] }));
-
-    const removeOps = projector.map(ev({ type: 'context.undone', agentId: 'main', turns: 1 }));
-    expect(removeOps).toEqual([{ op: 'items.remove', ids: ['t2', 'live-m1'] }]);
-    tx.apply(removeOps);
-
-    expect(tx.getItems().map((item) => item.kind)).toEqual(['turn']);
-    expect(turnOps('t1', tx.getItems()).prompt).toBe('first');
-  });
-
-  it('removes multiple trailing turns and keeps taskrefs appended during them', () => {
-    const tx = new AgentTranscript('main');
-    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID, {
-      items: () => tx.getItems(),
-    });
-    const feed = (event: ProjectorBusEvent): void => {
-      tx.apply(projector.map(event));
-    };
-
-    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
-    feed(ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
-    feed(ev({ type: 'turn.started', turnId: 2, origin: { kind: 'user' } }));
-    feed(
-      ev({
-        type: 'task.started',
-        info: {
-          taskId: 'task1',
-          kind: 'process',
-          description: 'ls',
-          status: 'running',
-          startedAt: 1,
-          endedAt: null,
-        },
-      }),
-    );
-    feed(ev({ type: 'turn.ended', turnId: 2, reason: 'completed' }));
-    feed(ev({ type: 'turn.started', turnId: 3, origin: { kind: 'user' } }));
-    feed(ev({ type: 'turn.ended', turnId: 3, reason: 'completed' }));
-
-    const removeOps = projector.map(ev({ type: 'context.undone', agentId: 'main', turns: 2 }));
-    expect(removeOps).toEqual([{ op: 'items.remove', ids: ['t3', 't2'] }]);
-    tx.apply(removeOps);
-
-    expect(tx.getItems().map((item) => item.kind)).toEqual(['turn', 'taskref']);
-    expect(tx.getTask('task1')?.state).toBe('running');
-  });
-
-  it('ignores context.undone when no removable turns exist', () => {
-    const bare = new AgentTranscriptProjector('main', TEST_SESSION_ID);
-    expect(bare.map(ev({ type: 'context.undone', agentId: 'main', turns: 1 }))).toEqual([]);
-
-    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID, { items: () => [] });
-    expect(projector.map(ev({ type: 'context.undone', agentId: 'main', turns: 1 }))).toEqual([]);
-  });
-
-  it('removes every turn from fromTurnId onward, including trailing non-anchor turns', () => {
-    const tx = new AgentTranscript('main');
-    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID, {
-      items: () => tx.getItems(),
-    });
-    const feed = (event: ProjectorBusEvent): void => {
-      tx.apply(projector.map(event));
-    };
-
-    feed(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' }, prompt: 'kept' }));
-    feed(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
-    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'undone' }));
-    feed(ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
-    feed(ev({ type: 'turn.started', turnId: 2, origin: { kind: 'cron', taskId: 'j1' } }));
-    feed(ev({ type: 'turn.ended', turnId: 2, reason: 'completed' }));
-    feed(ev({ type: 'context.spliced', start: 1, deleteCount: 3, messages: [] }));
-
-    const removeOps = projector.map(
-      ev({ type: 'context.undone', agentId: 'main', turns: 1, fromTurnId: 1 }),
-    );
-    expect(removeOps).toEqual([{ op: 'items.remove', ids: ['t2', 't1', 'live-m1'] }]);
-    tx.apply(removeOps);
-
-    expect(tx.getItems().map((item) => item.kind)).toEqual(['turn']);
-    expect(turnOps('t0', tx.getItems()).prompt).toBe('kept');
+  it('does not infer removed turns from an undo count', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    expect(projector.map(ev({ type: 'context.undone', agentId: 'main', turns: 1, fromTurnId: 0 }))).toEqual([]);
   });
 
   it('projects error / warning events as notice markers outside any step', () => {
@@ -3323,6 +3276,8 @@ describe('bindSessionTranscript', () => {
     readonly id: string;
     readonly context: AgentContext;
     readonly bus: FakeBus;
+    contextMessages: ContextMessage[];
+    readonly undoParticipants: Map<string, AgentConversationUndoParticipant>;
     readonly accessor: { get: (token: unknown) => unknown };
   }
 
@@ -3353,6 +3308,7 @@ describe('bindSessionTranscript', () => {
     }
     add(id: string, opts?: { loopStatus?: { state?: 'idle' | 'running'; activeTurnId?: number }; tasks?: readonly unknown[]; activePromptId?: string }): FakeAgentHandle {
       const bus = this.handles.get(id)?.bus ?? new FakeBus();
+      const undoParticipants = new Map<string, AgentConversationUndoParticipant>();
       const scope = makeAgentScopeContext({
         agentId: id,
         agentScope: `agents/${id}`,
@@ -3379,10 +3335,21 @@ describe('bindSessionTranscript', () => {
         id,
         context: scope.agentContext,
         bus,
+        contextMessages: [],
+        undoParticipants,
         accessor: {
           get: (token: unknown) => {
             if (token === IAgentScopeContext) return scope;
             if (token === IEventBus) return bus;
+            if (token === IAgentContextMemoryService) return { get: () => handle.contextMessages };
+            if (token === IAgentConversationUndoParticipantRegistry) {
+              return {
+                register: (participant: AgentConversationUndoParticipant) => {
+                  undoParticipants.set(participant.id, participant);
+                  return { dispose: () => { undoParticipants.delete(participant.id); } };
+                },
+              };
+            }
             if (token === IAgentLoopService) {
               const active =
                 opts?.activePromptId === undefined
@@ -4152,6 +4119,56 @@ describe('bindSessionTranscript', () => {
       expect(agent?.getAttachment('att_1')).toBeUndefined();
       service.dropSession('s1');
     } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it.each([1, 2])('removes undone content even when the history read fails %i times', async (failures) => {
+    const home = await seedWireHome();
+    const agents = new FakeAgents();
+    const main = agents.add('main');
+    const service = new TranscriptService({ homeDir: home, core: fakeCoreWithAgents(agents) });
+    try {
+      const store = service.forSessionLive('s1')!;
+      await service.whenReady('s1');
+      expect(store.getAgent('main')!.getItems().length).toBeGreaterThan(0);
+      main.contextMessages = [{ role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } }];
+      main.bus.emit(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'undone prompt' }));
+      const read = vi.spyOn(service, 'readColdSnapshot');
+      for (let i = 0; i < failures; i++) read.mockRejectedValueOnce(new Error('temporary read failure'));
+      await main.undoParticipants.get('transcript')!.reconcileAfterUndo();
+      expect(store.getAgent('main')!.getItems().filter((item) => item.kind === 'turn').map((turn) => turn.prompt)).toEqual(['hi']);
+      expect(service.getOpsSince('s1', 'main', 0)?.batches.at(-1)?.ops[0]?.op).toBe('reset');
+      read.mockRestore();
+    } finally {
+      service.dropSession('s1');
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('does not restore undone messages from an earlier history read', async () => {
+    const home = await seedWireHome();
+    const agents = new FakeAgents();
+    const main = agents.add('main');
+    const service = new TranscriptService({ homeDir: home, core: fakeCoreWithAgents(agents) });
+    try {
+      const store = service.forSessionLive('s1')!;
+      await service.whenReady('s1');
+      const stale = await service.readColdSnapshot('s1', 'main');
+      let release!: (snapshot: AgentTranscriptSnapshot | undefined) => void;
+      const pending = new Promise<AgentTranscriptSnapshot | undefined>((resolve) => { release = resolve; });
+      const read = vi.spyOn(service, 'readColdSnapshot').mockImplementationOnce(() => pending);
+      main.bus.emit(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
+      await waitFor(() => read.mock.calls.length === 1);
+      await writeFile(join(home, 'sessions', 'ws', 's1', 'agents', 'main', 'wire.jsonl'), '');
+      await main.undoParticipants.get('transcript')!.reconcileAfterUndo();
+      expect(store.getAgent('main')?.getItems()).toEqual([]);
+      release(stale);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(store.getAgent('main')?.getItems()).toEqual([]);
+      read.mockRestore();
+    } finally {
+      service.dropSession('s1');
       await rm(home, { recursive: true, force: true });
     }
   });

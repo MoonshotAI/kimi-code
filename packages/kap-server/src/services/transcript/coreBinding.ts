@@ -1,5 +1,6 @@
 import {
   IAgentLifecycleService,
+  IAgentConversationUndoParticipantRegistry,
   IAgentLoopService,
   IAgentScopeContext,
   IAgentTaskService,
@@ -38,6 +39,7 @@ export function bindSessionTranscript(
   session: ISessionScopeHandle,
   logger?: TranscriptBindingLogger,
   onOps?: (event: TranscriptChangeEvent) => void,
+  reconcileAfterUndo?: (agentId: string) => Promise<void>,
 ): TranscriptBinding {
   const agents = session.accessor.get(IAgentLifecycleService);
   const pendingInteractions = (): readonly Interaction[] =>
@@ -104,7 +106,6 @@ export function bindSessionTranscript(
           return agentHandle === undefined ? [] : legacyApprovalsOf(agentHandle);
         },
         turn: (turnId) => store.getAgent(agentId)?.getTurn(turnId),
-        items: () => store.getAgent(agentId)?.getItems(),
         resolvePlanRevisionKey: (key) =>
           agents.handleOf(agentId)?.accessor.get(IAgentScopeContext).scope(key) ?? key,
       });
@@ -139,7 +140,7 @@ export function bindSessionTranscript(
     store.ensureAgent(handle.id, { agentId: handle.id });
     const bus = handle.accessor.get(IEventBus);
     const busD = bus.subscribe((event) =>
-      applyOps(handle.id, projector.map(event as ProjectorBusEvent)),
+      applyOps(handle.id, projectorFor(handle.id).map(event as ProjectorBusEvent)),
     );
     const loopStatus = handle.accessor.get(IAgentLoopService)?.snapshot();
     if (loopStatus?.state === 'running' && loopStatus.activeTurnId !== undefined) {
@@ -148,6 +149,16 @@ export function bindSessionTranscript(
     }
     const list = agentDisposables.get(handle.id) ?? [];
     list.push(busD);
+    if (reconcileAfterUndo !== undefined) {
+      list.push(handle.accessor.get(IAgentConversationUndoParticipantRegistry).register({
+        id: 'transcript',
+        phase: 'after-flush',
+        reconcileAfterUndo: async () => {
+          await reconcileAfterUndo(handle.id);
+          projectors.delete(handle.id);
+        },
+      }));
+    }
     agentDisposables.set(handle.id, list);
   };
 
