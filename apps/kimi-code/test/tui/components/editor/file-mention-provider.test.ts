@@ -492,6 +492,20 @@ describe('FileMentionProvider', () => {
     expect(dir.lines[0]).toBe('hey @src/');
   });
 
+  it('still applies path completion for a directory whose name starts with @', () => {
+    const provider = new FileMentionProvider([], workDir, NO_FD);
+    const line = 'cd ';
+    const result = provider.applyCompletion(
+      [line],
+      0,
+      line.length,
+      { value: '@scope/', label: '@scope/' },
+      '',
+    );
+
+    expect(result.lines[0]).toBe('cd @scope/');
+  });
+
   describe('applyCompletion live @ token', () => {
     const selectedDir = {
       value: '@/mnt/e/mlbb-android-2.1.46.1156.1_HB/',
