@@ -307,9 +307,23 @@ export class FileMentionProvider implements AutocompleteProvider {
     // it, no second `/`) and prepends another `/`, producing e.g.
     // `//Applications/ ` with a trailing space that also blocks further
     // completion. Handle path completion ourselves so the value replaces the
-    // prefix verbatim. `@` mentions keep pi-tui's behaviour.
+    // prefix verbatim.
     if (this.getInputMode() === 'bash' && prefix.startsWith('/')) {
       return applyPathCompletion(lines, cursorLine, cursorCol, item, prefix);
+    }
+    // Editor caches suggestions.prefix across in-flight refreshes. Re-cut the
+    // live `@` token so Tab/Enter does not splice a second `@` onto a stale range.
+    if (prefix.startsWith('@') || item.value.startsWith('@')) {
+      const currentLine = lines[cursorLine] ?? '';
+      const textBeforeCursor = currentLine.slice(0, cursorCol);
+      const livePrefix =
+        prefix.length > 0 && textBeforeCursor.endsWith(prefix)
+          ? prefix
+          : extractAtPrefix(textBeforeCursor);
+      if (livePrefix === null) {
+        return { lines, cursorLine, cursorCol };
+      }
+      return this.inner.applyCompletion(lines, cursorLine, cursorCol, item, livePrefix);
     }
     return this.inner.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
   }
@@ -342,6 +356,9 @@ export function extractInlineSkillPrefix(text: string, cursorLine: number = 0): 
 }
 
 export function extractAtPrefix(text: string): string | null {
+  const quotedPrefix = extractQuotedAtPrefix(text);
+  if (quotedPrefix !== null) return quotedPrefix;
+
   let tokenStart = 0;
   for (let i = text.length - 1; i >= 0; i -= 1) {
     if (PATH_DELIMITERS.has(text[i] ?? '')) {
@@ -351,6 +368,21 @@ export function extractAtPrefix(text: string): string | null {
   }
   if (text[tokenStart] !== '@') return null;
   return text.slice(tokenStart);
+}
+
+function extractQuotedAtPrefix(text: string): string | null {
+  let inQuotes = false;
+  let quoteStart = -1;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === '"') {
+      inQuotes = !inQuotes;
+      if (inQuotes) quoteStart = i;
+    }
+  }
+  if (!inQuotes || quoteStart <= 0 || text[quoteStart - 1] !== '@') return null;
+  const atIndex = quoteStart - 1;
+  if (atIndex > 0 && !PATH_DELIMITERS.has(text[atIndex - 1] ?? '')) return null;
+  return text.slice(atIndex);
 }
 
 function isExecutableFd(fdPath: string): boolean {
@@ -418,7 +450,7 @@ function getFsMentionSuggestions(
 ): AutocompleteSuggestions | null {
   if (signal.aborted) return null;
 
-  const query = atPrefix.slice(1);
+  const query = atPrefix.startsWith('@"') ? atPrefix.slice(2) : atPrefix.slice(1);
   const candidates = collectFsMentionCandidates(workDir, additionalDirs, signal);
   if (candidates.length === 0 || signal.aborted) return null;
 

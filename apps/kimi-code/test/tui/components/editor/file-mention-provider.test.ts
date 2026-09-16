@@ -422,6 +422,20 @@ describe('FileMentionProvider', () => {
     expect(values.some((value) => value.startsWith('@.git'))).toBe(false);
   });
 
+  it('uses the filesystem fallback for an unclosed quoted @ mention', async () => {
+    mkdirSync(join(workDir, 'actions'));
+    mkdirSync(join(workDir, 'activity'));
+    const provider = new FileMentionProvider([], workDir, NO_FD);
+
+    const result = await provider.getSuggestions(['@"ac'], 0, 4, { signal: ctrl() });
+
+    expect(result).not.toBeNull();
+    expect(result!.prefix).toBe('@"ac');
+    expect(result!.items.map((item) => item.value)).toEqual(
+      expect.arrayContaining(['@actions/', '@activity/']),
+    );
+  });
+
   it('filesystem fallback quotes paths with spaces', async () => {
     mkdirSync(join(workDir, 'my folder'));
     const provider = new FileMentionProvider([], workDir, NO_FD);
@@ -476,6 +490,107 @@ describe('FileMentionProvider', () => {
       '@sr',
     );
     expect(dir.lines[0]).toBe('hey @src/');
+  });
+
+  describe('applyCompletion live @ token', () => {
+    const selectedDir = {
+      value: '@/mnt/e/mlbb-android-2.1.46.1156.1_HB/',
+      label: 'mlbb-android-2.1.46.1156.1_HB/',
+    };
+
+    it('replaces the live @ token when the cached prefix is a stale shorter query', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = ' @/mnt/e/mlbb-simple-android-trunk';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        line.length,
+        selectedDir,
+        '@/mnt/e/mlbb-simple-and',
+      );
+
+      expect(result.lines[0]).toBe(' @/mnt/e/mlbb-android-2.1.46.1156.1_HB/');
+      expect(result.cursorCol).toBe(' @/mnt/e/mlbb-android-2.1.46.1156.1_HB/'.length);
+    });
+
+    it('replaces the live @ token when the cached prefix is longer than the current token', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = '@/mnt/e/mlbb-simple-and';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        line.length,
+        selectedDir,
+        '@/mnt/e/mlbb-simple-android-trunk',
+      );
+
+      expect(result.lines[0]).toBe('@/mnt/e/mlbb-android-2.1.46.1156.1_HB/');
+    });
+
+    it('replaces the live @ token when the cached prefix is empty', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = '@/mnt/e/mlbb-simple-and';
+      const result = provider.applyCompletion([line], 0, line.length, selectedDir, '');
+
+      expect(result.lines[0]).toBe('@/mnt/e/mlbb-android-2.1.46.1156.1_HB/');
+    });
+
+    it('replaces only the current @ token when earlier text is present', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = 'see @a @/mnt/e/mlbb-simple-android-trunk';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        line.length,
+        selectedDir,
+        '@/mnt/e/mlbb-simple-and',
+      );
+
+      expect(result.lines[0]).toBe('see @a @/mnt/e/mlbb-android-2.1.46.1156.1_HB/');
+    });
+
+    it('does not splice when the cursor has already left the @ token', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = '@/mnt/e/mlbb-simple-and ';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        line.length,
+        selectedDir,
+        '@/mnt/e/mlbb-simple-and',
+      );
+
+      expect(result.lines[0]).toBe(line);
+      expect(result.cursorCol).toBe(line.length);
+    });
+
+    it('replaces an unclosed quoted @ token when the cached prefix is stale', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = '@"ac';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        line.length,
+        { value: '@actions/', label: 'actions/' },
+        '@"a',
+      );
+
+      expect(result.lines[0]).toBe('@actions/');
+    });
+
+    it('replaces a quoted @ token that contains spaces when the cached prefix is stale', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = '@"my folder/te';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        line.length,
+        { value: '@"my folder/test.txt"', label: 'test.txt' },
+        '@"my',
+      );
+
+      expect(result.lines[0]).toBe('@"my folder/test.txt" ');
+    });
   });
 
   describe('bash-mode path completion dotfile filtering', () => {
@@ -678,7 +793,7 @@ describe('FileMentionProvider', () => {
 
       expect(result).not.toBeNull();
       expect(result!.prefix).toBe('/');
-      expect(result!.items.map((item) => item.value).sort()).toEqual([
+      expect(result!.items.map((item) => item.value).toSorted()).toEqual([
         'skill:review',
         'skill:security',
       ]);
@@ -699,7 +814,7 @@ describe('FileMentionProvider', () => {
       const result = await provider.getSuggestions(['first line', '/'], 1, 1, { signal: ctrl() });
 
       expect(result).not.toBeNull();
-      expect(result!.items.map((item) => item.value).sort()).toEqual([
+      expect(result!.items.map((item) => item.value).toSorted()).toEqual([
         'skill:review',
         'skill:security',
       ]);
