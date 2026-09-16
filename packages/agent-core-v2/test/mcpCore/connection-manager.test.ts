@@ -62,6 +62,7 @@ import {
   hangingListStdioFixture,
   slowStdioFixture,
   slowToolStdioFixture,
+  startAnonymousDiscoveryHttpMcpServer,
   stderrThenExitFixture,
   stdioFixture,
 } from './stubs';
@@ -986,6 +987,96 @@ describe('McpConnectionManager', () => {
     } finally {
       await cm.shutdown();
       await closeServer(server);
+    }
+  }, 15000);
+
+  it('flips a connected server into needs-auth when a tool call fails with 401', async () => {
+    const server = await startAnonymousDiscoveryHttpMcpServer();
+    const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+    const cm = createManager({ oauthService });
+    const seen: Array<{ name: string; status: McpServerEntry['status'] }> = [];
+    cm.onStatusChange((e) => seen.push({ name: e.name, status: e.status }));
+    try {
+      await cm.connectAll({
+        hyper: { transport: 'http', url: server.url, startupTimeoutMs: 5_000 },
+      });
+      expect(cm.get('hyper')?.status).toBe('connected');
+      const client = cm.resolved('hyper')?.client;
+      if (client === undefined) throw new Error('expected a connected client');
+      const callError = await client.callTool('echo', { text: 'hi' }).then(
+        () => {
+          throw new Error('expected the call to fail with 401');
+        },
+        (error: unknown) => error,
+      );
+
+      await expect(cm.markNeedsAuth('hyper', callError)).resolves.toBe(true);
+      const entry = cm.get('hyper');
+      expect(entry?.status).toBe('needs-auth');
+      expect(entry?.error).toContain('run /mcp-config login hyper');
+      expect(cm.resolved('hyper')).toBeUndefined();
+      expect(seen.filter((s) => s.name === 'hyper').map((s) => s.status)).toEqual([
+        'pending',
+        'connected',
+        'needs-auth',
+      ]);
+
+      await expect(cm.markNeedsAuth('hyper', callError)).resolves.toBe(true);
+      expect(seen.filter((s) => s.name === 'hyper').map((s) => s.status)).toEqual([
+        'pending',
+        'connected',
+        'needs-auth',
+      ]);
+    } finally {
+      await cm.shutdown();
+      await server.close();
+    }
+  }, 15000);
+
+  it('keeps a headers-only server connected when a tool call fails with 401', async () => {
+    const server = await startAnonymousDiscoveryHttpMcpServer();
+    const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+    const cm = createManager({ oauthService });
+    try {
+      await cm.connectAll({
+        keyed: {
+          transport: 'http',
+          url: server.url,
+          headers: { Authorization: 'Bearer static-key' },
+          startupTimeoutMs: 5_000,
+        },
+      });
+      expect(cm.get('keyed')?.status).toBe('connected');
+      const client = cm.resolved('keyed')?.client;
+      if (client === undefined) throw new Error('expected a connected client');
+      const callError = await client.callTool('echo', { text: 'hi' }).then(
+        () => {
+          throw new Error('expected the call to fail with 401');
+        },
+        (error: unknown) => error,
+      );
+      await expect(cm.markNeedsAuth('keyed', callError)).resolves.toBe(false);
+      expect(cm.get('keyed')?.status).toBe('connected');
+    } finally {
+      await cm.shutdown();
+      await server.close();
+    }
+  }, 15000);
+
+  it('keeps the server connected when markNeedsAuth gets a non-401 error', async () => {
+    const server = await startAnonymousDiscoveryHttpMcpServer();
+    const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+    const cm = createManager({ oauthService });
+    try {
+      await cm.connectAll({
+        hyper: { transport: 'http', url: server.url, startupTimeoutMs: 5_000 },
+      });
+      expect(cm.get('hyper')?.status).toBe('connected');
+      await expect(cm.markNeedsAuth('hyper', new Error('boom'))).resolves.toBe(false);
+      expect(cm.get('hyper')?.status).toBe('connected');
+    } finally {
+      await cm.shutdown();
+      await server.close();
     }
   }, 15000);
 });

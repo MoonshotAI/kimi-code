@@ -95,6 +95,12 @@ class FakeMcpManager {
 
   reconnectHandler: (name: string) => Promise<void> = async () => {};
 
+  markNeedsAuthHandler: (name: string, error: unknown) => Promise<boolean> = async () => false;
+
+  async markNeedsAuth(name: string, error: unknown): Promise<boolean> {
+    return this.markNeedsAuthHandler(name, error);
+  }
+
   async reconnect(name: string): Promise<void> {
     await this.reconnectHandler(name);
   }
@@ -1299,6 +1305,45 @@ describe('AgentMcpService', () => {
         server: expect.objectContaining({ name: 'needs-auth', status: 'needs-auth' }),
       }),
     );
+  });
+
+  it('swaps real tools for the authenticate tool when a call fails with 401', async () => {
+    const oauthService = {
+      beginAuthorization: async () => ({
+        authorizationUrl: new URL('https://example.com/authorize'),
+        complete: async () => {},
+        cancel: async () => {},
+      }),
+    } as unknown as McpOAuthService;
+    const manager = new FakeMcpManager({ oauthService });
+    const client = fakeMcpClient();
+    client.callTool = () =>
+      Promise.reject(Object.assign(new Error('HTTP 401: Unauthorized'), { code: 401 }));
+    manager.setResolved('needs-auth', client, await discoverTools(client));
+    manager.markNeedsAuthHandler = async () => {
+      manager.needsAuth();
+      return true;
+    };
+    createService(manager);
+    manager.connect('needs-auth');
+
+    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__needs-auth__echo');
+    await expect(
+      executeTool(echo!, {
+        turnId: 1,
+        toolCallId: 'tc-401',
+        args: { text: 'hi' },
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow(/mcp__needs-auth__authenticate/);
+
+    const mcpTools = ix
+      .get(IAgentToolRegistryService)
+      .list()
+      .filter((tool) => tool.source === 'mcp');
+    expect(mcpTools).toEqual([
+      expect.objectContaining({ name: 'mcp__needs-auth__authenticate' }),
+    ]);
   });
 
   it('keeps tools registered when a connected server fails so later calls can heal', async () => {

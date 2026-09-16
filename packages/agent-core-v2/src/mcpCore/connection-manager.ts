@@ -54,6 +54,7 @@ export interface McpConnectionView {
       }
     | undefined;
   getRemoteServerUrl(name: string): string | undefined;
+  markNeedsAuth(name: string, error: unknown): Promise<boolean>;
   reconnect(name: string): Promise<void>;
   reconnectAndJoin(name: string): Promise<void>;
   waitForInitialLoad(signal?: AbortSignal): Promise<void>;
@@ -299,6 +300,22 @@ export class McpConnectionManager implements McpConnectionView {
     const existing = this.inFlightReconnects.get(name);
     if (existing !== undefined) await existing.catch(() => undefined);
     await this.reconnectAndJoin(name);
+  }
+
+  async markNeedsAuth(name: string, error: unknown): Promise<boolean> {
+    const entry = this.entries.get(name);
+    if (entry === undefined) return false;
+    if (entry.status !== 'connected' && entry.status !== 'needs-auth') return false;
+    if (!this.shouldMarkNeedsAuth(entry, error)) return false;
+    if (entry.status === 'needs-auth') return true;
+    entry.status = 'needs-auth';
+    entry.error = `${entry.name} requires OAuth — run /mcp-config login ${entry.name}`;
+    entry.tools = undefined;
+    entry.enabledNames = undefined;
+    entry.rawTools = undefined;
+    await this.closeClient(entry);
+    this.emit(entry);
+    return true;
   }
 
   async shutdown(): Promise<void> {

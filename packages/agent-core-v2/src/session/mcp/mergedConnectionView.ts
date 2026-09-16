@@ -40,6 +40,10 @@ export class MergedMcpConnectionView implements McpConnectionView {
     return this.owner(name).getRemoteServerUrl(name);
   }
 
+  markNeedsAuth(name: string, error: unknown): Promise<boolean> {
+    return this.owner(name).markNeedsAuth(name, error);
+  }
+
   reconnect(name: string): Promise<void> {
     return this.owner(name).reconnect(name);
   }

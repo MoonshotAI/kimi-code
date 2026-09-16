@@ -5,6 +5,7 @@ import { isAbortError } from '#/_base/utils/abort';
 
 import type { ExecutableTool, ExecutableToolContext } from '#/tool/toolContract';
 import { mcpResultToExecutableOutput, type McpOutputOptions } from '#/agent/mcp/output';
+import { qualifyMcpToolName } from '#/mcpCore/tool-naming';
 import type { MCPClient, MCPToolResult } from '#/mcpCore/types';
 import {
   isMcpConnectionClosedError,
@@ -14,12 +15,14 @@ import {
 } from '#/mcpCore/client-shared';
 
 interface McpToolOptions {
+  readonly serverName?: string;
   readonly attachmentStore?: McpOutputOptions['attachmentStore'];
   readonly originalsDir?: string;
   readonly telemetry?: ITelemetryService;
   readonly providerType?: () => string | undefined;
   readonly reconnect?: (signal?: AbortSignal) => Promise<MCPClient | undefined>;
   readonly isRemoved?: () => boolean;
+  readonly onUnauthorized?: (error: unknown) => Promise<boolean>;
 }
 
 export function createMcpTool(
@@ -49,6 +52,16 @@ export function createMcpTool(
         try {
           result = await callTool(client, args, context.signal);
         } catch (error) {
+          if ((await options.onUnauthorized?.(error)) === true) {
+            const serverName = options.serverName ?? qualifiedName;
+            throw new Error2(
+              ErrorCodes.MCP_OAUTH_FAILED,
+              `MCP server "${serverName}" rejected the call with 401 Unauthorized and is now ` +
+                `marked needs-auth. Call the ${qualifyMcpToolName(serverName, 'authenticate')} ` +
+                `tool to complete the OAuth login, then retry the original call.`,
+              { cause: error },
+            );
+          }
           result = await retryAfterReconnect(error, client, args, context, options, callTool);
         }
         return mcpResultToExecutableOutput(result, qualifiedName, {
