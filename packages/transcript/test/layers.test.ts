@@ -836,6 +836,82 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(turn.steps).toHaveLength(1);
   });
 
+  it('keeps server-local skill paths out of skill marker payloads', () => {
+    const bundledOrigin = {
+      kind: 'user',
+      skillActivations: [
+        {
+          activationId: 'act-1',
+          skillName: 'review',
+          skillArgs: 'strict',
+          skillType: 'prompt',
+          skillPath: '/private/review/SKILL.md',
+          skillSource: 'project',
+        },
+      ],
+    } as { kind: string };
+    const bundled = [
+      { type: 'text' as const, text: 'rendered review block' },
+      { type: 'text' as const, text: 'caller text' },
+    ];
+    const standaloneOrigin = {
+      kind: 'skill_activation',
+      activationId: 'act-2',
+      skillName: 'deploy',
+      trigger: 'model-tool',
+      skillPath: '/private/deploy/SKILL.md',
+      attachments: [{ name: 'notes.txt', mediaType: 'text/plain', size: 1, path: '/private/notes.txt' }],
+    } as { kind: string };
+    const steered = [
+      { type: 'text' as const, text: 'rendered steered block' },
+      { type: 'text' as const, text: 'steered text' },
+    ];
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user', content: bundled, toolCalls: [], origin: bundledOrigin },
+        { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: 'deploy instructions' }], toolCalls: [], origin: standaloneOrigin },
+        { role: 'user', content: steered, toolCalls: [], origin: bundledOrigin },
+        { role: 'assistant', content: [{ type: 'text', text: 'done' }], toolCalls: [] },
+      ],
+      { steeredContents: new Map([[JSON.stringify(steered), new Map([['user', 1]])]]) },
+    );
+
+    const markers = snapshot.items.filter((item) => item.kind === 'marker');
+    expect(markers.map((item) => item.kind === 'marker' && item.marker)).toEqual(['skill', 'skill', 'skill']);
+    expect(markers.map((item) => item.kind === 'marker' && item.payload)).toEqual([
+      {
+        text: 'rendered review block',
+        origin: {
+          kind: 'skill_activation',
+          trigger: 'user-slash',
+          activationId: 'act-1',
+          skillName: 'review',
+          skillArgs: 'strict',
+          skillType: 'prompt',
+          skillSource: 'project',
+        },
+      },
+      {
+        text: 'deploy instructions',
+        origin: { kind: 'skill_activation', trigger: 'model-tool', activationId: 'act-2', skillName: 'deploy' },
+      },
+      {
+        text: 'rendered steered block',
+        origin: {
+          kind: 'skill_activation',
+          trigger: 'user-slash',
+          activationId: 'act-1',
+          skillName: 'review',
+          skillArgs: 'strict',
+          skillType: 'prompt',
+          skillSource: 'project',
+        },
+      },
+    ]);
+    expect(JSON.stringify(markers)).not.toContain('/private/');
+  });
+
   it('maps media parts on the opening user message to attachment entities, dropping base64 bytes', () => {
     const snapshot = groupMessagesIntoSnapshot([
       {

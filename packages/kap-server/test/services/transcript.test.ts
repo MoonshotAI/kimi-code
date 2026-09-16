@@ -1687,6 +1687,32 @@ describe('AgentTranscriptProjector', () => {
     expect(markers[7]!.payload).toMatchObject({ start: 1, deleteCount: 2 });
   });
 
+  it('keeps server-local skill paths out of live skill marker payloads', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+
+    tx.apply(
+      projector.map(
+        ev({
+          type: 'skill.activated',
+          activationId: 'a1',
+          skillName: 'review',
+          skillArgs: 'strict',
+          trigger: 'user-slash',
+          skillPath: '/private/review/SKILL.md',
+          skillSource: 'project',
+        }),
+      ),
+    );
+
+    const marker = tx.getItems().find((item) => item.kind === 'marker');
+    expect(marker).toMatchObject({
+      marker: 'skill',
+      payload: { activationId: 'a1', skillName: 'review', skillArgs: 'strict', trigger: 'user-slash', skillSource: 'project' },
+    });
+    expect(JSON.stringify(marker)).not.toContain('/private/');
+  });
+
   it('does not infer removed turns from an undo count', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     expect(projector.map(ev({ type: 'context.undone', agentId: 'main', turns: 1, fromTurnId: 0 }))).toEqual([]);

@@ -34,3 +34,26 @@ export function projectTranscriptUserOrigin(origin: unknown): TranscriptUserOrig
     skillActivations: skillActivations.length > 0 ? skillActivations : undefined,
   };
 }
+
+export interface TranscriptSkillActivationProvenance {
+  readonly activationId?: string;
+  readonly trigger?: string;
+  readonly skillName?: string;
+  readonly skillArgs?: string;
+  readonly skillType?: string;
+  readonly skillSource?: string;
+}
+
+export function projectTranscriptSkillActivationProvenance(value: unknown): TranscriptSkillActivationProvenance {
+  const candidate = (typeof value === 'object' && value !== null ? value : {}) as Record<string, unknown>;
+  const text = (key: string): string | undefined =>
+    typeof candidate[key] === 'string' ? candidate[key] : undefined;
+  return {
+    activationId: text('activationId'),
+    trigger: text('trigger'),
+    skillName: text('skillName'),
+    skillArgs: text('skillArgs'),
+    skillType: text('skillType'),
+    skillSource: text('skillSource'),
+  };
+}

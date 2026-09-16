@@ -61,6 +61,7 @@ import type {
   SubagentStarted,
 } from '@moonshot-ai/agent-core-v2/session/subagent/mirrorAgentRun';
 import {
+  projectTranscriptSkillActivationProvenance,
   projectTranscriptUserOrigin,
   type AgentRef,
   type AgentUsageMeta,
@@ -354,7 +355,12 @@ export class AgentTranscriptProjector {
       case 'hook.result':
         return [this.markerOp('hook', restOf(event))];
       case 'skill.activated':
-        return [this.markerOp('skill', restOf(event))];
+        return [
+          this.markerOp('skill', {
+            agentId: event.agentId,
+            ...projectTranscriptSkillActivationProvenance(event),
+          }),
+        ];
       case 'plugin_command.activated':
         return [this.markerOp('skill', { ...restOf(event), variant: 'plugin_command' })];
       case 'cron.fired':
