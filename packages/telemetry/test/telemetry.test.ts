@@ -517,6 +517,33 @@ describe('EventSink', () => {
     expect(transport.saved[0]?.[2]?.context).toMatchObject({ model: 'reconciled-model' });
   });
 
+  it('caps the whole send — including a stalled credential lookup — at the caller signal', async () => {
+    const saved: EnrichedTelemetryEvent[][] = [];
+    const transport: TelemetryTransport = {
+      send: () =>
+        // Never settles, like a stalled credential store before fetch.
+        new Promise<void>(() => {}),
+      saveToDisk: (events) => {
+        saved.push([...events]);
+      },
+      retryDiskEvents: async () => undefined,
+    };
+    const sink = makeSink(transport, 10);
+    sink.accept({
+      event_id: 'e1',
+      device_id: 'dev',
+      session_id: 'ses',
+      event: 'stuck',
+      timestamp: 1,
+      properties: {},
+    });
+
+    const controller = new AbortController();
+    controller.abort();
+    await expect(sink.flush(controller.signal)).rejects.toThrow('flush join aborted');
+    expect(saved.map((batch) => batch.map((event) => event.event))).toEqual([['stuck']]);
+  });
+
   it('joins an in-flight flush before a later flush resolves', async () => {
     let releaseSend: (() => void) | undefined;
     const transport: TelemetryTransport = {

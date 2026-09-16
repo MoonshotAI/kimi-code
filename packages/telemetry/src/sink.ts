@@ -172,7 +172,18 @@ export class EventSink {
     this.sendController = controller;
     const unlink = linkAbortSignal(signal, controller);
     try {
-      await this.transport.send(events, controller.signal);
+      // Race the whole send — including its pre-fetch credential lookup,
+      // which is not abort-aware — against the caller's deadline.
+      await raceWithSignal(this.transport.send(events, controller.signal), controller.signal);
+    } catch (error) {
+      // The deadline cut short a send that may never notice (e.g. a stalled
+      // credential store): persist the batch ourselves before failing.
+      try {
+        this.transport.saveToDisk(events);
+      } catch {
+        // Telemetry must never make shutdown fail.
+      }
+      throw error;
     } finally {
       unlink();
       this.sendController = null;
