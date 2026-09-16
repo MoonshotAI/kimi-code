@@ -109,7 +109,7 @@ export * from '#/app/event/event2';
 export * from '#/state/errors';
 export * from '#/state/state';
 export * from '#/state/stateContribution';
-export * from '#/state/agentModel';
+
 export * from '#/state/eventDispatcher';
 import '#/state/eventDispatcherService';
 export * from '#/_base/state/stateRegistry';
@@ -404,8 +404,8 @@ export * from '#/agent/usage/usage';
 export * from '#/agent/usage/cacheProbe';
 export * from '#/agent/usage/cacheProbeService';
 export * from '#/session/usage/sessionUsage';
-export * from '#/session/usage/usageAgentModel';
-export * from '#/session/usage/sessionUsageService';
+
+export * from '#/agent/usage/agentUsageService';
 import '#/features/usage/usageFeature';
 export * from '#/agent/toolDedupe/toolDedupe';
 export * from '#/agent/toolDedupe/toolDedupeService';
@@ -647,8 +647,8 @@ export * from '#/agent/contextProjector/mediaProjection';
 export * from '#/agent/tokenCounting/tokenCounting';
 export * from '#/agent/tokenCounting/tokenCountingOps';
 export * from '#/session/tokenCounting/sessionTokenCounting';
-export * from '#/session/tokenCounting/tokenCountingAgentModel';
-export * from '#/session/tokenCounting/sessionTokenCountingService';
+
+export * from '#/agent/tokenCounting/agentTokenCountingService';
 import '#/features/tokenCounting/tokenCountingFeature';
 export * from '#/agent/plugin/agentPlugin';
 export * from '#/agent/plugin/agentPluginOps';
@@ -722,7 +722,7 @@ export * from '#/agent/undo/undoService';
 export * from '#/agent/shellCommand/shellCommand';
 export * from '#/agent/shellCommand/shellCommandService';
 export * from '#/agent/agentContext/agentContext';
-export * from '#/agent/agentContext/agentSpace';
+
 export * from '#/agent/scopeContext/scopeContext';
 export * from '#/features/sessionInit/sessionInit';
 export * from '#/features/sessionInit/sessionInitService';

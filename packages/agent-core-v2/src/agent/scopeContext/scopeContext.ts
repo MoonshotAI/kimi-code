@@ -1,7 +1,6 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
 
 export interface IAgentScopeContext {
   readonly _serviceBrand: undefined;
@@ -22,13 +21,10 @@ export function makeAgentScopeContext(input: {
   readonly generation?: number;
 }): IAgentScopeContext {
   const { agentScope } = input;
-  const space = new AgentSpaceImpl(input.agentId);
   const agentContext: AgentContext = Object.freeze({
     agentId: input.agentId,
     generation: input.generation ?? 0,
-    space,
   });
-  space._bindContext(agentContext);
   return {
     _serviceBrand: undefined,
     agentId: input.agentId,

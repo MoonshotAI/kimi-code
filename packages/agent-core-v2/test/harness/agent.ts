@@ -112,8 +112,6 @@ import { type ThinkingEffort } from '#human/llm/thinking';
 import { type Tool as KosongTool } from '#/llm-adapter/contract/message';
 import { type TokenUsage } from '#human/llm/usage';
 import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
-import { type AgentModelDefinition } from '#/state/agentModel';
-import { type AgentModelInstanceOf } from '#/agent/agentContext/agentSpace';
 import { IAgentTodoService } from '#/features/todo/todoService';
 import { type TodoItem } from '#/features/todo/todoItem';
 import type { LlmRequester } from '#human/llm/requester/requester';
@@ -1485,13 +1483,6 @@ export class AgentTestContext {
 
   get agentContext(): AgentContext {
     return this.get(IAgentScopeContext).agentContext;
-  }
-
-  readModel<D extends AgentModelDefinition<any, any>, R>(
-    definition: D,
-    read: (model: AgentModelInstanceOf<D>) => R,
-  ): R {
-    return this.agentContext.space.use(definition, read);
   }
 
   get wire(): IWireService {

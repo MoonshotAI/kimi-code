@@ -1,5 +1,5 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -11,10 +11,8 @@ import {
 } from '#/_base/errors/unexpectedError';
 import { BugIndicatingError } from '#/_base/errors/errors';
 import { ILogService } from '#/_base/log/log';
-import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
 import '#/agent/contextMemory/conversationTime';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
-import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IEventBus } from '#/app/event/eventBus';
@@ -653,24 +651,6 @@ describe('EventDispatcherService', () => {
 
     releaseRead();
     await rerun;
-  });
-
-  it('does not own AgentSpace teardown', () => {
-    const isolated = new TestInstantiationService();
-    const scope = makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' });
-    const space = scope.agentContext.space as AgentSpaceImpl;
-    const kill = vi.spyOn(space, '_kill');
-    isolated.set(IEventBus, new SyncDescriptor(EventBusService));
-    isolated.set(IAgentBlobService, noopBlob);
-    isolated.set(IWireService, stubWireJournal([]));
-    isolated.set(IAgentScopeContext, scope);
-    isolated.set(IAgentStateService, new AgentStateService());
-    isolated.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
-    isolated.get(IEventDispatcher);
-
-    isolated.dispose();
-
-    expect(kill).not.toHaveBeenCalled();
   });
 
   it('withdraws a disposed replayable contribution from dispatcher folds', async () => {

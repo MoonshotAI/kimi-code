@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 73 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 74 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -101,6 +101,7 @@
 //     task.ghosts                                     src/agent/task/taskService.ts
 //     task.notificationDelivery                       src/agent/task/taskService.ts
 //     task.scheduledNotificationKeys                  src/agent/task/taskService.ts
+//     tokenCounting                                   src/agent/tokenCounting/tokenCountingOps.ts
 //     toolDedupe.activeStep                           src/agent/toolDedupe/toolDedupeService.ts
 //     toolDedupe.activeTurnId                         src/agent/toolDedupe/toolDedupeService.ts
 //     toolDedupe.callKeyByCallId                      src/agent/toolDedupe/toolDedupeService.ts
@@ -119,6 +120,7 @@
 //     tower.base                                      src/features/tower/towerOps.ts
 //     tower.owner                                     src/features/tower/towerOps.ts
 //     turn                                            src/agent/loop/turnOps.ts
+//     usage                                           src/agent/usage/usageOps.ts
 //     userTool                                        src/agent/userTool/userToolOps.ts
 
 /** App-scope keys registered into IAppStateService. */
@@ -1197,6 +1199,16 @@ export interface AgentStateSnapshot {
   // replayable · durable · undoable — folds: ContextAppendMessage, TaskWaitDelivered
   'task.notificationDelivery': readonly string[];
   'task.scheduledNotificationKeys': Set<string>;
+  // src/agent/tokenCounting/tokenCountingOps.ts
+  // replayable · durable — folds: TokenCountingMeasured, TokenCountingTruncated, TokenCountingRebased, TokenCountingTurnRecorded
+  'tokenCounting': /* TokenCountingState — packages/agent-core-v2/src/agent/tokenCounting/tokenCountingOps.ts */ {
+    readonly anchors: readonly /* TokenAnchor — packages/agent-core-v2/src/agent/tokenCounting/tokenCountingOps.ts */ {
+      readonly length: number;
+      readonly tokens: number;
+      readonly measured: boolean;
+    }[];
+    readonly tokens: number;
+  };
   // src/agent/toolDedupe/toolDedupeService.ts
   'toolDedupe.activeStep': number;
   'toolDedupe.activeTurnId': number | undefined;
@@ -1217,6 +1229,17 @@ export interface AgentStateSnapshot {
   'toolExecutor.toolCallDupTypes': Map<string, /* ToolCallDupType — packages/agent-core-v2/src/agent/toolExecutor/toolExecutor.ts */ 'same_step' | 'cross_step'>;
   // src/agent/toolSelect/toolSelectService.ts
   'toolSelect.pendingLoaded': Set<string>;
+  // src/agent/usage/usageOps.ts
+  // replayable · durable — folds: UsageRecord
+  'usage': /* UsageModelState — packages/agent-core-v2/src/agent/usage/usageOps.ts */ {
+    readonly byModel: Record<string, /* TokenUsage — packages/agent-core-v2/src/human/llm/usage.ts */ {
+      inputOther: number;
+      output: number;
+      inputCacheRead: number;
+      inputCacheCreation: number;
+      raw?: Record<string, unknown>;
+    }>;
+  };
   // src/agent/userTool/userToolOps.ts
   // replayable · durable — folds: ToolsRegisterUserTool, ToolsUnregisterUserTool
   'userTool': /* UserToolModelState — packages/agent-core-v2/src/agent/userTool/userToolOps.ts */ Map<string, /* UserToolRegistration — packages/agent-core-v2/src/agent/userTool/userTool.ts */ {
