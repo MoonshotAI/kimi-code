@@ -517,7 +517,7 @@ export class McpOAuthService {
       | StoredMcpOAuthTokens
       | undefined;
     if (tokens === undefined) return undefined;
-    return { tokens, concurrent: isConcurrentGrant(tokens) };
+    return { tokens, concurrent: isConcurrentGrant(tokens, this.scheduler.now()) };
   }
 
   forgetProvider(serverName: string, serverUrl: string | URL): void {
@@ -676,10 +676,9 @@ async function readStoreMeta(
 
 const CONCURRENT_GRANT_GRACE_MS = 10_000;
 
-function isConcurrentGrant(tokens: StoredMcpOAuthTokens): boolean {
+function isConcurrentGrant(tokens: StoredMcpOAuthTokens, now: number): boolean {
   return (
-    typeof tokens.obtained_at === 'number' &&
-    Date.now() - tokens.obtained_at < CONCURRENT_GRANT_GRACE_MS
+    typeof tokens.obtained_at === 'number' && now - tokens.obtained_at < CONCURRENT_GRANT_GRACE_MS
   );
 }
 

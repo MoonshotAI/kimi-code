@@ -62,6 +62,7 @@ import {
   createMemoryMcpOAuthStore,
   cwdStdioFixture,
   hangingListStdioFixture,
+  ManualMcpOAuthScheduler,
   slowStdioFixture,
   slowToolStdioFixture,
   startAnonymousDiscoveryHttpMcpServer,
@@ -1362,6 +1363,34 @@ describe('McpConnectionManager', () => {
         'connected',
         'needs-auth',
       ]);
+    } finally {
+      await cm.shutdown();
+      await server.close();
+    }
+  }, 15000);
+
+  it('judges grant freshness by the oauth scheduler clock', async () => {
+    const server = await startAnonymousDiscoveryHttpMcpServer();
+    const scheduler = new ManualMcpOAuthScheduler(1_000_000);
+    const oauthService = new McpOAuthService({
+      store: createMemoryMcpOAuthStore(),
+      scheduler,
+    });
+    await oauthService.getProvider('hyper', server.url).saveTokens({
+      access_token: 'fresh-by-scheduler',
+      token_type: 'Bearer',
+    });
+    const cm = createManager({ oauthService });
+    try {
+      await cm.connectAll({
+        hyper: { transport: 'http', url: server.url, startupTimeoutMs: 5_000 },
+      });
+      expect(cm.get('hyper')?.status).toBe('connected');
+      const client = cm.resolved('hyper')?.client;
+      if (client === undefined) throw new Error('expected a connected client');
+      const error = Object.assign(new Error('HTTP 401'), { code: 401 });
+      await expect(cm.markNeedsAuth('hyper', error, client)).resolves.toBe(false);
+      expect(cm.get('hyper')?.status).toBe('connected');
     } finally {
       await cm.shutdown();
       await server.close();
