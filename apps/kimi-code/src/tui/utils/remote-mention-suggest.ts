@@ -1,9 +1,5 @@
 import type { AutocompleteItem } from '@moonshot-ai/pi-tui';
-import type {
-  Session,
-  SuggestFilesItem,
-  SuggestFilesResult,
-} from '@moonshot-ai/kimi-code-sdk';
+import type { Session, SuggestFilesItem } from '@moonshot-ai/kimi-code-sdk';
 
 import type { MentionSuggester } from '../components/editor/file-mention-provider';
 import type { RuntimeSlotState } from '../types';
@@ -17,7 +13,7 @@ const MENTION_SUGGEST_LIMIT = 50;
  * local fd scan would list files the runtime cannot see. Returns undefined
  * for local or unsynced sessions so the caller keeps the local fd-backed
  * path. The suggester degrades to `null` (the mention list stays closed) when
- * the SDK has no suggest endpoint or the call fails — never to local files.
+ * the endpoint reports `undefined` or the call fails — never to local files.
  */
 export function remoteMentionSuggester(
   session: Session | undefined,
@@ -27,17 +23,8 @@ export function remoteMentionSuggester(
     return undefined;
   }
   return async (query, signal) => {
-    // Session-scoped fs suggest; typed optionally because SDK builds without
-    // the method must degrade the same way as an unavailable endpoint.
-    const suggester = session as unknown as {
-      suggestFiles?: (input: {
-        query: string;
-        limit?: number;
-      }) => Promise<SuggestFilesResult | undefined>;
-    };
-    if (suggester.suggestFiles === undefined) return null;
     try {
-      const result = await suggester.suggestFiles({ query, limit: MENTION_SUGGEST_LIMIT });
+      const result = await session.suggestFiles({ query, limit: MENTION_SUGGEST_LIMIT });
       if (result === undefined || signal.aborted) return null;
       return result.items.map(toMentionAutocompleteItem);
     } catch {

@@ -8,12 +8,12 @@ import type { RuntimeSlotState } from '#/tui/types';
 const REMOTE: RuntimeSlotState = { runtimeId: 'dev-box', type: 'ssh', status: 'ready' };
 const LOCAL: RuntimeSlotState = { runtimeId: 'local', type: 'local', status: 'ready' };
 
-function makeSession(result: SuggestFilesResult | undefined, options: { fail?: boolean; noMethod?: boolean } = {}) {
+function makeSession(result: SuggestFilesResult | undefined, options: { fail?: boolean } = {}) {
   const suggestFiles = vi.fn(async () => {
     if (options.fail === true) throw new Error('engine down');
     return result;
   });
-  const session = options.noMethod === true ? ({} as Session) : ({ suggestFiles } as unknown as Session);
+  const session = { suggestFiles } as unknown as Session;
   return { session, suggestFiles };
 }
 
@@ -43,13 +43,6 @@ describe('remoteMentionSuggester', () => {
       { value: '@src/app.ts', label: 'app.ts', description: 'src/app.ts' },
       { value: '@"src/my docs/"', label: 'my docs/', description: 'src/my docs' },
     ]);
-  });
-
-  it('degrades to null when the SDK has no suggest method', async () => {
-    const { session } = makeSession(undefined, { noMethod: true });
-    const suggester = remoteMentionSuggester(session, REMOTE);
-    expect(suggester).toBeDefined();
-    expect(await suggester!('app', new AbortController().signal)).toBeNull();
   });
 
   it('degrades to null when the endpoint reports undefined or the call fails', async () => {
