@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process';
-import { readdirSync, realpathSync } from 'node:fs';
+import { existsSync, readdirSync, realpathSync } from 'node:fs';
 import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -449,10 +449,12 @@ describe('watch chokidar mode', () => {
       root = await mkdtemp(join(tmpdir(), 'watch-'));
       const long = join(root, 'long directory name');
       await mkdir(long);
-      const short = execFileSync('cmd.exe', ['/d', '/c', `for %I in ("${long}") do @echo %~sI`], {
+      const short = execFileSync('cmd.exe', ['/d', '/s', '/c', `"for %I in ("${long}") do @echo %~sI"`], {
         encoding: 'utf8',
+        windowsVerbatimArguments: true,
       }).trim();
-      expect(short).toMatch(/~\d/);
+      expect(basename(short)).toMatch(/~\d/);
+      expect(existsSync(short)).toBe(true);
       await writeFile(join(long, 'config.toml'), 'v1');
       const events: WatchChange[] = [];
       handle = watch(short, { depth: 0 });
