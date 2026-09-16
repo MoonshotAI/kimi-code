@@ -43,11 +43,24 @@ function makeHost(options: {
   switchError?: Error;
   reconnectError?: Error;
   setConfigError?: Error;
+  registrationDelayCalls?: number;
 }) {
-  const list = options.list ?? makeRuntimesInfo();
+  let currentList = options.list ?? makeRuntimesInfo();
+  // Simulate the engine's declaration watch: once setConfig writes a
+  // [runtimes] entry, listRuntimes includes the new runtime — after
+  // `registrationDelayCalls` polls, to mimic the async reconcile.
+  let callsAfterAdd = -1;
+  let pending: SessionRuntimesInfo['runtimes'][number] | undefined;
   const session = {
     id: 'ses-1',
-    listRuntimes: vi.fn(async () => list),
+    listRuntimes: vi.fn(async () => {
+      if (callsAfterAdd >= 0) callsAfterAdd += 1;
+      if (pending !== undefined && callsAfterAdd > (options.registrationDelayCalls ?? 0)) {
+        currentList = { ...currentList, runtimes: [...currentList.runtimes, pending] };
+        pending = undefined;
+      }
+      return currentList;
+    }),
     getRuntime: vi.fn(async () => ({ workspaceId: 'ws-1', runtimeId: options.currentRuntimeId ?? 'local' })),
     switchRuntime: vi.fn(async (runtimeId: string, opts?: { cwd?: string }) => {
       if (options.switchError !== undefined) throw options.switchError;
@@ -66,6 +79,18 @@ function makeHost(options: {
     harness: {
       setConfig: vi.fn(async (patch: unknown) => {
         if (options.setConfigError !== undefined) throw options.setConfigError;
+        callsAfterAdd = 0;
+        const declared = (patch as { runtimes?: Record<string, { type?: string; defaultCwd?: string }> }).runtimes ?? {};
+        for (const [id, entry] of Object.entries(declared)) {
+          pending = {
+            runtimeId: id,
+            type: entry.type ?? 'command',
+            status: 'disconnected',
+            generation: `g-${id}`,
+            capabilities: [],
+            defaultCwd: entry.defaultCwd,
+          } as unknown as SessionRuntimesInfo['runtimes'][number];
+        }
         return patch;
       }),
     },
@@ -77,7 +102,7 @@ function makeHost(options: {
     showError: vi.fn(),
     refreshRuntimeSlot: vi.fn(async () => {}),
   } as unknown as SlashCommandHost;
-  return { host, session, mounted, list };
+  return { host, session, mounted, list: currentList };
 }
 
 function latest<T>(mounted: MountedPanel[], type: new (...args: never[]) => T): T {
@@ -227,9 +252,56 @@ describe('handleRuntimeCommand', () => {
       });
     });
     await vi.waitFor(() => {
-      expect(host.showStatus).toHaveBeenCalledWith(
-        'Runtime "staging" added to config.toml — available after restart.',
-      );
+      expect(host.showStatus).toHaveBeenCalledWith('Runtime "staging" added to config.toml.');
+    });
+    // The watch-driven registration lands before the manager reopens, so the
+    // new runtime is listed immediately.
+    await vi.waitFor(() => {
+      const reopened = latest(mounted, RuntimeManagerComponent);
+      const plain = reopened.render(120).join('\n').replaceAll(/\[[0-9;]*m/g, '');
+      expect(plain).toContain('staging');
+    });
+  });
+
+  it('waits for a delayed watch registration before reopening the manager', async () => {
+    const { host, mounted } = makeHost({ registrationDelayCalls: 2 });
+    await handleRuntimeCommand(host);
+
+    const manager = latest(mounted, RuntimeManagerComponent);
+    manager.handleInput(DOWN);
+    manager.handleInput(DOWN);
+    manager.handleInput(DOWN);
+    manager.handleInput(ENTER); // [ Add Runtime ]
+
+    await vi.waitFor(() => {
+      expect(mounted.some((p) => p instanceof ChoicePickerComponent)).toBe(true);
+    });
+    const typePicker = latest(mounted, ChoicePickerComponent);
+    typePicker.handleInput(ENTER); // first option: SSH host
+
+    await vi.waitFor(() => {
+      expect(mounted.filter((p) => p instanceof ChoicePickerComponent).length).toBe(2);
+    });
+    const hostPicker = latest(mounted, ChoicePickerComponent);
+    hostPicker.handleInput(DOWN); // 'staging' — not an existing runtime id
+    hostPicker.handleInput(ENTER);
+
+    await vi.waitFor(() => {
+      expect(mounted.some((p) => p instanceof RuntimeAddDialogComponent)).toBe(true);
+    });
+    const form = latest(mounted, RuntimeAddDialogComponent);
+    form.handleInput(TAB); // id (empty -> derives from host)
+    form.handleInput(TAB); // defaultCwd
+    typeText(form, '/home/me/projects');
+    form.handleInput(ENTER);
+
+    await vi.waitFor(() => {
+      expect(host.showStatus).toHaveBeenCalledWith('Runtime "staging" added to config.toml.');
+    });
+    await vi.waitFor(() => {
+      const reopened = latest(mounted, RuntimeManagerComponent);
+      const plain = reopened.render(120).join('\n').replaceAll(/\[[0-9;]*m/g, '');
+      expect(plain).toContain('staging');
     });
   });
 

@@ -1,20 +1,27 @@
 import { randomUUID } from 'node:crypto';
+import { dirname, join } from 'node:path';
 import * as posixPath from 'node:path/posix';
 
 import { Emitter } from '@moonshot-ai/agent-core-v2/_base/event';
 import { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
+import { subtreeWatchFilter } from '@moonshot-ai/agent-core-v2/_base/utils/paths';
+import { TimeoutTimer } from '@moonshot-ai/agent-core-v2/_base/utils/timer';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
+import { watch } from '@moonshot-ai/agent-core-v2/human/utils/watch';
 import type { HostEnvironmentInfo } from '@moonshot-ai/agent-core-v2/os/interface/hostEnvironment';
 import { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
 import { IAtomicDocumentStore } from '@moonshot-ai/agent-core-v2/persistence/interface/atomicDocumentStore';
+import { RUNTIMES_SECTION } from '@moonshot-ai/agent-core-v2/runtime/configSection';
 import { REMOTE_RUNTIME_FLAG_ID } from '@moonshot-ai/agent-core-v2/runtime/flag';
 import {
+  PROJECT_RUNTIMES_FILE,
   resolveWorkspaceRuntimeDeclarations,
 } from '@moonshot-ai/agent-core-v2/runtime/runtimeDeclarations';
 import type {
   RemoteRuntimeDeclaration,
   RemoteRuntimeEntry,
+  RuntimeDeclarationSet,
 } from '@moonshot-ai/agent-core-v2/runtime/remoteRuntimeDeclaration';
 import type {
   Runtime,
@@ -168,7 +175,26 @@ export interface RemoteRuntimeProviderFactoryOptions {
   readonly autoInstall?: boolean;
   readonly installRunner?: LocalRunner;
   readonly installFetch?: typeof fetch;
+  // Project declaration watch (spec §4 hot reload): called once per attach
+  // with the absolute path of `<root>/.kimi-code/runtimes.toml`; `onChange`
+  // must fire when the file appears, changes, or disappears. Injectable for
+  // tests; the default watches the workspace root one level deep, filtered
+  // to the declaration file, debounced.
+  readonly watchProjectDeclarations?: (path: string, onChange: () => void) => { dispose(): void };
 }
+
+interface DeclaredRuntimeRecord {
+  handle: RuntimeProviderRuntimeHandle;
+  declaration: RemoteRuntimeDeclaration;
+  fingerprint: string;
+  // Bumped whenever the declaration is replaced or the record is torn down.
+  // An in-flight connect started under an older version disposes its result
+  // instead of swapping a runtime built from a stale declaration into the
+  // registry.
+  version: number;
+}
+
+const PROJECT_DECLARATION_WATCH_DEBOUNCE_MS = 200;
 
 export class RemoteRuntimeProviderFactory implements RuntimeProviderFactory {
   readonly id = 'remote-exec';
@@ -187,31 +213,99 @@ export class RemoteRuntimeProviderFactory implements RuntimeProviderFactory {
       };
     }
     const log = host.get(ILogService);
-    let declarations: readonly RemoteRuntimeDeclaration[];
+    const config = host.get(IConfigService);
+    const fs = host.get(IHostFileSystem);
+    const docs = host.get(IAtomicDocumentStore);
+    const resolve = () =>
+      resolveWorkspaceRuntimeDeclarations({ config, fs, docs, root: context.root });
+    let initial: RuntimeDeclarationSet;
     try {
-      const resolved = await resolveWorkspaceRuntimeDeclarations({
-        config: host.get(IConfigService),
-        fs: host.get(IHostFileSystem),
-        docs: host.get(IAtomicDocumentStore),
-        root: context.root,
-      });
-      if (resolved.projectError !== undefined) {
-        log.warn('project remote runtime declarations failed to load', { error: resolved.projectError });
+      initial = await resolve();
+      if (initial.projectError !== undefined) {
+        log.warn('project remote runtime declarations failed to load', { error: initial.projectError });
       }
-      declarations = resolved.entries;
     } catch (error) {
       log.warn('remote runtime declarations failed to load', { error });
       return {
         dispose() {},
       };
     }
-    const handles: RuntimeProviderRuntimeHandle[] = [];
-    for (const declaration of declarations) {
-      handles.push(this.registerDeclaredRuntime(context, host, declaration));
+    const records = new Map<string, DeclaredRuntimeRecord>();
+    for (const declaration of initial.entries) {
+      records.set(declaration.id, this.registerDeclaredRuntime(context, host, declaration));
     }
+
+    // Live declaration watch: user-level changes arrive through the config
+    // service's section event; project-level changes through a file watch on
+    // `.kimi-code/runtimes.toml`. Each trigger re-resolves declarations —
+    // trust is re-read on every resolve, so trust flips re-gate project
+    // declarations at the next trigger — and diffs them against the
+    // registered records. Reconciles are serialized on `tail`.
+    let disposed = false;
+    let tail = Promise.resolve();
+    const reconcile = (): void => {
+      tail = tail.catch(() => {}).then(async () => {
+        if (disposed) return;
+        let resolved: RuntimeDeclarationSet;
+        try {
+          resolved = await resolve();
+        } catch (error) {
+          log.warn('remote runtime declarations failed to reload', { error });
+          return;
+        }
+        if (resolved.projectError !== undefined) {
+          log.warn('project remote runtime declarations failed to load', { error: resolved.projectError });
+        }
+        if (disposed) return;
+        const next = new Map(resolved.entries.map((declaration) => [declaration.id, declaration]));
+        for (const [id, record] of records) {
+          if (next.has(id)) continue;
+          records.delete(id);
+          // Registry removal drains the generation: it leaves the registry at
+          // once (new acquires fail `runtime.not_found`), rejects new leases
+          // as draining, and disposes the runtime once held leases release
+          // (bounded by the registry drain timeout). Bindings to the removed
+          // runtime keep failing explicitly — no silent local fallback (D3).
+          record.version += 1;
+          void record.handle.remove().catch((error: unknown) => {
+            log.warn(`remote runtime ${id} removal failed`, { error });
+          });
+        }
+        for (const declaration of resolved.entries) {
+          const fingerprint = declarationFingerprint(declaration.entry);
+          const record = records.get(declaration.id);
+          if (record === undefined) {
+            records.set(declaration.id, this.registerDeclaredRuntime(context, host, declaration));
+            continue;
+          }
+          if (record.fingerprint === fingerprint) continue;
+          record.version += 1;
+          record.declaration = declaration;
+          try {
+            await record.handle.update(() => this.createPendingRuntime(context, record));
+            record.fingerprint = fingerprint;
+          } catch (error) {
+            log.warn(`remote runtime ${declaration.id} update failed`, { error });
+          }
+        }
+      });
+    };
+    const configListener = config.onDidSectionChange((event) => {
+      if (event.domain === RUNTIMES_SECTION) reconcile();
+    });
+    const watchProjectDeclarations = this.options.watchProjectDeclarations ?? watchProjectDeclarationFile;
+    const projectWatch = watchProjectDeclarations(join(context.root, PROJECT_RUNTIMES_FILE), reconcile);
     return {
       dispose: async () => {
-        for (const handle of [...handles].toReversed()) await handle.remove();
+        disposed = true;
+        configListener.dispose();
+        projectWatch.dispose();
+        for (const record of [...records.values()].toReversed()) {
+          record.version += 1;
+          await record.handle.remove();
+        }
+        records.clear();
+        await tail.catch(() => {});
       },
     };
   }
@@ -220,9 +314,21 @@ export class RemoteRuntimeProviderFactory implements RuntimeProviderFactory {
     context: RuntimeProviderContext,
     host: RuntimeProviderHost,
     declaration: RemoteRuntimeDeclaration,
-  ): RuntimeProviderRuntimeHandle {
-    let handle!: RuntimeProviderRuntimeHandle;
+  ): DeclaredRuntimeRecord {
+    const record: DeclaredRuntimeRecord = {
+      handle: undefined as unknown as RuntimeProviderRuntimeHandle,
+      declaration,
+      fingerprint: declarationFingerprint(declaration.entry),
+      version: 0,
+    };
+    record.handle = host.registerRuntime(this.createPendingRuntime(context, record));
+    return record;
+  }
+
+  private createPendingRuntime(context: RuntimeProviderContext, record: DeclaredRuntimeRecord): ManagedRemoteRuntime {
     let inflight: Promise<void> | undefined;
+    const version = record.version;
+    const declaration = record.declaration;
     const connectRuntime = (): Promise<void> => {
       inflight ??= (async () => {
         try {
@@ -248,20 +354,58 @@ export class RemoteRuntimeProviderFactory implements RuntimeProviderFactory {
             fetchImpl: this.options.installFetch,
             onDiagnostic: this.options.onDiagnostic,
           });
-          await handle.update(() => new ManagedRemoteRuntime(connected, connectRuntime));
+          if (record.version !== version) {
+            await connected.dispose();
+            return;
+          }
+          await record.handle.update(() => new ManagedRemoteRuntime(connected, connectRuntime));
         } finally {
           inflight = undefined;
         }
       })();
       return inflight;
     };
-    handle = host.registerRuntime(
-      new ManagedRemoteRuntime(undefined, connectRuntime, {
-        workspaceId: context.id,
-        runtimeId: declaration.id,
-        generation: `${declaration.id}-pending-${randomUUID()}`,
-      }),
-    );
-    return handle;
+    return new ManagedRemoteRuntime(undefined, connectRuntime, {
+      workspaceId: context.id,
+      runtimeId: declaration.id,
+      generation: `${declaration.id}-pending-${randomUUID()}`,
+    });
   }
+}
+
+export function watchProjectDeclarationFile(path: string, onChange: () => void): { dispose(): void } {
+  const debounce = new TimeoutTimer();
+  const root = dirname(dirname(path));
+  const handle = watch(root, { depth: 1, ignored: subtreeWatchFilter(root, [path]) });
+  const subscription = handle.onDidChange(() => {
+    debounce.cancelAndSet(onChange, PROJECT_DECLARATION_WATCH_DEBOUNCE_MS);
+  });
+  // The initial scan swallows events for files that appear before the watcher
+  // is ready; one extra change notification on ready catches those edits.
+  void handle.ready.then(() => {
+    onChange();
+  }, () => {});
+  return {
+    dispose: () => {
+      debounce.dispose();
+      subscription.dispose();
+      handle.dispose();
+    },
+  };
+}
+
+function declarationFingerprint(entry: RemoteRuntimeEntry): string {
+  return JSON.stringify(sortKeysDeep(entry));
+}
+
+function sortKeysDeep(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeysDeep);
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .toSorted(([a], [b]) => a.localeCompare(b))
+        .map(([key, nested]) => [key, sortKeysDeep(nested)]),
+    );
+  }
+  return value;
 }

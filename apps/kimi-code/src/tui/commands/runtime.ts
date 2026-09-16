@@ -210,10 +210,26 @@ async function addFlow(host: SlashCommandHost, session: Session, list: SessionRu
     await openRuntimeManager(host, session);
     return;
   }
-  // Declarations register into a workspace instance's runtime registry at
-  // attach time, so the new runtime appears in this dialog on next launch.
-  host.showStatus(`Runtime "${value.id}" added to config.toml — available after restart.`);
+  // The engine watches the [runtimes] config section and registers new
+  // declarations live; wait for the registration to land so the reopened
+  // manager lists the new runtime immediately.
+  host.showStatus(`Runtime "${value.id}" added to config.toml.`);
+  await waitForRuntimeRegistration(session, value.id);
   await openRuntimeManager(host, session);
+}
+
+const REGISTRATION_WAIT_TIMEOUT_MS = 2_000;
+const REGISTRATION_WAIT_INTERVAL_MS = 50;
+
+async function waitForRuntimeRegistration(session: Session, runtimeId: string): Promise<void> {
+  const deadline = Date.now() + REGISTRATION_WAIT_TIMEOUT_MS;
+  for (;;) {
+    const list = await session.listRuntimes();
+    if (list.runtimes.some((runtime) => runtime.runtimeId === runtimeId) || Date.now() >= deadline) return;
+    await new Promise((resolve) => {
+      setTimeout(resolve, REGISTRATION_WAIT_INTERVAL_MS);
+    });
+  }
 }
 
 async function submitAdd(
