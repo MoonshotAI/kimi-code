@@ -11,6 +11,7 @@ import { join } from 'pathe';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import type {
   OAuthClientInformationFull,
   OAuthTokens,
@@ -1443,6 +1444,33 @@ describe('McpConnectionManager', () => {
       await expect(cm.markNeedsAuth('hyper', error, client)).resolves.toBe(true);
       expect(cm.get('hyper')?.status).toBe('needs-auth');
       expect(await oauthService.hasTokens('hyper', server.url)).toBe(false);
+    } finally {
+      await cm.shutdown();
+      await server.close();
+    }
+  }, 15000);
+
+  it('ignores application-level errors that merely mention unauthorized', async () => {
+    const server = await startAnonymousDiscoveryHttpMcpServer();
+    const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+    const cm = createManager({ oauthService });
+    try {
+      await cm.connectAll({
+        hyper: { transport: 'http', url: server.url, startupTimeoutMs: 5_000 },
+      });
+      expect(cm.get('hyper')?.status).toBe('connected');
+      await oauthService.getProvider('hyper', server.url).saveTokens({
+        access_token: 'valid-access-token',
+        token_type: 'Bearer',
+        obtained_at: Date.now() - 60_000,
+      } as StoredMcpOAuthTokens);
+      const client = cm.resolved('hyper')?.client;
+      if (client === undefined) throw new Error('expected a connected client');
+      const appError = new McpError(ErrorCode.InvalidRequest, 'Unauthorized to edit this project');
+      await expect(cm.markNeedsAuth('hyper', appError, client)).resolves.toBe(false);
+      expect(cm.get('hyper')?.status).toBe('connected');
+      expect(await oauthService.hasTokens('hyper', server.url)).toBe(true);
+      expect(cm.resolved('hyper')?.client).toBe(client);
     } finally {
       await cm.shutdown();
       await server.close();

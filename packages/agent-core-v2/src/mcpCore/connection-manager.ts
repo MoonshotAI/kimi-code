@@ -3,6 +3,7 @@ import type { McpServerConfig } from './config-schema';
 import type { ILogger as Logger } from '#/_base/log/log';
 import type { ToolDescription as Tool } from '#human/llm/message';
 import { HostProcessError, HostProcessErrorCode } from '#/os/interface/hostProcess';
+import { McpError } from '@modelcontextprotocol/sdk/types.js';
 
 import { abortable } from '#/_base/utils/abort';
 import { HttpMcpClient } from './client-http';
@@ -571,6 +572,7 @@ function computeEnabledNames(config: McpServerConfig, tools: readonly Tool[]): S
 
 function isUnauthorizedLikeError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
+  if (error instanceof McpError) return false;
   if (error.name === 'UnauthorizedError') return true;
   const code = (error as { code?: unknown }).code;
   if (typeof code === 'number' && code === 401) return true;
