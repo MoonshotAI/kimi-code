@@ -247,6 +247,19 @@ function openOptions(overrides: Partial<OpenSessionOptions> = {}): OpenSessionOp
   };
 }
 
+function createStubTelemetry(homeDir = "/tmp/kimi-runtime-telemetry-home") {
+  return {
+    client: {
+      track: vi.fn(),
+      withContext: vi.fn(),
+      setContext: vi.fn(),
+    },
+    homeDir,
+    bindAuth: vi.fn(),
+    shutdown: vi.fn(async () => undefined),
+  };
+}
+
 function createRuntime(
   normalizeCreatedWorkDir?: (workDir: string) => string,
 ) {
@@ -254,6 +267,7 @@ function createRuntime(
   const runtime = new KimiRuntime({
     version: "0.6.0",
     harness: sdk.harness,
+    telemetry: createStubTelemetry(),
     broadcast: () => undefined,
     captureBaseline: () => undefined,
     log: () => undefined,
@@ -263,21 +277,24 @@ function createRuntime(
 
 describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
   it("creates the harness through the SDK factory when none is injected", async () => {
+    const telemetry = createStubTelemetry();
     const runtime = new KimiRuntime({
       version: "0.6.0",
+      telemetry,
       broadcast: () => undefined,
       captureBaseline: () => undefined,
       log: () => undefined,
     });
     expect(sdkFactories.createKimiHarness).toHaveBeenCalledOnce();
     expect(sdkFactories.createKimiHarness).toHaveBeenCalledWith({
-      homeDir: undefined,
+      homeDir: telemetry.homeDir,
       identity: {
         productName: "kimi-code-vscode",
         version: "0.6.0",
         platform: "kimi_code_vscode",
       },
       uiMode: "vscode",
+      telemetry: telemetry.client,
     });
     expect(runtime.harness).toBe(sdkFactories.harness as unknown as KimiHarness);
     await runtime.dispose();

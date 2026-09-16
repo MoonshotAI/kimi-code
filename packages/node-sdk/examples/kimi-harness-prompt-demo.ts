@@ -8,7 +8,8 @@ const PROMPT =
 
 async function main(): Promise<void> {
   const workDir = process.cwd();
-  const harness = createKimiHarness({ identity: smokeIdentityFromEnv() });
+  const harness = createKimiHarness({
+  telemetry: false, identity: smokeIdentityFromEnv() });
 
   try {
     const config = await harness.getConfig();

@@ -29,6 +29,7 @@ export async function runLoginFlow(options: { region?: KimiRegion } = {}): Promi
   const region = options.region ?? regionForBareLogin(persistedKimiOAuthRef());
   const identity = createKimiCodeHostIdentity();
   const harness = createKimiHarness({
+    telemetry: false,
     identity,
     uiMode: 'cli',
   });

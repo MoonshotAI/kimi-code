@@ -7,7 +7,8 @@ import {
 } from './runtime-smoke-helpers';
 
 async function main(): Promise<void> {
-  const harness = createKimiHarness({ identity: smokeIdentityFromEnv() });
+  const harness = createKimiHarness({
+  telemetry: false, identity: smokeIdentityFromEnv() });
 
   try {
     const config = await harness.getConfig();

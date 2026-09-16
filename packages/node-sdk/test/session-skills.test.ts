@@ -68,7 +68,8 @@ describe('Session skills', () => {
       '',
       'Check the requested file for security issues.',
     ]);
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({
+  telemetry: false, homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_sdk_multi_skill', workDir });
@@ -109,7 +110,8 @@ describe('Session skills', () => {
       '',
       'Review the requested file.',
     ]);
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({
+  telemetry: false, homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_sdk_skill_list', workDir });
@@ -141,7 +143,8 @@ describe('Session skills', () => {
       '',
       'Review the requested file.',
     ]);
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({
+  telemetry: false, homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_sdk_skill_activate', workDir });
@@ -202,7 +205,8 @@ describe('Session skills', () => {
     vi.stubEnv('KIMI_CODE_HOME', homeDir);
     await writeLegacyUserSkill(processHome, 'sdk-real-home-only', 'SDK real home skill');
     await writeBrandUserSkill(homeDir, 'sdk-sandbox-only', 'SDK sandbox skill');
-    const harness = createKimiHarness({ identity: TEST_IDENTITY });
+    const harness = createKimiHarness({
+  telemetry: false, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_sdk_skill_env_home', workDir });
@@ -296,7 +300,8 @@ describe('KimiHarness workspace skills', () => {
       '',
       'Inspect every changed file.',
     ]);
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({
+  telemetry: false, homeDir, identity: TEST_IDENTITY });
 
     try {
       const skills = await harness.listWorkspaceSkills(workDir);
@@ -314,7 +319,8 @@ describe('KimiHarness workspace skills', () => {
 
   it('preserves the core error when workDir is empty', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-workspace-skills-home-');
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({
+  telemetry: false, homeDir, identity: TEST_IDENTITY });
 
     try {
       await expect(harness.listWorkspaceSkills('   ')).rejects.toMatchObject({
@@ -329,7 +335,8 @@ describe('KimiHarness workspace skills', () => {
 
   it('preserves the core error when workDir is not a string', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-workspace-skills-home-');
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({
+  telemetry: false, homeDir, identity: TEST_IDENTITY });
 
     try {
       await expect(harness.listWorkspaceSkills(null as never)).rejects.toMatchObject({

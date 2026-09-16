@@ -46,6 +46,7 @@ async function createReplayRig(): Promise<ReplayRig> {
   await Promise.all([mkdir(homeDir), mkdir(workDir)]);
   const provider = await createFakeProviderHarness();
   const harness = createKimiHarness({
+    telemetry: false,
     homeDir,
     identity: { productName: "kimi-code-vscode", version: "test", platform: "kimi_code_vscode" },
   });

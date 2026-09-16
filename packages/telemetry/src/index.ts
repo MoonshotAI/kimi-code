@@ -50,5 +50,7 @@ export type { CrashPhase } from './crash';
 
 export { normalizeRemote } from './remote';
 
+export { getDefaultTelemetryClient, resetDefaultTelemetryClientForTests } from './client';
+
 export type { TelemetryPrimitive, TelemetryProperties } from './types';
 export type { TelemetryClient, TelemetryContextIds } from './client';

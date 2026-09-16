@@ -350,7 +350,15 @@ export interface SDKRpcClientV2Options {
    * source. Passed into the engine through `BootstrapInput.args.skillDirs`.
    */
   readonly skillDirs?: readonly string[];
-  readonly telemetry?: TelemetryClient;
+  /**
+   * Telemetry sink for harness-level events and forwarded engine events.
+   * Explicitly required — the SDK never picks a silent default:
+   * - pass a `TelemetryClient` to report events through the host's pipeline;
+   * - pass `false` to opt out of reporting (tests, third-party hosts);
+   * - omitting this property is a compile-time error, so a host cannot
+   *   unwittingly drop every event.
+   */
+  readonly telemetry: TelemetryClient | false;
   readonly onOAuthRefresh?: (outcome: OAuthRefreshOutcome) => void;
   readonly uiMode?: string;
   /** UI surfaces this host renders; forwarded as `BootstrapInput.args.uiCapabilities`. */
@@ -422,7 +430,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   /** App-scope subscriptions (global event forwarding, lifecycle tracking), disposed in {@link close}. */
   private readonly appSubscriptions: IDisposable[] = [];
 
-  constructor(options: SDKRpcClientV2Options = {}) {
+  constructor(options: SDKRpcClientV2Options) {
     super();
     this.identity =
       options.identity === undefined ? undefined : assertKimiHostIdentity(options.identity);
@@ -432,7 +440,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       configPath: options.configPath,
     });
     ensureKimiHome(this.homeDir);
-    this.telemetry = options.telemetry ?? noopTelemetryClient;
+    this.telemetry = options.telemetry === false ? noopTelemetryClient : options.telemetry;
     this.auth = new KimiAuthFacade({
       homeDir: this.homeDir,
       configPath: this.configPath,
@@ -542,8 +550,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * {@link suppressEngineSessionStarted} was called — see its doc for why the
    * harness-assembled client drops that row.
    */
-  private installEngineTelemetry(client: TelemetryClient | undefined): void {
-    if (client === undefined) return;
+  private installEngineTelemetry(client: TelemetryClient | false): void {
+    // `false` is the host's explicit opt-out: nothing is forwarded and the
+    // engine's telemetry-enabled flag is left untouched (there is no client
+    // sink to gate).
+    if (client === false) return;
     const telemetry = this.app.accessor.get(ITelemetryService);
     telemetry.addAppender({
       track: (record) => {

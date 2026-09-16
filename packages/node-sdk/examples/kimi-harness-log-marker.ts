@@ -42,6 +42,7 @@ async function main(): Promise<void> {
   const options = parseCliArgs();
   const resolvedHome = resolveKimiHome(options.homeDir);
   const harness = createKimiHarness({
+    telemetry: false,
     identity: { productName: 'kimi-code-cli', version: 'log-marker', platform: 'kimi_code_cli' },
     homeDir: options.homeDir,
   });

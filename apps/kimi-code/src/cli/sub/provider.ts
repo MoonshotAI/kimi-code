@@ -560,7 +560,7 @@ function resolveDeps(overrides: Partial<ProviderDeps> = {}): ResolvedProviderDep
     getHarness:
       overrides.getHarness ??
       (() => {
-        harness ??= createKimiHarness({ identity });
+        harness ??= createKimiHarness({ identity, telemetry: false });
         return harness;
       }),
     stdout: overrides.stdout ?? process.stdout,

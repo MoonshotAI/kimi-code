@@ -16,6 +16,7 @@ import {
   type LegacyApprovalFlags,
 } from "./legacy-approval";
 import { SessionRuntime } from "./session-runtime";
+import { initializeVscodeTelemetry, type VscodeTelemetry } from "./telemetry";
 import { areSameFsPath } from "../utils/fs-path";
 
 export interface KimiRuntimeOptions {
@@ -29,6 +30,11 @@ export interface KimiRuntimeOptions {
   readonly log: (message: string, error?: unknown) => void;
   readonly homeDir?: string;
   readonly harness?: KimiHarness;
+  /**
+   * Telemetry pipeline for this host. Defaults to the vscode client-side
+   * pipeline (`ui_mode: "vscode"`); tests substitute a stub.
+   */
+  readonly telemetry?: VscodeTelemetry;
 }
 
 export interface OpenSessionOptions {
@@ -50,23 +56,33 @@ export class KimiRuntime {
   private readonly sessions = new Map<string, SessionRuntime>();
   private readonly sessionByView = new Map<string, string>();
   private readonly viewChains = new Map<string, Promise<void>>();
+  private readonly telemetry: VscodeTelemetry;
   private closed = false;
 
   constructor(options: KimiRuntimeOptions) {
     this.broadcast = options.broadcast;
     this.captureBaseline = options.captureBaseline;
     this.log = options.log;
+    this.telemetry =
+      options.telemetry ??
+      initializeVscodeTelemetry({
+        homeDir: options.homeDir,
+        version: options.version,
+        log: (message) => this.log(message),
+      });
     this.harness =
       options.harness ??
       createKimiHarness({
-        homeDir: options.homeDir,
+        homeDir: this.telemetry.homeDir,
         identity: {
           productName: "kimi-code-vscode",
           version: options.version,
           platform: "kimi_code_vscode",
         },
         uiMode: "vscode",
+        telemetry: this.telemetry.client,
       });
+    this.telemetry.bindAuth(this.harness.auth);
   }
 
   getSessionForView(webviewId: string): SessionRuntime | undefined {
@@ -256,6 +272,7 @@ export class KimiRuntime {
     this.sessions.clear();
     this.sessionByView.clear();
     await this.harness.close();
+    await this.telemetry.shutdown();
   }
 
   private wrapSession(session: Session, legacyApproval: LegacyApprovalFlags): SessionRuntime {

@@ -209,7 +209,15 @@ export interface KimiHarnessOptions {
    * offer the dependent tool.
    */
   readonly uiCapabilities?: readonly HostUiCapability[];
-  readonly telemetry?: TelemetryClient | undefined;
+  /**
+   * Telemetry sink for harness-level events and forwarded engine events.
+   * Explicitly required — the SDK never picks a silent default:
+   * - pass a `TelemetryClient` to report events through the host's pipeline;
+   * - pass `false` to opt out of reporting (tests, third-party hosts);
+   * - omitting this property is a compile-time error, so a host cannot
+   *   unwittingly drop every event.
+   */
+  readonly telemetry: TelemetryClient | false;
   readonly onOAuthRefresh?: ((outcome: OAuthRefreshOutcome) => void) | undefined;
   readonly sessionStartedProperties?: TelemetryProperties;
 }

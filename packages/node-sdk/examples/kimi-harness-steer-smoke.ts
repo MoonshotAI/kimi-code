@@ -10,7 +10,8 @@ const PROMPT = 'Draft a long checklist for validating a TypeScript SDK runtime.'
 const STEER = 'Also include cancellation and permission-mode checks.';
 
 async function main(): Promise<void> {
-  const harness = createKimiHarness({ identity: smokeIdentityFromEnv() });
+  const harness = createKimiHarness({
+  telemetry: false, identity: smokeIdentityFromEnv() });
 
   try {
     const session = await createConfiguredSession(harness);
