@@ -22,7 +22,13 @@ export interface EnrichedTelemetryEvent extends TelemetryEvent {
 export interface TelemetryTransport {
   send(events: readonly EnrichedTelemetryEvent[], signal?: AbortSignal): Promise<void>;
   saveToDisk(events: readonly EnrichedTelemetryEvent[]): void;
-  retryDiskEvents(): Promise<void>;
+  retryDiskEvents(signal?: AbortSignal): Promise<void>;
+  /**
+   * Opt-out semantics: after this call, sends aborted by the host are
+   * discarded instead of spooled to disk, so a later retry cannot transmit
+   * events the user already declined.
+   */
+  discardAbortedSends?(): void;
 }
 
 export function isTelemetryPrimitive(value: unknown): value is TelemetryPrimitive {

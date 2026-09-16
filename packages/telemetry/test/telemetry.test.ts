@@ -623,6 +623,28 @@ describe('EventSink', () => {
     expect(captured.signal?.aborted).toBe(true);
   });
 
+  it('aborts the backlog retry and marks aborted sends for discard on opt-out', async () => {
+    const captured: { retrySignal?: AbortSignal; discardCalled: boolean } = { discardCalled: false };
+    const transport: TelemetryTransport = {
+      send: () => new Promise<void>(() => {}),
+      saveToDisk: () => undefined,
+      retryDiskEvents: (signal) => {
+        captured.retrySignal = signal;
+        return new Promise<void>(() => {});
+      },
+      discardAbortedSends: () => {
+        captured.discardCalled = true;
+      },
+    };
+    const sink = makeSink(transport);
+
+    void sink.retryDiskEvents();
+    sink.abortInFlight();
+
+    expect(captured.retrySignal?.aborted).toBe(true);
+    expect(captured.discardCalled).toBe(true);
+  });
+
   it('stops waiting for an in-flight flush once the caller signal aborts, spooling its batch', async () => {
     let releaseSend: (() => void) | undefined;
     const saved: EnrichedTelemetryEvent[][] = [];
@@ -904,8 +926,26 @@ describe('AsyncTransport', () => {
     expect(() => statSync(join(homeDir, 'telemetry'))).toThrow();
   });
 
-  it('spools transient failures to disk after retries exhaust', async () => {
+  it('discards an aborted send instead of spooling it after opt-out', async () => {
     const homeDir = await tempHome();
+    const transport = new AsyncTransport({
+      homeDir,
+      deviceId: 'dev',
+      endpoint: 'https://mock.test/events',
+      fetchImpl: vi.fn() as unknown as typeof fetch,
+      retryBackoffsMs: [],
+    });
+    transport.discardAbortedSends();
+
+    const controller = new AbortController();
+    controller.abort();
+    await expect(transport.send([sampleEvent('opted_out')], controller.signal)).rejects.toThrow();
+
+    // Nothing spooled: a later retry must not transmit declined events.
+    expect(() => statSync(join(homeDir, 'telemetry'))).toThrow();
+  });
+
+  it('spools transient failures to disk after retries exhaust', async () => {    const homeDir = await tempHome();
     const fetchImpl = vi.fn(async () => new Response('', { status: 429 }));
     const transport = new AsyncTransport({
       homeDir,

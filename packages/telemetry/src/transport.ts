@@ -55,6 +55,7 @@ export class AsyncTransport {
   private readonly requestTimeoutMs: number;
   private readonly sleepImpl: (ms: number, signal?: AbortSignal) => Promise<void>;
   private readonly now: () => number;
+  private discardAborted = false;
 
   constructor(options: AsyncTransportOptions) {
     this.homeDir = options.homeDir;
@@ -73,8 +74,10 @@ export class AsyncTransport {
     let savedToDisk = false;
     const saveEventsToDisk = (): void => {
       if (savedToDisk) return;
-      this.saveToDisk(events);
       savedToDisk = true;
+      // Opt-out aborts discard rather than spool: the user declined these.
+      if (this.discardAborted) return;
+      this.saveToDisk(events);
     };
     if (signal?.aborted === true) {
       saveEventsToDisk();
@@ -128,7 +131,11 @@ export class AsyncTransport {
     }
   }
 
-  async retryDiskEvents(): Promise<void> {
+  discardAbortedSends(): void {
+    this.discardAborted = true;
+  }
+
+  async retryDiskEvents(signal?: AbortSignal): Promise<void> {
     let entries: string[];
     try {
       entries = readdirSync(this.telemetryDir());
@@ -167,9 +174,11 @@ export class AsyncTransport {
       }
 
       try {
-        await this.sendHttp(payload);
+        if (signal?.aborted === true) return;
+        await this.sendHttp(payload, signal);
         unlinkSync(path);
       } catch (error) {
+        if (isSignalAborted(signal) || isAbortError(error)) return;
         if (error instanceof TransientTelemetryError) continue;
       }
     }

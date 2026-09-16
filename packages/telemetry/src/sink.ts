@@ -38,6 +38,7 @@ export class EventSink {
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private activeBatch: readonly EnrichedTelemetryEvent[] | null = null;
   private sendController: AbortController | null = null;
+  private retryController: AbortController | null = null;
   private tail: Promise<void> = Promise.resolve();
 
   constructor(options: EventSinkOptions) {
@@ -86,7 +87,15 @@ export class EventSink {
   }
 
   async retryDiskEvents(): Promise<void> {
-    await this.transport.retryDiskEvents();
+    // Backlog retries run under their own controller too: an opt-out must
+    // stop a retry request mid-flight, not just the periodic flush.
+    const controller = new AbortController();
+    this.retryController = controller;
+    try {
+      await this.transport.retryDiskEvents(controller.signal);
+    } finally {
+      this.retryController = null;
+    }
   }
 
   clearBuffer(): void {
@@ -109,11 +118,9 @@ export class EventSink {
     );
 
     // The caller's join of the previous operation, bounded by its signal.
-    let joinAborted = false;
     try {
       await raceWithSignal(previous, signal);
     } catch (error) {
-      joinAborted = true;
       // The timeout gave up on a send that still owns its batch: spool that
       // batch to disk so host unload cannot lose it. The send may still
       // succeed afterwards — a rare duplicate beats a lost batch.
@@ -150,9 +157,12 @@ export class EventSink {
     }
   }
 
-  /** Abort the currently running send, if any; the transport spools it. */
+  /** Abort the currently running send and backlog retry, if any; the
+      transport discards the aborted batch (opt-out semantics). */
   abortInFlight(): void {
+    this.transport.discardAbortedSends?.();
     this.sendController?.abort();
+    this.retryController?.abort();
   }
 
   flushSync(): void {
