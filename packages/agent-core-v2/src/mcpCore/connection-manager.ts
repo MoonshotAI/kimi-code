@@ -33,6 +33,7 @@ interface InternalEntry {
   enabledNames?: ReadonlySet<string>;
   error?: string;
   client?: RuntimeMcpClient;
+  connectedAt?: number;
 }
 
 export type McpStatusListener = (entry: McpServerEntry) => void;
@@ -313,7 +314,7 @@ export class McpConnectionManager implements McpConnectionView {
     const oauthService = this.oauthService;
     const rejectedGrant =
       oauthService !== undefined && isRemoteMcpConfig(entry.config)
-        ? await oauthService.peekRejectedGrant(name, entry.config.url)
+        ? await oauthService.peekRejectedGrant(name, entry.config.url, entry.connectedAt)
         : undefined;
     if (!this.isCurrent(entry, attemptId)) return false;
     if (rejectedGrant?.concurrent === true) return false;
@@ -377,6 +378,7 @@ export class McpConnectionManager implements McpConnectionView {
       entry.rawTools = discovered.rawTools;
       entry.enabledNames = computeEnabledNames(entry.config, discovered.tools);
       entry.status = 'connected';
+      entry.connectedAt = this.oauthService?.now() ?? Date.now();
       this.watchForUnexpectedClose(entry, startupClient, attemptId);
     } catch (error) {
       if (!this.isCurrent(entry, attemptId)) {
