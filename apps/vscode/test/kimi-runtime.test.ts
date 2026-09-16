@@ -304,6 +304,25 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
     await runtime.dispose();
   });
 
+  it("shuts telemetry down when harness construction fails", () => {
+    const telemetry = createStubTelemetry();
+    sdkFactories.createKimiHarness.mockImplementationOnce(() => {
+      throw new Error("engine bootstrap failed");
+    });
+
+    expect(
+      () =>
+        new KimiRuntime({
+          version: "0.6.0",
+          telemetry,
+          broadcast: () => undefined,
+          captureBaseline: () => undefined,
+          log: () => undefined,
+        }),
+    ).toThrow("engine bootstrap failed");
+    expect(telemetry.shutdown).toHaveBeenCalledOnce();
+  });
+
   it("forwards the requested settings when creating an SDK session", async () => {
     const { runtime, sdk } = createRuntime();
 

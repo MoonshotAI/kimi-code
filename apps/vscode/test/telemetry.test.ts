@@ -93,6 +93,7 @@ describe("initializeVscodeTelemetry", () => {
       isEditorTelemetryEnabled: () => editorEnabled,
       onEditorTelemetryChange: (registered) => {
         listener = registered;
+        return { dispose: () => undefined };
       },
     });
 
@@ -103,6 +104,24 @@ describe("initializeVscodeTelemetry", () => {
 
     listener?.(false);
     expect(getDefaultTelemetryClient().getSink()).toBeNull();
+  });
+
+  it("disposes the editor gate listener on shutdown", async () => {
+    let listener: ((enabled: boolean) => void) | undefined;
+    const dispose = vi.fn();
+    const telemetry = initializeVscodeTelemetry({
+      homeDir,
+      version: "0.7.5",
+      onEditorTelemetryChange: (registered) => {
+        listener = registered;
+        return { dispose };
+      },
+    });
+    expect(listener).toBeDefined();
+
+    await telemetry.shutdown();
+
+    expect(dispose).toHaveBeenCalledOnce();
   });
 });
 

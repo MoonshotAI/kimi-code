@@ -45,7 +45,9 @@ export interface VscodeTelemetryOptions {
    */
   readonly isEditorTelemetryEnabled?: () => boolean;
   /** Editor gate change hook; re-initializes the pipeline when it fires. */
-  readonly onEditorTelemetryChange?: (listener: (enabled: boolean) => void) => void;
+  readonly onEditorTelemetryChange?: (
+    listener: (enabled: boolean) => void,
+  ) => { dispose(): void };
 }
 
 export interface VscodeTelemetry {
@@ -88,8 +90,10 @@ export function initializeVscodeTelemetry(options: VscodeTelemetryOptions): Vsco
   boot();
   // Toggling the editor setting must not strand the old pipeline: a fresh
   // initialize either disables the singleton outright or reattaches a sink,
-  // stopping the previous periodic flush.
-  options.onEditorTelemetryChange?.((enabled) => {
+  // stopping the previous periodic flush. The subscription is disposed on
+  // shutdown so a deactivation never leaves a callback that can boot an
+  // ownerless pipeline again.
+  const editorListener = options.onEditorTelemetryChange?.((enabled) => {
     editorEnabled = enabled;
     boot();
   });
@@ -106,7 +110,10 @@ export function initializeVscodeTelemetry(options: VscodeTelemetryOptions): Vsco
       // earlier sessions (the initial boot deliberately skipped this).
       void getDefaultTelemetryClient().getSink()?.retryDiskEvents().catch(() => {});
     },
-    shutdown: () => shutdownTelemetry({ timeoutMs: TELEMETRY_SHUTDOWN_TIMEOUT_MS }),
+    shutdown: async () => {
+      editorListener?.dispose();
+      await shutdownTelemetry({ timeoutMs: TELEMETRY_SHUTDOWN_TIMEOUT_MS });
+    },
   };
 }
 

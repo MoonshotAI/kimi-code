@@ -36,6 +36,7 @@ export class EventSink {
   private readonly flushThreshold: number;
   private buffer: EnrichedTelemetryEvent[] = [];
   private flushTimer: ReturnType<typeof setInterval> | null = null;
+  private inFlight: Promise<void> | null = null;
 
   constructor(options: EventSinkOptions) {
     this.transport = options.transport;
@@ -86,10 +87,25 @@ export class EventSink {
   }
 
   async flush(signal?: AbortSignal): Promise<void> {
+    // Join any timer- or threshold-triggered flush already in flight: a
+    // shutdown-time flush must not resolve while a request still holds the
+    // last events, or the host may unload before they land or spool to disk.
+    if (this.inFlight !== null) {
+      try {
+        await this.inFlight;
+      } catch {
+        // The original owner surfaces the failure; joining is about ordering.
+      }
+    }
     if (this.buffer.length === 0) return;
     const events = this.buffer;
     this.buffer = [];
-    await this.transport.send(events, signal);
+    this.inFlight = this.transport.send(events, signal);
+    try {
+      await this.inFlight;
+    } finally {
+      this.inFlight = null;
+    }
   }
 
   flushSync(): void {

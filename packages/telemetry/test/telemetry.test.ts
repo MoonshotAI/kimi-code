@@ -514,6 +514,43 @@ describe('EventSink', () => {
     expect(transport.saved[0]?.[0]?.context).toMatchObject({ model: 'scoped-model' });
     expect(transport.saved[0]?.[1]?.context).toMatchObject({ model: 'reconciled-model' });
   });
+
+  it('joins an in-flight flush before a later flush resolves', async () => {
+    let releaseSend: (() => void) | undefined;
+    const transport: TelemetryTransport = {
+      sent: [],
+      saved: [],
+      retryCount: 0,
+      send: () =>
+        new Promise<void>((resolve) => {
+          releaseSend = resolve;
+        }),
+      saveToDisk: () => undefined,
+      retryDiskEvents: async () => undefined,
+    } as unknown as RecordingTransport;
+    const sink = makeSink(transport, 1);
+    sink.accept({
+      event_id: 'e1',
+      device_id: 'dev',
+      session_id: 'ses',
+      event: 'first',
+      timestamp: 1,
+      properties: {},
+    });
+
+    // Threshold 1 starts the send immediately; it stays in flight until released.
+    await vi.waitFor(() => expect(releaseSend).toBeDefined());
+    let joined = false;
+    const shutdownFlush = sink.flush().then(() => {
+      joined = true;
+    });
+    await Promise.resolve();
+    expect(joined).toBe(false);
+
+    releaseSend?.();
+    await shutdownFlush;
+    expect(joined).toBe(true);
+  });
 });
 
 describe('payload assembly', () => {

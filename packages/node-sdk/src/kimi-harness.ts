@@ -150,7 +150,7 @@ export class KimiHarness {
     if (planMode === true) {
       await session.setPlanMode(true);
     }
-    const createModel = (await session.getStatus()).model;
+    const createModel = await this.sessionModel(session);
     this.trackSessionStarted(summary.id, false, createModel, sessionStartedProperties);
     this.trackSessionEvent(session.id, 'session_new', createModel);
     return session;
@@ -213,7 +213,7 @@ export class KimiHarness {
       },
     });
     this.activeSessions.set(session.id, session);
-    const resumeModel = (await session.getStatus()).model;
+    const resumeModel = await this.sessionModel(session);
     this.trackSessionStarted(summary.id, true, resumeModel, sessionStartedProperties);
     this.trackSessionEvent(session.id, 'session_resume', resumeModel);
     return session;
@@ -226,7 +226,7 @@ export class KimiHarness {
       await active.reloadSession({
         forcePluginSessionStartReminder: input.forcePluginSessionStartReminder,
       });
-      this.trackSessionEvent(active.id, 'session_reload', (await active.getStatus()).model);
+      this.trackSessionEvent(active.id, 'session_reload', await this.sessionModel(active));
       return active;
     }
 
@@ -246,7 +246,7 @@ export class KimiHarness {
       },
     });
     this.activeSessions.set(session.id, session);
-    const reloadModel = (await session.getStatus()).model;
+    const reloadModel = await this.sessionModel(session);
     this.trackSessionStarted(summary.id, true, reloadModel);
     this.trackSessionEvent(session.id, 'session_reload', reloadModel);
     return session;
@@ -272,7 +272,7 @@ export class KimiHarness {
       },
     });
     this.activeSessions.set(session.id, session);
-    const forkModel = (await session.getStatus()).model;
+    const forkModel = await this.sessionModel(session);
     this.trackSessionStarted(summary.id, true, forkModel);
     this.trackSessionEvent(session.id, 'session_fork', forkModel);
     return session;
@@ -627,6 +627,16 @@ export class KimiHarness {
   async close(): Promise<void> {
     await Promise.all(Array.from(this.activeSessions.values(), (session) => session.close()));
     await this.closeImpl();
+  }
+
+  /** Best-effort model lookup for telemetry enrichment; never part of the
+      lifecycle operation's success path. */
+  private async sessionModel(session: Session): Promise<string | undefined> {
+    try {
+      return (await session.getStatus()).model;
+    } catch {
+      return undefined;
+    }
   }
 
   private trackSessionEvent(eventSessionId: string, event: string, model?: string): void {

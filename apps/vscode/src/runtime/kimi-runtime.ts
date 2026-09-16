@@ -42,7 +42,7 @@ export interface KimiRuntimeOptions {
    */
   readonly editorTelemetry?: {
     readonly isEnabled: () => boolean;
-    readonly onDidChange: (listener: (enabled: boolean) => void) => void;
+    readonly onDidChange: (listener: (enabled: boolean) => void) => { dispose(): void };
   };
 }
 
@@ -81,18 +81,27 @@ export class KimiRuntime {
         isEditorTelemetryEnabled: options.editorTelemetry?.isEnabled,
         onEditorTelemetryChange: options.editorTelemetry?.onDidChange,
       });
-    this.harness =
-      options.harness ??
-      createKimiHarness({
-        homeDir: this.telemetry.homeDir,
-        identity: {
-          productName: "kimi-code-vscode",
-          version: options.version,
-          platform: "kimi_code_vscode",
-        },
-        uiMode: "vscode",
-        telemetry: this.telemetry.client,
-      });
+    try {
+      this.harness =
+        options.harness ??
+        createKimiHarness({
+          homeDir: this.telemetry.homeDir,
+          identity: {
+            productName: "kimi-code-vscode",
+            version: options.version,
+            platform: "kimi_code_vscode",
+          },
+          uiMode: "vscode",
+          telemetry: this.telemetry.client,
+        });
+    } catch (error) {
+      // The pipeline started its timers before the harness existed; a failed
+      // construction yields no KimiRuntime that deactivate() can dispose, so
+      // shut the orphan down here (fire-and-forget — constructors cannot
+      // await).
+      void this.telemetry.shutdown().catch(() => {});
+      throw error;
+    }
     this.telemetry.bindAuth(this.harness.auth);
   }
 
