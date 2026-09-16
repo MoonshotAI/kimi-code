@@ -401,6 +401,33 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
     ]);
   });
 
+  it("omits skills restricted to specific client scopes from the slash commands", async () => {
+    const commands = await configHandlers[Methods.GetSlashCommands]!(undefined, {
+      workDir: "/workspace",
+      harness: {
+        listWorkspaceSkills: async () => [
+          { name: "tui-only", description: "TUI only", path: "/skills/tui-only", source: "builtin", type: "inline", scopes: ["tui"] },
+          { name: "web-only", description: "Web only", path: "/skills/web-only", source: "builtin", type: "inline", scopes: ["web"] },
+          { name: "unrestricted", description: "Unrestricted", path: "/skills/unrestricted", source: "builtin", type: "inline" },
+        ],
+      },
+      logError: () => undefined,
+    } as unknown as HandlerContext);
+
+    expect((commands as Array<{ name: string }>).map((command) => command.name)).toEqual([
+      "init",
+      "compact",
+      "clear",
+      "yolo",
+      "auto",
+      "plan",
+      "add-dir",
+      "export",
+      "import",
+      "skill:unrestricted",
+    ]);
+  });
+
   it("sends the package version in User-Agent when VS Code prompts the provider", async () => {
     const rig = await createRuntimeRig();
     routeSuccessfulPrompt(rig.provider);

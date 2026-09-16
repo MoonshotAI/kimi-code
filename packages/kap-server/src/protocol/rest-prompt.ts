@@ -43,6 +43,7 @@ export const promptItemSchema = z.object({
   status: promptStatusSchema,
   content: z.array(messageContentSchema).min(1),
   created_at: isoDateTimeSchema,
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 export type PromptItem = z.infer<typeof promptItemSchema>;
 

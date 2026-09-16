@@ -10,7 +10,10 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
 
 import type { CatalogModel, CatalogProviderInfo } from '#human/llm/provider-catalog';
-import { oauthCredentials, staticCredentials } from '#human/credentials/credentials';
+import {
+  createOAuthCredentialProvider,
+  createStaticCredentialProvider,
+} from '#human/credentials/credentials';
 import type { LlmCredentialProvider } from '#human/llm/requester/requester';
 import type { ModelCapability } from '../contract/capability';
 import { CONFIG_INVALID_ERROR_CODE } from '../contract/errors';
@@ -151,7 +154,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
   ): AsyncIterable<ModelRequestEvent> {
     const { requester } = this.entry(id);
     yield* streamWithCredentialRecovery(
-      requester.model.credentials,
+      requester.model.credentialProvider,
       () => requester.request(input, signal, params),
       signal,
     );
@@ -184,7 +187,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
         }
         return { text: text.trim(), usage, finishReason };
       };
-      const result = await runWithCredentialRecovery(requester.model.credentials, consume);
+      const result = await runWithCredentialRecovery(requester.model.credentialProvider, consume);
       return {
         ok: true,
         durationMs: Date.now() - startedAt,
@@ -331,7 +334,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       provider: providerConfig,
       providerName,
     });
-    const credentials = this.buildCredentials(providerName, auth);
+    const credentialProvider = this.buildCredentialProvider(providerName, auth);
 
     const providerType = providerConfig?.type ?? protocol;
     const resolvedBaseUrl =
@@ -390,9 +393,10 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       supportEfforts: model.supportEfforts,
       defaultEffort: model.defaultEffort,
       alwaysThinking: declared.has('always_thinking'),
+      adaptiveThinking: model.adaptiveThinking,
       providerType,
       providerName,
-      credentials,
+      credentialProvider,
       providerOptions,
     };
   }
@@ -451,12 +455,12 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     return protocol;
   }
 
-  private buildCredentials(
+  private buildCredentialProvider(
     providerName: string,
     auth: ResolvedModelAuthMaterial,
   ): LlmCredentialProvider {
     if (auth.apiKey !== undefined) {
-      return staticCredentials(auth.apiKey);
+      return createStaticCredentialProvider(auth.apiKey);
     }
     if (auth.apiKeyEnv !== undefined) {
       const envName = auth.apiKeyEnv;
@@ -477,11 +481,11 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       const oauthRef = auth.oauth;
       const providerKey = auth.oauthProviderKey ?? providerName;
       const tokens = this.oauth;
-      return oauthCredentials((options) =>
+      return createOAuthCredentialProvider((options) =>
         tokens.getAccessToken(providerKey, oauthRef, { force: options?.force === true }),
       );
     }
-    return staticCredentials(undefined);
+    return createStaticCredentialProvider(undefined);
   }
 }
 

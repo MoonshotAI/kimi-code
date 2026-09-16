@@ -90,19 +90,18 @@ function printDeviceCode(auth: {
   );
 }
 
-function printUsage(usage: Awaited<ReturnType<KimiHarness['auth']['getManagedUsage']>>): void {
-  if (usage.kind === 'error') {
-    process.stderr.write(`usage request returned: ${usage.message}\n`);
+function printUsage(result: Awaited<ReturnType<KimiHarness['auth']['getManagedUsage']>>): void {
+  if (result.kind === 'error') {
+    process.stderr.write(`quota request returned: ${result.message}\n`);
     return;
   }
-  const summary = usage.summary;
-  if (summary === null) {
-    process.stdout.write(`usage: no summary, limits=${String(usage.limits.length)}\n`);
-    return;
+  const { usages } = result.quota;
+  const parts: string[] = [];
+  for (const [key, entry] of Object.entries(usages)) {
+    if (entry === undefined) continue;
+    parts.push(`${key} ${String(Math.round(entry.usedRatio * 100))}%`);
   }
-  const w = summary.window;
-  const label = w !== undefined ? `${String(w.duration)}${w.unit} window` : (summary.name ?? 'usage');
-  process.stdout.write(`usage: ${label} ${String(summary.used)}/${String(summary.limit)}\n`);
+  process.stdout.write(`quota: ${parts.join(', ')}\n`);
 }
 
 function shouldKeepToken(hasExplicitHomeDir: boolean): boolean {

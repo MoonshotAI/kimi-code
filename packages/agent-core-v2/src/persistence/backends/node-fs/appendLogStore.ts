@@ -189,7 +189,7 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
     });
   }
 
-  private flushLog(scope: string, key: string): Promise<void> {
+  flushLog(scope: string, key: string): Promise<void> {
     const state = this.state(scope, key);
     return this.flushState(scope, key, state);
   }

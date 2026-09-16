@@ -15,13 +15,13 @@ let installed = false;
 
 // pi-tui loads its platform-specific native helpers via an absolute-path
 // require() computed from import.meta.url / process.execPath
-// (see pi-tui dist/terminal.js and dist/native-modifiers.js). In a SEA binary
-// those .node files live in the native-asset cache, so redirect any absolute
-// require of a pi-tui native helper to the cached copy.
+// (see pi-tui dist/native-platform.js and dist/native-module-path.js). In a
+// SEA binary those .node files live in the native-asset cache, so redirect
+// any absolute require of a pi-tui native helper to the cached copy.
 //
-// Path shape: native/<darwin|win32>/prebuilds/<arch>/<file>.node — note the
-// two path segments after "prebuilds", so ".+" (not "[^/]+") is required.
-const PI_TUI_NATIVE_PATTERN = /native[\\/](?:win32|darwin)[\\/]prebuilds[\\/].+\.node$/;
+// Path shape: native/<darwin|linux|win32>/prebuilds/<arch>/<file>.node — note
+// the two path segments after "prebuilds", so ".+" (not "[^/]+") is required.
+const PI_TUI_NATIVE_PATTERN = /native[\\/](?:win32|darwin|linux)[\\/]prebuilds[\\/].+\.node$/;
 
 export function installNativeModuleHook(): void {
   if (installed) return;

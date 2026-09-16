@@ -627,7 +627,7 @@ describe('turn machine credential recovery', () => {
       requester,
       { recovery: credentialsRecovery },
       {
-        request: { model, credentials: provider },
+        request: { model, credentialProvider: provider },
       },
     );
 
@@ -664,7 +664,7 @@ describe('turn machine credential recovery', () => {
       },
       {
         ...mediaHistory([mediaMessage('a', 2), mediaMessage('b', 1), mediaMessage('c', 1)]),
-        request: { model, credentials: provider },
+        request: { model, credentialProvider: provider },
       },
     );
 
@@ -692,7 +692,7 @@ describe('turn machine credential recovery', () => {
       requester,
       { recovery: credentialsRecovery },
       {
-        request: { model, credentials: provider },
+        request: { model, credentialProvider: provider },
       },
     );
 
@@ -723,7 +723,7 @@ describe('turn machine credential recovery', () => {
       resolve: () => Promise.reject(new Error('login required')),
     };
     const { actor, failed } = startTurnActor(requester, undefined, {
-      request: { model, credentials: provider },
+      request: { model, credentialProvider: provider },
     });
 
     await drain();

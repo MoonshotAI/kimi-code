@@ -14,6 +14,7 @@ import {
   INTERACTION_TAG_SESSION_ID,
   LifecycleScope,
   IAgentLifecycleService,
+  IAgentConversationUndoParticipantRegistry,
   IAgentLoopService,
   IAgentProfileService,
   IAgentScopeContext,
@@ -34,6 +35,11 @@ import {
   makeAgentScopeContext,
 } from '@moonshot-ai/agent-core-v2';
 import { TurnStarted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
+import { Event2 } from '@moonshot-ai/agent-core-v2/app/event/event2';
+import {
+  AgentEventBusView,
+  EventBusService,
+} from '@moonshot-ai/agent-core-v2/app/event/eventBusService';
 import type { AgentActivitySnapshot } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import type { AgentEvent } from '../src/transport/ws/v1/events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -96,6 +102,10 @@ class FakeEventBus {
   }
 }
 
+class ShardedProbe extends Event2<{ readonly marker: string }> {
+  static override readonly type = 'test.shardedProbe';
+}
+
 class FakeAgentHandle {
   readonly kind = LifecycleScope.Agent;
   readonly bus = new FakeAgentBus();
@@ -112,6 +122,9 @@ class FakeAgentHandle {
     this.context = scope.agentContext;
     this.services.set(IAgentScopeContext, scope);
     this.services.set(IEventBus, this.bus);
+    this.services.set(IAgentConversationUndoParticipantRegistry, {
+      register: () => ({ dispose: () => {} }),
+    });
     this.services.set(IAgentLoopService, {
       snapshot: () => ({
         state: this.activity.turn === undefined ? 'idle' : 'running',
@@ -944,6 +957,58 @@ describe('SessionEventBroadcaster', () => {
     expect(envelopes.filter((e) => e.volatile !== true).map((e) => e.seq)).toEqual([1, 2, 3]);
     expect(envelopes[0]).toMatchObject({ type: 'agent.created' });
     expect((envelopes[0]!.payload as { agentId: string }).agentId).toBe('main');
+  });
+
+  it('delivers each agent exactly its own events through the real sharded session bus', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    const sub = lc.addAgent('agent-1');
+    sessions.set('s1', lc);
+    const sessionBus = new EventBusService();
+    sessionBus.activateAgent(main.context);
+    sessionBus.activateAgent(sub.context);
+    main.set(
+      IEventBus,
+      new AgentEventBusView(
+        sessionBus,
+        main.accessor.get(IAgentScopeContext) as IAgentScopeContext,
+      ),
+    );
+    sub.set(
+      IEventBus,
+      new AgentEventBusView(
+        sessionBus,
+        sub.accessor.get(IAgentScopeContext) as IAgentScopeContext,
+      ),
+    );
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    sessionBus.publish(
+      new TurnStarted({ agentId: 'main', turnId: 1, origin: { kind: 'user' } }),
+      main.context,
+    );
+    sessionBus.publish(new ShardedProbe({ marker: 'main' }), main.context);
+    sessionBus.publish(
+      new TurnStarted({ agentId: 'agent-1', turnId: 9, origin: { kind: 'user' } }),
+      sub.context,
+    );
+    sessionBus.publish(new ShardedProbe({ marker: 'sub' }), sub.context);
+    sessionBus.publish(new ShardedProbe({ marker: 'orphan' }));
+    await bc.getCursor('s1');
+
+    const delivered = envelopes.filter(
+      (e) => e.type === 'turn.started' || e.type === 'test.shardedProbe',
+    );
+    expect(delivered.map((e) => [e.type, (e.payload as { agentId?: unknown }).agentId])).toEqual([
+      ['turn.started', 'main'],
+      ['test.shardedProbe', 'main'],
+      ['turn.started', 'agent-1'],
+      ['test.shardedProbe', 'agent-1'],
+    ]);
+    expect(envelopes.some((e) => (e.payload as { marker?: unknown }).marker === 'orphan')).toBe(
+      false,
+    );
   });
 
   it('broadcasts agent.disposed only for agents this state attached', async () => {
@@ -2481,7 +2546,7 @@ describe('SessionEventBroadcaster', () => {
       const ids = transcriptEnvelopes(view.envelopes)
         .filter((e) => e.type === 'transcript.reset')
         .map((e) => (e.payload as { agent_id: string }).agent_id)
-        .sort();
+        .toSorted();
       expect(ids).toEqual(['main', 'sub-1']);
     });
 

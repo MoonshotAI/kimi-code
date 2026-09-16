@@ -62,8 +62,9 @@ MCP server 配置写在 `mcp.json` 中，分两层：
 | `headers` | `Record<string, string>` | HTTP、SSE | 附加到每次请求的静态请求头 |
 | `bearerTokenEnvVar` | `string` | HTTP、SSE | 存放 bearer token 的环境变量名 |
 | `enabled` | `boolean` | 全部 | 设为 `false` 可禁用该 server |
-| `startupTimeoutMs` | `number` | 全部 | 连接超时，默认 `30000` 毫秒 |
-| `toolTimeoutMs` | `number` | 全部 | 单次工具调用超时（毫秒） |
+| `deferred` | `boolean` | 全部 | 实验功能：设为 `true` 时该 server 的工具由模型按需加载，默认 `false`（始终直接暴露）。前提与行为见 [按需加载工具](#按需加载工具) |
+| `startupTimeoutMs` | `number` | 全部 | 连接超时，取值范围为 `1` 到 `2147483647` 毫秒，默认 `30000` |
+| `toolTimeoutMs` | `number` | 全部 | 单次工具调用超时，取值范围为 `1` 到 `2147483647` 毫秒 |
 | `enabledTools` | `string[]` | 全部 | 工具白名单 |
 | `disabledTools` | `string[]` | 全部 | 工具黑名单 |
 
@@ -76,6 +77,30 @@ Plugins 也可以在 manifest 中声明 MCP servers。Plugin 声明的 servers �
 ::: warning 注意
 项目级 `.kimi-code/mcp.json` 中的 stdio 条目会在会话启动时执行本地命令，只在你信任的仓库里启用。
 :::
+
+## 按需加载工具
+
+默认情况下，server 的所有工具都会直接进入模型的顶层工具列表；接入的 server 较多、或单个 server 暴露的工具较多时，这些工具定义会持续占用上下文。把 server 标记为 deferred 后，它的工具不再进入顶层工具列表：模型先看到一份可加载工具清单，需要时通过内置的 `select_tools` 工具加载完整定义，加载后同一轮即可调用。
+
+按需加载是实验功能，同时满足两个前提才会生效：
+
+- 启用 `tool-select` 实验标志：设置环境变量 `KIMI_CODE_EXPERIMENTAL_TOOL_SELECT=1`，或在 `config.toml` 的 `[experimental]` 下写 `tool-select = true`；总开关 `KIMI_CODE_EXPERIMENTAL_FLAG=1` 会一并启用。
+- 当前模型声明了 `dynamically_loaded_tools` 能力：官方模型自动声明；其他模型可在 `config.toml` 的 `capabilities` 中追加，见 [配置文件](../configuration/config-files.md#models)。
+
+满足前提后，在 `mcp.json` 的 server 条目里设 `deferred: true`：
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "url": "https://mcp.example.com/mcp",
+      "deferred": true
+    }
+  }
+}
+```
+
+未设置 `deferred` 的 server 不受影响，工具始终直接暴露；前提不满足时该字段被忽略，行为相同。需要 OAuth 授权的 server 在完成授权前暴露的认证工具也遵循这个字段。
 
 ## 工具命名与权限
 

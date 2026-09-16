@@ -853,6 +853,7 @@ describe('supports_thinking_type', () => {
             supports_image_in: true,
             supports_video_in: true,
             supports_thinking_type: 'only',
+            supports_dynamic_tools: true,
             display_name: 'Kimi For Coding',
           },
           {
@@ -875,7 +876,7 @@ describe('supports_thinking_type', () => {
     );
   }
 
-  it('parses supports_thinking_type from the models endpoint', async () => {
+  it('parses supports_thinking_type and supports_dynamic_tools from the models endpoint', async () => {
     const models = await fetchManagedKimiCodeModels({
       accessToken: 'oauth-access-token',
       fetchImpl: vi.fn(async () => makeThinkingTypeModelsResponse()) as unknown as typeof fetch,
@@ -884,6 +885,8 @@ describe('supports_thinking_type', () => {
     expect(models[0]?.supportsThinkingType).toBe('only');
     expect(models[1]?.supportsThinkingType).toBe('no');
     expect(models[2]?.supportsThinkingType).toBe('both');
+    expect(models[0]?.supportsDynamicTools).toBe(true);
+    expect(models[1]?.supportsDynamicTools).toBe(false);
   });
 
   it('leaves supportsThinkingType undefined when the field is absent or invalid', async () => {
@@ -928,13 +931,14 @@ describe('supports_thinking_type', () => {
       },
     });
 
-    // 'only' → thinking locked on.
+    // 'only' → thinking locked on; supports_dynamic_tools adds dynamically_loaded_tools.
     expect(config.models?.['kimi-code/kimi-for-coding']?.capabilities).toEqual([
       'thinking',
       'always_thinking',
       'image_in',
       'video_in',
       'tool_use',
+      'dynamically_loaded_tools',
     ]);
     // 'no' → no thinking capability despite supports_reasoning=true.
     expect(config.models?.['kimi-code/kimi-plain']?.capabilities).toEqual(['tool_use']);

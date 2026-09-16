@@ -1,7 +1,7 @@
 import { apiKeyEnvMissingMessage } from '@moonshot-ai/kimi-code-oauth/provider-credential';
 import type {
-  AuthManagedUserInfoResult,
   AuthManagedUsageResult,
+  AuthManagedUserInfoResult,
   BearerTokenProvider,
   KimiOAuthLoginOptions,
   KimiOAuthLoginResult,

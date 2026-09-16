@@ -220,6 +220,20 @@ describe('McpConnectionManager', () => {
     }
   }, 15000);
 
+  it('reflects the deferred config field in the resolved view', async () => {
+    const cm = createManager();
+    try {
+      await cm.connectAll({
+        plain: stdioConfig(),
+        pinned: { ...stdioConfig(), deferred: true },
+      });
+      expect(cm.resolved('plain')?.deferred).toBe(false);
+      expect(cm.resolved('pinned')?.deferred).toBe(true);
+    } finally {
+      await cm.shutdown();
+    }
+  }, 15000);
+
   it('starts stdio servers in stdioCwd when config.cwd is omitted', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-manager-cwd-'));
     const cm = createManager({ stdioCwd: cwd });

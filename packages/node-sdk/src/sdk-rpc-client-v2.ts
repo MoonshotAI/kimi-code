@@ -2179,7 +2179,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         );
       }
     } else {
-      tower.exit();
+      await tower.exit();
     }
     await agent.accessor.get(IAgentReminderService).reconcileWhenIdle('tower_mode');
   }

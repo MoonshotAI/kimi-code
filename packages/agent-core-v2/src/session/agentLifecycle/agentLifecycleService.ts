@@ -6,6 +6,7 @@ import { Disposable, toDisposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { ILogService } from '#/_base/log/log';
+import { setRootActorErrorReporter } from '#/human/xstate2';
 import { Error2, ErrorCodes } from '#/errors';
 import { LifecycleScope } from '#/app/scopes';
 import {
@@ -130,6 +131,9 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     @ILogService private readonly logger: ILogService,
   ) {
     super();
+    setRootActorErrorReporter((err) => {
+      this.logger.error('root actor stopped on aborted operation', err);
+    });
     this.sessionActor.start();
     this._register(toDisposable(() => this.sessionActor.stop()));
     const restartedSubscription = this.sessionActor.on('agent.restarted', (event) => {
@@ -563,6 +567,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const managed = this.roster.get(agent.agentId);
     if (managed === undefined || managed.context !== agent || managed.closing) return;
     managed.closing = true;
+    await this.removeManaged(agent, managed);
+  }
+
+  private async removeManaged(agent: AgentContext, managed: ManagedAgent): Promise<void> {
     this.onWillCloseEmitter.fire(agent);
     const handle = managed.handle;
     await handle.accessor.get(IAgentTaskService).suppressAllTerminalNotifications();
@@ -602,8 +610,13 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       if (Date.now() >= promptIdleDeadline) break;
       await new Promise((resolve) => setTimeout(resolve, REMOVE_PROMPT_QUIESCE_POLL_MS));
     }
+    let stopError: Error | undefined;
     try {
       await handle.accessor.get(IAgentTaskService).stopAllOnExit('Session closed');
+    } catch (error) {
+      stopError = error instanceof Error ? error : new Error(String(error));
+    }
+    try {
       await handle.accessor.get(IEventDispatcher).flush().catch(onUnexpectedError);
       managed.killSpace();
       const ref = managed.ref;
@@ -618,6 +631,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     }
     if (this.roster.get(agent.agentId) === managed) this.roster.delete(agent.agentId);
     this.onDidCloseEmitter.fire(agent);
+    if (stopError !== undefined) throw stopError;
   }
 
   private managedFor(agent: AgentContext): ManagedAgent | undefined {

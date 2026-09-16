@@ -665,6 +665,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         agentId: this.scopeContext.agentId,
         promptId: input.promptId,
         content: stripBundledSkillBlocks(input.message),
+        clientMetadata: input.origin.clientMetadata,
         queueLength: (this.engine?.snapshot().queue.length ?? 0) + 1,
       }),
     );
@@ -688,6 +689,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         userMessageId: input.userMessageId,
         status,
         content: stripBundledSkillBlocks(input.message),
+        clientMetadata: input.origin.clientMetadata,
         createdAt: input.createdAt,
       }),
     );
@@ -816,7 +818,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const active = this.active;
     if (active === undefined || (turnId !== undefined && active.id !== turnId)) return false;
     if (active.controller.signal.aborted) {
-      this.machineEngine().abort();
+      this.machineEngine().abort(active.controller.signal.reason);
       return true;
     }
     void this.dispatcher.dispatch(
@@ -828,7 +830,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       }),
     );
     active.controller.abort(cancellation);
-    this.machineEngine().abort();
+    this.machineEngine().abort(cancellation);
     return true;
   }
 
@@ -1331,13 +1333,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           sentToMachine: true,
         });
         void this.dispatcher.dispatch(
-          new TurnSteer({
-            agentId: this.scopeContext.agentId,
-            input: gatedContent,
-            origin: merged.origin,
-          }),
-        );
-        void this.dispatcher.dispatch(
           new PromptSteered({
             agentId: this.scopeContext.agentId,
             activePromptId: active.prompt.id,
@@ -1346,6 +1341,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
               stripBundledSkillBlocks(child.projection.message),
             ),
             steeredAt: new Date().toISOString(),
+          }),
+        );
+        void this.dispatcher.dispatch(
+          new TurnSteer({
+            agentId: this.scopeContext.agentId,
+            input: gatedContent,
+            origin: merged.origin,
           }),
         );
         return;
@@ -1407,17 +1409,20 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
               new AssistantDelta({ agentId: this.scopeContext.agentId, turnId: turn.id, delta: delta.delta }),
             );
             return;
-          case 'thinking':
-            this.accumulateMachinePart(turn, {
+          case 'thinking': {
+            const part = this.accumulateMachinePart(turn, {
               type: 'think',
               think: delta.delta,
               encrypted: delta.encrypted,
               detailsIndex: delta.detailsIndex,
+              hidden: delta.hidden,
             });
+            if (part?.type === 'think' && part.hidden === true) return;
             void this.dispatcher.dispatch(
               new ThinkingDelta({ agentId: this.scopeContext.agentId, turnId: turn.id, delta: delta.delta }),
             );
             return;
+          }
           case 'toolCall':
             if (delta.started === true) turn.forceContentPartBoundary = true;
             void this.dispatcher.dispatch(
@@ -1663,12 +1668,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }
   }
 
-  private accumulateMachinePart(turn: ActiveTurn, part: ContentPart): void {
+  private accumulateMachinePart(turn: ActiveTurn, part: ContentPart): ContentPart | undefined {
     const last = turn.partials.at(-1);
-    if (part.type === 'think' && last?.type === 'text' && isVacuousContentPart(part)) return;
-    if (!turn.forceContentPartBoundary && last !== undefined && mergeInPlace(last, part)) return;
+    if (part.type === 'think' && last?.type === 'text' && isVacuousContentPart(part)) return undefined;
+    if (!turn.forceContentPartBoundary && last !== undefined && mergeInPlace(last, part)) return last;
     turn.forceContentPartBoundary = false;
     turn.partials.push({ ...part });
+    return turn.partials.at(-1);
   }
 
   private appendMachineToolResult(

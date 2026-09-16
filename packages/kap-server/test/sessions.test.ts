@@ -23,6 +23,7 @@ import {
   IAgentCronService,
   IAgentLifecycleService,
   IEventBus,
+  IEventDispatcher,
   IEventService,
   ISessionManager,
   IWireService,
@@ -36,6 +37,8 @@ import {
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
+import { TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import type { AgentTranscriptSnapshot } from '@moonshot-ai/transcript';
 import { TurnStarted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import { sessionWarningsResponseSchema } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
@@ -1224,6 +1227,53 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(forkedCron.list().map((t) => ({ id: t.id, prompt: t.prompt }))).toEqual([
       { id: task.id, prompt: 'fork me' },
     ]);
+  });
+
+  it.each([
+    { count: 1, texts: ['answer before steer', 'steered prompt', 'answer after steer'] },
+    { count: 2, texts: ['answer before steer'] },
+    { count: 3, texts: [] },
+  ])('keeps the correct messages when undoing $count anchors in a steered turn', async ({ count, texts }) => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
+    const id = created.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, id)!;
+    await session.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    const context = agent.accessor.get(IAgentContextMemoryService);
+    context.append(
+      { role: 'user', content: [{ type: 'text', text: 'original prompt' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'answer before steer' }], toolCalls: [] },
+    );
+    await agent.accessor.get(IEventDispatcher).dispatch(new TurnSteer({
+      agentId: MAIN_AGENT_ID,
+      input: [{ type: 'text', text: 'steered prompt' }],
+      origin: { kind: 'user' },
+    }));
+    context.append(
+      { role: 'user', content: [{ type: 'text', text: 'steered prompt' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'answer after steer' }], toolCalls: [] },
+    );
+    await agent.accessor.get(IEventDispatcher).dispatch(new TurnSteer({
+      agentId: MAIN_AGENT_ID,
+      input: [{ type: 'text', text: 'second steer' }],
+      origin: { kind: 'user' },
+    }));
+    context.append(
+      { role: 'user', content: [{ type: 'text', text: 'second steer' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'answer after second steer' }], toolCalls: [] },
+    );
+    await agent.accessor.get(IWireService).flush();
+    const path = `/api/v1/sessions/${id}/transcript?agent_id=main`;
+    const before = await getJson<AgentTranscriptSnapshot>(path);
+    expect(before.body.code).toBe(0);
+    expect(before.body.data.items.filter((item) => item.kind === 'turn')).toHaveLength(1);
+    const undone = await postJson(`/api/v1/sessions/${id}:undo`, { count });
+    expect(undone.body.code).toBe(0);
+    const after = await getJson<AgentTranscriptSnapshot>(path);
+    const turns = after.body.data.items.filter((item) => item.kind === 'turn');
+    expect(turns.map((turn) => turn.prompt)).toEqual(count === 3 ? [] : ['original prompt']);
+    expect(turns.flatMap((turn) => turn.steps).flatMap((step) => step.frames).filter((frame) => frame.kind === 'text').map((frame) => frame.text)).toEqual(texts);
+    expect(after.body.data.prompts).toEqual([]);
   });
 
   it('forks an undo-branched wire self-contained and replays it equivalently', async () => {

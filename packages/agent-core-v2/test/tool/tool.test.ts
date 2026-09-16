@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable, type Writable } from 'node:stream';
+import { createControlledPromise } from '@antfu/utils';
 import { LifecycleScope } from '#/app/scopes';
 import { type IAgentScopeHandle } from '#/_base/di/scope';
 import { Event, type Event as KimiEvent } from '#/_base/event';
@@ -46,6 +47,7 @@ import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { DEFAULT_SUBAGENT_TIMEOUT_MS, SECONDARY_MODEL_SECTION, SUBAGENT_SECTION } from '#/session/subagent/configSection';
 import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
 import { Error2, ErrorCodes } from '#/errors';
+import { SUBAGENT_SCOPE_EVICT_TIMEOUT_ENV } from '#/session/subagent/subagentScopeCache';
 import type { AgentTaskSettlement } from '#/agent/task/types';
 import { SubagentTask } from '#/agent/tools/agent/subagent-task';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
@@ -2423,6 +2425,82 @@ describe('Agent tool execution contract', () => {
     expect(result.output).toContain('resumed after restart');
   });
 
+  it('re-acquires the resume target after the metadata read and rebuilds it when it was evicted meanwhile', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      runCompletion: async () => ({ summary: 'resumed after eviction' }),
+    });
+    const metadata = sessionMetadataStub({ 'agent-existing': subagentMeta() });
+    const snapshot = await metadata.read();
+    const readGate = createControlledPromise<typeof snapshot>();
+    let armGate = false;
+    let gatedReadStarted = false;
+    metadata.read = vi.fn(async () => {
+      if (!armGate) return snapshot;
+      gatedReadStarted = true;
+      return readGate;
+    });
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(ISessionMetadata, metadata),
+    );
+    lifecycle.addHandle('agent-existing', 'explore');
+
+    armGate = true;
+    const resultPromise = executeAgentTool(context, {
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+    });
+    await vi.waitFor(() => {
+      expect(gatedReadStarted).toBe(true);
+    });
+    await lifecycle.remove(stubAgentContext('agent-existing', 1));
+    readGate.resolve(snapshot);
+    const result = await resultPromise;
+
+    expect(lifecycle.create).toHaveBeenCalledTimes(1);
+    expect(lifecycle.create).toHaveBeenCalledWith({
+      agentId: 'agent-existing',
+      labels: { parentAgentId: 'main' },
+      forkedFrom: undefined,
+    });
+    expect(result.isError).not.toBe(true);
+    expect(result.output).toContain('resumed after eviction');
+  });
+
+  it('stops rebuilding an evicted resume target once the caller aborts', async () => {
+    vi.stubEnv(SUBAGENT_SCOPE_EVICT_TIMEOUT_ENV, '1000');
+    try {
+      const lifecycle = createAgentLifecycleStub({
+        createError: new Error2(ErrorCodes.AGENT_ALREADY_EXISTS, 'still closing'),
+      });
+      const context = createAgentToolContext(
+        lifecycle,
+        sessionService(ISessionMetadata, sessionMetadataStub({ 'agent-existing': subagentMeta() })),
+      );
+      const controller = new AbortController();
+
+      const resultPromise = executeAgentTool(
+        context,
+        { prompt: 'Continue', description: 'Continue work', resume: 'agent-existing' },
+        controller.signal,
+      );
+      await vi.waitFor(() => {
+        expect(lifecycle.create).toHaveBeenCalled();
+      });
+      controller.abort(userCancellationReason());
+      const createCallsAtAbort = lifecycle.create.mock.calls.length;
+      const abortedAt = Date.now();
+      const result = await resultPromise;
+
+      expect(result.isError).toBe(true);
+      expect(Date.now() - abortedAt).toBeLessThan(500);
+      expect(lifecycle.create.mock.calls.length).toBe(createCallsAtAbort);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('keeps rejecting resume of an agent id that was never persisted', async () => {
     const lifecycle = createAgentLifecycleStub();
     const context = createAgentToolContext(
@@ -3036,6 +3114,42 @@ describe('Agent tool execution contract', () => {
     expect(result.output).toMatch(/agent_id.*not.*task_id|task_id.*not.*agent_id/i);
     expect(result.output).toMatch(/task\.lost|task\.failed|task\.killed/);
     completion.resolve({ summary: 'finished later' });
+  });
+
+  it('reports a background subagent stopped by the task manager as cancelled, not failed', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: (_agentId, _request, options) =>
+        new Promise((_resolve, reject) => {
+          options.signal.addEventListener(
+            'abort',
+            () => {
+              reject(options.signal.reason);
+            },
+            { once: true },
+          );
+        }),
+    });
+    const context = createAgentToolContext(lifecycle);
+    const tasks = context.get(IAgentTaskService);
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      run_in_background: true,
+    });
+    if (typeof result.output !== 'string') throw new TypeError('expected string output');
+    const taskId = result.output.match(/task_id: (agent-[0-9a-z]{8})/)?.[1];
+    expect(taskId).toBeDefined();
+
+    await expect(tasks.stop(taskId!, 'no longer needed')).resolves.toMatchObject({
+      status: 'killed',
+    });
+
+    const terminal = lifecycle.publishedEvents
+      .filter((event) => event.type === 'subagent.failed' || event.type === 'subagent.cancelled')
+      .map((event) => event.type);
+    expect(terminal).toEqual(['subagent.cancelled']);
   });
 
   it('reports a deliberate user interruption when a foreground subagent is cancelled by the user', async () => {

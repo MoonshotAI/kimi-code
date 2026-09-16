@@ -88,6 +88,14 @@ describe('AgentTitlePromptSource', () => {
     disposables.dispose();
   });
 
+  it('uses client display text consistently for titles, first turns and digests', async () => {
+    liveMessages = [userMessage('annotated', '<browser_ref id="internal">Save</browser_ref>', { kind: 'user', clientMetadata: [{ display_text: 'Save button · Rename to Save changes' }] }), assistantMessage('reply', [{ type: 'text', text: 'Done' }])];
+    const source = ix.get(IAgentTitlePromptSource);
+    await expect(source.firstUserPrompts(3)).resolves.toEqual(['Save button · Rename to Save changes']);
+    await expect(source.firstTurnExcerpt()).resolves.toEqual({ user: 'Save button · Rename to Save changes', assistant: 'Done' });
+    await expect(source.digestExcerpt()).resolves.toEqual({ turns: [{ user: 'Save button · Rename to Save changes', assistant: 'Done' }] });
+  });
+
   it('returns the first three prompts from the live context and queue in order', async () => {
     liveMessages = [userMessage('one', '第一条')];
     queue = {

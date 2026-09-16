@@ -34,13 +34,13 @@ describe('UsagePanelComponent', () => {
         contextTokens: 2500,
         maxContextTokens: 10000,
         managedUsage: {
-          summary: {
-            name: 'daily',
-            used: 20,
-            limit: 100,
-            resetAt: new Date(Date.now() + 3600_000).toISOString(),
-          },
-          limits: [],
+          rows: [
+            {
+              name: 'daily',
+              usedRatio: 0.2,
+              resetAt: new Date(Date.now() + 3600_000).toISOString(),
+            },
+          ],
         },
       }).map(strip);
 
@@ -57,27 +57,29 @@ describe('UsagePanelComponent', () => {
     }
   });
 
-  it('derives plan usage labels from the window and falls back to name / Limit', () => {
+  it('renders plan usage rows with their names and the monthly breakdown line', () => {
     const lines = buildUsageReportLines({
       sessionUsage: { byModel: {} },
       contextUsage: 0,
       contextTokens: 0,
       maxContextTokens: 0,
       managedUsage: {
-        summary: { window: { duration: 1, unit: 'week' }, used: 1, limit: 10 },
-        limits: [
-          { window: { duration: 5, unit: 'hour' }, used: 2, limit: 10 },
-          { name: 'Custom cap', used: 3, limit: 10 },
-          { used: 4, limit: 10 },
+        rows: [
+          { name: '5h limit', usedRatio: 0.2 },
+          {
+            name: 'Monthly limit',
+            usedRatio: 0.4,
+            breakdown: { kimiRatio: 0.15, codeRatio: 0.25 },
+          },
         ],
       },
     }).map(strip);
 
     const output = lines.join('\n');
-    expect(output).toContain('Weekly limit');
     expect(output).toContain('5h limit');
-    expect(output).toContain('Custom cap');
-    expect(output).toContain('Limit');
+    expect(output).toContain('Monthly limit');
+    expect(output).toContain('40% used');
+    expect(output).toContain('kimi 15% · code 25%');
   });
 
   it('shows "reset" when the reset timestamp is already in the past', () => {
@@ -87,12 +89,10 @@ describe('UsagePanelComponent', () => {
       contextTokens: 0,
       maxContextTokens: 0,
       managedUsage: {
-        summary: null,
-        limits: [
+        rows: [
           {
             name: 'daily',
-            used: 1,
-            limit: 10,
+            usedRatio: 0.1,
             resetAt: new Date(Date.now() - 60_000).toISOString(),
           },
         ],
@@ -110,8 +110,7 @@ describe('UsagePanelComponent', () => {
       contextTokens: 0,
       maxContextTokens: 0,
       managedUsage: {
-        summary: null,
-        limits: [],
+        rows: [],
         extraUsage: {
           balanceCents: 10000,
           totalCents: 20000,
@@ -142,8 +141,7 @@ describe('UsagePanelComponent', () => {
       contextTokens: 0,
       maxContextTokens: 0,
       managedUsage: {
-        summary: null,
-        limits: [],
+        rows: [],
         extraUsage: {
           balanceCents: 18208,
           totalCents: 40000,
@@ -174,7 +172,7 @@ describe('UsagePanelComponent', () => {
         contextUsage: 0,
         contextTokens: 0,
         maxContextTokens: 0,
-        managedUsage: { summary: null, limits: [], extraUsage },
+        managedUsage: { rows: [], extraUsage },
       }).map(strip);
 
       expect(lines).not.toContain('Extra Usage');
@@ -188,8 +186,7 @@ describe('UsagePanelComponent', () => {
       contextTokens: 0,
       maxContextTokens: 0,
       managedUsage: {
-        summary: null,
-        limits: [],
+        rows: [],
         extraUsage: {
           balanceCents: 10000,
           totalCents: 20000,
@@ -217,8 +214,7 @@ describe('UsagePanelComponent', () => {
       contextTokens: 0,
       maxContextTokens: 0,
       managedUsage: {
-        summary: null,
-        limits: [],
+        rows: [],
         extraUsage: {
           balanceCents: 15901,
           totalCents: 300000,
@@ -237,6 +233,35 @@ describe('UsagePanelComponent', () => {
     // ...and the right-aligned numeric parts end in the same column, so the
     // decimal points line up across rows.
     expect(new Set(extraRows.map((line) => line.length)).size).toBe(1);
+  });
+
+  it('shows an empty-hint instead of an error when there is no session yet', async () => {
+    const { showUsage } = await import('#/tui/commands/info');
+    const added: string[] = [];
+    const host = {
+      session: undefined,
+      state: {
+        appState: {
+          model: 'kimi',
+          availableModels: {},
+          contextUsage: 0,
+          contextTokens: 0,
+          maxContextTokens: 1_000_000,
+        },
+        transcriptContainer: {
+          addChild: (component: { render(width: number): string[] }) => {
+            added.push(...component.render(80).map(strip));
+          },
+        },
+        ui: { requestRender: () => {} },
+      },
+    };
+
+    await showUsage(host as never);
+
+    const output = added.join('\n');
+    expect(output).toContain('No token usage recorded yet.');
+    expect(output).not.toContain('No active session');
   });
 
   it('wraps preformatted usage lines in a bordered panel', () => {

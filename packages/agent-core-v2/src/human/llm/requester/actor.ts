@@ -61,7 +61,7 @@ export function createRequestActor(
   return fromCallback<LlmEvent, LlmInput>(({ input, sendBack }) => {
     void (async () => {
       try {
-        const credential = input.config.credentials?.resolve();
+        const credential = input.config.credentialProvider?.resolve();
         const config =
           credential === undefined
             ? input.config

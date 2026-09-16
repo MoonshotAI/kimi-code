@@ -117,6 +117,7 @@ export class NotifyController {
         break;
       case 'subagent.completed':
       case 'subagent.failed':
+      case 'subagent.cancelled':
         this.running.delete(event.subagentId);
         this.dropPending(event.subagentId);
         break;

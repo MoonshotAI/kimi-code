@@ -1,20 +1,17 @@
 import { createActor as createXStateActor } from 'xstate';
-import type { Actor, ActorOptions, AnyActorLogic, InspectionEvent } from 'xstate';
+import type { Actor, ActorOptions, AnyActorLogic } from 'xstate';
 
+import { isAbortError } from '#/llm/errors';
 import { xstateInspectionCollector } from '#/xstateInspection';
 
 export * from 'xstate';
 
-function reportUnhandled(event: InspectionEvent): void {
-  if (event.type !== '@xstate.microstep' || event._transitions.length > 0) {
-    return;
-  }
-  if (event.event.type.startsWith('xstate.')) {
-    return;
-  }
-  console.warn(
-    `[agent-core] unhandled event "${event.event.type}" in actor "${event.actorRef.sessionId}"`,
-  );
+export type RootActorErrorReporter = (err: unknown) => void;
+
+let reportRootActorError: RootActorErrorReporter = () => {};
+
+export function setRootActorErrorReporter(reporter: RootActorErrorReporter): void {
+  reportRootActorError = reporter;
 }
 
 function createActorWithInspect<TLogic extends AnyActorLogic>(
@@ -22,10 +19,9 @@ function createActorWithInspect<TLogic extends AnyActorLogic>(
   options?: ActorOptions<TLogic>,
 ): Actor<TLogic> {
   const inspect = options?.inspect;
-  return createXStateActor(logic, {
+  const actor = createXStateActor(logic, {
     ...options,
     inspect: (event) => {
-      reportUnhandled(event);
       xstateInspectionCollector.publish(event);
       if (typeof inspect === 'function') {
         inspect(event);
@@ -34,6 +30,20 @@ function createActorWithInspect<TLogic extends AnyActorLogic>(
       }
     },
   });
+  swallowRootAbortError(actor);
+  return actor;
+}
+
+function swallowRootAbortError(actor: Actor<AnyActorLogic>): void {
+  const internal = actor as unknown as { _reportError(err: unknown): void };
+  const reportError = internal._reportError.bind(actor);
+  internal._reportError = (err: unknown) => {
+    if (isAbortError(err)) {
+      reportRootActorError(err);
+      return;
+    }
+    reportError(err);
+  };
 }
 
 export const createActor = createActorWithInspect as typeof createXStateActor;

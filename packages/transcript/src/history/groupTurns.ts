@@ -4,7 +4,7 @@ import type { TranscriptFrame, TranscriptUserOrigin } from '../model/frame';
 import type { TranscriptItem, TranscriptMarker } from '../model/item';
 import type { TurnOrigin } from '../model/turn';
 import { daemonFileRefFromPairingPart } from '../contract/mediaRef';
-import { projectTranscriptUserOrigin } from '../contract/origin';
+import { projectTranscriptUserOrigin, projectTranscriptUserTurnOrigin } from '../contract/origin';
 
 export type HistoryMediaSource =
   | { readonly kind: 'url'; readonly url: string }
@@ -13,7 +13,7 @@ export type HistoryMediaSource =
 
 export type HistoryContentPart =
   | { readonly type: 'text'; readonly text: string }
-  | { readonly type: 'think'; readonly think: string }
+  | { readonly type: 'think'; readonly think: string; readonly hidden?: boolean }
   | { readonly type: 'image' | 'video' | 'audio'; readonly source: HistoryMediaSource; readonly name?: string }
   | {
       readonly type: 'file';
@@ -71,6 +71,7 @@ export function groupMessagesIntoSnapshot(
   options?: {
     readonly taskOriginTurnTaskIds?: ReadonlySet<string>;
     readonly steeredContents?: ReadonlyMap<string, ReadonlyMap<string, number>>;
+    readonly turnPromptIds?: ReadonlySet<string>;
   },
 ): AgentTranscriptSnapshot {
   const items: TranscriptItem[] = [];
@@ -244,7 +245,9 @@ export function groupMessagesIntoSnapshot(
       }
       const contentKey = JSON.stringify(message.content ?? []);
       const steerKind = originKind ?? 'user';
-      const steeredByKind = steeredContents.get(contentKey);
+      const opensAsTurnPrompt =
+        message.id !== undefined && options?.turnPromptIds?.has(message.id) === true;
+      const steeredByKind = opensAsTurnPrompt ? undefined : steeredContents.get(contentKey);
       const steeredRemaining = steeredByKind?.get(steerKind) ?? 0;
       if (steeredByKind !== undefined && steeredRemaining > 0) {
         steeredByKind.set(steerKind, steeredRemaining - 1);
@@ -341,7 +344,7 @@ export function groupMessagesIntoSnapshot(
       for (const part of message.content ?? []) {
         if (part.type === 'text' && 'text' in part && typeof part.text === 'string' && part.text.length > 0) {
           step.frames.push({ kind: 'text', frameId: nextFrameId(), role: 'assistant', text: part.text });
-        } else if (part.type === 'think' && 'think' in part && typeof part.think === 'string' && part.think.length > 0) {
+        } else if (part.type === 'think' && 'think' in part && typeof part.think === 'string' && part.think.length > 0 && part.hidden !== true) {
           step.frames.push({ kind: 'thinking', frameId: nextFrameId(), text: part.think });
         }
       }
@@ -463,6 +466,7 @@ function mapOrigin(message: HistoryMessage): TurnOrigin {
     case 'shell_command':
       return { kind: 'user', payload: origin };
     case 'user':
+      return projectTranscriptUserTurnOrigin(origin);
     case undefined:
       return { kind: 'user' };
     default:

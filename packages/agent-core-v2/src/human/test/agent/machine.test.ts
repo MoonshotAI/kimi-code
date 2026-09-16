@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createActor, waitFor } from '#/xstate2';
+import { xstateInspectionCollector } from '#/xstateInspection';
 
 import { UNKNOWN_CAPABILITY } from '#/llm/capability';
 import {
@@ -845,7 +846,12 @@ describe('agent machine lifecycle', () => {
   });
 
   it('persists turn events without reporting unhandled store.changed and closes directly while linking', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const unhandledStoreChanged: unknown[] = [];
+    const unsubscribe = xstateInspectionCollector.subscribe((envelope) => {
+      if (envelope.eventType === 'store.changed' && envelope.unhandled === true) {
+        unhandledStoreChanged.push(envelope);
+      }
+    });
     try {
       const requester = createStubRequester([
         createAssistantMessage([{ type: 'text', text: 'hi' }]),
@@ -858,12 +864,9 @@ describe('agent machine lifecycle', () => {
         timeout: 5000,
       });
       await store.flush();
-      const unhandled = warn.mock.calls.filter(([message]) =>
-        String(message).includes('unhandled event "store.changed"'),
-      );
-      expect(unhandled).toEqual([]);
+      expect(unhandledStoreChanged).toEqual([]);
     } finally {
-      warn.mockRestore();
+      unsubscribe();
     }
 
     const visitedStates: unknown[] = [];
@@ -1368,6 +1371,35 @@ describe('agent machine input.abort', () => {
     expect(salvaged?.meta?.source).toBe('salvaged');
   });
 
+  it('forwards the abort reason to the in-flight llm request signal', async () => {
+    const signals: AbortSignal[] = [];
+    const requester: LlmRequester = {
+      generate: (_config, _content, { signal, onEvent }) => {
+        signals.push(signal);
+        return new Promise((resolve) => {
+          signal.addEventListener('abort', () => {
+            onEvent?.({ type: 'llm.failed.remote', error: { kind: 'abort', message: 'aborted' } });
+            resolve();
+          });
+        });
+      },
+    };
+    const store = await testStore();
+    const actor = createTestAgent(store, requester, []);
+    actor.start();
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('hi') } });
+    await vi.waitFor(() => {
+      expect(signals).toHaveLength(1);
+    });
+
+    const reason = new Error('stop requested by the user');
+    actor.send({ type: 'input.abort', reason });
+    await waitFor(actor, (s) => s.matches('idle'), { timeout: 5000 });
+
+    expect(signals[0]?.aborted).toBe(true);
+    expect(signals[0]?.reason).toBe(reason);
+  });
+
   it('aborts running turn tools and completes the transcript with aborted tool messages', async () => {
     const requester = createStubRequester([
       createAssistantMessage([], [toolCall('call-1', 'slow_tool')]),
@@ -1416,6 +1448,34 @@ describe('agent machine input.abort', () => {
       'assistant:resumed',
     ]);
     expect(store.getState().turnIndex.nextTurnId).toBe(2);
+  });
+
+  it('forwards the abort reason to the signals of running turn tools', async () => {
+    const requester = createStubRequester([
+      createAssistantMessage([], [toolCall('call-1', 'slow_tool')]),
+      createAssistantMessage([{ type: 'text', text: 'resumed' }], []),
+    ]);
+    const signals: AbortSignal[] = [];
+    const tools = stubTools(({ signal }) => {
+      signals.push(signal);
+      return new Promise((_, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason));
+      });
+    }, 'slow_tool');
+    const store = await testStore();
+    const actor = createTestAgent(store, requester, tools);
+    actor.start();
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('hi') } });
+    await vi.waitFor(() => {
+      expect(signals).toHaveLength(1);
+    });
+
+    const reason = new Error('stop requested by the user');
+    actor.send({ type: 'input.abort', reason });
+    await waitFor(actor, (s) => s.matches('idle'), { timeout: 5000 });
+
+    expect(signals[0]?.aborted).toBe(true);
+    expect(signals[0]?.reason).toBe(reason);
   });
 
   it('waits for the real outcome of a tool that settles after the abort signal', async () => {

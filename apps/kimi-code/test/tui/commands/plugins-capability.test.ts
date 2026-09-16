@@ -234,12 +234,12 @@ describe('plugins command capability surface', () => {
       fakePanel().panel,
       {
         id: 'kimi-webbridge',
-        displayName: 'Kimi WebBridge',
+        displayName: 'Kimi Browser Extension',
         source: 'capability:kimi-webbridge',
       } as never,
     );
 
-    expect(notices).toContainEqual({ title: 'Kimi WebBridge is installed.', detail: undefined });
+    expect(notices).toContainEqual({ title: 'Kimi Browser Extension is installed.', detail: undefined });
     expect(statuses).not.toContain('Run /new or /reload to apply plugin changes.');
     const rendered = transcriptEntries.flatMap((entry) => entry.render(100)).join('\n');
     expect(rendered).toContain(
@@ -261,7 +261,7 @@ describe('plugins command capability surface', () => {
       fakePanel().panel,
       {
         id: 'kimi-webbridge',
-        displayName: 'Kimi WebBridge',
+        displayName: 'Kimi Browser Extension',
         source: 'capability:kimi-webbridge',
       } as never,
     );
@@ -282,15 +282,15 @@ describe('plugins command capability surface', () => {
       fakePanel().panel,
       {
         id: 'kimi-webbridge',
-        displayName: 'Kimi WebBridge',
+        displayName: 'Kimi Browser Extension',
         source: 'capability:kimi-webbridge',
       } as never,
     );
 
     const lines = visibleLines(transcriptEntries, 180);
-    const installed = lines.findIndex((line) => line.includes('Kimi WebBridge is installed.'));
+    const installed = lines.findIndex((line) => line.includes('Kimi Browser Extension is installed.'));
     const intro = lines.findIndex((line) =>
-      line.includes('Two steps left to use Kimi WebBridge:'),
+      line.includes('Two steps left to use Kimi Browser Extension:'),
     );
     const firstStep = lines.findIndex((line) =>
       line.includes('Install the browser extension'),

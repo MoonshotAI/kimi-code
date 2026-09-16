@@ -80,7 +80,7 @@ Pass a custom marketplace JSON path or URL to `/plugins marketplace <source>`, o
 Official plugins are plugins and built-in product capabilities maintained by Kimi. There are currently three:
 
 - **[Kimi Datasource](#kimi-datasource)**: Query financial market data, financial news, macroeconomic indicators, corporate registration records, academic literature, Chinese laws and regulations, and official data from intergovernmental organizations in natural language
-- **[Kimi WebBridge](#kimi-webbridge)**: Let AI drive your own browser to get web tasks done
+- **[Kimi Browser Extension](#kimi-browser-extension)**: Let AI drive your own browser to get web tasks done
 - **[Kimi Computer Use](#kimi-computer-use)**: Let AI operate your desktop apps (macOS and Windows)
 
 ### Installation and Upgrade
@@ -92,7 +92,7 @@ All official plugins share the same installation and upgrade flow:
 3. After installation completes, run `/reload` or `/new` to activate it
 
 ::: info Note
-Kimi WebBridge installs in two parts: after the steps above, you also need to [install the browser extension](#install-the-browser-extension) before it works.
+Kimi Browser Extension installs in two parts: after the steps above, you also need to [install the browser extension](#install-the-browser-extension) before it works.
 :::
 
 Official plugins do not update automatically. When an update is available, you'll be prompted the next time you use the old version. To upgrade, repeat the installation steps above.
@@ -164,13 +164,15 @@ Look up national (GB), industry, local, and association standards by number or t
 - Technical indicators and real-time prices are only available during active trading hours
 - AI-generated output is for reference only and does not constitute investment or business advice
 
-### Kimi WebBridge <Badge type="tip" text="v1.11.3" />
+<a id="kimi-webbridge"></a>
 
-Kimi WebBridge lets AI drive your browser directly: not an emulator, not a crawler, but the browser you use every day, with your login sessions and cookies. AI can open pages, read content, click buttons, fill in forms, and take screenshots just like you do, taking repetitive web operations off your hands. See the [Kimi WebBridge site](https://www.kimi.com/features/webbridge) for a product overview.
+### Kimi Browser Extension <Badge type="tip" text="v1.11.4" />
+
+Kimi Browser Extension lets AI drive your browser directly: not an emulator, not a crawler, but the browser you use every day, with your login sessions and cookies. AI can open pages, read content, click buttons, fill in forms, and take screenshots just like you do, taking repetitive web operations off your hands. See the [Kimi Browser Extension site](https://www.kimi.com/features/webbridge) for a product overview.
 
 #### Install the browser extension
 
-After installing via `/plugins`, you also need the Kimi WebBridge extension in your browser before AI can drive it. There are two ways to install it:
+After installing via `/plugins`, you also need the Kimi Browser Extension in your browser before AI can drive it. There are two ways to install it:
 
 **Option 1: Install from a store (recommended)**
 
@@ -189,9 +191,9 @@ Use this when you can't reach the stores:
 
    ![Load the unpacked extension](../../media/webbridge-load-unpacked.jpeg)
 
-4. Once installed, the Kimi WebBridge icon appears in the browser toolbar. Seeing the icon means the installation succeeded, and AI can start working on web pages for you.
+4. Once installed, the Kimi Browser Extension icon appears in the browser toolbar. Seeing the icon means the installation succeeded, and AI can start working on web pages for you.
 
-   ![The Kimi WebBridge icon in the browser toolbar](../../media/webbridge-install-success.jpeg)
+   ![The Kimi Browser Extension icon in the browser toolbar](../../media/webbridge-install-success.jpeg)
 
 #### What you can do
 
