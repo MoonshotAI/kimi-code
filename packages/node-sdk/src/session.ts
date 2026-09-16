@@ -37,6 +37,8 @@ import type {
   SessionTodoItem,
   SessionUsage,
   SkillSummary,
+  SuggestFilesInput,
+  SuggestFilesResult,
   PluginCommandDef,
   ThinkingEffort,
   Unsubscribe,
@@ -290,6 +292,17 @@ export class Session {
   async listRuntimes(): Promise<SessionRuntimesInfo> {
     this.ensureOpen();
     return this.rpc.listRuntimes({ sessionId: this.id });
+  }
+
+  /**
+   * Fuzzy file suggestions rooted at this session's workspace context and
+   * served by the session's currently bound runtime — a remote binding
+   * suggests files on the remote side, a local one keeps the session-less
+   * `KimiHarness.suggestFiles` results. `undefined` on the v1 engine.
+   */
+  async suggestFiles(input: SuggestFilesInput): Promise<SuggestFilesResult | undefined> {
+    this.ensureOpen();
+    return this.rpc.suggestSessionFiles({ sessionId: this.id, ...input });
   }
 
   async setThinking(effort: ThinkingEffort): Promise<void> {

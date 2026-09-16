@@ -218,6 +218,13 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     client: SDKRpcClientV2,
     options: { readonly connect?: () => Promise<void> } = {},
   ) {
+    // The constructor attaches the real remote-exec provider, which owns every
+    // declared runtime as a placeholder; retire it so the fake provider can
+    // register the same runtime id.
+    const attached = await (client as unknown as {
+      remoteRuntimeProvider: Promise<{ dispose(): void | Promise<void> } | undefined>;
+    }).remoteRuntimeProvider;
+    await attached?.dispose();
     return client.engineAccessor.get(IWorkspaceInstanceManager).addProvider({
       id: 'fake-box-provider',
       imports: { root: [], imports: [], local: [] },
@@ -1028,6 +1035,84 @@ key = "${titleOAuthRef.key}"
       }
     } finally {
       await harness.close();
+    }
+  });
+
+  it('serves session.suggestFiles from the live session workspace context', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    await mkdir(join(workDir, 'src'), { recursive: true });
+    await writeFile(join(workDir, 'src', 'app.ts'), 'app');
+    await writeFile(join(workDir, 'src', 'index.ts'), 'index');
+    await writeFile(join(workDir, 'README.md'), 'readme');
+    try {
+      const session = await harness.createSession({ workDir });
+      const matched = await session.suggestFiles({ query: 'app', limit: 20 });
+      expect(matched?.items).toContainEqual(
+        expect.objectContaining({ kind: 'file', path: 'src/app.ts', name: 'app.ts' }),
+      );
+      const appItem = matched?.items.find((item) => item.name === 'app.ts');
+      expect(appItem?.matchPositions.length).toBeGreaterThan(0);
+
+      const topLevel = await session.suggestFiles({ query: '', limit: 20 });
+      expect(topLevel?.items).toContainEqual(expect.objectContaining({ kind: 'directory', name: 'src' }));
+
+      for (const limit of [0, -1, 201, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        await expect(session.suggestFiles({ query: 'a', limit })).rejects.toMatchObject({
+          code: ErrorCodes.REQUEST_INVALID,
+        });
+      }
+      await session.close();
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('serves session.suggestFiles from the bound runtime fs after a remote switch', async () => {
+    const { harness, client } = await makeRuntimeHarness();
+    const localDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-local-'));
+    const remoteDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-remote-'));
+    tempDirs.push(localDir, remoteDir);
+    await writeFile(join(localDir, 'local-only.ts'), 'local');
+    await writeFile(join(remoteDir, 'remote-only.ts'), 'remote');
+    const provider = await attachFakeBoxRuntime(client);
+    try {
+      const session = await harness.createSession({ workDir: localDir });
+      const before = await session.suggestFiles({ query: 'local-only', limit: 20 });
+      expect(before?.items).toContainEqual(expect.objectContaining({ name: 'local-only.ts' }));
+
+      await session.switchRuntime('fake-box', { cwd: remoteDir });
+      const after = await session.suggestFiles({ query: 'remote-only', limit: 20 });
+      expect(after?.items).toContainEqual(expect.objectContaining({ name: 'remote-only.ts' }));
+      const stale = await session.suggestFiles({ query: 'local-only', limit: 20 });
+      expect(stale?.items.find((item) => item.name === 'local-only.ts')).toBeUndefined();
+      await session.close();
+    } finally {
+      await provider.dispose();
+      await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('attaches the remote runtime provider so declared runtimes appear as placeholders', async () => {
+    const { harness } = await makeRuntimeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    try {
+      const session = await harness.createSession({ workDir });
+      const listed = await session.listRuntimes();
+      const byId = new Map(listed.runtimes.map((entry) => [entry.runtimeId, entry]));
+      expect(byId.get('local')).toMatchObject({ type: 'local', status: 'ready' });
+      expect(byId.get('fake-box')).toMatchObject({
+        type: 'ssh',
+        status: 'disconnected',
+        defaultCwd: '/remote/work',
+      });
+      await session.close();
+    } finally {
+      await harness.close();
+      vi.unstubAllEnvs();
     }
   });
 

@@ -12,7 +12,10 @@
  *   `IWorkspaceSkillCatalog`) instead.
  * - `suggestFiles` → same escape hatch (the workspace handler's
  *   `IWorkspaceFsService`); the v1 client inherits the base's `undefined`
- *   (capability absent).
+ *   (capability absent). `suggestSessionFiles` is the session-scoped twin:
+ *   roots come from the live session's workspace context and the suggest
+ *   runs on the session's currently bound runtime through the workspace
+ *   program's per-runtime accessor.
  * - `getConfig` / `setConfig` / `removeProvider` / `getConfigDiagnostics` →
  *   `klient.global.config.*`, with the v1 `KimiConfig` shape restored by the
  *   pure mapping layer in `src/v2/config-mapper.ts`.
@@ -61,7 +64,9 @@
  *   connect + target-fs cwd validation); flag off keeps the legacy sync
  *   `switch` and rejects a caller-supplied `cwd`. `createSession`'s
  *   `runtimeId` / `runtimeCwd` options ride the engine's own
- *   `mainAgentBinding` + runtime seed path.
+ *   `mainAgentBinding` + runtime seed path. The constructor attaches the
+ *   `remote-exec` runtime provider (flag-self-gated) with the region CDN
+ *   artifact locator, mirroring the kap-server composition root.
  * - `prompt` / `steer` / `runShellCommand` / `cancelShellCommand` → the
  *   `klient.session(id).agent(id)` facade; `activatePluginCommand` →
  *   `IAgentPluginCommandService` through the agent scope; `activateSkill` →
@@ -148,6 +153,11 @@ import {
   resolveMcpJsonPaths,
 } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
 import { fsSuggestRequestSchema } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
+import type {
+  FsSuggestRequest,
+  FsSuggestResponse,
+} from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
+import { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
 import { IAppendLogStore } from '@moonshot-ai/agent-core-v2/persistence/interface/appendLogStore';
 import type { McpServerConfig as WorkspaceMcpServerConfig } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
 import {
@@ -192,6 +202,7 @@ import {
   IMcpManagementService,
   IMcpOAuthService,
   IModelService,
+  IOAuthService,
   IProviderService,
   ISessionBtwService,
   ISessionContext,
@@ -248,7 +259,8 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import type { AgentHandle, Klient } from '@moonshot-ai/klient';
 import { createKlient } from '@moonshot-ai/klient/memory';
-import { assertKimiHostIdentity, createKimiDefaultHeaders } from '@moonshot-ai/kimi-code-oauth';
+import { assertKimiHostIdentity, createKimiDefaultHeaders, kimiRegionProfile } from '@moonshot-ai/kimi-code-oauth';
+import { CdnExecutorArtifactLocator, RemoteRuntimeProviderFactory } from '@moonshot-ai/remote-exec';
 
 import { KimiAuthFacade } from '#/auth';
 import { ensureConfigFile, HookDefSchema } from '#/config/index';
@@ -394,6 +406,13 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   private readonly app: Scope;
   /**
+   * The remote runtime provider attach handle (`remote-exec` factory), held
+   * as a promise because the constructor is synchronous. Disposed in
+   * {@link close} before the app scope; an attach failure degrades to no
+   * remote runtimes instead of killing the client.
+   */
+  private readonly remoteRuntimeProvider: Promise<{ dispose(): void | Promise<void> } | undefined>;
+  /**
    * The engine's config reads (`get`/`getAll`/`inspect`/`diagnostics`) are
    * synchronous over state that only exists once the initial load settles;
    * unlike the mutating methods they do not await `IConfigService.ready`
@@ -480,6 +499,24 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       [...logSeed(resolveLoggingConfig({ homeDir: this.homeDir, env: process.env }))],
     );
     this.app = app;
+    this.remoteRuntimeProvider = app.accessor
+      .get(IWorkspaceInstanceManager)
+      .addProvider(
+        new RemoteRuntimeProviderFactory({
+          clientName: 'kimi-code',
+          clientVersion: identity.version,
+          artifactLocator: new CdnExecutorArtifactLocator({
+            cdnBaseUrl: kimiRegionProfile(app.accessor.get(IOAuthService).getRegion()).cdnBase,
+          }),
+          onDiagnostic: (line) => {
+            app.accessor.get(ILogService).warn(line.trimEnd());
+          },
+        }),
+      )
+      .catch((error) => {
+        app.accessor.get(ILogService).warn('remote runtime provider attach failed', { error });
+        return undefined;
+      });
     this.klient = createKlient({ scope: app });
     this.configReady = app.accessor.get(IConfigService).ready;
     this.installEngineTelemetry(options.telemetry);
@@ -540,6 +577,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     // the accessor throws once the scope is disposed. shutdown() is
     // idempotent, so the ledger's own teardown turns into a no-op.
     await this.app.accessor.get(IMcpOAuthService).shutdown();
+    const remoteRuntimeProvider = await this.remoteRuntimeProvider;
+    await remoteRuntimeProvider?.dispose();
     const appendLogStore = this.app.accessor.get(IAppendLogStore);
     this.app.dispose();
     await appendLogStore.drainRetirements();
@@ -668,33 +707,39 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * the web client's @ mention results.
    */
   override async suggestFiles(workDir: string, input: SuggestFilesInput): Promise<SuggestFilesResult | undefined> {
-    const parsed = fsSuggestRequestSchema.safeParse({
-      query: input.query,
-      limit: input.limit ?? 50,
-      follow_gitignore: true,
-      show_hidden: false,
-    });
-    if (!parsed.success) {
-      const issue = parsed.error.issues[0];
-      const where = issue !== undefined && issue.path.length > 0 ? `${String(issue.path[0])}: ` : '';
-      throw new KimiError(
-        ErrorCodes.REQUEST_INVALID,
-        `suggestFiles ${where}${issue?.message ?? 'invalid input'}`,
-      );
-    }
+    const parsed = parseSuggestFilesInput(input);
     const handler = await this.engineAccessor
       .get(IWorkspaceInstanceManager)
       .getOrCreate({ root: normalizeRequiredWorkDir('suggestFiles', workDir) });
-    const result = await handler.program.fs.suggest(parsed.data);
-    return {
-      items: result.items.map((item) => ({
-        path: item.path,
-        name: item.name,
-        kind: item.kind,
-        matchPositions: item.match_positions,
-      })),
-      truncated: result.truncated,
-    };
+    return toSuggestFilesResult(await handler.program.fs.suggest(parsed));
+  }
+
+  /**
+   * Session-scoped twin of {@link suggestFiles}: roots come from the live
+   * session's workspace context (a remote binding's cwd already lives there)
+   * and the suggest runs on the session's currently bound runtime through
+   * the workspace program's per-runtime fs accessor. A local binding serves
+   * the same candidates as the session-less variant.
+   */
+  override async suggestSessionFiles(
+    input: SessionIdRpcInput & SuggestFilesInput,
+  ): Promise<SuggestFilesResult | undefined> {
+    const parsed = parseSuggestFilesInput(input);
+    const session = this.requireLiveSession(input.sessionId);
+    const agent = await this.agentScope(input.sessionId);
+    const binding = agent.accessor.get(IAgentRuntimeBindingService).get();
+    const workspace = session.accessor.get(ISessionWorkspaceContext);
+    const context = session.accessor.get(ISessionContext);
+    const manager = this.engineAccessor.get(IWorkspaceInstanceManager);
+    const instance =
+      manager.get(context.workspaceId) ??
+      (await manager.getOrCreate({ root: context.cwd }));
+    const result = await instance.program.suggestFiles(
+      binding.runtimeId,
+      { workDir: workspace.workDir, additionalDirs: workspace.additionalDirs },
+      parsed,
+    );
+    return toSuggestFilesResult(result);
   }
 
   /**
@@ -2900,6 +2945,36 @@ function normalizeRequiredWorkDir(operation: string, workDir: string): string {
     throw new KimiError(ErrorCodes.REQUEST_WORK_DIR_REQUIRED, `${operation} requires workDir`);
   }
   return normalizeWorkDir(workDir);
+}
+
+function parseSuggestFilesInput(input: SuggestFilesInput): FsSuggestRequest {
+  const parsed = fsSuggestRequestSchema.safeParse({
+    query: input.query,
+    limit: input.limit ?? 50,
+    follow_gitignore: true,
+    show_hidden: false,
+  });
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const where = issue !== undefined && issue.path.length > 0 ? `${String(issue.path[0])}: ` : '';
+    throw new KimiError(
+      ErrorCodes.REQUEST_INVALID,
+      `suggestFiles ${where}${issue?.message ?? 'invalid input'}`,
+    );
+  }
+  return parsed.data;
+}
+
+function toSuggestFilesResult(result: FsSuggestResponse): SuggestFilesResult {
+  return {
+    items: result.items.map((item) => ({
+      path: item.path,
+      name: item.name,
+      kind: item.kind,
+      matchPositions: item.match_positions,
+    })),
+    truncated: result.truncated,
+  };
 }
 
 /**

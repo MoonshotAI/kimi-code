@@ -395,6 +395,19 @@ export abstract class SDKRpcClientBase {
     input: SuggestFilesInput,
   ): Promise<SuggestFilesResult | undefined>;
 
+  /**
+   * Session-scoped file suggestions rooted at the session's workspace
+   * context and served by the session's currently bound runtime. Only the
+   * agent-core-v2 engine implements it; the v1 engine reports `undefined`
+   * (capability absent), same convention as the session-less variant.
+   */
+  async suggestSessionFiles(
+    input: SessionIdRpcInput & SuggestFilesInput,
+  ): Promise<SuggestFilesResult | undefined> {
+    void input;
+    return undefined;
+  }
+
   abstract listBackgroundTasks(
     input: SessionIdRpcInput & { activeOnly?: boolean; limit?: number },
   ): Promise<readonly BackgroundTaskInfo[]>;

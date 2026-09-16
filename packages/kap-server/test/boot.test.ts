@@ -16,9 +16,15 @@ import {
   ITelemetryService,
   noopTelemetryService,
 } from '@moonshot-ai/agent-core-v2';
+import { CdnExecutorArtifactLocator } from '@moonshot-ai/remote-exec';
 
 import { listLiveServerInstances } from '../src/instanceRegistry';
-import { listenWithPortRetry, type RunningServer, startServer } from '../src/start';
+import {
+  createRemoteRuntimeProviderOptions,
+  listenWithPortRetry,
+  type RunningServer,
+  startServer,
+} from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authedFetch } from './helpers/auth';
 
@@ -348,6 +354,42 @@ async function allocateAdjacentFreePair(
   }
   throw new Error('could not allocate an adjacent free port pair');
 }
+
+describe('createRemoteRuntimeProviderOptions', () => {
+  it('attaches a region CDN artifact locator to the remote runtime provider factory', () => {
+    const onDiagnostic = (): void => {};
+    const options = createRemoteRuntimeProviderOptions({
+      region: 'global',
+      clientVersion: '9.9.9-test',
+      onDiagnostic,
+    });
+
+    expect(options.clientName).toBe('kimi-code');
+    expect(options.clientVersion).toBe('9.9.9-test');
+    expect(options.onDiagnostic).toBe(onDiagnostic);
+    expect(options.autoInstall).toBeUndefined();
+    expect(options.installRunner).toBeUndefined();
+    expect(options.installFetch).toBeUndefined();
+    expect(options.artifactLocator).toBeInstanceOf(CdnExecutorArtifactLocator);
+    const locator = options.artifactLocator as CdnExecutorArtifactLocator;
+    expect(locator.cdnBaseUrl).toBe('https://code.kimi.ai/kimi-code');
+    expect(locator.manifestUrl('9.9.9-test')).toBe(
+      'https://code.kimi.ai/kimi-code/binaries/9.9.9-test/manifest.json',
+    );
+  });
+
+  it('derives the mainland-cn CDN base from the region profile', () => {
+    const options = createRemoteRuntimeProviderOptions({
+      region: 'mainland-cn',
+      clientVersion: '9.9.9-test',
+      onDiagnostic: () => {},
+    });
+
+    expect((options.artifactLocator as CdnExecutorArtifactLocator).cdnBaseUrl).toBe(
+      'https://code.kimi.com/kimi-code',
+    );
+  });
+});
 
 describe('listenWithPortRetry', () => {
   it('returns the requested port when the first listen succeeds', async () => {

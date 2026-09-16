@@ -1,7 +1,7 @@
 import { Emitter, type Event } from '#/_base/event';
 import { UserFileSkillSource } from '#/features/skill/catalog/userFileSkillSource';
 import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
-import type { RuntimeBinding, RuntimeLease } from '#/runtime/runtime';
+import type { RuntimeBinding, RuntimeLease, RuntimeWorkspaceRoots } from '#/runtime/runtime';
 import { LOCAL_RUNTIME_ID } from '#/runtime/runtime';
 import { RuntimeError, type RuntimeGenerationSnapshot, type RuntimeRegistry, type RuntimeRegistryChange } from '#/runtime/runtimeRegistry';
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
@@ -10,7 +10,7 @@ import type { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { WorkspaceDirsService } from '#/workspace/workspaceDirs/workspaceDirsService';
-import type { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
+import type { FsSuggestRequest, FsSuggestResponse, IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
 import { WorkspaceFsService } from '#/workspace/workspaceFs/fsService';
 import type { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
 import { WorkspaceGitService } from '#/workspace/workspaceGit/workspaceGitService';
@@ -153,6 +153,43 @@ export class Program {
 
   sessionControllerGenerationFor(runtimeId: string): string {
     return this.requireGeneration(runtimeId).id;
+  }
+
+  async suggestFiles(
+    runtimeId: string,
+    roots: RuntimeWorkspaceRoots,
+    request: FsSuggestRequest,
+  ): Promise<FsSuggestResponse> {
+    const lease = this.resolver.acquire({ workspaceId: this.workspaceId, runtimeId }, ['fs']);
+    try {
+      const mapped = lease.runtime.workspace.mapRoots(roots);
+      const context: IWorkspaceContext = { ...this.context, cwd: mapped.workDir };
+      const dirs = {
+        _serviceBrand: undefined,
+        ready: Promise.resolve(),
+        additionalDirs: mapped.additionalDirs ?? [],
+        onDidChange: () => ({ dispose: () => {} }),
+        addDir: async () => {
+          throw new Error('session fs directories are immutable');
+        },
+        mergeAdditionalDirs: async () => {
+          throw new Error('session fs directories are immutable');
+        },
+        sessionInfo: () => ({ workDir: mapped.workDir, additionalDirs: mapped.additionalDirs ?? [] }),
+      } as unknown as IWorkspaceDirs;
+      const fs = new WorkspaceFsService(
+        context,
+        dirs,
+        lease.runtime.fs!,
+        this.resolver,
+        this.dependencies.telemetry,
+        new WorkspaceGitService(context, this.dependencies.git),
+        runtimeId,
+      );
+      return await fs.suggest(request);
+    } finally {
+      lease.dispose();
+    }
   }
 
   createSessionController(runtimeId: string = LOCAL_RUNTIME_ID): SessionLifecycleService {

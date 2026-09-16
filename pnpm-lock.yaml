@@ -801,6 +801,9 @@ importers:
       '@moonshot-ai/kosong':
         specifier: workspace:^
         version: link:../kosong
+      '@moonshot-ai/remote-exec':
+        specifier: workspace:^
+        version: link:../remote-exec
       '@types/yazl':
         specifier: ^2.4.6
         version: 2.4.6
