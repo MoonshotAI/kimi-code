@@ -1,15 +1,30 @@
 import type { TranscriptSkillActivation, TranscriptUserOrigin } from '../model/frame';
 
 export function projectTranscriptUserOrigin(origin: unknown): TranscriptUserOrigin | undefined {
-  const candidate = origin as { readonly kind?: unknown; readonly skillActivations?: unknown; readonly clientMetadata?: unknown; readonly trigger?: unknown; readonly skillName?: unknown; readonly skillArgs?: unknown } | undefined;
+  const candidate = origin as {
+    readonly kind?: unknown;
+    readonly skillActivations?: unknown;
+    readonly clientMetadata?: unknown;
+    readonly trigger?: unknown;
+    readonly skillName?: unknown;
+    readonly skillArgs?: unknown;
+  } | undefined;
   if (candidate?.kind !== 'user' && candidate?.kind !== 'skill_activation') return undefined;
   const clientMetadata = Array.isArray(candidate.clientMetadata)
     ? candidate.clientMetadata.filter((entry): entry is Record<string, unknown> => typeof entry === 'object' && entry !== null && !Array.isArray(entry))
     : [];
   if (candidate.kind === 'skill_activation') {
-    if (candidate.trigger !== 'user-slash' || typeof candidate.skillName !== 'string' || candidate.skillName.length === 0) return undefined;
-    return { kind: 'skill_activation', trigger: 'user-slash', skillName: candidate.skillName, skillArgs: typeof candidate.skillArgs === 'string' ? candidate.skillArgs : undefined, clientMetadata: clientMetadata.length > 0 ? clientMetadata : undefined };
+    if (candidate.trigger !== 'user-slash') return undefined;
+    if (typeof candidate.skillName !== 'string' || candidate.skillName.length === 0) return undefined;
+    return {
+      kind: 'skill_activation',
+      trigger: 'user-slash',
+      skillName: candidate.skillName,
+      skillArgs: typeof candidate.skillArgs === 'string' ? candidate.skillArgs : undefined,
+      clientMetadata: clientMetadata.length > 0 ? clientMetadata : undefined,
+    };
   }
+  if (!Array.isArray(candidate.skillActivations) && clientMetadata.length === 0) return { kind: 'user' };
   const skillActivations = (Array.isArray(candidate.skillActivations) ? candidate.skillActivations : []).flatMap((activation): TranscriptSkillActivation[] => {
     if (typeof activation !== 'object' || activation === null) return [];
     const value = activation as { readonly skillName?: unknown; readonly skillArgs?: unknown };
@@ -19,7 +34,6 @@ export function projectTranscriptUserOrigin(origin: unknown): TranscriptUserOrig
       skillArgs: typeof value.skillArgs === 'string' ? value.skillArgs : undefined,
     }];
   });
-  if (clientMetadata.length === 0 && !Array.isArray(candidate.skillActivations)) return { kind: 'user' };
   return {
     kind: 'user',
     clientMetadata: clientMetadata.length > 0 ? clientMetadata : undefined,

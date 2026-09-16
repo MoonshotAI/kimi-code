@@ -51,6 +51,16 @@ describe('client metadata in transcript user origins', () => {
   });
 });
 
+describe('user slash skill activations as transcript origins', () => {
+  it('projects a user-invoked activation and rejects a model-triggered one', () => {
+    const origin = { kind: 'skill_activation', trigger: 'user-slash', skillName: 'example-skill', skillArgs: 'args' };
+    expect(transcriptUserOriginSchema.parse(projectTranscriptUserOrigin(origin))).toEqual(origin);
+    expect(projectTranscriptUserOrigin({ ...origin, trigger: 'model-tool' })).toBeUndefined();
+    expect(projectTranscriptUserOrigin({ ...origin, skillName: '' })).toBeUndefined();
+    expect(projectTranscriptUserOrigin({ kind: 'user' })).toStrictEqual({ kind: 'user' });
+  });
+});
+
 const turnOp = (n: number): TranscriptOperation => ({
   op: 'turn.upsert',
   turn: { kind: 'turn', turnId: `t${n}`, ordinal: n, state: 'running', origin: { kind: 'user' } },
