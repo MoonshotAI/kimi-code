@@ -1571,6 +1571,10 @@ describe('SDKRpcClientV2 engine telemetry', () => {
     try {
       const session = await harness.createSession({ workDir });
       await session.setPermission('yolo');
+      const started = records.find((record) => record.event === 'session_started');
+      expect(started?.sessionId).toBe(session.id);
+      const statusModel = (await session.getStatus()).model;
+      expect(started?.model).toBe(statusModel ?? null);
       const forwarded = records.filter((record) => record.event === 'yolo_toggle');
       expect(forwarded.length).toBeGreaterThan(0);
       for (const record of forwarded) {

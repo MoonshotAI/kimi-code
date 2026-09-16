@@ -150,7 +150,7 @@ export class KimiHarness {
     if (planMode === true) {
       await session.setPlanMode(true);
     }
-    this.trackSessionStarted(summary.id, false, sessionStartedProperties);
+    this.trackSessionStarted(summary.id, false, (await session.getStatus()).model, sessionStartedProperties);
     this.trackSessionEvent(session.id, 'session_new');
     return session;
   }
@@ -212,7 +212,7 @@ export class KimiHarness {
       },
     });
     this.activeSessions.set(session.id, session);
-    this.trackSessionStarted(summary.id, true, sessionStartedProperties);
+    this.trackSessionStarted(summary.id, true, (await session.getStatus()).model, sessionStartedProperties);
     this.trackSessionEvent(session.id, 'session_resume');
     return session;
   }
@@ -244,7 +244,7 @@ export class KimiHarness {
       },
     });
     this.activeSessions.set(session.id, session);
-    this.trackSessionStarted(summary.id, true);
+    this.trackSessionStarted(summary.id, true, (await session.getStatus()).model);
     this.trackSessionEvent(session.id, 'session_reload');
     return session;
   }
@@ -269,7 +269,7 @@ export class KimiHarness {
       },
     });
     this.activeSessions.set(session.id, session);
-    this.trackSessionStarted(summary.id, true);
+    this.trackSessionStarted(summary.id, true, (await session.getStatus()).model);
     this.trackSessionEvent(session.id, 'session_fork');
     return session;
   }
@@ -632,9 +632,10 @@ export class KimiHarness {
   private trackSessionStarted(
     eventSessionId: string,
     resumed: boolean,
+    model: string | undefined,
     sessionScoped?: TelemetryProperties,
   ): void {
-    withTelemetryContext(this.telemetry, { sessionId: eventSessionId }).track('session_started', {
+    withTelemetryContext(this.telemetry, { sessionId: eventSessionId, model }).track('session_started', {
       ...this.sessionStartedProperties,
       ...sessionScoped,
       ...this.sessionStartedDynamicProperties?.(),
