@@ -1232,21 +1232,43 @@ describe('crash handler', () => {
     });
   });
 
-  it('ignores aborted-operation rejections while observing', () => {
+  it('ignores aborted-operation rejections in both observing and sole-listener modes', () => {
     const client = new TelemetryClient();
     const transport = new RecordingTransport();
     client.attachSink(makeSink(transport));
     installCrashHandlersForClient(client);
+    const abort = new DOMException('The operation was aborted.', 'AbortError');
     const owner = (): void => {};
     process.on('unhandledRejection', owner);
     try {
       (process.emit as (event: string, ...args: unknown[]) => boolean)(
         'unhandledRejection',
-        new DOMException('The operation was aborted.', 'AbortError'),
+        abort,
         Promise.resolve(),
       );
     } finally {
       process.off('unhandledRejection', owner);
+    }
+
+    expect(transport.saved).toHaveLength(0);
+
+    uninstallCrashHandlers();
+    // Drop every other listener so the crash handler is the sole one, as in
+    // print/server mode; an aborted-operation rejection must not be rethrown.
+    const others = process.listeners('unhandledRejection');
+    process.removeAllListeners('unhandledRejection');
+    installCrashHandlersForClient(client);
+    try {
+      (process.emit as (event: string, ...args: unknown[]) => boolean)(
+        'unhandledRejection',
+        abort,
+        Promise.resolve(),
+      );
+    } finally {
+      uninstallCrashHandlers();
+      for (const listener of others) {
+        process.on('unhandledRejection', listener as (...args: unknown[]) => void);
+      }
     }
 
     expect(transport.saved).toHaveLength(0);
