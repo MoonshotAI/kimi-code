@@ -401,6 +401,7 @@ describe('SessionSubagentScopeCacheService', () => {
       _serviceBrand: undefined,
       workDir: '/tmp/kimi-subagentScopeCache-work',
       additionalDirs: [],
+      setWorkDir: () => {},
     } as unknown as ISessionWorkspaceContext);
     ix.stub(IPluginService, pluginServiceStub);
     ix.stub(IConfigService, {

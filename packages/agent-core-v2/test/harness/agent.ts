@@ -2332,6 +2332,7 @@ function createWorkspaceContextStub(
       }
       return target;
     },
+    setWorkDir: () => {},
   };
 }
 

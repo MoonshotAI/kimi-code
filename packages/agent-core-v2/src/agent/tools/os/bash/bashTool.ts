@@ -165,7 +165,7 @@ export class BashTool implements IBashTool {
     const noninteractiveEnv: Record<string, string> = {
       NO_COLOR: '1',
       TERM: 'dumb',
-      GIT_TERMINAL_PROMPT: process.env['GIT_TERMINAL_PROMPT'] ?? '0',
+      GIT_TERMINAL_PROMPT: '0',
       SHELL: env.shellPath,
     };
 

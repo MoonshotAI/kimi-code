@@ -16,6 +16,16 @@ function runtime(generation: string, status: RuntimeStatus = 'ready'): FakeRunti
   ) as FakeRuntime;
 }
 
+function remoteRuntime(generation: string, status: RuntimeStatus = 'ready'): FakeRuntime {
+  return Object.assign(
+    new FakeRuntime(
+      { workspaceId: 'workspace', runtimeId: 'remote', generation },
+      { status, capabilities: ['fs', 'process'] },
+    ),
+    { fs: {}, process: {} },
+  ) as FakeRuntime;
+}
+
 function deferred(): { readonly promise: Promise<void>; resolve(): void; reject(error: Error): void } {
   let resolve!: () => void;
   let reject!: (error: Error) => void;
@@ -28,6 +38,7 @@ function deferred(): { readonly promise: Promise<void>; resolve(): void; reject(
 
 function setup(readiness = new Map<string, Promise<void>>(), order: string[] = []) {
   const registry = new RuntimeRegistry('workspace', 50);
+  const controllerInputs: ProgramSessionControllerInput[] = [];
   const program = new Program(
     'workspace',
     registry,
@@ -47,11 +58,14 @@ function setup(readiness = new Map<string, Promise<void>>(), order: string[] = [
     },
     {
       agentProfiles: { entries: () => [] },
-      createSessionController: (input: ProgramSessionControllerInput) => ({ dispose: input.onDispose }) as never,
+      createSessionController: (input: ProgramSessionControllerInput) => {
+        controllerInputs.push(input);
+        return { dispose: input.onDispose } as never;
+      },
     } as never,
   );
-  const create = vi.fn(() => {
-    const lease = registry.acquire(program.binding, ['fs', 'process']);
+  const create = vi.fn((runtimeId: string) => {
+    const lease = registry.acquire({ workspaceId: 'workspace', runtimeId }, ['fs', 'process']);
     const id = lease.runtime.identity.generation;
     const behavior = {
       ready: readiness.get(id) ?? Promise.resolve(),
@@ -88,7 +102,7 @@ function setup(readiness = new Map<string, Promise<void>>(), order: string[] = [
     };
   });
   (program as unknown as { createGeneration: typeof create }).createGeneration = create;
-  return { registry, program, create };
+  return { registry, program, create, controllerInputs };
 }
 
 describe('Program', () => {
@@ -98,7 +112,7 @@ describe('Program', () => {
     registry.register(current);
     expect(create).toHaveBeenCalledTimes(1);
     expect(program.status).toBe('degraded');
-    expect(() => program.dirs).toThrow('no available local runtime generation');
+    expect(() => program.dirs).toThrow('no available generation for runtime local');
 
     current.setStatus('ready');
     await program.ready;
@@ -228,6 +242,55 @@ describe('Program', () => {
     expect(program.status).toBe('ready');
     program.dispose();
     expect(order).toEqual(['behavior:one', 'behavior:two']);
+    await registry.dispose();
+  });
+
+  it('isolates generations per runtime so same-workspace sessions do not cross project context', async () => {
+    const { registry, program, create, controllerInputs } = setup();
+    registry.register(runtime('one'));
+    registry.register(remoteRuntime('remote-one'));
+
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create.mock.calls[0]?.[0]).toBe('local');
+
+    program.createSessionController();
+    expect(create).toHaveBeenCalledTimes(1);
+
+    program.createSessionController('remote');
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(create.mock.calls[1]?.[0]).toBe('remote');
+
+    expect(program.sessionControllerGeneration).toBe('one');
+    expect(program.sessionControllerGenerationFor('remote')).toBe('remote-one');
+    expect(controllerInputs).toHaveLength(2);
+    expect(controllerInputs[0]?.fs).not.toBe(controllerInputs[1]?.fs);
+    expect(controllerInputs[0]?.fs).toBe(create.mock.results[0]?.value.lease.runtime.fs);
+    expect(controllerInputs[1]?.fs).toBe(create.mock.results[1]?.value.lease.runtime.fs);
+
+    expect(() => program.sessionControllerGenerationFor('missing')).toThrow(
+      'no available generation for runtime missing',
+    );
+
+    program.dispose();
+    await registry.dispose();
+  });
+
+  it('retires a remote generation when its runtime is removed without touching local', async () => {
+    const { registry, program, create } = setup();
+    registry.register(runtime('one'));
+    const remote = remoteRuntime('remote-one');
+    const remoteRegistration = registry.register(remote);
+    program.createSessionController('remote');
+    expect(program.sessionControllerGenerationFor('remote')).toBe('remote-one');
+
+    await remoteRegistration.remove();
+    expect(() => program.sessionControllerGenerationFor('remote')).toThrow(
+      'no available generation for runtime remote',
+    );
+    expect(program.sessionControllerGeneration).toBe('one');
+    expect(create).toHaveBeenCalledTimes(2);
+
+    program.dispose();
     await registry.dispose();
   });
 });

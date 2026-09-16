@@ -820,6 +820,39 @@ describe('mcpResultToExecutableOutput', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  test('persists originals through the provided runtime filesystem', async () => {
+    const bigBytes = Buffer.from(
+      await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
+    );
+    const writes = new Map<string, Uint8Array>();
+    const fs = {
+      mkdir: async () => {},
+      writeBytes: async (path: string, data: Uint8Array) => {
+        writes.set(path, data);
+      },
+      stat: async (path: string) => {
+        const data = writes.get(path);
+        if (data === undefined) throw new Error('ENOENT');
+        return { isFile: true, isDirectory: false, size: data.length };
+      },
+      readdir: async () => [],
+      remove: async () => {},
+    };
+
+    const out = await mcpResultToExecutableOutput(
+      result([{ type: 'image', data: bigBytes.toString('base64'), mimeType: 'image/png' }]),
+      'mcp__s__shot',
+      { originals: { fs: fs as never, dir: '/remote/tmp/kimi-code/original-images' } },
+    );
+
+    const caption = modelText(out);
+    const pathMatch = /saved at "([^"]+)"/.exec(caption!);
+    expect(pathMatch).not.toBeNull();
+    expect(pathMatch![1]!.startsWith('/remote/tmp/kimi-code/original-images/')).toBe(true);
+    const persisted = writes.get(pathMatch![1]!);
+    expect(persisted !== undefined && Buffer.from(persisted).equals(bigBytes)).toBe(true);
+  });
+
   test('keeps the caption and the full text alongside the compressed image', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'mcp-originals-'));
     const big = Buffer.from(

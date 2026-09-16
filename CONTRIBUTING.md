@@ -93,6 +93,11 @@ Every PR opens with the [PR template](.github/pull_request_template.md). PR titl
 - Auto-formatting via `pnpm lint:fix`.
 - Follow existing local patterns when the lint rules do not cover a style choice.
 
+## Engine Invariants
+
+- Two filesystems exist side by side and must not be conflated. Anything workspace-related (project files, project config such as `AGENTS.md` and `.kimi-code/`, skill and instruction discovery, file the model can be told to read) always goes through the session's `runtime.fs` — acquire it from the calling agent's runtime lease, never from a node-local backend. The App-level `IHostFileSystem` is reserved for server-local data only: session storage, the search index, and the blob store.
+- The same split applies to processes: workspace commands run through the runtime's process service; App-level process backends are for host-local jobs (hooks, local MCP servers, server maintenance).
+
 ## Reporting Security Issues
 
 Found a security issue? Please see [SECURITY.md](SECURITY.md) instead of opening a public issue.

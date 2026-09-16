@@ -2,6 +2,7 @@ import { Emitter, type Event } from '#/_base/event';
 import { UserFileSkillSource } from '#/features/skill/catalog/userFileSkillSource';
 import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
 import type { RuntimeBinding, RuntimeLease } from '#/runtime/runtime';
+import { LOCAL_RUNTIME_ID } from '#/runtime/runtime';
 import { RuntimeError, type RuntimeGenerationSnapshot, type RuntimeRegistry, type RuntimeRegistryChange } from '#/runtime/runtimeRegistry';
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
@@ -114,8 +115,9 @@ export class Program {
   readonly onDidChange: Event<ProgramSnapshot> = this.changeEmitter.event;
   private readonly registrySubscription;
   private readonly resolver: IRuntimeResolver;
-  private generation?: ProgramGeneration;
-  private generationFailed = false;
+  private readonly generations = new Map<string, ProgramGeneration>();
+  private readonly failedGenerations = new Set<string>();
+  private readonly reconciledGenerations = new Set<string>();
   private disposed = false;
   private resolveReady?: () => void;
   readonly ready = new Promise<void>((resolve) => { this.resolveReady = resolve; });
@@ -126,31 +128,35 @@ export class Program {
     private readonly context: IWorkspaceContext,
     private readonly dependencies: ProgramDependencies,
   ) {
-    this.binding = Object.freeze({ workspaceId, runtimeId: 'local' });
+    this.binding = Object.freeze({ workspaceId, runtimeId: LOCAL_RUNTIME_ID });
     this.resolver = {
       _serviceBrand: undefined,
       inspect: (binding) => this.runtimes.inspect(binding),
       acquire: (binding, required) => this.runtimes.acquire(binding, required),
     };
     this.registrySubscription = runtimes.onDidChange((change) => this.onRuntimeChange(change));
-    this.reconcileGeneration();
+    this.reconcileGeneration(LOCAL_RUNTIME_ID);
   }
 
   get status(): ProgramStatus { return this.currentStatus; }
-  get state(): IWorkspaceStateService { return this.requireGeneration().state; }
-  get dirs(): IWorkspaceDirs { return this.requireGeneration().dirs; }
-  get fs(): IWorkspaceFsService { return this.requireGeneration().fs; }
-  get git(): IWorkspaceGitService { return this.requireGeneration().git; }
-  get instructions(): IWorkspaceInstructionsService { return this.requireGeneration().instructions; }
-  get mcpConfig(): IWorkspaceMcpConfigService { return this.requireGeneration().mcpConfig; }
-  get mcp(): IWorkspaceMcpService { return this.requireGeneration().mcp; }
-  get trust(): IWorkspaceTrust { return this.requireGeneration().trust; }
-  get skills(): IWorkspaceSkillCatalog { return this.requireGeneration().skills; }
-  get agentProfiles(): IWorkspaceAgentProfileLoader { return this.requireGeneration().agentProfiles; }
-  get sessionControllerGeneration(): string { return this.requireGeneration().id; }
+  get state(): IWorkspaceStateService { return this.requireGeneration(LOCAL_RUNTIME_ID).state; }
+  get dirs(): IWorkspaceDirs { return this.requireGeneration(LOCAL_RUNTIME_ID).dirs; }
+  get fs(): IWorkspaceFsService { return this.requireGeneration(LOCAL_RUNTIME_ID).fs; }
+  get git(): IWorkspaceGitService { return this.requireGeneration(LOCAL_RUNTIME_ID).git; }
+  get instructions(): IWorkspaceInstructionsService { return this.requireGeneration(LOCAL_RUNTIME_ID).instructions; }
+  get mcpConfig(): IWorkspaceMcpConfigService { return this.requireGeneration(LOCAL_RUNTIME_ID).mcpConfig; }
+  get mcp(): IWorkspaceMcpService { return this.requireGeneration(LOCAL_RUNTIME_ID).mcp; }
+  get trust(): IWorkspaceTrust { return this.requireGeneration(LOCAL_RUNTIME_ID).trust; }
+  get skills(): IWorkspaceSkillCatalog { return this.requireGeneration(LOCAL_RUNTIME_ID).skills; }
+  get agentProfiles(): IWorkspaceAgentProfileLoader { return this.requireGeneration(LOCAL_RUNTIME_ID).agentProfiles; }
+  get sessionControllerGeneration(): string { return this.sessionControllerGenerationFor(LOCAL_RUNTIME_ID); }
 
-  createSessionController(): SessionLifecycleService {
-    const generation = this.requireGeneration();
+  sessionControllerGenerationFor(runtimeId: string): string {
+    return this.requireGeneration(runtimeId).id;
+  }
+
+  createSessionController(runtimeId: string = LOCAL_RUNTIME_ID): SessionLifecycleService {
+    const generation = this.requireGeneration(runtimeId);
     generation.references += 1;
     let released = false;
     const release = (): void => {
@@ -181,7 +187,7 @@ export class Program {
   }
 
   snapshot(): ProgramSnapshot {
-    const generation = this.generation;
+    const generation = this.generations.get(LOCAL_RUNTIME_ID);
     const skills = generation?.skills.catalog.listSkills() ?? [];
     const skillsBySource = new Map<string, number>();
     for (const skill of skills) {
@@ -226,42 +232,51 @@ export class Program {
     if (this.disposed) return;
     this.disposed = true;
     this.registrySubscription.dispose();
-    const generation = this.generation;
-    this.generation = undefined;
-    if (generation !== undefined) this.retireGeneration(generation);
+    const generations = [...this.generations.values()];
+    this.generations.clear();
+    for (const generation of generations) this.retireGeneration(generation);
     this.changeEmitter.dispose();
   }
 
-  private requireGeneration(): ProgramGeneration {
-    if (this.generation === undefined) throw new Error(`program ${this.workspaceId} has no available local runtime generation`);
-    return this.generation;
+  private requireGeneration(runtimeId: string): ProgramGeneration {
+    let generation = this.generations.get(runtimeId);
+    if (generation === undefined && !this.reconciledGenerations.has(runtimeId)) {
+      this.reconcileGeneration(runtimeId);
+      generation = this.generations.get(runtimeId);
+    }
+    if (generation === undefined) {
+      throw new Error(`program ${this.workspaceId} has no available generation for runtime ${runtimeId}`);
+    }
+    return generation;
   }
 
   private onRuntimeChange(change: RuntimeRegistryChange): void {
-    if (change.runtimeId !== 'local' || this.disposed) return;
-    this.reconcileGeneration();
+    if (this.disposed) return;
+    if (change.runtimeId !== LOCAL_RUNTIME_ID && !this.reconciledGenerations.has(change.runtimeId)) return;
+    this.reconcileGeneration(change.runtimeId);
   }
 
-  private reconcileGeneration(): void {
-    const local = this.runtimes.current('local');
-    if (local === undefined) {
-      const previous = this.generation;
-      this.generation = undefined;
+  private reconcileGeneration(runtimeId: string): void {
+    this.reconciledGenerations.add(runtimeId);
+    const current = this.runtimes.current(runtimeId);
+    if (current === undefined) {
+      const previous = this.generations.get(runtimeId);
+      this.generations.delete(runtimeId);
       if (previous !== undefined) this.retireGeneration(previous);
       this.refresh();
       return;
     }
-    if (this.generation?.id !== local.identity.generation) {
-      const previous = this.generation;
-      this.generationFailed = false;
+    if (this.generations.get(runtimeId)?.id !== current.identity.generation) {
+      const previous = this.generations.get(runtimeId);
+      this.failedGenerations.delete(runtimeId);
       try {
-        const next = this.createGeneration();
-        this.generation = next;
+        const next = this.createGeneration(runtimeId);
+        this.generations.set(runtimeId, next);
         if (previous !== undefined) this.retireGeneration(previous);
         this.observeReadiness(next);
       } catch (error) {
         if (!(error instanceof RuntimeError && error.code === 'runtime.unavailable')) {
-          this.generationFailed = true;
+          this.failedGenerations.add(runtimeId);
           this.resolveProgramReady();
         }
       }
@@ -269,8 +284,8 @@ export class Program {
     this.refresh();
   }
 
-  private createGeneration(): ProgramGeneration {
-    const lease = this.resolver.acquire(this.binding, PROGRAM_CAPABILITIES);
+  private createGeneration(runtimeId: string): ProgramGeneration {
+    const lease = this.resolver.acquire({ workspaceId: this.workspaceId, runtimeId }, PROGRAM_CAPABILITIES);
     const runtime = lease.runtime;
     const disposables: { dispose(): void | Promise<void> }[] = [];
     const own = <T extends { dispose(): void | Promise<void> }>(value: T): T => {
@@ -294,9 +309,9 @@ export class Program {
       const agentProfiles = own(new WorkspaceAgentProfileLoaderService(this.context, runtime.fs!, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
       const skillDiscovery = new RuntimeSkillDiscovery(this.dependencies.log, runtime.fs!);
       const userSkills = own(new UserFileSkillSource(skillDiscovery, this.dependencies.bootstrap, this.dependencies.config));
-      const explicitSkills = new ExplicitFileSkillSource(skillDiscovery, this.context, this.dependencies.bootstrap);
-      const extraSkills = own(new ExtraFileSkillSource(skillDiscovery, this.dependencies.config, this.context, this.dependencies.bootstrap));
-      const workspaceSkills = own(new WorkspaceRootSkillSource(skillDiscovery, this.context, this.dependencies.config, this.dependencies.bootstrap));
+      const explicitSkills = new ExplicitFileSkillSource(skillDiscovery, this.context, this.dependencies.bootstrap, runtime.fs!);
+      const extraSkills = own(new ExtraFileSkillSource(skillDiscovery, this.dependencies.config, this.context, this.dependencies.bootstrap, runtime.fs!));
+      const workspaceSkills = own(new WorkspaceRootSkillSource(skillDiscovery, this.context, this.dependencies.config, this.dependencies.bootstrap, runtime.fs!));
       const pluginSkills = new PluginSkillSource(skillDiscovery, this.dependencies.plugins);
       const skills = own(new WorkspaceSkillCatalogService(this.dependencies.builtinSkills, userSkills, explicitSkills, extraSkills, workspaceSkills, pluginSkills, state));
       return {
@@ -323,7 +338,7 @@ export class Program {
         retired: false,
       };
     } catch (error) {
-      for (const disposable of disposables.reverse()) void disposable.dispose();
+      for (const disposable of disposables.toReversed()) void disposable.dispose();
       lease.dispose();
       throw error;
     }
@@ -339,13 +354,13 @@ export class Program {
       readiness(generation.agentProfiles),
     ]).then(
       () => {
-        if (this.generation !== generation) return;
+        if (this.generations.get(generation.lease.runtime.identity.runtimeId) !== generation) return;
         generation.ready = true;
         this.resolveProgramReady();
         this.refresh();
       },
       () => {
-        if (this.generation !== generation) return;
+        if (this.generations.get(generation.lease.runtime.identity.runtimeId) !== generation) return;
         generation.failed = true;
         this.resolveProgramReady();
         this.refresh();
@@ -362,7 +377,7 @@ export class Program {
   private releaseGeneration(generation: ProgramGeneration): void {
     generation.references -= 1;
     if (generation.references !== 0 || !generation.retired) return;
-    for (const disposable of [...generation.disposables].reverse()) void disposable.dispose();
+    for (const disposable of [...generation.disposables].toReversed()) void disposable.dispose();
     generation.lease.dispose();
   }
 
@@ -372,10 +387,11 @@ export class Program {
   }
 
   private refresh(): void {
-    const local = this.runtimes.current('local');
+    const local = this.runtimes.current(LOCAL_RUNTIME_ID);
+    const generation = this.generations.get(LOCAL_RUNTIME_ID);
     if (local === undefined || local.status === 'connecting') this.currentStatus = 'preparing';
-    else if (this.generationFailed || this.generation?.failed === true) this.currentStatus = 'degraded';
-    else if (this.generation?.ready !== true) this.currentStatus = this.generation === undefined && local.status !== 'ready' ? 'degraded' : 'preparing';
+    else if (this.failedGenerations.has(LOCAL_RUNTIME_ID) || generation?.failed === true) this.currentStatus = 'degraded';
+    else if (generation?.ready !== true) this.currentStatus = generation === undefined && local.status !== 'ready' ? 'degraded' : 'preparing';
     else this.currentStatus = local.status === 'ready' ? 'ready' : 'degraded';
     this.changeEmitter.fire(this.snapshot());
   }

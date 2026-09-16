@@ -7,9 +7,12 @@ import type { IHostTerminalService } from '#/os/interface/terminal';
 export type RuntimeStatus = 'connecting' | 'ready' | 'degraded' | 'disconnected' | 'draining' | 'disposed';
 export type RuntimeCapability = 'fs' | 'process' | 'terminal';
 
+export const LOCAL_RUNTIME_ID = 'local';
+
 export interface RuntimeBinding {
   readonly workspaceId: string;
   readonly runtimeId: string;
+  readonly cwd?: string;
 }
 
 export interface RuntimeIdentity extends RuntimeBinding {

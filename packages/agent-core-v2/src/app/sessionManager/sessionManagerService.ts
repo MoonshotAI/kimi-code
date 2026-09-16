@@ -4,6 +4,7 @@ import { Emitter, type Event, type IWaitUntil } from '#/_base/event';
 import { ScopeActivation, registerScopedService, type ISessionScopeHandle } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { Error2, ErrorCodes } from '#/errors';
+import { LOCAL_RUNTIME_ID } from '#/runtime/runtime';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import {
@@ -68,7 +69,7 @@ export class SessionManager implements ISessionManager {
         ? { root: options.workDir }
         : { workspaceId: options.workspaceId, root: options.workDir },
     );
-    const create = () => this.controllerForWorkspace(workspace.id).create(options);
+    const create = () => this.controllerForWorkspace(workspace.id, options.runtimeId).create(options);
     if (options.sessionId === undefined) return create();
     return this.serializeLifecycle(options.sessionId, create);
   }
@@ -123,7 +124,7 @@ export class SessionManager implements ISessionManager {
   }
 
   private lifecycleKeys(...ids: (string | undefined)[]): string[] {
-    return [...new Set(ids.filter((id): id is string => id !== undefined))].sort();
+    return [...new Set(ids.filter((id): id is string => id !== undefined))].toSorted();
   }
 
   withLifecycleSerialization<T>(
@@ -222,7 +223,7 @@ export class SessionManager implements ISessionManager {
   }
 
   dispose(): void {
-    for (const { controller, subscriptions } of [...this.controllerEntries].reverse()) {
+    for (const { controller, subscriptions } of [...this.controllerEntries].toReversed()) {
       subscriptions.dispose();
       controller.dispose();
     }
@@ -239,13 +240,14 @@ export class SessionManager implements ISessionManager {
     this.didForkEmitter.dispose();
   }
 
-  private controllerForWorkspace(workspaceId: string): SessionLifecycleService {
+  private controllerForWorkspace(workspaceId: string, runtimeId: string = LOCAL_RUNTIME_ID): SessionLifecycleService {
     const workspace = this.workspaces.get(workspaceId);
     if (workspace === undefined) throw new Error(`workspace ${workspaceId} is not materialized`);
-    const generation = workspace.program.sessionControllerGeneration;
-    const existing = this.controllers.get(workspaceId);
+    const key = `${workspaceId}\0${runtimeId}`;
+    const generation = workspace.program.sessionControllerGenerationFor(runtimeId);
+    const existing = this.controllers.get(key);
     if (existing?.generation === generation) return existing.controller;
-    const controller = workspace.program.createSessionController();
+    const controller = workspace.program.createSessionController(runtimeId);
     const subscriptions = new DisposableStore();
     const entry: SessionControllerEntry = { generation, controller, subscriptions, sessionCount: 0 };
     subscriptions.add(controller.onWillCreateSession((event) => this.willCreateEmitter.fire(event)));
@@ -261,26 +263,26 @@ export class SessionManager implements ISessionManager {
       this.sessions.delete(event.sessionId);
       this.owners.delete(event.sessionId);
       this.didCloseEmitter.fire(event);
-      this.retireEntryIfIdle(workspaceId, entry);
+      this.retireEntryIfIdle(key, entry);
     }));
     subscriptions.add(controller.onDidArchiveSession((event) => {
       entry.sessionCount -= 1;
       this.sessions.delete(event.sessionId);
       this.owners.delete(event.sessionId);
       this.didArchiveEmitter.fire(event);
-      this.retireEntryIfIdle(workspaceId, entry);
+      this.retireEntryIfIdle(key, entry);
     }));
     subscriptions.add(controller.onDidForkSession((event) => this.didForkEmitter.fire(event)));
     this.controllerEntries.add(entry);
-    this.controllers.set(workspaceId, entry);
-    if (existing !== undefined) this.retireEntryIfIdle(workspaceId, existing);
+    this.controllers.set(key, entry);
+    if (existing !== undefined) this.retireEntryIfIdle(key, existing);
     return controller;
   }
 
-  private retireEntryIfIdle(workspaceId: string, entry: SessionControllerEntry): void {
+  private retireEntryIfIdle(key: string, entry: SessionControllerEntry): void {
     if (entry.sessionCount !== 0 || !this.controllerEntries.has(entry)) return;
     this.controllerEntries.delete(entry);
-    if (this.controllers.get(workspaceId) === entry) this.controllers.delete(workspaceId);
+    if (this.controllers.get(key) === entry) this.controllers.delete(key);
     entry.subscriptions.dispose();
     entry.controller.dispose();
   }

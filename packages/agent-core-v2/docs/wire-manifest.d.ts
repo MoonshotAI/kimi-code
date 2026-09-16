@@ -567,6 +567,7 @@ interface RuntimeSetBindingPayload {
   agentId: string;
   workspaceId: string;
   runtimeId: string;
+  cwd?: string;
 }
 
 /**

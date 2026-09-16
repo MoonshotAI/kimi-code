@@ -51,6 +51,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { closeTrailingOpenToolExchange } from '#/agent/contextMemory/openToolExchange';
 import { IAgentRuntimeBindingSeed, IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
 import '#/agent/runtimeBinding/runtimeBindingService';
+import { LOCAL_RUNTIME_ID } from '#/runtime/runtime';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
 import { IWireService } from '#/wire/wire';
@@ -291,7 +292,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
             [ITelemetryService, telemetryBinding.telemetry],
             [IAgentRuntimeBindingSeed, {
               _serviceBrand: undefined,
-              binding: { workspaceId: this.ctx.workspaceId, runtimeId: opts.runtimeId ?? 'local' },
+              binding: { workspaceId: this.ctx.workspaceId, runtimeId: opts.runtimeId ?? LOCAL_RUNTIME_ID, cwd: opts.runtimeCwd },
             }],
             [IAgentBlobService, blobView],
             [IWireService, wire],
@@ -423,9 +424,11 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const source = sourceManaged.handle;
     const sourceData = source.accessor.get(IAgentProfileService).data();
     const override = opts?.binding;
+    const sourceBinding = source.accessor.get(IAgentRuntimeBindingService).current;
     const childContext = await this.create({
       agentId: opts?.agentId,
-      runtimeId: source.accessor.get(IAgentRuntimeBindingService).current.runtimeId,
+      runtimeId: sourceBinding.runtimeId,
+      runtimeCwd: sourceBinding.cwd,
       forkedFrom: source.id,
       labels: withSubagentProfile(opts?.labels, override?.profile ?? sourceData.profileName),
     });

@@ -29,6 +29,8 @@ import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentLoopService, type LoopNotifyHandle } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import type { RuntimeLease } from '#/runtime/runtime';
 import { ITaskService, type ITaskHandle, TERMINAL_TASK_STATES } from '#/app/task/task';
 import {
   TERMINAL_STATUSES,
@@ -57,7 +59,7 @@ import {
   type RegisterAgentTaskOptions,
 } from './task';
 import { resolveAgentTaskConfig } from './configSection';
-import { AgentTaskPersistence } from './persist';
+import { AgentTaskPersistence, type AgentTaskSpillTarget } from './persist';
 import { taskKey, TaskNotified, TaskStarted, TaskTerminated, TaskWaitDelivered } from './taskOps';
 import { formatTaskList } from '#/agent/tools/task/task-list/taskListTool';
 import '#/agent/tools/task/task-output/taskOutputTool';
@@ -229,6 +231,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     undoParticipants: IAgentConversationUndoParticipantRegistry,
     @ILogService private readonly log: ILogService,
     @IAgentStateService private readonly states: IAgentStateService,
+    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
   ) {
     super();
     this.states.contributeState(taskKey);
@@ -247,6 +250,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       atomicDocs,
       byteStore,
       fallbackRoot,
+      () => this.spillTarget(),
     );
     this._register(
       undoParticipants.register({
@@ -284,6 +288,23 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
 
   private get ghosts(): Map<string, AgentTaskInfo> {
     return this.states.get(taskGhostsKey);
+  }
+
+  private spillTarget(): AgentTaskSpillTarget | undefined {
+    let lease: RuntimeLease;
+    try {
+      lease = this.runtime.acquire();
+    } catch {
+      return undefined;
+    }
+    try {
+      const tempDir = lease.runtime.environment.tempDir;
+      const fs = lease.runtime.fs;
+      if (tempDir === undefined || fs === undefined) return undefined;
+      return { fs, dir: lease.runtime.path.join(tempDir, 'kimi-code', 'task-output') };
+    } finally {
+      lease.dispose();
+    }
   }
 
   private get scheduledNotificationKeys(): Set<string> {

@@ -1101,11 +1101,13 @@ export interface AgentStateSnapshot {
   'runtimeBinding': /* RuntimeBinding — packages/agent-core-v2/src/runtime/runtime.ts */ {
     readonly workspaceId: string;
     readonly runtimeId: string;
+    readonly cwd?: string;
   } | undefined;
   // src/agent/runtimeBinding/runtimeBindingService.ts
   'runtime.binding': /* RuntimeBinding — packages/agent-core-v2/src/runtime/runtime.ts */ {
     readonly workspaceId: string;
     readonly runtimeId: string;
+    readonly cwd?: string;
   };
   // src/agent/shellCommand/shellCommandService.ts
   'shellCommand.tasks': Map<string, string>;

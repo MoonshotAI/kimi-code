@@ -20,6 +20,7 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
 import type { Runtime } from '#/runtime/runtime';
 import { IConfigService } from '#/app/config/config';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
@@ -148,6 +149,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
   async spawn(opts: SpawnSubagentOptions): Promise<SpawnedSubagent> {
     const caller = this.requireCaller(opts.callerAgentId);
     const { plan } = opts;
+    const callerBinding = caller.accessor.get(IAgentRuntimeBindingService).current;
     const lease = plan.fork
       ? undefined
       : caller.accessor.get(IAgentRuntimeService).acquire(['process']);
@@ -170,7 +172,8 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
               thinking: plan.thinking,
             },
             labels: opts.labels,
-            runtimeId: lease!.runtime.identity.runtimeId,
+            runtimeId: callerBinding.runtimeId,
+            runtimeCwd: callerBinding.cwd,
           });
           created = this.agentLifecycle.handleOf(createdContext.agentId)!;
         }

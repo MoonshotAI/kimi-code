@@ -31,6 +31,7 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { LocalRuntimeProviderFactory } from '#/runtime/localRuntime';
 import { canonicalWorkspaceRoot } from '#/_base/utils/paths';
 import type { Runtime, RuntimeBinding, RuntimeCapability, RuntimeLease } from '#/runtime/runtime';
+import { LOCAL_RUNTIME_ID } from '#/runtime/runtime';
 import { RuntimeError, RuntimeRegistry } from '#/runtime/runtimeRegistry';
 import type { RuntimeProviderFactory } from '#/runtime/runtimeProvider';
 import { SharedRuntimeUnitHostFactory, type RuntimeUnitHandle, type RuntimeUnitHostFactory } from '#/runtime/runtimeUnitHost';
@@ -78,7 +79,8 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
     private readonly unitHostFactory: RuntimeUnitHostFactory = new SharedRuntimeUnitHostFactory(),
   ) {
-    this.providers.set('local', new LocalRuntimeProviderFactory());
+    const localProvider = new LocalRuntimeProviderFactory();
+    this.providers.set(localProvider.id, localProvider);
   }
 
   get(workspaceId: string): WorkspaceInstance | undefined {
@@ -153,7 +155,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     this.instances.delete(workspaceId);
     const attachments = this.attachments.get(workspaceId);
     this.attachments.delete(workspaceId);
-    if (attachments !== undefined) for (const attachment of [...attachments.values()].reverse()) await attachment.dispose();
+    if (attachments !== undefined) for (const attachment of [...attachments.values()].toReversed()) await attachment.dispose();
     await instance.dispose();
     this.changeEmitter.fire({ workspaceId });
   }
@@ -169,18 +171,18 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
       }
     } catch (error) {
       this.providers.delete(factory.id);
-      for (const instance of attached.reverse()) await this.detach(instance.id, factory.id);
+      for (const instance of attached.toReversed()) await this.detach(instance.id, factory.id);
       throw error;
     }
     return { dispose: async () => {
       if (this.providers.get(factory.id) !== factory) return;
       this.providers.delete(factory.id);
-      for (const workspaceId of [...this.attachments.keys()].reverse()) await this.detach(workspaceId, factory.id);
+      for (const workspaceId of [...this.attachments.keys()].toReversed()) await this.detach(workspaceId, factory.id);
     } };
   }
 
   async dispose(): Promise<void> {
-    for (const workspaceId of [...this.instances.keys()].reverse()) await this.close(workspaceId);
+    for (const workspaceId of [...this.instances.keys()].toReversed()) await this.close(workspaceId);
     this.changeEmitter.dispose();
   }
 
@@ -248,7 +250,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     );
     try {
       for (const provider of this.providers.values()) await this.attach(instance, provider);
-      if (instance.runtimes.current('local') === undefined) throw new Error(`workspace ${workspace.id} has no local runtime`);
+      if (instance.runtimes.current(LOCAL_RUNTIME_ID) === undefined) throw new Error(`workspace ${workspace.id} has no local runtime`);
       instance.activate();
       this.instances.set(workspace.id, instance);
       this.changeEmitter.fire({ workspaceId: workspace.id, instance });
@@ -257,7 +259,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
       const attachments = this.attachments.get(instance.id);
       this.attachments.delete(instance.id);
       if (attachments !== undefined) {
-        for (const attachment of [...attachments.values()].reverse()) await attachment.dispose();
+        for (const attachment of [...attachments.values()].toReversed()) await attachment.dispose();
       }
       await instance.dispose();
       throw error;

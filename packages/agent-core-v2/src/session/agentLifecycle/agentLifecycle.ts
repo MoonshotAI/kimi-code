@@ -16,6 +16,7 @@ export interface CreateAgentOptions {
   readonly agentId?: string;
   readonly binding?: BindAgentInput;
   readonly runtimeId?: string;
+  readonly runtimeCwd?: string;
   readonly forkedFrom?: string;
   readonly labels?: Readonly<Record<string, string>>;
 }

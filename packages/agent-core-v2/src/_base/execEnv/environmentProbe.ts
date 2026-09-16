@@ -26,6 +26,7 @@ export interface HostEnvironmentInfo {
   readonly shellPath: string;
   readonly pathClass: PathClass;
   readonly homeDir: string;
+  readonly tempDir?: string;
 }
 
 export interface HostEnvironmentProbeDeps {

@@ -1,7 +1,6 @@
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { isWithinWorkspace } from '#/tool/path-access';
-import { IGitService } from '#/app/git/git';
-import type { IGitService as GitService } from '#/app/git/git';
+import { findGitWorkTree } from '#/app/git/workTree';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { ISessionWorkspaceContext as WorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -17,7 +16,6 @@ export class GitCwdWriteApprovePermissionPolicyService implements PermissionPoli
   constructor(
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @ISessionWorkspaceContext private readonly workspace: WorkspaceContext,
-    @IGitService private readonly git: GitService,
   ) {}
 
   async evaluate(
@@ -26,29 +24,34 @@ export class GitCwdWriteApprovePermissionPolicyService implements PermissionPoli
     const toolName = context.toolCall.name;
     if (toolName !== 'Write' && toolName !== 'Edit') return undefined;
     const lease = this.runtime.acquire();
-    const pathClass = lease.runtime.environment.pathClass;
-    lease.dispose();
-    if (pathClass !== 'posix') return undefined;
+    try {
+      const pathClass = lease.runtime.environment.pathClass;
+      if (pathClass !== 'posix') return undefined;
+      const fs = lease.runtime.fs;
+      if (fs === undefined) return undefined;
 
-    const cwd = this.workspace.workDir;
-    if (cwd.length === 0) return undefined;
+      const cwd = this.workspace.workDir;
+      if (cwd.length === 0) return undefined;
 
-    const writeAccesses = writeFileAccesses(context);
-    if (writeAccesses.length === 0) return undefined;
-    if (
-      !writeAccesses.every((access) =>
-        isWithinWorkspace(
-          access.path,
-          { workspaceDir: cwd, additionalDirs: this.workspace.additionalDirs },
-          'posix',
-        ),
-      )
-    ) {
-      return undefined;
+      const writeAccesses = writeFileAccesses(context);
+      if (writeAccesses.length === 0) return undefined;
+      if (
+        !writeAccesses.every((access) =>
+          isWithinWorkspace(
+            access.path,
+            { workspaceDir: cwd, additionalDirs: this.workspace.additionalDirs },
+            'posix',
+          ),
+        )
+      ) {
+        return undefined;
+      }
+
+      return (await findGitWorkTree(fs, cwd)) === null
+        ? undefined
+        : { kind: 'approve' };
+    } finally {
+      lease.dispose();
     }
-
-    return (await this.git.findWorkTree(cwd)) === null
-      ? undefined
-      : { kind: 'approve' };
   }
 }

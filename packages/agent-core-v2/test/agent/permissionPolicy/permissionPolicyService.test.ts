@@ -519,6 +519,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
                 dirname: (path: string) => dirname(path),
               },
               workspace: { mapRoots: (roots) => roots },
+              fs: hostFs,
             },
             dispose: () => {},
           }),
@@ -818,6 +819,7 @@ function workspaceStub(initialWorkDir: string): {
     resolve: (path) => path,
     isWithin: () => true,
     assertAllowed: (path) => path,
+    setWorkDir: () => {},
   };
   return {
     stub,

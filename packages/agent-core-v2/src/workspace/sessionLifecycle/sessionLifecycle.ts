@@ -14,6 +14,7 @@ export interface CreateSessionOptions {
   readonly workDir: string;
   readonly additionalDirs?: readonly string[];
   readonly mainAgentBinding?: BindAgentInput;
+  readonly runtimeId?: string;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
 }
 

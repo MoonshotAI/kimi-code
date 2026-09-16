@@ -7,6 +7,7 @@ import {
   type ISkillSource,
   type SkillContribution,
 } from '#/features/skill/catalog/skillSource';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 
 export interface IExplicitFileSkillSource extends ISkillSource {
@@ -26,6 +27,7 @@ export class ExplicitFileSkillSource implements IExplicitFileSkillSource {
     @ISkillDiscovery private readonly discovery: ISkillDiscovery,
     @IWorkspaceContext private readonly workspace: IWorkspaceContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
+    private readonly fs: IHostFileSystem,
   ) {}
 
   async load(): Promise<SkillContribution> {
@@ -34,7 +36,7 @@ export class ExplicitFileSkillSource implements IExplicitFileSkillSource {
       return { skills: [] };
     }
     return this.discovery.discover(
-      await configuredRoots(explicitDirs, this.workspace.cwd, this.bootstrap.osHomeDir, 'user'),
+      await configuredRoots(explicitDirs, this.workspace.cwd, this.bootstrap.osHomeDir, 'user', this.fs),
     );
   }
 }

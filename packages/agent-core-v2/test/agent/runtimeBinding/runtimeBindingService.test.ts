@@ -1,13 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
 import { Emitter } from '#/_base/event';
+import type { LiveRef } from '#/_base/di/instantiation';
+import type { ISessionEventBus } from '#/app/event/eventBus';
 import { AgentRuntimeService, snapshotAgentRuntimeBinding } from '#/agent/runtimeBinding/agentRuntime';
 import { AgentRuntimeBindingService, agentRuntimeBindingKey } from '#/agent/runtimeBinding/runtimeBindingService';
+import { runtimeBindingKey, type RuntimeSetBinding } from '#/agent/runtimeBinding/runtimeBindingOps';
 import { AgentStateService } from '#/agent/state/agentStateService';
+import type { IAgentLoopService } from '#/agent/loop/loop';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
 import type { Runtime, RuntimeBinding, RuntimeCapability, RuntimeLease } from '#/runtime/runtime';
 import { RuntimeError, RuntimeRegistry } from '#/runtime/runtimeRegistry';
 import { makeSessionContext } from '#/session/sessionContext/sessionContext';
+import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { IEventDispatcher } from '#/state/eventDispatcher';
 import type {
   IRuntimeResolver,
@@ -32,7 +37,11 @@ function runtime(
   });
 }
 
-function setup() {
+interface RestoreHook {
+  (ctx: unknown, next: () => Promise<void>): Promise<void>;
+}
+
+function setup(options: { agentId?: string; sessionCwd?: string } = {}) {
   const registry = new RuntimeRegistry('workspace');
   const local = runtime('local', 'local-one', 'ready', ['fs', 'process']);
   const remote = runtime('remote', 'remote-one', 'ready', ['process']);
@@ -50,25 +59,79 @@ function setup() {
     workspaceId: 'workspace',
     sessionDir: '/session',
     sessionScope: 'sessions/session',
-    cwd: '/workspace',
+    cwd: options.sessionCwd ?? '/workspace',
   });
+  const dispatched: RuntimeSetBinding[] = [];
+  const restoreHooks = new Map<string, RestoreHook>();
   const dispatcher = {
     _serviceBrand: undefined,
-    dispatch: () => Promise.resolve(),
-    hooks: { onDidRestore: { register: () => ({ dispose: () => {} }) } },
-  } as unknown as IEventDispatcher;
-  const binding = new AgentRuntimeBindingService(
-    {
-      _serviceBrand: undefined,
-      agentId: 'main',
-      agentContext: stubAgentContext('main', 1),
-      scope: (subKey?: string) => subKey ?? '',
+    dispatch: (event: RuntimeSetBinding) => {
+      dispatched.push(event);
+      return Promise.resolve();
     },
+    hooks: {
+      onDidRestore: {
+        register: (id: string, hook: RestoreHook) => {
+          restoreHooks.set(id, hook);
+          return { dispose: () => {} };
+        },
+      },
+    },
+  } as unknown as IEventDispatcher;
+  const workDirWrites: string[] = [];
+  const workspaceContext = {
+    _serviceBrand: undefined,
+    workDir: session.cwd,
+    additionalDirs: [],
+    setWorkDir: (dir: string) => {
+      workDirWrites.push(dir);
+    },
+  } as unknown as ISessionWorkspaceContext;
+  const activeToolCalls: { toolCallId: string; name: string }[] = [];
+  const loopState: {
+    turn?: { turnId: number; phase: string; step: number; activeToolCalls: { toolCallId: string; name: string }[] };
+  } = { turn: undefined };
+  const loop: LiveRef<IAgentLoopService> = {
+    current: {
+      snapshot: () => ({
+        state: 'running',
+        queue: [],
+        notificationCount: 0,
+        paused: false,
+        hasPendingRequests: false,
+        turn: loopState.turn,
+      }),
+    } as unknown as IAgentLoopService,
+    onDidChange: () => ({ dispose: () => {} }),
+  };
+  const scopeContext = {
+    _serviceBrand: undefined,
+    agentId: options.agentId ?? 'main',
+    agentContext: stubAgentContext(options.agentId ?? 'main', 1),
+    scope: (subKey?: string) => subKey ?? '',
+  };
+  const busHandlers = new Map<string, ((event: { readonly agentId?: string }) => void)[]>();
+  const eventBus = {
+    subscribe: (cls: { readonly type: string }, handler: (event: { readonly agentId?: string }) => void) => {
+      const handlers = busHandlers.get(cls.type) ?? [];
+      handlers.push(handler);
+      busHandlers.set(cls.type, handlers);
+      return { dispose: () => {} };
+    },
+  } as unknown as ISessionEventBus;
+  const publishBus = (type: string, event: { readonly agentId?: string }): void => {
+    for (const handler of busHandlers.get(type) ?? []) handler(event);
+  };
+  const binding = new AgentRuntimeBindingService(
+    scopeContext,
     state,
     { _serviceBrand: undefined, binding: { workspaceId: 'workspace', runtimeId: 'local' } },
     session,
+    workspaceContext,
     resolver,
     dispatcher,
+    eventBus,
+    loop,
   );
   const workspaceChanges = new Emitter<{ workspaceId: string }>();
   const workspaces = {
@@ -85,7 +148,13 @@ function setup() {
     remote,
     localRegistration,
     workspaceChanges,
-    agentRuntime: new AgentRuntimeService(binding, resolver, workspaces),
+    dispatched,
+    restoreHooks,
+    workDirWrites,
+    activeToolCalls,
+    loopState,
+    publishBus,
+    agentRuntime: new AgentRuntimeService(scopeContext, binding, resolver, workspaces, eventBus),
   };
 }
 
@@ -228,5 +297,136 @@ describe('AgentRuntimeBindingService', () => {
     expect(agentRuntime.isAvailable(['process'])).toBe(true);
     local.setStatus('ready');
     expect(changes).toHaveLength(1);
+  });
+
+  it('carries cwd through switch and the persisted op payload', () => {
+    const { binding, dispatched } = setup();
+
+    expect(binding.switch('remote', '/remote/work')).toEqual({
+      workspaceId: 'workspace',
+      runtimeId: 'remote',
+      cwd: '/remote/work',
+    });
+    expect(binding.current.cwd).toBe('/remote/work');
+    expect(dispatched.at(-1)).toMatchObject({
+      workspaceId: 'workspace',
+      runtimeId: 'remote',
+      cwd: '/remote/work',
+    });
+
+    binding.switch('local');
+    expect(binding.current).toEqual({ workspaceId: 'workspace', runtimeId: 'local', cwd: undefined });
+    expect(dispatched.at(-1)).toMatchObject({ workspaceId: 'workspace', runtimeId: 'local' });
+  });
+
+  it('rejects switching while tool calls are executing or pending approval', () => {
+    const { binding, activeToolCalls, loopState } = setup();
+    loopState.turn = { turnId: 1, phase: 'tool_call', step: 1, activeToolCalls };
+    activeToolCalls.push({ toolCallId: 'call-1', name: 'Bash' });
+
+    expect(() => binding.switch('remote')).toThrowError(
+      expect.objectContaining<Partial<RuntimeError>>({ code: 'runtime.conflict' }),
+    );
+    expect(binding.current).toEqual({ workspaceId: 'workspace', runtimeId: 'local', cwd: undefined });
+
+    activeToolCalls.length = 0;
+    expect(binding.switch('remote').runtimeId).toBe('remote');
+  });
+
+  it('pushes the effective workDir to the session context for the main agent', async () => {
+    const { binding, workDirWrites, restoreHooks } = setup();
+
+    binding.switch('remote', '/remote/work');
+    expect(workDirWrites).toEqual(['/remote/work']);
+
+    binding.switch('local');
+    expect(workDirWrites).toEqual(['/remote/work', '/workspace']);
+
+    workDirWrites.length = 0;
+    await restoreHooks.get('agent-runtime-binding')?.(undefined, async () => {});
+    expect(workDirWrites).toEqual(['/workspace']);
+  });
+
+  it('defers the workDir switch to the turn boundary while the op commits mid-turn', () => {
+    const { binding, loopState, workDirWrites, publishBus } = setup();
+    loopState.turn = { turnId: 1, phase: 'running', step: 1, activeToolCalls: [] };
+
+    expect(binding.switch('remote', '/remote/work').runtimeId).toBe('remote');
+    expect(binding.current).toMatchObject({ runtimeId: 'remote', cwd: '/remote/work' });
+    expect(workDirWrites).toEqual([]);
+
+    publishBus('turn.ended', { agentId: 'main' });
+    expect(workDirWrites).toEqual(['/remote/work']);
+
+    loopState.turn = { turnId: 2, phase: 'running', step: 1, activeToolCalls: [] };
+    binding.switch('local');
+    expect(workDirWrites).toEqual(['/remote/work']);
+
+    publishBus('turn.ended', { agentId: 'agent-9' });
+    expect(workDirWrites).toEqual(['/remote/work']);
+
+    publishBus('turn.ended', { agentId: 'main' });
+    expect(workDirWrites).toEqual(['/remote/work', '/workspace']);
+  });
+
+  it('does not push workDir for non-main agents', () => {
+    const { binding, workDirWrites } = setup({ agentId: 'agent-1' });
+    binding.switch('remote', '/remote/work');
+    expect(workDirWrites).toEqual([]);
+  });
+
+  it('pins the turn binding and generation from turn start until turn end', () => {
+    const { binding, agentRuntime, publishBus } = setup();
+    publishBus('turn.started', { agentId: 'main' });
+
+    binding.switch('remote');
+    const lease = agentRuntime.acquire();
+    expect(lease.runtime.identity).toMatchObject({ runtimeId: 'local', generation: 'local-one' });
+    lease.dispose();
+
+    publishBus('turn.ended', { agentId: 'main' });
+    const next = agentRuntime.acquire();
+    expect(next.runtime.identity).toMatchObject({ runtimeId: 'remote', generation: 'remote-one' });
+    next.dispose();
+  });
+
+  it('fails turn acquires when the pinned runtime generation changes mid-turn', async () => {
+    const { agentRuntime, localRegistration, publishBus } = setup();
+    publishBus('turn.started', { agentId: 'main' });
+
+    await localRegistration.replace(runtime('local', 'local-two', 'ready', ['fs', 'process']));
+
+    expect(() => agentRuntime.acquire()).toThrowError(
+      expect.objectContaining<Partial<RuntimeError>>({ code: 'runtime.unavailable' }),
+    );
+
+    publishBus('turn.ended', { agentId: 'main' });
+    const lease = agentRuntime.acquire();
+    expect(lease.runtime.identity.generation).toBe('local-two');
+    lease.dispose();
+  });
+
+  it('replays the restored binding without reconnecting and raises unavailable on first acquire', async () => {
+    const { state, remote, restoreHooks, binding, agentRuntime, workDirWrites } = setup();
+    state.set(runtimeBindingKey, { workspaceId: 'workspace', runtimeId: 'remote', cwd: '/remote/work' });
+    remote.setStatus('disconnected');
+
+    await restoreHooks.get('agent-runtime-binding')?.(undefined, async () => {});
+
+    expect(binding.current).toEqual({ workspaceId: 'workspace', runtimeId: 'remote', cwd: '/remote/work' });
+    expect(workDirWrites).toEqual(['/remote/work']);
+    expect(() => agentRuntime.acquire()).toThrowError(
+      expect.objectContaining<Partial<RuntimeError>>({ code: 'runtime.unavailable' }),
+    );
+    expect(binding.current.runtimeId).toBe('remote');
+  });
+
+  it('ignores turn events of other agents', () => {
+    const { binding, agentRuntime, publishBus } = setup();
+    publishBus('turn.started', { agentId: 'agent-9' });
+    binding.switch('remote');
+    const lease = agentRuntime.acquire();
+    expect(lease.runtime.identity.runtimeId).toBe('remote');
+    lease.dispose();
   });
 });

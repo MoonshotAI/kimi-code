@@ -22,6 +22,7 @@ import { makeHookRunner } from '../features/externalHooks/runner-stub';
 import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
 import { ToolAccesses, type ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -292,6 +293,12 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
           return {
             _serviceBrand: undefined,
             snapshot: () => ({ state: 'idle' }),
+          } as never;
+        }
+        if (serviceId === IAgentRuntimeBindingService) {
+          return {
+            _serviceBrand: undefined,
+            current: { workspaceId: 'test', runtimeId: 'local' },
           } as never;
         }
         if (serviceId === IAgentPermissionModeService) {
