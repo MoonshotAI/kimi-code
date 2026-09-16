@@ -240,7 +240,7 @@ import type { ExperimentalFeatureState } from '#/flag';
 import { KimiHarness } from '#/kimi-harness';
 import type { BeginGlobalMcpServerAuthResult } from '#/mcp';
 import { limitAgentReplayByTurns } from '#/replay';
-import { noopTelemetryClient } from '#/telemetry';
+import { noopTelemetryClient, withTelemetryContext } from '#/telemetry';
 import {
   SDKRpcClientBase,
   type ActivatePluginCommandRpcInput,
@@ -559,6 +559,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     telemetry.addAppender({
       track: (record) => {
         if (this.engineSessionStartedSuppressed && record.event === 'session_started') return;
+        const sessionId = record.context['session_id'];
+        if (typeof sessionId === 'string' && sessionId.length > 0) {
+          withTelemetryContext(client, { sessionId }).track(record.event, record.properties);
+          return;
+        }
         client.track(record.event, record.properties);
       },
     });

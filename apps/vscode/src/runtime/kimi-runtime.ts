@@ -268,11 +268,14 @@ export class KimiRuntime {
   async dispose(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    await Promise.all([...this.sessions.values()].map((session) => session.close()));
-    this.sessions.clear();
-    this.sessionByView.clear();
-    await this.harness.close();
-    await this.telemetry.shutdown();
+    try {
+      await Promise.all([...this.sessions.values()].map((session) => session.close()));
+      this.sessions.clear();
+      this.sessionByView.clear();
+      await this.harness.close();
+    } finally {
+      await this.telemetry.shutdown();
+    }
   }
 
   private wrapSession(session: Session, legacyApproval: LegacyApprovalFlags): SessionRuntime {

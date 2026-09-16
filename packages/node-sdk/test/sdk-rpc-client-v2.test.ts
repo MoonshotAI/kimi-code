@@ -1557,6 +1557,31 @@ describe('SDKRpcClientV2 engine telemetry', () => {
     }
   });
 
+  it('scopes forwarded engine events with their session id', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-tel-session-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-tel-session-work-'));
+    tempDirs.push(workDir);
+    const records: TelemetryRecord[] = [];
+    const harness = createKimiHarness({
+      homeDir,
+      identity: TEST_IDENTITY,
+      telemetry: recordingTelemetry(records),
+    });
+    try {
+      const session = await harness.createSession({ workDir });
+      await session.setPermission('yolo');
+      const forwarded = records.filter((record) => record.event === 'yolo_toggle');
+      expect(forwarded.length).toBeGreaterThan(0);
+      for (const record of forwarded) {
+        expect(record.sessionId).toBe(session.id);
+      }
+      await session.close();
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('honors telemetry = false for engine-side events', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-tel-off-'));
     tempDirs.push(homeDir);

@@ -696,6 +696,28 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
     expect(sdk.closeCount()).toBe(1);
   });
 
+  it("shuts telemetry down even when harness teardown fails", async () => {
+    const telemetry = createStubTelemetry();
+    const failingHarness = {
+      homeDir: "/tmp/kimi-runtime-failing-home",
+      auth: {},
+      close: vi.fn(async () => {
+        throw new Error("persistence teardown failed");
+      }),
+    } as unknown as KimiHarness;
+    const runtime = new KimiRuntime({
+      version: "0.6.0",
+      harness: failingHarness,
+      telemetry,
+      broadcast: () => undefined,
+      captureBaseline: () => undefined,
+      log: () => undefined,
+    });
+
+    await expect(runtime.dispose()).rejects.toThrow("persistence teardown failed");
+    expect(telemetry.shutdown).toHaveBeenCalledOnce();
+  });
+
   it("does not retain a resumed session when it belongs to a different working directory", async () => {
     const { runtime, sdk } = createRuntime();
     const foreign = sdk.addSession("foreign-1", "/other-workspace");
