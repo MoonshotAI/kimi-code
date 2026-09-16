@@ -3,7 +3,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { encodeWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';
 import { IEventService } from '#/app/event/event';
-import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
@@ -56,20 +56,17 @@ export class WorkspaceService implements IWorkspaceService {
       let stat;
       try {
         stat = await this.hostFs.stat(root);
-      } catch (error) {
-        const code = (unwrapErrorCause(error) as NodeJS.ErrnoException | undefined)?.code;
-        if (code === 'ENOENT' || code === 'ENOTDIR') {
-          throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `workspace root ${root} does not exist`);
-        }
-        throw error;
+      } catch {
+        stat = undefined;
       }
-      if (!stat.isDirectory) {
+      if (stat !== undefined && !stat.isDirectory) {
         try {
           stat = await this.hostFs.stat(await this.hostFs.realpath(root));
         } catch {
+          stat = undefined;
         }
       }
-      if (!stat.isDirectory) {
+      if (stat !== undefined && !stat.isDirectory) {
         throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `workspace root ${root} is not a directory`);
       }
       await this.ensureMerged();

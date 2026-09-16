@@ -9,6 +9,7 @@ const runtimeSetBindingSchema = z.object({
   agentId: z.string(),
   workspaceId: z.string(),
   runtimeId: z.string(),
+  cwd: z.string().optional(),
 });
 
 export class RuntimeSetBinding extends AgentEvent2<z.infer<typeof runtimeSetBindingSchema>> {
@@ -20,10 +21,11 @@ export interface RuntimeSetBinding {
   readonly agentId: string;
   readonly workspaceId: string;
   readonly runtimeId: string;
+  readonly cwd?: string;
 }
 
 export const runtimeBindingKey = defineState(
   'runtimeBinding',
   (): RuntimeBinding | undefined => undefined,
 ).replayable({ schema: z.custom<RuntimeBinding | undefined>() })
-  .on(RuntimeSetBinding, (_s, e) => ({ workspaceId: e.workspaceId, runtimeId: e.runtimeId }));
+  .on(RuntimeSetBinding, (_s, e) => ({ workspaceId: e.workspaceId, runtimeId: e.runtimeId, cwd: e.cwd }));

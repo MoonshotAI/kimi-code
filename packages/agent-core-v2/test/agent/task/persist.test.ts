@@ -278,4 +278,66 @@ describe('AgentTaskPersistence', () => {
       });
     });
   });
+
+  describe('runtime spill mirror', () => {
+    it('mirrors appended output into the spill target and reports the spill path', async () => {
+      const writes: { path: string; data: string }[] = [];
+      const spillFs = {
+        mkdir: async () => {},
+        appendText: async (path: string, data: string) => {
+          writes.push({ path, data });
+        },
+      };
+      const spill = new AgentTaskPersistence(
+        join(sessionDir, AGENT_SCOPE),
+        AGENT_SCOPE,
+        docs,
+        bytes,
+        undefined,
+        () => ({ fs: spillFs as never, dir: '/remote/tmp/kimi-code/task-output' }),
+      );
+
+      await spill.appendTaskOutput('bash-mirror01', 'chunk-one');
+      await spill.appendTaskOutput('bash-mirror01', 'chunk-two');
+
+      expect(writes).toEqual([
+        { path: '/remote/tmp/kimi-code/task-output/bash-mirror01.log', data: 'chunk-one' },
+        { path: '/remote/tmp/kimi-code/task-output/bash-mirror01.log', data: 'chunk-two' },
+      ]);
+      const snapshot = await spill.readTaskOutputSnapshot('bash-mirror01', 100);
+      expect(snapshot?.outputPath).toBe('/remote/tmp/kimi-code/task-output/bash-mirror01.log');
+      expect(snapshot?.outputSizeBytes).toBe('chunk-onechunk-two'.length);
+    });
+
+    it('tolerates spill failures and keeps the server-local output readable', async () => {
+      const spill = new AgentTaskPersistence(
+        join(sessionDir, AGENT_SCOPE),
+        AGENT_SCOPE,
+        docs,
+        bytes,
+        undefined,
+        () => ({
+          fs: {
+            mkdir: async () => {},
+            appendText: async () => {
+              throw new Error('connection lost');
+            },
+          } as never,
+          dir: '/remote/tmp/kimi-code/task-output',
+        }),
+      );
+
+      await spill.appendTaskOutput('bash-mirror02', 'still-recorded');
+      const snapshot = await spill.readTaskOutputSnapshot('bash-mirror02', 100);
+      expect(snapshot?.preview).toBe('still-recorded');
+    });
+
+    it('keeps the server-local output path when no spill target is present', async () => {
+      await persistence.appendTaskOutput('bash-local001', 'local only');
+      const snapshot = await persistence.readTaskOutputSnapshot('bash-local001', 100);
+      expect(snapshot?.outputPath).toBe(
+        join(sessionDir, 'tasks', 'bash-local001', 'output.log'),
+      );
+    });
+  });
 });

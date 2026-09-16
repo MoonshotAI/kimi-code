@@ -2,9 +2,13 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import type { IDisposable } from '#/_base/di/lifecycle';
+import { ISessionEventBus } from '#/app/event/eventBus';
 import { LifecycleScope } from '#/app/scopes';
+import { TurnStarted } from '#/agent/loop/turnEvents';
+import { TurnEnded } from '#/agent/loop/turnOps';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { Runtime, RuntimeBinding, RuntimeCapability, RuntimeLease } from '#/runtime/runtime';
-import { runtimeStatusAllows, type RuntimeGenerationSnapshot } from '#/runtime/runtimeRegistry';
+import { RuntimeError, runtimeStatusAllows, type RuntimeGenerationSnapshot } from '#/runtime/runtimeRegistry';
 import {
   IRuntimeResolver,
   IWorkspaceInstanceManager,
@@ -55,23 +59,45 @@ export function snapshotAgentRuntimeBinding(
   }
 }
 
+interface TurnRuntimeSnapshot {
+  readonly binding: RuntimeBinding;
+  readonly generation?: string;
+}
+
 export class AgentRuntimeService implements IAgentRuntimeService {
   declare readonly _serviceBrand: undefined;
   private readonly changeEmitter = new Emitter<void>();
   readonly onDidChange = this.changeEmitter.event;
   private readonly bindingSubscription: IDisposable;
   private readonly workspaceSubscription: IDisposable;
+  private readonly turnSubscriptions: readonly IDisposable[];
   private registrySubscription: IDisposable | undefined;
+  private turnSnapshot: TurnRuntimeSnapshot | undefined;
 
   constructor(
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentRuntimeBindingService private readonly binding: IAgentRuntimeBindingService,
     @IRuntimeResolver private readonly resolver: IRuntimeResolver,
     @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
+    @ISessionEventBus private readonly eventBus: ISessionEventBus,
   ) {
     this.bindingSubscription = this.binding.onDidChange(() => this.rebind());
     this.workspaceSubscription = this.workspaces.onDidChange((change) => {
       if (change.workspaceId === this.binding.current.workspaceId) this.rebind();
     });
+    this.turnSubscriptions = [
+      this.eventBus.subscribe(TurnStarted, (event) => {
+        if (event.agentId !== this.scopeContext.agentId) return;
+        this.turnSnapshot = {
+          binding: this.binding.current,
+          generation: this.currentGeneration(this.binding.current),
+        };
+      }),
+      this.eventBus.subscribe(TurnEnded, (event) => {
+        if (event.agentId !== this.scopeContext.agentId) return;
+        this.turnSnapshot = undefined;
+      }),
+    ];
     this.bindRegistry();
   }
 
@@ -89,14 +115,29 @@ export class AgentRuntimeService implements IAgentRuntimeService {
   }
 
   acquire(required: readonly RuntimeCapability[] = []): RuntimeLease {
-    return this.resolver.acquire(this.binding.current, required);
+    const snapshot = this.turnSnapshot;
+    if (snapshot === undefined) {
+      return this.resolver.acquire(this.binding.current, required);
+    }
+    if (this.currentGeneration(snapshot.binding) !== snapshot.generation) {
+      throw new RuntimeError(
+        'runtime.unavailable',
+        `runtime ${snapshot.binding.runtimeId} generation changed during the active turn`,
+      );
+    }
+    return this.resolver.acquire(snapshot.binding, required);
   }
 
   dispose(): void {
+    for (const subscription of this.turnSubscriptions) subscription.dispose();
     this.registrySubscription?.dispose();
     this.workspaceSubscription.dispose();
     this.bindingSubscription.dispose();
     this.changeEmitter.dispose();
+  }
+
+  private currentGeneration(binding: RuntimeBinding): string | undefined {
+    return this.workspaces.get(binding.workspaceId)?.runtimes.current(binding.runtimeId)?.identity.generation;
   }
 
   private rebind(): void {

@@ -332,6 +332,7 @@ describe('AgentLifecycleService', () => {
       _serviceBrand: undefined,
       workDir: '/tmp/kimi-agentLifecycle-work',
       additionalDirs: [],
+      setWorkDir: () => {},
     } as unknown as ISessionWorkspaceContext);
     ix.stub(IPluginService, pluginServiceStub);
     ix.stub(IConfigService, {

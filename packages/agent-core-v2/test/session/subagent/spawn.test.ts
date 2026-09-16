@@ -17,6 +17,7 @@ import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile'
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
 import { Error2, ErrorCodes, isError2 } from '#/errors';
 import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
@@ -149,6 +150,12 @@ describe('SessionSubagentService planSpawn and spawn', () => {
             return {
               _serviceBrand: undefined,
               acquire: acquireRuntime,
+            };
+          }
+          if (serviceId === IAgentRuntimeBindingService) {
+            return {
+              _serviceBrand: undefined,
+              current: { workspaceId: 'w1', runtimeId: 'acp:s1' },
             };
           }
           if (serviceId === IAgentScopeContext) {
