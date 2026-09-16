@@ -76,21 +76,12 @@ export interface PromptSteeredEvent {
   readonly steeredAt: string;
 }
 
-export interface SteeredPromptInput {
-  readonly promptId: string;
-  readonly userMessageId: string;
-  readonly content: ContentPart[];
-  readonly createdAt: string;
-  readonly clientMetadata?: UserPromptOrigin['clientMetadata'];
-}
-
 export interface PromptSteeredPayload {
   readonly agentId: string;
   readonly activePromptId: string;
   readonly promptIds: string[];
   readonly content: ContentPart[];
   readonly steeredAt: string;
-  readonly inputs?: readonly SteeredPromptInput[];
 }
 
 const promptSteeredSchema = z.object({
@@ -99,13 +90,6 @@ const promptSteeredSchema = z.object({
   promptIds: z.array(z.string()),
   content: z.custom<ContentPart[]>(),
   steeredAt: z.string(),
-  inputs: z.array(z.object({
-    promptId: z.string(),
-    userMessageId: z.string(),
-    content: z.custom<ContentPart[]>(),
-    createdAt: z.string(),
-    clientMetadata: z.array(z.record(z.string(), z.unknown())).readonly().optional(),
-  })).optional(),
 });
 
 export class PromptSteered extends AgentEvent2<z.infer<typeof promptSteeredSchema>> {

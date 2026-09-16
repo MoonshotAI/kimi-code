@@ -1946,7 +1946,7 @@ describe('AgentTranscriptProjector', () => {
     expect(entity?.request).toEqual({ toolCallId: 'call_x' });
   });
 
-  it('preserves queue metadata through lifecycle updates and recovers individual steers without prior queue events', () => {
+  it('preserves queue metadata through prompt lifecycle updates', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
@@ -1956,14 +1956,6 @@ describe('AgentTranscriptProjector', () => {
     feed(ev({ type: 'prompt.started', promptId: 'p1' }));
     feed(ev({ type: 'prompt.completed', promptId: 'p1', finishedAt: '2026-01-01T00:00:02.000Z', reason: 'completed' }));
     expect(tx.getPrompt('p1')?.clientMetadata).toEqual(metadata);
-    const cold = new AgentTranscript('main');
-    const coldProjector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
-    cold.apply(coldProjector.map(ev({
-      type: 'prompt.steered', activePromptId: 'active', promptIds: ['selected'], content: [{ type: 'text', text: 'wire' }], steeredAt: '2026-01-01T00:00:05.000Z',
-      inputs: [{ promptId: 'selected', userMessageId: 'selected-message', createdAt: '2026-01-01T00:00:03.000Z', content: [{ type: 'text', text: 'wire' }], clientMetadata: metadata }],
-    })));
-    expect(cold.getPrompt('selected')).toMatchObject({ status: 'completed', content: [{ type: 'text', text: 'wire' }], clientMetadata: metadata, userMessageId: 'selected-message', createdAt: '2026-01-01T00:00:03.000Z' });
-    expect(cold.getPrompt('active')?.clientMetadata).toEqual(metadata);
   });
 
   it('projects prompt submitted/completed/aborted/steered as global queue entities', () => {

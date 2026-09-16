@@ -288,11 +288,7 @@ describe('prompt queue', () => {
     expect(events[0]?.origin).toMatchObject({ kind: 'user', clientMetadata: [first, second] });
     expect(submitted.find((event) => event.promptId === one.id)?.clientMetadata).toEqual([first]);
     expect(queued.find((event) => event.promptId === two.id)?.clientMetadata).toEqual([second]);
-    const persisted = PromptSteered.schema.parse(steered[0]);
-    expect(persisted.inputs?.map((input) => ({ promptId: input.promptId, clientMetadata: input.clientMetadata, content: input.content }))).toEqual([
-      { promptId: one.id, clientMetadata: [first], content: [{ type: 'text', text: 'one' }] },
-      { promptId: two.id, clientMetadata: [second], content: [{ type: 'text', text: 'two' }] },
-    ]);
+    expect(PromptSteered.schema.parse(steered[0]).promptIds).toEqual([one.id, two.id]);
     expect(events[0]?.input).toEqual([{ type: 'text', text: 'one' }, { type: 'text', text: 'two' }]);
     hold.release();
     await loop.settled();

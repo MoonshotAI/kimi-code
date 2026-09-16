@@ -1428,13 +1428,12 @@ export class AgentTranscriptProjector {
 
   private onPromptSteered(event: PromptSteeredEvent): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
-    const inputs = new Map(event.inputs?.map((input) => [input.promptId, input]));
     const active = this.upsertPrompt(event.activePromptId, (prev) => ({
       promptId: event.activePromptId,
       status: prev?.status ?? 'running',
       userMessageId: prev?.userMessageId,
       content: projectPromptContentParts(event.content),
-      clientMetadata: event.inputs?.flatMap((input) => input.clientMetadata ?? []),
+      clientMetadata: prev?.clientMetadata,
       createdAt: prev?.createdAt ?? event.steeredAt,
       finishedAt: prev?.finishedAt,
       steeredAt: event.steeredAt,
@@ -1442,14 +1441,13 @@ export class AgentTranscriptProjector {
     ops.push({ op: 'prompt.upsert', prompt: active });
     this.unpairedSteerPromptIds.push([...event.promptIds]);
     for (const promptId of event.promptIds) {
-      const input = inputs.get(promptId);
       const steered = this.upsertPrompt(promptId, (prev) => ({
         promptId,
         status: 'completed',
-        userMessageId: input?.userMessageId ?? prev?.userMessageId,
-        content: input === undefined ? prev?.content : projectPromptContentParts(input.content),
-        clientMetadata: input?.clientMetadata ?? prev?.clientMetadata,
-        createdAt: input?.createdAt ?? prev?.createdAt ?? event.steeredAt,
+        userMessageId: prev?.userMessageId,
+        content: prev?.content,
+        clientMetadata: prev?.clientMetadata,
+        createdAt: prev?.createdAt ?? event.steeredAt,
         finishedAt: event.steeredAt,
         steeredAt: event.steeredAt,
       }));
