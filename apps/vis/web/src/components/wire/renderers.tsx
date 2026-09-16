@@ -489,7 +489,7 @@ export const WIRE_RENDERERS: RendererMap = {
     label: 'message',
     headline: (r) => {
       const m = r.message;
-      const tc = m.toolCalls.length > 0 ? `${m.toolCalls.length} tool_call(s)` : '';
+      const tc = m.role === 'assistant' && m.toolCalls.length > 0 ? `${m.toolCalls.length} tool_call(s)` : '';
       return {
         main: (
           <span className="flex items-center gap-2 min-w-0">

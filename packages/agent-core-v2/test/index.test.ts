@@ -626,7 +626,6 @@ function userMessage(text: string): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text }],
-    toolCalls: [],
   };
 }
 

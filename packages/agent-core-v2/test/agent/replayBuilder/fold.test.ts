@@ -15,7 +15,6 @@ function userMessage(text: string, origin?: ContextMessage['origin']): ContextMe
   return {
     role: 'user',
     content: [{ type: 'text', text }],
-    toolCalls: [],
     origin,
   };
 }
@@ -71,7 +70,7 @@ describe('foldWireRecords', () => {
     const [assistant, tool] = messages;
     expect(assistant).toMatchObject({ type: 'message', time: 10 });
     if (assistant?.type !== 'message') throw new Error('expected message record');
-    expect(assistant.message.role).toBe('assistant');
+    if (assistant.message.role !== 'assistant') throw new Error('expected assistant message');
     expect(assistant.message.content).toEqual([{ type: 'text', text: 'working' }]);
     expect(assistant.message.toolCalls).toEqual([
       { type: 'function', id: 'tc1', name: 'Shell', arguments: '{"command":"ls"}', extras: undefined },
@@ -388,7 +387,7 @@ describe('foldWireRecords', () => {
   it('migrates older protocol journals before folding', () => {
     const legacy: WireRecord[] = [
       { type: 'metadata', protocol_version: '1.0', created_at: 0 },
-      appendMessage(userMessage('hi'), 3),
+      appendMessage({ ...userMessage('hi'), toolCalls: [] } as ContextMessage, 3),
     ];
     const folded = foldWireRecords(legacy);
     expect(folded.replay).toHaveLength(1);

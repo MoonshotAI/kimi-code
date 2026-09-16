@@ -1,5 +1,4 @@
-import type { Message } from '#/llm-adapter/contract/message';
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart, Message } from '#human/llm/message';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import type { AgentTaskStatus } from '#/agent/task/task';
@@ -121,11 +120,11 @@ export type PromptOrigin =
 
 export type ContextMessage = Message & {
   readonly id?: string;
-  readonly providerMessageId?: string;
   readonly origin?: PromptOrigin | undefined;
   readonly isError?: boolean;
   toolCallDisplays?: Record<string, ToolInputDisplay>;
   readonly note?: string;
+  readonly partial?: boolean;
 };
 
 export interface UserMessageRecord {

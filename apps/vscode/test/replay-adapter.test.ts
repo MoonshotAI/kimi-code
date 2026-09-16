@@ -32,14 +32,21 @@ function message(
     readonly origin?: ReplayMessage["origin"];
   } = {},
 ): ReplayMessage {
-  return {
-    role,
+  const base = {
     content,
-    toolCalls: options.toolCalls ?? [],
-    toolCallId: options.toolCallId,
     isError: options.isError,
     origin: options.origin,
   };
+  switch (role) {
+    case "system":
+      return { ...base, role };
+    case "user":
+      return { ...base, role };
+    case "assistant":
+      return { ...base, role, toolCalls: options.toolCalls ?? [] };
+    case "tool":
+      return { ...base, role, toolCallId: options.toolCallId ?? "" };
+  }
 }
 
 function record(messageValue: ReplayMessage, time: number = 1): AgentReplayRecord {

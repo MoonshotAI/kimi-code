@@ -30,7 +30,6 @@ import {
   type Tool,
 } from '@moonshot-ai/agent-core-v2';
 import type { FinishReason } from '@moonshot-ai/agent-core-v2/human/llm/finish-reason';
-import { fromLlmMessage } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/message';
 import type { LlmRequester } from '@moonshot-ai/agent-core-v2/human/llm/requester/requester';
 
 interface ScriptedResponse {
@@ -147,7 +146,7 @@ export function createScriptedProvider(): ScriptedProvider {
         const stream = await provider.generate(
           config.systemPrompt ?? '',
           [...(config.tools ?? [])],
-          content.messages.map(fromLlmMessage),
+          content.messages,
           { signal: control.signal },
         );
         for await (const part of stream) {

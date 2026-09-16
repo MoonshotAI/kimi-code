@@ -164,7 +164,6 @@ describe('plugin session-start dynamic injection', () => {
         {
           role: 'user',
           content: [{ type: 'text', text: CURRENT_PLUGIN_SESSION_START_REMINDER }],
-          toolCalls: [],
           origin: { kind: 'injection', variant: 'plugin_session_start' },
         },
       ],

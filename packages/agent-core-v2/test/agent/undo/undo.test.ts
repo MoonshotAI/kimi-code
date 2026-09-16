@@ -392,7 +392,6 @@ describe('AgentConversationUndoService', () => {
       {
         role: 'user',
         content: [{ type: 'text', text: 'u2' }],
-        toolCalls: [],
         origin: { kind: 'user' },
       },
       {

@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import type { Message } from '#/llm-adapter/contract/message';
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart, Message } from '#human/llm/message';
 
 import type { MediaStripSnapshot } from './contextProjector';
 

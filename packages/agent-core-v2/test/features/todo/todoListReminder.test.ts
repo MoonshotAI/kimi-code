@@ -46,7 +46,6 @@ function priorTodoReminder(): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text: '<system-reminder>\nPrior todo reminder\n</system-reminder>' }],
-    toolCalls: [],
     origin: { kind: 'injection', variant: 'todo_list_reminder' },
   };
 }

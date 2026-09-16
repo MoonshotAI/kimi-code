@@ -518,7 +518,6 @@ describe('server-v2 /api/v1 prompts', () => {
           { type: 'text', text: 'rendered skill block' },
           { type: 'text', text: 'Review this change.' },
         ],
-        toolCalls: [],
         origin: {
           kind: 'user',
           skillActivations: [{ activationId: 'a1', skillName: 'update-config' }],
@@ -534,7 +533,6 @@ describe('server-v2 /api/v1 prompts', () => {
       message: {
         role: 'user',
         content: [{ type: 'text', text: 'plain question' }],
-        toolCalls: [],
         origin: { kind: 'user' },
       },
     });

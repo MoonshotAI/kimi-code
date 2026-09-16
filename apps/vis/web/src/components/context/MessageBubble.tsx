@@ -50,7 +50,7 @@ function AssistantBubble({ m }: { m: ProjectedMessage }) {
   const thinkPart = m.message.content.find((p) => p.type === 'think');
   const think = thinkPart && thinkPart.type === 'think' ? thinkPart.think : undefined;
   const visibleParts = m.message.content.filter((p) => p.type !== 'think');
-  const toolCalls = m.message.toolCalls;
+  const toolCalls = m.message.role === 'assistant' ? m.message.toolCalls : [];
   return (
     <article className={baseClass()} style={{ borderLeftColor: 'var(--color-assistant)' }}>
       <header className="mb-1 flex items-center gap-2">
@@ -82,6 +82,7 @@ function ToolBubble({ m }: { m: ProjectedMessage }) {
   // by default so the conversation flow stays readable. Errors open by
   // default — that's the case where the user actually needs to read.
   const [open, setOpen] = useState(m.message.isError === true);
+  const toolCallId = m.message.role === 'tool' ? m.message.toolCallId : undefined;
   const totalChars = m.message.content.reduce((acc, p) => {
     if (p.type === 'text') return acc + p.text.length;
     return acc;
@@ -98,9 +99,9 @@ function ToolBubble({ m }: { m: ProjectedMessage }) {
       >
         <span className="text-fg-3">{open ? '▾' : '▸'}</span>
         <Pill tone="tool" variant="solid">tool</Pill>
-        {m.message.toolCallId ? (
+        {toolCallId ? (
           <span className="font-mono text-[11px] text-fg-1">
-            call {m.message.toolCallId.slice(0, 12)}
+            call {toolCallId.slice(0, 12)}
           </span>
         ) : null}
         <span className="font-mono text-[10px] text-fg-3 tabular">line {m.lineNo}</span>

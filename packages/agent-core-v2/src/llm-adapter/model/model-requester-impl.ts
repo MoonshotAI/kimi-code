@@ -7,7 +7,7 @@ import type { LlmErrorMessage } from '#human/llm/errors';
 import { emptyResponseError } from '#human/llm/empty-response';
 import { NO_FINISH, type FinishInfo } from '#human/llm/finish-reason';
 import type { ProviderMediaContribution, VideoUploadInput } from '#human/llm/media/upload';
-import { createMessageAccumulator, type VideoURLPart } from '#human/llm/message';
+import { createMessageAccumulator, type ToolDescription as Tool, type VideoURLPart } from '#human/llm/message';
 import type { LlmModel } from '#human/llm/model';
 import type { ProtocolName } from '#human/llm/protocol/base';
 import { applyCredential, resolveModelCredentials } from '#human/credentials/credentials';
@@ -28,7 +28,6 @@ import {
   traceIdFromHeadersRecord,
   VideoUploadUnsupportedError,
 } from '../contract/errors';
-import { fromLlmAssistantMessage, toLlmMessage, type Tool } from '../contract/message';
 import { mergeUsagePatch } from '#human/llm/usage';
 
 import type { Model } from './catalog';
@@ -153,7 +152,7 @@ export class ModelRequesterImpl implements ModelRequester {
       extraParams: samplingExtraParams(resolved.protocol, params?.sampling),
     };
     const content: LlmRequestContent = {
-      messages: input.messages.map(toLlmMessage),
+      messages: input.messages,
       usedContextTokens: params?.usedContextTokens,
     };
 
@@ -249,7 +248,7 @@ export class ModelRequesterImpl implements ModelRequester {
     }
     queue.push({
       type: 'finish',
-      message: fromLlmAssistantMessage(accumulator.finish()),
+      message: accumulator.finish(),
       providerFinishReason: finish?.finishReason ?? undefined,
       rawFinishReason: finish?.rawFinishReason ?? undefined,
       id: messageId,

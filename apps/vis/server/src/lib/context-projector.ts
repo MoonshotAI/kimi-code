@@ -168,6 +168,7 @@ export function projectContext(
     },
     appendOpenToolCall: (call) => {
       if (openMessage === undefined) return;
+      if (openMessage.message.role !== 'assistant') return;
       openMessage.message = {
         ...openMessage.message,
         toolCalls: [...openMessage.message.toolCalls, call],
@@ -335,7 +336,6 @@ export function projectContext(
           message: {
             role: 'user',
             content: [{ type: 'text', text: summaryText }],
-            toolCalls: [],
             origin: { kind: 'compaction_summary' },
           } as ContextMessage,
           toolStepUuids: [],

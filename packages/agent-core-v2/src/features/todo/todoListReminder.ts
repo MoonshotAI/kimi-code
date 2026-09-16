@@ -66,7 +66,7 @@ function getTodoListReminderTurnCounts(
   };
 }
 
-function hasTodoListWrite(message: ContextMessage): boolean {
+function hasTodoListWrite(message: Extract<ContextMessage, { readonly role: 'assistant' }>): boolean {
   return message.toolCalls.some((toolCall) => {
     if (toolCall.name !== TODO_LIST_TOOL_NAME) return false;
     if (typeof toolCall.arguments !== 'string') return false;

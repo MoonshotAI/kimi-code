@@ -107,9 +107,16 @@ import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
 import { summarizeSkill, type SkillCatalog } from '#/features/skill/catalog/types';
 import { type ModelCapability } from '#/llm-adapter/contract/capability';
-import { isToolCall, isToolCallPart, type ContentPart, type Message as KosongMessage, type StreamedMessagePart } from '#/llm-adapter/contract/message';
+import {
+  isToolCall,
+  isToolCallPart,
+  type ContentPart,
+  type Message as KosongMessage,
+  type StreamedMessagePart,
+  type ToolCall,
+  type ToolDescription as KosongTool,
+} from '#human/llm/message';
 import { type ThinkingEffort } from '#human/llm/thinking';
-import { type Tool as KosongTool } from '#/llm-adapter/contract/message';
 import { type TokenUsage } from '#human/llm/usage';
 import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
 import { IAgentTodoService } from '#/features/todo/todoService';
@@ -1712,7 +1719,6 @@ export class AgentTestContext {
     this.appendMessage({
       role: 'user',
       content: [...content],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
   }
@@ -1729,7 +1735,6 @@ export class AgentTestContext {
     this.appendMessage({
       role: 'user',
       content: [{ type: 'text', text }],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
   }
@@ -1741,7 +1746,6 @@ export class AgentTestContext {
     this.appendMessage({
       role: 'user',
       content: [{ type: 'text', text: `<system-reminder>\n${content.trim()}\n</system-reminder>` }],
-      toolCalls: [],
       origin,
     });
   }
@@ -1755,7 +1759,6 @@ export class AgentTestContext {
           text: `<local-command-stdout>\n${content.trim()}\n</local-command-stdout>`,
         },
       ],
-      toolCalls: [],
       origin: { kind: 'injection', variant: 'local-command-stdout' },
     });
   }
@@ -1922,7 +1925,6 @@ export class AgentTestContext {
         { type: 'text', text: 'inspect this image' },
         { type: 'image_url', imageUrl: { url: 'ms://image-1', id: 'image-1' } },
       ],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
     this.appendAssistantMessage({
@@ -2242,7 +2244,6 @@ export class AgentTestContext {
     this.appendMessage({
       role: 'user',
       content: [{ type: 'text', text }],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
   }
@@ -2255,7 +2256,6 @@ export class AgentTestContext {
     this.appendMessage({
       role: 'tool',
       content: contentPartsFromToolOutput(output),
-      toolCalls: [],
       toolCallId,
       isError,
     });
@@ -2731,7 +2731,7 @@ function capabilityNames(capabilities: ModelCapability | undefined): string[] {
   ].filter((capability): capability is string => capability !== undefined);
 }
 
-function toolCall(id: string, name: string, args: unknown): ContextMessage['toolCalls'][number] {
+function toolCall(id: string, name: string, args: unknown): ToolCall {
   return {
     type: 'function',
     id,

@@ -2,8 +2,7 @@ import { ErrorCodes, Error2 } from '#/errors';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
-import type { Message } from '#/llm-adapter/contract/message';
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart, Message } from '#human/llm/message';
 
 export type ProjectionAnomaly =
   | { readonly kind: 'tool_result_reordered'; readonly toolCallId: string }
@@ -149,7 +148,8 @@ function pairBlocks(
     }
 
     const content = projectedContent(message, onAnomaly);
-    if (message.toolCalls.length === 0 && !hasDeclaredTools(message)) {
+    const toolCalls = message.role === 'assistant' ? message.toolCalls : [];
+    if (toolCalls.length === 0 && !hasDeclaredTools(message)) {
       if (content.length === 0) continue;
       if (content.every(isVacuousContentPart)) {
         onAnomaly?.({ kind: 'vacuous_message_dropped', role: message.role });
@@ -157,14 +157,14 @@ function pairBlocks(
       }
     }
     markForeignBetween();
-    if (message.toolCalls.length === 0) {
+    if (toolCalls.length === 0) {
       blocks.push({ kind: 'message', source: message, content });
       continue;
     }
 
     const exchange: Exchange = { source: message, content, ownerIndex: index, pending: [] };
     blocks.push({ kind: 'exchange', exchange });
-    for (const call of message.toolCalls) {
+    for (const call of toolCalls) {
       const superseded = openCalls.get(call.id);
       if (superseded !== undefined) {
         superseded.pending.result = INTERRUPTED_RESULT;
@@ -204,14 +204,7 @@ function flattenBlocks(
       const text = merge.texts.join('\n\n');
       const content: ContentPart[] = text === '' ? [] : [{ type: 'text', text }];
       content.push(...merge.parts);
-      out.push({
-        role: 'user',
-        name: undefined,
-        content,
-        toolCalls: [],
-        toolCallId: undefined,
-        partial: undefined,
-      });
+      out.push({ role: 'user', content });
     }
     merge = undefined;
   };
@@ -389,11 +382,8 @@ const TOOL_INTERRUPTED_TEXT =
 function createInterruptedToolResult(toolCallId: string): Message {
   return {
     role: 'tool',
-    name: undefined,
     content: [{ type: 'text', text: TOOL_INTERRUPTED_TEXT }],
-    toolCalls: [],
     toolCallId,
-    partial: undefined,
   };
 }
 
@@ -412,17 +402,18 @@ function canMergeUserMessage(message: ContextMessage): boolean {
 }
 
 function hasDeclaredTools(message: ContextMessage): boolean {
-  return message.tools !== undefined && message.tools.length > 0;
+  return message.role === 'system' && message.tools !== undefined && message.tools.length > 0;
 }
 
 function toWireMessage(message: ContextMessage, content: ContentPart[]): Message {
-  return {
-    role: message.role,
-    name: message.name,
-    content,
-    toolCalls: message.toolCalls,
-    toolCallId: message.toolCallId,
-    partial: message.partial,
-    tools: message.tools,
-  };
+  switch (message.role) {
+    case 'system':
+      return { role: 'system', content, tools: message.tools };
+    case 'user':
+      return { role: 'user', content };
+    case 'assistant':
+      return { role: 'assistant', content, toolCalls: message.toolCalls };
+    case 'tool':
+      return { role: 'tool', content, toolCallId: message.toolCallId };
+  }
 }

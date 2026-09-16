@@ -72,7 +72,11 @@ export function formatToolCallMd(tc: ToolCall): string {
   return `${title}\n<!-- call_id: ${tc.id} -->\n\`\`\`json\n${argsFormatted}\n\`\`\``;
 }
 
-function formatToolResultMd(msg: ContextMessage, toolName: string, hint: string): string {
+function formatToolResultMd(
+  msg: Extract<ContextMessage, { readonly role: 'tool' }>,
+  toolName: string,
+  hint: string,
+): string {
   const callId = msg.toolCallId ?? 'unknown';
   const parts: string[] = [];
   for (const part of msg.content) {
@@ -202,7 +206,7 @@ function buildOverview(
   }
 
   const toolCallCount = history.reduce(
-    (sum, msg) => sum + msg.toolCalls.length,
+    (sum, msg) => sum + (msg.role === 'assistant' ? msg.toolCalls.length : 0),
     0,
   );
 

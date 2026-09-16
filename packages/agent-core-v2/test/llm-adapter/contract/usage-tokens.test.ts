@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Message } from '#/llm-adapter/contract/message';
+import type { Message } from '#human/llm/message';
 import {
   estimateTokens,
   estimateTokensForContentPart,
@@ -70,7 +70,6 @@ describe('estimateTokensForMessage(s)', () => {
     const message: Message = {
       role: 'user',
       content: [{ type: 'text', text: 'hello world' }],
-      toolCalls: [],
     };
     const first = estimateTokensForMessage(message);
     message.content.push({ type: 'text', text: 'mutated after the fact' });

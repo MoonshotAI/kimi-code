@@ -252,7 +252,6 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
           this.context.append({
             role: 'user',
             content: [...createHistoryMessageBuilder().plain(reason).parts()],
-            toolCalls: [],
             origin: { kind: 'system_trigger', name: 'stop_hook' },
           });
           loop.notify();
@@ -375,7 +374,6 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
       this.context.append({
         role: 'user',
         content: [...createHistoryMessageBuilder().xml(append.text).parts()],
-        toolCalls: [],
         origin: { kind: 'hook_result', event: append.event },
       });
       void this.dispatcher.dispatch(

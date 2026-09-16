@@ -562,7 +562,8 @@ describe('Agent resume', () => {
 
     await ctx.restorePersisted();
 
-    const toolCall = ctx.context.get()[0]?.toolCalls[0] as
+    const first = ctx.context.get()[0];
+    const toolCall = (first?.role === 'assistant' ? first.toolCalls[0] : undefined) as
       | { name?: string; arguments?: string | null; function?: unknown }
       | undefined;
     expect(toolCall).toMatchObject({

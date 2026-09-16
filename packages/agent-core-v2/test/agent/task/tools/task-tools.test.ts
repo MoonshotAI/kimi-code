@@ -1240,7 +1240,7 @@ describe('WaitForTool (harness)', () => {
       slow.resolveWait(0);
       await ctx.get(IAgentLoopService).settled();
       expect(ctx.llmCalls).toHaveLength(3);
-      expect(ctx.llmCalls[2]?.history.find((message) => message.toolCallId === 'wait-again')).toMatchObject({
+      expect(ctx.llmCalls[2]?.history.find((message) => message.role === 'tool' && message.toolCallId === 'wait-again')).toMatchObject({
         content: [{ text: expect.stringContaining('wait_status: completed') }],
       });
       expect(ctx.allEvents.filter((event) => event.event === 'task.notified')).toHaveLength(0);
@@ -1278,7 +1278,7 @@ describe('WaitForTool (harness)', () => {
       await vi.waitFor(() => {
         const deliveries = ctx.context.get().filter((message) =>
           (message.origin?.kind === 'task' && message.origin.taskId === taskId) ||
-          (message.toolCallId === 'racing-wait' && message.content.some((part) =>
+          (message.role === 'tool' && message.toolCallId === 'racing-wait' && message.content.some((part) =>
             part.type === 'text' && part.text.includes('wait_status: completed'),
           )),
         );

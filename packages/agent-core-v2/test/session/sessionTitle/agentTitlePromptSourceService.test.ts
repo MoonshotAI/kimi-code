@@ -20,7 +20,6 @@ function userMessage(
     id,
     role: 'user',
     content: [{ type: 'text', text }],
-    toolCalls: [],
     origin,
   };
 }
@@ -30,7 +29,7 @@ function assistantMessage(id: string, parts: ContentPart[]): ContextMessage {
 }
 
 function toolMessage(id: string, text: string): ContextMessage {
-  return { id, role: 'tool', content: [{ type: 'text', text }], toolCalls: [] };
+  return { id, role: 'tool', content: [{ type: 'text', text }], toolCallId: 'call_1' };
 }
 
 interface MockQueueState {

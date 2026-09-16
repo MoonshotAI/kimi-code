@@ -2,6 +2,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { estimateTokensForMessages } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/tokens';
 import { buildCompactionContinuationText } from '@moonshot-ai/agent-core-v2/agent/contextMemory/compactionHandoff';
+import type { ContextMessage } from '../../src/lib/agent-record-types';
 import { buildSessionFixture } from '../fixtures/build';
 import { projectContext } from '../../src/lib/context-projector';
 import { readAgentWire } from '../../src/lib/wire-reader';
@@ -112,8 +113,9 @@ describe('context-projector', () => {
     expect(proj.messages[0]!.message.role).toBe('user');
 
     expect(proj.messages[1]!.message.role).toBe('assistant');
-    expect(proj.messages[1]!.message.content).toEqual([{ type: 'text', text: 'Let me check' }]);
-    expect(proj.messages[1]!.message.toolCalls).toEqual([
+    const assistant = proj.messages[1]!.message as Extract<ContextMessage, { readonly role: 'assistant' }>;
+    expect(assistant.content).toEqual([{ type: 'text', text: 'Let me check' }]);
+    expect(assistant.toolCalls).toEqual([
       { type: 'function', id: 'call_1', name: 'LS', arguments: '{"path":"/"}' },
     ]);
     // The assistant message was opened by step.begin (line 3), so its
@@ -123,8 +125,9 @@ describe('context-projector', () => {
     expect(proj.messages[1]!.toolStepUuids).toEqual(['s1']);
 
     expect(proj.messages[2]!.message.role).toBe('tool');
-    expect(proj.messages[2]!.message.toolCallId).toBe('call_1');
-    expect(proj.messages[2]!.message.content).toEqual([
+    const tool = proj.messages[2]!.message as Extract<ContextMessage, { readonly role: 'tool' }>;
+    expect(tool.toolCallId).toBe('call_1');
+    expect(tool.content).toEqual([
       { type: 'text', text: 'file1.txt\nfile2.txt' },
     ]);
   });
@@ -304,7 +307,7 @@ describe('context-projector', () => {
 
   it('tool.result: error string output is prefixed with the error sentinel', () => {
     const msg = projectToolResult({ output: 'boom: file not found', isError: true });
-    expect(msg.role).toBe('tool');
+    if (msg.role !== 'tool') throw new Error('expected tool message');
     expect(msg.toolCallId).toBe('call_1');
     expect(msg.isError).toBe(true);
     expect(msg.content).toEqual([

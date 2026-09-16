@@ -123,7 +123,10 @@ describe('migrated session is discoverable by agent-core-v2', () => {
     // Content round trip: the v2 context transcript sees exactly the imported
     // messages — the synthesized turn records must not alter, duplicate, or
     // drop any message. (`toolCallDisplays` is UI-only enrichment the context
-    // transcript deliberately does not carry, so strip it from both sides.)
+    // transcript deliberately does not carry, so strip it from both sides. The
+    // vacuous `toolCalls: []` container on non-assistant messages is likewise
+    // representation-only: 1.0 records always carry it, the in-memory union
+    // shape only has `toolCalls` on assistant messages.)
     const transcript = reduceContextTranscript(records);
     const imported = records
       .filter((r) => r.type === 'context.append_message')
@@ -133,7 +136,9 @@ describe('migrated session is discoverable by agent-core-v2', () => {
     ): unknown[] =>
       messages.map((m) => {
         const { toolCallDisplays: _dropped, ...rest } = m as Record<string, unknown>;
-        return rest;
+        if (rest['role'] === 'assistant') return rest;
+        const { toolCalls: _vacuous, ...withoutToolCalls } = rest;
+        return withoutToolCalls;
       });
     expect(stripDisplays([...transcript.entries])).toEqual(stripDisplays(imported));
 

@@ -1,8 +1,7 @@
 import { isDraft, original } from 'immer';
 
 import type { FinishReason } from '#human/llm/finish-reason';
-import { createToolMessage } from '#/llm-adapter/contract/message';
-import type { ContentPart, ToolCall } from '#human/llm/message';
+import { createToolMessage, type ContentPart, type ToolCall } from '#human/llm/message';
 import type { TokenUsage } from '#human/llm/usage';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
@@ -231,8 +230,13 @@ export function foldAppendMessage(
   message: ContextMessage,
 ): readonly ContextMessage[] {
   const bound = boundOf(state);
-  bound.fold.appendMessage(message, undefined);
+  bound.fold.appendMessage(normalizeReplayedToolCallId(message), undefined);
   return bind(bound, bound.sink.current());
+}
+
+export function normalizeReplayedToolCallId(message: ContextMessage): ContextMessage {
+  if (message.role !== 'tool' || message.toolCallId !== undefined) return message;
+  return { ...message, toolCallId: '' };
 }
 
 export function foldLoopEvent(
@@ -290,14 +294,17 @@ function createImmutableFoldSink(initial: readonly ContextMessage[]): ImmutableF
       updateOpen((message) => ({ ...message, content: [...message.content, part] }));
     },
     appendOpenToolCall: (call, display) => {
-      updateOpen((message) => ({
-        ...message,
-        toolCalls: [...message.toolCalls, call],
-        toolCallDisplays:
-          display === undefined
-            ? message.toolCallDisplays
-            : { ...message.toolCallDisplays, [call.id]: display },
-      }));
+      updateOpen((message) => {
+        if (message.role !== 'assistant') return message;
+        return {
+          ...message,
+          toolCalls: [...message.toolCalls, call],
+          toolCallDisplays:
+            display === undefined
+              ? message.toolCallDisplays
+              : { ...message.toolCallDisplays, [call.id]: display },
+        };
+      });
     },
     dropOpenAssistant: () => {
       if (openIndex === -1) return;
@@ -328,6 +335,7 @@ function recoverFoldState(state: readonly ContextMessage[]): InitialFoldState | 
   const openIndex = findOpenAssistantIndex(state);
   if (openIndex === -1) return undefined;
   const open = state[openIndex]!;
+  if (open.role !== 'assistant') return undefined;
   const resolvedToolCallIds = new Set<string>();
   for (let i = openIndex + 1; i < state.length; i++) {
     const message = state[i]!;

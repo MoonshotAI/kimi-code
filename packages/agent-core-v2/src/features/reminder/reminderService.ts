@@ -64,7 +64,6 @@ function appendReminder(
   runtime.get(IAgentContextMemoryService).append({
     role: 'user',
     content: [...createHistoryMessageBuilder().systemReminder(content).parts()],
-    toolCalls: [],
     origin: {
       kind: 'injection',
       variant: notification.variant,
@@ -133,7 +132,6 @@ function appendResult(
     runtime.get(IAgentContextMemoryService).append({
       role: 'user',
       content: [...createHistoryMessageBuilder().systemReminder(resolved).parts()],
-      toolCalls: [],
       origin,
     });
     return;
@@ -143,11 +141,18 @@ function appendResult(
     if (message.content.length === 0 && (message.tools === undefined || message.tools.length === 0)) {
       return;
     }
+    if (message.role === 'system') {
+      runtime.get(IAgentContextMemoryService).append({
+        role: 'system',
+        content: [...message.content],
+        tools: message.tools === undefined ? undefined : [...message.tools],
+        origin,
+      });
+      return;
+    }
     runtime.get(IAgentContextMemoryService).append({
-      role: message.role,
+      role: 'user',
       content: [...message.content],
-      toolCalls: [],
-      tools: message.tools,
       origin,
     });
     return;
@@ -156,7 +161,6 @@ function appendResult(
   runtime.get(IAgentContextMemoryService).append({
     role: 'user',
     content: [...resolved],
-    toolCalls: [],
     origin,
   });
 }

@@ -19,7 +19,6 @@ function user(origin?: ContextMessage['origin']): ContextMessage {
   return {
     role: 'user',
     content: [text('u')],
-    toolCalls: [],
     ...(origin === undefined ? {} : { origin }),
   };
 }
@@ -32,7 +31,6 @@ function injection(): ContextMessage {
   return {
     role: 'user',
     content: [text('i')],
-    toolCalls: [],
     origin: { kind: 'injection', variant: 'system_reminder' },
   };
 }
@@ -41,7 +39,6 @@ function compaction(): ContextMessage {
   return {
     role: 'user',
     content: [text('sum')],
-    toolCalls: [],
     origin: { kind: 'compaction_summary' },
   };
 }

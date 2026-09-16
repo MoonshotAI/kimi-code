@@ -19,7 +19,6 @@ function userMessage(text: string): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text }],
-    toolCalls: [],
     origin: { kind: 'user' },
   };
 }
@@ -28,7 +27,6 @@ function compactionSummary(text: string): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text }],
-    toolCalls: [],
     origin: { kind: 'compaction_summary' },
   };
 }
@@ -380,11 +378,11 @@ describe('AgentReminderService', () => {
     await runInjectionStep();
 
     const message = context.get().at(-1);
-    expect(message?.role).toBe('system');
-    expect(message?.tools).toEqual([
+    if (message?.role !== 'system') throw new Error('expected system message');
+    expect(message.tools).toEqual([
       { name: 'TestTool', description: 'test tool', parameters: { type: 'object' } },
     ]);
-    expect(message?.origin).toEqual({ kind: 'injection', variant: 'schema_test' });
+    expect(message.origin).toEqual({ kind: 'injection', variant: 'schema_test' });
   });
 
   it('stamps the disclosure on tagged raw messages returned through the result wrapper', async () => {

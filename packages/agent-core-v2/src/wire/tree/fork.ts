@@ -23,7 +23,6 @@ export class ForkLineError extends Error {
 const compactionSummaryMarker: ContextMessage = {
   role: 'user',
   content: [],
-  toolCalls: [],
   origin: { kind: 'compaction_summary' },
 };
 

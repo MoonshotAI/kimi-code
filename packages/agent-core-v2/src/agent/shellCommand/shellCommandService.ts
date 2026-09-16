@@ -240,7 +240,6 @@ export class AgentShellCommandService implements IAgentShellCommandService {
     this.context.append({
       role: 'user',
       content: [...createHistoryMessageBuilder().xml(`<bash-input>\n${escapeXml(command)}\n</bash-input>`).parts()],
-      toolCalls: [],
       origin: { kind: 'shell_command', phase: 'input' },
     });
   }
@@ -249,7 +248,6 @@ export class AgentShellCommandService implements IAgentShellCommandService {
     this.context.append({
       role: 'user',
       content: [...createHistoryMessageBuilder().xml(`<bash-stdout>${escapeXml(stdout)}</bash-stdout><bash-stderr>${escapeXml(stderr)}</bash-stderr>`).parts()],
-      toolCalls: [],
       origin:
         isError === true
           ? { kind: 'shell_command', phase: 'output', isError: true }

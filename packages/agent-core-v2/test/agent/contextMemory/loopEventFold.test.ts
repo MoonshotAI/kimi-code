@@ -34,8 +34,8 @@ describe('loop-event fold parity', () => {
     return messages.map((m) => ({
       role: m.role,
       content: m.content,
-      toolCalls: m.toolCalls,
-      toolCallId: m.toolCallId,
+      toolCalls: m.role === 'assistant' ? m.toolCalls : [],
+      toolCallId: m.role === 'tool' ? m.toolCallId : undefined,
       isError: m.isError,
       note: m.note,
     }));
@@ -52,7 +52,6 @@ describe('loop-event fold parity', () => {
         {
           role: 'tool',
           content: [{ type: 'text', text: 'lookup result' }],
-          toolCalls: [],
           toolCallId: 'c1',
           isError: false,
         },
@@ -97,7 +96,6 @@ describe('loop-event fold parity', () => {
         {
           role: 'tool',
           content: [{ type: 'text', text: 'boom' }],
-          toolCalls: [],
           toolCallId: 'c2',
           isError: true,
         },
@@ -130,8 +128,8 @@ describe('loop-event fold parity', () => {
     return messages.map((m) => ({
       role: m.role,
       content: m.content,
-      toolCalls: m.toolCalls,
-      toolCallId: m.toolCallId,
+      toolCalls: m.role === 'assistant' ? m.toolCalls : [],
+      toolCallId: m.role === 'tool' ? m.toolCallId : undefined,
       isError: m.isError,
       partial: m.partial,
     }));
@@ -406,7 +404,6 @@ describe('loop-event fold parity', () => {
         {
           role: 'tool',
           content: [{ type: 'text', text: 'result text' }],
-          toolCalls: [],
           toolCallId: 'c3',
           isError: false,
           note: '<system>Image compressed.</system>',

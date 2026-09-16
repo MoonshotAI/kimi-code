@@ -10,7 +10,7 @@ import { AgentContextProjectorService } from '#/agent/contextProjector/contextPr
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import type { Message } from '#/llm-adapter/contract/message';
+import type { Message } from '#human/llm/message';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
@@ -49,14 +49,13 @@ function repairPayloads(warnings: WarningCall[]): Record<string, unknown>[] {
 const INTERRUPTED = 'Tool result is not available in the current context';
 
 function user(text: string): ContextMessage {
-  return { role: 'user', content: [{ type: 'text', text }], toolCalls: [], origin: { kind: 'user' } };
+  return { role: 'user', content: [{ type: 'text', text }], origin: { kind: 'user' } };
 }
 
 function reminder(text: string): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text: `<system-reminder>\n${text}\n</system-reminder>` }],
-    toolCalls: [],
     origin: { kind: 'injection', variant: 'host' },
   };
 }
@@ -70,14 +69,13 @@ function assistant(text: string, toolCallIds: readonly string[] = []): ContextMe
 }
 
 function toolResult(toolCallId: string, text: string): ContextMessage {
-  return { role: 'tool', content: [{ type: 'text', text }], toolCalls: [], toolCallId };
+  return { role: 'tool', content: [{ type: 'text', text }], toolCallId };
 }
 
 function schemaMessage(name: string): ContextMessage {
   return {
     role: 'system',
     content: [],
-    toolCalls: [],
     tools: [
       {
         name,
@@ -259,11 +257,10 @@ describe('projector tool-exchange normalization', () => {
   });
 
   it('keeps a tool-shaped message without a toolCallId', () => {
-    const message: ContextMessage = {
+    const message = {
       role: 'tool',
       content: [{ type: 'text', text: 'tool-like output' }],
-      toolCalls: [],
-    };
+    } as ContextMessage;
     expect(project([message])).toHaveLength(1);
   });
 
@@ -273,19 +270,11 @@ describe('projector tool-exchange normalization', () => {
     expect(projected).toEqual([
       {
         role: 'user',
-        name: undefined,
         content: [{ type: 'text', text: 'load it' }],
-        toolCalls: [],
-        toolCallId: undefined,
-        partial: undefined,
       },
       {
         role: 'system',
-        name: undefined,
         content: [],
-        toolCalls: [],
-        toolCallId: undefined,
-        partial: undefined,
         tools: [
           {
             name: 'mcp__srv__query',
@@ -305,7 +294,6 @@ describe('projector tool-exchange normalization', () => {
     const result: ContextMessage = {
       role: 'tool',
       content: [{ type: 'text', text: 'image result' }],
-      toolCalls: [],
       toolCallId: 'call_image',
       note,
     };
@@ -323,14 +311,12 @@ describe('projector tool-exchange normalization', () => {
       {
         role: 'tool',
         content: [{ type: 'text', text: '<system>ERROR: remote failed</system>' }],
-        toolCalls: [],
         toolCallId: 'call_error',
         isError: true,
       },
       {
         role: 'tool',
         content: [{ type: 'text', text: '   ' }],
-        toolCalls: [],
         toolCallId: 'call_empty',
       },
     ] satisfies ContextMessage[];
@@ -365,7 +351,7 @@ describe('projector tool-exchange normalization', () => {
       'tool:dup',
       'assistant',
     ]);
-    expect(projected[1]?.toolCalls.map((call) => call.id)).toEqual(['dup']);
+    expect(projected[1]?.role === 'assistant' ? projected[1].toolCalls.map((call) => call.id) : []).toEqual(['dup']);
     expect(projected.filter((message) => message.role === 'tool')).toHaveLength(1);
   });
 
@@ -383,7 +369,7 @@ describe('projector tool-exchange normalization', () => {
         message.role === 'tool' ? `tool:${message.toolCallId}` : message.role,
       ),
     ).toEqual(['user', 'assistant', 'tool:dup', 'assistant', 'user']);
-    expect(projected[1]?.toolCalls.map((call) => call.id)).toEqual(['dup']);
+    expect(projected[1]?.role === 'assistant' ? projected[1].toolCalls.map((call) => call.id) : []).toEqual(['dup']);
     expect((projected[2]?.content[0] as { text: string }).text).toBe('late result');
   });
 
@@ -437,7 +423,7 @@ describe('projector tool-exchange normalization', () => {
         message.role === 'tool' ? `tool:${message.toolCallId}` : message.role,
       ),
     ).toEqual(['user', 'assistant', 'tool:dup', 'assistant', 'user']);
-    expect(projected[3]?.toolCalls).toEqual([]);
+    expect(projected[3]?.role === 'assistant' ? projected[3].toolCalls : undefined).toEqual([]);
     expect(projected[3]?.content).toEqual([
       { type: 'think', think: '' },
       { type: 'text', text: 'second' },
@@ -651,7 +637,6 @@ describe('projector tool-exchange normalization', () => {
       return {
         role: 'user',
         content: [{ type: 'image_url', imageUrl: { url } }],
-        toolCalls: [],
         origin: { kind: 'user' },
       };
     }
@@ -697,7 +682,6 @@ describe('projector tool-exchange normalization', () => {
       return {
         role: 'user',
         content: [{ type: 'image_url', imageUrl: { url, id } }],
-        toolCalls: [],
         origin: { kind: 'user' },
       };
     }
@@ -720,13 +704,11 @@ describe('projector tool-exchange normalization', () => {
             { type: 'image_url', imageUrl: { url: 'data:image/avif;base64,BBBB' } },
             { type: 'text', text: '</image>' },
           ],
-          toolCalls: [],
           toolCallId: 'c1',
         },
         {
           role: 'user',
           content: [{ type: 'video_url', videoUrl: { url: 'data:video/mp4;base64,CCCC' } }],
-          toolCalls: [],
           origin: { kind: 'user' },
         },
       ]);
@@ -767,7 +749,6 @@ describe('projector tool-exchange normalization', () => {
       const orphan: ContextMessage = {
         role: 'tool',
         content: [{ type: 'image_url', imageUrl: { url, id: 'orphan-id' } }],
-        toolCalls: [],
         toolCallId: 'ghost',
       };
       const snapshot = projector.captureMediaStripSnapshot([

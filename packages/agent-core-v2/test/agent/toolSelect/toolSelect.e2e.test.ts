@@ -147,11 +147,13 @@ describe('progressive tool disclosure end-to-end', () => {
 
     const secondWire = ctx.llmCalls[1]!;
     const schemaMessages = secondWire.history.filter(
-      (message) => message.tools?.some((tool) => tool.name === MCP_ALPHA),
+      (message) => message.role === 'system' && message.tools?.some((tool) => tool.name === MCP_ALPHA),
     );
     expect(schemaMessages).toHaveLength(1);
 
-    const alphaFromSchema = schemaMessages[0]!.tools!.find((tool) => tool.name === MCP_ALPHA)!;
+    const schemaMessage = schemaMessages[0]!;
+    if (schemaMessage.role !== 'system') throw new Error('expected system message');
+    const alphaFromSchema = schemaMessage.tools!.find((tool) => tool.name === MCP_ALPHA)!;
     expect(alphaFromSchema.parameters).toEqual(alpha.parameters);
 
     expect(secondWire.tools).toEqual(firstWire.tools);
@@ -190,10 +192,11 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(historyText(firstWire.history)).toContain(DASHBOARD_TOOL);
 
     const secondWire = ctx.llmCalls[1]!;
-    const injected = secondWire.history.find((message) =>
-      message.tools?.some((tool) => tool.name === DASHBOARD_TOOL),
+    const injected = secondWire.history.find(
+      (message) => message.role === 'system' && message.tools?.some((tool) => tool.name === DASHBOARD_TOOL),
     );
-    expect(injected?.tools?.find((tool) => tool.name === DASHBOARD_TOOL)?.parameters).toEqual({
+    if (injected?.role !== 'system') throw new Error('expected system message');
+    expect(injected.tools?.find((tool) => tool.name === DASHBOARD_TOOL)?.parameters).toEqual({
       type: 'object',
       properties: { title: { type: 'string' } },
       required: ['title'],
@@ -212,7 +215,6 @@ describe('progressive tool disclosure end-to-end', () => {
     ctx.get(IAgentContextMemoryService).append({
       role: 'user',
       content: [{ type: 'text', text: 'earlier question' }],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
 
@@ -223,7 +225,7 @@ describe('progressive tool disclosure end-to-end', () => {
 
     await ctx.get(IAgentConversationUndoService).undo(1);
     const afterUndo = ctx.get(IAgentContextMemoryService).get();
-    expect(afterUndo.some((message) => message.tools?.some((tool) => tool.name === MCP_ALPHA))).toBe(
+    expect(afterUndo.some((message) => message.role === 'system' && message.tools?.some((tool) => tool.name === MCP_ALPHA))).toBe(
       true,
     );
 
@@ -234,7 +236,7 @@ describe('progressive tool disclosure end-to-end', () => {
 
     const afterReload = ctx.get(IAgentContextMemoryService).get();
     expect(
-      afterReload.some((message) => message.tools?.some((tool) => tool.name === MCP_ALPHA)),
+      afterReload.some((message) => message.role === 'system' && message.tools?.some((tool) => tool.name === MCP_ALPHA)),
     ).toBe(true);
     expect(historyText(afterReload)).toContain('Already available: mcp__srv__alpha');
     expect(historyText(afterReload)).not.toContain('Loaded: mcp__srv__alpha');

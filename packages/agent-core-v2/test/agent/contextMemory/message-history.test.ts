@@ -12,12 +12,10 @@ import { EventBusService } from '#/app/event/eventBusService';
 
 import { registerTestAgentWire, registerTestEventDispatcher } from '../../wire/stubs';
 
-function textMessage(role: ContextMessage['role'], text: string): ContextMessage {
-  return {
-    role,
-    content: [{ type: 'text', text }],
-    toolCalls: [],
-  };
+function textMessage(role: 'user' | 'assistant', text: string): ContextMessage {
+  return role === 'user'
+    ? { role, content: [{ type: 'text', text }] }
+    : { role, content: [{ type: 'text', text }], toolCalls: [] };
 }
 
 function textOf(message: ContextMessage): string {

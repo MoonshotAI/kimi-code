@@ -182,7 +182,7 @@ export function MessageDetail({ message }: { message: ContextMessage }) {
         <FieldRow label="role">
           <span className="text-[var(--color-cat-ephemeral)]">"{message.role}"</span>
         </FieldRow>
-        {message.toolCallId ? (
+        {message.role === 'tool' && message.toolCallId ? (
           <FieldRow label="toolCallId">
             <Mono>{message.toolCallId}</Mono>
           </FieldRow>
@@ -215,7 +215,7 @@ export function MessageDetail({ message }: { message: ContextMessage }) {
         </div>
       ) : null}
 
-      {message.toolCalls.length > 0 ? (
+      {message.role === 'assistant' && message.toolCalls.length > 0 ? (
         <div>
           <div className="mb-1 text-fg-2">
             toolCalls ({message.toolCalls.length})

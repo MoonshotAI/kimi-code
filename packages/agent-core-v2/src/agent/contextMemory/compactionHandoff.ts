@@ -132,7 +132,6 @@ export function createCompactionSummaryMessage(text: string): ContextMessage {
   return {
     role: 'user',
     content: [...createHistoryMessageBuilder().plain(text).parts()],
-    toolCalls: [],
     origin: { kind: 'compaction_summary' },
   };
 }
@@ -141,7 +140,6 @@ export function createCompactionElisionMessage(omittedTokens: number): ContextMe
   return {
     role: 'user',
     content: [...createHistoryMessageBuilder().systemReminder(compactionElisionContent(omittedTokens)).parts()],
-    toolCalls: [],
     origin: { kind: 'injection', variant: COMPACTION_ELISION_VARIANT },
   };
 }
@@ -158,7 +156,6 @@ export function createCompactionContinuationMessage(): ContextMessage {
   return {
     role: 'user',
     content: [...createHistoryMessageBuilder().systemReminder(compactionContinuationContent()).parts()],
-    toolCalls: [],
     origin: { kind: 'injection', variant: COMPACTION_CONTINUATION_VARIANT },
   };
 }
@@ -362,7 +359,6 @@ function replaceMessageText<T extends MessageLike>(message: T, text: string): T 
   return {
     ...message,
     content: [{ type: 'text', text }],
-    toolCalls: [],
   } as unknown as T;
 }
 

@@ -590,7 +590,6 @@ describe('agentsMdReminder re-injection after context loss', () => {
     h.context.append({
       role: 'user',
       content: [{ type: 'text', text: 'prompt' }],
-      toolCalls: [],
     });
     await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
     expect(agentsMdMessages(h)).toHaveLength(1);

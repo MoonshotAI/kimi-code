@@ -29,14 +29,13 @@ import {
 } from '../../harness';
 
 function message(text: string): ContextMessage {
-  return { role: 'user', content: [{ type: 'text', text }], toolCalls: [], origin: { kind: 'user' } };
+  return { role: 'user', content: [{ type: 'text', text }], origin: { kind: 'user' } };
 }
 
 function bundledMessage(skillName: string, user: string, extra: readonly ContentPart[] = []): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text: `<skill>${skillName}</skill>` }, { type: 'text', text: user }, ...extra],
-    toolCalls: [],
     origin: { kind: 'user', skillActivations: [{ activationId: `act-${skillName}`, skillName }] },
   };
 }
@@ -395,7 +394,6 @@ describe('prompt queue', () => {
       message: {
         role: 'user',
         content: [{ type: 'image_url', imageUrl: { url: avifUrl } }],
-        toolCalls: [],
         origin: { kind: 'user' },
       },
     });
@@ -425,7 +423,6 @@ describe('prompt queue', () => {
       message: {
         role: 'user',
         content: [{ type: 'image_url', imageUrl: { url: heicUrl } }],
-        toolCalls: [],
         origin: { kind: 'user' },
       },
     });
@@ -453,7 +450,6 @@ describe('prompt queue', () => {
       message: {
         role: 'user',
         content: [{ type: 'image_url', imageUrl: { url: avifUrl } }],
-        toolCalls: [],
         origin: { kind: 'user' },
       },
     });
@@ -492,7 +488,6 @@ describe('prompt queue', () => {
       message: {
         role: 'user',
         content: [{ type: 'image_url', imageUrl: { url: 'kimi-file://file_1' } }],
-        toolCalls: [],
         origin: { kind: 'user' },
       },
     });
@@ -649,7 +644,6 @@ describe('prompt queue', () => {
       message: {
         role: 'user',
         content: [{ type: 'text', text: 'one' }],
-        toolCalls: [],
         origin: {
           kind: 'user',
           attachments: [{ name: 'a.txt', mediaType: 'text/plain', size: 1, path: '/data/a.txt' }],
@@ -660,7 +654,6 @@ describe('prompt queue', () => {
       message: {
         role: 'user',
         content: [{ type: 'text', text: 'two' }],
-        toolCalls: [],
         origin: {
           kind: 'user',
           attachments: [{ name: 'b.txt', mediaType: 'text/plain', size: 2, path: '/data/b.txt' }],

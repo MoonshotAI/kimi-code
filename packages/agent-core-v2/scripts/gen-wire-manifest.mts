@@ -623,6 +623,7 @@ function findImportSource(file: string, name: string): string | undefined {
 function resolveModuleFile(fromFile: string, specifier: string): string | undefined {
   let base: string;
   if (specifier.startsWith('#/')) base = join(SRC, specifier.slice(2));
+  else if (specifier.startsWith('#human/')) base = join(SRC, 'human', specifier.slice(7));
   else if (specifier.startsWith('.')) base = join(dirname(fromFile), specifier);
   else return undefined;
   for (const candidate of [`${base}.ts`, join(base, 'index.ts')]) {

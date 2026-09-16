@@ -96,8 +96,10 @@ interface ConfigUpdatePayload {
   agentId: string;
   modelAlias?: string;
   profileName?: string;
-  thinkingEffort?: ThinkingEffort;
-  thinkingLevel?: ThinkingEffort;
+  /** ThinkingEffort */
+  thinkingEffort?: 'off' | 'on' | (string & {});
+  /** ThinkingEffort */
+  thinkingLevel?: 'off' | 'on' | (string & {});
   systemPrompt?: string;
   /** EnvironmentDisclosureSnapshot */
   environmentDisclosure?: {
@@ -127,21 +129,7 @@ interface ContextAppendMessagePayload {
   _name: 'context.append_message';
   agentId: string;
   /** ContextMessage */
-  message: {
-    role: Role;
-    name?: string;
-    content: ContentPart[];
-    toolCalls: ToolCall[];
-    toolCallId?: string;
-    partial?: boolean;
-    tools?: ToolDescription[];
-    id?: string;
-    providerMessageId?: string;
-    origin?: 'user' | 'skill_activation' | 'plugin_command' | 'injection' | 'shell_command' | 'compaction_summary' | 'system_trigger' | 'task' | 'cron_job' | 'cron_missed' | 'hook_result' | 'retry' | undefined;
-    isError?: boolean;
-    toolCallDisplays?: Record<string, ToolInputDisplay>;
-    note?: string;
-  };
+  message: 'system' | 'user' | 'assistant' | 'tool' & { id?: string, origin?: 'user' | 'skill_activation' | 'plugin_command' | 'injection' | 'shell_command' | 'compaction_summary' | 'system_trigger' | 'task' | 'cron_job' | 'cron_missed' | 'hook_result' | 'retry' | undefined, isError?: boolean, toolCallDisplays?: Record<string, ToolInputDisplay>, note?: string, partial?: boolean };
 }
 
 /**
@@ -372,7 +360,8 @@ interface LlmRequestPayload {
   provider: string;
   model: string;
   modelAlias?: string;
-  thinkingEffort?: ThinkingEffort;
+  /** ThinkingEffort */
+  thinkingEffort?: 'off' | 'on' | (string & {});
   thinkingKeep?: string;
   temperature?: number;
   topP?: number;
@@ -511,7 +500,8 @@ interface ProfileBindPayload {
   agentId: string;
   modelAlias?: string;
   profileName?: string;
-  thinkingEffort: ThinkingEffort;
+  /** ThinkingEffort */
+  thinkingEffort: 'off' | 'on' | (string & {});
   systemPrompt: string;
   /** EnvironmentDisclosureSnapshot */
   environmentDisclosure?: {
@@ -879,7 +869,14 @@ interface UsageRecordPayload {
   _name: 'usage.record';
   agentId: string;
   model: string;
-  usage: TokenUsage;
+  /** TokenUsage */
+  usage: {
+    inputOther: number;
+    output: number;
+    inputCacheRead: number;
+    inputCacheCreation: number;
+    raw?: Record<string, unknown>;
+  };
   /** UsageRecordScope */
   usageScope?: 'session' | 'turn';
 }

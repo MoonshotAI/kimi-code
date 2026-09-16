@@ -1454,7 +1454,7 @@ describe('AgentLifecycleService', () => {
       arguments: '{}',
     };
     const history: ContextMessage[] = [
-      { role: 'user', content: [{ type: 'text', text: 'analyze this repo' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'analyze this repo' }] },
       { role: 'assistant', content: [], toolCalls: [agentCall], partial: true },
     ];
     sourceHandle.accessor.get(IAgentContextMemoryService).append(...history);

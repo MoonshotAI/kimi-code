@@ -491,7 +491,7 @@ function projectPromptList(loop: IAgentLoopService) {
           userMessageId: item.meta?.userMessageId ?? '',
           createdAt: item.meta?.createdAt ?? '',
           state: 'pending',
-          message: { ...item.message, toolCalls: [], origin: item.meta?.origin as PromptOrigin | undefined },
+          message: { ...item.message, origin: item.meta?.origin as PromptOrigin | undefined },
         }),
       ),
   };

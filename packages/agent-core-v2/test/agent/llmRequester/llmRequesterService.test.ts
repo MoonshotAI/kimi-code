@@ -49,8 +49,7 @@ import {
   APIStatusError,
 } from '#/llm-adapter/contract/errors';
 import { emptyUsage, type TokenUsage } from '#human/llm/usage';
-import { type Message } from '#/llm-adapter/contract/message';
-import { isToolCall, type StreamedMessagePart, type ToolCall } from '#human/llm/message';
+import { isToolCall, type Message, type StreamedMessagePart, type ToolCall } from '#human/llm/message';
 import type { ThinkingEffort } from '#human/llm/thinking';
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
@@ -121,8 +120,13 @@ const capabilities: ModelCapability = {
 };
 
 const history: Message[] = [
-  { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
+  { role: 'user', content: [{ type: 'text', text: 'hello' }] },
 ];
+
+function assistantToolCalls(message: Message): ToolCall[] {
+  if (message.role !== 'assistant') throw new Error('expected assistant message');
+  return message.toolCalls;
+}
 
 type ProjectionKind = 'normal' | 'strict' | 'degraded' | 'stripped';
 
@@ -634,7 +638,6 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
     const imageMessage = (url: string, id: string): Message => ({
       role: 'user',
       content: [{ type: 'image_url', imageUrl: { url, id } }],
-      toolCalls: [],
     });
     const { service } = createService(
       createRequester(
@@ -1082,7 +1085,7 @@ describe('AgentLLMRequesterService tool call id normalization', () => {
       parts.push(part);
     });
 
-    expect(result.message.toolCalls.map((c) => c.id)).toEqual(['call_1', 'call_2']);
+    expect(assistantToolCalls(result.message).map((c) => c.id)).toEqual(['call_1', 'call_2']);
     expect(parts.filter(isToolCall).map((p) => p.id)).toEqual(['call_1', 'call_2']);
   });
 
@@ -1100,8 +1103,8 @@ describe('AgentLLMRequesterService tool call id normalization', () => {
       parts.push(part);
     });
 
-    expect(first.message.toolCalls[0]!.id).toBe('Bash_0');
-    expect(second.message.toolCalls[0]).toMatchObject({ id: 'Bash_0__2', rawId: 'Bash_0' });
+    expect(assistantToolCalls(first.message)[0]!.id).toBe('Bash_0');
+    expect(assistantToolCalls(second.message)[0]).toMatchObject({ id: 'Bash_0__2', rawId: 'Bash_0' });
     expect(parts.filter(isToolCall).map((p) => [p.id, p.rawId])).toEqual([
       ['Bash_0', undefined],
       ['Bash_0__2', 'Bash_0'],
@@ -1116,7 +1119,7 @@ describe('AgentLLMRequesterService tool call id normalization', () => {
 
     const result = await service.request();
 
-    expect(result.message.toolCalls.map((c) => [c.id, c.rawId])).toEqual([
+    expect(assistantToolCalls(result.message).map((c) => [c.id, c.rawId])).toEqual([
       ['Bash_0', undefined],
       ['Bash_0__2', 'Bash_0'],
     ]);
@@ -1133,7 +1136,7 @@ describe('AgentLLMRequesterService tool call id normalization', () => {
 
     await expect(service.request()).rejects.toThrow('stream boom');
     const retry = await service.request();
-    expect(retry.message.toolCalls[0]!.id).toBe('Bash_9');
+    expect(assistantToolCalls(retry.message)[0]!.id).toBe('Bash_9');
   });
 
   it('rewrites an id that already exists in the restored context', async () => {
@@ -1152,7 +1155,7 @@ describe('AgentLLMRequesterService tool call id normalization', () => {
     );
 
     const result = await service.request();
-    expect(result.message.toolCalls[0]!.id).toBe('Bash_0__2');
+    expect(assistantToolCalls(result.message)[0]!.id).toBe('Bash_0__2');
   });
 });
 

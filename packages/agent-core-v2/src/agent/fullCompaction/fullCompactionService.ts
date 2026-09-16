@@ -36,7 +36,7 @@ import {
   APIStatusError,
   isRetryableGenerateError,
 } from '#/llm-adapter/contract/errors';
-import { createUserMessage, type Message } from '#/llm-adapter/contract/message';
+import { createUserMessage, type Message } from '#human/llm/message';
 import type { ToolDescription as Tool } from '#human/llm/message';
 import { inputTotal, type TokenUsage } from '#human/llm/usage';
 import { IEventBus } from '#/app/event/eventBus';

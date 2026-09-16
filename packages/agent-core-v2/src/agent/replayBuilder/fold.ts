@@ -1,4 +1,4 @@
-import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
+import { normalizeReplayedToolCallId, type LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { CompactionResult } from '#/agent/fullCompaction/types';
 import type { PermissionApprovalResultRecord } from '#/agent/permissionRules/permissionRules';
@@ -11,7 +11,7 @@ import type {
   GoalSnapshot,
   GoalStatus,
 } from '#/features/goal/types';
-import { createToolMessage } from '#/llm-adapter/contract/message';
+import { createToolMessage } from '#human/llm/message';
 import { estimateTokens, estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
 import { createHistoryMessageBuilder } from '#human/agent/historyBuilder';
 import {
@@ -80,7 +80,7 @@ class WireReplayFoldState {
   readonly replay: AgentReplayRecord[] = [];
   readonly toolStore: Record<string, unknown> = {};
   private history: ContextMessage[] = [];
-  private readonly openSteps = new Map<string, ContextMessage>();
+  private readonly openSteps = new Map<string, Extract<ContextMessage, { readonly role: 'assistant' }>>();
   private readonly pendingToolResultIds = new Set<string>();
   private deferredMessages: ContextMessage[] = [];
   private goal: FoldGoalState | undefined;
@@ -89,7 +89,7 @@ class WireReplayFoldState {
     const time = record.time ?? Date.now();
     switch (record.type) {
       case 'context.append_message':
-        this.appendMessage(record['message'] as ContextMessage, time);
+        this.appendMessage(normalizeReplayedToolCallId(record['message'] as ContextMessage), time);
         return;
       case 'context.append_loop_event':
         this.appendLoopEvent(record['event'] as LoopRecordedEvent, time);
@@ -197,7 +197,11 @@ class WireReplayFoldState {
     switch (event.type) {
       case 'step.begin': {
         this.closePendingToolResults(time);
-        const message: ContextMessage = { role: 'assistant', content: [], toolCalls: [] };
+        const message: Extract<ContextMessage, { readonly role: 'assistant' }> = {
+          role: 'assistant',
+          content: [],
+          toolCalls: [],
+        };
         this.pushHistory([message], time);
         this.openSteps.set(event.uuid, message);
         return;
@@ -315,7 +319,6 @@ class WireReplayFoldState {
     const summaryMessage: ContextMessage = {
       role: 'user',
       content: [...createHistoryMessageBuilder().plain(contextSummary).parts()],
-      toolCalls: [],
       origin: { kind: 'compaction_summary' },
     };
     this.history =
@@ -422,7 +425,6 @@ class WireReplayFoldState {
       {
         role: 'user',
         content: [...createHistoryMessageBuilder().systemReminder(GOAL_FORK_CLEARED_REMINDER).parts()],
-        toolCalls: [],
         origin: { kind: 'system_trigger', name: 'goal_fork_cleared' },
       },
       time,

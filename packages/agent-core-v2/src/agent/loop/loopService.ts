@@ -23,8 +23,7 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IConfigService } from '#/app/config/config';
 import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
 import { type FinishReason } from '#human/llm/finish-reason';
-import { mergeInPlace } from '#/llm-adapter/contract/message';
-import type { ContentPart, UserMessage } from '#human/llm/message';
+import { mergeInPlace, type ContentPart, type UserMessage } from '#human/llm/message';
 import { emptyUsage, type TokenUsage } from '#human/llm/usage';
 import { BugIndicatingError, ErrorCodes, Error2, isError2, toKimiErrorPayload } from '#/errors';
 import { OrderedHookSlot } from '#/hooks';
@@ -307,7 +306,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       role: 'user',
       content: [...input.message.content],
       id,
-      toolCalls: [],
       origin: meta?.origin as PromptOrigin | undefined,
     };
     if (tracked) {
@@ -577,7 +575,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const promptMessage: ContextMessage = {
       role: 'user',
       content: [...message.content],
-      toolCalls: [],
       id: queueItemId,
       origin: entry.meta?.origin as PromptOrigin | undefined,
     };
@@ -610,7 +607,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         role: 'user',
         content: [...entry.message.content],
         id: waiter.id,
-        toolCalls: [],
         origin: entry.meta?.origin as PromptOrigin | undefined,
       });
     }
@@ -1117,7 +1113,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         role: 'user',
         content: [...entry.message.content],
         id: waiter.id,
-        toolCalls: [],
         origin: entry.meta?.origin as PromptOrigin | undefined,
       },
       userMessageId: entry.meta?.userMessageId ?? '',
@@ -1274,7 +1269,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
                 role: 'user',
                 content: [...entry.message.content],
                 id,
-                toolCalls: [],
                 origin: entry.meta?.origin as PromptOrigin | undefined,
               },
               userMessageId: entry.meta?.userMessageId ?? '',
@@ -1308,7 +1302,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           contextMessage: {
             role: 'user',
             content: gatedContent,
-            toolCalls: [],
             origin: merged.origin,
             id: newMessageId(),
           },
@@ -2146,7 +2139,6 @@ interface SteeredPrompt extends PromptProjection {
 const EMPTY_HANDLE_MESSAGE: ContextMessage = {
   role: 'user',
   content: [],
-  toolCalls: [],
 };
 
 function projectionFromEntry(entry: UserEntry): PromptProjection {
@@ -2158,7 +2150,6 @@ function projectionFromEntry(entry: UserEntry): PromptProjection {
       role: 'user',
       content: [...entry.message.content],
       id: entry.meta?.promptId,
-      toolCalls: [],
       origin: entry.meta?.origin as PromptOrigin | undefined,
     },
     userMessageId: entry.meta?.userMessageId ?? '',

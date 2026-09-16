@@ -95,7 +95,6 @@ function swarmReminder(
   return {
     role: 'user',
     content: [...createHistoryMessageBuilder().systemReminder(content).parts()],
-    toolCalls: [],
     origin: { kind: 'injection', variant: 'swarm_mode', disclosure },
   };
 }
@@ -332,7 +331,6 @@ describe('AgentSwarmService', () => {
           context.append({
             role: 'user',
             content: [...createHistoryMessageBuilder().systemReminder(result.content).parts()],
-            toolCalls: [],
             origin: { kind: 'injection', variant: 'swarm_mode', disclosure: result.disclosure },
           });
         }
@@ -440,7 +438,6 @@ describe('AgentSwarmService', () => {
     context.append({
       role: 'user',
       content: [{ type: 'text', text: 'later prompt' }],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
     swarm.exit();

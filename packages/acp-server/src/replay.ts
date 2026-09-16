@@ -124,7 +124,7 @@ function syntheticToolCall(
 }
 
 function toolMessageToUpdate(
-  message: ContextMessage,
+  message: Extract<ContextMessage, { readonly role: 'tool' }>,
   sessionId: string,
   toolCallTurnIds: ReadonlyMap<string, number>,
 ): SessionNotification | null {

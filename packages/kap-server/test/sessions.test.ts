@@ -1182,7 +1182,6 @@ describe('server-v2 /api/v1/sessions', () => {
     const user = (text: string): ContextMessage => ({
       role: 'user',
       content: [{ type: 'text', text }],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
     const assistant = (text: string): ContextMessage => ({

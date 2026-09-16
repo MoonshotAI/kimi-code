@@ -28,7 +28,10 @@ export function buildExportMarkdown(input: {
     (message) => message.role === "user" && !isInternalMessage(message),
   );
   const topic = firstUser === undefined ? "" : shorten(stringifyParts(firstUser.content), 80);
-  const toolCalls = input.history.reduce((count, message) => count + message.toolCalls.length, 0);
+  const toolCalls = input.history.reduce(
+    (count, message) => count + (message.role === "assistant" ? message.toolCalls.length : 0),
+    0,
+  );
   const lines = [
     "---",
     `session_id: ${input.sessionId}`,
@@ -62,7 +65,7 @@ export function stringifyContextHistory(history: readonly ContextMessage[]): str
     const sections: string[] = [];
     const content = stringifyParts(message.content);
     if (content.trim()) sections.push(content);
-    if (message.toolCalls.length > 0) {
+    if (message.role === "assistant" && message.toolCalls.length > 0) {
       sections.push(message.toolCalls.map(stringifyToolCall).join("\n"));
     }
     if (sections.length === 0) continue;

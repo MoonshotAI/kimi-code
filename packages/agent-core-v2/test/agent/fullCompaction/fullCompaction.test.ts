@@ -9,10 +9,8 @@ import {
   APIRequestTooLargeError,
   APIStatusError,
 } from '#/llm-adapter/contract/errors';
-import { type Message } from '#/llm-adapter/contract/message';
-import { type StreamedMessagePart, type ToolCall } from '#human/llm/message';
+import { type Message, type StreamedMessagePart, type ToolCall } from '#human/llm/message';
 import type { FinishReason } from '#human/llm/finish-reason';
-import { fromLlmMessage } from '#/llm-adapter/contract/message';
 import type { TokenUsage } from '#human/llm/usage';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -175,8 +173,8 @@ describe('FullCompaction', () => {
           { type: 'function', id: 'call_b', name: 'Lookup', arguments: '{}' },
         ],
       },
-      { role: 'tool', content: [{ type: 'text', text: 'a' }], toolCalls: [], toolCallId: 'call_a' },
-      { role: 'tool', content: [{ type: 'text', text: 'b' }], toolCalls: [], toolCallId: 'call_b' },
+      { role: 'tool', content: [{ type: 'text', text: 'a' }], toolCallId: 'call_a' },
+      { role: 'tool', content: [{ type: 'text', text: 'b' }], toolCallId: 'call_b' },
       textMessage('user', 'next prompt'),
     ];
 
@@ -1037,7 +1035,6 @@ describe('FullCompaction', () => {
     ctx.context.append({
       role: 'user',
       content: [{ type: 'text', text: 'X'.repeat(400_000) }],
-      toolCalls: [],
     });
     const failed = ctx.once('error');
 
@@ -2242,7 +2239,6 @@ describe('FullCompaction', () => {
       ctx.context.append({
         role: 'system',
         content: [],
-        toolCalls: [],
         tools: [
           {
             name: LARGE_MCP_TOOL,
@@ -3776,7 +3772,7 @@ function realKosongGenerate(
   return {
     generate: async (config, content, control) => {
       attempt += 1;
-      const streamed = script(attempt, content.messages.map(fromLlmMessage));
+      const streamed = script(attempt, content.messages);
       const emit = control.onEvent;
       emit?.({ type: 'llm.sent' });
       emit?.({

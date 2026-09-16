@@ -67,7 +67,6 @@ describe('AgentNotifyUserNudgeService', () => {
     context.append({
       role: 'user',
       content: [{ type: 'text', text: 'do the thing' }],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
     ctx.configure();

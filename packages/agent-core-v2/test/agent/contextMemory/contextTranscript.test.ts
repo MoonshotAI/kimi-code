@@ -22,7 +22,6 @@ function userMessage(text: string, origin?: PromptOrigin): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text }],
-    toolCalls: [],
     ...(origin === undefined ? {} : { origin }),
   };
 }
@@ -242,9 +241,11 @@ describe('reduceContextTranscript', () => {
       loopEvent({ type: 'step.end', uuid: 's1' }),
     ]);
     expect(result.entries.map((m) => m.role)).toEqual(['user', 'assistant', 'tool']);
-    expect(result.entries[1]!.toolCalls).toHaveLength(1);
-    expect(result.entries[1]!.toolCalls[0]!.id).toBe('call_1');
-    expect(result.entries[2]!.toolCallId).toBe('call_1');
+    const assistant = result.entries[1] as Extract<ContextMessage, { readonly role: 'assistant' }>;
+    expect(assistant.toolCalls).toHaveLength(1);
+    expect(assistant.toolCalls[0]!.id).toBe('call_1');
+    const tool = result.entries[2] as Extract<ContextMessage, { readonly role: 'tool' }>;
+    expect(tool.toolCallId).toBe('call_1');
     expect(result.foldedLength).toBe(3);
   });
 
@@ -327,8 +328,8 @@ describe('live fold parity', () => {
     return messages.map((m) => ({
       role: m.role,
       content: m.content,
-      toolCalls: m.toolCalls,
-      toolCallId: m.toolCallId,
+      toolCalls: m.role === 'assistant' ? m.toolCalls : [],
+      toolCallId: m.role === 'tool' ? m.toolCallId : undefined,
       isError: m.isError,
       note: m.note,
     }));
@@ -426,8 +427,9 @@ describe('live fold parity', () => {
       'user',
       'assistant',
     ]);
-    expect(transcript.entries[2]!.toolCallId).toBe('c1');
-    expect(transcript.entries[2]!.isError).toBe(true);
+    const toolEntry = transcript.entries[2] as Extract<ContextMessage, { readonly role: 'tool' }>;
+    expect(toolEntry.toolCallId).toBe('c1');
+    expect(toolEntry.isError).toBe(true);
     expect(transcript.foldedLength).toBe(live.length);
   });
 

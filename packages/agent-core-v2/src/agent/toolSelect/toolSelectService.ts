@@ -256,6 +256,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   }
 
   private shapeActiveMessage(message: ContextMessage): ContextMessage | undefined {
+    if (message.role !== 'system') return message;
     const tools = message.tools;
     if (tools === undefined || tools.length === 0) return message;
 
@@ -273,7 +274,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
 
     const { tools: _tools, ...rest } = message;
     void _tools;
-    if (rest.content.length === 0 && rest.toolCalls.length === 0) return undefined;
+    if (rest.content.length === 0) return undefined;
     return rest;
   }
 

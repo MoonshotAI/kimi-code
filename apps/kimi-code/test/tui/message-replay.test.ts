@@ -84,18 +84,29 @@ function message(
     readonly isError?: boolean;
   } = {},
 ): AgentReplayRecord {
-  return {
-    time: REPLAY_TIME,
-    type: 'message',
-    message: {
-      role,
-      content: [...content],
-      toolCalls: [...(extra.toolCalls ?? [])],
-      toolCallId: extra.toolCallId,
-      origin: extra.origin as PromptOrigin | undefined,
-      isError: extra.isError,
-    },
+  const base = {
+    content: [...content],
+    origin: extra.origin as PromptOrigin | undefined,
+    isError: extra.isError,
   };
+  switch (role) {
+    case 'system':
+      return { time: REPLAY_TIME, type: 'message', message: { ...base, role } };
+    case 'user':
+      return { time: REPLAY_TIME, type: 'message', message: { ...base, role } };
+    case 'assistant':
+      return {
+        time: REPLAY_TIME,
+        type: 'message',
+        message: { ...base, role, toolCalls: [...(extra.toolCalls ?? [])] },
+      };
+    case 'tool':
+      return {
+        time: REPLAY_TIME,
+        type: 'message',
+        message: { ...base, role, toolCallId: extra.toolCallId ?? '' },
+      };
+  }
 }
 
 function toolCall(id: string, name: string, args: Record<string, unknown>): ToolCall {

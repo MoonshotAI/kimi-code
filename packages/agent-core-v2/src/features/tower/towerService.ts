@@ -504,7 +504,6 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
             .plain(`${countText} — latest from ${latest.from}: "${subject}". Read and route with TowerInbox.`)
             .parts(),
         ],
-        toolCalls: [],
         origin: { kind: 'injection', variant: TOWER_INBOX_WAKE_VARIANT },
       },
       turnScoped: false,

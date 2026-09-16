@@ -50,7 +50,6 @@ export function stripBundledSkillBlocks(message: SteerMessage): ContentPart[] {
 export function mergeSteerMessages(messages: readonly SteerMessage[]): {
   role: 'user';
   content: ContentPart[];
-  toolCalls: [];
   origin: UserPromptOrigin;
 } {
   const skillActivations = messages.flatMap(
@@ -63,7 +62,6 @@ export function mergeSteerMessages(messages: readonly SteerMessage[]): {
       ...messages.flatMap((message) => message.content.slice(0, bundledSkillBlockCount(message))),
       ...messages.flatMap((message) => stripBundledSkillBlocks(message)),
     ],
-    toolCalls: [],
     origin:
       skillActivations.length === 0 && attachments.length === 0
         ? USER_PROMPT_ORIGIN

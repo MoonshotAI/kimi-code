@@ -118,7 +118,7 @@ class StubBlobService implements IAgentBlobService {
 }
 
 function userMessage(text: string): ContextMessage {
-  return { role: 'user', content: [{ type: 'text', text }], toolCalls: [] };
+  return { role: 'user', content: [{ type: 'text', text }] };
 }
 
 function imageMessage(payload: string): ContextMessage {
@@ -126,7 +126,7 @@ function imageMessage(payload: string): ContextMessage {
     type: 'image',
     source: { url: `data:image/png;base64,${payload}` },
   } as unknown as ContentPart;
-  return { role: 'user', content: [part], toolCalls: [] };
+  return { role: 'user', content: [part] };
 }
 
 function mediaUrl(message: DeepReadonly<ContextMessage>): string {
@@ -306,13 +306,15 @@ describe('AgentContextMemoryService (wire-backed)', () => {
 
     const model = replay.agentState.get(contextMemoryKey);
     expect(model.map((message) => message.role)).toEqual(['user', 'assistant', 'tool']);
-    expect(model[1]!.content).toEqual([{ type: 'text', text: 'hello' }]);
-    expect(model[1]!.partial).toBeUndefined();
-    expect(model[1]!.toolCalls).toHaveLength(1);
-    expect(model[1]!.toolCalls[0]!.id).toBe('call_1');
-    expect(model[1]!.toolCalls[0]!.name).toBe('Bash');
+    const assistant = model[1] as Extract<ContextMessage, { readonly role: 'assistant' }>;
+    expect(assistant.content).toEqual([{ type: 'text', text: 'hello' }]);
+    expect(assistant.partial).toBeUndefined();
+    expect(assistant.toolCalls).toHaveLength(1);
+    expect(assistant.toolCalls[0]!.id).toBe('call_1');
+    expect(assistant.toolCalls[0]!.name).toBe('Bash');
     expect(model[2]!.role).toBe('tool');
-    expect(model[2]!.toolCallId).toBe('call_1');
+    const tool = model[2] as Extract<ContextMessage, { readonly role: 'tool' }>;
+    expect(tool.toolCallId).toBe('call_1');
   });
 
   it('replays v1 context.apply_compaction records with contextSummary as the model summary', async () => {

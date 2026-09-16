@@ -4,7 +4,13 @@ import type { ResponseFormat } from '#human/llm/response-format';
 import type { ThinkingEffort } from '#human/llm/thinking';
 import type { TokenUsage } from '#human/llm/usage';
 
-import type { Message, StreamedMessagePart, Tool, VideoURLPart } from '../contract/message';
+import type {
+  AssistantMessage,
+  Message,
+  StreamedMessagePart,
+  ToolDescription as Tool,
+  VideoURLPart,
+} from '#human/llm/message';
 
 import type { Model } from './catalog';
 
@@ -35,7 +41,7 @@ export type ModelRequestEvent =
   | { readonly type: 'usage'; readonly usage: TokenUsage; readonly model?: string }
   | {
       readonly type: 'finish';
-      readonly message: Message;
+      readonly message: AssistantMessage;
       readonly providerFinishReason?: FinishReason;
       readonly rawFinishReason?: string;
       readonly id?: string;
