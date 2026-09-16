@@ -115,7 +115,7 @@ function appendReminder(result: ToolDedupeResult, reminderText: string): ToolDed
   const arr: ContentPart[] = [...result.output];
   const last = arr.at(-1);
   if (last !== undefined && last.type === 'text') {
-    arr[arr.length - 1] = { type: 'text', text: last.text + reminderText };
+    arr[arr.length - 1] = { type: 'text', text: last.text + reminderText, contentType: last.contentType };
   } else {
     arr.push({ type: 'text', text: reminderText });
   }

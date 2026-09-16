@@ -116,7 +116,11 @@ export class AgentShellCommandService implements IAgentShellCommandService {
         timeout: SHELL_FOREGROUND_TIMEOUT_S,
       });
       if (execution.isError === true) {
-        const output = typeof execution.output === 'string' ? execution.output : 'Command failed.';
+        const outputText = execution.output
+          .filter((part): part is Extract<ContentPart, { type: 'text' }> => part.type === 'text')
+          .map((part) => part.text)
+          .join('');
+        const output = outputText.length > 0 ? outputText : 'Command failed.';
         this.appendShellOutput('', output);
         isError = true;
         return { stdout: '', stderr: output, isError: true };
@@ -166,7 +170,7 @@ export class AgentShellCommandService implements IAgentShellCommandService {
         return { stdout: outputText, stderr: '', isError: false, backgrounded: true };
       }
       if (isError && stdout.length === 0 && stderr.length === 0) {
-        stderr = typeof result.output === 'string' ? result.output : 'Command failed.';
+        stderr = outputText.length > 0 ? outputText : 'Command failed.';
         if (input.commandId !== undefined && stderr.length > 0) {
           void this.dispatcher.dispatch(
             new ShellOutput({

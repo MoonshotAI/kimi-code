@@ -891,7 +891,7 @@ export function foldWireHistory(
         const isError = e.result.isError === true;
         existing.status = isError ? 'error' : 'done';
         existing.output = e.result.output;
-        existing.error = isError && typeof e.result.output === 'string' ? e.result.output : undefined;
+        existing.error = isError ? toolResultErrorText(e.result.output) : undefined;
         existing.at = atMs(record);
         return;
       }
@@ -2062,6 +2062,17 @@ function epochMsToIso(value: unknown): string | undefined {
   return typeof value === 'number' && Number.isFinite(value)
     ? new Date(value).toISOString()
     : undefined;
+}
+
+function toolResultErrorText(output: unknown): string | undefined {
+  if (typeof output === 'string') return output;
+  if (!Array.isArray(output)) return undefined;
+  const text = output
+    .filter((part): part is { type: 'text'; text: string } =>
+      typeof part === 'object' && part !== null && (part as { type?: unknown }).type === 'text')
+    .map((part) => part.text)
+    .join('');
+  return text.length > 0 ? text : undefined;
 }
 
 function goalPayloadOf(goal: GoalState): Record<string, unknown> {
