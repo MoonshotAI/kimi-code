@@ -150,8 +150,9 @@ export class KimiHarness {
     if (planMode === true) {
       await session.setPlanMode(true);
     }
-    this.trackSessionStarted(summary.id, false, (await session.getStatus()).model, sessionStartedProperties);
-    this.trackSessionEvent(session.id, 'session_new');
+    const createModel = (await session.getStatus()).model;
+    this.trackSessionStarted(summary.id, false, createModel, sessionStartedProperties);
+    this.trackSessionEvent(session.id, 'session_new', createModel);
     return session;
   }
 
@@ -212,8 +213,9 @@ export class KimiHarness {
       },
     });
     this.activeSessions.set(session.id, session);
-    this.trackSessionStarted(summary.id, true, (await session.getStatus()).model, sessionStartedProperties);
-    this.trackSessionEvent(session.id, 'session_resume');
+    const resumeModel = (await session.getStatus()).model;
+    this.trackSessionStarted(summary.id, true, resumeModel, sessionStartedProperties);
+    this.trackSessionEvent(session.id, 'session_resume', resumeModel);
     return session;
   }
 
@@ -224,7 +226,7 @@ export class KimiHarness {
       await active.reloadSession({
         forcePluginSessionStartReminder: input.forcePluginSessionStartReminder,
       });
-      this.trackSessionEvent(active.id, 'session_reload');
+      this.trackSessionEvent(active.id, 'session_reload', (await active.getStatus()).model);
       return active;
     }
 
@@ -244,8 +246,9 @@ export class KimiHarness {
       },
     });
     this.activeSessions.set(session.id, session);
-    this.trackSessionStarted(summary.id, true, (await session.getStatus()).model);
-    this.trackSessionEvent(session.id, 'session_reload');
+    const reloadModel = (await session.getStatus()).model;
+    this.trackSessionStarted(summary.id, true, reloadModel);
+    this.trackSessionEvent(session.id, 'session_reload', reloadModel);
     return session;
   }
 
@@ -269,8 +272,9 @@ export class KimiHarness {
       },
     });
     this.activeSessions.set(session.id, session);
-    this.trackSessionStarted(summary.id, true, (await session.getStatus()).model);
-    this.trackSessionEvent(session.id, 'session_fork');
+    const forkModel = (await session.getStatus()).model;
+    this.trackSessionStarted(summary.id, true, forkModel);
+    this.trackSessionEvent(session.id, 'session_fork', forkModel);
     return session;
   }
 
@@ -625,8 +629,8 @@ export class KimiHarness {
     await this.closeImpl();
   }
 
-  private trackSessionEvent(eventSessionId: string, event: string): void {
-    withTelemetryContext(this.telemetry, { sessionId: eventSessionId }).track(event);
+  private trackSessionEvent(eventSessionId: string, event: string, model?: string): void {
+    withTelemetryContext(this.telemetry, { sessionId: eventSessionId, model }).track(event);
   }
 
   private trackSessionStarted(
