@@ -552,14 +552,60 @@ describe('EventSink', () => {
     expect(joined).toBe(true);
   });
 
-  it('stops waiting for an in-flight flush once the caller signal aborts', async () => {
+  it('serializes concurrent flush waiters so a later waiter joins the next send too', async () => {
+    const gates: Array<() => void> = [];
+    const transport: TelemetryTransport = {
+      send: () =>
+        new Promise<void>((resolve) => {
+          gates.push(resolve);
+        }),
+      saveToDisk: () => undefined,
+      retryDiskEvents: async () => undefined,
+    };
+    const sink = makeSink(transport, 10);
+    const event = (id: string): TelemetryEvent => ({
+      event_id: id,
+      device_id: 'dev',
+      session_id: 'ses',
+      event: id,
+      timestamp: 1,
+      properties: {},
+    });
+
+    sink.accept(event('first'));
+    const firstFlush = sink.flush(); // takes 'first', send 1 stays in flight
+    await vi.waitFor(() => expect(gates).toHaveLength(1));
+
+    sink.accept(event('second'));
+    const thresholdFlush = sink.flush(); // joins flush 1, then should send 'second'
+    let shutdownResolved = false;
+    const shutdownFlush = sink.flush().then(() => {
+      shutdownResolved = true;
+    });
+
+    gates[0]?.();
+    await firstFlush;
+    await vi.waitFor(() => expect(gates).toHaveLength(2));
+    await Promise.resolve();
+    expect(shutdownResolved).toBe(false);
+
+    gates[1]?.();
+    await thresholdFlush;
+    await shutdownFlush;
+    expect(shutdownResolved).toBe(true);
+  });
+
+  it('stops waiting for an in-flight flush once the caller signal aborts, spooling its batch', async () => {
     let releaseSend: (() => void) | undefined;
+    const saved: EnrichedTelemetryEvent[][] = [];
     const transport: TelemetryTransport = {
       send: () =>
         new Promise<void>((resolve) => {
           releaseSend = resolve;
         }),
-      saveToDisk: () => undefined,
+      saveToDisk: (events) => {
+        saved.push([...events]);
+      },
       retryDiskEvents: async () => undefined,
     };
     const sink = makeSink(transport, 1);
@@ -575,8 +621,10 @@ describe('EventSink', () => {
 
     const controller = new AbortController();
     controller.abort();
-    // The send never resolves, but the join must respect the already-aborted signal.
-    await expect(sink.flush(controller.signal)).resolves.toBeUndefined();
+    // The send never resolves: the join must respect the aborted signal,
+    // reject for the caller's fallback, and spool the still-owned batch.
+    await expect(sink.flush(controller.signal)).rejects.toThrow('flush join aborted');
+    expect(saved.map((batch) => batch.map((event) => event.event))).toEqual([['first']]);
   });
 });
 

@@ -36,7 +36,8 @@ export class EventSink {
   private readonly flushThreshold: number;
   private buffer: EnrichedTelemetryEvent[] = [];
   private flushTimer: ReturnType<typeof setInterval> | null = null;
-  private inFlight: Promise<void> | null = null;
+  private activeBatch: readonly EnrichedTelemetryEvent[] | null = null;
+  private flushChain: Promise<void> = Promise.resolve();
 
   constructor(options: EventSinkOptions) {
     this.transport = options.transport;
@@ -87,22 +88,44 @@ export class EventSink {
   }
 
   async flush(signal?: AbortSignal): Promise<void> {
-    // Join any timer- or threshold-triggered flush already in flight: a
-    // shutdown-time flush must not resolve while a request still holds the
-    // last events, or the host may unload before they land or spool to disk.
-    // The join still honors the caller's abort signal — that send started
-    // without it, and a shutdown timeout must cap the wait regardless.
-    if (this.inFlight !== null) {
-      await raceWithSignal(this.inFlight, signal);
-    }
-    if (this.buffer.length === 0) return;
-    const events = this.buffer;
-    this.buffer = [];
-    this.inFlight = this.transport.send(events, signal);
+    // Serialize the complete flush operation: every caller joins the previous
+    // flush — including its send — before deciding there is nothing to send,
+    // so concurrent waiters can never strand a batch mid-flight. The join
+    // honors the caller's abort signal: the previous send started without it,
+    // and a shutdown timeout must cap the wait regardless.
+    const previous = this.flushChain;
+    let release!: () => void;
+    this.flushChain = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     try {
-      await this.inFlight;
+      try {
+        await raceWithSignal(previous, signal);
+      } catch (error) {
+        // The timeout gave up on a send that still owns its batch: spool that
+        // batch to disk so host unload cannot lose it, then let the caller's
+        // fallback persist whatever remains in the buffer. The in-flight send
+        // may still succeed afterwards — a rare duplicate beats a lost batch.
+        if (this.activeBatch !== null) {
+          try {
+            this.transport.saveToDisk(this.activeBatch);
+          } catch {
+            // Telemetry must never make shutdown fail.
+          }
+        }
+        throw error;
+      }
+      if (this.buffer.length === 0) return;
+      const events = this.buffer;
+      this.buffer = [];
+      this.activeBatch = events;
+      try {
+        await this.transport.send(events, signal);
+      } finally {
+        this.activeBatch = null;
+      }
     } finally {
-      this.inFlight = null;
+      release();
     }
   }
 
@@ -148,7 +171,7 @@ function setPrimitive(
   target[key] = value;
 }
 
-/** Await a send already in flight, but give up as soon as the signal aborts. */
+/** Await a send already in flight, but reject as soon as the signal aborts. */
 function raceWithSignal(promise: Promise<void>, signal?: AbortSignal): Promise<void> {
   const settled = promise.catch(() => {
     // The original owner surfaces the failure; joining is about ordering.
@@ -156,12 +179,17 @@ function raceWithSignal(promise: Promise<void>, signal?: AbortSignal): Promise<v
   if (signal === undefined) return settled;
   return Promise.race([
     settled,
-    new Promise<void>((resolve) => {
+    new Promise<void>((_resolve, reject) => {
+      const onAbort = (): void => {
+        const error = new Error('flush join aborted');
+        error.name = 'AbortError';
+        reject(error);
+      };
       if (signal.aborted) {
-        resolve();
+        onAbort();
         return;
       }
-      signal.addEventListener('abort', () => resolve(), { once: true });
+      signal.addEventListener('abort', onAbort, { once: true });
     }),
   ]);
 }
