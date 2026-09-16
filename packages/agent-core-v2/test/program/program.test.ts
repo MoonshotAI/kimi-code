@@ -1,5 +1,11 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 
+import { noopTelemetryService } from '#/app/telemetry/telemetry';
+import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { Program } from '#/program/program';
 import type { ProgramSessionControllerInput } from '#/program/programDependencies';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
@@ -292,5 +298,117 @@ describe('Program', () => {
 
     program.dispose();
     await registry.dispose();
+  });
+});
+
+function fakeFsRuntime(runtimeId: string, generation: string): FakeRuntime {
+  return Object.assign(
+    new FakeRuntime(
+      { workspaceId: 'workspace', runtimeId, generation },
+      { capabilities: ['fs'] },
+    ),
+    { fs: new HostFileSystem() },
+  ) as FakeRuntime;
+}
+
+function suggestSetup() {
+  const registry = new RuntimeRegistry('workspace', 50);
+  const program = new Program(
+    'workspace',
+    registry,
+    {
+      _serviceBrand: undefined,
+      workspaceId: 'workspace',
+      cwd: '/workspace',
+      source: 'local',
+      meta: {
+        id: 'workspace',
+        name: 'workspace',
+        root: '/workspace',
+        createdAt: 0,
+        lastOpenedAt: 0,
+      },
+      persistenceScope: 'sessions/workspace',
+    },
+    {
+      agentProfiles: { entries: () => [] },
+      createSessionController: () => ({ dispose: () => {} }) as never,
+      telemetry: noopTelemetryService,
+      git: { current: undefined, onDidChange: () => ({ dispose: () => {} }) },
+    } as never,
+  );
+  (program as unknown as { createGeneration: () => unknown }).createGeneration = () => {
+    throw new Error('generations are not exercised by suggestFiles tests');
+  };
+  return { registry, program };
+}
+
+describe('Program.suggestFiles', () => {
+  it('suggests files for a runtime with the given session roots', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-program-suggest-'));
+    try {
+      await mkdir(join(dir, 'src'), { recursive: true });
+      await writeFile(join(dir, 'src', 'app.ts'), 'app');
+      await writeFile(join(dir, 'src', 'index.ts'), 'index');
+      await writeFile(join(dir, 'README.md'), 'readme');
+      const { registry, program } = suggestSetup();
+      registry.register(fakeFsRuntime('local', 'local-one'));
+
+      const result = await program.suggestFiles(
+        'local',
+        { workDir: dir },
+        { query: 'app', limit: 20, follow_gitignore: true, show_hidden: false },
+      );
+
+      expect(result.items).toContainEqual(
+        expect.objectContaining({ kind: 'file', path: 'src/app.ts', name: 'app.ts' }),
+      );
+      const topLevel = await program.suggestFiles(
+        'local',
+        { workDir: dir },
+        { query: '', limit: 20, follow_gitignore: true, show_hidden: false },
+      );
+      expect(topLevel.items).toContainEqual(expect.objectContaining({ kind: 'directory', name: 'src' }));
+
+      program.dispose();
+      await registry.dispose();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('routes the suggest to the requested runtime and rejects an unknown runtime', async () => {
+    const localDir = await mkdtemp(join(tmpdir(), 'kimi-program-suggest-local-'));
+    const remoteDir = await mkdtemp(join(tmpdir(), 'kimi-program-suggest-remote-'));
+    try {
+      await writeFile(join(localDir, 'local-only.ts'), 'local');
+      await writeFile(join(remoteDir, 'remote-only.ts'), 'remote');
+      const { registry, program } = suggestSetup();
+      registry.register(fakeFsRuntime('local', 'local-one'));
+      registry.register(fakeFsRuntime('remote', 'remote-one'));
+
+      const remoteResult = await program.suggestFiles(
+        'remote',
+        { workDir: remoteDir },
+        { query: 'remote-only', limit: 20, follow_gitignore: true, show_hidden: false },
+      );
+      expect(remoteResult.items).toContainEqual(
+        expect.objectContaining({ kind: 'file', path: 'remote-only.ts', name: 'remote-only.ts' }),
+      );
+
+      await expect(
+        program.suggestFiles(
+          'ghost',
+          { workDir: localDir },
+          { query: 'a', limit: 20, follow_gitignore: true, show_hidden: false },
+        ),
+      ).rejects.toThrow(/ghost/);
+
+      program.dispose();
+      await registry.dispose();
+    } finally {
+      await rm(localDir, { recursive: true, force: true });
+      await rm(remoteDir, { recursive: true, force: true });
+    }
   });
 });
