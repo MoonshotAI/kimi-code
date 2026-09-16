@@ -640,7 +640,13 @@ export class KimiHarness {
   }
 
   private trackSessionEvent(eventSessionId: string, event: string, model?: string): void {
-    withTelemetryContext(this.telemetry, { sessionId: eventSessionId, model }).track(event);
+    // A missing model clears ambient model context (null), not inherits it:
+    // the best-effort lookup must never attribute a session event to the
+    // host's default or a previous session's model.
+    withTelemetryContext(this.telemetry, {
+      sessionId: eventSessionId,
+      model: model !== undefined && model.length > 0 ? model : null,
+    }).track(event);
   }
 
   private trackSessionStarted(
@@ -649,7 +655,10 @@ export class KimiHarness {
     model: string | undefined,
     sessionScoped?: TelemetryProperties,
   ): void {
-    withTelemetryContext(this.telemetry, { sessionId: eventSessionId, model }).track('session_started', {
+    withTelemetryContext(this.telemetry, {
+      sessionId: eventSessionId,
+      model: model !== undefined && model.length > 0 ? model : null,
+    }).track('session_started', {
       ...this.sessionStartedProperties,
       ...sessionScoped,
       ...this.sessionStartedDynamicProperties?.(),
