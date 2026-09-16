@@ -198,7 +198,7 @@ kimi web --port 58628    # 指定绑定端口
 
 ### `kimi install-app`
 
-打印 Kimi Code 桌面端页面地址（`https://www.kimi.com/code`）并在默认浏览器中打开，无需离开终端即可下载并安装桌面端应用。
+打印 Kimi Code 桌面端页面地址并在默认浏览器中打开，无需离开终端即可下载并安装桌面端应用。页面地址随当前区域而定：国内区域为 `https://www.kimi.com/code`，全球区域为 `https://www.kimi.ai/code`。
 
 ```sh
 kimi install-app

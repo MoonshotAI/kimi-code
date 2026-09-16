@@ -198,7 +198,7 @@ Generate a new persistent bearer token (written to `~/.kimi-code/server.token`);
 
 ### `kimi install-app`
 
-Print the Kimi Code desktop app page (`https://www.kimi.com/code`) and open it in the default browser, so you can download and install the desktop app without leaving the terminal.
+Print the Kimi Code desktop app page and open it in the default browser, so you can download and install the desktop app without leaving the terminal. The URL follows the active region: `https://www.kimi.com/code` on the mainland region, `https://www.kimi.ai/code` on the global region.
 
 ```sh
 kimi install-app
