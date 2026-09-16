@@ -24,7 +24,7 @@ import { type ISessionContext, makeSessionContext } from '#/session/sessionConte
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { type BashInput, BashInputSchema } from '#/agent/tools/os/bash/bash';
 import { BashTool } from '#/agent/tools/os/bash/bashTool';
-import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ExecutableToolContext, type ExecutableToolResult, type ToolExecution } from '#/tool/toolContract';
 
 const posixEnv: IHostEnvironment = {
   _serviceBrand: undefined,
@@ -836,7 +836,7 @@ describe('BashTool', () => {
     });
     expect(proc.stdin.end).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({
-      output: 'ok\n',
+      output: textOutput('ok\n'),
       isError: false,
     });
   });
@@ -861,7 +861,7 @@ describe('BashTool', () => {
     );
 
     expect(exec.mock.calls[0]?.[1]).toEqual(['-c', "cd '/outside/workspace' && pwd"]);
-    expect(result).toMatchObject({ output: 'out\n', isError: false });
+    expect(result).toMatchObject({ output: textOutput('out\n'), isError: false });
   });
 
   it('uses the kaos cwd as the default working directory', async () => {
@@ -887,7 +887,7 @@ describe('BashTool', () => {
     expect(args).toEqual(['-c', "cd '/c/Users/me/project' && echo ok 2>/dev/null"]);
     expect(execOptions?.env).toMatchObject({ SHELL: 'C:\\Program Files\\Git\\bin\\bash.exe' });
     expect(result).toMatchObject({
-      output: 'ok\n',
+      output: textOutput('ok\n'),
       isError: false,
     });
   });
@@ -902,8 +902,8 @@ describe('BashTool', () => {
       isError: true,
       brief: 'Failed with exit code: 2',
     });
-    expect(result.output).toContain('boom\n');
-    expect(result.output).toContain('Command failed with exit code: 2.');
+    expect(outputText(result.output)).toContain('boom\n');
+    expect(outputText(result.output)).toContain('Command failed with exit code: 2.');
   });
 
   it('returns both stdout and stderr when a command succeeds', async () => {
@@ -913,7 +913,7 @@ describe('BashTool', () => {
     const result = await executeTool(tool, context({ command: 'mixed', timeout: 60 }));
 
     expect(result).toMatchObject({
-      output: 'out\nwarn\n',
+      output: textOutput('out\nwarn\n'),
       isError: false,
     });
   });
@@ -930,8 +930,8 @@ describe('BashTool', () => {
       isError: true,
       brief: 'Failed with exit code: 2',
     });
-    expect(result.output).toContain('partial\nboom\n');
-    expect(result.output).toContain('Command failed with exit code: 2.');
+    expect(outputText(result.output)).toContain('partial\nboom\n');
+    expect(outputText(result.output)).toContain('Command failed with exit code: 2.');
   });
 
   it('returns the service failure reason when foreground process wait rejects', async () => {
@@ -952,8 +952,8 @@ describe('BashTool', () => {
       isError: true,
       brief: 'wait failed',
     });
-    expect(result.output).toContain('partial output\nwait failed');
-    expect(result.output).not.toContain('exit code: null');
+    expect(outputText(result.output)).toContain('partial output\nwait failed');
+    expect(outputText(result.output)).not.toContain('exit code: null');
   });
 
   it('preserves foreground stdout and stderr arrival order', async () => {
@@ -973,7 +973,7 @@ describe('BashTool', () => {
       const result = await resultPromise;
       expect(result).toMatchObject({
         isError: false,
-        output: 'err-first\nout-second\nerr-third\n',
+        output: textOutput('err-first\nout-second\nerr-third\n'),
       });
     } finally {
       vi.useRealTimers();
@@ -1007,7 +1007,7 @@ describe('BashTool', () => {
       expect(result).toMatchObject({
         isError: false,
       });
-      expect(result.output).toContain('task_id: call_bash');
+      expect(outputText(result.output)).toContain('task_id: call_bash');
       resolveWait(0);
     } finally {
       vi.useRealTimers();
@@ -1043,7 +1043,7 @@ describe('BashTool', () => {
       const result = await running;
 
       expect(result).toMatchObject({ isError: true, brief: 'Killed by timeout (1s)' });
-      expect(result.output).toContain('Command killed by timeout (1s)');
+      expect(outputText(result.output)).toContain('Command killed by timeout (1s)');
     } finally {
       vi.useRealTimers();
     }
@@ -1070,8 +1070,8 @@ describe('BashTool', () => {
 
       expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
       expect(result).toMatchObject({ isError: true, brief: 'Killed by timeout (1s)' });
-      expect(result.output).toContain('Command killed by timeout (1s)');
-      expect(result.output).not.toContain('Premature close');
+      expect(outputText(result.output)).toContain('Command killed by timeout (1s)');
+      expect(outputText(result.output)).not.toContain('Premature close');
     } finally {
       vi.useRealTimers();
     }
@@ -1088,7 +1088,7 @@ describe('BashTool', () => {
     const result = await executeTool(tool, context({ command: 'remote-cmd', timeout: 60 }));
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('SSH channel read failed');
+    expect(outputText(result.output)).toContain('SSH channel read failed');
   });
 
   it('does not spawn when the signal is already aborted', async () => {
@@ -1099,7 +1099,7 @@ describe('BashTool', () => {
 
     const result = await executeTool(tool, context({ command: 'echo nope' }, controller.signal));
 
-    expect(result).toEqual({ isError: true, output: 'Aborted before command started' });
+    expect(result).toEqual({ isError: true, output: textOutput('Aborted before command started') });
     expect(exec).not.toHaveBeenCalled();
   });
 
@@ -1127,7 +1127,7 @@ describe('BashTool', () => {
 
     expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('Interrupted by user');
+    expect(outputText(result.output)).toContain('Interrupted by user');
   });
 
   it('caps retained output and reports the true total via spill when stdout exceeds the retention cap', async () => {
@@ -1137,7 +1137,7 @@ describe('BashTool', () => {
 
     const result = await executeTool(tool, context({ command: 'yes', timeout: 60 }));
 
-    expect(result.output).toBe('x'.repeat(10_000_000));
+    expect(outputText(result.output)).toBe('x'.repeat(10_000_000));
     expect(result.spill?.totalChars).toBe(10 * 1024 * 1024 + 1);
   });
 
@@ -1149,8 +1149,7 @@ describe('BashTool', () => {
 
     const result = await executeTool(tool, context({ command: 'yes', timeout: 60 }));
 
-    expect(typeof result.output).toBe('string');
-    const output = result.output as string;
+    const output = outputText(result.output);
     expect(output).not.toContain('[...truncated]');
     expect(output).not.toContain('Output is truncated');
     expect(result.spill?.suffix).toBe('Command executed successfully.');
@@ -1164,8 +1163,7 @@ describe('BashTool', () => {
     const result = await executeTool(tool, context({ command: 'fail-and-flood', timeout: 60 }));
 
     expect(result).toMatchObject({ isError: true });
-    expect(typeof result.output).toBe('string');
-    const output = result.output as string;
+    const output = outputText(result.output);
     expect(output.startsWith('E'.repeat(10_000_000))).toBe(true);
     expect(output).toContain('Command failed with exit code: 1.');
     expect(result.spill?.totalChars).toBe(10 * 1024 * 1024 + 1);
@@ -1179,7 +1177,7 @@ describe('BashTool', () => {
 
     const result = await executeTool(tool, context({ command: 'flood', timeout: 60 }));
 
-    expect(result.output).toBe(fullOutput);
+    expect(outputText(result.output)).toBe(fullOutput);
     const spill = result.spill;
     expect(spill).toBeDefined();
     const taskId = /^\/fake\/tasks\/(call_bash)\/output\.log$/.exec(
@@ -1201,7 +1199,7 @@ describe('BashTool', () => {
 
     const result = await executeTool(tool, context({ command: 'flood', timeout: 60 }));
 
-    expect(result.output).toBe(fullOutput);
+    expect(outputText(result.output)).toBe(fullOutput);
     expect(result.spill).toEqual({ suffix: 'Command executed successfully.' });
     expect(persisted.size).toBe(0);
   });
@@ -1214,7 +1212,7 @@ describe('BashTool', () => {
 
     const result = await executeTool(tool, context({ command: 'edge', timeout: 60 }));
 
-    expect(result.output).toBe(fullOutput);
+    expect(outputText(result.output)).toBe(fullOutput);
     expect(result.spill).toBeUndefined();
     expect(persisted.size).toBe(0);
   });
@@ -1330,7 +1328,7 @@ describe('BashTool', () => {
     );
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('Background execution is not available');
+    expect(outputText(result.output)).toContain('Background execution is not available');
     expect(exec).not.toHaveBeenCalled();
   });
 
@@ -1396,14 +1394,14 @@ describe('BashTool background mode', () => {
     (proc.stdout as PassThrough).write('after detach\n');
 
     expect(result).toMatchObject({ isError: false });
-    expect(result.output).toContain('before detach\n');
-    expect(result.output).not.toContain('after detach\n');
-    expect(result.output).toContain(`task_id: ${task.taskId}`);
-    expect(result.output).toContain('automatic_notification: true');
-    expect(result.output).toContain('The user moved this task to the background.');
-    expect(result.output).toContain('detached_by_user: true');
-    expect(result.output).toContain('do NOT wait, poll, or call TaskOutput');
-    expect(result.output).toContain('human_shell_hint: The task is visible in the background-task panel.');
+    expect(outputText(result.output)).toContain('before detach\n');
+    expect(outputText(result.output)).not.toContain('after detach\n');
+    expect(outputText(result.output)).toContain(`task_id: ${task.taskId}`);
+    expect(outputText(result.output)).toContain('automatic_notification: true');
+    expect(outputText(result.output)).toContain('The user moved this task to the background.');
+    expect(outputText(result.output)).toContain('detached_by_user: true');
+    expect(outputText(result.output)).toContain('do NOT wait, poll, or call TaskOutput');
+    expect(outputText(result.output)).toContain('human_shell_hint: The task is visible in the background-task panel.');
     expect((result as { brief?: string }).brief).toBe(`Backgrounded ${task.taskId} by the user`);
     expect(service.getTask(task.taskId)).toMatchObject({ detached: true });
     await vi.waitFor(async () => {
@@ -1501,11 +1499,11 @@ describe('BashTool background mode', () => {
         isError: false,
         brief: expect.stringContaining('after timeout'),
       });
-      expect(result.output).toContain('The task now runs in the background.');
-      expect(result.output).not.toContain('The user moved this task');
-      expect(result.output).not.toContain('detached_by_user');
-      expect(result.output).toContain('human_shell_hint: The task is visible in the background-task panel.');
-      const taskId = /^task_id: (\S+)/m.exec(result.output as string)?.[1];
+      expect(outputText(result.output)).toContain('The task now runs in the background.');
+      expect(outputText(result.output)).not.toContain('The user moved this task');
+      expect(outputText(result.output)).not.toContain('detached_by_user');
+      expect(outputText(result.output)).toContain('human_shell_hint: The task is visible in the background-task panel.');
+      const taskId = /^task_id: (\S+)/m.exec(outputText(result.output))?.[1];
       expect(taskId).toBeDefined();
       expect(service.getTask(taskId!)).toMatchObject({ status: 'running', detached: true });
 
@@ -1534,11 +1532,11 @@ describe('BashTool background mode', () => {
     service.detach(task.taskId);
     const result = await running;
 
-    expect(result.output).toContain(`task_id: ${task.taskId}`);
-    expect(result.output).toContain('You will be automatically notified when it completes');
-    expect(result.output).toContain('do NOT wait or poll');
-    expect(result.output).not.toContain('TaskOutput');
-    expect(result.output).not.toContain('TaskStop');
+    expect(outputText(result.output)).toContain(`task_id: ${task.taskId}`);
+    expect(outputText(result.output)).toContain('You will be automatically notified when it completes');
+    expect(outputText(result.output)).toContain('do NOT wait or poll');
+    expect(outputText(result.output)).not.toContain('TaskOutput');
+    expect(outputText(result.output)).not.toContain('TaskStop');
 
     finish();
     await expect(service.wait(task.taskId)).resolves.toMatchObject({
@@ -1568,8 +1566,7 @@ describe('BashTool background mode', () => {
     const result = await running;
 
     expect(result).toMatchObject({ isError: false });
-    expect(typeof result.output).toBe('string');
-    const output = result.output as string;
+    const output = outputText(result.output);
     expect(output).toContain(`task_id: ${task.taskId}`);
     expect(output).toContain('automatic_notification: true');
     expect(output).toContain('foreground_output:');
@@ -1602,7 +1599,7 @@ describe('BashTool background mode', () => {
       context({ command: 'sleep 10', run_in_background: true, description: 'watch' }),
     );
     expect(unavailable).toMatchObject({ isError: true });
-    expect(unavailable.output).toContain('Background execution is not available');
+    expect(outputText(unavailable.output)).toContain('Background execution is not available');
     expect(exec).not.toHaveBeenCalled();
 
     const { service } = createFakeTaskService();
@@ -1613,7 +1610,7 @@ describe('BashTool background mode', () => {
     );
 
     expect(missingDescription).toMatchObject({ isError: true });
-    expect(missingDescription.output).toContain('description is required');
+    expect(outputText(missingDescription.output)).toContain('description is required');
     expect(exec).not.toHaveBeenCalled();
   });
 
@@ -1628,11 +1625,11 @@ describe('BashTool background mode', () => {
       context({ command: 'sleep 10', run_in_background: true, description: 'long running task' }),
     );
 
-    expect(result.output).toMatch(/task_id: call_bash/);
-    expect(result.output).toContain('automatic_notification: true');
+    expect(outputText(result.output)).toMatch(/task_id: call_bash/);
+    expect(outputText(result.output)).toContain('automatic_notification: true');
     expect((result as { brief?: string }).brief).toMatch(/^Started call_bash$/);
-    expect(result.output).toContain('do NOT wait, poll, or call TaskOutput on it');
-    expect(result.output).not.toContain('block=false');
+    expect(outputText(result.output)).toContain('do NOT wait, poll, or call TaskOutput on it');
+    expect(outputText(result.output)).not.toContain('block=false');
     expect(service.list(false)).toHaveLength(1);
   });
 
@@ -1650,7 +1647,7 @@ describe('BashTool background mode', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      output: 'Too many background tasks are already running.',
+      output: textOutput('Too many background tasks are already running.'),
     });
     expect(exec).toHaveBeenCalledTimes(1);
     expect(rejectedProc.kill).toHaveBeenCalledWith('SIGTERM');
@@ -1683,7 +1680,7 @@ describe('BashTool background mode', () => {
     expect(results).toContainEqual(
       expect.objectContaining({
         isError: true,
-        output: 'Too many background tasks are already running.',
+        output: textOutput('Too many background tasks are already running.'),
       }),
     );
   });
@@ -1727,7 +1724,7 @@ describe('BashTool background mode', () => {
     expect(results).toContainEqual(
       expect.objectContaining({
         isError: true,
-        output: 'Too many background tasks are already running.',
+        output: textOutput('Too many background tasks are already running.'),
       }),
     );
   });
@@ -1749,9 +1746,7 @@ describe('BashTool background mode', () => {
           timeout: 1,
         }),
       );
-      expect(typeof result.output).toBe('string');
-      if (typeof result.output !== 'string') throw new Error('Expected string tool output.');
-      const taskId = result.output.match(/task_id: (call_bash)/)?.[1];
+      const taskId = outputText(result.output).match(/task_id: (call_bash)/)?.[1];
       expect(taskId).toBeDefined();
 
       markExited();
@@ -1832,8 +1827,7 @@ describe('BashTool background mode', () => {
       context({ command: 'sleep 1', run_in_background: true, description: 'sleep task' }),
     );
 
-    expect(typeof result.output).toBe('string');
-    const output = result.output as string;
+    const output = outputText(result.output);
     expect(output).toContain('task_id:');
     expect(output).toContain('status: running');
     expect(output).toContain('automatic_notification: true');
@@ -1854,7 +1848,7 @@ describe('BashTool background mode', () => {
     );
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('description is required');
+    expect(outputText(result.output)).toContain('description is required');
     expect(exec).not.toHaveBeenCalled();
   });
 });
@@ -1875,8 +1869,7 @@ describe('BashTool prompt / runtime consistency', () => {
     );
 
     expect(result).toMatchObject({ isError: true });
-    expect(typeof result.output).toBe('string');
-    const errorToolNames = [...(result.output as string).matchAll(/\b(Task[A-Za-z]+)\b/g)].map(
+    const errorToolNames = [...outputText(result.output).matchAll(/\b(Task[A-Za-z]+)\b/g)].map(
       (match) => match[1],
     );
 
@@ -1886,3 +1879,7 @@ describe('BashTool prompt / runtime consistency', () => {
     expect(errorToolNames.length).toBeGreaterThan(0);
   });
 });
+
+function outputText(output: ExecutableToolResult['output']): string {
+  return output.map((part) => (part.type === 'text' ? part.text : '')).join('');
+}

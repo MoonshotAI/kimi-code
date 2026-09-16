@@ -4,7 +4,7 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { GOAL_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '#/agent/tools/mainAgentOnly';
-import { type ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ToolExecution } from '#/tool/toolContract';
 
 import { IAgentGoalService } from '#/features/goal/goalService';
 import { goalForModel } from '#/features/goal/tools/serialize';
@@ -42,7 +42,7 @@ export class CreateGoalTool implements ICreateGoalTool {
           currentGoal?.goalId !== goalAtResolution?.goalId &&
           (currentGoal === null || !this.goal.isGoalToolTarget(turnId, currentGoal.goalId))
         ) {
-          return { output: 'Goal not created: the current goal changed.' };
+          return { output: textOutput('Goal not created: the current goal changed.') };
         }
         const snapshot = await this.goal.createGoal(
           {
@@ -52,7 +52,7 @@ export class CreateGoalTool implements ICreateGoalTool {
           },
           'model',
         );
-        return { output: JSON.stringify({ goal: goalForModel(snapshot) }, null, 2) };
+        return { output: textOutput(JSON.stringify({ goal: goalForModel(snapshot) }, null, 2)) };
       },
     };
   }

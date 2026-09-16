@@ -5,6 +5,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { runWillBeginStepHooks, type StubLoop } from '../../../agent/loop/stubs';
 import { IAgentGoalService } from '#/features/goal/goalService';
+import { textOutput } from '#/tool/toolContract';
 
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
@@ -307,7 +308,7 @@ describe('GoalInjection integration', () => {
       await ctx.untilApproval(true);
       const toolCallEvents = ctx.untilToolCall({
         content: 'lookup-result',
-        output: 'lookup-result',
+        output: textOutput('lookup-result'),
       });
       ctx.mockNextResponse({ type: 'text', text: 'The lookup result is lookup-result.' });
       ctx.mockNextResponse(

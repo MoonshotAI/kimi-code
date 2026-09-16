@@ -21,6 +21,7 @@ import { ISessionInstructionsProvider } from '#/session/sessionInstructions/inst
 import type { WatchChange } from '#human/utils/watch';
 import {
   ToolAccesses,
+  textOutput,
   type ToolAccesses as ToolAccessesType,
 } from '#/tool/toolContract';
 import type {
@@ -281,7 +282,7 @@ function didCtx(
       options.preflightRejected === true
         ? undefined
         : options.accesses ?? testAccesses(name, args),
-    result: options.result ?? { output: 'original result' },
+    result: options.result ?? { output: textOutput('original result') },
   };
 }
 
@@ -763,7 +764,7 @@ describe('agentsMdReminder result shapes and edge cases', () => {
 
     const failed = await fire(
       h,
-      didCtx('Read', { path: agentsMdPath }, { result: { output: 'not found', isError: true } }),
+      didCtx('Read', { path: agentsMdPath }, { result: { output: textOutput('not found'), isError: true } }),
     );
     expect(outputText(failed)).toBe('not found');
     expect(agentsMdMessages(h)).toHaveLength(0);
@@ -803,7 +804,7 @@ describe('agentsMdReminder duplicate calls', () => {
         return {
           accesses: ToolAccesses.readFile(String(args['path'])),
           approvalRule: this.name,
-          execute: async (_ctx: ExecutableToolContext) => ({ output: 'file contents' }),
+          execute: async (_ctx: ExecutableToolContext) => ({ output: textOutput('file contents') }),
         };
       }
     }
@@ -946,7 +947,7 @@ describe('agentsMdReminder probing boundaries', () => {
     const result = await fire(
       h,
       didCtx('Read', { path: join(subDir, 'missing.ts') }, {
-        result: { output: 'not found', isError: true },
+        result: { output: textOutput('not found'), isError: true },
       }),
     );
 
@@ -1207,7 +1208,7 @@ describe('agentsMdReminder round-2 hardening', () => {
         return {
           accesses: ToolAccesses.readFile(String(args['path'])),
           approvalRule: this.name,
-          execute: async (_ctx: ExecutableToolContext) => ({ output: 'x'.repeat(60_000) }),
+          execute: async (_ctx: ExecutableToolContext) => ({ output: textOutput('x'.repeat(60_000)) }),
         };
       }
     }
@@ -1227,9 +1228,7 @@ describe('agentsMdReminder round-2 hardening', () => {
     }
 
     expect(results).toHaveLength(1);
-    const output = results[0]!.result.output;
-    expect(typeof output).toBe('string');
-    const text = output as string;
+    const text = outputText(results[0]!.result);
     expect(text).toContain('output_path:');
     expect(text).not.toContain('<system-reminder>');
     expect(text).not.toContain(subAgentsMd);
@@ -1252,7 +1251,7 @@ describe('agentsMdReminder round-2 hardening', () => {
         return {
           accesses: ToolAccesses.readFile(join(homePackage, 'index.ts')),
           approvalRule: this.name,
-          execute: async (_ctx: ExecutableToolContext) => ({ output: 'home file contents' }),
+          execute: async (_ctx: ExecutableToolContext) => ({ output: textOutput('home file contents') }),
         };
       }
     }
@@ -1305,7 +1304,7 @@ describe('agentsMdReminder round-2 hardening', () => {
     }
     h.ix.get(IAgentToolRegistryService).register(new ReadTool());
     h.ix.get(IAgentToolExecutorService).onBeforeExecuteTool((event) => {
-      event.veto({ output: 'permission denied', isError: true });
+      event.veto({ output: textOutput('permission denied'), isError: true });
     });
 
     const results = [];
@@ -1359,7 +1358,7 @@ describe('agentsMdReminder cancellation outcomes', () => {
             return new Promise<ExecutableToolResult>((resolve) => {
               const onAbort = (): void => {
                 signal.removeEventListener('abort', onAbort);
-                resolve({ output: 'bash aborted', isError: true });
+                resolve({ output: textOutput('bash aborted'), isError: true });
               };
               if (signal.aborted) onAbort();
               else signal.addEventListener('abort', onAbort);
@@ -1378,7 +1377,7 @@ describe('agentsMdReminder cancellation outcomes', () => {
         return {
           accesses: ToolAccesses.readFile(join(subDir, 'index.ts')),
           approvalRule: this.name,
-          execute: async () => ({ output: 'read result' }),
+          execute: async () => ({ output: textOutput('read result') }),
         };
       }
     }

@@ -26,7 +26,7 @@ import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { probeHostEnvironmentFromNode } from '#/_base/execEnv/environmentProbe';
 import type { ITelemetryService, TelemetryProperties } from '#/app/telemetry/telemetry';
-import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ExecutableToolContext, type ExecutableToolResult, type ToolExecution } from '#/tool/toolContract';
 
 vi.mock('#/os/backends/node-local/tools/rgLocator', () => ({
   ensureRgPath: vi.fn(async (): Promise<{ path: string; source: string }> => ({
@@ -197,7 +197,7 @@ async function execute(tool: GlobTool, args: GlobInput): Promise<ExecutableToolR
         : `Tool "${tool.name}" failed to resolve execution: ${
             error instanceof Error ? error.message : String(error)
           }`;
-    return { isError: true, output };
+    return { isError: true, output: textOutput(output) };
   }
   if (execution.isError === true) return execution;
   const ctx: ExecutableToolContext = {
@@ -209,11 +209,7 @@ async function execute(tool: GlobTool, args: GlobInput): Promise<ExecutableToolR
 }
 
 function toolContentString(result: ExecutableToolResult): string {
-  const c = result.output;
-  if (typeof c !== 'string') {
-    throw new TypeError(`expected string content, got ${typeof c}`);
-  }
-  return c;
+  return result.output.map((part) => (part.type === 'text' ? part.text : '')).join('');
 }
 
 function makeTool(
@@ -286,7 +282,7 @@ describe('GlobTool', () => {
 
     expect(args).toContain('--sortr=modified');
     expect(args).not.toContain('--sort=modified');
-    expect(result.output).toBe('src/new.ts\nsrc/old.ts');
+    expect(toolContentString(result)).toBe('src/new.ts\nsrc/old.ts');
     withCwd.toHaveBeenCalledWith('/workspace');
   });
 
@@ -299,7 +295,7 @@ describe('GlobTool', () => {
 
     const result = await execute(tool, { pattern: 'src/**/*.ts', path: 'C:\\WORKSPACE' });
 
-    expect(result.output).toBe('src/old.ts');
+    expect(toolContentString(result)).toBe('src/old.ts');
     withCwd.toHaveBeenCalledWith('C:/WORKSPACE');
   });
 
@@ -315,7 +311,7 @@ describe('GlobTool', () => {
     expect(result.isError).toBeFalsy();
     withCwd.toHaveBeenCalledWith('/workspace');
     expect(execArgs(exec).at(-1)).toBe('.');
-    expect(result.output).toContain('Continue with the same search arguments and offset=100.');
+    expect(toolContentString(result)).toContain('Continue with the same search arguments and offset=100.');
   });
 
   it('passes a brace pattern through to a single rg --glob', async () => {
@@ -342,7 +338,7 @@ describe('GlobTool', () => {
     expect(result.isError).toBeFalsy();
     withCwd.toHaveBeenCalledWith('/workspace');
     expect(execArgs(exec)).toContain('\\{a,b\\}.ts');
-    expect(result.output).toContain('{a,b}.ts');
+    expect(toolContentString(result)).toContain('{a,b}.ts');
   });
 
   it('searches only the current workspace when path is omitted', async () => {
@@ -354,7 +350,7 @@ describe('GlobTool', () => {
     expect(exec).toHaveBeenCalledTimes(1);
     withCwd.toHaveBeenCalledWith('/workspace');
     expect(execArgs(exec).at(-1)).toBe('.');
-    expect(result.output).toBe('a.ts\nshared.ts');
+    expect(toolContentString(result)).toBe('a.ts\nshared.ts');
   });
 
   it('keeps results absolute when searching an additional directory', async () => {
@@ -363,7 +359,7 @@ describe('GlobTool', () => {
 
     const result = await execute(tool, { pattern: 'pkg/**/*.ts', path: '/extra' });
 
-    expect(result.output).toBe('/extra/pkg/a.ts');
+    expect(toolContentString(result)).toBe('/extra/pkg/a.ts');
     expect(exec).toHaveBeenCalledTimes(1);
     withCwd.toHaveBeenCalledWith('/extra');
     expect(execArgs(exec).at(-1)).toBe('.');
@@ -396,9 +392,9 @@ describe('GlobTool', () => {
 
     const result = await execute(tool, { pattern: '*.ts' });
 
-    expect(result.output).toContain('Continue with the same search arguments and offset=100.');
-    expect(result.output).toContain('0.ts');
-    expect(result.output).not.toContain(`${String(DEFAULT_HEAD_LIMIT)}.ts`);
+    expect(toolContentString(result)).toContain('Continue with the same search arguments and offset=100.');
+    expect(toolContentString(result)).toContain('0.ts');
+    expect(toolContentString(result)).not.toContain(`${String(DEFAULT_HEAD_LIMIT)}.ts`);
   });
 
   it('offers an all-matches query when the default page is incomplete', async () => {
@@ -411,7 +407,7 @@ describe('GlobTool', () => {
 
     const result = await execute(tool, { pattern: '*.txt' });
 
-    expect(result.output).toContain('To remove the match-count limit, omit offset and use head_limit=0.');
+    expect(toolContentString(result)).toContain('To remove the match-count limit, omit offset and use head_limit=0.');
   });
 
   it('returns a "Found N matches" footer at exactly DEFAULT_HEAD_LIMIT without truncation', async () => {
@@ -423,14 +419,14 @@ describe('GlobTool', () => {
 
     const result = await execute(tool, { pattern: '*.py' });
 
-    expect(result.output).not.toContain('Only the first');
-    expect(result.output).toContain(`Found ${String(DEFAULT_HEAD_LIMIT)} matches`);
+    expect(toolContentString(result)).not.toContain('Only the first');
+    expect(toolContentString(result)).toContain(`Found ${String(DEFAULT_HEAD_LIMIT)} matches`);
   });
 
   it.each([2, 10])('distinguishes an exhausted page at offset=%s from a search with no matches', async (offset) => {
     const { tool } = makeTool(workspace, { exec: execReturning('/workspace/a.ts\n/workspace/b.ts\n') });
     const result = await execute(tool, GlobInputSchema.parse({ pattern: '*.ts', offset }));
-    expect(result.output).toBe(`No more matches at offset=${String(offset)} in the current result set (2 matches).`);
+    expect(toolContentString(result)).toBe(`No more matches at offset=${String(offset)} in the current result set (2 matches).`);
   });
 
   it.each([0, 1, 3])('keeps traversal warnings and partial counts on the page at offset=%s', async (offset) => {
@@ -438,11 +434,11 @@ describe('GlobTool', () => {
       exec: execReturning('/workspace/a.ts\n/workspace/b.ts\n/workspace/c.ts\n', 'rg: ./locked: Permission denied', 2),
     });
     const result = await execute(tool, GlobInputSchema.parse({ pattern: '*.ts', offset, head_limit: 1 }));
-    expect(result.output).toContain('Permission denied');
-    expect(result.output).toContain('partial result set');
-    expect(result.output).not.toContain('No matches found');
-    if (offset < 3) expect(result.output).toContain('of 3 collected matches (partial result set).');
-    else expect(result.output).toContain('No more matches at offset=3');
+    expect(toolContentString(result)).toContain('Permission denied');
+    expect(toolContentString(result)).toContain('partial result set');
+    expect(toolContentString(result)).not.toContain('No matches found');
+    if (offset < 3) expect(toolContentString(result)).toContain('of 3 collected matches (partial result set).');
+    else expect(toolContentString(result)).toContain('No more matches at offset=3');
   });
 
   it.each([
@@ -465,9 +461,9 @@ describe('GlobTool', () => {
       exec: execReturning(`/workspace/${'x'.repeat(200)}.ts\n`.repeat(50_000)),
     });
     const result = await execute(tool, GlobInputSchema.parse({ pattern: '*.ts', head_limit: 0 }));
-    expect(result.output).toContain('stdout truncated');
-    expect(result.output).toContain('collected matches (partial result set)');
-    expect(result.output).not.toContain('Continue with');
+    expect(toolContentString(result)).toContain('stdout truncated');
+    expect(toolContentString(result)).toContain('collected matches (partial result set)');
+    expect(toolContentString(result)).not.toContain('Continue with');
   });
 
   it('keeps the timeout warning when the requested page has no collected matches', async () => {
@@ -487,9 +483,9 @@ describe('GlobTool', () => {
       const pending = execute(tool, GlobInputSchema.parse({ pattern: '*.ts', offset: 1 }));
       await vi.advanceTimersByTimeAsync(20_000);
       const result = await pending;
-      expect(result.output).toContain('Glob timed out');
-      expect(result.output).toContain('No more matches at offset=1 in the collected partial result set');
-      expect(result.output).not.toContain('No matches found');
+      expect(toolContentString(result)).toContain('Glob timed out');
+      expect(toolContentString(result)).toContain('No more matches at offset=1 in the collected partial result set');
+      expect(toolContentString(result)).not.toContain('No matches found');
     } finally {
       vi.useRealTimers();
     }
@@ -521,9 +517,9 @@ describe('GlobTool', () => {
 
     const result = await execute(tool, { pattern: 'src/**' });
 
-    expect(result.output).toContain('src/a.ts');
-    expect(result.output).not.toContain('.env');
-    expect(result.output).toContain('Filtered 1 sensitive file');
+    expect(toolContentString(result)).toContain('src/a.ts');
+    expect(toolContentString(result)).not.toContain('.env');
+    expect(toolContentString(result)).toContain('Filtered 1 sensitive file');
   });
 
   it('surfaces the raw spawn error when rg cannot be spawned', async () => {
@@ -533,8 +529,8 @@ describe('GlobTool', () => {
     const result = await execute(tool, { pattern: '*.ts' });
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('spawn rg ENOENT');
-    expect(result.output).not.toContain('Glob failed');
+    expect(toolContentString(result)).toContain('spawn rg ENOENT');
+    expect(toolContentString(result)).not.toContain('Glob failed');
   });
 
   it('retries once single-threaded when rg fails with EAGAIN (os error 11)', async () => {
@@ -549,7 +545,7 @@ describe('GlobTool', () => {
     const result = await execute(tool, { pattern: '*.ts', path: '/workspace' });
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).toContain('a.ts');
+    expect(toolContentString(result)).toContain('a.ts');
     expect(exec).toHaveBeenCalledTimes(2);
     const retryArgs = (exec.mock.calls[1] as ReadonlyArray<unknown>)[1] as string[];
     expect(retryArgs).toContain('-j');
@@ -567,7 +563,7 @@ describe('GlobTool', () => {
     const result = await execute(tool, { pattern: '*.ts' });
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('rg unavailable: ripgrep (rg) is not available on PATH');
+    expect(toolContentString(result)).toContain('rg unavailable: ripgrep (rg) is not available on PATH');
     expect(exec).not.toHaveBeenCalled();
     expect(events).toContainEqual({
       event: 'glob_tool_rg_fallback',
@@ -587,7 +583,7 @@ describe('GlobTool', () => {
     const result = await execute(tool, { pattern: '*.ts' });
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).toContain('a.ts');
+    expect(toolContentString(result)).toContain('a.ts');
     expect((exec.mock.calls[0] as ReadonlyArray<unknown>)[0]).toBe('/mock/rg');
     expect(events).toContainEqual({
       event: 'glob_tool_rg_fallback',
@@ -604,8 +600,8 @@ describe('GlobTool', () => {
 
       const result = await execute(tool, { pattern: '*.py', path: '/skills' });
 
-      expect(result.output).toContain('/skills/read_content.py');
-      expect(result.output).toContain('/skills/utils.py');
+      expect(toolContentString(result)).toContain('/skills/read_content.py');
+      expect(toolContentString(result)).toContain('/skills/utils.py');
       withCwd.toHaveBeenCalledWith('/skills');
       expect(execArgs(exec).at(-1)).toBe('.');
     });
@@ -619,7 +615,7 @@ describe('GlobTool', () => {
         path: '/skills/feishu/scripts',
       });
 
-      expect(result.output).toContain('/skills/feishu/scripts/read_content.py');
+      expect(toolContentString(result)).toContain('/skills/feishu/scripts/read_content.py');
       withCwd.toHaveBeenCalledWith('/skills/feishu/scripts');
     });
 
@@ -633,7 +629,7 @@ describe('GlobTool', () => {
       const result = await execute(tool, { pattern: '*.py', path: '../../tmp/evil' });
 
       expect(result).toMatchObject({ isError: true });
-      expect(result.output).toContain('absolute path');
+      expect(toolContentString(result)).toContain('absolute path');
       expect(exec).not.toHaveBeenCalled();
       withCwd.not.toHaveBeenCalled();
     });
@@ -647,7 +643,7 @@ describe('GlobTool', () => {
         path: '/skills/my-skill/scripts',
       });
 
-      expect(result.output).toContain('/skills/my-skill/scripts/helper.py');
+      expect(toolContentString(result)).toContain('/skills/my-skill/scripts/helper.py');
       withCwd.toHaveBeenCalledWith('/skills/my-skill/scripts');
     });
   });
@@ -661,8 +657,8 @@ describe('GlobTool', () => {
     expect(result.isError).toBeFalsy();
     withCwd.toHaveBeenCalledWith('/workspace');
     expect(execArgs(exec)).toContain('**/*.py');
-    expect(result.output).toContain('a.py');
-    expect(result.output).toContain('sub/b.py');
+    expect(toolContentString(result)).toContain('a.py');
+    expect(toolContentString(result)).toContain('sub/b.py');
   });
 
   it('walks safe recursive patterns with a literal subdirectory anchor', async () => {
@@ -680,12 +676,12 @@ describe('GlobTool', () => {
 
     const result = await execute(tool, { pattern: 'src/**/*.py', path: '/workspace' });
 
-    expect(result.output).toContain('src/main.py');
-    expect(result.output).toContain('src/utils.py');
-    expect(result.output).toContain('src/main/app.py');
-    expect(result.output).toContain('src/main/config.py');
-    expect(result.output).toContain('src/test/test_app.py');
-    expect(result.output).toContain('src/test/test_config.py');
+    expect(toolContentString(result)).toContain('src/main.py');
+    expect(toolContentString(result)).toContain('src/utils.py');
+    expect(toolContentString(result)).toContain('src/main/app.py');
+    expect(toolContentString(result)).toContain('src/main/config.py');
+    expect(toolContentString(result)).toContain('src/test/test_app.py');
+    expect(toolContentString(result)).toContain('src/test/test_config.py');
   });
 
   it('surfaces an explicit no-match message when rg exits 1', async () => {
@@ -695,7 +691,7 @@ describe('GlobTool', () => {
     const result = await execute(tool, { pattern: '*.xyz', path: '/workspace' });
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).toContain('No matches found');
+    expect(toolContentString(result)).toContain('No matches found');
   });
 
   it('keeps complete paths and surfaces a warning when rg exits 2 after traversal errors', async () => {
@@ -709,10 +705,10 @@ describe('GlobTool', () => {
     const result = await execute(tool, { pattern: '*.ts', path: '/workspace' });
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).toContain('a.ts');
-    expect(result.output).toContain('src/b.ts');
-    expect(result.output).toContain('Glob completed with warnings');
-    expect(result.output).toContain('Permission denied');
+    expect(toolContentString(result)).toContain('a.ts');
+    expect(toolContentString(result)).toContain('src/b.ts');
+    expect(toolContentString(result)).toContain('Glob completed with warnings');
+    expect(toolContentString(result)).toContain('Permission denied');
   });
 
   it('keeps ripgrep errors hard failures when no complete path is produced', async () => {
@@ -722,7 +718,7 @@ describe('GlobTool', () => {
     const result = await execute(tool, { pattern: '[', path: '/workspace' });
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('Glob failed: error: invalid glob');
+    expect(toolContentString(result)).toContain('Glob failed: error: invalid glob');
   });
 
   it('reports "does not exist" when the search directory is missing', async () => {
@@ -735,7 +731,7 @@ describe('GlobTool', () => {
     const result = await execute(tool, { pattern: '*.py', path: '/workspace/nonexistent' });
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('does not exist');
+    expect(toolContentString(result)).toContain('does not exist');
     expect(exec).not.toHaveBeenCalled();
     withCwd.not.toHaveBeenCalled();
   });
@@ -748,7 +744,7 @@ describe('GlobTool', () => {
     const result = await execute(tool, { pattern: '*.py', path: '/workspace/file.txt' });
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('is not a directory');
+    expect(toolContentString(result)).toContain('is not a directory');
     expect(exec).not.toHaveBeenCalled();
     withCwd.not.toHaveBeenCalled();
   });
@@ -763,7 +759,7 @@ describe('GlobTool', () => {
     const result = await execute(tool, { pattern: '*.py', path: '/workspace/locked' });
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('EACCES: permission denied');
+    expect(toolContentString(result)).toContain('EACCES: permission denied');
     expect(exec).not.toHaveBeenCalled();
     withCwd.not.toHaveBeenCalled();
   });
@@ -777,7 +773,7 @@ describe('GlobTool', () => {
     expect(result.isError).toBeFalsy();
     withCwd.toHaveBeenCalledWith('/workspace');
     expect(execArgs(exec)).toContain('**/main/*.py');
-    expect(result.output).toContain('src/main/app.py');
+    expect(toolContentString(result)).toContain('src/main/app.py');
   });
 
   it('matches dotfiles like .gitlab-ci.yml under a simple "*.yml" pattern', async () => {
@@ -786,8 +782,8 @@ describe('GlobTool', () => {
 
     const result = await execute(tool, { pattern: '*.yml' });
 
-    expect(result.output).toContain('.gitlab-ci.yml');
-    expect(result.output).toContain('config.yml');
+    expect(toolContentString(result)).toContain('.gitlab-ci.yml');
+    expect(toolContentString(result)).toContain('config.yml');
   });
 
   it('descends into hidden directories under a recursive pattern', async () => {
@@ -796,7 +792,7 @@ describe('GlobTool', () => {
 
     const result = await execute(tool, { pattern: 'src/**/*.yml' });
 
-    expect(result.output).toContain('src/.config/settings.yml');
+    expect(toolContentString(result)).toContain('src/.config/settings.yml');
   });
 
   it('matches files inside an explicitly addressed hidden directory', async () => {
@@ -805,7 +801,7 @@ describe('GlobTool', () => {
 
     const result = await execute(tool, { pattern: '.github/**/*.yml' });
 
-    expect(result.output).toContain('.github/workflows/ci.yml');
+    expect(toolContentString(result)).toContain('.github/workflows/ci.yml');
   });
 
   it('shows absolute paths when explicit search root is outside all workspace roots', async () => {
@@ -817,7 +813,7 @@ describe('GlobTool', () => {
 
     const result = await execute(tool, { pattern: '*.py', path: '/extra' });
     expect(result.isError).toBeFalsy();
-    expect(result.output).toBe('/extra/test.py');
+    expect(toolContentString(result)).toBe('/extra/test.py');
     withCwd.toHaveBeenCalledWith('/extra');
   });
 
@@ -828,7 +824,7 @@ describe('GlobTool', () => {
 
     const result = await execute(tool, { pattern: '*.py', path: '/extra' });
     expect(result.isError).toBeFalsy();
-    expect(result.output).toBe('/extra/test.py');
+    expect(toolContentString(result)).toBe('/extra/test.py');
   });
 
   it('allows a relative path argument that resolves inside the workspace', async () => {
@@ -838,7 +834,7 @@ describe('GlobTool', () => {
     const result = await execute(tool, { pattern: '*.py', path: 'relative/path' });
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).toContain('test.py');
+    expect(toolContentString(result)).toContain('test.py');
     withCwd.toHaveBeenCalledWith('/workspace/relative/path');
     expect(execArgs(exec).at(-1)).toBe('.');
   });
@@ -853,7 +849,7 @@ describe('GlobTool', () => {
     const result = await execute(tool, { pattern: '*.py', path: '~/' });
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).toBe('No matches found');
+    expect(toolContentString(result)).toBe('No matches found');
     withCwd.toHaveBeenCalledWith('/home/test');
     expect(execArgs(exec).at(-1)).toBe('.');
   });
@@ -868,7 +864,7 @@ describe('GlobTool', () => {
     const result = await execute(tool, { pattern: '*.py', path: '/parent/workdir-sneaky' });
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).toBe('No matches found');
+    expect(toolContentString(result)).toBe('No matches found');
     withCwd.toHaveBeenCalledWith('/parent/workdir-sneaky');
     expect(execArgs(exec).at(-1)).toBe('.');
   });
@@ -980,7 +976,7 @@ describe('GlobTool integration (real ripgrep)', () => {
 
     const result = await execute(tool, { pattern: '*.ts', path: tmpDir! });
 
-    expect(result.output).toBe('new.ts\nmid.ts\nold.ts');
+    expect(toolContentString(result)).toBe('new.ts\nmid.ts\nold.ts');
   });
 
   it('treats a bare pattern (no slash) as recursive across subdirectories', async () => {
@@ -991,9 +987,9 @@ describe('GlobTool integration (real ripgrep)', () => {
 
     const result = await execute(tool, { pattern: '*.ts', path: tmpDir! });
 
-    expect(result.output).toContain('root.ts');
-    expect(result.output).toContain('src/a.ts');
-    expect(result.output).toContain('src/sub/b.ts');
+    expect(toolContentString(result)).toContain('root.ts');
+    expect(toolContentString(result)).toContain('src/a.ts');
+    expect(toolContentString(result)).toContain('src/sub/b.ts');
   });
 
   it('matches brace alternatives across directories', async () => {
@@ -1004,9 +1000,9 @@ describe('GlobTool integration (real ripgrep)', () => {
 
     const result = await execute(tool, { pattern: '{src,test}/*.ts', path: tmpDir! });
 
-    expect(result.output).toContain('src/a.ts');
-    expect(result.output).toContain('test/a.ts');
-    expect(result.output).not.toContain('other/a.ts');
+    expect(toolContentString(result)).toContain('src/a.ts');
+    expect(toolContentString(result)).toContain('test/a.ts');
+    expect(toolContentString(result)).not.toContain('other/a.ts');
   });
 
   it('matches a recursive anchored pattern (src/**/*.ts) under an absolute search root', async () => {
@@ -1017,9 +1013,9 @@ describe('GlobTool integration (real ripgrep)', () => {
 
     const result = await execute(tool, { pattern: 'src/**/*.ts', path: tmpDir! });
 
-    expect(result.output).toContain('src/a.ts');
-    expect(result.output).toContain('src/sub/b.ts');
-    expect(result.output).not.toContain('other/c.ts');
+    expect(toolContentString(result)).toContain('src/a.ts');
+    expect(toolContentString(result)).toContain('src/sub/b.ts');
+    expect(toolContentString(result)).not.toContain('other/c.ts');
   });
 
   it('treats an escaped brace as a literal filename', async () => {
@@ -1028,7 +1024,7 @@ describe('GlobTool integration (real ripgrep)', () => {
 
     const result = await execute(tool, { pattern: '\\{a,b\\}.ts', path: tmpDir! });
 
-    expect(result.output).toContain('{a,b}.ts');
+    expect(toolContentString(result)).toContain('{a,b}.ts');
   });
 
   it('returns absolute paths when the search root is outside the workspace', async () => {
@@ -1040,7 +1036,7 @@ describe('GlobTool integration (real ripgrep)', () => {
 
       const result = await execute(tool, { pattern: '*.ts', path: externalDir });
 
-      expect(result.output).toBe(extFile);
+      expect(toolContentString(result)).toBe(extFile);
     } finally {
       await fs.rm(externalDir, { recursive: true, force: true });
     }

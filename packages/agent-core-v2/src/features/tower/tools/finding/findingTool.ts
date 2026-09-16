@@ -1,7 +1,7 @@
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import type { ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ToolExecution } from '#/tool/toolContract';
 
 import { callerName, newTowerStore, runTowerTool } from '../support';
 import DESCRIPTION from './finding.md?raw';
@@ -41,7 +41,7 @@ export class TowerFindingTool implements ITowerFindingTool {
             suggestedFix: args.suggested_fix,
           });
           return {
-            output: `finding filed: ${rel}\nThe tower will route it — do not fix out-of-scope issues yourself.`,
+            output: textOutput(`finding filed: ${rel}\nThe tower will route it — do not fix out-of-scope issues yourself.`),
           };
         }),
     };

@@ -1,6 +1,6 @@
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
-import { type ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ToolExecution } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
 import { IAgentTaskService } from '#/agent/task/task';
@@ -34,7 +34,7 @@ export class TaskListTool implements ITaskListTool {
         const activeOnly = args.active_only ?? true;
         const tasks = this.tasks.list(activeOnly, args.limit ?? 20);
         return {
-          output: formatTaskList(tasks, activeOnly),
+          output: textOutput(formatTaskList(tasks, activeOnly)),
           isError: false,
         };
       },

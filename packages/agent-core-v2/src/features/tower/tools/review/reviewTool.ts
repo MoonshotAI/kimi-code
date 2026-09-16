@@ -1,7 +1,7 @@
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import type { ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ToolExecution } from '#/tool/toolContract';
 
 import { callerName, newTowerStore, runTowerTool } from '../support';
 import DESCRIPTION from './review.md?raw';
@@ -40,7 +40,7 @@ export class TowerReviewTool implements ITowerReviewTool {
             decision: args.decision,
           });
           return {
-            output: `review submitted: ${rel}\nAlso notify the branch author (or the tower) with TowerSend so the verdict is seen.`,
+            output: textOutput(`review submitted: ${rel}\nAlso notify the branch author (or the tower) with TowerSend so the verdict is seen.`),
           };
         }),
     };

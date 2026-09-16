@@ -704,7 +704,7 @@ function policyContext(input: PolicyContextInput): ResolvedToolExecutionHookCont
         subject === undefined
           ? undefined
           : (ruleArgs) => matchesRuleSubject(input.toolName, ruleArgs, subject),
-      execute: async () => ({ output: '' }),
+      execute: async () => ({ output: [] }),
     },
   };
 }

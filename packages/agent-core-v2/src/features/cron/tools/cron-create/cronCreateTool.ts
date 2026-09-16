@@ -1,4 +1,4 @@
-import { type ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern } from '#/tool/rule-match';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -39,7 +39,7 @@ export class CronCreateTool implements ICronCreateTool {
     if (this.cron.isDisabled()) {
       return {
         isError: true,
-        output: 'Cron scheduling is disabled (KIMI_DISABLE_CRON=1).',
+        output: textOutput('Cron scheduling is disabled (KIMI_DISABLE_CRON=1).'),
       };
     }
 
@@ -51,9 +51,11 @@ export class CronCreateTool implements ICronCreateTool {
     } catch (err) {
       return {
         isError: true,
-        output: `Invalid cron expression: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
+        output: textOutput(
+          `Invalid cron expression: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        ),
       };
     }
 
@@ -61,18 +63,22 @@ export class CronCreateTool implements ICronCreateTool {
     if (!hasFireWithinYears(parsed, 5, nowAtPrepare)) {
       return {
         isError: true,
-        output: `Cron expression ${JSON.stringify(
-          normalizedCron,
-        )} has no fire within 5 years; refusing to schedule.`,
+        output: textOutput(
+          `Cron expression ${JSON.stringify(
+            normalizedCron,
+          )} has no fire within 5 years; refusing to schedule.`,
+        ),
       };
     }
 
     if (this.cron.list().length >= MAX_CRON_JOBS_PER_SESSION) {
       return {
         isError: true,
-        output: `Cron job cap reached (max ${String(
-          MAX_CRON_JOBS_PER_SESSION,
-        )} per session).`,
+        output: textOutput(
+          `Cron job cap reached (max ${String(
+            MAX_CRON_JOBS_PER_SESSION,
+          )} per session).`,
+        ),
       };
     }
 
@@ -80,9 +86,11 @@ export class CronCreateTool implements ICronCreateTool {
     if (byteLen > MAX_PROMPT_BYTES) {
       return {
         isError: true,
-        output: `Prompt exceeds ${String(
-          MAX_PROMPT_BYTES,
-        )} bytes (got ${String(byteLen)}).`,
+        output: textOutput(
+          `Prompt exceeds ${String(
+            MAX_PROMPT_BYTES,
+          )} bytes (got ${String(byteLen)}).`,
+        ),
       };
     }
 
@@ -96,11 +104,13 @@ export class CronCreateTool implements ICronCreateTool {
       ) {
         return {
           isError: true,
-          output: `One-shot cron ${JSON.stringify(
-            normalizedCron,
-          )} would not fire until ${formatLocalIsoWithOffset(
-            firstFire,
-          )} (more than a year out). If you meant "today" or a near date, the pinned day/month has already passed this year — pick a future date or use wildcards.`,
+          output: textOutput(
+            `One-shot cron ${JSON.stringify(
+              normalizedCron,
+            )} would not fire until ${formatLocalIsoWithOffset(
+              firstFire,
+            )} (more than a year out). If you meant "today" or a near date, the pinned day/month has already passed this year — pick a future date or use wildcards.`,
+          ),
         };
       }
     }
@@ -123,9 +133,11 @@ export class CronCreateTool implements ICronCreateTool {
         if (this.cron.list().length >= MAX_CRON_JOBS_PER_SESSION) {
           return {
             isError: true,
-            output: `Cron job cap reached (max ${String(
-              MAX_CRON_JOBS_PER_SESSION,
-            )} per session).`,
+            output: textOutput(
+              `Cron job cap reached (max ${String(
+                MAX_CRON_JOBS_PER_SESSION,
+              )} per session).`,
+            ),
           };
         }
 
@@ -152,7 +164,7 @@ export class CronCreateTool implements ICronCreateTool {
         };
 
         return {
-          output: formatOutput(output),
+          output: textOutput(formatOutput(output)),
           isError: false,
         };
       },

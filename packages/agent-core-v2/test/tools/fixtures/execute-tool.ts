@@ -1,8 +1,9 @@
-import type {
-  ExecutableTool,
-  ExecutableToolContext,
-  ExecutableToolResult,
-  ToolExecution,
+import {
+  textOutput,
+  type ExecutableTool,
+  type ExecutableToolContext,
+  type ExecutableToolResult,
+  type ToolExecution,
 } from '#/tool/toolContract';
 import { PathSecurityError } from '#/tool/path-access';
 
@@ -26,7 +27,7 @@ export async function executeTool<Input>(
         : `Tool "${tool.name}" failed to resolve execution: ${
             error instanceof Error ? error.message : String(error)
           }`;
-    return { isError: true, output };
+    return { isError: true, output: textOutput(output) };
   }
   if (execution.isError === true) return execution;
   return execution.execute(executionContext);

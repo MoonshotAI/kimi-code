@@ -14,7 +14,7 @@ import { StdioMcpClient } from '#/mcpCore/client-stdio';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
 import type { MCPClient, MCPContentBlock, MCPToolResult } from '#/mcpCore/types';
-import type { ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ToolExecution } from '#/tool/toolContract';
 import { sniffImageDimensions } from '#/agent/media/file-type';
 
 function modelText(result: Awaited<ReturnType<typeof mcpResultToExecutableOutput>>): string {
@@ -25,10 +25,8 @@ function isPromiseLike(value: ToolExecution | Promise<ToolExecution>): value is 
   return typeof (value as Promise<ToolExecution>).then === 'function';
 }
 
-function parseResultExtras(output: string | ContentPart[]): Record<string, unknown> {
-  const text = typeof output === 'string'
-    ? output
-    : output.map((part) => part.type === 'text' ? part.text : '').join('\n');
+function parseResultExtras(output: readonly ContentPart[]): Record<string, unknown> {
+  const text = output.map((part) => part.type === 'text' ? part.text : '').join('\n');
   const json = /<mcp-result-extras>\n([\s\S]*?)\n<\/mcp-result-extras>/.exec(text)?.[1];
   if (json === undefined) throw new Error('Expected model-visible MCP result extras');
   return JSON.parse(json) as Record<string, unknown>;
@@ -306,12 +304,12 @@ describe('mcpResultToExecutableOutput', () => {
     return { content, isError };
   }
 
-  test('collapses a single text part into a plain string', async () => {
+  test('keeps a single text part as a text part', async () => {
     const out = await mcpResultToExecutableOutput(
       result([{ type: 'text', text: 'hello' }]),
       'mcp__s__t',
     );
-    expect(out).toEqual({ output: 'hello' });
+    expect(out).toEqual({ output: textOutput('hello') });
   });
 
   test('delivers an inline image the bound provider accepts instead of a notice', async () => {
@@ -332,7 +330,7 @@ describe('mcpResultToExecutableOutput', () => {
       result([{ type: 'text', text: 'oops' }], true),
       'mcp__s__t',
     );
-    expect(out).toEqual({ output: 'oops', isError: true });
+    expect(out).toEqual({ output: textOutput('oops'), isError: true });
   });
 
   test('omits structuredContent when a text block already carries its serialization', async () => {
@@ -362,7 +360,7 @@ describe('mcpResultToExecutableOutput', () => {
       },
       'mcp__s__t',
     );
-    expect(out.output).toBe('{\n  "total": 1,\n  "rows": [ { "id": 1 } ]\n}');
+    expect(out.output).toEqual(textOutput('{\n  "total": 1,\n  "rows": [ { "id": 1 } ]\n}'));
   });
 
   test('preserves both values when parsing the text would round a number', async () => {
@@ -574,7 +572,7 @@ describe('mcpResultToExecutableOutput', () => {
       },
       'mcp__s__t',
     );
-    expect(out).toEqual({ output: 'ok' });
+    expect(out).toEqual({ output: textOutput('ok') });
   });
 
   test('returns an empty output array when the content array is empty', async () => {
@@ -644,7 +642,7 @@ describe('mcpResultToExecutableOutput', () => {
       result([{ type: 'text', text: 'x'.repeat(100_001) }]),
       'mcp__s__t',
     );
-    expect(out.output).toBe('x'.repeat(100_001));
+    expect(out.output).toEqual(textOutput('x'.repeat(100_001)));
     expect(out.truncated).toBeUndefined();
     expect(out.spill).toBeUndefined();
   });
@@ -918,7 +916,7 @@ describe('createMcpTool', () => {
       signal: new AbortController().signal,
     });
 
-    expect(result).toEqual({ output: 'ok' });
+    expect(result).toEqual({ output: textOutput('ok') });
     expect(result.truncated).toBeUndefined();
   });
 
@@ -1001,10 +999,8 @@ describe('mcpResultToExecutableOutput over a real stdio server', () => {
     }
   }
 
-  function joinedText(output: string | ContentPart[]): string {
-    return typeof output === 'string'
-      ? output
-      : output.map((p) => (p.type === 'text' ? p.text : '')).join('');
+  function joinedText(output: readonly ContentPart[]): string {
+    return output.map((p) => (p.type === 'text' ? p.text : '')).join('');
   }
 
   test('dual-emitting servers reach the model once, through content', async () => {

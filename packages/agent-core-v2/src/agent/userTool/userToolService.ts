@@ -6,10 +6,11 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { abortable } from '#/_base/utils/abort';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import type {
-  ExecutableTool,
-  ExecutableToolContext,
-  ExecutableToolResult,
+import {
+  textOutput,
+  type ExecutableTool,
+  type ExecutableToolContext,
+  type ExecutableToolResult,
 } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -157,11 +158,13 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
       tags,
     });
     try {
-      return await abortable(request, context.signal);
+      const result = await abortable(request, context.signal);
+      const output: unknown = result.output;
+      return typeof output === 'string' ? { ...result, output: textOutput(output) } : result;
     } catch (error) {
       if (context.signal.aborted) {
         interactions.respond(id, {
-          output: `User tool "${name}" was aborted.`,
+          output: textOutput(`User tool "${name}" was aborted.`),
           isError: true,
         });
       }

@@ -18,7 +18,7 @@ import type { ModelRequestTiming } from '#/llm-adapter/model/model-requester';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { abortedToolOutput } from '#/agent/toolExecutor/toolExecutorService';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
-import type { ExecutableToolResult } from '#/tool/toolContract';
+import { textOutput, type ExecutableToolResult } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IConfigService } from '#/app/config/config';
 import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
@@ -1678,7 +1678,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private appendMachineToolResult(
     toolCallId: string,
     result: {
-      readonly output: string | ContentPart[];
+      readonly output: readonly ContentPart[];
       readonly isError?: boolean;
       readonly note?: string;
       readonly stopTurn?: boolean;
@@ -1964,7 +1964,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         type: 'tool.result',
         parentUuid: step.toolCallUuids.get(toolCallId) ?? randomUUID(),
         toolCallId,
-        result: { output: abortedToolOutput(name, reason), isError: true },
+        result: { output: textOutput(abortedToolOutput(name, reason)), isError: true },
       });
       step.resolvedToolIds.add(toolCallId);
     }

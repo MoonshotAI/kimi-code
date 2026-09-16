@@ -7,7 +7,7 @@ const TOOL_EMPTY_ERROR_STATUS =
 const TOOL_OUTPUT_EMPTY_TEXT = 'Tool output is empty.';
 
 export interface RenderableToolResult {
-  readonly output: string | readonly ContentPart[];
+  readonly output: readonly ContentPart[];
   readonly note?: string;
   readonly isError?: boolean;
 }
@@ -23,8 +23,8 @@ export function renderToolResultForModel(result: RenderableToolResult): ContentP
 }
 
 function renderStatus(result: RenderableToolResult): ContentPart[] {
-  const output = result.output;
-  const single = typeof output === 'string' ? output : singleTextPart(output);
+  const parts = result.output;
+  const single = singleTextPart(parts);
   if (single !== undefined) {
     if (result.isError === true) {
       if (single.length === 0) return [textPart(TOOL_EMPTY_ERROR_STATUS)];
@@ -33,7 +33,6 @@ function renderStatus(result: RenderableToolResult): ContentPart[] {
     return isEmptyOutputText(single) ? [textPart(TOOL_EMPTY_STATUS)] : [textPart(single)];
   }
 
-  const parts = output as readonly ContentPart[];
   if (isEmptyEquivalentContentArray(parts)) {
     return [textPart(result.isError === true ? TOOL_EMPTY_ERROR_STATUS : TOOL_EMPTY_STATUS)];
   }

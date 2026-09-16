@@ -11,6 +11,7 @@ import { IConfigService } from '#/app/config/config';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import {
   ToolAccesses,
+  textOutput,
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
@@ -196,7 +197,7 @@ export class ReadTool implements IReadTool {
 
   resolveExecution(args: ReadInput): ToolExecution | Promise<ToolExecution> {
     if (args.column_offset !== undefined && (args.line_offset ?? 1) < 0) {
-      return { isError: true, output: 'column_offset is only supported for forward reads. Use a positive line_offset or the forward Next Read arguments.' };
+      return { isError: true, output: textOutput('column_offset is only supported for forward reads. Use a positive line_offset or the forward Next Read arguments.') };
     }
     if (isDaemonFileUrl(args.path)) return this.attachmentExecution(args);
     const inspected = inspectAgentRuntime(this.runtime);
@@ -226,7 +227,7 @@ export class ReadTool implements IReadTool {
         const lease = this.runtime.acquire(['fs']);
         try {
           if (lease.runtime.identity.generation !== inspected.identity.generation) {
-            return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
+            return { isError: true, output: textOutput('Runtime changed before execution. Retry the tool call.') };
           }
           const eventLog = this.resultTruncation.isWireJournalPath(path);
           const result = await this.execution(runtimeFileSource(lease.runtime.fs!, path), args, eventLog);
@@ -264,12 +265,12 @@ export class ReadTool implements IReadTool {
         stat = await source.stat();
       } catch (error) {
         if (isFileNotFoundError(error)) {
-          return { isError: true, output: `"${args.path}" does not exist.` };
+          return { isError: true, output: textOutput(`"${args.path}" does not exist.`) };
         }
         throw error;
       }
       if (!stat.isFile) {
-        return { isError: true, output: `"${args.path}" is not a file.` };
+        return { isError: true, output: textOutput(`"${args.path}" is not a file.`) };
       }
 
       const header = await source.readBytes(MEDIA_SNIFF_BYTES);
@@ -277,7 +278,7 @@ export class ReadTool implements IReadTool {
       if (fileType.kind === 'image' || fileType.kind === 'video') {
         return {
           isError: true,
-          output: `"${args.path}" is ${fileType.kind === 'image' ? 'an' : 'a'} ${fileType.kind} file. Only text files can be read.`,
+          output: textOutput(`"${args.path}" is ${fileType.kind === 'image' ? 'an' : 'a'} ${fileType.kind} file. Only text files can be read.`),
         };
       }
 
@@ -289,10 +290,11 @@ export class ReadTool implements IReadTool {
         if (stat.size > TRANSCODE_MAX_BYTES) {
           return {
             isError: true,
-            output:
+            output: textOutput(
               `"${args.path}" is ${encodingDisplayName(detection.encoding)} text but too large to transcode ` +
-              `(${String(stat.size)} bytes > ${String(TRANSCODE_MAX_BYTES)}). ` +
-              'Convert it to UTF-8 first (e.g. with `iconv`).',
+                `(${String(stat.size)} bytes > ${String(TRANSCODE_MAX_BYTES)}). ` +
+                'Convert it to UTF-8 first (e.g. with `iconv`).',
+            ),
           };
         }
         const bytes = await source.readBytes();
@@ -310,7 +312,7 @@ export class ReadTool implements IReadTool {
       } else if (fileType.kind === 'unknown') {
         return {
           isError: true,
-          output: notReadableFileOutput(args.path),
+          output: textOutput(notReadableFileOutput(args.path)),
         };
       } else {
         readLines = () => source.readLines();
@@ -333,17 +335,17 @@ export class ReadTool implements IReadTool {
         const currentStat = await source.stat();
         if (!currentStat.isFile || currentStat.size !== stat.size ||
           currentStat.mtimeMs !== stat.mtimeMs || currentStat.ino !== stat.ino) {
-          return { isError: true, output: 'File changed while reading its tail. Retry Read with the updated file.' };
+          return { isError: true, output: textOutput('File changed while reading its tail. Retry Read with the updated file.') };
         }
       }
       return result;
     } catch (error) {
       if (isTextDecodeError(error)) {
-        return { isError: true, output: notUtf8DecodableFileOutput(args.path) };
+        return { isError: true, output: textOutput(notUtf8DecodableFileOutput(args.path)) };
       }
       return {
         isError: true,
-        output: error instanceof Error ? error.message : String(error),
+        output: textOutput(error instanceof Error ? error.message : String(error)),
       };
     }
   }
@@ -364,7 +366,7 @@ export class ReadTool implements IReadTool {
 
     for await (const rawLine of lines) {
       if (containsNulByte(rawLine)) {
-        return { isError: true, output: notReadableFileOutput(args.path) };
+        return { isError: true, output: textOutput(notReadableFileOutput(args.path)) };
       }
       currentLineNo += 1;
       updateLineEndingFlags(flags, rawLine);
@@ -401,10 +403,10 @@ export class ReadTool implements IReadTool {
       const prefix = `${String(lineOffset)}\t`;
       const text = firstLine?.slice(prefix.length);
       if (text === undefined || columnOffset > text.length) {
-        return { isError: true, output: `column_offset=${String(columnOffset)} is past the end of the starting line ${String(lineOffset)}. Read the line from column 0 to inspect its current contents.` };
+        return { isError: true, output: textOutput(`column_offset=${String(columnOffset)} is past the end of the starting line ${String(lineOffset)}. Read the line from column 0 to inspect its current contents.`) };
       }
       if (splitsSurrogatePair(text, columnOffset)) {
-        return { isError: true, output: `column_offset=${String(columnOffset)} splits a Unicode character in line ${String(lineOffset)}. Use a character boundary or the Next Read arguments.` };
+        return { isError: true, output: textOutput(`column_offset=${String(columnOffset)} splits a Unicode character in line ${String(lineOffset)}. Use a character boundary or the Next Read arguments.`) };
       }
       renderedLines[0] = prefix + text.slice(columnOffset);
     }
@@ -480,16 +482,18 @@ export class ReadTool implements IReadTool {
       }
       const note = `<system>${parts.join(' ')}</system>`;
       const renderedChars = count === 0
-        ? renderToolResultForModel({ output: '', note }).reduce(
+        ? renderToolResultForModel({ output: [], note }).reduce(
           (sum, part) => sum + (part.type === 'text' ? part.text.length : 0),
           0,
         )
         : contentChars + 1 + note.length;
       if (renderedChars <= maxChars && (complete || count > 0)) {
         return {
-          output: fragmentEnd !== undefined
-            ? firstPrefix + firstText.slice(0, fragmentEnd)
-            : page.renderedLines.slice(first, end).join('\n'),
+          output: textOutput(
+            fragmentEnd !== undefined
+              ? firstPrefix + firstText.slice(0, fragmentEnd)
+              : page.renderedLines.slice(first, end).join('\n'),
+          ),
           note,
           truncated: complete ? undefined : true,
         };
@@ -499,7 +503,7 @@ export class ReadTool implements IReadTool {
         fragmentEnd = Math.min(previousEnd - 1, previousEnd - (renderedChars - maxChars));
         if (splitsSurrogatePair(firstText, fragmentEnd)) fragmentEnd -= 1;
         if (fragmentEnd <= 0) {
-          return { isError: true, output: `max_chars=${String(maxChars)} is too small for file text and the Read status. Increase max_chars.` };
+          return { isError: true, output: textOutput(`max_chars=${String(maxChars)} is too small for file text and the Read status. Increase max_chars.`) };
         }
         contentChars = firstPrefix.length + fragmentEnd;
         continue;
@@ -508,7 +512,7 @@ export class ReadTool implements IReadTool {
         if (!complete) {
           const recovery: ExecutableToolResult = {
             isError: true,
-            output: 'No complete line fits. Continue with the forward Next Read.',
+            output: textOutput('No complete line fits. Continue with the forward Next Read.'),
             note,
             truncated: true,
           };
@@ -518,7 +522,7 @@ export class ReadTool implements IReadTool {
           );
           if (recoveryChars <= maxChars) return recovery;
         }
-        return { isError: true, output: `max_chars=${String(maxChars)} is too small for the Read status. Increase max_chars.` };
+        return { isError: true, output: textOutput(`max_chars=${String(maxChars)} is too small for the Read status. Increase max_chars.`) };
       }
       const dropped = page.fromTail ? first++ : --end;
       contentChars -= page.renderedLines[dropped]!.length + 1;
@@ -555,7 +559,7 @@ export class ReadTool implements IReadTool {
     let totalLines = 0;
     for await (const rawLine of readLines()) {
       if (containsNulByte(rawLine)) {
-        return { isError: true, output: notReadableFileOutput(args.path) };
+        return { isError: true, output: textOutput(notReadableFileOutput(args.path)) };
       }
       totalLines += 1;
       updateLineEndingFlags(flags, rawLine);
@@ -572,12 +576,12 @@ export class ReadTool implements IReadTool {
         if (currentLine > rangeEnd) break;
         if (currentLine < rangeStart) continue;
         if (containsNulByte(rawLine)) {
-          return { isError: true, output: notReadableFileOutput(args.path) };
+          return { isError: true, output: textOutput(notReadableFileOutput(args.path)) };
         }
         retainLine(rawLine, currentLine);
       }
       if (currentLine < rangeEnd || currentLine > totalLines) {
-        return { isError: true, output: 'File changed while reading its tail. Retry Read with the updated file.' };
+        return { isError: true, output: textOutput('File changed while reading its tail. Retry Read with the updated file.') };
       }
     }
     const selected = entries.slice(first).map((entry) => renderLine(entry!, lineEndingStyle));

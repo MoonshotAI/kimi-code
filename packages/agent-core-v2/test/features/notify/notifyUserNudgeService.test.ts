@@ -9,7 +9,7 @@ import { FlagService } from '#/app/flag/flagService';
 import { NOTIFY_USER_FLAG_ID } from '#/features/notify/flag';
 import { NOTIFY_USER_NUDGE_VARIANT } from '#/features/notify/notifyUserNudge';
 import { NOTIFY_USER_TOOL_NAME } from '#/features/notify/tools/notify-user/notify-user';
-import type { ExecutableTool } from '#/tool/toolContract';
+import { textOutput, type ExecutableTool } from '#/tool/toolContract';
 
 import { runWillBeginStepHooks } from '../../agent/loop/stubs';
 import { createTestAgent, type TestAgentContext } from '../../harness';
@@ -20,7 +20,7 @@ const notifyToolStub: ExecutableTool = {
   parameters: { type: 'object', properties: {}, additionalProperties: false },
   resolveExecution: () => ({
     approvalRule: NOTIFY_USER_TOOL_NAME,
-    execute: async () => ({ output: 'ok' }),
+    execute: async () => ({ output: textOutput('ok') }),
   }),
 };
 

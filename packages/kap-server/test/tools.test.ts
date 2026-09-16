@@ -134,7 +134,7 @@ describe('server-v2 /api/v1 tools + mcp', () => {
       parameters,
       resolveExecution: () => ({
         approvalRule: 'always-allow',
-        execute: async () => ({ output: '' }),
+        execute: async () => ({ output: [] }),
       }),
     } as ExecutableTool;
   }

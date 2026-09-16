@@ -1,6 +1,6 @@
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
-import { type ExecutableToolResult, type ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ExecutableToolResult, type ToolExecution } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
 import { IAgentTaskService } from '#/agent/task/task';
@@ -66,7 +66,7 @@ export class TaskOutputTool implements ITaskOutputTool {
   private async execute(args: TaskOutputInput): Promise<ExecutableToolResult> {
     const current = this.tasks.getTask(args.task_id);
     if (!current) {
-      return { isError: true, output: `Task not found: ${args.task_id}` };
+      return { isError: true, output: textOutput(`Task not found: ${args.task_id}`) };
     }
 
     const output = await this.tasks.getOutputSnapshot(args.task_id, OUTPUT_PREVIEW_BYTES);
@@ -98,7 +98,7 @@ export class TaskOutputTool implements ITaskOutputTool {
     lines.push('[output]', output.preview || '[no output available]');
 
     return {
-      output: lines.join('\n'),
+      output: textOutput(lines.join('\n')),
       isError: false,
     };
   }

@@ -170,7 +170,7 @@ describe('AgentFileHistoryService', () => {
     const execution: RunnableToolExecution = {
       approvalRule: 'Edit',
       display: { kind: 'file_io', operation: 'edit', path },
-      execute: async () => ({ output: '' }),
+      execute: async () => ({ output: [] }),
     };
     await executorEvents.fireWillExecute(
       { turnId, toolCall, execution, args: {} },

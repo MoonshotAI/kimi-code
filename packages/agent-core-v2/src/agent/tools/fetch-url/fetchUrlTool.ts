@@ -2,6 +2,7 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import {
   ToolAccesses,
+  textOutput,
   type ExecutableToolContext,
   type ExecutableToolResult,
   type ToolExecution,
@@ -45,7 +46,7 @@ export class FetchURLTool implements IFetchURLTool {
 
       if (!content) {
         return {
-          output: 'The response body is empty.',
+          output: textOutput('The response body is empty.'),
           isError: false,
         };
       }
@@ -65,12 +66,12 @@ export class FetchURLTool implements IFetchURLTool {
       if (error instanceof HttpFetchError) {
         return {
           isError: true,
-          output: `Failed to fetch URL. Status: ${String(error.status)}. ${msg}`,
+          output: textOutput(`Failed to fetch URL. Status: ${String(error.status)}. ${msg}`),
         };
       }
       return {
         isError: true,
-        output: `Failed to fetch URL due to network error: ${args.url}. ${msg}`,
+        output: textOutput(`Failed to fetch URL due to network error: ${args.url}. ${msg}`),
       };
     }
   }

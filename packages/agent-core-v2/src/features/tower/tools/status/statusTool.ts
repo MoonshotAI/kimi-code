@@ -7,7 +7,7 @@ import {
 } from '#/features/tower/towerRateLimit';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import type { ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ToolExecution } from '#/tool/toolContract';
 
 import { callerName, newTowerStore, runTowerTool } from '../support';
 import DESCRIPTION from './status.md?raw';
@@ -99,7 +99,7 @@ export class TowerStatusTool implements ITowerStatusTool {
           );
           const log = await store.recentLog(RECENT_LOG_LINES);
           sections.push(...(log.length > 0 ? log : ['(activity log is empty)']));
-          return { output: sections.join('\n') };
+          return { output: textOutput(sections.join('\n')) };
         }),
     };
   }

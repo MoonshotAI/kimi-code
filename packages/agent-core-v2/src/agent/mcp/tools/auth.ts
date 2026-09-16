@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import {
   MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE,
+  textOutput,
   type ExecutableTool,
   type ExecutableToolContext,
   type ExecutableToolResult,
@@ -70,9 +71,10 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
           return errorResult(serverName, reconnectError);
         }
         return {
-          output:
+          output: textOutput(
             `MCP server "${serverName}" already had valid OAuth credentials. ` +
-            `Reconnected; real tools are available now.`,
+              `Reconnected; real tools are available now.`,
+          ),
         };
       }
       return errorResult(serverName, error);
@@ -113,9 +115,10 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
     }
 
     return {
-      output:
+      output: textOutput(
         `MCP server "${serverName}" authenticated successfully. ` +
-        `The real MCP tools have replaced this synthetic authenticate tool.`,
+          `The real MCP tools have replaced this synthetic authenticate tool.`,
+      ),
     };
   };
 
@@ -145,6 +148,8 @@ function errorResult(
       : '';
   return {
     isError: true,
-    output: `OAuth flow for MCP server "${serverName}" did not complete: ${message}${suffix}`,
+    output: textOutput(
+      `OAuth flow for MCP server "${serverName}" did not complete: ${message}${suffix}`,
+    ),
   };
 }

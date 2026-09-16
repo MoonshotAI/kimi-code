@@ -9,10 +9,11 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { QuestionAnsweredEvent, QuestionDismissedEvent } from '#/app/telemetry/events';
-import type {
-  ExecutableToolContext,
-  ExecutableToolResult,
-  ToolExecution,
+import {
+  textOutput,
+  type ExecutableToolContext,
+  type ExecutableToolResult,
+  type ToolExecution,
 } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
@@ -93,12 +94,12 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
     { toolCallId, signal, turnId, trace }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
     if (args.background === true && !this.allowBackground()) {
-      return { isError: true, output: BACKGROUND_UNAVAILABLE_MESSAGE };
+      return { isError: true, output: textOutput(BACKGROUND_UNAVAILABLE_MESSAGE) };
     }
 
     const uniquenessError = questionUniquenessError(args.questions);
     if (uniquenessError !== null) {
-      return { isError: true, output: uniquenessError };
+      return { isError: true, output: textOutput(uniquenessError) };
     }
 
     if (args.background === true) {
@@ -143,17 +144,18 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
     } catch (error) {
       return {
         isError: true,
-        output: error instanceof Error ? error.message : String(error),
+        output: textOutput(error instanceof Error ? error.message : String(error)),
       };
     }
 
     const status = this.tasks.getTask(taskId)?.status ?? 'running';
     return {
       isError: false,
-      output:
+      output: textOutput(
         `task_id: ${taskId}\n` +
-        `status: ${status}\n` +
-        'next_step: Continue your work; the answer arrives automatically in a later message. Use TaskStop only to cancel the question.',
+          `status: ${status}\n` +
+          'next_step: Continue your work; the answer arrives automatically in a later message. Use TaskStop only to cancel the question.',
+      ),
     };
   }
 
@@ -186,7 +188,7 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
       this.telemetry.track2('question_answered', properties);
       return {
         isError: false,
-        output: JSON.stringify({ answers: normalized.answers }),
+        output: textOutput(JSON.stringify({ answers: normalized.answers })),
       };
     } catch (error) {
       if (isAbortError(error) || signal.aborted) throw error;
@@ -194,7 +196,7 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
       if (error instanceof Error2 && error.code === CoreErrors.codes.NOT_IMPLEMENTED) {
         return {
           isError: true,
-          output: QUESTION_UNSUPPORTED_FAILURE_MESSAGE,
+          output: textOutput(QUESTION_UNSUPPORTED_FAILURE_MESSAGE),
         };
       }
 
@@ -267,10 +269,12 @@ function questionDescription(questions: AskUserQuestionInput['questions']): stri
 function dismissedQuestionResult(): ExecutableToolResult {
   return {
     isError: false,
-    output: JSON.stringify({
-      answers: {},
-      note: QUESTION_DISMISSED_MESSAGE,
-    }),
+    output: textOutput(
+      JSON.stringify({
+        answers: {},
+        note: QUESTION_DISMISSED_MESSAGE,
+      }),
+    ),
   };
 }
 

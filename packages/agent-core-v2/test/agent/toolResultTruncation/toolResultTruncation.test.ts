@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import type { ExecutableToolResult } from '#/tool/toolContract';
+import { textOutput, type ExecutableToolResult } from '#/tool/toolContract';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { ToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncationService';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -67,14 +67,12 @@ describe('ToolResultTruncationService', () => {
     const result = await truncation.truncateForModel<ExecutableToolResult>({
       toolName: 'Lookup Tool',
       toolCallId: 'call:lookup',
-      result: { output: fullOutput, isError: true },
+      result: { output: textOutput(fullOutput), isError: true },
     });
 
     expect(result.truncated).toBe(true);
     expect(result.isError).toBe(true);
-    const rendered = result.output;
-    expect(typeof rendered).toBe('string');
-    if (typeof rendered !== 'string') throw new Error('expected string output');
+    const rendered = outputText(result.output);
     expect(rendered).toContain('Tool output exceeded 50000 characters');
     expect(rendered).toContain('tool_name: Lookup Tool');
     expect(rendered).toContain('tool_call_id: call:lookup');
@@ -101,16 +99,14 @@ describe('ToolResultTruncationService', () => {
       toolName: 'Bash',
       toolCallId: 'call_bash',
       result: {
-        output: full,
+        output: textOutput(full),
         spill: { suffix: 'Command failed with exit code: 1.' },
       },
     });
 
     expect(result.truncated).toBe(true);
     expect('spill' in result).toBe(false);
-    const rendered = result.output;
-    expect(typeof rendered).toBe('string');
-    if (typeof rendered !== 'string') throw new Error('expected string output');
+    const rendered = outputText(result.output);
     expect(rendered).toContain(`output_size_chars: ${String(full.length)}`);
     expect(rendered).toContain('Command failed with exit code: 1.');
     await expect(readFile(renderedOutputPath(rendered), 'utf8')).resolves.toBe(full);
@@ -123,14 +119,12 @@ describe('ToolResultTruncationService', () => {
       toolName: 'Bash',
       toolCallId: 'call_partial',
       result: {
-        output: preserved,
+        output: textOutput(preserved),
         spill: { totalChars: 25_000_000 },
       },
     });
 
-    const rendered = result.output;
-    expect(typeof rendered).toBe('string');
-    if (typeof rendered !== 'string') throw new Error('expected string output');
+    const rendered = outputText(result.output);
     expect(rendered).toContain(
       'the first 60000 characters (of 25000000) were saved to a file.',
     );
@@ -148,12 +142,10 @@ describe('ToolResultTruncationService', () => {
     const result = await truncation.truncateForModel<ExecutableToolResult>({
       toolName: 'mcp__s__big',
       toolCallId: 'call_huge',
-      result: { output: full },
+      result: { output: textOutput(full) },
     });
 
-    const rendered = result.output;
-    expect(typeof rendered).toBe('string');
-    if (typeof rendered !== 'string') throw new Error('expected string output');
+    const rendered = outputText(result.output);
     expect(rendered).toContain(
       'the first 10000000 characters (of 11000000) were saved to a file.',
     );
@@ -169,14 +161,12 @@ describe('ToolResultTruncationService', () => {
       toolName: 'Bash',
       toolCallId: 'call_prespilled',
       result: {
-        output: retained,
+        output: textOutput(retained),
         spill: { outputPath: existing, totalChars: 120_000, suffix: 'task_id: task-1' },
       },
     });
 
-    const rendered = result.output;
-    expect(typeof rendered).toBe('string');
-    if (typeof rendered !== 'string') throw new Error('expected string output');
+    const rendered = outputText(result.output);
     expect(rendered).toContain(`output_path: ${existing}`);
     expect(rendered).toContain('the full output was saved to a file.');
     expect(rendered).toContain('output_size_chars: 120000');
@@ -217,13 +207,11 @@ describe('ToolResultTruncationService', () => {
     const result = await truncation.truncateForModel<ExecutableToolResult>({
       toolName: 'Grep',
       toolCallId: 'call_grep',
-      result: { output: full },
+      result: { output: textOutput(full) },
     });
 
     expect(result.truncated).toBe(true);
-    const rendered = result.output;
-    expect(typeof rendered).toBe('string');
-    if (typeof rendered !== 'string') throw new Error('expected string output');
+    const rendered = outputText(result.output);
     expect(rendered).toContain('first line\n');
     expect(rendered).toContain(`${'y'.repeat(1_984)}[...truncated]\n`);
     expect(rendered).toContain('last line');
@@ -239,12 +227,10 @@ describe('ToolResultTruncationService', () => {
     const result = await truncation.truncateForModel<ExecutableToolResult>({
       toolName: 'mcp__s__t',
       toolCallId: 'call_suffix_inline',
-      result: { output: full, spill: { suffix: notice } },
+      result: { output: textOutput(full), spill: { suffix: notice } },
     });
 
-    const rendered = result.output;
-    expect(typeof rendered).toBe('string');
-    if (typeof rendered !== 'string') throw new Error('expected string output');
+    const rendered = outputText(result.output);
     expect(rendered).toContain('[Per-line truncation occurred; the complete output was saved to a file.');
     expect(rendered.split(notice).length - 1).toBe(1);
   });
@@ -255,12 +241,10 @@ describe('ToolResultTruncationService', () => {
     const result = await truncation.truncateForModel<ExecutableToolResult>({
       toolName: 'Bash',
       toolCallId: 'call_suffix_unique',
-      result: { output: full, spill: { suffix: 'task_id: task-9' } },
+      result: { output: textOutput(full), spill: { suffix: 'task_id: task-9' } },
     });
 
-    const rendered = result.output;
-    expect(typeof rendered).toBe('string');
-    if (typeof rendered !== 'string') throw new Error('expected string output');
+    const rendered = outputText(result.output);
     expect(rendered).toContain('[Per-line truncation occurred; the complete output was saved to a file.');
     expect(rendered).toContain('task_id: task-9');
   });
@@ -297,19 +281,17 @@ describe('ToolResultTruncationService', () => {
     const result = await truncation.truncateForModel<ExecutableToolResult>({
       toolName: 'Grep',
       toolCallId: 'call_grep_cap',
-      result: { output: full },
+      result: { output: textOutput(full) },
     });
 
-    const rendered = result.output;
-    expect(typeof rendered).toBe('string');
-    if (typeof rendered !== 'string') throw new Error('expected string output');
+    const rendered = outputText(result.output);
     expect(rendered).toContain('Tool output exceeded 50000 characters');
     expect(rendered).not.toContain('Per-line truncation occurred');
     await expect(readFile(renderedOutputPath(rendered), 'utf8')).resolves.toBe(full);
   });
 
   it('delivers long lines whole while the total fits the budget', async () => {
-    const below = { output: `prefix\n${'x'.repeat(30_000)}` } as const;
+    const below = { output: textOutput(`prefix\n${'x'.repeat(30_000)}`) } as const;
 
     await expect(
       truncation.truncateForModel({
@@ -321,7 +303,7 @@ describe('ToolResultTruncationService', () => {
   });
 
   it('passes spill-exempt results through untouched', async () => {
-    const exempt = { output: 'z'.repeat(60_000), spillExempt: true as const };
+    const exempt = { output: textOutput('z'.repeat(60_000)), spillExempt: true as const };
 
     await expect(
       truncation.truncateForModel({
@@ -374,13 +356,11 @@ describe('ToolResultTruncationService', () => {
     const result = await truncation.truncateForModel<ExecutableToolResult>({
       toolName: 'Read',
       toolCallId: 'call_truncated',
-      result: { output: full, truncated: true },
+      result: { output: textOutput(full), truncated: true },
     });
 
     expect(result.truncated).toBe(true);
-    const rendered = result.output;
-    expect(typeof rendered).toBe('string');
-    if (typeof rendered !== 'string') throw new Error('expected string output');
+    const rendered = outputText(result.output);
     expect(rendered).toContain('Tool output exceeded 50000 characters');
     await expect(readFile(renderedOutputPath(rendered), 'utf8')).resolves.toBe(full);
   });
@@ -389,16 +369,16 @@ describe('ToolResultTruncationService', () => {
     const first = await truncation.truncateForModel({
       toolName: 'Lookup',
       toolCallId: 'call_repeat',
-      result: { output: `${'a'.repeat(50_001)}first` },
+      result: { output: textOutput(`${'a'.repeat(50_001)}first`) },
     });
     const second = await truncation.truncateForModel({
       toolName: 'Lookup',
       toolCallId: 'call_repeat',
-      result: { output: `${'b'.repeat(50_001)}second` },
+      result: { output: textOutput(`${'b'.repeat(50_001)}second`) },
     });
 
-    const firstPath = renderedOutputPath(first.output);
-    const secondPath = renderedOutputPath(second.output);
+    const firstPath = renderedOutputPath(outputText(first.output));
+    const secondPath = renderedOutputPath(outputText(second.output));
     expect(firstPath).not.toBe(secondPath);
     await expect(readFile(firstPath, 'utf8')).resolves.toContain('first');
     await expect(readFile(secondPath, 'utf8')).resolves.toContain('second');
@@ -424,12 +404,10 @@ describe('ToolResultTruncationService', () => {
     const longLine = await failing.truncateForModel<ExecutableToolResult>({
       toolName: 'Lookup',
       toolCallId: 'call_fail_long_line',
-      result: { output: 'x'.repeat(60_000) },
+      result: { output: textOutput('x'.repeat(60_000)) },
     });
     expect(longLine.truncated).toBe(true);
-    const renderedLongLine = longLine.output;
-    expect(typeof renderedLongLine).toBe('string');
-    if (typeof renderedLongLine !== 'string') throw new Error('expected string output');
+    const renderedLongLine = outputText(longLine.output);
     expect(renderedLongLine).not.toContain('output_path:');
     expect(renderedLongLine).toContain('could not be saved to a file');
     expect(renderedLongLine.length).toBeLessThan(10_000);
@@ -437,17 +415,19 @@ describe('ToolResultTruncationService', () => {
     const shortLines = await failing.truncateForModel<ExecutableToolResult>({
       toolName: 'Lookup',
       toolCallId: 'call_fail_short_lines',
-      result: { output: 'short line\n'.repeat(6_000) },
+      result: { output: textOutput('short line\n'.repeat(6_000)) },
     });
     expect(shortLines.truncated).toBe(true);
-    const renderedShortLines = shortLines.output;
-    expect(typeof renderedShortLines).toBe('string');
-    if (typeof renderedShortLines !== 'string') throw new Error('expected string output');
+    const renderedShortLines = outputText(shortLines.output);
     expect(renderedShortLines).not.toContain('output_path:');
     expect(renderedShortLines).toContain('could not be saved to a file');
     expect(renderedShortLines.length).toBeLessThan(10_000);
   });
 });
+
+function outputText(output: ExecutableToolResult['output']): string {
+  return output.map((part) => (part.type === 'text' ? part.text : '')).join('');
+}
 
 function renderedOutputPath(output: unknown): string {
   if (typeof output !== 'string') throw new Error('expected rendered output to be a string');

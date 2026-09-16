@@ -6,7 +6,7 @@ import type { TowerMission, TowerStore } from '#/features/tower/protocol/index';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import type { ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ToolExecution } from '#/tool/toolContract';
 
 import { callerName, newTowerStore, runTowerTool } from '../support';
 import DESCRIPTION from './mission.md?raw';
@@ -50,11 +50,11 @@ export class TowerMissionTool implements ITowerMissionTool {
             if (mission === undefined) {
               const known = state.missions.map((m) => m.id).join(', ');
               return {
-                output: `unknown mission "${args.id}" — known missions: ${known.length > 0 ? known : '(none planned yet)'}`,
+                output: textOutput(`unknown mission "${args.id}" — known missions: ${known.length > 0 ? known : '(none planned yet)'}`),
                 isError: true,
               };
             }
-            return { output: await renderMission(store, mission) };
+            return { output: textOutput(await renderMission(store, mission)) };
           }
           const mission = await store.updateMission(caller, args.id, {
             status: args.status,
@@ -65,11 +65,13 @@ export class TowerMissionTool implements ITowerMissionTool {
             scope: args.scope,
           });
           return {
-            output: [
-              `mission ${mission.id} updated — status: ${mission.status}, open tasks: ${String(mission.tasks.filter((t) => !t.done).length)}, blockers: ${String(mission.blockers.length)}`,
-              '',
-              await renderMission(store, mission),
-            ].join('\n'),
+            output: textOutput(
+              [
+                `mission ${mission.id} updated — status: ${mission.status}, open tasks: ${String(mission.tasks.filter((t) => !t.done).length)}, blockers: ${String(mission.blockers.length)}`,
+                '',
+                await renderMission(store, mission),
+              ].join('\n'),
+            ),
           };
         }),
     };

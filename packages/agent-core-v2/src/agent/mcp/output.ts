@@ -223,10 +223,9 @@ export async function mcpResultToExecutableOutput(
     parts.push({ type: 'text', text: captionDetails.content, contentType: 'text/xml' });
   }
   if (notices.content.length > 0) parts.push({ type: 'text', text: notices.content });
-  const output = collapseSingleText(parts);
   const suffix = [captionDetails.suffix, notices.suffix].filter((s) => s.length > 0).join('\n');
   const base = {
-    output,
+    output: parts,
     truncated: capped.truncated || omittedAttachment ? true : undefined,
     spill: suffix.length > 0 ? { suffix } : undefined,
   };
@@ -409,11 +408,4 @@ async function applyBinaryPartCap(
   }
 
   return { parts: out, truncated, notices };
-}
-
-function collapseSingleText(parts: readonly ContentPart[]): string | ContentPart[] {
-  if (parts.length === 1 && parts[0]?.type === 'text') {
-    return parts[0].text;
-  }
-  return [...parts];
 }

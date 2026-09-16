@@ -8,6 +8,7 @@ import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
   ToolAccesses,
+  textOutput,
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
@@ -68,7 +69,7 @@ export class WriteTool implements IWriteTool {
         const lease = this.runtime.acquire(['fs']);
         try {
           if (lease.runtime.identity.generation !== inspected.identity.generation) {
-            return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
+            return { isError: true, output: textOutput('Runtime changed before execution. Retry the tool call.') };
           }
           return await this.execution(lease.runtime.fs!, args, path);
         } finally {
@@ -81,7 +82,7 @@ export class WriteTool implements IWriteTool {
   private async execution(fs: IHostFileSystem, args: WriteInput, safePath: string): Promise<ExecutableToolResult> {
     const parentError = await this.ensureParentDirectory(fs, safePath);
     if (parentError !== undefined) {
-      return { isError: true, output: parentError };
+      return { isError: true, output: textOutput(parentError) };
     }
 
     try {
@@ -93,19 +94,19 @@ export class WriteTool implements IWriteTool {
       }
       const bytesWritten = Buffer.byteLength(args.content, 'utf8');
       return {
-        output: `${mode === 'append' ? 'Appended' : 'Wrote'} ${String(bytesWritten)} bytes to ${args.path}`,
+        output: textOutput(`${mode === 'append' ? 'Appended' : 'Wrote'} ${String(bytesWritten)} bytes to ${args.path}`),
       };
     } catch (error) {
       const code = (unwrapErrorCause(error) as { code?: unknown } | null)?.code;
       if (code === 'ENOENT') {
         return {
           isError: true,
-          output: `Failed to write ${args.path}: parent directory does not exist.`,
+          output: textOutput(`Failed to write ${args.path}: parent directory does not exist.`),
         };
       }
       return {
         isError: true,
-        output: error instanceof Error ? error.message : String(error),
+        output: textOutput(error instanceof Error ? error.message : String(error)),
       };
     }
   }

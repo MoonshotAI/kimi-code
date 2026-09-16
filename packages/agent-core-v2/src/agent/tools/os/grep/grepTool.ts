@@ -3,6 +3,7 @@ import { normalize } from 'pathe';
 import { ToolOutputAccumulator } from '#/tool/output-accumulator';
 import {
   ToolAccesses,
+  textOutput,
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
@@ -110,7 +111,7 @@ export class GrepTool implements IGrepTool {
         const lease = this.runtime.acquire(['fs', 'process']);
         try {
           if (lease.runtime.identity.generation !== inspected.identity.generation) {
-            return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
+            return { isError: true, output: textOutput('Runtime changed before execution. Retry the tool call.') };
           }
           return await this.execution(lease.runtime.process!, lease.runtime.fs!, env, workspace, args, signal, searchPaths);
         } finally {
@@ -130,7 +131,7 @@ export class GrepTool implements IGrepTool {
     searchPaths: string[],
   ): Promise<ExecutableToolResult> {
     if (signal.aborted) {
-      return { isError: true, output: 'Aborted before search started' };
+      return { isError: true, output: textOutput('Aborted before search started') };
     }
 
     const pathClass = env.pathClass;
@@ -149,10 +150,10 @@ export class GrepTool implements IGrepTool {
       }
     } catch (error) {
       if (signal.aborted) {
-        return { isError: true, output: 'Grep aborted' };
+        return { isError: true, output: textOutput('Grep aborted') };
       }
       this.telemetry.track2('grep_tool_rg_fallback', { outcome: 'failed' });
-      return { isError: true, output: rgUnavailableMessage(error) };
+      return { isError: true, output: textOutput(rgUnavailableMessage(error)) };
     }
 
     let runResult: RunRgResult;
@@ -163,7 +164,7 @@ export class GrepTool implements IGrepTool {
         signal,
       );
       if (firstRun.kind === 'aborted') {
-        return { isError: true, output: 'Grep aborted' };
+        return { isError: true, output: textOutput('Grep aborted') };
       }
       runResult = firstRun;
 
@@ -174,12 +175,12 @@ export class GrepTool implements IGrepTool {
           signal,
         );
         if (retryRun.kind === 'aborted') {
-          return { isError: true, output: 'Grep aborted' };
+          return { isError: true, output: textOutput('Grep aborted') };
         }
         runResult = retryRun;
       }
     } catch (error) {
-      return { isError: true, output: formatSpawnError(error) };
+      return { isError: true, output: textOutput(formatSpawnError(error)) };
     }
 
     const { exitCode, stderrText, bufferTruncated, stderrTruncated, timedOut } = runResult;
@@ -188,7 +189,7 @@ export class GrepTool implements IGrepTool {
     if (exitCode !== 0 && exitCode !== 1 && !timedOut) {
       return {
         isError: true,
-        output: formatRipgrepError(exitCode, stderrText, stderrTruncated),
+        output: textOutput(formatRipgrepError(exitCode, stderrText, stderrTruncated)),
       };
     }
 
@@ -199,11 +200,11 @@ export class GrepTool implements IGrepTool {
     if (timedOut && stdoutText.trim() === '') {
       return {
         isError: true,
-        output: `Grep timed out after ${String(DEFAULT_TIMEOUT_MS / 1000)}s. Try a more specific path or pattern.`,
+        output: textOutput(`Grep timed out after ${String(DEFAULT_TIMEOUT_MS / 1000)}s. Try a more specific path or pattern.`),
       };
     }
     if (signal.aborted) {
-      return { isError: true, output: 'Grep aborted' };
+      return { isError: true, output: textOutput('Grep aborted') };
     }
 
     const rawLines = parseRipgrepOutput(stdoutText, mode);
@@ -218,7 +219,7 @@ export class GrepTool implements IGrepTool {
           : keptLines;
     } catch (error) {
       if (error instanceof GrepAbortedError) {
-        return { isError: true, output: 'Grep aborted' };
+        return { isError: true, output: textOutput('Grep aborted') };
       }
       throw error;
     }

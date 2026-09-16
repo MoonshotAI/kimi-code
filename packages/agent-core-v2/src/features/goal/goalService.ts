@@ -51,7 +51,7 @@ import {
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import type { ExecutableToolResult } from '#/tool/toolContract';
+import { textOutput, type ExecutableToolResult } from '#/tool/toolContract';
 import { createHistoryMessageBuilder } from '#human/agent/historyBuilder';
 
 import type { GoalReasonInput, ResumeGoalInput } from './goal';
@@ -1143,11 +1143,11 @@ function createGoalEffectHandlers(runtime: AgentActorContext<GoalRuntimeState>) 
     },
     veto: (event: BeforeToolExecuteEvent) => {
       if (isStaleGoalToolCall(context, event)) {
-        event.veto({ output: GOAL_STALE_TOOL_RESULT });
+        event.veto({ output: textOutput(GOAL_STALE_TOOL_RESULT) });
         return;
       }
       if (context.effects.budgetGraceTurns.has(event.turnId)) {
-        event.veto({ output: GOAL_BUDGET_TOOLS_REJECTED_MESSAGE });
+        event.veto({ output: textOutput(GOAL_BUDGET_TOOLS_REJECTED_MESSAGE) });
       }
     },
     toolCompleted: (tool: Parameters<Parameters<IAgentToolExecutorService['hooks']['onDidExecuteTool']['register']>[1]>[0]) => {

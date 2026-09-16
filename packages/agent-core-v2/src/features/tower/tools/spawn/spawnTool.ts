@@ -27,6 +27,7 @@ import { IConfigService } from '#/app/config/config';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import {
+  textOutput,
   type ExecutableToolContext,
   type ExecutableToolResult,
   type ToolExecution,
@@ -81,7 +82,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     if (this.callerAgentId !== MAIN_AGENT_ID) {
       return {
         isError: true,
-        output: TOWER_MAIN_AGENT_ONLY,
+        output: textOutput(TOWER_MAIN_AGENT_ONLY),
       };
     }
     return {
@@ -102,7 +103,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     try {
       if (!this.tower.isActive) {
         return {
-          output: TOWER_MODE_USER_ENABLED_ONLY,
+          output: textOutput(TOWER_MODE_USER_ENABLED_ONLY),
           isError: true,
         };
       }
@@ -111,14 +112,14 @@ export class TowerSpawnTool implements ITowerSpawnTool {
 
       if (args.name.trim().length === 0 || args.name.trim() !== args.name) {
         return {
-          output: `tower agent name "${args.name}" must not be blank or carry surrounding whitespace`,
+          output: textOutput(`tower agent name "${args.name}" must not be blank or carry surrounding whitespace`),
           isError: true,
         };
       }
 
       if (isReservedTowerAgentName(args.name)) {
         return {
-          output: `tower agent name "${args.name}" is reserved by the tower protocol — pick a different name`,
+          output: textOutput(`tower agent name "${args.name}" is reserved by the tower protocol — pick a different name`),
           isError: true,
         };
       }
@@ -126,9 +127,10 @@ export class TowerSpawnTool implements ITowerSpawnTool {
       const existing = store.findByName(state, args.name);
       if (existing !== undefined) {
         return {
-          output:
+          output: textOutput(
             `tower agent "${args.name}" is already registered (agent_id: ${existing.agentId}, kind: ${existing.kind}) — ` +
-            `resume it instead of spawning a duplicate: Agent(resume="${existing.agentId}", run_in_background=true, prompt="...") — never foreground: its output flows back through the tower protocol files`,
+              `resume it instead of spawning a duplicate: Agent(resume="${existing.agentId}", run_in_background=true, prompt="...") — never foreground: its output flows back through the tower protocol files`,
+          ),
           isError: true,
         };
       }
@@ -139,13 +141,13 @@ export class TowerSpawnTool implements ITowerSpawnTool {
       if (args.kind === 'worker') {
         const missionId = args.mission_id;
         if (missionId === undefined) {
-          return { output: 'worker spawns require mission_id', isError: true };
+          return { output: textOutput('worker spawns require mission_id'), isError: true };
         }
         mission = state.missions.find((m) => m.id === missionId);
         if (mission === undefined) {
           const known = state.missions.map((m) => m.id).join(', ');
           return {
-            output: `unknown mission "${missionId}" — known missions: ${known.length > 0 ? known : '(none planned yet)'}`,
+            output: textOutput(`unknown mission "${missionId}" — known missions: ${known.length > 0 ? known : '(none planned yet)'}`),
             isError: true,
           };
         }
@@ -167,7 +169,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
       } else {
         reviewTarget = args.review_target;
         if (reviewTarget === undefined) {
-          return { output: 'reviewer spawns require review_target', isError: true };
+          return { output: textOutput('reviewer spawns require review_target'), isError: true };
         }
       }
 
@@ -179,7 +181,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
 
       const gate = this.rateLimit.acquire();
       if (!gate.ok) {
-        return { output: gate.reason, isError: true };
+        return { output: textOutput(gate.reason), isError: true };
       }
       let slotHeld = true;
       try {
@@ -200,7 +202,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
           handle = await this.launch(prompt, description, toolCallId, controller, binding);
         } catch (error) {
           return {
-            output: `tower spawn failed: ${error instanceof Error ? error.message : String(error)}`,
+            output: textOutput(`tower spawn failed: ${error instanceof Error ? error.message : String(error)}`),
             isError: true,
           };
         }
@@ -216,7 +218,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
           controller.abort();
           void handle.completion.catch(() => {});
           return {
-            output: error instanceof Error ? error.message : String(error),
+            output: textOutput(error instanceof Error ? error.message : String(error)),
             isError: true,
           };
         }
@@ -275,31 +277,33 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         );
 
         return {
-          output: [
-            `name: ${args.name}`,
-            `kind: ${args.kind}`,
-            `agent_id: ${handle.agentId}`,
-            `task_id: ${taskId}`,
-            'status: running',
-            ...(binding !== undefined ? [`model: ${binding.model}`] : []),
-            ...(mission !== undefined
-              ? [
-                  `mission: ${mission.id} — ${mission.title}`,
-                  `branch: ${mission.branch}`,
-                  `worktree: ${store.abs(join(WORKTREES_DIR, mission.worktree))}`,
-                ]
-              : [`review_target: ${reviewTarget ?? ''}`]),
-            ...notes,
-            '',
-            `The ${args.kind} runs detached in the background; its completion arrives as a notification. Track progress with TowerStatus / TowerInbox; recover a dead agent with Agent(resume="${handle.agentId}", run_in_background=true, prompt="...") — never foreground: its output flows back through the tower protocol files.`,
-          ].join('\n'),
+          output: textOutput(
+            [
+              `name: ${args.name}`,
+              `kind: ${args.kind}`,
+              `agent_id: ${handle.agentId}`,
+              `task_id: ${taskId}`,
+              'status: running',
+              ...(binding !== undefined ? [`model: ${binding.model}`] : []),
+              ...(mission !== undefined
+                ? [
+                    `mission: ${mission.id} — ${mission.title}`,
+                    `branch: ${mission.branch}`,
+                    `worktree: ${store.abs(join(WORKTREES_DIR, mission.worktree))}`,
+                  ]
+                : [`review_target: ${reviewTarget ?? ''}`]),
+              ...notes,
+              '',
+              `The ${args.kind} runs detached in the background; its completion arrives as a notification. Track progress with TowerStatus / TowerInbox; recover a dead agent with Agent(resume="${handle.agentId}", run_in_background=true, prompt="...") — never foreground: its output flows back through the tower protocol files.`,
+            ].join('\n'),
+          ),
         };
       } finally {
         if (slotHeld) this.rateLimit.release();
       }
     } catch (error) {
       if (error instanceof TowerProtocolError || error instanceof GitError) {
-        return { output: error.message, isError: true };
+        return { output: textOutput(error.message), isError: true };
       }
       throw error;
     }

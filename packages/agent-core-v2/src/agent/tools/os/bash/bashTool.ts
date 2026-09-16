@@ -11,6 +11,7 @@ import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { getShellPathBridge } from '#/_base/execEnv/shellPathBridge';
 import {
   DEFAULT_TOOL_RESULT_MAX_CHARS,
+  textOutput,
   type ExecutableToolResult,
   type ToolExecution,
   type ToolUpdate,
@@ -24,6 +25,7 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import { renderPrompt } from '#/_base/utils/render-prompt';
 import { userCancellationReason } from '#/_base/utils/abort';
+import type { ContentPart } from '#human/llm/message';
 import bashDescriptionTemplate from './bash.md?raw';
 import { ProcessTask } from './process-task';
 import {
@@ -204,7 +206,7 @@ export class BashTool implements IBashTool {
       lease.dispose();
       return {
         isError: true,
-        output: error instanceof Error ? error.message : String(error),
+        output: textOutput(error instanceof Error ? error.message : String(error)),
       };
     }
     closeProcessStdin(proc);
@@ -247,7 +249,7 @@ export class BashTool implements IBashTool {
       lease.dispose();
       return {
         isError: true,
-        output: error instanceof Error ? error.message : String(error),
+        output: textOutput(error instanceof Error ? error.message : String(error)),
       };
     }
 
@@ -294,20 +296,25 @@ export class BashTool implements IBashTool {
     args: BashInput,
     signal: AbortSignal,
   ): ExecutableToolResult | undefined {
-    if (signal.aborted) return { isError: true, output: 'Aborted before command started' };
-    if (args.command.length === 0) return { isError: true, output: 'Command cannot be empty.' };
+    if (signal.aborted) {
+      return { isError: true, output: textOutput('Aborted before command started') };
+    }
+    if (args.command.length === 0) {
+      return { isError: true, output: textOutput('Command cannot be empty.') };
+    }
     if (args.run_in_background !== true) return undefined;
     if (!this.allowBackground()) {
       return {
         isError: true,
-        output:
+        output: textOutput(
           'Background execution is not available for this agent because TaskOutput and TaskStop are not enabled.',
+        ),
       };
     }
     if (!args.description?.trim()) {
       return {
         isError: true,
-        output: 'description is required when run_in_background is true.',
+        output: textOutput('description is required when run_in_background is true.'),
       };
     }
     return undefined;
@@ -395,15 +402,19 @@ export class BashTool implements IBashTool {
       'human_shell_hint: The task is visible in the background-task panel.';
 
     const foregroundResult = builder.ok('');
-    const foregroundOutput = foregroundResult.output.length > 0 ? foregroundResult.output : '';
+    const foregroundOutput = foregroundResult.output
+      .filter((part): part is Extract<ContentPart, { type: 'text' }> => part.type === 'text')
+      .map((part) => part.text)
+      .join('');
     const result: ExecutableToolResult & {
       readonly brief: string;
     } = {
       isError: false,
-      output:
+      output: textOutput(
         foregroundOutput.length === 0
           ? metadata
           : `${metadata}\n\nforeground_output:\n${foregroundOutput}`,
+      ),
       brief: labels.brief,
     };
     return result;

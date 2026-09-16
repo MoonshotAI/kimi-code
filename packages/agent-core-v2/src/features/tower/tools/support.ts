@@ -6,7 +6,7 @@ import {
   type TowerState,
 } from '#/features/tower/protocol/index';
 import type { ISessionContext } from '#/session/sessionContext/sessionContext';
-import type { ExecutableToolResult } from '#/tool/toolContract';
+import { textOutput, type ExecutableToolResult } from '#/tool/toolContract';
 
 export function newTowerStore(sessionContext: ISessionContext): TowerStore {
   return new TowerStore(resolveTowerRepoRoot(sessionContext.cwd));
@@ -30,7 +30,7 @@ export async function runTowerTool(
     return await execute();
   } catch (error) {
     if (error instanceof TowerProtocolError || error instanceof GitError) {
-      return { output: error.message, isError: true };
+      return { output: textOutput(error.message), isError: true };
     }
     throw error;
   }

@@ -26,7 +26,7 @@ export interface ToolResultExtras {
   readonly note?: string;
   readonly delivery?: ToolDelivery;
   readonly stopBatchAfterThis?: boolean;
-  readonly output?: string | ContentPart[];
+  readonly output?: readonly ContentPart[];
   readonly isError?: boolean;
 }
 
@@ -54,10 +54,6 @@ interface PendingEntry {
   readonly input: ToolExecuteInput;
   readonly resolve: (result: ToolResult) => void;
   readonly removeAbortListener: () => void;
-}
-
-function toContentParts(output: string | ContentPart[]): ContentPart[] {
-  return typeof output === 'string' ? [{ type: 'text', text: output }] : output;
 }
 
 export function createMachineTools(options: CreateMachineToolsOptions): MachineTools {
@@ -178,7 +174,7 @@ export function createMachineTools(options: CreateMachineToolsOptions): MachineT
       isError: result.isError,
     });
     settleEntry(entry, {
-      content: toContentParts(result.output),
+      content: [...result.output],
       isError: result.isError === true ? true : undefined,
     });
   };

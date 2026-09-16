@@ -42,7 +42,7 @@ import { APIConnectionError, APIStatusError } from '#/llm-adapter/contract/error
 import type { ToolCall } from '#human/llm/message';
 import type { TokenUsage } from '#human/llm/usage';
 import { ErrorCodes, Error2, errorInfo, toKimiErrorPayload } from '#/errors';
-import type { ExecutableTool, RunnableToolExecution } from '#/tool/toolContract';
+import { textOutput, type ExecutableTool, type RunnableToolExecution } from '#/tool/toolContract';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import {
@@ -262,7 +262,7 @@ async function runTerminalUpdateGoalResult(
     toolCalls: [toolCall],
     args: { status },
     outcome: 'executed',
-    result: { output, stopTurn: true },
+    result: { output: textOutput(output), stopTurn: true },
   });
 }
 
@@ -527,7 +527,7 @@ describe('AgentGoalService', () => {
       const execution = tool.resolveExecution({ status: 'paused' } as never);
       expect(execution).toMatchObject({
         isError: true,
-        output: 'Invalid goal status. Use `active`, `complete`, or `blocked`.',
+        output: textOutput('Invalid goal status. Use `active`, `complete`, or `blocked`.'),
       });
       expect(goals.getGoal().goal?.status).toBe('active');
     });
@@ -790,7 +790,7 @@ describe('AgentGoalService goal-start review', () => {
       description: 'Creating a goal',
       display,
       approvalRule: 'CreateGoal',
-      execute: async () => ({ output: '' }),
+      execute: async () => ({ output: [] }),
     };
     return {
       turnId: 1,
@@ -1112,8 +1112,8 @@ describe('AgentGoalService core workflow hooks', () => {
     const results = await executeToolCall(toolExecutor, oldTurn, toolCall);
 
     expect(results).toHaveLength(1);
-    expect(results[0]!.result.output).toBe(
-      'Goal changed since this turn started; ignored stale goal tool call.',
+    expect(results[0]!.result.output).toEqual(
+      textOutput('Goal changed since this turn started; ignored stale goal tool call.'),
     );
     expect(goals.getGoal().goal).toMatchObject({
       goalId: replacement.goalId,

@@ -14,6 +14,7 @@ import type {
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
+import { textOutput } from '#/tool/toolContract';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventBus } from '#/app/event/eventBus';
@@ -68,7 +69,7 @@ const HANDOFF_VETO_TEXT =
   'and what you need next.';
 
 const HANDOFF_VETO_RESULT: ToolDedupeResult = {
-  output: HANDOFF_VETO_TEXT,
+  output: textOutput(HANDOFF_VETO_TEXT),
   isError: true,
   stopTurn: true,
   stopTurnReason: REPEAT_BREAKER_STOP_REASON,
@@ -111,20 +112,14 @@ interface TurnCallRecord {
 }
 
 function appendReminder(result: ToolDedupeResult, reminderText: string): ToolDedupeResult {
-  const output = result.output;
-  let newOutput: string | ContentPart[];
-  if (typeof output === 'string') {
-    newOutput = output + reminderText;
+  const arr: ContentPart[] = [...result.output];
+  const last = arr.at(-1);
+  if (last !== undefined && last.type === 'text') {
+    arr[arr.length - 1] = { type: 'text', text: last.text + reminderText };
   } else {
-    const arr: ContentPart[] = [...output];
-    const last = arr.at(-1);
-    if (last !== undefined && last.type === 'text') {
-      arr[arr.length - 1] = { type: 'text', text: last.text + reminderText };
-    } else {
-      arr.push({ type: 'text', text: reminderText });
-    }
-    newOutput = arr;
+    arr.push({ type: 'text', text: reminderText });
   }
+  const newOutput = arr;
   const spill =
     result.spill !== undefined
       ? { ...result.spill, suffix: (result.spill.suffix ?? '') + reminderText }
@@ -139,7 +134,7 @@ function forceStopResult(result: ToolDedupeResult, reminderText: string): ToolDe
   return { ...withReminder, stopTurn: true, stopTurnReason: REPEAT_BREAKER_STOP_REASON };
 }
 
-const DEDUPE_PLACEHOLDER_RESULT: ToolDedupeResult = { output: '' };
+const DEDUPE_PLACEHOLDER_RESULT: ToolDedupeResult = { output: [] };
 
 export const toolDedupeStepCallsKey = defineState<string[]>('toolDedupe.stepCalls', () => []);
 export const toolDedupeOriginalCallIndexKey = defineState<Map<string, number>>(
@@ -353,7 +348,7 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
 
     for (const deferred of this.stepDeferreds.values()) {
       deferred.resolve({
-        output: 'Tool call deduplicated but original result was lost',
+        output: textOutput('Tool call deduplicated but original result was lost'),
         isError: true,
       });
     }

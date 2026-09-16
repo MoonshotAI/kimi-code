@@ -1,6 +1,7 @@
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
 import {
+  textOutput,
   type ExecutableToolContext,
   type ExecutableToolResult,
   type ToolExecution,
@@ -142,7 +143,7 @@ export class WaitForTool implements IWaitForTool {
     if (!this.flags.enabled(WAIT_FOR_FLAG_ID)) {
       return {
         isError: true,
-        output: 'WaitFor is disabled: the wait_for experimental flag is off.',
+        output: textOutput('WaitFor is disabled: the wait_for experimental flag is off.'),
       };
     }
     const startedAt = Date.now();
@@ -153,16 +154,18 @@ export class WaitForTool implements IWaitForTool {
       if (runningAtStart.length === 0) {
         this.track(args, startedAt, timeoutMs, 'completed', 0);
         return {
-          output: [
-            formatPlainObject({ waitStatus: 'no_tasks', waitedMs: 0, timeoutMs }),
-            'No background tasks are running, so there is nothing to wait for. Finished tasks report back via automatic notification.',
-          ].join('\n\n'),
+          output: textOutput(
+            [
+              formatPlainObject({ waitStatus: 'no_tasks', waitedMs: 0, timeoutMs }),
+              'No background tasks are running, so there is nothing to wait for. Finished tasks report back via automatic notification.',
+            ].join('\n\n'),
+          ),
           isError: false,
         };
       }
     } else if (this.tasks.getTask(args.task_id) === undefined) {
       this.track(args, startedAt, timeoutMs, 'task_not_found', 0);
-      return { isError: true, output: `Task not found: ${args.task_id}` };
+      return { isError: true, output: textOutput(`Task not found: ${args.task_id}`) };
     }
 
     let waited: AgentTaskInfo | undefined;
@@ -181,7 +184,7 @@ export class WaitForTool implements IWaitForTool {
         (error === ctx.steerSignal.reason || isAbortError(error))
       ) {
         this.track(args, startedAt, timeoutMs, 'interrupted', 0);
-        return { output: this.formatInterrupted(args, startedAt, timeoutMs), isError: false };
+        return { output: textOutput(this.formatInterrupted(args, startedAt, timeoutMs)), isError: false };
       }
       this.track(args, startedAt, timeoutMs, 'aborted', 0);
       throw error;
@@ -191,12 +194,12 @@ export class WaitForTool implements IWaitForTool {
 
     if (waited === undefined) {
       this.track(args, startedAt, timeoutMs, 'task_not_found', 0);
-      return { isError: true, output: `Task not found: ${args.task_id ?? ''}` };
+      return { isError: true, output: textOutput(`Task not found: ${args.task_id ?? ''}`) };
     }
 
     if (!TERMINAL_STATUSES.has(waited.status)) {
       this.track(args, startedAt, timeoutMs, 'timed_out', 0);
-      return { output: this.formatTimeout(args, startedAt, timeoutMs), isError: false };
+      return { output: textOutput(this.formatTimeout(args, startedAt, timeoutMs)), isError: false };
     }
 
     const extras = this.collectExtras(runningAtStart, waited.taskId);
@@ -205,7 +208,7 @@ export class WaitForTool implements IWaitForTool {
       [waited, ...extras].map((info) => ({ taskId: info.taskId, status: info.status })),
     );
     this.track(args, startedAt, timeoutMs, 'completed', extras.length);
-    return { output, isError: false };
+    return { output: textOutput(output), isError: false };
   }
 
   private async waitAny(

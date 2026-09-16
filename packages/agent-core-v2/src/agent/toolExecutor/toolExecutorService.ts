@@ -18,6 +18,7 @@ import { isAbortError, isUserCancellation } from '#/_base/utils/abort';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
   ToolAccesses,
+  textOutput,
   type ExecutableTool,
   type ExecutableToolResult,
   type RunnableToolExecution,
@@ -652,7 +653,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         ? `Tool "${call.toolName}" aborted during onDidExecuteTool hook.`
         : `onDidExecuteTool hook failed for "${call.toolName}": ${errorMessage(error)}`;
       return {
-        output,
+        output: textOutput(output),
         isError: true,
         description: result.description,
         display: result.display,
@@ -835,24 +836,24 @@ function makeErrorToolResult(
     toolCall: call.toolCall,
     toolName: call.toolName,
     args,
-    result: { output, isError: true },
+    result: { output: textOutput(output), isError: true },
   };
 }
 
 function coerceToolResult(value: unknown, toolName: string): ExecutableToolResult {
   if (value === null || value === undefined) {
-    return { output: `Tool "${toolName}" returned no result.`, isError: true };
+    return { output: textOutput(`Tool "${toolName}" returned no result.`), isError: true };
   }
   if (typeof value !== 'object') {
     return {
-      output: `Tool "${toolName}" returned a ${typeof value} instead of a tool result.`,
+      output: textOutput(`Tool "${toolName}" returned a ${typeof value} instead of a tool result.`),
       isError: true,
     };
   }
   const candidate = value as { output?: unknown };
-  if (typeof candidate.output !== 'string' && !Array.isArray(candidate.output)) {
+  if (!Array.isArray(candidate.output)) {
     return {
-      output: `Tool "${toolName}" returned a result with a missing or malformed "output" field.`,
+      output: textOutput(`Tool "${toolName}" returned a result with a missing or malformed "output" field.`),
       isError: true,
     };
   }
@@ -860,27 +861,15 @@ function coerceToolResult(value: unknown, toolName: string): ExecutableToolResul
 }
 
 function normalizeToolResult(result: ExecutableToolResult): ToolResult {
-  let output: ToolResult['output'];
-  if (typeof result.output === 'string') {
-    output = result.output.length > 0 ? result.output : TOOL_OUTPUT_EMPTY;
-  } else if (result.output.length === 0) {
-    output = TOOL_OUTPUT_EMPTY;
-  } else {
-    const hasMediaBlock = result.output.some(isMediaContentPart);
-    if (hasMediaBlock) {
-      const hasNonEmptyText = result.output.some(
-        (part) => part.type === 'text' && part.text.length > 0,
-      );
-      output = hasNonEmptyText
-        ? result.output
-        : [{ type: 'text', text: TOOL_OUTPUT_NON_TEXT }, ...result.output];
-    } else {
-      const textJoined = result.output
-        .filter((part): part is Extract<ContentPart, { type: 'text' }> => part.type === 'text')
-        .map((part) => part.text)
-        .join('');
-      output = textJoined.length > 0 ? textJoined : TOOL_OUTPUT_EMPTY;
-    }
+  const hasMediaBlock = result.output.some(isMediaContentPart);
+  const hasNonEmptyText = result.output.some(
+    (part) => part.type === 'text' && part.text.length > 0,
+  );
+  let output: ToolResult['output'] = result.output;
+  if (hasMediaBlock && !hasNonEmptyText) {
+    output = [{ type: 'text', text: TOOL_OUTPUT_NON_TEXT }, ...result.output];
+  } else if (!hasMediaBlock && !hasNonEmptyText) {
+    output = textOutput(TOOL_OUTPUT_EMPTY);
   }
   const base: {
     output: ToolResult['output'];
@@ -924,7 +913,6 @@ function toolTelemetryErrorType(outcome: 'success' | 'error' | 'cancelled'): 'ca
 }
 
 function toolOutputText(output: ToolResult['output']): string {
-  if (typeof output === 'string') return output;
   return output
     .filter((part): part is Extract<ContentPart, { type: 'text' }> => part.type === 'text')
     .map((part) => part.text)
@@ -954,7 +942,7 @@ async function raceWithAbortGrace<Result>(
     const armTimer = (): void => {
       graceTimer = setTimeout(() => {
         resolve({
-          output: abortedToolOutput(toolName, signal.reason),
+          output: textOutput(abortedToolOutput(toolName, signal.reason)),
           isError: true,
         } as unknown as Result);
       }, ABORT_GRACE_MS);

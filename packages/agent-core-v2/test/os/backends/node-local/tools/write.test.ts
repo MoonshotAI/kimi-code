@@ -8,17 +8,13 @@ import { WriteTool } from '#/agent/tools/os/write/writeTool';
 import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ExecutableToolContext, type ExecutableToolResult, type ToolExecution } from '#/tool/toolContract';
 
 const signal = new AbortController().signal;
 const PERMISSIVE_WORKSPACE = stubWorkspaceContext('/');
 
 function toolContentString(result: ExecutableToolResult): string {
-  const c = result.output;
-  if (typeof c !== 'string') {
-    throw new TypeError(`expected string content, got ${typeof c}`);
-  }
-  return c;
+  return result.output.map((part) => (part.type === 'text' ? part.text : '')).join('');
 }
 
 function createTestEnv(home = '/home'): IHostEnvironment {
@@ -96,7 +92,7 @@ async function execute(tool: WriteTool, args: WriteInput): Promise<ExecutableToo
         : `Tool "${tool.name}" failed to resolve execution: ${
             error instanceof Error ? error.message : String(error)
           }`;
-    return { isError: true, output };
+    return { isError: true, output: textOutput(output) };
   }
   if (execution.isError === true) return execution;
   const ctx: ExecutableToolContext = {
@@ -169,7 +165,7 @@ describe('WriteTool', () => {
     const result = await execute(tool, { path: '/tmp/new.txt', content: 'hello' });
 
     expect(writeText).toHaveBeenCalledWith('/tmp/new.txt', 'hello');
-    expect(result.output).toContain('Wrote 5 bytes');
+    expect(toolContentString(result)).toContain('Wrote 5 bytes');
   });
 
   it('expands leading tilde paths using the kaos home directory', async () => {
@@ -194,7 +190,7 @@ describe('WriteTool', () => {
     const result = await execute(tool, { path: '~/notes/today.txt', content: 'hello' });
 
     expect(fakes.writeText).toHaveBeenCalledWith('/home/test/notes/today.txt', 'hello');
-    expect(result.output).toContain('Wrote 5 bytes');
+    expect(toolContentString(result)).toContain('Wrote 5 bytes');
   });
 
   it('appends content through appendText without reading existing bytes', async () => {
@@ -209,7 +205,7 @@ describe('WriteTool', () => {
     expect(appendText).toHaveBeenCalledWith('/tmp/existing.txt', '\nhello');
     expect(readText).not.toHaveBeenCalled();
     expect(writeText).not.toHaveBeenCalled();
-    expect(result.output).toContain('Appended 6 bytes');
+    expect(toolContentString(result)).toContain('Appended 6 bytes');
   });
 
   it('reports the real UTF-8 byte count for non-ASCII content', async () => {
@@ -221,8 +217,8 @@ describe('WriteTool', () => {
 
     const result = await execute(tool, { path: '/tmp/jp.txt', content });
 
-    expect(result.output).toContain('Wrote 18 bytes');
-    expect(result.output).not.toContain('Wrote 6 bytes');
+    expect(toolContentString(result)).toContain('Wrote 18 bytes');
+    expect(toolContentString(result)).not.toContain('Wrote 6 bytes');
   });
 
   it('reports the real UTF-8 byte count for content with surrogate-pair emoji', async () => {
@@ -235,8 +231,8 @@ describe('WriteTool', () => {
 
     const result = await execute(tool, { path: '/tmp/emoji.txt', content });
 
-    expect(result.output).toContain('Wrote 6 bytes');
-    expect(result.output).not.toContain('Wrote 4 bytes');
+    expect(toolContentString(result)).toContain('Wrote 6 bytes');
+    expect(toolContentString(result)).not.toContain('Wrote 4 bytes');
   });
 
   it('reports the real UTF-8 byte count for non-ASCII append content', async () => {
@@ -249,7 +245,7 @@ describe('WriteTool', () => {
     const result = await execute(tool, { path: '/tmp/menu.txt', content, mode: 'append' });
 
     expect(appendText).toHaveBeenCalledWith('/tmp/menu.txt', 'café');
-    expect(result.output).toContain('Appended 5 bytes');
+    expect(toolContentString(result)).toContain('Appended 5 bytes');
   });
 
   it('creates missing parent directories automatically before writing', async () => {
@@ -276,7 +272,7 @@ describe('WriteTool', () => {
 
     const result = await execute(tool, { path: '/tmp/missing-dir/file.txt', content: 'data' });
 
-    expect(result).toMatchObject({ isError: true, output: 'permission denied' });
+    expect(result).toMatchObject({ isError: true, output: textOutput('permission denied') });
     expect(writeText).not.toHaveBeenCalled();
   });
 
@@ -288,7 +284,7 @@ describe('WriteTool', () => {
     const result = await execute(tool, { path: '/tmp/a-file/child.txt', content: 'data' });
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toMatch(/not a directory/i);
+    expect(toolContentString(result)).toMatch(/not a directory/i);
     expect(writeText).not.toHaveBeenCalled();
   });
 
@@ -310,7 +306,7 @@ describe('WriteTool', () => {
 
     const result = await execute(tool, { path: '/some/file.txt', content: 'data' });
 
-    expect(result).toMatchObject({ isError: true, output: 'disk full' });
+    expect(result).toMatchObject({ isError: true, output: textOutput('disk full') });
   });
 
   it('allows explicit absolute writes outside the workspace', async () => {
@@ -331,7 +327,7 @@ describe('WriteTool', () => {
     const result = await execute(tool, { path: '../outside.txt', content: 'x' });
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('absolute path');
+    expect(toolContentString(result)).toContain('absolute path');
     expect(writeText).not.toHaveBeenCalled();
   });
 
@@ -341,7 +337,7 @@ describe('WriteTool', () => {
     const result = await execute(tool, { path: '/workspace/id_rsa', content: 'key' });
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('sensitive-file pattern');
+    expect(toolContentString(result)).toContain('sensitive-file pattern');
     expect(writeText).not.toHaveBeenCalled();
   });
 
@@ -376,7 +372,7 @@ describe('WriteTool', () => {
     const result = await execute(tool, { path: '/tmp/missing-dir/file.txt', content: 'data' });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('parent directory does not exist');
+    expect(toolContentString(result)).toContain('parent directory does not exist');
   });
 
   it('appending to a nonexistent file creates it with just the appended bytes', async () => {

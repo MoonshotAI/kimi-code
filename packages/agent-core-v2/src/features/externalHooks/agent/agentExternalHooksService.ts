@@ -463,7 +463,6 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
 }
 
 function toolOutputText(output: ExecutableToolResult['output']): string {
-  if (typeof output === 'string') return output;
   return output
     .filter((part): part is Extract<(typeof output)[number], { type: 'text' }> => {
       return typeof part === 'object' && part !== null && part.type === 'text';

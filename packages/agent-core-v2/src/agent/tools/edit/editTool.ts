@@ -13,6 +13,7 @@ import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
   ToolAccesses,
+  textOutput,
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
@@ -75,7 +76,7 @@ export class EditTool implements IEditTool {
         const lease = this.runtime.acquire(['fs']);
         try {
           if (lease.runtime.identity.generation !== inspected.identity.generation) {
-            return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
+            return { isError: true, output: textOutput('Runtime changed before execution. Retry the tool call.') };
           }
           return await this.execution(args, path, lease.runtime.fs!);
         } finally {
@@ -93,7 +94,7 @@ export class EditTool implements IEditTool {
     if (args.old_string === args.new_string) {
       return {
         isError: true,
-        output: 'No changes to make: old_string and new_string are exactly the same.',
+        output: textOutput('No changes to make: old_string and new_string are exactly the same.'),
       };
     }
 
@@ -105,10 +106,10 @@ export class EditTool implements IEditTool {
       replace_all: args.replace_all ?? false,
     }, fs);
     if (!result.ok) {
-      return { isError: true, output: result.error };
+      return { isError: true, output: textOutput(result.error) };
     }
     const word = result.count === 1 ? 'occurrence' : 'occurrences';
-    return { output: `Replaced ${String(result.count)} ${word} in ${args.path}` };
+    return { output: textOutput(`Replaced ${String(result.count)} ${word} in ${args.path}`) };
   }
 }
 

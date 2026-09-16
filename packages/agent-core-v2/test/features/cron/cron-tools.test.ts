@@ -172,14 +172,12 @@ function isRunnableExecution(execution: ToolExecution): execution is RunnableToo
 
 function assertSuccess(result: ExecutableToolResult): string {
   expect(result.isError ?? false).toBe(false);
-  expect(typeof result.output).toBe('string');
-  return result.output as string;
+  return result.output.map((part) => (part.type === 'text' ? part.text : '')).join('');
 }
 
 function assertError(result: ExecutableToolResult): string {
   expect(result.isError).toBe(true);
-  expect(typeof result.output).toBe('string');
-  return result.output as string;
+  return result.output.map((part) => (part.type === 'text' ? part.text : '')).join('');
 }
 
 function scrubCronOutput(output: string): string {

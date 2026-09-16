@@ -20,7 +20,7 @@ import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { Runtime } from '#/runtime/runtime';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ExecutableToolContext, type ExecutableToolResult, type ToolExecution } from '#/tool/toolContract';
 
 const signal = new AbortController().signal;
 const PERMISSIVE_WORKSPACE = stubWorkspaceContext('/');
@@ -111,7 +111,7 @@ async function execute(tool: EditTool, args: EditInput): Promise<ExecutableToolR
         : `Tool "${tool.name}" failed to resolve execution: ${
             error instanceof Error ? error.message : String(error)
           }`;
-    return { isError: true, output };
+    return { isError: true, output: textOutput(output) };
   }
   if (execution.isError === true) return execution;
   const ctx: ExecutableToolContext = {
@@ -120,6 +120,10 @@ async function execute(tool: EditTool, args: EditInput): Promise<ExecutableToolR
     signal,
   };
   return execution.execute(ctx);
+}
+
+function toolContentString(result: ExecutableToolResult): string {
+  return result.output.map((part) => (part.type === 'text' ? part.text : '')).join('');
 }
 
 describe('EditTool', () => {
@@ -206,7 +210,7 @@ describe('EditTool', () => {
       new_string: 'gamma',
     });
 
-    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(toolContentString(result)).toContain('Replaced 1 occurrence');
     expect(writeText).toHaveBeenCalledWith('/tmp/a.txt', 'alpha gamma');
   });
 
@@ -227,7 +231,7 @@ describe('EditTool', () => {
       new_string: 'generation',
     });
 
-    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(toolContentString(result)).toContain('Replaced 1 occurrence');
     expect(runtimeWrite).toHaveBeenCalledWith('/tmp/a.txt', 'runtime generation');
     expect(appRead).not.toHaveBeenCalled();
     expect(appWrite).not.toHaveBeenCalled();
@@ -245,7 +249,7 @@ describe('EditTool', () => {
       new_string: 'gamma',
     });
 
-    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(toolContentString(result)).toContain('Replaced 1 occurrence');
     expect(readText).toHaveBeenCalledWith('/home/test/notes/today.txt', { errors: 'strict' });
     expect(writeText).toHaveBeenCalledWith('/home/test/notes/today.txt', 'alpha gamma');
   });
@@ -264,7 +268,7 @@ describe('EditTool', () => {
       new_string: "$& $$ $` $'",
     });
 
-    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(toolContentString(result)).toContain('Replaced 1 occurrence');
     expect(writeText).toHaveBeenCalledWith('/tmp/a.txt', "alpha $& $$ $` $' gamma");
   });
 
@@ -283,7 +287,7 @@ describe('EditTool', () => {
       replace_all: true,
     });
 
-    expect(result.output).toContain('Replaced 2 occurrences');
+    expect(toolContentString(result)).toContain('Replaced 2 occurrences');
     expect(writeText).toHaveBeenCalledWith('/tmp/a.txt', '$& b $&');
   });
 
@@ -301,7 +305,7 @@ describe('EditTool', () => {
       new_string: 'one\ntwo',
     });
 
-    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(toolContentString(result)).toContain('Replaced 1 occurrence');
     expect(writeText).toHaveBeenCalledWith('/tmp/a.txt', 'one\r\ntwo\r\ngamma\r\n');
   });
 
@@ -319,7 +323,7 @@ describe('EditTool', () => {
       new_string: 'one\r\ntwo',
     });
 
-    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(toolContentString(result)).toContain('Replaced 1 occurrence');
     expect(writeText).toHaveBeenCalledWith('/tmp/a.txt', 'one\r\ntwo\r\n');
   });
 
@@ -338,7 +342,7 @@ describe('EditTool', () => {
     });
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('old_string not found');
+    expect(toolContentString(result)).toContain('old_string not found');
     expect(writeText).not.toHaveBeenCalled();
   });
 
@@ -356,7 +360,7 @@ describe('EditTool', () => {
       new_string: 'one\r\ntwo',
     });
 
-    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(toolContentString(result)).toContain('Replaced 1 occurrence');
     expect(writeText).toHaveBeenCalledWith('/tmp/a.txt', 'one\r\ntwo\ngamma\r\n');
   });
 
@@ -375,7 +379,7 @@ describe('EditTool', () => {
       replace_all: true,
     });
 
-    expect(result.output).toContain('Replaced 2 occurrences');
+    expect(toolContentString(result)).toContain('Replaced 2 occurrences');
     expect(writeText).toHaveBeenCalledWith('/tmp/a.txt', 'x b x');
   });
 
@@ -393,7 +397,7 @@ describe('EditTool', () => {
     });
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('No changes to make');
+    expect(toolContentString(result)).toContain('No changes to make');
     expect(readText).not.toHaveBeenCalled();
     expect(writeText).not.toHaveBeenCalled();
   });
@@ -413,7 +417,7 @@ describe('EditTool', () => {
     });
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('old_string not found');
+    expect(toolContentString(result)).toContain('old_string not found');
     expect(writeText).not.toHaveBeenCalled();
   });
 
@@ -432,9 +436,9 @@ describe('EditTool', () => {
     });
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('not unique');
-    expect(result.output).toContain('set replace_all=true');
-    expect(result.output).toContain('include more surrounding context');
+    expect(toolContentString(result)).toContain('not unique');
+    expect(toolContentString(result)).toContain('set replace_all=true');
+    expect(toolContentString(result)).toContain('include more surrounding context');
     expect(writeText).not.toHaveBeenCalled();
   });
 
@@ -450,7 +454,7 @@ describe('EditTool', () => {
     });
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('absolute path');
+    expect(toolContentString(result)).toContain('absolute path');
     expect(readText).not.toHaveBeenCalled();
   });
 
@@ -468,7 +472,7 @@ describe('EditTool', () => {
       new_string: '地球',
     });
 
-    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(toolContentString(result)).toContain('Replaced 1 occurrence');
     expect(writeText).toHaveBeenCalledWith('/tmp/u.txt', 'Hello 地球! café');
   });
 
@@ -508,7 +512,7 @@ describe('EditTool', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('is not a file');
+    expect(toolContentString(result)).toContain('is not a file');
   });
 
   it('maps a HostFsError-wrapped EISDIR to the is-not-a-file phrasing', async () => {
@@ -531,7 +535,7 @@ describe('EditTool', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('is not a file');
+    expect(toolContentString(result)).toContain('is not a file');
   });
 
   it('replaces a substring with an empty new_string (deletion)', async () => {
@@ -548,7 +552,7 @@ describe('EditTool', () => {
       new_string: '',
     });
 
-    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(toolContentString(result)).toContain('Replaced 1 occurrence');
     expect(writeText).toHaveBeenCalledWith('/tmp/e.txt', 'Hello !');
   });
 

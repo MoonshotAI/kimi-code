@@ -20,6 +20,7 @@ import {
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { textOutput } from '#/tool/toolContract';
 import type { ToolCall } from '#human/llm/message';
 
 import { stubPermissionModeService } from '../permissionMode/stubs';
@@ -47,7 +48,7 @@ function makeContext(
     execution: {
       description: `Approve ${toolName}`,
       approvalRule: toolName,
-      execute: () => Promise.resolve({ output: '' }),
+      execute: () => Promise.resolve({ output: [] }),
     },
   };
 }
@@ -118,7 +119,7 @@ describe('AgentPermissionGate', () => {
   it('forwards the policy resolution to the approval service and returns its result', async () => {
     const resolution: PermissionPolicyResolution = { kind: 'deny', message: 'nope' };
     policyResult = { policyName: 'user-configured-deny', result: resolution };
-    const blocked: BeforeExecuteDecision = { veto: { output: 'nope', isError: true } };
+    const blocked: BeforeExecuteDecision = { veto: { output: textOutput('nope'), isError: true } };
     resolvePermissionResolution.mockResolvedValue(blocked);
     const svc = make();
     const ctx = makeContext('bash');
@@ -169,7 +170,7 @@ describe('AgentPermissionGate', () => {
   });
 
   it('vetoes with the resolved denial and ends adjudication on a deny resolution', async () => {
-    const blocked: BeforeExecuteDecision = { veto: { output: 'nope', isError: true } };
+    const blocked: BeforeExecuteDecision = { veto: { output: textOutput('nope'), isError: true } };
     policyResult = { policyName: 'p', result: { kind: 'deny', message: 'nope' } };
     resolvePermissionResolution.mockResolvedValue(blocked);
     make();
@@ -183,7 +184,7 @@ describe('AgentPermissionGate', () => {
   });
 
   it('defers an ask resolution to a cold waitUntil factory', async () => {
-    const synthetic: BeforeExecuteDecision = { veto: { output: 'Plan review handled.' } };
+    const synthetic: BeforeExecuteDecision = { veto: { output: textOutput('Plan review handled.') } };
     const ask: PermissionPolicyResolution = { kind: 'ask' };
     policyResult = { policyName: 'p', result: ask };
     requestToolApproval.mockResolvedValue(synthetic);

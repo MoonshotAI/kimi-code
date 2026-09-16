@@ -7,7 +7,7 @@ import type {
 import { createMachineTools } from '#/agent/loop/machine/tools';
 import type { ToolCall } from '#human/llm/message';
 import type { ToolExecuteInput } from '#human/tool/executor';
-import type { ToolInfo } from '#/tool/toolContract';
+import { textOutput, type ToolInfo } from '#/tool/toolContract';
 
 function call(id: string, name: string): ToolCall {
   return { type: 'function', id, name, arguments: '{}' };
@@ -29,7 +29,7 @@ function createRecordingExecutor(): {
         yield {
           toolCallId: toolCall.id,
           toolName: toolCall.name,
-          result: { output: `ok:${toolCall.id}` },
+          result: { output: textOutput(`ok:${toolCall.id}`) },
         } satisfies ToolExecutionResult;
       }
     },

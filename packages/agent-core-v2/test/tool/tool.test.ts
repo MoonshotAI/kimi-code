@@ -21,7 +21,7 @@ import { makeHookRunner } from '../features/externalHooks/runner-stub';
 import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import { ToolAccesses, type ExecutableTool } from '#/tool/toolContract';
+import { ToolAccesses, textOutput, type ExecutableTool, type ExecutableToolResult } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { agentContextOf, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -1214,8 +1214,8 @@ describe('Agent tool execution contract', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('Subagent type "coder" is not allowed for this agent');
-    expect(result.output).toContain('explore');
+    expect(outputText(result.output)).toContain('Subagent type "coder" is not allowed for this agent');
+    expect(outputText(result.output)).toContain('explore');
     expect(lifecycle.create).not.toHaveBeenCalled();
   });
 
@@ -1239,8 +1239,8 @@ describe('Agent tool execution contract', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('Subagent type "coder" is not allowed for this agent');
-    expect(result.output).toContain('explore');
+    expect(outputText(result.output)).toContain('Subagent type "coder" is not allowed for this agent');
+    expect(outputText(result.output)).toContain('explore');
     expect(lifecycle.create).not.toHaveBeenCalled();
   });
 
@@ -1296,8 +1296,8 @@ describe('Agent tool execution contract', () => {
       subagent_type: 'coder',
     });
     expect(blocked.isError).toBe(true);
-    expect(blocked.output).toContain('Subagent type "coder" is not allowed for this agent');
-    expect(blocked.output).toContain('explore');
+    expect(outputText(blocked.output)).toContain('Subagent type "coder" is not allowed for this agent');
+    expect(outputText(blocked.output)).toContain('explore');
 
     const allowed = await executeAgentTool(context, {
       prompt: 'Investigate',
@@ -1309,7 +1309,7 @@ describe('Agent tool execution contract', () => {
         binding: expect.objectContaining({ profile: 'explore' }),
       }),
     );
-    expect(allowed.output).toContain('actual_subagent_type: explore');
+    expect(outputText(allowed.output)).toContain('actual_subagent_type: explore');
   });
 
   it('does not create a subagent when process disappears after tool activation', async () => {
@@ -1326,7 +1326,7 @@ describe('Agent tool execution contract', () => {
     });
 
     expect(result).toEqual({
-      output: 'subagent error: process capability is no longer available',
+      output: textOutput('subagent error: process capability is no longer available'),
       isError: true,
     });
     expect(lifecycle.create).not.toHaveBeenCalled();
@@ -1355,7 +1355,7 @@ describe('Agent tool execution contract', () => {
         binding: expect.objectContaining({ profile: 'explore' }),
       }),
     );
-    expect(result.output).toContain('actual_subagent_type: explore');
+    expect(outputText(result.output)).toContain('actual_subagent_type: explore');
   });
 
   it('reports a normal completion with stop_reason and a resume hint', async () => {
@@ -1371,12 +1371,12 @@ describe('Agent tool execution contract', () => {
     });
 
     expect(result.isError).toBeUndefined();
-    expect(result.output).toContain('status: completed');
-    expect(result.output).toContain('stop_reason: completed');
-    expect(result.output).toContain('[summary]\nchild result');
-    expect(result.output).toContain('resume_hint: Continue with Agent(resume="agent-child"');
-    expect(result.output).not.toContain('notice:');
-    expect(result.output).not.toContain('next_step:');
+    expect(outputText(result.output)).toContain('status: completed');
+    expect(outputText(result.output)).toContain('stop_reason: completed');
+    expect(outputText(result.output)).toContain('[summary]\nchild result');
+    expect(outputText(result.output)).toContain('resume_hint: Continue with Agent(resume="agent-child"');
+    expect(outputText(result.output)).not.toContain('notice:');
+    expect(outputText(result.output)).not.toContain('next_step:');
   });
 
   it('reports a repeat-breaker handoff as completed with stop_reason repeat_breaker', async () => {
@@ -1395,11 +1395,11 @@ describe('Agent tool execution contract', () => {
     });
 
     expect(result.isError).toBeUndefined();
-    expect(result.output).toContain('status: completed');
-    expect(result.output).toContain('stop_reason: repeat_breaker');
-    expect(result.output).toContain('notice: The subagent was stopped by the repeat breaker');
-    expect(result.output).toContain('[summary]\nStuck: the same grep keeps returning nothing.');
-    expect(result.output).toContain('next_step: The subagent was stuck on one tool call.');
+    expect(outputText(result.output)).toContain('status: completed');
+    expect(outputText(result.output)).toContain('stop_reason: repeat_breaker');
+    expect(outputText(result.output)).toContain('notice: The subagent was stopped by the repeat breaker');
+    expect(outputText(result.output)).toContain('[summary]\nStuck: the same grep keeps returning nothing.');
+    expect(outputText(result.output)).toContain('next_step: The subagent was stuck on one tool call.');
   });
 
   it('settles a repeat-breaker completion with a stop code and a task reason', async () => {
@@ -1494,13 +1494,13 @@ describe('Agent tool execution contract', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('status: failed');
-    expect(result.output).toContain('stop_reason: no_final_message');
-    expect(result.output).toContain(
+    expect(outputText(result.output)).toContain('status: failed');
+    expect(outputText(result.output)).toContain('stop_reason: no_final_message');
+    expect(outputText(result.output)).toContain(
       'subagent error: The subagent was stopped before it finished. Reason: Subagent turn ended without a final message (stop reason: repeat_breaker).',
     );
-    expect(result.output).toContain('resume_hint: Continue with Agent(resume="agent-child", prompt="continue")');
-    expect(result.output).toContain('next_step: Resume to continue where it stopped');
+    expect(outputText(result.output)).toContain('resume_hint: Continue with Agent(resume="agent-child", prompt="continue")');
+    expect(outputText(result.output)).toContain('next_step: Resume to continue where it stopped');
   });
 
   it('keeps the repeat_breaker classification when the handoff produced no text', async () => {
@@ -1522,12 +1522,12 @@ describe('Agent tool execution contract', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('status: failed');
-    expect(result.output).toContain('stop_reason: repeat_breaker');
-    expect(result.output).toContain('Reason: Subagent turn ended without a final message');
-    expect(result.output).toContain('resume_hint: Continue with Agent(resume="agent-child", prompt="continue")');
-    expect(result.output).toContain('next_step: The subagent was stuck on one tool call.');
-    expect(result.output).not.toContain('[summary]');
+    expect(outputText(result.output)).toContain('status: failed');
+    expect(outputText(result.output)).toContain('stop_reason: repeat_breaker');
+    expect(outputText(result.output)).toContain('Reason: Subagent turn ended without a final message');
+    expect(outputText(result.output)).toContain('resume_hint: Continue with Agent(resume="agent-child", prompt="continue")');
+    expect(outputText(result.output)).toContain('next_step: The subagent was stuck on one tool call.');
+    expect(outputText(result.output)).not.toContain('[summary]');
   });
 
   it('maps a step-cap failure to stop_reason max_steps without config advice', async () => {
@@ -1548,10 +1548,10 @@ describe('Agent tool execution contract', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('stop_reason: max_steps');
-    expect(result.output).toContain('maxSteps=5');
-    expect(result.output).not.toContain('config.toml');
-    expect(result.output).toContain('resume_hint:');
+    expect(outputText(result.output)).toContain('stop_reason: max_steps');
+    expect(outputText(result.output)).toContain('maxSteps=5');
+    expect(outputText(result.output)).not.toContain('config.toml');
+    expect(outputText(result.output)).toContain('resume_hint:');
   });
 
   it('maps a provider filter failure to stop_reason filtered with a rephrase hint', async () => {
@@ -1569,8 +1569,8 @@ describe('Agent tool execution contract', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('stop_reason: filtered');
-    expect(result.output).toContain('next_step: Resuming is unlikely to help');
+    expect(outputText(result.output)).toContain('stop_reason: filtered');
+    expect(outputText(result.output)).toContain('next_step: Resuming is unlikely to help');
   });
 
   it('truncates an oversized failure reason', async () => {
@@ -1588,9 +1588,9 @@ describe('Agent tool execution contract', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('stop_reason: error');
-    expect(result.output).toContain('[truncated]');
-    expect((result.output as string).length).toBeLessThan(3000);
+    expect(outputText(result.output)).toContain('stop_reason: error');
+    expect(outputText(result.output)).toContain('[truncated]');
+    expect(outputText(result.output).length).toBeLessThan(3000);
   });
 
   it('declares no resource accesses so concurrent Agent calls can run in parallel', async () => {
@@ -1695,7 +1695,7 @@ describe('Agent tool execution contract', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      output: 'Cannot set subagent_type when resuming an existing agent. Resume by agent id only.',
+      output: textOutput('Cannot set subagent_type when resuming an existing agent. Resume by agent id only.'),
     });
     expect(lifecycle.run).not.toHaveBeenCalled();
   });
@@ -1712,7 +1712,7 @@ describe('Agent tool execution contract', () => {
       fork: true,
     });
 
-    expect(result).toMatchObject({ isError: true, output: FORK_WITH_RESUME_UNAVAILABLE });
+    expect(result).toMatchObject({ isError: true, output: textOutput(FORK_WITH_RESUME_UNAVAILABLE) });
     expect(lifecycle.create).not.toHaveBeenCalled();
     expect(lifecycle.run).not.toHaveBeenCalled();
   });
@@ -1729,7 +1729,7 @@ describe('Agent tool execution contract', () => {
       fork: true,
     });
 
-    expect(result).toMatchObject({ isError: true, output: FORK_WITH_TYPE_UNAVAILABLE });
+    expect(result).toMatchObject({ isError: true, output: textOutput(FORK_WITH_TYPE_UNAVAILABLE) });
     expect(lifecycle.create).not.toHaveBeenCalled();
     expect(lifecycle.run).not.toHaveBeenCalled();
   });
@@ -1745,7 +1745,7 @@ describe('Agent tool execution contract', () => {
       fork: true,
     });
 
-    expect(result).toMatchObject({ isError: true, output: FORK_WITH_MODEL_UNAVAILABLE });
+    expect(result).toMatchObject({ isError: true, output: textOutput(FORK_WITH_MODEL_UNAVAILABLE) });
     expect(lifecycle.create).not.toHaveBeenCalled();
     expect(lifecycle.run).not.toHaveBeenCalled();
   });
@@ -1765,7 +1765,7 @@ describe('Agent tool execution contract', () => {
     });
 
     expect(result.isError).not.toBe(true);
-    expect(result.output).toContain('child result');
+    expect(outputText(result.output)).toContain('child result');
     expect(lifecycle.fork).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'main' }), {
       labels: expect.objectContaining({ parentAgentId: 'main' }),
     });
@@ -1785,7 +1785,7 @@ describe('Agent tool execution contract', () => {
       fork: true,
     });
 
-    expect(result.output).toContain('child result');
+    expect(outputText(result.output)).toContain('child result');
     expect(lifecycle.create).not.toHaveBeenCalled();
     expect(lifecycle.fork).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'main' }), {
       labels: expect.objectContaining({ parentAgentId: 'main' }),
@@ -1812,7 +1812,7 @@ describe('Agent tool execution contract', () => {
     });
 
     expect(result.isError).not.toBe(true);
-    expect(result.output).toContain('child result');
+    expect(outputText(result.output)).toContain('child result');
     expect(lifecycle.create).not.toHaveBeenCalled();
     expect(lifecycle.fork).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'main' }), {
       labels: expect.objectContaining({ parentAgentId: 'main' }),
@@ -1829,7 +1829,7 @@ describe('Agent tool execution contract', () => {
       fork: true,
     });
 
-    expect(result).toMatchObject({ isError: true, output: FORK_EXPERIMENTAL_UNAVAILABLE });
+    expect(result).toMatchObject({ isError: true, output: textOutput(FORK_EXPERIMENTAL_UNAVAILABLE) });
     expect(lifecycle.create).not.toHaveBeenCalled();
     expect(lifecycle.fork).not.toHaveBeenCalled();
     expect(lifecycle.run).not.toHaveBeenCalled();
@@ -1896,9 +1896,9 @@ describe('Agent tool execution contract', () => {
       { kind: 'prompt', prompt: expect.stringContaining('Investigate') },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
-    expect(result.output).toContain('agent_id: agent-child');
-    expect(result.output).toContain('actual_subagent_type: explore');
-    expect(result.output).toContain('child result');
+    expect(outputText(result.output)).toContain('agent_id: agent-child');
+    expect(outputText(result.output)).toContain('actual_subagent_type: explore');
+    expect(outputText(result.output)).toContain('child result');
   });
 
   it('emits subagent.spawned exactly once, after task registration, carrying the task id', async () => {
@@ -2067,7 +2067,7 @@ describe('Agent tool execution contract', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain(
+    expect(outputText(result.output)).toContain(
       'Invalid model "provider/typo". Available models: provider/fast, provider/smart, primary.',
     );
     expect(lifecycle.create).not.toHaveBeenCalled();
@@ -2106,7 +2106,7 @@ describe('Agent tool execution contract', () => {
       model: 'primary',
     });
     expect(rejected.isError).toBe(true);
-    expect(rejected.output).toContain('[secondary_model].force is set');
+    expect(outputText(rejected.output)).toContain('[secondary_model].force is set');
     expect(lifecycle.create).not.toHaveBeenCalled();
 
     await executeAgentTool(context, {
@@ -2141,7 +2141,7 @@ describe('Agent tool execution contract', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('[secondary_model.models] key "primary" is reserved');
+    expect(outputText(result.output)).toContain('[secondary_model.models] key "primary" is reserved');
     expect(lifecycle.create).not.toHaveBeenCalled();
   });
 
@@ -2169,8 +2169,8 @@ describe('Agent tool execution contract', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('Model "provider/bad" is not configured in config.toml.');
-    expect(result.output).toContain('comes from [secondary_model.models]');
+    expect(outputText(result.output)).toContain('Model "provider/bad" is not configured in config.toml.');
+    expect(outputText(result.output)).toContain('comes from [secondary_model.models]');
   });
 
   it('does not rewrite spawn failures unrelated to the model config', async () => {
@@ -2190,8 +2190,8 @@ describe('Agent tool execution contract', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('MCP server failed to start');
-    expect(result.output).not.toContain('[secondary_model.models]');
+    expect(outputText(result.output)).toContain('MCP server failed to start');
+    expect(outputText(result.output)).not.toContain('[secondary_model.models]');
   });
 
   it('mirrors v1-compatible subagent lifecycle event fields', async () => {
@@ -2379,9 +2379,9 @@ describe('Agent tool execution contract', () => {
       { kind: 'prompt', prompt: 'Continue' },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
-    expect(result.output).toContain('agent_id: agent-existing');
-    expect(result.output).toContain('actual_subagent_type: explore');
-    expect(result.output).toContain('resumed result');
+    expect(outputText(result.output)).toContain('agent_id: agent-existing');
+    expect(outputText(result.output)).toContain('actual_subagent_type: explore');
+    expect(outputText(result.output)).toContain('resumed result');
   });
 
   it('rebuilds a persisted subagent that is not live before resuming it', async () => {
@@ -2421,8 +2421,8 @@ describe('Agent tool execution contract', () => {
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(result.isError).not.toBe(true);
-    expect(result.output).toContain('agent_id: agent-existing');
-    expect(result.output).toContain('resumed after restart');
+    expect(outputText(result.output)).toContain('agent_id: agent-existing');
+    expect(outputText(result.output)).toContain('resumed after restart');
   });
 
   it('keeps rejecting resume of an agent id that was never persisted', async () => {
@@ -2440,7 +2440,7 @@ describe('Agent tool execution contract', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      output: 'subagent error: Agent instance "agent-missing" does not exist',
+      output: textOutput('subagent error: Agent instance "agent-missing" does not exist'),
     });
     expect(lifecycle.create).not.toHaveBeenCalled();
     expect(lifecycle.run).not.toHaveBeenCalled();
@@ -2464,7 +2464,7 @@ describe('Agent tool execution contract', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      output: 'subagent error: Agent instance "agent-existing" does not belong to this parent agent',
+      output: textOutput('subagent error: Agent instance "agent-existing" does not belong to this parent agent'),
     });
     expect(lifecycle.create).not.toHaveBeenCalled();
     expect(lifecycle.run).not.toHaveBeenCalled();
@@ -2551,7 +2551,7 @@ describe('Agent tool execution contract', () => {
       resume: 'agent-existing',
     });
 
-    expect(result).toEqual({ output: expect.stringContaining(`actual_subagent_type: ${TOWER_WORKER_PROFILE}`) });
+    expect(result).toEqual({ output: [expect.objectContaining({ type: 'text', text: expect.stringContaining(`actual_subagent_type: ${TOWER_WORKER_PROFILE}`) })] });
     expect(setMode).not.toHaveBeenCalled();
     expect(lifecycle.run).toHaveBeenCalledOnce();
   });
@@ -2577,7 +2577,7 @@ describe('Agent tool execution contract', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      output: 'subagent error: Agent instance "main" is not a subagent',
+      output: textOutput('subagent error: Agent instance "main" is not a subagent'),
     });
     expect(lifecycle.run).not.toHaveBeenCalled();
   });
@@ -2601,7 +2601,7 @@ describe('Agent tool execution contract', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      output: 'subagent error: Agent instance "agent-existing" does not belong to this parent agent',
+      output: textOutput('subagent error: Agent instance "agent-existing" does not belong to this parent agent'),
     });
     expect(lifecycle.run).not.toHaveBeenCalled();
   });
@@ -2637,8 +2637,9 @@ describe('Agent tool execution contract', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      output:
+      output: textOutput(
         'subagent error: Agent instance "agent-existing" is already running and cannot run concurrently',
+      ),
     });
     expect(lifecycle.run).not.toHaveBeenCalled();
   });
@@ -2696,10 +2697,9 @@ describe('Agent tool execution contract', () => {
       run_in_background: true,
     });
 
-    expect(result.output).toContain('status: running');
-    expect(result.output).toContain('agent_id: agent-child');
-    if (typeof result.output !== 'string') throw new TypeError('expected string output');
-    const taskId = result.output.match(/task_id: (\S+)/)?.[1];
+    expect(outputText(result.output)).toContain('status: running');
+    expect(outputText(result.output)).toContain('agent_id: agent-child');
+    const taskId = outputText(result.output).match(/task_id: (\S+)/)?.[1];
     expect(taskId).toBeDefined();
     expect(context.get(IAgentTaskService).getTask(taskId!)).toMatchObject({
       status: 'running',
@@ -2722,8 +2722,9 @@ describe('Agent tool execution contract', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      output:
+      output: textOutput(
         'Background agent execution is not available for this agent because TaskList, TaskOutput, and TaskStop are not enabled.',
+      ),
     });
     expect(lifecycle.create).not.toHaveBeenCalled();
   });
@@ -2757,9 +2758,9 @@ describe('Agent tool execution contract', () => {
 
     expect(invalid).toMatchObject({
       isError: true,
-      output: 'Cannot set subagent_type when resuming an existing agent. Resume by agent id only.',
+      output: textOutput('Cannot set subagent_type when resuming an existing agent. Resume by agent id only.'),
     });
-    expect(valid.output).toContain('status: running');
+    expect(outputText(valid.output)).toContain('status: running');
     expect(lifecycle.create).toHaveBeenCalledTimes(1);
     completion.resolve({ summary: 'finished later' });
   });
@@ -2803,10 +2804,10 @@ describe('Agent tool execution contract', () => {
       run_in_background: true,
     });
 
-    expect(first.output).toContain('status: running');
+    expect(outputText(first.output)).toContain('status: running');
     expect(second).toMatchObject({
       isError: true,
-      output: 'Too many background tasks are already running.',
+      output: textOutput('Too many background tasks are already running.'),
     });
     expect(lifecycle.create).toHaveBeenCalledTimes(2);
     completions[0]?.resolve({ summary: 'finished later' });
@@ -2851,12 +2852,12 @@ describe('Agent tool execution contract', () => {
 
     expect(lifecycle.create).toHaveBeenCalledTimes(2);
     expect(results).toContainEqual(
-      expect.objectContaining({ output: expect.stringContaining('status: running') }),
+      expect.objectContaining({ output: [expect.objectContaining({ type: 'text', text: expect.stringContaining('status: running') })] }),
     );
     expect(results).toContainEqual(
       expect.objectContaining({
         isError: true,
-        output: 'Too many background tasks are already running.',
+        output: textOutput('Too many background tasks are already running.'),
       }),
     );
     completions[0]?.resolve({ summary: 'finished later' });
@@ -2925,7 +2926,7 @@ describe('Agent tool execution contract', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      output: 'subagent error: missing subagent',
+      output: textOutput('subagent error: missing subagent'),
     });
     expect(entries).toContainEqual({
       level: 'warn',
@@ -2967,10 +2968,10 @@ describe('Agent tool execution contract', () => {
     tasks.detach(task.taskId);
     const result = await running;
 
-    expect(result.output).toContain(`task_id: ${task.taskId}`);
-    expect(result.output).toContain('agent_id: agent-child');
-    expect(result.output).toContain('automatic_notification: true');
-    expect(result.output).toContain('note: The user moved this subagent to the background.');
+    expect(outputText(result.output)).toContain(`task_id: ${task.taskId}`);
+    expect(outputText(result.output)).toContain('agent_id: agent-child');
+    expect(outputText(result.output)).toContain('automatic_notification: true');
+    expect(outputText(result.output)).toContain('note: The user moved this subagent to the background.');
 
     completion.resolve({ summary: 'finished later' });
     await expect(tasks.wait(task.taskId)).resolves.toMatchObject({
@@ -3001,10 +3002,10 @@ describe('Agent tool execution contract', () => {
     tasks.detach(task.taskId);
     const result = await running;
 
-    expect(result.output).toContain(`task_id: ${task.taskId}`);
-    expect(result.output).toContain('next_step: The completion arrives automatically');
-    expect(result.output).not.toContain('TaskOutput');
-    expect(result.output).not.toContain('TaskStop');
+    expect(outputText(result.output)).toContain(`task_id: ${task.taskId}`);
+    expect(outputText(result.output)).toContain('next_step: The completion arrives automatically');
+    expect(outputText(result.output)).not.toContain('TaskOutput');
+    expect(outputText(result.output)).not.toContain('TaskStop');
 
     completion.resolve({ summary: 'finished later' });
     await expect(tasks.wait(task.taskId)).resolves.toMatchObject({
@@ -3027,16 +3028,15 @@ describe('Agent tool execution contract', () => {
       run_in_background: true,
     });
 
-    if (typeof result.output !== 'string') throw new TypeError('expected string output');
-    const taskId = result.output.match(/task_id: (\S+)/)?.[1];
+    const taskId = outputText(result.output).match(/task_id: (\S+)/)?.[1];
     expect(taskId).toBeDefined();
-    expect(result.output).toContain('next_step:');
-    expect(result.output).toContain(BACKGROUND_AGENT_NEXT_STEP);
-    expect(result.output).not.toContain('block=false');
-    expect(result.output).toContain('resume_hint:');
-    expect(result.output).toContain('Agent(resume="agent-child"');
-    expect(result.output).toMatch(/agent_id.*not.*task_id|task_id.*not.*agent_id/i);
-    expect(result.output).toMatch(/task\.lost|task\.failed|task\.killed/);
+    expect(outputText(result.output)).toContain('next_step:');
+    expect(outputText(result.output)).toContain(BACKGROUND_AGENT_NEXT_STEP);
+    expect(outputText(result.output)).not.toContain('block=false');
+    expect(outputText(result.output)).toContain('resume_hint:');
+    expect(outputText(result.output)).toContain('Agent(resume="agent-child"');
+    expect(outputText(result.output)).toMatch(/agent_id.*not.*task_id|task_id.*not.*agent_id/i);
+    expect(outputText(result.output)).toMatch(/task\.lost|task\.failed|task\.killed/);
     completion.resolve({ summary: 'finished later' });
   });
 
@@ -3069,11 +3069,11 @@ describe('Agent tool execution contract', () => {
     const result = await resultPromise;
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('status: failed');
-    expect(result.output).toContain('stop_reason: cancelled');
-    expect(result.output).toContain('The subagent was stopped before it finished by user.');
-    expect(result.output).not.toContain('resume_hint:');
-    expect(result.output).toContain('next_step: The user stopped this subagent.');
+    expect(outputText(result.output)).toContain('status: failed');
+    expect(outputText(result.output)).toContain('stop_reason: cancelled');
+    expect(outputText(result.output)).toContain('The subagent was stopped before it finished by user.');
+    expect(outputText(result.output)).not.toContain('resume_hint:');
+    expect(outputText(result.output)).toContain('next_step: The user stopped this subagent.');
   });
 
   it('reports the reason when a foreground subagent is stopped for another cause', async () => {
@@ -3100,12 +3100,12 @@ describe('Agent tool execution contract', () => {
     const result = await resultPromise;
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('stop_reason: stopped');
-    expect(result.output).toContain(
+    expect(outputText(result.output)).toContain('stop_reason: stopped');
+    expect(outputText(result.output)).toContain(
       'The subagent was stopped before it finished. Reason: Session closed',
     );
-    expect(result.output).toContain('resume_hint: Continue with Agent(resume="agent-child"');
-    expect(result.output).not.toContain('The user stopped this subagent');
+    expect(outputText(result.output)).toContain('resume_hint: Continue with Agent(resume="agent-child"');
+    expect(outputText(result.output)).not.toContain('The user stopped this subagent');
   });
 
   it('returns the spawned agent id when a foreground subagent times out', async () => {
@@ -3136,14 +3136,14 @@ describe('Agent tool execution contract', () => {
     const result = await resultPromise;
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('agent_id: agent-child');
-    expect(result.output).toContain('actual_subagent_type: coder');
-    expect(result.output).toContain('status: failed');
-    expect(result.output).toContain('subagent error: Agent timed out after 2 hours.');
-    expect(result.output).toContain('resume_hint:');
-    expect(result.output).toContain('Agent(resume="agent-child", prompt="continue")');
-    expect(result.output).toContain('do not set subagent_type');
-    expect(result.output).toContain('retains its prior context');
+    expect(outputText(result.output)).toContain('agent_id: agent-child');
+    expect(outputText(result.output)).toContain('actual_subagent_type: coder');
+    expect(outputText(result.output)).toContain('status: failed');
+    expect(outputText(result.output)).toContain('subagent error: Agent timed out after 2 hours.');
+    expect(outputText(result.output)).toContain('resume_hint:');
+    expect(outputText(result.output)).toContain('Agent(resume="agent-child", prompt="continue")');
+    expect(outputText(result.output)).toContain('do not set subagent_type');
+    expect(outputText(result.output)).toContain('retains its prior context');
   });
 
   it('honours the configured subagent timeout over the default', async () => {
@@ -3176,7 +3176,7 @@ describe('Agent tool execution contract', () => {
     const result = await resultPromise;
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('subagent error: Agent timed out after 1 second.');
+    expect(outputText(result.output)).toContain('subagent error: Agent timed out after 1 second.');
   });
 });
 
@@ -3388,7 +3388,7 @@ describe('AgentSwarm tool execution contract', () => {
         },
       ],
     });
-    expect(result.output).toBe([
+    expect(outputText(result.output)).toBe([
       '<agent_swarm_result>',
       '<summary>completed: 2</summary>',
       '<subagent agent_id="agent-explore-1" item="src/a.ts" outcome="completed">explore result a</subagent>',
@@ -3635,7 +3635,7 @@ describe('AgentSwarm tool execution contract', () => {
         },
       ],
     });
-    expect(result.output).toBe([
+    expect(outputText(result.output)).toBe([
       '<agent_swarm_result>',
       '<summary>completed: 3</summary>',
       '<subagent mode="resume" agent_id="agent-old-1" item="src/old-a.ts" outcome="completed">result 1</subagent>',
@@ -3684,7 +3684,7 @@ describe('AgentSwarm tool execution contract', () => {
       signal,
     });
 
-    expect(result.output).toBe([
+    expect(outputText(result.output)).toBe([
       '<agent_swarm_result>',
       '<summary>completed: 1, failed: 1</summary>',
       '<resume_hint>Call AgentSwarm with resume_agent_ids using the agent_id values in this result to continue unfinished work.</resume_hint>',
@@ -3731,14 +3731,14 @@ describe('AgentSwarm tool execution contract', () => {
       signal,
     });
 
-    expect(result.output).toBe([
+    expect(outputText(result.output)).toBe([
       '<agent_swarm_result>',
       '<summary>failed: 2</summary>',
       '<subagent item="src/a.ts" outcome="failed">Agent did not start.</subagent>',
       '<subagent item="src/b.ts" outcome="failed">Agent also did not start.</subagent>',
       '</agent_swarm_result>',
     ].join('\n'));
-    expect(result.output).not.toContain('<resume_hint>');
+    expect(outputText(result.output)).not.toContain('<resume_hint>');
     expect(result.isError).toBeUndefined();
   });
 
@@ -3781,7 +3781,7 @@ describe('AgentSwarm tool execution contract', () => {
       signal,
     });
 
-    expect(result.output).toBe([
+    expect(outputText(result.output)).toBe([
       '<agent_swarm_result>',
       '<summary>completed: 2</summary>',
       '<resume_hint>Call AgentSwarm with resume_agent_ids using the agent_id values in this result to continue unfinished work.</resume_hint>',
@@ -3837,7 +3837,7 @@ describe('AgentSwarm tool execution contract', () => {
       signal,
     });
 
-    expect(result.output).toBe([
+    expect(outputText(result.output)).toBe([
       '<agent_swarm_result>',
       '<summary>completed: 1, aborted: 2</summary>',
       '<resume_hint>Call AgentSwarm with resume_agent_ids using the agent_id values in this result to continue unfinished work.</resume_hint>',
@@ -4260,8 +4260,9 @@ describe('Agent tools', () => {
         }),
       ).resolves.toMatchObject({
         isError: true,
-        output:
+        output: textOutput(
           'Background execution is not available for this agent because TaskOutput and TaskStop are not enabled.',
+        ),
       });
 
       await ctx.rpc.setActiveTools({ names: ['Bash', 'TaskList', 'TaskOutput', 'TaskStop'] });
@@ -4316,7 +4317,7 @@ describe('Agent tools', () => {
       expect(
         await ctx.untilToolCall({
           content: 'moon-result',
-          output: 'moon-result',
+          output: textOutput('moon-result'),
         }),
       ).toMatchInlineSnapshot(`
         [wire] permission.set_mode         { "agentId": "main", "mode": "auto", "time": "<time>" }
@@ -4359,9 +4360,9 @@ describe('Agent tools', () => {
       expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
         [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "tool.call", "uuid": "<uuid-3>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "moon" } }, "time": "<time>" }
         [wire] interaction.request         { "agentId": "main", "id": "<user_tool-1>", "kind": "user_tool", "toolCallId": "call_lookup", "request": { "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "moon" } }, "time": "<time>" }
-        [wire] interaction.resolved        { "agentId": "main", "id": "<user_tool-1>", "response": { "content": "moon-result", "output": "moon-result" }, "time": "<time>" }
-        [emit] tool.result                 { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "output": "moon-result" }
-        [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "tool.result", "parentUuid": "<uuid-3>", "toolCallId": "call_lookup", "result": { "output": "moon-result" } }, "time": "<time>" }
+        [wire] interaction.resolved        { "agentId": "main", "id": "<user_tool-1>", "response": { "content": "moon-result", "output": [ { "type": "text", "text": "moon-result" } ] }, "time": "<time>" }
+        [emit] tool.result                 { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "output": [ { "type": "text", "text": "moon-result" } ] }
+        [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "tool.result", "parentUuid": "<uuid-3>", "toolCallId": "call_lookup", "result": { "output": [ { "type": "text", "text": "moon-result" } ] } }, "time": "<time>" }
         [emit] turn.step.completed         { "time": "<time>", "agentId": "main", "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 144, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use", "providerFinishReason": "tool_calls", "rawFinishReason": "tool_calls" }
         [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "finishReason": "tool_use", "usage": { "inputOther": 144, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-1", "providerFinishReason": "tool_calls", "rawFinishReason": "tool_calls" }, "time": "<time>" }
         [emit] turn.step.started           { "time": "<time>", "agentId": "main", "turnId": 0, "step": 2, "stepId": "<uuid-4>" }
@@ -4459,7 +4460,7 @@ describe('Agent tools', () => {
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Look up moon' }] });
       await ctx.untilToolCall({
         content: fullOutput,
-        output: fullOutput,
+        output: textOutput(fullOutput),
       });
       ctx.mockNextResponse({ type: 'text', text: 'The lookup output was saved.' });
       await ctx.untilTurnEnd();
@@ -4575,4 +4576,8 @@ function hookPayloadAssertCommand(expected: {
     "process.on('uncaughtException', (error) => { console.error(error.message); process.exit(2); });",
   ].filter((line) => line.length > 0).join('');
   return `node -e ${JSON.stringify(script)}`;
+}
+
+function outputText(output: ExecutableToolResult['output']): string {
+  return output.map((part) => (part.type === 'text' ? part.text : '')).join('');
 }

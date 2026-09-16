@@ -47,7 +47,7 @@ import type {
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
 import type { ToolCall } from '#human/llm/message';
-import type { ExecutableToolContext } from '#/tool/toolContract';
+import { textOutput, type ExecutableToolContext, type ExecutableToolResult } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -118,7 +118,7 @@ function hookContext(toolCalls: ToolCall[]): ResolvedToolExecutionHookContext {
     toolCall: toolCalls[0]!,
     toolCalls,
     args: {},
-    execution: { approvalRule: toolCalls[0]!.name, execute: async () => ({ output: '' }) },
+    execution: { approvalRule: toolCalls[0]!.name, execute: async () => ({ output: [] }) },
   };
 }
 
@@ -576,7 +576,7 @@ describe('AgentSwarmService', () => {
 
     expect(decision).toEqual({
       veto: {
-        output: expect.stringContaining('one swarm at a time'),
+        output: [expect.objectContaining({ type: 'text', text: expect.stringContaining('one swarm at a time') })],
         isError: true,
       },
     });
@@ -592,7 +592,7 @@ describe('AgentSwarmService', () => {
 
     expect(decision).toEqual({
       veto: {
-        output: expect.stringContaining('must be the only tool call'),
+        output: [expect.objectContaining({ type: 'text', text: expect.stringContaining('must be the only tool call') })],
         isError: true,
       },
     });
@@ -787,7 +787,7 @@ describe('AgentSwarmTool', () => {
         plan: { profileName: 'explore', model: 'provider/fast', modelSource: 'secondary_pool', thinking: undefined, fork: false },
       },
     ] }));
-    expect(result.output).toBe(
+    expect(outputText(result.output)).toBe(
       [
         '<agent_swarm_result>',
         '<summary>completed: 2</summary>',
@@ -853,7 +853,7 @@ describe('AgentSwarmTool', () => {
     );
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('Subagent type "coder" is not allowed for this agent');
+    expect(outputText(result.output)).toContain('Subagent type "coder" is not allowed for this agent');
     expect(host.swarmService.run).not.toHaveBeenCalled();
   });
 
@@ -907,7 +907,7 @@ describe('AgentSwarmTool', () => {
 
       const result = await executeTool(tool, context(testCase.input));
 
-      expect(result.output).toBe(testCase.output);
+      expect(outputText(result.output)).toBe(testCase.output);
       expect(result.isError).toBe(true);
       expect(host.swarmService.run).not.toHaveBeenCalled();
     }
@@ -1027,7 +1027,7 @@ describe('AgentSwarmTool', () => {
         plan: { profileName: 'explore', model: 'mock-model', modelSource: 'inherited', thinking: 'off', fork: false },
       },
     ] }));
-    expect(result.output).toBe(
+    expect(outputText(result.output)).toBe(
       [
         '<agent_swarm_result>',
         '<summary>completed: 3</summary>',
@@ -1093,7 +1093,7 @@ describe('AgentSwarmTool', () => {
         timeout: DEFAULT_SWARM_TIMEOUT_MS,
       },
     ] }));
-    expect(result.output).toBe(
+    expect(outputText(result.output)).toBe(
       [
         '<agent_swarm_result>',
         '<summary>completed: 1</summary>',
@@ -1131,7 +1131,7 @@ describe('AgentSwarmTool', () => {
       }),
     );
 
-    expect(result.output).toBe(
+    expect(outputText(result.output)).toBe(
       [
         '<agent_swarm_result>',
         '<summary>completed: 1, failed: 1</summary>',
@@ -1289,7 +1289,7 @@ describe('AgentSwarmTool', () => {
       }),
     );
 
-    expect(result.output).toBe(
+    expect(outputText(result.output)).toBe(
       [
         '<agent_swarm_result>',
         '<summary>failed: 2</summary>',
@@ -1336,7 +1336,7 @@ describe('AgentSwarmTool', () => {
       }),
     );
 
-    expect(result.output).toBe(
+    expect(outputText(result.output)).toBe(
       [
         '<agent_swarm_result>',
         '<summary>completed: 1, aborted: 2</summary>',
@@ -1363,7 +1363,7 @@ describe('AgentSwarmTool', () => {
       }),
     );
 
-    expect(result).toMatchObject({ isError: true, output: FORK_WITH_RESUME_UNAVAILABLE });
+    expect(result).toMatchObject({ isError: true, output: textOutput(FORK_WITH_RESUME_UNAVAILABLE) });
     expect(host.swarmService.run).not.toHaveBeenCalled();
   });
 
@@ -1383,7 +1383,7 @@ describe('AgentSwarmTool', () => {
       }),
     );
 
-    expect(result).toMatchObject({ isError: true, output: FORK_WITH_TYPE_UNAVAILABLE });
+    expect(result).toMatchObject({ isError: true, output: textOutput(FORK_WITH_TYPE_UNAVAILABLE) });
     expect(host.swarmService.run).not.toHaveBeenCalled();
   });
 
@@ -1403,7 +1403,7 @@ describe('AgentSwarmTool', () => {
       }),
     );
 
-    expect(result).toMatchObject({ isError: true, output: FORK_WITH_MODEL_UNAVAILABLE });
+    expect(result).toMatchObject({ isError: true, output: textOutput(FORK_WITH_MODEL_UNAVAILABLE) });
     expect(host.swarmService.run).not.toHaveBeenCalled();
   });
 
@@ -1421,7 +1421,7 @@ describe('AgentSwarmTool', () => {
       }),
     );
 
-    expect(result).toMatchObject({ isError: true, output: FORK_EXPERIMENTAL_UNAVAILABLE });
+    expect(result).toMatchObject({ isError: true, output: textOutput(FORK_EXPERIMENTAL_UNAVAILABLE) });
     expect(host.swarmService.run).not.toHaveBeenCalled();
   });
 
@@ -1459,3 +1459,7 @@ describe('AgentSwarmTool', () => {
     );
   });
 });
+
+function outputText(output: ExecutableToolResult['output']): string {
+  return output.map((part) => (part.type === 'text' ? part.text : '')).join('');
+}

@@ -29,6 +29,7 @@ import { TurnStarted } from '#/agent/loop/turnEvents';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { textOutput } from '#/tool/toolContract';
 import type {
   ExecutableTool,
   ToolDisclosure,
@@ -140,7 +141,7 @@ class StubMcpTool implements ExecutableTool<Record<string, unknown>> {
       approvalRule: this.name,
       execute: async () => {
         this.calls += 1;
-        return { output: this.output };
+        return { output: textOutput(this.output) };
       },
     };
   }
@@ -158,7 +159,7 @@ class EchoTool implements ExecutableTool<Record<string, unknown>> {
       approvalRule: this.name,
       execute: async () => {
         this.calls += 1;
-        return { output: 'echo ok' };
+        return { output: textOutput('echo ok') };
       },
     };
   }
@@ -605,7 +606,7 @@ describe('AgentToolSelectService S0 baseline (gate closed)', () => {
       signal: new AbortController().signal,
     });
     expect(result).toEqual({
-      output: 'select_tools is not available for the current model.',
+      output: textOutput('select_tools is not available for the current model.'),
       isError: true,
     });
   });
@@ -623,7 +624,7 @@ describe('AgentToolSelectService S0 baseline (gate closed)', () => {
     const h = createExecutorHarness();
     const results = await execute(h, toolCall('call-1', MCP_GONE));
     expect(results).toHaveLength(1);
-    expect(results[0]!.result.output).toBe(`Tool "${MCP_GONE}" not found`);
+    expect(outputText(results[0]!.result.output)).toBe(`Tool "${MCP_GONE}" not found`);
     expect(results[0]!.result.isError).toBe(true);
   });
 });
@@ -939,11 +940,13 @@ describe('AgentToolSelectService.load', () => {
     const mixed = selectTools.resolveExecution({ names: [MCP_BETA, MCP_ALPHA, MCP_GONE] });
     if (mixed.isError === true) throw new Error('expected a runnable execution');
     expect(await mixed.execute(ctx)).toEqual({
-      output: [
-        `Loaded: ${MCP_BETA}`,
-        `Already available: ${MCP_ALPHA}`,
-        `Unknown tool: ${MCP_GONE}. Pick from the latest announced tools list.`,
-      ].join('\n'),
+      output: textOutput(
+        [
+          `Loaded: ${MCP_BETA}`,
+          `Already available: ${MCP_ALPHA}`,
+          `Unknown tool: ${MCP_GONE}. Pick from the latest announced tools list.`,
+        ].join('\n'),
+      ),
     });
   });
 
@@ -954,7 +957,7 @@ describe('AgentToolSelectService.load', () => {
     const unknownOnly = selectTools.resolveExecution({ names: [MCP_GONE] });
     if (unknownOnly.isError === true) throw new Error('expected a runnable execution');
     expect(await unknownOnly.execute(ctx)).toEqual({
-      output: `Unknown tool: ${MCP_GONE}. Pick from the latest announced tools list.`,
+      output: textOutput(`Unknown tool: ${MCP_GONE}. Pick from the latest announced tools list.`),
       isError: true,
     });
   });
@@ -973,7 +976,7 @@ describe('AgentToolSelectService executor interception', () => {
     const results = await execute(h, toolCall('call-1', MCP_ALPHA));
     expect(results).toHaveLength(1);
     expect(results[0]!.result.isError).toBe(true);
-    expect(results[0]!.result.output).toContain('is available but not loaded');
+    expect(outputText(results[0]!.result.output)).toContain('is available but not loaded');
     expect(alpha.calls).toBe(0);
   });
 
@@ -985,9 +988,10 @@ describe('AgentToolSelectService executor interception', () => {
     const results = await execute(h, toolCall('call-1', MCP_ALPHA, { unexpected: true }));
     expect(results).toHaveLength(1);
     expect(results[0]!.result).toEqual({
-      output:
+      output: textOutput(
         `Tool "${MCP_ALPHA}" is available but not loaded. ` +
         `Call select_tools with ["${MCP_ALPHA}"] first, then call the tool.`,
+      ),
       isError: true,
       stopTurn: false,
     });
@@ -1002,7 +1006,7 @@ describe('AgentToolSelectService executor interception', () => {
 
     const results = await execute(h, toolCall('call-1', MCP_ALPHA));
     expect(results).toHaveLength(1);
-    expect(results[0]!.result.output).toBe('mcp ok');
+    expect(outputText(results[0]!.result.output)).toBe('mcp ok');
     expect(alpha.calls).toBe(1);
   });
 
@@ -1017,8 +1021,9 @@ describe('AgentToolSelectService executor interception', () => {
 
     expect(results).toHaveLength(1);
     expect(results[0]!.result).toEqual({
-      output:
+      output: textOutput(
         `Tool "${MCP_ALPHA}" was loaded but is no longer active. Ask the user to enable it before calling it again.`,
+      ),
       isError: true,
       stopTurn: false,
     });
@@ -1032,7 +1037,7 @@ describe('AgentToolSelectService executor interception', () => {
 
     const results = await execute(h, toolCall('call-1', 'Echo'));
     expect(results).toHaveLength(1);
-    expect(results[0]!.result.output).toBe('echo ok');
+    expect(outputText(results[0]!.result.output)).toBe('echo ok');
     expect(echo.calls).toBe(1);
   });
 
@@ -1042,12 +1047,12 @@ describe('AgentToolSelectService executor interception', () => {
     registerUser(h, dashboard, 'deferred');
 
     const beforeLoad = await execute(h, toolCall('call-1', USER_DEFERRED));
-    expect(beforeLoad[0]!.result.output).toContain('is available but not loaded');
+    expect(outputText(beforeLoad[0]!.result.output)).toContain('is available but not loaded');
     expect(dashboard.calls).toBe(0);
 
     h.contextMemory.history.push(schemaMessage(USER_DEFERRED));
     const afterLoad = await execute(h, toolCall('call-2', USER_DEFERRED));
-    expect(afterLoad[0]!.result.output).toBe('echo ok');
+    expect(outputText(afterLoad[0]!.result.output)).toBe('echo ok');
     expect(dashboard.calls).toBe(1);
   });
 });
@@ -1064,7 +1069,7 @@ describe('AgentToolSelectService missing tool wording', () => {
     const results = await execute(h, toolCall('call-1', MCP_GONE));
     expect(results).toHaveLength(1);
     expect(results[0]!.result.isError).toBe(true);
-    expect(results[0]!.result.output).toBe(
+    expect(outputText(results[0]!.result.output)).toBe(
       `Tool "${MCP_GONE}" was loaded but its MCP server is currently disconnected. ` +
         'It may become available again when the server reconnects; do not retry immediately.',
     );
@@ -1073,7 +1078,7 @@ describe('AgentToolSelectService missing tool wording', () => {
   it('keeps the default message for a name that was never loaded', async () => {
     const h = createExecutorHarness();
     const results = await execute(h, toolCall('call-1', MCP_GONE));
-    expect(results[0]!.result.output).toBe(`Tool "${MCP_GONE}" not found`);
+    expect(outputText(results[0]!.result.output)).toBe(`Tool "${MCP_GONE}" not found`);
   });
 
   it('reports a loaded user tool that is no longer registered', async () => {
@@ -1084,7 +1089,7 @@ describe('AgentToolSelectService missing tool wording', () => {
 
     const results = await execute(h, toolCall('call-1', USER_DEFERRED));
 
-    expect(results[0]!.result.output).toBe(
+    expect(outputText(results[0]!.result.output)).toBe(
       `Tool "${USER_DEFERRED}" was loaded but is no longer registered. ` +
         'Do not retry it unless it becomes available again.',
     );
@@ -1172,3 +1177,7 @@ describe('AgentToolSelectService loadable-tools announcements', () => {
     expect(await announce(h)).toBeUndefined();
   });
 });
+
+function outputText(output: ToolExecutionResult['result']['output']): string {
+  return output.map((part) => (part.type === 'text' ? part.text : '')).join('');
+}

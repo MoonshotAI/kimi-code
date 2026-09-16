@@ -1,6 +1,7 @@
 import {
   DEFAULT_TOOL_RESULT_MAX_CHARS,
   DEFAULT_TOOL_RESULT_MAX_RETAINED_CHARS,
+  textOutput,
   type ExecutableToolErrorResult,
   type ExecutableToolSuccessResult,
   type ToolResultSpill,
@@ -10,7 +11,6 @@ export type ToolOutputAccumulatorResult = (
   | ExecutableToolErrorResult
   | ExecutableToolSuccessResult
 ) & {
-  readonly output: string;
   readonly brief?: string;
 };
 
@@ -42,9 +42,10 @@ export class ToolOutputAccumulator {
       finalMessage += '.';
     }
     const output = this.buffer.join('');
+    const text = output.length === 0 ? finalMessage : output;
     return {
       isError: false,
-      output: output.length === 0 ? finalMessage : output,
+      output: text.length === 0 ? [] : textOutput(text),
       brief: options.brief,
       spill: this.completionSpill(finalMessage),
     };
@@ -55,16 +56,17 @@ export class ToolOutputAccumulator {
     options: { readonly brief?: string } = {},
   ): ToolOutputAccumulatorResult {
     const output = this.buffer.join('');
+    const text =
+      message.length === 0
+        ? output
+        : output.length === 0
+          ? message
+          : output.endsWith('\n')
+            ? `${output}${message}`
+            : `${output}\n${message}`;
     return {
       isError: true,
-      output:
-        message.length === 0
-          ? output
-          : output.length === 0
-            ? message
-            : output.endsWith('\n')
-              ? `${output}${message}`
-              : `${output}\n${message}`,
+      output: text.length === 0 ? [] : textOutput(text),
       brief: options.brief,
       spill: this.retentionSpill(message),
     };

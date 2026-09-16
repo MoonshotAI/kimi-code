@@ -16,6 +16,7 @@ import { SessionBtwService } from '#/features/btw/btwService';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import type { ToolCall } from '#human/llm/message';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { textOutput } from '#/tool/toolContract';
 
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
@@ -99,12 +100,12 @@ describe('SessionBtwService', () => {
         toolCall,
         toolCalls: [toolCall],
         args: {},
-        execution: { approvalRule: name, execute: async () => ({ output: '' }) },
+        execution: { approvalRule: name, execute: async () => ({ output: [] }) },
       });
 
       expect(decision).toEqual({
         veto: {
-          output: `${TOOL_CALL_DISABLED_MESSAGE} [worker guidance]`,
+          output: textOutput(`${TOOL_CALL_DISABLED_MESSAGE} [worker guidance]`),
           isError: true,
         },
       });
@@ -124,7 +125,7 @@ describe('SessionBtwService', () => {
         toolCall,
         toolCalls: [toolCall],
         args: {},
-        execution: { approvalRule: name, execute: async () => ({ output: '' }) },
+        execution: { approvalRule: name, execute: async () => ({ output: [] }) },
       });
 
       expect(decision).toBeUndefined();

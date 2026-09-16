@@ -1,4 +1,4 @@
-import type { ToolExecution } from '#/tool/toolContract';
+import { textOutput, type ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentCronService } from '#/features/cron/cronService';
@@ -49,12 +49,12 @@ export class CronListTool implements ICronListTool {
         const header = `cron_jobs: ${String(tasks.length)}`;
         if (records.length === 0) {
           return {
-            output: `${header}\nNo cron jobs scheduled.`,
+            output: textOutput(`${header}\nNo cron jobs scheduled.`),
             isError: false,
           };
         }
         return {
-          output: `${header}\n${records.join('\n---\n')}`,
+          output: textOutput(`${header}\n${records.join('\n---\n')}`),
           isError: false,
         };
       },
