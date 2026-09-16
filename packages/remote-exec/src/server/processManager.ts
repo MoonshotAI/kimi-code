@@ -53,7 +53,6 @@ interface ManagedProcess {
   pty: IPty | undefined;
   stdinOpen: boolean;
   terminateAfterStart: boolean;
-  terminationRequested: boolean;
   nextSeq: number;
   readonly retained: RetainedChunk[];
   retainedBytes: number;
@@ -140,7 +139,6 @@ export class ProcessManager {
       pty: undefined,
       stdinOpen: tty || pipeStdin,
       terminateAfterStart: false,
-      terminationRequested: false,
       nextSeq: 1,
       retained: [],
       retainedBytes: 0,
@@ -164,6 +162,13 @@ export class ProcessManager {
       await this.startPty(entry, argv as string[], cwd, spawnEnv);
     } else {
       await this.startPipe(entry, argv as string[], cwd, spawnEnv, pipeStdin, arg0);
+    }
+    if (this.disposed) {
+      // Shutdown raced the spawn: the entry was dropped with the map, so kill
+      // the child right away rather than leaving an unmanaged orphan.
+      this.processes.delete(processId);
+      this.killGroup(entry, 'SIGKILL');
+      throw new RpcError(RpcErrorCode.InternalError, 'server is shutting down');
     }
     entry.state = 'running';
     if (entry.terminateAfterStart) {
@@ -440,6 +445,9 @@ export class ProcessManager {
     if (entry.writeIds.ids.has(writeId)) {
       return { status: 'accepted' };
     }
+    // Record before any await (codex ordering): a concurrent replay of the
+    // same writeId must not write twice, whatever happens below.
+    rememberWriteId(entry.writeIds, writeId);
     if (eof) {
       entry.stdinOpen = false;
       if (entry.pty !== undefined) {
@@ -447,7 +455,6 @@ export class ProcessManager {
       } else {
         entry.child?.stdin?.end();
       }
-      rememberWriteId(entry.writeIds, writeId);
       return { status: 'accepted' };
     }
     const chunk = Buffer.from(chunkBase64, 'base64');
@@ -485,7 +492,6 @@ export class ProcessManager {
         }
       }
     }
-    rememberWriteId(entry.writeIds, writeId);
     return { status: 'accepted' };
   }
 
@@ -529,7 +535,6 @@ export class ProcessManager {
   }
 
   private beginTermination(entry: ManagedProcess): void {
-    entry.terminationRequested = true;
     this.killGroup(entry, 'SIGTERM');
     entry.killTimer = setTimeout(() => {
       try {
@@ -610,7 +615,6 @@ export class ProcessManager {
     if (this.disposed) return;
     const entries = [...this.processes.values()].filter((entry) => entry.state === 'running');
     for (const entry of entries) {
-      entry.terminationRequested = true;
       try {
         this.killGroup(entry, 'SIGTERM');
       } catch {

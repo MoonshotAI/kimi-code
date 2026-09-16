@@ -265,8 +265,12 @@ async function scenarioDisconnect(
   reconnect: () => Promise<RemoteRuntime>,
 ): Promise<void> {
   process.stdout.write('scenario: disconnect\n');
-  const proc = await runtime.process.spawn('sleep', ['300'], { cwd });
-  const sleepPid = proc.pid;
+  let sleepPid = -1;
+  await check('disconnect', 'long-running process started', async () => {
+    const proc = await runtime.process.spawn('sleep', ['300'], { cwd });
+    sleepPid = proc.pid;
+  });
+  if (sleepPid <= 0) return;
   await runtime.dispose();
   await check('disconnect', 'calls after disconnect reject instead of falling back to local', async () => {
     await runtime.process.spawn('touch', ['/tmp/remote-exec-e2e-must-not-exist']).then(
@@ -283,7 +287,6 @@ async function scenarioDisconnect(
     );
   });
   await check('disconnect', 'remote processes of the dropped connection are gone', async () => {
-    if (sleepPid <= 0) throw new Error('never learned the sleep pid');
     await new Promise((resolve) => {
       setTimeout(resolve, 1_000);
     });
@@ -339,9 +342,11 @@ async function main(): Promise<void> {
       throw new Error(`unknown scenario "${name}" (want one of ${SCENARIOS.join(', ')})`);
     }
   }
+  // Destructive scenarios run last, disconnect before container-stop: a
+  // stopped container would break any later scenario's fresh connection.
   const ordered = [...requested].toSorted((a, b) => {
-    const last = (name: string): number => (name === 'disconnect' || name === 'container-stop' ? 1 : 0);
-    return last(a) - last(b);
+    const weight = (name: string): number => (name === 'disconnect' ? 1 : name === 'container-stop' ? 2 : 0);
+    return weight(a) - weight(b);
   });
 
   process.stdout.write(`connecting via ${flags.target} launcher...\n`);
@@ -374,16 +379,26 @@ async function main(): Promise<void> {
       case 'group-residue':
         await scenarioGroupResidue(runtime, cwd);
         break;
-      case 'container-stop':
+      case 'container-stop': {
         if (flags.container === undefined) {
-          record('container-stop', 'prerequisite', false, 'requires --container');
+          record('container-stop', 'prerequisite', true, 'skipped: requires --container');
           break;
         }
-        await scenarioContainerStop(runtime, flags.container, cwd);
+        const fresh = await connect();
+        try {
+          await scenarioContainerStop(fresh, flags.container, cwd);
+        } finally {
+          if (fresh.status !== 'disposed') {
+            await fresh.dispose();
+          }
+        }
         break;
-      case 'disconnect':
-        await scenarioDisconnect(runtime, cwd, connect);
+      }
+      case 'disconnect': {
+        const fresh = await connect();
+        await scenarioDisconnect(fresh, cwd, connect);
         break;
+      }
     }
   }
 

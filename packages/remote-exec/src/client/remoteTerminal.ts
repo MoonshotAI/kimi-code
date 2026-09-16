@@ -101,7 +101,10 @@ export class RemoteTerminalService implements IHostTerminalService {
     });
     connection.onNotification(PROCESS_EXITED_METHOD, (params) => {
       const notification = params as ProcessExitedNotification;
-      this.processes.get(notification.processId)?.onExited(notification.exitCode);
+      const proc = this.processes.get(notification.processId);
+      if (proc === undefined) return;
+      proc.onExited(notification.exitCode);
+      this.processes.delete(notification.processId);
     });
     connection.onDidClose(() => {
       for (const proc of this.processes.values()) {

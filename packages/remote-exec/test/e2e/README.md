@@ -89,7 +89,8 @@ Useful flags: `--scenario basic,pty,term-ignore,group-residue,container-stop,dis
 - `group-residue` — `sleep & exit 0` leader exits; the residue group member is
   killed on `process/signal` (verified with remote `kill -0`).
 - `container-stop` — `docker stop` mid-session: runtime reports `disconnected`
-  and later calls reject (no local fallback). docker targets only.
+  and later calls reject (no local fallback). Runs on a fresh connection and is
+  skipped (not failed) when `--container` is absent.
 - `disconnect` — client-side bridge drop: later fs/process calls reject, and a
   fresh probe connection confirms the dropped connection's processes are dead.
 

@@ -1,6 +1,8 @@
+import { PassThrough } from 'node:stream';
+
 import { describe, expect, it } from 'vitest';
 
-import { ConnectionClosedError, HandshakeError } from '../src/client/connection';
+import { ConnectionClosedError, HandshakeError, RemoteExecConnection } from '../src/client/connection';
 import { RpcError } from '../src/protocol/errors';
 import {
   connectInProcess,
@@ -130,5 +132,53 @@ describe('handshake', () => {
     connection.close();
     await expect(slow).rejects.toThrow(ConnectionClosedError);
     await loopback.host.done;
+  });
+
+  it('settles queued calls beyond the in-flight cap when the connection closes', async () => {
+    const { connection, loopback } = await connectInProcess();
+    await connection.call('process/start', {
+      processId: 'idle',
+      argv: ['sleep', '5'],
+      cwd: '/tmp',
+      pipeStdin: false,
+    });
+    const total = 260;
+    const calls: Promise<unknown>[] = [];
+    for (let i = 0; i < total; i += 1) {
+      calls.push(connection.call('process/read', { processId: 'idle', waitMs: 30_000 }));
+    }
+    connection.close();
+    const settled = await Promise.allSettled(calls);
+    expect(settled).toHaveLength(total);
+    expect(settled.every((result) => result.status === 'rejected')).toBe(true);
+    await loopback.host.done;
+  });
+
+  it('rejects the handshake with the peer error when initialize is answered with an error', async () => {
+    const clientToServer = new PassThrough();
+    const serverToClient = new PassThrough();
+    const pipe = {
+      write: (chunk: Uint8Array) => {
+        clientToServer.write(chunk);
+      },
+      end: () => {
+        clientToServer.end();
+      },
+      onData: (listener: (chunk: Uint8Array) => void) => {
+        serverToClient.on('data', listener);
+      },
+      onEnd: (listener: () => void) => {
+        serverToClient.on('end', listener);
+      },
+      onError: (listener: (error: Error) => void) => {
+        serverToClient.on('error', listener);
+      },
+    };
+    clientToServer.on('data', () => {
+      serverToClient.write('{"id":1,"error":{"code":-32603,"message":"wrong dialect"}}\n');
+    });
+    await expect(
+      RemoteExecConnection.connect(pipe, { clientName: 'test', clientVersion: '0.0.0' }),
+    ).rejects.toThrow(/wrong dialect/);
   });
 });

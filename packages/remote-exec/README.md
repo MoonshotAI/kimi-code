@@ -47,10 +47,29 @@ deviations per the design spec, plus one forced addition:
 - `process/write` accepts `eof: true` (with an empty chunk) to close remote
   stdin. Codex has no stdin close on the wire; our `IHostProcess.stdin.end()`
   makes it necessary. After EOF, writes report `stdinClosed`.
+- `process/resize` on an already-exited tty process is a success no-op, so a
+  resize racing the process exit does not surface an ioctl error.
+- `process/write` suspends the RPC response until the child's stdin drains
+  (or the process exits / the connection drops), propagating backpressure to
+  the caller instead of buffering unboundedly executor-side; codex uses a
+  bounded channel for the same effect. A write broken by process exit settles
+  as `stdinClosed`.
 - `environment` adds `osArch`/`osVersion`/`pathClass` over codex (rg artifact
   selection needs arch), plus `cwd`/`tempDir`.
 - No ws transport, no `resumeSessionId`, no sandbox parameter family, no
   `fs/walk`/`fs/copy`/`capabilityRoots/discoverV1`/`environmentConfig/read`.
+
+Client-surface notes beyond the wire protocol:
+
+- `RemoteRuntime.environment` is the handshake payload (adds `cwd`/`tempDir`
+  to `HostEnvironmentInfo`).
+- `RemoteRuntime.connection` is public as the protocol escape hatch for calls
+  the `Runtime` interface cannot express (e.g. `process/terminate` with its
+  TERM-then-KILL escalation, which `IHostProcess.kill`'s single signal does
+  not cover).
+- Whole-file reads without `maxBytes` are rejected server-side above 32MiB
+  (base64 of the response must fit the 64MiB frame cap); larger files are read
+  through `offset`/`maxBytes` range reads.
 
 Wire discipline: NDJSON frames (`\n`-terminated, `\r\n` tolerated, blank lines
 skipped, strict UTF-8), one message capped at 64MiB (disconnect on exceed),

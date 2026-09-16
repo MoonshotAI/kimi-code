@@ -227,7 +227,10 @@ export class RemoteProcessService implements IHostProcessService {
     });
     connection.onNotification(PROCESS_CLOSED_METHOD, (params) => {
       const notification = params as ProcessClosedNotification;
-      this.processes.get(notification.processId)?.onClosed();
+      const proc = this.processes.get(notification.processId);
+      if (proc === undefined) return;
+      proc.onClosed();
+      this.processes.delete(notification.processId);
     });
     connection.onDidClose(() => {
       for (const proc of this.processes.values()) {

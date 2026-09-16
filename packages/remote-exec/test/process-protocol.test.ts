@@ -295,32 +295,18 @@ describe('process protocol semantics', () => {
       cwd: '/tmp',
       pipeStdin: true,
     });
+    // A 1MiB write to a pipe nobody reads always exceeds the stream's
+    // high-water mark, so the write handler parks deterministically; the kill
+    // is processed concurrently and breaks the parked write with stdinClosed.
     const chunk = Buffer.alloc(1024 * 1024, 0x61).toString('base64');
-    let parkedId = -1;
-    for (let i = 0; i < 4; i += 1) {
-      raw.send({
-        id: 100 + i,
-        method: 'process/write',
-        params: { processId: 'blocker', chunkBase64: chunk, writeId: `flood-${i}` },
-      });
-      const outcome = await Promise.race([
-        raw.nextResponse(100 + i).then(() => 'answered'),
-        new Promise<'parked'>((resolve) => {
-          setTimeout(() => {
-            resolve('parked');
-          }, 500);
-        }),
-      ]);
-      if (outcome === 'parked') {
-        parkedId = 100 + i;
-        break;
-      }
-    }
-    expect(parkedId).toBeGreaterThanOrEqual(100);
-
+    raw.send({
+      id: 100,
+      method: 'process/write',
+      params: { processId: 'blocker', chunkBase64: chunk, writeId: 'flood-1' },
+    });
     raw.send({ id: 200, method: 'process/signal', params: { processId: 'blocker', signal: 'kill' } });
-    await raw.nextResponse(200);
-    const settled = (await raw.nextResponse(parkedId, 5_000))['result'] as { status: string };
+    await raw.nextResponse(200, 30_000);
+    const settled = (await raw.nextResponse(100, 30_000))['result'] as { status: string };
     expect(settled.status).toBe('stdinClosed');
     loopback.clientInput.end();
     await loopback.host.done;

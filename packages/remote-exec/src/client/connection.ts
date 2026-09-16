@@ -136,7 +136,12 @@ export class RemoteExecConnection {
         resolve: (result) => {
           this.onInitializeResult(result as InitializeResult);
         },
-        reject: () => {},
+        reject: (error: Error) => {
+          // An error answer to initialize (wrong-dialect peer) must surface
+          // immediately, not be misreported later as an initialize timeout.
+          this.onHandshakeResponse(error);
+          this.teardown();
+        },
       });
       this.pipe.write(
         encodeFrame({
@@ -359,7 +364,10 @@ export class RemoteExecConnection {
       pending.reject(failure);
     }
     this.pending.clear();
-    this.callQueue.length = 0;
+    // Queued calls re-enter call(), which now rejects with ConnectionClosedError.
+    for (const run of this.callQueue.splice(0)) {
+      run();
+    }
     for (const listener of this.closeListeners) listener(this.closeInfo);
     this.closeListeners.clear();
     this.teardown();
