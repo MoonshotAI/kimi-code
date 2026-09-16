@@ -97,6 +97,45 @@ function coldTranscriptService(home: string): TranscriptService {
 }
 
 describe('AgentTranscriptProjector', () => {
+  it('keeps cron steers grouped while undo removes only the appropriate suffix', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cron-undo-'));
+    const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+    const append = (role: string, text: string, kind?: string) => ({
+      type: 'context.append_message',
+      message: { role, content: [{ type: 'text', text }], toolCalls: [], origin: kind === undefined ? undefined : { kind } },
+    });
+    const steer = (text: string) => ({ type: 'turn.steer', input: [{ type: 'text', text }], origin: { kind: 'cron_job' } });
+    const records: Record<string, unknown>[] = [
+      append('user', 'first prompt', 'user'),
+      append('assistant', 'first answer'),
+      steer('retained cron'),
+      append('user', 'retained cron', 'cron_job'),
+      append('assistant', 'cron answer'),
+      append('user', 'second prompt', 'user'),
+      steer('removed cron'),
+      append('user', 'removed cron', 'cron_job'),
+      append('assistant', 'second answer'),
+    ];
+    try {
+      await mkdir(wireDir, { recursive: true });
+      const service = coldTranscriptService(home);
+      const read = async () => {
+        await writeFile(join(wireDir, 'wire.jsonl'), records.map((record) => JSON.stringify(record)).join('\n') + '\n');
+        return (await service.readColdSnapshot('s1', 'main'))!.items.filter((item) => item.kind === 'turn');
+      };
+      const before = await read();
+      expect(before.map((turn) => turn.prompt)).toEqual(['first prompt', 'second prompt']);
+      records.push({ type: 'context.undo', count: 1 });
+      const after = await read();
+      expect(after.map((turn) => turn.prompt)).toEqual(['first prompt']);
+      expect(after[0]!.steps.flatMap((step) => step.frames).filter((frame) => frame.kind === 'text').map((frame) => frame.text)).toEqual(['first answer', 'retained cron', 'cron answer']);
+      records.push(append('user', 'removed cron', 'cron_job'), append('assistant', 'new cron answer'));
+      expect((await read()).map((turn) => turn.prompt)).toEqual(['first prompt', 'removed cron']);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('projects a full turn: headers, delta appends, flush, tool frames', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');

@@ -501,7 +501,8 @@ export class TranscriptService {
     const taskOriginTurnTaskIds = new Set<string>();
     const steeredContents = new Map<string, Map<string, number>>();
     const pendingSteers = new Map<string, Map<string, number>>();
-    const anchorStack: { taskIdsSnapshot: Set<string>; steer?: { key: string; kind: string } }[] = [];
+    const matchedSteers: { key: string; kind: string }[] = [];
+    const anchorStack: { taskIdsSnapshot: Set<string>; steerCount: number }[] = [];
     let anchorFloor = 0;
     let sawTurnPrompt = false;
     for (const record of records) {
@@ -509,6 +510,7 @@ export class TranscriptService {
         const count = typeof record['count'] === 'number' ? (record['count'] as number) : 0;
         for (let i = 0; i < count && anchorStack.length > anchorFloor; i++) {
           const popped = anchorStack.pop()!;
+          matchedSteers.length = popped.steerCount;
           taskOriginTurnTaskIds.clear();
           for (const id of popped.taskIdsSnapshot) taskOriginTurnTaskIds.add(id);
         }
@@ -521,13 +523,17 @@ export class TranscriptService {
       if (record.type === 'context.append_message') {
         const message = (record as { message?: ContextMessage }).message;
         if (message !== undefined && isUndoAnchor(message)) {
+          anchorStack.push({ taskIdsSnapshot: new Set(taskOriginTurnTaskIds), steerCount: matchedSteers.length });
+        }
+        if (message?.role === 'user') {
           const key = JSON.stringify(message.content);
           const kind = message.origin?.kind ?? 'user';
           const pendingByKind = pendingSteers.get(key);
           const remaining = pendingByKind?.get(kind) ?? 0;
-          const steer = remaining > 0 ? { key, kind } : undefined;
-          if (steer !== undefined) pendingByKind!.set(kind, remaining - 1);
-          anchorStack.push({ taskIdsSnapshot: new Set(taskOriginTurnTaskIds), steer });
+          if (remaining > 0) {
+            pendingByKind!.set(kind, remaining - 1);
+            matchedSteers.push({ key, kind });
+          }
         }
         continue;
       }
@@ -554,8 +560,7 @@ export class TranscriptService {
         taskOriginTurnTaskIds.add(origin.taskId);
       }
     }
-    for (const { steer } of anchorStack) {
-      if (steer === undefined) continue;
+    for (const steer of matchedSteers) {
       const byKind = steeredContents.get(steer.key) ?? new Map<string, number>();
       byKind.set(steer.kind, (byKind.get(steer.kind) ?? 0) + 1);
       steeredContents.set(steer.key, byKind);
