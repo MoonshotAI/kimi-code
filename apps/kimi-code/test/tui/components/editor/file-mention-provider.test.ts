@@ -505,6 +505,19 @@ describe('FileMentionProvider', () => {
     expect(result.lines[0]).toBe('@README.md');
   });
 
+  it('does not recut a stale @-named path item after the user types @', () => {
+    const provider = new FileMentionProvider([], workDir, NO_FD);
+    const result = provider.applyCompletion(
+      ['@'],
+      0,
+      1,
+      { value: '@scope/', label: '@scope/' },
+      '',
+    );
+
+    expect(result.lines[0]).toBe('@@scope/');
+  });
+
   it('still applies path completion for a directory whose name starts with @', () => {
     const provider = new FileMentionProvider([], workDir, NO_FD);
     const line = 'cd ';
@@ -566,14 +579,6 @@ describe('FileMentionProvider', () => {
       );
 
       expect(result.lines[0]).toBe('@src/');
-    });
-
-    it('replaces the live @ token when the cached prefix is empty', () => {
-      const provider = new FileMentionProvider([], workDir, NO_FD);
-      const line = '@/mnt/e/mlbb-simple-and';
-      const result = provider.applyCompletion([line], 0, line.length, selectedDir, '');
-
-      expect(result.lines[0]).toBe('@/mnt/e/mlbb-android-2.1.46.1156.1_HB/');
     });
 
     it('replaces only the current @ token when earlier text is present', () => {

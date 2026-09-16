@@ -313,17 +313,16 @@ export class FileMentionProvider implements AutocompleteProvider {
     }
     // Editor caches suggestions.prefix across in-flight refreshes. Re-cut the
     // live `@` token so Tab/Enter does not splice a second `@` onto a stale range.
-    // Recut only for mention pickers or mention-shaped items, and only while the
-    // cursor is still on an `@` token: a path list can stay open after the user
-    // types `@`, and a directory named `@scope` also has a value starting with `@`.
-    const currentLine = lines[cursorLine] ?? '';
-    const textBeforeCursor = currentLine.slice(0, cursorCol);
-    const livePrefix = extractAtPrefix(textBeforeCursor);
-    if (livePrefix !== null && (prefix.startsWith('@') || item.value.startsWith('@'))) {
-      return this.inner.applyCompletion(lines, cursorLine, cursorCol, item, livePrefix);
-    }
+    // Only mention pickers have a prefix that starts with `@`. Path/slash lists
+    // can still be visible after the user types `@`, including a `@scope/` entry.
     if (prefix.startsWith('@')) {
-      return { lines, cursorLine, cursorCol };
+      const currentLine = lines[cursorLine] ?? '';
+      const textBeforeCursor = currentLine.slice(0, cursorCol);
+      const livePrefix = extractAtPrefix(textBeforeCursor);
+      if (livePrefix === null) {
+        return { lines, cursorLine, cursorCol };
+      }
+      return this.inner.applyCompletion(lines, cursorLine, cursorCol, item, livePrefix);
     }
     return this.inner.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
   }
