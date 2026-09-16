@@ -463,11 +463,13 @@ describe('watch chokidar mode', () => {
       await writeFile(join(long, 'added.toml'), 'v1');
 
       await expect
-        .poll(() =>
-          events.some((e) => e.path === join(short, 'config.toml') && e.action === 'modified') &&
-          events.some((e) => e.path === join(short, 'added.toml') && e.action === 'created'),
-        )
-        .toBe(true);
+        .poll(() => events, { timeout: 10000 })
+        .toEqual(
+          expect.arrayContaining([
+            { path: join(short, 'config.toml'), action: 'modified', kind: 'file' },
+            { path: join(short, 'added.toml'), action: 'created', kind: 'file' },
+          ]),
+        );
     },
     30000,
   );
