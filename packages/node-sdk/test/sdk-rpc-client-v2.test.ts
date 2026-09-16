@@ -59,6 +59,10 @@ import {
 import { McpOAuthService as McpOAuthServiceV2 } from '@moonshot-ai/agent-core-v2/mcpCore/oauth/service';
 
 import { TEST_IDENTITY } from './test-identity';
+import {
+  resetModelsDevUpstreamForTest,
+  setModelsDevUpstreamForTest,
+} from '@moonshot-ai/agent-core-v2/app/kosongConfig/modelsDevUpstream';
 import { recordingTelemetry, type TelemetryRecord } from './telemetry';
 
 const hostEnvProbe = vi.hoisted(() => ({ failWithMissingShell: false }));
@@ -83,6 +87,7 @@ vi.mock('@moonshot-ai/agent-core-v2/_base/execEnv/environmentProbe', async (impo
 const tempDirs: string[] = [];
 
 afterEach(async () => {
+  resetModelsDevUpstreamForTest();
   // The read-model mirror/query-store close asynchronously on dispose; await
   // the drains so the rm below never races their final flush (ENOTEMPTY).
   await drainSessionIndexMirror();
@@ -994,55 +999,29 @@ key = "${titleOAuthRef.key}"
     }
   });
 
-  it('replaces config sections exactly when unknown-field preservation is disabled', async () => {
+  it('imports a registry through the harness without selecting a default when the caller defers selection', async () => {
+    setModelsDevUpstreamForTest({
+      fetchImpl: async () => Response.json({
+        example: {
+          id: 'example',
+          name: 'Example',
+          type: 'openai',
+          api: 'https://api.example.test/v1',
+          models: { m1: { id: 'm1' } },
+        },
+      }),
+    });
     const { harness } = await makeHarness();
     try {
-      await harness.setConfig({
-        providers: {
-          a: {
-            type: 'openai',
-            baseUrl: 'https://a.example.test/v1',
-            apiKey: 'sk-a',
-            customHeaders: { 'X-Old': 'value' },
-          },
-        },
+      const result = await harness.importCustomRegistry({
+        url: 'https://registry.example.test/api.json',
+        setDefaultWhenUnset: false,
       });
-
-      await harness.replaceConfigSections(
-        {
-          providers: {
-            a: {
-              type: 'openai',
-              baseUrl: 'https://a.example.test/v1',
-              apiKey: 'sk-b',
-            },
-          },
-        },
-        { preserveUnknown: false },
-      );
-
-      const next = await harness.getConfig({ reload: true });
-      expect(next.providers['a']).toEqual({
-        type: 'openai',
-        baseUrl: 'https://a.example.test/v1',
-        apiKey: 'sk-b',
-      });
-    } finally {
-      await harness.close();
-    }
-  });
-
-  it('rejects an atomic section replacement prepared from stale config', async () => {
-    const { harness } = await makeHarness();
-    try {
-      await harness.setConfig({ defaultModel: 'provider/model' });
-      await expect(
-        harness.replaceConfigSections(
-          { defaultModel: undefined },
-          { expectedValues: { defaultModel: undefined } },
-        ),
-      ).rejects.toThrow(/changed.*retry/i);
-      expect((await harness.getConfig({ reload: true })).defaultModel).toBe('provider/model');
+      expect(result.modelsImported).toBe(1);
+      const config = await harness.getConfig({ reload: true });
+      expect(config.providers['example']).toMatchObject({ type: 'openai', apiKey: '' });
+      expect(config.models?.['example/m1']).toMatchObject({ provider: 'example', model: 'm1' });
+      expect(config.defaultModel).toBeUndefined();
     } finally {
       await harness.close();
     }

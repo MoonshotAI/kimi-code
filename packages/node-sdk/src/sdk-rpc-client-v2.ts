@@ -228,7 +228,14 @@ import {
   type ServicesAccessor,
   type SessionSummary as V2SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
-import type { AgentHandle, Klient } from '@moonshot-ai/klient';
+import {
+  RPCError,
+  type AgentHandle,
+  type Klient,
+  type ImportCustomRegistryOptions,
+  type ImportCustomRegistryResult,
+} from '@moonshot-ai/klient';
+import { RegistryImportError } from '#/catalog';
 import { createKlient } from '@moonshot-ai/klient/memory';
 import { assertKimiHostIdentity, createKimiDefaultHeaders } from '@moonshot-ai/kimi-code-oauth';
 
@@ -810,21 +817,27 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return true;
   }
 
-  override async replaceConfigSections(
-    sections: Record<string, unknown>,
-    options?: {
-      readonly preserveUnknown?: boolean;
-      readonly exactKeys?: Readonly<Record<string, readonly string[]>>;
-      readonly expectedValues?: Readonly<Record<string, unknown>>;
-    },
-  ): Promise<void> {
+  override async importCustomRegistry(
+    options: ImportCustomRegistryOptions,
+  ): Promise<ImportCustomRegistryResult> {
     await this.configReady;
-    await this.klient.global.config.replaceSections({
-      sections,
-      preserveUnknown: options?.preserveUnknown,
-      exactKeys: options?.exactKeys,
-      expectedValues: options?.expectedValues,
-    });
+    try {
+      return await this.klient.global.kosong.importCustomRegistry(options);
+    } catch (error) {
+      if (!(error instanceof RPCError)) throw error;
+      const details = error.details as Record<string, unknown> | undefined;
+      const phase = details?.['phase'];
+      throw new RegistryImportError(
+        error.message,
+        phase === 'fetch' || phase === 'empty' ? phase : 'apply',
+        typeof details?.['status'] === 'number' ? details['status'] : undefined,
+      );
+    }
+  }
+
+  override async replaceConfigSections(sections: Record<string, unknown>): Promise<void> {
+    await this.configReady;
+    await this.klient.global.config.replaceSections({ sections });
   }
 
   override async listPlugins(): Promise<readonly PluginSummary[]> {

@@ -36,6 +36,7 @@ import type { FileMeta } from '@moonshot-ai/agent-core-v2/app/file/fileService';
 import type { ModelRecord } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
 import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
+import type { IModelsDevImportService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/modelsDevImport';
 
 import type { McpServerConfig } from '../../contract/mcp.js';
 import type { CallOptions } from '../channel.js';
@@ -111,6 +112,13 @@ export type RefreshProviderModelsOptions = NonNullable<
 /** String-literal form of the engine's `ConfigTarget` enum, so consumers never import the enum value. */
 export type ConfigTargetLiteral = `${ConfigTarget}`;
 
+export type ImportCustomRegistryOptions = Parameters<
+  IModelsDevImportService['importCustomRegistry']
+>[0];
+export type ImportCustomRegistryResult = Awaited<
+  ReturnType<IModelsDevImportService['importCustomRegistry']>
+>;
+
 // ---------------------------------------------------------------------------
 // Facade interfaces
 // ---------------------------------------------------------------------------
@@ -155,16 +163,11 @@ export interface GlobalConfigFacade {
   /**
    * Replace several domains in ONE atomic write (the engine's
    * `IConfigService.replaceSections`): a domain mapped to `undefined` is
-   * cleared, domains absent from `sections` are left untouched. Set
-   * `preserveUnknown` to false when the supplied domains are complete snapshots.
-   * When an `expectedValues` entry no longer matches, the entire write fails.
+   * cleared, domains absent from `sections` are left untouched.
    */
   replaceSections(input: {
     sections: Record<string, unknown>;
     target?: ConfigTargetLiteral;
-    preserveUnknown?: boolean;
-    exactKeys?: Readonly<Record<string, readonly string[]>>;
-    expectedValues?: Readonly<Record<string, unknown>>;
   }): Promise<void>;
   reload(): Promise<void>;
   diagnostics(): Promise<readonly ConfigDiagnostic[]>;
@@ -179,6 +182,7 @@ export interface GlobalKosongFacade {
   addProvider(config: AnonymousProviderInput): Promise<void>;
   removeProvider(id: string): Promise<void>;
   refreshProviders(opts?: RefreshProviderModelsOptions): Promise<RefreshProviderModelsResponse>;
+  importCustomRegistry(options: ImportCustomRegistryOptions): Promise<ImportCustomRegistryResult>;
 
   // -- Model ------------------------------------------------------------
   listModels(): Promise<readonly ModelCatalogItem[]>;
@@ -437,7 +441,7 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
         // `null` is the wire encoding of "clear this domain" — JSON
         // round-trips cannot carry `undefined` (see IConfigService.replace).
         call('configService', 'replace', [domain, value === undefined ? null : value, target]) as Promise<void>,
-      replaceSections: ({ sections, target, preserveUnknown, exactKeys, expectedValues }) =>
+      replaceSections: ({ sections, target }) =>
         call('configService', 'replaceSections', [
           Object.fromEntries(
             Object.entries(sections).map(([domain, value]) => [
@@ -446,19 +450,6 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
             ]),
           ),
           target,
-          {
-            preserveUnknown,
-            exactKeys,
-            expectedValues:
-              expectedValues === undefined
-                ? undefined
-                : Object.fromEntries(
-                    Object.entries(expectedValues).map(([domain, value]) => [
-                      domain,
-                      value === undefined ? null : value,
-                    ]),
-                  ),
-          },
         ]) as Promise<void>,
       reload: () => call('configService', 'reload', []) as Promise<void>,
       diagnostics: () =>
@@ -466,6 +457,8 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
     },
 
     kosong: {
+      importCustomRegistry: (options) =>
+        call('modelsDevImport', 'importCustomRegistry', [options]) as Promise<ImportCustomRegistryResult>,
       listProviders: () =>
         call('modelResolver', 'listProviders', []) as Promise<
           readonly ProviderCatalogItem[]

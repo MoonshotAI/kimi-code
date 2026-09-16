@@ -20,6 +20,8 @@ import type {
   ForkSessionInput,
   GenerateSessionTitleInput,
   GetConfigOptions,
+  ImportCustomRegistryOptions,
+  ImportCustomRegistryResult,
   GlobalMcpServerAuthStatus,
   KimiConfig,
   KimiConfigPatch,
@@ -470,22 +472,20 @@ export class KimiHarness {
     return this.rpc.supportsAtomicSectionReplace();
   }
 
+  async importCustomRegistry(
+    options: ImportCustomRegistryOptions,
+  ): Promise<ImportCustomRegistryResult> {
+    return this.rpc.importCustomRegistry(options);
+  }
+
   /**
    * Replace several top-level config sections in ONE atomic write: a section
    * mapped to `undefined` is cleared, absent sections are left untouched.
    * Replace semantics (unlike {@link setConfig}'s deep-merge), so staged
-   * removals are expressed by the written record itself. Set `preserveUnknown`
-   * to false when the supplied sections are complete snapshots.
+   * removals are expressed by the written record itself.
    */
-  async replaceConfigSections(
-    sections: Record<string, unknown>,
-    options?: {
-      readonly preserveUnknown?: boolean;
-      readonly exactKeys?: Readonly<Record<string, readonly string[]>>;
-      readonly expectedValues?: Readonly<Record<string, unknown>>;
-    },
-  ): Promise<void> {
-    return this.rpc.replaceConfigSections(sections, options);
+  async replaceConfigSections(sections: Record<string, unknown>): Promise<void> {
+    return this.rpc.replaceConfigSections(sections);
   }
 
   /**

@@ -2,6 +2,7 @@ import {
   applyCustomRegistryEntries,
   credentialEnvHints,
   customRegistryReplacementKeys,
+  CustomRegistryApiError,
   fetchCustomRegistry,
   reconcileProviderCredentialUpdate,
   type CustomRegistryProviderEntry,
@@ -199,11 +200,11 @@ export class ModelsDevImportService implements IModelsDevImportService {
   ): Promise<ImportCustomRegistryResult> {
     const { url } = options;
     const config = await this.readyConfig();
-    const providers = config.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue ?? {};
+    const initialProviders = config.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue ?? {};
     const source: CustomRegistrySource = {
       kind: 'apiJson',
       url,
-      apiKey: options.apiKey ?? registryKeyFromExisting(providers, url) ?? '',
+      apiKey: options.apiKey ?? registryKeyFromExisting(initialProviders, url) ?? '',
     };
 
     let entries: Record<string, CustomRegistryProviderEntry>;
@@ -217,15 +218,24 @@ export class ModelsDevImportService implements IModelsDevImportService {
       throw new Error2(
         codes.REGISTRY_IMPORT_INVALID,
         `custom registry at ${url} cannot be imported: ${truncateUpstreamMessage(error)}`,
+        {
+          details: {
+            phase: 'fetch',
+            status: error instanceof CustomRegistryApiError ? error.status : undefined,
+          },
+        },
       );
     }
     if (Object.keys(entries).length === 0) {
       throw new Error2(
         codes.REGISTRY_IMPORT_INVALID,
         `custom registry at ${url} has no importable providers`,
+        { details: { phase: 'empty' } },
       );
     }
 
+    await config.reload();
+    const providers = config.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue ?? {};
     for (const entry of Object.values(entries)) {
       if (providers[entry.id]?.oauth !== undefined) {
         throw new Error2(
@@ -259,7 +269,10 @@ export class ModelsDevImportService implements IModelsDevImportService {
     const firstEntry = Object.values(entries)[0];
     const firstModelKey = firstEntry === undefined ? undefined : Object.keys(firstEntry.models)[0];
     const hadDefault = previousDefault !== undefined && previousDefault.trim().length > 0;
-    if (!hadDefault && firstEntry !== undefined && firstModelKey !== undefined) {
+    if (
+      options.setDefaultWhenUnset !== false &&
+      !hadDefault && firstEntry !== undefined && firstModelKey !== undefined
+    ) {
       next.defaultModel = `${firstEntry.id}/${firstModelKey}`;
     }
     const sections: Record<string, unknown> = {

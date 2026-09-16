@@ -38,6 +38,7 @@ export interface ImportModelsDevProviderResult {
 export interface ImportCustomRegistryOptions {
   readonly url: string;
   readonly apiKey?: string;
+  readonly setDefaultWhenUnset?: boolean;
 }
 
 export interface ImportCustomRegistryResult {

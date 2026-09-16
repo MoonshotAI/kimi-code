@@ -13,15 +13,11 @@
  */
 
 import {
-  credentialEnvHints,
-  CustomRegistryApiError,
-  fetchCustomRegistry,
-  type CustomRegistrySource,
-} from '@moonshot-ai/kimi-code-oauth';
-import {
   applyCatalogProvider,
   catalogProviderModels,
   CatalogFetchError,
+  RegistryImportError,
+  type ImportCustomRegistryResult,
   createKimiHarness,
   DEFAULT_CATALOG_URL,
   resolveCatalogImport,
@@ -34,7 +30,6 @@ import type { Command } from 'commander';
 
 import { createKimiCodeHostIdentity, createKimiCodeUserAgent } from '#/cli/version';
 import { fetchCatalogOrBuiltIn } from '#/utils/catalog-fetch';
-import { persistRegistryImport } from '#/utils/registry-import';
 
 interface WritableLike {
   write(chunk: string): boolean;
@@ -74,8 +69,6 @@ export async function handleProviderAdd(
   url: string,
   opts: AddOptions,
 ): Promise<void> {
-  // The registry key is optional: public registries need no Authorization at
-  // all, and `fetchCustomRegistry` only sends the header for a non-empty key.
   const apiKey = resolveApiKey(opts.apiKey, deps.env) ?? '';
 
   const trimmedUrl = url.trim();
@@ -84,26 +77,25 @@ export async function handleProviderAdd(
     deps.exit(1);
   }
 
-  const source: CustomRegistrySource = {
-    kind: 'apiJson',
-    url: trimmedUrl,
-    apiKey,
-  };
-
   const harness = deps.getHarness();
   await harness.ensureConfigFile();
 
-  let entries: Awaited<ReturnType<typeof fetchCustomRegistry>>;
+  let result: ImportCustomRegistryResult;
   try {
-    entries = await fetchCustomRegistry(source, { userAgent: createKimiCodeUserAgent() });
+    result = await harness.importCustomRegistry({
+      url: trimmedUrl,
+      apiKey,
+      setDefaultWhenUnset: false,
+    });
   } catch (error) {
-    const suffix = error instanceof CustomRegistryApiError ? ` (HTTP ${String(error.status)})` : '';
+    if (!(error instanceof RegistryImportError) || error.phase === 'apply') throw error;
+    if (error.phase === 'empty') {
+      deps.stderr.write(`Registry at ${trimmedUrl} contained no usable providers.\n`);
+      deps.exit(1);
+    }
+    const suffix = error.status === undefined ? '' : ` (HTTP ${String(error.status)})`;
     deps.stderr.write(`Failed to fetch registry${suffix}: ${errorMessage(error)}\n`);
-    if (
-      apiKey.length === 0 &&
-      error instanceof CustomRegistryApiError &&
-      (error.status === 401 || error.status === 403)
-    ) {
+    if (apiKey.length === 0 && (error.status === 401 || error.status === 403)) {
       deps.stderr.write(
         'This registry requires authentication — pass --api-key <key> or set KIMI_REGISTRY_API_KEY.\n',
       );
@@ -111,24 +103,15 @@ export async function handleProviderAdd(
     deps.exit(1);
   }
 
-  const entryList = Object.values(entries);
-  if (entryList.length === 0) {
-    deps.stderr.write(`Registry at ${trimmedUrl} contained no usable providers.\n`);
-    deps.exit(1);
-  }
-
-  await persistRegistryImport(harness, entries, source);
-
-  const modelCount = entryList.reduce((total, entry) => total + Object.keys(entry.models).length, 0);
+  const count = result.providers.length;
   deps.stdout.write(
-    `Imported ${String(entryList.length)} provider${entryList.length === 1 ? '' : 's'} ` +
-      `(${String(modelCount)} model${modelCount === 1 ? '' : 's'}) from ${trimmedUrl}:\n`,
+    `Imported ${String(count)} provider${count === 1 ? '' : 's'} ` +
+      `(${String(result.modelsImported)} model${result.modelsImported === 1 ? '' : 's'}) from ${trimmedUrl}:\n`,
   );
-  for (const entry of entryList) {
-    deps.stdout.write(`  - ${entry.id}\n`);
+  for (const provider of result.providers) {
+    deps.stdout.write(`  - ${provider.id}\n`);
   }
-  const hints = credentialEnvHints(entryList);
-  for (const [id, envName] of Object.entries(hints)) {
+  for (const [id, envName] of Object.entries(result.credentialEnv)) {
     deps.stdout.write(
       `provider "${id}" declares credential env var "${envName}" — set api_key_env in config.toml to use it\n`,
     );

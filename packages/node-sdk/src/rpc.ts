@@ -36,6 +36,8 @@ import type {
   ForkSessionInput,
   GenerateSessionTitleInput,
   GetConfigOptions,
+  ImportCustomRegistryOptions,
+  ImportCustomRegistryResult,
   GetCronTasksResult,
   GlobalMcpServerAuthStatus,
   McpManagedServerInfo,
@@ -239,14 +241,11 @@ export abstract class SDKRpcClientBase {
 
   abstract supportsAtomicSectionReplace(): boolean;
 
-  abstract replaceConfigSections(
-    sections: Record<string, unknown>,
-    options?: {
-      readonly preserveUnknown?: boolean;
-      readonly exactKeys?: Readonly<Record<string, readonly string[]>>;
-      readonly expectedValues?: Readonly<Record<string, unknown>>;
-    },
-  ): Promise<void>;
+  abstract importCustomRegistry(
+    options: ImportCustomRegistryOptions,
+  ): Promise<ImportCustomRegistryResult>;
+
+  abstract replaceConfigSections(sections: Record<string, unknown>): Promise<void>;
 
   abstract uploadFile(data: Uint8Array, options: UploadFileOptions): Promise<FileMeta>;
 

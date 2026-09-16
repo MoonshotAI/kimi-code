@@ -83,7 +83,6 @@ import type { IBootstrapService } from '@moonshot-ai/agent-core-v2/app/bootstrap
 import type {
   ConfigDiagnostic,
   ConfigInspectValue,
-  ConfigReplaceSectionsOptions,
   ConfigTarget,
 } from '@moonshot-ai/agent-core-v2/app/config/config';
 import type {
@@ -103,6 +102,14 @@ import type {
 import type { ModelRecord } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
 import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
+import type {
+  ImportCustomRegistryOptions,
+  ImportCustomRegistryResult,
+} from '@moonshot-ai/agent-core-v2/app/kosongConfig/modelsDevImport';
+import {
+  importCustomRegistryOptionsSchema,
+  importCustomRegistryResultSchema,
+} from '../src/contract/global/registryImport.js';
 import type {
   GetPluginInfoInput,
   InstallPluginInput,
@@ -252,7 +259,6 @@ import {
 import {
   configDiagnosticSchema,
   configInspectValueSchema,
-  configReplaceSectionsOptionsSchema,
   configTargetSchema,
 } from '../src/contract/global/config.js';
 import {
@@ -339,6 +345,13 @@ type AssertWireToEngine<TSchema extends z.ZodType, TEngine> = [z.infer<TSchema>]
   ? true
   : never;
 
+const _registryImportOptions: AssertWire<
+  typeof importCustomRegistryOptionsSchema, ImportCustomRegistryOptions
+> = true;
+const _registryImportResult: AssertWire<
+  typeof importCustomRegistryResultSchema, ImportCustomRegistryResult
+> = true;
+
 // Wire shapes, derived from the engine interfaces.
 type OAuthFlowStart = Awaited<ReturnType<IOAuthService['startLogin']>>;
 type OAuthFlowSnapshot = NonNullable<ReturnType<IOAuthService['getFlow']>>;
@@ -366,10 +379,6 @@ const _workspaceUpdate: AssertWire<typeof workspaceUpdateSchema, WorkspaceUpdate
 const _configInspectValue: AssertEngineToWire<typeof configInspectValueSchema, ConfigInspectValue> =
   true;
 const _configDiagnostic: AssertWire<typeof configDiagnosticSchema, ConfigDiagnostic> = true;
-const _configReplaceSectionsOptions: AssertWire<
-  typeof configReplaceSectionsOptionsSchema,
-  ConfigReplaceSectionsOptions
-> = true;
 const _configTarget: AssertWire<typeof configTargetSchema, ConfigTargetValues> = true;
 
 // capabilities.ts

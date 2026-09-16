@@ -14,6 +14,10 @@ import { join } from 'node:path';
 import { Service } from '@moonshot-ai/agent-core-v2/_base/di/service';
 import { CommandContribution } from '@moonshot-ai/agent-core-v2/agent/command/commandContribution';
 import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureManager';
+import {
+  resetModelsDevUpstreamForTest,
+  setModelsDevUpstreamForTest,
+} from '@moonshot-ai/agent-core-v2/app/kosongConfig/modelsDevUpstream';
 
 import type { Klient } from '../../src/index.js';
 import type { TestEngine } from './engine.js';
@@ -237,69 +241,138 @@ export function defineKlientConformance(
       }
     });
 
-    it('config replaceSections forwards exact replacement and guards across the transport', async () => {
-      const config = target.klient.global.config;
-      const beforeProviders = await config.inspect<Record<string, unknown>>('providers');
-      const beforeModels = await config.inspect<Record<string, unknown>>('models');
-      const beforeGuard = await config.inspect<unknown>('conformanceGuard');
+    it('imports a shrinking registry while preserving its environment credential and unrelated providers', async () => {
+      const { config, kosong } = target.klient.global;
+      const domains = ['providers', 'models', 'defaultModel', 'defaultProvider', 'thinking'];
+      const before = Object.fromEntries(
+        await Promise.all(domains.map(async (domain) => [
+          domain, (await config.inspect(domain)).userValue,
+        ])),
+      );
+      const url = 'https://registry.example.test/api.json';
+      const source = { kind: 'apiJson', url, apiKey: '' };
+      setModelsDevUpstreamForTest({
+        fetchImpl: async () => Response.json({
+          owned: {
+            id: 'owned',
+            name: 'Owned',
+            type: 'openai',
+            api: 'https://owned.example.test/v1',
+            env: ['SUGGESTED_KEY'],
+            models: { fresh: { id: 'fresh' } },
+          },
+        }),
+      });
       try {
         await config.replaceSections({
           sections: {
             providers: {
-              ...beforeProviders.userValue,
-              'conf-owned': { type: 'openai', apiKey: 'old' },
-              'conf-keep': { type: 'openai', apiKey: 'keep' },
+              owned: {
+                type: 'openai',
+                baseUrl: 'https://owned.example.test/v1',
+                apiKeyEnv: 'EXAMPLE_OWN_KEY',
+                source,
+              },
+              gone: { type: 'openai', source },
+              keep: { type: 'openai', apiKey: 'example-key' },
             },
             models: {
-              ...beforeModels.userValue,
-              'conf-owned/m1': { provider: 'conf-owned', model: 'm1', maxContextSize: 100 },
-              'conf-keep/m1': { provider: 'conf-keep', model: 'm1', maxContextSize: 100 },
+              'owned/old': { provider: 'owned', model: 'old' },
+              'gone/old': { provider: 'gone', model: 'old' },
+              'keep/model': { provider: 'keep', model: 'model' },
             },
+            defaultModel: 'gone/old',
+            defaultProvider: 'gone',
+            thinking: { enabled: true },
           },
         });
-        await config.replaceSections({
-          sections: {
-            providers: {
-              'conf-owned': { type: 'openai', apiKey: 'new' },
-              'conf-stale': { type: 'openai', apiKey: 'stale' },
-            },
-            models: {
-              'conf-owned/m1': { provider: 'conf-owned', model: 'm1', maxContextSize: 200 },
-              'conf-stale/m1': { provider: 'conf-stale', model: 'm1', maxContextSize: 100 },
-            },
+        const result = await kosong.importCustomRegistry({ url });
+        expect(result).toMatchObject({ modelsImported: 1, credentialEnv: { owned: 'SUGGESTED_KEY' } });
+        expect(result.providers.map((provider) => provider.id)).toEqual(['owned']);
+        await config.reload();
+        expect((await config.inspect('providers')).userValue).toEqual({
+          owned: {
+            type: 'openai',
+            baseUrl: 'https://owned.example.test/v1',
+            apiKeyEnv: 'EXAMPLE_OWN_KEY',
+            source,
           },
-          preserveUnknown: false,
-          exactKeys: {
-            providers: ['conf-owned'],
-            models: ['conf-owned/m1'],
-          },
+          keep: { type: 'openai', apiKey: 'example-key' },
         });
-
-        const providers = await config.inspect<Record<string, Record<string, unknown>>>('providers');
-        const models = await config.inspect<Record<string, Record<string, unknown>>>('models');
-        expect(providers.userValue?.['conf-owned']?.['apiKey']).toBe('new');
-        expect(providers.userValue?.['conf-keep']).toBeDefined();
-        expect(providers.userValue?.['conf-stale']).toBeUndefined();
-        expect(models.userValue?.['conf-owned/m1']?.['maxContextSize']).toBe(200);
-        expect(models.userValue?.['conf-keep/m1']).toBeDefined();
-        expect(models.userValue?.['conf-stale/m1']).toBeUndefined();
-
-        await config.replaceSections({ sections: { conformanceGuard: 'current' } });
-        await expect(
-          config.replaceSections({
-            sections: { conformanceGuard: 'next' },
-            expectedValues: { conformanceGuard: undefined },
-          }),
-        ).rejects.toThrow(/changed.*retry/i);
-        expect((await config.inspect('conformanceGuard')).userValue).toBe('current');
+        const models = (await config.inspect<Record<string, unknown>>('models')).userValue ?? {};
+        expect(Object.keys(models).toSorted()).toEqual(['keep/model', 'owned/fresh']);
+        expect((await config.inspect('defaultModel')).userValue).toBeUndefined();
+        expect((await config.inspect('defaultProvider')).userValue).toBeUndefined();
+        expect((await config.inspect('thinking')).userValue).toEqual({});
       } finally {
+        resetModelsDevUpstreamForTest();
+        await config.replaceSections({ sections: before });
+      }
+    });
+
+    it('keeps a credential binding edited while the registry response is in flight', async () => {
+      const { config, kosong } = target.klient.global;
+      const domains = ['providers', 'models', 'defaultModel', 'defaultProvider', 'thinking'];
+      const before = Object.fromEntries(
+        await Promise.all(domains.map(async (domain) => [
+          domain, (await config.inspect(domain)).userValue,
+        ])),
+      );
+      const url = 'https://registry.example.test/api.json';
+      const source = { kind: 'apiJson', url, apiKey: '' };
+      const provider = { type: 'openai', baseUrl: 'https://owned.example.test/v1', source };
+      try {
         await config.replaceSections({
           sections: {
-            providers: beforeProviders.userValue,
-            models: beforeModels.userValue,
-            conformanceGuard: beforeGuard.userValue,
+            providers: { owned: { ...provider, apiKeyEnv: 'FIRST_EXAMPLE_KEY' } },
+            models: {},
+            defaultModel: undefined,
+            defaultProvider: undefined,
+            thinking: undefined,
           },
         });
+        setModelsDevUpstreamForTest({
+          fetchImpl: async () => {
+            await config.set({
+              domain: 'providers',
+              patch: { owned: { apiKeyEnv: 'SECOND_EXAMPLE_KEY' } },
+            });
+            return Response.json({
+              owned: {
+                id: 'owned',
+                name: 'Owned',
+                type: 'openai',
+                api: provider.baseUrl,
+                models: { m1: { id: 'm1' } },
+              },
+            });
+          },
+        });
+        await kosong.importCustomRegistry({ url, setDefaultWhenUnset: false });
+        await config.reload();
+        const providers = await config.inspect<Record<string, { apiKeyEnv?: string }>>('providers');
+        expect(providers.userValue?.['owned']?.apiKeyEnv).toBe('SECOND_EXAMPLE_KEY');
+      } finally {
+        resetModelsDevUpstreamForTest();
+        await config.replaceSections({ sections: before });
+      }
+    });
+
+    it('preserves the registry authentication failure across the transport without changing config', async () => {
+      const before = await target.klient.global.config.getAll();
+      setModelsDevUpstreamForTest({
+        fetchImpl: async () => Response.json(
+          { message: 'example authentication required' },
+          { status: 401 },
+        ),
+      });
+      try {
+        await expect(target.klient.global.kosong.importCustomRegistry({
+          url: 'https://registry.example.test/api.json', apiKey: '',
+        })).rejects.toMatchObject({ details: { phase: 'fetch', status: 401 } });
+        expect(await target.klient.global.config.getAll()).toEqual(before);
+      } finally {
+        resetModelsDevUpstreamForTest();
       }
     });
 
