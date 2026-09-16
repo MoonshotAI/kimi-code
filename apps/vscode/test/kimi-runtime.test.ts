@@ -728,13 +728,9 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
     let slowCloseSettled = false;
     sdk.addSession("slow-1", "/workspace", {}, undefined, undefined);
     sdk.addSession("failing-1", "/workspace", {}, undefined, new Error("session teardown failed"));
-    const slowHarness = {
-      ...sdk.harness,
-      close: vi.fn(async () => undefined),
-    } as unknown as KimiHarness;
     const runtime = new KimiRuntime({
       version: "0.6.0",
-      harness: slowHarness,
+      harness: sdk.harness,
       telemetry,
       broadcast: () => undefined,
       captureBaseline: () => undefined,

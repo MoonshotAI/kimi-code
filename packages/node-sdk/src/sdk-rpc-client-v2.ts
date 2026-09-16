@@ -240,7 +240,7 @@ import type { ExperimentalFeatureState } from '#/flag';
 import { KimiHarness } from '#/kimi-harness';
 import type { BeginGlobalMcpServerAuthResult } from '#/mcp';
 import { limitAgentReplayByTurns } from '#/replay';
-import { noopTelemetryClient, withTelemetryContext } from '#/telemetry';
+import { noopTelemetryClient, withTelemetryContext, type TelemetryContextPatch } from '#/telemetry';
 import {
   SDKRpcClientBase,
   type ActivatePluginCommandRpcInput,
@@ -560,8 +560,13 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       track: (record) => {
         if (this.engineSessionStartedSuppressed && record.event === 'session_started') return;
         const sessionId = record.context['session_id'];
-        if (typeof sessionId === 'string' && sessionId.length > 0) {
-          withTelemetryContext(client, { sessionId }).track(record.event, record.properties);
+        const model = record.context['model'];
+        const context: TelemetryContextPatch = {
+          sessionId: typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : undefined,
+          model: typeof model === 'string' && model.length > 0 ? model : undefined,
+        };
+        if (context.sessionId !== undefined || context.model !== undefined) {
+          withTelemetryContext(client, context).track(record.event, record.properties);
           return;
         }
         client.track(record.event, record.properties);

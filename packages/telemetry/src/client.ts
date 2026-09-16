@@ -7,6 +7,7 @@ import { isTelemetryPrimitive } from './types';
 export interface TelemetryContextIds {
   readonly deviceId?: string | null;
   readonly sessionId?: string | null;
+  readonly model?: string | null;
 }
 
 export interface TelemetryShutdownOptions {
@@ -23,6 +24,7 @@ interface PendingTelemetryEvent extends TelemetryEvent {
   readonly contextOverrides?: {
     readonly deviceId?: boolean;
     readonly sessionId?: boolean;
+    readonly model?: boolean;
   };
   readonly droppedPropertyKeys?: readonly string[];
 }
@@ -33,12 +35,14 @@ export class TelemetryClient {
   private systemMetricsCollector: SystemMetricsCollectorHandle | null = null;
   private deviceId: string | null = null;
   private sessionId: string | null = null;
+  private model: string | null = null;
   private disabled = false;
   private unexpectedErrorHandler: ((error: Error) => void) | null = null;
 
   setContext(input: TelemetryContextIds): void {
     if (input.deviceId !== undefined) this.deviceId = input.deviceId;
     if (input.sessionId !== undefined) this.sessionId = input.sessionId;
+    if (input.model !== undefined) this.model = input.model;
   }
 
   setUnexpectedErrorHandler(handler: ((error: Error) => void) | null): void {
@@ -70,6 +74,9 @@ export class TelemetryClient {
       }
       if (record.session_id === null && event.contextOverrides?.sessionId !== true) {
         record.session_id = this.sessionId;
+      }
+      if (record.model === null && event.contextOverrides?.model !== true) {
+        record.model = this.model;
       }
       sink.accept(record);
     }
@@ -107,6 +114,7 @@ export class TelemetryClient {
       event_id: randomUUID().replaceAll('-', ''),
       device_id: context.deviceId === undefined ? this.deviceId : context.deviceId,
       session_id: context.sessionId === undefined ? this.sessionId : context.sessionId,
+      model: context.model === undefined ? this.model : context.model,
       event,
       timestamp: Date.now() / 1000,
       properties: sanitized,
@@ -114,6 +122,7 @@ export class TelemetryClient {
       contextOverrides: {
         deviceId: context.deviceId !== undefined,
         sessionId: context.sessionId !== undefined,
+        model: context.model !== undefined,
       },
     };
     if (this.sink !== null) {
@@ -291,6 +300,7 @@ function mergeContext(base: TelemetryContextIds, patch: TelemetryContextIds): Te
   return {
     deviceId: patch.deviceId === undefined ? base.deviceId : patch.deviceId,
     sessionId: patch.sessionId === undefined ? base.sessionId : patch.sessionId,
+    model: patch.model === undefined ? base.model : patch.model,
   };
 }
 
@@ -299,6 +309,7 @@ function toTelemetryEvent(event: PendingTelemetryEvent): TelemetryEvent {
     event_id: event.event_id,
     device_id: event.device_id,
     session_id: event.session_id,
+    model: event.model,
     event: event.event,
     timestamp: event.timestamp,
     properties: event.properties,

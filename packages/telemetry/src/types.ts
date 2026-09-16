@@ -8,6 +8,8 @@ export interface TelemetryEvent {
   readonly event_id: string;
   device_id: string | null;
   session_id: string | null;
+  /** Per-event model; wins over the sink's reconciled context model. */
+  model?: string | null;
   readonly event: string;
   readonly timestamp: number;
   readonly properties: TelemetryProperties;

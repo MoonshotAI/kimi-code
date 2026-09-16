@@ -45,10 +45,14 @@ export class EventSink {
   }
 
   accept(event: TelemetryEvent): void {
+    // The per-event model rides in the envelope context and wins over the
+    // sink's reconciled model; a null model keeps the sink's value.
+    const { model, ...rest } = event;
     const enriched: EnrichedTelemetryEvent = {
-      ...event,
+      ...rest,
       context: { ...this.context },
     };
+    setPrimitive(enriched.context, 'model', model ?? undefined);
     this.buffer.push(enriched);
     if (this.buffer.length >= this.flushThreshold) {
       void this.flush().catch(() => {});

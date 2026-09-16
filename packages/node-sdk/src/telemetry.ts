@@ -4,6 +4,7 @@ export type TelemetryProperties = Readonly<Record<string, TelemetryPropertyValue
 
 export interface TelemetryContextPatch {
   readonly sessionId?: string | null;
+  readonly model?: string | null;
 }
 
 export interface TelemetryClient {

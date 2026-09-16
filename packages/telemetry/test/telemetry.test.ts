@@ -492,6 +492,28 @@ describe('EventSink', () => {
     expect(transport.saved[0]?.[0]?.context).toMatchObject({ model: 'kimi-k2' });
     expect(transport.saved[0]?.[1]?.context).toMatchObject({ model: 'reconciled-model' });
   });
+
+  it('lets a per-event model win over the sink context model', () => {
+    const transport = new RecordingTransport();
+    const sink = makeSink(transport);
+    const event = (id: string, model: string | null): TelemetryEvent => ({
+      event_id: id,
+      device_id: 'dev',
+      session_id: 'ses',
+      model,
+      event: 'test',
+      timestamp: 1,
+      properties: {},
+    });
+
+    sink.setModel('reconciled-model');
+    sink.accept(event('e1', 'scoped-model'));
+    sink.accept(event('e2', null));
+    sink.flushSync();
+
+    expect(transport.saved[0]?.[0]?.context).toMatchObject({ model: 'scoped-model' });
+    expect(transport.saved[0]?.[1]?.context).toMatchObject({ model: 'reconciled-model' });
+  });
 });
 
 describe('payload assembly', () => {
