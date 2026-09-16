@@ -9,7 +9,11 @@ export const TowerPlanToolInputSchema = z
       .array(
         z
           .object({
-            title: z.string().describe('Short mission title; becomes the branch/worktree slug'),
+            title: z
+              .string()
+              .describe(
+                'Short mission title; becomes the branch/worktree slug. ASCII English only — CJK titles are rejected (a non-ASCII title slugs to a generic word like "item" and collides across missions). Include a unique identifier word, e.g. a business code like B010100.',
+              ),
             scope: z
               .array(z.string())
               .min(1)
