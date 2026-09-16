@@ -13,6 +13,7 @@ import {
   compressImageForModel,
   decodeBase64Prefix,
   Error2,
+  ErrorCodes,
   fileNotFoundError,
   isModelAcceptedImageMime,
   MAX_IMAGE_DECODE_BYTES,
@@ -33,6 +34,8 @@ import {
   VIDEO_MIME_BY_SUFFIX,
 } from '@moonshot-ai/agent-core-v2/agent/media/mediaRef';
 import { isSensitiveFile } from '@moonshot-ai/agent-core-v2/tool/path-access';
+import type { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
+import type { Runtime, RuntimePath } from '@moonshot-ai/agent-core-v2/runtime/runtime';
 
 import type { PromptSubmission } from '../protocol/rest-prompt';
 
@@ -130,8 +133,78 @@ export function contentToCoreParts(content: WireContent): ContentPart[] {
 export interface ResolvePromptMediaOptions {
   readonly resolveOriginalsDir?: () => Promise<string | undefined>;
   readonly resolveAttachmentsDir?: () => Promise<string | undefined>;
+  readonly resolveAttachmentsTarget?: () => Promise<PromptAttachmentsTarget | undefined>;
   readonly telemetry?: ITelemetryService;
   readonly providerType?: string;
+}
+
+export interface PromptAttachmentsTarget {
+  readonly dir: string;
+  readonly fs: IHostFileSystem;
+  readonly path: RuntimePath;
+}
+
+export function runtimeAttachmentsTarget(runtime: Runtime): PromptAttachmentsTarget {
+  const tempDir = (runtime.environment as Runtime['environment'] & { tempDir?: string }).tempDir;
+  if (tempDir === undefined || runtime.fs === undefined) {
+    throw new Error2(
+      ErrorCodes.INTERNAL,
+      `runtime ${runtime.identity.runtimeId} does not provide a writable environment tempDir`,
+    );
+  }
+  return {
+    dir: runtime.path.join(tempDir, 'kimi-code', 'attachments'),
+    fs: runtime.fs,
+    path: runtime.path,
+  };
+}
+
+interface AttachmentSink {
+  readonly dir: string;
+  join(...parts: readonly string[]): string;
+  prepare(): Promise<void>;
+  size(path: string): Promise<number | undefined>;
+  write(path: string, data: Uint8Array | AsyncIterable<Uint8Array>): Promise<void>;
+}
+
+function localAttachmentSink(dir: string): AttachmentSink {
+  return {
+    dir,
+    join: (...parts) => join(...parts),
+    prepare: async () => {
+      await mkdir(dir, { recursive: true });
+    },
+    size: (path) => stat(path).then((info) => info.size, () => undefined),
+    write: async (path, data) => {
+      if (data instanceof Uint8Array) {
+        await writeFile(path, data);
+        return;
+      }
+      await pipeline(Readable.from(data), createWriteStream(path));
+    },
+  };
+}
+
+function runtimeAttachmentSink(target: PromptAttachmentsTarget): AttachmentSink {
+  return {
+    dir: target.dir,
+    join: (...parts) => target.path.join(...parts),
+    prepare: async () => {
+      await target.fs.mkdir(target.dir, { recursive: true });
+    },
+    size: (path) => target.fs.stat(path).then((info) => info.size, () => undefined),
+    write: async (path, data) => {
+      const chunks: Uint8Array[] = [];
+      if (data instanceof Uint8Array) {
+        chunks.push(data);
+      } else {
+        for await (const chunk of data) {
+          chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+        }
+      }
+      await target.fs.writeBytes(path, chunks.length === 1 ? chunks[0]! : Buffer.concat(chunks));
+    },
+  };
 }
 
 export interface PromptMediaPreparation {
@@ -165,14 +238,17 @@ export async function resolvePromptMediaFiles(
     }
     return originalsDir;
   };
-  let attachmentsDir: string | undefined;
-  let attachmentsDirResolved = false;
-  const resolveAttachmentsDir = async (): Promise<string> => {
-    if (!attachmentsDirResolved) {
-      attachmentsDirResolved = true;
-      attachmentsDir = await options.resolveAttachmentsDir?.().catch(() => undefined);
+  let attachmentsSink: AttachmentSink | undefined;
+  const resolveAttachmentsSink = async (): Promise<AttachmentSink> => {
+    if (attachmentsSink !== undefined) return attachmentsSink;
+    const target = await options.resolveAttachmentsTarget?.();
+    if (target !== undefined) {
+      attachmentsSink = runtimeAttachmentSink(target);
+    } else {
+      const dir = await options.resolveAttachmentsDir?.().catch(() => undefined);
+      attachmentsSink = localAttachmentSink(dir ?? cacheDir);
     }
-    return attachmentsDir ?? cacheDir;
+    return attachmentsSink;
   };
   const attachments: PromptFileAttachment[] = [];
   const content: WireContent = [];
@@ -189,7 +265,7 @@ export async function resolvePromptMediaFiles(
           const persisted = await persistAttachmentBytes(
             bytes,
             `${createHash('sha256').update(bytes).digest('hex').slice(0, 32)}-${sanitizeAttachmentName(name)}`,
-            await resolveAttachmentsDir(),
+            await resolveAttachmentsSink(),
           );
           content.push({
             type: 'text',
@@ -277,7 +353,7 @@ export async function resolvePromptMediaFiles(
           throw new Error2('validation.failed', 'file part requires file_id or path');
         }
         const file = await store.get(part.file_id);
-        const attachedPath = await materializeAttachmentToDir(file, await resolveAttachmentsDir());
+        const attachedPath = await materializeAttachment(file, await resolveAttachmentsSink());
         content.push({
           type: 'text',
           text: buildAttachedFileNotice(file.meta.name, file.meta.media_type, file.meta.size, attachedPath),
@@ -399,7 +475,7 @@ export async function resolvePromptMediaFiles(
           const persisted = await persistAttachmentBytes(
             data,
             `${file.meta.id}-${sanitizeAttachmentName(name)}`,
-            await resolveAttachmentsDir(),
+            await resolveAttachmentsSink(),
           );
           content.push({
             type: 'text',
@@ -495,26 +571,23 @@ function sanitizeAttachmentName(name: string): string {
   return cleaned.length > 0 ? cleaned : 'attachment';
 }
 
-async function materializeAttachmentToDir(file: GetResult, dir: string): Promise<string> {
-  await mkdir(dir, { recursive: true });
-  const target = join(dir, `${file.meta.id}-${sanitizeAttachmentName(file.meta.name)}`);
-  const info = await stat(target).catch(() => undefined);
-  if (info?.size === file.meta.size) return target;
-
-  await pipeline(file.stream(), createWriteStream(target));
+async function materializeAttachment(file: GetResult, sink: AttachmentSink): Promise<string> {
+  await sink.prepare();
+  const target = sink.join(sink.dir, `${file.meta.id}-${sanitizeAttachmentName(file.meta.name)}`);
+  if ((await sink.size(target)) === file.meta.size) return target;
+  await sink.write(target, file.stream());
   return target;
 }
 
 async function persistAttachmentBytes(
   bytes: Uint8Array,
   name: string,
-  dir: string,
+  sink: AttachmentSink,
 ): Promise<string | null> {
   try {
-    await mkdir(dir, { recursive: true });
-    const target = join(dir, name);
-    const info = await stat(target).catch(() => undefined);
-    if (info?.size !== bytes.length) await writeFile(target, bytes);
+    await sink.prepare();
+    const target = sink.join(sink.dir, name);
+    if ((await sink.size(target)) !== bytes.length) await sink.write(target, bytes);
     return target;
   } catch {
     return null;
