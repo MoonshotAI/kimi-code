@@ -131,6 +131,10 @@ vi.mock("vscode", () => ({
     showQuickPick: vi.fn(),
     showOpenDialog: vi.fn(),
   },
+  env: {
+    isTelemetryEnabled: true,
+    onDidChangeTelemetryEnabled: () => ({ dispose: () => undefined }),
+  },
 }));
 
 vi.mock("@moonshot-ai/kimi-code-sdk", async (importOriginal) => {

@@ -72,6 +72,10 @@ vi.mock("vscode", () => ({
     textDocuments: [],
   },
   window: { showWarningMessage: host.showWarningMessage },
+  env: {
+    isTelemetryEnabled: true,
+    onDidChangeTelemetryEnabled: () => ({ dispose: () => undefined }),
+  },
 }));
 
 vi.mock("@moonshot-ai/kimi-code-sdk", async (importOriginal) => {

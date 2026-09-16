@@ -8,19 +8,16 @@ export interface TelemetryRecord {
 }
 
 export function recordingTelemetry(records: TelemetryRecord[]): TelemetryClient {
+  const scoped = (sessionId: string | null, model: string | null): TelemetryClient => ({
+    track: (event, properties) => {
+      records.push({ event, sessionId, model, properties });
+    },
+    withContext: (patch) => scoped(patch.sessionId ?? sessionId, patch.model ?? model),
+  });
   return {
     track: (event, properties) => {
       records.push({ event, sessionId: null, model: null, properties });
     },
-    withContext: (patch) => ({
-      track: (event, properties) => {
-        records.push({
-          event,
-          sessionId: patch.sessionId ?? null,
-          model: patch.model ?? null,
-          properties,
-        });
-      },
-    }),
+    withContext: (patch) => scoped(patch.sessionId ?? null, patch.model ?? null),
   };
 }

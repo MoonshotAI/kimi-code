@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 
-import type { FileMeta, KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
+import type { FileMeta, KimiHarness, Session, TelemetryClient } from '@moonshot-ai/kimi-code-sdk';
 import { compressImageForModel } from '@moonshot-ai/kimi-code-sdk';
 
 import {
@@ -639,13 +639,17 @@ export class EditorKeyboardController {
     // The edge cap comes from the host harness's [image] config (resolved per
     // paste so a config reload applies immediately); hosts without a harness
     // use the env/built-in default.
+    const compressionTelemetry: TelemetryClient = {
+      track: (event, properties) =>
+        this.host.track(event, properties === undefined ? undefined : { ...properties }),
+      // Paste compression events carry no session/model scope; a scoped
+      // context is irrelevant here, so it scopes to itself.
+      withContext: () => compressionTelemetry,
+    };
     const compressed = await compressImageForModel(originalBytes, originalMime, {
       maxEdge: this.host.harness?.imageLimits?.maxEdgePx(),
       telemetry: {
-        client: {
-          track: (event, properties) =>
-            this.host.track(event, properties === undefined ? undefined : { ...properties }),
-        },
+        client: compressionTelemetry,
         source: 'tui_paste',
       },
     });

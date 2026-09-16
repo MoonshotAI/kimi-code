@@ -9,7 +9,12 @@ export interface TelemetryContextPatch {
 
 export interface TelemetryClient {
   track(event: string, properties?: TelemetryProperties): void;
-  withContext?(patch: TelemetryContextPatch): TelemetryClient;
+  /**
+   * Required part of the contract: scoped forwarding (engine events, session
+   * lifecycle rows) depends on it, and a track-only client would silently
+   * drop the canonical session/model context.
+   */
+  withContext(patch: TelemetryContextPatch): TelemetryClient;
   setContext?(patch: TelemetryContextPatch): void;
 }
 
