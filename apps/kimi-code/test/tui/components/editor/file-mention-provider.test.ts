@@ -625,6 +625,21 @@ describe('FileMentionProvider', () => {
       expect(result.cursorCol).toBe('@"actions/'.length);
     });
 
+    it('quotes a stale unquoted mention item when the live token is quoted', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = '@"ac"';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        4,
+        { value: '@actions/', label: 'actions/' },
+        '@ac',
+      );
+
+      expect(result.lines[0]).toBe('@"actions/"');
+      expect(result.cursorCol).toBe('@"actions/'.length);
+    });
+
     it('consumes the closing quote after the cursor for a quoted fallback item', () => {
       const provider = new FileMentionProvider([], workDir, NO_FD);
       const line = '@"ac"';

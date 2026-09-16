@@ -322,7 +322,11 @@ export class FileMentionProvider implements AutocompleteProvider {
       if (livePrefix === null) {
         return { lines, cursorLine, cursorCol };
       }
-      return this.inner.applyCompletion(lines, cursorLine, cursorCol, item, livePrefix);
+      const applyItem =
+        livePrefix.startsWith('@"') && item.value.startsWith('@') && !item.value.startsWith('@"')
+          ? { ...item, value: `@"${item.value.slice(1)}"` }
+          : item;
+      return this.inner.applyCompletion(lines, cursorLine, cursorCol, applyItem, livePrefix);
     }
     return this.inner.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
   }
