@@ -24,8 +24,16 @@ export function countEditLines(text: string): number {
   return lines;
 }
 
-export function isOversizedEmptyDeletion(oldString: string, newString: string): boolean {
-  return newString.trim().length === 0 && countEditLines(oldString) >= LARGE_DELETE_MIN_OLD_LINES;
+export function isOversizedEmptyDeletion(
+  oldString: string,
+  newString: string,
+  occurrenceCount = 1,
+): boolean {
+  return (
+    newString.trim().length === 0 &&
+    occurrenceCount > 0 &&
+    countEditLines(oldString) * occurrenceCount >= LARGE_DELETE_MIN_OLD_LINES
+  );
 }
 
 function oversizedDeletionMessage(path: string): string {
@@ -54,14 +62,21 @@ function notUniqueMessage(path: string, count: number): string {
 
 export class EditService {
   apply(model: TextModel, input: EditApplyInput): EditApplyResult {
-    if (input.allow_large_delete !== true && isOversizedEmptyDeletion(input.old_string, input.new_string)) {
-      return { ok: false, error: oversizedDeletionMessage(input.path) };
+    if (input.replace_all) {
+      const count = model.countOccurrences(input.old_string);
+      if (count === 0) return { ok: false, error: notFoundMessage(input.path) };
+      if (
+        input.allow_large_delete !== true &&
+        isOversizedEmptyDeletion(input.old_string, input.new_string, count)
+      ) {
+        return { ok: false, error: oversizedDeletionMessage(input.path) };
+      }
+      const { text } = model.replaceAll(input.old_string, input.new_string);
+      return { ok: true, rawContent: model.materialize(text), count };
     }
 
-    if (input.replace_all) {
-      const { text, count } = model.replaceAll(input.old_string, input.new_string);
-      if (count === 0) return { ok: false, error: notFoundMessage(input.path) };
-      return { ok: true, rawContent: model.materialize(text), count };
+    if (input.allow_large_delete !== true && isOversizedEmptyDeletion(input.old_string, input.new_string)) {
+      return { ok: false, error: oversizedDeletionMessage(input.path) };
     }
 
     const count = model.countOccurrences(input.old_string);

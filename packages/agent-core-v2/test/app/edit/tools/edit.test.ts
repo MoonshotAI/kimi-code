@@ -581,6 +581,37 @@ describe('EditTool', () => {
     expect(writeText).toHaveBeenCalledWith('/tmp/skill.md', '\n\nmore');
   });
 
+  it('refuses cumulative replace_all empty deletions unless allow_large_delete is set', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const file = ['keep', 'alpha', 'beta', 'mid', 'alpha', 'beta', 'tail'].join('\n');
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn().mockResolvedValue(file),
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const refused = await execute(tool, {
+      path: '/tmp/skill.md',
+      old_string: 'alpha\nbeta',
+      new_string: '',
+      replace_all: true,
+    });
+    expect(refused).toMatchObject({ isError: true });
+    expect(refused.output).toContain('Refusing a multi-line deletion');
+    expect(refused.output).toContain('allow_large_delete=true');
+    expect(writeText).not.toHaveBeenCalled();
+
+    const allowed = await execute(tool, {
+      path: '/tmp/skill.md',
+      old_string: 'alpha\nbeta',
+      new_string: '',
+      replace_all: true,
+      allow_large_delete: true,
+    });
+    expect(allowed.output).toContain('Replaced 2 occurrences');
+    expect(writeText).toHaveBeenCalledWith('/tmp/skill.md', 'keep\n\nmid\n\ntail');
+  });
+
   it('counts lone carriage returns when guarding multi-line deletions', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const { fs } = createSpiedEditFs({
