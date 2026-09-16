@@ -72,7 +72,6 @@ import {
   type TranscriptAttachment,
   type TranscriptFrame,
   type TranscriptInteraction,
-  type TranscriptItem,
   type TranscriptMarker,
   type TranscriptOperation,
   type TranscriptPrompt,
@@ -168,8 +167,6 @@ export type ProjectorStepOrdinalLookup = (turnId: string) => number | undefined;
 
 export type ProjectorTurnLookup = (turnId: string) => TurnHeader | undefined;
 
-export type ProjectorItemsLookup = () => readonly TranscriptItem[] | undefined;
-
 export type ProjectorPlanRevisionKey = (key: string) => string;
 
 export interface ProjectorLookups {
@@ -177,7 +174,6 @@ export interface ProjectorLookups {
   readonly toolFrame?: ProjectorToolFrameLookup;
   readonly stepOrdinal?: ProjectorStepOrdinalLookup;
   readonly turn?: ProjectorTurnLookup;
-  readonly items?: ProjectorItemsLookup;
   readonly resolvePlanRevisionKey?: ProjectorPlanRevisionKey;
   readonly activitySnapshot?: () => AgentActivitySnapshot;
   readonly pendingApprovals?: () => readonly LegacyActivityApproval[];
@@ -374,7 +370,7 @@ export class AgentTranscriptProjector {
       case 'context.spliced':
         return [this.markerOp('undo', restOf(event))];
       case 'context.undone':
-        return this.onContextUndone(event);
+        return [];
       case 'error':
         return [this.noticeOp('error', event.message, restOf(event))];
       case 'warning':
@@ -1304,38 +1300,6 @@ export class AgentTranscriptProjector {
       });
     }
     return ops;
-  }
-
-  private onContextUndone(event: { turns: number; fromTurnId?: number }): TranscriptOperation[] {
-    const items = this.lookups?.items?.();
-    if (items === undefined) return [];
-    const ids: string[] = [];
-    let cutIndex = items.length;
-    if (event.fromTurnId !== undefined) {
-      const fromTurnId = event.fromTurnId;
-      for (let i = items.length - 1; i >= 0; i--) {
-        const item = items[i];
-        if (item === undefined || item.kind !== 'turn') continue;
-        if (item.ordinal < fromTurnId) break;
-        ids.push(item.turnId);
-        cutIndex = i;
-      }
-    } else {
-      let remaining = event.turns;
-      for (let i = items.length - 1; i >= 0 && remaining > 0; i--) {
-        const item = items[i];
-        if (item === undefined || item.kind !== 'turn') continue;
-        ids.push(item.turnId);
-        cutIndex = i;
-        remaining -= 1;
-      }
-    }
-    if (ids.length === 0) return [];
-    for (let i = cutIndex + 1; i < items.length; i++) {
-      const item = items[i];
-      if (item?.kind === 'marker' && item.marker === 'undo') ids.push(item.markerId);
-    }
-    return [{ op: 'items.remove', ids }];
   }
 
   private markerOp(marker: string, payload: unknown): TranscriptOperation {
