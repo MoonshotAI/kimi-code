@@ -272,10 +272,16 @@ export class RemoteRuntimeProviderFactory implements RuntimeProviderFactory {
           });
         }
         for (const declaration of resolved.entries) {
+          if (disposed) return;
           const fingerprint = declarationFingerprint(declaration.entry);
           const record = records.get(declaration.id);
           if (record === undefined) {
-            records.set(declaration.id, this.registerDeclaredRuntime(context, host, declaration));
+            try {
+              records.set(declaration.id, this.registerDeclaredRuntime(context, host, declaration));
+            } catch (error) {
+              // A failed entry keeps no record, so the next trigger retries it.
+              log.warn(`remote runtime ${declaration.id} registration failed`, { error });
+            }
             continue;
           }
           if (record.fingerprint === fingerprint) continue;

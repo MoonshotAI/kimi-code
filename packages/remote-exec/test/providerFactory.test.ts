@@ -373,6 +373,37 @@ describe('declaration watch', () => {
     await registry.dispose();
   });
 
+  it('skips a declaration whose registration fails and still registers the rest', async () => {
+    const registry = new RuntimeRegistry('workspace-1');
+    // A runtime registered outside the factory collides with the declaration id.
+    registry.register(new FakeRuntime(
+      { workspaceId: 'workspace-1', runtimeId: 'conflict', generation: 'other' },
+      { capabilities: [] },
+    ));
+    const config = watchableConfigService({});
+    const warn = vi.fn();
+    const services = baseServices({
+      config: config.service,
+      log: { _serviceBrand: undefined, info: () => {}, warn, error: () => {} } as unknown as ILogService,
+    });
+    const factory = new RemoteRuntimeProviderFactory(factoryOptions({ connect: vi.fn() }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(services, registry));
+
+    config.setSection({
+      conflict: { type: 'ssh', host: 'conflict' },
+      staging: { type: 'ssh', host: 'staging' },
+    });
+    await vi.waitFor(() => {
+      expect(registry.current('staging')).toBeDefined();
+    });
+    expect(warn).toHaveBeenCalledWith('remote runtime conflict registration failed', expect.anything());
+    // The colliding pre-existing registration is left untouched.
+    expect(registry.current('conflict')!.identity.generation).toBe('other');
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
   it('updates a changed declaration in place and connects with the new entry', async () => {
     const registry = new RuntimeRegistry('workspace-1');
     const config = watchableConfigService({
