@@ -26,7 +26,7 @@ import {
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
 import { ReadGroupComponent } from '#/tui/components/messages/read-group';
 import { replayBackgroundProjection } from '#/tui/utils/message-replay';
-import type { TaskNotificationOrigin } from '#/tui/utils/message-replay';
+import type { BackgroundTaskNotificationOrigin } from '#/tui/utils/message-replay';
 
 vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
 
@@ -80,22 +80,35 @@ function message(
   extra: {
     readonly toolCalls?: readonly ToolCall[];
     readonly toolCallId?: string;
-    readonly origin?: PromptOrigin | TaskNotificationOrigin;
+    readonly origin?: PromptOrigin | BackgroundTaskNotificationOrigin;
     readonly isError?: boolean;
   } = {},
 ): AgentReplayRecord {
-  return {
-    time: REPLAY_TIME,
-    type: 'message',
-    message: {
-      role,
-      content: [...content],
-      toolCalls: [...(extra.toolCalls ?? [])],
-      toolCallId: extra.toolCallId,
-      origin: extra.origin as PromptOrigin | undefined,
-      isError: extra.isError,
-    },
-  };
+  const origin = extra.origin as PromptOrigin | undefined;
+  switch (role) {
+    case 'system':
+      return { time: REPLAY_TIME, type: 'message', message: { message: { role, content: [...content] }, meta: { origin } } };
+    case 'user':
+      return { time: REPLAY_TIME, type: 'message', message: { message: { role, content: [...content] }, meta: { origin } } };
+    case 'assistant':
+      return {
+        time: REPLAY_TIME,
+        type: 'message',
+        message: {
+          message: { role, content: [...content], toolCalls: [...(extra.toolCalls ?? [])] },
+          meta: { origin },
+        },
+      };
+    case 'tool':
+      return {
+        time: REPLAY_TIME,
+        type: 'message',
+        message: {
+          message: { role, content: [...content], toolCallId: extra.toolCallId ?? '' },
+          meta: { isError: extra.isError },
+        },
+      };
+  }
 }
 
 function toolCall(id: string, name: string, args: Record<string, unknown>): ToolCall {

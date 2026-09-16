@@ -32,7 +32,7 @@ import {
   getLiveSessionById,
   resumeSessionById,
   sessionDirOf,
-  type ContextMessage,
+  type HistoryMessage,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
 import { TurnStarted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
@@ -1179,24 +1179,21 @@ describe('server-v2 /api/v1/sessions', () => {
     await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
     const agent = session!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
     const context = agent.accessor.get(IAgentContextMemoryService);
-    const user = (text: string): ContextMessage => ({
-      role: 'user',
-      content: [{ type: 'text', text }],
-      toolCalls: [],
-      origin: { kind: 'user' },
+    const user = (text: string): HistoryMessage => ({
+      message: { role: 'user', content: [{ type: 'text', text }] },
+      meta: { origin: { kind: 'user' } },
     });
-    const assistant = (text: string): ContextMessage => ({
-      role: 'assistant',
-      content: [{ type: 'text', text }],
-      toolCalls: [],
+    const assistant = (text: string): HistoryMessage => ({
+      message: { role: 'assistant', content: [{ type: 'text', text }], toolCalls: [] },
+      meta: {},
     });
     context.append(user('first prompt'), assistant('first answer'));
     context.append(user('second prompt'), assistant('second answer'));
     await agent.accessor.get(IAgentConversationUndoService).undo(1);
     await agent.accessor.get(IWireService).flush();
-    const messageText = (messages: readonly ContextMessage[]) =>
+    const messageText = (messages: readonly HistoryMessage[]) =>
       messages.map((message) =>
-        message.content.map((part) => (part.type === 'text' ? part.text : '')).join(''),
+        message.message.content.map((part) => (part.type === 'text' ? part.text : '')).join(''),
       );
     const sourceText = messageText(context.get());
     expect(sourceText).toEqual(['first prompt', 'first answer']);

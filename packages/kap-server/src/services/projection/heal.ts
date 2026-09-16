@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 
 import type { TokenUsage } from '@moonshot-ai/agent-core-v2';
+import { normalizeReplayedEntry } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
+import { isUserEntry } from '@moonshot-ai/agent-core-v2/human/agent/turn';
 
 import type { StepTiming, StepUsage } from '../../protocol/messages';
 import {
@@ -105,10 +107,10 @@ export function foldTimelineSeed(records: readonly ContextRecord[]): TimelineSee
         break;
       }
       case 'context.append_message': {
-        const message = record['message'] as
-          | { id?: string; role?: string; origin?: unknown }
-          | undefined;
-        if (message?.role === 'assistant') {
+        const raw = record['message'];
+        if (raw === null || typeof raw !== 'object') break;
+        const message = normalizeReplayedEntry(raw);
+        if (message.message.role === 'assistant') {
           if (
             currentTurn === undefined ||
             hiddenTurnIds.has(currentTurn) ||
@@ -130,7 +132,7 @@ export function foldTimelineSeed(records: readonly ContextRecord[]): TimelineSee
           }
           break;
         }
-        if (message?.role !== 'user' || !isUndoAnchorOrigin(message.origin)) break;
+        if (!isUserEntry(message) || !isUndoAnchorOrigin(message.meta?.origin)) break;
         if (!seedEnded) {
           if (!visibleTurnOrdinals.has(SEED_TURN_RAW_ID)) {
             visibleTurnOrdinals.add(SEED_TURN_RAW_ID);
@@ -139,7 +141,7 @@ export function foldTimelineSeed(records: readonly ContextRecord[]): TimelineSee
           currentTurn = SEED_TURN_RAW_ID;
           break;
         }
-        const messageId = typeof message.id === 'string' ? message.id : undefined;
+        const messageId = message.meta?.promptId;
         const matchingIndex =
           messageId !== undefined
             ? pendingAnchors.findIndex((anchor) => anchor.promptId === messageId)

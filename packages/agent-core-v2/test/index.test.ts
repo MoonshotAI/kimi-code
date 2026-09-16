@@ -6,7 +6,6 @@ import {
   EVENT2_REGISTRY,
   IAgentContextMemoryService,
   IAgentGoalService,
-  type ContextMessage,
   type WireRecord,
 } from '#/index';
 import {
@@ -524,11 +523,15 @@ describe('AgentRecords persistence metadata', () => {
     ]);
     expect(ctx.get(IAgentGoalService).getGoal().goal).toBeNull();
     const reminder = context.get().at(-1);
-    expect(reminder?.origin).toEqual({
-      kind: 'injection',
-      variant: 'goal_fork_cleared',
+    expect(reminder).toMatchObject({
+      meta: {
+        origin: {
+          kind: 'injection',
+          variant: 'goal_fork_cleared',
+        },
+      },
     });
-    expect(JSON.stringify(reminder?.content)).toContain('This fork does not have a current goal.');
+    expect(JSON.stringify(reminder?.message.content)).toContain('This fork does not have a current goal.');
   });
 
   it('keeps goals created after the forked boundary', async () => {
@@ -552,9 +555,13 @@ describe('AgentRecords persistence metadata', () => {
       goalId: 'fork-goal',
       objective: 'fork work',
     });
-    expect(context.get().at(-1)?.origin).toEqual({
-      kind: 'injection',
-      variant: 'goal_fork_cleared',
+    expect(context.get().at(-1)).toMatchObject({
+      meta: {
+        origin: {
+          kind: 'injection',
+          variant: 'goal_fork_cleared',
+        },
+      },
     });
   });
 
@@ -621,20 +628,3 @@ class RecordingInMemoryWireRecordPersistence extends InMemoryWireRecordPersisten
   }
 }
 
-
-function userMessage(text: string): ContextMessage {
-  return {
-    role: 'user',
-    content: [{ type: 'text', text }],
-    toolCalls: [],
-  };
-}
-
-function compactionSummaryMessage(text: string): ContextMessage {
-  return {
-    role: 'assistant',
-    content: [{ type: 'text', text }],
-    toolCalls: [],
-    origin: { kind: 'compaction_summary' },
-  };
-}

@@ -11,7 +11,7 @@ import {
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { isCompactionSummaryMessage } from '#/agent/contextMemory/compactionHandoff';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import { isSystemEntry, isUserEntry, type HistoryMessage } from '#human/agent/turn';
 import { IAgentLoopService, type BeforeStepContext } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventBus } from '#/app/event/eventBus';
@@ -62,13 +62,16 @@ function appendReminder(
   notification: ReminderNotification,
 ): void {
   runtime.get(IAgentContextMemoryService).append({
-    role: 'user',
-    content: [...createHistoryMessageBuilder().systemReminder(content).parts()],
-    toolCalls: [],
-    origin: {
-      kind: 'injection',
-      variant: notification.variant,
-      ownerPromptId: notification.ownerPromptId,
+    message: {
+      role: 'user',
+      content: [...createHistoryMessageBuilder().systemReminder(content).parts()],
+    },
+    meta: {
+      origin: {
+        kind: 'injection',
+        variant: notification.variant,
+        ownerPromptId: notification.ownerPromptId,
+      },
     },
   });
 }
@@ -87,8 +90,8 @@ function providerContext(
     lastInjectedAt,
     lastInjection,
     lastDisclosure:
-      lastInjection?.origin?.kind === 'injection'
-        ? lastInjection.origin.disclosure
+      lastInjection !== undefined && isUserEntry(lastInjection) && lastInjection.meta?.origin?.kind === 'injection'
+        ? lastInjection.meta.origin.disclosure
         : undefined,
     isNewTurn,
   };
@@ -131,10 +134,11 @@ function appendResult(
   if (typeof resolved === 'string') {
     if (resolved.trim().length === 0) return;
     runtime.get(IAgentContextMemoryService).append({
-      role: 'user',
-      content: [...createHistoryMessageBuilder().systemReminder(resolved).parts()],
-      toolCalls: [],
-      origin,
+      message: {
+        role: 'user',
+        content: [...createHistoryMessageBuilder().systemReminder(resolved).parts()],
+      },
+      meta: { origin },
     });
     return;
   }
@@ -143,21 +147,27 @@ function appendResult(
     if (message.content.length === 0 && (message.tools === undefined || message.tools.length === 0)) {
       return;
     }
+    if (message.role === 'system') {
+      runtime.get(IAgentContextMemoryService).append({
+        message: {
+          role: 'system',
+          content: [...message.content],
+          tools: message.tools === undefined ? undefined : [...message.tools],
+        },
+        meta: { origin },
+      });
+      return;
+    }
     runtime.get(IAgentContextMemoryService).append({
-      role: message.role,
-      content: [...message.content],
-      toolCalls: [],
-      tools: message.tools,
-      origin,
+      message: { role: 'user', content: [...message.content] },
+      meta: { origin },
     });
     return;
   }
   if (resolved.length === 0) return;
   runtime.get(IAgentContextMemoryService).append({
-    role: 'user',
-    content: [...resolved],
-    toolCalls: [],
-    origin,
+    message: { role: 'user', content: [...resolved] },
+    meta: { origin },
   });
 }
 
@@ -295,7 +305,7 @@ export class AgentReminderService extends AgentActorService<null> implements IAg
 
 function isCompactionSplice(splice: {
   readonly deleteCount: number;
-  readonly messages: readonly ContextMessage[];
+  readonly messages: readonly HistoryMessage[];
 }): boolean {
   return splice.deleteCount > 0 && splice.messages.some(isCompactionSummaryMessage);
 }
@@ -312,10 +322,15 @@ function isInjectionResult(
   return typeof content === 'object' && content !== null && !Array.isArray(content) && 'content' in content;
 }
 
-function findInjections(history: readonly ContextMessage[], variant: string): number[] {
+function findInjections(history: readonly HistoryMessage[], variant: string): number[] {
   const positions: number[] = [];
-  history.forEach((message, index) => {
-    if (message.origin?.kind === 'injection' && message.origin.variant === variant) positions.push(index);
+  history.forEach((entry, index) => {
+    const origin = isUserEntry(entry)
+      ? entry.meta?.origin
+      : isSystemEntry(entry)
+        ? entry.meta?.origin
+        : undefined;
+    if (origin?.kind === 'injection' && origin.variant === variant) positions.push(index);
   });
   return positions;
 }

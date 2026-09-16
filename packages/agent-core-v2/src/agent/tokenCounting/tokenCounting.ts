@@ -1,5 +1,4 @@
-import type { Message } from '#/llm-adapter/contract/message';
-import type { ToolDescription as Tool } from '#human/llm/message';
+import type { Message, ToolDescription as Tool } from '#human/llm/message';
 
 export type TokenCountingStrategy = 'measured+estimated' | 'measured' | 'estimated';
 

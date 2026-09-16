@@ -245,7 +245,7 @@ export class AgentConversationUndoService
       for (let i = history.length - 1; i >= 0; i--) {
         const message = history[i]!;
         if (!isUndoAnchor(message)) continue;
-        lastPrompt = promptMetadataTextFromContentParts(message.content);
+        lastPrompt = promptMetadataTextFromContentParts(message.message.content);
         if (lastPrompt !== undefined) break;
       }
     }

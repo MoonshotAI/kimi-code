@@ -3,12 +3,13 @@ import type {
   BackgroundTaskInfo,
   BackgroundTaskStatus,
   ContentPart,
-  ContextMessage,
+  HistoryMessage,
   PromptOrigin,
   ResumedAgentState,
   ToolCall,
+  UserEntry,
 } from '@moonshot-ai/kimi-code-sdk';
-import { limitAgentReplayByTurns } from '@moonshot-ai/kimi-code-sdk';
+import { isToolEntry, limitAgentReplayByTurns } from '@moonshot-ai/kimi-code-sdk';
 
 import type {
   AppState,
@@ -250,15 +251,31 @@ export interface TaskNotificationOrigin {
   readonly notificationId: string;
 }
 
+export interface LegacyBackgroundTaskNotificationOrigin {
+  readonly kind: 'background_task';
+  readonly taskId: string;
+  readonly status: BackgroundTaskStatus;
+  readonly notificationId: string;
+}
+
 export type BackgroundTaskNotificationOrigin =
-  | Extract<PromptOrigin, { kind: 'background_task' }>
-  | TaskNotificationOrigin;
+  | TaskNotificationOrigin
+  | LegacyBackgroundTaskNotificationOrigin;
 
 export function backgroundOrigin(
-  message: ContextMessage,
+  entry: UserEntry,
 ): BackgroundTaskNotificationOrigin | undefined {
-  const origin = message.origin as BackgroundTaskNotificationOrigin | undefined;
+  const origin = entry.meta?.origin as BackgroundTaskNotificationOrigin | undefined;
   return origin?.kind === 'background_task' || origin?.kind === 'task' ? origin : undefined;
+}
+
+/**
+ * Origin metadata travels on the entry meta (every role but `tool` carries it);
+ * replayed records from before the entry switch were normalized onto the same
+ * shape by the engine, so this is the single read path.
+ */
+export function historyEntryOrigin(entry: HistoryMessage): PromptOrigin | undefined {
+  return isToolEntry(entry) ? undefined : entry.meta?.origin;
 }
 
 export function skillActivationFromOrigin(
@@ -310,9 +327,9 @@ export function bundledSkillsFromOrigin(
  * text part per bundled skill, so the caller's own parts start right after
  * them.
  */
-export function stripBundledSkillParts(message: ContextMessage): readonly ContentPart[] {
-  const bundledCount = bundledSkillsFromOrigin(message.origin).length;
-  return bundledCount === 0 ? message.content : message.content.slice(bundledCount);
+export function stripBundledSkillParts(entry: UserEntry): readonly ContentPart[] {
+  const bundledCount = bundledSkillsFromOrigin(entry.meta?.origin).length;
+  return bundledCount === 0 ? entry.message.content : entry.message.content.slice(bundledCount);
 }
 
 export function pluginCommandFromOrigin(

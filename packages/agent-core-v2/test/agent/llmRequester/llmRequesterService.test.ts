@@ -6,7 +6,7 @@ import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { HistoryMessage } from '#human/agent/turn';
 import {
   IAgentContextProjectorService,
   type MediaStripSnapshot,
@@ -49,8 +49,7 @@ import {
   APIStatusError,
 } from '#/llm-adapter/contract/errors';
 import { emptyUsage, type TokenUsage } from '#human/llm/usage';
-import { type Message } from '#/llm-adapter/contract/message';
-import { isToolCall, type StreamedMessagePart, type ToolCall } from '#human/llm/message';
+import { isToolCall, type Message, type StreamedMessagePart, type ToolCall } from '#human/llm/message';
 import type { ThinkingEffort } from '#human/llm/thinking';
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
@@ -120,9 +119,14 @@ const capabilities: ModelCapability = {
   max_context_tokens: 1000,
 };
 
-const history: Message[] = [
-  { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
+const history: HistoryMessage[] = [
+  { message: { role: 'user', content: [{ type: 'text', text: 'hello' }] } },
 ];
+
+function assistantToolCalls(message: Message): ToolCall[] {
+  if (message.role !== 'assistant') throw new Error('expected assistant message');
+  return message.toolCalls;
+}
 
 type ProjectionKind = 'normal' | 'strict' | 'degraded' | 'stripped';
 
@@ -140,9 +144,9 @@ function recordProjectionCalls(): {
   const calls: ProjectionKind[] = [];
   return {
     projector: {
-      project: (messages: readonly ContextMessage[], policy) => {
+      project: (messages: readonly HistoryMessage[], policy) => {
         calls.push(classifyProjectionPolicy(policy));
-        return messages;
+        return messages.map((entry) => entry.message);
       },
     },
     calls,
@@ -208,7 +212,7 @@ function createService(
   options: {
     readonly thinkingLevel?: ThinkingEffort;
     readonly mediaResolver?: Partial<IAgentMediaResolverService>;
-    readonly contextMessages?: Message[];
+    readonly contextMessages?: HistoryMessage[];
     readonly env?: Record<string, string>;
   } = {},
 ) {
@@ -611,7 +615,7 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
     const { service, dispatcher, records } = createService(
       createRequester(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413]),
       {
-        project: (messages: readonly ContextMessage[]) => messages,
+        project: (messages: readonly HistoryMessage[]) => messages.map((entry) => entry.message),
       },
     );
 
@@ -631,10 +635,11 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
     const capturedInputs: ModelRequestInput[] = [];
     const oldUrl = 'data:image/png;base64,REJECTED';
     const newUrl = 'data:image/png;base64,SMALL';
-    const imageMessage = (url: string, id: string): Message => ({
-      role: 'user',
-      content: [{ type: 'image_url', imageUrl: { url, id } }],
-      toolCalls: [],
+    const imageMessage = (url: string, id: string): HistoryMessage => ({
+      message: {
+        role: 'user',
+        content: [{ type: 'image_url', imageUrl: { url, id } }],
+      },
     });
     const { service } = createService(
       createRequester(
@@ -723,9 +728,9 @@ describe('AgentLLMRequesterService combined recovery projections', () => {
     policies: (ProjectionPolicy | undefined)[];
   }): Pick<IAgentContextProjectorService, 'project'> {
     return {
-      project: (messages: readonly ContextMessage[], policy) => {
+      project: (messages: readonly HistoryMessage[], policy) => {
         policies.policies.push(policy);
-        return messages;
+        return messages.map((entry) => entry.message);
       },
     };
   }
@@ -789,7 +794,7 @@ describe('AgentLLMRequesterService combined recovery projections', () => {
 
 describe('AgentLLMRequesterService trace id', () => {
   const passthroughProjector = {
-    project: (messages: readonly ContextMessage[]) => messages,
+    project: (messages: readonly HistoryMessage[]) => messages.map((entry) => entry.message),
   };
 
   function createTracedRequester(traceId: string | null): ModelRequester {
@@ -1082,7 +1087,7 @@ describe('AgentLLMRequesterService tool call id normalization', () => {
       parts.push(part);
     });
 
-    expect(result.message.toolCalls.map((c) => c.id)).toEqual(['call_1', 'call_2']);
+    expect(assistantToolCalls(result.message).map((c) => c.id)).toEqual(['call_1', 'call_2']);
     expect(parts.filter(isToolCall).map((p) => p.id)).toEqual(['call_1', 'call_2']);
   });
 
@@ -1100,8 +1105,8 @@ describe('AgentLLMRequesterService tool call id normalization', () => {
       parts.push(part);
     });
 
-    expect(first.message.toolCalls[0]!.id).toBe('Bash_0');
-    expect(second.message.toolCalls[0]).toMatchObject({ id: 'Bash_0__2', rawId: 'Bash_0' });
+    expect(assistantToolCalls(first.message)[0]!.id).toBe('Bash_0');
+    expect(assistantToolCalls(second.message)[0]).toMatchObject({ id: 'Bash_0__2', rawId: 'Bash_0' });
     expect(parts.filter(isToolCall).map((p) => [p.id, p.rawId])).toEqual([
       ['Bash_0', undefined],
       ['Bash_0__2', 'Bash_0'],
@@ -1116,7 +1121,7 @@ describe('AgentLLMRequesterService tool call id normalization', () => {
 
     const result = await service.request();
 
-    expect(result.message.toolCalls.map((c) => [c.id, c.rawId])).toEqual([
+    expect(assistantToolCalls(result.message).map((c) => [c.id, c.rawId])).toEqual([
       ['Bash_0', undefined],
       ['Bash_0__2', 'Bash_0'],
     ]);
@@ -1133,7 +1138,7 @@ describe('AgentLLMRequesterService tool call id normalization', () => {
 
     await expect(service.request()).rejects.toThrow('stream boom');
     const retry = await service.request();
-    expect(retry.message.toolCalls[0]!.id).toBe('Bash_9');
+    expect(assistantToolCalls(retry.message)[0]!.id).toBe('Bash_9');
   });
 
   it('rewrites an id that already exists in the restored context', async () => {
@@ -1143,16 +1148,18 @@ describe('AgentLLMRequesterService tool call id normalization', () => {
       {
         contextMessages: [
           {
-            role: 'assistant',
-            content: [],
-            toolCalls: [{ type: 'function', id: 'Bash_0', name: 'Bash', arguments: '{}' }],
+            message: {
+              role: 'assistant',
+              content: [],
+              toolCalls: [{ type: 'function', id: 'Bash_0', name: 'Bash', arguments: '{}' }],
+            },
           },
         ],
       },
     );
 
     const result = await service.request();
-    expect(result.message.toolCalls[0]!.id).toBe('Bash_0__2');
+    expect(assistantToolCalls(result.message)[0]!.id).toBe('Bash_0__2');
   });
 });
 

@@ -112,9 +112,31 @@ function parseWireLine(line: string): ParsedWireRecord | undefined {
   return record as ParsedWireRecord;
 }
 
+function entryFieldsOf(raw: unknown): {
+  readonly role?: unknown;
+  readonly content?: unknown;
+  readonly origin?: unknown;
+  readonly promptId?: unknown;
+} {
+  if (raw === null || typeof raw !== 'object') return {};
+  const m = raw as {
+    readonly message?: unknown;
+    readonly meta?: unknown;
+    readonly role?: unknown;
+    readonly content?: unknown;
+    readonly origin?: unknown;
+    readonly id?: unknown;
+  };
+  if (m.message !== null && typeof m.message === 'object') {
+    const inner = m.message as { readonly role?: unknown; readonly content?: unknown };
+    const meta = m.meta as { readonly origin?: unknown; readonly promptId?: unknown } | undefined;
+    return { role: inner.role, content: inner.content, origin: meta?.origin, promptId: meta?.promptId };
+  }
+  return { role: m.role, content: m.content, origin: m.origin, promptId: m.id };
+}
+
 function turnEffectOfAppendMessage(message: unknown): TurnEffect {
-  if (message === null || typeof message !== 'object') return NONE;
-  const m = message as { role?: unknown; origin?: unknown };
+  const m = entryFieldsOf(message);
   if (m.role === 'system') return NONE;
   if (m.role === 'assistant') return ENSURE;
   if (m.role !== 'user') return NONE;
@@ -147,20 +169,17 @@ export function analyzeWireLine(line: string): WireLineAnalysis {
 
   if (r.type === 'context.append_message') {
     const turn = turnEffectOfAppendMessage(r.message);
-    const message = r.message;
+    const m = entryFieldsOf(r.message);
     const messages: ExtractedWireMessage[] = [];
-    if (message !== null && typeof message === 'object') {
-      const m = message as { role?: unknown; content?: unknown; origin?: unknown };
-      if (m.role === 'user') {
-        const origin = m.origin;
-        const userTyped =
-          origin === null ||
-          origin === undefined ||
-          (typeof origin === 'object' && isUserTypedOrigin(origin as OriginLike));
-        if (userTyped) {
-          const text = textOfContent(m.content).trim();
-          if (text.length > 0) messages.push({ role: 'user', text, time });
-        }
+    if (m.role === 'user') {
+      const origin = m.origin;
+      const userTyped =
+        origin === null ||
+        origin === undefined ||
+        (typeof origin === 'object' && isUserTypedOrigin(origin as OriginLike));
+      if (userTyped) {
+        const text = textOfContent(m.content).trim();
+        if (text.length > 0) messages.push({ role: 'user', text, time });
       }
     }
     return { messages, turn, step: STEP_NONE };

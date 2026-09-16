@@ -18,11 +18,11 @@ import {
   isUserActivatableSkillType,
   promptMetadataTextFromContentParts,
   ProfileError,
-  type ContextMessage,
   type PromptHandle,
   type PromptOrigin,
   type PromptState,
   type PromptWithSkillsResult,
+  type UserEntry,
   newMessageId,
   ISessionContext,
   resumeSessionById,
@@ -491,7 +491,10 @@ function projectPromptList(loop: IAgentLoopService) {
           userMessageId: item.meta?.userMessageId ?? '',
           createdAt: item.meta?.createdAt ?? '',
           state: 'pending',
-          message: { ...item.message, toolCalls: [], origin: item.meta?.origin as PromptOrigin | undefined },
+          message: {
+            message: item.message,
+            meta: { ...item.meta, origin: item.meta?.origin },
+          },
         }),
       ),
   };
@@ -506,14 +509,14 @@ export function projectPromptSnapshot(prompt: {
   readonly userMessageId: string;
   readonly createdAt: string;
   readonly state: PromptState;
-  readonly message: ContextMessage;
+  readonly message: UserEntry;
 }) {
   const status = prompt.state === 'running' || prompt.state === 'steered'
     ? 'running'
     : prompt.state === 'blocked' ? 'blocked' : 'queued';
-  const origin = prompt.message.origin;
+  const origin = prompt.message.meta?.origin;
   const bundled = origin?.kind === 'user' ? (origin.skillActivations?.length ?? 0) : 0;
-  const content = bundled === 0 ? prompt.message.content : prompt.message.content.slice(bundled);
+  const content = bundled === 0 ? prompt.message.message.content : prompt.message.message.content.slice(bundled);
   return {
     prompt_id: prompt.id,
     user_message_id: prompt.userMessageId,

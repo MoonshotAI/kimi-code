@@ -239,7 +239,7 @@ export class SessionProjection {
       const prompts = handle.accessor.get(IAgentLoopService) as IAgentLoopService | undefined;
       const active =
         status.activePromptId === undefined ? undefined : prompts?.promptHandle(status.activePromptId);
-      const rawOrigin = active?.message.origin;
+      const rawOrigin = active?.message.meta?.origin;
       projector.seedActiveTurn({
         turnId: status.activeTurnId,
         promptId: active?.id,

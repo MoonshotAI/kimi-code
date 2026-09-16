@@ -1,8 +1,9 @@
 import { estimateTokens, estimateTokensForMessage, estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart, Message } from '#human/llm/message';
 import { createHistoryMessageBuilder, systemReminderText } from '#human/agent/historyBuilder';
 import summaryPrefixTemplate from './compaction-summary-prefix.md?raw';
-import type { ContextMessage, PromptOrigin } from './types';
+import { isUserEntry, type HistoryMessage } from '#human/agent/turn';
+import type { PromptOrigin } from './types';
 
 export const COMPACTION_SUMMARY_PREFIX = summaryPrefixTemplate.trimEnd();
 export const COMPACT_USER_MESSAGE_MAX_TOKENS = 20_000;
@@ -10,12 +11,12 @@ export const COMPACT_USER_MESSAGE_HEAD_TOKENS = 2_000;
 export const COMPACTION_ELISION_VARIANT = 'compaction_elision';
 export const COMPACTION_CONTINUATION_VARIANT = 'compaction_continuation';
 
-type MessageLike = ContextMessage;
+type MessageLike = HistoryMessage;
 
 export interface TokenEstimate {
   readonly text: (text: string) => number;
-  readonly message: (message: MessageLike) => number;
-  readonly messages: (messages: readonly MessageLike[]) => number;
+  readonly message: (message: Message) => number;
+  readonly messages: (messages: readonly Message[]) => number;
 }
 
 export const defaultTokenEstimate: TokenEstimate = {
@@ -33,7 +34,7 @@ export interface CompactionUserSelection<T> {
 
 export interface ContextCompactionShapeInput {
   readonly summary: string;
-  readonly legacySummaryMessage?: ContextMessage;
+  readonly legacySummaryMessage?: HistoryMessage;
   readonly contextSummary?: string;
   readonly compactedCount: number;
   readonly tokensBefore: number;
@@ -55,11 +56,11 @@ export interface ContextCompactionShape {
   readonly keptUserMessageCount: number;
   readonly keptHeadUserMessageCount?: number;
   readonly droppedCount?: number;
-  readonly messages: readonly ContextMessage[];
+  readonly messages: readonly HistoryMessage[];
 }
 
 export function buildContextCompactionShape(
-  history: readonly ContextMessage[],
+  history: readonly HistoryMessage[],
   input: ContextCompactionShapeInput,
   estimate: TokenEstimate = defaultTokenEstimate,
 ): ContextCompactionShape {
@@ -74,7 +75,7 @@ export function buildContextCompactionShape(
       contextSummary,
       compactedCount: input.compactedCount,
       tokensBefore: input.tokensBefore,
-      tokensAfter: input.tokensAfter ?? estimate.messages(messages),
+      tokensAfter: input.tokensAfter ?? estimate.messages(messages.map((entry) => entry.message)),
       keptUserMessageCount: 0,
       droppedCount: input.droppedCount,
       messages,
@@ -100,7 +101,7 @@ export function buildContextCompactionShape(
     input.tokensAfter ??
     (input.requestOverheadTokens ?? 0) +
       (input.summaryOutputTokens ?? estimate.text(contextSummary)) +
-      estimate.messages([...keptMessages, continuationMessage]);
+      estimate.messages([...keptMessages, continuationMessage].map((entry) => entry.message));
   const keptUserMessageCount =
     input.keptUserMessageCount ?? selection.head.length + selection.tail.length;
   const keptHeadUserMessageCount =
@@ -128,21 +129,20 @@ export function buildCompactionSummaryText(summary: string): string {
   return `${COMPACTION_SUMMARY_PREFIX}\n${suffix.length > 0 ? suffix : '(no summary available)'}`;
 }
 
-export function createCompactionSummaryMessage(text: string): ContextMessage {
+export function createCompactionSummaryMessage(text: string): HistoryMessage {
   return {
-    role: 'user',
-    content: [...createHistoryMessageBuilder().plain(text).parts()],
-    toolCalls: [],
-    origin: { kind: 'compaction_summary' },
+    message: { role: 'user', content: [...createHistoryMessageBuilder().plain(text).parts()] },
+    meta: { origin: { kind: 'compaction_summary' } },
   };
 }
 
-export function createCompactionElisionMessage(omittedTokens: number): ContextMessage {
+export function createCompactionElisionMessage(omittedTokens: number): HistoryMessage {
   return {
-    role: 'user',
-    content: [...createHistoryMessageBuilder().systemReminder(compactionElisionContent(omittedTokens)).parts()],
-    toolCalls: [],
-    origin: { kind: 'injection', variant: COMPACTION_ELISION_VARIANT },
+    message: {
+      role: 'user',
+      content: [...createHistoryMessageBuilder().systemReminder(compactionElisionContent(omittedTokens)).parts()],
+    },
+    meta: { origin: { kind: 'injection', variant: COMPACTION_ELISION_VARIANT } },
   };
 }
 
@@ -154,12 +154,13 @@ function compactionElisionContent(omittedTokens: number): string {
   return `Some of this conversation's user messages were omitted here during compaction: the messages above this note are the oldest user input, the messages below are the most recent, and roughly ${String(omittedTokens)} tokens in between were dropped. The omitted content is covered by the compaction summary at the end of the conversation.`;
 }
 
-export function createCompactionContinuationMessage(): ContextMessage {
+export function createCompactionContinuationMessage(): HistoryMessage {
   return {
-    role: 'user',
-    content: [...createHistoryMessageBuilder().systemReminder(compactionContinuationContent()).parts()],
-    toolCalls: [],
-    origin: { kind: 'injection', variant: COMPACTION_CONTINUATION_VARIANT },
+    message: {
+      role: 'user',
+      content: [...createHistoryMessageBuilder().systemReminder(compactionContinuationContent()).parts()],
+    },
+    meta: { origin: { kind: 'injection', variant: COMPACTION_CONTINUATION_VARIANT } },
   };
 }
 
@@ -178,11 +179,11 @@ export function collectCompactableUserMessages<T extends MessageLike>(messages: 
 }
 
 export function isCompactionSummaryMessage(message: MessageLike): boolean {
-  return message.origin?.kind === 'compaction_summary';
+  return isUserEntry(message) && message.meta?.origin?.kind === 'compaction_summary';
 }
 
 export function isRealUserInput(message: MessageLike): boolean {
-  return message.role === 'user' && compactionUserMessageDisposition(message.origin) === 'keep';
+  return isUserEntry(message) && compactionUserMessageDisposition(message.meta?.origin) === 'keep';
 }
 
 export function compactionUserMessageDisposition(
@@ -216,13 +217,13 @@ export function compactionUserMessageDisposition(
 export function selectRecentUserMessages<T extends MessageLike>(
   messages: readonly T[],
   maxTokens: number = COMPACT_USER_MESSAGE_MAX_TOKENS,
-  estimateMessage: (message: T) => number = estimateTokensForMessage,
+  estimateMessage: (message: Message) => number = estimateTokensForMessage,
 ): T[] {
   const selected: T[] = [];
   let remaining = maxTokens;
   for (let i = messages.length - 1; i >= 0 && remaining > 0; i--) {
     const message = messages[i]!;
-    const tokens = estimateMessage(message);
+    const tokens = estimateMessage(message.message);
     if (tokens <= remaining) {
       selected.push(message);
       remaining -= tokens;
@@ -239,11 +240,11 @@ export function selectCompactionUserMessages<T extends MessageLike>(
   messages: readonly T[],
   maxTokens: number = COMPACT_USER_MESSAGE_MAX_TOKENS,
   headTokens: number = COMPACT_USER_MESSAGE_HEAD_TOKENS,
-  estimateMessage: (message: T) => number = estimateTokensForMessage,
+  estimateMessage: (message: Message) => number = estimateTokensForMessage,
 ): CompactionUserSelection<T> {
   let totalTokens = 0;
   for (const message of messages) {
-    totalTokens += estimateMessage(message);
+    totalTokens += estimateMessage(message.message);
   }
   if (totalTokens <= maxTokens) {
     return { head: [], tail: [...messages], elided: false, omittedTokens: 0 };
@@ -257,14 +258,14 @@ export function selectCompactionUserMessages<T extends MessageLike>(
   let tailBoundaryDroppedPrefix: T | null = null;
   for (let i = messages.length - 1; i >= 0 && tailRemaining > 0; i--) {
     const message = messages[i]!;
-    const tokens = estimateMessage(message);
+    const tokens = estimateMessage(message.message);
     if (tokens <= tailRemaining) {
       tail.push(message);
       tailRemaining -= tokens;
       headEndExclusive = i;
       continue;
     }
-    const fullText = extractText(message.content);
+    const fullText = extractText(message.message.content);
     const keptSuffix = truncateTextToTokensFromEnd(fullText, tailRemaining);
     tail.push(replaceMessageText(message, keptSuffix));
     headEndExclusive = i;
@@ -284,7 +285,7 @@ export function selectCompactionUserMessages<T extends MessageLike>(
   let headRemaining = headBudget;
   for (const message of headCandidates) {
     if (headRemaining <= 0) break;
-    const tokens = estimateMessage(message);
+    const tokens = estimateMessage(message.message);
     if (tokens <= headRemaining) {
       head.push(message);
       headRemaining -= tokens;
@@ -295,8 +296,8 @@ export function selectCompactionUserMessages<T extends MessageLike>(
   }
 
   let keptTokens = 0;
-  for (const message of head) keptTokens += estimateMessage(message);
-  for (const message of tail) keptTokens += estimateMessage(message);
+  for (const message of head) keptTokens += estimateMessage(message.message);
+  for (const message of tail) keptTokens += estimateMessage(message.message);
   return { head, tail, elided: true, omittedTokens: Math.max(0, totalTokens - keptTokens) };
 }
 
@@ -361,11 +362,10 @@ function truncateTextToTokensFromEnd(text: string, maxTokens: number): string {
 function replaceMessageText<T extends MessageLike>(message: T, text: string): T {
   return {
     ...message,
-    content: [{ type: 'text', text }],
-    toolCalls: [],
+    message: { ...message.message, content: [{ type: 'text', text }] },
   } as unknown as T;
 }
 
 function truncateUserMessage<T extends MessageLike>(message: T, maxTokens: number): T {
-  return replaceMessageText(message, truncateTextToTokens(extractText(message.content), maxTokens));
+  return replaceMessageText(message, truncateTextToTokens(extractText(message.message.content), maxTokens));
 }

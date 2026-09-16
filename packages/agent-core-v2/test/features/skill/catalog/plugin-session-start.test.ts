@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import { isUserEntry, type HistoryMessage } from '#human/agent/turn';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { runWillBeginStepHooks, type StubLoop } from '../../../agent/loop/stubs';
 import type { LogContext, LogPayload } from '#/_base/log/log';
@@ -62,7 +62,7 @@ function recordingLogger(warnings: CapturedWarn[]): RecordingLogger {
 async function sessionStartRuntime(input: {
   readonly sessionStarts: readonly EnabledPluginSessionStart[];
   readonly skills: readonly SkillDefinition[];
-  readonly history?: readonly ContextMessage[];
+  readonly history?: readonly HistoryMessage[];
   readonly skipRestore?: boolean;
 }): Promise<{
   readonly ctx: ReturnType<typeof testAgent>;
@@ -91,15 +91,15 @@ async function injectDynamic(ctx: ReturnType<typeof testAgent>): Promise<void> {
 }
 
 function lastReminder(ctx: ReturnType<typeof testAgent>): string {
-  const last = ctx.context.get().findLast((message) => message.role === 'user');
-  return last?.content.map((part) => (part.type === 'text' ? part.text : '')).join('') ?? '';
+  const last = ctx.context.get().findLast((entry) => entry.message.role === 'user');
+  return last?.message.content.map((part) => (part.type === 'text' ? part.text : '')).join('') ?? '';
 }
 
 function pluginSessionStartMessages(ctx: ReturnType<typeof testAgent>) {
-  return ctx.context.get().filter(
-    (message) =>
-      message.origin?.kind === 'injection' && message.origin.variant === 'plugin_session_start',
-  );
+  return ctx.context.get().filter((entry) => {
+    const origin = isUserEntry(entry) ? entry.meta?.origin : undefined;
+    return origin?.kind === 'injection' && origin.variant === 'plugin_session_start';
+  });
 }
 
 describe('plugin session-start dynamic injection', () => {
@@ -123,7 +123,8 @@ describe('plugin session-start dynamic injection', () => {
     expect(text).toContain('TodoList');
     expect(text).toContain('body of skill');
     expect(text).toContain('</plugin_session_start>');
-    expect(ctx.context.get().at(-1)?.origin).toEqual({
+    const lastEntry = ctx.context.get().at(-1);
+    expect(lastEntry !== undefined && isUserEntry(lastEntry) ? lastEntry.meta?.origin : undefined).toEqual({
       kind: 'injection',
       variant: 'plugin_session_start',
     });
@@ -162,10 +163,11 @@ describe('plugin session-start dynamic injection', () => {
       skills: [skill('using-superpowers', 'body', { id: 'superpowers' })],
       history: [
         {
-          role: 'user',
-          content: [{ type: 'text', text: CURRENT_PLUGIN_SESSION_START_REMINDER }],
-          toolCalls: [],
-          origin: { kind: 'injection', variant: 'plugin_session_start' },
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: CURRENT_PLUGIN_SESSION_START_REMINDER }],
+          },
+          meta: { origin: { kind: 'injection', variant: 'plugin_session_start' } },
         },
       ],
     });

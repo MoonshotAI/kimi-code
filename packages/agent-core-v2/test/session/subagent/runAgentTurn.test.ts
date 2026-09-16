@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { HistoryMessage } from '#human/agent/turn';
 import {
   createMaxStepsExceededError,
   IAgentLoopService,
@@ -27,13 +27,13 @@ function makeTurn(result: TurnResult): Turn {
   };
 }
 
-function assistant(text: string): ContextMessage {
-  return { role: 'assistant', content: [{ type: 'text', text }], toolCalls: [] };
+function assistant(text: string): HistoryMessage {
+  return { message: { role: 'assistant', content: [{ type: 'text', text }], toolCalls: [] } };
 }
 
 function handleWith(
   turn: Turn,
-  messages: readonly ContextMessage[],
+  messages: readonly HistoryMessage[],
 ): { readonly handle: IAgentScopeHandle; readonly prompts: unknown[] } {
   const prompts: unknown[] = [];
   const services = new Map<unknown, unknown>([

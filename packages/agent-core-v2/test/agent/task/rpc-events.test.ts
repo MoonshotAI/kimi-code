@@ -19,6 +19,7 @@ import {
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import { QuestionBackgroundTask } from '#/agent/tools/ask-user-question/question-background-task';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { isUserEntry } from '#human/agent/turn';
 import { IEventBus } from '#/app/event/eventBus';
 import type { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -162,14 +163,18 @@ interface TaskServiceFixture {
   persistence?: ReturnType<typeof createAgentTaskPersistence>;
 }
 
-type TestContextMessage = {
-  readonly origin?: {
-    readonly kind: string;
-    readonly taskId: string;
-    readonly status: string;
-    readonly notificationId: string;
+type TestAppendedMessage = {
+  readonly meta?: {
+    readonly origin?: {
+      readonly kind: string;
+      readonly taskId: string;
+      readonly status: string;
+      readonly notificationId: string;
+    };
   };
-  readonly content: readonly { readonly text: string }[];
+  readonly message: {
+    readonly content: readonly { readonly text: string }[];
+  };
 };
 
 function createAgentTaskService(options: {
@@ -249,8 +254,8 @@ async function cleanupSessionDir(
   await rm(sessionDir, { recursive: true, force: true });
 }
 
-function firstAppendedContextMessage(agent: FakeTaskAgent): TestContextMessage {
-  const call = agent.context.appendUserMessage.mock.calls[0] as unknown as TestContextMessage[];
+function firstAppendedMessage(agent: FakeTaskAgent): TestAppendedMessage {
+  const call = agent.context.appendUserMessage.mock.calls[0] as unknown as TestAppendedMessage[];
   const message = call.at(-1);
   if (message === undefined) throw new Error('Expected an appended context message');
   return message;
@@ -269,10 +274,10 @@ async function drainNotifications(ctx: TestAgentContext): Promise<void> {
   });
 }
 
-function notificationMessageFor(agent: FakeTaskAgent, taskId: string): TestContextMessage {
-  for (const call of agent.context.appendUserMessage.mock.calls as unknown as TestContextMessage[][]) {
+function notificationMessageFor(agent: FakeTaskAgent, taskId: string): TestAppendedMessage {
+  for (const call of agent.context.appendUserMessage.mock.calls as unknown as TestAppendedMessage[][]) {
     for (const message of call) {
-      if (message.origin?.kind === 'task' && message.origin.taskId === taskId) return message;
+      if (message.meta?.origin?.kind === 'task' && message.meta.origin.taskId === taskId) return message;
     }
   }
   throw new Error(`Expected an appended notification message for ${taskId}`);
@@ -496,13 +501,13 @@ describe('AgentTaskService — notification delivery', () => {
     await turnEnd;
 
     const message = notificationMessageFor(agent, taskId);
-    expect(message.origin).toEqual({
+    expect(message.meta?.origin).toEqual({
       kind: 'task',
       taskId,
       status: 'completed',
       notificationId: `task:${taskId}:completed`,
     });
-    const text = message.content[0]!.text;
+    const text = message.message.content[0]!.text;
     expect(text).toContain('Background agent completed');
     expect(text).toContain('agent task completed.');
     expect(text).toContain('<output-file');
@@ -531,13 +536,13 @@ describe('AgentTaskService — notification delivery', () => {
     await turnEnd;
 
     const message = notificationMessageFor(agent, taskId);
-    expect(message.origin).toEqual({
+    expect(message.meta?.origin).toEqual({
       kind: 'task',
       taskId,
       status: 'completed',
       notificationId: `task:${taskId}:completed`,
     });
-    const text = message.content[0]!.text;
+    const text = message.message.content[0]!.text;
     expect(text).toContain('Title: Background question answered');
     expect(text).toContain('The user answered "Which database?".');
     expect(text).toContain(`<answer>\n${answer}\n</answer>`);
@@ -569,7 +574,7 @@ describe('AgentTaskService — notification delivery', () => {
     });
     await turnEnd;
 
-    const text = notificationMessageFor(agent, taskId).content[0]!.text;
+    const text = notificationMessageFor(agent, taskId).message.content[0]!.text;
     expect(text).toContain('Title: Background question dismissed');
     expect(text).toContain('The user dismissed "Which database?" without answering.');
     expect(text).toContain(`<answer>\n${dismissed}\n</answer>`);
@@ -596,7 +601,7 @@ describe('AgentTaskService — notification delivery', () => {
     });
     await turnEnd;
 
-    const text = notificationMessageFor(agent, taskId).content[0]!.text;
+    const text = notificationMessageFor(agent, taskId).message.content[0]!.text;
     expect(text).toContain('Title: Background question completed');
     expect(text).toContain('Which database? completed.');
     expect(text).not.toContain('dismissed');
@@ -628,8 +633,8 @@ describe('AgentTaskService — notification delivery', () => {
     await turnEnd;
 
     const message = notificationMessageFor(agent, taskId);
-    expect(message.origin).toMatchObject({ kind: 'task', taskId, status: 'failed' });
-    const text = message.content[0]!.text;
+    expect(message.meta?.origin).toMatchObject({ kind: 'task', taskId, status: 'failed' });
+    const text = message.message.content[0]!.text;
     expect(text).toContain('Title: Background question failed');
     expect(text).toContain(
       'Which database? failed. Reason: The connected client does not support interactive questions.',
@@ -650,13 +655,13 @@ describe('AgentTaskService — notification delivery', () => {
     await drainNotifications(ctx);
 
     const message = notificationMessageFor(agent, taskId);
-    expect(message.origin).toEqual({
+    expect(message.meta?.origin).toEqual({
       kind: 'task',
       taskId,
       status: 'completed',
       notificationId: `task:${taskId}:completed`,
     });
-    const text = message.content[0]!.text;
+    const text = message.message.content[0]!.text;
     expect(text).toContain('Background process completed');
     expect(text).toContain('shell task completed.');
   });
@@ -673,13 +678,13 @@ describe('AgentTaskService — notification delivery', () => {
     await drainNotifications(ctx);
 
     const message = notificationMessageFor(agent, taskId);
-    expect(message.origin).toEqual({
+    expect(message.meta?.origin).toEqual({
       kind: 'task',
       taskId,
       status: 'killed',
       notificationId: `task:${taskId}:killed`,
     });
-    expect(message.content[0]!.text).toContain('long shell task was stopped by user.');
+    expect(message.message.content[0]!.text).toContain('long shell task was stopped by user.');
   });
 
   it('TaskStopTool suppresses the real terminal notification for model-requested stops', async () => {
@@ -759,14 +764,14 @@ describe('AgentTaskService — notification delivery', () => {
       await vi.waitFor(() => {
         expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
       });
-      const message = firstAppendedContextMessage(agent);
-      expect(message.origin).toEqual({
+      const message = firstAppendedMessage(agent);
+      expect(message.meta?.origin).toEqual({
         kind: 'task',
         taskId: 'agent-done0000',
         status: 'completed',
         notificationId: 'task:agent-done0000:completed',
       });
-      const text = message.content[0]!.text;
+      const text = message.message.content[0]!.text;
       expect(text).toContain('Background agent completed');
       expect(text).not.toContain('restored subagent summary');
       expect(text).toContain('<output-file');
@@ -792,14 +797,14 @@ describe('AgentTaskService — notification delivery', () => {
       await vi.waitFor(() => {
         expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
       });
-      const message = firstAppendedContextMessage(agent);
-      expect(message.origin).toEqual({
+      const message = firstAppendedMessage(agent);
+      expect(message.meta?.origin).toEqual({
         kind: 'task',
         taskId: 'bash-done0000',
         status: 'completed',
         notificationId: 'task:bash-done0000:completed',
       });
-      const text = message.content[0]!.text;
+      const text = message.message.content[0]!.text;
       expect(text).toContain('Background process completed');
       expect(text).not.toContain('restored shell output');
       expect(text).toContain('<output-file');
@@ -827,8 +832,8 @@ describe('AgentTaskService — notification delivery', () => {
       await vi.waitFor(() => {
         expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
       });
-      const message = firstAppendedContextMessage(agent);
-      const text = message.content[0]!.text;
+      const message = firstAppendedMessage(agent);
+      const text = message.message.content[0]!.text;
       expect(text).toContain('<output-file');
       expect(text).toContain(persistence.taskOutputFile(taskId));
       expect(text).not.toContain('final output line');
@@ -856,10 +861,11 @@ describe('AgentTaskService — notification delivery', () => {
       const context = ctx.get(IAgentContextMemoryService);
       context.append(
         {
-          role: 'user',
-          content: [{ type: 'text', text: 'already delivered' }],
-          toolCalls: [],
-          origin,
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'already delivered' }],
+          },
+          meta: { origin },
         },
       );
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -899,9 +905,9 @@ describe('AgentTaskService — notification delivery', () => {
       await ctx.get(IAgentConversationUndoService).undo(1);
 
       expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(2);
-      expect(ctx.context.get().some((message) => message.origin?.kind === 'user')).toBe(false);
+      expect(ctx.context.get().some((entry) => isUserEntry(entry) && entry.meta?.origin?.kind === 'user')).toBe(false);
       expect(
-        ctx.context.get().filter((message) => message.origin?.kind === 'task'),
+        ctx.context.get().filter((entry) => isUserEntry(entry) && entry.meta?.origin?.kind === 'task'),
       ).toHaveLength(1);
     } finally {
       await cleanupSessionDir(sessionDir, fixture);
@@ -946,7 +952,7 @@ describe('AgentTaskService — notification delivery', () => {
       });
       expect(active.signal.aborted).toBe(false);
       expect(
-        ctx.context.get().filter((message) => message.origin?.kind === 'task'),
+        ctx.context.get().filter((entry) => isUserEntry(entry) && entry.meta?.origin?.kind === 'task'),
       ).toEqual([]);
 
       ctx.mockNextResponse({ type: 'text', text: 'notification acknowledged' });
@@ -954,10 +960,12 @@ describe('AgentTaskService — notification delivery', () => {
       release();
       await expect(active.result).resolves.toMatchObject({ type: 'completed' });
       expect(
-        ctx.context.get().filter((message) => message.origin?.kind === 'task'),
+        ctx.context.get().filter((entry) => isUserEntry(entry) && entry.meta?.origin?.kind === 'task'),
       ).toEqual([
         expect.objectContaining({
-          origin: expect.objectContaining({ taskId, status: 'completed' }),
+          meta: expect.objectContaining({
+            origin: expect.objectContaining({ taskId, status: 'completed' }),
+          }),
         }),
       ]);
       expect(notifiedCount(ctx)).toBe(1);
@@ -996,13 +1004,13 @@ describe('AgentTaskService — notification delivery', () => {
       await vi.waitFor(() => {
         expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
       });
-      const message = firstAppendedContextMessage(agent);
-      expect(message.origin).toMatchObject({
+      const message = firstAppendedMessage(agent);
+      expect(message.meta?.origin).toMatchObject({
         kind: 'injection',
         variant: 'task_resume_termination',
       });
-      expect(message.content[0]!.text).toContain('<system-reminder>');
-      expect(message.content[0]!.text).toContain('agent-run00000');
+      expect(message.message.content[0]!.text).toContain('<system-reminder>');
+      expect(message.message.content[0]!.text).toContain('agent-run00000');
       await vi.waitFor(() => {
         expect(fireAndForgetTrigger).toHaveBeenCalledTimes(1);
       });
@@ -1071,14 +1079,17 @@ describe('AgentTaskService — notification delivery', () => {
       fixture = createAgentTaskService({ sessionDir });
       const { agent, ctx, manager } = fixture;
       ctx.get(IAgentContextMemoryService).append({
-        role: 'user',
-        content: [{ type: 'text', text: '<notification>interrupted task lost.</notification>' }],
-        toolCalls: [],
-        origin: {
-          kind: 'task',
-          taskId: 'agent-old00000',
-          status: 'lost',
-          notificationId: 'task:agent-old00000:lost',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: '<notification>interrupted task lost.</notification>' }],
+        },
+        meta: {
+          origin: {
+            kind: 'task',
+            taskId: 'agent-old00000',
+            status: 'lost',
+            notificationId: 'task:agent-old00000:lost',
+          },
         },
       });
 
@@ -1087,11 +1098,10 @@ describe('AgentTaskService — notification delivery', () => {
 
       expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
       expect(
-        ctx.contextData().history.filter(
-          (message) =>
-            message.origin?.kind === 'injection' &&
-            message.origin.variant === 'task_resume_termination',
-        ),
+        ctx.contextData().history.filter((entry) => {
+          const origin = isUserEntry(entry) ? entry.meta?.origin : undefined;
+          return origin?.kind === 'injection' && origin.variant === 'task_resume_termination';
+        }),
       ).toEqual([]);
       await vi.waitFor(async () => {
         await expect(persistence.readTask('agent-old00000')).resolves.toMatchObject({
@@ -1133,7 +1143,7 @@ describe('AgentTaskService — notification delivery', () => {
         status: 'lost',
         resumeReminded: true,
       });
-      expect(firstAppendedContextMessage(agent).origin).toMatchObject({
+      expect(firstAppendedMessage(agent).meta?.origin).toMatchObject({
         kind: 'injection',
         variant: 'task_resume_termination',
       });
@@ -1196,7 +1206,7 @@ describe('AgentTaskService — notification delivery', () => {
     });
 
     await drainNotifications(ctx);
-    expect(notificationMessageFor(agent, taskId).content[0]!.text).toContain(
+    expect(notificationMessageFor(agent, taskId).message.content[0]!.text).toContain(
       'inspect repository completed.',
     );
   });
@@ -1246,7 +1256,7 @@ describe('AgentTaskService — agent recovery notification bodies', () => {
       expect(notifiedCount(ctx)).toBe(1);
     });
     await drainNotifications(ctx);
-    const text = notificationMessageFor(agent, taskId).content[0]!.text;
+    const text = notificationMessageFor(agent, taskId).message.content[0]!.text;
     expect(text).toContain('agent_id="agent-7"');
     expect(text).toMatch(/Agent\(resume="agent-7"/);
     expect(text).toMatch(/agent_id.*NOT source_id|source_id.*NOT agent_id/);
@@ -1268,7 +1278,7 @@ describe('AgentTaskService — agent recovery notification bodies', () => {
       expect(notifiedCount(ctx)).toBe(1);
     });
     await drainNotifications(ctx);
-    const text = notificationMessageFor(agent, taskId).content[0]!.text;
+    const text = notificationMessageFor(agent, taskId).message.content[0]!.text;
     expect(text).toContain('agent_id="agent-8"');
     expect(text).not.toMatch(/Agent\(resume="agent-8"/);
   });
@@ -1283,7 +1293,7 @@ describe('AgentTaskService — agent recovery notification bodies', () => {
       expect(notifiedCount(ctx)).toBe(1);
     });
     await drainNotifications(ctx);
-    const text = notificationMessageFor(agent, taskId).content[0]!.text;
+    const text = notificationMessageFor(agent, taskId).message.content[0]!.text;
     expect(text).not.toContain('agent_id=');
     expect(text).not.toMatch(/Agent\(resume=/);
     expect(text).toContain(`source_id="${taskId}"`);

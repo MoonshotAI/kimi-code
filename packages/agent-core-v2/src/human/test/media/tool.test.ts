@@ -164,7 +164,7 @@ describe('media stack wiring', () => {
     const requester: LlmRequester = {
       generate: (_config, { messages }, { onEvent }) => {
         seenMessages.push(messages);
-        const message = responses[Math.min(call, responses.length - 1)] as AssistantMessage;
+        const message = responses[Math.min(call, responses.length - 1)]!;
         call += 1;
         for (const part of [...message.content, ...message.toolCalls]) {
           onEvent?.({ type: 'llm.streaming.part', part });
@@ -211,7 +211,7 @@ describe('media stack wiring', () => {
 
     const wire = planOpenAIRequest({
       model,
-      messages: seenMessages[1] as readonly Message[],
+      messages: seenMessages[1] ?? [],
       tools: [],
     });
     const wireMessages = wire.params.messages as unknown as Record<string, unknown>[];

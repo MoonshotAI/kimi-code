@@ -20,7 +20,7 @@ import {
   type ContextCompactionInput,
   type ContextCompactionResult,
 } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { HistoryMessage } from '#human/agent/turn';
 import {
   HookDefSchema,
   HOOKS_SECTION,
@@ -113,9 +113,9 @@ function makeAfterStep(signal: AbortSignal): AfterStepContext {
 }
 
 function stubContextMemory(): IAgentContextMemoryService & {
-  readonly messages: readonly ContextMessage[];
+  readonly messages: readonly HistoryMessage[];
 } {
-  const messages: ContextMessage[] = [];
+  const messages: HistoryMessage[] = [];
   return {
     _serviceBrand: undefined,
     get: () => [...messages],
@@ -380,9 +380,11 @@ describe('IExternalHooksRunnerService integration', () => {
       expect(loop.snapshot().hasPendingRequests).toBe(true);
       expect(context.messages.at(-1)).toEqual(
         expect.objectContaining({
-          role: 'user',
-          content: [{ type: 'text', text: 'continue 1', contentType: 'text/plain' }],
-          origin: { kind: 'system_trigger', name: 'stop_hook' },
+          message: expect.objectContaining({
+            role: 'user',
+            content: [{ type: 'text', text: 'continue 1', contentType: 'text/plain' }],
+          }),
+          meta: expect.objectContaining({ origin: { kind: 'system_trigger', name: 'stop_hook' } }),
         }),
       );
       expect(loop.drainNextBatch(context)).toBeDefined();
@@ -406,9 +408,11 @@ describe('IExternalHooksRunnerService integration', () => {
       expect(loop.snapshot().hasPendingRequests).toBe(true);
       expect(context.messages.at(-1)).toEqual(
         expect.objectContaining({
-          role: 'user',
-          content: [{ type: 'text', text: 'continue 2', contentType: 'text/plain' }],
-          origin: { kind: 'system_trigger', name: 'stop_hook' },
+          message: expect.objectContaining({
+            role: 'user',
+            content: [{ type: 'text', text: 'continue 2', contentType: 'text/plain' }],
+          }),
+          meta: expect.objectContaining({ origin: { kind: 'system_trigger', name: 'stop_hook' } }),
         }),
       );
       expect(loop.drainNextBatch(context)).toBeDefined();
@@ -693,9 +697,11 @@ describe('IExternalHooksRunnerService integration', () => {
       expect(loop.snapshot().hasPendingRequests).toBe(true);
       expect(context.messages.at(-1)).toEqual(
         expect.objectContaining({
-          role: 'user',
-          content: [{ type: 'text', text: 'loaded stop hook', contentType: 'text/plain' }],
-          origin: { kind: 'system_trigger', name: 'stop_hook' },
+          message: expect.objectContaining({
+            role: 'user',
+            content: [{ type: 'text', text: 'loaded stop hook', contentType: 'text/plain' }],
+          }),
+          meta: expect.objectContaining({ origin: { kind: 'system_trigger', name: 'stop_hook' } }),
         }),
       );
     } finally {

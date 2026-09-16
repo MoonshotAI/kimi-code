@@ -1,3 +1,5 @@
+import { normalizeReplayedEntry } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
+
 import type { ContentPart, WireEntry } from './agent-record-types';
 
 const BLOBREF_PROTOCOL = 'blobref:';
@@ -51,8 +53,7 @@ function rehydrateRecord(
     return;
   }
   if (type === 'context.append_message') {
-    const message = record['message'] as { content: ContentPart[] };
-    rehydrateParts(message.content, sessionId, agentId, baseUrl);
+    rehydrateParts(normalizeReplayedEntry(record['message']).message.content, sessionId, agentId, baseUrl);
     return;
   }
   if (type === 'context.append_loop_event') {

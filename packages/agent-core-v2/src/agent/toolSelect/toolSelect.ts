@@ -1,5 +1,5 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { HistoryMessage } from '#human/agent/turn';
 import type { ToolDescription as Tool } from '#human/llm/message';
 import type { ToolInfo } from '#/tool/toolContract';
 
@@ -22,7 +22,7 @@ export interface IAgentToolSelectService {
 
   shapeTools(entries: readonly ToolInfo[]): readonly ShapedToolEntry[];
 
-  shapeHistory(messages: readonly ContextMessage[]): readonly ContextMessage[];
+  shapeHistory(messages: readonly HistoryMessage[]): readonly HistoryMessage[];
 
   load(names: readonly string[]): LoadToolsResult;
 

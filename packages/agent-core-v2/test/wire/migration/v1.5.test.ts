@@ -31,7 +31,7 @@ describe('1.4 to 1.5 active wall-clock anchor migration', () => {
         },
       ]),
     ).toMatchInlineSnapshot(`
-      [wire] metadata      { "protocol_version": "<protocol-version>", "created_at": "<time>" }
+      [wire] metadata      { "protocol_version": "1.5", "created_at": "<time>" }
       [wire] goal.create   { "goalId": "goal-1", "objective": "ship the feature", "time": "<time>", "wallClockResumedAt": 10 }
       [wire] goal.update   { "status": "paused", "wallClockMs": 20, "time": "<time>" }
       [wire] goal.update   { "status": "active", "time": "<time>", "wallClockResumedAt": 40 }

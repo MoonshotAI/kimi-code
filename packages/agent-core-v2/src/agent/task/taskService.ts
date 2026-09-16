@@ -24,6 +24,7 @@ import '#/agent/contextMemory/conversationTime';
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { TaskOrigin } from '#/agent/contextMemory/types';
+import { isUserEntry, type HistoryMessage } from '#human/agent/turn';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentLoopService, type LoopNotifyHandle } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -259,8 +260,9 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
           this.activeTaskReminderPending = true;
         }
         for (const message of e.messages) {
-          if (isTaskOrigin(message.origin)) {
-            this.markDeliveredNotification(message.origin);
+          const origin = isUserEntry(message) ? message.meta?.origin : undefined;
+          if (isTaskOrigin(origin)) {
+            this.markDeliveredNotification(origin);
           }
         }
       }),
@@ -1010,10 +1012,8 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     if (this.deliveredNotificationKeys.has(key)) return;
     const handle = this.loop.notify({
       message: {
-        role: 'user',
-        content: [...context.content],
-        toolCalls: [],
-        origin: context.origin,
+        message: { role: 'user', content: [...context.content] },
+        meta: { origin: context.origin },
       },
       turnScoped: false,
       onConsume: () => {
@@ -1074,13 +1074,14 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   private hasPreviousSessionReminder(taskId: string): boolean {
     const taskLinePrefix = `- ${taskId} "`;
     return this.context.get().some((message) => {
+      const origin = isUserEntry(message) ? message.meta?.origin : undefined;
       if (
-        message.origin?.kind !== 'injection' ||
-        message.origin.variant !== TASK_RESUME_TERMINATION_VARIANT
+        origin?.kind !== 'injection' ||
+        origin.variant !== TASK_RESUME_TERMINATION_VARIANT
       ) {
         return false;
       }
-      return message.content.some(
+      return message.message.content.some(
         (part) =>
           part.type === 'text' &&
           part.text.split('\n').some((line) => line.startsWith(taskLinePrefix)),
@@ -1133,10 +1134,8 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     const context = await this.buildAgentTaskNotificationContext(info);
     if (context === undefined) return;
     this.context.append({
-      role: 'user',
-      content: [...context.content],
-      toolCalls: [],
-      origin: context.origin,
+      message: { role: 'user', content: [...context.content] },
+      meta: { origin: context.origin },
     });
     this.fireNotificationHook(context.notification);
   }
@@ -1230,7 +1229,8 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
 
   private hasDeliveredNotification(key: string): boolean {
     return this.context.get().some((message) => {
-      return isTaskOrigin(message.origin) && notificationKey(message.origin) === key;
+      const origin = isUserEntry(message) ? message.meta?.origin : undefined;
+      return isTaskOrigin(origin) && notificationKey(origin) === key;
     });
   }
 
@@ -1374,11 +1374,11 @@ function shouldListTask(info: AgentTaskInfo, activeOnly: boolean): boolean {
 
 function isCompactionSplice(splice: {
   readonly deleteCount: number;
-  readonly messages: readonly { readonly origin?: { readonly kind: string } | undefined }[];
+  readonly messages: readonly HistoryMessage[];
 }): boolean {
   return (
     splice.deleteCount > 0 &&
-    splice.messages.some((message) => message.origin?.kind === 'compaction_summary')
+    splice.messages.some((message) => isUserEntry(message) && message.meta?.origin?.kind === 'compaction_summary')
   );
 }
 
@@ -1421,7 +1421,8 @@ function notificationKey(origin: TaskNotificationOrigin): string {
 
 function taskOriginFromMessage(message: unknown): TaskNotificationOrigin | undefined {
   if (typeof message !== 'object' || message === null) return undefined;
-  const origin = (message as { readonly origin?: unknown }).origin;
+  const record = message as { readonly origin?: unknown; readonly meta?: { readonly origin?: unknown } };
+  const origin = record.meta?.origin ?? record.origin;
   return isTaskOrigin(origin) ? origin : undefined;
 }
 

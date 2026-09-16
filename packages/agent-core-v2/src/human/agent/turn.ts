@@ -34,6 +34,7 @@ import {
 } from '#/llm/requester/retry';
 import { ToolCallIdNormalizer } from '#/llm/toolCallIdNormalizer';
 import { emptyUsage, type TokenUsage } from '#/llm/usage';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import type { ToolResult } from '#/tool/executor';
 import type { ToolOutput } from '#/tool/machine';
 import { createAbortScope, withAbort, type AbortScope } from '#/utils/abort';
@@ -47,7 +48,9 @@ export interface EntryMeta {
   key?: string;
 }
 
-export type SystemMeta = EntryMeta;
+export interface SystemMeta extends EntryMeta {
+  origin?: PromptOrigin;
+}
 
 export interface UserMeta extends EntryMeta {
   promptId?: string;
@@ -57,17 +60,22 @@ export interface UserMeta extends EntryMeta {
   userMessageId?: string;
 }
 
-export type ToolMeta = EntryMeta;
+export interface ToolMeta extends EntryMeta {
+  isError?: boolean;
+  note?: string;
+  origin?: PromptOrigin;
+}
 
 export interface AssistantMeta extends EntryMeta {
   model?: { provider: string; model: string };
-  usage: TokenUsage;
+  usage?: TokenUsage;
   headers?: Record<string, string>;
   finish?: FinishInfo;
   messageId?: string;
+  toolCallDisplays?: Record<string, ToolInputDisplay>;
+  partial?: true;
+  origin?: PromptOrigin;
 }
-
-export type AssistantMetaInput = Omit<AssistantMeta, 'usage'> & { usage?: TokenUsage };
 
 export interface HistoryEntry<T extends Message, F extends EntryMeta> {
   message: T;
@@ -83,6 +91,22 @@ export type ToolEntry = HistoryEntry<ToolMessage, ToolMeta>;
 export type AssistantEntry = HistoryEntry<AssistantMessage, AssistantMeta>;
 
 export type HistoryMessage = SystemEntry | UserEntry | AssistantEntry | ToolEntry;
+
+export function isSystemEntry(entry: HistoryMessage): entry is SystemEntry {
+  return entry.message.role === 'system';
+}
+
+export function isUserEntry(entry: HistoryMessage): entry is UserEntry {
+  return entry.message.role === 'user';
+}
+
+export function isAssistantEntry(entry: HistoryMessage): entry is AssistantEntry {
+  return entry.message.role === 'assistant';
+}
+
+export function isToolEntry(entry: HistoryMessage): entry is ToolEntry {
+  return entry.message.role === 'tool';
+}
 
 export function createUserEntry(message: UserMessage, meta: UserMeta = {}): UserEntry {
   return { message, meta };
@@ -114,11 +138,11 @@ export interface HistoryAccumulator {
   pushHeaders(headers: Record<string, string>): void;
   pushFinish(finish: FinishInfo): void;
   pushMessageId(messageId: string): void;
-  finish(meta?: AssistantMetaInput): AssistantEntry;
+  finish(meta?: AssistantMeta): AssistantEntry;
 }
 
 export function createHistoryAccumulator(
-  meta?: AssistantMetaInput,
+  meta?: AssistantMeta,
   toolCallIds?: ToolCallIdNormalizer,
 ): HistoryAccumulator {
   const inner = createMessageAccumulator();
@@ -173,7 +197,7 @@ export function createHistoryAccumulator(
   };
 }
 
-function modelMeta(model: LlmModel): AssistantMetaInput {
+function modelMeta(model: LlmModel): AssistantMeta {
   return { model: { provider: model.provider, model: model.model } };
 }
 

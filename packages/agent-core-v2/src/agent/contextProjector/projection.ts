@@ -1,9 +1,8 @@
 import { ErrorCodes, Error2 } from '#/errors';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import { isAssistantEntry, isToolEntry, isUserEntry, type HistoryMessage } from '#human/agent/turn';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
-import type { Message } from '#/llm-adapter/contract/message';
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart, Message } from '#human/llm/message';
 
 export type ProjectionAnomaly =
   | { readonly kind: 'tool_result_reordered'; readonly toolCallId: string }
@@ -58,13 +57,13 @@ export function summarizeProjectionRepairs(
   return summary;
 }
 
-export function project(history: readonly ContextMessage[], onAnomaly?: OnAnomaly): Message[] {
+export function project(history: readonly HistoryMessage[], onAnomaly?: OnAnomaly): Message[] {
   const layout = sliceLayout(history);
   return flattenBlocks(pairBlocks(history, layout, onAnomaly), layout, onAnomaly);
 }
 
 export function projectStrict(
-  history: readonly ContextMessage[],
+  history: readonly HistoryMessage[],
   onAnomaly?: OnAnomaly,
 ): Message[] {
   const projected = project(history, onAnomaly);
@@ -79,19 +78,19 @@ interface SliceLayout {
   readonly lastNonToolIndex: number;
 }
 
-function sliceLayout(history: readonly ContextMessage[]): SliceLayout {
+function sliceLayout(history: readonly HistoryMessage[]): SliceLayout {
   let sizing = true;
   let lastNonToolIndex = -1;
   for (const [index, message] of history.entries()) {
-    if (message.partial === true || message.role === 'tool') continue;
+    if ((isAssistantEntry(message) && message.meta?.partial === true) || message.message.role === 'tool') continue;
     lastNonToolIndex = index;
-    if (message.role === 'assistant') sizing = false;
+    if (message.message.role === 'assistant') sizing = false;
   }
   return { sizing, lastNonToolIndex };
 }
 
 interface AttachedResult {
-  readonly source: ContextMessage;
+  readonly source: HistoryMessage;
   readonly content: ContentPart[];
 }
 
@@ -104,7 +103,7 @@ interface PendingCall {
 }
 
 interface Exchange {
-  readonly source: ContextMessage;
+  readonly source: HistoryMessage;
   readonly content: ContentPart[];
   readonly ownerIndex: number;
   readonly pending: PendingCall[];
@@ -113,13 +112,13 @@ interface Exchange {
 type Block =
   | {
       readonly kind: 'message';
-      readonly source: ContextMessage;
+      readonly source: HistoryMessage;
       readonly content: ContentPart[];
     }
   | { readonly kind: 'exchange'; readonly exchange: Exchange };
 
 function pairBlocks(
-  history: readonly ContextMessage[],
+  history: readonly HistoryMessage[],
   layout: SliceLayout,
   onAnomaly?: OnAnomaly,
 ): Block[] {
@@ -131,40 +130,41 @@ function pairBlocks(
   };
 
   for (const [index, message] of history.entries()) {
-    if (message.partial === true) continue;
-    if (message.role === 'tool' && !layout.sizing) {
-      if (message.toolCallId === undefined) continue;
-      const open = openCalls.get(message.toolCallId);
+    if (isAssistantEntry(message) && message.meta?.partial === true) continue;
+    if (message.message.role === 'tool' && !layout.sizing) {
+      if (message.message.toolCallId === undefined) continue;
+      const open = openCalls.get(message.message.toolCallId);
       if (open === undefined) {
         markForeignBetween();
-        onAnomaly?.({ kind: 'orphan_tool_result_dropped', toolCallId: message.toolCallId });
+        onAnomaly?.({ kind: 'orphan_tool_result_dropped', toolCallId: message.message.toolCallId });
         continue;
       }
-      openCalls.delete(message.toolCallId);
+      openCalls.delete(message.message.toolCallId);
       open.pending.result = { source: message, content: projectedContent(message, onAnomaly) };
       if (open.pending.foreignBetween) {
-        onAnomaly?.({ kind: 'tool_result_reordered', toolCallId: message.toolCallId });
+        onAnomaly?.({ kind: 'tool_result_reordered', toolCallId: message.message.toolCallId });
       }
       continue;
     }
 
     const content = projectedContent(message, onAnomaly);
-    if (message.toolCalls.length === 0 && !hasDeclaredTools(message)) {
+    const toolCalls = message.message.role === 'assistant' ? message.message.toolCalls : [];
+    if (toolCalls.length === 0 && !hasDeclaredTools(message)) {
       if (content.length === 0) continue;
       if (content.every(isVacuousContentPart)) {
-        onAnomaly?.({ kind: 'vacuous_message_dropped', role: message.role });
+        onAnomaly?.({ kind: 'vacuous_message_dropped', role: message.message.role });
         continue;
       }
     }
     markForeignBetween();
-    if (message.toolCalls.length === 0) {
+    if (toolCalls.length === 0) {
       blocks.push({ kind: 'message', source: message, content });
       continue;
     }
 
     const exchange: Exchange = { source: message, content, ownerIndex: index, pending: [] };
     blocks.push({ kind: 'exchange', exchange });
-    for (const call of message.toolCalls) {
+    for (const call of toolCalls) {
       const superseded = openCalls.get(call.id);
       if (superseded !== undefined) {
         superseded.pending.result = INTERRUPTED_RESULT;
@@ -183,7 +183,7 @@ function pairBlocks(
 }
 
 interface MergeState {
-  single: { readonly source: ContextMessage; readonly content: ContentPart[] } | undefined;
+  single: { readonly source: HistoryMessage; readonly content: ContentPart[] } | undefined;
   readonly texts: string[];
   readonly parts: ContentPart[];
 }
@@ -199,19 +199,12 @@ function flattenBlocks(
   const flushMerge = (): void => {
     if (merge === undefined) return;
     if (merge.single !== undefined) {
-      out.push(toWireMessage(merge.single.source, merge.single.content));
+      out.push(toWireMessage(merge.single.source.message, merge.single.content));
     } else {
       const text = merge.texts.join('\n\n');
       const content: ContentPart[] = text === '' ? [] : [{ type: 'text', text }];
       content.push(...merge.parts);
-      out.push({
-        role: 'user',
-        name: undefined,
-        content,
-        toolCalls: [],
-        toolCallId: undefined,
-        partial: undefined,
-      });
+      out.push({ role: 'user', content });
     }
     merge = undefined;
   };
@@ -231,13 +224,13 @@ function flattenBlocks(
         continue;
       }
       flushMerge();
-      out.push(toWireMessage(block.source, block.content));
+      out.push(toWireMessage(block.source.message, block.content));
       continue;
     }
 
     flushMerge();
     const { exchange } = block;
-    out.push(toWireMessage(exchange.source, exchange.content));
+    out.push(toWireMessage(exchange.source.message, exchange.content));
     for (const pending of exchange.pending) {
       if (pending.result === undefined) {
         out.push(createInterruptedToolResult(pending.callId));
@@ -249,7 +242,7 @@ function flattenBlocks(
       } else if (pending.result === INTERRUPTED_RESULT) {
         out.push(createInterruptedToolResult(pending.callId));
       } else {
-        out.push(toWireMessage(pending.result.source, pending.result.content));
+        out.push(toWireMessage(pending.result.source.message, pending.result.content));
       }
     }
   }
@@ -336,20 +329,20 @@ function appendMergeContent(group: MergeState, content: readonly ContentPart[]):
   if (text.length > 0) group.texts.push(text);
 }
 
-function projectedContent(source: ContextMessage, onAnomaly?: OnAnomaly): ContentPart[] {
+function projectedContent(source: HistoryMessage, onAnomaly?: OnAnomaly): ContentPart[] {
   const content =
-    source.role === 'tool'
+    source.message.role === 'tool'
       ? renderToolResultForModel({
-          output: outputFromToolContent(source.content),
-          isError: source.isError,
-          note: source.note,
+          output: outputFromToolContent(source.message.content),
+          isError: isToolEntry(source) ? source.meta?.isError : undefined,
+          note: isToolEntry(source) ? source.meta?.note : undefined,
         })
-      : source.content;
+      : source.message.content;
   return cleanContent(source, content, onAnomaly);
 }
 
 function cleanContent(
-  source: ContextMessage,
+  source: HistoryMessage,
   rawContent: readonly ContentPart[],
   onAnomaly?: OnAnomaly,
 ): ContentPart[] {
@@ -360,7 +353,7 @@ function cleanContent(
     for (const part of rawContent) {
       if (isBlankText(part)) {
         if (part.type === 'text' && part.text.length > 0) {
-          onAnomaly?.({ kind: 'whitespace_text_dropped', role: source.role });
+          onAnomaly?.({ kind: 'whitespace_text_dropped', role: source.message.role });
         }
       } else {
         filtered.push(part);
@@ -368,11 +361,11 @@ function cleanContent(
     }
     content = filtered;
   }
-  if (source.role === 'tool' && content.length === 0) {
+  if (source.message.role === 'tool' && content.length === 0) {
     throw new Error2(
       ErrorCodes.REQUEST_INVALID,
       'Tool result message content cannot be empty after removing empty text blocks.',
-      { details: { toolCallId: source.toolCallId } },
+      { details: { toolCallId: isToolEntry(source) ? source.message.toolCallId : undefined } },
     );
   }
   return [...content];
@@ -389,11 +382,8 @@ const TOOL_INTERRUPTED_TEXT =
 function createInterruptedToolResult(toolCallId: string): Message {
   return {
     role: 'tool',
-    name: undefined,
     content: [{ type: 'text', text: TOOL_INTERRUPTED_TEXT }],
-    toolCalls: [],
     toolCallId,
-    partial: undefined,
   };
 }
 
@@ -407,22 +397,23 @@ function isBlankText(part: ContentPart): boolean {
   return part.type === 'text' && part.text.trim().length === 0;
 }
 
-function canMergeUserMessage(message: ContextMessage): boolean {
-  return message.role === 'user' && message.origin?.kind === 'user';
+function canMergeUserMessage(message: HistoryMessage): boolean {
+  return isUserEntry(message) && message.meta?.origin?.kind === 'user';
 }
 
-function hasDeclaredTools(message: ContextMessage): boolean {
-  return message.tools !== undefined && message.tools.length > 0;
+function hasDeclaredTools(message: HistoryMessage): boolean {
+  return message.message.role === 'system' && message.message.tools !== undefined && message.message.tools.length > 0;
 }
 
-function toWireMessage(message: ContextMessage, content: ContentPart[]): Message {
-  return {
-    role: message.role,
-    name: message.name,
-    content,
-    toolCalls: message.toolCalls,
-    toolCallId: message.toolCallId,
-    partial: message.partial,
-    tools: message.tools,
-  };
+function toWireMessage(message: HistoryMessage['message'], content: ContentPart[]): Message {
+  switch (message.role) {
+    case 'system':
+      return { role: 'system', content, tools: message.tools };
+    case 'user':
+      return { role: 'user', content };
+    case 'assistant':
+      return { role: 'assistant', content, toolCalls: message.toolCalls };
+    case 'tool':
+      return { role: 'tool', content, toolCallId: message.toolCallId };
+  }
 }

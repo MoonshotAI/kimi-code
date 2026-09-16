@@ -31,7 +31,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { AgentReminderService, IAgentReminderService } from '#/features/reminder/reminderService';
 import '#/agent/contextMemory/contextMemoryService';
 import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/agent/contextMemory/openToolExchange';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { HistoryMessage } from '#human/agent/turn';
 import { agentContextOf, IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
@@ -1453,9 +1453,12 @@ describe('AgentLifecycleService', () => {
       name: 'Agent',
       arguments: '{}',
     };
-    const history: ContextMessage[] = [
-      { role: 'user', content: [{ type: 'text', text: 'analyze this repo' }], toolCalls: [] },
-      { role: 'assistant', content: [], toolCalls: [agentCall], partial: true },
+    const history: HistoryMessage[] = [
+      { message: { role: 'user', content: [{ type: 'text', text: 'analyze this repo' }] } },
+      {
+        message: { role: 'assistant', content: [], toolCalls: [agentCall] },
+        meta: { partial: true },
+      },
     ];
     sourceHandle.accessor.get(IAgentContextMemoryService).append(...history);
 
@@ -1464,12 +1467,14 @@ describe('AgentLifecycleService', () => {
     await svc.handleOf(child.agentId)!.accessor.get(IWireService).flush();
     const seeded = svc.handleOf(child.agentId)!.accessor.get(IAgentContextMemoryService).get();
     expect(seeded).toHaveLength(3);
-    expect(seeded[0]).toMatchObject({ role: 'user' });
-    expect(seeded[1]).toMatchObject({ role: 'assistant', partial: undefined });
+    expect(seeded[0]).toMatchObject({ message: { role: 'user' } });
+    expect(seeded[1]).toMatchObject({ message: { role: 'assistant' }, meta: { partial: undefined } });
     expect(seeded[2]).toMatchObject({
-      role: 'tool',
-      toolCallId: 'call_agent',
-      content: [{ type: 'text', text: INHERITED_IN_FLIGHT_TOOL_OUTPUT }],
+      message: {
+        role: 'tool',
+        toolCallId: 'call_agent',
+        content: [{ type: 'text', text: INHERITED_IN_FLIGHT_TOOL_OUTPUT }],
+      },
     });
     const boundaryIndex = log.appended.findIndex((record) => record.type === 'agent.fork');
     expect(boundaryIndex).toBeGreaterThan(-1);

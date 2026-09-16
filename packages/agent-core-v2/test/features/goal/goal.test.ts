@@ -9,6 +9,8 @@ import { TurnStarted } from '#/agent/loop/turnEvents';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
+import type { PromptOrigin } from '#/agent/contextMemory/types';
+import { isToolEntry, isUserEntry } from '#human/agent/turn';
 import { AgentGoalService, IAgentGoalService } from '#/features/goal/goalService';
 import { IGoalDeadlineScheduler } from '#/features/goal/goalDeadlineScheduler';
 
@@ -84,6 +86,11 @@ function createTestAgent(
 }
 
 const testAgent = createTestAgent;
+
+function lastOrigin(context: IAgentContextMemoryService): PromptOrigin | undefined {
+  const entry = context.get().at(-1);
+  return entry !== undefined && !isToolEntry(entry) ? entry.meta?.origin : undefined;
+}
 
 type GoalServiceTestManager = IAgentGoalService;
 type GoalRecord = WireRecord & { type: `goal.${string}` };
@@ -504,11 +511,15 @@ describe('AgentGoalService', () => {
       expect(removed.status).toBe('active');
       expect(goals.getGoal()).toEqual({ goal: null });
       const reminder = context.get().at(-1);
-      expect(reminder?.origin).toEqual({
-        kind: 'injection',
-        variant: 'goal_cancelled',
+      expect(reminder).toMatchObject({
+        meta: {
+          origin: {
+            kind: 'injection',
+            variant: 'goal_cancelled',
+          },
+        },
       });
-      expect(JSON.stringify(reminder?.content)).toContain('Ignore earlier active-goal reminders');
+      expect(JSON.stringify(reminder?.message.content)).toContain('Ignore earlier active-goal reminders');
       await expect(goals.cancelGoal()).rejects.toMatchObject({ code: ErrorCodes.GOAL_NOT_FOUND });
     });
 
@@ -901,7 +912,7 @@ describe('AgentGoalService core workflow hooks', () => {
     expect(resumed.status).toBe('active');
     expect(loopService.launches).toHaveLength(1);
     expect(loopService.drainNextBatch(context)).toBeDefined();
-    expect(context.get().at(-1)?.origin).toEqual({
+    expect(lastOrigin(context)).toEqual({
       kind: 'system_trigger',
       name: 'goal_continuation',
     });
@@ -932,7 +943,7 @@ describe('AgentGoalService core workflow hooks', () => {
         expect(loopService.launches).toHaveLength(1);
       });
       expect(loopService.drainNextBatch(context)).toBeDefined();
-      expect(context.get().at(-1)?.origin).toEqual({
+      expect(lastOrigin(context)).toEqual({
         kind: 'system_trigger',
         name: 'goal_continuation',
       });
@@ -1012,7 +1023,7 @@ describe('AgentGoalService core workflow hooks', () => {
     });
     expect(goals.getGoal().goal).toMatchObject({ objective: 'new task', status: 'active' });
     expect(loopService.drainNextBatch(context)).toBeDefined();
-    expect(context.get().at(-1)?.origin).toEqual({
+    expect(lastOrigin(context)).toEqual({
       kind: 'system_trigger',
       name: 'goal_continuation',
     });
@@ -1241,10 +1252,11 @@ describe('AgentGoalService core workflow hooks', () => {
   it('does not launch a continuation when another loop request is pending', async () => {
     loopService.notify({
       message: {
-        role: 'user',
-        content: [{ type: 'text', text: 'queued work' }],
-        toolCalls: [],
-        origin: USER_PROMPT_ORIGIN,
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'queued work' }],
+        },
+        meta: { origin: USER_PROMPT_ORIGIN },
       },
     });
     await goals.createGoal({ objective: 'finish the task' });
@@ -1255,7 +1267,7 @@ describe('AgentGoalService core workflow hooks', () => {
     expect(resumed.status).toBe('active');
     expect(loopService.launches).toEqual([]);
     expect(loopService.drainNextBatch(context)).toBeDefined();
-    expect(context.get().at(-1)?.origin).toEqual(USER_PROMPT_ORIGIN);
+    expect(lastOrigin(context)).toEqual(USER_PROMPT_ORIGIN);
   });
 
   it('launches only one continuation when blocked resume is repeated', async () => {
@@ -1316,12 +1328,12 @@ describe('AgentGoalService core workflow hooks', () => {
     });
     expect(loopService.launches).toHaveLength(1);
     expect(loopService.drainNextBatch(context)).toBeDefined();
-    expect(context.get().at(-1)?.origin).toEqual({
+    expect(lastOrigin(context)).toEqual({
       kind: 'system_trigger',
       name: 'goal_continuation',
     });
-    expect(JSON.stringify(context.get().at(-1)?.content)).toContain('Continue working toward');
-    expect(JSON.stringify(context.get().at(-1)?.content)).toContain('WaitFor');
+    expect(JSON.stringify(context.get().at(-1)?.message.content)).toContain('Continue working toward');
+    expect(JSON.stringify(context.get().at(-1)?.message.content)).toContain('WaitFor');
   });
 
   it('blocks the next continuation only after the final allowed turn ends', async () => {
@@ -1605,11 +1617,11 @@ describe('AgentGoalService core workflow hooks', () => {
     expect(goals.getGoal().goal).toMatchObject({ status: 'active', turnsUsed: 1 });
     expect(loopService.launches).toHaveLength(1);
     expect(loopService.drainNextBatch(context)).toBeDefined();
-    expect(context.get().at(-1)?.origin).toEqual({
+    expect(lastOrigin(context)).toEqual({
       kind: 'system_trigger',
       name: 'goal_continuation',
     });
-    const prompt = JSON.stringify(context.get().at(-1)?.content);
+    const prompt = JSON.stringify(context.get().at(-1)?.message.content);
     expect(prompt).toContain('per-turn step limit');
     expect(prompt).toContain('Pick up where that turn stopped');
   });
@@ -2114,11 +2126,11 @@ describe('AgentGoalService mid-turn budget stop', () => {
       );
 
       const history = ctx.get(IAgentContextMemoryService).get();
-      const toolResultIndex = history.findIndex((message) => message.role === 'tool');
-      const reminderIndex = history.findIndex(
-        (message) =>
-          message.origin?.kind === 'injection' && message.origin.variant === 'goal_budget_stop',
-      );
+      const toolResultIndex = history.findIndex((entry) => entry.message.role === 'tool');
+      const reminderIndex = history.findIndex((entry) => {
+        const origin = isUserEntry(entry) ? entry.meta?.origin : undefined;
+        return origin?.kind === 'injection' && origin.variant === 'goal_budget_stop';
+      });
       expect(toolResultIndex).toBeGreaterThanOrEqual(0);
       expect(reminderIndex).toBeGreaterThan(toolResultIndex);
       expect(JSON.stringify(history)).toContain('Final status: budget exhausted.');
@@ -2217,7 +2229,7 @@ describe('AgentGoalService mid-turn budget stop', () => {
       );
 
       const history = ctx.get(IAgentContextMemoryService).get();
-      const toolResults = history.filter((message) => message.role === 'tool');
+      const toolResults = history.filter((entry) => entry.message.role === 'tool');
       expect(toolResults).toHaveLength(2);
       expect(JSON.stringify(toolResults.at(-1))).toContain(
         'Goal budget exhausted; tool calls are rejected. Write your final message.',
@@ -2348,7 +2360,7 @@ describe('AgentGoalService goal outcome tool result flow', () => {
       );
       const history = ctx.get(IAgentContextMemoryService).get();
       expect(JSON.stringify(history)).toContain('Blocked because credentials are unavailable.');
-      expect(history.at(-1)?.role).toBe('assistant');
+      expect(history.at(-1)?.message.role).toBe('assistant');
       expect(goals.getGoal().goal?.status).toBe('blocked');
     } finally {
       await ctx.dispose();
@@ -2392,7 +2404,7 @@ describe('AgentGoalService goal outcome tool result flow', () => {
       const history = ctx.get(IAgentContextMemoryService).get();
       expect(JSON.stringify(history)).toContain('Write a concise final message');
       expect(JSON.stringify(history)).not.toContain('This summary should not run.');
-      expect(history.at(-1)?.role).toBe('tool');
+      expect(history.at(-1)?.message.role).toBe('tool');
     } finally {
       await ctx.dispose();
     }
@@ -2426,11 +2438,15 @@ describe('AgentGoalService fork boundaries', () => {
 
     expect(goals.getGoal().goal).toBeNull();
     const reminder = context.get().at(-1);
-    expect(reminder?.origin).toEqual({
-      kind: 'injection',
-      variant: 'goal_fork_cleared',
+    expect(reminder).toMatchObject({
+      meta: {
+        origin: {
+          kind: 'injection',
+          variant: 'goal_fork_cleared',
+        },
+      },
     });
-    const text = JSON.stringify(reminder?.content);
+    const text = JSON.stringify(reminder?.message.content);
     expect(text).toContain('This fork does not have a current goal.');
     expect(text).toContain('Ignore earlier active-goal reminders from the source session.');
     expect(text).toContain('Handle requests normally unless the user starts a new goal.');
@@ -2454,7 +2470,7 @@ describe('AgentGoalService fork boundaries', () => {
     ]);
 
     expect(context.get()).toHaveLength(1);
-    expect(context.get()[0]?.origin).toEqual({ kind: 'system_trigger', name: 'goal_fork_cleared' });
+    expect(context.get()[0]).toMatchObject({ meta: { origin: { kind: 'system_trigger', name: 'goal_fork_cleared' } } });
   });
 
   it('does not append a fork-cleared reminder when the fork had no goal', async () => {

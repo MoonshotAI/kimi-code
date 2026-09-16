@@ -500,8 +500,8 @@ key = "${titleOAuthRef.key}"
       await expect(session.getContext()).resolves.toMatchObject({
         history: [
           expect.objectContaining({
-            role: 'user',
-            origin: { kind: 'user' },
+            message: expect.objectContaining({ role: 'user' }),
+            meta: expect.objectContaining({ origin: { kind: 'user' } }),
           }),
         ],
       });
@@ -1483,7 +1483,10 @@ describe('foldAgentWireReplay', () => {
     expect(folded.replay).toEqual([
       {
         type: 'message',
-        message: { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
+        message: {
+          message: { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+          meta: {},
+        },
         time: 1001,
       },
       { type: 'permission_updated', mode: 'auto', time: 1002 },

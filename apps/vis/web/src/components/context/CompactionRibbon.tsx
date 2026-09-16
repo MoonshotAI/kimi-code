@@ -41,7 +41,7 @@ export function CompactionRibbon({ message }: CompactionRibbonProps) {
 }
 
 function extractSummary(message: ProjectedMessage): string {
-  for (const part of message.message.content) {
+  for (const part of message.message.message.content) {
     if (part.type === 'text') return part.text;
   }
   return '';

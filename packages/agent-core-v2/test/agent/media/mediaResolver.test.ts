@@ -22,7 +22,7 @@ import { AgentStateService } from '#/agent/state/agentStateService';
 import { type GetResult, IFileService } from '#/app/file/fileService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
-import type { Message } from '#/llm-adapter/contract/message';
+import type { Message } from '#human/llm/message';
 import type { ContentPart, VideoURLPart } from '#human/llm/message';
 import type { LlmCredentialProvider } from '#human/llm/requester/requester';
 import type { ModelRequester } from '#/llm-adapter/model/model-requester';
@@ -46,14 +46,13 @@ const IMAGE_TAG = '<image path="/cache/file_abc.png"></image>';
 const PNG_DATA_URL = `data:image/png;base64,${PNG_BYTES.toString('base64')}`;
 
 function videoMessage(url: string): Message {
-  return { role: 'user', content: [{ type: 'video_url', videoUrl: { url } }], toolCalls: [] };
+  return { role: 'user', content: [{ type: 'video_url', videoUrl: { url } }] };
 }
 
 function imageMessage(url: string, ...before: ContentPart[]): Message {
   return {
     role: 'user',
     content: [...before, { type: 'image_url', imageUrl: { url } }],
-    toolCalls: [],
   };
 }
 
@@ -772,7 +771,6 @@ describe('AgentMediaResolverService session-canonical display path', () => {
     const canonical = await plantCanonical(FILE_ID, '.mp4', VIDEO_BYTES);
     const message: Message = {
       role: 'user',
-      toolCalls: [],
       content: [
         { type: 'text', text: VIDEO_TAG },
         { type: 'video_url', videoUrl: { url: buildKimiFileUrl(FILE_ID) } },
@@ -793,7 +791,6 @@ describe('AgentMediaResolverService session-canonical display path', () => {
     const req = requester({ videoIn: false });
     const bare: Message = {
       role: 'user',
-      toolCalls: [],
       content: [
         { type: 'video_url', videoUrl: { url: buildKimiFileUrl(FILE_ID) } },
       ],
@@ -803,7 +800,6 @@ describe('AgentMediaResolverService session-canonical display path', () => {
 
     const withLegacyTag: Message = {
       role: 'user',
-      toolCalls: [],
       content: [
         { type: 'text', text: VIDEO_TAG },
         { type: 'video_url', videoUrl: { url: buildKimiFileUrl(FILE_ID) } },

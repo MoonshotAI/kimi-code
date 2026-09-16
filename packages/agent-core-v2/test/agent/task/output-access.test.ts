@@ -6,6 +6,7 @@ import { join } from 'pathe';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IAgentTaskService } from '#/agent/task/task';
+import { isUserEntry } from '#human/agent/turn';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
 import { TaskOutputTool } from '#/agent/tools/task/task-output/taskOutputTool';
@@ -96,7 +97,7 @@ async function waitForTaskNotifications(
     expect(loop.snapshot().hasPendingRequests).toBe(false);
   });
 
-  const origins = ctx.context.get().map((message) => message.origin);
+  const origins = ctx.context.get().map((entry) => (isUserEntry(entry) ? entry.meta?.origin : undefined));
   for (const task of tasks) {
     expect(origins).toContainEqual({
       kind: 'task',

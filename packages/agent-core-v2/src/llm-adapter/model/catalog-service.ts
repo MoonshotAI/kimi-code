@@ -165,7 +165,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
           {
             systemPrompt: 'You are a connectivity probe. Answer with the single word "pong".',
             tools: [],
-            messages: [{ role: 'user', content: [{ type: 'text', text: 'ping' }], toolCalls: [] }],
+            messages: [{ role: 'user', content: [{ type: 'text', text: 'ping' }] }],
           },
           undefined,
           { maxCompletionTokens: 512 },

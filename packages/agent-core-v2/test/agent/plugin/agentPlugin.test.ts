@@ -5,6 +5,7 @@ import { AsyncEmitter, Emitter } from '#/_base/event';
 import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
 import { AgentPluginService } from '#/agent/plugin/agentPluginService';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
+import { isUserEntry, type HistoryMessage } from '#human/agent/turn';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IEventBus } from '#/app/event/eventBus';
 import { TurnStarted } from '#/agent/loop/turnEvents';
@@ -36,14 +37,14 @@ function pluginSkill(): SkillDefinition {
 }
 
 function findPluginSessionStartEventMessages(ctx: TestAgentContext) {
-  return ctx.contextData().history.filter(
-    (message) =>
-      message.origin?.kind === 'injection' && message.origin.variant === 'plugin_session_start',
-  );
+  return ctx.contextData().history.filter((entry) => {
+    const origin = isUserEntry(entry) ? entry.meta?.origin : undefined;
+    return origin?.kind === 'injection' && origin.variant === 'plugin_session_start';
+  });
 }
 
-function messageText(message: { readonly content: readonly { readonly type: string; readonly text?: string }[] }): string {
-  return message.content.map((part) => (part.type === 'text' ? (part.text ?? '') : '')).join('');
+function messageText(entry: HistoryMessage): string {
+  return entry.message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
 }
 
 async function runInjectionBoundary(ctx: TestAgentContext): Promise<void> {
@@ -334,10 +335,10 @@ describe('AgentPluginService plugin-change reminder', () => {
   });
 
   function findPluginChangeMessages(context: TestAgentContext) {
-    return context.contextData().history.filter(
-      (message) =>
-        message.origin?.kind === 'injection' && message.origin.variant === 'plugin_change',
-    );
+    return context.contextData().history.filter((entry) => {
+      const origin = isUserEntry(entry) ? entry.meta?.origin : undefined;
+      return origin?.kind === 'injection' && origin.variant === 'plugin_change';
+    });
   }
 
   it('appends a plugin_change system reminder when the plugin set mutates', async () => {

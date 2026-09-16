@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 
-import type { ToolCall } from '#human/llm/message';
+import type { Message, ToolCall } from '#human/llm/message';
 import { dirname, join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -486,7 +486,7 @@ describe('Plan service', () => {
       await ctx.untilTurnEnd();
       await expectPlanActive(true);
       expect(ctx.llmCalls).toHaveLength(1);
-      expect(toolResultText(context.get())).toContain('Plan rejected by user');
+      expect(toolResultText(context.get().map((entry) => entry.message))).toContain('Plan rejected by user');
     });
 
     it('does not execute later tool calls in the same batch after plan rejection', async () => {
@@ -532,8 +532,8 @@ describe('Plan service', () => {
       await expectPlanActive(true);
       expect(exec).not.toHaveBeenCalled();
       expect(ctx.llmCalls).toHaveLength(1);
-      expect(toolResultText(context.get())).toContain('Plan rejected by user');
-      expect(toolResultText(context.get())).toContain(
+      expect(toolResultText(context.get().map((entry) => entry.message))).toContain('Plan rejected by user');
+      expect(toolResultText(context.get().map((entry) => entry.message))).toContain(
         'Tool skipped because a previous tool call stopped the turn.',
       );
     });
@@ -685,7 +685,7 @@ describe('Plan service', () => {
 
       expect(files.get(planPath)).toBe(content);
       expect(writeText).toHaveBeenCalledWith(planPath, content);
-      expect(toolResultText(context.get())).not.toContain('denied by permission rule');
+      expect(toolResultText(context.get().map((entry) => entry.message))).not.toContain('denied by permission rule');
       expect(
         ctx.allEvents.some((event) => event.type === '[rpc]' && event.event === 'requestApproval'),
       ).toBe(false);
@@ -714,13 +714,13 @@ describe('Plan service', () => {
         [emit] prompt.submitted            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Inspect without mutating files" } ], "createdAt": "<time>" }
         [wire] turn.started                { "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "input": [ { "type": "text", "text": "Inspect without mutating files" } ], "time": "<time>" }
         [emit] turn.started                { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "input": [ { "type": "text", "text": "Inspect without mutating files" } ] }
-        [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Inspect without mutating files" } ], "id": "<msg-1>", "toolCalls": [], "origin": { "kind": "user" } } ] }
+        [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "message": { "role": "user", "content": [ { "type": "text", "text": "Inspect without mutating files" } ] }, "meta": { "promptId": "<msg-1>", "origin": { "kind": "user" } } } ] }
         [emit] prompt.started              { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
-        [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Inspect without mutating files" } ], "id": "<msg-1>", "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
+        [wire] context.append_message      { "agentId": "main", "message": { "message": { "role": "user", "content": [ { "type": "text", "text": "Inspect without mutating files" } ] }, "meta": { "promptId": "<msg-1>", "origin": { "kind": "user" } } }, "time": "<time>" }
         [wire] agent.message.appended      { "message": { "message": { "role": "user", "content": [ { "type": "text", "text": "Inspect without mutating files" } ] }, "meta": { "source": "input", "promptId": "<msg-1>", "origin": { "kind": "user" }, "tracked": true, "createdAt": "<time>", "userMessageId": "<msg-1>" } }, "time": "<time>", "kind": "event" }
-        [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 1, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "<plan-mode-reminder>", "contentType": "text/xml" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "plan_mode" } } ] }
+        [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 1, "deleteCount": 0, "messages": [ { "message": { "role": "user", "content": [ { "type": "text", "text": "<plan-mode-reminder>", "contentType": "text/xml" } ] }, "meta": { "origin": { "kind": "injection", "variant": "plan_mode" } } } ] }
         [wire] agent.turn.started          { "turnId": 0, "queueItemId": "<msg-1>", "time": "<time>", "kind": "event" }
-        [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "<plan-mode-reminder>", "contentType": "text/xml" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "plan_mode" } }, "time": "<time>" }
+        [wire] context.append_message      { "agentId": "main", "message": { "message": { "role": "user", "content": [ { "type": "text", "text": "<plan-mode-reminder>", "contentType": "text/xml" } ] }, "meta": { "origin": { "kind": "injection", "variant": "plan_mode" } } }, "time": "<time>" }
         [wire] plugin.session_start        { "agentId": "main", "content": null, "time": "<time>" }
         [emit] turn.step.started           { "time": "<time>", "agentId": "main", "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
         [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
@@ -761,7 +761,7 @@ describe('Plan service', () => {
       `);
 
       expect(ctx.llmCalls).toHaveLength(2);
-      expect(toolResultText(context.get())).toContain('plan-safe');
+      expect(toolResultText(context.get().map((entry) => entry.message))).toContain('plan-safe');
       await expectPlanActive(true);
       expect(
         ctx.allEvents.some((event) => event.type === '[rpc]' && event.event === 'requestApproval'),
@@ -793,13 +793,13 @@ describe('Plan service', () => {
         [emit] prompt.submitted            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Remove forbidden.txt" } ], "createdAt": "<time>" }
         [wire] turn.started                { "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "input": [ { "type": "text", "text": "Remove forbidden.txt" } ], "time": "<time>" }
         [emit] turn.started                { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "input": [ { "type": "text", "text": "Remove forbidden.txt" } ] }
-        [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Remove forbidden.txt" } ], "id": "<msg-1>", "toolCalls": [], "origin": { "kind": "user" } } ] }
+        [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "message": { "role": "user", "content": [ { "type": "text", "text": "Remove forbidden.txt" } ] }, "meta": { "promptId": "<msg-1>", "origin": { "kind": "user" } } } ] }
         [emit] prompt.started              { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
-        [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Remove forbidden.txt" } ], "id": "<msg-1>", "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
+        [wire] context.append_message      { "agentId": "main", "message": { "message": { "role": "user", "content": [ { "type": "text", "text": "Remove forbidden.txt" } ] }, "meta": { "promptId": "<msg-1>", "origin": { "kind": "user" } } }, "time": "<time>" }
         [wire] agent.message.appended      { "message": { "message": { "role": "user", "content": [ { "type": "text", "text": "Remove forbidden.txt" } ] }, "meta": { "source": "input", "promptId": "<msg-1>", "origin": { "kind": "user" }, "tracked": true, "createdAt": "<time>", "userMessageId": "<msg-1>" } }, "time": "<time>", "kind": "event" }
-        [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 1, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "<plan-mode-reminder>", "contentType": "text/xml" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "plan_mode" } } ] }
+        [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 1, "deleteCount": 0, "messages": [ { "message": { "role": "user", "content": [ { "type": "text", "text": "<plan-mode-reminder>", "contentType": "text/xml" } ] }, "meta": { "origin": { "kind": "injection", "variant": "plan_mode" } } } ] }
         [wire] agent.turn.started          { "turnId": 0, "queueItemId": "<msg-1>", "time": "<time>", "kind": "event" }
-        [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "<plan-mode-reminder>", "contentType": "text/xml" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "plan_mode" } }, "time": "<time>" }
+        [wire] context.append_message      { "agentId": "main", "message": { "message": { "role": "user", "content": [ { "type": "text", "text": "<plan-mode-reminder>", "contentType": "text/xml" } ] }, "meta": { "origin": { "kind": "injection", "variant": "plan_mode" } } }, "time": "<time>" }
         [wire] plugin.session_start        { "agentId": "main", "content": null, "time": "<time>" }
         [emit] turn.step.started           { "time": "<time>", "agentId": "main", "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
         [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
@@ -838,7 +838,7 @@ describe('Plan service', () => {
         [wire] turn.ended                  { "agentId": "main", "turnId": 0, "reason": "completed", "time": "<time>" }
         [emit] turn.ended                  { "time": "<time>", "agentId": "main", "turnId": 0, "reason": "completed" }
       `);
-      expect(toolResultText(context.get())).toContain('removed');
+      expect(toolResultText(context.get().map((entry) => entry.message))).toContain('removed');
     });
   });
 
@@ -848,8 +848,8 @@ describe('Plan service', () => {
 
       await injectDynamic();
       const afterFull = context.get().length;
-      expect(lastUserText(context.get())).toContain('Plan mode is active');
-      expect(lastUserText(context.get())).toContain('Plan file:');
+      expect(lastUserText(context.get().map((entry) => entry.message))).toContain('Plan mode is active');
+      expect(lastUserText(context.get().map((entry) => entry.message))).toContain('Plan file:');
 
       await injectDynamic();
       expect(context.get()).toHaveLength(afterFull);
@@ -858,8 +858,8 @@ describe('Plan service', () => {
       ctx.appendAssistantTurn(2, 'assistant two');
       await injectDynamic();
 
-      expect(lastUserText(context.get())).toContain('Plan mode still active');
-      expect(lastUserText(context.get())).toContain('Plan file:');
+      expect(lastUserText(context.get().map((entry) => entry.message))).toContain('Plan mode still active');
+      expect(lastUserText(context.get().map((entry) => entry.message))).toContain('Plan file:');
     });
 
     it('emits a reentry reminder when restored plan mode already has plan content', async () => {
@@ -873,8 +873,8 @@ describe('Plan service', () => {
 
       await injectDynamic();
 
-      expect(lastUserText(context.get())).toContain('Re-entering Plan Mode');
-      expect(lastUserText(context.get())).toContain('Read the existing plan file');
+      expect(lastUserText(context.get().map((entry) => entry.message))).toContain('Re-entering Plan Mode');
+      expect(lastUserText(context.get().map((entry) => entry.message))).toContain('Read the existing plan file');
     });
 
     it('emits one exit reminder after leaving plan mode', async () => {
@@ -884,7 +884,7 @@ describe('Plan service', () => {
       plan.exit();
       await injectDynamic();
       const afterExit = context.get().length;
-      expect(lastUserText(context.get())).toContain('Plan mode is no longer active');
+      expect(lastUserText(context.get().map((entry) => entry.message))).toContain('Plan mode is no longer active');
 
       await injectDynamic();
       expect(context.get()).toHaveLength(afterExit);
@@ -901,7 +901,7 @@ describe('Plan service', () => {
       ctx.appendUserMessage([{ type: 'text', text: 'new plan request' }]);
       await injectDynamic();
 
-      expect(lastUserText(context.get())).toContain('Plan mode is active');
+      expect(lastUserText(context.get().map((entry) => entry.message))).toContain('Plan mode is active');
     });
   });
 
@@ -914,7 +914,7 @@ describe('Plan service', () => {
   }
 });
 
-function lastUserText(history: readonly { role: string; content: readonly unknown[] }[]): string {
+function lastUserText(history: readonly Message[]): string {
   const message = history.findLast((item) => item.role === 'user');
   if (message === undefined) return '';
   return message.content
@@ -932,7 +932,7 @@ function lastUserText(history: readonly { role: string; content: readonly unknow
     .join('');
 }
 
-function toolResultText(history: readonly { role: string; content: readonly unknown[] }[]): string {
+function toolResultText(history: readonly Message[]): string {
   return history
     .filter((message) => message.role === 'tool')
     .flatMap((message) => message.content)

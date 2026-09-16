@@ -24,7 +24,8 @@ import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage, TaskOrigin } from '#/agent/contextMemory/types';
+import type { TaskOrigin } from '#/agent/contextMemory/types';
+import { isUserEntry, type HistoryMessage, type UserEntry } from '#human/agent/turn';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -383,8 +384,10 @@ describe('AgentTaskService', () => {
     const context = ix.get(IAgentContextMemoryService) as StubContextMemory;
     loop.drainNextBatch(context);
 
-    const delivered = context.messages.filter((message) => message.origin?.kind === 'task');
-    expect(delivered.map((message) => (message.origin as TaskOrigin).taskId)).toEqual([taskB]);
+    const delivered = context.messages.filter(
+      (entry): entry is UserEntry => isUserEntry(entry) && entry.meta?.origin?.kind === 'task',
+    );
+    expect(delivered.map((entry) => (entry.meta!.origin as TaskOrigin).taskId)).toEqual([taskB]);
   });
 
   function waitContext(taskId: string, args: WaitForInput) {
@@ -887,8 +890,10 @@ describe('AgentTaskService', () => {
 
     const keyA = `${taskA}\0completed\0task:${taskA}:completed`;
     expect(two.get(IAgentStateService).get(taskNotificationDeliveryKey)).toContain(keyA);
-    const redelivered = context2.messages.filter((message) => message.origin?.kind === 'task');
-    expect(redelivered.map((message) => (message.origin as TaskOrigin).taskId)).toEqual([taskB]);
+    const redelivered = context2.messages.filter(
+      (entry): entry is UserEntry => isUserEntry(entry) && entry.meta?.origin?.kind === 'task',
+    );
+    expect(redelivered.map((entry) => (entry.meta!.origin as TaskOrigin).taskId)).toEqual([taskB]);
   });
 
   it('restore touches only the agent own task records', async () => {
@@ -1000,12 +1005,13 @@ describe('AgentTaskService', () => {
     expect(subagent.list(false)).toEqual([]);
   });
 
-  function compactionSummary(text: string): ContextMessage {
+  function compactionSummary(text: string): HistoryMessage {
     return {
-      role: 'user',
-      content: [{ type: 'text', text }],
-      toolCalls: [],
-      origin: { kind: 'compaction_summary' },
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text }],
+      },
+      meta: { origin: { kind: 'compaction_summary' } },
     };
   }
 

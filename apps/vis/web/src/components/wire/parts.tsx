@@ -10,7 +10,8 @@
 
 import type { ReactNode } from 'react';
 
-import type { ContentPart, ContextMessage, LoopRecordedEvent, ToolCall } from '../../types';
+import type { ContentPart, HistoryMessage, LoopRecordedEvent, ToolCall } from '../../types';
+import { isAssistantEntry, isToolEntry, isUserEntry } from '../../types';
 import { ImagePreview } from '../shared/ImagePreview';
 import { JsonViewer } from '../shared/JsonViewer';
 import { SizePreview } from '../shared/SizePreview';
@@ -175,53 +176,53 @@ function ToolCallView({ call }: { call: ToolCall }) {
   );
 }
 
-export function MessageDetail({ message }: { message: ContextMessage }) {
+export function MessageDetail({ message }: { message: HistoryMessage }) {
   return (
     <div className="space-y-2">
       <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
         <FieldRow label="role">
-          <span className="text-[var(--color-cat-ephemeral)]">"{message.role}"</span>
+          <span className="text-[var(--color-cat-ephemeral)]">"{message.message.role}"</span>
         </FieldRow>
-        {message.toolCallId ? (
+        {message.message.role === 'tool' && message.message.toolCallId ? (
           <FieldRow label="toolCallId">
-            <Mono>{message.toolCallId}</Mono>
+            <Mono>{message.message.toolCallId}</Mono>
           </FieldRow>
         ) : null}
-        {message.origin ? (
+        {isUserEntry(message) && message.meta?.origin ? (
           <FieldRow label="origin" wide>
-            <JsonViewer value={message.origin} defaultOpenDepth={2} />
+            <JsonViewer value={message.meta.origin} defaultOpenDepth={2} />
           </FieldRow>
         ) : null}
-        {message.isError === true ? (
+        {isToolEntry(message) && message.meta?.isError === true ? (
           <FieldRow label="isError">
             <span className="text-[var(--color-sev-error)]">true</span>
           </FieldRow>
         ) : null}
-        {message.partial === true ? (
+        {isAssistantEntry(message) && message.meta?.partial === true ? (
           <FieldRow label="partial">
             <span className="text-[var(--color-sev-warning)]">true</span>
           </FieldRow>
         ) : null}
       </div>
 
-      {message.content.length > 0 ? (
+      {message.message.content.length > 0 ? (
         <div>
-          <div className="mb-1 text-fg-2">content ({message.content.length} part{message.content.length === 1 ? '' : 's'})</div>
+          <div className="mb-1 text-fg-2">content ({message.message.content.length} part{message.message.content.length === 1 ? '' : 's'})</div>
           <div className="space-y-1">
-            {message.content.map((part, i) => (
+            {message.message.content.map((part, i) => (
               <ContentPartView key={i} part={part} />
             ))}
           </div>
         </div>
       ) : null}
 
-      {message.toolCalls.length > 0 ? (
+      {message.message.role === 'assistant' && message.message.toolCalls.length > 0 ? (
         <div>
           <div className="mb-1 text-fg-2">
-            toolCalls ({message.toolCalls.length})
+            toolCalls ({message.message.toolCalls.length})
           </div>
           <div className="space-y-1">
-            {message.toolCalls.map((tc) => (
+            {message.message.toolCalls.map((tc) => (
               <ToolCallView key={tc.id} call={tc} />
             ))}
           </div>

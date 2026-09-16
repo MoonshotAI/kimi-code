@@ -319,7 +319,7 @@ import {
   resolvedConfigToKimiConfig,
 } from '#/v2/config-mapper';
 import { translateGlobalEvent } from '#/v2/event-mapper';
-import { assertImportFits, buildImportContextMessage } from '#/v2/import-context';
+import { assertImportFits, buildImportContextEntry } from '#/v2/import-context';
 import { foldAgentWireReplay } from '#/v2/resume-replay';
 import {
   mcpConfigWithoutName,
@@ -1916,7 +1916,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         'Cannot import context while the agent is busy',
       );
     }
-    const message = buildImportContextMessage(input.content, input.source);
+    const message = buildImportContextEntry(input.content, input.source);
     const capability = agent.accessor.get(IAgentProfileService).data().modelCapabilities;
     const currentTokenCount = agent.accessor
       .get(ISessionTokenCountingService)

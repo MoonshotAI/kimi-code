@@ -6,6 +6,7 @@ import type { IAgentLoopService } from '#/agent/loop/loop';
 import type { IEventBus } from '#/app/event/eventBus';
 import type { IAgentReminderService } from '#/features/reminder/reminderService';
 import { createHistoryMessageBuilder } from '#human/agent/historyBuilder';
+import { isUserEntry } from '#human/agent/turn';
 import type {
   ContextInjectionContent,
   ContextInjectionMessage,
@@ -42,17 +43,19 @@ export function createReminderHarness(
     rearm = false;
     for (const [variant, provider] of entries) {
       const history = context.get();
-      const positions = history.flatMap((message, index) =>
-        message.origin?.kind === 'injection' && message.origin.variant === variant ? [index] : [],
-      );
+      const positions = history.flatMap((entry, index) => {
+        const origin = isUserEntry(entry) ? entry.meta?.origin : undefined;
+        return origin?.kind === 'injection' && origin.variant === variant ? [index] : [];
+      });
       const lastInjectedAt = positions.at(-1) ?? null;
       const lastInjection = lastInjectedAt === null ? undefined : history[lastInjectedAt];
+      const lastOrigin = lastInjection !== undefined && isUserEntry(lastInjection) ? lastInjection.meta?.origin : undefined;
       const value = await provider({
         injectedPositions: positions,
         lastInjectedAt,
         lastInjection,
-        lastDisclosure: lastInjection?.origin?.kind === 'injection'
-          ? lastInjection.origin.disclosure
+        lastDisclosure: lastOrigin?.kind === 'injection'
+          ? lastOrigin.disclosure
           : undefined,
         isNewTurn,
       });
@@ -66,28 +69,40 @@ export function createReminderHarness(
       if (typeof content === 'string') {
         if (content.trim().length === 0) continue;
         context.append({
-          role: 'user',
-          content: [...createHistoryMessageBuilder().systemReminder(content).parts()],
-          toolCalls: [],
-          origin,
+          message: {
+            role: 'user',
+            content: [...createHistoryMessageBuilder().systemReminder(content).parts()],
+          },
+          meta: { origin },
         });
         continue;
       }
       if (Array.isArray(content)) {
         if (content.length === 0) continue;
-        context.append({ role: 'user', content: [...content], toolCalls: [], origin });
+        context.append({ message: { role: 'user', content: [...content] }, meta: { origin } });
         continue;
       }
       const message = (content as { readonly message: ContextInjectionMessage }).message;
       if (message.content.length === 0 && (message.tools === undefined || message.tools.length === 0)) {
         continue;
       }
+      if (message.role === 'system') {
+        context.append({
+          message: {
+            role: 'system',
+            content: [...message.content],
+            tools: message.tools === undefined ? undefined : [...message.tools],
+          },
+          meta: { origin },
+        });
+        continue;
+      }
       context.append({
-        role: message.role,
-        content: [...message.content],
-        toolCalls: [],
-        tools: message.tools,
-        origin,
+        message: {
+          role: 'user',
+          content: [...message.content],
+        },
+        meta: { origin },
       });
     }
     await next();

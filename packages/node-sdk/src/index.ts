@@ -69,6 +69,7 @@ export type { LogContext, LogLevel, LogPayload, Logger } from '#/logging/index';
 export { effectiveModelAlias, loadRuntimeConfigSafe } from '#/config/index';
 export { resolveConfigPath } from '@moonshot-ai/agent-core-v2';
 export { limitAgentReplayByTurns } from '#/replay';
+export { isAssistantEntry, isSystemEntry, isToolEntry, isUserEntry } from '@moonshot-ai/agent-core-v2';
 export { parseAgentFileText, resolveAgentPath } from '@moonshot-ai/agent-core-v2';
 export { SECONDARY_DERIVED_MODEL_ALIAS } from '#/config/index';
 export { PRIMARY_SUBAGENT_MODEL_CHOICE } from '@moonshot-ai/agent-core-v2/session/subagent/configSection';

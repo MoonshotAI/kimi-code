@@ -498,14 +498,15 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
         : latest.subject;
     this.inboxWakeHandle = this.loop.notify({
       message: {
-        role: 'user',
-        content: [
-          ...createHistoryMessageBuilder()
-            .plain(`${countText} — latest from ${latest.from}: "${subject}". Read and route with TowerInbox.`)
-            .parts(),
-        ],
-        toolCalls: [],
-        origin: { kind: 'injection', variant: TOWER_INBOX_WAKE_VARIANT },
+        message: {
+          role: 'user',
+          content: [
+            ...createHistoryMessageBuilder()
+              .plain(`${countText} — latest from ${latest.from}: "${subject}". Read and route with TowerInbox.`)
+              .parts(),
+          ],
+        },
+        meta: { origin: { kind: 'injection', variant: TOWER_INBOX_WAKE_VARIANT } },
       },
       turnScoped: false,
       onConsume: () => {

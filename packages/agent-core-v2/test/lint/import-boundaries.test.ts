@@ -30,7 +30,7 @@ describe('check-import-boundaries', () => {
 
   it('flags human importing llm-adapter', () => {
     const violations = checkSource(
-      `import { Foo } from '#/llm-adapter/contract/message';`,
+      `import { Foo } from '#/llm-adapter/contract/errors';`,
       atHuman('llm', 'message.ts'),
     );
     expect(violations).toHaveLength(1);
@@ -48,7 +48,7 @@ describe('check-import-boundaries', () => {
 
   it('flags human escaping into v2 via a relative path', () => {
     const violations = checkSource(
-      `import { Foo } from '../../llm-adapter/contract/message';`,
+      `import { Foo } from '../../llm-adapter/contract/errors';`,
       atHuman('llm', 'message.ts'),
     );
     expect(violations).toHaveLength(1);

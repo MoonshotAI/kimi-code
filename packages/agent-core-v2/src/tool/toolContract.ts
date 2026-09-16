@@ -1,4 +1,5 @@
 import type { ContentPart, ToolCall, ToolDescription as Tool } from '#human/llm/message';
+import type { PromptOrigin } from '#human/agent/origin';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
@@ -20,7 +21,7 @@ export interface ToolDeliveryMessage {
   readonly role: 'user';
   readonly content: readonly ContentPart[];
   readonly toolCalls?: readonly ToolCall[];
-  readonly origin?: unknown;
+  readonly origin?: PromptOrigin;
 }
 
 export interface ToolDelivery {

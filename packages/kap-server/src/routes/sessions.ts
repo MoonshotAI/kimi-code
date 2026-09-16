@@ -25,7 +25,7 @@ import {
   setSessionArchived,
   isError2,
   Error2,
-  type ContextMessage,
+  type HistoryMessage,
   type IAgentScopeHandle,
   type ISessionScopeHandle,
   type Scope,
@@ -1098,7 +1098,7 @@ const MAX_UNDO_MESSAGE_PAGE_SIZE = 100;
 function pageUndoMessages(
   sessionId: string,
   sessionCreatedAtMs: number,
-  history: readonly ContextMessage[],
+  history: readonly HistoryMessage[],
   requestedPageSize: number | undefined,
 ): { items: ReturnType<typeof toProtocolMessage>[]; has_more: boolean } {
   const pageSize = Math.min(

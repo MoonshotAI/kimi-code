@@ -60,7 +60,7 @@ export const agentRuntimeBindingContract = {
   switch: { input: z.tuple([z.string()]), output: runtimeBindingSchema },
 } satisfies ServiceContract;
 
-/** `history` items are full `ContextMessage`s, mirrored as `unknown`. */
+/** `history` items are full `HistoryMessage` entries, mirrored as `unknown`. */
 export const agentContextMemoryContract = {
   get: { input: z.tuple([]), output: z.array(z.unknown()) },
 } satisfies ServiceContract;

@@ -17,6 +17,7 @@ import {
   type ExecutableTool,
   type ExecutableToolContext,
   type ExecutableToolResult,
+  type ToolDeliveryMessage,
   type ToolExecution,
   type ToolResult,
   type ToolUpdate,
@@ -826,11 +827,11 @@ describe('AgentToolExecutorService', () => {
     });
   });
   it('threads a declared delivery onto the yielded result for the agent layer to consume', async () => {
-    const message = {
-      role: 'user' as const,
-      content: [{ type: 'text' as const, text: 'injected' }],
+    const message: ToolDeliveryMessage = {
+      role: 'user',
+      content: [{ type: 'text', text: 'injected' }],
       toolCalls: [],
-      origin: { kind: 'skill_activation', skillName: 'commit', trigger: 'model-tool' },
+      origin: { kind: 'skill_activation', activationId: 'a1', skillName: 'commit', trigger: 'model-tool' },
     };
     const tool = new TestTool('skillish', {
       result: { output: 'ack', delivery: { kind: 'steer', message } },

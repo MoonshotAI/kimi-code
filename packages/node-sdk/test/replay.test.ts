@@ -7,10 +7,8 @@ function userTurn(text: string, time: number): AgentReplayRecord {
     type: 'message',
     time,
     message: {
-      role: 'user',
-      content: [{ type: 'text', text }],
-      toolCalls: [],
-      origin: { kind: 'user' },
+      message: { role: 'user', content: [{ type: 'text', text }] },
+      meta: { origin: { kind: 'user' } },
     },
   };
 }
@@ -20,10 +18,8 @@ function cronTurn(text: string, time: number): AgentReplayRecord {
     type: 'message',
     time,
     message: {
-      role: 'user',
-      content: [{ type: 'text', text }],
-      toolCalls: [],
-      origin: { kind: 'cron_job', jobId: 'job-1', cron: '*/15 * * * *', recurring: true, coalescedCount: 1, stale: false },
+      message: { role: 'user', content: [{ type: 'text', text }] },
+      meta: { origin: { kind: 'cron_job', jobId: 'job-1', cron: '*/15 * * * *', recurring: true, coalescedCount: 1, stale: false } },
     },
   };
 }
@@ -33,10 +29,8 @@ function cronMissedTurn(text: string, time: number): AgentReplayRecord {
     type: 'message',
     time,
     message: {
-      role: 'user',
-      content: [{ type: 'text', text }],
-      toolCalls: [],
-      origin: { kind: 'cron_missed', count: 3 },
+      message: { role: 'user', content: [{ type: 'text', text }] },
+      meta: { origin: { kind: 'cron_missed', count: 3 } },
     },
   };
 }
@@ -46,10 +40,8 @@ function injection(text: string, time: number): AgentReplayRecord {
     type: 'message',
     time,
     message: {
-      role: 'user',
-      content: [{ type: 'text', text }],
-      toolCalls: [],
-      origin: { kind: 'injection', variant: 'reminder' },
+      message: { role: 'user', content: [{ type: 'text', text }] },
+      meta: { origin: { kind: 'injection', variant: 'reminder' } },
     },
   };
 }
@@ -59,9 +51,8 @@ function assistant(text: string, time: number): AgentReplayRecord {
     type: 'message',
     time,
     message: {
-      role: 'assistant',
-      content: [{ type: 'text', text }],
-      toolCalls: [],
+      message: { role: 'assistant', content: [{ type: 'text', text }], toolCalls: [] },
+      meta: {},
     },
   };
 }
@@ -78,7 +69,7 @@ describe('limitAgentReplayByTurns', () => {
       records.push(assistant(`answer ${turn}`, turn * 10 + 1));
     }
     const limited = limitAgentReplayByTurns(records, 5);
-    expect(limited[0]).toMatchObject({ message: { origin: { kind: 'user' } } });
+    expect(limited[0]).toMatchObject({ message: { meta: { origin: { kind: 'user' } } } });
     expect(JSON.stringify(limited)).toContain('prompt 15');
     expect(JSON.stringify(limited)).not.toContain('prompt 14');
   });

@@ -183,10 +183,13 @@ describe('fork subagent first-request parity', () => {
 
     const tail = childReq.history.slice(parentReq.history.length);
     expect(tail.map((message) => message.role)).toEqual(['assistant', 'tool', 'user', 'user']);
-    expect(tail[0]?.toolCalls.map((call) => call.name)).toEqual(['Agent']);
-    expect(tail[0]?.partial).toBeUndefined();
-    expect(tail[1]?.toolCallId).toBe('call_fork');
-    expect(tail[1]?.content).toEqual([{ type: 'text', text: INHERITED_IN_FLIGHT_TOOL_OUTPUT }]);
+    const tailAssistant = tail[0];
+    if (tailAssistant?.role !== 'assistant') throw new Error('expected assistant message');
+    expect(tailAssistant.toolCalls.map((call) => call.name)).toEqual(['Agent']);
+    const tailTool = tail[1];
+    if (tailTool?.role !== 'tool') throw new Error('expected tool message');
+    expect(tailTool.toolCallId).toBe('call_fork');
+    expect(tailTool.content).toEqual([{ type: 'text', text: INHERITED_IN_FLIGHT_TOOL_OUTPUT }]);
     const notice = tail[2]?.content[0];
     expect(notice?.type).toBe('text');
     expect(notice?.type === 'text' && notice.contentType).toBe('text/xml');

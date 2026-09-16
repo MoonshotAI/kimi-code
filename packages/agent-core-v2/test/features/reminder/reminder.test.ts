@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import { isSystemEntry, isToolEntry, type HistoryMessage } from '#human/agent/turn';
+import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { contextMemoryKey } from '#/agent/contextMemory/contextOps';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { ReminderFeature } from '#/features/reminder/reminderFeature';
@@ -15,27 +16,33 @@ import {
   type StubLoop,
 } from '../../agent/loop/stubs';
 
-function userMessage(text: string): ContextMessage {
+function userMessage(text: string): HistoryMessage {
   return {
-    role: 'user',
-    content: [{ type: 'text', text }],
-    toolCalls: [],
-    origin: { kind: 'user' },
+    message: {
+      role: 'user',
+      content: [{ type: 'text', text }],
+    },
+    meta: { origin: { kind: 'user' } },
   };
 }
 
-function compactionSummary(text: string): ContextMessage {
+function compactionSummary(text: string): HistoryMessage {
   return {
-    role: 'user',
-    content: [{ type: 'text', text }],
-    toolCalls: [],
-    origin: { kind: 'compaction_summary' },
+    message: {
+      role: 'user',
+      content: [{ type: 'text', text }],
+    },
+    meta: { origin: { kind: 'compaction_summary' } },
   };
+}
+
+function originOf(entry: HistoryMessage | undefined): PromptOrigin | undefined {
+  return entry !== undefined && !isToolEntry(entry) ? entry.meta?.origin : undefined;
 }
 
 function lastText(context: IAgentContextMemoryService): string | undefined {
-  const message = context.get().at(-1);
-  const part = message?.content[0];
+  const entry = context.get().at(-1);
+  const part = entry?.message.content[0];
   return part?.type === 'text' ? part.text : undefined;
 }
 
@@ -64,7 +71,7 @@ describe('AgentReminderService', () => {
   function spliceContext(
     start: number,
     deleteCount: number,
-    inserted: readonly ContextMessage[],
+    inserted: readonly HistoryMessage[],
   ): void {
     const backing = [...ctx.agentState.get(contextMemoryKey)];
     backing.splice(start, deleteCount, ...inserted);
@@ -93,7 +100,7 @@ describe('AgentReminderService', () => {
     expect(seen).toEqual([null]);
     expect(lastText(context)).toContain('<system-reminder>');
     expect(lastText(context)).toContain('recorded reminder');
-    expect(context.get().at(-1)?.origin).toEqual({
+    expect(originOf(context.get().at(-1))).toEqual({
       kind: 'injection',
       variant: 'recording_test',
     });
@@ -112,7 +119,7 @@ describe('AgentReminderService', () => {
 
     await runInjectionStep();
 
-    expect(context.get().at(-1)?.origin).toEqual({
+    expect(originOf(context.get().at(-1))).toEqual({
       kind: 'injection',
       variant: 'date_test',
       disclosure: {
@@ -132,12 +139,12 @@ describe('AgentReminderService', () => {
 
     await runInjectionStep();
 
-    const message = context.get().at(-1);
-    expect(message?.content).toEqual([
+    const entry = context.get().at(-1);
+    expect(entry?.message.content).toEqual([
       { type: 'text', text: 'caption' },
       { type: 'image_url', imageUrl: { url: 'https://example.com/a.png' } },
     ]);
-    expect(message?.origin).toEqual({ kind: 'injection', variant: 'media_test' });
+    expect(originOf(entry)).toEqual({ kind: 'injection', variant: 'media_test' });
   });
 
   it('skips injection when the provider returns an empty content array', async () => {
@@ -178,7 +185,7 @@ describe('AgentReminderService', () => {
 
     expect(seen).toEqual(['target']);
     expect(context.get()).toHaveLength(1);
-    expect(context.get()[0]?.origin).toEqual({ kind: 'injection', variant: 'target' });
+    expect(originOf(context.get()[0])).toEqual({ kind: 'injection', variant: 'target' });
   });
 
   it('leaves reconciliation to the next step head when quiescence cannot be acquired', async () => {
@@ -230,7 +237,7 @@ describe('AgentReminderService', () => {
     await runInjectionStep();
 
     expect(seen).toEqual([null, 0, 0]);
-    expect(context.get().map((message) => message.origin?.kind)).toEqual([
+    expect(context.get().map((entry) => originOf(entry)?.kind)).toEqual([
       'injection',
       'user',
     ]);
@@ -255,7 +262,7 @@ describe('AgentReminderService', () => {
 
     expect(seenA).toEqual([null, null]);
     expect(seenB).toEqual([null, null]);
-    expect(context.get().map((message) => message.origin)).toEqual([
+    expect(context.get().map(originOf)).toEqual([
       { kind: 'injection', variant: 'recording_a' },
       { kind: 'injection', variant: 'recording_b' },
     ]);
@@ -279,7 +286,7 @@ describe('AgentReminderService', () => {
     await runInjectionStep();
 
     expect(seen).toEqual([null, null]);
-    expect(context.get().map((message) => message.origin)).toEqual([
+    expect(context.get().map(originOf)).toEqual([
       { kind: 'compaction_summary' },
       { kind: 'injection', variant: 'recording_test' },
     ]);
@@ -308,7 +315,7 @@ describe('AgentReminderService', () => {
 
     expect(seenA).toEqual([null, 1]);
     expect(seenB).toEqual([null, 2]);
-    expect(context.get().map((message) => message.origin)).toEqual([
+    expect(context.get().map(originOf)).toEqual([
       { kind: 'compaction_summary' },
       { kind: 'injection', variant: 'recording_a' },
       { kind: 'injection', variant: 'recording_b' },
@@ -328,7 +335,7 @@ describe('AgentReminderService', () => {
     await runInjectionStep();
 
     expect(seen).toEqual([true, false, true]);
-    expect(context.get().map((message) => message.origin)).toEqual([
+    expect(context.get().map(originOf)).toEqual([
       { kind: 'compaction_summary' },
       { kind: 'injection', variant: 'per_turn_test' },
     ]);
@@ -362,7 +369,7 @@ describe('AgentReminderService', () => {
     await runInjectionStep(true);
 
     expect(seen).toEqual([true, true]);
-    expect(context.get().map((message) => message.origin)).toEqual([
+    expect(context.get().map(originOf)).toEqual([
       { kind: 'compaction_summary' },
       { kind: 'injection', variant: 'per_turn_test' },
     ]);
@@ -379,12 +386,12 @@ describe('AgentReminderService', () => {
 
     await runInjectionStep();
 
-    const message = context.get().at(-1);
-    expect(message?.role).toBe('system');
-    expect(message?.tools).toEqual([
+    const entry = context.get().at(-1);
+    if (entry === undefined || !isSystemEntry(entry)) throw new Error('expected system message');
+    expect(entry.message.tools).toEqual([
       { name: 'TestTool', description: 'test tool', parameters: { type: 'object' } },
     ]);
-    expect(message?.origin).toEqual({ kind: 'injection', variant: 'schema_test' });
+    expect(entry.meta?.origin).toEqual({ kind: 'injection', variant: 'schema_test' });
   });
 
   it('stamps the disclosure on tagged raw messages returned through the result wrapper', async () => {
@@ -395,7 +402,7 @@ describe('AgentReminderService', () => {
 
     await runInjectionStep();
 
-    expect(context.get().at(-1)?.origin).toEqual({
+    expect(originOf(context.get().at(-1))).toEqual({
       kind: 'injection',
       variant: 'schema_test',
       disclosure: { kind: 'test_receipt', id: 'r1' },

@@ -238,22 +238,26 @@ export class AgentShellCommandService implements IAgentShellCommandService {
 
   private appendShellInput(command: string): void {
     this.context.append({
-      role: 'user',
-      content: [...createHistoryMessageBuilder().xml(`<bash-input>\n${escapeXml(command)}\n</bash-input>`).parts()],
-      toolCalls: [],
-      origin: { kind: 'shell_command', phase: 'input' },
+      message: {
+        role: 'user',
+        content: [...createHistoryMessageBuilder().xml(`<bash-input>\n${escapeXml(command)}\n</bash-input>`).parts()],
+      },
+      meta: { origin: { kind: 'shell_command', phase: 'input' } },
     });
   }
 
   private appendShellOutput(stdout: string, stderr: string, isError?: boolean): void {
     this.context.append({
-      role: 'user',
-      content: [...createHistoryMessageBuilder().xml(`<bash-stdout>${escapeXml(stdout)}</bash-stdout><bash-stderr>${escapeXml(stderr)}</bash-stderr>`).parts()],
-      toolCalls: [],
-      origin:
-        isError === true
-          ? { kind: 'shell_command', phase: 'output', isError: true }
-          : { kind: 'shell_command', phase: 'output' },
+      message: {
+        role: 'user',
+        content: [...createHistoryMessageBuilder().xml(`<bash-stdout>${escapeXml(stdout)}</bash-stdout><bash-stderr>${escapeXml(stderr)}</bash-stderr>`).parts()],
+      },
+      meta: {
+        origin:
+          isError === true
+            ? { kind: 'shell_command', phase: 'output', isError: true }
+            : { kind: 'shell_command', phase: 'output' },
+      },
     });
   }
 

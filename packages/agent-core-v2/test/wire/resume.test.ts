@@ -15,6 +15,7 @@ import {
   type PromptOrigin,
 } from '#/index';
 import { IAgentTaskService } from '#/agent/task/task';
+import { isAssistantEntry, isUserEntry } from '#human/agent/turn';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { turnKey } from '#/agent/loop/turnOps';
@@ -473,7 +474,7 @@ describe('Agent resume', () => {
 
     await ctx.restorePersisted();
 
-    expect(ctx.context.get().map((message) => message.role)).toEqual([
+    expect(ctx.context.get().map((entry) => entry.message.role)).toEqual([
       'user',
       'assistant',
       'user',
@@ -497,14 +498,14 @@ describe('Agent resume', () => {
 
     await ctx.restorePersisted();
 
-    expect(ctx.context.get().map((message) => message.role)).toEqual([
+    expect(ctx.context.get().map((entry) => entry.message.role)).toEqual([
       'user',
       'assistant',
       'tool',
       'tool',
       'user',
     ]);
-    expect(ctx.context.get()[4]?.content).toEqual([
+    expect(ctx.context.get()[4]?.message.content).toEqual([
       {
         type: 'text',
         text: '<system-reminder>\nresume skill body\n</system-reminder>',
@@ -562,7 +563,8 @@ describe('Agent resume', () => {
 
     await ctx.restorePersisted();
 
-    const toolCall = ctx.context.get()[0]?.toolCalls[0] as
+    const first = ctx.context.get()[0];
+    const toolCall = (first !== undefined && isAssistantEntry(first) ? first.message.toolCalls[0] : undefined) as
       | { name?: string; arguments?: string | null; function?: unknown }
       | undefined;
     expect(toolCall).toMatchObject({
@@ -622,7 +624,7 @@ describe('Agent resume', () => {
 
       await ctx.restorePersisted();
       expect(
-        ctx.context.get().some((message) => message.origin?.kind === 'task'),
+        ctx.context.get().some((entry) => isUserEntry(entry) && entry.meta?.origin?.kind === 'task'),
       ).toBe(false);
 
       const background = ctx.get(IAgentTaskService) as TaskServiceTestManager;
@@ -673,9 +675,11 @@ describe('Agent resume', () => {
 
     expect(ctx.context.get()).toEqual([
       expect.objectContaining({
-        role: 'user',
-        content: [{ type: 'text', text: 'Compacted implementation notes.', contentType: 'text/plain' }],
-        origin: { kind: 'compaction_summary' },
+        message: expect.objectContaining({
+          role: 'user',
+          content: [{ type: 'text', text: 'Compacted implementation notes.', contentType: 'text/plain' }],
+        }),
+        meta: expect.objectContaining({ origin: { kind: 'compaction_summary' } }),
       }),
     ]);
   });
@@ -713,22 +717,23 @@ describe('Agent resume', () => {
 
       expect(steer).not.toHaveBeenCalled();
       expect(
-        ctx.context.get().some(
-          (message) =>
-            message.origin?.kind === 'task' &&
-            message.origin.taskId === 'agent-new00000',
+        ctx.context.get().some((entry) =>
+          isUserEntry(entry) && entry.meta?.origin?.kind === 'task' &&
+          entry.meta.origin.taskId === 'agent-new00000',
         ),
       ).toBe(true);
       expect(persistence.appended).toContainEqual(
         expect.objectContaining({
           type: 'context.append_message',
           message: expect.objectContaining({
-            origin: {
-              kind: 'task',
-              taskId: 'agent-new00000',
-              status: 'completed',
-              notificationId: 'task:agent-new00000:completed',
-            },
+            meta: expect.objectContaining({
+              origin: {
+                kind: 'task',
+                taskId: 'agent-new00000',
+                status: 'completed',
+                notificationId: 'task:agent-new00000:completed',
+              },
+            }),
           }),
         }),
       );
@@ -776,7 +781,7 @@ describe('Agent resume', () => {
 
     await ctx.restorePersisted();
 
-    expect(ctx.context.get().map((message) => message.role)).toEqual([
+    expect(ctx.context.get().map((entry) => entry.message.role)).toEqual([
       'user',
       'assistant',
       'tool',
@@ -1057,9 +1062,9 @@ describe('Agent resume', () => {
       await ctx.restorePersisted();
 
       expect(ctx.context.get()).toHaveLength(3);
-      expect(ctx.context.get()[0]?.role).toBe('user');
-      expect(ctx.context.get()[1]?.role).toBe('assistant');
-      expect(ctx.context.get()[2]?.role).toBe('user');
+      expect(ctx.context.get()[0]?.message.role).toBe('user');
+      expect(ctx.context.get()[1]?.message.role).toBe('assistant');
+      expect(ctx.context.get()[2]?.message.role).toBe('user');
       const skipped = unexpected.filter(
         (error) => (error as { code?: unknown }).code === 'wire.unknown_record',
       );

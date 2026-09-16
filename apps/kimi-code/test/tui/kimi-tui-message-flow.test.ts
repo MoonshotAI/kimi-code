@@ -953,48 +953,55 @@ describe('KimiTUI message flow', () => {
               type: 'message',
               time: 1,
               message: {
-                role: 'user',
-                content: [{ type: 'text', text: 'earlier question' }],
-                toolCalls: [],
-                origin: { kind: 'user' },
+                message: {
+                  role: 'user',
+                  content: [{ type: 'text', text: 'earlier question' }],
+                },
+                meta: { origin: { kind: 'user' } },
               },
             },
             {
               type: 'message',
               time: 2,
               message: {
-                role: 'assistant',
-                content: [{ type: 'text', text: 'earlier answer' }],
-                toolCalls: [],
+                message: {
+                  role: 'assistant',
+                  content: [{ type: 'text', text: 'earlier answer' }],
+                  toolCalls: [],
+                },
               },
             },
             {
               type: 'message',
               time: 3,
               message: {
-                role: 'user',
-                content: [{ type: 'text', text: 'hook note' }],
-                toolCalls: [],
-                origin: { kind: 'hook_result', event: 'UserPromptSubmit' },
+                message: {
+                  role: 'user',
+                  content: [{ type: 'text', text: 'hook note' }],
+                },
+                meta: { origin: { kind: 'hook_result', event: 'UserPromptSubmit' } },
               },
             },
             {
               type: 'message',
               time: 4,
               message: {
-                role: 'user',
-                content: [
-                  { type: 'text', text: 'skill card A body' },
-                  { type: 'text', text: 'skill card B body' },
-                  { type: 'text', text: 'please /skill:review and /skill:security' },
-                ],
-                toolCalls: [],
-                origin: {
-                  kind: 'user',
-                  skillActivations: [
-                    { activationId: 'act-1', skillName: 'review' },
-                    { activationId: 'act-2', skillName: 'security' },
+                message: {
+                  role: 'user',
+                  content: [
+                    { type: 'text', text: 'skill card A body' },
+                    { type: 'text', text: 'skill card B body' },
+                    { type: 'text', text: 'please /skill:review and /skill:security' },
                   ],
+                },
+                meta: {
+                  origin: {
+                    kind: 'user',
+                    skillActivations: [
+                      { activationId: 'act-1', skillName: 'review' },
+                      { activationId: 'act-2', skillName: 'security' },
+                    ],
+                  },
                 },
               },
             },
@@ -1002,24 +1009,29 @@ describe('KimiTUI message flow', () => {
               type: 'message',
               time: 5,
               message: {
-                role: 'assistant',
-                content: [{ type: 'text', text: 'bundled answer' }],
-                toolCalls: [],
+                message: {
+                  role: 'assistant',
+                  content: [{ type: 'text', text: 'bundled answer' }],
+                  toolCalls: [],
+                },
               },
             },
             {
               type: 'message',
               time: 6,
               message: {
-                role: 'user',
-                content: [
-                  { type: 'text', text: 'skill card C body' },
-                  { type: 'text', text: 'please /commit' },
-                ],
-                toolCalls: [],
-                origin: {
-                  kind: 'user',
-                  skillActivations: [{ activationId: 'act-3', skillName: 'commit' }],
+                message: {
+                  role: 'user',
+                  content: [
+                    { type: 'text', text: 'skill card C body' },
+                    { type: 'text', text: 'please /commit' },
+                  ],
+                },
+                meta: {
+                  origin: {
+                    kind: 'user',
+                    skillActivations: [{ activationId: 'act-3', skillName: 'commit' }],
+                  },
                 },
               },
             },
@@ -1103,64 +1115,73 @@ describe('KimiTUI message flow', () => {
               type: 'message',
               time: 1,
               message: {
-                role: 'user',
-                content: [{ type: 'text', text: 'first question' }],
-                toolCalls: [],
-                origin: { kind: 'user' },
+                message: {
+                  role: 'user',
+                  content: [{ type: 'text', text: 'first question' }],
+                },
+                meta: { origin: { kind: 'user' } },
               },
             },
             {
               type: 'message',
               time: 2,
               message: {
-                role: 'assistant',
-                content: [],
-                toolCalls: [
-                  {
-                    type: 'function',
-                    id: 'tc-notify-1',
-                    name: 'NotifyUser',
-                    arguments: JSON.stringify({ message: 'first-turn update' }),
-                  },
-                ],
+                message: {
+                  role: 'assistant',
+                  content: [],
+                  toolCalls: [
+                    {
+                      type: 'function',
+                      id: 'tc-notify-1',
+                      name: 'NotifyUser',
+                      arguments: JSON.stringify({ message: 'first-turn update' }),
+                    },
+                  ],
+                },
               },
             },
             {
               type: 'message',
               time: 3,
               message: {
-                role: 'tool',
-                toolCallId: 'tc-notify-1',
-                content: [{ type: 'text', text: 'Update shown to the user.' }],
-                toolCalls: [],
+                message: {
+                  role: 'tool',
+                  toolCallId: 'tc-notify-1',
+                  content: [{ type: 'text', text: 'Update shown to the user.' }],
+                },
               },
             },
             {
               type: 'message',
               time: 4,
               message: {
-                role: 'assistant',
-                content: [{ type: 'text', text: 'first answer' }],
-                toolCalls: [],
+                message: {
+                  role: 'assistant',
+                  content: [{ type: 'text', text: 'first answer' }],
+                  toolCalls: [],
+                },
               },
             },
             {
               type: 'message',
               time: 5,
               message: {
-                role: 'user',
-                content: [{ type: 'text', text: 'second question' }],
-                toolCalls: [],
-                origin: { kind: 'user' },
+                message: {
+                  role: 'user',
+                  content: [{ type: 'text', text: 'second question' }],
+                },
+                meta: { origin: { kind: 'user' } },
               },
             },
             {
               type: 'message',
               time: 6,
               message: {
-                role: 'assistant',
-                content: [{ type: 'text', text: 'second answer' }],
-                toolCalls: [],
+                message: {
+                  role: 'assistant',
+                  content: [{ type: 'text', text: 'second answer' }],
+                  toolCalls: [],
+                },
               },
             },
           ],
@@ -1199,55 +1220,62 @@ describe('KimiTUI message flow', () => {
               type: 'message',
               time: 1,
               message: {
-                role: 'user',
-                content: [{ type: 'text', text: 'first question' }],
-                toolCalls: [],
-                origin: { kind: 'user' },
+                message: {
+                  role: 'user',
+                  content: [{ type: 'text', text: 'first question' }],
+                },
+                meta: { origin: { kind: 'user' } },
               },
             },
             {
               type: 'message',
               time: 2,
               message: {
-                role: 'assistant',
-                content: [],
-                toolCalls: [
-                  {
-                    type: 'function',
-                    id: 'tc-notify-cron',
-                    name: 'NotifyUser',
-                    arguments: JSON.stringify({ message: 'update from the prompt turn' }),
-                  },
-                ],
+                message: {
+                  role: 'assistant',
+                  content: [],
+                  toolCalls: [
+                    {
+                      type: 'function',
+                      id: 'tc-notify-cron',
+                      name: 'NotifyUser',
+                      arguments: JSON.stringify({ message: 'update from the prompt turn' }),
+                    },
+                  ],
+                },
               },
             },
             {
               type: 'message',
               time: 3,
               message: {
-                role: 'tool',
-                toolCallId: 'tc-notify-cron',
-                content: [{ type: 'text', text: 'Update shown to the user.' }],
-                toolCalls: [],
+                message: {
+                  role: 'tool',
+                  toolCallId: 'tc-notify-cron',
+                  content: [{ type: 'text', text: 'Update shown to the user.' }],
+                },
               },
             },
             {
               type: 'message',
               time: 4,
               message: {
-                role: 'user',
-                content: [{ type: 'text', text: 'check the build' }],
-                toolCalls: [],
-                origin: { kind: 'cron_job', jobId: 'job-1', cron: '*/5 * * * *', recurring: true },
+                message: {
+                  role: 'user',
+                  content: [{ type: 'text', text: 'check the build' }],
+                },
+                meta: { origin: { kind: 'cron_job', jobId: 'job-1', cron: '*/5 * * * *', recurring: true } },
               },
             },
             {
               type: 'message',
               time: 5,
               message: {
-                role: 'assistant',
-                content: [{ type: 'text', text: 'build is green' }],
-                toolCalls: [],
+                message: {
+                  role: 'assistant',
+                  content: [{ type: 'text', text: 'build is green' }],
+                  toolCalls: [],
+                },
               },
             },
           ],
@@ -1276,19 +1304,22 @@ describe('KimiTUI message flow', () => {
         type: 'message',
         time: index * 2,
         message: {
-          role: 'user',
-          content: [{ type: 'text', text: `question ${index}` }],
-          toolCalls: [],
-          origin: { kind: 'user' },
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: `question ${index}` }],
+          },
+          meta: { origin: { kind: 'user' } },
         },
       },
       {
         type: 'message',
         time: index * 2 + 1,
         message: {
-          role: 'assistant',
-          content: [{ type: 'text', text: `answer ${index}` }],
-          toolCalls: [],
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: `answer ${index}` }],
+            toolCalls: [],
+          },
         },
       },
     ];
@@ -1309,25 +1340,29 @@ describe('KimiTUI message flow', () => {
               type: 'message',
               time: 1,
               message: {
-                role: 'user',
-                content: [{ type: 'text', text: 'hook note' }],
-                toolCalls: [],
-                origin: { kind: 'hook_result', event: 'UserPromptSubmit' },
+                message: {
+                  role: 'user',
+                  content: [{ type: 'text', text: 'hook note' }],
+                },
+                meta: { origin: { kind: 'hook_result', event: 'UserPromptSubmit' } },
               },
             },
             {
               type: 'message',
               time: 2,
               message: {
-                role: 'user',
-                content: [
-                  { type: 'text', text: 'review body' },
-                  { type: 'text', text: 'bundled question' },
-                ],
-                toolCalls: [],
-                origin: {
-                  kind: 'user',
-                  skillActivations: [{ activationId: 'act-1', skillName: 'review' }],
+                message: {
+                  role: 'user',
+                  content: [
+                    { type: 'text', text: 'review body' },
+                    { type: 'text', text: 'bundled question' },
+                  ],
+                },
+                meta: {
+                  origin: {
+                    kind: 'user',
+                    skillActivations: [{ activationId: 'act-1', skillName: 'review' }],
+                  },
                 },
               },
             },
@@ -1335,9 +1370,11 @@ describe('KimiTUI message flow', () => {
               type: 'message',
               time: 3,
               message: {
-                role: 'assistant',
-                content: [{ type: 'text', text: 'bundled answer' }],
-                toolCalls: [],
+                message: {
+                  role: 'assistant',
+                  content: [{ type: 'text', text: 'bundled answer' }],
+                  toolCalls: [],
+                },
               },
             },
             ...Array.from({ length: 9 }, (_, i) => plainTurn(i + 10)).flat(),

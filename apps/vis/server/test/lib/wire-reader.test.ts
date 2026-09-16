@@ -65,7 +65,7 @@ describe('wire-reader', () => {
       expect(entry.data.type).toBe('context.append_message');
 
       // `data` carries the migrated (flat) shape.
-      const dataMsg = (entry.data as { message: { toolCalls: unknown[] } }).message;
+      const dataMsg = (entry.data as unknown as { message: { toolCalls: unknown[] } }).message;
       expect(dataMsg.toolCalls[0]).toEqual({
         type: 'function',
         id: 'call_1',

@@ -4118,21 +4118,25 @@ describe('Agent tools', () => {
       expect(ctx.contextData().history).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            role: 'tool',
-            toolCallId: 'call_agent',
-            content: [
-              expect.objectContaining({
-                text: expect.stringContaining('reason=max_tokens'),
-              }),
-            ],
+            message: expect.objectContaining({
+              role: 'tool',
+              toolCallId: 'call_agent',
+              content: [
+                expect.objectContaining({
+                  text: expect.stringContaining('reason=max_tokens'),
+                }),
+              ],
+            }),
           }),
           expect.objectContaining({
-            role: 'assistant',
-            content: [
-              expect.objectContaining({
-                text: 'I recovered from the subagent failure.',
-              }),
-            ],
+            message: expect.objectContaining({
+              role: 'assistant',
+              content: [
+                expect.objectContaining({
+                  text: 'I recovered from the subagent failure.',
+                }),
+              ],
+            }),
           }),
         ]),
       );
@@ -4324,12 +4328,12 @@ describe('Agent tools', () => {
         [emit] prompt.submitted            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Look up moon" } ], "createdAt": "<time>" }
         [wire] turn.started                { "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "input": [ { "type": "text", "text": "Look up moon" } ], "time": "<time>" }
         [emit] turn.started                { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "input": [ { "type": "text", "text": "Look up moon" } ] }
-        [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "id": "<msg-1>", "toolCalls": [], "origin": { "kind": "user" } } ] }
+        [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "message": { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ] }, "meta": { "promptId": "<msg-1>", "origin": { "kind": "user" } } } ] }
         [emit] prompt.started              { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
-        [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 1, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "<auto-mode-enter-reminder>", "contentType": "text/xml" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "permission_mode" } } ] }
-        [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "id": "<msg-1>", "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
+        [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 1, "deleteCount": 0, "messages": [ { "message": { "role": "user", "content": [ { "type": "text", "text": "<auto-mode-enter-reminder>", "contentType": "text/xml" } ] }, "meta": { "origin": { "kind": "injection", "variant": "permission_mode" } } } ] }
+        [wire] context.append_message      { "agentId": "main", "message": { "message": { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ] }, "meta": { "promptId": "<msg-1>", "origin": { "kind": "user" } } }, "time": "<time>" }
         [wire] agent.message.appended      { "message": { "message": { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ] }, "meta": { "source": "input", "promptId": "<msg-1>", "origin": { "kind": "user" }, "tracked": true, "createdAt": "<time>", "userMessageId": "<msg-1>" } }, "time": "<time>", "kind": "event" }
-        [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "<auto-mode-enter-reminder>", "contentType": "text/xml" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "permission_mode" } }, "time": "<time>" }
+        [wire] context.append_message      { "agentId": "main", "message": { "message": { "role": "user", "content": [ { "type": "text", "text": "<auto-mode-enter-reminder>", "contentType": "text/xml" } ] }, "meta": { "origin": { "kind": "injection", "variant": "permission_mode" } } }, "time": "<time>" }
         [wire] agent.turn.started          { "turnId": 0, "queueItemId": "<msg-1>", "time": "<time>", "kind": "event" }
         [wire] plugin.session_start        { "agentId": "main", "content": null, "time": "<time>" }
         [emit] turn.step.started           { "time": "<time>", "agentId": "main", "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
@@ -4401,9 +4405,9 @@ describe('Agent tools', () => {
         [emit] prompt.submitted               { "time": "<time>", "agentId": "main", "promptId": "<msg-2>", "userMessageId": "<msg-2>", "status": "running", "content": [ { "type": "text", "text": "Can you still use Lookup?" } ], "createdAt": "<time>" }
         [wire] turn.started                   { "agentId": "main", "turnId": 1, "promptId": "<msg-2>", "origin": { "kind": "user" }, "input": [ { "type": "text", "text": "Can you still use Lookup?" } ], "time": "<time>" }
         [emit] turn.started                   { "time": "<time>", "agentId": "main", "turnId": 1, "promptId": "<msg-2>", "origin": { "kind": "user" }, "input": [ { "type": "text", "text": "Can you still use Lookup?" } ] }
-        [emit] context.spliced                { "time": "<time>", "agentId": "main", "start": 5, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Can you still use Lookup?" } ], "id": "<msg-2>", "toolCalls": [], "origin": { "kind": "user" } } ] }
+        [emit] context.spliced                { "time": "<time>", "agentId": "main", "start": 5, "deleteCount": 0, "messages": [ { "message": { "role": "user", "content": [ { "type": "text", "text": "Can you still use Lookup?" } ] }, "meta": { "promptId": "<msg-2>", "origin": { "kind": "user" } } } ] }
         [emit] prompt.started                 { "time": "<time>", "agentId": "main", "promptId": "<msg-2>" }
-        [wire] context.append_message         { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Can you still use Lookup?" } ], "id": "<msg-2>", "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
+        [wire] context.append_message         { "agentId": "main", "message": { "message": { "role": "user", "content": [ { "type": "text", "text": "Can you still use Lookup?" } ] }, "meta": { "promptId": "<msg-2>", "origin": { "kind": "user" } } }, "time": "<time>" }
         [wire] agent.message.appended         { "message": { "message": { "role": "user", "content": [ { "type": "text", "text": "Can you still use Lookup?" } ] }, "meta": { "source": "input", "promptId": "<msg-2>", "origin": { "kind": "user" }, "tracked": true, "createdAt": "<time>", "userMessageId": "<msg-2>" } }, "time": "<time>", "kind": "event" }
         [wire] agent.turn.started             { "turnId": 1, "queueItemId": "<msg-2>", "time": "<time>", "kind": "event" }
         [emit] turn.step.started              { "time": "<time>", "agentId": "main", "turnId": 1, "step": 1, "stepId": "<uuid-6>" }

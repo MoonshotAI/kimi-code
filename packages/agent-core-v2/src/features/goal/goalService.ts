@@ -14,7 +14,9 @@ import {
   type AgentActorRestoreEvent,
 } from '#/agent/actorService/agentActorService';
 import { ContextAppendMessage } from '#/agent/contextMemory/contextEvents';
-import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
+import { normalizeReplayedEntry } from '#/agent/contextMemory/loopEventFold';
+import type { PromptOrigin } from '#/agent/contextMemory/types';
+import { isUserEntry, type HistoryMessage } from '#human/agent/turn';
 import { GoalInjection, GOAL_WAIT_FOR_GUIDANCE } from '#/features/goal/injection/goalInjection';
 import { LOOP_CONTROL_SECTION, type LoopControl } from '#/agent/loop/configSection';
 import { LoopErrors } from '#/agent/loop/errors';
@@ -228,8 +230,8 @@ type GoalEffectEvent = GoalDeadlineRefreshEvent | GoalDeadlineClearEvent;
 type GoalActorEvent = GoalCommitEvent | AgentActorRestoreEvent | GoalEffectEvent;
 type GoalActorSnapshot = Snapshot<unknown> & { readonly context: GoalActorContext; };
 
-function isGoalForkClearedReminder(message: ContextMessage | undefined): boolean {
-  const origin = message?.origin;
+function isGoalForkClearedReminder(message: HistoryMessage | undefined): boolean {
+  const origin = message !== undefined && isUserEntry(message) ? message.meta?.origin : undefined;
   if (origin?.kind === 'injection') return origin.variant === GOAL_FORK_CLEARED_REMINDER_NAME;
   return origin?.kind === 'system_trigger' && origin.name === GOAL_FORK_CLEARED_REMINDER_NAME;
 }
@@ -1372,7 +1374,7 @@ export class AgentGoalService extends AgentActorService<GoalRuntimeState> implem
             return;
           }
           if (event instanceof ContextAppendMessage) {
-            if (state.forkNotice.reminderPending && isGoalForkClearedReminder(event.message)) {
+            if (state.forkNotice.reminderPending && isGoalForkClearedReminder(normalizeReplayedEntry(event.message))) {
               state.forkNotice.reminderPending = false;
             }
           }

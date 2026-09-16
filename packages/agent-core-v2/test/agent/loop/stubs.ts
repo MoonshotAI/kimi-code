@@ -53,7 +53,7 @@ import type { AgentEventStore } from '#human/agent/slices';
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { BeforeToolExecuteEvent, ToolDidExecuteContext, WillExecuteToolEvent } from '#/agent/toolExecutor/toolHooks';
 import { OrderedHookSlot } from '#/hooks';
-import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
+import type { HistoryMessage } from '#human/agent/turn';
 import { createHooks } from '#/hooks';
 import type { IWireService } from '#/wire/wire';
 
@@ -67,7 +67,7 @@ export type StubLoop = IAgentLoopService & {
   readonly queue: { hasPendingRequests(): boolean };
   startTurn(): StubTurn;
   settleActive(result?: TurnResult): void;
-  drainNextBatch(context: { append(...messages: ContextMessage[]): void }): { readonly driver: { readonly kind: string } } | undefined;
+  drainNextBatch(context: { append(...messages: HistoryMessage[]): void }): { readonly driver: { readonly kind: string } } | undefined;
 };
 const turnControllers = new WeakMap<Turn, AbortController>();
 export function makeTurn(id: number): StubTurn {
@@ -76,7 +76,7 @@ export function makeTurn(id: number): StubTurn {
   turnControllers.set(turn, controller);
   return turn;
 }
-interface PendingEntry { readonly kind: string; readonly message?: ContextMessage; readonly onConsume?: () => void }
+interface PendingEntry { readonly kind: string; readonly message?: UserEntry; readonly onConsume?: () => void }
 function registry(): { handlers: LoopErrorHandler[]; register: IAgentLoopService['registerLoopErrorHandler'] } {
   const handlers: LoopErrorHandler[] = [];
   const remove = (id: string) => { const i = handlers.findIndex((h) => h.id === id); if (i >= 0) handlers.splice(i, 1); };
@@ -145,18 +145,13 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
     submit(input: UserEntry, options?: LoopSubmitOptions) {
       const turn = startTurn();
       const id = input.meta?.promptId ?? 'p';
-      const message: ContextMessage = {
-        ...input.message,
-        toolCalls: [],
-        origin: input.meta?.origin as PromptOrigin | undefined,
-      };
-      pending.push({ kind: 'prompt', message, onConsume: options?.onMaterialize });
+      pending.push({ kind: 'prompt', message: input, onConsume: options?.onMaterialize });
       handles.set(id, {
         id,
         userMessageId: id,
         createdAt: '',
         state: 'running',
-        message,
+        message: input,
         launched: Promise.resolve(turn),
         completion: new Promise(() => {}),
       });
@@ -208,7 +203,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
       if (batch.length === 0) return undefined;
       for (const entry of batch) {
         entry.onConsume?.();
-        if (entry.message !== undefined && entry.message.content.length > 0) context.append(entry.message);
+        if (entry.message !== undefined && entry.message.message.content.length > 0) context.append(entry.message);
       }
       return { driver: { kind: batch[0]!.kind } };
     },

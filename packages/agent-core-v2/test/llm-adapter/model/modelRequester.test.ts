@@ -19,7 +19,7 @@ import {
   PROVIDER_AUTH_ERROR_CODE,
   isAbortError,
 } from '#/llm-adapter/contract/errors';
-import type { Message } from '#/llm-adapter/contract/message';
+import type { Message } from '#human/llm/message';
 import type { Model } from '#/llm-adapter/model/catalog';
 import type { ModelRequestEvent } from '#/llm-adapter/model/model-requester';
 import { effectiveMaxCompletionTokens } from '#/llm-adapter/model/model-requester';
@@ -125,17 +125,15 @@ describe('ModelRequesterImpl request execution', () => {
       {
         role: 'system',
         content: [{ type: 'text', text: 's' }],
-        toolCalls: [],
         tools: [{ name: 'decl', description: 'd', parameters: {} }],
       },
-      { role: 'user', content: [{ type: 'text', text: 'u' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'u' }] },
       {
         role: 'assistant',
         content: [{ type: 'text', text: 'a' }],
         toolCalls: [{ type: 'function', id: 'c1', name: 't', arguments: '{}' }],
-        partial: true,
       },
-      { role: 'tool', content: [{ type: 'text', text: 'r' }], toolCalls: [], toolCallId: 'c1' },
+      { role: 'tool', content: [{ type: 'text', text: 'r' }], toolCallId: 'c1' },
     ];
 
     await collect(

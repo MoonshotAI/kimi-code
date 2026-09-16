@@ -5,16 +5,21 @@
 // (v1-written / pre-migration) wires still contain on disk.
 
 export type {
-  ContextMessage,
+  AssistantEntry,
+  HistoryMessage,
   LoopRecordedEvent,
   Message,
   ContentPart,
+  SystemEntry,
   ToolCall,
+  ToolEntry,
+  UserEntry,
   TokenUsage,
   PermissionMode,
   PromptOrigin,
   CronTask,
 } from '@moonshot-ai/agent-core-v2';
+export { isAssistantEntry, isSystemEntry, isToolEntry, isUserEntry } from '@moonshot-ai/agent-core-v2';
 export { WIRE_PROTOCOL_VERSION } from '@moonshot-ai/agent-core-v2/wire/migration/migration';
 export type {
   AgentTaskInfo as BackgroundTaskInfo,

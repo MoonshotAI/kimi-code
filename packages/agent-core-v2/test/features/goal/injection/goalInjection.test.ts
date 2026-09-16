@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ToolCall } from '#human/llm/message';
+import { isUserEntry } from '#human/agent/turn';
+import { normalizeReplayedEntry } from '#/agent/contextMemory/loopEventFold';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -93,9 +95,10 @@ describe('GoalInjection content', () => {
 
     await injectDynamic(local, true);
     expect(lastGoalReminder(localContext)).toContain('<untrusted_objective>');
-    expect(localContext.get().filter((message) =>
-      message.origin?.kind === 'injection' && message.origin.variant === 'goal'
-    )).toHaveLength(1);
+    expect(localContext.get().filter((entry) => {
+      const origin = isUserEntry(entry) ? entry.meta?.origin : undefined;
+      return origin?.kind === 'injection' && origin.variant === 'goal';
+    })).toHaveLength(1);
 
     await local.dispose();
     const count = localContext.get().length;
@@ -230,8 +233,12 @@ describe('GoalInjection content', () => {
 function goalReminderRecords(persistence: InMemoryWireRecordPersistence) {
   return persistence.records.filter((r) => {
     if (r.type !== 'context.append_message') return false;
-    const message = (r as { message?: { origin?: { kind?: string; variant?: string } } }).message;
-    return message?.origin?.kind === 'injection' && message?.origin?.variant === 'goal';
+    const raw = (r as { message?: unknown }).message;
+    if (raw === null || typeof raw !== 'object') return false;
+    const entry = normalizeReplayedEntry(raw);
+    if (!isUserEntry(entry)) return false;
+    const origin = entry.meta?.origin;
+    return origin?.kind === 'injection' && origin.variant === 'goal';
   });
 }
 
@@ -244,11 +251,12 @@ async function flushedGoalReminderRecords(
 }
 
 function lastGoalReminder(context: IAgentContextMemoryService): string | undefined {
-  const message = context.get().findLast((item) => {
-    return item.origin?.kind === 'injection' && item.origin.variant === 'goal';
+  const entry = context.get().findLast((item) => {
+    const origin = isUserEntry(item) ? item.meta?.origin : undefined;
+    return origin?.kind === 'injection' && origin.variant === 'goal';
   });
-  if (message === undefined) return undefined;
-  return message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+  if (entry === undefined) return undefined;
+  return entry.message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
 }
 
 describe('GoalInjection integration', () => {

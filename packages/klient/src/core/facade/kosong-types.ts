@@ -5,8 +5,8 @@
  * `providerService`/`modelService` wire formats.
  */
 
-import type { Message } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/message';
 import type {
+  Message,
   StreamedMessagePart,
   ToolDescription as Tool,
 } from '@moonshot-ai/agent-core-v2/human/llm/message';

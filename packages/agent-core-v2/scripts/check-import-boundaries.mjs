@@ -43,6 +43,8 @@ function basesInternalViolation(absFile, targetAbs, specifier) {
 const HUMAN_VOCABULARY = new Set([
   'agent/historyBuilder',
   'agent/origin',
+  'agent/taskStatus',
+  'agent/turn',
   'llm/message',
   'llm/usage',
   'llm/capability',
@@ -54,6 +56,7 @@ const HUMAN_VOCABULARY = new Set([
   'llm/requester/requester',
   'llm/toolCallIdNormalizer',
   'llm-kimi/trait',
+  'tool/toolInputDisplay',
   'interaction/interaction',
   'interaction/machine',
   'interaction/facade',

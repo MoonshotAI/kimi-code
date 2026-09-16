@@ -18,7 +18,7 @@ import type { ContextInjectionProvider, ContextInjectionResult } from '#/feature
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { createReminderStub } from '../reminder/stubs';
 import { AgentContextMemoryService } from '#/agent/contextMemory/contextMemoryService';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import { isUserEntry, type HistoryMessage } from '#human/agent/turn';
 import { DEFAULT_SWARM_TIMEOUT_MS, SWARM_SECTION } from '#/features/swarm/configSection';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionSwarmService, type SessionSwarmRunResult, type SessionSwarmTask } from '#/features/swarm/session/sessionSwarm';import { IAgentStateService } from '#/agent/state/agentState';
@@ -82,21 +82,22 @@ async function runInjectionBoundary(loop: IAgentLoopService): Promise<void> {
   await loop.hooks.onWillBeginStep.run({ turnId: 0, step: 1, firstStepOfTurn: true, signal });
 }
 
-function messageText(message: ContextMessage | undefined): string {
+function messageText(entry: HistoryMessage | undefined): string {
   return (
-    message?.content.map((part) => (part.type === 'text' ? part.text : '')).join('') ?? ''
+    entry?.message.content.map((part) => (part.type === 'text' ? part.text : '')).join('') ?? ''
   );
 }
 
 function swarmReminder(
   content: string,
   disclosure?: { readonly kind: 'swarm_mode'; readonly state: 'active' },
-): ContextMessage {
+): HistoryMessage {
   return {
-    role: 'user',
-    content: [...createHistoryMessageBuilder().systemReminder(content).parts()],
-    toolCalls: [],
-    origin: { kind: 'injection', variant: 'swarm_mode', disclosure },
+    message: {
+      role: 'user',
+      content: [...createHistoryMessageBuilder().systemReminder(content).parts()],
+    },
+    meta: { origin: { kind: 'injection', variant: 'swarm_mode', disclosure } },
   };
 }
 
@@ -309,17 +310,19 @@ describe('AgentSwarmService', () => {
     loop.hooks.onWillBeginStep.register('test-reminder', async ({ firstStepOfTurn }, next) => {
       const context = ix.get(IAgentContextMemoryService);
       const history = context.get();
-      const positions = history.flatMap((message, index) =>
-        message.origin?.kind === 'injection' && message.origin.variant === 'swarm_mode' ? [index] : [],
-      );
+      const positions = history.flatMap((entry, index) => {
+        const origin = isUserEntry(entry) ? entry.meta?.origin : undefined;
+        return origin?.kind === 'injection' && origin.variant === 'swarm_mode' ? [index] : [];
+      });
       const lastInjectedAt = positions.at(-1) ?? null;
       const lastInjection = lastInjectedAt === null ? undefined : history[lastInjectedAt];
+      const lastOrigin = lastInjection !== undefined && isUserEntry(lastInjection) ? lastInjection.meta?.origin : undefined;
       const value = await provider?.({
         injectedPositions: positions,
         lastInjectedAt,
         lastInjection,
-        lastDisclosure: lastInjection?.origin?.kind === 'injection'
-          ? lastInjection.origin.disclosure
+        lastDisclosure: lastOrigin?.kind === 'injection'
+          ? lastOrigin.disclosure
           : undefined,
         isNewTurn: firstStepOfTurn,
       });
@@ -330,10 +333,11 @@ describe('AgentSwarmService', () => {
             : { content: value };
         if (typeof result.content === 'string') {
           context.append({
-            role: 'user',
-            content: [...createHistoryMessageBuilder().systemReminder(result.content).parts()],
-            toolCalls: [],
-            origin: { kind: 'injection', variant: 'swarm_mode', disclosure: result.disclosure },
+            message: {
+              role: 'user',
+              content: [...createHistoryMessageBuilder().systemReminder(result.content).parts()],
+            },
+            meta: { origin: { kind: 'injection', variant: 'swarm_mode', disclosure: result.disclosure } },
           });
         }
       }
@@ -400,10 +404,14 @@ describe('AgentSwarmService', () => {
     await runInjectionBoundary(ix.get(IAgentLoopService));
 
     const reminder = context.get().at(-1);
-    expect(reminder?.origin).toEqual({
-      kind: 'injection',
-      variant: 'swarm_mode',
-      disclosure: { kind: 'swarm_mode', state: 'active' },
+    expect(reminder).toMatchObject({
+      meta: {
+        origin: {
+          kind: 'injection',
+          variant: 'swarm_mode',
+          disclosure: { kind: 'swarm_mode', state: 'active' },
+        },
+      },
     });
     expect(context.get()).toHaveLength(1);
   });
@@ -438,17 +446,22 @@ describe('AgentSwarmService', () => {
     swarm.enter('manual');
     await runInjectionBoundary(ix.get(IAgentLoopService));
     context.append({
-      role: 'user',
-      content: [{ type: 'text', text: 'later prompt' }],
-      toolCalls: [],
-      origin: { kind: 'user' },
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'later prompt' }],
+      },
+      meta: { origin: { kind: 'user' } },
     });
     swarm.exit();
 
     expect(context.get()).toHaveLength(2);
-    expect(context.get()[0]?.origin).toMatchObject({
-      kind: 'injection',
-      variant: 'swarm_mode',
+    expect(context.get()[0]).toMatchObject({
+      meta: {
+        origin: {
+          kind: 'injection',
+          variant: 'swarm_mode',
+        },
+      },
     });
     expect(messageText(context.get()[1])).toBe('later prompt');
   });
@@ -642,12 +655,12 @@ describe('swarm context reconciliation', () => {
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'third prompt' }] });
       await ctx.untilTurnEnd();
 
-      const reminders = ctx.contextData().history.filter(
-        (message) =>
-          message.origin?.kind === 'injection' && message.origin.variant === 'swarm_mode',
-      );
+      const reminders = ctx.contextData().history.filter((entry) => {
+        const origin = isUserEntry(entry) ? entry.meta?.origin : undefined;
+        return origin?.kind === 'injection' && origin.variant === 'swarm_mode';
+      });
       const latest = reminders.at(-1);
-      const text = latest?.content
+      const text = latest?.message.content
         .map((part) => (part.type === 'text' ? part.text : ''))
         .join('');
       expect(text).toContain('Swarm Mode has ended.');

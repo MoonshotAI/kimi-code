@@ -25,10 +25,16 @@ import {
   isRecoverableRequestStructureError,
   isRetryableGenerateError,
 } from '#/llm-adapter/contract/errors';
-import type { Message } from '#/llm-adapter/contract/message';
 import { type ThinkingEffort } from '#human/llm/thinking';
 import type { LlmCredentialProvider } from '#human/llm/requester/requester';
-import { isToolCall, type StreamedMessagePart, type ToolDescription as Tool } from '#human/llm/message';
+import {
+  isToolCall,
+  type AssistantMessage,
+  type Message,
+  type StreamedMessagePart,
+  type ToolDescription as Tool,
+} from '#human/llm/message';
+import type { HistoryMessage } from '#human/agent/turn';
 import { emptyUsage, inputTotal, type TokenUsage } from '#human/llm/usage';
 import { ILogService, type LogContext } from '#/_base/log/log';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
@@ -104,7 +110,7 @@ interface ResolvedLLMRequest {
   readonly thinkingEffort: ThinkingEffort;
   readonly systemPrompt: string;
   readonly tools: readonly Tool[];
-  readonly messages: Message[];
+  readonly messages: HistoryMessage[];
   readonly source: AgentLLMRequestSource | undefined;
   readonly logFields: AgentLLMRequestLogFields;
 }
@@ -338,7 +344,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     onRequestTrace: (traceId: string | undefined) => void,
     onAttemptRetry: (() => void) | undefined,
   ): Promise<AgentLLMRequestFinish> {
-    this.toolCallIdNormalizer.seedFrom(this.context.get());
+    this.toolCallIdNormalizer.seedFrom(this.context.get().map((entry) => entry.message));
     const shaped = this.toolSelect.shapeHistory(request.messages);
     const recoveredStrip = this.mediaStripSnapshotForTurn(request.source);
     let policy: ProjectionPolicy | undefined =
@@ -384,7 +390,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       this.logRequest(logInput);
       this.recordRequest(logInput);
 
-      let message: Message | undefined;
+      let message: AssistantMessage | undefined;
       let usage: TokenUsage | undefined;
       let timing: ModelRequestTiming | undefined;
       let finish: Extract<ModelRequestEvent, { type: 'finish' }> | undefined;
@@ -450,7 +456,12 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         request.source,
       );
       if (usage !== undefined) {
-        this.tokenCounting.measured(this.scopeContext.agentContext, request.messages, [message], usage);
+        this.tokenCounting.measured(
+          this.scopeContext.agentContext,
+          request.messages.map((entry) => entry.message),
+          [message],
+          usage,
+        );
       }
       this.logResponse(request.logFields, usage ?? emptyUsage(), timing);
 
@@ -732,9 +743,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       this.log.info('llm config', { ...logFields, ...config });
     }
 
-    const partialMessageCount = input.messages.filter((message) => message.partial === true).length;
     const requestFields: LogContext = { ...logFields };
-    if (partialMessageCount > 0) requestFields['partialMessageCount'] = partialMessageCount;
     this.log.info('llm request', requestFields);
   }
 

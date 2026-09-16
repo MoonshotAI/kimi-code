@@ -45,7 +45,8 @@ import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
 import { AgentToolDedupeService } from '#/agent/toolDedupe/toolDedupeService';
-import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
+import { isUserEntry, type HistoryMessage, type UserEntry } from '#human/agent/turn';
+import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { createReminderHarness } from '../../features/reminder/stubs';
@@ -312,14 +313,16 @@ function outputText(result: ExecutableToolResult): string {
     .join('');
 }
 
-function agentsMdMessages(h: Harness): readonly ContextMessage[] {
-  return h.context.messages.filter(
-    (message) => message.origin?.kind === 'injection' && message.origin.variant === 'agents_md',
-  );
+function agentsMdMessages(h: Harness): readonly UserEntry[] {
+  return h.context.messages.filter((entry): entry is UserEntry => {
+    if (!isUserEntry(entry)) return false;
+    const origin = entry.meta?.origin;
+    return origin?.kind === 'injection' && origin.variant === 'agents_md';
+  });
 }
 
-function messageText(message: ContextMessage): string {
-  return message.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('');
+function messageText(entry: HistoryMessage): string {
+  return entry.message.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('');
 }
 
 function reminderText(h: Harness): string {
@@ -396,7 +399,7 @@ describe('agentsMdReminder path-carrying tools', () => {
 
     expect(outputText(result)).toBe('original result');
     expect(agentsMdMessages(h)).toHaveLength(1);
-    expect(agentsMdMessages(h)[0]?.origin).toMatchObject({
+    expect(agentsMdMessages(h)[0]?.meta?.origin).toMatchObject({
       kind: 'injection',
       variant: 'agents_md',
     });
@@ -588,9 +591,10 @@ describe('agentsMdReminder re-injection after context loss', () => {
     h.reminder.seedInjected([], workDir);
 
     h.context.append({
-      role: 'user',
-      content: [{ type: 'text', text: 'prompt' }],
-      toolCalls: [],
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'prompt' }],
+      },
     });
     await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
     expect(agentsMdMessages(h)).toHaveLength(1);

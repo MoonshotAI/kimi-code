@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { KeyedResourceLeasePool } from '#/_base/lifecycle/keyedResource';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { isUserEntry } from '#human/agent/turn';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { TodoFeature } from '#/features/todo/todoFeature';
@@ -18,18 +19,20 @@ import {
 } from '../../harness';
 
 function reminderInjected(ctx: TestAgentContext): boolean {
-  return ctx.context.get().some(
-    (message) =>
-      message.origin?.kind === 'injection' && message.origin.variant === TODO_LIST_REMINDER_VARIANT,
-  );
+  return ctx.context.get().some((entry) => {
+    const origin = isUserEntry(entry) ? entry.meta?.origin : undefined;
+    return origin?.kind === 'injection' && origin.variant === TODO_LIST_REMINDER_VARIANT;
+  });
 }
 
 function appendAssistantTurns(memory: IAgentContextMemoryService, count: number): void {
   for (let i = 0; i < count; i += 1) {
     memory.append({
-      role: 'assistant',
-      content: [{ type: 'text', text: `turn ${i}` }],
-      toolCalls: [],
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: `turn ${i}` }],
+        toolCalls: [],
+      },
     });
   }
 }
@@ -200,11 +203,10 @@ describe('AgentTodoService', () => {
     appendAssistantTurns(subMemory, 10);
     await subReminder.reconcileWhenIdle(TODO_LIST_REMINDER_VARIANT);
     expect(
-      subMemory.get().some(
-        (message) =>
-          message.origin?.kind === 'injection' &&
-          message.origin.variant === TODO_LIST_REMINDER_VARIANT,
-      ),
+      subMemory.get().some((entry) => {
+        const origin = isUserEntry(entry) ? entry.meta?.origin : undefined;
+        return origin?.kind === 'injection' && origin.variant === TODO_LIST_REMINDER_VARIANT;
+      }),
     ).toBe(false);
     await lifecycle.remove(sub);
   });

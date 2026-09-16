@@ -151,10 +151,11 @@ describe('plan ops (wire-backed)', () => {
       new ContextAppendMessage({
         agentId: 'test-agent',
         message: {
-          role: 'user',
-          content: [{ type: 'text', text: 'keep me' }],
-          toolCalls: [],
-          origin: { kind: 'user' },
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'keep me' }],
+          },
+          meta: { origin: { kind: 'user' } },
         },
       }),
     );

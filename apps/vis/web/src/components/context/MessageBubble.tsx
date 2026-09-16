@@ -5,6 +5,7 @@ import type {
   ProjectedMessage,
   ToolCall,
 } from '../../types';
+import { isAssistantEntry, isToolEntry, isUserEntry } from '../../types';
 import { ImagePreview } from '../shared/ImagePreview';
 import { Pill } from '../shared/Pill';
 
@@ -13,7 +14,7 @@ interface MessageBubbleProps {
 }
 
 export function MessageBubble({ message }: MessageBubbleProps) {
-  const role = message.message.role;
+  const role = message.message.message.role;
   if (role === 'user') return <UserBubble m={message} />;
   if (role === 'assistant') return <AssistantBubble m={message} />;
   if (role === 'tool') return <ToolBubble m={message} />;
@@ -25,7 +26,7 @@ function baseClass(): string {
 }
 
 function UserBubble({ m }: { m: ProjectedMessage }) {
-  const origin = m.message.origin;
+  const origin = isUserEntry(m.message) ? m.message.meta?.origin : undefined;
   const originKind = origin?.kind;
   // Badge every origin that is not a plain user prompt. This covers
   // skill_activation, task (v2; v1: background_task), cron_job, cron_missed,
@@ -39,18 +40,17 @@ function UserBubble({ m }: { m: ProjectedMessage }) {
         {showsOriginBadge ? (
           <Pill tone="meta" variant="outline">{originKind}</Pill>
         ) : null}
-        {m.message.isError ? <Pill tone="error" variant="outline">error</Pill> : null}
       </header>
-      <MessageContent parts={m.message.content} />
+      <MessageContent parts={m.message.message.content} />
     </article>
   );
 }
 
 function AssistantBubble({ m }: { m: ProjectedMessage }) {
-  const thinkPart = m.message.content.find((p) => p.type === 'think');
+  const thinkPart = m.message.message.content.find((p) => p.type === 'think');
   const think = thinkPart && thinkPart.type === 'think' ? thinkPart.think : undefined;
-  const visibleParts = m.message.content.filter((p) => p.type !== 'think');
-  const toolCalls = m.message.toolCalls;
+  const visibleParts = m.message.message.content.filter((p) => p.type !== 'think');
+  const toolCalls = m.message.message.role === 'assistant' ? m.message.message.toolCalls : [];
   return (
     <article className={baseClass()} style={{ borderLeftColor: 'var(--color-assistant)' }}>
       <header className="mb-1 flex items-center gap-2">
@@ -62,7 +62,7 @@ function AssistantBubble({ m }: { m: ProjectedMessage }) {
             {toolCalls.length} tool call{toolCalls.length > 1 ? 's' : ''}
           </Pill>
         ) : null}
-        {m.message.partial ? <Pill tone="warning" variant="outline">partial</Pill> : null}
+        {isAssistantEntry(m.message) && m.message.meta?.partial ? <Pill tone="warning" variant="outline">partial</Pill> : null}
       </header>
       {think ? <ThinkBlock text={think} /> : null}
       <MessageContent parts={visibleParts} />
@@ -81,12 +81,13 @@ function ToolBubble({ m }: { m: ProjectedMessage }) {
   // Tool outputs are often huge (file contents, command stdout). Collapse
   // by default so the conversation flow stays readable. Errors open by
   // default — that's the case where the user actually needs to read.
-  const [open, setOpen] = useState(m.message.isError === true);
-  const totalChars = m.message.content.reduce((acc, p) => {
+  const [open, setOpen] = useState(isToolEntry(m.message) && m.message.meta?.isError === true);
+  const toolCallId = m.message.message.role === 'tool' ? m.message.message.toolCallId : undefined;
+  const totalChars = m.message.message.content.reduce((acc, p) => {
     if (p.type === 'text') return acc + p.text.length;
     return acc;
   }, 0);
-  const preview = firstTextPreview(m.message.content);
+  const preview = firstTextPreview(m.message.message.content);
   return (
     <article className={baseClass()} style={{ borderLeftColor: 'var(--color-tool)' }}>
       <button
@@ -98,13 +99,13 @@ function ToolBubble({ m }: { m: ProjectedMessage }) {
       >
         <span className="text-fg-3">{open ? '▾' : '▸'}</span>
         <Pill tone="tool" variant="solid">tool</Pill>
-        {m.message.toolCallId ? (
+        {toolCallId ? (
           <span className="font-mono text-[11px] text-fg-1">
-            call {m.message.toolCallId.slice(0, 12)}
+            call {toolCallId.slice(0, 12)}
           </span>
         ) : null}
         <span className="font-mono text-[10px] text-fg-3 tabular">line {m.lineNo}</span>
-        {m.message.isError ? <Pill tone="error" variant="outline">error</Pill> : null}
+        {isToolEntry(m.message) && m.message.meta?.isError ? <Pill tone="error" variant="outline">error</Pill> : null}
         {!open ? (
           <span className="ml-1 flex min-w-0 flex-1 items-center gap-2 font-mono text-[11px] text-fg-3">
             <span className="truncate">{preview}</span>
@@ -116,7 +117,7 @@ function ToolBubble({ m }: { m: ProjectedMessage }) {
       </button>
       {open ? (
         <div className="mt-2 max-h-[60vh] overflow-auto">
-          <MessageContent parts={m.message.content} />
+          <MessageContent parts={m.message.message.content} />
         </div>
       ) : null}
     </article>
@@ -130,7 +131,7 @@ function SystemBubble({ m }: { m: ProjectedMessage }) {
         <Pill tone="config" variant="solid">system</Pill>
         <span className="font-mono text-[10px] text-fg-3 tabular">line {m.lineNo}</span>
       </header>
-      <MessageContent parts={m.message.content} />
+      <MessageContent parts={m.message.message.content} />
     </article>
   );
 }

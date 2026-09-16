@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { foldWireRecords } from '#/agent/replayBuilder/fold';
 import type { AgentReplayRecord } from '#/agent/replayBuilder/types';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import { isAssistantEntry, type HistoryMessage } from '#human/agent/turn';
+import type { PromptOrigin } from '#human/agent/origin';
 import type { WireRecord } from '#/wire/record';
 
 const METADATA: WireRecord = { type: 'metadata', protocol_version: '1.5', created_at: 0 };
@@ -11,16 +12,14 @@ function fold(records: readonly WireRecord[]) {
   return foldWireRecords([METADATA, ...records]);
 }
 
-function userMessage(text: string, origin?: ContextMessage['origin']): ContextMessage {
+function userMessage(text: string, origin?: PromptOrigin): HistoryMessage {
   return {
-    role: 'user',
-    content: [{ type: 'text', text }],
-    toolCalls: [],
-    origin,
+    message: { role: 'user', content: [{ type: 'text', text }] },
+    meta: { origin },
   };
 }
 
-function appendMessage(message: ContextMessage, time = 1): WireRecord {
+function appendMessage(message: unknown, time = 1): WireRecord {
   return { type: 'context.append_message', message, time };
 }
 
@@ -71,18 +70,21 @@ describe('foldWireRecords', () => {
     const [assistant, tool] = messages;
     expect(assistant).toMatchObject({ type: 'message', time: 10 });
     if (assistant?.type !== 'message') throw new Error('expected message record');
-    expect(assistant.message.role).toBe('assistant');
-    expect(assistant.message.content).toEqual([{ type: 'text', text: 'working' }]);
-    expect(assistant.message.toolCalls).toEqual([
+    const assistantEntry = assistant.message;
+    if (!isAssistantEntry(assistantEntry)) throw new Error('expected assistant message');
+    expect(assistantEntry.message.content).toEqual([{ type: 'text', text: 'working' }]);
+    expect(assistantEntry.message.toolCalls).toEqual([
       { type: 'function', id: 'tc1', name: 'Shell', arguments: '{"command":"ls"}', extras: undefined },
     ]);
-    expect(assistant.message.toolCallDisplays).toEqual({ tc1: display });
+    expect(assistantEntry.meta?.toolCallDisplays).toEqual({ tc1: display });
     if (tool?.type !== 'message') throw new Error('expected message record');
     expect(tool.message).toMatchObject({
-      role: 'tool',
-      toolCallId: 'tc1',
-      content: [{ type: 'text', text: 'file.txt' }],
-      isError: false,
+      message: {
+        role: 'tool',
+        toolCallId: 'tc1',
+        content: [{ type: 'text', text: 'file.txt' }],
+      },
+      meta: { isError: false },
     });
     expect(tool.time).toBe(13);
   });
@@ -98,7 +100,7 @@ describe('foldWireRecords', () => {
       loopEvent({ type: 'tool.result', toolCallId: 'tc1', result: { output: 'done' } }, 4),
     ]);
     const messages = messageRecords(folded.replay);
-    expect(messages.map((record) => (record.type === 'message' ? record.message.role : ''))).toEqual([
+    expect(messages.map((record) => (record.type === 'message' ? record.message.message.role : ''))).toEqual([
       'assistant',
       'tool',
       'user',
@@ -122,11 +124,10 @@ describe('foldWireRecords', () => {
     const synthesized = messages[1];
     if (synthesized?.type !== 'message') throw new Error('expected message record');
     expect(synthesized.message).toMatchObject({
-      role: 'tool',
-      toolCallId: 'tc1',
-      isError: true,
+      message: { role: 'tool', toolCallId: 'tc1' },
+      meta: { isError: true },
     });
-    expect(synthesized.message.content[0]).toMatchObject({
+    expect(synthesized.message.message.content[0]).toMatchObject({
       type: 'text',
       text: expect.stringContaining('interrupted'),
     });
@@ -145,7 +146,10 @@ describe('foldWireRecords', () => {
     expect(messages).toHaveLength(2);
     const synthesized = messages[1];
     if (synthesized?.type !== 'message') throw new Error('expected message record');
-    expect(synthesized.message).toMatchObject({ role: 'tool', toolCallId: 'tc1', isError: true });
+    expect(synthesized.message).toMatchObject({
+      message: { role: 'tool', toolCallId: 'tc1' },
+      meta: { isError: true },
+    });
   });
 
   it('drops a tool result whose call is not pending', () => {
@@ -170,8 +174,8 @@ describe('foldWireRecords', () => {
     if (first?.type !== 'message' || assistant?.type !== 'message') {
       throw new Error('expected message records');
     }
-    expect(first.message.content[0]).toMatchObject({ text: 'first' });
-    expect(assistant.message.role).toBe('assistant');
+    expect(first.message.message.content[0]).toMatchObject({ text: 'first' });
+    expect(assistant.message.message.role).toBe('assistant');
   });
 
   it('keeps injection messages out of the undo walk but stops at a compaction boundary', () => {
@@ -200,7 +204,7 @@ describe('foldWireRecords', () => {
     expect(messages).toHaveLength(1);
     const [remaining] = messages;
     if (remaining?.type !== 'message') throw new Error('expected message record');
-    expect(remaining.message.content[0]).toMatchObject({ text: 'old' });
+    expect(remaining.message.message.content[0]).toMatchObject({ text: 'old' });
   });
 
   it('tracks compaction begin, apply, and cancel through the last compaction record', () => {
@@ -300,7 +304,9 @@ describe('foldWireRecords', () => {
     expect(folded.replay).toHaveLength(2);
     const reminder = folded.replay[1];
     if (reminder?.type !== 'message') throw new Error('expected message record');
-    expect(reminder.message.origin).toEqual({ kind: 'system_trigger', name: 'goal_fork_cleared' });
+    expect(reminder.message).toMatchObject({
+      meta: { origin: { kind: 'system_trigger', name: 'goal_fork_cleared' } },
+    });
 
     const noGoal = fold([{ type: 'forked', time: 1 }]);
     expect(noGoal.replay).toEqual([]);
@@ -388,7 +394,7 @@ describe('foldWireRecords', () => {
   it('migrates older protocol journals before folding', () => {
     const legacy: WireRecord[] = [
       { type: 'metadata', protocol_version: '1.0', created_at: 0 },
-      appendMessage(userMessage('hi'), 3),
+      appendMessage({ role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] }, 3),
     ];
     const folded = foldWireRecords(legacy);
     expect(folded.replay).toHaveLength(1);
@@ -406,6 +412,6 @@ describe('foldWireRecords', () => {
     expect(messages).toHaveLength(1);
     const [remaining] = messages;
     if (remaining?.type !== 'message') throw new Error('expected message record');
-    expect(remaining.message.content[0]).toMatchObject({ text: 'before' });
+    expect(remaining.message.message.content[0]).toMatchObject({ text: 'before' });
   });
 });

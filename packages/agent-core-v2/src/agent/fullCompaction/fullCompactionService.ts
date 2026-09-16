@@ -3,10 +3,9 @@ import { Service } from "#/_base/di/service";
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
-import { estimateTokensForMessage } from "#/llm-adapter/contract/tokens";
 import { buildCompactionSummaryText, isRealUserInput } from '#/agent/contextMemory/compactionHandoff';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { HistoryMessage } from '#human/agent/turn';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentLLMRequesterService, type AgentLLMRequestFinish } from '#/agent/llmRequester/llmRequester';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
@@ -36,7 +35,7 @@ import {
   APIStatusError,
   isRetryableGenerateError,
 } from '#/llm-adapter/contract/errors';
-import { createUserMessage, type Message } from '#/llm-adapter/contract/message';
+import { createUserMessage, type Message } from '#human/llm/message';
 import type { ToolDescription as Tool } from '#human/llm/message';
 import { inputTotal, type TokenUsage } from '#human/llm/usage';
 import { IEventBus } from '#/app/event/eventBus';
@@ -280,7 +279,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   }
 
   private currentRequestTokens(): number {
-    return this.requestTokens(this.context.get());
+    return this.requestTokens(this.context.get().map((entry) => entry.message));
   }
 
   private requestTokens(messages: readonly Message[]): number {
@@ -391,7 +390,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         'Cannot compact while a turn is active. Wait for it to finish, then retry.',
       );
     }
-    return this.requestTokens(history);
+    return this.requestTokens(history.map((entry) => entry.message));
   }
 
   private createActiveCompaction(
@@ -620,7 +619,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   ): Promise<CompactionResult> {
     const startedAt = Date.now();
     const originalHistory = [...this.context.get()];
-    const tokensBefore = this.requestTokens(originalHistory);
+    const tokensBefore = this.requestTokens(originalHistory.map((entry) => entry.message));
     let retryCount = 0;
     let thinkingEffort = this.profile.data().thinkingLevel;
 
@@ -643,14 +642,17 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
       const maxAttempts = resolvedModel.compactionMaxAttempts ?? MAX_COMPACTION_RETRY_ATTEMPTS;
       let attempt: CompactionAttemptResult | undefined;
-      let historyForModel: readonly ContextMessage[] = stripDynamicToolContext(originalHistory);
+      let historyForModel: readonly HistoryMessage[] = stripDynamicToolContext(originalHistory);
       let droppedCount = 0;
       let overflowShrinkCount = 0;
       let requestAttempts = 0;
       while (true) {
         const messagesToCompact = historyForModel;
-        const messages: Message[] = [...messagesToCompact, createUserMessage(instruction)];
-        const estimatedCompactionRequestTokens = this.requestTokens(messages);
+        const messages: HistoryMessage[] = [
+          ...messagesToCompact,
+          { message: createUserMessage(instruction), meta: {} },
+        ];
+        const estimatedCompactionRequestTokens = this.requestTokens(messages.map((entry) => entry.message));
         requestAttempts += 1;
 
         try {
@@ -698,7 +700,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             historyForModel = shrinkCompactionHistoryAfterOverflow(
               messagesToCompact,
               overflowShrinkCount,
-              (message) => this.tokenCounting.estimateMessage(message),
+              (entry: HistoryMessage) => this.tokenCounting.estimateMessage(entry.message),
             );
             if (historyForModel.length === 0) throw error;
             droppedCount += before - historyForModel.length;
@@ -873,18 +875,18 @@ function collectSummary(finish: AgentLLMRequestFinish): CompactionAttemptResult 
 }
 
 function historySafeToCompact(
-  current: readonly ContextMessage[],
-  original: readonly ContextMessage[],
+  current: readonly HistoryMessage[],
+  original: readonly HistoryMessage[],
 ): boolean {
   if (current.length < original.length) return false;
   if (!original.every((message, index) => message === current[index])) return false;
   return current.slice(original.length).every(isRealUserInput);
 }
 
-function shrinkCompactionHistoryAfterOverflow<T extends Message>(
+function shrinkCompactionHistoryAfterOverflow<T extends HistoryMessage>(
   messages: readonly T[],
   attempt: number,
-  estimateMessage: (message: T) => number = estimateTokensForMessage,
+  estimateMessage: (message: T) => number,
 ): T[] {
   if (messages.length <= 1) return messages.slice();
   const ratio = COMPACTION_OVERFLOW_SHRINK_RATIOS[
@@ -896,10 +898,10 @@ function shrinkCompactionHistoryAfterOverflow<T extends Message>(
   return takeRecentMessagesWithinTokenBudget(messages, tokenBudget, estimateMessage);
 }
 
-function takeRecentMessagesWithinTokenBudget<T extends Message>(
+function takeRecentMessagesWithinTokenBudget<T extends HistoryMessage>(
   messages: readonly T[],
   tokenBudget: number,
-  estimateMessage: (message: T) => number = estimateTokensForMessage,
+  estimateMessage: (message: T) => number,
 ): T[] {
   let start = messages.length;
   let tokens = 0;
@@ -913,16 +915,14 @@ function takeRecentMessagesWithinTokenBudget<T extends Message>(
   return dropLeadingToolResults(messages.slice(start));
 }
 
-function dropOldestMessageAndLeadingToolResults<T extends { readonly role: string }>(
-  messages: readonly T[],
-): T[] {
+function dropOldestMessageAndLeadingToolResults<T extends HistoryMessage>(messages: readonly T[]): T[] {
   if (messages.length <= 1) return messages.slice();
   return dropLeadingToolResults(messages.slice(1));
 }
 
-function dropLeadingToolResults<T extends { readonly role: string }>(messages: readonly T[]): T[] {
+function dropLeadingToolResults<T extends HistoryMessage>(messages: readonly T[]): T[] {
   let start = 0;
-  while (start < messages.length && messages[start]!.role === 'tool') {
+  while (start < messages.length && messages[start]!.message.role === 'tool') {
     start += 1;
   }
   return messages.slice(start);

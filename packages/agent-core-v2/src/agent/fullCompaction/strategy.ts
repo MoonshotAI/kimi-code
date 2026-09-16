@@ -1,4 +1,4 @@
-import type { Message } from '#/llm-adapter/contract/message';
+import type { Message } from '#human/llm/message';
 import type { ProfileModelContext } from '#/agent/profile/profile';
 import type { CompactionSource } from './types';
 import { estimateTokensForMessage } from '#/llm-adapter/contract/tokens';

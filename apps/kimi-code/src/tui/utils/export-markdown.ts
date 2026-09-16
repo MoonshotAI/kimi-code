@@ -1,4 +1,13 @@
-import type { ContentPart, ContextMessage, PromptOrigin, ToolCall } from '@moonshot-ai/kimi-code-sdk';
+import type {
+  ContentPart,
+  HistoryMessage,
+  PromptOrigin,
+  ToolCall,
+  ToolEntry,
+} from '@moonshot-ai/kimi-code-sdk';
+import { isAssistantEntry, isToolEntry, isUserEntry } from '@moonshot-ai/kimi-code-sdk';
+
+import { historyEntryOrigin } from './message-replay';
 
 const HINT_KEYS = ['path', 'file_path', 'command', 'query', 'url', 'name', 'pattern'] as const;
 
@@ -72,10 +81,14 @@ export function formatToolCallMd(tc: ToolCall): string {
   return `${title}\n<!-- call_id: ${tc.id} -->\n\`\`\`json\n${argsFormatted}\n\`\`\``;
 }
 
-function formatToolResultMd(msg: ContextMessage, toolName: string, hint: string): string {
-  const callId = msg.toolCallId ?? 'unknown';
+function formatToolResultMd(
+  entry: ToolEntry,
+  toolName: string,
+  hint: string,
+): string {
+  const callId = entry.message.toolCallId === '' ? 'unknown' : entry.message.toolCallId;
   const parts: string[] = [];
-  for (const part of msg.content) {
+  for (const part of entry.message.content) {
     const text = formatContentPartMd(part);
     if (text.trim()) parts.push(text);
   }
@@ -105,76 +118,75 @@ const INTERNAL_ORIGINS = new Set<PromptOrigin['kind']>([
   'cron_missed',
 ]);
 
-export function isInternalMessage(msg: ContextMessage): boolean {
-  const origin = msg.origin;
+export function isInternalMessage(entry: HistoryMessage): boolean {
+  const origin = historyEntryOrigin(entry);
   if (origin === undefined) return false;
   if (INTERNAL_ORIGINS.has(origin.kind)) return true;
   if (origin.kind === 'user') return false;
-  return msg.content.some((part) => part.type === 'text' && part.contentType === 'text/xml');
+  return entry.message.content.some((part) => part.type === 'text' && part.contentType === 'text/xml');
 }
 
-export function groupIntoTurns(history: readonly ContextMessage[]): ContextMessage[][] {
-  const turns: ContextMessage[][] = [];
-  let current: ContextMessage[] = [];
+export function groupIntoTurns(history: readonly HistoryMessage[]): HistoryMessage[][] {
+  const turns: HistoryMessage[][] = [];
+  let current: HistoryMessage[] = [];
 
-  for (const msg of history) {
-    if (isInternalMessage(msg)) continue;
-    if (msg.role === 'user' && current.length > 0) {
+  for (const entry of history) {
+    if (isInternalMessage(entry)) continue;
+    if (isUserEntry(entry) && current.length > 0) {
       turns.push(current);
       current = [];
     }
-    current.push(msg);
+    current.push(entry);
   }
 
   if (current.length > 0) turns.push(current);
   return turns;
 }
 
-function formatTurnMd(messages: readonly ContextMessage[], turnNumber: number): string {
+function formatTurnMd(entries: readonly HistoryMessage[], turnNumber: number): string {
   const lines: string[] = [`## Turn ${String(turnNumber)}`, ''];
 
   const toolCallInfo = new Map<string, { name: string; hint: string }>();
   let assistantHeaderWritten = false;
 
-  for (const msg of messages) {
-    if (isInternalMessage(msg)) continue;
+  for (const entry of entries) {
+    if (isInternalMessage(entry)) continue;
 
-    if (msg.role === 'user') {
+    if (isUserEntry(entry)) {
       lines.push('### User', '');
       // A daemon-ref media part is self-contained and renders as
       // `[image]`/`[video]` below; a standalone `<media path>` tag is user
       // text and exports verbatim.
-      for (const part of msg.content) {
+      for (const part of entry.message.content) {
         const text = formatContentPartMd(part);
         if (text.trim()) {
           lines.push(text, '');
         }
       }
-    } else if (msg.role === 'assistant') {
+    } else if (isAssistantEntry(entry)) {
       if (!assistantHeaderWritten) {
         lines.push('### Assistant', '');
         assistantHeaderWritten = true;
       }
 
-      for (const part of msg.content) {
+      for (const part of entry.message.content) {
         const text = formatContentPartMd(part);
         if (text.trim()) {
           lines.push(text, '');
         }
       }
 
-      for (const tc of msg.toolCalls) {
+      for (const tc of entry.message.toolCalls) {
         const hint = extractToolCallHint(tc.arguments ?? '{}');
         toolCallInfo.set(tc.id, { name: tc.name, hint });
         lines.push(formatToolCallMd(tc), '');
       }
-    } else if (msg.role === 'tool') {
-      const tcId = msg.toolCallId ?? '';
-      const info = toolCallInfo.get(tcId) ?? { name: 'unknown', hint: '' };
-      lines.push(formatToolResultMd(msg, info.name, info.hint), '');
-    } else if (msg.role === 'system') {
-      lines.push(`### ${msg.role.charAt(0).toUpperCase()}${msg.role.slice(1)}`, '');
-      for (const part of msg.content) {
+    } else if (isToolEntry(entry)) {
+      const info = toolCallInfo.get(entry.message.toolCallId) ?? { name: 'unknown', hint: '' };
+      lines.push(formatToolResultMd(entry, info.name, info.hint), '');
+    } else {
+      lines.push(`### ${entry.message.role.charAt(0).toUpperCase()}${entry.message.role.slice(1)}`, '');
+      for (const part of entry.message.content) {
         const text = formatContentPartMd(part);
         if (text.trim()) {
           lines.push(text, '');
@@ -187,13 +199,13 @@ function formatTurnMd(messages: readonly ContextMessage[], turnNumber: number): 
 }
 
 function buildOverview(
-  history: readonly ContextMessage[],
-  turns: readonly ContextMessage[][],
+  history: readonly HistoryMessage[],
+  turns: readonly HistoryMessage[][],
 ): string {
   let topic = '';
-  for (const msg of history) {
-    if (msg.role === 'user' && !isInternalMessage(msg)) {
-      const textParts = msg.content
+  for (const entry of history) {
+    if (isUserEntry(entry) && !isInternalMessage(entry)) {
+      const textParts = entry.message.content
         .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
         .map((p) => p.text);
       topic = shorten(textParts.join(' '), 80);
@@ -202,7 +214,7 @@ function buildOverview(
   }
 
   const toolCallCount = history.reduce(
-    (sum, msg) => sum + msg.toolCalls.length,
+    (sum, entry) => sum + (isAssistantEntry(entry) ? entry.message.toolCalls.length : 0),
     0,
   );
 
@@ -219,7 +231,7 @@ function buildOverview(
 export interface BuildExportMarkdownInput {
   readonly sessionId: string;
   readonly workDir: string;
-  readonly history: readonly ContextMessage[];
+  readonly history: readonly HistoryMessage[];
   readonly tokenCount: number;
   readonly now: Date;
 }

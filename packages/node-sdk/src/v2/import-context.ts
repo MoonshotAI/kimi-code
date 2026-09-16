@@ -11,7 +11,7 @@
  * escapers byte-identical with the legacy v1 output so a v1-written and a
  * v2-written import reduce to the same history.
  */
-import type { ContextMessage } from '@moonshot-ai/agent-core-v2';
+import type { UserEntry } from '@moonshot-ai/agent-core-v2';
 import { estimateTokensForMessages } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/tokens';
 
 import { ErrorCodes, KimiError } from '#/errors';
@@ -41,7 +41,7 @@ function escapeXmlAttr(input: string): string {
  * (`import_source_empty`) fail with v1's `request.invalid` shapes before any
  * token math runs.
  */
-export function buildImportContextMessage(content: string, source: string): ContextMessage {
+export function buildImportContextEntry(content: string, source: string): UserEntry {
   if (content.trim().length === 0) {
     throw new KimiError(ErrorCodes.REQUEST_INVALID, 'Imported context cannot be empty', {
       details: { reason: 'import_content_empty' },
@@ -54,23 +54,24 @@ export function buildImportContextMessage(content: string, source: string): Cont
     });
   }
   return {
-    role: 'user',
-    content: [
-      {
-        type: 'text',
-        text:
-          `<system>The user has imported context from ${escapeXml(normalizedSource)}. ` +
-          `${IMPORT_CONTEXT_GUIDANCE}</system>`,
-      },
-      {
-        type: 'text',
-        text:
-          `<imported_context source="${escapeXmlAttr(normalizedSource)}">\n` +
-          `${content}\n</imported_context>`,
-      },
-    ],
-    toolCalls: [],
-    origin: { kind: 'user' },
+    message: {
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text:
+            `<system>The user has imported context from ${escapeXml(normalizedSource)}. ` +
+            `${IMPORT_CONTEXT_GUIDANCE}</system>`,
+        },
+        {
+          type: 'text',
+          text:
+            `<imported_context source="${escapeXmlAttr(normalizedSource)}">\n` +
+            `${content}\n</imported_context>`,
+        },
+      ],
+    },
+    meta: { origin: { kind: 'user' } },
   };
 }
 
@@ -81,11 +82,11 @@ export function buildImportContextMessage(content: string, source: string): Cont
  * — and therefore the rejection — agree.
  */
 export function assertImportFits(
-  message: ContextMessage,
+  message: UserEntry,
   currentTokenCount: number,
   maxContextTokens: number,
 ): void {
-  const importTokenCount = estimateTokensForMessages([message]);
+  const importTokenCount = estimateTokensForMessages([message.message]);
   const totalTokenCount = currentTokenCount + importTokenCount;
   if (maxContextTokens > 0 && totalTokenCount > maxContextTokens) {
     throw new KimiError(

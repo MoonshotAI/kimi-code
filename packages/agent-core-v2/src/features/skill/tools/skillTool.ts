@@ -121,7 +121,6 @@ export async function executeModelSkill(
         )
         .parts(),
     ],
-    toolCalls: [],
     origin,
   };
   skillService.recordModelToolActivation(origin);

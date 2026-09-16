@@ -4,6 +4,8 @@ import {
   type ContentPart,
   type TokenUsage,
 } from '@moonshot-ai/agent-core-v2';
+import { isToolEntry, isUserEntry } from '@moonshot-ai/agent-core-v2';
+import { normalizeReplayedEntry } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
 
 import type {
   ContentPart as WireContentPart,
@@ -966,25 +968,19 @@ export function foldWireHistory(
   };
 
   const onAppendMessage = (record: ContextRecord): void => {
-    const message = record['message'] as
-      | {
-          id?: string;
-          role?: string;
-          content?: ContentPart[];
-          toolCalls?: readonly { id: string; name: string; arguments: string | null }[];
-          toolCallId?: string;
-          isError?: boolean;
-          origin?: unknown;
-        }
-      | undefined;
-    if (message?.role === undefined) return;
+    const raw = record['message'];
+    if (raw === null || typeof raw !== 'object') return;
+    const replayed = normalizeReplayedEntry(raw);
+    const message = replayed.message;
     if (message.role === 'user') {
-      const taskOrigin = taskNotificationOriginOf(message.origin);
+      const origin = isUserEntry(replayed) ? replayed.meta?.origin : undefined;
+      const taskOrigin = taskNotificationOriginOf(origin);
       if (taskOrigin !== undefined) {
         onTaskNotificationAppend(message, taskOrigin, record);
         return;
       }
-      if (!isUndoAnchorOrigin(message.origin)) return;
+      if (!isUndoAnchorOrigin(origin)) return;
+      const promptId = isUserEntry(replayed) ? replayed.meta?.promptId : undefined;
       if (!seedEnded) {
         const recordAtMs = atMs(record);
         if (!turns.has(turnIdOf(SEED_TURN_RAW_ID))) {
@@ -992,32 +988,30 @@ export function foldWireHistory(
         }
         currentTurn = SEED_TURN_RAW_ID;
         const seedTurnId = turnIdOf(SEED_TURN_RAW_ID);
-        const content = Array.isArray(message.content) ? message.content : [];
-        const skipBlocks = bundledSkillCount(message.origin);
+        const content = message.content;
+        const skipBlocks = bundledSkillCount(origin);
         const entry = scratch(SEED_TURN_RAW_ID);
         const attachmentIds: string[] = [];
-        for (let i = promptAttachmentCount(content, message.origin); i > 0; i -= 1) {
+        for (let i = promptAttachmentCount(content, origin); i > 0; i -= 1) {
           entry.attachmentSeq += 1;
           attachmentIds.push(attachmentIdOf(seedTurnId, entry.attachmentSeq));
         }
         const messageId =
-          typeof message.id === 'string'
-            ? message.id
-            : `${seedTurnId}.u${(entry.serverUserSeq += 1)}`;
+          promptId ?? `${seedTurnId}.u${(entry.serverUserSeq += 1)}`;
         const draft: UserDraft = {
           messageId,
           turnId: seedTurnId,
           text: wireContentParts(content.slice(skipBlocks)),
           timestamp: recordAtMs,
-          origin: userOriginOf(message.origin),
+          origin: userOriginOf(origin),
           attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
-          skillActivations: skillActivationsOf(message.origin),
+          skillActivations: skillActivationsOf(origin),
         };
         users.set(messageId, draft);
         order.push(`user:${messageId}`);
         return;
       }
-      const messageId = typeof message.id === 'string' ? message.id : undefined;
+      const messageId = promptId;
       const matchingIndex =
         messageId !== undefined
           ? pendingAnchors.findIndex((anchor) => anchor.promptId === messageId)
@@ -1061,7 +1055,7 @@ export function foldWireHistory(
       step.status = 'completed';
       step.endedAt = recordAtIso;
       step.at = recordAtMs;
-      for (const part of message.content ?? []) {
+      for (const part of message.content) {
         if (part.type === 'text' && typeof part.text === 'string' && part.text.length > 0) {
           const existingId = stepTextIds.get(step.stepId)?.assistant;
           const target =
@@ -1081,7 +1075,7 @@ export function foldWireHistory(
           target.at = recordAtMs;
         }
       }
-      for (const call of message.toolCalls ?? []) {
+      for (const call of message.toolCalls) {
         if (tools.has(call.id)) continue;
         const input = parseToolArgs(call.arguments ?? undefined);
         const tool: ToolDraft = {
@@ -1107,11 +1101,11 @@ export function foldWireHistory(
     }
     if (message.role === 'tool') {
       const toolCallId = message.toolCallId;
-      if (typeof toolCallId !== 'string') return;
+      if (toolCallId === '') return;
       const existing = tools.get(toolCallId);
       if (existing === undefined) return;
-      const output = promptTextOf(message.content ?? []);
-      const isError = message.isError === true;
+      const output = promptTextOf(message.content);
+      const isError = isToolEntry(replayed) && replayed.meta?.isError === true;
       existing.status = isError ? 'error' : 'done';
       existing.output = output;
       existing.error = isError ? output : undefined;

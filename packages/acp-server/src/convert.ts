@@ -15,7 +15,7 @@ import { isHideOutputMarker } from './marker';
 
 /**
  * Convert an array of ACP {@link ContentBlock}s into agent-core-v2
- * {@link ContentPart}s suitable for a user `ContextMessage`'s `content`.
+ * {@link ContentPart}s suitable for a user `HistoryMessage`'s `message.content`.
  *
  * Image parts are built from the client-declared MIME verbatim; run the
  * result through {@link compressPromptImageParts} before submitting so

@@ -6,21 +6,23 @@ import {
   isFullyUndoable,
   readContextCompactionShapeInput,
 } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextOps';
-import { createLoopEventFold } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
+import { createLoopEventFold, normalizeReplayedEntry } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
 import { renderToolResultForModel } from '@moonshot-ai/agent-core-v2/agent/contextMemory/toolResultRender';
 import type {
   ContentPart,
-  ContextMessage,
+  HistoryMessage,
   PermissionMode,
+  PromptOrigin,
   TokenUsage,
   WireEntry,
 } from './agent-record-types';
+import { isAssistantEntry, isToolEntry, isUserEntry } from '@moonshot-ai/agent-core-v2';
 
 export interface ProjectedMessage {
   lineNo: number;
   time?: number;
   source: 'append_message' | 'compaction_summary' | 'undo' | 'clear';
-  message: ContextMessage;
+  message: HistoryMessage;
   toolStepUuids: string[];
   /** Set only when source === 'undo'. */
   undo?: { count: number; removedMessageCount: number };
@@ -127,7 +129,7 @@ export function projectContext(
   let currentEntry: WireEntry | undefined;
   let openMessage: ProjectedMessage | undefined;
   let syntheticToolOrdinal = 0;
-  const appendMessageEntries = new WeakMap<ContextMessage, ProjectedMessage>();
+  const appendMessageEntries = new WeakMap<HistoryMessage, ProjectedMessage>();
 
   const pushModelMessage = (message: ProjectedMessage): void => {
     modelMessages.push(message);
@@ -154,23 +156,34 @@ export function projectContext(
         lineNo: currentLineNo(),
         time,
         source: 'append_message',
-        message: { role: 'assistant', content: [], toolCalls: [], partial: true },
+        message: {
+          message: { role: 'assistant', content: [], toolCalls: [] },
+          meta: { partial: true },
+        },
         toolStepUuids: stepUuid === undefined ? [] : [stepUuid],
       };
       pushModelMessage(openMessage);
     },
     appendOpenContent: (part) => {
       if (openMessage === undefined) return;
+      if (!isAssistantEntry(openMessage.message)) return;
       openMessage.message = {
         ...openMessage.message,
-        content: [...openMessage.message.content, part],
+        message: {
+          ...openMessage.message.message,
+          content: [...openMessage.message.message.content, part],
+        },
       };
     },
     appendOpenToolCall: (call) => {
       if (openMessage === undefined) return;
+      if (!isAssistantEntry(openMessage.message)) return;
       openMessage.message = {
         ...openMessage.message,
-        toolCalls: [...openMessage.message.toolCalls, call],
+        message: {
+          ...openMessage.message.message,
+          toolCalls: [...openMessage.message.message.toolCalls, call],
+        },
       };
     },
     dropOpenAssistant: () => {
@@ -180,7 +193,11 @@ export function projectContext(
     },
     sealOpenAssistant: () => {
       if (openMessage === undefined) return;
-      openMessage.message = { ...openMessage.message, partial: undefined };
+      if (!isAssistantEntry(openMessage.message)) return;
+      openMessage.message = {
+        ...openMessage.message,
+        meta: { ...openMessage.message.meta, partial: undefined },
+      };
       openMessage = undefined;
     },
     pushToolMessage: (message, time) => {
@@ -222,7 +239,7 @@ export function projectContext(
     const rec = entry.data;
     switch (rec.type) {
       case 'context.append_message': {
-        const message = normalizeLegacyOrigin(rec.message);
+        const message = normalizeLegacyOrigin(normalizeReplayedEntry(rec.message));
         appendMessageEntries.set(message, {
           lineNo: entry.lineNo,
           time: rec.time,
@@ -278,7 +295,7 @@ export function projectContext(
             // Synthetic marker: never rendered as a bubble (the web dispatches on
             // `source === 'clear'`). `role: 'assistant'` keeps it out of any
             // role-counting / tool-blanking path.
-            message: { role: 'assistant', content: [], toolCalls: [] } as ContextMessage,
+            message: { message: { role: 'assistant', content: [], toolCalls: [] }, meta: {} } as HistoryMessage,
             toolStepUuids: [],
           });
         }
@@ -312,7 +329,7 @@ export function projectContext(
         // The v2 payload is a union of three variants: current records carry
         // `summary` as a string (with `contextSummary` holding the
         // model-facing variant when media degraded); a legacy variant carries
-        // the summary as a ContextMessage plus `count` instead of
+        // the summary as a legacy flat message record plus `count` instead of
         // `compactedCount`. `tokensBefore`/`tokensAfter` are optional in all
         // variants. Normalize before projecting.
         const rawSummary = rec.summary;
@@ -321,10 +338,10 @@ export function projectContext(
           typeof rawSummary === 'string'
             ? rawSummary
             : rawSummary !== undefined
-              ? contextMessageText(rawSummary)
+              ? messageContentText(normalizeReplayedEntry(rawSummary).message)
               : (contextSummary ?? '');
         const shape = buildContextCompactionShape(
-          historyEntries.map((message) => message.message),
+          historyEntries.map((projected) => projected.message),
           compactionInput,
         );
         const compactedCount = shape.compactedCount;
@@ -333,11 +350,12 @@ export function projectContext(
           time: rec.time,
           source: 'compaction_summary',
           message: {
-            role: 'user',
-            content: [{ type: 'text', text: summaryText }],
-            toolCalls: [],
-            origin: { kind: 'compaction_summary' },
-          } as ContextMessage,
+            message: {
+              role: 'user',
+              content: [{ type: 'text', text: summaryText }],
+            },
+            meta: { origin: { kind: 'compaction_summary' } },
+          } as HistoryMessage,
           toolStepUuids: [],
           compaction: {
             compactedCount,
@@ -348,7 +366,9 @@ export function projectContext(
         const legacyTail = rec.legacyTail === true || rec.keptUserMessageCount === undefined;
         const summaryIndex = legacyTail
           ? 0
-          : shape.messages.findIndex((message) => message.origin?.kind === 'compaction_summary');
+          : shape.messages.findIndex(
+              (message) => isUserEntry(message) && message.meta?.origin?.kind === 'compaction_summary',
+            );
         const modelSummaryBubble: ProjectedMessage = {
           ...summaryBubble,
           message: modelFacingMessage(shape.messages[summaryIndex] ?? summaryBubble.message),
@@ -480,7 +500,7 @@ export function projectContext(
           // `role: 'assistant'` is deliberate so this marker can never match the
           // `role: 'tool'` micro-compaction blanking gate — keep it non-tool if
           // you ever change the placeholder.
-          message: { role: 'assistant', content: [], toolCalls: [] } as ContextMessage,
+          message: { message: { role: 'assistant', content: [], toolCalls: [] }, meta: {} } as HistoryMessage,
           toolStepUuids: [],
           undo: { count: rec.count, removedMessageCount },
         });
@@ -607,11 +627,14 @@ export function projectContext(
       historyIndex++;
       const m = pm.message;
       if (
-        m.role === 'tool' &&
-        m.toolCallId !== undefined &&
-        estimateContentTokens(m.content) >= MICRO_MIN_CONTENT_TOKENS
+        isToolEntry(m) &&
+        m.message.toolCallId !== undefined &&
+        estimateContentTokens(m.message.content) >= MICRO_MIN_CONTENT_TOKENS
       ) {
-        pm.message = { ...m, content: [{ type: 'text', text: MICRO_TRUNCATED_MARKER }] };
+        pm.message = {
+          ...m,
+          message: { ...m.message, content: [{ type: 'text', text: MICRO_TRUNCATED_MARKER }] },
+        };
       }
     }
   }
@@ -677,31 +700,38 @@ function isHistoryEntry(pm: ProjectedMessage): boolean {
   return pm.source !== 'undo' && pm.source !== 'clear';
 }
 
-function modelFacingMessage(message: ContextMessage): ContextMessage {
-  if (message.role !== 'tool') return message;
+function modelFacingMessage(message: HistoryMessage): HistoryMessage {
+  if (!isToolEntry(message)) return message;
   return {
     ...message,
-    content: renderToolResultForModel({
-      output: message.content,
-      isError: message.isError,
-      note: message.note,
-    }),
-    note: undefined,
+    message: {
+      ...message.message,
+      content: renderToolResultForModel({
+        output: message.message.content,
+        isError: message.meta?.isError,
+        note: message.meta?.note,
+      }),
+    },
+    meta: { ...message.meta, note: undefined },
   };
 }
 
 /** v1 wires tag background-task prompts `origin.kind === 'background_task'`;
  *  v2 renamed the kind to 'task' (same status literals). Normalize on ingest
  *  so the engine's undo helper and the web see one vocabulary. */
-function normalizeLegacyOrigin(message: ContextMessage): ContextMessage {
-  const origin = message.origin as { readonly kind: string } | undefined;
+function normalizeLegacyOrigin(message: HistoryMessage): HistoryMessage {
+  if (!isUserEntry(message)) return message;
+  const origin = message.meta?.origin as { readonly kind: string } | undefined;
   if (origin?.kind !== 'background_task') return message;
-  return { ...message, origin: { ...origin, kind: 'task' } as ContextMessage['origin'] };
+  return {
+    ...message,
+    meta: { ...message.meta, origin: { ...origin, kind: 'task' } as PromptOrigin },
+  };
 }
 
-/** Text rendering of a ContextMessage's content parts, used to surface the
+/** Text rendering of a message's content parts, used to surface the
  *  legacy `context.apply_compaction` variant whose summary is a message. */
-function contextMessageText(message: ContextMessage): string {
+function messageContentText(message: HistoryMessage['message']): string {
   return message.content
     .filter((part) => part.type === 'text')
     .map((part) => part.text)

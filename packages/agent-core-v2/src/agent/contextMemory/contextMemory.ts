@@ -2,7 +2,7 @@ import { createDecorator } from "#/_base/di/instantiation";
 import type { WireLineRange } from '#/wire/record';
 
 import type { LoopRecordedEvent } from './loopEventFold';
-import type { ContextMessage } from './types';
+import type { HistoryMessage } from '#human/agent/turn';
 
 export interface ContextCompactionInput {
   readonly summary: string;
@@ -32,13 +32,13 @@ export interface ContextCompactionResult {
 export interface IAgentContextMemoryService {
   readonly _serviceBrand: undefined;
 
-  get(): readonly ContextMessage[];
+  get(): readonly HistoryMessage[];
 
-  append(...messages: readonly ContextMessage[]): void;
+  append(...messages: readonly HistoryMessage[]): void;
 
   appendLoopEvent(event: LoopRecordedEvent): void;
 
-  publishTrailingRemoval(previous: readonly ContextMessage[]): boolean;
+  publishTrailingRemoval(previous: readonly HistoryMessage[]): boolean;
 
   clear(): void;
 

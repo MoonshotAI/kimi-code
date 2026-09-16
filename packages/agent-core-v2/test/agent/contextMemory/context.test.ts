@@ -1,5 +1,4 @@
-import type { Message } from '#/llm-adapter/contract/message';
-import type { ToolCall } from '#human/llm/message';
+import type { Message, ToolCall } from '#human/llm/message';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { estimateTokens, estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
@@ -11,7 +10,9 @@ import {
   selectCompactionUserMessages,
   type TokenEstimate,
 } from '#/agent/contextMemory/compactionHandoff';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { HistoryMessage } from '#human/agent/turn';
+import { isUserEntry } from '#human/agent/turn';
+import type { PromptOrigin } from '#human/agent/origin';
 import {
   closeTrailingOpenToolExchange,
   INHERITED_IN_FLIGHT_TOOL_OUTPUT,
@@ -53,21 +54,31 @@ describe('Agent context', () => {
     ctx.appendSystemReminder('Remember this.', { kind: 'injection', variant: 'host' });
     context.append(
       {
-        role: 'assistant',
-        content: [],
-        toolCalls: [{ type: 'function', id: 'call_origin', name: 'Run', arguments: '{}' }],
+        message: {
+          role: 'assistant',
+          content: [],
+          toolCalls: [{ type: 'function', id: 'call_origin', name: 'Run', arguments: '{}' }],
+        },
+        meta: {},
       },
     );
     context.append(
       {
-        role: 'tool',
-        content: [{ type: 'text', text: 'tool output' }],
-        toolCalls: [],
-        toolCallId: 'call_origin',
+        message: {
+          role: 'tool',
+          content: [{ type: 'text', text: 'tool output' }],
+          toolCallId: 'call_origin',
+        },
+        meta: {},
       },
     );
 
-    expect(context.get().map(({ role, origin }) => ({ role, origin }))).toEqual([
+    expect(
+      context.get().map((entry) => ({
+        role: entry.message.role,
+        origin: isUserEntry(entry) ? entry.meta?.origin : undefined,
+      })),
+    ).toEqual([
       { role: 'user', origin: { kind: 'user' } },
       { role: 'user', origin: { kind: 'injection', variant: 'host' } },
       { role: 'assistant', origin: undefined },
@@ -79,33 +90,40 @@ describe('Agent context', () => {
   it('renders tool error and empty-output status as model-visible text', () => {
     context.append(
       {
-        role: 'assistant',
-        content: [],
-        toolCalls: [
-          { type: 'function', id: 'call_error', name: 'Run', arguments: '{}' },
-          { type: 'function', id: 'call_empty', name: 'Run', arguments: '{}' },
-        ],
+        message: {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            { type: 'function', id: 'call_error', name: 'Run', arguments: '{}' },
+            { type: 'function', id: 'call_empty', name: 'Run', arguments: '{}' },
+          ],
+        },
+        meta: {},
       },
     );
     context.append(
       {
-        role: 'tool',
-        content: [
-          {
-            type: 'text',
-            text: '<system>ERROR: Tool execution failed.</system>\npermission denied',
-          },
-        ],
-        toolCalls: [],
-        toolCallId: 'call_error',
+        message: {
+          role: 'tool',
+          content: [
+            {
+              type: 'text',
+              text: '<system>ERROR: Tool execution failed.</system>\npermission denied',
+            },
+          ],
+          toolCallId: 'call_error',
+        },
+        meta: {},
       },
     );
     context.append(
       {
-        role: 'tool',
-        content: [{ type: 'text', text: '<system>Tool output is empty.</system>' }],
-        toolCalls: [],
-        toolCallId: 'call_empty',
+        message: {
+          role: 'tool',
+          content: [{ type: 'text', text: '<system>Tool output is empty.</system>' }],
+          toolCallId: 'call_empty',
+        },
+        meta: {},
       },
     );
 
@@ -130,40 +148,55 @@ describe('Agent context', () => {
   });
 
   it('drops empty text parts only in LLM projection', () => {
-    const history: ContextMessage[] = [
+    const history: HistoryMessage[] = [
       {
-        role: 'user',
-        content: [
-          { type: 'text', text: '' },
-          { type: 'text', text: 'Run the tool' },
-        ],
-        toolCalls: [],
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: '' },
+            { type: 'text', text: 'Run the tool' },
+          ],
+        },
+        meta: {},
       },
       {
-        role: 'assistant',
-        content: [{ type: 'text', text: '' }],
-        toolCalls: [],
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: '' }],
+          toolCalls: [],
+        },
+        meta: {},
       },
       {
-        role: 'assistant',
-        content: [{ type: 'text', text: '' }],
-        toolCalls: [{ type: 'function', id: 'call_empty', name: 'empty', arguments: '{}' }],
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: '' }],
+          toolCalls: [{ type: 'function', id: 'call_empty', name: 'empty', arguments: '{}' }],
+        },
+        meta: {},
       },
       {
-        role: 'tool',
-        content: [{ type: 'text', text: 'done' }],
-        toolCalls: [],
-        toolCallId: 'call_empty',
+        message: {
+          role: 'tool',
+          content: [{ type: 'text', text: 'done' }],
+          toolCallId: 'call_empty',
+        },
+        meta: {},
       },
       {
-        role: 'assistant',
-        content: [{ type: 'think', think: '', encrypted: 'enc_empty_thinking' }],
-        toolCalls: [],
+        message: {
+          role: 'assistant',
+          content: [{ type: 'think', think: '', encrypted: 'enc_empty_thinking' }],
+          toolCalls: [],
+        },
+        meta: {},
       },
       {
-        role: 'user',
-        content: [{ type: 'text', text: '   ' }],
-        toolCalls: [],
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: '   ' }],
+        },
+        meta: {},
       },
     ];
 
@@ -171,7 +204,6 @@ describe('Agent context', () => {
       {
         role: 'user',
         content: [{ type: 'text', text: 'Run the tool' }],
-        toolCalls: [],
       },
       {
         role: 'assistant',
@@ -181,7 +213,6 @@ describe('Agent context', () => {
       {
         role: 'tool',
         content: [{ type: 'text', text: 'done' }],
-        toolCalls: [],
         toolCallId: 'call_empty',
       },
       {
@@ -190,25 +221,30 @@ describe('Agent context', () => {
         toolCalls: [],
       },
     ]);
-    expect(history[0]?.content).toEqual([
+    expect(history[0]?.message.content).toEqual([
       { type: 'text', text: '' },
       { type: 'text', text: 'Run the tool' },
     ]);
-    expect(history[1]?.content).toEqual([{ type: 'text', text: '' }]);
+    expect(history[1]?.message.content).toEqual([{ type: 'text', text: '' }]);
   });
 
   it('renders tool result messages left empty by LLM projection cleanup as empty output', () => {
-    const history: ContextMessage[] = [
+    const history: HistoryMessage[] = [
       {
-        role: 'assistant',
-        content: [],
-        toolCalls: [{ type: 'function', id: 'call_empty', name: 'empty', arguments: '{}' }],
+        message: {
+          role: 'assistant',
+          content: [],
+          toolCalls: [{ type: 'function', id: 'call_empty', name: 'empty', arguments: '{}' }],
+        },
+        meta: {},
       },
       {
-        role: 'tool',
-        content: [{ type: 'text', text: '' }],
-        toolCallId: 'call_empty',
-        toolCalls: [],
+        message: {
+          role: 'tool',
+          content: [{ type: 'text', text: '' }],
+          toolCallId: 'call_empty',
+        },
+        meta: {},
       },
     ];
 
@@ -221,7 +257,6 @@ describe('Agent context', () => {
       {
         role: 'tool',
         content: [{ type: 'text', text: '<system>Tool output is empty.</system>' }],
-        toolCalls: [],
         toolCallId: 'call_empty',
       },
     ]);
@@ -231,36 +266,40 @@ describe('Agent context', () => {
     ctx.appendUserMessage([{ type: 'text', text: 'hooked input' }]);
     context.append(
       {
-        role: 'user',
-        content: [
-          {
-            type: 'text',
-            text: '<hook_result hook_event="UserPromptSubmit">\nhook response\n</hook_result>',
-          },
-        ],
-        toolCalls: [],
-        origin: { kind: 'hook_result', event: 'UserPromptSubmit' },
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: '<hook_result hook_event="UserPromptSubmit">\nhook response\n</hook_result>',
+            },
+          ],
+        },
+        meta: { origin: { kind: 'hook_result', event: 'UserPromptSubmit' } },
       },
     );
     context.append(
       {
-        role: 'assistant',
-        content: [
-          {
-            type: 'text',
-            text: '<hook_result hook_event="UserPromptSubmit">\nblocked reason\n</hook_result>',
-          },
-        ],
-        toolCalls: [],
-        origin: { kind: 'hook_result', event: 'UserPromptSubmit', blocked: true },
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'text',
+              text: '<hook_result hook_event="UserPromptSubmit">\nblocked reason\n</hook_result>',
+            },
+          ],
+          toolCalls: [],
+        },
+        meta: { origin: { kind: 'hook_result', event: 'UserPromptSubmit', blocked: true } },
       },
     );
     context.append(
       {
-        role: 'user',
-        content: [{ type: 'text', text: 'continue from stop hook' }],
-        toolCalls: [],
-        origin: { kind: 'hook_result', event: 'Stop' },
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'continue from stop hook' }],
+        },
+        meta: { origin: { kind: 'hook_result', event: 'Stop' } },
       },
     );
 
@@ -269,7 +308,6 @@ describe('Agent context', () => {
       {
         role: 'user',
         content: [{ type: 'text', text: 'hooked input' }],
-        toolCalls: [],
       },
       {
         role: 'user',
@@ -279,7 +317,6 @@ describe('Agent context', () => {
             text: '<hook_result hook_event="UserPromptSubmit">\nhook response\n</hook_result>',
           },
         ],
-        toolCalls: [],
       },
       {
         role: 'assistant',
@@ -294,7 +331,6 @@ describe('Agent context', () => {
       {
         role: 'user',
         content: [{ type: 'text', text: 'continue from stop hook' }],
-        toolCalls: [],
       },
     ]);
   });
@@ -303,15 +339,17 @@ describe('Agent context', () => {
     ctx.appendUserMessage([{ type: 'text', text: 'blocked prompt' }]);
     context.append(
       {
-        role: 'assistant',
-        content: [
-          {
-            type: 'text',
-            text: '<hook_result hook_event="UserPromptSubmit">\nblocked reason\n</hook_result>',
-          },
-        ],
-        toolCalls: [],
-        origin: { kind: 'hook_result', event: 'UserPromptSubmit', blocked: true },
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'text',
+              text: '<hook_result hook_event="UserPromptSubmit">\nblocked reason\n</hook_result>',
+            },
+          ],
+          toolCalls: [],
+        },
+        meta: { origin: { kind: 'hook_result', event: 'UserPromptSubmit', blocked: true } },
       },
     );
     ctx.appendUserMessage([{ type: 'text', text: 'safe followup' }]);
@@ -321,7 +359,6 @@ describe('Agent context', () => {
       {
         role: 'user',
         content: [{ type: 'text', text: 'blocked prompt' }],
-        toolCalls: [],
       },
       {
         role: 'assistant',
@@ -336,7 +373,6 @@ describe('Agent context', () => {
       {
         role: 'user',
         content: [{ type: 'text', text: 'safe followup' }],
-        toolCalls: [],
       },
     ]);
   });
@@ -387,29 +423,35 @@ describe('Agent context', () => {
     ctx.appendUserMessage([{ type: 'text', text: 'load a skill' }]);
     context.append(
       {
-        role: 'assistant',
-        content: [],
-        toolCalls: [
-          { type: 'function', id: 'call_write', name: 'Write', arguments: '{}' },
-          { type: 'function', id: 'call_skill', name: 'Skill', arguments: '{}' },
-        ],
+        message: {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            { type: 'function', id: 'call_write', name: 'Write', arguments: '{}' },
+            { type: 'function', id: 'call_skill', name: 'Skill', arguments: '{}' },
+          ],
+        },
+        meta: {},
       },
     );
     context.append(
       {
-        role: 'user',
-        content: [{ type: 'text', text: '<system-reminder>\nskill body\n</system-reminder>' }],
-        toolCalls: [],
-        origin: {
-          kind: 'skill_activation',
-          activationId: 'act_skill',
-          skillName: 'demo',
-          trigger: 'model-tool',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: '<system-reminder>\nskill body\n</system-reminder>' }],
+        },
+        meta: {
+          origin: {
+            kind: 'skill_activation',
+            activationId: 'act_skill',
+            skillName: 'demo',
+            trigger: 'model-tool',
+          },
         },
       },
     );
 
-    expect(context.get().map((message) => message.role)).toEqual(['user', 'assistant', 'user']);
+    expect(context.get().map((entry) => entry.message.role)).toEqual(['user', 'assistant', 'user']);
     expect(ctx.project().map((message) => message.role)).toEqual([
       'user',
       'assistant',
@@ -420,10 +462,12 @@ describe('Agent context', () => {
 
     context.append(
       {
-        role: 'tool',
-        content: [{ type: 'text', text: 'wrote file' }],
-        toolCalls: [],
-        toolCallId: 'call_write',
+        message: {
+          role: 'tool',
+          content: [{ type: 'text', text: 'wrote file' }],
+          toolCallId: 'call_write',
+        },
+        meta: {},
       },
     );
     expect(ctx.project().map((message) => message.role)).toEqual([
@@ -436,10 +480,12 @@ describe('Agent context', () => {
 
     context.append(
       {
-        role: 'tool',
-        content: [{ type: 'text', text: 'skill loaded' }],
-        toolCalls: [],
-        toolCallId: 'call_skill',
+        message: {
+          role: 'tool',
+          content: [{ type: 'text', text: 'skill loaded' }],
+          toolCallId: 'call_skill',
+        },
+        meta: {},
       },
     );
 
@@ -478,7 +524,7 @@ describe('Agent context', () => {
 
     ctx.appendUserMessage([{ type: 'text', text: 'next user prompt'.repeat(20) }]);
 
-    const pendingMessages = context.get().slice(-1);
+    const pendingMessages = context.get().slice(-1).map((entry) => entry.message);
     expect(tokenCounting.get().size).toBe(
       tokenCounting.get().measured + estimateTokensForMessages(pendingMessages),
     );
@@ -488,14 +534,17 @@ describe('Agent context', () => {
     ctx.appendUserMessage([{ type: 'text', text: 'lookup pending tokens' }]);
     context.append(
       {
-        role: 'assistant',
-        content: [],
-        toolCalls: [
-          { type: 'function', id: 'call_pending_tokens', name: 'Lookup', arguments: '{}' },
-        ],
+        message: {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            { type: 'function', id: 'call_pending_tokens', name: 'Lookup', arguments: '{}' },
+          ],
+        },
+        meta: {},
       },
     );
-    tokenCounting.measured(context.get(), [], {
+    tokenCounting.measured(context.get().map((entry) => entry.message), [], {
       inputCacheRead: 0,
       inputCacheCreation: 0,
       inputOther: 1_280,
@@ -503,14 +552,16 @@ describe('Agent context', () => {
     });
     context.append(
       {
-        role: 'tool',
-        content: [{ type: 'text', text: 'large tool result '.repeat(50) }],
-        toolCalls: [],
-        toolCallId: 'call_pending_tokens',
+        message: {
+          role: 'tool',
+          content: [{ type: 'text', text: 'large tool result '.repeat(50) }],
+          toolCallId: 'call_pending_tokens',
+        },
+        meta: {},
       },
     );
 
-    const pendingMessages = context.get().slice(-1);
+    const pendingMessages = context.get().slice(-1).map((entry) => entry.message);
     expect(tokenCounting.get().measured).toBe(1_280);
     expect(tokenCounting.get().size).toBe(
       1_280 + estimateTokensForMessages(pendingMessages),
@@ -536,7 +587,7 @@ describe('Agent context', () => {
     ctx.appendUserMessage([{ type: 'text', text: 'pending one'.repeat(20) }]);
     ctx.appendUserMessage([{ type: 'text', text: 'pending two'.repeat(20) }]);
 
-    const messages = context.get();
+    const messages = context.get().map((entry) => entry.message);
     const tailEstimate = estimateTokensForMessages(messages.slice(2));
 
     expect(tokenCounting.get()).toEqual({
@@ -600,7 +651,7 @@ describe('Agent context', () => {
     await ctx.undoHistory(1);
 
     const surviving = context.get();
-    expect(surviving.map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(surviving.map((m) => m.message.role)).toEqual(['user', 'assistant']);
     expect(tokenCounting.get()).toEqual({ size: 1_000, measured: 1_000, estimated: 0 });
   });
 
@@ -611,7 +662,7 @@ describe('Agent context', () => {
 
     await ctx.undoHistory(1);
 
-    expect(context.get().map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(context.get().map((m) => m.message.role)).toEqual(['user', 'assistant']);
     expect(tokenCounting.get()).toEqual({ size: 1_000, measured: 1_000, estimated: 0 });
   });
 
@@ -621,19 +672,22 @@ describe('Agent context', () => {
 
     context.append(
       {
-        role: 'user',
-        content: [{ type: 'text', text: 'background task completed' }],
-        toolCalls: [],
-        origin: {
-          kind: 'task',
-          taskId: 'bash-001',
-          status: 'completed',
-          notificationId: 'task:bash-001:completed',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'background task completed' }],
+        },
+        meta: {
+          origin: {
+            kind: 'task',
+            taskId: 'bash-001',
+            status: 'completed',
+            notificationId: 'task:bash-001:completed',
+          },
         },
       },
     );
 
-    expect(context.get().map((m) => m.role)).toEqual([
+    expect(context.get().map((m) => m.message.role)).toEqual([
       'user',
       'assistant',
       'user',
@@ -643,7 +697,7 @@ describe('Agent context', () => {
 
     await ctx.undoHistory(1);
 
-    expect(context.get().map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(context.get().map((m) => m.message.role)).toEqual(['user', 'assistant']);
   });
 
   it('keeps un-owned injection messages from the undone turn in the rebuilt context', async () => {
@@ -657,10 +711,12 @@ describe('Agent context', () => {
     );
     context.append(
       {
-        role: 'assistant',
-        content: [{ type: 'text', text: 'work done' }],
-        toolCalls: [],
-        origin: undefined,
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'work done' }],
+          toolCalls: [],
+        },
+        meta: {},
       },
     );
 
@@ -668,14 +724,18 @@ describe('Agent context', () => {
 
     expect(context.get()).toEqual([
       expect.objectContaining({
-        role: 'user',
-        content: [{ type: 'text', text: 'earlier question' }],
-        origin: { kind: 'user' },
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'earlier question' }],
+        },
+        meta: { origin: { kind: 'user' } },
       }),
       expect.objectContaining({
-        role: 'user',
-        content: [{ type: 'text', text: 'Plan mode is active' }],
-        origin: { kind: 'injection', variant: 'plan_mode' },
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Plan mode is active' }],
+        },
+        meta: { origin: { kind: 'injection', variant: 'plan_mode' } },
       }),
     ]);
   });
@@ -695,11 +755,13 @@ describe('Agent context', () => {
 
     expect(context.get()).toMatchObject([
       {
-        origin: { kind: 'user' },
-        id: expect.any(String),
-        content: [{ type: 'text', text: `inspect this image ${caption}` }],
+        meta: { origin: { kind: 'user' }, promptId: expect.any(String) },
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: `inspect this image ${caption}` }],
+        },
       },
-      { role: 'assistant' },
+      { message: { role: 'assistant' } },
     ]);
 
     await ctx.undoHistory(1);
@@ -779,10 +841,9 @@ describe('Agent context', () => {
 
     it('falls back to a zero tokensAfter', () => {
       const history = [userMessage('u1'), {
-        role: 'assistant',
-        content: [{ type: 'text', text: 'a1' }],
-        toolCalls: [],
-      } as ContextMessage];
+        message: { role: 'assistant', content: [{ type: 'text', text: 'a1' }], toolCalls: [] },
+        meta: {},
+      } as HistoryMessage];
 
       const shape = buildContextCompactionShape(
         history,
@@ -791,17 +852,16 @@ describe('Agent context', () => {
       );
 
       expect(shape.tokensAfter).toBe(0);
-      expect(shape.messages.map((m) => m.role)).toEqual(['user', 'user', 'user']);
-      expect(shape.messages[1]?.origin?.kind).toBe('compaction_summary');
-      expect(shape.messages[2]?.origin).toEqual({ kind: 'injection', variant: 'compaction_continuation' });
+      expect(shape.messages.map((m) => m.message.role)).toEqual(['user', 'user', 'user']);
+      expect(isUserEntry(shape.messages[1]!) && shape.messages[1]!.meta?.origin?.kind).toBe('compaction_summary');
+      expect(isUserEntry(shape.messages[2]!) && shape.messages[2]!.meta?.origin).toEqual({ kind: 'injection', variant: 'compaction_continuation' });
     });
 
     it('prefers the measured summary output tokens over the text estimate', () => {
       const history = [userMessage('u1'), {
-        role: 'assistant',
-        content: [{ type: 'text', text: 'a1' }],
-        toolCalls: [],
-      } as ContextMessage];
+        message: { role: 'assistant', content: [{ type: 'text', text: 'a1' }], toolCalls: [] },
+        meta: {},
+      } as HistoryMessage];
 
       const withMeasured = buildContextCompactionShape(history, {
         summary: 'summary',
@@ -824,10 +884,9 @@ describe('Agent context', () => {
 
     it('counts the request overhead into tokensAfter on the full-request basis', () => {
       const history = [userMessage('u1'), {
-        role: 'assistant',
-        content: [{ type: 'text', text: 'a1' }],
-        toolCalls: [],
-      } as ContextMessage];
+        message: { role: 'assistant', content: [{ type: 'text', text: 'a1' }], toolCalls: [] },
+        meta: {},
+      } as HistoryMessage];
 
       const withOverhead = buildContextCompactionShape(history, {
         summary: 'summary',
@@ -851,11 +910,13 @@ describe('Agent context', () => {
   describe('legacy compaction layout', () => {
     it('keeps the verbatim summary followed by the uncompacted tail', () => {
       const history = [userMessage('old'), userMessage('tail')];
-      const legacySummary: ContextMessage = {
-        role: 'assistant',
-        content: [{ type: 'text', text: 'legacy summary' }],
-        toolCalls: [],
-        origin: { kind: 'compaction_summary' },
+      const legacySummary: HistoryMessage = {
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'legacy summary' }],
+          toolCalls: [],
+        },
+        meta: { origin: { kind: 'compaction_summary' } },
       };
       const input = {
         summary: 'legacy summary',
@@ -870,17 +931,15 @@ describe('Agent context', () => {
 
       expect(shape.messages[0]).toBe(legacySummary);
       expect(shape.messages[1]).toBe(history[1]);
-      expect(shape.messages.map(textOf)).toEqual(['legacy summary', 'tail']);
+      expect(shape.messages.map((entry) => textOf(entry.message))).toEqual(['legacy summary', 'tail']);
     });
   });
 });
 
-function userMessage(text: string, origin?: ContextMessage['origin']): ContextMessage {
+function userMessage(text: string, origin?: PromptOrigin): HistoryMessage {
   return {
-    role: 'user',
-    content: [{ type: 'text', text }],
-    toolCalls: [],
-    origin,
+    message: { role: 'user', content: [{ type: 'text', text }] },
+    meta: { origin },
   };
 }
 
@@ -892,10 +951,9 @@ function textOf(message: Message): string {
 }
 
 describe('closeTrailingOpenToolExchange', () => {
-  const user: ContextMessage = {
-    role: 'user',
-    content: [{ type: 'text', text: 'hi' }],
-    toolCalls: [],
+  const user: HistoryMessage = {
+    message: { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+    meta: {},
   };
   const readCall: ToolCall = { type: 'function', id: 'call_read', name: 'Read', arguments: '{}' };
   const agentCall: ToolCall = { type: 'function', id: 'call_agent', name: 'Agent', arguments: '{}' };
@@ -910,74 +968,94 @@ describe('closeTrailingOpenToolExchange', () => {
   });
 
   it('keeps a fully answered trailing exchange unchanged', () => {
-    const history: ContextMessage[] = [
+    const history: HistoryMessage[] = [
       user,
-      { role: 'assistant', content: [], toolCalls: [readCall] },
+      { message: { role: 'assistant', content: [], toolCalls: [readCall] }, meta: {} },
       {
-        role: 'tool',
-        toolCallId: 'call_read',
-        content: [{ type: 'text', text: 'contents' }],
-        toolCalls: [],
+        message: {
+          role: 'tool',
+          toolCallId: 'call_read',
+          content: [{ type: 'text', text: 'contents' }],
+        },
+        meta: {},
       },
     ];
     expect(closeTrailingOpenToolExchange(history)).toEqual(history);
   });
 
   it('closes an unanswered trailing call with a synthetic in-flight result', () => {
-    const assistant: ContextMessage = {
-      role: 'assistant',
-      content: [{ type: 'text', text: 'delegating the follow-up' }],
-      toolCalls: [agentCall],
+    const assistant: HistoryMessage = {
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'delegating the follow-up' }],
+        toolCalls: [agentCall],
+      },
+      meta: {},
     };
     const seed = closeTrailingOpenToolExchange([user, assistant]);
 
     expect(seed).toHaveLength(3);
     expect(seed.slice(0, 2)).toEqual([user, assistant]);
     expect(seed[2]).toEqual({
-      role: 'tool',
-      toolCallId: 'call_agent',
-      content: [{ type: 'text', text: INHERITED_IN_FLIGHT_TOOL_OUTPUT }],
-      toolCalls: [],
+      message: {
+        role: 'tool',
+        toolCallId: 'call_agent',
+        content: [{ type: 'text', text: INHERITED_IN_FLIGHT_TOOL_OUTPUT }],
+      },
+      meta: {},
     });
   });
 
   it('seals a partial assistant when closing an unanswered trailing call', () => {
-    const assistant: ContextMessage = {
-      role: 'assistant',
-      content: [{ type: 'text', text: 'delegating the follow-up' }],
-      toolCalls: [agentCall],
-      partial: true,
+    const assistant: HistoryMessage = {
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'delegating the follow-up' }],
+        toolCalls: [agentCall],
+      },
+      meta: { partial: true },
     };
     const seed = closeTrailingOpenToolExchange([user, assistant]);
 
-    expect(seed[1]).toMatchObject({ role: 'assistant', partial: undefined });
+    expect(seed[1]).toMatchObject({ message: { role: 'assistant' }, meta: { partial: undefined } });
     expect(seed[2]).toMatchObject({
-      role: 'tool',
-      toolCallId: 'call_agent',
-      content: [{ type: 'text', text: INHERITED_IN_FLIGHT_TOOL_OUTPUT }],
+      message: {
+        role: 'tool',
+        toolCallId: 'call_agent',
+        content: [{ type: 'text', text: INHERITED_IN_FLIGHT_TOOL_OUTPUT }],
+      },
+      meta: {},
     });
   });
 
   it('fills only the unanswered calls of a partially answered parallel batch', () => {
-    const assistant: ContextMessage = {
-      role: 'assistant',
-      content: [],
-      toolCalls: [readCall, agentCall],
+    const assistant: HistoryMessage = {
+      message: {
+        role: 'assistant',
+        content: [],
+        toolCalls: [readCall, agentCall],
+      },
+      meta: {},
     };
-    const answered: ContextMessage = {
-      role: 'tool',
-      toolCallId: 'call_read',
-      content: [{ type: 'text', text: 'contents' }],
-      toolCalls: [],
+    const answered: HistoryMessage = {
+      message: {
+        role: 'tool',
+        toolCallId: 'call_read',
+        content: [{ type: 'text', text: 'contents' }],
+      },
+      meta: {},
     };
     const seed = closeTrailingOpenToolExchange([user, assistant, answered]);
 
     expect(seed).toHaveLength(4);
     expect(seed.slice(0, 3)).toEqual([user, assistant, answered]);
     expect(seed[3]).toMatchObject({
-      role: 'tool',
-      toolCallId: 'call_agent',
-      content: [{ type: 'text', text: INHERITED_IN_FLIGHT_TOOL_OUTPUT }],
+      message: {
+        role: 'tool',
+        toolCallId: 'call_agent',
+        content: [{ type: 'text', text: INHERITED_IN_FLIGHT_TOOL_OUTPUT }],
+      },
+      meta: {},
     });
   });
 });

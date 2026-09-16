@@ -6,6 +6,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createKimiHarness, type Event, type KimiHarness } from '#/index';
+import type { AgentReplayRecord } from '#/replay';
+import { isUserEntry } from '@moonshot-ai/agent-core-v2';
 import { turnPromptText } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 
 import { TEST_IDENTITY } from './test-identity';
@@ -461,7 +463,9 @@ describe('Session.prompt events', () => {
       expect(fullResume.getResumeState()?.agents[spawned.subagentId]?.replay).toContainEqual(
         expect.objectContaining({
           type: 'message',
-          message: expect.objectContaining({ role: 'assistant' }),
+          message: expect.objectContaining({
+            message: expect.objectContaining({ role: 'assistant' }),
+          }),
         }),
       );
     } finally {
@@ -805,27 +809,19 @@ async function runPrompt(
   await done;
 }
 
-function visibleReplayText(
-  records: readonly {
-    readonly type: string;
-    readonly message?: {
-      readonly role: string;
-      readonly content: ReadonlyArray<{ readonly type: string; readonly text?: string }>;
-      readonly origin?: { readonly kind: string };
-    };
-  }[],
-): readonly string[] {
+function visibleReplayText(records: readonly AgentReplayRecord[]): readonly string[] {
   const entries: string[] = [];
   for (const record of records) {
-    if (record.type !== 'message' || record.message === undefined) continue;
-    const { message } = record;
-    if (message.role === 'user' && message.origin?.kind !== 'user') continue;
-    if (message.role !== 'user' && message.role !== 'assistant') continue;
-    const text = message.content
+    if (record.type !== 'message') continue;
+    const { message: entry } = record;
+    const origin = isUserEntry(entry) ? entry.meta?.origin : undefined;
+    if (entry.message.role === 'user' && origin?.kind !== 'user') continue;
+    if (entry.message.role !== 'user' && entry.message.role !== 'assistant') continue;
+    const text = entry.message.content
       .filter((part) => part.type === 'text')
       .map((part) => part.text ?? '')
       .join('');
-    entries.push(`${message.role}:${text}`);
+    entries.push(`${entry.message.role}:${text}`);
   }
   return entries;
 }

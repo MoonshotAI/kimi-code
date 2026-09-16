@@ -3,7 +3,8 @@ import { APIProviderRateLimitError, isProviderRateLimitError } from '#/llm-adapt
 import { linkAbortSignal, userCancellationReason } from '#/_base/utils/abort';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
+import type { PromptOrigin } from '#/agent/contextMemory/types';
+import type { HistoryMessage } from '#human/agent/turn';
 import { Error2, ErrorCodes, toKimiErrorPayload, type KimiErrorPayload } from '#/errors';
 import {
   IAgentLoopService,
@@ -167,16 +168,16 @@ function providerRateLimitErrorFromPayload(error: KimiErrorPayload): APIProvider
   return new APIProviderRateLimitError(error.message, requestId);
 }
 
-function latestAssistantText(messages: readonly ContextMessage[]): string {
+function latestAssistantText(messages: readonly HistoryMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i]!;
-    if (message.role !== 'assistant') continue;
-    return contentText(message.content);
+    if (message.message.role !== 'assistant') continue;
+    return contentText(message.message.content);
   }
   return '';
 }
 
-function contentText(content: ContextMessage['content']): string {
+function contentText(content: HistoryMessage['message']['content']): string {
   if (typeof content === 'string') return content;
   return content
     .filter((part): part is Extract<(typeof content)[number], { type: 'text' }> => part.type === 'text')

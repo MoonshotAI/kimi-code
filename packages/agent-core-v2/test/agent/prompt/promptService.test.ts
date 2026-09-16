@@ -4,7 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { IEventBus } from '#/app/event/eventBus';
 import { IFileService } from '#/app/file/fileService';
-import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
+import { isUserEntry, type UserEntry } from '#human/agent/turn';
+import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { IAgentLoopService, type PromptHandle } from '#/agent/loop/loop';
 import { TurnSteer } from '#/agent/loop/turnOps';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
@@ -28,16 +29,20 @@ import {
   type TestAgentServiceOverride,
 } from '../../harness';
 
-function message(text: string): ContextMessage {
-  return { role: 'user', content: [{ type: 'text', text }], toolCalls: [], origin: { kind: 'user' } };
+function message(text: string): UserEntry {
+  return {
+    message: { role: 'user', content: [{ type: 'text', text }] },
+    meta: { origin: { kind: 'user' } },
+  };
 }
 
-function bundledMessage(skillName: string, user: string, extra: readonly ContentPart[] = []): ContextMessage {
+function bundledMessage(skillName: string, user: string, extra: readonly ContentPart[] = []): UserEntry {
   return {
-    role: 'user',
-    content: [{ type: 'text', text: `<skill>${skillName}</skill>` }, { type: 'text', text: user }, ...extra],
-    toolCalls: [],
-    origin: { kind: 'user', skillActivations: [{ activationId: `act-${skillName}`, skillName }] },
+    message: {
+      role: 'user',
+      content: [{ type: 'text', text: `<skill>${skillName}</skill>` }, { type: 'text', text: user }, ...extra],
+    },
+    meta: { origin: { kind: 'user', skillActivations: [{ activationId: `act-${skillName}`, skillName }] } },
   };
 }
 
@@ -59,12 +64,12 @@ function daemonIntake() {
 
 async function enqueue(
   loop: IAgentLoopService,
-  input: { id?: string; message: ContextMessage },
+  input: { id?: string; message: UserEntry },
 ): Promise<PromptHandle> {
   const status = loop.snapshot();
   const { id } = loop.submit({
-    message: { role: 'user', content: [...input.message.content] },
-    meta: { promptId: input.id, origin: input.message.origin, tracked: true },
+    message: { role: 'user', content: [...input.message.message.content] },
+    meta: { promptId: input.id, origin: input.message.meta?.origin, tracked: true },
   });
   const handle = loop.promptHandle(id)!;
   if (status.state === 'idle' && !status.paused && status.queue.length === 0) {
@@ -290,7 +295,7 @@ describe('prompt queue', () => {
 
     const { id } = loop.submit(
       {
-        message: { role: 'user', content: message('system').content },
+        message: { role: 'user', content: message('system').message.content },
         meta: { origin: { kind: 'injection', variant: 'test' } as PromptOrigin },
       },
       { steerIfActive: true },
@@ -333,7 +338,7 @@ describe('prompt queue', () => {
     });
 
     const { id } = loop.submit({
-      message: { role: 'user', content: message('launching').content },
+      message: { role: 'user', content: message('launching').message.content },
       meta: { tracked: true },
     });
     await entered;
@@ -360,8 +365,8 @@ describe('prompt queue', () => {
 
     const history = ctx.context.get();
     expect(history).toHaveLength(1);
-    expect(history[0]?.origin).toEqual({ kind: 'user' });
-    expect(history[0]?.content).toEqual([
+    expect(history[0]).toMatchObject({ meta: { origin: { kind: 'user' } } });
+    expect(history[0]?.message.content).toEqual([
       {
         type: 'text',
         text: '<system>Image compressed to fit model limits: 800x600</system>look at this',
@@ -393,17 +398,18 @@ describe('prompt queue', () => {
     await enqueue(loop, {
       id: 'prompt-img',
       message: {
-        role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url: avifUrl } }],
-        toolCalls: [],
-        origin: { kind: 'user' },
+        message: {
+          role: 'user',
+          content: [{ type: 'image_url', imageUrl: { url: avifUrl } }],
+        },
+        meta: { origin: { kind: 'user' } },
       },
     });
     await hold.started;
 
     const appended = ctx.context.get();
     expect(appended).toHaveLength(1);
-    const parts = appended[0]!.content;
+    const parts = appended[0]!.message.content;
     expect(parts.some((part) => part.type === 'image_url')).toBe(false);
     expect(parts[0]).toMatchObject({ type: 'text' });
     expect((parts[0] as { text: string }).text).toContain('image/avif');
@@ -423,15 +429,16 @@ describe('prompt queue', () => {
     await enqueue(loop, {
       id: 'prompt-heic',
       message: {
-        role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url: heicUrl } }],
-        toolCalls: [],
-        origin: { kind: 'user' },
+        message: {
+          role: 'user',
+          content: [{ type: 'image_url', imageUrl: { url: heicUrl } }],
+        },
+        meta: { origin: { kind: 'user' } },
       },
     });
     await hold.started;
 
-    const parts = ctx.context.get()[0]!.content;
+    const parts = ctx.context.get()[0]!.message.content;
     expect(parts).toEqual([{ type: 'image_url', imageUrl: { url: heicUrl } }]);
 
     hold.release();
@@ -451,10 +458,11 @@ describe('prompt queue', () => {
     const queued = await enqueue(loop, {
       id: 'prompt-steer-img',
       message: {
-        role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url: avifUrl } }],
-        toolCalls: [],
-        origin: { kind: 'user' },
+        message: {
+          role: 'user',
+          content: [{ type: 'image_url', imageUrl: { url: avifUrl } }],
+        },
+        meta: { origin: { kind: 'user' } },
       },
     });
     await loop.steer([queued.id]);
@@ -462,7 +470,7 @@ describe('prompt queue', () => {
     hold.release();
     await loop.settled();
 
-    const parts = ctx.context.get().flatMap((entry) => entry.content);
+    const parts = ctx.context.get().flatMap((entry) => entry.message.content);
     expect(parts.some((part) => part.type === 'image_url')).toBe(false);
     expect(
       parts.some((part) => part.type === 'text' && part.text.includes('image/avif')),
@@ -490,10 +498,11 @@ describe('prompt queue', () => {
     const queued = await enqueue(loop, {
       id: 'prompt-steer-daemon',
       message: {
-        role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url: 'kimi-file://file_1' } }],
-        toolCalls: [],
-        origin: { kind: 'user' },
+        message: {
+          role: 'user',
+          content: [{ type: 'image_url', imageUrl: { url: 'kimi-file://file_1' } }],
+        },
+        meta: { origin: { kind: 'user' } },
       },
     });
 
@@ -626,10 +635,12 @@ describe('prompt queue', () => {
     hold.release();
     await loop.settled();
 
-    const merged = ctx.context.get().find(
-      (entry) => entry.origin?.kind === 'user' && entry.origin.skillActivations !== undefined,
-    );
-    expect(merged?.content).toEqual([
+    const merged = ctx.context.get().find((entry) => {
+      if (!isUserEntry(entry)) return false;
+      const origin = entry.meta?.origin;
+      return origin?.kind === 'user' && origin.skillActivations !== undefined;
+    });
+    expect(merged?.message.content).toEqual([
       { type: 'text', text: '<skill>review</skill>' },
       { type: 'text', text: '<skill>security</skill>' },
       { type: 'text', text: 'user A' },
@@ -647,23 +658,29 @@ describe('prompt queue', () => {
     await hold.started;
     const one = await enqueue(loop, {
       message: {
-        role: 'user',
-        content: [{ type: 'text', text: 'one' }],
-        toolCalls: [],
-        origin: {
-          kind: 'user',
-          attachments: [{ name: 'a.txt', mediaType: 'text/plain', size: 1, path: '/data/a.txt' }],
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'one' }],
+        },
+        meta: {
+          origin: {
+            kind: 'user',
+            attachments: [{ name: 'a.txt', mediaType: 'text/plain', size: 1, path: '/data/a.txt' }],
+          },
         },
       },
     });
     const two = await enqueue(loop, {
       message: {
-        role: 'user',
-        content: [{ type: 'text', text: 'two' }],
-        toolCalls: [],
-        origin: {
-          kind: 'user',
-          attachments: [{ name: 'b.txt', mediaType: 'text/plain', size: 2, path: '/data/b.txt' }],
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'two' }],
+        },
+        meta: {
+          origin: {
+            kind: 'user',
+            attachments: [{ name: 'b.txt', mediaType: 'text/plain', size: 2, path: '/data/b.txt' }],
+          },
         },
       },
     });
@@ -672,14 +689,17 @@ describe('prompt queue', () => {
     hold.release();
     await loop.settled();
 
-    const merged = ctx.context.get().find(
-      (entry) => entry.origin?.kind === 'user' && entry.origin.attachments !== undefined,
-    );
-    expect(merged?.origin?.kind === 'user' && merged.origin.attachments).toEqual([
+    const merged = ctx.context.get().find((entry) => {
+      if (!isUserEntry(entry)) return false;
+      const origin = entry.meta?.origin;
+      return origin?.kind === 'user' && origin.attachments !== undefined;
+    });
+    const mergedOrigin = merged !== undefined && isUserEntry(merged) ? merged.meta?.origin : undefined;
+    expect(mergedOrigin?.kind === 'user' && mergedOrigin.attachments).toEqual([
       { name: 'a.txt', mediaType: 'text/plain', size: 1, path: '/data/a.txt' },
       { name: 'b.txt', mediaType: 'text/plain', size: 2, path: '/data/b.txt' },
     ]);
-    expect(merged?.origin?.kind === 'user' && merged.origin.skillActivations).toBeUndefined();
+    expect(mergedOrigin?.kind === 'user' && mergedOrigin.skillActivations).toBeUndefined();
   });
 
   it('steers a fresh submission into the active turn and settles it with the parent', async () => {
@@ -694,7 +714,7 @@ describe('prompt queue', () => {
     await hold.started;
     const { id } = loop.submit(
       {
-        message: { role: 'user', content: message('steer me').content },
+        message: { role: 'user', content: message('steer me').message.content },
         meta: { tracked: true },
       },
       { steerIfActive: true },
@@ -720,7 +740,7 @@ describe('prompt queue', () => {
     await enqueue(loop, { message: message('active') });
     await hold.started;
     const { id } = loop.submit({
-      message: { role: 'user', content: message('meta').content },
+      message: { role: 'user', content: message('meta').message.content },
       meta: { promptId: 'meta-id', tracked: true },
     });
 

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import { isUserEntry, type HistoryMessage } from '#human/agent/turn';
 import {
   IAgentContextMemoryService,
   IAgentShellCommandService,
@@ -16,8 +16,8 @@ import {
   type TestAgentContext,
 } from '../../harness';
 
-const textOf = (message: ContextMessage): string =>
-  message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+const textOf = (entry: HistoryMessage): string =>
+  entry.message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
 
 describe('AgentShellCommandService', () => {
   let ctx: TestAgentContext;
@@ -45,7 +45,10 @@ describe('AgentShellCommandService', () => {
 
     expect(result.isError).toBe(false);
     expect(result.stdout).toContain('hello');
-    expect(context.get().map(({ role, origin }) => ({ role, origin }))).toEqual([
+    expect(context.get().map((entry) => ({
+      role: entry.message.role,
+      origin: isUserEntry(entry) ? entry.meta?.origin : undefined,
+    }))).toEqual([
       { role: 'user', origin: { kind: 'shell_command', phase: 'input' } },
       { role: 'user', origin: { kind: 'shell_command', phase: 'output' } },
     ]);
@@ -71,7 +74,7 @@ describe('AgentShellCommandService', () => {
 
     expect(result.isError).toBe(true);
     const output = context.get().at(-1)!;
-    expect(output.origin).toEqual({ kind: 'shell_command', phase: 'output', isError: true });
+    expect(output).toMatchObject({ meta: { origin: { kind: 'shell_command', phase: 'output', isError: true } } });
     expect(textOf(output)).toContain('<bash-stderr>');
   });
 
@@ -182,7 +185,10 @@ describe('AgentShellCommandService', () => {
 
     expect(result.isError).toBe(true);
     expect(result.stderr).toContain('Bash tool is not registered');
-    expect(context.get().map(({ role, origin }) => ({ role, origin }))).toEqual([
+    expect(context.get().map((entry) => ({
+      role: entry.message.role,
+      origin: isUserEntry(entry) ? entry.meta?.origin : undefined,
+    }))).toEqual([
       { role: 'user', origin: { kind: 'shell_command', phase: 'input' } },
       { role: 'user', origin: { kind: 'shell_command', phase: 'output', isError: true } },
     ]);

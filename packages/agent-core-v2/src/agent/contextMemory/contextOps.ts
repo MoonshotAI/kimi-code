@@ -2,6 +2,12 @@ import { z } from 'zod';
 
 import { ErrorCodes, Error2 } from '#/errors';
 import type { ContentPart } from '#human/llm/message';
+import {
+  isAssistantEntry,
+  isSystemEntry,
+  isUserEntry,
+  type HistoryMessage,
+} from '#human/agent/turn';
 import { defineState } from '#/state/state';
 import type { PartsTransformer } from '#/wire/record';
 import type { WireRecord } from '#/wire/record';
@@ -22,27 +28,34 @@ import { isPromptOwnedInjection, isUndoAnchor } from './conversationTime';
 import {
   foldAppendMessage,
   foldLoopEvent,
+  normalizeReplayedEntry,
   resetFold,
   type LoopRecordedEvent,
 } from './loopEventFold';
-import type { ContextMessage } from './types';
 
 async function dehydrateMessages(
-  messages: readonly ContextMessage[],
+  messages: readonly HistoryMessage[],
   transform: PartsTransformer,
-): Promise<{ changed: boolean; result: ContextMessage[] }> {
+): Promise<{ changed: boolean; result: HistoryMessage[] }> {
   let changed = false;
-  const result: ContextMessage[] = [];
-  for (const msg of messages) {
-    const parts = await transform(msg.content);
-    if (parts !== msg.content) {
+  const result: HistoryMessage[] = [];
+  for (const entry of messages) {
+    const parts = await transform(entry.message.content);
+    if (parts !== entry.message.content) {
       changed = true;
-      result.push({ ...msg, content: [...parts] as ContentPart[] });
+      result.push(withMessageContent(entry, [...parts] as ContentPart[]));
     } else {
-      result.push(msg);
+      result.push(entry);
     }
   }
   return { changed, result };
+}
+
+function withMessageContent(entry: HistoryMessage, content: ContentPart[]): HistoryMessage {
+  if (isSystemEntry(entry)) return { ...entry, message: { ...entry.message, content } };
+  if (isUserEntry(entry)) return { ...entry, message: { ...entry.message, content } };
+  if (isAssistantEntry(entry)) return { ...entry, message: { ...entry.message, content } };
+  return { ...entry, message: { ...entry.message, content } };
 }
 
 async function dehydrateRecord(
@@ -50,11 +63,20 @@ async function dehydrateRecord(
   transform: PartsTransformer,
 ): Promise<WireRecord> {
   if (record.type === 'context.append_message') {
-    const message = record['message'] as ContextMessage | undefined;
-    if (message === undefined) return record;
-    const parts = await transform(message.content);
-    if (parts === message.content) return record;
-    return { ...record, message: { ...message, content: [...parts] } };
+    const raw = record['message'] as
+      | { readonly role?: unknown; readonly content?: readonly ContentPart[]; readonly message?: { readonly content?: readonly ContentPart[] } }
+      | undefined;
+    if (raw === undefined || raw === null) return record;
+    if (typeof raw.role === 'string') {
+      const parts = await transform([...(raw.content ?? [])]);
+      if (parts === (raw.content ?? [])) return record;
+      return { ...record, message: { ...raw, content: [...parts] } };
+    }
+    const inner = raw.message;
+    if (inner === undefined) return record;
+    const parts = await transform([...(inner.content ?? [])]);
+    if (parts === (inner.content ?? [])) return record;
+    return { ...record, message: { ...raw, message: { ...inner, content: [...parts] } } };
   }
   if (record.type === 'context.append_loop_event') {
     const event = record['event'] as LoopRecordedEvent | undefined;
@@ -76,9 +98,9 @@ async function dehydrateRecord(
   return record;
 }
 
-export const contextMemoryKey = defineState('contextMemory', (): ContextMessage[] => [])
+export const contextMemoryKey = defineState('contextMemory', (): HistoryMessage[] => [])
   .replayable({
-    schema: z.custom<ContextMessage[]>(),
+    schema: z.custom<HistoryMessage[]>(),
     blobs: {
       dehydrate: dehydrateRecord,
       rehydrate: async (state, transform) => {
@@ -92,24 +114,25 @@ export const contextMemoryKey = defineState('contextMemory', (): ContextMessage[
       if (s.length === 0) return;
       const cut = computeUndoCut(s, count);
       if (!isFullyUndoable(cut, count)) return;
-      return resetFold(s.slice(0, cut.cutIndex)) as ContextMessage[];
+      return resetFold(s.slice(0, cut.cutIndex)) as HistoryMessage[];
     },
   })
-  .on(ContextAppendMessage, (s, e) => foldAppendMessage(s, e.message) as ContextMessage[])
-  .on(ContextAppendLoopEvent, (s, e) => foldLoopEvent(s, e.event) as ContextMessage[])
-  .on(ContextClear, (s) => (s.length === 0 ? undefined : (resetFold([]) as ContextMessage[])))
+  .on(ContextAppendMessage, (s, e) => foldAppendMessage(s, e.message) as HistoryMessage[])
+  .on(ContextAppendLoopEvent, (s, e) => foldLoopEvent(s, e.event) as HistoryMessage[])
+  .on(ContextClear, (s) => (s.length === 0 ? undefined : (resetFold([]) as HistoryMessage[])))
   .on(ContextApplyCompaction, (s, e) => {
     const result = buildContextCompactionShape(
       s,
       readContextCompactionShapeInput(e as unknown as ContextApplyCompactionPayload),
     );
-    return resetFold([...result.messages]) as ContextMessage[];
+    return resetFold([...result.messages]) as HistoryMessage[];
   });
 
-export function popSwarmModeReminder(state: ContextMessage[]): ContextMessage[] {
+export function popSwarmModeReminder(state: HistoryMessage[]): HistoryMessage[] {
   const last = state.at(-1);
-  if (last?.origin?.kind !== 'injection' || last.origin.variant !== 'swarm_mode') return state;
-  return resetFold(state.slice(0, -1)) as ContextMessage[];
+  const origin = last !== undefined && isUserEntry(last) ? last.meta?.origin : undefined;
+  if (origin?.kind !== 'injection' || origin.variant !== 'swarm_mode') return state;
+  return resetFold(state.slice(0, -1)) as HistoryMessage[];
 }
 
 interface UnknownRecord {
@@ -119,11 +142,11 @@ interface UnknownRecord {
 type ContextCompactionRecord = ContextApplyCompactionPayload | UnknownRecord;
 
 export function applyContextCompactionRecord(
-  state: readonly ContextMessage[],
+  state: readonly HistoryMessage[],
   record: ContextCompactionRecord,
-): ContextMessage[] {
+): HistoryMessage[] {
   const result = buildContextCompactionShape(state, readContextCompactionShapeInput(record));
-  return resetFold([...result.messages]) as ContextMessage[];
+  return resetFold([...result.messages]) as HistoryMessage[];
 }
 
 export function readContextCompactionShapeInput(
@@ -165,13 +188,13 @@ export function readContextCompactedCount(record: ContextCompactionRecord): numb
   );
 }
 
-export function readContextCompactionSummary(record: ContextCompactionRecord): ContextMessage {
+export function readContextCompactionSummary(record: ContextCompactionRecord): HistoryMessage {
   const fields = record as UnknownRecord;
   const contextSummary = fields['contextSummary'];
   if (typeof contextSummary === 'string') return createCompactionSummaryMessage(contextSummary);
   const summary = fields['summary'];
   if (typeof summary === 'string') return createCompactionSummaryMessage(summary);
-  if (isContextMessage(summary)) return summary;
+  if (isLegacyFlatMessage(summary)) return normalizeReplayedEntry(summary);
   throw new Error2(
     ErrorCodes.STORAGE_DECODE_FAILED,
     'Invalid context.apply_compaction record: missing summary',
@@ -190,7 +213,7 @@ function readContextCompactionRawSummary(record: UnknownRecord): string {
   if (typeof summary === 'string') return summary;
   const contextSummary = record['contextSummary'];
   if (typeof contextSummary === 'string') return contextSummary;
-  if (isContextMessage(summary)) {
+  if (isLegacyFlatMessage(summary)) {
     return textOf(summary);
   }
   throw new Error2(
@@ -206,9 +229,9 @@ function readContextCompactionRawSummary(record: UnknownRecord): string {
   );
 }
 
-function readLegacySummaryMessage(record: UnknownRecord): ContextMessage | undefined {
+function readLegacySummaryMessage(record: UnknownRecord): HistoryMessage | undefined {
   const summary = record['summary'];
-  return isContextMessage(summary) ? summary : undefined;
+  return isLegacyFlatMessage(summary) ? normalizeReplayedEntry(summary) : undefined;
 }
 
 function readOptionalNumber(record: UnknownRecord, key: string): number | undefined {
@@ -226,7 +249,7 @@ function readOptionalBoolean(record: UnknownRecord, key: string): boolean | unde
   return typeof value === 'boolean' ? value : undefined;
 }
 
-function textOf(message: ContextMessage): string {
+function textOf(message: { readonly content: readonly ContentPart[] }): string {
   let text = '';
   for (const part of message.content) {
     if (part.type === 'text') text += part.text;
@@ -234,7 +257,7 @@ function textOf(message: ContextMessage): string {
   return text;
 }
 
-function isContextMessage(value: unknown): value is ContextMessage {
+function isLegacyFlatMessage(value: unknown): value is { readonly role: string; readonly content: readonly ContentPart[] } {
   if (value === null || typeof value !== 'object') return false;
   const message = value as { role?: unknown; content?: unknown };
   return typeof message.role === 'string' && Array.isArray(message.content);
@@ -246,25 +269,27 @@ export interface UndoCut {
   readonly stoppedAtCompaction: boolean;
 }
 
-export function computeUndoCut(state: readonly ContextMessage[], count: number): UndoCut {
+export function computeUndoCut(state: readonly HistoryMessage[], count: number): UndoCut {
   let remaining = count;
   let cutIndex = -1;
   let removedCount = 0;
   let stoppedAtCompaction = false;
   for (let i = state.length - 1; i >= 0 && remaining > 0; i--) {
-    const message = state[i];
-    if (message === undefined || message.origin?.kind === 'injection') continue;
-    if (message.origin?.kind === 'compaction_summary') {
+    const entry = state[i];
+    if (entry === undefined) continue;
+    const origin = entry.meta?.origin;
+    if (origin?.kind === 'injection') continue;
+    if (origin?.kind === 'compaction_summary') {
       stoppedAtCompaction = true;
       break;
     }
-    if (isUndoAnchor(message)) {
+    if (isUndoAnchor(entry)) {
       remaining--;
       removedCount++;
       cutIndex = i;
       while (
         cutIndex > 0 &&
-        isPromptOwnedInjection(state[cutIndex - 1]!, message)
+        isPromptOwnedInjection(state[cutIndex - 1]!, entry)
       ) {
         cutIndex--;
       }
@@ -291,7 +316,7 @@ export type UndoPrecheck =
       readonly undoable: number;
     };
 
-export function precheckUndo(history: readonly ContextMessage[], count: number): UndoPrecheck {
+export function precheckUndo(history: readonly HistoryMessage[], count: number): UndoPrecheck {
   const cut = computeUndoCut(history, count);
   if (isFullyUndoable(cut, count)) return { ok: true };
   const reason: UndoUnavailableReason = cut.stoppedAtCompaction

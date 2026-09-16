@@ -250,10 +250,11 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
         if (reason !== undefined) {
           this.stopHookContinuationUsed = true;
           this.context.append({
-            role: 'user',
-            content: [...createHistoryMessageBuilder().plain(reason).parts()],
-            toolCalls: [],
-            origin: { kind: 'system_trigger', name: 'stop_hook' },
+            message: {
+              role: 'user',
+              content: [...createHistoryMessageBuilder().plain(reason).parts()],
+            },
+            meta: { origin: { kind: 'system_trigger', name: 'stop_hook' } },
           });
           loop.notify();
           return;
@@ -338,10 +339,10 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
   private async runPromptSubmitHook(
     ctx: PromptSubmitContext,
   ): Promise<boolean> {
-    if ((ctx.promptMessage.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') return false;
+    if ((ctx.promptMessage.meta?.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') return false;
 
     const signal = new AbortController().signal;
-    const input = ctx.promptMessage.content;
+    const input = ctx.promptMessage.message.content;
     signal.throwIfAborted();
     const results = await this.runner.trigger('UserPromptSubmit', {
       matcherValue: input,
@@ -354,10 +355,12 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     const block = renderUserPromptHookBlockResult(results);
     if (block !== undefined) {
       this.context.append({
-        role: 'assistant',
-        content: [...createHistoryMessageBuilder().xml(block.text).parts()],
-        toolCalls: [],
-        origin: { kind: 'hook_result', event: block.event, blocked: true },
+        message: {
+          role: 'assistant',
+          content: [...createHistoryMessageBuilder().xml(block.text).parts()],
+          toolCalls: [],
+        },
+        meta: { origin: { kind: 'hook_result', event: block.event, blocked: true } },
       });
       void this.dispatcher.dispatch(
         new HookResult({
@@ -373,10 +376,11 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     const append = renderUserPromptHookResult(results);
     if (append !== undefined) {
       this.context.append({
-        role: 'user',
-        content: [...createHistoryMessageBuilder().xml(append.text).parts()],
-        toolCalls: [],
-        origin: { kind: 'hook_result', event: append.event },
+        message: {
+          role: 'user',
+          content: [...createHistoryMessageBuilder().xml(append.text).parts()],
+        },
+        meta: { origin: { kind: 'hook_result', event: append.event } },
       });
       void this.dispatcher.dispatch(
         new HookResult({

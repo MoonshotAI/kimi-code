@@ -22,7 +22,7 @@ import {
 } from './contextEvents';
 import { contextMemoryKey } from './contextOps';
 import type { LoopRecordedEvent } from './loopEventFold';
-import type { ContextMessage } from './types';
+import type { HistoryMessage } from '#human/agent/turn';
 
 export class AgentContextMemoryService extends Disposable implements IAgentContextMemoryService {
   declare readonly _serviceBrand: undefined;
@@ -45,11 +45,11 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
     };
   }
 
-  get(): readonly ContextMessage[] {
-    return this.agentState.get(contextMemoryKey) as readonly ContextMessage[];
+  get(): readonly HistoryMessage[] {
+    return this.agentState.get(contextMemoryKey) as readonly HistoryMessage[];
   }
 
-  append(...messages: readonly ContextMessage[]): void {
+  append(...messages: readonly HistoryMessage[]): void {
     if (messages.length === 0) return;
     const start = this.get().length;
     for (const message of messages) {
@@ -66,7 +66,7 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
     );
   }
 
-  publishTrailingRemoval(previous: readonly ContextMessage[]): boolean {
+  publishTrailingRemoval(previous: readonly HistoryMessage[]): boolean {
     const cutIndex = previous.length - 1;
     if (cutIndex < 0) return false;
     const current = this.get();

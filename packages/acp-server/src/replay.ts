@@ -5,7 +5,7 @@
  * turns on the client.
  *
  * Pure projection: {@link projectHistoryToSessionUpdates} maps a
- * `ContextMessage[]` to a `SessionNotification[]` with no IO, so the mapping
+ * `HistoryMessage[]` to a `SessionNotification[]` with no IO, so the mapping
  * is unit-testable without a live connection. The caller (`AcpSession`)
  * awaits each push in order — replay is a one-shot batch whose completion
  * ordering is what tells `loadSession` the response is safe to return.
@@ -20,7 +20,7 @@
  */
 
 import type { SessionNotification } from '@agentclientprotocol/sdk';
-import type { ContentPart, ContextMessage, ToolCall } from '@moonshot-ai/agent-core-v2';
+import { isToolEntry, type ContentPart, type HistoryMessage, type ToolCall } from '@moonshot-ai/agent-core-v2';
 
 import {
   assistantDeltaToSessionUpdate,
@@ -35,13 +35,14 @@ import {
  */
 export function projectHistoryToSessionUpdates(
   sessionId: string,
-  messages: readonly ContextMessage[],
+  messages: readonly HistoryMessage[],
 ): SessionNotification[] {
   const out: SessionNotification[] = [];
   let turnId = 0;
   const toolCallTurnIds = new Map<string, number>();
 
-  for (const message of messages) {
+  for (const entry of messages) {
+    const message = entry.message;
     switch (message.role) {
       case 'user':
         for (const part of message.content) {
@@ -63,7 +64,8 @@ export function projectHistoryToSessionUpdates(
         break;
       }
       case 'tool': {
-        const update = toolMessageToUpdate(message, sessionId, toolCallTurnIds);
+        if (!isToolEntry(entry)) break;
+        const update = toolMessageToUpdate(entry, sessionId, toolCallTurnIds);
         if (update !== null) out.push(update);
         break;
       }
@@ -124,11 +126,11 @@ function syntheticToolCall(
 }
 
 function toolMessageToUpdate(
-  message: ContextMessage,
+  entry: Extract<HistoryMessage, { message: { readonly role: 'tool' } }>,
   sessionId: string,
   toolCallTurnIds: ReadonlyMap<string, number>,
 ): SessionNotification | null {
-  const rawToolCallId = message.toolCallId;
+  const rawToolCallId = entry.message.toolCallId;
   if (!rawToolCallId) {
     // Tool result with no correlation id — skip rather than crash; the
     // on-disk session is the source of truth and we cannot synthesize a
@@ -142,14 +144,14 @@ function toolMessageToUpdate(
     // client never saw would orphan the card.
     return null;
   }
-  const isError = message.isError === true;
+  const isError = entry.meta?.isError === true;
   return {
     sessionId,
     update: {
       sessionUpdate: 'tool_call_update',
       toolCallId: `${turnId}:${rawToolCallId}`,
       status: isError ? 'failed' : 'completed',
-      content: toolMessageContentToAcpToolCallContent(message.content),
+      content: toolMessageContentToAcpToolCallContent(entry.message.content),
     },
   };
 }

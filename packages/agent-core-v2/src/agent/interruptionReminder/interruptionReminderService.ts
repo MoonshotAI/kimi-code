@@ -2,7 +2,9 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { HistoryMessage } from '#human/agent/turn';
+import { isUserEntry } from '#human/agent/turn';
+import { isAssistantEntry } from '#human/agent/turn';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
@@ -35,7 +37,8 @@ export class AgentInterruptionReminderService
     this._register(
       eventBus.subscribe(TurnEnded, (event) => {
         if (event.reason !== 'cancelled' || event.interruptReason !== 'user_cancelled') return;
-        const origin = lastComparableMessage(this.context.get())?.origin;
+        const last = lastComparableMessage(this.context.get());
+        const origin = last !== undefined && isUserEntry(last) ? last.meta?.origin : undefined;
         if (origin?.kind === 'injection' && origin.variant === INTERRUPTION_REMINDER_VARIANT) return;
         this.reminder.notify(INTERRUPTION_REMINDER, {
           variant: INTERRUPTION_REMINDER_VARIANT,
@@ -45,14 +48,14 @@ export class AgentInterruptionReminderService
   }
 }
 
-function lastComparableMessage(messages: readonly ContextMessage[]): ContextMessage | undefined {
+function lastComparableMessage(messages: readonly HistoryMessage[]): HistoryMessage | undefined {
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index]!;
     if (
-      message.role === 'assistant' &&
-      message.partial === true &&
-      message.toolCalls.length === 0 &&
-      message.content.every(isVacuousContentPart)
+      isAssistantEntry(message) &&
+      message.meta?.partial === true &&
+      message.message.toolCalls.length === 0 &&
+      message.message.content.every(isVacuousContentPart)
     ) {
       continue;
     }

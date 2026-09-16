@@ -4,7 +4,9 @@ import {
   isContentPart,
   isToolCall,
   isToolCallPart,
+  type Message,
   type StreamedMessagePart,
+  type ToolDescription as Tool,
 } from '#human/llm/message';
 import type {
   ExtraParams,
@@ -13,7 +15,6 @@ import type {
   LlmRequestControl,
   LlmRequester,
 } from '#human/llm/requester/requester';
-import { fromLlmMessage, type Message, type Tool } from '#/llm-adapter/contract/message';
 import { isAbortError } from '#/llm-adapter/contract/errors';
 import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
 import type { TokenUsage } from '#human/llm/usage';
@@ -76,7 +77,7 @@ export function requesterFromGenerateFn(fn: LegacyGenerateFn): LlmRequester {
           { name: config.model.provider, modelName: config.model.model },
           config.systemPrompt ?? '',
           [...(config.tools ?? [])],
-          content.messages.map(fromLlmMessage),
+          [...content.messages],
           {
             onMessagePart: (part) => {
               parts.push(structuredClone(part));
@@ -174,7 +175,7 @@ export function createScriptedGenerate() {
       throw new Error(`Unexpected generate call #${String(calls.length + 1)}`);
     }
 
-    const history = content.messages.map(fromLlmMessage);
+    const history = [...content.messages];
     const input = normalizeGenerateInput({
       systemPrompt: config.systemPrompt ?? '',
       tools: (config.tools ?? []).map(({ name, description, parameters }) => ({
@@ -282,7 +283,7 @@ export function createScriptedGenerate() {
 function partsFromGeneratedMessage(message: Message): StreamedMessagePart[] {
   const parts: StreamedMessagePart[] = [
     ...message.content.map((part) => structuredClone(part)),
-    ...message.toolCalls.map((part) => structuredClone(part)),
+    ...(message.role === 'assistant' ? message.toolCalls : []).map((part) => structuredClone(part)),
   ];
   return parts.length > 0 ? parts : [{ type: 'text', text: '' }];
 }

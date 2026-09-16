@@ -1116,13 +1116,15 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
     await expect(runtime.session.getContext()).resolves.toMatchObject({
       history: [
         {
-          role: "user",
-          content: expect.arrayContaining([
-            expect.objectContaining({
-              type: "text",
-              text: expect.stringContaining("Keep the public API stable."),
-            }),
-          ]),
+          message: expect.objectContaining({
+            role: "user",
+            content: expect.arrayContaining([
+              expect.objectContaining({
+                type: "text",
+                text: expect.stringContaining("Keep the public API stable."),
+              }),
+            ]),
+          }),
         },
       ],
     });

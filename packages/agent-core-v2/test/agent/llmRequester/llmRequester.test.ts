@@ -664,7 +664,7 @@ function wireEvents(
 }
 
 function userMessage(text: string) {
-  return { role: 'user' as const, content: [{ type: 'text' as const, text }], toolCalls: [] };
+  return { message: { role: 'user' as const, content: [{ type: 'text' as const, text }] } };
 }
 
 async function collectLLMRequest(

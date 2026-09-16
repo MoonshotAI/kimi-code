@@ -533,7 +533,7 @@ function spend(budget: Budget): boolean {
   return true;
 }
 
-const TS_BUDGET = (): Budget => ({ remaining: 24 });
+const TS_BUDGET = (): Budget => ({ remaining: 64 });
 
 const _fileCache = new Map<string, string>();
 
@@ -607,6 +607,16 @@ function findTsTypeDef(name: string, file: string): string | undefined {
   return undefined;
 }
 
+function findTsTypeParams(name: string, file: string): string[] {
+  const source = readCached(file);
+  const re = new RegExp(`(?:export\\s+)?(?:interface|type)\\s+${name}\\s*<([^>]+)>`);
+  const m = re.exec(source);
+  if (m === null) return [];
+  return splitTopLevel(m[1]!, [','])
+    .map((p) => p.trim().split(/\s+/)[0]!)
+    .filter((p) => p !== '');
+}
+
 function findImportSource(file: string, name: string): string | undefined {
   const source = readCached(file);
   const re = /(?:import|export)\s+(?:type\s+)?\{([^}]+)\}\s*from\s*'([^']+)'/g;
@@ -623,6 +633,7 @@ function findImportSource(file: string, name: string): string | undefined {
 function resolveModuleFile(fromFile: string, specifier: string): string | undefined {
   let base: string;
   if (specifier.startsWith('#/')) base = join(SRC, specifier.slice(2));
+  else if (specifier.startsWith('#human/')) base = join(SRC, 'human', specifier.slice(7));
   else if (specifier.startsWith('.')) base = join(dirname(fromFile), specifier);
   else return undefined;
   for (const candidate of [`${base}.ts`, join(base, 'index.ts')]) {
@@ -712,6 +723,22 @@ function summarizeTsTypeExpr(
       return renderTsFields(splitTsTypeFields(body), file, budget, charBudget, depth);
     }
   }
+  const generic = /^([$\w]+)<(.+)>$/.exec(text);
+  if (generic !== null && spend(budget)) {
+    const def = findTsTypeDef(generic[1]!, file);
+    if (def !== undefined) {
+      const params = findTsTypeParams(generic[1]!, file);
+      const args = splitTopLevel(generic[2]!, [',']);
+      let substituted = def;
+      params.forEach((param, i) => {
+        const arg = args[i]?.trim();
+        if (arg !== undefined && arg !== '') {
+          substituted = substituted.replaceAll(new RegExp(`\\b${param}\\b`, 'g'), arg);
+        }
+      });
+      return summarizeTsTypeExpr(substituted, file, budget, charBudget, depth + 1);
+    }
+  }
   if (/^[$\w]+$/.test(text)) {
     const summary = summarizeTsType(text, file, budget);
     if (summary !== undefined) return summary;
@@ -760,7 +787,8 @@ function friendlyZodExpr(expr: string, ownerFile: string, depth = 0): Sketch {
     if (typeof summary !== 'string' && !Array.isArray(summary)) {
       return { [TYPE_KEY]: typeName, ...summary };
     }
-    return truncate(`${typeName} = ${stringifySketch(summary)}`, 1024);
+    const rendered = `${typeName} = ${stringifySketch(summary)}`;
+    return rendered.includes('…') ? typeName : rendered;
   }
   if (/^z\.string\(\)$/.test(text)) return 'string';
   if (/^z\.number\(\)$/.test(text)) return 'number';
@@ -959,8 +987,8 @@ export async function buildWireManifest(): Promise<string> {
     '// runtime EVENT2_REGISTRY ("import = register"). Every payload declaration',
     '// carries its record type in a `_name` field. Payload sketches use TypeScript',
     '// type syntax; when a named type is expanded inline, its name appears as a doc',
-    '// comment (`/** ContextMessage */`). Bare type names (ContentPart,',
-    '// ContextMessage, …) refer to the real types in src/ — they are intentionally',
+    '// comment (`/** HistoryMessage */`). Bare type names (ContentPart,',
+    '// HistoryMessage, …) refer to the real types in src/ — they are intentionally',
     '// not resolved here. `// …` marks a capped field list. On disk (wire.jsonl)',
     '// the journal opens with a metadata line {"type": "metadata",',
     '// "protocol_version", "min_protocol_version", "created_at"} — readers whose',

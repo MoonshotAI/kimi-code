@@ -23,23 +23,31 @@ import {
 type ReplayMessage = Extract<AgentReplayRecord, { type: "message" }>["message"];
 
 function message(
-  role: ReplayMessage["role"],
+  role: ReplayMessage["message"]["role"],
   content: ContentPart[],
   options: {
     readonly toolCalls?: ToolCall[];
     readonly toolCallId?: string;
     readonly isError?: boolean;
-    readonly origin?: ReplayMessage["origin"];
+    readonly origin?: NonNullable<ReplayMessage["meta"]>["origin"];
   } = {},
 ): ReplayMessage {
-  return {
-    role,
-    content,
-    toolCalls: options.toolCalls ?? [],
-    toolCallId: options.toolCallId,
-    isError: options.isError,
-    origin: options.origin,
-  };
+  switch (role) {
+    case "system":
+      return { message: { role, content }, meta: { origin: options.origin } };
+    case "user":
+      return { message: { role, content }, meta: { origin: options.origin } };
+    case "assistant":
+      return {
+        message: { role, content, toolCalls: options.toolCalls ?? [] },
+        meta: { origin: options.origin },
+      };
+    case "tool":
+      return {
+        message: { role, content, toolCallId: options.toolCallId ?? "" },
+        meta: { isError: options.isError, origin: options.origin },
+      };
+  }
 }
 
 function record(messageValue: ReplayMessage, time: number = 1): AgentReplayRecord {
