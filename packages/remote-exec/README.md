@@ -8,7 +8,8 @@ agent-core-v2 `Runtime` interface.
 ```text
 packages/remote-exec/src/
 ├── protocol/   message types, error codes, NDJSON codec (self-contained)
-├── client/     execBridge, launchers, connection, fs/process/terminal stubs, remoteRuntime, remoteRuntimeProvider
+├── client/     execBridge, launchers, connection, fs/process/terminal stubs, remoteRuntime, remoteRuntimeProvider,
+│               artifactLocator, executorInstaller, installTrigger (executor auto-install, spec D8/D9)
 └── server/     stdioHost, fsHandler, processManager, environment, entry, standalone
 ```
 
@@ -81,6 +82,68 @@ Client-surface notes beyond the wire protocol:
   it into the registry with a fresh generation; the old generation drains and
   its leases never migrate. The whole provider is inert unless
   `KIMI_CODE_EXPERIMENTAL_REMOTE_RUNTIME` is enabled.
+
+## Executor install and version guidance (spec D8/D9)
+
+The connect path (`connectWithAutoInstall`, wired into the factory) classifies
+handshake failures and acts on them:
+
+- **Missing executor** — the launcher exited 127 (ssh remote shell) or 126
+  (docker exec "executable file not found"), or the handshake **timed out**.
+  For typed `ssh`/`docker` runtimes with an artifact locator configured, the
+  trigger runs **one** auto-install attempt and then retries the connect
+  **exactly once**; a failed install or a failed retry surfaces as a
+  `HandshakeError` carrying the original failure plus install guidance.
+  `command` runtimes are never auto-installed — they fail with manual install
+  guidance.
+- **Too-old executor** — the handshake answered but `executorVersion <
+  MIN_EXECUTOR_VERSION`. The client rejects with *upgrade* guidance (current
+  vs minimum version), deliberately distinct from the missing-executor
+  guidance; no auto-upgrade is performed.
+
+`installExecutor` (ssh/docker) runs: probe the target environment (`uname
+-sm`, plus the container user's `$HOME` for docker) → skip when a usable
+executor already answers `--version` at the destination → locate the artifact
+→ download with pinned SHA-256 verification (same discipline as rgLocator) →
+upload to a unique tmp path (`scp` / `docker cp`) → `chmod 755` + atomic
+`mv -f` into the destination (tmp+rename, so a half-install never presents as
+success) → post-check that the installed binary runs `--version` at or above
+the minimum. Every step failure throws `ExecutorInstallError` naming the step,
+argv, exit code and bounded stderr, and the remote tmp file is removed
+best-effort. The default destination is `~/.kimi-code/bin/kimi` (ssh: expanded
+by the remote shell as `$HOME`; docker: the probed container-user absolute
+home path — `docker exec` has no tilde expansion, and the connect retry uses
+that absolute path). A custom `remoteBin` is installed at that literal path.
+
+### Artifact locator — injection point
+
+`ExecutorArtifactLocator` resolves `(osKind, osArch, version)` to
+`{url, sha256, filename, version}`. The default implementation,
+`CdnExecutorArtifactLocator`, follows the SEA native release chain
+(`apps/kimi-code/scripts/native`): it fetches
+`<cdnBaseUrl>/binaries/<version>/manifest.json`, selects the
+`<platform>-<arch>` platform entry (`linux-x64`, `linux-arm64`, `darwin-x64`,
+`darwin-arm64` — the executor is posix-only), verifies the manifest's own
+`version` matches the request, and downloads
+`<cdnBaseUrl>/binaries/<version>/<filename>` pinning the entry's `checksum`
+(SHA-256 of the bare binary).
+
+The CDN base is region-dependent app-layer knowledge, so it is **injected**:
+the composition root (kap-server mission) constructs the factory with
+
+```ts
+new RemoteRuntimeProviderFactory({
+  artifactLocator: new CdnExecutorArtifactLocator({
+    cdnBaseUrl: kimiRegionProfile(resolveKimiRegion({ configuredOAuthHost, configuredOAuthKey })).cdnBase,
+  }),
+  clientVersion: <the server/CLI version>,
+})
+```
+
+`kimiRegionProfile`/`resolveKimiRegion` come from `@moonshot-ai/kimi-code-oauth`
+(already a kap-server dependency — the same source rgLocator uses). Without a
+locator, missing executors get manual install guidance instead of an
+auto-install attempt. `installRunner` and `installFetch` are test seams.
 
 Wire discipline: NDJSON frames (`\n`-terminated, `\r\n` tolerated, blank lines
 skipped, strict UTF-8), one message capped at 64MiB (disconnect on exceed),

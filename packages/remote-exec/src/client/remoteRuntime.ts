@@ -84,8 +84,10 @@ export class RemoteRuntime implements Runtime {
       ]);
       if (exit !== undefined && !(error instanceof HandshakeError)) {
         const stderr = bridge.getStderrTail().trim();
+        const detail = stderr.length > 0 ? stderr : exit.error?.message;
         throw new HandshakeError(
-          `executor process exited before the handshake completed (code ${exit.code ?? 'null'}, signal ${exit.signal ?? 'null'})${stderr.length > 0 ? `: ${stderr}` : ''}`,
+          `executor process exited before the handshake completed (code ${exit.code ?? 'null'}, signal ${exit.signal ?? 'null'})${detail !== undefined && detail.length > 0 ? `: ${detail}` : ''}`,
+          { kind: 'executor-exit', exitCode: exit.code, cause: error },
         );
       }
       throw error;

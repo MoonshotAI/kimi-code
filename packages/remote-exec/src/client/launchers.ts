@@ -5,6 +5,30 @@ export { resolveProgramPath };
 export const DEFAULT_REMOTE_BIN = '~/.kimi-code/bin/kimi';
 export const EXEC_SERVER_ARGV: readonly string[] = ['exec-server', '--listen', 'stdio'];
 
+// ssh and scp share the -o set (BatchMode against password prompts,
+// accept-new against first-connect host-key prompts, ServerAlive for half-open
+// detection); only the ssh invocation adds -T (no TTY on the bridge).
+export const SSH_CONFIG_OPTIONS: readonly string[] = [
+  '-o',
+  'BatchMode=yes',
+  '-o',
+  'ConnectTimeout=10',
+  '-o',
+  'ServerAliveInterval=15',
+  '-o',
+  'ServerAliveCountMax=3',
+  '-o',
+  'StrictHostKeyChecking=accept-new',
+];
+
+export function sshBaseArgs(): readonly string[] {
+  return ['-T', ...SSH_CONFIG_OPTIONS];
+}
+
+export function dockerBaseArgs(context?: string): readonly string[] {
+  return context === undefined ? [] : ['--context', context];
+}
+
 export type LauncherSpec =
   | { readonly type: 'ssh'; readonly host: string; readonly remoteBin?: string }
   | {
@@ -32,17 +56,7 @@ export function resolveLauncher(spec: LauncherSpec): ResolvedLauncher {
       return {
         program: 'ssh',
         args: [
-          '-T',
-          '-o',
-          'BatchMode=yes',
-          '-o',
-          'ConnectTimeout=10',
-          '-o',
-          'ServerAliveInterval=15',
-          '-o',
-          'ServerAliveCountMax=3',
-          '-o',
-          'StrictHostKeyChecking=accept-new',
+          ...sshBaseArgs(),
           spec.host,
           spec.remoteBin ?? DEFAULT_REMOTE_BIN,
           ...EXEC_SERVER_ARGV,
@@ -52,7 +66,7 @@ export function resolveLauncher(spec: LauncherSpec): ResolvedLauncher {
       return {
         program: 'docker',
         args: [
-          ...(spec.context === undefined ? [] : ['--context', spec.context]),
+          ...dockerBaseArgs(spec.context),
           'exec',
           '-i',
           spec.container,

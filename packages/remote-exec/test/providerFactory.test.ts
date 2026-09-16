@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
@@ -17,6 +19,8 @@ import type {
 } from '@moonshot-ai/agent-core-v2/runtime/runtimeUnitHost';
 import { writeWorkspaceTrust } from '@moonshot-ai/agent-core-v2/workspace/workspaceTrust/trustRecord';
 
+import { HandshakeError } from '../src/client/connection';
+import type { LocalRunner, LocalRunRequest } from '../src/client/executorInstaller';
 import { RemoteRuntimeProviderFactory } from '../src/client/remoteRuntimeProvider';
 import type { RemoteRuntime, RemoteRuntimeOptions } from '../src/client/remoteRuntime';
 
@@ -323,6 +327,159 @@ describe('toLauncherSpec via factory connect', () => {
     expect(connect).toHaveBeenCalledWith(expect.objectContaining({
       launcher: { type: 'command', program: 'agi', args: ['sandbox', 'ssh'], env: { AGI_TOKEN: 'x' } },
     }));
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+});
+
+describe('factory auto-install trigger', () => {
+  const INSTALL_ARTIFACT_BYTES = new TextEncoder().encode('fake-kimi-sea-binary\n');
+  const INSTALL_ARTIFACT = {
+    version: '1.2.3',
+    filename: 'kimi-code-linux-x64',
+    url: 'https://cdn.example.test/binaries/1.2.3/kimi-code-linux-x64',
+    sha256: createHash('sha256').update(INSTALL_ARTIFACT_BYTES).digest('hex'),
+  };
+
+  function installFetch(): typeof fetch {
+    return vi.fn(async () => new Response(INSTALL_ARTIFACT_BYTES, { status: 200 })) as unknown as typeof fetch;
+  }
+
+  function sshInstallRunner(): LocalRunner {
+    let installedVersion: string | undefined;
+    return async (request: LocalRunRequest) => {
+      const last = request.args.at(-1) ?? '';
+      if (request.program === 'ssh') {
+        if (last === 'uname -sm') return { code: 0, signal: null, stdout: 'Linux x86_64\n', stderr: '' };
+        if (last.endsWith('--version')) {
+          return installedVersion === undefined
+            ? { code: 127, signal: null, stdout: '', stderr: 'kimi: command not found' }
+            : { code: 0, signal: null, stdout: `${installedVersion}\n`, stderr: '' };
+        }
+        if (last.startsWith('chmod 755')) installedVersion = INSTALL_ARTIFACT.version;
+        return { code: 0, signal: null, stdout: '', stderr: '' };
+      }
+      return { code: 0, signal: null, stdout: '', stderr: '' };
+    };
+  }
+
+  function missingExecutorError(): HandshakeError {
+    return new HandshakeError(
+      'executor process exited before the handshake completed (code 127, signal null): kimi: command not found',
+      { kind: 'executor-exit', exitCode: 127 },
+    );
+  }
+
+  it('auto-installs a typed runtime once and retries the connect once after a missing executor', async () => {
+    const registry = new RuntimeRegistry('workspace-1');
+    let calls = 0;
+    const connect = vi.fn(async (options: RemoteRuntimeOptions) => {
+      calls += 1;
+      if (calls === 1) throw missingExecutorError();
+      return connectedRuntime(options, `connected-${calls}`);
+    });
+    const factory = new RemoteRuntimeProviderFactory({
+      connect,
+      clientVersion: '1.2.3',
+      artifactLocator: { locate: vi.fn(async () => INSTALL_ARTIFACT) },
+      installFetch: installFetch(),
+      installRunner: sshInstallRunner(),
+    });
+    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
+
+    await registry.current('dev-box')!.connect!();
+
+    expect(connect).toHaveBeenCalledTimes(2);
+    expect(connect).toHaveBeenLastCalledWith(expect.objectContaining({
+      launcher: { type: 'ssh', host: 'dev-box', remoteBin: '~/.kimi-code/bin/kimi' },
+    }));
+    expect(registry.current('dev-box')!.status).toBe('ready');
+    expect(registry.current('dev-box')!.identity.generation).toBe('connected-2');
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('does not retry the connect when the auto-install fails', async () => {
+    const registry = new RuntimeRegistry('workspace-1');
+    const connect = vi.fn(async () => {
+      throw missingExecutorError();
+    });
+    const failingRunner: LocalRunner = async () => ({
+      code: 255,
+      signal: null,
+      stdout: '',
+      stderr: 'ssh: connect to host dev-box port 22: Connection refused',
+    });
+    const factory = new RemoteRuntimeProviderFactory({
+      connect,
+      clientVersion: '1.2.3',
+      artifactLocator: { locate: vi.fn(async () => INSTALL_ARTIFACT) },
+      installFetch: installFetch(),
+      installRunner: failingRunner,
+    });
+    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
+
+    const placeholder = registry.current('dev-box')!;
+    await expect(placeholder.connect!()).rejects.toThrow(/Auto-install failed[\s\S]*Connection refused/);
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(registry.current('dev-box')).toBe(placeholder);
+    expect(registry.current('dev-box')!.status).toBe('disconnected');
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('fails command runtimes with guidance and never attempts an install', async () => {
+    const registry = new RuntimeRegistry('workspace-1');
+    const services = baseServices({
+      config: configService({
+        gym: { command: 'agi', args: ['sandbox', 'ssh'], defaultCwd: '/home/me' },
+      }),
+    });
+    const runner = vi.fn() as unknown as LocalRunner;
+    const connect = vi.fn(async () => {
+      throw missingExecutorError();
+    });
+    const factory = new RemoteRuntimeProviderFactory({
+      connect,
+      artifactLocator: { locate: vi.fn(async () => INSTALL_ARTIFACT) },
+      installRunner: runner,
+    });
+    const attachment = await factory.attach(CONTEXT, fakeHost(services, registry));
+
+    await expect(registry.current('gym')!.connect!()).rejects.toThrow(
+      /code 127[\s\S]*Auto-install is not available for `command` runtimes/,
+    );
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(runner).not.toHaveBeenCalled();
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('answers a too-old executor with upgrade guidance instead of an install', async () => {
+    const registry = new RuntimeRegistry('workspace-1');
+    const runner = vi.fn() as unknown as LocalRunner;
+    const connect = vi.fn(async () => {
+      throw new HandshakeError(
+        'executor version 0.0.4 is below the minimum 0.1.0; upgrade the remote executor (kimi exec-server) and retry',
+        { kind: 'incompatible', executorVersion: '0.0.4', minExecutorVersion: '0.1.0' },
+      );
+    });
+    const factory = new RemoteRuntimeProviderFactory({
+      connect,
+      artifactLocator: { locate: vi.fn(async () => INSTALL_ARTIFACT) },
+      installRunner: runner,
+    });
+    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
+
+    await expect(registry.current('dev-box')!.connect!()).rejects.toThrow(
+      /0\.0\.4[\s\S]*Upgrade the executor/,
+    );
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(runner).not.toHaveBeenCalled();
 
     await attachment.dispose();
     await registry.dispose();

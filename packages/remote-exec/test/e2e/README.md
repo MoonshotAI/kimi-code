@@ -73,8 +73,11 @@ npx tsx test/e2e/driver.ts --target ssh --host dev-box           # default remot
 npx tsx test/e2e/driver.ts --target docker --container myapp-dev --remote-bin /root/.kimi-code/bin/kimi
 ```
 
-Useful flags: `--scenario basic,pty,term-ignore,group-residue,container-stop,disconnect`
-(default: all), `--remote-cwd <dir>` (working directory for the checks).
+Useful flags: `--scenario install,basic,pty,term-ignore,group-residue,container-stop,disconnect`
+(default: everything except `install`), `--remote-cwd <dir>` (working directory
+for the checks). The `install` scenario additionally needs `--cdn-base <url>`
+and `--client-version <semver>` (§5) and runs first, before the other
+scenarios' upfront connect.
 
 ## 4. What each scenario proves
 
@@ -93,8 +96,83 @@ Useful flags: `--scenario basic,pty,term-ignore,group-residue,container-stop,dis
   skipped (not failed) when `--container` is absent.
 - `disconnect` — client-side bridge drop: later fs/process calls reject, and a
   fresh probe connection confirms the dropped connection's processes are dead.
+- `install` — auto-install acceptance on a fresh target; see §5.
 
-## 5. Manual fault injection
+## 5. Auto-install acceptance (scenario `install`)
+
+The `install` scenario verifies spec D8/D9 end-to-end on a **fresh** target
+(no executor installed): the connect fails as missing-executor, the
+auto-install downloads + verifies + activates the executor, the retried
+connect yields a working runtime, a tampered checksum is rejected without a
+retry, and a second install is a no-op. It runs real ssh/docker and a real
+HTTP download against a manifest you serve locally.
+
+### 5.1 Stage the artifact + manifest
+
+The auto-install expects the SEA release layout
+(`<cdnBase>/binaries/<version>/manifest.json` +
+`<cdnBase>/binaries/<version>/kimi-code-<target>`). Either download the
+published binary for the target platform from the release CDN, or build one
+with the native chain (`apps/kimi-code/scripts/native`). Then stage a local
+site:
+
+```bash
+VERSION=0.3.0            # the release to install (must be >= MIN_EXECUTOR_VERSION 0.1.0)
+TARGET=linux-x64         # the TARGET's platform-arch: linux-x64 | linux-arm64 | darwin-x64 | darwin-arm64
+mkdir -p site/binaries/$VERSION
+cp /path/to/kimi site/binaries/$VERSION/kimi-code-$TARGET
+SHA=$(shasum -a 256 site/binaries/$VERSION/kimi-code-$TARGET | cut -d' ' -f1)
+cat > site/binaries/$VERSION/manifest.json <<EOF
+{"version":"$VERSION","tag":"v$VERSION","platforms":{"$TARGET":{"filename":"kimi-code-$TARGET","checksum":"$SHA"}}}
+EOF
+(cd site && python3 -m http.server 8000)
+```
+
+### 5.2 Run the scenario
+
+```bash
+cd packages/remote-exec
+npx tsx test/e2e/driver.ts --target ssh --host dev-box --scenario install \
+  --cdn-base http://127.0.0.1:8000 --client-version $VERSION
+npx tsx test/e2e/driver.ts --target docker --container myapp-dev --scenario install \
+  --cdn-base http://127.0.0.1:8000 --client-version $VERSION
+```
+
+What each check proves:
+
+- `connect on a fresh target fails as a missing executor` — the failure is
+  classified (ssh exit 127 / docker exit 126), not a generic error.
+- `a tampered checksum aborts the auto-install without a connect retry` — a
+  manifest whose sha256 does not match the served binary fails at the
+  `download` step with `checksum mismatch`, and the connect is NOT retried.
+- `auto-install on the handshake failure yields a working runtime` — the
+  trigger installs once and retries the connect exactly once; the executor
+  binary exists at the expected absolute path on the target and an fs
+  round-trip works through it.
+- `a second install is a no-op` — an executor answering `--version` at or
+  above the minimum is left untouched (no re-download).
+
+On success the executor stays installed, so the other scenarios can run
+against the same target afterwards (drop `--scenario install` or pass the
+full list). To re-run `install`, remove the executor on the target
+(`ssh dev-box 'rm -f ~/.kimi-code/bin/kimi'` /
+`docker exec myapp-dev rm -f /root/.kimi-code/bin/kimi`).
+
+### 5.3 Manual fault injection for half-installs
+
+- **Unwritable bin dir**: `ssh dev-box 'chmod 500 ~/.kimi-code/bin'` — the
+  install must fail at the `upload` or `activate` step naming argv, exit code
+  and stderr; `~/.kimi-code/bin/kimi` must not appear, and no stale
+  `.kimi-install-*` tmp file remains after the best-effort cleanup.
+- **Interrupted upload**: kill `scp` mid-transfer (throttle with a large
+  file) — the tmp file may remain on the target, but the destination never
+  appears half-written (activation is a single atomic `mv -f`), and the next
+  install attempt starts from a fresh tmp name.
+- **Missing local ssh/docker**: remove the launcher program from PATH — the
+  connect fails before the handshake with the spawn error in the message; no
+  install is attempted.
+
+## 6. Manual fault injection
 
 - **ssh bridge drop / half-open**: run any long scenario (e.g. `--scenario
   disconnect` paused at a prompt, or a manual `sleep` via the driver), then
@@ -108,8 +186,7 @@ Useful flags: `--scenario basic,pty,term-ignore,group-residue,container-stop,dis
   to stdout; the zero-tolerance handshake must reject the connection
   immediately.
 
-## 6. Notes
-
+## 7. Notes
 - The standalone executor reports version `0.0.0-standalone`; the driver
   passes `--minExecutorVersion 0.0.0`. The real version gate is covered by the
   loopback suite (`test/handshake.test.ts`).

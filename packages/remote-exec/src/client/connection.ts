@@ -41,10 +41,29 @@ export class ConnectionClosedError extends Error {
   }
 }
 
+export type HandshakeErrorKind = 'timeout' | 'executor-exit' | 'incompatible';
+
+export interface HandshakeErrorDetails {
+  readonly kind?: HandshakeErrorKind;
+  readonly exitCode?: number | null;
+  readonly executorVersion?: string;
+  readonly minExecutorVersion?: string;
+  readonly cause?: unknown;
+}
+
 export class HandshakeError extends Error {
-  constructor(message: string) {
-    super(message);
+  readonly kind?: HandshakeErrorKind;
+  readonly exitCode?: number | null;
+  readonly executorVersion?: string;
+  readonly minExecutorVersion?: string;
+
+  constructor(message: string, details: HandshakeErrorDetails = {}) {
+    super(message, details.cause === undefined ? undefined : { cause: details.cause });
     this.name = 'HandshakeError';
+    this.kind = details.kind;
+    this.exitCode = details.exitCode;
+    this.executorVersion = details.executorVersion;
+    this.minExecutorVersion = details.minExecutorVersion;
   }
 }
 
@@ -101,7 +120,7 @@ export class RemoteExecConnection {
     return new Promise<RemoteExecConnection>((resolve, reject) => {
       const timeoutMs = options.initializeTimeoutMs ?? 10_000;
       this.handshakeTimer = setTimeout(() => {
-        this.fail(new HandshakeError(`initialize timed out after ${timeoutMs}ms`));
+        this.fail(new HandshakeError(`initialize timed out after ${timeoutMs}ms`, { kind: 'timeout' }));
       }, timeoutMs);
       this.handshakeTimer.unref?.();
 
@@ -209,11 +228,17 @@ export class RemoteExecConnection {
     if (compareVersions(this.executorVersionValue, minExecutorVersion) < 0) {
       return new HandshakeError(
         `executor version ${this.executorVersionValue} is below the minimum ${minExecutorVersion}; upgrade the remote executor (kimi exec-server) and retry`,
+        {
+          kind: 'incompatible',
+          executorVersion: this.executorVersionValue,
+          minExecutorVersion,
+        },
       );
     }
     if (this.environmentValue.pathClass !== 'posix') {
       return new HandshakeError(
         `executor environment ${this.environmentValue.osKind} is not posix; remote runtimes require a posix target`,
+        { kind: 'incompatible' },
       );
     }
     return undefined;
