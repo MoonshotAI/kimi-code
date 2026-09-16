@@ -34,6 +34,9 @@ import type {
   RuntimeUnitImports,
 } from '@moonshot-ai/agent-core-v2/runtime/runtimeUnitHost';
 
+import type { ExecutorArtifactLocator } from './artifactLocator';
+import type { LocalRunner } from './executorInstaller';
+import { connectWithAutoInstall } from './installTrigger';
 import type { LauncherSpec } from './launchers';
 import { RemoteRuntime, type RemoteRuntimeOptions } from './remoteRuntime';
 
@@ -156,6 +159,15 @@ export interface RemoteRuntimeProviderFactoryOptions {
   readonly initializeTimeoutMs?: number;
   readonly onDiagnostic?: (line: string) => void;
   readonly connect?: (options: RemoteRuntimeOptions) => Promise<RemoteRuntime>;
+  // Executor auto-install (spec D8): the locator resolves the SEA artifact for
+  // the probed target; inject `CdnExecutorArtifactLocator` built with the
+  // region CDN base (`kimiRegionProfile(resolveKimiRegion(...)).cdnBase`) from
+  // the composition root. Without a locator, missing executors get manual
+  // install guidance instead of an auto-install attempt.
+  readonly artifactLocator?: ExecutorArtifactLocator;
+  readonly autoInstall?: boolean;
+  readonly installRunner?: LocalRunner;
+  readonly installFetch?: typeof fetch;
 }
 
 export class RemoteRuntimeProviderFactory implements RuntimeProviderFactory {
@@ -215,14 +227,25 @@ export class RemoteRuntimeProviderFactory implements RuntimeProviderFactory {
       inflight ??= (async () => {
         try {
           const connect = this.options.connect ?? ((opts: RemoteRuntimeOptions) => RemoteRuntime.connect(opts));
-          const connected = await connect({
-            workspaceId: context.id,
-            runtimeId: declaration.id,
+          const attempt = (launcher: LauncherSpec): Promise<RemoteRuntime> =>
+            connect({
+              workspaceId: context.id,
+              runtimeId: declaration.id,
+              launcher,
+              clientName: this.options.clientName,
+              clientVersion: this.options.clientVersion,
+              minExecutorVersion: this.options.minExecutorVersion,
+              initializeTimeoutMs: this.options.initializeTimeoutMs,
+              onDiagnostic: this.options.onDiagnostic,
+            });
+          const connected = await connectWithAutoInstall(attempt, {
             launcher: toLauncherSpec(declaration.entry),
-            clientName: this.options.clientName,
+            artifactLocator: this.options.artifactLocator,
+            autoInstall: this.options.autoInstall,
             clientVersion: this.options.clientVersion,
             minExecutorVersion: this.options.minExecutorVersion,
-            initializeTimeoutMs: this.options.initializeTimeoutMs,
+            runner: this.options.installRunner,
+            fetchImpl: this.options.installFetch,
             onDiagnostic: this.options.onDiagnostic,
           });
           await handle.update(() => new ManagedRemoteRuntime(connected, connectRuntime));

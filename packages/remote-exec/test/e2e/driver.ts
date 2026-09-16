@@ -1,7 +1,15 @@
 import { spawn as localSpawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
-import { RemoteRuntime, type LauncherSpec } from '../../src/client/index';
+import {
+  CdnExecutorArtifactLocator,
+  classifyHandshakeFailure,
+  connectWithAutoInstall,
+  installExecutor,
+  RemoteRuntime,
+  type ExecutorArtifactLocator,
+  type LauncherSpec,
+} from '../../src/client/index';
 
 interface Flags {
   target?: string;
@@ -14,6 +22,8 @@ interface Flags {
   env?: string;
   scenario?: string;
   remoteCwd?: string;
+  cdnBase?: string;
+  clientVersion?: string;
 }
 
 interface CheckResult {
@@ -331,80 +341,200 @@ async function scenarioContainerStop(runtime: RemoteRuntime, container: string, 
   void proc;
 }
 
-const SCENARIOS = ['basic', 'pty', 'term-ignore', 'group-residue', 'container-stop', 'disconnect'] as const;
+async function scenarioInstall(flags: Flags): Promise<void> {
+  process.stdout.write('scenario: install\n');
+  const cdnBase = flags.cdnBase;
+  const clientVersion = flags.clientVersion;
+  if (cdnBase === undefined) throw new Error('--scenario install requires --cdn-base <url>');
+  if (clientVersion === undefined) {
+    throw new Error('--scenario install requires --client-version <semver>');
+  }
+  const launcher = buildLauncher(flags);
+  if (launcher.type === 'command') {
+    throw new Error('--scenario install requires a typed target (ssh or docker)');
+  }
+  const locator = new CdnExecutorArtifactLocator({ cdnBaseUrl: cdnBase });
+  const onDiagnostic = (line: string): void => {
+    process.stdout.write(`  [diag] ${line}\n`);
+  };
+  const connectBase = {
+    workspaceId: 'remote-exec-e2e',
+    runtimeId: 'e2e-target',
+    clientName: 'remote-exec-e2e-driver',
+    clientVersion,
+    onDiagnostic,
+  };
+
+  await check('install', 'connect on a fresh target fails as a missing executor', async () => {
+    try {
+      await RemoteRuntime.connect({ ...connectBase, launcher });
+    } catch (error) {
+      const cls = classifyHandshakeFailure(error);
+      if (cls === 'missing' || cls === 'timeout') return;
+      throw new Error(
+        `expected a missing/timeout failure, got ${cls}: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+    throw new Error('connect succeeded before any install — use a fresh target for this scenario');
+  });
+
+  await check('install', 'a tampered checksum aborts the auto-install without a connect retry', async () => {
+    const badLocator: ExecutorArtifactLocator = {
+      locate: async (target, version) => ({
+        ...(await locator.locate(target, version)),
+        sha256: '0'.repeat(64),
+      }),
+    };
+    let attempts = 0;
+    let outcome: 'connected' | unknown;
+    try {
+      await connectWithAutoInstall(
+        async (retryLauncher) => {
+          attempts += 1;
+          return RemoteRuntime.connect({ ...connectBase, launcher: retryLauncher });
+        },
+        { launcher, artifactLocator: badLocator, clientVersion, onDiagnostic },
+      );
+      outcome = 'connected';
+    } catch (error) {
+      outcome = error;
+    }
+    if (outcome === 'connected') {
+      throw new Error('connect succeeded despite the tampered checksum');
+    }
+    const message = outcome instanceof Error ? outcome.message : String(outcome);
+    if (!message.includes('Auto-install failed') || !message.includes('checksum mismatch')) {
+      throw new Error(`unexpected failure text: ${message}`);
+    }
+    if (attempts !== 1) {
+      throw new Error(`connect was retried ${String(attempts - 1)} times after the failed install`);
+    }
+  });
+
+  await check('install', 'auto-install on the handshake failure yields a working runtime', async () => {
+    let attempts = 0;
+    const runtime = await connectWithAutoInstall(
+      async (retryLauncher) => {
+        attempts += 1;
+        return RemoteRuntime.connect({ ...connectBase, launcher: retryLauncher });
+      },
+      { launcher, artifactLocator: locator, clientVersion, onDiagnostic },
+    );
+    try {
+      if (attempts !== 2) {
+        throw new Error(`expected exactly 2 connect attempts (fail + one retry), got ${String(attempts)}`);
+      }
+      const binPath = flags.remoteBin ?? `${runtime.environment.homeDir}/.kimi-code/bin/kimi`;
+      const meta = await runtime.fs.stat(binPath);
+      if (!meta.isFile) throw new Error(`${binPath} is not a file on the target`);
+      const probe = `${runtime.environment.tempDir}/remote-exec-e2e-install.txt`;
+      await runtime.fs.writeText(probe, 'installed');
+      const text = await runtime.fs.readText(probe);
+      await runtime.fs.remove(probe);
+      if (text !== 'installed') throw new Error('fs round-trip after install failed');
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  await check('install', 'a second install is a no-op (already installed)', async () => {
+    const result = await installExecutor({
+      launcher,
+      locator,
+      version: clientVersion,
+      onProgress: onDiagnostic,
+    });
+    if (!result.alreadyInstalled) throw new Error('the second install downloaded again');
+  });
+}
+
+const SCENARIOS = ['install', 'basic', 'pty', 'term-ignore', 'group-residue', 'container-stop', 'disconnect'] as const;
 
 async function main(): Promise<void> {
   const flags = parseFlags(process.argv.slice(2));
-  const launcher = buildLauncher(flags);
-  const requested = (flags.scenario ?? SCENARIOS.join(',')).split(',').map((name) => name.trim());
+  // install is opt-in: it needs --cdn-base/--client-version and a fresh target.
+  const defaultScenarios = SCENARIOS.filter((name) => name !== 'install').join(',');
+  const requested = (flags.scenario ?? defaultScenarios).split(',').map((name) => name.trim());
   for (const name of requested) {
     if (!(SCENARIOS as readonly string[]).includes(name)) {
       throw new Error(`unknown scenario "${name}" (want one of ${SCENARIOS.join(', ')})`);
     }
   }
-  // Destructive scenarios run last, disconnect before container-stop: a
-  // stopped container would break any later scenario's fresh connection.
-  const ordered = [...requested].toSorted((a, b) => {
-    const weight = (name: string): number => (name === 'disconnect' ? 1 : name === 'container-stop' ? 2 : 0);
-    return weight(a) - weight(b);
-  });
+  // install runs first: it needs a fresh target (no executor), and afterwards
+  // the executor is in place for the remaining scenarios.
+  if (requested.includes('install')) {
+    await scenarioInstall(flags);
+  }
+  const rest = requested.filter((name) => name !== 'install');
 
-  process.stdout.write(`connecting via ${flags.target} launcher...\n`);
-  const connect = (): Promise<RemoteRuntime> =>
-    RemoteRuntime.connect({
-      workspaceId: 'remote-exec-e2e',
-      runtimeId: 'e2e-target',
-      launcher,
-      clientName: 'remote-exec-e2e-driver',
-      clientVersion: '0.0.0',
-      minExecutorVersion: '0.0.0',
-      onDiagnostic: (line) => {
-        process.stdout.write(`  [diag] ${line}\n`);
-      },
+  if (rest.length > 0) {
+    const launcher = buildLauncher(flags);
+    // Destructive scenarios run last, disconnect before container-stop: a
+    // stopped container would break any later scenario's fresh connection.
+    const ordered = [...rest].toSorted((a, b) => {
+      const weight = (name: string): number => (name === 'disconnect' ? 1 : name === 'container-stop' ? 2 : 0);
+      return weight(a) - weight(b);
     });
-  const runtime = await connect();
-  const cwd = flags.remoteCwd ?? runtime.environment.cwd;
 
-  for (const name of ordered) {
-    switch (name) {
-      case 'basic':
-        await scenarioBasic(runtime, cwd);
-        break;
-      case 'pty':
-        await scenarioPty(runtime, cwd);
-        break;
-      case 'term-ignore':
-        await scenarioTermIgnore(runtime, cwd);
-        break;
-      case 'group-residue':
-        await scenarioGroupResidue(runtime, cwd);
-        break;
-      case 'container-stop': {
-        if (flags.container === undefined) {
-          record('container-stop', 'prerequisite', true, 'skipped: requires --container');
+    process.stdout.write(`connecting via ${flags.target ?? ''} launcher...\n`);
+    const connect = (): Promise<RemoteRuntime> =>
+      RemoteRuntime.connect({
+        workspaceId: 'remote-exec-e2e',
+        runtimeId: 'e2e-target',
+        launcher,
+        clientName: 'remote-exec-e2e-driver',
+        clientVersion: '0.0.0',
+        minExecutorVersion: '0.0.0',
+        onDiagnostic: (line) => {
+          process.stdout.write(`  [diag] ${line}\n`);
+        },
+      });
+    const runtime = await connect();
+    const cwd = flags.remoteCwd ?? runtime.environment.cwd;
+
+    for (const name of ordered) {
+      switch (name) {
+        case 'basic':
+          await scenarioBasic(runtime, cwd);
+          break;
+        case 'pty':
+          await scenarioPty(runtime, cwd);
+          break;
+        case 'term-ignore':
+          await scenarioTermIgnore(runtime, cwd);
+          break;
+        case 'group-residue':
+          await scenarioGroupResidue(runtime, cwd);
+          break;
+        case 'container-stop': {
+          if (flags.container === undefined) {
+            record('container-stop', 'prerequisite', true, 'skipped: requires --container');
+            break;
+          }
+          const fresh = await connect();
+          try {
+            await scenarioContainerStop(fresh, flags.container, cwd);
+          } finally {
+            if (fresh.status !== 'disposed') {
+              await fresh.dispose();
+            }
+          }
           break;
         }
-        const fresh = await connect();
-        try {
-          await scenarioContainerStop(fresh, flags.container, cwd);
-        } finally {
-          if (fresh.status !== 'disposed') {
-            await fresh.dispose();
-          }
+        case 'disconnect': {
+          const fresh = await connect();
+          await scenarioDisconnect(fresh, cwd, connect);
+          break;
         }
-        break;
       }
-      case 'disconnect': {
-        const fresh = await connect();
-        await scenarioDisconnect(fresh, cwd, connect);
-        break;
-      }
+    }
+
+    if (runtime.status !== 'disposed') {
+      await runtime.dispose();
     }
   }
 
-  if (runtime.status !== 'disposed') {
-    await runtime.dispose();
-  }
   const failures = results.filter((result) => !result.ok);
   process.stdout.write(`\n${results.length - failures.length}/${results.length} checks passed\n`);
   if (failures.length > 0) {
