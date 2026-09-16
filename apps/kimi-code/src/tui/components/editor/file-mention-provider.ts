@@ -316,10 +316,7 @@ export class FileMentionProvider implements AutocompleteProvider {
     if (prefix.startsWith('@') || item.value.startsWith('@')) {
       const currentLine = lines[cursorLine] ?? '';
       const textBeforeCursor = currentLine.slice(0, cursorCol);
-      const livePrefix =
-        prefix.length > 0 && textBeforeCursor.endsWith(prefix)
-          ? prefix
-          : extractAtPrefix(textBeforeCursor);
+      const livePrefix = extractAtPrefix(textBeforeCursor);
       if (livePrefix === null) {
         return { lines, cursorLine, cursorCol };
       }

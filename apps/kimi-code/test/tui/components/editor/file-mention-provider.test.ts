@@ -527,6 +527,20 @@ describe('FileMentionProvider', () => {
       expect(result.lines[0]).toBe('@/mnt/e/mlbb-android-2.1.46.1156.1_HB/');
     });
 
+    it('replaces the live @ token when the cached prefix is a suffix of a path that contains @', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = '@packages/@';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        line.length,
+        { value: '@src/', label: 'src/' },
+        '@',
+      );
+
+      expect(result.lines[0]).toBe('@src/');
+    });
+
     it('replaces the live @ token when the cached prefix is empty', () => {
       const provider = new FileMentionProvider([], workDir, NO_FD);
       const line = '@/mnt/e/mlbb-simple-and';
