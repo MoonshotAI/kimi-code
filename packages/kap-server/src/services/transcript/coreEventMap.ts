@@ -1507,7 +1507,7 @@ export class AgentTranscriptProjector {
     promptId: string,
     build: (prev: TranscriptPrompt | undefined) => TranscriptPrompt,
   ): TranscriptPrompt {
-    const prompt = build(this.prompts.get(promptId) ?? this.lookups?.prompt?.(promptId));
+    const prompt = build(this.lookups?.prompt?.(promptId) ?? this.prompts.get(promptId));
     this.prompts.set(promptId, prompt);
     return prompt;
   }

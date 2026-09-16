@@ -2179,6 +2179,54 @@ describe('AgentTranscriptProjector', () => {
     });
   });
 
+  it('prefers store prompt content after backfill over a pre-backfill steered cache', () => {
+    const prompts = new Map<string, NonNullable<ReturnType<AgentTranscript['getPrompt']>>>();
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID, {
+      prompt: (promptId) => prompts.get(promptId),
+    });
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => {
+      for (const op of projector.map(event)) {
+        tx.apply([op]);
+        if (op.op === 'prompt.upsert') prompts.set(op.prompt.promptId, op.prompt);
+      }
+    };
+
+    feed(
+      ev({
+        type: 'prompt.steered',
+        activePromptId: 'p1',
+        promptIds: ['p2'],
+        content: [{ type: 'text', text: 'second' }],
+        steeredAt: '2026-01-01T00:00:02.000Z',
+      }),
+    );
+    expect(tx.getPrompt('p1')?.content).toEqual([{ type: 'text', text: 'second' }]);
+
+    const restored = {
+      promptId: 'p1',
+      status: 'running' as const,
+      content: [{ type: 'text', text: 'first' }],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      steeredAt: '2026-01-01T00:00:02.000Z',
+    };
+    prompts.set('p1', restored);
+    tx.apply([{ op: 'prompt.upsert', prompt: restored }]);
+
+    feed(
+      ev({
+        type: 'prompt.completed',
+        promptId: 'p1',
+        finishedAt: '2026-01-01T00:00:10.000Z',
+        reason: 'completed',
+      }),
+    );
+    expect(tx.getPrompt('p1')).toMatchObject({
+      status: 'completed',
+      content: [{ type: 'text', text: 'first' }],
+    });
+  });
+
   it('projects prompt.steered media content to the wire shape (no daemon ref or path leak)', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
