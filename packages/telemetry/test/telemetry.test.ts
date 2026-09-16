@@ -528,8 +528,17 @@ describe('EventSink', () => {
       },
       retryDiskEvents: async () => undefined,
     };
-    const sink = makeSink(transport, 10);
-    sink.accept({
+    const controller = new AbortController();
+    let sendStarted = false;
+    const hangingTransport: TelemetryTransport = {
+      ...transport,
+      send: () => {
+        sendStarted = true;
+        return new Promise<void>(() => {});
+      },
+    };
+    const stuckSink = makeSink(hangingTransport, 10);
+    stuckSink.accept({
       event_id: 'e1',
       device_id: 'dev',
       session_id: 'ses',
@@ -538,9 +547,10 @@ describe('EventSink', () => {
       properties: {},
     });
 
-    const controller = new AbortController();
+    const flushPromise = stuckSink.flush(controller.signal);
+    await vi.waitFor(() => expect(sendStarted).toBe(true));
     controller.abort();
-    await expect(sink.flush(controller.signal)).rejects.toThrow('flush join aborted');
+    await expect(flushPromise).rejects.toThrow('flush join aborted');
     expect(saved.map((batch) => batch.map((event) => event.event))).toEqual([['stuck']]);
   });
 
