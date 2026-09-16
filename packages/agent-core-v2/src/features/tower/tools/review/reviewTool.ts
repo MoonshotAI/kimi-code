@@ -1,9 +1,10 @@
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentScopeContext, agentContextOfScope } from '#/agent/scopeContext/scopeContext';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
 
-import { callerName, newTowerStore, runTowerTool } from '../support';
+import { callerName, callerTokens, newTowerStore, runTowerTool } from '../support';
 import DESCRIPTION from './review.md?raw';
 import {
   ITowerReviewTool,
@@ -20,6 +21,7 @@ export class TowerReviewTool implements ITowerReviewTool {
   constructor(
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    @ISessionUsageService private readonly usage: ISessionUsageService,
   ) {}
 
   resolveExecution(args: TowerReviewToolInput): ToolExecution {
@@ -38,6 +40,7 @@ export class TowerReviewTool implements ITowerReviewTool {
             findings: args.findings,
             checks: args.checks,
             decision: args.decision,
+            tokens: callerTokens(this.usage, agentContextOfScope(this.scopeContext)),
           });
           return {
             output: `review submitted: ${rel}\nAlso notify the branch author (or the tower) with TowerSend so the verdict is seen.`,
