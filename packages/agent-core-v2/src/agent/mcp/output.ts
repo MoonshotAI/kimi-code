@@ -190,6 +190,7 @@ export async function mcpResultToExecutableOutput(
       wrapped.push({
         type: 'text',
         text: `\n<mcp-result-extras>\n${serialized}\n</mcp-result-extras>`,
+        contentType: 'text/xml',
       });
     }
   }
@@ -215,16 +216,19 @@ export async function mcpResultToExecutableOutput(
     },
   });
   const capped = await applyBinaryPartCap(compressed.parts, preserveInlineMedia);
-  const notices = await attachmentDetails(
-    [...compressed.captions, ...attachmentNotices, ...capped.notices], options,
-  );
+  const captionDetails = await attachmentDetails(compressed.captions, options);
+  const notices = await attachmentDetails([...attachmentNotices, ...capped.notices], options);
   const parts = [...capped.parts];
+  if (captionDetails.content.length > 0) {
+    parts.push({ type: 'text', text: captionDetails.content, contentType: 'text/xml' });
+  }
   if (notices.content.length > 0) parts.push({ type: 'text', text: notices.content });
   const output = collapseSingleText(parts);
+  const suffix = [captionDetails.suffix, notices.suffix].filter((s) => s.length > 0).join('\n');
   const base = {
     output,
     truncated: capped.truncated || omittedAttachment ? true : undefined,
-    spill: notices.suffix.length > 0 ? { suffix: notices.suffix } : undefined,
+    spill: suffix.length > 0 ? { suffix } : undefined,
   };
   return result.isError ? { ...base, isError: true } : base;
 }
@@ -361,9 +365,9 @@ function wrapMediaOnly(parts: readonly ContentPart[], qualifiedToolName: string)
   const hasNonEmptyText = parts.some((p) => p.type === 'text' && p.text.length > 0);
   if (!hasMedia || hasNonEmptyText) return [...parts];
   return [
-    { type: 'text', text: `<mcp_tool_result name="${qualifiedToolName}">` },
+    { type: 'text', text: `<mcp_tool_result name="${qualifiedToolName}">`, contentType: 'text/xml' },
     ...parts,
-    { type: 'text', text: '</mcp_tool_result>' },
+    { type: 'text', text: '</mcp_tool_result>', contentType: 'text/xml' },
   ];
 }
 

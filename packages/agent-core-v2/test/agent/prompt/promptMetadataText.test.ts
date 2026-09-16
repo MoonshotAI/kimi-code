@@ -30,7 +30,7 @@ describe('promptMetadataTextFromContentParts', () => {
 
   it('keeps a standalone image-compression caption out of the metadata text', () => {
     const text = promptMetadataTextFromContentParts([
-      { type: 'text', text: CAPTION },
+      { type: 'text', text: CAPTION, contentType: 'text/xml' },
       { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
     ]);
     expect(text).toBe('[image]');

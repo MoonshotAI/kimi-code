@@ -318,6 +318,7 @@ export function makeExtractionResendable(
           },
           originalPath: persistOriginalImageSync(original.bytes, original.mime, originalsDir),
         }),
+        contentType: 'text/xml',
       });
     }
     if (snapshot === undefined || !part.imageUrl.url.startsWith('kimi-file://')) {
@@ -635,10 +636,13 @@ export function resolveOriginalCaptions(
       originalPath: original.path,
     });
     const previous = out.at(-1);
-    if (previous?.type === 'text' && previous.text.startsWith(CAPTION_OPENING)) {
-      out[out.length - 1] = { type: 'text', text: caption };
+    if (
+      previous?.type === 'text' &&
+      (previous.contentType === 'text/xml' || previous.text.startsWith(CAPTION_OPENING))
+    ) {
+      out[out.length - 1] = { type: 'text', text: caption, contentType: 'text/xml' };
     } else {
-      out.push({ type: 'text', text: caption });
+      out.push({ type: 'text', text: caption, contentType: 'text/xml' });
     }
     changed = true;
     out.push(part);

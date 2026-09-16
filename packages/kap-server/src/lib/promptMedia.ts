@@ -116,7 +116,7 @@ export async function resolvePromptSessionMediaRefs(
 export function contentToCoreParts(content: WireContent): ContentPart[] {
   const parts: ContentPart[] = [];
   for (const part of content) {
-    if (part.type === 'text') parts.push({ type: 'text', text: part.text });
+    if (part.type === 'text') parts.push({ type: 'text', text: part.text, contentType: part.contentType });
     else if (part.type === 'image' && part.source.kind === 'url') parts.push({ type: 'image_url', imageUrl: { url: part.source.url, id: part.source.id, name: part.name } });
     else if (part.type === 'image' && part.source.kind === 'base64') parts.push({ type: 'image_url', imageUrl: { url: `data:${part.source.media_type};base64,${part.source.data}`, name: part.name } });
     else if (part.type === 'image' && part.source.kind === 'session_media') parts.push({ type: 'image_url', imageUrl: { url: buildDaemonFileUrl(part.source.file_id), id: part.source.file_id, name: part.name } });
@@ -232,6 +232,7 @@ export async function resolvePromptMediaFiles(
               },
               originalPath,
             }),
+            contentType: 'text/xml',
           });
           content.push({
             type: 'image',
@@ -343,6 +344,7 @@ export async function resolvePromptMediaFiles(
               },
               originalPath: sourcePath,
             }),
+            contentType: 'text/xml',
           });
         }
         const saved = await store.save(
@@ -443,6 +445,7 @@ export async function resolvePromptMediaFiles(
               },
               originalPath,
             }),
+            contentType: 'text/xml',
           });
         }
         let finalFile = file;
