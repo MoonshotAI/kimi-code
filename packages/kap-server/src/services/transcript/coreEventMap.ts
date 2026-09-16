@@ -1085,19 +1085,22 @@ export class AgentTranscriptProjector {
     } else {
       this.subagentTaskIds.delete(event.subagentId);
     }
-    const task = this.upsertTask(taskKey, (prev) => ({
-      taskId: taskKey,
-      kind: 'subagent',
-      state: 'running',
-      detached: event.runInBackground,
-      description: event.description ?? prev?.description,
-      agentId: event.subagentId,
-      outputTail: prev?.outputTail ?? '',
-      startedAt: prev?.startedAt ?? nowIso(),
-      endedAt: prev?.endedAt,
-      model: event.model ?? prev?.model,
-      thinkingEffort: event.thinkingEffort ?? prev?.thinkingEffort,
-    }));
+    const task = this.upsertTask(taskKey, (prev) => {
+      const newGeneration = prev !== undefined && prev.state !== 'running';
+      return {
+        taskId: taskKey,
+        kind: 'subagent',
+        state: 'running',
+        detached: event.runInBackground,
+        description: event.description ?? prev?.description,
+        agentId: event.subagentId,
+        outputTail: prev?.outputTail ?? '',
+        startedAt: newGeneration ? nowIso() : (prev?.startedAt ?? nowIso()),
+        endedAt: newGeneration ? undefined : prev?.endedAt,
+        model: event.model ?? prev?.model,
+        thinkingEffort: event.thinkingEffort ?? prev?.thinkingEffort,
+      };
+    });
     const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
     const hit =
       this.toolFrames.get(event.parentToolCallId) ?? this.adoptToolFrame(event.parentToolCallId);
@@ -1124,6 +1127,10 @@ export class AgentTranscriptProjector {
     error?: string;
     reason?: string;
   }): TranscriptOperation[] {
+    const terminal =
+      event.type === 'subagent.completed' ||
+      event.type === 'subagent.failed' ||
+      event.type === 'subagent.cancelled';
     const state: TranscriptTask['state'] =
       event.type === 'subagent.completed'
         ? 'completed'
@@ -1132,53 +1139,31 @@ export class AgentTranscriptProjector {
           : event.type === 'subagent.cancelled'
             ? 'killed'
             : 'running';
-    const taskKey = this.subagentTaskIds.get(event.subagentId) ?? event.subagentId;
-    const task = this.upsertTask(taskKey, (prev) => ({
-      taskId: taskKey,
-      kind: 'subagent',
-      state,
-      detached: prev?.detached ?? true,
-      description: prev?.description,
-      agentId: event.subagentId,
-      outputTail: prev?.outputTail ?? '',
-      startedAt: prev?.startedAt ?? nowIso(),
-      endedAt:
-        event.type === 'subagent.completed' ||
-        event.type === 'subagent.failed' ||
-        event.type === 'subagent.cancelled'
-          ? nowIso()
-          : prev?.endedAt,
-      resultSummary: event.resultSummary ?? prev?.resultSummary,
-      usage: event.usage ?? prev?.usage,
-      error: event.error ?? prev?.error,
-      stateReason: event.reason ?? prev?.stateReason,
-      model: prev?.model,
-      thinkingEffort: prev?.thinkingEffort,
-    }));
-    const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
-    if (taskKey !== event.subagentId && this.tasks.has(event.subagentId)) {
-      const agentTask = this.upsertTask(event.subagentId, (prev) => ({
-        taskId: event.subagentId,
+    const build = (taskId: string) => (prev: TranscriptTask | undefined): TranscriptTask => {
+      const newGeneration = !terminal && prev !== undefined && prev.state !== 'running';
+      return {
+        taskId,
         kind: 'subagent',
         state,
         detached: prev?.detached ?? true,
         description: prev?.description,
         agentId: event.subagentId,
         outputTail: prev?.outputTail ?? '',
-        startedAt: prev?.startedAt ?? nowIso(),
-        endedAt:
-          event.type === 'subagent.completed' ||
-          event.type === 'subagent.failed' ||
-          event.type === 'subagent.cancelled'
-            ? nowIso()
-            : prev?.endedAt,
-        resultSummary: event.resultSummary ?? prev?.resultSummary,
-        usage: event.usage ?? prev?.usage,
-        error: event.error ?? prev?.error,
-        stateReason: event.reason ?? prev?.stateReason,
+        startedAt: newGeneration ? nowIso() : (prev?.startedAt ?? nowIso()),
+        endedAt: terminal ? nowIso() : newGeneration ? undefined : prev?.endedAt,
+        resultSummary: newGeneration ? undefined : (event.resultSummary ?? prev?.resultSummary),
+        usage: newGeneration ? undefined : (event.usage ?? prev?.usage),
+        error: newGeneration ? undefined : (event.error ?? prev?.error),
+        stateReason: event.reason ?? (newGeneration ? undefined : prev?.stateReason),
         model: prev?.model,
         thinkingEffort: prev?.thinkingEffort,
-      }));
+      };
+    };
+    const taskKey = this.subagentTaskIds.get(event.subagentId) ?? event.subagentId;
+    const task = this.upsertTask(taskKey, build(taskKey));
+    const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
+    if (taskKey !== event.subagentId && this.tasks.has(event.subagentId)) {
+      const agentTask = this.upsertTask(event.subagentId, build(event.subagentId));
       ops.push({ op: 'task.upsert', task: agentTask });
     }
     return ops;

@@ -1186,6 +1186,146 @@ describe('AgentTranscriptProjector', () => {
     expect(tx.getTask('agent-1')).toMatchObject({ kind: 'subagent', state: 'running' });
   });
 
+  it('resets the agent-run generation stamps when a completed subagent is resumed for rework', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    feed(
+      ev({
+        type: 'subagent.spawned',
+        subagentId: 'agent-1',
+        subagentName: 'worker',
+        parentToolCallId: 'call-1',
+        description: 'tower worker',
+        runInBackground: true,
+      }),
+    );
+    feed(
+      ev({
+        type: 'task.started',
+        info: {
+          taskId: 'task-9',
+          kind: 'agent',
+          description: 'tower worker',
+          status: 'running',
+          detached: true,
+          agentId: 'agent-1',
+          startedAt: 1_700_000_000_000,
+          endedAt: null,
+        },
+      }),
+    );
+    feed(ev({ type: 'subagent.completed', subagentId: 'agent-1', resultSummary: 'done' }));
+    feed(
+      ev({
+        type: 'task.terminated',
+        info: {
+          taskId: 'task-9',
+          kind: 'agent',
+          description: 'tower worker',
+          status: 'completed',
+          detached: true,
+          agentId: 'agent-1',
+          startedAt: 1_700_000_000_000,
+          endedAt: 1_700_000_001_000,
+        },
+      }),
+    );
+    const firstRun = tx.getTask('agent-1');
+    expect(firstRun).toMatchObject({ state: 'completed', resultSummary: 'done' });
+
+    feed(
+      ev({
+        type: 'subagent.spawned',
+        subagentId: 'agent-1',
+        subagentName: 'worker',
+        parentToolCallId: 'call-2',
+        description: 'tower worker',
+        runInBackground: true,
+        taskId: 'task-10',
+      }),
+    );
+    feed(ev({ type: 'subagent.started', subagentId: 'agent-1' }));
+
+    const resumed = tx.getTask('agent-1');
+    expect(resumed).toMatchObject({ kind: 'subagent', state: 'running' });
+    expect(resumed?.endedAt).toBeUndefined();
+    expect(resumed?.resultSummary).toBeUndefined();
+    expect(resumed?.error).toBeUndefined();
+    expect((resumed?.startedAt ?? '') >= (firstRun?.endedAt ?? '')).toBe(true);
+    expect(tx.getTask('task-9')).toMatchObject({
+      state: 'completed',
+      resultSummary: 'done',
+      endedAt: new Date(1_700_000_001_000).toISOString(),
+    });
+    expect(tx.getTask('task-10')).toMatchObject({
+      kind: 'subagent',
+      state: 'running',
+      agentId: 'agent-1',
+    });
+  });
+
+  it('clears the terminal stamps when a terminal subagent is respawned without a task id', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    feed(
+      ev({
+        type: 'subagent.spawned',
+        subagentId: 'agent-1',
+        subagentName: 'worker',
+        parentToolCallId: 'call-1',
+        description: 'scan',
+        runInBackground: false,
+      }),
+    );
+    feed(ev({ type: 'subagent.completed', subagentId: 'agent-1', resultSummary: 'done' }));
+    const finished = tx.getTask('agent-1');
+    expect(finished).toMatchObject({ state: 'completed', resultSummary: 'done' });
+
+    feed(
+      ev({
+        type: 'subagent.spawned',
+        subagentId: 'agent-1',
+        subagentName: 'worker',
+        parentToolCallId: 'call-2',
+        description: 'scan again',
+        runInBackground: false,
+      }),
+    );
+
+    const respawned = tx.getTask('agent-1');
+    expect(respawned).toMatchObject({ kind: 'subagent', state: 'running' });
+    expect(respawned?.endedAt).toBeUndefined();
+    expect(respawned?.resultSummary).toBeUndefined();
+    expect((respawned?.startedAt ?? '') >= (finished?.endedAt ?? '')).toBe(true);
+  });
+
+  it('keeps the run stamps when subagent.started arrives for an already-running task', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    feed(
+      ev({
+        type: 'subagent.spawned',
+        subagentId: 'agent-1',
+        subagentName: 'explore',
+        parentToolCallId: 'call-1',
+        description: 'Inspect files',
+        runInBackground: true,
+        taskId: 'task-9',
+      }),
+    );
+    feed(ev({ type: 'subagent.started', subagentId: 'agent-1' }));
+    const startedAt = tx.getTask('task-9')?.startedAt;
+    feed(ev({ type: 'subagent.started', subagentId: 'agent-1' }));
+
+    expect(tx.getTask('task-9')).toMatchObject({ state: 'running', startedAt });
+  });
+
   it('recovers the agent → task association from a backfilled task.started', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
