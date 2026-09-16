@@ -739,6 +739,8 @@ function bashTool(
       track: (resource) => resource,
       dispose: () => {},
     }),
+    reconnect: async () => {},
+    workspaceRoots: () => ({ workDir: ctx.cwd, additionalDirs: [] }),
   };
   return new BashTool(runtime, ctx, stubWorkspaceContext(ctx.cwd), background, toolPolicy, config);
 }

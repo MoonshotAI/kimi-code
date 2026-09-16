@@ -1,6 +1,7 @@
 import { normalize, resolve } from 'pathe';
 
 import { ensureRgPath, rgUnavailableMessage, type RgProbe } from '#/os/backends/node-local/tools/rgLocator';
+import type { Runtime } from '#/runtime/runtime';
 import {
   DEFAULT_TIMEOUT_MS,
   MAX_OUTPUT_BYTES,
@@ -127,6 +128,7 @@ export class GlobTool implements IGlobTool {
             return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
           }
           return await this.execution(
+            lease.runtime,
             lease.runtime.fs!,
             lease.runtime.process!,
             env,
@@ -143,6 +145,7 @@ export class GlobTool implements IGlobTool {
   }
 
   private async execution(
+    runtime: Runtime,
     fs: IHostFileSystem,
     processService: IHostProcessService,
     env: IHostEnvironment,
@@ -174,6 +177,7 @@ export class GlobTool implements IGlobTool {
       const resolution = await ensureRgPath(createRgProbe(processService), {
         signal,
         allowCachedFallback: true,
+        runtime,
       });
       rgPath = resolution.path;
       if (resolution.source !== 'system-path') {

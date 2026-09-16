@@ -3,12 +3,21 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { ISessionEventBus } from '#/app/event/eventBus';
+import { IFlagService } from '#/app/flag/flag';
 import { LifecycleScope } from '#/app/scopes';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import type { Runtime, RuntimeBinding, RuntimeCapability, RuntimeLease } from '#/runtime/runtime';
+import { REMOTE_RUNTIME_FLAG_ID } from '#/runtime/flag';
+import type { Runtime, RuntimeBinding, RuntimeCapability, RuntimeLease, RuntimeWorkspaceRoots } from '#/runtime/runtime';
+import { LOCAL_RUNTIME_ID } from '#/runtime/runtime';
 import { RuntimeError, runtimeStatusAllows, type RuntimeGenerationSnapshot } from '#/runtime/runtimeRegistry';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionStateService } from '#/session/state/sessionState';
+import {
+  workspaceContextAdditionalDirsKey,
+  workspaceContextWorkDirKey,
+} from '#/session/workspaceContext/workspaceContextService';
 import {
   IRuntimeResolver,
   IWorkspaceInstanceManager,
@@ -28,6 +37,8 @@ export interface IAgentRuntimeService {
   inspect(): Runtime;
   isAvailable(required?: readonly RuntimeCapability[]): boolean;
   acquire(required?: readonly RuntimeCapability[]): RuntimeLease;
+  reconnect(): Promise<void>;
+  workspaceRoots(): RuntimeWorkspaceRoots;
 }
 
 export const IAgentRuntimeService: ServiceIdentifier<IAgentRuntimeService> =
@@ -80,6 +91,9 @@ export class AgentRuntimeService implements IAgentRuntimeService {
     @IRuntimeResolver private readonly resolver: IRuntimeResolver,
     @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
     @ISessionEventBus private readonly eventBus: ISessionEventBus,
+    @ISessionContext private readonly session: ISessionContext,
+    @ISessionStateService private readonly sessionState: ISessionStateService,
+    @IFlagService private readonly flags: IFlagService,
   ) {
     this.bindingSubscription = this.binding.onDidChange(() => this.rebind());
     this.workspaceSubscription = this.workspaces.onDidChange((change) => {
@@ -103,6 +117,34 @@ export class AgentRuntimeService implements IAgentRuntimeService {
 
   inspect(): Runtime {
     return this.resolver.inspect(this.binding.current);
+  }
+
+  async reconnect(): Promise<void> {
+    const runtime = this.resolver.inspect(this.binding.current);
+    if (typeof runtime.connect !== 'function') {
+      throw new RuntimeError(
+        'runtime.unavailable',
+        `runtime ${this.binding.current.runtimeId} does not support reconnect`,
+      );
+    }
+    await runtime.connect();
+  }
+
+  workspaceRoots(): RuntimeWorkspaceRoots {
+    if (!this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) {
+      return {
+        workDir: this.sessionState.get(workspaceContextWorkDirKey),
+        additionalDirs: this.sessionState.get(workspaceContextAdditionalDirsKey),
+      };
+    }
+    const binding = this.turnSnapshot?.binding ?? this.binding.current;
+    return {
+      workDir: binding.cwd ?? this.session.cwd,
+      additionalDirs:
+        binding.runtimeId === LOCAL_RUNTIME_ID
+          ? this.sessionState.get(workspaceContextAdditionalDirsKey)
+          : [],
+    };
   }
 
   isAvailable(required: readonly RuntimeCapability[] = []): boolean {

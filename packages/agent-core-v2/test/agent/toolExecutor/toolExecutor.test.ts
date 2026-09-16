@@ -1097,6 +1097,8 @@ describe('truncation pipeline', () => {
       isAvailable: () => true,
       inspect: () => runtime,
       acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
+      reconnect: async () => {},
+      workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
     };
     mediaRuntime = binding;
     registry.register(new ReadTool(

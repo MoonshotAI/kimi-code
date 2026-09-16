@@ -3,10 +3,29 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { Emitter, type Event, type IWaitUntil } from '#/_base/event';
 import { ScopeActivation, registerScopedService, type ISessionScopeHandle } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
 import { Error2, ErrorCodes } from '#/errors';
+import { ILogService } from '#/_base/log/log';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { RuntimeSetBinding } from '#/agent/runtimeBinding/runtimeBindingOps';
+import { REMOTE_RUNTIME_FLAG_ID } from '#/runtime/flag';
 import { LOCAL_RUNTIME_ID } from '#/runtime/runtime';
+import { resolveWorkspaceRuntimeDeclarations } from '#/runtime/runtimeDeclarations';
+import type { RuntimeDeclarationSet } from '#/runtime/remoteRuntimeDeclaration';
+import { runtimeStatusAllows } from '#/runtime/runtimeRegistry';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
+import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
+import {
+  agentScopeOf,
+  sessionScopeOf,
+  workspacePersistenceScope,
+} from '#/workspace/sessionLifecycle/internal/addressing';
 import {
   type CreateChildSessionOptions,
   type ForkSessionOptions,
@@ -19,6 +38,7 @@ import {
   type SessionWillCreateEvent,
 } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
+import type { WorkspaceInstance } from '#/workspace/workspaceInstance/workspaceInstance';
 import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
 import {
@@ -61,6 +81,13 @@ export class SessionManager implements ISessionManager {
   constructor(
     @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
     @ISessionIndex private readonly index: ISessionIndex,
+    @IFlagService private readonly flags: IFlagService,
+    @IConfigService private readonly config: IConfigService,
+    @IHostFileSystem private readonly fs: IHostFileSystem,
+    @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
+    @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @ILogService private readonly log: ILogService,
   ) {}
 
   async create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle> {
@@ -69,9 +96,56 @@ export class SessionManager implements ISessionManager {
         ? { root: options.workDir }
         : { workspaceId: options.workspaceId, root: options.workDir },
     );
-    const create = () => this.controllerForWorkspace(workspace.id, options.runtimeId).create(options);
+    const declarations = await this.workspaceRuntimeDeclarations(workspace);
+    if (options.runtimeId !== undefined && options.runtimeId !== LOCAL_RUNTIME_ID && declarations !== undefined) {
+      if (!declarations.entries.some((entry) => entry.id === options.runtimeId)) {
+        throw new Error2(
+          ErrorCodes.CONFIG_INVALID,
+          `runtime "${options.runtimeId}" is not declared in [runtimes]`,
+        );
+      }
+    }
+    const resolved = options.runtimeId === undefined ? declarations?.default : undefined;
+    const runtimeId = options.runtimeId ?? resolved?.runtimeId;
+    const declaredCwd =
+      options.runtimeId === undefined
+        ? undefined
+        : declarations?.entries.find((entry) => entry.id === options.runtimeId)?.entry.defaultCwd;
+    const runtimeCwd = options.runtimeCwd ?? resolved?.cwd ?? declaredCwd;
+    const controllerRuntimeId = this.selectControllerRuntimeId(workspace, runtimeId ?? LOCAL_RUNTIME_ID);
+    const effective =
+      runtimeId === undefined && runtimeCwd === undefined
+        ? options
+        : { ...options, runtimeId, runtimeCwd };
+    const create = () => this.controllerForWorkspace(workspace.id, controllerRuntimeId).create(effective);
     if (options.sessionId === undefined) return create();
     return this.serializeLifecycle(options.sessionId, create);
+  }
+
+  private async workspaceRuntimeDeclarations(workspace: WorkspaceInstance): Promise<RuntimeDeclarationSet | undefined> {
+    if (!this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) return undefined;
+    try {
+      const declarations = await resolveWorkspaceRuntimeDeclarations({
+        config: this.config,
+        fs: this.fs,
+        docs: this.docs,
+        root: workspace.root,
+      });
+      if (declarations.projectError !== undefined) {
+        this.log.warn('project remote runtime declarations failed to load', { error: declarations.projectError });
+      }
+      return declarations;
+    } catch (error) {
+      this.log.warn('remote runtime declaration resolution failed', { error });
+      return undefined;
+    }
+  }
+
+  private selectControllerRuntimeId(workspace: WorkspaceInstance, runtimeId: string): string {
+    if (runtimeId === LOCAL_RUNTIME_ID) return LOCAL_RUNTIME_ID;
+    const runtime = workspace.runtimes.current(runtimeId);
+    if (runtime === undefined || !runtimeStatusAllows(runtime, ['fs', 'process'])) return LOCAL_RUNTIME_ID;
+    return runtimeId;
   }
 
   async resume(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined> {
@@ -293,7 +367,27 @@ export class SessionManager implements ISessionManager {
     const summary = await this.index.get(sessionId);
     if (summary === undefined) return undefined;
     const workspace = await this.workspaces.getOrCreate({ workspaceId: summary.workspaceId, root: summary.cwd });
-    return this.controllerForWorkspace(workspace.id);
+    const persisted = await this.peekPersistedRuntimeId(workspace.id, sessionId);
+    return this.controllerForWorkspace(workspace.id, this.selectControllerRuntimeId(workspace, persisted ?? LOCAL_RUNTIME_ID));
+  }
+
+  private async peekPersistedRuntimeId(workspaceId: string, sessionId: string): Promise<string | undefined> {
+    if (!this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) return undefined;
+    try {
+      const scope = agentScopeOf(
+        sessionScopeOf(workspacePersistenceScope(this.bootstrap.scope('sessions'), workspaceId), sessionId),
+        MAIN_AGENT_ID,
+      );
+      let runtimeId: string | undefined;
+      for await (const record of this.appendLogStore.read<WireRecord>(scope, AGENT_WIRE_RECORD_KEY)) {
+        if (record.type === RuntimeSetBinding.type && typeof record['runtimeId'] === 'string') {
+          runtimeId = record['runtimeId'];
+        }
+      }
+      return runtimeId;
+    } catch {
+      return undefined;
+    }
   }
 }
 

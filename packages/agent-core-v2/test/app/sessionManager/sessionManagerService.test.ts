@@ -2,12 +2,21 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { Emitter, Event } from '#/_base/event';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
+import type { ILogService } from '#/_base/log/log';
+import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import type { IConfigService } from '#/app/config/config';
+import type { IFlagService } from '#/app/flag/flag';
 import type { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
 import { SessionManager } from '#/app/sessionManager/sessionManagerService';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
+import type { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { Program } from '#/program/program';
 import type { ProgramSessionControllerInput } from '#/program/programDependencies';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
 import { RuntimeRegistry } from '#/runtime/runtimeRegistry';
+import { writeWorkspaceTrust } from '#/workspace/workspaceTrust/trustRecord';
 import type {
   SessionArchivedEvent,
   SessionClosedEvent,
@@ -17,6 +26,35 @@ import type {
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import type { WorkspaceInstance } from '#/workspace/workspaceInstance/workspaceInstance';
 import type { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+
+function makeSessionManager(
+  workspaces: IWorkspaceInstanceManager,
+  index: ISessionIndex,
+  overrides: {
+    readonly flags?: IFlagService;
+    readonly config?: IConfigService;
+    readonly fs?: IHostFileSystem;
+    readonly docs?: IAtomicDocumentStore;
+    readonly appendLogStore?: IAppendLogStore;
+    readonly bootstrap?: IBootstrapService;
+    readonly log?: ILogService;
+  } = {},
+): SessionManager {
+  return new SessionManager(
+    workspaces,
+    index,
+    overrides.flags ?? ({ _serviceBrand: undefined, enabled: () => false } as unknown as IFlagService),
+    overrides.config ??
+      ({ _serviceBrand: undefined, ready: Promise.resolve(), get: () => undefined } as unknown as IConfigService),
+    overrides.fs ?? ({ _serviceBrand: undefined } as unknown as IHostFileSystem),
+    overrides.docs ?? ({ _serviceBrand: undefined, get: async () => undefined } as unknown as IAtomicDocumentStore),
+    overrides.appendLogStore ??
+      ({ _serviceBrand: undefined, read: async function* () {} } as unknown as IAppendLogStore),
+    overrides.bootstrap ?? ({ _serviceBrand: undefined, scope: (name: string) => name } as unknown as IBootstrapService),
+    overrides.log ??
+      ({ _serviceBrand: undefined, warn: () => {}, info: () => {}, error: () => {} } as unknown as ILogService),
+  );
+}
 
 function controller(sessionId = 'session-1'): {
   readonly service: SessionLifecycleService;
@@ -104,7 +142,7 @@ describe('SessionManager', () => {
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
     } as unknown as ISessionIndex;
-    const manager = new SessionManager(workspaces, index);
+    const manager = makeSessionManager(workspaces, index);
 
     const resumePromise = manager.resume('session-1');
     const section = manager.withLifecycleSerialization('session-1', async () => {
@@ -132,7 +170,7 @@ describe('SessionManager', () => {
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
     } as unknown as ISessionIndex;
-    const manager = new SessionManager(workspaces, index);
+    const manager = makeSessionManager(workspaces, index);
 
     let releaseSection!: () => void;
     const sectionGate = new Promise<void>((resolve) => {
@@ -173,7 +211,7 @@ describe('SessionManager', () => {
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
     } as unknown as ISessionIndex;
-    const manager = new SessionManager(workspaces, index);
+    const manager = makeSessionManager(workspaces, index);
 
     let releaseSection!: () => void;
     const sectionGate = new Promise<void>((resolve) => {
@@ -211,7 +249,7 @@ describe('SessionManager', () => {
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
     } as unknown as ISessionIndex;
-    const manager = new SessionManager(workspaces, index);
+    const manager = makeSessionManager(workspaces, index);
 
     let releaseSection!: () => void;
     const sectionGate = new Promise<void>((resolve) => {
@@ -249,7 +287,7 @@ describe('SessionManager', () => {
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
     } as unknown as ISessionIndex;
-    const manager = new SessionManager(workspaces, index);
+    const manager = makeSessionManager(workspaces, index);
 
     let releaseSection!: () => void;
     const sectionGate = new Promise<void>((resolve) => {
@@ -287,7 +325,7 @@ describe('SessionManager', () => {
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
     } as unknown as ISessionIndex;
-    const manager = new SessionManager(workspaces, index);
+    const manager = makeSessionManager(workspaces, index);
 
     let releaseSection!: () => void;
     const sectionGate = new Promise<void>((resolve) => {
@@ -325,7 +363,7 @@ describe('SessionManager', () => {
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
     } as unknown as ISessionIndex;
-    const manager = new SessionManager(workspaces, index);
+    const manager = makeSessionManager(workspaces, index);
 
     let releaseSection!: () => void;
     const sectionGate = new Promise<void>((resolve) => {
@@ -362,7 +400,7 @@ describe('SessionManager', () => {
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
     } as unknown as ISessionIndex;
-    const manager = new SessionManager(workspaces, index);
+    const manager = makeSessionManager(workspaces, index);
 
     let releaseSection!: () => void;
     const sectionGate = new Promise<void>((resolve) => {
@@ -400,7 +438,7 @@ describe('SessionManager', () => {
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
     } as unknown as ISessionIndex;
-    const manager = new SessionManager(workspaces, index);
+    const manager = makeSessionManager(workspaces, index);
 
     await expect(manager.resume('session-1')).rejects.toThrow('boom');
     await expect(manager.whenResumeSettled('session-1')).rejects.toThrow('boom');
@@ -422,7 +460,7 @@ describe('SessionManager', () => {
       get: (workspaceId: string) => workspaceId === workspace.id ? workspace : undefined,
     } as unknown as IWorkspaceInstanceManager;
     const index = { get: async () => undefined } as unknown as ISessionIndex;
-    const manager = new SessionManager(workspaces, index);
+    const manager = makeSessionManager(workspaces, index);
     const created = await manager.create({ workDir: '/workspace' });
     expect(created).toBe(fake.handle);
     expect(manager.get('session-1')).toBe(fake.handle);
@@ -448,7 +486,7 @@ describe('SessionManager', () => {
       getOrCreate: async () => workspace,
       get: () => workspace,
     } as unknown as IWorkspaceInstanceManager;
-    const manager = new SessionManager(
+    const manager = makeSessionManager(
       workspaces,
       { get: async () => undefined } as unknown as ISessionIndex,
     );
@@ -484,7 +522,7 @@ describe('SessionManager', () => {
       getOrCreate: async () => workspace,
       get: () => workspace,
     } as unknown as IWorkspaceInstanceManager;
-    const manager = new SessionManager(
+    const manager = makeSessionManager(
       workspaces,
       { get: async () => undefined } as unknown as ISessionIndex,
     );
@@ -640,13 +678,13 @@ describe('SessionManager controller retirement', () => {
     return { registry, program, controllers };
   }
 
-  function managerFor(program: Program): SessionManager {
-    const workspace = { id: 'workspace', program } as unknown as WorkspaceInstance;
+  function managerFor(program: Program, registry?: RuntimeRegistry): SessionManager {
+    const workspace = { id: 'workspace', program, runtimes: registry } as unknown as WorkspaceInstance;
     const workspaces = {
       getOrCreate: async () => workspace,
       get: (workspaceId: string) => workspaceId === workspace.id ? workspace : undefined,
     } as unknown as IWorkspaceInstanceManager;
-    return new SessionManager(
+    return makeSessionManager(
       workspaces,
       { get: async () => undefined } as unknown as ISessionIndex,
     );
@@ -657,7 +695,7 @@ describe('SessionManager controller retirement', () => {
     const first = runtime('one');
     const registration = registry.register(first);
     await program.ready;
-    const manager = managerFor(program);
+    const manager = managerFor(program, registry);
 
     const handleOne = await manager.create({ workDir: '/workspace' });
     const replacement = registration.replace(runtime('two'));
@@ -684,7 +722,7 @@ describe('SessionManager controller retirement', () => {
     const { registry, program, controllers } = liveProgram(50);
     registry.register(runtime('one'));
     await program.ready;
-    const manager = managerFor(program);
+    const manager = managerFor(program, registry);
 
     const first = await manager.create({ workDir: '/workspace' });
     expect(controllers).toHaveLength(1);
@@ -706,7 +744,7 @@ describe('SessionManager controller retirement', () => {
     registry.register(runtime('one'));
     registry.register(remoteRuntime('remote-one'));
     await program.ready;
-    const manager = managerFor(program);
+    const manager = managerFor(program, registry);
 
     const local = await manager.create({ workDir: '/workspace' });
     const remote = await manager.create({ workDir: '/workspace', runtimeId: 'remote' });
@@ -724,6 +762,294 @@ describe('SessionManager controller retirement', () => {
     manager.dispose();
     expect(controllers[1]!.dispose).toHaveBeenCalledTimes(1);
     program.dispose();
+    await registry.dispose();
+  });
+});
+
+describe('SessionManager remote runtime wiring', () => {
+  function flagsOn(): IFlagService {
+    return { _serviceBrand: undefined, enabled: (id: string) => id === 'remote_runtime' } as unknown as IFlagService;
+  }
+
+  function configWith(section: unknown): IConfigService {
+    return {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      get: (domain: string) => (domain === 'runtimes' ? section : undefined),
+    } as unknown as IConfigService;
+  }
+
+  function fsWith(files: Readonly<Record<string, string>>): IHostFileSystem {
+    return {
+      _serviceBrand: undefined,
+      readText: async (path: string) => {
+        const text = files[path];
+        if (text === undefined) {
+          throw new HostFsError(OsFsErrors.codes.OS_FS_NOT_FOUND, `not found: ${path}`);
+        }
+        return text;
+      },
+    } as unknown as IHostFileSystem;
+  }
+
+  function docsStore(): IAtomicDocumentStore & { readonly records: Map<string, unknown> } {
+    const records = new Map<string, unknown>();
+    return {
+      _serviceBrand: undefined,
+      records,
+      get: async <T,>(scope: string, key: string) => records.get(`${scope}/${key}`) as T | undefined,
+      set: async <T,>(scope: string, key: string, value: T) => {
+        records.set(`${scope}/${key}`, value);
+      },
+      delete: async (scope: string, key: string) => {
+        records.delete(`${scope}/${key}`);
+      },
+    } as unknown as IAtomicDocumentStore & { readonly records: Map<string, unknown> };
+  }
+
+  function createCapture() {
+    const created: { readonly options: readonly unknown[]; readonly service: SessionLifecycleService }[] = [];
+    const byRuntime = new Map<string, { options: unknown[]; service: SessionLifecycleService; handle: ISessionScopeHandle }>();
+    const program = {
+      sessionControllerGenerationFor: (runtimeId: string) => `generation-${runtimeId}`,
+      createSessionController: (runtimeId: string) => {
+        const handle = { id: `session-${runtimeId}` } as unknown as ISessionScopeHandle;
+        const options: unknown[] = [];
+        const service = {
+          onWillCreateSession: Event.None,
+          onDidCreateSession: Event.None,
+          onWillCloseSession: Event.None,
+          onDidCloseSession: Event.None,
+          onDidArchiveSession: Event.None,
+          onDidForkSession: Event.None,
+          create: async (opts: unknown) => {
+            options.push(opts);
+            return handle;
+          },
+          resume: async () => handle,
+          restore: async () => handle,
+          get: () => undefined,
+          list: () => [],
+          close: async () => {},
+          archive: async () => {},
+          delete: async () => {},
+          fork: async () => handle,
+          createChild: async () => handle,
+          dispose: () => {},
+        } as unknown as SessionLifecycleService;
+        byRuntime.set(runtimeId, { options, service, handle });
+        created.push({ options, service });
+        return service;
+      },
+    } as unknown as Program;
+    return { program, byRuntime };
+  }
+
+  function workspaceWith(
+    registry: RuntimeRegistry,
+    program: Program,
+    root = '/workspace',
+  ): WorkspaceInstance {
+    return { id: 'workspace-1', root, runtimes: registry, program } as unknown as WorkspaceInstance;
+  }
+
+  it('binds a new session to the configured default runtime and cwd', async () => {
+    const registry = new RuntimeRegistry('workspace-1');
+    registry.register(Object.assign(new FakeRuntime(
+      { workspaceId: 'workspace-1', runtimeId: 'local', generation: 'local-one' },
+      { capabilities: ['fs', 'process'] },
+    ), { fs: {}, process: {} }));
+    const { program, byRuntime } = createCapture();
+    const workspace = workspaceWith(registry, program);
+    const workspaces = {
+      getOrCreate: async () => workspace,
+      get: () => workspace,
+    } as unknown as IWorkspaceInstanceManager;
+    const manager = makeSessionManager(
+      workspaces,
+      { get: async () => undefined } as unknown as ISessionIndex,
+      {
+        flags: flagsOn(),
+        config: configWith({
+          default: 'gym',
+          gym: { command: 'agi', args: ['sandbox'], defaultCwd: '/home/me/gym' },
+        }),
+      },
+    );
+
+    await manager.create({ workDir: '/workspace' });
+    expect(byRuntime.has('local')).toBe(true);
+    expect(byRuntime.get('local')!.options[0]).toMatchObject({ runtimeId: 'gym', runtimeCwd: '/home/me/gym' });
+    manager.dispose();
+    await registry.dispose();
+  });
+
+  it('prefers a trusted project default over the user default', async () => {
+    const registry = new RuntimeRegistry('workspace-1');
+    registry.register(Object.assign(new FakeRuntime(
+      { workspaceId: 'workspace-1', runtimeId: 'local', generation: 'local-one' },
+      { capabilities: ['fs', 'process'] },
+    ), { fs: {}, process: {} }));
+    const { program, byRuntime } = createCapture();
+    const workspace = workspaceWith(registry, program);
+    const workspaces = {
+      getOrCreate: async () => workspace,
+      get: () => workspace,
+    } as unknown as IWorkspaceInstanceManager;
+    const docs = docsStore();
+    await writeWorkspaceTrust(docs, '/workspace', Date.now());
+    const manager = makeSessionManager(
+      workspaces,
+      { get: async () => undefined } as unknown as ISessionIndex,
+      {
+        flags: flagsOn(),
+        config: configWith({
+          default: 'user-box',
+          'user-box': { type: 'ssh', host: 'user-box', defaultCwd: '/user' },
+        }),
+        fs: fsWith({
+          '/workspace/.kimi-code/runtimes.toml': 'default = "project-box"\n\n[project-box]\ntype = "ssh"\nhost = "project-box"\ndefaultCwd = "/project"\n',
+        }),
+        docs,
+      },
+    );
+
+    await manager.create({ workDir: '/workspace' });
+    expect(byRuntime.get('local')!.options[0]).toMatchObject({ runtimeId: 'project-box', runtimeCwd: '/project' });
+    manager.dispose();
+    await registry.dispose();
+  });
+
+  it('applies the declaration defaultCwd for an explicit runtime id and rejects undeclared ids', async () => {
+    const registry = new RuntimeRegistry('workspace-1');
+    registry.register(Object.assign(new FakeRuntime(
+      { workspaceId: 'workspace-1', runtimeId: 'local', generation: 'local-one' },
+      { capabilities: ['fs', 'process'] },
+    ), { fs: {}, process: {} }));
+    const { program, byRuntime } = createCapture();
+    const workspace = workspaceWith(registry, program);
+    const workspaces = {
+      getOrCreate: async () => workspace,
+      get: () => workspace,
+    } as unknown as IWorkspaceInstanceManager;
+    const manager = makeSessionManager(
+      workspaces,
+      { get: async () => undefined } as unknown as ISessionIndex,
+      {
+        flags: flagsOn(),
+        config: configWith({
+          gym: { command: 'agi', defaultCwd: '/home/me/gym' },
+        }),
+      },
+    );
+
+    await manager.create({ workDir: '/workspace', runtimeId: 'gym' });
+    expect(byRuntime.get('local')!.options[0]).toMatchObject({ runtimeId: 'gym', runtimeCwd: '/home/me/gym' });
+
+    await manager.create({ workDir: '/workspace', runtimeId: 'gym', runtimeCwd: '/elsewhere' });
+    expect(byRuntime.get('local')!.options[1]).toMatchObject({ runtimeId: 'gym', runtimeCwd: '/elsewhere' });
+
+    await expect(manager.create({ workDir: '/workspace', runtimeId: 'missing' })).rejects.toMatchObject({
+      code: 'config.invalid',
+    });
+    manager.dispose();
+    await registry.dispose();
+  });
+
+  it('keeps new sessions local when no default is configured or the flag is off', async () => {
+    const registry = new RuntimeRegistry('workspace-1');
+    registry.register(Object.assign(new FakeRuntime(
+      { workspaceId: 'workspace-1', runtimeId: 'local', generation: 'local-one' },
+      { capabilities: ['fs', 'process'] },
+    ), { fs: {}, process: {} }));
+    const { program, byRuntime } = createCapture();
+    const workspace = workspaceWith(registry, program);
+    const workspaces = {
+      getOrCreate: async () => workspace,
+      get: () => workspace,
+    } as unknown as IWorkspaceInstanceManager;
+    const index = { get: async () => undefined } as unknown as ISessionIndex;
+
+    const noDefault = makeSessionManager(workspaces, index, { flags: flagsOn(), config: configWith(undefined) });
+    await noDefault.create({ workDir: '/workspace' });
+    expect(byRuntime.get('local')!.options[0]).toMatchObject({ workDir: '/workspace' });
+    expect((byRuntime.get('local')!.options[0] as { runtimeId?: string }).runtimeId).toBeUndefined();
+    noDefault.dispose();
+
+    const flagOff = makeSessionManager(workspaces, index, {
+      config: configWith({
+        default: 'gym',
+        gym: { command: 'agi', defaultCwd: '/home/me/gym' },
+      }),
+    });
+    await flagOff.create({ workDir: '/workspace' });
+    const last = byRuntime.get('local')!.options.at(-1) as { runtimeId?: string };
+    expect(last.runtimeId).toBeUndefined();
+    flagOff.dispose();
+    await registry.dispose();
+  });
+
+  function restoreSetup(options: {
+    readonly remoteStatus: 'ready' | 'disconnected';
+    readonly flagOn: boolean;
+  }) {
+    const registry = new RuntimeRegistry('workspace-1');
+    registry.register(Object.assign(new FakeRuntime(
+      { workspaceId: 'workspace-1', runtimeId: 'local', generation: 'local-one' },
+      { capabilities: ['fs', 'process'] },
+    ), { fs: {}, process: {} }));
+    registry.register(Object.assign(new FakeRuntime(
+      { workspaceId: 'workspace-1', runtimeId: 'remote', generation: 'remote-one' },
+      { status: options.remoteStatus, capabilities: ['fs', 'process'] },
+    ), { fs: {}, process: {} }));
+    const { program, byRuntime } = createCapture();
+    const workspace = workspaceWith(registry, program);
+    const workspaces = {
+      getOrCreate: async () => workspace,
+      get: () => workspace,
+    } as unknown as IWorkspaceInstanceManager;
+    const index = {
+      get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
+    } as unknown as ISessionIndex;
+    const appendLogStore = {
+      _serviceBrand: undefined,
+      read: async function* () {
+        yield { type: 'runtime.set_binding', agentId: 'main', workspaceId: 'workspace-1', runtimeId: 'remote', cwd: '/remote/work', time: 1 };
+      },
+    } as unknown as IAppendLogStore;
+    const manager = makeSessionManager(workspaces, index, {
+      flags: options.flagOn ? flagsOn() : undefined,
+      appendLogStore,
+    });
+    return { manager, byRuntime, registry };
+  }
+
+  it('restores a remote-bound session on the local controller without connecting when the runtime is disconnected', async () => {
+    const { manager, byRuntime, registry } = restoreSetup({ remoteStatus: 'disconnected', flagOn: true });
+
+    await manager.resume('session-1');
+    expect(byRuntime.has('local')).toBe(true);
+    expect(byRuntime.has('remote')).toBe(false);
+    manager.dispose();
+    await registry.dispose();
+  });
+
+  it('restores a remote-bound session on the remote controller when the runtime is ready', async () => {
+    const { manager, byRuntime, registry } = restoreSetup({ remoteStatus: 'ready', flagOn: true });
+
+    await manager.resume('session-1');
+    expect(byRuntime.has('remote')).toBe(true);
+    manager.dispose();
+    await registry.dispose();
+  });
+
+  it('ignores the persisted remote binding when the flag is off', async () => {
+    const { manager, byRuntime, registry } = restoreSetup({ remoteStatus: 'ready', flagOn: false });
+
+    await manager.resume('session-1');
+    expect(byRuntime.has('local')).toBe(true);
+    expect(byRuntime.has('remote')).toBe(false);
+    manager.dispose();
     await registry.dispose();
   });
 });

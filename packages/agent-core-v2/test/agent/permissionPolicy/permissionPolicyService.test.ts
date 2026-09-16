@@ -116,6 +116,8 @@ describe('AgentPermissionPolicyService chain', () => {
             },
             dispose: () => {},
           }),
+          reconnect: async () => {},
+          workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
         });
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
         reg.definePartialInstance(IGitService, { findWorkTree: async () => null });
@@ -523,6 +525,8 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
             },
             dispose: () => {},
           }),
+          reconnect: async () => {},
+          workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
         });
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
         reg.definePartialInstance(IGitService, {

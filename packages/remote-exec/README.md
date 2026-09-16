@@ -8,13 +8,13 @@ agent-core-v2 `Runtime` interface.
 ```text
 packages/remote-exec/src/
 ├── protocol/   message types, error codes, NDJSON codec (self-contained)
-├── client/     execBridge, launchers, connection, fs/process/terminal stubs, remoteRuntime
+├── client/     execBridge, launchers, connection, fs/process/terminal stubs, remoteRuntime, remoteRuntimeProvider
 └── server/     stdioHost, fsHandler, processManager, environment, entry, standalone
 ```
 
 ## Entries
 
-- `.` — client side: protocol + bridge + stubs + `RemoteRuntime`.
+- `.` — client side: protocol + bridge + stubs + `RemoteRuntime` + `RemoteRuntimeProviderFactory`.
 - `./client` — the same client surface.
 - `./server` — the executor side: `runExecServer` (light entry), `StdioHost`.
 - `./protocol` — wire types and codec only.
@@ -70,6 +70,17 @@ Client-surface notes beyond the wire protocol:
 - Whole-file reads without `maxBytes` are rejected server-side above 32MiB
   (base64 of the response must fit the 64MiB frame cap); larger files are read
   through `offset`/`maxBytes` range reads.
+- `RemoteRuntimeProviderFactory` is the workspace composition root for
+  declared runtimes: it attaches via `IWorkspaceInstanceManager.addProvider`,
+  reads the merged declaration set (`config.toml` `[runtimes]` plus a trusted
+  project-level `.kimi-code/runtimes.toml`, resolved by agent-core-v2's
+  `resolveWorkspaceRuntimeDeclarations`), and registers each declared runtime
+  as a `disconnected` placeholder (`ManagedRemoteRuntime`) — no connections
+  are made at registration. An explicit `connect()` (the binding
+  `connectAndSwitch` flow, or reconnect) builds the `RemoteRuntime` and swaps
+  it into the registry with a fresh generation; the old generation drains and
+  its leases never migrate. The whole provider is inert unless
+  `KIMI_CODE_EXPERIMENTAL_REMOTE_RUNTIME` is enabled.
 
 Wire discipline: NDJSON frames (`\n`-terminated, `\r\n` tolerated, blank lines
 skipped, strict UTF-8), one message capped at 64MiB (disconnect on exceed),

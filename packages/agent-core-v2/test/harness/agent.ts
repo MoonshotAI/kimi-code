@@ -1358,6 +1358,8 @@ export class AgentTestContext {
                 }
                 return { runtime, track: (resource) => resource, dispose: () => {} };
               },
+              reconnect: async () => {},
+              workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
             });
             reg.defineDescriptor(
               IWireService,

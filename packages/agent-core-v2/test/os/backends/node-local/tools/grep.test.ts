@@ -195,6 +195,8 @@ class GrepTool extends ProductionGrepTool {
       isAvailable: () => true,
       inspect: () => backend,
       acquire: () => ({ runtime: backend, track: (resource) => resource, dispose: () => {} }),
+      reconnect: async () => {},
+      workspaceRoots: () => ({ workDir: workspaceConfig.workspaceDir, additionalDirs: workspaceConfig.additionalDirs ?? [] }),
     };
     super(
       runtime,
@@ -350,6 +352,8 @@ describe('GrepTool', () => {
             isAvailable: () => true,
             inspect: () => runtime,
             acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
+            reconnect: async () => {},
+            workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
           });
           reg.defineInstance(ISessionWorkspaceContext, stubWorkspaceContext('/workspace'));
           reg.defineInstance(ITelemetryService, noopTelemetryService);

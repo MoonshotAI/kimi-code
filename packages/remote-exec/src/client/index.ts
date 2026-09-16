@@ -5,3 +5,4 @@ export * from './remoteFileSystem';
 export * from './remoteProcess';
 export * from './remoteTerminal';
 export * from './remoteRuntime';
+export * from './remoteRuntimeProvider';
