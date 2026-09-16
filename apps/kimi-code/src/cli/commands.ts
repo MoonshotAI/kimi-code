@@ -2,6 +2,7 @@ import { CLI_COMMAND_NAME } from '#/constant/app';
 import { registerMigrateCommand, type MigrateCommandOptions } from '#/migration/index';
 import { Command, InvalidArgumentError, Option } from 'commander';
 
+import { EXEC_SERVER_COMMAND } from './exec-server';
 import type { CLIOptions } from './options';
 import { registerAcpCommand } from './sub/acp';
 import { registerDoctorCommand } from './sub/doctor';
@@ -18,6 +19,7 @@ export type MigrateCommandHandler = (options: MigrateCommandOptions) => void;
 export type PluginNodeRunnerHandler = (entry: string, args: readonly string[]) => void;
 export type UpgradeCommandHandler = (yes: boolean) => void | Promise<void>;
 export type UpdateDownloadHandler = (version: string, manual: boolean) => void;
+export type ExecServerCommandHandler = (listen: string) => void;
 
 export function createProgram(
   version: string,
@@ -26,6 +28,7 @@ export function createProgram(
   onPluginNodeRunner: PluginNodeRunnerHandler = () => {},
   onUpgrade: UpgradeCommandHandler = () => {},
   onUpdateDownload: UpdateDownloadHandler = () => {},
+  onExecServer: ExecServerCommandHandler = () => {},
 ): Command {
   const program = new Command(CLI_COMMAND_NAME)
     .description('The Starting Point for Next-Gen Agents')
@@ -116,6 +119,13 @@ export function createProgram(
     )
     .addOption(new Option('--yes').hideHelp().default(false))
     .addOption(new Option('--auto-approve').hideHelp().default(false))
+    .addOption(
+      // Remote-runtime is experimental: the [runtimes] config layer resolves
+      // and validates the id (unknown id / missing defaultCwd → startup
+      // error). Hidden until that lands.
+      new Option('--runtime <id>', 'Bind the new session to the configured runtime <id>.')
+        .hideHelp(),
+    )
     .option('--plan', 'Start in plan mode.', false);
 
   registerExportCommand(program);
@@ -157,6 +167,19 @@ export function createProgram(
       onUpdateDownload(targetVersion, options.manual === true);
     });
 
+  // Remote-executor entry (remote-runtime spec §6). The exact argv shape
+  // `exec-server --listen stdio` is pre-dispatched in `src/main.ts` before
+  // this program is even loaded; this hidden command owns every other
+  // spelling (`--listen=stdio`, unsupported transports, excess args) so they
+  // still route to the executor or fail with a clean stderr error.
+  program
+    .command(EXEC_SERVER_COMMAND, { hidden: true })
+    .requiredOption('--listen <transport>', 'Transport to listen on. Only "stdio" is supported.')
+    .allowExcessArguments(false)
+    .action((options: { listen: string }) => {
+      onExecServer(options.listen);
+    });
+
   program.argument('[args...]').action((args: string[]) => {
     if (args.length > 0) {
       program.error(`unknown command '${args[0]}'. See '${CLI_COMMAND_NAME} --help'.`);
@@ -182,6 +205,7 @@ export function createProgram(
       agent: raw['agent'] as string | undefined,
       agentFiles: raw['agentFile'] as string[],
       addDirs: raw['addDir'] as string[],
+      runtime: raw['runtime'] as string | undefined,
     };
 
     onMain(opts);

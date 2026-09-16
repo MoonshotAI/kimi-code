@@ -24,6 +24,7 @@ function makeStartupInput(): KimiTUIStartupInput {
       skillsDirs: [],
       agent: undefined,
       agentFiles: [],
+      runtime: undefined,
     },
     tuiConfig: {
       theme: 'dark',

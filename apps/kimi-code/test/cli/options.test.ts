@@ -51,6 +51,7 @@ describe('CLI options parsing', () => {
       expect(opts.agent).toBeUndefined();
       expect(opts.agentFiles).toEqual([]);
       expect(opts.addDirs).toEqual([]);
+      expect(opts.runtime).toBeUndefined();
     });
   });
 
@@ -508,6 +509,48 @@ describe('CLI options parsing', () => {
 
     it('accepts --agent in prompt mode', () => {
       const opts = parse(['-p', 'hi', '--agent', 'reviewer']);
+      expect(validateOptions(opts, {}).uiMode).toBe('print');
+    });
+  });
+
+  describe('--runtime', () => {
+    it('parses --runtime as the new-session runtime override', () => {
+      expect(parse(['--runtime', 'dev-box']).runtime).toBe('dev-box');
+    });
+
+    it('is hidden from the help output while the feature is experimental', () => {
+      const help = createProgram('0.1.0-test', () => {}, () => {}).helpInformation();
+      expect(help).not.toContain('--runtime');
+    });
+
+    it('rejects empty runtime values', () => {
+      const opts = parse(['--runtime', '   ']);
+      expect(() => validateOptions(opts)).toThrow(OptionConflictError);
+      expect(() => validateOptions(opts)).toThrow('Runtime cannot be empty.');
+    });
+
+    it('rejects --runtime with --session', () => {
+      const opts = parse(['--runtime', 'dev-box', '--session', 'ses_123']);
+      expect(() => validateOptions(opts)).toThrow(OptionConflictError);
+      expect(() => validateOptions(opts)).toThrow(
+        'Cannot combine --runtime with --session/--continue',
+      );
+    });
+
+    it('rejects --runtime with --continue', () => {
+      const opts = parse(['--runtime', 'dev-box', '--continue']);
+      expect(() => validateOptions(opts)).toThrow(OptionConflictError);
+      expect(() => validateOptions(opts)).toThrow(
+        'Cannot combine --runtime with --session/--continue',
+      );
+    });
+
+    it('accepts --runtime for a new interactive session', () => {
+      expect(validateOptions(parse(['--runtime', 'dev-box']), {}).uiMode).toBe('shell');
+    });
+
+    it('accepts --runtime in prompt mode', () => {
+      const opts = parse(['-p', 'hi', '--runtime', 'dev-box']);
       expect(validateOptions(opts, {}).uiMode).toBe('print');
     });
   });
