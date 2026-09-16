@@ -2213,9 +2213,18 @@ describe('AgentTranscriptProjector', () => {
       },
     });
     expect(JSON.stringify(frame)).not.toContain('/private/');
-    expect(frame?.kind === 'text' ? frame.attachmentIds : undefined).toEqual([
+    const attachmentIds = frame?.kind === 'text' ? frame.attachmentIds : undefined;
+    expect(attachmentIds).toHaveLength(2);
+    expect(attachmentIds?.[0]).toBe(
       attachmentOp?.op === 'attachment.upsert' ? attachmentOp.attachment.attachmentId : undefined,
-    ]);
+    );
+    expect(tx.getAttachment(attachmentIds![1]!)).toEqual({
+      attachmentId: attachmentIds![1],
+      mediaType: 'text/plain',
+      name: 'secret.txt',
+      size: 12,
+    });
+    expect(JSON.stringify([...tx.getAttachments().values()])).not.toContain('/private/');
   });
 
   it('records a user slash skill activation steered into a running turn without taking a queued prompt id', () => {
@@ -2232,6 +2241,24 @@ describe('AgentTranscriptProjector', () => {
     expect(frames[0]).toMatchObject({ role: 'user', text: 'User activated the skill', origin: { kind: 'skill_activation', trigger: 'user-slash', skillName: 'example-skill' } });
     expect((frames[0] as { promptIds?: readonly string[] }).promptIds).toBeUndefined();
     expect(frames[1]).toMatchObject({ text: 'queued input', promptIds: ['queued'] });
+  });
+
+  it('projects origin file attachments on steered frames for user prompts and slash skills', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+    const file = { name: 'notes.pdf', mediaType: 'application/pdf', size: 42, path: '/tmp/notes.pdf' };
+    feed(ev({ type: 'turn.started', turnId: 7, origin: { kind: 'user' }, prompt: 'active' }));
+    feed(ev({ type: 'turn.step.started', turnId: 7, step: 1 }));
+    feed(ev({ type: 'turn.steer', input: [{ type: 'text', text: 'User activated the skill' }], origin: { kind: 'skill_activation', activationId: 'act-3', trigger: 'user-slash', skillName: 'example-skill', attachments: [file] } }));
+    feed(ev({ type: 'prompt.steered', activePromptId: 'active', promptIds: ['queued'], content: [{ type: 'text', text: 'see file' }], steeredAt: '2026-01-01T00:00:02.000Z' }));
+    feed(ev({ type: 'turn.steer', input: [{ type: 'text', text: 'see file' }], origin: { kind: 'user', attachments: [file] } }));
+    const frames = turnOps('t7', tx.getItems()).steps[0]!.frames as { attachmentIds?: readonly string[] }[];
+    expect(frames).toHaveLength(2);
+    for (const frame of frames) {
+      expect(frame.attachmentIds).toHaveLength(1);
+      expect(tx.getAttachment(frame.attachmentIds![0]!)).toMatchObject({ name: 'notes.pdf', mediaType: 'application/pdf', size: 42 });
+    }
   });
 
   it('still ignores a model-triggered skill activation steer', () => {

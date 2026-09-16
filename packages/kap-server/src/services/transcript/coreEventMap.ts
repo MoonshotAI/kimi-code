@@ -106,6 +106,7 @@ type PromptCompletedEvent = { readonly type: 'prompt.completed' } & PromptComple
 type PromptAbortedEvent = { readonly type: 'prompt.aborted' } & PromptAborted;
 type PromptSteeredEvent = { readonly type: 'prompt.steered' } & PromptSteered;
 type TurnSteerEvent = { readonly type: 'turn.steer' } & TurnSteer;
+type SteerFileAttachment = { readonly name: string; readonly mediaType: string; readonly size: number };
 
 export type ProjectorBusEvent =
   | PlanRevisionEvent
@@ -201,6 +202,7 @@ export class AgentTranscriptProjector {
   private pendingTaskNotifications: { text: string; taskId: string | undefined }[] = [];
   private pendingSteers: {
     input: readonly ContentPart[];
+    files: readonly SteerFileAttachment[];
     promptIds: readonly string[] | undefined;
     origin: TranscriptUserOrigin;
   }[] = [];
@@ -474,6 +476,7 @@ export class AgentTranscriptProjector {
           turnId,
           this.currentStep.stepId,
           pending.input,
+          pending.files,
           pending.promptIds,
           pending.origin,
         );
@@ -564,7 +567,7 @@ export class AgentTranscriptProjector {
     }
     this.pendingTaskNotifications = [];
     for (const pending of this.pendingSteers) {
-      this.steerUserFrame(ops, turnId, stepId, pending.input, pending.promptIds, pending.origin);
+      this.steerUserFrame(ops, turnId, stepId, pending.input, pending.files, pending.promptIds, pending.origin);
     }
     this.pendingSteers = [];
     return ops;
@@ -1458,6 +1461,7 @@ export class AgentTranscriptProjector {
     if (turn !== undefined && turn.state !== 'running') return [];
     const skip = origin.kind === 'user' ? origin.skillActivations?.length ?? 0 : 0;
     const input = skip > 0 ? event.input.slice(skip) : event.input;
+    const files = origin.attachments ?? [];
     const step = this.currentStep;
     if (step !== undefined && step.state === 'running') {
       const ops: TranscriptOperation[] = [];
@@ -1466,6 +1470,7 @@ export class AgentTranscriptProjector {
         step.turnId,
         step.stepId,
         input,
+        files,
         origin.kind === 'user' ? this.unpairedSteerPromptIds.shift() : undefined,
         frameOrigin,
       );
@@ -1473,6 +1478,7 @@ export class AgentTranscriptProjector {
     }
     this.pendingSteers.push({
       input,
+      files,
       promptIds: origin.kind === 'user' ? this.unpairedSteerPromptIds.shift() : undefined,
       origin: frameOrigin,
     });
@@ -1484,6 +1490,7 @@ export class AgentTranscriptProjector {
     turnId: string,
     stepId: string,
     input: readonly ContentPart[],
+    files: readonly SteerFileAttachment[],
     promptIds: readonly string[] | undefined,
     origin: TranscriptUserOrigin,
   ): void {
@@ -1506,6 +1513,16 @@ export class AgentTranscriptProjector {
               ? part.videoUrl.name
               : undefined,
         source: { kind: 'session_media', fileId: ref.ref.fileId },
+      };
+      ops.push({ op: 'attachment.upsert', attachment });
+      attachmentIds.push(attachment.attachmentId);
+    }
+    for (const file of files) {
+      const attachment: TranscriptAttachment = {
+        attachmentId: `${stepId}.att${++this.attachmentOrdinal}`,
+        mediaType: file.mediaType,
+        name: file.name,
+        size: file.size,
       };
       ops.push({ op: 'attachment.upsert', attachment });
       attachmentIds.push(attachment.attachmentId);
