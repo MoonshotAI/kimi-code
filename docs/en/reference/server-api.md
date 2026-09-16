@@ -567,6 +567,8 @@ These endpoints create, list, and inspect sessions, drive session-level actions 
 | `GET /api/v1/sessions/{session_id}/warnings` | Session-level warnings |
 | `GET /api/v1/sessions/{session_id}/runtime` | Read the main agent's runtime binding |
 | `POST /api/v1/sessions/{session_id}/runtime` | Switch the main agent's runtime binding |
+| `POST /api/v1/sessions/{session_id}/runtime/reconnect` | Reconnect the bound runtime (experimental remote runtime) |
+| `GET /api/v1/sessions/{session_id}/runtimes` | List the runtimes registered for the session workspace |
 | `POST /api/v1/sessions/{session_id}/export` | Export the session with diagnostics (zip stream, not enveloped) |
 | `GET /api/v1/sessions/{session_id}/snapshot` | Full snapshot for client rebuilds (with `as_of_seq` and `epoch`) |
 | `GET /api/v1/sessions/{session_id}/media/{file_id}` | Download prompt media by file id (binary) |
@@ -841,23 +843,53 @@ Reads the main agent's runtime binding — which runtime the session's agent loo
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 
-On success, `data` is `{ workspace_id, runtime_id }`.
+On success, `data` is `{ workspace_id, runtime_id, cwd? }`; `cwd` is the working directory on the bound runtime, present when the binding carries one.
 
 - `40401`: session not found
 
 #### `POST /api/v1/sessions/{session_id}/runtime`
 
-Switches the main agent's runtime binding.
+Switches the main agent's runtime binding. Switching to a non-local runtime is experimental and requires the `remote_runtime` flag (see [Remote runtimes](../guides/remote-runtime.md)); the connection is established and the given `cwd` is validated against the target's filesystem before the new binding is persisted — on failure the previous binding is kept.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 | `runtime_id` | body | string | **Required.** Target runtime id |
+| `cwd` | body | string | Working directory on the target runtime; defaults to the entry's configured `defaultCwd` |
 
-On success, `data` is the new binding `{ workspace_id, runtime_id }`.
+On success, `data` is the new binding `{ workspace_id, runtime_id, cwd? }`.
 
+- `40001`: the given `cwd` does not resolve to a directory on the target runtime
+- `40401`: session not found
 - `40420`: no runtime with that `runtime_id`
+- `40901`: the session has a running turn or a pending approval; switching applies at the turn boundary
 - `40926`: the runtime exists but is unavailable
+
+#### `POST /api/v1/sessions/{session_id}/runtime/reconnect`
+
+Explicitly reconnects the main agent's bound runtime after a disconnect (experimental remote runtime). Remote runtimes never reconnect automatically and never fall back to `local` silently — after a connection drop, tool calls fail with a runtime-unavailable error until this endpoint (or the `/runtime` dialog) re-establishes the connection.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **Required.** Session id |
+
+On success, `data` is the current binding `{ workspace_id, runtime_id, cwd? }`.
+
+- `40401`: session not found
+- `40420`: no runtime with that `runtime_id`
+- `40926`: the runtime exists but is unavailable (also returned when the `remote_runtime` flag is disabled)
+
+#### `GET /api/v1/sessions/{session_id}/runtimes`
+
+Lists the runtimes registered for the session's workspace, plus the SSH hosts discovered in `~/.ssh/config` as candidates for new declarations.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **Required.** Session id |
+
+On success, `data` is `{ workspace_id, runtimes, ssh_hosts }`. Each `runtimes` entry is `{ runtime_id, type, status, generation, capabilities, default_cwd? }` with `type` one of `local` / `ssh` / `docker` / `command`, `status` one of `connecting` / `ready` / `degraded` / `disconnected` / `draining` / `disposed`, and `capabilities` drawn from `fs` / `process` / `terminal`. `ssh_hosts` is a list of host names (empty when the `remote_runtime` flag is disabled).
+
+- `40401`: session not found
 
 #### `POST /api/v1/sessions/{session_id}/export`
 

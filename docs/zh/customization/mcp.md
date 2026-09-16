@@ -12,7 +12,7 @@ Kimi Code CLI 会保留因格式或大小限制而无法直接交付的内嵌 MC
 
 Kimi Code CLI 支持三种 MCP server 接入方式：
 
-- **stdio**：CLI 以子进程方式启动本地 MCP server，通过标准输入输出通信。适合本地命令行工具。
+- **stdio**：CLI 以子进程方式启动本地 MCP server，通过标准输入输出通信。适合本地命令行工具。stdio server 始终在运行 Kimi Code 的机器上执行——即使会话绑定了 [远程运行时](../guides/remote-runtime.md)，它们也看不到目标环境的文件系统。
 - **HTTP**：CLI 连接一个已在运行的 HTTP 端点。适合远程服务或需要持久运行的进程。
 - **SSE**：CLI 连接旧式 HTTP+SSE 端点。新 MCP server 优先使用 HTTP；只有服务仍仅暴露旧式 SSE 传输时，才设置 `transport: "sse"`。
 

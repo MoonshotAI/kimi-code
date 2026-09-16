@@ -12,7 +12,7 @@ Attachment paths and compression details share the tool-output budget. Large lis
 
 Kimi Code CLI supports three MCP server connection methods:
 
-- **stdio**: The CLI starts the local MCP server as a child process and communicates via standard input/output. Suitable for local command-line tools.
+- **stdio**: The CLI starts the local MCP server as a child process and communicates via standard input/output. Suitable for local command-line tools. Stdio servers always run on the machine running Kimi Code — even when the session is bound to a [remote runtime](../guides/remote-runtime.md), they do not see the target's filesystem.
 - **HTTP**: The CLI connects to an already-running HTTP endpoint. Suitable for remote services or processes that need to run persistently.
 - **SSE**: The CLI connects to a legacy HTTP+SSE endpoint (Server-Sent Events, a streaming HTTP mechanism). Prefer HTTP for new MCP servers, but use `transport: "sse"` when a service still exposes only the older SSE transport.
 

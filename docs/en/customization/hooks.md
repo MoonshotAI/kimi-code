@@ -1,6 +1,6 @@
 # Hooks
 
-Hooks are an automatic trigger mechanism: you tell Kimi Code CLI in advance "whenever X happens, run this script." The script runs on your local machine, and you can put any logic inside it. Typical use cases:
+Hooks are an automatic trigger mechanism: you tell Kimi Code CLI in advance "whenever X happens, run this script." The script runs on your local machine, and you can put any logic inside it. This stays true when a session is bound to a [remote runtime](../guides/remote-runtime.md): hooks always execute on the machine running Kimi Code, so in a remote session they observe local files and processes, not the target's. Typical use cases:
 
 - **Security interception**: Before the Agent executes a shell command, check whether it contains dangerous operations (such as `rm -rf`) and block execution if so
 - **Desktop notifications**: When a background task completes, pop up a system notification to bring you back to review the results
