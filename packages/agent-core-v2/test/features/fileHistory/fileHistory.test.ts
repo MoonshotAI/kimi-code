@@ -19,6 +19,7 @@ import { IAgentFileHistoryService } from '#/features/fileHistory/fileHistory';
 import { AgentFileHistoryService, countLineDiff } from '#/features/fileHistory/fileHistoryService';
 import { displacedCheckpoints } from '#/features/fileHistory/fileHistoryOps';
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ToolCall } from '#human/llm/message';
 import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -110,7 +111,14 @@ describe('AgentFileHistoryService', () => {
     });
   }
 
-  function createService(agentId = 'main'): AgentFileHistoryService {
+  function createService(
+    agentId = 'main',
+    options?: {
+      executor?: IAgentToolExecutorService;
+      lifecycle?: IAgentLifecycleService;
+      state?: IAgentStateService;
+    },
+  ): AgentFileHistoryService {
     const ctx =
       agentId === scopeCtx.agentId
         ? scopeCtx
@@ -129,8 +137,8 @@ describe('AgentFileHistoryService', () => {
       return disposables.add(
         new AgentFileHistoryService(
         ctx,
-        ix.get(IAgentStateService),
-        executorEvents.executor,
+        options?.state ?? ix.get(IAgentStateService),
+        options?.executor ?? executorEvents.executor,
         eventBus,
         ix.get(IEventDispatcher),
         stubRuntime(),
@@ -153,7 +161,7 @@ describe('AgentFileHistoryService', () => {
             readdir: async () => [],
             remove: async () => {},
           } as unknown as IHostFileSystem,
-          { handleOf: () => undefined } as unknown as IAgentLifecycleService,
+          options?.lifecycle ?? ({ handleOf: () => undefined } as unknown as IAgentLifecycleService),
         ),
       );
     } finally {
@@ -367,6 +375,198 @@ describe('AgentFileHistoryService', () => {
     await service.settled();
 
     expect(service.history().checkpoints).toEqual([]);
+  });
+
+  function createLinkedSubagent(main: AgentFileHistoryService): ToolExecutorEventStubs {
+    const subEvents = stubToolExecutorEvents();
+    const subState = {
+      contributeState: () => {},
+      get: () => ({ checkpoints: [], tracked: [] }),
+      has: () => false,
+      replayableKeys: () => [],
+      onDidContributeReplayable: () => ({ dispose() {} }),
+      onDidWithdrawReplayable: () => ({ dispose() {} }),
+    } as unknown as IAgentStateService;
+    createService('agent-1', {
+      executor: subEvents.executor,
+      state: subState,
+      lifecycle: {
+        handleOf: (id: string) =>
+          id === 'main'
+            ? {
+                accessor: {
+                  get: (token: unknown) =>
+                    token === IAgentFileHistoryService ? main : undefined,
+                },
+              }
+            : undefined,
+      } as unknown as IAgentLifecycleService,
+    });
+    return subEvents;
+  }
+
+  async function fireSubagentWrite(
+    events: ToolExecutorEventStubs,
+    path: string,
+    afterCapture?: () => void,
+  ): Promise<void> {
+    const toolCall: ToolCall = {
+      type: 'function',
+      id: 'call-sub-0',
+      name: 'Write',
+      arguments: null,
+    };
+    const execution: RunnableToolExecution = {
+      approvalRule: 'Write',
+      display: { kind: 'file_io', operation: 'write', path },
+      execute: async () => ({ output: '' }),
+    };
+    const signal = new AbortController().signal;
+    await events.fireWillExecute({ turnId: 0, toolCall, execution, args: {} }, signal);
+    afterCapture?.();
+    await events.didExecuteSlot.run({
+      turnId: 0,
+      signal,
+      toolCall,
+      toolCalls: [toolCall],
+      args: {},
+      outcome: 'executed',
+      result: { output: '' },
+    });
+  }
+
+  it('keeps a captureForActiveTurn after the main turn has ended', async () => {
+    const service = createService();
+    setFile('/ws/late.txt', 'from-background-subagent\n');
+
+    startTurn(1);
+    endTurn(1);
+    await service.settled();
+    expect(service.history().checkpoints).toEqual([]);
+
+    await service.captureForActiveTurn('/ws/late.txt');
+    await service.settled();
+
+    const start = service
+      .history()
+      .checkpoints.find((c) => c.turnId === 1 && c.phase === 'start');
+    expect(start?.entries['late.txt']?.version).toBe(1);
+    expect(await blobText(start!.entries['late.txt']!.key!)).toBe('from-background-subagent\n');
+    expect(await service.turnRecorded(1)).toBe(true);
+  });
+
+  it('finalizes an ended turn after a late capture so changes() includes the write', async () => {
+    const service = createService();
+
+    startTurn(1);
+    endTurn(1);
+    await service.settled();
+    expect(await service.turnRecorded(1)).toBe(false);
+    expect(await service.changes(1)).toEqual([]);
+
+    await service.captureForActiveTurn('/ws/late.txt');
+    setFile('/ws/late.txt', 'from-background-subagent\n');
+    await service.captureForActiveTurn('/ws/late.txt');
+    await service.settled();
+
+    expect(await service.turnRecorded(1)).toBe(true);
+    expect(await service.changes(1)).toEqual([
+      { path: 'late.txt', status: 'added', additions: 1, deletions: 0 },
+    ]);
+  });
+
+  it('merges a late capture into an ended turn that already has an end checkpoint', async () => {
+    const service = createService();
+    setFile('/ws/a.txt', 'one\n');
+
+    startTurn(1);
+    await fireEdit(service, '/ws/a.txt', 1);
+    setFile('/ws/a.txt', 'two\n');
+    endTurn(1);
+    await service.settled();
+    expect(await service.changes(1)).toEqual([
+      { path: 'a.txt', status: 'modified', additions: 1, deletions: 1 },
+    ]);
+
+    await service.captureForActiveTurn('/ws/late.txt');
+    setFile('/ws/late.txt', 'after-end\n');
+    await service.captureForActiveTurn('/ws/late.txt');
+    await service.settled();
+
+    expect(await service.changes(1)).toEqual([
+      { path: 'a.txt', status: 'modified', additions: 1, deletions: 1 },
+      { path: 'late.txt', status: 'added', additions: 1, deletions: 0 },
+    ]);
+    expect(await service.turnRecorded(1)).toBe(true);
+  });
+
+  it('forwards a subagent edit onto the last ended main turn', async () => {
+    const main = createService();
+    startTurn(3);
+    const subEvents = createLinkedSubagent(main);
+    endTurn(3);
+    await main.settled();
+
+    await fireSubagentWrite(subEvents, '/ws/from-sub.txt', () => {
+      setFile('/ws/from-sub.txt', 'written-after-parent-ended\n');
+    });
+    await main.settled();
+
+    const start = main
+      .history()
+      .checkpoints.find((c) => c.turnId === 3 && c.phase === 'start');
+    expect(start?.entries['from-sub.txt']).toEqual({ key: null, version: 1 });
+    expect(await main.turnRecorded(3)).toBe(true);
+    expect(await main.changes(3)).toEqual([
+      { path: 'from-sub.txt', status: 'added', additions: 1, deletions: 0 },
+    ]);
+  });
+
+  it('keeps a subagent capture on its parent turn after a later main turn starts', async () => {
+    const main = createService();
+    startTurn(1);
+    const subEvents = createLinkedSubagent(main);
+    endTurn(1);
+    startTurn(2);
+    await main.settled();
+
+    await fireSubagentWrite(subEvents, '/ws/from-turn-1.txt', () => {
+      setFile('/ws/from-turn-1.txt', 'still-belongs-to-turn-1\n');
+    });
+    await main.settled();
+
+    expect(await main.changes(1)).toEqual([
+      { path: 'from-turn-1.txt', status: 'added', additions: 1, deletions: 0 },
+    ]);
+    expect(await main.changes(2)).toEqual([]);
+    expect(await main.turnRecorded(1)).toBe(true);
+    expect(
+      main.history().checkpoints.find((c) => c.turnId === 2)?.entries['from-turn-1.txt'],
+    ).toBeUndefined();
+  });
+
+  it('pins a captureForActiveTurn to the main turn that is active when it arrives', async () => {
+    const service = createService();
+    setFile('/ws/spawned.txt', 'during-turn-1\n');
+    startTurn(1);
+    await service.captureForActiveTurn('/ws/spawned.txt');
+    endTurn(1);
+    await service.settled();
+
+    startTurn(2);
+    setFile('/ws/late.txt', 'during-turn-2\n');
+    await service.captureForActiveTurn('/ws/late.txt');
+    await service.settled();
+
+    expect(
+      service.history().checkpoints.find((c) => c.turnId === 1)?.entries['spawned.txt'],
+    ).toBeDefined();
+    expect(
+      service.history().checkpoints.find((c) => c.turnId === 2)?.entries['late.txt'],
+    ).toBeDefined();
+    expect(
+      service.history().checkpoints.find((c) => c.turnId === 1)?.entries['late.txt'],
+    ).toBeUndefined();
   });
 
   it('drops turns outside the retention window and re-baselines returning files', async () => {
