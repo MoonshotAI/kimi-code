@@ -52,17 +52,16 @@ export function createMcpTool(
         try {
           result = await callTool(client, args, context.signal);
         } catch (error) {
-          if ((await options.onUnauthorized?.(error)) === true) {
-            const serverName = options.serverName ?? qualifiedName;
-            throw new Error2(
-              ErrorCodes.MCP_OAUTH_FAILED,
-              `MCP server "${serverName}" rejected the call with 401 Unauthorized and is now ` +
-                `marked needs-auth. Call the ${qualifyMcpToolName(serverName, 'authenticate')} ` +
-                `tool to complete the OAuth login, then retry the original call.`,
-              { cause: error },
-            );
-          }
-          result = await retryAfterReconnect(error, client, args, context, options, callTool);
+          await throwIfUnauthorized(options, qualifiedName, error);
+          result = await retryAfterReconnect(
+            error,
+            client,
+            args,
+            context,
+            options,
+            callTool,
+            qualifiedName,
+          );
         }
         return mcpResultToExecutableOutput(result, qualifiedName, {
           signal: context.signal,
@@ -76,6 +75,22 @@ export function createMcpTool(
   };
 }
 
+async function throwIfUnauthorized(
+  options: McpToolOptions,
+  qualifiedName: string,
+  error: unknown,
+): Promise<void> {
+  if ((await options.onUnauthorized?.(error)) !== true) return;
+  const serverName = options.serverName ?? qualifiedName;
+  throw new Error2(
+    ErrorCodes.MCP_OAUTH_FAILED,
+    `MCP server "${serverName}" rejected the call with 401 Unauthorized and is now ` +
+      `marked needs-auth. Call the ${qualifyMcpToolName(serverName, 'authenticate')} ` +
+      `tool to complete the OAuth login, then retry the original call.`,
+    { cause: error },
+  );
+}
+
 async function retryAfterReconnect(
   error: unknown,
   client: MCPClient,
@@ -83,6 +98,7 @@ async function retryAfterReconnect(
   context: Pick<ExecutableToolContext, 'signal' | 'onUpdate'>,
   options: McpToolOptions,
   callTool: (client: MCPClient, args: unknown, signal: AbortSignal) => Promise<MCPToolResult>,
+  qualifiedName: string,
 ): Promise<MCPToolResult> {
   const reconnect = options.reconnect;
   const isUnrecoverable = (e: unknown): boolean =>
@@ -102,6 +118,7 @@ async function retryAfterReconnect(
       try {
         return await callTool(client, args, context.signal);
       } catch (retryError) {
+        await throwIfUnauthorized(options, qualifiedName, retryError);
         if (isUnrecoverable(retryError)) {
           throw retryError;
         }
@@ -127,5 +144,10 @@ async function retryAfterReconnect(
   if (freshClient === undefined) {
     throw failure;
   }
-  return callTool(freshClient, args, context.signal);
+  try {
+    return await callTool(freshClient, args, context.signal);
+  } catch (finalError) {
+    await throwIfUnauthorized(options, qualifiedName, finalError);
+    throw finalError;
+  }
 }

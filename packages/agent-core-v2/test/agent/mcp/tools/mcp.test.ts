@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 
 import { createMcpTool } from '#/agent/mcp/tools/mcp';
 import type { MCPClient } from '#/mcpCore/types';
@@ -78,6 +79,67 @@ describe('createMcpTool', () => {
         signal: new AbortController().signal,
       }),
     ).rejects.toThrow('HTTP 401: Unauthorized');
+    expect(onUnauthorized).toHaveBeenCalledWith(error);
+  });
+
+  it('routes a 401 from the liveness-probe retry through onUnauthorized', async () => {
+    const transportError = new Error('socket hang up');
+    const error = unauthorizedError();
+    let calls = 0;
+    const client: MCPClient = {
+      ...fakeMcpClient(),
+      callTool: () => {
+        calls += 1;
+        return calls === 1 ? Promise.reject(transportError) : Promise.reject(error);
+      },
+    };
+    const reconnect = vi.fn();
+    const onUnauthorized = vi.fn(async (e: unknown) => e === error);
+    const tool = createMcpTool('mcp__hyper__echo', echoTool, client, {
+      serverName: 'hyper',
+      reconnect,
+      onUnauthorized,
+    });
+    await expect(
+      executeTool(tool, {
+        turnId: 0,
+        toolCallId: 'tc',
+        args: { text: 'hi' },
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow(/mcp__hyper__authenticate/);
+    expect(onUnauthorized).toHaveBeenCalledWith(transportError);
+    expect(onUnauthorized).toHaveBeenCalledWith(error);
+    expect(reconnect).not.toHaveBeenCalled();
+  });
+
+  it('routes a 401 from the post-reconnect call through onUnauthorized', async () => {
+    const closedError = Object.assign(new Error('connection closed'), {
+      code: ErrorCode.ConnectionClosed,
+    });
+    const error = unauthorizedError();
+    const staleClient: MCPClient = {
+      ...fakeMcpClient(),
+      callTool: () => Promise.reject(closedError),
+    };
+    const freshClient: MCPClient = {
+      ...fakeMcpClient(),
+      callTool: () => Promise.reject(error),
+    };
+    const onUnauthorized = vi.fn(async (e: unknown) => e === error);
+    const tool = createMcpTool('mcp__hyper__echo', echoTool, staleClient, {
+      serverName: 'hyper',
+      reconnect: async () => freshClient,
+      onUnauthorized,
+    });
+    await expect(
+      executeTool(tool, {
+        turnId: 0,
+        toolCallId: 'tc',
+        args: { text: 'hi' },
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow(/mcp__hyper__authenticate/);
     expect(onUnauthorized).toHaveBeenCalledWith(error);
   });
 });

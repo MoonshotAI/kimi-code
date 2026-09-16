@@ -308,12 +308,14 @@ export class McpConnectionManager implements McpConnectionView {
     if (entry.status !== 'connected' && entry.status !== 'needs-auth') return false;
     if (!this.shouldMarkNeedsAuth(entry, error)) return false;
     if (entry.status === 'needs-auth') return true;
+    const attemptId = entry.attemptId;
+    await this.closeClient(entry);
+    if (!this.isCurrent(entry, attemptId)) return false;
     entry.status = 'needs-auth';
     entry.error = `${entry.name} requires OAuth — run /mcp-config login ${entry.name}`;
     entry.tools = undefined;
     entry.enabledNames = undefined;
     entry.rawTools = undefined;
-    await this.closeClient(entry);
     this.emit(entry);
     return true;
   }

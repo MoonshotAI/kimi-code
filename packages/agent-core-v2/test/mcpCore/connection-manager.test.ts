@@ -1079,4 +1079,44 @@ describe('McpConnectionManager', () => {
       await server.close();
     }
   }, 15000);
+
+  it('does not emit a stale needs-auth when a reconnect overtakes markNeedsAuth', async () => {
+    const connect = vi.spyOn(Client.prototype, 'connect').mockResolvedValue();
+    const listTools = vi.spyOn(Client.prototype, 'listTools').mockResolvedValue({ tools: [] });
+    const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+    const cm = createManager({ oauthService });
+    const seen: Array<{ name: string; status: McpServerEntry['status'] }> = [];
+    cm.onStatusChange((e) => seen.push({ name: e.name, status: e.status }));
+    let releaseClose: (() => void) | undefined;
+    try {
+      await cm.connectAll({ hyper: { transport: 'http', url: 'https://example.test/mcp' } });
+      expect(cm.get('hyper')?.status).toBe('connected');
+      const internal = (
+        cm as unknown as { entries: Map<string, { client?: { close: () => Promise<void> } }> }
+      ).entries.get('hyper');
+      if (internal?.client === undefined) throw new Error('expected a client');
+      internal.client.close = () =>
+        new Promise<void>((resolve) => {
+          releaseClose = resolve;
+        });
+
+      const mark = cm.markNeedsAuth('hyper', Object.assign(new Error('HTTP 401'), { code: 401 }));
+      await cm.reconnect('hyper');
+      expect(cm.get('hyper')?.status).toBe('connected');
+      releaseClose!();
+      await expect(mark).resolves.toBe(false);
+      expect(cm.get('hyper')?.status).toBe('connected');
+      expect(seen.filter((s) => s.name === 'hyper').map((s) => s.status)).toEqual([
+        'pending',
+        'connected',
+        'pending',
+        'connected',
+      ]);
+    } finally {
+      releaseClose?.();
+      await cm.shutdown();
+      connect.mockRestore();
+      listTools.mockRestore();
+    }
+  }, 15000);
 });
