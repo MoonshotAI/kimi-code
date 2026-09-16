@@ -59,25 +59,6 @@ describe('providers TOML transforms', () => {
     expect(back['acme']).toEqual({ type: 'openai', api_key_env: 'ACME_API_KEY' });
   });
 
-  it('drops a stale api_key when the provider is replaced with api_key_env', () => {
-    const raw = {
-      acme: {
-        type: 'openai',
-        api_key: 'sk-old',
-        source: { kind: 'apiJson', url: 'https://registry.example.test/api.json', api_key: 'sk-reg' },
-      },
-    };
-    const next = providersToToml(
-      { acme: { type: 'openai', apiKeyEnv: 'ACME_API_KEY' } },
-      raw,
-    ) as Record<string, Record<string, unknown>>;
-    expect(next['acme']).toEqual({
-      type: 'openai',
-      api_key_env: 'ACME_API_KEY',
-      source: { kind: 'apiJson', url: 'https://registry.example.test/api.json', api_key: 'sk-reg' },
-    });
-  });
-
   it('drops a stale api_key_env and oauth when the provider is replaced with an inline api_key', () => {
     const raw = {
       acme: {

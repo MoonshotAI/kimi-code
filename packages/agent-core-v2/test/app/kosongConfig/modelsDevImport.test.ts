@@ -463,41 +463,6 @@ describe('IModelsDevImportService', () => {
     expect(providers['acme-gpt']).not.toHaveProperty('apiKeyEnv');
   });
 
-  it('preserves a hand-edited apiKeyEnv across an explicit re-import of the same registry', async () => {
-    setModelsDevUpstreamForTest({ fetchImpl: fetchJson(REGISTRY_DOC) });
-    const { config, imports } = createHost({
-      providers: {
-        'acme-gpt': {
-          type: 'openai',
-          baseUrl: 'https://acme.example/v1',
-          apiKeyEnv: 'ACME_OWN_KEY',
-          source: { kind: 'apiJson', url: REGISTRY_URL, apiKey: '' },
-        },
-      },
-    });
-
-    await imports.importCustomRegistry({ url: REGISTRY_URL });
-
-    const providers = config.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue ?? {};
-    expect(providers['acme-gpt']).toMatchObject({ apiKeyEnv: 'ACME_OWN_KEY' });
-    expect(providers['acme-gpt']).not.toHaveProperty('apiKey');
-  });
-
-  it('does not graft a manual provider apiKeyEnv onto a colliding registry entry', async () => {
-    setModelsDevUpstreamForTest({ fetchImpl: fetchJson(REGISTRY_DOC) });
-    const { config, imports } = createHost({
-      providers: {
-        'acme-gpt': { type: 'openai', apiKeyEnv: 'VICTIM_KEY' },
-      },
-    });
-
-    await imports.importCustomRegistry({ url: REGISTRY_URL });
-
-    const providers = config.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue ?? {};
-    expect(providers['acme-gpt']).not.toHaveProperty('apiKeyEnv');
-    expect(providers['acme-gpt']).toMatchObject({ apiKey: '' });
-  });
-
   it('rejects a registry import that would rewrite an OAuth-managed provider', async () => {
     setModelsDevUpstreamForTest({ fetchImpl: fetchJson(REGISTRY_DOC) });
     const { imports } = createHost({

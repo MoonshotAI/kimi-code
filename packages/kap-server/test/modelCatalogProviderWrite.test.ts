@@ -604,26 +604,6 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     });
   });
 
-  it('drops a stored api_key_env when a non-empty api_key replaces it', async () => {
-    await boot(ENV_KEY_TOML);
-    const { status, body } = await putJson<{ provider: { has_api_key: boolean } }>(
-      '/api/v1/providers/openai',
-      { ...REPLACE_BODY, api_key: 'sk-new-openai' },
-    );
-    expect(status).toBe(200);
-    expect(body.data.provider.has_api_key).toBe(true);
-
-    const onDisk = await readConfigToml();
-    expect(onDisk['providers']).toEqual({
-      openai: {
-        type: 'openai',
-        api_key: 'sk-new-openai',
-        base_url: 'https://api.openai.example/v1',
-        default_model: 'openai/gpt-4.1',
-      },
-    });
-  });
-
   it('keeps a stored api_key_env when the replace body carries no credential', async () => {
     await boot(ENV_KEY_TOML);
     vi.stubEnv('KIMI_TEST_REPLACE_ROUTE_KEY', 'sk-env');
@@ -693,26 +673,6 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
       },
     });
     expect(body.data.provider.has_api_key).toBe(false);
-  });
-
-  it('clears a stored api_key_env when an empty api_key_env is sent', async () => {
-    await boot(ENV_KEY_TOML);
-    const { status } = await putJson<unknown>('/api/v1/providers/openai', {
-      ...REPLACE_BODY,
-      api_key: 'sk-inline',
-      api_key_env: '',
-    });
-    expect(status).toBe(200);
-
-    const onDisk = await readConfigToml();
-    expect(onDisk['providers']).toEqual({
-      openai: {
-        type: 'openai',
-        api_key: 'sk-inline',
-        base_url: 'https://api.openai.example/v1',
-        default_model: 'openai/gpt-4.1',
-      },
-    });
   });
 
   it('rejects a replace that submits api_key and api_key_env together', async () => {

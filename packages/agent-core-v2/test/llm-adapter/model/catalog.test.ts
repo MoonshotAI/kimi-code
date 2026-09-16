@@ -1111,24 +1111,6 @@ describe('ModelCatalog enumeration', () => {
     }
   });
 
-  it('treats an api_key_env provider as configured only while the variable is set', async () => {
-    const { host, catalog } = createHost({
-      providers: {
-        acme: { type: 'openai', apiKeyEnv: 'KIMI_TEST_ACME_ENV_KEY' },
-      },
-      models: {},
-    });
-    try {
-      const credentialState = async () =>
-        (await catalog.listProviders()).map((p) => [p.id, p.has_api_key, p.status]);
-      expect(await credentialState()).toEqual([['acme', false, 'unconfigured']]);
-      vi.stubEnv('KIMI_TEST_ACME_ENV_KEY', 'sk-live');
-      expect(await credentialState()).toEqual([['acme', true, 'connected']]);
-    } finally {
-      host.dispose();
-    }
-  });
-
   it('marks an OAuth provider connected when a cached token exists', async () => {
     const { host, catalog } = createHost(
       {

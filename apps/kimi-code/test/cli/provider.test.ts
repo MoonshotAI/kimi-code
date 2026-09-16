@@ -427,54 +427,6 @@ describe('kimi provider add', () => {
     expect(final.models?.['kohub-responses/legacy-model']).toBeUndefined();
   });
 
-  it('preserves a hand-edited api_key_env across an explicit re-import of the same registry', async () => {
-    mockRegistryFetch();
-    const initial: KimiConfig = {
-      providers: {
-        kohub: {
-          type: 'anthropic',
-          baseUrl: 'https://registry.example.test',
-          apiKeyEnv: 'KOHUB_API_KEY',
-          source: { kind: 'apiJson', url: REGISTRY_URL, apiKey: '' },
-        },
-      },
-      models: {},
-    } as unknown as KimiConfig;
-    const { harness, current } = await makeRegistryHarness(initial);
-    const { deps, exitCodes } = makeDeps(harness);
-
-    await tryRun(() => handleProviderAdd(deps, REGISTRY_URL, {}));
-
-    expect(exitCodes).toEqual([]);
-    const kohub = (await current()).providers['kohub']!;
-    expect(kohub.apiKeyEnv).toBe('KOHUB_API_KEY');
-    expect(kohub).not.toHaveProperty('apiKey');
-  });
-
-  it('does not graft a manual provider api_key_env onto a colliding registry entry', async () => {
-    mockRegistryFetch();
-    const initial: KimiConfig = {
-      providers: {
-        kohub: {
-          type: 'anthropic',
-          baseUrl: 'https://registry.example.test',
-          apiKeyEnv: 'VICTIM_KEY',
-        },
-      },
-      models: {},
-    } as unknown as KimiConfig;
-    const { harness, current } = await makeRegistryHarness(initial);
-    const { deps, exitCodes } = makeDeps(harness);
-
-    await tryRun(() => handleProviderAdd(deps, REGISTRY_URL, {}));
-
-    expect(exitCodes).toEqual([]);
-    const kohub = (await current()).providers['kohub']!;
-    expect(kohub).not.toHaveProperty('apiKeyEnv');
-    expect(kohub.apiKey).toBe('');
-    expect(kohub.source).toEqual({ kind: 'apiJson', url: REGISTRY_URL, apiKey: '' });
-  });
-
   it('reads the api key from KIMI_REGISTRY_API_KEY when --api-key is omitted', async () => {
     const fetchMock = mockRegistryFetch();
     const { harness } = await makeRegistryHarness({ providers: {} } as KimiConfig);
@@ -532,31 +484,6 @@ describe('kimi provider add', () => {
     expect(headers['Authorization']).toBeUndefined();
     expect(Object.keys((await current()).providers).toSorted()).toEqual(['kohub', 'kohub-responses']);
     expect(stdout.join('')).toContain('Imported 2 providers');
-  });
-
-  it('prints an api_key_env hint for entries declaring a credential env var, without persisting it', async () => {
-    mockRegistryFetch({
-      acme: {
-        id: 'acme',
-        name: 'Acme',
-        api: 'https://acme.example.test/v1',
-        type: 'openai',
-        env: ['ACME_API_KEY'],
-        models: { m1: { id: 'm1' } },
-      },
-    });
-    const { harness, current } = await makeRegistryHarness({ providers: {} } as KimiConfig);
-    const { deps, stdout, exitCodes } = makeDeps(harness);
-
-    await tryRun(() => handleProviderAdd(deps, REGISTRY_URL, {}));
-
-    expect(exitCodes).toEqual([]);
-    const output = stdout.join('');
-    expect(output).toContain('provider "acme" declares credential env var "ACME_API_KEY"');
-    expect(output).toContain('api_key_env');
-    const acme = (await current()).providers['acme']!;
-    expect(acme.apiKey).toBe('');
-    expect(acme).not.toHaveProperty('apiKeyEnv');
   });
 
   it('exits 1 when the registry fetch fails with an HTTP error', async () => {

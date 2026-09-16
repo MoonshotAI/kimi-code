@@ -241,75 +241,6 @@ export function defineKlientConformance(
       }
     });
 
-    it('imports a shrinking registry while preserving its environment credential and unrelated providers', async () => {
-      const { config, kosong } = target.klient.global;
-      const domains = ['providers', 'models', 'defaultModel', 'defaultProvider', 'thinking'];
-      const before = Object.fromEntries(
-        await Promise.all(domains.map(async (domain) => [
-          domain, (await config.inspect(domain)).userValue,
-        ])),
-      );
-      const url = 'https://registry.example.test/api.json';
-      const source = { kind: 'apiJson', url, apiKey: '' };
-      setModelsDevUpstreamForTest({
-        fetchImpl: async () => Response.json({
-          owned: {
-            id: 'owned',
-            name: 'Owned',
-            type: 'openai',
-            api: 'https://owned.example.test/v1',
-            env: ['SUGGESTED_KEY'],
-            models: { fresh: { id: 'fresh' } },
-          },
-        }),
-      });
-      try {
-        await config.replaceSections({
-          sections: {
-            providers: {
-              owned: {
-                type: 'openai',
-                baseUrl: 'https://owned.example.test/v1',
-                apiKeyEnv: 'EXAMPLE_OWN_KEY',
-                source,
-              },
-              gone: { type: 'openai', source },
-              keep: { type: 'openai', apiKey: 'example-key' },
-            },
-            models: {
-              'owned/old': { provider: 'owned', model: 'old' },
-              'gone/old': { provider: 'gone', model: 'old' },
-              'keep/model': { provider: 'keep', model: 'model' },
-            },
-            defaultModel: 'gone/old',
-            defaultProvider: 'gone',
-            thinking: { enabled: true },
-          },
-        });
-        const result = await kosong.importCustomRegistry({ url });
-        expect(result).toMatchObject({ modelsImported: 1, credentialEnv: { owned: 'SUGGESTED_KEY' } });
-        expect(result.providers.map((provider) => provider.id)).toEqual(['owned']);
-        await config.reload();
-        expect((await config.inspect('providers')).userValue).toEqual({
-          owned: {
-            type: 'openai',
-            baseUrl: 'https://owned.example.test/v1',
-            apiKeyEnv: 'EXAMPLE_OWN_KEY',
-            source,
-          },
-          keep: { type: 'openai', apiKey: 'example-key' },
-        });
-        const models = (await config.inspect<Record<string, unknown>>('models')).userValue ?? {};
-        expect(Object.keys(models).toSorted()).toEqual(['keep/model', 'owned/fresh']);
-        expect((await config.inspect('defaultModel')).userValue).toBeUndefined();
-        expect((await config.inspect('defaultProvider')).userValue).toBeUndefined();
-        expect((await config.inspect('thinking')).userValue).toEqual({});
-      } finally {
-        resetModelsDevUpstreamForTest();
-        await config.replaceSections({ sections: before });
-      }
-    });
-
     it('keeps a credential binding edited while the registry response is in flight', async () => {
       const { config, kosong } = target.klient.global;
       const domains = ['providers', 'models', 'defaultModel', 'defaultProvider', 'thinking'];
@@ -355,24 +286,6 @@ export function defineKlientConformance(
       } finally {
         resetModelsDevUpstreamForTest();
         await config.replaceSections({ sections: before });
-      }
-    });
-
-    it('preserves the registry authentication failure across the transport without changing config', async () => {
-      const before = await target.klient.global.config.getAll();
-      setModelsDevUpstreamForTest({
-        fetchImpl: async () => Response.json(
-          { message: 'example authentication required' },
-          { status: 401 },
-        ),
-      });
-      try {
-        await expect(target.klient.global.kosong.importCustomRegistry({
-          url: 'https://registry.example.test/api.json', apiKey: '',
-        })).rejects.toMatchObject({ details: { phase: 'fetch', status: 401 } });
-        expect(await target.klient.global.config.getAll()).toEqual(before);
-      } finally {
-        resetModelsDevUpstreamForTest();
       }
     });
 

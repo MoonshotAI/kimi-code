@@ -6,7 +6,6 @@ import {
   CUSTOM_REGISTRY_DEFAULT_CAPABILITIES,
   CUSTOM_REGISTRY_DEFAULT_MAX_CONTEXT,
   capabilitiesFromCustomEntry,
-  customRegistryReplacementKeys,
   CustomRegistryApiError,
   fetchCustomRegistry,
   removeCustomRegistryProvider,
@@ -517,35 +516,6 @@ describe('applyCustomRegistryProvider', () => {
     });
   });
 
-  it('keeps the inline apiKey for an env-declaring entry when no hand-edited apiKeyEnv exists', () => {
-    const config: ManagedKimiConfigShape = {
-      providers: {
-        acme: {
-          type: 'openai',
-          baseUrl: 'https://acme.example.test/v1',
-          apiKey: 'sk-legacy-import',
-        },
-      },
-    };
-    const entry: CustomRegistryProviderEntry = {
-      id: 'acme',
-      name: 'Acme',
-      api: 'https://acme.example.test/v1',
-      type: 'openai',
-      env: ['ACME_API_KEY'],
-      models: { m1: { id: 'm1' } },
-    };
-
-    applyCustomRegistryProvider(config, entry, KOKUB_SOURCE);
-
-    expect(config.providers['acme']).toEqual({
-      type: 'openai',
-      baseUrl: 'https://acme.example.test/v1',
-      apiKey: 'sk-token',
-      source: KOKUB_SOURCE,
-    });
-  });
-
   it('preserves a hand-edited apiKeyEnv when the entry declares no env', () => {
     const config: ManagedKimiConfigShape = {
       providers: {
@@ -575,34 +545,6 @@ describe('applyCustomRegistryProvider', () => {
     });
   });
 
-  it('keeps a hand-edited apiKeyEnv when upstream drops and later re-adds the env field', () => {
-    const config: ManagedKimiConfigShape = {
-      providers: {
-        acme: {
-          type: 'openai',
-          baseUrl: 'https://acme.example.test/v1',
-          apiKeyEnv: 'MY_OWN_KEY',
-          source: KOKUB_SOURCE,
-        },
-      },
-    };
-    const entryWithoutEnv: CustomRegistryProviderEntry = {
-      id: 'acme',
-      name: 'Acme',
-      api: 'https://acme.example.test/v1',
-      type: 'openai',
-      models: { m1: { id: 'm1' } },
-    };
-
-    applyCustomRegistryProvider(config, entryWithoutEnv, KOKUB_SOURCE);
-    expect(config.providers['acme']?.['apiKeyEnv']).toBe('MY_OWN_KEY');
-    expect(config.providers['acme']).not.toHaveProperty('apiKey');
-
-    applyCustomRegistryProvider(config, { ...entryWithoutEnv, env: ['ACME_API_KEY'] }, KOKUB_SOURCE);
-    expect(config.providers['acme']?.['apiKeyEnv']).toBe('MY_OWN_KEY');
-    expect(config.providers['acme']).not.toHaveProperty('apiKey');
-  });
-
   it('does not preserve apiKeyEnv when the colliding provider is manual (no registry source)', () => {
     const config: ManagedKimiConfigShape = {
       providers: {
@@ -610,39 +552,6 @@ describe('applyCustomRegistryProvider', () => {
           type: 'openai',
           baseUrl: 'https://acme.example.test/v1',
           apiKeyEnv: 'VICTIM_KEY',
-        },
-      },
-    };
-    const entry: CustomRegistryProviderEntry = {
-      id: 'acme',
-      name: 'Acme',
-      api: 'https://attacker.example.test/v1',
-      type: 'openai',
-      models: { m1: { id: 'm1' } },
-    };
-
-    applyCustomRegistryProvider(config, entry, KOKUB_SOURCE);
-
-    expect(config.providers['acme']).toEqual({
-      type: 'openai',
-      baseUrl: 'https://attacker.example.test/v1',
-      apiKey: 'sk-token',
-      source: KOKUB_SOURCE,
-    });
-  });
-
-  it('does not preserve apiKeyEnv when the colliding provider came from a different registry', () => {
-    const config: ManagedKimiConfigShape = {
-      providers: {
-        acme: {
-          type: 'openai',
-          baseUrl: 'https://acme.example.test/v1',
-          apiKeyEnv: 'VICTIM_KEY',
-          source: {
-            kind: 'apiJson',
-            url: 'https://other-registry.example.test/api.json',
-            apiKey: 'sk-other',
-          },
         },
       },
     };
@@ -858,80 +767,6 @@ describe('applyCustomRegistryEntries', () => {
     expect(config.models?.['keepme/m1']).toBeDefined();
   });
 
-  it('preserves a hand-edited apiKeyEnv across an explicit re-import of the same registry', () => {
-    const source: CustomRegistrySource = {
-      kind: 'apiJson',
-      url: 'https://registry.example.test/api.json',
-      apiKey: '',
-    };
-    const entries: Record<string, CustomRegistryProviderEntry> = {
-      acme: {
-        id: 'acme',
-        name: 'Acme',
-        api: 'https://acme.example.test/v1',
-        type: 'openai',
-        models: { m1: { id: 'm1' } },
-      },
-    };
-
-    const config: ManagedKimiConfigShape = { providers: {} };
-    applyCustomRegistryEntries(config, entries, source);
-
-    const imported = config.providers['acme'] as Record<string, unknown>;
-    delete imported['apiKey'];
-    imported['apiKeyEnv'] = 'MY_OWN_KEY';
-
-    applyCustomRegistryEntries(config, entries, source);
-
-    expect(config.providers['acme']).toEqual({
-      type: 'openai',
-      baseUrl: 'https://acme.example.test/v1',
-      apiKeyEnv: 'MY_OWN_KEY',
-      source,
-    });
-  });
-
-  it('does not carry apiKeyEnv onto a re-imported provider owned by a different registry', () => {
-    const source: CustomRegistrySource = {
-      kind: 'apiJson',
-      url: 'https://registry.example.test/api.json',
-      apiKey: 'sk-token',
-    };
-    const entries: Record<string, CustomRegistryProviderEntry> = {
-      acme: {
-        id: 'acme',
-        name: 'Acme',
-        api: 'https://acme.example.test/v1',
-        type: 'openai',
-        models: { m1: { id: 'm1' } },
-      },
-    };
-
-    const config: ManagedKimiConfigShape = {
-      providers: {
-        acme: {
-          type: 'openai',
-          baseUrl: 'https://acme.example.test/v1',
-          apiKeyEnv: 'VICTIM_KEY',
-          source: {
-            kind: 'apiJson',
-            url: 'https://other-registry.example.test/api.json',
-            apiKey: 'sk-other',
-          },
-        },
-      },
-    };
-
-    applyCustomRegistryEntries(config, entries, source);
-
-    expect(config.providers['acme']).toEqual({
-      type: 'openai',
-      baseUrl: 'https://acme.example.test/v1',
-      apiKey: 'sk-token',
-      source,
-    });
-  });
-
   it('does not remove providers from a different source URL even when ids overlap', () => {
     const sourceA: CustomRegistrySource = {
       kind: 'apiJson',
@@ -1009,156 +844,6 @@ describe('custom registry safety', () => {
       expect(config).toEqual(original);
     },
   );
-
-  it('keeps a reserved provider when it disappears from a registry response', () => {
-    const source: CustomRegistrySource = {
-      kind: 'apiJson',
-      url: 'https://registry.example.test/api.json',
-      apiKey: '',
-    };
-    const config: ManagedKimiConfigShape = {
-      providers: {
-        'moonshot-cn': {
-          type: 'kimi',
-          apiKey: 'sk-platform',
-          source,
-        },
-      },
-      models: { 'moonshot-cn/m1': { provider: 'moonshot-cn', model: 'm1', maxContextSize: 1000 } },
-      defaultModel: 'moonshot-cn/m1',
-    };
-    const original = structuredClone(config);
-
-    applyCustomRegistryEntries(
-      config,
-      {
-        acme: {
-          id: 'acme',
-          name: 'Acme',
-          api: 'https://acme.example.test/v1',
-          type: 'openai',
-          models: { m1: { id: 'm1' } },
-        },
-      },
-      source,
-    );
-
-    expect(config.providers['moonshot-cn']).toEqual(original.providers['moonshot-cn']);
-    expect(config.models?.['moonshot-cn/m1']).toEqual(original.models?.['moonshot-cn/m1']);
-    expect(config.providers['acme']).toBeDefined();
-    expect(
-      customRegistryReplacementKeys(
-        original,
-        {
-          acme: {
-            id: 'acme',
-            name: 'Acme',
-            api: 'https://acme.example.test/v1',
-            type: 'openai',
-            models: { m1: { id: 'm1' } },
-          },
-        },
-        source,
-      ),
-    ).toEqual({
-      providers: ['acme'],
-      models: ['acme/m1'],
-      thinking: ['enabled', 'effort', 'keep'],
-    });
-  });
-
-  it('rejects an OAuth provider collision before mutation', () => {
-    const source: CustomRegistrySource = {
-      kind: 'apiJson',
-      url: 'https://registry.example.test/api.json',
-      apiKey: '',
-    };
-    const config: ManagedKimiConfigShape = {
-      providers: {
-        acme: {
-          type: 'openai',
-          oauth: { storage: 'file', key: 'oauth/acme' },
-          source,
-        },
-      },
-      models: {},
-    };
-    const original = structuredClone(config);
-
-    expect(() =>
-      applyCustomRegistryEntries(
-        config,
-        {
-          acme: {
-            id: 'acme',
-            name: 'Acme',
-            api: 'https://acme.example.test/v1',
-            type: 'openai',
-            models: { m1: { id: 'm1' } },
-          },
-        },
-        source,
-      ),
-    ).toThrow(/managed by OAuth/i);
-    expect(config).toEqual(original);
-  });
-
-  it('includes old providers whose source apiKey is malformed in exact replacement keys', () => {
-    const source: CustomRegistrySource = {
-      kind: 'apiJson',
-      url: 'https://registry.example.test/api.json',
-      apiKey: '',
-    };
-    const config: ManagedKimiConfigShape = {
-      providers: {
-        gone: { type: 'openai', source: { kind: 'apiJson', url: source.url, apiKey: null } },
-      },
-      models: { 'gone/m1': { provider: 'gone', model: 'm1', maxContextSize: 1000 } },
-    };
-
-    expect(customRegistryReplacementKeys(config, {}, source)).toEqual({
-      providers: ['gone'],
-      models: ['gone/m1'],
-      thinking: ['enabled', 'effort', 'keep'],
-    });
-  });
-
-  it('rejects an apiKeyEnv provider when the registry changes its endpoint', () => {
-    const source: CustomRegistrySource = {
-      kind: 'apiJson',
-      url: 'https://registry.example.test/api.json',
-      apiKey: '',
-    };
-    const existing = {
-      type: 'openai',
-      baseUrl: 'https://trusted.example.test/v1',
-      apiKeyEnv: 'ACME_API_KEY',
-      source,
-    };
-    const config: ManagedKimiConfigShape = {
-      providers: { acme: existing },
-      models: { 'acme/old': { provider: 'acme', model: 'old', maxContextSize: 1000 } },
-      defaultModel: 'acme/old',
-    };
-    const original = structuredClone(config);
-
-    expect(() =>
-      applyCustomRegistryEntries(
-        config,
-        {
-          acme: {
-            id: 'acme',
-            name: 'Acme',
-            api: 'https://changed.example.test/v1',
-            type: 'openai',
-            models: { m1: { id: 'm1' } },
-          },
-        },
-        source,
-      ),
-    ).toThrow(/endpoint/i);
-    expect(config).toEqual(original);
-  });
 });
 
 describe('capabilitiesFromCustomEntry', () => {

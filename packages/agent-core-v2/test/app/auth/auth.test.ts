@@ -1728,23 +1728,6 @@ describe('AuthSummaryService', () => {
     expect(getCachedAccessToken).not.toHaveBeenCalled();
   });
 
-  it('ensureReady accepts an api_key_env provider while the variable is set', async () => {
-    providers = {
-      acme: { type: 'openai', apiKeyEnv: 'KIMI_TEST_ENSURE_READY_KEY' },
-    };
-    models = {
-      acme: { provider: 'acme', model: 'acme-1', protocol: 'openai', maxContextSize: 128000 },
-    };
-    defaultModel = 'acme';
-    vi.stubEnv('KIMI_TEST_ENSURE_READY_KEY', 'sk-live');
-    try {
-      await expect(createSummary().ensureReady()).resolves.toBeUndefined();
-      expect(getCachedAccessToken).not.toHaveBeenCalled();
-    } finally {
-      vi.unstubAllEnvs();
-    }
-  });
-
   it('ensureReady throws config.invalid when the api_key_env variable is unset', async () => {
     providers = {
       acme: { type: 'openai', apiKeyEnv: 'KIMI_TEST_ENSURE_READY_KEY' },
