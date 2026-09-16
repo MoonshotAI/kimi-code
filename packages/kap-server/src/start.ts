@@ -31,8 +31,13 @@ import {
   createKimiDefaultHeaders,
   kimiRegionProfile,
   type KimiHostIdentity,
+  type KimiRegion,
 } from '@moonshot-ai/kimi-code-oauth';
-import { RemoteRuntimeProviderFactory } from '@moonshot-ai/remote-exec';
+import {
+  CdnExecutorArtifactLocator,
+  RemoteRuntimeProviderFactory,
+  type RemoteRuntimeProviderFactoryOptions,
+} from '@moonshot-ai/remote-exec';
 import { createAsyncApiDocument } from './protocol/asyncapi';
 import Fastify, { type FastifyInstance } from 'fastify';
 
@@ -141,6 +146,25 @@ export interface RunningServer {
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 58627;
 
+export interface CreateRemoteRuntimeProviderOptionsInput {
+  readonly region: KimiRegion;
+  readonly clientVersion: string;
+  readonly onDiagnostic: (line: string) => void;
+}
+
+export function createRemoteRuntimeProviderOptions(
+  input: CreateRemoteRuntimeProviderOptionsInput,
+): RemoteRuntimeProviderFactoryOptions {
+  return {
+    clientName: 'kimi-code',
+    clientVersion: input.clientVersion,
+    artifactLocator: new CdnExecutorArtifactLocator({
+      cdnBaseUrl: kimiRegionProfile(input.region).cdnBase,
+    }),
+    onDiagnostic: input.onDiagnostic,
+  };
+}
+
 export async function startServer(opts: ServerStartOptions): Promise<RunningServer> {
   const host = opts.host ?? DEFAULT_HOST;
   const port = opts.port ?? DEFAULT_PORT;
@@ -226,13 +250,15 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     [...logSeed(logging), ...(opts.seeds ?? [])],
   );
   const remoteRuntimeProvider = await core.accessor.get(IWorkspaceInstanceManager).addProvider(
-    new RemoteRuntimeProviderFactory({
-      clientName: 'kimi-code',
-      clientVersion: serverVersion,
-      onDiagnostic: (line) => {
-        logger.warn(line.trimEnd());
-      },
-    }),
+    new RemoteRuntimeProviderFactory(
+      createRemoteRuntimeProviderOptions({
+        region: core.accessor.get(IOAuthService).getRegion(),
+        clientVersion: serverVersion,
+        onDiagnostic: (line) => {
+          logger.warn(line.trimEnd());
+        },
+      }),
+    ),
   );
 
   let telemetry: ServerTelemetry = {};
