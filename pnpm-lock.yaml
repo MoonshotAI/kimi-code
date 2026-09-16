@@ -847,6 +847,19 @@ importers:
         specifier: ^8.18.0
         version: 8.18.1
 
+  packages/remote-exec:
+    dependencies:
+      '@moonshot-ai/agent-core-v2':
+        specifier: workspace:^
+        version: link:../agent-core-v2
+      node-pty:
+        specifier: ^1.1.0
+        version: 1.1.0
+    devDependencies:
+      tsx:
+        specifier: ^4.21.0
+        version: 4.21.0
+
   packages/telemetry: {}
 
   packages/transcript:
