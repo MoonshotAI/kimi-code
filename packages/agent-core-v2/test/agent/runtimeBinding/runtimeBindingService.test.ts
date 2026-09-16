@@ -88,6 +88,9 @@ function setup(options: { agentId?: string; sessionCwd?: string } = {}) {
     },
   } as unknown as ISessionWorkspaceContext;
   const activeToolCalls: { toolCallId: string; name: string }[] = [];
+  const loopState: {
+    turn?: { turnId: number; phase: string; step: number; activeToolCalls: { toolCallId: string; name: string }[] };
+  } = { turn: undefined };
   const loop: LiveRef<IAgentLoopService> = {
     current: {
       snapshot: () => ({
@@ -96,7 +99,7 @@ function setup(options: { agentId?: string; sessionCwd?: string } = {}) {
         notificationCount: 0,
         paused: false,
         hasPendingRequests: false,
-        turn: { turnId: 1, phase: 'tool_call', step: 1, activeToolCalls },
+        turn: loopState.turn,
       }),
     } as unknown as IAgentLoopService,
     onDidChange: () => ({ dispose: () => {} }),
@@ -107,22 +110,6 @@ function setup(options: { agentId?: string; sessionCwd?: string } = {}) {
     agentContext: stubAgentContext(options.agentId ?? 'main', 1),
     scope: (subKey?: string) => subKey ?? '',
   };
-  const binding = new AgentRuntimeBindingService(
-    scopeContext,
-    state,
-    { _serviceBrand: undefined, binding: { workspaceId: 'workspace', runtimeId: 'local' } },
-    session,
-    workspaceContext,
-    resolver,
-    dispatcher,
-    loop,
-  );
-  const workspaceChanges = new Emitter<{ workspaceId: string }>();
-  const workspaces = {
-    _serviceBrand: undefined,
-    onDidChange: workspaceChanges.event,
-    get: () => ({ runtimes: registry }),
-  } as unknown as IWorkspaceInstanceManager;
   const busHandlers = new Map<string, ((event: { readonly agentId?: string }) => void)[]>();
   const eventBus = {
     subscribe: (cls: { readonly type: string }, handler: (event: { readonly agentId?: string }) => void) => {
@@ -135,6 +122,23 @@ function setup(options: { agentId?: string; sessionCwd?: string } = {}) {
   const publishBus = (type: string, event: { readonly agentId?: string }): void => {
     for (const handler of busHandlers.get(type) ?? []) handler(event);
   };
+  const binding = new AgentRuntimeBindingService(
+    scopeContext,
+    state,
+    { _serviceBrand: undefined, binding: { workspaceId: 'workspace', runtimeId: 'local' } },
+    session,
+    workspaceContext,
+    resolver,
+    dispatcher,
+    eventBus,
+    loop,
+  );
+  const workspaceChanges = new Emitter<{ workspaceId: string }>();
+  const workspaces = {
+    _serviceBrand: undefined,
+    onDidChange: workspaceChanges.event,
+    get: () => ({ runtimes: registry }),
+  } as unknown as IWorkspaceInstanceManager;
   return {
     registry,
     resolver,
@@ -148,6 +152,7 @@ function setup(options: { agentId?: string; sessionCwd?: string } = {}) {
     restoreHooks,
     workDirWrites,
     activeToolCalls,
+    loopState,
     publishBus,
     agentRuntime: new AgentRuntimeService(scopeContext, binding, resolver, workspaces, eventBus),
   };
@@ -315,7 +320,8 @@ describe('AgentRuntimeBindingService', () => {
   });
 
   it('rejects switching while tool calls are executing or pending approval', () => {
-    const { binding, activeToolCalls } = setup();
+    const { binding, activeToolCalls, loopState } = setup();
+    loopState.turn = { turnId: 1, phase: 'tool_call', step: 1, activeToolCalls };
     activeToolCalls.push({ toolCallId: 'call-1', name: 'Bash' });
 
     expect(() => binding.switch('remote')).toThrowError(
@@ -339,6 +345,28 @@ describe('AgentRuntimeBindingService', () => {
     workDirWrites.length = 0;
     await restoreHooks.get('agent-runtime-binding')?.(undefined, async () => {});
     expect(workDirWrites).toEqual(['/workspace']);
+  });
+
+  it('defers the workDir switch to the turn boundary while the op commits mid-turn', () => {
+    const { binding, loopState, workDirWrites, publishBus } = setup();
+    loopState.turn = { turnId: 1, phase: 'running', step: 1, activeToolCalls: [] };
+
+    expect(binding.switch('remote', '/remote/work').runtimeId).toBe('remote');
+    expect(binding.current).toMatchObject({ runtimeId: 'remote', cwd: '/remote/work' });
+    expect(workDirWrites).toEqual([]);
+
+    publishBus('turn.ended', { agentId: 'main' });
+    expect(workDirWrites).toEqual(['/remote/work']);
+
+    loopState.turn = { turnId: 2, phase: 'running', step: 1, activeToolCalls: [] };
+    binding.switch('local');
+    expect(workDirWrites).toEqual(['/remote/work']);
+
+    publishBus('turn.ended', { agentId: 'agent-9' });
+    expect(workDirWrites).toEqual(['/remote/work']);
+
+    publishBus('turn.ended', { agentId: 'main' });
+    expect(workDirWrites).toEqual(['/remote/work', '/workspace']);
   });
 
   it('does not push workDir for non-main agents', () => {

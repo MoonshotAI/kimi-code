@@ -3,8 +3,10 @@ import { defineState } from '#/state/state';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { ref, type LiveRef } from '#/_base/di/instantiation';
 import { Emitter } from '#/_base/event';
+import { ISessionEventBus } from '#/app/event/eventBus';
 import { LifecycleScope } from '#/app/scopes';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { LOCAL_RUNTIME_ID, type RuntimeBinding } from '#/runtime/runtime';
@@ -25,6 +27,8 @@ export class AgentRuntimeBindingService implements IAgentRuntimeBindingService {
   private readonly changeEmitter = new Emitter<RuntimeBinding>();
   readonly onDidChange = this.changeEmitter.event;
   private readonly restoreHook: IDisposable;
+  private readonly turnEndSubscription: IDisposable;
+  private pendingWorkDir: string | undefined;
 
   constructor(
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
@@ -34,6 +38,7 @@ export class AgentRuntimeBindingService implements IAgentRuntimeBindingService {
     @ISessionWorkspaceContext private readonly workspaceContext: ISessionWorkspaceContext,
     @IRuntimeResolver private readonly resolver: IRuntimeResolver,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
+    @ISessionEventBus private readonly eventBus: ISessionEventBus,
     @ref(IAgentLoopService) private readonly loop: LiveRef<IAgentLoopService>,
   ) {
     this.state.contributeState(agentRuntimeBindingKey);
@@ -54,6 +59,10 @@ export class AgentRuntimeBindingService implements IAgentRuntimeBindingService {
         this.applySessionWorkDir(replayed);
       }
       await next();
+    });
+    this.turnEndSubscription = this.eventBus.subscribe(TurnEnded, (event) => {
+      if (event.agentId !== this.scopeContext.agentId) return;
+      this.flushPendingWorkDir();
     });
   }
 
@@ -78,7 +87,19 @@ export class AgentRuntimeBindingService implements IAgentRuntimeBindingService {
 
   private applySessionWorkDir(binding: RuntimeBinding): void {
     if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
-    this.workspaceContext.setWorkDir(binding.cwd ?? this.session.cwd);
+    const workDir = binding.cwd ?? this.session.cwd;
+    if (this.loop.current?.snapshot().turn !== undefined) {
+      this.pendingWorkDir = workDir;
+      return;
+    }
+    this.workspaceContext.setWorkDir(workDir);
+  }
+
+  private flushPendingWorkDir(): void {
+    const pending = this.pendingWorkDir;
+    if (pending === undefined) return;
+    this.pendingWorkDir = undefined;
+    this.workspaceContext.setWorkDir(pending);
   }
 
   get current(): RuntimeBinding {
@@ -116,6 +137,7 @@ export class AgentRuntimeBindingService implements IAgentRuntimeBindingService {
   }
 
   dispose(): void {
+    this.turnEndSubscription.dispose();
     this.restoreHook.dispose();
     this.changeEmitter.dispose();
   }
