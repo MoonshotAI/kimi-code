@@ -1609,7 +1609,7 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
-  it('keeps messages appended while compacting an unchanged prefix', async () => {
+  it('places messages appended while compacting an unchanged prefix after the handoff', async () => {
     const ctx = testAgent();
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -1659,10 +1659,6 @@ describe('FullCompaction', () => {
         },
         {
           "role": "user",
-          "text": "new user while compacting",
-        },
-        {
-          "role": "user",
           "text": "The conversation so far has been compacted to free up context. What follows is your own working summary of this task — use it to continue your train of thought rather than starting over. Treat it as notes, not proof: where it says a step was done, tests passed, or a fix worked, verify that yourself before relying on it. Any user messages earlier in this context are preserved verbatim from the compacted conversation; where a system-reminder note among them marks an omitted middle section, the user messages it replaced are covered by this summary. The summary records which earlier requests were already addressed.
       Compacted prefix.",
         },
@@ -1671,6 +1667,10 @@ describe('FullCompaction', () => {
           "text": "<system-reminder>
       Context compaction is complete — continue the work that was in progress when it began.
       </system-reminder>",
+        },
+        {
+          "role": "user",
+          "text": "new user while compacting",
         },
       ]
     `);
