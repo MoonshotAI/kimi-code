@@ -2218,6 +2218,32 @@ describe('AgentTranscriptProjector', () => {
     ]);
   });
 
+  it('records a user slash skill activation steered into a running turn without taking a queued prompt id', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+    const origin = { kind: 'skill_activation' as const, activationId: 'act-1', trigger: 'user-slash' as const, skillName: 'example-skill', skillArgs: 'args' };
+    feed(ev({ type: 'turn.started', turnId: 5, origin: { kind: 'user' }, prompt: 'active' }));
+    feed(ev({ type: 'turn.step.started', turnId: 5, step: 1 }));
+    feed(ev({ type: 'prompt.steered', activePromptId: 'active', promptIds: ['queued'], content: [{ type: 'text', text: 'queued input' }], steeredAt: '2026-01-01T00:00:02.000Z' }));
+    feed(ev({ type: 'turn.steer', input: [{ type: 'text', text: 'User activated the skill' }], origin }));
+    feed(ev({ type: 'turn.steer', input: [{ type: 'text', text: 'queued input' }], origin: { kind: 'user' } }));
+    const frames = turnOps('t5', tx.getItems()).steps[0]!.frames;
+    expect(frames[0]).toMatchObject({ role: 'user', text: 'User activated the skill', origin: { kind: 'skill_activation', trigger: 'user-slash', skillName: 'example-skill' } });
+    expect((frames[0] as { promptIds?: readonly string[] }).promptIds).toBeUndefined();
+    expect(frames[1]).toMatchObject({ text: 'queued input', promptIds: ['queued'] });
+  });
+
+  it('still ignores a model-triggered skill activation steer', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+    feed(ev({ type: 'turn.started', turnId: 6, origin: { kind: 'user' }, prompt: 'active' }));
+    feed(ev({ type: 'turn.step.started', turnId: 6, step: 1 }));
+    feed(ev({ type: 'turn.steer', input: [{ type: 'text', text: 'model tool activation' }], origin: { kind: 'skill_activation', activationId: 'act-2', trigger: 'model-tool', skillName: 'example-skill' } }));
+    expect(turnOps('t6', tx.getItems()).steps[0]!.frames).toHaveLength(0);
+  });
+
   it('ignores turn.steer for non-user origins and for turns that are not running', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');

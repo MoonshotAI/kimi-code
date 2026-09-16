@@ -12,10 +12,15 @@ export interface TranscriptSkillActivation {
   readonly skillArgs?: string;
 }
 
-export interface TranscriptUserOrigin {
+export type TranscriptUserOrigin = {
   readonly kind: 'user';
   readonly skillActivations?: readonly TranscriptSkillActivation[];
-}
+} | {
+  readonly kind: 'skill_activation';
+  readonly trigger: 'user-slash';
+  readonly skillName: string;
+  readonly skillArgs?: string;
+};
 
 interface TextFrameBase {
   readonly kind: 'text';

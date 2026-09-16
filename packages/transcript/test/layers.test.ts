@@ -4,6 +4,7 @@ import { filterOpsForGrade, isAppendOnly, redactSnapshotForGrade } from '#/granu
 import { detachGrades, gradeFor, needsResetOnTransition } from '#/granularity/grade';
 import { paginateTurns } from '#/pagination/paginate';
 import { ViewRegistry } from '#/view/registry';
+import { projectTranscriptUserOrigin } from '#/contract/origin';
 import { groupMessagesIntoSnapshot, type HistoryContentPart } from '#/history/groupTurns';
 import { foldWireRecordFacts, type HistoryWireRecord } from '#/history/foldFacts';
 import {
@@ -11,12 +12,23 @@ import {
   transcriptQuerySchema,
   transcriptResponseSchema,
   transcriptGradeSpecSchema,
+  transcriptUserOriginSchema,
 } from '#/contract/schema';
 import type { TranscriptItem } from '#/model/item';
 import type { AgentTranscriptSnapshot, TranscriptOperation } from '#/ops/operation';
 
 const idLabel = (i: TranscriptItem): string =>
   i.kind === 'turn' ? i.turnId : i.kind === 'marker' ? i.markerId : i.refId;
+
+describe('user slash skill activations as transcript origins', () => {
+  it('projects a user-invoked activation and rejects a model-triggered one', () => {
+    const origin = { kind: 'skill_activation', trigger: 'user-slash', skillName: 'example-skill', skillArgs: 'args' };
+    expect(transcriptUserOriginSchema.parse(projectTranscriptUserOrigin(origin))).toEqual(origin);
+    expect(projectTranscriptUserOrigin({ ...origin, trigger: 'model-tool' })).toBeUndefined();
+    expect(projectTranscriptUserOrigin({ ...origin, skillName: '' })).toBeUndefined();
+    expect(projectTranscriptUserOrigin({ kind: 'user' })).toStrictEqual({ kind: 'user' });
+  });
+});
 
 const turnOp = (n: number): TranscriptOperation => ({
   op: 'turn.upsert',
