@@ -53,8 +53,13 @@ import {
   IMcpManagementService,
   IMcpOAuthService,
   ISessionManager,
+  IWorkspaceInstanceManager,
   OsProcessErrors,
 } from '@moonshot-ai/agent-core-v2';
+
+import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
+import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
+import { FakeRuntime } from '@moonshot-ai/agent-core-v2/runtime/fakeRuntime';
 
 import { McpOAuthService as McpOAuthServiceV2 } from '@moonshot-ai/agent-core-v2/mcpCore/oauth/service';
 
@@ -141,6 +146,191 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       expect(await session.getRuntime()).toEqual(binding);
     } finally {
       await harness.close();
+    }
+  });
+
+  it('rejects createSession runtime options while the remote_runtime flag is off', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', 'false');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_RUNTIME', 'false');
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    try {
+      await expect(harness.createSession({ workDir, runtimeId: 'box', runtimeCwd: '/remote' })).rejects.toThrow(
+        /remote_runtime/,
+      );
+      await expect(harness.createSession({ workDir, runtimeCwd: '/remote' })).rejects.toThrow(
+        /runtimeCwd requires runtimeId/,
+      );
+      const session = await harness.createSession({ workDir });
+      await expect(session.switchRuntime('box', { cwd: '/remote' })).rejects.toThrow(/remote_runtime/);
+    } finally {
+      await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  function runtimeConfigToml(defaultCwd: string): string {
+    return [
+      'default_model = "stub"',
+      '',
+      '[providers.stub]',
+      'type = "openai"',
+      'base_url = "http://127.0.0.1:9999"',
+      'api_key = "stub"',
+      '',
+      '[models.stub]',
+      'provider = "stub"',
+      'model = "stub"',
+      'max_context_size = 1000',
+      '',
+      '[experimental]',
+      'remote_runtime = true',
+      '',
+      '[runtimes.fake-box]',
+      'type = "ssh"',
+      'host = "fake-box"',
+      `defaultCwd = ${JSON.stringify(defaultCwd)}`,
+      '',
+    ].join('\n');
+  }
+
+  async function makeRuntimeHarness(options: { readonly defaultCwd?: string } = {}): Promise<{ harness: KimiHarness; client: SDKRpcClientV2; homeDir: string }> {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', 'false');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_RUNTIME', 'true');
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    await writeFile(join(homeDir, 'config.toml'), runtimeConfigToml(options.defaultCwd ?? '/remote/work'), 'utf-8');
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const harness = new KimiHarness(client, {
+      identity: client.identity,
+      homeDir: client.homeDir,
+      configPath: client.configPath,
+      auth: client.auth,
+      telemetry: client.telemetry,
+      ensureConfigFile: () => client.ensureConfigFile(),
+      onClose: () => client.close(),
+    });
+    return { harness, client, homeDir };
+  }
+
+  async function attachFakeBoxRuntime(
+    client: SDKRpcClientV2,
+    options: { readonly connect?: () => Promise<void> } = {},
+  ) {
+    return client.engineAccessor.get(IWorkspaceInstanceManager).addProvider({
+      id: 'fake-box-provider',
+      imports: { root: [], imports: [], local: [] },
+      attach: async (context, host) => {
+        const fake = new FakeRuntime(
+          { workspaceId: context.id, runtimeId: 'fake-box', generation: 'fake-generation' },
+          { capabilities: ['fs', 'process'] },
+        );
+        const runtime = Object.assign(fake, {
+          fs: new HostFileSystem(),
+          process: new HostProcessService(),
+          connect: options.connect,
+        });
+        const registration = host.registerRuntime(runtime);
+        return { dispose: () => registration.remove() };
+      },
+    });
+  }
+
+  it('seeds the initial binding from createSession runtimeId with the declaration defaultCwd', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const { harness, client } = await makeRuntimeHarness({ defaultCwd: workDir });
+    const provider = await attachFakeBoxRuntime(client);
+    try {
+      await expect(harness.createSession({ workDir, runtimeId: 'ghost' })).rejects.toThrow(/not declared/);
+      const session = await harness.createSession({ workDir, runtimeId: 'fake-box' });
+      const binding = await session.getRuntime();
+      expect(binding.runtimeId).toBe('fake-box');
+      expect(binding.cwd).toBe(workDir);
+
+      const listed = await session.listRuntimes();
+      const byId = new Map(listed.runtimes.map((entry) => [entry.runtimeId, entry]));
+      expect(byId.get('local')).toMatchObject({ type: 'local', status: 'ready' });
+      expect(byId.get('fake-box')).toMatchObject({ type: 'ssh', status: 'ready', defaultCwd: workDir });
+      expect(listed.sshHosts).toEqual(expect.any(Array));
+    } finally {
+      await provider.dispose();
+      await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('switches with cwd through connectAndSwitch and reconnects explicitly', async () => {
+    const { harness, client } = await makeRuntimeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const connect = vi.fn(async () => {});
+    const provider = await attachFakeBoxRuntime(client, { connect });
+    try {
+      const session = await harness.createSession({ workDir });
+      const switched = await session.switchRuntime('fake-box', { cwd: workDir });
+      expect(switched.runtimeId).toBe('fake-box');
+      expect(switched.cwd).toBe(workDir);
+      expect((await session.getRuntime()).cwd).toBe(workDir);
+
+      const listed = await session.listRuntimes();
+      const fakeBox = listed.runtimes.find((entry) => entry.runtimeId === 'fake-box');
+      expect(fakeBox).toMatchObject({ type: 'ssh', status: 'ready', defaultCwd: '/remote/work' });
+
+      const reconnected = await session.reconnectRuntime();
+      expect(reconnected.runtimeId).toBe('fake-box');
+      expect(connect).toHaveBeenCalledTimes(1);
+
+      await session.switchRuntime('local');
+      await expect(session.reconnectRuntime()).rejects.toThrow(/does not support reconnect/);
+    } finally {
+      await provider.dispose();
+      await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('previews project-declared runtimes with full command lines in the trust info', async () => {
+    const { harness } = await makeRuntimeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    await mkdir(join(workDir, '.kimi-code'), { recursive: true });
+    await writeFile(
+      join(workDir, '.kimi-code', 'runtimes.toml'),
+      [
+        '[project-box]',
+        'type = "ssh"',
+        'host = "project-box"',
+        'defaultCwd = "/project"',
+        '',
+        '[gym]',
+        `command = ${JSON.stringify(process.execPath)}`,
+        'args = ["sandbox", "ssh", "i-1", "--", "/home/me/.kimi-code/bin/kimi", "exec-server", "--listen", "stdio"]',
+        'defaultCwd = "/home/me/kimi-code"',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+    try {
+      const info = await harness.getWorkspaceTrustInfo(workDir);
+      expect(info.trusted).toBe(false);
+      expect(info.gatedRuntimes).toEqual([
+        {
+          id: 'project-box',
+          commandLine: 'ssh project-box ~/.kimi-code/bin/kimi exec-server --listen stdio',
+        },
+        {
+          id: 'gym',
+          commandLine: `${process.execPath} sandbox ssh i-1 -- /home/me/.kimi-code/bin/kimi exec-server --listen stdio`,
+        },
+      ]);
+
+      await harness.trustWorkspace(workDir);
+      expect((await harness.getWorkspaceTrustInfo(workDir)).gatedRuntimes).toEqual([]);
+    } finally {
+      await harness.close();
+      vi.unstubAllEnvs();
     }
   });
 
@@ -1424,7 +1614,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
     await writeFile(join(workDir, '.mcp.json'), '{not json', 'utf-8');
     try {
       const info = await harness.getWorkspaceTrustInfo(workDir);
-      expect(info).toEqual({ trusted: false, gatedMcpServers: [] });
+      expect(info).toEqual({ trusted: false, gatedMcpServers: [], gatedRuntimes: [] });
     } finally {
       await harness.close();
     }
@@ -1439,6 +1629,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
       expect(await harness.getWorkspaceTrustInfo(workDir)).toEqual({
         trusted: true,
         gatedMcpServers: [],
+        gatedRuntimes: [],
       });
       // The trust marker lives in the kimi home, never in the checkout.
       const markers = await readdir(join(homeDir, 'workspace-trust'));

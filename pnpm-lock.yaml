@@ -662,6 +662,9 @@ importers:
       '@moonshot-ai/remote-control':
         specifier: workspace:^
         version: link:../remote-control
+      '@moonshot-ai/remote-exec':
+        specifier: workspace:^
+        version: link:../remote-exec
       '@moonshot-ai/transcript':
         specifier: workspace:^
         version: link:../transcript

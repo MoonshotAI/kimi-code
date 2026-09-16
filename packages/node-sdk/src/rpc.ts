@@ -66,6 +66,7 @@ import type {
   ResumedSessionSummary,
   SessionSummary,
   SessionSummaryPage,
+  SessionRuntimesInfo,
   SkillSummary,
   PluginCommandDef,
   SuggestFilesInput,
@@ -152,6 +153,7 @@ export interface RunCommandRpcInput extends SessionIdRpcInput {
 
 export interface SwitchSessionRuntimeRpcInput extends SessionIdRpcInput {
   readonly runtimeId: string;
+  readonly cwd?: string;
 }
 
 export interface ReconnectMcpServerRpcInput extends SessionIdRpcInput {
@@ -464,6 +466,10 @@ export abstract class SDKRpcClientBase {
   abstract getRuntime(input: SessionIdRpcInput): Promise<AgentRuntimeBinding>;
 
   abstract switchRuntime(input: SwitchSessionRuntimeRpcInput): Promise<AgentRuntimeBinding>;
+
+  abstract reconnectRuntime(input: SessionIdRpcInput): Promise<AgentRuntimeBinding>;
+
+  abstract listRuntimes(input: SessionIdRpcInput): Promise<SessionRuntimesInfo>;
 
   onEvent(listener: (event: Event) => void): Unsubscribe {
     this.eventListeners.add(listener);

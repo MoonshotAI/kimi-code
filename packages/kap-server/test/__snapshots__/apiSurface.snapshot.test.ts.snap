@@ -242,6 +242,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/sessions/{session_id}/runtimes",
+    ],
+    [
+      "GET",
       "/api/v1/sessions/{session_id}/skills",
     ],
     [
@@ -471,6 +475,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/sessions/{session_id}/runtime",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions/{session_id}/runtime/reconnect",
     ],
     [
       "POST",

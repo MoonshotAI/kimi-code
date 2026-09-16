@@ -49,6 +49,7 @@ import {
   resolvePromptMediaFiles,
   resolvePromptSessionMediaRefs,
   runtimeAttachmentsTarget,
+  runtimeOriginalsTarget,
   type PromptMediaPreparation,
 } from '../lib/promptMedia';
 import type { RuntimeLease } from '@moonshot-ai/agent-core-v2/runtime/runtime';
@@ -260,7 +261,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
           const sessionDir = resolved.handle.accessor.get(ISessionContext).sessionDir;
           const mainAgent = await ensureMainAgentHandle(resolved.handle);
           const binding = mainAgent.accessor.get(IAgentRuntimeBindingService).get();
-          let attachmentsLease: RuntimeLease | undefined;
+          let runtimeLease: RuntimeLease | undefined;
           try {
             preparedMedia = await resolvePromptMediaFiles(
               resolvedSessionMedia,
@@ -272,17 +273,23 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
                   .get(IAgentProfileService)
                   .getModelProviderType(),
                 resolveOriginalsDir: async () => sessionMediaOriginalsDir(sessionDir),
+                resolveOriginalsTarget: binding.runtimeId === 'local'
+                  ? undefined
+                  : async () => {
+                      runtimeLease ??= core.accessor.get(IRuntimeResolver).acquire(binding, ['fs']);
+                      return runtimeOriginalsTarget(runtimeLease.runtime);
+                    },
                 resolveAttachmentsDir: async () => join(sessionDir, 'attachments'),
                 resolveAttachmentsTarget: binding.runtimeId === 'local'
                   ? undefined
                   : async () => {
-                      attachmentsLease ??= core.accessor.get(IRuntimeResolver).acquire(binding, ['fs']);
-                      return runtimeAttachmentsTarget(attachmentsLease.runtime);
+                      runtimeLease ??= core.accessor.get(IRuntimeResolver).acquire(binding, ['fs']);
+                      return runtimeAttachmentsTarget(runtimeLease.runtime);
                     },
               },
             );
           } finally {
-            attachmentsLease?.dispose();
+            runtimeLease?.dispose();
           }
           attachmentParts.push(...contentToCoreParts(preparedMedia.content));
         }
