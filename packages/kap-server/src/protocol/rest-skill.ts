@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { fileContentSchema, imageContentSchema, videoContentSchema } from './message';
+import { fileContentSchema, imageContentSchema, textContentSchema, videoContentSchema } from './message';
 import { skillDescriptorSchema } from './skill';
 
 export const listSkillsResponseSchema = z.object({
@@ -9,6 +9,7 @@ export const listSkillsResponseSchema = z.object({
 export type ListSkillsResponse = z.infer<typeof listSkillsResponseSchema>;
 
 export const activateSkillAttachmentSchema = z.discriminatedUnion('type', [
+  textContentSchema,
   imageContentSchema,
   videoContentSchema,
   fileContentSchema,
