@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { projectHistoryToSessionUpdates } from '../src/replay';
 
 import type { SessionNotification } from '@agentclientprotocol/sdk';
-import type { ContextMessage } from '@moonshot-ai/agent-core-v2';
+import type { HistoryMessage } from '@moonshot-ai/agent-core-v2';
 
 const SESSION_ID = 'session_test';
 
@@ -17,8 +17,8 @@ describe('projectHistoryToSessionUpdates', () => {
   });
 
   it('projects a user text message to a user_message_chunk', () => {
-    const messages: ContextMessage[] = [
-      { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+    const messages: HistoryMessage[] = [
+      { message: { role: 'user', content: [{ type: 'text', text: 'hi' }] }, meta: {} },
     ];
     const updates = projectHistoryToSessionUpdates(SESSION_ID, messages);
     expect(kinds(updates)).toEqual(['user_message_chunk']);
@@ -29,17 +29,23 @@ describe('projectHistoryToSessionUpdates', () => {
   });
 
   it('projects an assistant text + tool call and correlates the tool result', () => {
-    const messages: ContextMessage[] = [
-      { role: 'user', content: [{ type: 'text', text: 'read a.ts' }] },
+    const messages: HistoryMessage[] = [
+      { message: { role: 'user', content: [{ type: 'text', text: 'read a.ts' }] }, meta: {} },
       {
-        role: 'assistant',
-        content: [{ type: 'text', text: 'reading' }],
-        toolCalls: [{ type: 'function', id: 'c1', name: 'Read', arguments: '{"path":"a.ts"}' }],
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'reading' }],
+          toolCalls: [{ type: 'function', id: 'c1', name: 'Read', arguments: '{"path":"a.ts"}' }],
+        },
+        meta: {},
       },
       {
-        role: 'tool',
-        content: [{ type: 'text', text: 'file body' }],
-        toolCallId: 'c1',
+        message: {
+          role: 'tool',
+          content: [{ type: 'text', text: 'file body' }],
+          toolCallId: 'c1',
+        },
+        meta: {},
       },
     ];
     const updates = projectHistoryToSessionUpdates(SESSION_ID, messages);
@@ -64,17 +70,22 @@ describe('projectHistoryToSessionUpdates', () => {
   });
 
   it('marks an errored tool result as failed', () => {
-    const messages: ContextMessage[] = [
+    const messages: HistoryMessage[] = [
       {
-        role: 'assistant',
-        content: [],
-        toolCalls: [{ type: 'function', id: 'c1', name: 'Bash', arguments: '{}' }],
+        message: {
+          role: 'assistant',
+          content: [],
+          toolCalls: [{ type: 'function', id: 'c1', name: 'Bash', arguments: '{}' }],
+        },
+        meta: {},
       },
       {
-        role: 'tool',
-        content: [{ type: 'text', text: 'boom' }],
-        toolCallId: 'c1',
-        isError: true,
+        message: {
+          role: 'tool',
+          content: [{ type: 'text', text: 'boom' }],
+          toolCallId: 'c1',
+        },
+        meta: { isError: true },
       },
     ];
     const updates = projectHistoryToSessionUpdates(SESSION_ID, messages);
@@ -82,11 +93,14 @@ describe('projectHistoryToSessionUpdates', () => {
   });
 
   it('projects a think part to an agent_thought_chunk', () => {
-    const messages: ContextMessage[] = [
+    const messages: HistoryMessage[] = [
       {
-        role: 'assistant',
-        content: [{ type: 'think', think: 'hmm' }],
-        toolCalls: [],
+        message: {
+          role: 'assistant',
+          content: [{ type: 'think', think: 'hmm' }],
+          toolCalls: [],
+        },
+        meta: {},
       },
     ];
     const updates = projectHistoryToSessionUpdates(SESSION_ID, messages);
@@ -94,27 +108,36 @@ describe('projectHistoryToSessionUpdates', () => {
   });
 
   it('skips a tool message whose call was never issued in this slice', () => {
-    const messages: ContextMessage[] = [
+    const messages: HistoryMessage[] = [
       {
-        role: 'tool',
-        content: [{ type: 'text', text: 'orphan' }],
-        toolCallId: 'unknown',
+        message: {
+          role: 'tool',
+          content: [{ type: 'text', text: 'orphan' }],
+          toolCallId: 'unknown',
+        },
+        meta: {},
       },
     ];
     expect(projectHistoryToSessionUpdates(SESSION_ID, messages)).toEqual([]);
   });
 
   it('increments the synthetic turnId per assistant message', () => {
-    const messages: ContextMessage[] = [
+    const messages: HistoryMessage[] = [
       {
-        role: 'assistant',
-        content: [],
-        toolCalls: [{ type: 'function', id: 'a', name: 'Read', arguments: '{}' }],
+        message: {
+          role: 'assistant',
+          content: [],
+          toolCalls: [{ type: 'function', id: 'a', name: 'Read', arguments: '{}' }],
+        },
+        meta: {},
       },
       {
-        role: 'assistant',
-        content: [],
-        toolCalls: [{ type: 'function', id: 'b', name: 'Read', arguments: '{}' }],
+        message: {
+          role: 'assistant',
+          content: [],
+          toolCalls: [{ type: 'function', id: 'b', name: 'Read', arguments: '{}' }],
+        },
+        meta: {},
       },
     ];
     const updates = projectHistoryToSessionUpdates(SESSION_ID, messages);

@@ -1,7 +1,7 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { contextMemoryKey } from '#/agent/contextMemory/contextOps';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { HistoryMessage } from '#human/agent/turn';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -25,8 +25,7 @@ import {
 } from '#/agent/tokenCounting/tokenCountingOps';
 import { IConfigService } from '#/app/config/config';
 import { ISessionEventBus } from '#/app/event/eventBus';
-import type { Message } from '#/llm-adapter/contract/message';
-import type { ToolDescription as Tool } from '#human/llm/message';
+import type { Message, ToolDescription as Tool } from '#human/llm/message';
 import {
   estimateTokens,
   estimateTokensForMessage,
@@ -55,7 +54,7 @@ export class AgentTokenCountingService extends Disposable implements ISessionTok
     this._register(
       eventBus.subscribe(TurnEnded, (event) => {
         if (event.agentId !== this.scopeContext.agentId) return;
-        const context = this.states.get(contextMemoryKey) as readonly ContextMessage[];
+        const context = this.states.get(contextMemoryKey) as readonly HistoryMessage[];
         void this.dispatcher.dispatch(
           new TokenCountingTurnRecorded({
             agentId: event.agentId,
@@ -79,7 +78,7 @@ export class AgentTokenCountingService extends Disposable implements ISessionTok
     this.assertIssued(agent);
     return this.getFrom(
       this.states.get(tokenCountingKey),
-      this.states.get(contextMemoryKey) as readonly ContextMessage[],
+      this.states.get(contextMemoryKey) as readonly HistoryMessage[],
       start,
       end,
     );
@@ -92,7 +91,7 @@ export class AgentTokenCountingService extends Disposable implements ISessionTok
     usage: TokenUsage,
   ): void {
     this.assertIssued(agent);
-    const context = this.states.get(contextMemoryKey) as readonly ContextMessage[];
+    const context = this.states.get(contextMemoryKey) as readonly HistoryMessage[];
     if (!matchesContext(input, context)) return;
     void this.dispatcher.dispatch(
       new TokenCountingMeasured({
@@ -112,7 +111,7 @@ export class AgentTokenCountingService extends Disposable implements ISessionTok
     this.assertIssued(agent);
     return this.statusSizeFrom(
       this.states.get(tokenCountingKey),
-      this.states.get(contextMemoryKey) as readonly ContextMessage[],
+      this.states.get(contextMemoryKey) as readonly HistoryMessage[],
       this.strategy,
     );
   }
@@ -128,7 +127,7 @@ export class AgentTokenCountingService extends Disposable implements ISessionTok
         length: cutIndex,
         tokens: this.getFrom(
           this.states.get(tokenCountingKey),
-          this.states.get(contextMemoryKey) as readonly ContextMessage[],
+          this.states.get(contextMemoryKey) as readonly HistoryMessage[],
           0,
           cutIndex,
         ).size,
@@ -174,7 +173,7 @@ export class AgentTokenCountingService extends Disposable implements ISessionTok
 
   private getFrom(
     state: TokenCountingState,
-    context: readonly ContextMessage[],
+    context: readonly HistoryMessage[],
     start?: number,
     end?: number,
   ): ContextSize {
@@ -186,8 +185,8 @@ export class AgentTokenCountingService extends Disposable implements ISessionTok
     const measured =
       from === 0 && measuredEnd === anchor.length
         ? anchor.tokens
-        : estimateTokensForMessages(context.slice(from, measuredEnd));
-    const estimated = estimateTokensForMessages(context.slice(estimatedStart, to));
+        : estimateTokensForMessages(context.slice(from, measuredEnd).map((entry) => entry.message));
+    const estimated = estimateTokensForMessages(context.slice(estimatedStart, to).map((entry) => entry.message));
     return { size: measured + estimated, measured, estimated };
   }
 
@@ -201,11 +200,11 @@ export class AgentTokenCountingService extends Disposable implements ISessionTok
 
   private statusSizeFrom(
     state: TokenCountingState,
-    context: readonly ContextMessage[],
+    context: readonly HistoryMessage[],
     strategy: TokenCountingStrategy,
   ): number {
     if (strategy === 'measured') return this.latestMeasuredFrom(state);
-    if (strategy === 'estimated') return estimateTokensForMessages(context);
+    if (strategy === 'estimated') return estimateTokensForMessages(context.map((entry) => entry.message));
     return Math.max(this.getFrom(state, context).size, this.latestMeasuredFrom(state));
   }
 
@@ -218,10 +217,10 @@ export class AgentTokenCountingService extends Disposable implements ISessionTok
   }
 }
 
-function matchesContext(input: readonly Message[], context: readonly ContextMessage[]): boolean {
+function matchesContext(input: readonly Message[], context: readonly HistoryMessage[]): boolean {
   if (input.length !== context.length) return false;
   for (let index = 0; index < input.length; index++) {
-    if (input[index] !== context[index]) return false;
+    if (input[index] !== context[index]!.message) return false;
   }
   return true;
 }

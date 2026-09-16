@@ -1,9 +1,10 @@
 import type {
   ContentPart,
-  ContextMessage,
+  HistoryMessage,
   PromptOrigin,
   ToolCall,
 } from "@moonshot-ai/kimi-code-sdk";
+import { isToolEntry } from "@moonshot-ai/kimi-code-sdk";
 
 const INTERNAL_ORIGINS = new Set<PromptOrigin["kind"]>([
   "injection",
@@ -19,17 +20,17 @@ const TOOL_HINT_KEYS = ["path", "file_path", "command", "query", "url", "name", 
 export function buildExportMarkdown(input: {
   readonly sessionId: string;
   readonly workDir: string;
-  readonly history: readonly ContextMessage[];
+  readonly history: readonly HistoryMessage[];
   readonly tokenCount: number;
   readonly now: Date;
 }): string {
   const turns = groupIntoTurns(input.history);
   const firstUser = input.history.find(
-    (message) => message.role === "user" && !isInternalMessage(message),
+    (message) => message.message.role === "user" && !isInternalMessage(message),
   );
-  const topic = firstUser === undefined ? "" : shorten(stringifyParts(firstUser.content), 80);
+  const topic = firstUser === undefined ? "" : shorten(stringifyParts(firstUser.message.content), 80);
   const toolCalls = input.history.reduce(
-    (count, message) => count + (message.role === "assistant" ? message.toolCalls.length : 0),
+    (count, message) => count + (message.message.role === "assistant" ? message.message.toolCalls.length : 0),
     0,
   );
   const lines = [
@@ -58,21 +59,21 @@ export function buildExportMarkdown(input: {
   return lines.join("\n");
 }
 
-export function stringifyContextHistory(history: readonly ContextMessage[]): string {
+export function stringifyContextHistory(history: readonly HistoryMessage[]): string {
   const messages: string[] = [];
   for (const message of history) {
     if (isInternalMessage(message)) continue;
     const sections: string[] = [];
-    const content = stringifyParts(message.content);
+    const content = stringifyParts(message.message.content);
     if (content.trim()) sections.push(content);
-    if (message.role === "assistant" && message.toolCalls.length > 0) {
-      sections.push(message.toolCalls.map(stringifyToolCall).join("\n"));
+    if (message.message.role === "assistant" && message.message.toolCalls.length > 0) {
+      sections.push(message.message.toolCalls.map(stringifyToolCall).join("\n"));
     }
     if (sections.length === 0) continue;
-    const callId = message.role === "tool" && message.toolCallId
-      ? ` (call_id: ${message.toolCallId})`
+    const callId = message.message.role === "tool" && message.message.toolCallId
+      ? ` (call_id: ${message.message.toolCallId})`
       : "";
-    messages.push(`[${message.role.toUpperCase()}]${callId}\n${sections.join("\n")}`);
+    messages.push(`[${message.message.role.toUpperCase()}]${callId}\n${sections.join("\n")}`);
   }
   return messages.join("\n\n");
 }
@@ -89,16 +90,17 @@ export function isSensitiveFile(fileName: string): boolean {
     .some((pattern) => normalized.includes(pattern));
 }
 
-function isInternalMessage(message: ContextMessage): boolean {
-  return message.origin !== undefined && INTERNAL_ORIGINS.has(message.origin.kind);
+function isInternalMessage(message: HistoryMessage): boolean {
+  const origin = isToolEntry(message) ? undefined : message.meta?.origin;
+  return origin !== undefined && INTERNAL_ORIGINS.has(origin.kind);
 }
 
-function groupIntoTurns(history: readonly ContextMessage[]): ContextMessage[][] {
-  const turns: ContextMessage[][] = [];
-  let current: ContextMessage[] = [];
+function groupIntoTurns(history: readonly HistoryMessage[]): HistoryMessage[][] {
+  const turns: HistoryMessage[][] = [];
+  let current: HistoryMessage[] = [];
   for (const message of history) {
     if (isInternalMessage(message)) continue;
-    if (message.role === "user" && current.length > 0) {
+    if (message.message.role === "user" && current.length > 0) {
       turns.push(current);
       current = [];
     }
@@ -108,44 +110,44 @@ function groupIntoTurns(history: readonly ContextMessage[]): ContextMessage[][] 
   return turns;
 }
 
-function formatTurn(messages: readonly ContextMessage[], turnNumber: number): string {
+function formatTurn(messages: readonly HistoryMessage[], turnNumber: number): string {
   const lines = [`## Turn ${String(turnNumber)}`, ""];
   const toolInfo = new Map<string, { name: string; hint: string }>();
   let assistantHeading = false;
   for (const message of messages) {
-    if (message.role === "user") {
-      lines.push("### User", "", stringifyParts(message.content), "");
+    if (message.message.role === "user") {
+      lines.push("### User", "", stringifyParts(message.message.content), "");
       continue;
     }
-    if (message.role === "assistant") {
+    if (message.message.role === "assistant") {
       if (!assistantHeading) {
         lines.push("### Assistant", "");
         assistantHeading = true;
       }
-      const content = formatPartsMarkdown(message.content);
+      const content = formatPartsMarkdown(message.message.content);
       if (content) lines.push(content, "");
-      for (const call of message.toolCalls) {
+      for (const call of message.message.toolCalls) {
         const hint = toolCallHint(call);
         toolInfo.set(call.id, { name: call.name, hint });
         lines.push(formatToolCallMarkdown(call, hint), "");
       }
       continue;
     }
-    if (message.role === "tool") {
-      const info = toolInfo.get(message.toolCallId ?? "") ?? { name: "unknown", hint: "" };
+    if (message.message.role === "tool") {
+      const info = toolInfo.get(message.message.toolCallId ?? "") ?? { name: "unknown", hint: "" };
       const hint = info.hint ? ` (\`${info.hint}\`)` : "";
       lines.push(
         `<details><summary>Tool Result: ${info.name}${hint}</summary>`,
         "",
-        `<!-- call_id: ${message.toolCallId ?? "unknown"} -->`,
-        formatPartsMarkdown(message.content),
+        `<!-- call_id: ${message.message.toolCallId ?? "unknown"} -->`,
+        formatPartsMarkdown(message.message.content),
         "",
         "</details>",
         "",
       );
       continue;
     }
-    lines.push(`### ${capitalize(message.role)}`, "", formatPartsMarkdown(message.content), "");
+    lines.push(`### ${capitalize(message.message.role)}`, "", formatPartsMarkdown(message.message.content), "");
   }
   return lines.join("\n");
 }

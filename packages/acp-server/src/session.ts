@@ -30,7 +30,7 @@ import type {
   ToolCallLocation,
 } from '@agentclientprotocol/sdk';
 import { RequestError } from '@agentclientprotocol/sdk';
-import type { ContextMessage } from '@moonshot-ai/agent-core-v2';
+import type { HistoryMessage } from '@moonshot-ai/agent-core-v2';
 import type {
   AgentEventPayloads,
   AgentHandle,
@@ -402,9 +402,9 @@ export class AcpSession {
    * ordering — replay is a one-shot batch, not a live stream.
    */
   async replayHistory(): Promise<void> {
-    let messages: readonly ContextMessage[];
+    let messages: readonly HistoryMessage[];
     try {
-      // `history` items cross the wire as JSON-cloned `ContextMessage`s (the
+      // `history` items cross the wire as JSON-cloned entries (the
       // facade types them via the engine RPC signature).
       messages = (await this.agent.getContext()).history;
     } catch (error) {

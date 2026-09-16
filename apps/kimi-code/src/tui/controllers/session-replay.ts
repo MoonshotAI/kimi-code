@@ -1,14 +1,18 @@
 import type {
   AgentReplayRecord,
+  AssistantEntry,
   ContentPart,
-  ContextMessage,
   GoalChange,
+  HistoryMessage,
   PermissionMode,
   ResumedAgentState,
   Session,
   TextPromptPart,
   ToolCall,
+  ToolEntry,
+  UserEntry,
 } from '@moonshot-ai/kimi-code-sdk';
+import { isAssistantEntry, isToolEntry, isUserEntry } from '@moonshot-ai/kimi-code-sdk';
 
 import { ToolCallComponent } from '../components/messages/tool-call';
 import { ShellRunComponent } from '../components/messages/shell-run';
@@ -38,6 +42,7 @@ import {
   countActiveBackgroundTasks,
   createReplayRenderContext,
   formatHookResultMessageForTranscript,
+  historyEntryOrigin,
   isTerminalBackgroundTask,
   limitReplayRecordsByTurn,
   REPLAY_TURN_LIMIT,
@@ -100,7 +105,10 @@ function preserveBundleHookResults(
 ): readonly AgentReplayRecord[] {
   const limited = limitReplayRecordsByTurn(replay, maxTurns);
   const first = limited[0];
-  if (first?.type !== 'message' || bundledSkillsFromOrigin(first.message.origin).length === 0) {
+  if (
+    first?.type !== 'message' ||
+    bundledSkillsFromOrigin(historyEntryOrigin(first.message)).length === 0
+  ) {
     return limited;
   }
   const firstIndex = replay.indexOf(first);
@@ -108,7 +116,10 @@ function preserveBundleHookResults(
   let start = firstIndex;
   for (;;) {
     const candidate = replay[start - 1];
-    if (candidate?.type !== 'message' || candidate.message.origin?.kind !== 'hook_result') break;
+    if (
+      candidate?.type !== 'message' ||
+      historyEntryOrigin(candidate.message)?.kind !== 'hook_result'
+    ) break;
     start -= 1;
   }
   return start === firstIndex ? limited : [...replay.slice(start, firstIndex), ...limited];
@@ -244,21 +255,33 @@ export class SessionReplayRenderer {
     // the bundle's window — after its skill cards, before the prompt —
     // matching the live event order instead of attaching them to the
     // previous turn.
-    if (record.type === 'message' && record.message.origin?.kind === 'hook_result') {
+    if (record.type === 'message' && historyEntryOrigin(record.message)?.kind === 'hook_result') {
       let end = index;
       for (;;) {
         const candidate = records[end + 1];
-        if (candidate?.type !== 'message' || candidate.message.origin?.kind !== 'hook_result') {
+        if (
+          candidate?.type !== 'message' ||
+          historyEntryOrigin(candidate.message)?.kind !== 'hook_result'
+        ) {
           break;
         }
         end += 1;
       }
       const next = records[end + 1];
-      if (next?.type === 'message' && bundledSkillsFromOrigin(next.message.origin).length > 0) {
-        const hookResults: ContextMessage[] = [];
+      if (
+        next?.type === 'message' &&
+        isUserEntry(next.message) &&
+        bundledSkillsFromOrigin(next.message.meta?.origin).length > 0
+      ) {
+        const hookResults: (UserEntry | AssistantEntry)[] = [];
         for (let j = index; j <= end; j++) {
           const hookRecord = records[j]!;
-          if (hookRecord.type === 'message') hookResults.push(hookRecord.message);
+          if (
+            hookRecord.type === 'message' &&
+            (isUserEntry(hookRecord.message) || isAssistantEntry(hookRecord.message))
+          ) {
+            hookResults.push(hookRecord.message);
+          }
         }
         this.renderBundledPrompt(context, next.message, hookResults);
         return end + 1;
@@ -303,53 +326,51 @@ export class SessionReplayRenderer {
     }
   }
 
-  private renderMessage(context: ReplayRenderContext, message: ContextMessage): void {
-    switch (message.role) {
-      case 'user':
-        this.renderUserMessage(context, message);
+  private renderMessage(context: ReplayRenderContext, entry: HistoryMessage): void {
+    if (isUserEntry(entry)) {
+      this.renderUserMessage(context, entry);
+      return;
+    }
+    if (isAssistantEntry(entry)) {
+      if (entry.meta?.origin?.kind === 'hook_result') {
+        this.renderHookResult(context, entry);
+        this.renderToolCalls(context, entry.message.toolCalls);
         return;
-      case 'assistant':
-        if (message.origin?.kind === 'hook_result') {
-          this.renderHookResult(context, message);
-          this.renderToolCalls(context, message.toolCalls);
-          return;
-        }
-        collectReplayMessageContent(context.assistant, message.content);
-        this.flushAssistant(context);
-        this.renderToolCalls(context, message.toolCalls);
-        return;
-      case 'tool':
-        this.flushAssistant(context);
-        this.renderToolResult(context, message);
-        return;
-      case 'system':
-        return;
-      default:
-        return;
+      }
+      collectReplayMessageContent(context.assistant, entry.message.content);
+      this.flushAssistant(context);
+      this.renderToolCalls(context, entry.message.toolCalls);
+      return;
+    }
+    if (isToolEntry(entry)) {
+      this.flushAssistant(context);
+      this.renderToolResult(context, entry);
+      return;
     }
   }
 
-  private renderUserMessage(context: ReplayRenderContext, message: ContextMessage): void {
-    const origin = backgroundOrigin(message);
-    if (origin !== undefined) {
+  private renderUserMessage(context: ReplayRenderContext, entry: UserEntry): void {
+    const taskOrigin = backgroundOrigin(entry);
+    if (taskOrigin !== undefined) {
       this.flushAssistant(context);
-      this.renderBackgroundTaskNotification(context, origin);
+      this.renderBackgroundTaskNotification(context, taskOrigin);
       return;
     }
-    if (message.origin?.kind === 'hook_result') {
-      this.renderHookResult(context, message);
+    const origin = entry.meta?.origin;
+    if (origin?.kind === 'hook_result') {
+      this.renderHookResult(context, entry);
       return;
     }
-    if (message.origin?.kind === 'injection') {
+    if (origin?.kind === 'injection') {
       return;
     }
-    if (message.origin?.kind === 'shell_command') {
+    if (origin?.kind === 'shell_command') {
       // A `!` command, replayed from records. Unwrap the XML tags back into the
       // same `$ cmd` + output view the live editor produced. (Must NOT fall into
       // the `injection` branch above — that returns without rendering.)
       this.flushAssistant(context);
-      const text = contentPartsToText(message.content);
-      if (message.origin.phase === 'input') {
+      const text = contentPartsToText(entry.message.content);
+      if (origin.phase === 'input') {
         const cmd = (extractBashTag(text, 'bash-input') ?? text).trim();
         this.advanceTurn(context);
         this.host.appendTranscriptEntry(
@@ -363,7 +384,7 @@ export class SessionReplayRenderer {
         // Replayed `!` output is a finished card: mount the same component the
         // live view uses, already finished, so the ctrl+o toggle reaches it.
         const output = new ShellRunComponent(() => this.host.state.ui.requestRender());
-        output.finish(stdout, stderr, message.origin.isError);
+        output.finish(stdout, stderr, origin.isError);
         // Inherit the current ctrl+o state, same as the live card — the global
         // toggle only reaches components that exist when it fires.
         if (this.host.state.toolOutputExpanded) output.setExpanded(true);
@@ -372,7 +393,7 @@ export class SessionReplayRenderer {
           replayEntry(
             context,
             'status',
-            formatBashOutputForDisplay(stdout, stderr, message.origin.isError),
+            formatBashOutputForDisplay(stdout, stderr, origin.isError),
             'plain',
           ),
         );
@@ -380,19 +401,19 @@ export class SessionReplayRenderer {
       }
       return;
     }
-    if (message.origin?.kind === 'cron_job') {
-      this.renderCronJob(context, message);
+    if (origin?.kind === 'cron_job') {
+      this.renderCronJob(context, entry);
       return;
     }
-    if (message.origin?.kind === 'cron_missed') {
-      this.renderCronMissed(context, message);
+    if (origin?.kind === 'cron_missed') {
+      this.renderCronMissed(context, entry);
       return;
     }
     // System-trigger messages (goal continuation prompts, goal outcome
     // reminders, stop-hook reasons, …) are model-facing only: the live event
     // stream never renders them, so replay must not leak them either.
-    if (message.origin?.kind === 'system_trigger') {
-      if (message.origin.name === 'goal_continuation') {
+    if (origin?.kind === 'system_trigger') {
+      if (origin.name === 'goal_continuation') {
         // The goal driver's synthetic "continue" prompt starts a new replay
         // turn even though nothing visible is mounted: advance the turn and
         // mark an invisible boundary so each goal round groups under its own
@@ -406,53 +427,53 @@ export class SessionReplayRenderer {
     }
 
     this.flushAssistant(context);
-    const skill = skillActivationFromOrigin(message.origin);
+    const skill = skillActivationFromOrigin(origin);
     if (skill !== undefined) {
       this.renderSkillActivation(context, skill);
-      if (message.origin?.kind === 'skill_activation' && message.origin.trigger === 'user-slash') {
+      if (origin?.kind === 'skill_activation' && origin.trigger === 'user-slash') {
         this.advanceTurn(context);
       }
       return;
     }
-    const pluginCommand = pluginCommandFromOrigin(message.origin);
+    const pluginCommand = pluginCommandFromOrigin(origin);
     if (pluginCommand !== undefined) {
       this.renderPluginCommand(context, pluginCommand);
-      if (message.origin?.kind === 'plugin_command' && message.origin.trigger === 'user-slash') {
+      if (origin?.kind === 'plugin_command' && origin.trigger === 'user-slash') {
         this.advanceTurn(context);
       }
       return;
     }
 
-    if (bundledSkillsFromOrigin(message.origin).length > 0) {
-      this.renderBundledPrompt(context, message);
+    if (bundledSkillsFromOrigin(origin).length > 0) {
+      this.renderBundledPrompt(context, entry);
       return;
     }
     this.advanceTurn(context);
     this.host.appendTranscriptEntry(
-      replayEntry(context, 'user', contentPartsToText(message.content), 'plain'),
+      replayEntry(context, 'user', contentPartsToText(entry.message.content), 'plain'),
     );
   }
 
   private renderBundledPrompt(
     context: ReplayRenderContext,
-    message: ContextMessage,
-    hookResults: readonly ContextMessage[] = [],
+    entry: UserEntry,
+    hookResults: readonly (UserEntry | AssistantEntry)[] = [],
   ): void {
     // The bundle is one message: advance once, rebuild the per-skill cards
     // from the prompt origin, then show the caller's own parts (the engine
     // prepends one rendered text part per bundled skill to the content).
     this.advanceTurn(context);
-    this.renderBundledSkillCards(context, message);
+    this.renderBundledSkillCards(context, entry);
     for (const hookResult of hookResults) {
       this.renderHookResult(context, hookResult);
     }
     this.host.appendTranscriptEntry(
-      replayEntry(context, 'user', contentPartsToText(stripBundledSkillParts(message)), 'plain'),
+      replayEntry(context, 'user', contentPartsToText(stripBundledSkillParts(entry)), 'plain'),
     );
   }
 
-  private renderBundledSkillCards(context: ReplayRenderContext, message: ContextMessage): void {
-    for (const skill of bundledSkillsFromOrigin(message.origin)) {
+  private renderBundledSkillCards(context: ReplayRenderContext, entry: UserEntry): void {
+    for (const skill of bundledSkillsFromOrigin(entry.meta?.origin)) {
       this.renderSkillActivation(context, skill);
     }
   }
@@ -473,17 +494,17 @@ export class SessionReplayRenderer {
 
   private renderToolResult(
     context: ReplayRenderContext,
-    message: Extract<ContextMessage, { readonly role: 'tool' }>,
+    entry: ToolEntry,
   ): void {
-    const toolCallId = message.toolCallId;
-    if (toolCallId === undefined) return;
+    const toolCallId = entry.message.toolCallId;
+    if (toolCallId === '') return;
     const call = context.toolCalls.get(toolCallId);
     if (call === undefined) return;
 
     const result: ToolResultBlockData = {
       tool_call_id: toolCallId,
-      output: toolResultOutput(message.content),
-      is_error: message.isError,
+      output: toolResultOutput(entry.message.content),
+      is_error: entry.meta?.isError,
     };
     call.result = result;
     this.applyStepContext(context);
@@ -639,17 +660,18 @@ export class SessionReplayRenderer {
     });
   }
 
-  private renderHookResult(context: ReplayRenderContext, message: ContextMessage): void {
-    if (message.origin?.kind !== 'hook_result') return;
+  private renderHookResult(context: ReplayRenderContext, entry: UserEntry | AssistantEntry): void {
+    const origin = entry.meta?.origin;
+    if (origin?.kind !== 'hook_result') return;
     this.flushAssistant(context);
     this.host.appendTranscriptEntry({
       ...replayEntry(
         context,
         'assistant',
         formatHookResultMessageForTranscript(
-          contentPartsToText(message.content),
-          message.origin.event,
-          message.origin.blocked === true,
+          contentPartsToText(entry.message.content),
+          origin.event,
+          origin.blocked === true,
         ),
         'markdown',
       ),
@@ -657,33 +679,35 @@ export class SessionReplayRenderer {
     });
   }
 
-  private renderCronJob(context: ReplayRenderContext, message: ContextMessage): void {
-    if (message.origin?.kind !== 'cron_job') return;
+  private renderCronJob(context: ReplayRenderContext, entry: UserEntry): void {
+    const origin = entry.meta?.origin;
+    if (origin?.kind !== 'cron_job') return;
     this.flushAssistant(context);
     this.host.appendTranscriptEntry({
       ...replayEntry(
         context,
         'cron',
-        cronPromptText(message.content),
+        cronPromptText(entry.message.content),
         'plain',
       ),
       cronData: {
-        jobId: message.origin.jobId,
-        cron: message.origin.cron,
-        recurring: message.origin.recurring,
-        coalescedCount: message.origin.coalescedCount,
-        stale: message.origin.stale,
+        jobId: origin.jobId,
+        cron: origin.cron,
+        recurring: origin.recurring,
+        coalescedCount: origin.coalescedCount,
+        stale: origin.stale,
       },
     });
   }
 
-  private renderCronMissed(context: ReplayRenderContext, message: ContextMessage): void {
-    if (message.origin?.kind !== 'cron_missed') return;
+  private renderCronMissed(context: ReplayRenderContext, entry: UserEntry): void {
+    const origin = entry.meta?.origin;
+    if (origin?.kind !== 'cron_missed') return;
     this.flushAssistant(context);
     this.host.appendTranscriptEntry({
-      ...replayEntry(context, 'cron', cronPromptText(message.content), 'plain'),
+      ...replayEntry(context, 'cron', cronPromptText(entry.message.content), 'plain'),
       cronData: {
-        missedCount: message.origin.count,
+        missedCount: origin.count,
       },
     });
   }

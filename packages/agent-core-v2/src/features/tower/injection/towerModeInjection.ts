@@ -1,7 +1,7 @@
 import { Service } from '#/_base/di/service';
 import type { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { HistoryMessage } from '#human/agent/turn';
 import { IFlagService } from '#/app/flag/flag';
 import { IAgentTowerService, TOWER_FLAG_ID } from '#/features/tower/tower';
 import TOWER_MODE_EXIT_REMINDER from './tower-mode-exit-reminder.md?raw';
@@ -49,18 +49,18 @@ type TowerModeReminderVariant = 'full' | 'sparse';
 
 function towerModeReminderVariant(
   injectedAt: number | null,
-  history: readonly ContextMessage[],
+  history: readonly HistoryMessage[],
 ): TowerModeReminderVariant | null {
   if (injectedAt === null) return 'full';
   let assistantTurnsSince = 0;
   for (let i = injectedAt + 1; i < history.length; i++) {
     const message = history[i];
     if (message === undefined) continue;
-    if (message.role === 'assistant') {
+    if (message.message.role === 'assistant') {
       assistantTurnsSince += 1;
       continue;
     }
-    if (message.role === 'user' && assistantTurnsSince >= 1) return 'full';
+    if (message.message.role === 'user' && assistantTurnsSince >= 1) return 'full';
   }
   if (assistantTurnsSince >= TOWER_MODE_FULL_REFRESH_TURNS) return 'full';
   if (assistantTurnsSince >= TOWER_MODE_DEDUP_MIN_TURNS) return 'sparse';

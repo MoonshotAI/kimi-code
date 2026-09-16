@@ -651,8 +651,8 @@ const _setPermissionPayload: AssertWire<typeof setPermissionPayloadSchema, SetPe
   true;
 const _tokenUsage: AssertWire<typeof tokenUsageSchema, TokenUsage> = true;
 const _usageStatus: AssertWire<typeof usageStatusSchema, UsageStatus> = true;
-// One-directional: `history` entries are full `ContextMessage`s (deep
-// `Message`/`Tool`/`PromptOrigin` unions) mirrored as `unknown`.
+// One-directional: `history` entries are full `HistoryMessage`s (deep
+// `{ message, meta }` unions) mirrored as `unknown`.
 const _agentContextData: AssertEngineToWire<typeof agentContextDataSchema, AgentContextData> = true;
 const _runtimeBinding: AssertWire<typeof runtimeBindingSchema, RuntimeBinding> = true;
 const _planData: AssertWire<typeof planDataSchema, PlanData> = true;

@@ -1,7 +1,7 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { Message } from '#human/llm/message';
 
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { HistoryMessage } from '#human/agent/turn';
 
 declare const mediaStripSnapshotBrand: unique symbol;
 
@@ -18,10 +18,10 @@ export interface IAgentContextProjectorService {
   readonly _serviceBrand: undefined;
 
   project(
-    messages: readonly ContextMessage[],
+    messages: readonly HistoryMessage[],
     policy?: ProjectionPolicy,
   ): readonly Message[];
-  captureMediaStripSnapshot(messages: readonly ContextMessage[]): MediaStripSnapshot;
+  captureMediaStripSnapshot(messages: readonly HistoryMessage[]): MediaStripSnapshot;
 }
 
 export const IAgentContextProjectorService = createDecorator<IAgentContextProjectorService>(

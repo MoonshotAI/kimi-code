@@ -5,6 +5,7 @@ import type {
   ContextInjectionResult,
 } from '#/features/reminder/types';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { isUserEntry } from '#human/agent/turn';
 
 import SWARM_MODE_ENTER_REMINDER from '../enter-reminder.md?raw';
 import SWARM_MODE_EXIT_REMINDER from '../exit-reminder.md?raw';
@@ -65,7 +66,8 @@ export class SwarmInjection extends Disposable {
     if (ctx.lastDisclosure !== undefined) return ctx.lastDisclosure.state;
     const history = this.context.get();
     for (let i = history.length - 1; i >= 0; i--) {
-      const origin = history[i]!.origin;
+      const entry = history[i]!;
+      const origin = isUserEntry(entry) ? entry.meta?.origin : undefined;
       if (origin?.kind !== 'injection') continue;
       if (origin.variant === LEGACY_SWARM_MODE_EXIT_VARIANT) return 'inactive';
       if (origin.variant === SWARM_MODE_INJECTION_VARIANT) return 'active';

@@ -7,6 +7,7 @@ import { escapeXmlAttr } from '#/_base/utils/xml-escape';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import type { ContextInjectionContext } from '#/features/reminder/types';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { isUserEntry, type HistoryMessage } from '#human/agent/turn';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { systemReminderContent } from '#/features/reminder/systemReminder';
@@ -232,14 +233,14 @@ function renderPluginSessionStartReminder(
 }
 
 function shouldNeutralizePluginSessionStart(
-  history: readonly { readonly origin?: { readonly kind: string; readonly variant?: string } }[],
+  history: readonly HistoryMessage[],
 ): boolean {
   return history.some((message) => {
-    const kind = message.origin?.kind;
-    if (kind === 'injection') {
-      return message.origin?.variant === SESSION_START_INJECTION_VARIANT;
+    const origin = isUserEntry(message) ? message.meta?.origin : undefined;
+    if (origin?.kind === 'injection') {
+      return origin.variant === SESSION_START_INJECTION_VARIANT;
     }
-    return kind === 'compaction_summary';
+    return origin?.kind === 'compaction_summary';
   });
 }
 

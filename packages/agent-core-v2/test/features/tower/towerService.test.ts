@@ -14,7 +14,7 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { createReminderStub } from '../reminder/stubs';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import { isUserEntry, type HistoryMessage } from '#human/agent/turn';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { runWillBeginStepHooks, stubLoopWithHooks, type StubLoop } from '../../agent/loop/stubs';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -2483,18 +2483,18 @@ describe('AgentTowerService', () => {
       });
     }
 
-    function drainWakeMessages(): ContextMessage[] {
-      const appended: ContextMessage[] = [];
+    function drainWakeMessages(): HistoryMessage[] {
+      const appended: HistoryMessage[] = [];
       loop.drainNextBatch({
-        append: (...messages: ContextMessage[]) => {
+        append: (...messages: HistoryMessage[]) => {
           appended.push(...messages);
         },
       });
       return appended;
     }
 
-    function wakeText(message: ContextMessage): string {
-      return message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+    function wakeText(entry: HistoryMessage): string {
+      return entry.message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
     }
 
     it('wakes the main agent once when a worker messages the tower', async () => {
@@ -2507,8 +2507,10 @@ describe('AgentTowerService', () => {
 
       expect(messages).toHaveLength(1);
       const message = messages[0]!;
-      expect(message.role).toBe('user');
-      expect(message.origin).toEqual({ kind: 'injection', variant: TOWER_INBOX_WAKE_VARIANT });
+      expect(message).toMatchObject({
+        message: { role: 'user' },
+        meta: { origin: { kind: 'injection', variant: TOWER_INBOX_WAKE_VARIANT } },
+      });
       const text = wakeText(message);
       expect(text).toContain('1 new tower inbox message');
       expect(text).toContain('w1');
@@ -2789,16 +2791,17 @@ function appendAssistantTurn(
   ctx.appendAssistantTurn(context.get().length, text);
 }
 
-function towerReminderMessages(context: IAgentContextMemoryService): readonly ContextMessage[] {
-  return context.get().filter((message) => {
-    return message.origin?.kind === 'injection' && message.origin.variant === 'tower_mode';
+function towerReminderMessages(context: IAgentContextMemoryService): readonly HistoryMessage[] {
+  return context.get().filter((entry) => {
+    const origin = isUserEntry(entry) ? entry.meta?.origin : undefined;
+    return origin?.kind === 'injection' && origin.variant === 'tower_mode';
   });
 }
 
 function lastTowerReminder(context: IAgentContextMemoryService): string {
-  const message = towerReminderMessages(context).at(-1);
-  if (message === undefined) return '';
-  return message.content
+  const entry = towerReminderMessages(context).at(-1);
+  if (entry === undefined) return '';
+  return entry.message.content
     .map((part) => (part.type === 'text' ? part.text : ''))
     .join('');
 }

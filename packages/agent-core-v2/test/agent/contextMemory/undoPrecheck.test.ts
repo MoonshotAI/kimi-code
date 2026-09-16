@@ -8,42 +8,40 @@ import {
   isFullyUndoable,
 } from '#/agent/contextMemory/contextOps';
 import { ContextUndo } from '#/agent/contextMemory/contextEvents';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { HistoryMessage } from '#human/agent/turn';
+import type { PromptOrigin } from '#human/agent/origin';
 import { expandedStateFolds, type FoldContext } from '#/state/state';
 
 function text(value: string): { type: 'text'; text: string } {
   return { type: 'text', text: value };
 }
 
-function user(origin?: ContextMessage['origin']): ContextMessage {
+function user(origin?: PromptOrigin): HistoryMessage {
   return {
-    role: 'user',
-    content: [text('u')],
-    ...(origin === undefined ? {} : { origin }),
+    message: { role: 'user', content: [text('u')] },
+    meta: { origin },
   };
 }
 
-function assistant(): ContextMessage {
-  return { role: 'assistant', content: [text('a')], toolCalls: [] };
+function assistant(): HistoryMessage {
+  return { message: { role: 'assistant', content: [text('a')], toolCalls: [] } };
 }
 
-function injection(): ContextMessage {
+function injection(): HistoryMessage {
   return {
-    role: 'user',
-    content: [text('i')],
-    origin: { kind: 'injection', variant: 'system_reminder' },
+    message: { role: 'user', content: [text('i')] },
+    meta: { origin: { kind: 'injection', variant: 'system_reminder' } },
   };
 }
 
-function compaction(): ContextMessage {
+function compaction(): HistoryMessage {
   return {
-    role: 'user',
-    content: [text('sum')],
-    origin: { kind: 'compaction_summary' },
+    message: { role: 'user', content: [text('sum')] },
+    meta: { origin: { kind: 'compaction_summary' } },
   };
 }
 
-const USER_ORIGIN: ContextMessage['origin'] = { kind: 'user' };
+const USER_ORIGIN: PromptOrigin = { kind: 'user' };
 
 describe('computeUndoCut', () => {
   it('finds the cut for the last real user prompt', () => {
@@ -107,7 +105,7 @@ describe('contextUndo op', () => {
     emit: () => {},
   };
 
-  function applyContextUndo(state: ContextMessage[], count: number): ContextMessage[] {
+  function applyContextUndo(state: HistoryMessage[], count: number): HistoryMessage[] {
     const fold = expandedStateFolds(contextMemoryKey).get(ContextUndo)!;
     const result = fold(castDraft(state), new ContextUndo({ agentId: 'main', count }), foldContext);
     return result === undefined ? state : result;

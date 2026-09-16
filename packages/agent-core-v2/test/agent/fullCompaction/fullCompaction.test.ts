@@ -25,6 +25,7 @@ import { makeHookRunner } from '../../features/externalHooks/runner-stub';
 import type { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
 import { MASTER_ENV } from '#/app/flag/flagService';
 import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
+import { isUserEntry, type HistoryMessage } from '#human/agent/turn';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import type { TestAgentContext, TestAgentOptions, TestAgentServiceOverride } from '../../harness';
 import { agentService, appService, appServices, createCommandRunner, execEnvServices, hostEnvironmentServices, requesterFromGenerateFn, sessionServices, testAgent as createTestAgent, type LegacyGenerateResult } from '../../harness';
@@ -292,13 +293,13 @@ describe('FullCompaction', () => {
       },
       { role: 'user', text: buildCompactionContinuationText() },
     ]);
-    expect(ctx.context.get().at(-2)?.content[0]).toMatchObject({
+    expect(ctx.context.get().at(-2)?.message.content[0]).toMatchObject({
       type: 'text',
       text: expect.stringContaining('The conversation so far has been compacted'),
     });
     expect(ctx.context.get().at(-1)).toMatchObject({
-      role: 'user',
-      origin: { kind: 'injection', variant: 'compaction_continuation' },
+      message: { role: 'user' },
+      meta: { origin: { kind: 'injection', variant: 'compaction_continuation' } },
     });
     expect(records).toContainEqual({
       event: 'compaction_finished',
@@ -1033,8 +1034,10 @@ describe('FullCompaction', () => {
     });
     ctx.appendExchange(1, 'small user one', 'small assistant one', 20);
     ctx.context.append({
-      role: 'user',
-      content: [{ type: 'text', text: 'X'.repeat(400_000) }],
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'X'.repeat(400_000) }],
+      },
     });
     const failed = ctx.once('error');
 
@@ -1582,7 +1585,7 @@ describe('FullCompaction', () => {
         tool[call_open_two]: text "Tool result is not available in the current context. Do not assume the tool completed successfully."
         user: text <compaction-instruction>
     `);
-    expect(ctx.context.get().map((message) => message.role)).toEqual([
+    expect(ctx.context.get().map((entry) => entry.message.role)).toEqual([
       'user',
       'user',
       'user',
@@ -1597,7 +1600,7 @@ describe('FullCompaction', () => {
         result: { output: 'two result' },
       },
     });
-    expect(ctx.context.get().map((message) => message.role)).toEqual([
+    expect(ctx.context.get().map((entry) => entry.message.role)).toEqual([
       'user',
       'user',
       'user',
@@ -1742,7 +1745,7 @@ describe('FullCompaction', () => {
         i * 1_850,
       );
     }
-    const initialTokens = estimateTokensForMessages(ctx.context.get());
+    const initialTokens = estimateTokensForMessages(ctx.context.get().map((entry) => entry.message));
     const completed = ctx.once('compaction.completed');
     ctx.mockNextResponse({ type: 'text', text: 'Auto summary.' });
 
@@ -1980,7 +1983,7 @@ describe('FullCompaction', () => {
       variant: 'host',
     });
 
-    expect(ctx.context.get().map((m) => m.role)).toEqual([
+    expect(ctx.context.get().map((entry) => entry.message.role)).toEqual([
       'user',
       'assistant',
       'user',
@@ -2002,14 +2005,14 @@ describe('FullCompaction', () => {
     await ctx.rpc.beginCompaction({});
     await compacted;
 
-    expect(ctx.context.get().map((m) => m.role)).toEqual([
+    expect(ctx.context.get().map((entry) => entry.message.role)).toEqual([
       'user',
       'user',
       'user',
       'user',
     ]);
-    expect(ctx.context.get().at(-2)?.origin).toEqual({ kind: 'compaction_summary' });
-    expect(ctx.context.get().at(-1)?.origin).toEqual({ kind: 'injection', variant: 'compaction_continuation' });
+    expect(ctx.context.get().at(-2)).toMatchObject({ meta: { origin: { kind: 'compaction_summary' } } });
+    expect(ctx.context.get().at(-1)).toMatchObject({ meta: { origin: { kind: 'injection', variant: 'compaction_continuation' } } });
 
     await ctx.dispatch({
       type: 'context.append_loop_event',
@@ -2029,7 +2032,7 @@ describe('FullCompaction', () => {
         result: { output: 'two result' },
       },
     });
-    expect(ctx.context.get().map((m) => m.role)).toEqual([
+    expect(ctx.context.get().map((entry) => entry.message.role)).toEqual([
       'user',
       'user',
       'user',
@@ -2050,7 +2053,7 @@ describe('FullCompaction', () => {
       variant: 'host',
     });
 
-    expect(ctx.context.get().map((m) => m.role)).toEqual([
+    expect(ctx.context.get().map((entry) => entry.message.role)).toEqual([
       'user',
       'assistant',
       'user',
@@ -2073,14 +2076,14 @@ describe('FullCompaction', () => {
     await ctx.rpc.beginCompaction({});
     await compacted;
 
-    expect(ctx.context.get().map((m) => m.role)).toEqual([
+    expect(ctx.context.get().map((entry) => entry.message.role)).toEqual([
       'user',
       'user',
       'user',
       'user',
     ]);
-    expect(ctx.context.get().at(-2)?.origin).toEqual({ kind: 'compaction_summary' });
-    expect(ctx.context.get().at(-1)?.origin).toEqual({ kind: 'injection', variant: 'compaction_continuation' });
+    expect(ctx.context.get().at(-2)).toMatchObject({ meta: { origin: { kind: 'compaction_summary' } } });
+    expect(ctx.context.get().at(-1)).toMatchObject({ meta: { origin: { kind: 'injection', variant: 'compaction_continuation' } } });
 
     await ctx.dispatch({
       type: 'context.append_loop_event',
@@ -2091,7 +2094,7 @@ describe('FullCompaction', () => {
         result: { output: 'two result' },
       },
     });
-    expect(ctx.context.get().map((m) => m.role)).toEqual([
+    expect(ctx.context.get().map((entry) => entry.message.role)).toEqual([
       'user',
       'user',
       'user',
@@ -2237,16 +2240,18 @@ describe('FullCompaction', () => {
       .register(mcpTool(LARGE_MCP_TOOL, parameters), { source: 'mcp', disclosure: 'deferred' });
     try {
       ctx.context.append({
-        role: 'system',
-        content: [],
-        tools: [
-          {
-            name: LARGE_MCP_TOOL,
-            description: `${LARGE_MCP_TOOL} desc`,
-            parameters,
-          },
-        ],
-        origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
+        message: {
+          role: 'system',
+          content: [],
+          tools: [
+            {
+              name: LARGE_MCP_TOOL,
+              description: `${LARGE_MCP_TOOL} desc`,
+              parameters,
+            },
+          ],
+        },
+        meta: { origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT } },
       });
       ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
 
@@ -3432,13 +3437,13 @@ describe('FullCompaction', () => {
       role: 'user',
       text: buildCompactionContinuationText(),
     });
-    expect(ctx.context.get().at(-2)?.content[0]).toMatchObject({
+    expect(ctx.context.get().at(-2)?.message.content[0]).toMatchObject({
       type: 'text',
       text: expect.stringContaining('The conversation so far has been compacted'),
     });
     expect(ctx.context.get().at(-1)).toMatchObject({
-      role: 'user',
-      origin: { kind: 'injection', variant: 'compaction_continuation' },
+      message: { role: 'user' },
+      meta: { origin: { kind: 'injection', variant: 'compaction_continuation' } },
     });
     await ctx.expectResumeMatches();
   });
@@ -3488,7 +3493,7 @@ describe('FullCompaction context recovery pointer', () => {
   }
 
   function noteText(ctx: TestAgentContext): string {
-    const part = ctx.context.get().at(-2)?.content[0];
+    const part = ctx.context.get().at(-2)?.message.content[0];
     return part?.type === 'text' ? part.text : '';
   }
 
@@ -4054,9 +4059,10 @@ describe('goal reminder re-injection after full compaction', () => {
 
     const reminderMessages = ctx.context
       .get()
-      .filter(
-        (message) => message.origin?.kind === 'injection' && message.origin.variant === 'goal',
-      );
+      .filter((entry) => {
+        const origin = isUserEntry(entry) ? entry.meta?.origin : undefined;
+        return origin?.kind === 'injection' && origin.variant === 'goal';
+      });
     expect(reminderMessages).toHaveLength(0);
 
     const tokensAfter = records.find((record) => record.event === 'compaction_finished')

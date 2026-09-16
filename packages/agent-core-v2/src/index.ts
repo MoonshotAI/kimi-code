@@ -161,6 +161,23 @@ export type { ToolCallIdPolicy } from '#human/llm/requester/requester';
 export type { SamplingOptions } from '#/llm-adapter/model/model-requester';
 export * from '#/llm-adapter/contract/request-trace';
 export type { KimiThinkingConfig } from '#human/llm-kimi/trait';
+export {
+  isAssistantEntry,
+  isSystemEntry,
+  isToolEntry,
+  isUserEntry,
+  type AssistantEntry,
+  type AssistantMeta,
+  type EntryMeta,
+  type HistoryEntry,
+  type HistoryMessage,
+  type SystemEntry,
+  type SystemMeta,
+  type ToolEntry,
+  type ToolMeta,
+  type UserEntry,
+  type UserMeta,
+} from '#human/agent/turn';
 
 export * from '#/app/sessionIndex/sessionIndex';
 export * from '#/app/sessionIndex/sessionIndexService';

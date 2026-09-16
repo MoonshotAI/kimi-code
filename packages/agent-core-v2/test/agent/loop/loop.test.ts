@@ -10,7 +10,8 @@ import { IAgentProfileService } from '#/index';
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import type { ModelRequestTiming } from '#/llm-adapter/model/model-requester';
 import { APIProviderRateLimitError } from '#/llm-adapter/contract/errors';
-import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
+import { isAssistantEntry, isUserEntry, type HistoryMessage } from '#human/agent/turn';
+import type { PromptOrigin } from '#/agent/contextMemory/types';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import { IAgentGoalService } from '#/features/goal/goalService';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
@@ -93,9 +94,9 @@ describe('Agent loop', () => {
       [emit] prompt.submitted            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Hello" } ], "createdAt": "<time>" }
       [wire] turn.started                { "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "input": [ { "type": "text", "text": "Hello" } ], "time": "<time>" }
       [emit] turn.started                { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "input": [ { "type": "text", "text": "Hello" } ] }
-      [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "id": "<msg-1>", "origin": { "kind": "user" } } ] }
+      [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "message": { "role": "user", "content": [ { "type": "text", "text": "Hello" } ] }, "meta": { "promptId": "<msg-1>", "origin": { "kind": "user" } } } ] }
       [emit] prompt.started              { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
-      [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "id": "<msg-1>", "origin": { "kind": "user" } }, "time": "<time>" }
+      [wire] context.append_message      { "agentId": "main", "message": { "message": { "role": "user", "content": [ { "type": "text", "text": "Hello" } ] }, "meta": { "promptId": "<msg-1>", "origin": { "kind": "user" } } }, "time": "<time>" }
       [wire] agent.message.appended      { "message": { "message": { "role": "user", "content": [ { "type": "text", "text": "Hello" } ] }, "meta": { "source": "input", "promptId": "<msg-1>", "origin": { "kind": "user" }, "tracked": true, "createdAt": "<time>", "userMessageId": "<msg-1>" } }, "time": "<time>", "kind": "event" }
       [wire] agent.turn.started          { "turnId": 0, "queueItemId": "<msg-1>", "time": "<time>", "kind": "event" }
       [wire] plugin.session_start        { "agentId": "main", "content": null, "time": "<time>" }
@@ -187,9 +188,9 @@ describe('Agent loop', () => {
       [emit] prompt.submitted            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Hello" } ], "createdAt": "<time>" }
       [wire] turn.started                { "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "input": [ { "type": "text", "text": "Hello" } ], "time": "<time>" }
       [emit] turn.started                { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "input": [ { "type": "text", "text": "Hello" } ] }
-      [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "id": "<msg-1>", "origin": { "kind": "user" } } ] }
+      [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "message": { "role": "user", "content": [ { "type": "text", "text": "Hello" } ] }, "meta": { "promptId": "<msg-1>", "origin": { "kind": "user" } } } ] }
       [emit] prompt.started              { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
-      [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "id": "<msg-1>", "origin": { "kind": "user" } }, "time": "<time>" }
+      [wire] context.append_message      { "agentId": "main", "message": { "message": { "role": "user", "content": [ { "type": "text", "text": "Hello" } ] }, "meta": { "promptId": "<msg-1>", "origin": { "kind": "user" } } }, "time": "<time>" }
       [wire] agent.message.appended      { "message": { "message": { "role": "user", "content": [ { "type": "text", "text": "Hello" } ] }, "meta": { "source": "input", "promptId": "<msg-1>", "origin": { "kind": "user" }, "tracked": true, "createdAt": "<time>", "userMessageId": "<msg-1>" } }, "time": "<time>", "kind": "event" }
       [wire] agent.turn.started          { "turnId": 0, "queueItemId": "<msg-1>", "time": "<time>", "kind": "event" }
       [wire] plugin.session_start        { "agentId": "main", "content": null, "time": "<time>" }
@@ -492,9 +493,9 @@ describe('Agent loop', () => {
       [emit] prompt.submitted                { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Look up moon" } ], "createdAt": "<time>" }
       [wire] turn.started                    { "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "input": [ { "type": "text", "text": "Look up moon" } ], "time": "<time>" }
       [emit] turn.started                    { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "input": [ { "type": "text", "text": "Look up moon" } ] }
-      [emit] context.spliced                 { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "id": "<msg-1>", "origin": { "kind": "user" } } ] }
+      [emit] context.spliced                 { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "message": { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ] }, "meta": { "promptId": "<msg-1>", "origin": { "kind": "user" } } } ] }
       [emit] prompt.started                  { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
-      [wire] context.append_message          { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "id": "<msg-1>", "origin": { "kind": "user" } }, "time": "<time>" }
+      [wire] context.append_message          { "agentId": "main", "message": { "message": { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ] }, "meta": { "promptId": "<msg-1>", "origin": { "kind": "user" } } }, "time": "<time>" }
       [wire] agent.message.appended          { "message": { "message": { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ] }, "meta": { "source": "input", "promptId": "<msg-1>", "origin": { "kind": "user" }, "tracked": true, "createdAt": "<time>", "userMessageId": "<msg-1>" } }, "time": "<time>", "kind": "event" }
       [wire] agent.turn.started              { "turnId": 0, "queueItemId": "<msg-1>", "time": "<time>", "kind": "event" }
       [wire] plugin.session_start            { "agentId": "main", "content": null, "time": "<time>" }
@@ -662,8 +663,8 @@ describe('Agent loop', () => {
     await ctx.untilApproval(true);
     await ctx.untilTurnEnd();
 
-    const assistant = ctx.contextData().history.find((m) => m.role === 'assistant');
-    expect(assistant?.toolCalls[0]?.extras).toEqual({ thought_signature_b64: 'c2lnbmF0dXJl' });
+    const assistant = ctx.contextData().history.find(isAssistantEntry);
+    expect(assistant?.message.toolCalls[0]?.extras).toEqual({ thought_signature_b64: 'c2lnbmF0dXJl' });
   });
 
   it('lets non-external stop hooks continue a turn more than once', async () => {
@@ -674,9 +675,11 @@ describe('Agent loop', () => {
         continuations += 1;
         loop.notify({
           message: {
-            role: 'user',
-            content: [{ type: 'text', text: `continue ${continuations}` }],
-            origin: { kind: 'system_trigger', name: 'stop_hook' },
+            message: {
+              role: 'user',
+              content: [{ type: 'text', text: `continue ${continuations}` }],
+            },
+            meta: { origin: { kind: 'system_trigger', name: 'stop_hook' } },
           },
         });
         return;
@@ -704,16 +707,20 @@ describe('Agent loop', () => {
     expect(retryingSteps).toEqual([2]);
     expect(ctx.contextData().history).toContainEqual(
       expect.objectContaining({
-        role: 'user',
-        content: [{ type: 'text', text: 'continue 1' }],
-        origin: { kind: 'system_trigger', name: 'stop_hook' },
+        message: expect.objectContaining({
+          role: 'user',
+          content: [{ type: 'text', text: 'continue 1' }],
+        }),
+        meta: expect.objectContaining({ origin: { kind: 'system_trigger', name: 'stop_hook' } }),
       }),
     );
     expect(ctx.contextData().history).toContainEqual(
       expect.objectContaining({
-        role: 'user',
-        content: [{ type: 'text', text: 'continue 2' }],
-        origin: { kind: 'system_trigger', name: 'stop_hook' },
+        message: expect.objectContaining({
+          role: 'user',
+          content: [{ type: 'text', text: 'continue 2' }],
+        }),
+        meta: expect.objectContaining({ origin: { kind: 'system_trigger', name: 'stop_hook' } }),
       }),
     );
   });
@@ -941,7 +948,7 @@ describe('Agent loop', () => {
       const real = submitTurn(parkedLoop, 'real').turn;
       let nudgeConsumed = 0;
       parkedLoop.notify({
-        message: { role: 'user', content: [{ type: 'text', text: 'nudge text' }] },
+        message: { message: { role: 'user', content: [{ type: 'text', text: 'nudge text' }] } },
         onConsume: () => {
           nudgeConsumed += 1;
         },
@@ -954,7 +961,9 @@ describe('Agent loop', () => {
         expect(parked.llmCalls).toHaveLength(1);
         expect(parked.contextData().history).toContainEqual(
           expect.objectContaining({
-            content: [{ type: 'text', text: 'nudge text' }],
+            message: expect.objectContaining({
+              content: [{ type: 'text', text: 'nudge text' }],
+            }),
           }),
         );
       } finally {
@@ -1534,14 +1543,14 @@ describe('interruption reminder', () => {
     });
   }
 
-  function remindersIn(target: TestAgentContext): ContextMessage[] {
-    return target.contextData().history.filter(
-      (message) =>
-        message.origin?.kind === 'injection' && message.origin.variant === 'interruption',
-    );
+  function remindersIn(target: TestAgentContext): HistoryMessage[] {
+    return target.contextData().history.filter((entry) => {
+      const origin = isUserEntry(entry) ? entry.meta?.origin : undefined;
+      return origin?.kind === 'injection' && origin.variant === 'interruption';
+    });
   }
 
-  function interruptionReminders(): ContextMessage[] {
+  function interruptionReminders(): HistoryMessage[] {
     return remindersIn(ctx);
   }
 
@@ -1562,12 +1571,14 @@ describe('interruption reminder', () => {
     subscription.dispose();
 
     expect(ctx.contextData().history.slice(0, 2)).toEqual([
-      expect.objectContaining({ role: 'user', content: [{ type: 'text', text: 'Hello' }] }),
+      expect.objectContaining({ message: expect.objectContaining({ role: 'user', content: [{ type: 'text', text: 'Hello' }] }) }),
       {
-        role: 'assistant',
-        content: [{ type: 'text', text: 'partial answer' }],
-        toolCalls: [],
-        partial: true,
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'partial answer' }],
+          toolCalls: [],
+        },
+        meta: { partial: true },
       },
     ]);
     expect(interruptionReminders()).toHaveLength(1);
@@ -1594,7 +1605,7 @@ describe('interruption reminder', () => {
     await ctx.untilTurnEnd();
 
     expect(interruptionReminders()).toHaveLength(1);
-    expect(interruptionReminders()[0]!.content).toEqual([
+    expect(interruptionReminders()[0]!.message.content).toEqual([
       {
         type: 'text',
         text: '<system-reminder>\nThe previous turn was interrupted by the user before completion; any partial output shown above is incomplete. The user\'s next message continues the conversation.\n</system-reminder>',
@@ -1638,10 +1649,12 @@ describe('interruption reminder', () => {
     subscription.dispose();
 
     expect(ctx.contextData().history).toContainEqual({
-      role: 'assistant',
-      content: [{ type: 'text', text: 'partial answer' }],
-      toolCalls: [],
-      partial: true,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'partial answer' }],
+        toolCalls: [],
+      },
+      meta: { partial: true },
     });
     expect(interruptionReminders()).toHaveLength(0);
 
@@ -1745,9 +1758,9 @@ describe('interruption reminder', () => {
     await ctx.undoHistory(1);
 
     expect(
-      ctx.contextData().history.map((message) => ({
-        role: message.role,
-        origin: message.origin,
+      ctx.contextData().history.map((entry) => ({
+        role: entry.message.role,
+        origin: isUserEntry(entry) ? entry.meta?.origin : undefined,
       })),
     ).toEqual([
       {
@@ -1773,7 +1786,7 @@ describe('interruption reminder', () => {
 
     const thinkParts = ctx
       .contextData()
-      .history.flatMap((message) => message.content)
+      .history.flatMap((entry) => entry.message.content)
       .filter((part) => part.type === 'think');
     expect(thinkParts).toEqual([]);
     expect(interruptionReminders()).toHaveLength(1);
@@ -1790,13 +1803,15 @@ describe('interruption reminder', () => {
     second.dispose();
 
     expect(ctx.contextData().history).toContainEqual({
-      role: 'assistant',
-      content: [
-        { type: 'think', think: 'seg', encrypted: 'sig' },
-        { type: 'text', text: 'partial answer' },
-      ],
-      toolCalls: [],
-      partial: true,
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'think', think: 'seg', encrypted: 'sig' },
+          { type: 'text', text: 'partial answer' },
+        ],
+        toolCalls: [],
+      },
+      meta: { partial: true },
     });
   });
 
@@ -1809,8 +1824,8 @@ describe('interruption reminder', () => {
 
     expect(contentPartRecordsIn(ctx)).toBe(0);
     expect(ctx.contextData().history.slice(0, 2)).toEqual([
-      expect.objectContaining({ role: 'user' }),
-      { role: 'assistant', content: [], toolCalls: [], partial: true },
+      expect.objectContaining({ message: expect.objectContaining({ role: 'user' }) }),
+      { message: { role: 'assistant', content: [], toolCalls: [] }, meta: { partial: true } },
     ]);
     expect(interruptionReminders()).toHaveLength(1);
   });
@@ -1917,10 +1932,12 @@ describe('interruption reminder', () => {
       const history = local.contextData().history;
       expect(remindersIn(local)).toHaveLength(1);
       const reminderIndex = history.indexOf(remindersIn(local)[0]!);
-      expect(history.slice(0, reminderIndex).some((message) => message.role === 'tool')).toBe(true);
+      expect(history.slice(0, reminderIndex).some((entry) => entry.message.role === 'tool')).toBe(true);
       expect(history[reminderIndex + 1]).toMatchObject({
-        role: 'user',
-        content: [{ type: 'text', text: 'again' }],
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'again' }],
+        },
       });
 
       await local.expectResumeMatches();

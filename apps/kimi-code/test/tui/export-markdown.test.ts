@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ContentPart, ToolCall } from '@moonshot-ai/kimi-code-sdk';
-import type { ContextMessage, PromptOrigin } from '@moonshot-ai/kimi-code-sdk';
+import type { HistoryMessage, PromptOrigin } from '@moonshot-ai/kimi-code-sdk';
 
 import {
   buildExportMarkdown,
@@ -15,11 +15,10 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function userMsg(text: string, origin?: PromptOrigin, contentType?: string): ContextMessage {
+function userMsg(text: string, origin?: PromptOrigin, contentType?: string): HistoryMessage {
   return {
-    role: 'user',
-    content: [{ type: 'text', text, contentType }],
-    origin,
+    message: { role: 'user', content: [{ type: 'text', text, contentType }] },
+    meta: { origin },
   };
 }
 
@@ -27,24 +26,28 @@ function assistantMsg(
   text: string,
   toolCalls: ToolCall[] = [],
   thinkText?: string,
-): ContextMessage {
+): HistoryMessage {
   const content: ContentPart[] = [];
   if (thinkText !== undefined) {
     content.push({ type: 'think', think: thinkText });
   }
   content.push({ type: 'text', text });
   return {
-    role: 'assistant',
-    content,
-    toolCalls,
+    message: {
+      role: 'assistant',
+      content,
+      toolCalls,
+    },
   };
 }
 
-function toolMsg(callId: string, text: string): ContextMessage {
+function toolMsg(callId: string, text: string): HistoryMessage {
   return {
-    role: 'tool',
-    content: [{ type: 'text', text }],
-    toolCallId: callId,
+    message: {
+      role: 'tool',
+      content: [{ type: 'text', text }],
+      toolCallId: callId,
+    },
   };
 }
 
@@ -242,7 +245,7 @@ describe('isInternalMessage', () => {
 
 describe('groupIntoTurns', () => {
   it('groups messages into turns starting at user messages', () => {
-    const msgs: ContextMessage[] = [
+    const msgs: HistoryMessage[] = [
       userMsg('q1', { kind: 'user' }),
       assistantMsg('a1'),
       userMsg('q2', { kind: 'user' }),
@@ -255,7 +258,7 @@ describe('groupIntoTurns', () => {
   });
 
   it('skips internal messages', () => {
-    const msgs: ContextMessage[] = [
+    const msgs: HistoryMessage[] = [
       userMsg('q1', { kind: 'user' }),
       userMsg('injected', { kind: 'injection', variant: 'test' }),
       assistantMsg('a1'),
@@ -271,7 +274,7 @@ describe('groupIntoTurns', () => {
 
   it('handles tool messages within a turn', () => {
     const tc = makeToolCall('c1', 'Bash', { command: 'ls' });
-    const msgs: ContextMessage[] = [
+    const msgs: HistoryMessage[] = [
       userMsg('do it', { kind: 'user' }),
       assistantMsg('ok', [tc]),
       toolMsg('c1', 'file1.txt'),
@@ -291,7 +294,7 @@ describe('buildExportMarkdown', () => {
   const now = new Date('2026-05-27T10:00:00+08:00');
 
   it('builds complete markdown with frontmatter and overview', () => {
-    const msgs: ContextMessage[] = [
+    const msgs: HistoryMessage[] = [
       userMsg('Hello world', { kind: 'user' }),
       assistantMsg('Hi there'),
     ];
@@ -318,7 +321,7 @@ describe('buildExportMarkdown', () => {
   });
 
   it('includes thinking in collapsible details', () => {
-    const msgs: ContextMessage[] = [
+    const msgs: HistoryMessage[] = [
       userMsg('question', { kind: 'user' }),
       assistantMsg('answer', [], 'deep thought'),
     ];
@@ -337,17 +340,19 @@ describe('buildExportMarkdown', () => {
     // An uploaded image persists as a self-contained `kimi-file://` part —
     // the export keeps the real text and `[image]`, never the materialization
     // path or the internal url.
-    const msgs: ContextMessage[] = [
+    const msgs: HistoryMessage[] = [
       {
-        role: 'user',
-        content: [
-          { type: 'text', text: 'what is this? ' },
-          {
-            type: 'image_url',
-            imageUrl: { url: 'kimi-file://f_1?path=%2FUsers%2Falice%2Fmedia%2Ff_1.png' },
-          },
-        ],
-        origin: { kind: 'user' },
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'what is this? ' },
+            {
+              type: 'image_url',
+              imageUrl: { url: 'kimi-file://f_1?path=%2FUsers%2Falice%2Fmedia%2Ff_1.png' },
+            },
+          ],
+        },
+        meta: { origin: { kind: 'user' } },
       },
       assistantMsg('a screenshot'),
     ];
@@ -366,7 +371,7 @@ describe('buildExportMarkdown', () => {
   });
 
   it('keeps an unpaired standalone <media path> tag as user text in the export', () => {
-    const msgs: ContextMessage[] = [
+    const msgs: HistoryMessage[] = [
       userMsg('<image path="/tmp/shot.png">', { kind: 'user' }),
       assistantMsg('ok'),
     ];
@@ -382,7 +387,7 @@ describe('buildExportMarkdown', () => {
 
   it('renders tool calls and results', () => {
     const tc = makeToolCall('c1', 'Read', { file_path: '/foo.ts' });
-    const msgs: ContextMessage[] = [
+    const msgs: HistoryMessage[] = [
       userMsg('read file', { kind: 'user' }),
       assistantMsg('let me read', [tc]),
       toolMsg('c1', 'file contents here'),
@@ -402,7 +407,7 @@ describe('buildExportMarkdown', () => {
   });
 
   it('filters out internal messages', () => {
-    const msgs: ContextMessage[] = [
+    const msgs: HistoryMessage[] = [
       userMsg('hello', { kind: 'user' }),
       userMsg('injected stuff', { kind: 'injection', variant: 'system-reminder' }),
       assistantMsg('response'),
@@ -420,7 +425,7 @@ describe('buildExportMarkdown', () => {
   });
 
   it('counts turns correctly in overview', () => {
-    const msgs: ContextMessage[] = [
+    const msgs: HistoryMessage[] = [
       userMsg('q1', { kind: 'user' }),
       assistantMsg('a1'),
       userMsg('q2', { kind: 'user' }),
@@ -444,7 +449,7 @@ describe('buildExportMarkdown', () => {
   it('counts tool calls in overview', () => {
     const tc1 = makeToolCall('c1', 'Bash', { command: 'ls' });
     const tc2 = makeToolCall('c2', 'Read', { file_path: '/a.ts' });
-    const msgs: ContextMessage[] = [
+    const msgs: HistoryMessage[] = [
       userMsg('do things', { kind: 'user' }),
       assistantMsg('ok', [tc1, tc2]),
       toolMsg('c1', 'out1'),

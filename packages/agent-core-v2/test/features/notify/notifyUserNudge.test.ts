@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { AssistantEntry, HistoryMessage } from '#human/agent/turn';
 import {
   NOTIFY_USER_NUDGE_THRESHOLD,
   lastMidResponsePosition,
@@ -11,106 +11,128 @@ import {
   toolCallsSincePosition,
 } from '#/features/notify/notifyUserNudge';
 
-function userPrompt(): ContextMessage {
+function userPrompt(): HistoryMessage {
   return {
-    role: 'user',
-    content: [{ type: 'text', text: 'do the thing' }],
-    origin: { kind: 'user' },
+    message: {
+      role: 'user',
+      content: [{ type: 'text', text: 'do the thing' }],
+    },
+    meta: { origin: { kind: 'user' } },
   };
 }
 
-function nudgeInjection(): ContextMessage {
+function nudgeInjection(): HistoryMessage {
   return {
-    role: 'user',
-    content: [{ type: 'text', text: 'nudge' }],
-    origin: { kind: 'injection', variant: 'notify_user_nudge' },
+    message: {
+      role: 'user',
+      content: [{ type: 'text', text: 'nudge' }],
+    },
+    meta: { origin: { kind: 'injection', variant: 'notify_user_nudge' } },
   };
 }
 
-function cronPrompt(): ContextMessage {
+function cronPrompt(): HistoryMessage {
   return {
-    role: 'user',
-    content: [{ type: 'text', text: 'cron fired' }],
-    origin: {
-      kind: 'cron_job',
-      jobId: 'j1',
-      cron: '* * * * *',
-      recurring: true,
-      coalescedCount: 0,
-      stale: false,
+    message: {
+      role: 'user',
+      content: [{ type: 'text', text: 'cron fired' }],
+    },
+    meta: {
+      origin: {
+        kind: 'cron_job',
+        jobId: 'j1',
+        cron: '* * * * *',
+        recurring: true,
+        coalescedCount: 0,
+        stale: false,
+      },
     },
   };
 }
 
-function slashSkillPrompt(): ContextMessage {
+function slashSkillPrompt(): HistoryMessage {
   return {
-    role: 'user',
-    content: [{ type: 'text', text: '/review' }],
-    origin: { kind: 'skill_activation', activationId: 'a1', skillName: 'review', trigger: 'user-slash' },
+    message: {
+      role: 'user',
+      content: [{ type: 'text', text: '/review' }],
+    },
+    meta: { origin: { kind: 'skill_activation', activationId: 'a1', skillName: 'review', trigger: 'user-slash' } },
   };
 }
 
-function modelSkillPrompt(): ContextMessage {
+function modelSkillPrompt(): HistoryMessage {
   return {
-    role: 'user',
-    content: [{ type: 'text', text: 'skill content' }],
-    origin: { kind: 'skill_activation', activationId: 'a2', skillName: 'pdf', trigger: 'model-tool' },
+    message: {
+      role: 'user',
+      content: [{ type: 'text', text: 'skill content' }],
+    },
+    meta: { origin: { kind: 'skill_activation', activationId: 'a2', skillName: 'pdf', trigger: 'model-tool' } },
   };
 }
 
-function taskPrompt(): ContextMessage {
+function taskPrompt(): HistoryMessage {
   return {
-    role: 'user',
-    content: [{ type: 'text', text: 'task finished' }],
-    origin: { kind: 'task', taskId: 't1', status: 'completed', notificationId: 'n1' },
+    message: {
+      role: 'user',
+      content: [{ type: 'text', text: 'task finished' }],
+    },
+    meta: { origin: { kind: 'task', taskId: 't1', status: 'completed', notificationId: 'n1' } },
   };
 }
 
-function retryPrompt(): ContextMessage {
+function retryPrompt(): HistoryMessage {
   return {
-    role: 'user',
-    content: [],
-    origin: { kind: 'retry' },
+    message: {
+      role: 'user',
+      content: [],
+    },
+    meta: { origin: { kind: 'retry' } },
   };
 }
 
-function subagentTriggerPrompt(): ContextMessage {
+function subagentTriggerPrompt(): HistoryMessage {
   return {
-    role: 'user',
-    content: [{ type: 'text', text: 'resume the subagent' }],
-    origin: { kind: 'system_trigger', name: 'subagent' },
+    message: {
+      role: 'user',
+      content: [{ type: 'text', text: 'resume the subagent' }],
+    },
+    meta: { origin: { kind: 'system_trigger', name: 'subagent' } },
   };
 }
 
-function stopHookContinuation(): ContextMessage {
+function stopHookContinuation(): HistoryMessage {
   return {
-    role: 'user',
-    content: [{ type: 'text', text: 'stop hook asks to continue' }],
-    origin: { kind: 'system_trigger', name: 'stop_hook' },
+    message: {
+      role: 'user',
+      content: [{ type: 'text', text: 'stop hook asks to continue' }],
+    },
+    meta: { origin: { kind: 'system_trigger', name: 'stop_hook' } },
   };
 }
 
-function assistantWithTools(...names: string[]): ContextMessage {
+function assistantWithTools(...names: string[]): AssistantEntry {
   return {
-    role: 'assistant',
-    content: [],
-    toolCalls: names.map((name, index) => ({
-      type: 'function' as const,
-      id: `call_${index}`,
-      name,
-      arguments: '{}',
-    })),
+    message: {
+      role: 'assistant',
+      content: [],
+      toolCalls: names.map((name, index) => ({
+        type: 'function' as const,
+        id: `call_${index}`,
+        name,
+        arguments: '{}',
+      })),
+    },
   };
 }
 
-function assistantWithText(text: string, ...tools: string[]): ContextMessage {
-  const message = assistantWithTools(...tools);
-  return { ...message, content: [{ type: 'text', text }] };
+function assistantWithText(text: string, ...tools: string[]): AssistantEntry {
+  const entry = assistantWithTools(...tools);
+  return { ...entry, message: { ...entry.message, content: [{ type: 'text', text }] } };
 }
 
-function assistantWithThink(think: string, ...tools: string[]): ContextMessage {
-  const message = assistantWithTools(...tools);
-  return { ...message, content: [{ type: 'think', think }] };
+function assistantWithThink(think: string, ...tools: string[]): AssistantEntry {
+  const entry = assistantWithTools(...tools);
+  return { ...entry, message: { ...entry.message, content: [{ type: 'think', think }] } };
 }
 
 describe('toolCallsSinceLastNotify', () => {

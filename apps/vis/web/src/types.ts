@@ -14,7 +14,11 @@ export type {
   ApiError,
   AgentRecord,
   AgentRecordOf,
-  ContextMessage,
+  AssistantEntry,
+  HistoryMessage,
+  SystemEntry,
+  ToolEntry,
+  UserEntry,
   PromptOrigin,
   TokenUsage,
   PermissionMode,
@@ -38,6 +42,7 @@ export type {
   LogLine,
   LogsResponse,
 } from '../../server/src/lib/agent-record-types';
+export { isAssistantEntry, isSystemEntry, isToolEntry, isUserEntry } from '../../server/src/lib/agent-record-types';
 
 export type {
   ProjectedMessage,

@@ -13,6 +13,7 @@ import {
   type RegisterAgentTaskOptions,
 } from '#/agent/task/task';
 import { type AgentTaskStatus, TERMINAL_STATUSES } from '#/agent/task/types';
+import { isUserEntry } from '#human/agent/turn';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { TaskListInputSchema } from '#/agent/tools/task/task-list/task-list';
 import { TaskListTool } from '#/agent/tools/task/task-list/taskListTool';
@@ -1276,19 +1277,22 @@ describe('WaitForTool (harness)', () => {
       await steered;
       await waitForTerminal(tasks, taskId);
       await vi.waitFor(() => {
-        const deliveries = ctx.context.get().filter((message) =>
-          (message.origin?.kind === 'task' && message.origin.taskId === taskId) ||
-          (message.role === 'tool' && message.toolCallId === 'racing-wait' && message.content.some((part) =>
-            part.type === 'text' && part.text.includes('wait_status: completed'),
-          )),
-        );
+        const deliveries = ctx.context.get().filter((entry) => {
+          const origin = isUserEntry(entry) ? entry.meta?.origin : undefined;
+          return (
+            (origin?.kind === 'task' && origin.taskId === taskId) ||
+            (entry.message.role === 'tool' && entry.message.toolCallId === 'racing-wait' && entry.message.content.some((part) =>
+              part.type === 'text' && part.text.includes('wait_status: completed'),
+            ))
+          );
+        });
         expect(deliveries).toHaveLength(1);
       });
       await ctx.get(IAgentLoopService).settled();
 
       const history = ctx.context.get();
       expect(await tasks.readOutput(taskId)).toBe('BACKGROUND-RESULT');
-      expect(history.filter((message) => message.content.some((part) =>
+      expect(history.filter((entry) => entry.message.content.some((part) =>
         part.type === 'text' && part.text === 'Handle the new request too.',
       ))).toHaveLength(1);
       expect(tasks.getTask(taskId)?.status).toBe('completed');
@@ -1354,7 +1358,7 @@ describe('WaitForTool (harness)', () => {
 
       expect(loop.snapshot().hasPendingRequests).toBe(false);
       loop.drainNextBatch(ctx.context);
-      expect(ctx.context.get().some((message) => message.origin?.kind === 'task')).toBe(false);
+      expect(ctx.context.get().some((entry) => isUserEntry(entry) && entry.meta?.origin?.kind === 'task')).toBe(false);
       expect(ctx.allEvents.some((event) => event.event === 'task.notified')).toBe(false);
       expect(ctx.llmCalls).toHaveLength(0);
       expect(

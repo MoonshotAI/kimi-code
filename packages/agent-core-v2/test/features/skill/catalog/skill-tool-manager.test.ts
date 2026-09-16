@@ -29,7 +29,7 @@ function makeSkill(name: string, metadata: SkillDefinition['metadata'] = {}): Sk
 function recordContainsSkillLoaded(record: unknown, skillName: string): boolean {
   if (!isRecordWithMessage(record)) return false;
   return (
-    record.message.content?.some((part) => {
+    record.message.message.content?.some((part) => {
       return (
         part.type === 'text' &&
         typeof part.text === 'string' &&
@@ -44,7 +44,9 @@ function isRecordWithMessage(
 ): record is {
   readonly type: string;
   readonly message: {
-    readonly content?: readonly { readonly type?: string; readonly text?: string }[];
+    readonly message: {
+      readonly content?: readonly { readonly type?: string; readonly text?: string }[];
+    };
   };
 } {
   if (record === null || typeof record !== 'object') return false;
@@ -239,37 +241,42 @@ describe('ToolManager SkillTool wire behavior', () => {
     expect(skillSplice).toMatchObject({
       type: 'context.append_message',
       message: expect.objectContaining({
-        role: 'user',
-        content: [
-          {
-            type: 'text',
-            text: [
-              'Skill tool loaded instructions for this request. Follow them.',
-              '',
-              '<skill-loaded name="review" trigger="model-tool" source="user" dir="/skills/review" args="">',
-              'body of review',
-              '</skill-loaded>',
-            ].join('\n'),
-            contentType: 'text/xml',
-          },
-        ],
-        origin: expect.objectContaining({
-          kind: 'skill_activation',
-          skillName: 'review',
-          trigger: 'model-tool',
+        message: expect.objectContaining({
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: [
+                'Skill tool loaded instructions for this request. Follow them.',
+                '',
+                '<skill-loaded name="review" trigger="model-tool" source="user" dir="/skills/review" args="">',
+                'body of review',
+                '</skill-loaded>',
+              ].join('\n'),
+              contentType: 'text/xml',
+            },
+          ],
+        }),
+        meta: expect.objectContaining({
+          origin: expect.objectContaining({
+            kind: 'skill_activation',
+            skillName: 'review',
+            trigger: 'model-tool',
+          }),
         }),
       }),
     });
     expect(persistence.records.some((record) => record.type === 'skill.activate')).toBe(false);
     expect(context.get().at(-1)).toMatchObject({
-      role: 'assistant',
-      content: [{ type: 'text', text: 'Review skill loaded.' }],
+      message: { role: 'assistant', content: [{ type: 'text', text: 'Review skill loaded.' }] },
     });
     expect(context.get().at(-2)).toMatchObject({
-      role: 'user',
-      origin: {
-        kind: 'skill_activation',
-        skillName: 'review',
+      message: { role: 'user' },
+      meta: {
+        origin: {
+          kind: 'skill_activation',
+          skillName: 'review',
+        },
       },
     });
   });
@@ -333,7 +340,12 @@ describe('ToolManager SkillTool restore behavior', () => {
       expect.objectContaining({ type: '[rpc]', event: 'skill.activated' }),
     );
     expect(track).not.toHaveBeenCalledWith('skill_invoked', expect.anything());
-    expect(context.get()).toMatchObject([message]);
+    expect(context.get()).toMatchObject([
+      {
+        message: { role: 'user', content: [{ type: 'text', text: 'restored skill body' }] },
+        meta: { origin },
+      },
+    ]);
   });
 });
 

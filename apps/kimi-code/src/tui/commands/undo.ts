@@ -1,6 +1,6 @@
 import type { Component } from '@moonshot-ai/pi-tui';
-import type { ContextMessage } from '@moonshot-ai/kimi-code-sdk';
-import { isKimiError } from '@moonshot-ai/kimi-code-sdk';
+import type { HistoryMessage } from '@moonshot-ai/kimi-code-sdk';
+import { isKimiError, isUserEntry } from '@moonshot-ai/kimi-code-sdk';
 
 import { WelcomeComponent } from '../components/chrome/welcome';
 import { CompactionComponent } from '../components/dialogs/compaction';
@@ -261,28 +261,29 @@ function undoAvailabilityFromTranscript(
 }
 
 function undoAvailabilityFromContext(
-  history: readonly ContextMessage[],
+  history: readonly HistoryMessage[],
 ): UndoAvailability {
   let maxCount = 0;
   let stoppedAtCompaction = false;
 
   for (let i = history.length - 1; i >= 0; i--) {
-    const message = history[i];
-    if (message === undefined) continue;
-    if (message.origin?.kind === 'injection') continue;
-    if (message.origin?.kind === 'compaction_summary') {
+    const entry = history[i];
+    if (entry === undefined) continue;
+    const origin = isUserEntry(entry) ? entry.meta?.origin : undefined;
+    if (origin?.kind === 'injection') continue;
+    if (origin?.kind === 'compaction_summary') {
       stoppedAtCompaction = true;
       break;
     }
-    if (isContextUndoAnchor(message)) maxCount++;
+    if (isContextUndoAnchor(entry)) maxCount++;
   }
 
   return { maxCount, stoppedAtCompaction };
 }
 
-function isContextUndoAnchor(message: ContextMessage): boolean {
-  if (message.role !== 'user') return false;
-  const origin = message.origin;
+function isContextUndoAnchor(entry: HistoryMessage): boolean {
+  if (!isUserEntry(entry)) return false;
+  const origin = entry.meta?.origin;
   if (origin === undefined || origin.kind === 'user') return true;
   if (origin.kind === 'skill_activation') {
     return origin.trigger === 'user-slash';

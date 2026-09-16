@@ -15,22 +15,29 @@ import {
   resetFold,
   type LoopRecordedEvent,
 } from '#/agent/contextMemory/loopEventFold';
-import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
+import { isAssistantEntry, isToolEntry, isUserEntry, type AssistantEntry, type HistoryMessage, type ToolEntry, type UserEntry } from '#human/agent/turn';
+import type { PromptOrigin } from '#/agent/contextMemory/types';
 import type { WireRecord } from '#/wire/record';
 
-function userMessage(text: string, origin?: PromptOrigin): ContextMessage {
+function userMessage(text: string, origin?: PromptOrigin): UserEntry {
   return {
-    role: 'user',
-    content: [{ type: 'text', text }],
-    ...(origin === undefined ? {} : { origin }),
+    message: { role: 'user', content: [{ type: 'text', text }] },
+    meta: { origin },
   };
 }
 
-function assistantMessage(text: string): ContextMessage {
-  return { role: 'assistant', content: [{ type: 'text', text }], toolCalls: [] };
+function withPromptId(entry: UserEntry, promptId: string): UserEntry {
+  return { ...entry, meta: { ...entry.meta, promptId } };
 }
 
-function appendMessage(message: ContextMessage): WireRecord {
+function assistantMessage(text: string): HistoryMessage {
+  return {
+    message: { role: 'assistant', content: [{ type: 'text', text }], toolCalls: [] },
+    meta: {},
+  };
+}
+
+function appendMessage(message: HistoryMessage): WireRecord {
   return { type: 'context.append_message', message };
 }
 
@@ -69,8 +76,8 @@ function undo(count: number): WireRecord {
 }
 
 function texts(result: ContextTranscript): string[] {
-  return result.entries.map((m) =>
-    m.content.map((p) => (p.type === 'text' ? p.text : `[${p.type}]`)).join(''),
+  return result.entries.map((entry) =>
+    entry.message.content.map((p) => (p.type === 'text' ? p.text : `[${p.type}]`)).join(''),
   );
 }
 
@@ -81,7 +88,7 @@ describe('reduceContextTranscript', () => {
       ...assistantStep('s1', 'a1'),
     ]);
     expect(texts(result)).toEqual(['u1', 'a1']);
-    expect(result.entries.map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(result.entries.map((m) => m.message.role)).toEqual(['user', 'assistant']);
     expect(result.foldedLength).toBe(2);
   });
 
@@ -95,8 +102,8 @@ describe('reduceContextTranscript', () => {
       appendMessage(userMessage('u3')),
     ]);
     expect(texts(result)).toEqual(['u1', 'a1', 'u2', 'a2', 'SUM', 'u3']);
-    expect(result.entries[4]!.origin).toEqual({ kind: 'compaction_summary' });
-    expect(result.entries[4]!.role).toBe('user');
+    expect(isUserEntry(result.entries[4]!) && result.entries[4]!.meta?.origin).toEqual({ kind: 'compaction_summary' });
+    expect(result.entries[4]!.message.role).toBe('user');
     expect(result.foldedLength).toBe(4);
   });
 
@@ -143,7 +150,7 @@ describe('reduceContextTranscript', () => {
       { type: 'context.append_message', message: userMessage('u2') },
     ]);
 
-    expect(result.entries.map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'user']);
+    expect(result.entries.map((m) => m.message.role)).toEqual(['user', 'assistant', 'tool', 'user']);
     expect(result.times).toEqual([100, 200, 220, undefined]);
   });
 
@@ -157,7 +164,7 @@ describe('reduceContextTranscript', () => {
       undo(1),
     ]);
     expect(texts(result)).toEqual(['message A', 'reply A', 'summary text']);
-    expect(result.entries.map((m) => m.role)).toEqual(['user', 'assistant', 'user']);
+    expect(result.entries.map((m) => m.message.role)).toEqual(['user', 'assistant', 'user']);
     expect(result.foldedLength).toBe(3);
   });
 
@@ -181,7 +188,7 @@ describe('reduceContextTranscript', () => {
           ownerPromptId: 'prompt-1',
         }),
       ),
-      appendMessage({ ...userMessage('undo me', { kind: 'user' }), id: 'prompt-1' }),
+      appendMessage(withPromptId(userMessage('undo me', { kind: 'user' }), 'prompt-1')),
       appendMessage(assistantMessage('undone answer')),
       undo(1),
       appendMessage(userMessage('keep me', { kind: 'user' })),
@@ -240,12 +247,12 @@ describe('reduceContextTranscript', () => {
       loopEvent({ type: 'tool.result', toolCallId: 'call_1', result: { output: 'hi' } }),
       loopEvent({ type: 'step.end', uuid: 's1' }),
     ]);
-    expect(result.entries.map((m) => m.role)).toEqual(['user', 'assistant', 'tool']);
-    const assistant = result.entries[1] as Extract<ContextMessage, { readonly role: 'assistant' }>;
-    expect(assistant.toolCalls).toHaveLength(1);
-    expect(assistant.toolCalls[0]!.id).toBe('call_1');
-    const tool = result.entries[2] as Extract<ContextMessage, { readonly role: 'tool' }>;
-    expect(tool.toolCallId).toBe('call_1');
+    expect(result.entries.map((m) => m.message.role)).toEqual(['user', 'assistant', 'tool']);
+    const assistant = result.entries[1] as AssistantEntry;
+    expect(assistant.message.toolCalls).toHaveLength(1);
+    expect(assistant.message.toolCalls[0]!.id).toBe('call_1');
+    const tool = result.entries[2] as ToolEntry;
+    expect(tool.message.toolCallId).toBe('call_1');
     expect(result.foldedLength).toBe(3);
   });
 
@@ -256,7 +263,7 @@ describe('reduceContextTranscript', () => {
       loopEvent({ type: 'content.part', stepUuid: 's1', part: { type: 'think', think: '' } }),
       loopEvent({ type: 'step.end', uuid: 's1' }),
     ]);
-    expect(result.entries.map((m) => m.role)).toEqual(['user']);
+    expect(result.entries.map((m) => m.message.role)).toEqual(['user']);
     expect(result.foldedLength).toBe(1);
   });
 
@@ -268,7 +275,7 @@ describe('reduceContextTranscript', () => {
       loopEvent({ type: 'content.part', stepUuid: 's2', part: { type: 'text', text: 'recovered' } }),
       loopEvent({ type: 'step.end', uuid: 's2' }),
     ]);
-    expect(result.entries.map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(result.entries.map((m) => m.message.role)).toEqual(['user', 'assistant']);
     expect(texts(result)).toEqual(['q', 'recovered']);
     expect(result.foldedLength).toBe(2);
   });
@@ -291,18 +298,18 @@ describe('reduceContextTranscript', () => {
       loopEvent({ type: 'content.part', stepUuid: 's3', part: { type: 'text', text: 'answer' } }),
       loopEvent({ type: 'step.end', uuid: 's3' }),
     ]);
-    expect(result.entries.map((m) => m.role)).toEqual(['user', 'assistant', 'assistant', 'assistant']);
+    expect(result.entries.map((m) => m.message.role)).toEqual(['user', 'assistant', 'assistant', 'assistant']);
     expect(result.foldedLength).toBe(4);
   });
 });
 
 describe('live fold parity', () => {
-  function foldLive(records: WireRecord[]): readonly ContextMessage[] {
-    let state: readonly ContextMessage[] = [];
+  function foldLive(records: WireRecord[]): readonly HistoryMessage[] {
+    let state: readonly HistoryMessage[] = [];
     for (const record of records) {
       switch (record.type) {
         case 'context.append_message':
-          state = foldAppendMessage(state, record['message'] as ContextMessage);
+          state = foldAppendMessage(state, record['message'] as HistoryMessage);
           break;
         case 'context.append_loop_event':
           state = foldLoopEvent(state, record['event'] as LoopRecordedEvent);
@@ -324,14 +331,14 @@ describe('live fold parity', () => {
     return state;
   }
 
-  function comparable(messages: readonly ContextMessage[]): unknown {
-    return messages.map((m) => ({
-      role: m.role,
-      content: m.content,
-      toolCalls: m.role === 'assistant' ? m.toolCalls : [],
-      toolCallId: m.role === 'tool' ? m.toolCallId : undefined,
-      isError: m.isError,
-      note: m.note,
+  function comparable(messages: readonly HistoryMessage[]): unknown {
+    return messages.map((entry) => ({
+      role: entry.message.role,
+      content: entry.message.content,
+      toolCalls: entry.message.role === 'assistant' ? entry.message.toolCalls : [],
+      toolCallId: entry.message.role === 'tool' ? entry.message.toolCallId : undefined,
+      isError: isToolEntry(entry) ? entry.meta?.isError : undefined,
+      note: isToolEntry(entry) ? entry.meta?.note : undefined,
     }));
   }
 
@@ -366,7 +373,7 @@ describe('live fold parity', () => {
     const live = foldLive(records);
     const transcript = reduceContextTranscript(records);
     expect(comparable(transcript.entries)).toEqual(comparable(live));
-    expect(transcript.entries.map((m) => m.role)).toEqual([
+    expect(transcript.entries.map((m) => m.message.role)).toEqual([
       'user',
       'assistant',
       'tool',
@@ -391,8 +398,8 @@ describe('live fold parity', () => {
     const transcript = reduceContextTranscript(records);
     expect(live).toHaveLength(6);
     expect(transcript.foldedLength).toBe(live.length);
-    expect(live[2]!.origin).toEqual({ kind: 'compaction_summary' });
-    expect(live[3]!.origin).toEqual({ kind: 'injection', variant: 'compaction_continuation' });
+    expect(isUserEntry(live[2]!) && live[2]!.meta?.origin).toEqual({ kind: 'compaction_summary' });
+    expect(isUserEntry(live[3]!) && live[3]!.meta?.origin).toEqual({ kind: 'injection', variant: 'compaction_continuation' });
   });
 
   it('settles a frame left open by a failed attempt when compaction lands mid-fold', () => {
@@ -405,7 +412,7 @@ describe('live fold parity', () => {
     ];
     const live = foldLive(records);
     const transcript = reduceContextTranscript(records);
-    expect(live.map((m) => m.role)).toEqual(['user', 'user', 'user', 'assistant']);
+    expect(live.map((m) => m.message.role)).toEqual(['user', 'user', 'user', 'assistant']);
     expect(texts(transcript)).toEqual(['u1', 'a1', 'SUM', 'a3']);
     expect(transcript.foldedLength).toBe(live.length);
   });
@@ -420,16 +427,16 @@ describe('live fold parity', () => {
     ];
     const live = foldLive(records);
     const transcript = reduceContextTranscript(records);
-    expect(transcript.entries.map((m) => m.role)).toEqual([
+    expect(transcript.entries.map((m) => m.message.role)).toEqual([
       'user',
       'assistant',
       'tool',
       'user',
       'assistant',
     ]);
-    const toolEntry = transcript.entries[2] as Extract<ContextMessage, { readonly role: 'tool' }>;
-    expect(toolEntry.toolCallId).toBe('c1');
-    expect(toolEntry.isError).toBe(true);
+    const toolEntry = transcript.entries[2] as ToolEntry;
+    expect(toolEntry.message.toolCallId).toBe('c1');
+    expect(toolEntry.meta?.isError).toBe(true);
     expect(transcript.foldedLength).toBe(live.length);
   });
 
@@ -443,9 +450,9 @@ describe('live fold parity', () => {
     ];
     const live = foldLive(records);
     const transcript = reduceContextTranscript(records);
-    expect(live.map((m) => m.role)).toEqual(['user', 'assistant', 'assistant', 'assistant']);
-    expect(live[2]!.partial).toBe(true);
-    expect(transcript.entries.map((m) => m.role)).toEqual([
+    expect(live.map((m) => m.message.role)).toEqual(['user', 'assistant', 'assistant', 'assistant']);
+    expect(isAssistantEntry(live[2]!) && live[2]!.meta?.partial).toBe(true);
+    expect(transcript.entries.map((m) => m.message.role)).toEqual([
       'user',
       'assistant',
       'assistant',
@@ -481,7 +488,7 @@ describe('live fold parity', () => {
           ownerPromptId: 'p1',
         }),
       ),
-      appendMessage({ ...userMessage('u1', { kind: 'user' }), id: 'p1' }),
+      appendMessage(withPromptId(userMessage('u1', { kind: 'user' }), 'p1')),
       ...assistantStep('s1', 'a1'),
       appendMessage(
         userMessage('injB', {
@@ -490,7 +497,7 @@ describe('live fold parity', () => {
           ownerPromptId: 'p2',
         }),
       ),
-      appendMessage({ ...userMessage('u2', { kind: 'user' }), id: 'p2' }),
+      appendMessage(withPromptId(userMessage('u2', { kind: 'user' }), 'p2')),
       ...assistantStep('s2', 'a2'),
       undo(2),
     ];
@@ -510,7 +517,7 @@ describe('live fold parity', () => {
           ownerPromptId: 'shared',
         }),
       ),
-      appendMessage({ ...userMessage('u1', { kind: 'user' }), id: 'shared' }),
+      appendMessage(withPromptId(userMessage('u1', { kind: 'user' }), 'shared')),
       ...assistantStep('s1', 'a1'),
       appendMessage(
         userMessage('injB', {
@@ -519,7 +526,7 @@ describe('live fold parity', () => {
           ownerPromptId: 'shared',
         }),
       ),
-      appendMessage({ ...userMessage('u2', { kind: 'user' }), id: 'shared' }),
+      appendMessage(withPromptId(userMessage('u2', { kind: 'user' }), 'shared')),
       ...assistantStep('s2', 'a2'),
       undo(1),
     ];

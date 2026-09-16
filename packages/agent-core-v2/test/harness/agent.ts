@@ -26,7 +26,11 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import '#/features/reminder/reminderFeature';
 import { BUILTIN_REPLAYABLE_STATE_KEYS } from '../state/builtinReplayableKeys';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { HistoryMessage } from '#human/agent/turn';
+import { isUserEntry } from '#human/agent/turn';
+import type { PromptOrigin } from '#human/agent/origin';
+import type { AssistantMessage } from '#human/llm/message';
+import { normalizeReplayedEntry } from '#/agent/contextMemory/loopEventFold';
 import { IAgentCronService } from '#/features/cron/cronService';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IAgentGoalService } from '#/features/goal/goalService';
@@ -431,7 +435,7 @@ interface ResumeStateSnapshot {
     readonly systemPrompt: string;
   };
   readonly context: {
-    readonly history: readonly ContextMessage[];
+    readonly history: readonly HistoryMessage[];
   };
   readonly checkpointedModels: Readonly<Record<string, unknown>>;
   readonly todos: readonly TodoItem[];
@@ -1689,7 +1693,7 @@ export class AgentTestContext {
     (this.get(IModelCatalog) as ModelCatalog).notifyConfigChanged();
   }
 
-  contextData(): { readonly history: readonly ContextMessage[]; readonly tokenCount: number } {
+  contextData(): { readonly history: readonly HistoryMessage[]; readonly tokenCount: number } {
     const context = this.get(IAgentContextMemoryService);
     const tokenCounting = this.tokenCounting;
     return {
@@ -1698,7 +1702,7 @@ export class AgentTestContext {
     };
   }
 
-  project(messages?: readonly ContextMessage[]) {
+  project(messages?: readonly HistoryMessage[]) {
     const context = this.get(IAgentContextMemoryService);
     const projector = this.get(IAgentContextProjectorService);
     return projector.project(messages ?? context.get());
@@ -1717,9 +1721,8 @@ export class AgentTestContext {
 
   appendUserMessage(content: readonly ContentPart[]): void {
     this.appendMessage({
-      role: 'user',
-      content: [...content],
-      origin: { kind: 'user' },
+      message: { role: 'user', content: [...content] },
+      meta: { origin: { kind: 'user' } },
     });
   }
 
@@ -1733,33 +1736,36 @@ export class AgentTestContext {
       }),
     );
     this.appendMessage({
-      role: 'user',
-      content: [{ type: 'text', text }],
-      origin: { kind: 'user' },
+      message: { role: 'user', content: [{ type: 'text', text }] },
+      meta: { origin: { kind: 'user' } },
     });
   }
 
   appendSystemReminder(
     content: string,
-    origin: ContextMessage['origin'] = { kind: 'injection', variant: 'system-reminder' },
+    origin: PromptOrigin = { kind: 'injection', variant: 'system-reminder' },
   ): void {
     this.appendMessage({
-      role: 'user',
-      content: [{ type: 'text', text: `<system-reminder>\n${content.trim()}\n</system-reminder>` }],
-      origin,
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: `<system-reminder>\n${content.trim()}\n</system-reminder>` }],
+      },
+      meta: { origin },
     });
   }
 
   appendLocalCommandStdout(content: string): void {
     this.appendMessage({
-      role: 'user',
-      content: [
-        {
-          type: 'text',
-          text: `<local-command-stdout>\n${content.trim()}\n</local-command-stdout>`,
-        },
-      ],
-      origin: { kind: 'injection', variant: 'local-command-stdout' },
+      message: {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: `<local-command-stdout>\n${content.trim()}\n</local-command-stdout>`,
+          },
+        ],
+      },
+      meta: { origin: { kind: 'injection', variant: 'local-command-stdout' } },
     });
   }
 
@@ -1920,12 +1926,14 @@ export class AgentTestContext {
 
   appendRichToolExchange(): void {
     this.appendMessage({
-      role: 'user',
-      content: [
-        { type: 'text', text: 'inspect this image' },
-        { type: 'image_url', imageUrl: { url: 'ms://image-1', id: 'image-1' } },
-      ],
-      origin: { kind: 'user' },
+      message: {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'inspect this image' },
+          { type: 'image_url', imageUrl: { url: 'ms://image-1', id: 'image-1' } },
+        ],
+      },
+      meta: { origin: { kind: 'user' } },
     });
     this.appendAssistantMessage({
       role: 'assistant',
@@ -1970,9 +1978,9 @@ export class AgentTestContext {
 
   compactHistory(): Array<{ readonly role: string; readonly text: string }> {
     const context = this.get(IAgentContextMemoryService);
-    return context.get().map((message) => ({
-      role: message.role,
-      text: message.content.map((part) => (part.type === 'text' ? part.text : '')).join(''),
+    return context.get().map((entry) => ({
+      role: entry.message.role,
+      text: entry.message.content.map((part) => (part.type === 'text' ? part.text : '')).join(''),
     }));
   }
 
@@ -2242,26 +2250,27 @@ export class AgentTestContext {
 
   private appendUserText(text: string): void {
     this.appendMessage({
-      role: 'user',
-      content: [{ type: 'text', text }],
-      origin: { kind: 'user' },
+      message: { role: 'user', content: [{ type: 'text', text }] },
+      meta: { origin: { kind: 'user' } },
     });
   }
 
-  private appendAssistantMessage(message: ContextMessage): void {
-    this.appendMessage(message);
+  private appendAssistantMessage(message: AssistantMessage): void {
+    this.appendMessage({ message });
   }
 
   private appendToolResult(toolCallId: string, output: ToolOutput, isError?: boolean): void {
     this.appendMessage({
-      role: 'tool',
-      content: contentPartsFromToolOutput(output),
-      toolCallId,
-      isError,
+      message: {
+        role: 'tool',
+        content: contentPartsFromToolOutput(output),
+        toolCallId,
+      },
+      meta: { isError },
     });
   }
 
-  private appendMessage(...messages: ContextMessage[]): void {
+  private appendMessage(...messages: HistoryMessage[]): void {
     if (messages.length === 0) return;
     const context = this.get(IAgentContextMemoryService);
     context.append(...messages);
@@ -2277,7 +2286,7 @@ export class AgentTestContext {
     };
     const context = this.get(IAgentContextMemoryService);
     const tokenCounting = this.tokenCounting;
-    tokenCounting.measured(context.get(), [], usage);
+    tokenCounting.measured(context.get().map((entry) => entry.message), [], usage);
     const profile = this.get(IAgentProfileService);
     void this.usage.record(profile.data().modelAlias ?? 'mock-model', usage, {
       type: 'turn',
@@ -2408,15 +2417,15 @@ function resumeContextSnapshot(ctx: AgentTestContext) {
   };
 }
 
-function stripMessageId(message: ContextMessage): ContextMessage {
-  if (message.id === undefined) return message;
-  const { id: _id, ...rest } = message;
-  return rest as ContextMessage;
+function stripMessageId(entry: HistoryMessage): HistoryMessage {
+  if (!isUserEntry(entry) || entry.meta?.promptId === undefined) return entry;
+  const { promptId: _promptId, ...meta } = entry.meta;
+  return { ...entry, meta };
 }
 
-function isSystemReminderMessage(message: ContextMessage): boolean {
-  if (message.role !== 'user') return false;
-  const text = message.content
+function isSystemReminderMessage(entry: HistoryMessage): boolean {
+  if (!isUserEntry(entry)) return false;
+  const text = entry.message.content
     .map((part) => (part.type === 'text' ? part.text : ''))
     .join('')
     .trimStart();
@@ -2434,8 +2443,8 @@ function pendingTaskNotificationKeys(records: readonly WireRecord[]): readonly s
       }
       continue;
     }
-    for (const message of contextMessagesFromRecord(record)) {
-      const origin = message.origin;
+    for (const entry of contextEntriesFromRecord(record)) {
+      const origin = entry.meta?.origin;
       if (isTaskOriginLike(origin)) {
         delivered.add(`${origin.taskId}\0${origin.status}\0${origin.notificationId}`);
       }
@@ -2444,16 +2453,11 @@ function pendingTaskNotificationKeys(records: readonly WireRecord[]): readonly s
   return [...terminal].filter((key) => !delivered.has(key));
 }
 
-function contextMessagesFromRecord(record: WireRecord): readonly ContextMessage[] {
-  if (record.type === 'context.append_message') {
-    const message = record['message'];
-    return isContextMessageLike(message) ? [message] : [];
-  }
-  return [];
-}
-
-function isContextMessageLike(value: unknown): value is ContextMessage {
-  return typeof value === 'object' && value !== null && 'role' in value;
+function contextEntriesFromRecord(record: WireRecord): readonly HistoryMessage[] {
+  if (record.type !== 'context.append_message') return [];
+  const message = record['message'];
+  if (message === null || typeof message !== 'object') return [];
+  return [normalizeReplayedEntry(message)];
 }
 
 function isTaskInfoLike(value: unknown): value is {

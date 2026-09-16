@@ -1,10 +1,10 @@
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { HistoryMessage } from '#human/agent/turn';
 
 const SYSTEM_REMINDER_PREFIX = '<system-reminder>\n';
 const SYSTEM_REMINDER_SUFFIX = '\n</system-reminder>';
 
-export function systemReminderContent(message: ContextMessage): string | undefined {
-  const text = message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+export function systemReminderContent(message: HistoryMessage): string | undefined {
+  const text = message.message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
   if (!text.startsWith(SYSTEM_REMINDER_PREFIX) || !text.endsWith(SYSTEM_REMINDER_SUFFIX)) {
     return undefined;
   }

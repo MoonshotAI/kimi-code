@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { turnPromptText, type TurnStarted } from '#/agent/loop/turnEvents';
+import { isUserEntry, type UserEntry } from '#human/agent/turn';
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
 
 import { stubSkill } from './catalog/stubs';
@@ -82,15 +83,15 @@ describe('promptWithSkills', () => {
     expect(llmInput).toContain('Review this change.');
 
     const messages = ctx.context.get();
-    const promptMessage = messages.find((message) => message.origin?.kind === 'user');
-    expect(messages.filter((message) => message.origin?.kind === 'skill_activation')).toHaveLength(
+    const promptMessage = messages.find((entry): entry is UserEntry => isUserEntry(entry) && entry.meta?.origin?.kind === 'user');
+    expect(messages.filter((entry) => isUserEntry(entry) && entry.meta?.origin?.kind === 'skill_activation')).toHaveLength(
       0,
     );
-    expect(promptMessage?.origin).toMatchObject({
+    expect(promptMessage?.meta?.origin).toMatchObject({
       kind: 'user',
       skillActivations: [{ skillName: 'review' }, { skillName: 'security' }],
     });
-    const texts = promptMessage?.content
+    const texts = promptMessage?.message.content
       .filter((part) => part.type === 'text')
       .map((part) => part.text);
     expect(texts?.[0]).toContain('# Review body');

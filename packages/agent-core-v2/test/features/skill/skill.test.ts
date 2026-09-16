@@ -5,6 +5,7 @@ import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
 import { summarizeSkill } from '#/features/skill/catalog/types';
 import { IAgentSkillService } from '#/features/skill/skillService';
 import type { LlmRequester } from '#human/llm/requester/requester';
+import { isUserEntry, type UserEntry } from '#human/agent/turn';
 import {
   ISkillTool,
   MAX_SKILL_QUERY_DEPTH,
@@ -53,9 +54,9 @@ describe('AgentSkillService', () => {
     expect(launched.turn_id).toBe(0);
     await ctx.untilTurnEnd();
 
-    const activation = ctx.context.get().find((m) => m.origin?.kind === 'skill_activation');
-    expect(activation?.role).toBe('user');
-    expect(activation?.origin).toMatchObject({
+    const activation = ctx.context.get().find((entry): entry is UserEntry => isUserEntry(entry) && entry.meta?.origin?.kind === 'skill_activation');
+    expect(activation?.message.role).toBe('user');
+    expect(activation?.meta?.origin).toMatchObject({
       kind: 'skill_activation',
       skillName: 'commit',
     });
@@ -104,7 +105,7 @@ describe('AgentSkillService', () => {
 
     expect(finished).toBe(true);
     await ctx.untilTurnEnd();
-    expect(ctx.context.get().some((m) => m.origin?.kind === 'skill_activation')).toBe(true);
+    expect(ctx.context.get().some((entry) => isUserEntry(entry) && entry.meta?.origin?.kind === 'skill_activation')).toBe(true);
   });
 });
 
@@ -317,8 +318,11 @@ describe('AgentSkillService busy delivery (harness)', () => {
 
     const activations = ctx
       .contextData()
-      .history.filter((m) => m.role === 'user' && m.origin?.kind === 'skill_activation');
-    expect(activations.map((m) => (m.origin?.kind === 'skill_activation' ? m.origin.skillArgs : ''))).toEqual([
+      .history.filter((entry): entry is UserEntry => isUserEntry(entry) && entry.meta?.origin?.kind === 'skill_activation');
+    expect(activations.map((entry) => {
+      const origin = entry.meta?.origin;
+      return origin?.kind === 'skill_activation' ? origin.skillArgs ?? '' : '';
+    })).toEqual([
       'mission-1',
       'mission-2',
     ]);

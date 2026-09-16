@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import { isUserEntry, type HistoryMessage } from '#human/agent/turn';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IFlagService } from '#/app/flag/flag';
@@ -24,8 +24,8 @@ const notifyToolStub: ExecutableTool = {
   }),
 };
 
-function messageText(message: ContextMessage): string {
-  return message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+function messageText(entry: HistoryMessage): string {
+  return entry.message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
 }
 
 describe('AgentNotifyUserNudgeService', () => {
@@ -34,23 +34,25 @@ describe('AgentNotifyUserNudgeService', () => {
   let loop: IAgentLoopService;
   let flags: FlagService;
 
-  function nudgeInjections(): readonly ContextMessage[] {
+  function nudgeInjections(): readonly HistoryMessage[] {
     return context
       .get()
-      .filter(
-        (message) =>
-          message.origin?.kind === 'injection' && message.origin.variant === NOTIFY_USER_NUDGE_VARIANT,
-      );
+      .filter((entry) => {
+        const origin = isUserEntry(entry) ? entry.meta?.origin : undefined;
+        return origin?.kind === 'injection' && origin.variant === NOTIFY_USER_NUDGE_VARIANT;
+      });
   }
 
   function appendSilentToolCalls(count: number): void {
     for (let index = 0; index < count; index += 1) {
       context.append({
-        role: 'assistant',
-        content: [],
-        toolCalls: [
-          { type: 'function', id: `call_${String(index)}`, name: 'Bash', arguments: '{}' },
-        ],
+        message: {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            { type: 'function', id: `call_${String(index)}`, name: 'Bash', arguments: '{}' },
+          ],
+        },
       });
     }
   }
@@ -65,9 +67,11 @@ describe('AgentNotifyUserNudgeService', () => {
     if (registry.resolve(NOTIFY_USER_TOOL_NAME) === undefined) registry.register(notifyToolStub);
     await ctx.restorePersisted();
     context.append({
-      role: 'user',
-      content: [{ type: 'text', text: 'do the thing' }],
-      origin: { kind: 'user' },
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'do the thing' }],
+      },
+      meta: { origin: { kind: 'user' } },
     });
     ctx.configure();
   });

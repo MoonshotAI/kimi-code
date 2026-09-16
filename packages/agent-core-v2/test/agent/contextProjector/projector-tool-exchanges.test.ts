@@ -4,7 +4,7 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { ILogService, type ILogger } from '#/_base/log/log';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { AssistantEntry, HistoryMessage } from '#human/agent/turn';
 import { IAgentContextProjectorService } from '#/agent/contextProjector/contextProjector';
 import { AgentContextProjectorService } from '#/agent/contextProjector/contextProjectorService';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -48,45 +48,54 @@ function repairPayloads(warnings: WarningCall[]): Record<string, unknown>[] {
 
 const INTERRUPTED = 'Tool result is not available in the current context';
 
-function user(text: string): ContextMessage {
-  return { role: 'user', content: [{ type: 'text', text }], origin: { kind: 'user' } };
-}
-
-function reminder(text: string): ContextMessage {
+function user(text: string): HistoryMessage {
   return {
-    role: 'user',
-    content: [{ type: 'text', text: `<system-reminder>\n${text}\n</system-reminder>` }],
-    origin: { kind: 'injection', variant: 'host' },
+    message: { role: 'user', content: [{ type: 'text', text }] },
+    meta: { origin: { kind: 'user' } },
   };
 }
 
-function assistant(text: string, toolCallIds: readonly string[] = []): ContextMessage {
+function reminder(text: string): HistoryMessage {
   return {
-    role: 'assistant',
-    content: text === '' ? [] : [{ type: 'text', text }],
-    toolCalls: toolCallIds.map((id) => ({ type: 'function', id, name: 'Lookup', arguments: '{}' })),
+    message: {
+      role: 'user',
+      content: [{ type: 'text', text: `<system-reminder>\n${text}\n</system-reminder>` }],
+    },
+    meta: { origin: { kind: 'injection', variant: 'host' } },
   };
 }
 
-function toolResult(toolCallId: string, text: string): ContextMessage {
-  return { role: 'tool', content: [{ type: 'text', text }], toolCallId };
+function assistant(text: string, toolCallIds: readonly string[] = []): AssistantEntry {
+  return {
+    message: {
+      role: 'assistant',
+      content: text === '' ? [] : [{ type: 'text', text }],
+      toolCalls: toolCallIds.map((id) => ({ type: 'function', id, name: 'Lookup', arguments: '{}' })),
+    },
+  };
 }
 
-function schemaMessage(name: string): ContextMessage {
+function toolResult(toolCallId: string, text: string): HistoryMessage {
+  return { message: { role: 'tool', content: [{ type: 'text', text }], toolCallId } };
+}
+
+function schemaMessage(name: string): HistoryMessage {
   return {
-    role: 'system',
-    content: [],
-    tools: [
-      {
-        name,
-        description: `${name} desc`,
-        parameters: {
-          type: 'object',
-          properties: { query: { type: 'string' } },
+    message: {
+      role: 'system',
+      content: [],
+      tools: [
+        {
+          name,
+          description: `${name} desc`,
+          parameters: {
+            type: 'object',
+            properties: { query: { type: 'string' } },
+          },
         },
-      },
-    ],
-    origin: { kind: 'injection', variant: 'dynamic_tool_schema' },
+      ],
+    },
+    meta: { origin: { kind: 'injection', variant: 'dynamic_tool_schema' } },
   };
 }
 
@@ -114,17 +123,17 @@ describe('projector tool-exchange normalization', () => {
 
   afterEach(() => disposables.dispose());
 
-  function project(history: readonly ContextMessage[]): readonly Message[] {
+  function project(history: readonly HistoryMessage[]): readonly Message[] {
     return projector.project(history);
   }
 
-  function shape(history: readonly ContextMessage[]): string[] {
+  function shape(history: readonly HistoryMessage[]): string[] {
     return project(history).map((message) =>
       message.role === 'tool' ? `tool:${message.toolCallId}` : message.role,
     );
   }
 
-  function projectStrict(history: readonly ContextMessage[]): readonly Message[] {
+  function projectStrict(history: readonly HistoryMessage[]): readonly Message[] {
     return projector.project(history, { structure: 'strict' });
   }
 
@@ -243,9 +252,9 @@ describe('projector tool-exchange normalization', () => {
   });
 
   it('drops a partial assistant exchange without stranding its results', () => {
-    const history: ContextMessage[] = [
+    const history: HistoryMessage[] = [
       user('go'),
-      { ...assistant('', ['c1', 'c2']), partial: true },
+      { ...assistant('', ['c1', 'c2']), meta: { partial: true } },
       toolResult('c1', 'one'),
       assistant('recovered'),
     ];
@@ -257,11 +266,13 @@ describe('projector tool-exchange normalization', () => {
   });
 
   it('keeps a tool-shaped message without a toolCallId', () => {
-    const message = {
-      role: 'tool',
-      content: [{ type: 'text', text: 'tool-like output' }],
-    } as ContextMessage;
-    expect(project([message])).toHaveLength(1);
+    const entry = {
+      message: {
+        role: 'tool',
+        content: [{ type: 'text', text: 'tool-like output' }],
+      },
+    } as HistoryMessage;
+    expect(project([entry])).toHaveLength(1);
   });
 
   it('keeps a schema-only system message when it declares dynamic tools', () => {
@@ -291,35 +302,41 @@ describe('projector tool-exchange normalization', () => {
 
   it('renders structured tool-result notes only for the model projection', () => {
     const note = '<system>Image compressed.</system>';
-    const result: ContextMessage = {
-      role: 'tool',
-      content: [{ type: 'text', text: 'image result' }],
-      toolCallId: 'call_image',
-      note,
+    const result: HistoryMessage = {
+      message: {
+        role: 'tool',
+        content: [{ type: 'text', text: 'image result' }],
+        toolCallId: 'call_image',
+      },
+      meta: { note },
     };
     const history = [assistant('', ['call_image']), result];
 
     expect(project(history)[1]?.content).toEqual([
       { type: 'text', text: `image result\n${note}` },
     ]);
-    expect(result.content).toEqual([{ type: 'text', text: 'image result' }]);
+    expect(result.message.content).toEqual([{ type: 'text', text: 'image result' }]);
   });
 
   it('renders v1 tool-result status at the model projection boundary', () => {
     const history = [
       assistant('', ['call_error', 'call_empty']),
       {
-        role: 'tool',
-        content: [{ type: 'text', text: '<system>ERROR: remote failed</system>' }],
-        toolCallId: 'call_error',
-        isError: true,
+        message: {
+          role: 'tool',
+          content: [{ type: 'text', text: '<system>ERROR: remote failed</system>' }],
+          toolCallId: 'call_error',
+        },
+        meta: { isError: true },
       },
       {
-        role: 'tool',
-        content: [{ type: 'text', text: '   ' }],
-        toolCallId: 'call_empty',
+        message: {
+          role: 'tool',
+          content: [{ type: 'text', text: '   ' }],
+          toolCallId: 'call_empty',
+        },
       },
-    ] satisfies ContextMessage[];
+    ] satisfies HistoryMessage[];
 
     expect(project(history)[1]?.content).toEqual([
       {
@@ -379,9 +396,11 @@ describe('projector tool-exchange normalization', () => {
       assistant('first', ['dup']),
       toolResult('dup', 'one'),
       {
-        role: 'assistant' as const,
-        content: [{ type: 'think' as const, think: '' }],
-        toolCalls: [{ type: 'function' as const, id: 'dup', name: 'Lookup', arguments: '{}' }],
+        message: {
+          role: 'assistant' as const,
+          content: [{ type: 'think' as const, think: '' }],
+          toolCalls: [{ type: 'function' as const, id: 'dup', name: 'Lookup', arguments: '{}' }],
+        },
       },
       toolResult('dup', 'two'),
       user('next'),
@@ -405,12 +424,14 @@ describe('projector tool-exchange normalization', () => {
       assistant('first', ['dup']),
       toolResult('dup', 'one'),
       {
-        role: 'assistant' as const,
-        content: [
-          { type: 'think' as const, think: '' },
-          { type: 'text' as const, text: 'second' },
-        ],
-        toolCalls: [{ type: 'function' as const, id: 'dup', name: 'Lookup', arguments: '{}' }],
+        message: {
+          role: 'assistant' as const,
+          content: [
+            { type: 'think' as const, think: '' },
+            { type: 'text' as const, text: 'second' },
+          ],
+          toolCalls: [{ type: 'function' as const, id: 'dup', name: 'Lookup', arguments: '{}' }],
+        },
       },
       toolResult('dup', 'two'),
       user('next'),
@@ -547,8 +568,8 @@ describe('projector tool-exchange normalization', () => {
   });
 
   describe('vacuous (thinking-only) messages', () => {
-    function thinkingAssistant(content: ContextMessage['content']): ContextMessage {
-      return { role: 'assistant', content: [...content], toolCalls: [] };
+    function thinkingAssistant(content: HistoryMessage['message']['content']): HistoryMessage {
+      return { message: { role: 'assistant', content: [...content], toolCalls: [] } };
     }
 
     it('drops an assistant message whose only part is an empty think block', () => {
@@ -620,9 +641,11 @@ describe('projector tool-exchange normalization', () => {
       const history = [
         user('u1'),
         {
-          role: 'assistant' as const,
-          content: [{ type: 'think' as const, think: '' }],
-          toolCalls: [{ type: 'function' as const, id: 'c1', name: 'Lookup', arguments: '{}' }],
+          message: {
+            role: 'assistant' as const,
+            content: [{ type: 'think' as const, think: '' }],
+            toolCalls: [{ type: 'function' as const, id: 'c1', name: 'Lookup', arguments: '{}' }],
+          },
         },
         toolResult('c1', 'one'),
       ];
@@ -633,11 +656,13 @@ describe('projector tool-exchange normalization', () => {
   });
 
   describe('project with media: degraded policy', () => {
-    function imageMessage(url: string): ContextMessage {
+    function imageMessage(url: string): HistoryMessage {
       return {
-        role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url } }],
-        origin: { kind: 'user' },
+        message: {
+          role: 'user',
+          content: [{ type: 'image_url', imageUrl: { url } }],
+        },
+        meta: { origin: { kind: 'user' } },
       };
     }
 
@@ -678,16 +703,18 @@ describe('projector tool-exchange normalization', () => {
   });
 
   describe('project with media: stripped policy', () => {
-    function imageMessage(url: string, id?: string): ContextMessage {
+    function imageMessage(url: string, id?: string): HistoryMessage {
       return {
-        role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url, id } }],
-        origin: { kind: 'user' },
+        message: {
+          role: 'user',
+          content: [{ type: 'image_url', imageUrl: { url, id } }],
+        },
+        meta: { origin: { kind: 'user' } },
       };
     }
 
     function projectStripped(
-      history: readonly ContextMessage[],
+      history: readonly HistoryMessage[],
       snapshot = projector.captureMediaStripSnapshot(history),
     ): readonly Message[] {
       return projector.project(history, { media: { strip: snapshot } });
@@ -698,18 +725,22 @@ describe('projector tool-exchange normalization', () => {
         user('look at these'),
         imageMessage('data:image/png;base64,AAAA'),
         {
-          role: 'tool',
-          content: [
-            { type: 'text', text: '<image path="/tmp/shot.png">' },
-            { type: 'image_url', imageUrl: { url: 'data:image/avif;base64,BBBB' } },
-            { type: 'text', text: '</image>' },
-          ],
-          toolCallId: 'c1',
+          message: {
+            role: 'tool',
+            content: [
+              { type: 'text', text: '<image path="/tmp/shot.png">' },
+              { type: 'image_url', imageUrl: { url: 'data:image/avif;base64,BBBB' } },
+              { type: 'text', text: '</image>' },
+            ],
+            toolCallId: 'c1',
+          },
         },
         {
-          role: 'user',
-          content: [{ type: 'video_url', videoUrl: { url: 'data:video/mp4;base64,CCCC' } }],
-          origin: { kind: 'user' },
+          message: {
+            role: 'user',
+            content: [{ type: 'video_url', videoUrl: { url: 'data:video/mp4;base64,CCCC' } }],
+          },
+          meta: { origin: { kind: 'user' } },
         },
       ]);
 
@@ -746,10 +777,12 @@ describe('projector tool-exchange normalization', () => {
 
     it('does not snapshot media dropped by the normal provider projection', () => {
       const url = 'data:image/png;base64,ORPHAN';
-      const orphan: ContextMessage = {
-        role: 'tool',
-        content: [{ type: 'image_url', imageUrl: { url, id: 'orphan-id' } }],
-        toolCallId: 'ghost',
+      const orphan: HistoryMessage = {
+        message: {
+          role: 'tool',
+          content: [{ type: 'image_url', imageUrl: { url, id: 'orphan-id' } }],
+          toolCallId: 'ghost',
+        },
       };
       const snapshot = projector.captureMediaStripSnapshot([
         user('go'),

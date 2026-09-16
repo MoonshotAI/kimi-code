@@ -1,12 +1,11 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Error2, isError2, type Error2Options } from '#/_base/errors/errors';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { UserEntry } from '#human/agent/turn';
 import type { FinishReason } from '#human/llm/finish-reason';
 import type { ContentPart } from '#human/llm/message';
 import type { TokenUsage } from '#human/llm/usage';
 import type { Hooks } from '#/hooks';
-import type { UserEntry } from '#human/agent/turn';
 import { LoopErrors } from './errors';
 import type {
   MachineEngine,
@@ -161,7 +160,7 @@ export interface PromptSnapshot {
   readonly userMessageId: string;
   readonly createdAt: string;
   readonly state: PromptState;
-  readonly message: ContextMessage;
+  readonly message: UserEntry;
 }
 
 export interface PromptHandle extends PromptSnapshot {
@@ -183,13 +182,13 @@ export interface PromptLaunchResult {
 }
 
 export interface PromptSubmitContext {
-  readonly promptMessage: ContextMessage;
+  readonly promptMessage: UserEntry;
   readonly isSteer: boolean;
   block: boolean;
 }
 
 export interface LoopNotify {
-  readonly message?: ContextMessage;
+  readonly message?: UserEntry;
   readonly turnScoped?: boolean;
   readonly bypassMaxSteps?: boolean;
   readonly onConsume?: () => void;

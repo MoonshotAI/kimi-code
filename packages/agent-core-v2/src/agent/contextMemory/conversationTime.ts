@@ -1,4 +1,6 @@
 import { registerUndoableProtocol } from '#/state/state';
+import { isUserEntry, type HistoryMessage } from '#human/agent/turn';
+import type { PromptOrigin } from '#human/agent/origin';
 
 import {
   ContextAppendMessage,
@@ -6,9 +8,9 @@ import {
   ContextClear,
   ContextUndo,
 } from './contextEvents';
-import type { ContextMessage } from './types';
+import { normalizeReplayedEntry } from './loopEventFold';
 
-export function isUndoAnchorOrigin(origin: ContextMessage['origin']): boolean {
+export function isUndoAnchorOrigin(origin: PromptOrigin | undefined): boolean {
   if (origin === undefined || origin.kind === 'user') return true;
   return (
     (origin.kind === 'skill_activation' || origin.kind === 'plugin_command') &&
@@ -16,20 +18,21 @@ export function isUndoAnchorOrigin(origin: ContextMessage['origin']): boolean {
   );
 }
 
-export function isUndoAnchor(message: ContextMessage): boolean {
-  if (message.role !== 'user') return false;
-  return isUndoAnchorOrigin(message.origin);
+export function isUndoAnchor(entry: HistoryMessage): boolean {
+  if (!isUserEntry(entry)) return false;
+  return isUndoAnchorOrigin(entry.meta?.origin);
 }
 
 export function isPromptOwnedInjection(
-  message: ContextMessage,
-  prompt: ContextMessage,
+  message: HistoryMessage,
+  prompt: HistoryMessage,
 ): boolean {
-  const origin = message.origin;
+  const origin = isUserEntry(message) ? message.meta?.origin : undefined;
+  const promptId = isUserEntry(prompt) ? prompt.meta?.promptId : undefined;
   return (
     origin?.kind === 'injection' &&
     origin.ownerPromptId !== undefined &&
-    origin.ownerPromptId === prompt.id
+    origin.ownerPromptId === promptId
   );
 }
 
@@ -44,6 +47,6 @@ registerUndoableProtocol({
     clear: ContextClear,
     undo: ContextUndo,
   },
-  isUndoAnchor: (message) => isUndoAnchor(message as ContextMessage),
+  isUndoAnchor: (message) => isUndoAnchor(normalizeReplayedEntry(message)),
   isValidUndoCount,
 });

@@ -1,4 +1,4 @@
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import { isAssistantEntry, isUserEntry, type AssistantEntry, type HistoryMessage } from '#human/agent/turn';
 
 import { TODO_LIST_TOOL_NAME, type TodoItem } from './todoItem';
 
@@ -9,7 +9,7 @@ const TODO_LIST_REMINDER_TURNS_BETWEEN_REMINDERS = 10;
 
 interface TodoListReminderInput {
   readonly active: boolean;
-  readonly history: readonly ContextMessage[];
+  readonly history: readonly HistoryMessage[];
   readonly todos: readonly TodoItem[];
 }
 
@@ -33,7 +33,7 @@ export function todoListStaleReminder(input: TodoListReminderInput): string | un
 }
 
 function getTodoListReminderTurnCounts(
-  history: readonly ContextMessage[],
+  history: readonly HistoryMessage[],
 ): TodoListReminderTurnCounts {
   let foundWrite = false;
   let foundReminder = false;
@@ -44,7 +44,7 @@ function getTodoListReminderTurnCounts(
     const message = history[i];
     if (message === undefined) continue;
 
-    if (message.role === 'assistant') {
+    if (isAssistantEntry(message)) {
       if (!foundWrite && hasTodoListWrite(message)) {
         foundWrite = true;
       }
@@ -66,8 +66,8 @@ function getTodoListReminderTurnCounts(
   };
 }
 
-function hasTodoListWrite(message: Extract<ContextMessage, { readonly role: 'assistant' }>): boolean {
-  return message.toolCalls.some((toolCall) => {
+function hasTodoListWrite(message: AssistantEntry): boolean {
+  return message.message.toolCalls.some((toolCall) => {
     if (toolCall.name !== TODO_LIST_TOOL_NAME) return false;
     if (typeof toolCall.arguments !== 'string') return false;
 
@@ -80,10 +80,11 @@ function hasTodoListWrite(message: Extract<ContextMessage, { readonly role: 'ass
   });
 }
 
-function isTodoListReminder(message: ContextMessage): boolean {
+function isTodoListReminder(message: HistoryMessage): boolean {
+  const origin = isUserEntry(message) ? message.meta?.origin : undefined;
   return (
-    message.origin?.kind === 'injection' &&
-    message.origin.variant === TODO_LIST_REMINDER_VARIANT
+    origin?.kind === 'injection' &&
+    origin.variant === TODO_LIST_REMINDER_VARIANT
   );
 }
 

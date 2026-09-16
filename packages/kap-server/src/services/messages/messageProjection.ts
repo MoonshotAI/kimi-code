@@ -1,4 +1,4 @@
-import { daemonFileRefFromPart, parseDaemonFileUrl, type ContentPart, type ContextMessage } from '@moonshot-ai/agent-core-v2';
+import { daemonFileRefFromPart, isToolEntry, isUserEntry, parseDaemonFileUrl, type ContentPart, type HistoryMessage } from '@moonshot-ai/agent-core-v2';
 
 import type { Message, MessageContent, MessageRole, ToolUseContent } from '../../protocol/message';
 
@@ -7,11 +7,11 @@ function deriveMessageId(sessionId: string, index: number): string {
   return `msg_${sessionId}_${padded}`;
 }
 
-function toProtocolRole(role: ContextMessage['role']): MessageRole {
+function toProtocolRole(role: HistoryMessage['message']['role']): MessageRole {
   return role as MessageRole;
 }
 
-function mapContentPart(part: ContextMessage['content'][number]): MessageContent {
+function mapContentPart(part: ContentPart): MessageContent {
   switch (part.type) {
     case 'text':
       return { type: 'text', text: part.text };
@@ -38,9 +38,9 @@ function mapContentPart(part: ContextMessage['content'][number]): MessageContent
   }
 }
 
-function buildProtocolContent(msg: ContextMessage): MessageContent[] {
-  const visibleContent = msg.content.filter((p) => p.type !== 'think' || p.hidden !== true);
-  if (msg.role === 'tool') {
+function buildProtocolContent(msg: HistoryMessage): MessageContent[] {
+  const visibleContent = msg.message.content.filter((p) => p.type !== 'think' || p.hidden !== true);
+  if (isToolEntry(msg)) {
     const hasMediaPart = visibleContent.some(
       (p) => p.type === 'image_url' || p.type === 'video_url' || p.type === 'audio_url',
     );
@@ -48,16 +48,16 @@ function buildProtocolContent(msg: ContextMessage): MessageContent[] {
       ? visibleContent
       : visibleContent.map((p) => (p.type === 'text' ? p.text : '')).join('');
     const part: MessageContent =
-      msg.isError === true
+      msg.meta?.isError === true
         ? {
             type: 'tool_result',
-            tool_call_id: msg.toolCallId,
+            tool_call_id: msg.message.toolCallId,
             output,
             is_error: true,
           }
         : {
             type: 'tool_result',
-            tool_call_id: msg.toolCallId,
+            tool_call_id: msg.message.toolCallId,
             output,
           };
     return [part];
@@ -65,8 +65,8 @@ function buildProtocolContent(msg: ContextMessage): MessageContent[] {
 
   const base = visibleContent.map((p) => mapContentPart(p));
 
-  if (msg.role === 'assistant' && msg.toolCalls.length > 0) {
-    for (const call of msg.toolCalls) {
+  if (msg.message.role === 'assistant' && msg.message.toolCalls.length > 0) {
+    for (const call of msg.message.toolCalls) {
       let parsedInput: unknown = call.arguments;
       if (typeof call.arguments === 'string') {
         try {
@@ -124,15 +124,16 @@ export function projectPromptContentParts(content: readonly ContentPart[]): Mess
 export function toProtocolMessage(
   sessionId: string,
   index: number,
-  msg: ContextMessage,
+  msg: HistoryMessage,
   sessionCreatedAtMs: number,
   createdAtMsOverride?: number,
 ): Message {
-  const id = msg.id ?? deriveMessageId(sessionId, index);
-  const role = toProtocolRole(msg.role);
+  const id = (isUserEntry(msg) ? msg.meta?.promptId : undefined) ?? deriveMessageId(sessionId, index);
+  const role = toProtocolRole(msg.message.role);
   const content = buildProtocolContent(msg);
   const createdAtMs = createdAtMsOverride ?? sessionCreatedAtMs + index;
-  const metadata = msg.origin !== undefined ? { origin: msg.origin } : undefined;
+  const origin = isUserEntry(msg) ? msg.meta?.origin : undefined;
+  const metadata = origin !== undefined ? { origin } : undefined;
   return {
     id,
     session_id: sessionId,

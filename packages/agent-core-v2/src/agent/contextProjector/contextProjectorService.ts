@@ -2,7 +2,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { HistoryMessage } from '#human/agent/turn';
 import { IAgentStateService } from '#/agent/state/agentState';
 import type { Message } from '#human/llm/message';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -50,7 +50,7 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
   }
 
   project(
-    messages: readonly ContextMessage[],
+    messages: readonly HistoryMessage[],
     policy: ProjectionPolicy = {},
   ): readonly Message[] {
     const projected = this.projectWithTrace(
@@ -63,13 +63,13 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
     return stripMediaPartsBySnapshot(projected, media.strip);
   }
 
-  captureMediaStripSnapshot(messages: readonly ContextMessage[]): MediaStripSnapshot {
+  captureMediaStripSnapshot(messages: readonly HistoryMessage[]): MediaStripSnapshot {
     return captureMediaStripSnapshot(this.projectWithTrace(messages, project));
   }
 
   private projectWithTrace(
-    messages: readonly ContextMessage[],
-    fn: (history: readonly ContextMessage[], onAnomaly?: OnAnomaly) => Message[],
+    messages: readonly HistoryMessage[],
+    fn: (history: readonly HistoryMessage[], onAnomaly?: OnAnomaly) => Message[],
   ): readonly Message[] {
     const anomalies: ProjectionAnomaly[] = [];
     const result = fn(messages, (anomaly) => anomalies.push(anomaly));

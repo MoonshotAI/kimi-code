@@ -16,7 +16,7 @@ import {
 } from '#/agent/contextMemory/contextEvents';
 import { contextMemoryKey } from '#/agent/contextMemory/contextOps';
 import { buildCompactionContinuationText } from '#/agent/contextMemory/compactionHandoff';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { AssistantEntry, HistoryMessage, ToolEntry } from '#human/agent/turn';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
@@ -117,25 +117,25 @@ class StubBlobService implements IAgentBlobService {
   }
 }
 
-function userMessage(text: string): ContextMessage {
-  return { role: 'user', content: [{ type: 'text', text }] };
+function userMessage(text: string): HistoryMessage {
+  return { message: { role: 'user', content: [{ type: 'text', text }] } };
 }
 
-function imageMessage(payload: string): ContextMessage {
+function imageMessage(payload: string): HistoryMessage {
   const part = {
     type: 'image',
     source: { url: `data:image/png;base64,${payload}` },
   } as unknown as ContentPart;
-  return { role: 'user', content: [part] };
+  return { message: { role: 'user', content: [part] } };
 }
 
-function mediaUrl(message: DeepReadonly<ContextMessage>): string {
-  const part = message.content[0] as unknown as { source: { url: string } };
+function mediaUrl(entry: DeepReadonly<HistoryMessage>): string {
+  const part = entry.message.content[0] as unknown as { source: { url: string } };
   return part.source.url;
 }
 
-function textOf(message: DeepReadonly<ContextMessage>): string {
-  const part = message.content[0] as unknown as { text?: unknown };
+function textOf(entry: DeepReadonly<HistoryMessage>): string {
+  const part = entry.message.content[0] as unknown as { text?: unknown };
   if (typeof part.text !== 'string') throw new Error('expected text content');
   return part.text;
 }
@@ -233,9 +233,11 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     expect(model()).not.toBe(prev);
     expect(model()).toHaveLength(2);
     expect(model()![0]).toMatchObject({
-      role: 'user',
-      content: [{ type: 'text', text: 'sum' }],
-      origin: { kind: 'compaction_summary' },
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'sum' }],
+      },
+      meta: { origin: { kind: 'compaction_summary' } },
     });
 
     prev = model();
@@ -305,16 +307,16 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     );
 
     const model = replay.agentState.get(contextMemoryKey);
-    expect(model.map((message) => message.role)).toEqual(['user', 'assistant', 'tool']);
-    const assistant = model[1] as Extract<ContextMessage, { readonly role: 'assistant' }>;
-    expect(assistant.content).toEqual([{ type: 'text', text: 'hello' }]);
-    expect(assistant.partial).toBeUndefined();
-    expect(assistant.toolCalls).toHaveLength(1);
-    expect(assistant.toolCalls[0]!.id).toBe('call_1');
-    expect(assistant.toolCalls[0]!.name).toBe('Bash');
-    expect(model[2]!.role).toBe('tool');
-    const tool = model[2] as Extract<ContextMessage, { readonly role: 'tool' }>;
-    expect(tool.toolCallId).toBe('call_1');
+    expect(model.map((entry) => entry.message.role)).toEqual(['user', 'assistant', 'tool']);
+    const assistant = model[1] as AssistantEntry;
+    expect(assistant.message.content).toEqual([{ type: 'text', text: 'hello' }]);
+    expect(assistant.meta?.partial).toBeUndefined();
+    expect(assistant.message.toolCalls).toHaveLength(1);
+    expect(assistant.message.toolCalls[0]!.id).toBe('call_1');
+    expect(assistant.message.toolCalls[0]!.name).toBe('Bash');
+    expect(model[2]!.message.role).toBe('tool');
+    const tool = model[2] as ToolEntry;
+    expect(tool.message.toolCallId).toBe('call_1');
   });
 
   it('replays v1 context.apply_compaction records with contextSummary as the model summary', async () => {
@@ -342,8 +344,8 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     const model = replay.agentState.get(contextMemoryKey);
     expect(model.map(textOf)).toEqual(['model-facing summary', 'tail']);
     expect(model[0]).toMatchObject({
-      role: 'user',
-      origin: { kind: 'compaction_summary' },
+      message: { role: 'user' },
+      meta: { origin: { kind: 'compaction_summary' } },
     });
   });
 
@@ -379,7 +381,7 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     );
 
     const model = replay.agentState.get(contextMemoryKey);
-    expect(model.map((message) => message.role)).toEqual(['user', 'user', 'user', 'user']);
+    expect(model.map((entry) => entry.message.role)).toEqual(['user', 'user', 'user', 'user']);
     expect(model.map(textOf)).toEqual([
       'old user',
       'recent user',
@@ -387,10 +389,10 @@ describe('AgentContextMemoryService (wire-backed)', () => {
       buildCompactionContinuationText(),
     ]);
     expect(model[2]).toMatchObject({
-      origin: { kind: 'compaction_summary' },
+      meta: { origin: { kind: 'compaction_summary' } },
     });
     expect(model[3]).toMatchObject({
-      origin: { kind: 'injection', variant: 'compaction_continuation' },
+      meta: { origin: { kind: 'injection', variant: 'compaction_continuation' } },
     });
   });
 
@@ -424,13 +426,13 @@ describe('AgentContextMemoryService (wire-backed)', () => {
       buildCompactionContinuationText(),
     ]);
     expect(model[2]).toMatchObject({
-      role: 'user',
-      origin: { kind: 'compaction_summary' },
+      message: { role: 'user' },
+      meta: { origin: { kind: 'compaction_summary' } },
     });
   });
 
   it('replays legacy v2 context.apply_compaction records with count and summary message', async () => {
-    const legacySummary: ContextMessage = {
+    const legacySummary = {
       role: 'assistant',
       content: [{ type: 'text', text: 'legacy summary message' }],
       toolCalls: [],
@@ -456,7 +458,14 @@ describe('AgentContextMemoryService (wire-backed)', () => {
 
     const model = replay.agentState.get(contextMemoryKey);
     expect(model).toHaveLength(2);
-    expect(model[0]).toEqual(legacySummary);
+    expect(model[0]).toEqual({
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'legacy summary message' }],
+        toolCalls: [],
+      },
+      meta: { origin: { kind: 'compaction_summary' } },
+    });
     expect(textOf(model[1]!)).toBe('tail');
   });
 
@@ -476,7 +485,7 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     expect(blob.offloadCalls).toBeGreaterThanOrEqual(1);
     const appended = records.find((record) => record.type === 'context.append_message');
     expect(appended).toBeDefined();
-    const persisted = appended!['message'] as ContextMessage;
+    const persisted = appended!['message'] as DeepReadonly<HistoryMessage>;
     expect(mediaUrl(persisted).startsWith(BLOBREF)).toBe(true);
     expect(mediaUrl(persisted)).not.toContain(big);
 
@@ -546,10 +555,10 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     );
 
     const rebuilt = replay.agentState.get(contextMemoryKey);
-    expect(rebuilt.map((message) => message.role)).toEqual(['user', 'user', 'assistant']);
+    expect(rebuilt.map((entry) => entry.message.role)).toEqual(['user', 'user', 'assistant']);
     expect(textOf(rebuilt[1]!)).toBe('retry');
     expect(textOf(rebuilt[2]!)).toBe('answer');
-    expect(rebuilt.some((message) => message.partial === true)).toBe(false);
+    expect(rebuilt.some((entry) => (entry.meta as { partial?: boolean } | undefined)?.partial === true)).toBe(false);
   });
 
   it('publishes context.spliced on live dispatch and is silent on replay', async () => {

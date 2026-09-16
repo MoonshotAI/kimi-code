@@ -5,7 +5,8 @@ import type { ProviderConfig } from '#/model-provider';
 import type { CompactionResult } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/types';
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 
-import type { AgentContextData, ContextMessage } from '#/context';
+import type { AgentContextData, BackgroundTaskOrigin, PromptOrigin } from '#/context';
+import { isUserEntry, type HistoryMessage } from '@moonshot-ai/agent-core-v2';
 import type { PermissionApprovalResultRecord, PermissionData, PermissionMode } from '#/permission';
 import type { BackgroundTaskInfo } from '#/task';
 import type { ToolInfo } from '#/tool';
@@ -53,7 +54,7 @@ export interface SessionMeta {
 }
 
 export type AgentReplayRecordPayload =
-  | { type: 'message'; message: ContextMessage }
+  | { type: 'message'; message: HistoryMessage }
   | { type: 'compaction'; result?: CompactionResult | 'cancelled'; instruction?: string }
   | {
       type: 'goal_updated';
@@ -103,17 +104,18 @@ export function limitAgentReplayByTurns(
 function isAgentReplayUserTurnRecord(record: AgentReplayRecord): boolean {
   if (record.type !== 'message') return false;
   const { message } = record;
-  if (message.role !== 'user') return false;
-  switch (message.origin?.kind) {
+  if (!isUserEntry(message)) return false;
+  const origin = message.meta?.origin as (PromptOrigin | BackgroundTaskOrigin) | undefined;
+  switch (origin?.kind) {
     case undefined:
     case 'user':
       return true;
     case 'skill_activation':
-      return message.origin.trigger === 'user-slash';
+      return origin.trigger === 'user-slash';
     case 'plugin_command':
-      return message.origin.trigger === 'user-slash';
+      return origin.trigger === 'user-slash';
     case 'shell_command':
-      return message.origin.phase === 'input';
+      return origin.phase === 'input';
     case 'cron_job':
     case 'cron_missed':
       return true;
@@ -124,6 +126,8 @@ function isAgentReplayUserTurnRecord(record: AgentReplayRecord): boolean {
     case 'retry':
       return false;
     case 'system_trigger':
-      return message.origin.name === 'goal_continuation';
+      return origin.name === 'goal_continuation';
+    default:
+      return false;
   }
 }

@@ -5,7 +5,13 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
-import { reduceContextTranscript } from '@moonshot-ai/agent-core-v2';
+import {
+  isAssistantEntry,
+  isToolEntry,
+  isUserEntry,
+  reduceContextTranscript,
+  type HistoryMessage,
+} from '@moonshot-ai/agent-core-v2';
 
 import { migrateOneSession, type MigrateOneResult } from '../src/sessions/migrate-one.js';
 import { computeWorkdirBucket } from '../src/sessions/workdir-bucket.js';
@@ -14,11 +20,11 @@ import { listSessionsV2, readSessionSummaryV2 } from './v2-session-scan.js';
 // Turn-grouping rule for imported (origin-less) messages: one turn per user
 // message, plus one fallback turn for a leading non-user run left over from a
 // compaction-truncated context. Mirrors splitIntoTurns in src/sessions.
-const countGroupedTurns = (messages: readonly { role?: unknown }[]): number => {
+const countGroupedTurns = (messages: readonly HistoryMessage[]): number => {
   let turns = 0;
-  for (const message of messages) {
-    if (message.role === 'user') turns += 1;
-    else if (message.role === 'assistant' && turns === 0) turns += 1;
+  for (const entry of messages) {
+    if (entry.message.role === 'user') turns += 1;
+    else if (entry.message.role === 'assistant' && turns === 0) turns += 1;
   }
   return turns;
 };
@@ -131,6 +137,15 @@ describe('migrated session is discoverable by agent-core-v2', () => {
     const imported = records
       .filter((r) => r.type === 'context.append_message')
       .map((r) => r['message']);
+    const flattenEntry = (entry: HistoryMessage): Record<string, unknown> => ({
+      ...entry.message,
+      id: isUserEntry(entry) ? entry.meta?.promptId : undefined,
+      origin: entry.meta?.origin,
+      isError: isToolEntry(entry) ? entry.meta?.isError : undefined,
+      note: isToolEntry(entry) ? entry.meta?.note : undefined,
+      toolCallDisplays: isAssistantEntry(entry) ? entry.meta?.toolCallDisplays : undefined,
+      partial: isAssistantEntry(entry) ? entry.meta?.partial : undefined,
+    });
     const stripDisplays = (
       messages: readonly unknown[],
     ): unknown[] =>
@@ -140,7 +155,7 @@ describe('migrated session is discoverable by agent-core-v2', () => {
         const { toolCalls: _vacuous, ...withoutToolCalls } = rest;
         return withoutToolCalls;
       });
-    expect(stripDisplays([...transcript.entries])).toEqual(stripDisplays(imported));
+    expect(stripDisplays([...transcript.entries].map(flattenEntry))).toEqual(stripDisplays(imported));
 
     // The invariant that keeps a live turn from hijacking an imported one:
     // every turn.started advances the restored turn clock by one, so the number

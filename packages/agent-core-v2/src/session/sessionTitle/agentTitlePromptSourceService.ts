@@ -1,7 +1,7 @@
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
+import { isUserEntry, type HistoryMessage } from '#human/agent/turn';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import {
   promptMetadataTextFromContentParts,
@@ -30,11 +30,12 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
     const result: string[] = [];
     const seenMessageIds = new Set<string>();
 
-    const add = (message: ContextMessage): void => {
+    const add = (message: HistoryMessage): void => {
       if (result.length >= limit || !isNaturalLanguagePrompt(message)) return;
-      if (message.id !== undefined) {
-        if (seenMessageIds.has(message.id)) return;
-        seenMessageIds.add(message.id);
+      const promptId = isUserEntry(message) ? message.meta?.promptId : undefined;
+      if (promptId !== undefined) {
+        if (seenMessageIds.has(promptId)) return;
+        seenMessageIds.add(promptId);
       }
       const text = promptMetadataTextFromUserMessage(message);
       if (text !== undefined) result.push(text);
@@ -49,7 +50,7 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
     const firstUserIndex = all.findIndex(isNaturalLanguagePrompt);
     if (firstUserIndex < 0) return {};
     const user = promptMetadataTextFromUserMessage(all[firstUserIndex]!);
-    const span: ContextMessage[] = [];
+    const span: HistoryMessage[] = [];
     for (const message of all.slice(firstUserIndex + 1)) {
       if (isNaturalLanguagePrompt(message)) break;
       span.push(message);
@@ -64,9 +65,10 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
     for (let index = 0; index < all.length; index++) {
       const message = all[index]!;
       if (!isNaturalLanguagePrompt(message)) continue;
-      if (message.id !== undefined) {
-        if (seenMessageIds.has(message.id)) continue;
-        seenMessageIds.add(message.id);
+      const promptId = isUserEntry(message) ? message.meta?.promptId : undefined;
+      if (promptId !== undefined) {
+        if (seenMessageIds.has(promptId)) continue;
+        seenMessageIds.add(promptId);
       }
       userIndexes.push(index);
     }
@@ -82,7 +84,7 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
     return { turns };
   }
 
-  private combinedMessages(): ContextMessage[] {
+  private combinedMessages(): HistoryMessage[] {
     const snapshot = this.loop.snapshot();
     const all = [...this.context.get()];
     const activeHandle =
@@ -93,33 +95,34 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
     for (const item of snapshot.queue) {
       if (item.meta?.tracked !== true) continue;
       all.push({
-        role: 'user',
-        content: [...item.message.content],
-        origin: item.meta?.origin as PromptOrigin | undefined,
+        message: { role: 'user', content: [...item.message.content] },
+        meta: { origin: item.meta?.origin },
       });
     }
     return all;
   }
 }
 
-function isNaturalLanguagePrompt(message: ContextMessage): boolean {
-  if (message.role !== 'user') return false;
-  const origin = message.origin;
+function isNaturalLanguagePrompt(message: HistoryMessage): boolean {
+  if (!isUserEntry(message)) return false;
+  const origin = message.meta?.origin;
   return origin === undefined || origin.kind === 'user';
 }
 
-function promptMetadataTextFromUserMessage(message: ContextMessage): string | undefined {
-  const bundled = message.origin?.kind === 'user' ? (message.origin.skillActivations?.length ?? 0) : 0;
+function promptMetadataTextFromUserMessage(message: HistoryMessage): string | undefined {
+  if (!isUserEntry(message)) return undefined;
+  const origin = message.meta?.origin;
+  const bundled = origin?.kind === 'user' ? (origin.skillActivations?.length ?? 0) : 0;
   return promptMetadataTextFromContentParts(
-    bundled === 0 ? message.content : message.content.slice(bundled),
+    bundled === 0 ? message.message.content : message.message.content.slice(bundled),
   );
 }
 
-function finalAssistantText(messages: readonly ContextMessage[]): string | undefined {
+function finalAssistantText(messages: readonly HistoryMessage[]): string | undefined {
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index]!;
-    if (message.role !== 'assistant') continue;
-    const text = assistantTextFromContentParts(message.content);
+    if (message.message.role !== 'assistant') continue;
+    const text = assistantTextFromContentParts(message.message.content);
     if (text !== undefined) return text;
   }
   return undefined;

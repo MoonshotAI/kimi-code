@@ -1,6 +1,7 @@
 import { Error2, ErrorCodes } from '#/errors';
 import { FILE_HISTORY_RECORD_PREFIX } from '#/features/fileHistory/fileHistoryOps';
-import type { ContentPart } from '#human/llm/message';
+import { isUserEntry } from '#human/agent/turn';
+import { normalizeReplayedEntry } from '#/agent/contextMemory/loopEventFold';
 import {
   promptMetadataTextFromContentParts,
   promptMetadataTextFromText,
@@ -79,18 +80,20 @@ export function sliceSubagentRecordsAtTime(
 
 function isUserVisibleTurnRecord(record: WireRecord): boolean {
   if (record.type !== 'context.append_message') return false;
-  const message = asRecord(record['message']);
-  if (message === undefined || message['role'] !== 'user') return false;
-  const origin = asRecord(message['origin']);
-  switch (origin?.['kind']) {
+  const raw = record['message'];
+  if (raw === null || typeof raw !== 'object') return false;
+  const entry = normalizeReplayedEntry(raw);
+  if (!isUserEntry(entry)) return false;
+  const origin = entry.meta?.origin;
+  switch (origin?.kind) {
     case undefined:
     case 'user':
       return true;
     case 'skill_activation':
     case 'plugin_command':
-      return origin?.['trigger'] === 'user-slash';
+      return origin.trigger === 'user-slash';
     case 'shell_command':
-      return origin?.['phase'] === 'input';
+      return origin.phase === 'input';
     default:
       return false;
   }
@@ -162,16 +165,18 @@ function turnInputMatchesRecord(
 ): boolean {
   if (!isTurnInputRecordType(inputRecord.type)) return false;
   if (turnRecord.type !== 'context.append_message') return false;
-  const message = asRecord(turnRecord['message']);
-  if (message === undefined || message['role'] !== 'user') return false;
+  const raw = turnRecord['message'];
+  if (raw === null || typeof raw !== 'object') return false;
+  const entry = normalizeReplayedEntry(raw);
+  if (!isUserEntry(entry)) return false;
   const inputKind = asRecord(inputRecord['origin'])?.['kind'];
   if (typeof inputKind !== 'string') return false;
-  const messageKind = asRecord(message['origin'])?.['kind'];
+  const messageKind = entry.meta?.origin?.kind;
   if (messageKind !== undefined && typeof messageKind !== 'string') return false;
   if (!sameTurnOrigin(inputKind, messageKind)) return false;
   return (
     !compareContent ||
-    JSON.stringify(inputRecord['input']) === JSON.stringify(message['content'])
+    JSON.stringify(inputRecord['input']) === JSON.stringify(entry.message.content)
   );
 }
 
@@ -191,28 +196,28 @@ function recordTime(record: WireRecord): number | undefined {
 
 function promptMetadataFromTurnRecord(record: WireRecord): string | undefined {
   if (record.type !== 'context.append_message') return undefined;
-  const message = asRecord(record['message']);
-  if (message === undefined || message['role'] !== 'user') return undefined;
-  const origin = asRecord(message['origin']);
-  if (origin?.['kind'] === 'skill_activation') {
-    const name = origin['skillName'];
-    if (typeof name !== 'string') return undefined;
-    return promptMetadataTextFromText(slashCommandText(`/${name}`, origin['skillArgs']));
+  const raw = record['message'];
+  if (raw === null || typeof raw !== 'object') return undefined;
+  const entry = normalizeReplayedEntry(raw);
+  if (!isUserEntry(entry)) return undefined;
+  const origin = entry.meta?.origin;
+  if (origin?.kind === 'skill_activation') {
+    if (typeof origin.skillName !== 'string') return undefined;
+    return promptMetadataTextFromText(slashCommandText(`/${origin.skillName}`, origin.skillArgs));
   }
-  if (origin?.['kind'] === 'plugin_command') {
-    const pluginId = origin['pluginId'];
-    const commandName = origin['commandName'];
-    if (typeof pluginId !== 'string' || typeof commandName !== 'string') return undefined;
+  if (origin?.kind === 'plugin_command') {
+    if (typeof origin.pluginId !== 'string' || typeof origin.commandName !== 'string') {
+      return undefined;
+    }
     return promptMetadataTextFromText(
-      slashCommandText(`/${pluginId}:${commandName}`, origin['commandArgs']),
+      slashCommandText(`/${origin.pluginId}:${origin.commandName}`, origin.commandArgs),
     );
   }
-  const content = message['content'];
-  if (!Array.isArray(content)) return undefined;
-  const activations = origin?.['skillActivations'];
-  const bundled = origin?.['kind'] === 'user' && Array.isArray(activations) ? activations.length : 0;
+  const activations = origin?.kind === 'user' ? origin.skillActivations : undefined;
+  const content = entry.message.content;
+  const bundled = activations?.length ?? 0;
   return promptMetadataTextFromContentParts(
-    (bundled === 0 ? content : content.slice(bundled)) as readonly ContentPart[],
+    bundled === 0 ? [...content] : content.slice(bundled),
   );
 }
 

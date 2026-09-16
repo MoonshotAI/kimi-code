@@ -67,7 +67,14 @@ export type {
   ServicesConfig,
   ThinkingConfig,
 } from '#/config/index';
-export type { ContextMessage, PromptOrigin } from '#/context';
+export type { PromptOrigin } from '#/context';
+export type {
+  AssistantEntry,
+  HistoryMessage,
+  SystemEntry,
+  ToolEntry,
+  UserEntry,
+} from '@moonshot-ai/agent-core-v2';
 export type {
   ExperimentalFeatureState,
   ExperimentalFlagMap,

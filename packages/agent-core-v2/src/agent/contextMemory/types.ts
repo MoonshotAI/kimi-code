@@ -1,131 +1,27 @@
-import type { ContentPart, Message } from '#human/llm/message';
-import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
+import type { ContentPart } from '#human/llm/message';
+import type { HistoryMessage } from '#human/agent/turn';
+import type { PromptOrigin } from '#human/agent/origin';
 
-import type { AgentTaskStatus } from '#/agent/task/task';
-
-export type SkillSource = 'project' | 'user' | 'extra' | 'builtin';
-
-export interface PromptFileAttachment {
-  readonly name: string;
-  readonly mediaType: string;
-  readonly size: number;
-  readonly path: string;
-}
-
-export interface UserPromptOrigin {
-  readonly kind: 'user';
-  readonly skillActivations?: readonly BundledSkillActivation[];
-  readonly attachments?: readonly PromptFileAttachment[];
-}
-
-export const USER_PROMPT_ORIGIN: UserPromptOrigin = { kind: 'user' };
-
-export interface BundledSkillActivation {
-  readonly activationId: string;
-  readonly skillName: string;
-  readonly skillArgs?: string;
-  readonly skillType?: string;
-  readonly skillPath?: string;
-  readonly skillSource?: SkillSource;
-}
-
-export interface SkillActivationOrigin {
-  readonly kind: 'skill_activation';
-  readonly activationId: string;
-  readonly skillName: string;
-  readonly skillArgs?: string | undefined;
-  readonly trigger: 'user-slash' | 'model-tool' | 'nested-skill';
-  readonly skillType?: string | undefined;
-  readonly skillPath?: string | undefined;
-  readonly skillSource?: SkillSource | undefined;
-  readonly attachments?: readonly PromptFileAttachment[];
-}
-
-export interface PluginCommandOrigin {
-  readonly kind: 'plugin_command';
-  readonly activationId: string;
-  readonly pluginId: string;
-  readonly commandName: string;
-  readonly commandArgs?: string | undefined;
-  readonly trigger: 'user-slash';
-}
-
-export interface InjectionOrigin {
-  readonly kind: 'injection';
-  readonly variant: string;
-  readonly ownerPromptId?: string;
-  readonly disclosure?: unknown;
-}
-
-export interface ShellCommandOrigin {
-  readonly kind: 'shell_command';
-  readonly phase: 'input' | 'output';
-  readonly isError?: boolean;
-}
-
-export interface CompactionSummaryOrigin {
-  readonly kind: 'compaction_summary';
-}
-
-export interface SystemTriggerOrigin {
-  readonly kind: 'system_trigger';
-  readonly name: string;
-}
-
-export interface TaskOrigin {
-  readonly kind: 'task';
-  readonly taskId: string;
-  readonly status: AgentTaskStatus;
-  readonly notificationId: string;
-}
-
-export interface CronJobOrigin {
-  readonly kind: 'cron_job';
-  readonly jobId: string;
-  readonly cron: string;
-  readonly recurring: boolean;
-  readonly coalescedCount: number;
-  readonly stale: boolean;
-}
-
-export interface CronMissedOrigin {
-  readonly kind: 'cron_missed';
-  readonly count: number;
-}
-
-export interface HookResultOrigin {
-  readonly kind: 'hook_result';
-  readonly event: string;
-  readonly blocked?: boolean;
-}
-
-export interface RetryOrigin {
-  readonly kind: 'retry';
-  readonly trigger?: string;
-}
-
-export type PromptOrigin =
-  | UserPromptOrigin
-  | SkillActivationOrigin
-  | PluginCommandOrigin
-  | InjectionOrigin
-  | ShellCommandOrigin
-  | CompactionSummaryOrigin
-  | SystemTriggerOrigin
-  | TaskOrigin
-  | CronJobOrigin
-  | CronMissedOrigin
-  | HookResultOrigin
-  | RetryOrigin;
-
-export type ContextMessage = Message & {
-  readonly id?: string;
-  readonly origin?: PromptOrigin | undefined;
-  readonly isError?: boolean;
-  toolCallDisplays?: Record<string, ToolInputDisplay>;
-  readonly note?: string;
-  readonly partial?: boolean;
-};
+export type { AgentTaskStatus } from '#human/agent/taskStatus';
+export type {
+  BundledSkillActivation,
+  CronJobOrigin,
+  CronMissedOrigin,
+  HookResultOrigin,
+  InjectionOrigin,
+  PluginCommandOrigin,
+  PromptFileAttachment,
+  PromptOrigin,
+  RetryOrigin,
+  ShellCommandOrigin,
+  SkillActivationOrigin,
+  SkillSource,
+  CompactionSummaryOrigin,
+  SystemTriggerOrigin,
+  TaskOrigin,
+  UserPromptOrigin,
+} from '#human/agent/origin';
+export { USER_PROMPT_ORIGIN } from '#human/agent/origin';
 
 export interface UserMessageRecord {
   content: readonly ContentPart[];
@@ -138,6 +34,6 @@ export interface SystemReminderRecord {
 }
 
 export interface AgentContextData {
-  history: readonly ContextMessage[];
+  history: readonly HistoryMessage[];
   tokenCount: number;
 }

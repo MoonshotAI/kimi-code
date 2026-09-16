@@ -3,7 +3,8 @@ import {
   isUndoAnchor,
   isValidUndoCount,
 } from '#/agent/contextMemory/conversationTime';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import { normalizeReplayedEntry } from '#/agent/contextMemory/loopEventFold';
+import { isUserEntry, type HistoryMessage } from '#human/agent/turn';
 import type { WireRecord } from '#/wire/record';
 
 import { activeChain, AGENT_SWITCHED_TYPE, parseTree, type WireLine, type WireTree } from './tree';
@@ -20,20 +21,22 @@ export class ForkLineError extends Error {
   }
 }
 
-const compactionSummaryMarker: ContextMessage = {
-  role: 'user',
-  content: [],
-  origin: { kind: 'compaction_summary' },
+const compactionSummaryMarker: HistoryMessage = {
+  message: { role: 'user', content: [] },
+  meta: { origin: { kind: 'compaction_summary' } },
 };
 
-function isContextMessage(value: unknown): value is ContextMessage {
+function isAppendMessagePayload(value: unknown): boolean {
   if (value === null || typeof value !== 'object') return false;
-  const message = value as { role?: unknown; content?: unknown };
-  return typeof message.role === 'string' && Array.isArray(message.content);
+  const message = value as { role?: unknown; content?: unknown; message?: unknown };
+  return (
+    (typeof message.role === 'string' && Array.isArray(message.content)) ||
+    (message.message !== null && typeof message.message === 'object')
+  );
 }
 
 interface NumberedMessage {
-  readonly message: ContextMessage;
+  readonly message: HistoryMessage;
   readonly line: number;
 }
 
@@ -41,8 +44,9 @@ function foldUnpairedUndo(messages: NumberedMessage[], count: number): void {
   let removed = 0;
   for (let index = messages.length - 1; index >= 0; index--) {
     const { message } = messages[index]!;
-    if (message.origin?.kind === 'injection') continue;
-    if (message.origin?.kind === 'compaction_summary') return;
+    const origin = message.meta?.origin;
+    if (origin?.kind === 'injection') continue;
+    if (origin?.kind === 'compaction_summary') return;
     if (!isUndoAnchor(message)) continue;
     removed++;
     if (removed < count) continue;
@@ -69,7 +73,7 @@ export function computeForkLine(
     if (line <= clearFloor) continue;
     if (record.type === 'context.append_message') {
       const message = record['message'];
-      if (isContextMessage(message)) messages.push({ message, line });
+      if (isAppendMessagePayload(message)) messages.push({ message: normalizeReplayedEntry(message), line });
     } else if (record.type === 'context.apply_compaction') {
       messages.push({ message: compactionSummaryMarker, line });
     } else if (record.type === 'context.undo' && !pairedLegacyUndoLines.has(line)) {
@@ -81,8 +85,9 @@ export function computeForkLine(
   let cutIndex = -1;
   for (let index = messages.length - 1; index >= 0 && remaining > 0; index--) {
     const { message } = messages[index]!;
-    if (message.origin?.kind === 'injection') continue;
-    if (message.origin?.kind === 'compaction_summary') {
+    const origin = message.meta?.origin;
+    if (origin?.kind === 'injection') continue;
+    if (origin?.kind === 'compaction_summary') {
       throw new ForkLineError('compaction_boundary', turns - remaining);
     }
     if (isUndoAnchor(message)) {
@@ -113,16 +118,19 @@ export function restorableChain(
   for (const { record } of chain) {
     if (record.type !== 'context.append_message') continue;
     const message = record['message'];
-    if (!isContextMessage(message) || message.id === undefined) continue;
-    if (isUndoAnchor(message)) survivingPromptIds.add(message.id);
+    if (!isAppendMessagePayload(message)) continue;
+    const entry = normalizeReplayedEntry(message);
+    if (!isUserEntry(entry) || entry.meta?.promptId === undefined) continue;
+    if (isUndoAnchor(entry)) survivingPromptIds.add(entry.meta.promptId);
   }
   const reIncluded: WireLine[] = [];
   for (const entry of entries) {
     if (chainLines.has(entry.line)) continue;
     if (entry.record.type !== 'context.append_message') continue;
     const message = entry.record['message'];
-    if (!isContextMessage(message)) continue;
-    const origin = message.origin;
+    if (!isAppendMessagePayload(message)) continue;
+    const replayed = normalizeReplayedEntry(message);
+    const origin = replayed.meta?.origin;
     if (origin?.kind !== 'injection') continue;
     if (origin.ownerPromptId === undefined || survivingPromptIds.has(origin.ownerPromptId)) {
       reIncluded.push(entry);

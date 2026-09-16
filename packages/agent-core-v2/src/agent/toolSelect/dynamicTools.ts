@@ -1,4 +1,4 @@
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import { isUserEntry, type HistoryMessage, type SystemEntry } from '#human/agent/turn';
 import type { ToolDescription } from '#human/llm/message';
 
 export const DYNAMIC_TOOL_SCHEMA_VARIANT = 'dynamic_tool_schema';
@@ -6,45 +6,49 @@ export const DYNAMIC_TOOL_SCHEMA_VARIANT = 'dynamic_tool_schema';
 export const LOADABLE_TOOLS_VARIANT = 'loadable-tools';
 
 export function isDynamicToolSchemaMessage(
-  message: ContextMessage,
-): message is Extract<ContextMessage, { readonly role: 'system' }> & { readonly tools: ToolDescription[] } {
-  return message.role === 'system' && message.tools !== undefined && message.tools.length > 0;
+  entry: HistoryMessage,
+): entry is SystemEntry & { message: SystemEntry['message'] & { readonly tools: ToolDescription[] } } {
+  return (
+    entry.message.role === 'system' &&
+    entry.message.tools !== undefined &&
+    entry.message.tools.length > 0
+  );
 }
 
-export function isLoadableToolsAnnouncement(message: ContextMessage): boolean {
-  const origin = message.origin;
+export function isLoadableToolsAnnouncement(entry: HistoryMessage): boolean {
+  const origin = isUserEntry(entry) ? entry.meta?.origin : undefined;
   if (origin?.kind === 'injection') return origin.variant === LOADABLE_TOOLS_VARIANT;
   return origin?.kind === 'system_trigger' && origin.name === LOADABLE_TOOLS_VARIANT;
 }
 
 export function stripDynamicToolContext(
-  history: readonly ContextMessage[],
-): readonly ContextMessage[] {
+  history: readonly HistoryMessage[],
+): readonly HistoryMessage[] {
   if (!history.some((m) => isDynamicToolSchemaMessage(m) || isLoadableToolsAnnouncement(m))) {
     return history;
   }
-  const out: ContextMessage[] = [];
-  for (const message of history) {
-    if (isLoadableToolsAnnouncement(message)) continue;
-    if (isDynamicToolSchemaMessage(message)) {
-      const { tools: _tools, ...rest } = message;
+  const out: HistoryMessage[] = [];
+  for (const entry of history) {
+    if (isLoadableToolsAnnouncement(entry)) continue;
+    if (isDynamicToolSchemaMessage(entry)) {
+      const { tools: _tools, ...restMessage } = entry.message;
       void _tools;
-      if (rest.content.length === 0) continue;
-      out.push(rest);
+      if (restMessage.content.length === 0) continue;
+      out.push({ ...entry, message: restMessage });
       continue;
     }
-    out.push(message);
+    out.push(entry);
   }
   return out;
 }
 
 export function collectLoadedDynamicToolNames(
-  history: readonly ContextMessage[],
+  history: readonly HistoryMessage[],
 ): Set<string> {
   const names = new Set<string>();
-  for (const message of history) {
-    if (!isDynamicToolSchemaMessage(message)) continue;
-    for (const tool of message.tools) {
+  for (const entry of history) {
+    if (!isDynamicToolSchemaMessage(entry)) continue;
+    for (const tool of entry.message.tools) {
       names.add(tool.name);
     }
   }
@@ -54,11 +58,11 @@ export function collectLoadedDynamicToolNames(
 const TOOLS_ADDED_BLOCK = /<tools_added>\n?([\s\S]*?)\n?<\/tools_added>/g;
 const TOOLS_REMOVED_BLOCK = /<tools_removed>\n?([\s\S]*?)\n?<\/tools_removed>/g;
 
-export function foldAnnouncedToolNames(history: readonly ContextMessage[]): Set<string> {
+export function foldAnnouncedToolNames(history: readonly HistoryMessage[]): Set<string> {
   const announced = new Set<string>();
-  for (const message of history) {
-    if (!isLoadableToolsAnnouncement(message)) continue;
-    const text = message.content
+  for (const entry of history) {
+    if (!isLoadableToolsAnnouncement(entry)) continue;
+    const text = entry.message.content
       .map((part) => (part.type === 'text' ? part.text : ''))
       .join('');
     for (const name of matchToolNameBlocks(text, TOOLS_REMOVED_BLOCK)) {
@@ -69,19 +73,6 @@ export function foldAnnouncedToolNames(history: readonly ContextMessage[]): Set<
     }
   }
   return announced;
-}
-
-function matchToolNameBlocks(text: string, pattern: RegExp): string[] {
-  const names: string[] = [];
-  pattern.lastIndex = 0;
-  for (const match of text.matchAll(pattern)) {
-    const body = match[1] ?? '';
-    for (const line of body.split('\n')) {
-      const name = line.trim();
-      if (name.length > 0) names.push(name);
-    }
-  }
-  return names;
 }
 
 export function renderLoadableToolsAnnouncement(
@@ -101,4 +92,17 @@ export function renderLoadableToolsAnnouncement(
       'Fold all announcements in this conversation in order to get the current list.',
   );
   return sections.join('\n\n');
+}
+
+function matchToolNameBlocks(text: string, pattern: RegExp): string[] {
+  const names: string[] = [];
+  pattern.lastIndex = 0;
+  for (const match of text.matchAll(pattern)) {
+    const body = match[1] ?? '';
+    for (const line of body.split('\n')) {
+      const name = line.trim();
+      if (name.length > 0) names.push(name);
+    }
+  }
+  return names;
 }

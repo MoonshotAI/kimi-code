@@ -4,15 +4,15 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { HistoryMessage } from '#human/agent/turn';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import type { CronConfig } from '#/features/cron/configSection';
 import { IAgentCronService } from '#/features/cron/cronService';
 
 import { createTestAgent, type TestAgentContext } from '../../harness';
 
-function textOf(message: ContextMessage): string {
-  return message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+function textOf(entry: HistoryMessage): string {
+  return entry.message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
 }
 
 describe('cron-fired steer turn context', () => {
@@ -56,7 +56,7 @@ describe('cron-fired steer turn context', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'remind me every minute' }] });
     await ctx.untilTurnEnd();
 
-    const toolMessages = ctx.contextData().history.filter((m) => m.role === 'tool');
+    const toolMessages = ctx.contextData().history.filter((entry) => entry.message.role === 'tool');
     expect(toolMessages).toHaveLength(1);
     const jobId = textOf(toolMessages[0]!).match(/^id: (\S+)$/m)?.[1];
     expect(jobId).toBeDefined();

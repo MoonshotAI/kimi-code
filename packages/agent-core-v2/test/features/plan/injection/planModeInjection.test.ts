@@ -4,7 +4,7 @@ import { createFakeHostFs } from '../../../tools/fixtures/fake-exec';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { runWillBeginStepHooks, type StubLoop } from '../../../agent/loop/stubs';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import { isUserEntry, type HistoryMessage } from '#human/agent/turn';
 import { IAgentPlanService } from '#/features/plan/plan';
 import {
   createTestAgent,
@@ -36,16 +36,17 @@ function appendAssistantTurn(
   ctx.appendAssistantTurn(context.get().length, text);
 }
 
-function planReminderMessages(context: IAgentContextMemoryService): readonly ContextMessage[] {
-  return context.get().filter((message) => {
-    return message.origin?.kind === 'injection' && message.origin.variant === 'plan_mode';
+function planReminderMessages(context: IAgentContextMemoryService): readonly HistoryMessage[] {
+  return context.get().filter((entry) => {
+    const origin = isUserEntry(entry) ? entry.meta?.origin : undefined;
+    return origin?.kind === 'injection' && origin.variant === 'plan_mode';
   });
 }
 
 function lastPlanReminder(context: IAgentContextMemoryService): string {
-  const message = planReminderMessages(context).at(-1);
-  if (message === undefined) return '';
-  return message.content
+  const entry = planReminderMessages(context).at(-1);
+  if (entry === undefined) return '';
+  return entry.message.content
     .map((part) => (part.type === 'text' ? part.text : ''))
     .join('');
 }

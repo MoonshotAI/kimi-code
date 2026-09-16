@@ -1,18 +1,5 @@
-export type AgentTaskStatus =
-  | 'running'
-  | 'completed'
-  | 'failed'
-  | 'timed_out'
-  | 'killed'
-  | 'lost';
-
-export const TERMINAL_STATUSES: ReadonlySet<AgentTaskStatus> = new Set<AgentTaskStatus>([
-  'completed',
-  'failed',
-  'timed_out',
-  'killed',
-  'lost',
-]);
+import { TERMINAL_STATUSES, type AgentTaskStatus } from '#human/agent/taskStatus';
+export { TERMINAL_STATUSES, type AgentTaskStatus };
 export type AgentTaskSettlementStatus = 'completed' | 'failed' | 'timed_out' | 'killed';
 
 export interface AgentTaskSettlement {

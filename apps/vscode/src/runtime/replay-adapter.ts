@@ -1,3 +1,8 @@
+import {
+  isAssistantEntry,
+  isToolEntry,
+  isUserEntry,
+} from "@moonshot-ai/kimi-code-sdk";
 import type {
   AgentReplayRecord,
   ContentPart,
@@ -91,9 +96,10 @@ function replayAgentToWebviewEvents(
   for (const record of agent.replay) {
     switch (record.type) {
       case "message": {
-        const message = record.message;
-        if (message.role === "user") {
-          if (!isVisibleUserMessage(message.origin)) break;
+        const entry = record.message;
+        if (isUserEntry(entry)) {
+          const { message, meta } = entry;
+          if (!isVisibleUserMessage(meta?.origin)) break;
           const imported = importedContextReplay(message.content);
           completeTurn();
           step = 0;
@@ -103,7 +109,7 @@ function replayAgentToWebviewEvents(
               {
                 type: "TurnBegin",
                 payload: {
-                  user_input: imported?.input ?? replayUserInput(message.content, message.origin),
+                  user_input: imported?.input ?? replayUserInput(message.content, meta?.origin),
                 },
               },
               sessionId,
@@ -121,14 +127,15 @@ function replayAgentToWebviewEvents(
           break;
         }
 
-        if (message.role === "assistant") {
+        if (isAssistantEntry(entry)) {
+          const { message, meta } = entry;
           if (!turnOpen) break;
           ensureStep();
           for (const part of toLegacyContent(message.content)) {
             events.push(withSession({ type: "ContentPart", payload: part }, sessionId));
           }
           for (const call of message.toolCalls) {
-            const display = message.toolCallDisplays?.[call.id];
+            const display = meta?.toolCallDisplays?.[call.id];
             if (display !== undefined) {
               toolDisplays.set(call.id, toLegacyDisplay(display));
             }
@@ -156,7 +163,8 @@ function replayAgentToWebviewEvents(
           break;
         }
 
-        if (message.role === "tool" && turnOpen && message.toolCallId !== undefined) {
+        if (isToolEntry(entry) && turnOpen) {
+          const { message, meta } = entry;
           ensureStep();
           const display = toolDisplays.get(message.toolCallId) ?? [];
           toolDisplays.delete(message.toolCallId);
@@ -167,7 +175,7 @@ function replayAgentToWebviewEvents(
                 payload: {
                   tool_call_id: message.toolCallId,
                   return_value: {
-                    is_error: message.isError === true,
+                    is_error: meta?.isError === true,
                     output: toLegacyContent(message.content),
                     message: "",
                     display: [...display],
@@ -226,24 +234,24 @@ function buildSubagentReplayIndex(state: ResumedSessionState): SubagentReplayInd
     >();
     for (const record of parent.replay) {
       if (record.type !== "message") continue;
-      const { message } = record;
-      if (message.role === "assistant") {
-        for (const call of message.toolCalls) {
+      const entry = record.message;
+      if (isAssistantEntry(entry)) {
+        for (const call of entry.message.toolCalls) {
           calls.set(call.id, { name: call.name, startedAt: record.time, order: order++ });
         }
         continue;
       }
-      if (message.role !== "tool" || message.toolCallId === undefined) continue;
-      const call = calls.get(message.toolCallId);
+      if (!isToolEntry(entry)) continue;
+      const call = calls.get(entry.message.toolCallId);
       if (call === undefined || (call.name !== "Agent" && call.name !== "AgentSwarm")) continue;
-      for (const childAgentId of subagentIdsFromResult(call.name, message.content)) {
+      for (const childAgentId of subagentIdsFromResult(call.name, entry.message.content)) {
         const metadata = state.sessionMetadata.agents[childAgentId];
         if (metadata?.parentAgentId !== parentAgentId || state.agents[childAgentId] === undefined) {
           continue;
         }
         invocations.push({
           parentAgentId,
-          parentToolCallId: message.toolCallId,
+          parentToolCallId: entry.message.toolCallId,
           childAgentId,
           startedAt: call.startedAt,
           order: call.order,
@@ -345,12 +353,13 @@ function renderSubagentInvocation(
   for (const record of invocation.records) {
     switch (record.type) {
       case "message": {
-        const { message } = record;
-        if (message.role === "user") {
+        const entry = record.message;
+        if (isUserEntry(entry)) {
           step = 0;
           break;
         }
-        if (message.role === "assistant") {
+        if (isAssistantEntry(entry)) {
+          const { message, meta } = entry;
           step += 1;
           emit({ type: "StepBegin", payload: { n: step } });
           for (const part of toLegacyContent(message.content)) {
@@ -358,7 +367,7 @@ function renderSubagentInvocation(
           }
           for (const call of message.toolCalls) {
             const toolCallId = scopedReplayToolCallId(invocation.childAgentId, call.id);
-            const display = message.toolCallDisplays?.[call.id];
+            const display = meta?.toolCallDisplays?.[call.id];
             if (display !== undefined) toolDisplays.set(toolCallId, toLegacyDisplay(display));
             emit({
               type: "ToolCall",
@@ -383,7 +392,8 @@ function renderSubagentInvocation(
           }
           break;
         }
-        if (message.role === "tool" && message.toolCallId !== undefined) {
+        if (isToolEntry(entry)) {
+          const { message, meta } = entry;
           const toolCallId = scopedReplayToolCallId(
             invocation.childAgentId,
             message.toolCallId,
@@ -395,7 +405,7 @@ function renderSubagentInvocation(
             payload: {
               tool_call_id: toolCallId,
               return_value: {
-                is_error: message.isError === true,
+                is_error: meta?.isError === true,
                 output: toLegacyContent(message.content),
                 message: "",
                 display: [...display],
@@ -588,7 +598,7 @@ export function replayRecordTurnCount(records: readonly AgentReplayRecord[]): nu
   return records.filter(
     (record) =>
       record.type === "message" &&
-      record.message.role === "user" &&
-      isVisibleUserMessage(record.message.origin),
+      isUserEntry(record.message) &&
+      isVisibleUserMessage(record.message.meta?.origin),
   ).length;
 }

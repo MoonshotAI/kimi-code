@@ -7,7 +7,7 @@ import { IFlagService } from '#/app/flag/flag';
 import type { ToolDescription as Tool } from '#human/llm/message';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { HistoryMessage } from '#human/agent/turn';
 import { CompactionCompleted } from '#/agent/fullCompaction/compactionOps';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -111,7 +111,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     return shaped;
   }
 
-  shapeHistory(messages: readonly ContextMessage[]): readonly ContextMessage[] {
+  shapeHistory(messages: readonly HistoryMessage[]): readonly HistoryMessage[] {
     if (this.enabled()) return this.shapeActiveHistory(messages);
     return stripDynamicToolContext(messages);
   }
@@ -240,8 +240,8 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     return info.disclosure === 'deferred';
   }
 
-  private shapeActiveHistory(messages: readonly ContextMessage[]): readonly ContextMessage[] {
-    let shaped: ContextMessage[] | undefined;
+  private shapeActiveHistory(messages: readonly HistoryMessage[]): readonly HistoryMessage[] {
+    let shaped: HistoryMessage[] | undefined;
     for (let i = 0; i < messages.length; i += 1) {
       const message = messages[i]!;
       const next = this.shapeActiveMessage(message);
@@ -255,10 +255,10 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     return shaped ?? messages;
   }
 
-  private shapeActiveMessage(message: ContextMessage): ContextMessage | undefined {
-    if (message.role !== 'system') return message;
-    const tools = message.tools;
-    if (tools === undefined || tools.length === 0) return message;
+  private shapeActiveMessage(entry: HistoryMessage): HistoryMessage | undefined {
+    if (entry.message.role !== 'system') return entry;
+    const tools = entry.message.tools;
+    if (tools === undefined || tools.length === 0) return entry;
 
     let kept: Tool[] | undefined;
     for (let i = 0; i < tools.length; i += 1) {
@@ -269,13 +269,13 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
       }
       if (kept === undefined) kept = tools.slice(0, i);
     }
-    if (kept === undefined) return message;
-    if (kept.length > 0) return { ...message, tools: kept };
+    if (kept === undefined) return entry;
+    if (kept.length > 0) return { ...entry, message: { ...entry.message, tools: kept } };
 
-    const { tools: _tools, ...rest } = message;
+    const { tools: _tools, ...restMessage } = entry.message;
     void _tools;
-    if (rest.content.length === 0) return undefined;
-    return rest;
+    if (restMessage.content.length === 0) return undefined;
+    return { ...entry, message: restMessage };
   }
 
   private schemaOf(name: string): Tool | undefined {

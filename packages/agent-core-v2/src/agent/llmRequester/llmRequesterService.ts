@@ -34,6 +34,7 @@ import {
   type StreamedMessagePart,
   type ToolDescription as Tool,
 } from '#human/llm/message';
+import type { HistoryMessage } from '#human/agent/turn';
 import { emptyUsage, inputTotal, type TokenUsage } from '#human/llm/usage';
 import { ILogService, type LogContext } from '#/_base/log/log';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
@@ -109,7 +110,7 @@ interface ResolvedLLMRequest {
   readonly thinkingEffort: ThinkingEffort;
   readonly systemPrompt: string;
   readonly tools: readonly Tool[];
-  readonly messages: Message[];
+  readonly messages: HistoryMessage[];
   readonly source: AgentLLMRequestSource | undefined;
   readonly logFields: AgentLLMRequestLogFields;
 }
@@ -343,7 +344,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     onRequestTrace: (traceId: string | undefined) => void,
     onAttemptRetry: (() => void) | undefined,
   ): Promise<AgentLLMRequestFinish> {
-    this.toolCallIdNormalizer.seedFrom(this.context.get());
+    this.toolCallIdNormalizer.seedFrom(this.context.get().map((entry) => entry.message));
     const shaped = this.toolSelect.shapeHistory(request.messages);
     const recoveredStrip = this.mediaStripSnapshotForTurn(request.source);
     let policy: ProjectionPolicy | undefined =
@@ -455,7 +456,12 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         request.source,
       );
       if (usage !== undefined) {
-        this.tokenCounting.measured(this.scopeContext.agentContext, request.messages, [message], usage);
+        this.tokenCounting.measured(
+          this.scopeContext.agentContext,
+          request.messages.map((entry) => entry.message),
+          [message],
+          usage,
+        );
       }
       this.logResponse(request.logFields, usage ?? emptyUsage(), timing);
 

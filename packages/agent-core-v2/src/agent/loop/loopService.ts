@@ -31,7 +31,7 @@ import { OrderedHookSlot } from '#/hooks';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
 import { newMessageId } from '#/agent/contextMemory/messageId';
-import { type ContextMessage, type PromptOrigin } from '#/agent/contextMemory/types';
+import { type PromptOrigin } from '#/agent/contextMemory/types';
 import { gateImageFormatParts } from '#/agent/media/image-compress';
 import { daemonFileRefFromPart } from '#/agent/media/mediaRef';
 import { materializePromptDaemonRefs } from '#/agent/media/promptMediaIntake';
@@ -295,18 +295,16 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (this.disposing) throw abortError('Agent loop disposed');
     const meta = input.meta;
     const id = meta?.promptId ?? newMessageId();
-    const origin = (meta?.origin as PromptOrigin | undefined) ?? { kind: 'user' };
+    const origin = meta?.origin ?? { kind: 'user' };
     const tracked = meta?.tracked === true;
     const createdAt = meta?.createdAt ?? (tracked ? new Date().toISOString() : '');
     const userMessageId = meta?.userMessageId ?? (tracked ? id : '');
     const waiter = this.createWaiter(id, meta?.promptId, options?.onMaterialize);
     this.terminalStates.delete(id);
     this.promptWaiters.set(id, waiter);
-    const message: ContextMessage = {
-      role: 'user',
-      content: [...input.message.content],
-      id,
-      origin: meta?.origin as PromptOrigin | undefined,
+    const entry: UserEntry = {
+      message: { role: 'user', content: [...input.message.content] },
+      meta: { promptId: id, origin, tracked, createdAt, userMessageId },
     };
     if (tracked) {
       const queued =
@@ -314,15 +312,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         this.machinePaused() ||
         (this.engine !== undefined && this.engine.snapshot().queue.length > 0);
       this.publishPromptSubmitted(
-        { promptId: id, origin, userMessageId, createdAt, message },
+        { promptId: id, origin, userMessageId, createdAt, message: entry },
         queued ? 'queued' : 'running',
       );
-      if (queued) this.publishPromptQueued({ promptId: id, origin, message });
+      if (queued) this.publishPromptQueued({ promptId: id, origin, message: entry });
     }
-    const entry: UserEntry = {
-      message: { role: 'user', content: [...input.message.content] },
-      meta: { promptId: id, origin, tracked, createdAt, userMessageId },
-    };
     if (this.engine !== undefined) {
       try {
         this.machineEngine().submit(entry);
@@ -572,11 +566,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (waiter === undefined || entry?.meta?.tracked !== true) {
       return false;
     }
-    const promptMessage: ContextMessage = {
-      role: 'user',
-      content: [...message.content],
-      id: queueItemId,
-      origin: entry.meta?.origin as PromptOrigin | undefined,
+    const promptMessage: UserEntry = {
+      message: { role: 'user', content: [...message.content] },
+      meta: { promptId: queueItemId, origin: entry.meta?.origin },
     };
     const ctx: PromptSubmitContext = {
       promptMessage,
@@ -585,12 +577,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     };
     await this.hooks.onBeforeSubmitPrompt.run(ctx);
     if (ctx.block) return { block: true };
-    await this.materializeDaemonRefs(promptMessage);
+    await this.materializeDaemonRefs(promptMessage.message);
     return {
       block: false,
       message: {
         role: 'user',
-        content: gateImageFormatParts(promptMessage.content, this.profile.getModelProviderType()),
+        content: gateImageFormatParts(promptMessage.message.content, this.profile.getModelProviderType()),
       },
     };
   }
@@ -604,10 +596,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (waiter === undefined) return;
     if (state === 'blocked' && entry !== undefined && entry.message.content.length > 0) {
       this.context.append({
-        role: 'user',
-        content: [...entry.message.content],
-        id: waiter.id,
-        origin: entry.meta?.origin as PromptOrigin | undefined,
+        message: { role: 'user', content: [...entry.message.content] },
+        meta: { promptId: waiter.id, origin: entry.meta?.origin },
       });
     }
     waiter.launched.resolve(undefined);
@@ -629,9 +619,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const { delivery: _delivery, ...rest } = ctx.result;
     ctx.result = rest as ExecutableToolResult;
     if (delivery.kind === 'steer') {
-      const message = delivery.message as ContextMessage;
+      const message = delivery.message;
       this.submit(
-        { message: machineUserMessage(message), meta: { origin: message.origin } },
+        {
+          message: { role: 'user', content: [...message.content] },
+          meta: { origin: message.origin },
+        },
         { steerIfActive: true },
       );
     }
@@ -651,14 +644,17 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private publishPromptQueued(input: {
     readonly promptId: string;
     readonly origin: PromptOrigin;
-    readonly message: ContextMessage;
+    readonly message: UserEntry;
   }): void {
     if (input.origin.kind !== 'user') return;
     void this.dispatcher.dispatch(
       new PromptQueued({
         agentId: this.scopeContext.agentId,
         promptId: input.promptId,
-        content: stripBundledSkillBlocks(input.message),
+        content: stripBundledSkillBlocks({
+          content: input.message.message.content,
+          origin: input.message.meta?.origin,
+        }),
         queueLength: (this.engine?.snapshot().queue.length ?? 0) + 1,
       }),
     );
@@ -670,7 +666,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       readonly origin: PromptOrigin;
       readonly userMessageId: string;
       readonly createdAt: string;
-      readonly message: ContextMessage;
+      readonly message: UserEntry;
     },
     status: 'running' | 'queued',
   ): void {
@@ -681,7 +677,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         promptId: input.promptId,
         userMessageId: input.userMessageId,
         status,
-        content: stripBundledSkillBlocks(input.message),
+        content: stripBundledSkillBlocks({
+          content: input.message.message.content,
+          origin: input.message.meta?.origin,
+        }),
         createdAt: input.createdAt,
       }),
     );
@@ -839,19 +838,19 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }
     if (pending.queueItemId === undefined) {
       const seeded = this.nudges.slice(this.nudgeCursor).find(
-        (nudge) => !nudge.dropped && nudge.contextMessage !== undefined && nudge.contextMessage.content.length > 0,
+        (nudge) => !nudge.dropped && nudge.contextMessage !== undefined && nudge.contextMessage.message.content.length > 0,
       );
       if (seeded === undefined) {
         this.consumeDrainedNudges();
         return;
       }
-      const seededMessage = seeded.contextMessage as ContextMessage;
-      const waiter = this.createWaiter(seededMessage.id ?? newMessageId(), seededMessage.id);
+      const seededMessage = seeded.contextMessage!;
+      const waiter = this.createWaiter(seededMessage.meta?.promptId ?? newMessageId(), seededMessage.meta?.promptId);
       this.terminalStates.delete(waiter.id);
       this.promptWaiters.set(waiter.id, waiter);
       const entry: UserEntry = {
-        message: { role: 'user', content: [...seededMessage.content] },
-        meta: { promptId: waiter.id, origin: seededMessage.origin, tracked: false },
+        message: { role: 'user', content: [...seededMessage.message.content] },
+        meta: { promptId: waiter.id, origin: seededMessage.meta?.origin, tracked: false },
       };
       const seededTurn = this.beginActiveTurn(waiter, entry, pending.id);
       this.mirrorConsumedNudges(seededTurn);
@@ -1068,28 +1067,31 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       return true;
     }
     const seeded = this.nudges.slice(this.nudgeCursor).find(
-      (nudge) => !nudge.dropped && nudge.contextMessage !== undefined && nudge.contextMessage.content.length > 0,
+      (nudge) => !nudge.dropped && nudge.contextMessage !== undefined && nudge.contextMessage.message.content.length > 0,
     );
     if (seeded === undefined) {
       this.machineTurnSuppressed = true;
       return false;
     }
-    const seededMessage = seeded.contextMessage as ContextMessage;
-    const waiter = this.createWaiter(seededMessage.id ?? newMessageId(), seededMessage.id);
+    const seededMessage = seeded.contextMessage!;
+    const waiter = this.createWaiter(seededMessage.meta?.promptId ?? newMessageId(), seededMessage.meta?.promptId);
     this.promptWaiters.set(waiter.id, waiter);
     const entry: UserEntry = {
-      message: { role: 'user', content: [...seededMessage.content] },
-      meta: { promptId: waiter.id, origin: seededMessage.origin, tracked: false },
+      message: { role: 'user', content: [...seededMessage.message.content] },
+      meta: { promptId: waiter.id, origin: seededMessage.meta?.origin, tracked: false },
     };
     this.beginActiveTurn(waiter, entry, pending.id);
     return true;
   }
 
-  private gatedProjectionMessage(prompt: ActivePrompt): ContextMessage {
+  private gatedProjectionMessage(prompt: ActivePrompt): UserEntry {
     if (!prompt.tracked) return prompt.message;
     return {
       ...prompt.message,
-      content: gateImageFormatParts(prompt.message.content, this.profile.getModelProviderType()),
+      message: {
+        ...prompt.message.message,
+        content: gateImageFormatParts(prompt.message.message.content, this.profile.getModelProviderType()),
+      },
     };
   }
 
@@ -1102,7 +1104,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   private beginActiveTurn(waiter: PromptWaiter, entry: UserEntry, id: number): ActiveTurn {
-    const origin = (entry.meta?.origin as PromptOrigin | undefined) ?? { kind: 'user' };
+    const origin = entry.meta?.origin ?? { kind: 'user' };
     const tracked = entry.meta?.tracked === true;
     const prompt: ActivePrompt = {
       id: waiter.id,
@@ -1110,10 +1112,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       tracked,
       origin,
       message: {
-        role: 'user',
-        content: [...entry.message.content],
-        id: waiter.id,
-        origin: entry.meta?.origin as PromptOrigin | undefined,
+        message: { role: 'user', content: [...entry.message.content] },
+        meta: { promptId: waiter.id, origin: entry.meta?.origin },
       },
       userMessageId: entry.meta?.userMessageId ?? '',
       createdAt: entry.meta?.createdAt ?? '',
@@ -1182,7 +1182,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         turnId: id,
         promptId: prompt.promptId,
         origin: prompt.origin,
-        input: prompt.message.content,
+        input: prompt.message.message.content,
       }),
     );
     turn.state = 'running';
@@ -1196,8 +1196,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return active;
   }
 
-  private materializeMessage(message: ContextMessage): void {
-    if (message.content.length === 0) return;
+  private materializeMessage(message: UserEntry): void {
+    if (message.message.content.length === 0) return;
     this.context.append(message);
   }
 
@@ -1216,7 +1216,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       live += 1;
       bypass = bypass || nudge.bypassMaxSteps;
       nudge.consumed = true;
-      if (nudge.contextMessage !== undefined && nudge.contextMessage.content.length > 0) {
+      if (nudge.contextMessage !== undefined && nudge.contextMessage.message.content.length > 0) {
         this.materializeMessage(nudge.contextMessage);
       }
       nudge.onConsume?.();
@@ -1258,7 +1258,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           if (id === undefined) continue;
           const waiter = this.promptWaiters.get(id);
           if (waiter === undefined) continue;
-          const origin = (entry.meta?.origin as PromptOrigin | undefined) ?? { kind: 'user' };
+          const origin = entry.meta?.origin ?? { kind: 'user' };
           children.push({
             waiter,
             projection: {
@@ -1266,10 +1266,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
               tracked: entry.meta?.tracked === true,
               origin,
               message: {
-                role: 'user',
-                content: [...entry.message.content],
-                id,
-                origin: entry.meta?.origin as PromptOrigin | undefined,
+                message: { role: 'user', content: [...entry.message.content] },
+                meta: { promptId: id, origin: entry.meta?.origin },
               },
               userMessageId: entry.meta?.userMessageId ?? '',
               createdAt: entry.meta?.createdAt ?? '',
@@ -1285,12 +1283,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         const merged =
           children.length === 1
             ? {
-                content: children[0]!.projection.message.content,
+                content: children[0]!.projection.message.message.content,
                 origin: children[0]!.projection.origin,
               }
             : mergeSteerMessages(
                 children.map((child) => ({
-                  content: child.projection.message.content,
+                  content: child.projection.message.message.content,
                   origin: child.projection.origin,
                 })),
               );
@@ -1300,10 +1298,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         );
         this.nudges.push({
           contextMessage: {
-            role: 'user',
-            content: gatedContent,
-            origin: merged.origin,
-            id: newMessageId(),
+            message: { role: 'user', content: gatedContent },
+            meta: { origin: merged.origin, promptId: newMessageId() },
           },
           bypassMaxSteps: false,
           turnScoped: false,
@@ -1322,7 +1318,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
             activePromptId: active.prompt.id,
             promptIds: children.map((child) => child.waiter.id),
             content: children.flatMap((child) =>
-              stripBundledSkillBlocks(child.projection.message),
+              stripBundledSkillBlocks({
+                content: child.projection.message.message.content,
+                origin: child.projection.message.meta?.origin,
+              }),
             ),
             steeredAt: new Date().toISOString(),
           }),
@@ -2101,9 +2100,9 @@ function normalizeFinishReason(reason: FinishReason): string {
   return reason;
 }
 
-function machineUserMessage(message: ContextMessage | undefined): UserMessage {
+function machineUserMessage(message: UserEntry | undefined): UserMessage {
   if (message === undefined) return EMPTY_MACHINE_PROMPT;
-  return { role: 'user', content: [...message.content] };
+  return { role: 'user', content: [...message.message.content] };
 }
 
 type MutableTurn = {
@@ -2122,7 +2121,7 @@ interface PromptWaiter {
 interface PromptProjection {
   readonly tracked: boolean;
   readonly origin: PromptOrigin;
-  readonly message: ContextMessage;
+  readonly message: UserEntry;
   readonly userMessageId: string;
   readonly createdAt: string;
 }
@@ -2136,21 +2135,19 @@ interface SteeredPrompt extends PromptProjection {
   readonly parentId: string;
 }
 
-const EMPTY_HANDLE_MESSAGE: ContextMessage = {
-  role: 'user',
-  content: [],
+const EMPTY_HANDLE_MESSAGE: UserEntry = {
+  message: { role: 'user', content: [] },
+  meta: {},
 };
 
 function projectionFromEntry(entry: UserEntry): PromptProjection {
-  const origin = (entry.meta?.origin as PromptOrigin | undefined) ?? { kind: 'user' };
+  const origin = entry.meta?.origin ?? { kind: 'user' };
   return {
     tracked: entry.meta?.tracked === true,
     origin,
     message: {
-      role: 'user',
-      content: [...entry.message.content],
-      id: entry.meta?.promptId,
-      origin: entry.meta?.origin as PromptOrigin | undefined,
+      message: { role: 'user', content: [...entry.message.content] },
+      meta: { promptId: entry.meta?.promptId, origin: entry.meta?.origin },
     },
     userMessageId: entry.meta?.userMessageId ?? '',
     createdAt: entry.meta?.createdAt ?? '',
@@ -2158,7 +2155,7 @@ function projectionFromEntry(entry: UserEntry): PromptProjection {
 }
 
 interface Nudge {
-  readonly contextMessage?: ContextMessage;
+  readonly contextMessage?: UserEntry;
   readonly bypassMaxSteps: boolean;
   readonly turnScoped: boolean;
   readonly onConsume?: () => void;

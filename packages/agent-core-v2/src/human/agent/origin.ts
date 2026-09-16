@@ -1,5 +1,7 @@
 import type { ContentPart } from '#/llm/message';
 
+import type { AgentTaskStatus } from './taskStatus';
+
 export type SkillSource = 'project' | 'user' | 'extra' | 'builtin';
 
 export interface PromptFileAttachment {
@@ -26,9 +28,94 @@ export interface UserPromptOrigin {
 
 export const USER_PROMPT_ORIGIN: UserPromptOrigin = { kind: 'user' };
 
-export interface PromptOrigin {
-  readonly kind: string;
+export interface SkillActivationOrigin {
+  readonly kind: 'skill_activation';
+  readonly activationId: string;
+  readonly skillName: string;
+  readonly skillArgs?: string;
+  readonly trigger: 'user-slash' | 'model-tool' | 'nested-skill';
+  readonly skillType?: string;
+  readonly skillPath?: string;
+  readonly skillSource?: SkillSource;
+  readonly attachments?: readonly PromptFileAttachment[];
 }
+
+export interface PluginCommandOrigin {
+  readonly kind: 'plugin_command';
+  readonly activationId: string;
+  readonly pluginId: string;
+  readonly commandName: string;
+  readonly commandArgs?: string;
+  readonly trigger: 'user-slash';
+}
+
+export interface InjectionOrigin {
+  readonly kind: 'injection';
+  readonly variant: string;
+  readonly ownerPromptId?: string;
+  readonly disclosure?: unknown;
+}
+
+export interface ShellCommandOrigin {
+  readonly kind: 'shell_command';
+  readonly phase: 'input' | 'output';
+  readonly isError?: boolean;
+}
+
+export interface CompactionSummaryOrigin {
+  readonly kind: 'compaction_summary';
+}
+
+export interface SystemTriggerOrigin {
+  readonly kind: 'system_trigger';
+  readonly name: string;
+}
+
+export interface TaskOrigin {
+  readonly kind: 'task';
+  readonly taskId: string;
+  readonly status: AgentTaskStatus;
+  readonly notificationId: string;
+}
+
+export interface CronJobOrigin {
+  readonly kind: 'cron_job';
+  readonly jobId: string;
+  readonly cron: string;
+  readonly recurring: boolean;
+  readonly coalescedCount: number;
+  readonly stale: boolean;
+}
+
+export interface CronMissedOrigin {
+  readonly kind: 'cron_missed';
+  readonly count: number;
+}
+
+export interface HookResultOrigin {
+  readonly kind: 'hook_result';
+  readonly event: string;
+  readonly blocked?: boolean;
+}
+
+export interface RetryOrigin {
+  readonly kind: 'retry';
+  readonly trigger?: string;
+}
+
+export type PromptOrigin =
+  | UserPromptOrigin
+  | SkillActivationOrigin
+  | PluginCommandOrigin
+  | InjectionOrigin
+  | ShellCommandOrigin
+  | CompactionSummaryOrigin
+  | SystemTriggerOrigin
+  | TaskOrigin
+  | CronJobOrigin
+  | CronMissedOrigin
+  | HookResultOrigin
+  | RetryOrigin;
 
 export interface SteerMessage {
   readonly content: readonly ContentPart[];
@@ -36,7 +123,7 @@ export interface SteerMessage {
 }
 
 function userOriginOf(origin: PromptOrigin | undefined): UserPromptOrigin | undefined {
-  return origin !== undefined && origin.kind === 'user' ? (origin as UserPromptOrigin) : undefined;
+  return origin !== undefined && origin.kind === 'user' ? origin : undefined;
 }
 
 function bundledSkillBlockCount(message: SteerMessage): number {

@@ -19,9 +19,11 @@ describe('title excerpts over the real context memory', () => {
   it('first_turn pairs the opening prompt with the folded assistant final text', async () => {
     const context = ctx.get(IAgentContextMemoryService);
     context.append({
-      role: 'user',
-      content: [{ type: 'text', text: '帮我部署这个服务' }],
-      origin: { kind: 'user' },
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: '帮我部署这个服务' }],
+      },
+      meta: { origin: { kind: 'user' } },
     });
     context.appendLoopEvent({ type: 'step.begin', uuid: 's1' });
     context.appendLoopEvent({
@@ -68,9 +70,11 @@ describe('title excerpts over the real context memory', () => {
   it('first_turn reports no assistant text while the turn has not produced any', async () => {
     const context = ctx.get(IAgentContextMemoryService);
     context.append({
-      role: 'user',
-      content: [{ type: 'text', text: '刚发的问题' }],
-      origin: { kind: 'user' },
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: '刚发的问题' }],
+      },
+      meta: { origin: { kind: 'user' } },
     });
 
     await expect(ctx.get(IAgentTitlePromptSource).firstTurnExcerpt()).resolves.toEqual({
@@ -82,18 +86,22 @@ describe('title excerpts over the real context memory', () => {
   it('excludes bundled skill blocks from the excerpt of a bundled prompt', async () => {
     const context = ctx.get(IAgentContextMemoryService);
     context.append({
-      role: 'user',
-      content: [
-        { type: 'text', text: 'User activated the skill "review". Follow the loaded skill instructions.' },
-        { type: 'text', text: 'User activated the skill "security". Follow the loaded skill instructions.' },
-        { type: 'text', text: '检查这次改动的正确性' },
-      ],
-      origin: {
-        kind: 'user',
-        skillActivations: [
-          { activationId: 'act-1', skillName: 'review' },
-          { activationId: 'act-2', skillName: 'security' },
+      message: {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'User activated the skill "review". Follow the loaded skill instructions.' },
+          { type: 'text', text: 'User activated the skill "security". Follow the loaded skill instructions.' },
+          { type: 'text', text: '检查这次改动的正确性' },
         ],
+      },
+      meta: {
+        origin: {
+          kind: 'user',
+          skillActivations: [
+            { activationId: 'act-1', skillName: 'review' },
+            { activationId: 'act-2', skillName: 'security' },
+          ],
+        },
       },
     });
 

@@ -1,11 +1,11 @@
 import type { IDisposable } from '#/_base/di/lifecycle';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { HistoryMessage } from '#human/agent/turn';
 import type { ContentPart, ToolDescription as Tool } from '#human/llm/message';
 
 export interface ContextInjectionContext<D = unknown> {
   readonly injectedPositions: readonly number[];
   readonly lastInjectedAt: number | null;
-  readonly lastInjection?: ContextMessage;
+  readonly lastInjection?: HistoryMessage;
   readonly lastDisclosure?: D;
   readonly isNewTurn: boolean;
 }

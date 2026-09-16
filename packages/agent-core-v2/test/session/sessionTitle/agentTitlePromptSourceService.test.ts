@@ -3,40 +3,39 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { HistoryMessage, UserEntry } from '#human/agent/turn';
+import type { PromptOrigin } from '#human/agent/origin';
 import { IAgentLoopService, type PromptHandle } from '#/agent/loop/loop';
 import type { ContentPart } from '#human/llm/message';
 import { IAgentTitlePromptSource } from '#/session/sessionTitle/agentTitlePromptSource';
 import { AgentTitlePromptSourceService } from '#/session/sessionTitle/agentTitlePromptSourceService';
 
-const USER_ORIGIN: ContextMessage['origin'] = { kind: 'user' };
+const USER_ORIGIN: PromptOrigin = { kind: 'user' };
 
 function userMessage(
   id: string,
   text: string,
-  origin: ContextMessage['origin'] = USER_ORIGIN,
-): ContextMessage {
+  origin: PromptOrigin = USER_ORIGIN,
+): UserEntry {
   return {
-    id,
-    role: 'user',
-    content: [{ type: 'text', text }],
-    origin,
+    message: { role: 'user', content: [{ type: 'text', text }] },
+    meta: { promptId: id, origin },
   };
 }
 
-function assistantMessage(id: string, parts: ContentPart[]): ContextMessage {
-  return { id, role: 'assistant', content: parts, toolCalls: [] };
+function assistantMessage(parts: ContentPart[]): HistoryMessage {
+  return { message: { role: 'assistant', content: parts, toolCalls: [] } };
 }
 
-function toolMessage(id: string, text: string): ContextMessage {
-  return { id, role: 'tool', content: [{ type: 'text', text }], toolCallId: 'call_1' };
+function toolMessage(text: string): HistoryMessage {
+  return { message: { role: 'tool', content: [{ type: 'text', text }], toolCallId: 'call_1' } };
 }
 
 interface MockQueueState {
   active?: PromptHandle;
   pending: {
     id: string;
-    message: ContextMessage;
+    message: UserEntry;
     tracked: true;
     createdAt: string;
     userMessageId: string;
@@ -46,7 +45,7 @@ interface MockQueueState {
 describe('AgentTitlePromptSource', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
-  let liveMessages: readonly ContextMessage[];
+  let liveMessages: readonly HistoryMessage[];
   let queue: MockQueueState;
 
   beforeEach(() => {
@@ -62,7 +61,7 @@ describe('AgentTitlePromptSource', () => {
             activeTurnId: undefined,
             activePromptId: queue.active?.id,
             queue: queue.pending.map((item) => ({
-              message: { role: 'user' as const, content: [...item.message.content] },
+              message: { role: 'user' as const, content: [...item.message.message.content] },
               meta: {
                 promptId: item.id,
                 tracked: item.tracked,
@@ -171,15 +170,15 @@ describe('AgentTitlePromptSource', () => {
   it('firstTurnExcerpt pairs the opening prompt with the turn’s final assistant text', async () => {
     liveMessages = [
       userMessage('u1', '帮我写一个快排'),
-      assistantMessage('a1-think', [{ type: 'think', think: '让我想想' }]),
-      assistantMessage('a1-text', [{ type: 'text', text: '好的，先写一版' }]),
-      toolMessage('t1', 'tool output'),
-      assistantMessage('a2', [
+      assistantMessage([{ type: 'think', think: '让我想想' }]),
+      assistantMessage([{ type: 'text', text: '好的，先写一版' }]),
+      toolMessage('tool output'),
+      assistantMessage([
         { type: 'text', text: '这是最终版实现' },
         { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
       ]),
       userMessage('u2', '再加个单测'),
-      assistantMessage('a3', [{ type: 'text', text: '第二轮的回复' }]),
+      assistantMessage([{ type: 'text', text: '第二轮的回复' }]),
     ];
 
     await expect(ix.get(IAgentTitlePromptSource).firstTurnExcerpt()).resolves.toEqual({
@@ -200,7 +199,7 @@ describe('AgentTitlePromptSource', () => {
   it('digestExcerpt counts a queued prompt already appended to the context only once', async () => {
     liveMessages = [
       userMessage('one', '最早的问题'),
-      assistantMessage('a1', [{ type: 'text', text: '第一轮回答' }]),
+      assistantMessage([{ type: 'text', text: '第一轮回答' }]),
       userMessage('two', '进行中的问题'),
     ];
     queue = {
@@ -227,12 +226,12 @@ describe('AgentTitlePromptSource', () => {
   it('digestExcerpt pairs every prompt with its own turn’s final assistant text', async () => {
     liveMessages = [
       userMessage('u1', '最初的目标'),
-      assistantMessage('a1', [{ type: 'text', text: '第一轮回答' }]),
+      assistantMessage([{ type: 'text', text: '第一轮回答' }]),
       userMessage('u2', '中途追问'),
-      assistantMessage('a2', [{ type: 'text', text: '中间回答' }]),
+      assistantMessage([{ type: 'text', text: '中间回答' }]),
       userMessage('u3', '最近的要求'),
-      assistantMessage('a3', [{ type: 'think', think: '思考中' }]),
-      assistantMessage('a4', [{ type: 'text', text: '最新正文' }]),
+      assistantMessage([{ type: 'think', think: '思考中' }]),
+      assistantMessage([{ type: 'text', text: '最新正文' }]),
     ];
 
     await expect(ix.get(IAgentTitlePromptSource).digestExcerpt()).resolves.toEqual({
@@ -247,13 +246,13 @@ describe('AgentTitlePromptSource', () => {
   it('digestExcerpt covers every turn, even with a dangling tool-only span', async () => {
     liveMessages = [
       userMessage('u1', '最初的目标'),
-      assistantMessage('a1', [{ type: 'text', text: '第一轮回答' }]),
+      assistantMessage([{ type: 'text', text: '第一轮回答' }]),
       userMessage('u2', '第二个话题'),
-      assistantMessage('a2', [{ type: 'think', think: '只在思考' }]),
+      assistantMessage([{ type: 'think', think: '只在思考' }]),
       userMessage('u3', '第三个话题'),
-      assistantMessage('a3', [{ type: 'text', text: '第三轮回答' }]),
+      assistantMessage([{ type: 'text', text: '第三轮回答' }]),
       userMessage('u4', '最新的话题'),
-      assistantMessage('a4', [{ type: 'text', text: '最新回答' }]),
+      assistantMessage([{ type: 'text', text: '最新回答' }]),
     ];
 
     await expect(ix.get(IAgentTitlePromptSource).digestExcerpt()).resolves.toEqual({
@@ -269,7 +268,7 @@ describe('AgentTitlePromptSource', () => {
   it('digestExcerpt keeps a single-prompt conversation and dangling questions', async () => {
     liveMessages = [
       userMessage('u1', '唯一的问题'),
-      assistantMessage('a1', [{ type: 'text', text: '唯一的回答' }]),
+      assistantMessage([{ type: 'text', text: '唯一的回答' }]),
       userMessage('u2', '还没得到回复的新问题'),
     ];
 

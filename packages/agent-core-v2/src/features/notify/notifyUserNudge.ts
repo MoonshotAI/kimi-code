@@ -1,12 +1,12 @@
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import { isUserEntry, type HistoryMessage } from '#human/agent/turn';
 
 import { NOTIFY_USER_TOOL_NAME } from './tools/notify-user/notify-user';
 
 export const NOTIFY_USER_NUDGE_VARIANT = 'notify_user_nudge';
 export const NOTIFY_USER_NUDGE_THRESHOLD = 8;
 
-function startsNewTurn(message: ContextMessage): boolean {
-  const origin = message.origin;
+function startsNewTurn(message: HistoryMessage): boolean {
+  const origin = isUserEntry(message) ? message.meta?.origin : undefined;
   if (origin === undefined) return false;
   switch (origin.kind) {
     case 'user':
@@ -26,37 +26,37 @@ function startsNewTurn(message: ContextMessage): boolean {
   }
 }
 
-export function toolCallsSinceLastNotify(history: readonly ContextMessage[]): number {
+export function toolCallsSinceLastNotify(history: readonly HistoryMessage[]): number {
   let count = 0;
   for (let index = history.length - 1; index >= 0; index -= 1) {
     const message = history[index]!;
     if (startsNewTurn(message)) break;
-    if (message.role !== 'assistant') continue;
-    if (message.toolCalls.some((call) => call.name === NOTIFY_USER_TOOL_NAME)) break;
-    count += message.toolCalls.length;
+    if (message.message.role !== 'assistant') continue;
+    if (message.message.toolCalls.some((call) => call.name === NOTIFY_USER_TOOL_NAME)) break;
+    count += message.message.toolCalls.length;
   }
   return count;
 }
 
 export function toolCallsSincePosition(
-  history: readonly ContextMessage[],
+  history: readonly HistoryMessage[],
   position: number,
 ): number {
   let count = 0;
   for (const message of history.slice(position + 1)) {
-    if (message.role !== 'assistant') continue;
-    count += message.toolCalls.length;
+    if (message.message.role !== 'assistant') continue;
+    count += message.message.toolCalls.length;
   }
   return count;
 }
 
-export function lastMidResponsePosition(history: readonly ContextMessage[]): number {
+export function lastMidResponsePosition(history: readonly HistoryMessage[]): number {
   for (let index = history.length - 1; index >= 0; index -= 1) {
     const message = history[index]!;
     if (startsNewTurn(message)) break;
-    if (message.role !== 'assistant') continue;
-    if (message.toolCalls.some((call) => call.name === NOTIFY_USER_TOOL_NAME)) break;
-    const hasVisibleText = message.content.some(
+    if (message.message.role !== 'assistant') continue;
+    if (message.message.toolCalls.some((call) => call.name === NOTIFY_USER_TOOL_NAME)) break;
+    const hasVisibleText = message.message.content.some(
       (part) => part.type === 'text' && part.text.trim().length > 0,
     );
     if (hasVisibleText) return index;

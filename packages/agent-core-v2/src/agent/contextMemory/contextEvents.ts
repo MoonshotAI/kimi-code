@@ -2,16 +2,16 @@
 import { z } from 'zod';
 
 import { AgentEvent2 } from '#/app/event/event2';
+import type { HistoryMessage } from '#human/agent/turn';
 
 import type { LoopRecordedEvent } from './loopEventFold';
-import type { ContextMessage } from './types';
 
-const contextMessageSchema = z.custom<ContextMessage>();
+const historyMessageSchema = z.custom<HistoryMessage>();
 const loopRecordedEventSchema = z.custom<LoopRecordedEvent>();
 
 const contextAppendMessageSchema = z.object({
   agentId: z.string(),
-  message: contextMessageSchema,
+  message: historyMessageSchema,
 });
 
 export class ContextAppendMessage extends AgentEvent2<
@@ -23,7 +23,7 @@ export class ContextAppendMessage extends AgentEvent2<
 }
 export interface ContextAppendMessage {
   readonly agentId: string;
-  readonly message: ContextMessage;
+  readonly message: HistoryMessage;
 }
 
 const contextAppendLoopEventSchema = z.object({
@@ -83,7 +83,7 @@ const contextApplyCompactionSchema = z.union([
   }),
   z.object({
     ...contextCompactionBaseShape,
-    summary: contextMessageSchema,
+    summary: historyMessageSchema,
     count: z.number(),
     compactedCount: z.number().optional(),
   }),
@@ -116,7 +116,7 @@ export interface ContextSplicedPayload {
   readonly agentId: string;
   start: number;
   deleteCount: number;
-  messages: readonly ContextMessage[];
+  messages: readonly HistoryMessage[];
   tokens?: number;
 }
 

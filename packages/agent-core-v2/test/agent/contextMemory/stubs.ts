@@ -8,7 +8,7 @@ import {
 import { computeUndoCut, type UndoCut } from '#/agent/contextMemory/contextOps';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { HistoryMessage } from '#human/agent/turn';
 import { IEventBus, type ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IWireService } from '#/wire/wire';
@@ -17,7 +17,7 @@ import { stubAgentWire } from '../../wire/stubs';
 import { stubAgentContext } from '../agentContext/stubs';
 
 export interface StubContextMemory extends IAgentContextMemoryService {
-  readonly messages: readonly ContextMessage[];
+  readonly messages: readonly HistoryMessage[];
   undo(count: number): UndoCut;
 }
 
@@ -26,7 +26,7 @@ function publishSplice(
   input: {
     start: number;
     deleteCount: number;
-    messages: readonly ContextMessage[];
+    messages: readonly HistoryMessage[];
     tokens?: number;
   },
 ): void {
@@ -42,7 +42,7 @@ function publishSplice(
 }
 
 export function stubContextMemory(eventBus?: IEventBus): StubContextMemory {
-  const messages: ContextMessage[] = [];
+  const messages: HistoryMessage[] = [];
   return {
     _serviceBrand: undefined,
     get messages() {
@@ -94,13 +94,13 @@ class StubContextMemoryService implements IAgentContextMemoryService {
   constructor(@IEventBus eventBus: IEventBus) {
     this.impl = stubContextMemory(eventBus);
   }
-  get messages(): readonly ContextMessage[] {
+  get messages(): readonly HistoryMessage[] {
     return this.impl.messages;
   }
-  get(): readonly ContextMessage[] {
+  get(): readonly HistoryMessage[] {
     return this.impl.get();
   }
-  append(...messages: readonly ContextMessage[]): void {
+  append(...messages: readonly HistoryMessage[]): void {
     this.impl.append(...messages);
   }
   clear(): void {
@@ -109,7 +109,7 @@ class StubContextMemoryService implements IAgentContextMemoryService {
   appendLoopEvent(event: LoopRecordedEvent): void {
     this.impl.appendLoopEvent(event);
   }
-  publishTrailingRemoval(previous: readonly ContextMessage[]): boolean {
+  publishTrailingRemoval(previous: readonly HistoryMessage[]): boolean {
     return this.impl.publishTrailingRemoval(previous);
   }
   applyCompaction(input: ContextCompactionInput): ContextCompactionResult {

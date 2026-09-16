@@ -2,7 +2,7 @@ import { Service } from '#/_base/di/service';
 import { defineState } from '#/state/state';
 import type { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { HistoryMessage } from '#human/agent/turn';
 import { IAgentPlanService } from '#/features/plan/plan';
 import type { PlanFilePath } from '#/features/plan/plan';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -59,18 +59,18 @@ type PlanModeReminderVariant = 'full' | 'sparse';
 
 function planModeReminderVariant(
   injectedAt: number | null,
-  history: readonly ContextMessage[],
+  history: readonly HistoryMessage[],
 ): PlanModeReminderVariant | null {
   if (injectedAt === null) return 'full';
   let assistantTurnsSince = 0;
   for (let i = injectedAt + 1; i < history.length; i++) {
     const message = history[i];
     if (message === undefined) continue;
-    if (message.role === 'assistant') {
+    if (message.message.role === 'assistant') {
       assistantTurnsSince += 1;
       continue;
     }
-    if (message.role === 'user') {
+    if (message.message.role === 'user') {
       return 'full';
     }
   }

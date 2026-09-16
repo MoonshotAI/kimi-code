@@ -132,8 +132,8 @@ export const usageStatusSchema = z.object({
 });
 
 /**
- * `AgentContextData` — `history` items are full `ContextMessage`s (deep
- * `Message` / `Tool` / `PromptOrigin` unions); mirrored as `unknown` entries.
+ * `AgentContextData` — `history` items are full `HistoryMessage` entries
+ * (`{ message, meta }` unions); mirrored as `unknown` entries.
  */
 export const agentContextDataSchema = z.object({
   history: z.array(z.unknown()),

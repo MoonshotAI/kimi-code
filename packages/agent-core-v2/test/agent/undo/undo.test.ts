@@ -9,7 +9,9 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
 import { ContextApplyCompaction } from '#/agent/contextMemory/contextEvents';
 import { isPromptOwnedInjection, isUndoAnchor } from '#/agent/contextMemory/conversationTime';
-import type { ContextMessage, PromptOrigin, TaskOrigin } from '#/agent/contextMemory/types';
+import type { PromptOrigin, TaskOrigin } from '#/agent/contextMemory/types';
+import { isUserEntry, type HistoryMessage, type UserEntry } from '#human/agent/turn';
+import { normalizeReplayedEntry } from '#/agent/contextMemory/loopEventFold';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { turnKey } from '#/agent/loop/turnOps';
@@ -188,9 +190,9 @@ describe('AgentConversationUndoService', () => {
 
     await undo.undo(1);
     const history = ctx.context.get();
-    expect(history.map((m) => m.role)).toEqual(['user', 'user', 'user']);
-    expect(history[1]?.origin?.kind).toBe('compaction_summary');
-    expect(history[2]?.origin).toEqual({ kind: 'injection', variant: 'compaction_continuation' });
+    expect(history.map((entry) => entry.message.role)).toEqual(['user', 'user', 'user']);
+    expect(history[1]).toMatchObject({ meta: { origin: { kind: 'compaction_summary' } } });
+    expect(history[2]).toMatchObject({ meta: { origin: { kind: 'injection', variant: 'compaction_continuation' } } });
   });
 
   it('rejects undo across a legacy compaction boundary even when the in-memory precheck allows it', async () => {
@@ -201,13 +203,13 @@ describe('AgentConversationUndoService', () => {
     await ctx.dispatcher.dispatch(
       new ContextApplyCompaction({ agentId: 'main', summary: 'legacy summary', compactedCount: 2 }),
     );
-    expect(ctx.context.get().map((m) => m.role)).toEqual(['user', 'user', 'assistant']);
+    expect(ctx.context.get().map((entry) => entry.message.role)).toEqual(['user', 'user', 'assistant']);
 
     await expect(undo.undo(1)).rejects.toMatchObject({
       code: ErrorCodes.SESSION_UNDO_UNAVAILABLE,
       details: { reason: 'compaction_boundary', requestedCount: 1, undoableCount: 0 },
     });
-    expect(ctx.context.get().map((m) => m.role)).toEqual(['user', 'user', 'assistant']);
+    expect(ctx.context.get().map((entry) => entry.message.role)).toEqual(['user', 'user', 'assistant']);
   });
 
   it('cuts before the anchor that survives a legacy unpaired undo', async () => {
@@ -251,7 +253,7 @@ describe('AgentConversationUndoService', () => {
     ctx.get(IAgentContextMemoryService);
     await ctx.restorePersisted();
     expect(
-      ctx.context.get().map((m) => m.content.map((p) => (p.type === 'text' ? p.text : '')).join('')),
+      ctx.context.get().map((entry) => entry.message.content.map((p) => (p.type === 'text' ? p.text : '')).join('')),
     ).toEqual(['u1', 'a1', 'u3', 'a3']);
 
     await ctx.get(IAgentConversationUndoService).undo(2);
@@ -390,14 +392,18 @@ describe('AgentConversationUndoService', () => {
 
     ctx.get(IAgentContextMemoryService).append(
       {
-        role: 'user',
-        content: [{ type: 'text', text: 'u2' }],
-        origin: { kind: 'user' },
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'u2' }],
+        },
+        meta: { origin: { kind: 'user' } },
       },
       {
-        role: 'assistant',
-        content: [{ type: 'text', text: 'a2' }],
-        toolCalls: [],
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'a2' }],
+          toolCalls: [],
+        },
       },
     );
 
@@ -492,7 +498,7 @@ describe('AgentConversationUndoService', () => {
       try {
         await expect(ctx.get(IAgentConversationUndoService).undo(1)).rejects.toBe(storageError);
         if (failureCall === 1) {
-          expect(ctx.context.get().map((message) => message.role)).toEqual(['user', 'assistant']);
+          expect(ctx.context.get().map((entry) => entry.message.role)).toEqual(['user', 'assistant']);
         } else {
           expect(ctx.context.get()).toEqual([]);
         }
@@ -542,7 +548,7 @@ describe('AgentConversationUndoService', () => {
     await Promise.resolve();
 
     expect(calls).toBe(1);
-    expect(ctx.context.get().map((message) => message.role)).toEqual(['user', 'assistant']);
+    expect(ctx.context.get().map((entry) => entry.message.role)).toEqual(['user', 'assistant']);
     releaseFirst();
     await Promise.all([first, second]);
 
@@ -570,7 +576,7 @@ describe('AgentConversationUndoService', () => {
         provider_type: 'kimi',
       },
     });
-    expect(ctx.context.get().map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(ctx.context.get().map((entry) => entry.message.role)).toEqual(['user', 'assistant']);
   });
 
   it('reconciles lastPrompt after undo', async () => {
@@ -634,7 +640,7 @@ describe('AgentConversationUndoService', () => {
     try {
       await expect(ctx.get(IAgentConversationUndoService).undo(1)).resolves.toBe(1);
 
-      expect(ctx.context.get().map((message) => message.role)).toEqual(['user', 'assistant']);
+      expect(ctx.context.get().map((entry) => entry.message.role)).toEqual(['user', 'assistant']);
       expect(undone).toEqual([1]);
       expect(records).toContainEqual({
         event: 'conversation_undo',
@@ -680,13 +686,15 @@ describe('AgentConversationUndoService', () => {
     await tasks.wait(taskA, 1000);
     await tasks.wait(taskB, 1000);
 
-    expect(ctx.context.get().some((message) => message.origin?.kind === 'task')).toBe(false);
+    expect(ctx.context.get().some((entry) => isUserEntry(entry) && entry.meta?.origin?.kind === 'task')).toBe(false);
     expect(ctx.agentState.get(taskNotificationDeliveryKey)).toHaveLength(2);
 
     await undo.undo(1);
 
-    const redelivered = ctx.context.get().filter((message) => message.origin?.kind === 'task');
-    expect(redelivered.map((message) => (message.origin as TaskOrigin).taskId).sort()).toEqual(
+    const redelivered = ctx.context.get().filter(
+      (entry): entry is UserEntry => isUserEntry(entry) && entry.meta?.origin?.kind === 'task',
+    );
+    expect(redelivered.map((entry) => (entry.meta!.origin as TaskOrigin).taskId).sort()).toEqual(
       [taskA, taskB].sort(),
     );
   });
@@ -928,8 +936,8 @@ describe('AgentConversationUndoService', () => {
   });
 });
 
-function messageText(message: ContextMessage): string {
-  return `${message.role}:${message.content
+function messageText(entry: HistoryMessage): string {
+  return `${entry.message.role}:${entry.message.content
     .map((part) => (part.type === 'text' ? part.text : ''))
     .join('')}`;
 }
@@ -939,7 +947,7 @@ function legacyWireFold(records: readonly WireRecord[]): {
   readonly todo: readonly string[];
   readonly skippedUnknownTypes: readonly string[];
 } {
-  const transcript: ContextMessage[] = [];
+  const transcript: HistoryMessage[] = [];
   const todoCheckpoints: string[][] = [];
   let todo: string[] = [];
   const skippedUnknownTypes: string[] = [];
@@ -947,13 +955,14 @@ function legacyWireFold(records: readonly WireRecord[]): {
   const applyUndo = (count: number): void => {
     let removedUserCount = 0;
     for (let i = transcript.length - 1; i >= clearFloor; i--) {
-      const message = transcript[i]!;
-      if (message.origin?.kind === 'injection') continue;
-      if (message.origin?.kind === 'compaction_summary') break;
+      const entry = transcript[i]!;
+      const origin = entry.meta?.origin;
+      if (origin?.kind === 'injection') continue;
+      if (origin?.kind === 'compaction_summary') break;
       transcript.splice(i, 1);
-      if (!isUndoAnchor(message)) continue;
+      if (!isUndoAnchor(entry)) continue;
       removedUserCount++;
-      while (i > clearFloor && isPromptOwnedInjection(transcript[i - 1]!, message)) {
+      while (i > clearFloor && isPromptOwnedInjection(transcript[i - 1]!, entry)) {
         transcript.splice(i - 1, 1);
         i--;
       }
@@ -970,9 +979,9 @@ function legacyWireFold(records: readonly WireRecord[]): {
       case 'metadata':
         break;
       case 'context.append_message': {
-        const message = record['message'] as ContextMessage;
-        transcript.push(message);
-        if (isUndoAnchor(message)) todoCheckpoints.push([...todo]);
+        const entry = normalizeReplayedEntry(record['message']);
+        transcript.push(entry);
+        if (isUndoAnchor(entry)) todoCheckpoints.push([...todo]);
         break;
       }
       case 'context.undo': {

@@ -5,6 +5,7 @@ import { TurnEnded } from '#/agent/loop/turnOps';
 import { tokenCountingKey, TokenCountingMeasured } from '#/agent/tokenCounting/tokenCountingOps';
 import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
 import type { TokenUsage } from '#human/llm/usage';
+import { isUserEntry } from '#human/agent/turn';
 import { IWireService } from '#/wire/wire';
 
 import { createTestAgent, InMemoryWireRecordPersistence, type TestAgentContext } from '../../harness';
@@ -105,7 +106,7 @@ describe('Agent token counting', () => {
     await ctx.dispatcher.dispatch(new TokenCountingMeasured({ agentId: 'main', length: 5, tokens: 1234 }));
     const size = tokenCounting.get();
     expect(size.measured).toBe(0);
-    expect(size.size).toBe(estimateTokensForMessages(context.get()));
+    expect(size.size).toBe(estimateTokensForMessages(context.get().map((entry) => entry.message)));
   });
 
   it('restores the REAL size of the surviving prefix when undo truncates the ledger', async () => {
@@ -115,7 +116,7 @@ describe('Agent token counting', () => {
 
     await ctx.undoHistory(1);
 
-    expect(context.get().map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(context.get().map((entry) => entry.message.role)).toEqual(['user', 'assistant']);
     expect(tokenCounting.get()).toEqual({ size: 1_000, measured: 1_000, estimated: 0 });
     expect(tokenCounting.latestMeasured()).toBe(1_000);
   });
@@ -131,7 +132,11 @@ describe('Agent token counting', () => {
     });
 
     const history = context.get();
-    const kept = estimateTokensForMessages(history.filter((m) => m.origin?.kind !== 'compaction_summary'));
+    const kept = estimateTokensForMessages(
+      history
+        .filter((entry) => !(isUserEntry(entry) && entry.meta?.origin?.kind === 'compaction_summary'))
+        .map((entry) => entry.message),
+    );
     const expected = 500 + kept;
     expect(tokenCountingState(ctx).anchors).toEqual([
       { length: history.length, tokens: expected, measured: false },
@@ -160,7 +165,7 @@ describe('Agent token counting', () => {
 
       measured.appendUserMessage([{ type: 'text', text: 'hello world, not measured yet' }]);
       const tailEstimate = estimateTokensForMessages(
-        measured.get(IAgentContextMemoryService).get(),
+        measured.get(IAgentContextMemoryService).get().map((entry) => entry.message),
       );
       expect(tailEstimate).toBeGreaterThan(0);
       expect(counting.get()).toEqual({ size: tailEstimate, measured: 0, estimated: tailEstimate });
@@ -233,7 +238,7 @@ describe('Agent token counting', () => {
     try {
       const counting = estimated.tokenCounting;
       estimated.appendTurnExchange('u1', 'a1', 1_000_000);
-      const estimate = estimateTokensForMessages(estimated.get(IAgentContextMemoryService).get());
+      const estimate = estimateTokensForMessages(estimated.get(IAgentContextMemoryService).get().map((entry) => entry.message));
       expect(counting.latestMeasured()).toBe(1_000_000);
       expect(counting.statusSize()).toBe(estimate);
     } finally {

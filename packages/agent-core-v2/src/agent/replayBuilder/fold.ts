@@ -1,5 +1,5 @@
-import { normalizeReplayedToolCallId, type LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import { normalizeReplayedEntry, type LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
+import { isUserEntry, type AssistantEntry, type HistoryMessage } from '#human/agent/turn';
 import type { CompactionResult } from '#/agent/fullCompaction/types';
 import type { PermissionApprovalResultRecord } from '#/agent/permissionRules/permissionRules';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
@@ -79,17 +79,17 @@ interface FoldGoalState {
 class WireReplayFoldState {
   readonly replay: AgentReplayRecord[] = [];
   readonly toolStore: Record<string, unknown> = {};
-  private history: ContextMessage[] = [];
-  private readonly openSteps = new Map<string, Extract<ContextMessage, { readonly role: 'assistant' }>>();
+  private history: HistoryMessage[] = [];
+  private readonly openSteps = new Map<string, AssistantEntry>();
   private readonly pendingToolResultIds = new Set<string>();
-  private deferredMessages: ContextMessage[] = [];
+  private deferredMessages: HistoryMessage[] = [];
   private goal: FoldGoalState | undefined;
 
   apply(record: WireRecord): void {
     const time = record.time ?? Date.now();
     switch (record.type) {
       case 'context.append_message':
-        this.appendMessage(normalizeReplayedToolCallId(record['message'] as ContextMessage), time);
+        this.appendMessage(normalizeReplayedEntry(record['message']), time);
         return;
       case 'context.append_loop_event':
         this.appendLoopEvent(record['event'] as LoopRecordedEvent, time);
@@ -156,14 +156,14 @@ class WireReplayFoldState {
     this.replay.push({ ...payload, time });
   }
 
-  private pushHistory(messages: readonly ContextMessage[], time: number): void {
+  private pushHistory(messages: readonly HistoryMessage[], time: number): void {
     for (const message of messages) {
       this.history.push(message);
       this.push({ type: 'message', message }, time);
     }
   }
 
-  private appendMessage(message: ContextMessage, time: number): void {
+  private appendMessage(message: HistoryMessage, time: number): void {
     if (this.pendingToolResultIds.size > 0) {
       this.deferredMessages.push(message);
       return;
@@ -181,11 +181,11 @@ class WireReplayFoldState {
 
   private closePendingToolResults(time: number): void {
     if (this.pendingToolResultIds.size === 0) return;
-    const messages: ContextMessage[] = [];
+    const messages: HistoryMessage[] = [];
     for (const toolCallId of this.pendingToolResultIds) {
       messages.push({
-        ...createToolMessage(toolCallId, TOOL_INTERRUPTED_ON_RESUME_OUTPUT),
-        isError: true,
+        message: createToolMessage(toolCallId, TOOL_INTERRUPTED_ON_RESUME_OUTPUT),
+        meta: { isError: true },
       });
     }
     this.pendingToolResultIds.clear();
@@ -197,10 +197,9 @@ class WireReplayFoldState {
     switch (event.type) {
       case 'step.begin': {
         this.closePendingToolResults(time);
-        const message: Extract<ContextMessage, { readonly role: 'assistant' }> = {
-          role: 'assistant',
-          content: [],
-          toolCalls: [],
+        const message: AssistantEntry = {
+          message: { role: 'assistant', content: [], toolCalls: [] },
+          meta: {},
         };
         this.pushHistory([message], time);
         this.openSteps.set(event.uuid, message);
@@ -218,7 +217,7 @@ class WireReplayFoldState {
             `Received content_part for unknown step_uuid '${event.stepUuid}' (no open step_begin)`,
           );
         }
-        openStep.content.push(event.part);
+        openStep.message.content.push(event.part);
         return;
       }
       case 'tool.call': {
@@ -228,7 +227,7 @@ class WireReplayFoldState {
             `Received tool_call for unknown step_uuid '${event.stepUuid}' (no open step_begin)`,
           );
         }
-        openStep.toolCalls.push({
+        openStep.message.toolCalls.push({
           type: 'function',
           id: event.toolCallId,
           name: event.name,
@@ -236,8 +235,9 @@ class WireReplayFoldState {
           extras: event.extras,
         });
         if (event.display !== undefined) {
-          openStep.toolCallDisplays ??= {};
-          openStep.toolCallDisplays[event.toolCallId] = event.display;
+          openStep.meta ??= {};
+          openStep.meta.toolCallDisplays ??= {};
+          openStep.meta.toolCallDisplays[event.toolCallId] = event.display;
         }
         this.pendingToolResultIds.add(event.toolCallId);
         return;
@@ -248,12 +248,11 @@ class WireReplayFoldState {
         this.pushHistory(
           [
             {
-              ...createToolMessage(
+              message: createToolMessage(
                 event.toolCallId,
                 typeof output === 'string' ? output : [...output],
               ),
-              isError: event.result.isError,
-              note: event.result.note,
+              meta: { isError: event.result.isError, note: event.result.note },
             },
           ],
           time,
@@ -267,12 +266,13 @@ class WireReplayFoldState {
 
   private undo(count: number): void {
     if (count <= 0 || this.history.length === 0) return;
-    const removed = new Set<ContextMessage>();
+    const removed = new Set<HistoryMessage>();
     let removedUserCount = 0;
     for (let i = this.history.length - 1; i >= 0; i--) {
       const message = this.history[i]!;
-      if (message.origin?.kind === 'injection') continue;
-      if (message.origin?.kind === 'compaction_summary') break;
+      const origin = message.meta?.origin;
+      if (origin?.kind === 'injection') continue;
+      if (origin?.kind === 'compaction_summary') break;
       removed.add(message);
       this.history.splice(i, 1);
       if (isRealUserInput(message)) {
@@ -310,16 +310,18 @@ class WireReplayFoldState {
       tokensBefore: readNumber(record, 'tokensBefore') ?? 0,
       tokensAfter:
         readNumber(record, 'tokensAfter') ??
-        estimateTokens(contextSummary) + estimateTokensForMessages(keptTail),
+        estimateTokens(contextSummary) + estimateTokensForMessages(keptTail.map((entry) => entry.message)),
       keptUserMessageCount: readNumber(record, 'keptUserMessageCount') ?? keptTail.length,
       keptHeadUserMessageCount: readNumber(record, 'keptHeadUserMessageCount'),
       droppedCount: readNumber(record, 'droppedCount'),
     };
     this.patchLastCompaction({ result });
-    const summaryMessage: ContextMessage = {
-      role: 'user',
-      content: [...createHistoryMessageBuilder().plain(contextSummary).parts()],
-      origin: { kind: 'compaction_summary' },
+    const summaryMessage: HistoryMessage = {
+      message: {
+        role: 'user',
+        content: [...createHistoryMessageBuilder().plain(contextSummary).parts()],
+      },
+      meta: { origin: { kind: 'compaction_summary' } },
     };
     this.history =
       readNumber(record, 'keptUserMessageCount') === undefined &&
@@ -338,7 +340,7 @@ class WireReplayFoldState {
     }
   }
 
-  private selectLegacyKeptTail(record: WireRecord): ContextMessage[] {
+  private selectLegacyKeptTail(record: WireRecord): HistoryMessage[] {
     if (
       readNumber(record, 'tokensAfter') !== undefined &&
       readNumber(record, 'keptUserMessageCount') !== undefined
@@ -346,11 +348,11 @@ class WireReplayFoldState {
       return [];
     }
     const compactable = this.history.filter((message) => isRealUserInput(message));
-    const selected: ContextMessage[] = [];
+    const selected: HistoryMessage[] = [];
     let remaining = COMPACT_USER_MESSAGE_MAX_TOKENS;
     for (let i = compactable.length - 1; i >= 0 && remaining > 0; i--) {
       const message = compactable[i]!;
-      const tokens = estimateTokensForMessages([message]);
+      const tokens = estimateTokensForMessages([message.message]);
       selected.unshift(message);
       if (tokens > remaining) break;
       remaining -= tokens;
@@ -423,9 +425,11 @@ class WireReplayFoldState {
     this.goal = undefined;
     this.appendMessage(
       {
-        role: 'user',
-        content: [...createHistoryMessageBuilder().systemReminder(GOAL_FORK_CLEARED_REMINDER).parts()],
-        origin: { kind: 'system_trigger', name: 'goal_fork_cleared' },
+        message: {
+          role: 'user',
+          content: [...createHistoryMessageBuilder().systemReminder(GOAL_FORK_CLEARED_REMINDER).parts()],
+        },
+        meta: { origin: { kind: 'system_trigger', name: 'goal_fork_cleared' } },
       },
       time,
     );
@@ -491,9 +495,9 @@ function goalBudgetReport(state: FoldGoalState): GoalBudgetReport {
   };
 }
 
-function isRealUserInput(message: ContextMessage): boolean {
-  if (message.role !== 'user') return false;
-  const origin = message.origin;
+function isRealUserInput(message: HistoryMessage): boolean {
+  if (!isUserEntry(message)) return false;
+  const origin = message.meta?.origin;
   if (origin === undefined) return true;
   switch (origin.kind) {
     case 'user':

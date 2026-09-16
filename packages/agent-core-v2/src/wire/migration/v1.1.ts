@@ -2,10 +2,10 @@ import type { WireMigration, WireMigrationRecord } from './migration';
 
 interface V1_0ContextAppendMessageRecord extends WireMigrationRecord {
   readonly type: 'context.append_message';
-  readonly message: V1_0ContextMessage;
+  readonly message: V1_0Message;
 }
 
-interface V1_0ContextMessage {
+interface V1_0Message {
   readonly toolCalls: readonly V1_0ToolCall[];
   readonly [key: string]: unknown;
 }

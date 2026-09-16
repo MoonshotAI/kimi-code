@@ -8,7 +8,7 @@ import { type IAgentScopeHandle, type ISessionScopeHandle } from '#/_base/di/sco
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
+import type { HistoryMessage } from '#human/agent/turn';
 import { IRestGateway } from '#/app/gateway/gateway';
 import { RestGateway } from '#/app/gateway/gatewayService';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
@@ -21,8 +21,8 @@ import type { UserEntry } from '#human/agent/turn';
 import { stubLog } from '../../_base/log/stubs';
 import { stubLoopWithHooks, type StubLoop } from '../../agent/loop/stubs';
 
-function textOf(message: ContextMessage): string {
-  return message.content
+function textOf(entry: HistoryMessage): string {
+  return entry.message.content
     .map((part) => (part.type === 'text' ? part.text : ''))
     .join('');
 }
@@ -43,7 +43,7 @@ function makeAccessor(
 describe('RestGateway', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
-  let promptCalls: ContextMessage[];
+  let promptCalls: UserEntry[];
   let turnService: StubLoop;
 
   beforeEach(() => {
@@ -51,7 +51,7 @@ describe('RestGateway', () => {
     ix = disposables.add(new TestInstantiationService());
     promptCalls = [];
     turnService = stubLoopWithHooks({ hasActiveTurn: true });
-    turnService.submit = (input: UserEntry) => { promptCalls.push({ ...input.message, origin: input.meta?.origin as PromptOrigin | undefined }); return { id: 'p' }; };
+    turnService.submit = (input: UserEntry) => { promptCalls.push(input); return { id: 'p' }; };
 
     const agentHandle: IAgentScopeHandle = {
       id: 'main',
@@ -138,7 +138,7 @@ describe('RestGateway', () => {
 
     expect(promptCalls).toHaveLength(1);
     expect(textOf(promptCalls[0]!)).toBe('hello');
-    expect(promptCalls[0]!.origin).toMatchObject({ kind: 'user' });
+    expect(promptCalls[0]!.meta?.origin).toMatchObject({ kind: 'user' });
   });
 
   it('aborts the active turn signal on cancel', async () => {

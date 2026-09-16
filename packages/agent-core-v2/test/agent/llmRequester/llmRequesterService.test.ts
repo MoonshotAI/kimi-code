@@ -6,7 +6,7 @@ import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { HistoryMessage } from '#human/agent/turn';
 import {
   IAgentContextProjectorService,
   type MediaStripSnapshot,
@@ -119,8 +119,8 @@ const capabilities: ModelCapability = {
   max_context_tokens: 1000,
 };
 
-const history: Message[] = [
-  { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+const history: HistoryMessage[] = [
+  { message: { role: 'user', content: [{ type: 'text', text: 'hello' }] } },
 ];
 
 function assistantToolCalls(message: Message): ToolCall[] {
@@ -144,9 +144,9 @@ function recordProjectionCalls(): {
   const calls: ProjectionKind[] = [];
   return {
     projector: {
-      project: (messages: readonly ContextMessage[], policy) => {
+      project: (messages: readonly HistoryMessage[], policy) => {
         calls.push(classifyProjectionPolicy(policy));
-        return messages;
+        return messages.map((entry) => entry.message);
       },
     },
     calls,
@@ -212,7 +212,7 @@ function createService(
   options: {
     readonly thinkingLevel?: ThinkingEffort;
     readonly mediaResolver?: Partial<IAgentMediaResolverService>;
-    readonly contextMessages?: Message[];
+    readonly contextMessages?: HistoryMessage[];
     readonly env?: Record<string, string>;
   } = {},
 ) {
@@ -615,7 +615,7 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
     const { service, dispatcher, records } = createService(
       createRequester(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413]),
       {
-        project: (messages: readonly ContextMessage[]) => messages,
+        project: (messages: readonly HistoryMessage[]) => messages.map((entry) => entry.message),
       },
     );
 
@@ -635,9 +635,11 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
     const capturedInputs: ModelRequestInput[] = [];
     const oldUrl = 'data:image/png;base64,REJECTED';
     const newUrl = 'data:image/png;base64,SMALL';
-    const imageMessage = (url: string, id: string): Message => ({
-      role: 'user',
-      content: [{ type: 'image_url', imageUrl: { url, id } }],
+    const imageMessage = (url: string, id: string): HistoryMessage => ({
+      message: {
+        role: 'user',
+        content: [{ type: 'image_url', imageUrl: { url, id } }],
+      },
     });
     const { service } = createService(
       createRequester(
@@ -726,9 +728,9 @@ describe('AgentLLMRequesterService combined recovery projections', () => {
     policies: (ProjectionPolicy | undefined)[];
   }): Pick<IAgentContextProjectorService, 'project'> {
     return {
-      project: (messages: readonly ContextMessage[], policy) => {
+      project: (messages: readonly HistoryMessage[], policy) => {
         policies.policies.push(policy);
-        return messages;
+        return messages.map((entry) => entry.message);
       },
     };
   }
@@ -792,7 +794,7 @@ describe('AgentLLMRequesterService combined recovery projections', () => {
 
 describe('AgentLLMRequesterService trace id', () => {
   const passthroughProjector = {
-    project: (messages: readonly ContextMessage[]) => messages,
+    project: (messages: readonly HistoryMessage[]) => messages.map((entry) => entry.message),
   };
 
   function createTracedRequester(traceId: string | null): ModelRequester {
@@ -1146,9 +1148,11 @@ describe('AgentLLMRequesterService tool call id normalization', () => {
       {
         contextMessages: [
           {
-            role: 'assistant',
-            content: [],
-            toolCalls: [{ type: 'function', id: 'Bash_0', name: 'Bash', arguments: '{}' }],
+            message: {
+              role: 'assistant',
+              content: [],
+              toolCalls: [{ type: 'function', id: 'Bash_0', name: 'Bash', arguments: '{}' }],
+            },
           },
         ],
       },

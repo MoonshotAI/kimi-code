@@ -5,13 +5,13 @@ import {
   foldLoopEvent,
   type LoopRecordedEvent,
 } from '#/agent/contextMemory/loopEventFold';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import { isAssistantEntry, isToolEntry, type HistoryMessage } from '#human/agent/turn';
 
 describe('loop-event fold parity', () => {
   function appendAll(
-    state: readonly ContextMessage[],
-    messages: readonly ContextMessage[],
-  ): readonly ContextMessage[] {
+    state: readonly HistoryMessage[],
+    messages: readonly HistoryMessage[],
+  ): readonly HistoryMessage[] {
     let next = state;
     for (const message of messages) {
       next = foldAppendMessage(next, message);
@@ -20,9 +20,9 @@ describe('loop-event fold parity', () => {
   }
 
   function foldAll(
-    state: readonly ContextMessage[],
+    state: readonly HistoryMessage[],
     events: readonly LoopRecordedEvent[],
-  ): readonly ContextMessage[] {
+  ): readonly HistoryMessage[] {
     let next = state;
     for (const event of events) {
       next = foldLoopEvent(next, event);
@@ -30,14 +30,14 @@ describe('loop-event fold parity', () => {
     return next;
   }
 
-  function comparable(messages: readonly ContextMessage[]): unknown {
-    return messages.map((m) => ({
-      role: m.role,
-      content: m.content,
-      toolCalls: m.role === 'assistant' ? m.toolCalls : [],
-      toolCallId: m.role === 'tool' ? m.toolCallId : undefined,
-      isError: m.isError,
-      note: m.note,
+  function comparable(messages: readonly HistoryMessage[]): unknown {
+    return messages.map((entry) => ({
+      role: entry.message.role,
+      content: entry.message.content,
+      toolCalls: entry.message.role === 'assistant' ? entry.message.toolCalls : [],
+      toolCallId: entry.message.role === 'tool' ? entry.message.toolCallId : undefined,
+      isError: isToolEntry(entry) ? entry.meta?.isError : undefined,
+      note: isToolEntry(entry) ? entry.meta?.note : undefined,
     }));
   }
 
@@ -45,15 +45,20 @@ describe('loop-event fold parity', () => {
     const baseline = comparable(
       appendAll([], [
         {
-          role: 'assistant',
-          content: [{ type: 'text', text: 'I will call.' }],
-          toolCalls: [{ type: 'function', id: 'c1', name: 'Lookup', arguments: '{"q":"moon"}' }],
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'I will call.' }],
+            toolCalls: [{ type: 'function', id: 'c1', name: 'Lookup', arguments: '{"q":"moon"}' }],
+          },
+          meta: {},
         },
         {
-          role: 'tool',
-          content: [{ type: 'text', text: 'lookup result' }],
-          toolCallId: 'c1',
-          isError: false,
+          message: {
+            role: 'tool',
+            content: [{ type: 'text', text: 'lookup result' }],
+            toolCallId: 'c1',
+          },
+          meta: { isError: false },
         },
       ]),
     );
@@ -89,15 +94,20 @@ describe('loop-event fold parity', () => {
     const baseline = comparable(
       appendAll([], [
         {
-          role: 'assistant',
-          content: [],
-          toolCalls: [{ type: 'function', id: 'c2', name: 'Bash', arguments: '{}' }],
+          message: {
+            role: 'assistant',
+            content: [],
+            toolCalls: [{ type: 'function', id: 'c2', name: 'Bash', arguments: '{}' }],
+          },
+          meta: {},
         },
         {
-          role: 'tool',
-          content: [{ type: 'text', text: 'boom' }],
-          toolCallId: 'c2',
-          isError: true,
+          message: {
+            role: 'tool',
+            content: [{ type: 'text', text: 'boom' }],
+            toolCallId: 'c2',
+          },
+          meta: { isError: true },
         },
       ]),
     );
@@ -124,14 +134,14 @@ describe('loop-event fold parity', () => {
     expect(folded).toEqual(baseline);
   });
 
-  function shapes(messages: readonly ContextMessage[]) {
-    return messages.map((m) => ({
-      role: m.role,
-      content: m.content,
-      toolCalls: m.role === 'assistant' ? m.toolCalls : [],
-      toolCallId: m.role === 'tool' ? m.toolCallId : undefined,
-      isError: m.isError,
-      partial: m.partial,
+  function shapes(messages: readonly HistoryMessage[]) {
+    return messages.map((entry) => ({
+      role: entry.message.role,
+      content: entry.message.content,
+      toolCalls: entry.message.role === 'assistant' ? entry.message.toolCalls : [],
+      toolCallId: entry.message.role === 'tool' ? entry.message.toolCallId : undefined,
+      isError: isToolEntry(entry) ? entry.meta?.isError : undefined,
+      partial: isAssistantEntry(entry) ? entry.meta?.partial : undefined,
     }));
   }
 
@@ -316,7 +326,7 @@ describe('loop-event fold parity', () => {
       { type: 'step.end', uuid: 's1' },
     ]);
 
-    expect(folded.at(-1)?.content).toEqual([{ type: 'think', think: 'real reasoning' }]);
+    expect(folded.at(-1)?.message.content).toEqual([{ type: 'think', think: 'real reasoning' }]);
   });
 
   it('seals a step whose empty thinking block carries a provider signature', () => {
@@ -330,7 +340,7 @@ describe('loop-event fold parity', () => {
       { type: 'step.end', uuid: 's1' },
     ]);
 
-    expect(folded.at(-1)?.content).toEqual([{ type: 'think', think: '', encrypted: 'sig' }]);
+    expect(folded.at(-1)?.message.content).toEqual([{ type: 'think', think: '', encrypted: 'sig' }]);
   });
 
   it('seals a step that pairs an empty thinking block with real text', () => {
@@ -349,7 +359,7 @@ describe('loop-event fold parity', () => {
       { type: 'step.end', uuid: 's1' },
     ]);
 
-    expect(folded.at(-1)?.content).toEqual([
+    expect(folded.at(-1)?.message.content).toEqual([
       { type: 'think', think: '' },
       { type: 'text', text: 'answer' },
     ]);
@@ -397,16 +407,20 @@ describe('loop-event fold parity', () => {
     const baseline = comparable(
       appendAll([], [
         {
-          role: 'assistant',
-          content: [],
-          toolCalls: [{ type: 'function', id: 'c3', name: 'Screenshot', arguments: '{}' }],
+          message: {
+            role: 'assistant',
+            content: [],
+            toolCalls: [{ type: 'function', id: 'c3', name: 'Screenshot', arguments: '{}' }],
+          },
+          meta: {},
         },
         {
-          role: 'tool',
-          content: [{ type: 'text', text: 'result text' }],
-          toolCallId: 'c3',
-          isError: false,
-          note: '<system>Image compressed.</system>',
+          message: {
+            role: 'tool',
+            content: [{ type: 'text', text: 'result text' }],
+            toolCallId: 'c3',
+          },
+          meta: { isError: false, note: '<system>Image compressed.</system>' },
         },
       ]),
     );

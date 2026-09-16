@@ -4,7 +4,7 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { HistoryMessage } from '#human/agent/turn';
 import { AgentContextMemoryService } from '#/agent/contextMemory/contextMemoryService';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IEventBus } from '#/app/event/eventBus';
@@ -12,14 +12,14 @@ import { EventBusService } from '#/app/event/eventBusService';
 
 import { registerTestAgentWire, registerTestEventDispatcher } from '../../wire/stubs';
 
-function textMessage(role: 'user' | 'assistant', text: string): ContextMessage {
+function textMessage(role: 'user' | 'assistant', text: string): HistoryMessage {
   return role === 'user'
-    ? { role, content: [{ type: 'text', text }] }
-    : { role, content: [{ type: 'text', text }], toolCalls: [] };
+    ? { message: { role, content: [{ type: 'text', text }] } }
+    : { message: { role, content: [{ type: 'text', text }], toolCalls: [] } };
 }
 
-function textOf(message: ContextMessage): string {
-  return message.content
+function textOf(entry: HistoryMessage): string {
+  return entry.message.content
     .map((part) => (part.type === 'text' ? part.text : ''))
     .join('');
 }
@@ -62,7 +62,7 @@ describe('message history (IAgentContextMemoryService)', () => {
     ctx.append(textMessage('assistant', 'b'));
 
     const history = ctx.get();
-    expect(history.map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(history.map((entry) => entry.message.role)).toEqual(['user', 'assistant']);
     expect(history.map(textOf)).toEqual(['a', 'b']);
   });
 
@@ -71,7 +71,7 @@ describe('message history (IAgentContextMemoryService)', () => {
     ctx.append(textMessage('user', 'keep'));
 
     const view = ctx.get();
-    expect(() => (view as ContextMessage[]).splice(0, view.length)).toThrow();
+    expect(() => (view as HistoryMessage[]).splice(0, view.length)).toThrow();
 
     expect(ctx.get().map(textOf)).toEqual(['keep']);
   });
@@ -80,19 +80,20 @@ describe('message history (IAgentContextMemoryService)', () => {
     const ctx = ix.get(IAgentContextMemoryService);
     ctx.append(textMessage('user', 'hello'));
 
-    const [message] = ctx.get();
-    expect(message?.id).toBeUndefined();
+    const [entry] = ctx.get();
+    expect(entry).toMatchObject({ message: { role: 'user' } });
+    expect(entry).not.toHaveProperty('meta.promptId');
   });
 
   it('preserves an existing message id (idempotent)', () => {
     const ctx = ix.get(IAgentContextMemoryService);
-    const existing: ContextMessage = {
-      ...textMessage('user', 'keep'),
-      id: 'msg_01HXQM8K7Z3V9N2P5R6T8W0Y1B',
+    const existing: HistoryMessage = {
+      message: { role: 'user', content: [{ type: 'text', text: 'keep' }] },
+      meta: { promptId: 'msg_01HXQM8K7Z3V9N2P5R6T8W0Y1B' },
     };
     ctx.append(existing);
 
-    const [message] = ctx.get();
-    expect(message?.id).toBe('msg_01HXQM8K7Z3V9N2P5R6T8W0Y1B');
+    const [entry] = ctx.get();
+    expect(entry).toMatchObject({ meta: { promptId: 'msg_01HXQM8K7Z3V9N2P5R6T8W0Y1B' } });
   });
 });

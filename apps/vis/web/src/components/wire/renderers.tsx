@@ -9,6 +9,7 @@
 import type { ReactNode } from 'react';
 
 import type { AgentRecord, AgentRecordOf } from '../../types';
+import { isToolEntry, isUserEntry } from '../../types';
 import type { PillTone } from '../shared/Pill';
 import { Pill } from '../shared/Pill';
 import {
@@ -489,30 +490,34 @@ export const WIRE_RENDERERS: RendererMap = {
     label: 'message',
     headline: (r) => {
       const m = r.message;
-      const tc = m.role === 'assistant' && m.toolCalls.length > 0 ? `${m.toolCalls.length} tool_call(s)` : '';
+      const tc =
+        m.message.role === 'assistant' && m.message.toolCalls.length > 0
+          ? `${m.message.toolCalls.length} tool_call(s)`
+          : '';
+      const origin = isUserEntry(m) ? m.meta?.origin : undefined;
       return {
         main: (
           <span className="flex items-center gap-2 min-w-0">
             <Pill
               tone={
-                m.role === 'user'
+                m.message.role === 'user'
                   ? 'user'
-                  : m.role === 'assistant'
+                  : m.message.role === 'assistant'
                     ? 'assistant'
-                    : m.role === 'tool'
+                    : m.message.role === 'tool'
                       ? 'tool'
                       : 'meta'
               }
               variant="soft"
             >
-              {m.role}
+              {m.message.role}
             </Pill>
-            <Dim>({m.content.length} part{m.content.length === 1 ? '' : 's'})</Dim>
+            <Dim>({m.message.content.length} part{m.message.content.length === 1 ? '' : 's'})</Dim>
             {tc ? <Dim>· {tc}</Dim> : null}
-            {m.origin?.kind ? <Dim>· origin={m.origin.kind}</Dim> : null}
+            {origin?.kind ? <Dim>· origin={origin.kind}</Dim> : null}
           </span>
         ),
-        right: m.isError === true ? (
+        right: isToolEntry(m) && m.meta?.isError === true ? (
           <Pill tone="error" variant="solid">
             error
           </Pill>
@@ -553,8 +558,8 @@ export const WIRE_RENDERERS: RendererMap = {
     label: 'compacted',
     headline: (r) => {
       // v2 payload variants: `summary` is a string on current records, a
-      // ContextMessage on the legacy variant (which uses `count` instead of
-      // `compactedCount`); `tokensBefore`/`tokensAfter` are optional.
+      // legacy flat message record on the legacy variant (which uses `count`
+      // instead of `compactedCount`); `tokensBefore`/`tokensAfter` are optional.
       const record = r as unknown as UnknownObject;
       const summary = compactionSummaryView(r);
       const compactedCount = compactionCount(record);

@@ -6,6 +6,7 @@ import { deflateSync } from 'node:zlib';
 import {
   agentContextOf,
   agentRuntimeBindingKey,
+  isUserEntry,
   IAgentTitlePromptSource,
   IAgentContextMemoryService,
   IAgentLifecycleService,
@@ -497,12 +498,12 @@ describe('server-v2 /api/v1 prompts', () => {
     const session = getLiveSessionById(server!.core.accessor, id);
     const agent = session!.accessor.get(IAgentLifecycleService).handleOf('main');
     const history = agent!.accessor.get(IAgentContextMemoryService).get();
-    const bundled = history.find((message) => message.origin?.kind === 'user');
-    expect(bundled?.origin).toMatchObject({
+    const bundled = history.find((message) => isUserEntry(message) && message.meta?.origin?.kind === 'user');
+    expect(isUserEntry(bundled!) && bundled.meta?.origin).toMatchObject({
       kind: 'user',
       skillActivations: [{ skillName: 'update-config' }, { skillName: 'check-kimi-code-docs' }],
     });
-    const texts = bundled?.content
+    const texts = bundled?.message.content
       .filter((part) => part.type === 'text')
       .map((part) => part.text);
     expect(texts?.at(-1)).toBe('Review this change.');
@@ -513,14 +514,18 @@ describe('server-v2 /api/v1 prompts', () => {
       createdAt: '2026-01-01T00:00:00.000Z',
       state: 'running',
       message: {
-        role: 'user',
-        content: [
-          { type: 'text', text: 'rendered skill block' },
-          { type: 'text', text: 'Review this change.' },
-        ],
-        origin: {
-          kind: 'user',
-          skillActivations: [{ activationId: 'a1', skillName: 'update-config' }],
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'rendered skill block' },
+            { type: 'text', text: 'Review this change.' },
+          ],
+        },
+        meta: {
+          origin: {
+            kind: 'user',
+            skillActivations: [{ activationId: 'a1', skillName: 'update-config' }],
+          },
         },
       },
     });
@@ -531,9 +536,8 @@ describe('server-v2 /api/v1 prompts', () => {
       createdAt: '2026-01-01T00:00:00.000Z',
       state: 'pending',
       message: {
-        role: 'user',
-        content: [{ type: 'text', text: 'plain question' }],
-        origin: { kind: 'user' },
+        message: { role: 'user', content: [{ type: 'text', text: 'plain question' }] },
+        meta: { origin: { kind: 'user' } },
       },
     });
     expect(plain.content).toEqual([{ type: 'text', text: 'plain question' }]);
@@ -619,7 +623,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const session = getLiveSessionById(server!.core.accessor, id);
     const agent = session!.accessor.get(IAgentLifecycleService).handleOf('main');
     const history = agent!.accessor.get(IAgentContextMemoryService).get();
-    expect(history.filter((message) => message.origin?.kind === 'user')).toHaveLength(0);
+    expect(history.filter((message) => isUserEntry(message) && message.meta?.origin?.kind === 'user')).toHaveLength(0);
   });
 
   it('rejects an unknown bundled skill before any control override binds', async () => {
@@ -637,7 +641,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const agent = session!.accessor.get(IAgentLifecycleService).handleOf('main');
     expect(agent!.accessor.get(IAgentPermissionModeService).mode).toBe('manual');
     const history = agent!.accessor.get(IAgentContextMemoryService).get();
-    expect(history.filter((message) => message.origin?.kind === 'user')).toHaveLength(0);
+    expect(history.filter((message) => isUserEntry(message) && message.meta?.origin?.kind === 'user')).toHaveLength(0);
   });
 
   it('rejects an unknown bundled skill without materializing the main agent', async () => {
@@ -867,8 +871,8 @@ describe('server-v2 /api/v1 prompts', () => {
     const session = getLiveSessionById(server!.core.accessor, id);
     const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
     const memory = main.accessor.get(IAgentContextMemoryService).get();
-    const promptMessage = memory.find((m) => m.origin?.kind === 'user');
-    const captionPart = promptMessage?.content[0];
+    const promptMessage = memory.find((m) => isUserEntry(m) && m.meta?.origin?.kind === 'user');
+    const captionPart = promptMessage?.message.content[0];
     expect(captionPart?.type).toBe('text');
     expect((captionPart as { type: 'text'; text: string }).text).toContain('Image compressed');
   });
@@ -971,13 +975,13 @@ describe('server-v2 /api/v1 prompts', () => {
         .get()
         .find(
           (message) =>
-            message.role === 'user' &&
-            message.content.some(
+            message.message.role === 'user' &&
+            message.message.content.some(
               (part) => part.type === 'text' && part.text === 'replay the stored image',
             ),
         );
       expect(replayedMessage).toBeDefined();
-      expect(replayedMessage!.content).toContainEqual({
+      expect(replayedMessage!.message.content).toContainEqual({
         type: 'image_url',
         imageUrl: {
           url: `kimi-file://${uploaded.id}`,
@@ -1010,9 +1014,9 @@ describe('server-v2 /api/v1 prompts', () => {
         const message = main.accessor
           .get(IAgentContextMemoryService)
           .get()
-          .find((m) => m.role === 'user' && m.content.some((part) => part.type === 'image_url'));
+          .find((m) => m.message.role === 'user' && m.message.content.some((part) => part.type === 'image_url'));
         expect(message).toBeDefined();
-        expect(message!.content).toContainEqual({
+        expect(message!.message.content).toContainEqual({
           type: 'image_url',
           imageUrl: { url: `kimi-file://${uploaded.id}`, name: 'small.png' },
         });
@@ -1417,8 +1421,8 @@ describe('server-v2 /api/v1 prompts', () => {
       const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
       await vi.waitFor(() => {
         const memory = main.accessor.get(IAgentContextMemoryService).get();
-        const promptMessage = memory.find((entry) => entry.origin?.kind === 'user');
-        expect(promptMessage?.origin).toEqual({
+        const promptMessage = memory.find((entry) => isUserEntry(entry) && entry.meta?.origin?.kind === 'user');
+        expect(isUserEntry(promptMessage!) ? promptMessage.meta?.origin : undefined).toEqual({
           kind: 'user',
           attachments: [
             {
@@ -1732,8 +1736,8 @@ describe('server-v2 /api/v1 prompts', () => {
         .get()
         .some(
           (m) =>
-            m.role === 'user' &&
-            m.content.some((p) => p.type === 'text' && p.text === text),
+            m.message.role === 'user' &&
+            m.message.content.some((p) => p.type === 'text' && p.text === text),
         );
 
     expect(contextHasUserText(child, 'side question')).toBe(true);

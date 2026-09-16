@@ -1,52 +1,60 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { HistoryMessage } from '#human/agent/turn';
 import { type TodoItem } from '#/features/todo/todoItem';
 import { todoListStaleReminder } from '#/features/todo/todoListReminder';
 
-function assistantMessage(): ContextMessage {
+function assistantMessage(): HistoryMessage {
   return {
-    role: 'assistant',
-    content: [{ type: 'text', text: 'working' }],
-    toolCalls: [],
+    message: {
+      role: 'assistant',
+      content: [{ type: 'text', text: 'working' }],
+      toolCalls: [],
+    },
   };
 }
 
-function todoListWrite(todos: readonly TodoItem[]): ContextMessage {
+function todoListWrite(todos: readonly TodoItem[]): HistoryMessage {
   return {
-    role: 'assistant',
-    content: [],
-    toolCalls: [
-      {
-        type: 'function',
-        id: 'call_todo_write',
-        name: 'TodoList',
-        arguments: JSON.stringify({ todos }),
-      },
-    ],
+    message: {
+      role: 'assistant',
+      content: [],
+      toolCalls: [
+        {
+          type: 'function',
+          id: 'call_todo_write',
+          name: 'TodoList',
+          arguments: JSON.stringify({ todos }),
+        },
+      ],
+    },
   };
 }
 
-function todoListQuery(): ContextMessage {
+function todoListQuery(): HistoryMessage {
   return {
-    role: 'assistant',
-    content: [],
-    toolCalls: [
-      {
-        type: 'function',
-        id: 'call_todo_query',
-        name: 'TodoList',
-        arguments: JSON.stringify({}),
-      },
-    ],
+    message: {
+      role: 'assistant',
+      content: [],
+      toolCalls: [
+        {
+          type: 'function',
+          id: 'call_todo_query',
+          name: 'TodoList',
+          arguments: JSON.stringify({}),
+        },
+      ],
+    },
   };
 }
 
-function priorTodoReminder(): ContextMessage {
+function priorTodoReminder(): HistoryMessage {
   return {
-    role: 'user',
-    content: [{ type: 'text', text: '<system-reminder>\nPrior todo reminder\n</system-reminder>' }],
-    origin: { kind: 'injection', variant: 'todo_list_reminder' },
+    message: {
+      role: 'user',
+      content: [{ type: 'text', text: '<system-reminder>\nPrior todo reminder\n</system-reminder>' }],
+    },
+    meta: { origin: { kind: 'injection', variant: 'todo_list_reminder' } },
   };
 }
 

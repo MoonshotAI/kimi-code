@@ -11,7 +11,7 @@ import type { ToolCall } from '#human/llm/message';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { UndoCut } from '#/agent/contextMemory/contextOps';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import { isSystemEntry, isUserEntry, type HistoryMessage } from '#human/agent/turn';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { createReminderHarness } from '../../features/reminder/stubs';
@@ -104,21 +104,23 @@ function toolCall(id: string, name: string, args: unknown = {}): ToolCall {
   return { type: 'function', id, name, arguments: JSON.stringify(args) };
 }
 
-function userMessage(text: string): ContextMessage {
-  return { role: 'user', content: [{ type: 'text', text }] };
+function userMessage(text: string): HistoryMessage {
+  return { message: { role: 'user', content: [{ type: 'text', text }] } };
 }
 
-function schemaMessage(...names: string[]): ContextMessage {
+function schemaMessage(...names: string[]): HistoryMessage {
   return {
-    role: 'system',
-    content: [],
-    tools: names.map((name) => ({ name, description: `${name} desc`, parameters: {} })),
-    origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
+    message: {
+      role: 'system',
+      content: [],
+      tools: names.map((name) => ({ name, description: `${name} desc`, parameters: {} })),
+    },
+    meta: { origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT } },
   };
 }
 
-function schemaToolsOf(message: ContextMessage | undefined) {
-  return message?.role === 'system' ? message.tools : undefined;
+function schemaToolsOf(entry: HistoryMessage | undefined) {
+  return entry !== undefined && isSystemEntry(entry) ? entry.message.tools : undefined;
 }
 
 class StubMcpTool implements ExecutableTool<Record<string, unknown>> {
@@ -269,14 +271,14 @@ class FakeLoopService implements IAgentLoopService {
 
 class FakeContextMemory implements IAgentContextMemoryService {
   readonly _serviceBrand = undefined;
-  readonly history: ContextMessage[] = [];
-  readonly appended: ContextMessage[] = [];
+  readonly history: HistoryMessage[] = [];
+  readonly appended: HistoryMessage[] = [];
 
-  get(): readonly ContextMessage[] {
+  get(): readonly HistoryMessage[] {
     return this.history;
   }
 
-  append(...messages: readonly ContextMessage[]): void {
+  append(...messages: readonly HistoryMessage[]): void {
     this.appended.push(...messages);
   }
 
@@ -308,9 +310,11 @@ class FakeContextMemory implements IAgentContextMemoryService {
 
   landAnnouncement(content: string): void {
     this.history.push({
-      role: 'user',
-      content: [{ type: 'text', text: `<system-reminder>\n${content.trim()}\n</system-reminder>` }],
-      origin: { kind: 'system_trigger', name: LOADABLE_TOOLS_VARIANT },
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: `<system-reminder>\n${content.trim()}\n</system-reminder>` }],
+      },
+      meta: { origin: { kind: 'system_trigger', name: LOADABLE_TOOLS_VARIANT } },
     });
   }
 }
@@ -448,12 +452,13 @@ function registerUser(
   return registration;
 }
 
-function announcementText(message: ContextMessage): string {
-  return message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+function announcementText(entry: HistoryMessage): string {
+  return entry.message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
 }
 
-function isNewAnnouncement(message: ContextMessage): boolean {
-  return message.origin?.kind === 'injection' && message.origin.variant === LOADABLE_TOOLS_VARIANT;
+function isNewAnnouncement(entry: HistoryMessage): boolean {
+  const origin = isUserEntry(entry) ? entry.meta?.origin : undefined;
+  return origin?.kind === 'injection' && origin.variant === LOADABLE_TOOLS_VARIANT;
 }
 
 async function announce(h: Harness, step = 1): Promise<string | undefined> {
@@ -477,9 +482,11 @@ async function announceAfterCompaction(h: Harness): Promise<string | undefined> 
       deleteCount: 1,
       messages: [
         {
-          role: 'user',
-          content: [{ type: 'text', text: 'Compacted summary.' }],
-          origin: { kind: 'compaction_summary' },
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'Compacted summary.' }],
+          },
+          meta: { origin: { kind: 'compaction_summary' } },
         },
       ],
     }),
@@ -487,7 +494,7 @@ async function announceAfterCompaction(h: Harness): Promise<string | undefined> 
   return announce(h, 99);
 }
 
-async function declareSchemas(h: Harness, step = 1): Promise<ContextMessage | undefined> {
+async function declareSchemas(h: Harness, step = 1): Promise<HistoryMessage | undefined> {
   const before = h.contextMemory.appended.length;
   await h.loop.hooks.onWillBeginStep.run({
     turnId: 1,
@@ -496,11 +503,10 @@ async function declareSchemas(h: Harness, step = 1): Promise<ContextMessage | un
     signal: new AbortController().signal,
   });
   const fresh = h.contextMemory.appended.splice(before);
-  const declared = fresh.find(
-    (message) =>
-      message.origin?.kind === 'injection' &&
-      message.origin.variant === DYNAMIC_TOOL_SCHEMA_VARIANT,
-  );
+  const declared = fresh.find((entry) => {
+    const origin = entry.meta?.origin;
+    return origin?.kind === 'injection' && origin.variant === DYNAMIC_TOOL_SCHEMA_VARIANT;
+  });
   if (declared !== undefined) h.contextMemory.history.push(declared);
   return declared;
 }
@@ -558,7 +564,7 @@ describe('AgentToolSelectService S0 baseline (gate closed)', () => {
 
   it('shapeHistory returns the identical array when there is nothing to strip', () => {
     const h = createHarness();
-    const messages: readonly ContextMessage[] = [userMessage('a'), userMessage('b')];
+    const messages: readonly HistoryMessage[] = [userMessage('a'), userMessage('b')];
     expect(h.sut.shapeHistory(messages)).toBe(messages);
   });
 
@@ -616,7 +622,7 @@ describe('AgentToolSelectService S0 baseline (gate closed)', () => {
     h.contextMemory.landAnnouncement('<tools_added>\nt\n</tools_added>');
     h.contextMemory.history.push(schemaMessage('t'), userMessage('keep'));
     const shaped = h.sut.shapeHistory(h.contextMemory.get());
-    expect(shaped.map((message) => message.role)).toEqual(['user']);
+    expect(shaped.map((entry) => entry.message.role)).toEqual(['user']);
     expect(h.contextMemory.get()).toHaveLength(3);
   });
 
@@ -790,9 +796,9 @@ describe('AgentToolSelectService.load', () => {
 
     expect(h.contextMemory.appended).toHaveLength(0);
     const declared = await declareSchemas(h);
-    expect(declared?.role).toBe('system');
+    expect(declared?.message.role).toBe('system');
     expect(schemaToolsOf(declared)?.map((tool) => tool.name)).toEqual([MCP_BETA]);
-    expect(declared?.origin).toEqual({ kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT });
+    expect(declared !== undefined && isSystemEntry(declared) ? declared.meta?.origin : undefined).toEqual({ kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT });
   });
 
   it('loads the schema of an opted-in user tool', async () => {
@@ -849,7 +855,7 @@ describe('AgentToolSelectService.load', () => {
     registerMcp(h, new StubMcpTool(MCP_ALPHA));
 
     h.sut.load([MCP_ALPHA]);
-    expect(h.contextMemory.get().some((message) => message.role === 'system' && message.tools !== undefined)).toBe(false);
+    expect(h.contextMemory.get().some((entry) => entry.message.role === 'system' && entry.message.tools !== undefined)).toBe(false);
     const reselect = h.sut.load([MCP_ALPHA]);
     expect(reselect.alreadyAvailable).toEqual([MCP_ALPHA]);
     expect(reselect.toLoad).toEqual([]);
