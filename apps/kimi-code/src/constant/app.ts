@@ -5,7 +5,6 @@ import { currentKimiProfile } from '#/utils/region';
 export const PRODUCT_NAME = 'Kimi Code';
 export const CLI_COMMAND_NAME = 'kimi';
 export const PROCESS_NAME = 'kimi-code';
-export const DESKTOP_WEBSITE_URL = 'https://www.kimi.com/code';
 
 // Used in telemetry app names and HTTP User-Agent headers.
 export const CLI_USER_AGENT_PRODUCT = 'kimi-code-cli';
