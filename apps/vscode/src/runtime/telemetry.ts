@@ -3,6 +3,7 @@ import {
   KIMI_CODE_PROVIDER_NAME,
   kimiRegionProfile,
   resolveKimiRegion,
+  type KimiRegion,
 } from "@moonshot-ai/kimi-code-oauth";
 import {
   loadRuntimeConfigSafe,
@@ -30,6 +31,8 @@ import {
 const VSCODE_TELEMETRY_APP_NAME = "kimi-code-vscode";
 const VSCODE_TELEMETRY_UI_MODE = "vscode";
 const TELEMETRY_SHUTDOWN_TIMEOUT_MS = 3_000;
+// Same managed-provider slot the CLI reads (apps/kimi-code/src/utils/region.ts).
+const MANAGED_PROVIDER_KEY = "managed:kimi-code";
 
 export interface VscodeTelemetryOptions {
   readonly homeDir?: string;
@@ -59,7 +62,7 @@ export function initializeVscodeTelemetry(options: VscodeTelemetryOptions): Vsco
     appName: VSCODE_TELEMETRY_APP_NAME,
     version: options.version,
     uiMode: VSCODE_TELEMETRY_UI_MODE,
-    endpoint: () => kimiRegionProfile(resolveKimiRegion({ homeDir })).telemetryEndpoint,
+    endpoint: () => kimiRegionProfile(resolveVscodeTelemetryRegion(homeDir)).telemetryEndpoint,
     getAccessToken: async () =>
       auth === undefined ? null : (await auth.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME)) ?? null,
     onUnexpectedError: (error) => options.log?.(`telemetry property dropped: ${String(error)}`),
@@ -76,6 +79,23 @@ export function initializeVscodeTelemetry(options: VscodeTelemetryOptions): Vsco
     },
     shutdown: () => shutdownTelemetry({ timeoutMs: TELEMETRY_SHUTDOWN_TIMEOUT_MS }),
   };
+}
+
+/**
+ * Region for the telemetry endpoint. Follows the CLI helper: the persisted
+ * login's oauth ref (credential key + oauthHost) wins over the install
+ * marker, so a user who switched regions still reports to the deployment
+ * their credentials belong to.
+ */
+export function resolveVscodeTelemetryRegion(homeDir: string): KimiRegion {
+  const oauth = loadRuntimeConfigSafe(resolveConfigPath({ homeDir })).config.providers?.[
+    MANAGED_PROVIDER_KEY
+  ]?.oauth;
+  return resolveKimiRegion({
+    homeDir,
+    configuredOAuthHost: oauth?.oauthHost,
+    configuredOAuthKey: oauth?.key,
+  });
 }
 
 /** Honors the user's `telemetry` config toggle; a broken config leaves it on. */

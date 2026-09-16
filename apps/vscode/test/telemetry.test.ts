@@ -15,7 +15,7 @@ import {
 } from "@moonshot-ai/kimi-telemetry";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { initializeVscodeTelemetry } from "../src/runtime/telemetry";
+import { initializeVscodeTelemetry, resolveVscodeTelemetryRegion } from "../src/runtime/telemetry";
 
 let homeDir: string;
 
@@ -50,6 +50,15 @@ describe("initializeVscodeTelemetry", () => {
         version: "0.7.5",
       },
     });
+  });
+
+  it("resolves the telemetry region from the persisted oauth ref, not the install marker", async () => {
+    await writeConfig(
+      homeDir,
+      '[providers."managed:kimi-code"]\ntype = "kimi"\n[providers."managed:kimi-code".oauth]\nstorage = "file"\nkey = "kimi-code-global"\noauth_host = "https://auth.kimi.ai"\n',
+    );
+
+    expect(resolveVscodeTelemetryRegion(homeDir)).toBe("global");
   });
 
   it("reports nothing when the config disables telemetry", async () => {
