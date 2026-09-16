@@ -152,6 +152,7 @@ export function bindSessionTranscript(
     if (reconcileAfterUndo !== undefined) {
       list.push(handle.accessor.get(IAgentConversationUndoParticipantRegistry).register({
         id: 'transcript',
+        phase: 'after-flush',
         reconcileAfterUndo: async () => {
           await reconcileAfterUndo(handle.id);
           projectors.delete(handle.id);

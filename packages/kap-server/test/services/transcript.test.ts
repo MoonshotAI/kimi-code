@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import {
   INTERACTION_TAG_SESSION_ID,
   IAgentLifecycleService,
+  IAgentContextMemoryService,
   IAgentConversationUndoParticipantRegistry,
   IAgentLoopService,
   IAgentScopeContext,
@@ -22,6 +23,7 @@ import {
   interactions,
   makeAgentScopeContext,
   type AgentContext,
+  type ContextMessage,
   type AgentConversationUndoParticipant,
   type Event2,
   TOWER_FLAG_ID,
@@ -3035,6 +3037,7 @@ describe('bindSessionTranscript', () => {
     readonly id: string;
     readonly context: AgentContext;
     readonly bus: FakeBus;
+    contextMessages: ContextMessage[];
     readonly undoParticipants: Map<string, AgentConversationUndoParticipant>;
     readonly accessor: { get: (token: unknown) => unknown };
   }
@@ -3093,11 +3096,13 @@ describe('bindSessionTranscript', () => {
         id,
         context: scope.agentContext,
         bus,
+        contextMessages: [],
         undoParticipants,
         accessor: {
           get: (token: unknown) => {
             if (token === IAgentScopeContext) return scope;
             if (token === IEventBus) return bus;
+            if (token === IAgentContextMemoryService) return { get: () => handle.contextMessages };
             if (token === IAgentConversationUndoParticipantRegistry) {
               return {
                 register: (participant: AgentConversationUndoParticipant) => {
@@ -3875,6 +3880,29 @@ describe('bindSessionTranscript', () => {
       expect(agent?.getAttachment('att_1')).toBeUndefined();
       service.dropSession('s1');
     } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it.each([1, 2])('removes undone content even when the history read fails %i times', async (failures) => {
+    const home = await seedWireHome();
+    const agents = new FakeAgents();
+    const main = agents.add('main');
+    const service = new TranscriptService({ homeDir: home, core: fakeCoreWithAgents(agents) });
+    try {
+      const store = service.forSessionLive('s1')!;
+      await service.whenReady('s1');
+      expect(store.getAgent('main')!.getItems().length).toBeGreaterThan(0);
+      main.contextMessages = [{ role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } }];
+      main.bus.emit(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'undone prompt' }));
+      const read = vi.spyOn(service, 'readColdSnapshot');
+      for (let i = 0; i < failures; i++) read.mockRejectedValueOnce(new Error('temporary read failure'));
+      await main.undoParticipants.get('transcript')!.reconcileAfterUndo();
+      expect(store.getAgent('main')!.getItems().filter((item) => item.kind === 'turn').map((turn) => turn.prompt)).toEqual(['hi']);
+      expect(service.getOpsSince('s1', 'main', 0)?.batches.at(-1)?.ops[0]?.op).toBe('reset');
+      read.mockRestore();
+    } finally {
+      service.dropSession('s1');
       await rm(home, { recursive: true, force: true });
     }
   });

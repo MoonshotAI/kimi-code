@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 
 import {
   IAgentLifecycleService,
+  IAgentContextMemoryService,
   IFlagService,
   ISessionIndex,
   ISessionManager,
@@ -403,7 +404,27 @@ export class TranscriptService {
     }
     await entry.ready;
     await entry.agentBackfills.get(agentId);
-    const snapshot = await this.readColdSnapshot(sessionId, agentId);
+    let snapshot: AgentTranscriptSnapshot | undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        snapshot = await this.readColdSnapshot(sessionId, agentId);
+        if (snapshot !== undefined) break;
+      } catch (error) {
+        this.deps.logger?.warn(
+          { sessionId, agentId, err: error instanceof Error ? error.message : error },
+          'transcript: undo history read failed',
+        );
+      }
+    }
+    if (snapshot === undefined) {
+      const agent = getLiveSessionById(this.deps.core.accessor, sessionId)
+        ?.accessor.get(IAgentLifecycleService).handleOf(agentId);
+      if (agent !== undefined) {
+        const current = entry.store.ensureAgent(agentId).snapshot();
+        const retained = groupMessagesIntoSnapshot(agent.accessor.get(IAgentContextMemoryService).get());
+        snapshot = { ...current, items: retained.items, attachments: retained.attachments, prompts: [] };
+      }
+    }
     if (snapshot === undefined || this.live.get(sessionId) !== entry) return;
     const ops: TranscriptOperation[] = [{ op: 'reset', agentId, snapshot }];
     entry.store.ensureAgent(agentId).apply(ops);
