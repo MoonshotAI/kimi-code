@@ -317,6 +317,14 @@ export class McpConnectionManager implements McpConnectionView {
     entry.tools = undefined;
     entry.enabledNames = undefined;
     entry.rawTools = undefined;
+    const oauthService = this.oauthService;
+    if (
+      oauthService !== undefined &&
+      isRemoteMcpConfig(entry.config) &&
+      (await oauthService.hasTokens(name, entry.config.url))
+    ) {
+      await oauthService.invalidate(name, entry.config.url, 'tokens');
+    }
     this.emit(entry);
     return true;
   }

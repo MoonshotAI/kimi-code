@@ -189,8 +189,11 @@ export async function startInProcessHttpMcpServer(opts?: {
   };
 }
 
-export async function startAnonymousDiscoveryHttpMcpServer(): Promise<{
+export async function startAnonymousDiscoveryHttpMcpServer(opts?: {
+  tokenEndpoint?: 'invalid_grant';
+}): Promise<{
   url: string;
+  origin: string;
   close: () => Promise<void>;
 }> {
   const mcpServer = new McpServer({ name: 'mock-http-anon-discovery', version: '0.0.1' });
@@ -206,6 +209,11 @@ export async function startAnonymousDiscoveryHttpMcpServer(): Promise<{
   await mcpServer.connect(transport);
 
   const httpServer: Server = createServer((req, res) => {
+    if (opts?.tokenEndpoint === 'invalid_grant' && req.method === 'POST' && req.url === '/token') {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'invalid_grant' }));
+      return;
+    }
     if (req.method !== 'POST') {
       void transport.handleRequest(req, res);
       return;
@@ -244,6 +252,7 @@ export async function startAnonymousDiscoveryHttpMcpServer(): Promise<{
 
   return {
     url: `http://127.0.0.1:${port}/mcp`,
+    origin: `http://127.0.0.1:${port}`,
     close: () => closeServer(httpServer),
   };
 }

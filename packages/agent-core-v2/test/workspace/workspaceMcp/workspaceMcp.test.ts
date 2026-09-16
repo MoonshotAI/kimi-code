@@ -579,6 +579,21 @@ describe('WorkspaceMcpService', () => {
       expect(forgetProvider).toHaveBeenCalledWith('notion', SERVER_URL);
     });
 
+    it('forgets the provider but does not reconnect a needs-auth entry on token invalidation', async () => {
+      const service = createService();
+      manager = service.connectionManager();
+      await service.ready;
+      const reconnectAndJoin = mockManagerEntry('needs-auth');
+      const forgetProvider = vi.spyOn(oauthService, 'forgetProvider');
+
+      await oauthService.invalidate('notion', SERVER_URL, 'all');
+
+      await vi.waitFor(() => {
+        expect(forgetProvider).toHaveBeenCalledWith('notion', SERVER_URL);
+      });
+      expect(reconnectAndJoin).not.toHaveBeenCalled();
+    });
+
     it('ignores a credential event for a different server URL', async () => {
       const service = createService();
       manager = service.connectionManager();
