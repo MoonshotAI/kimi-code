@@ -12,13 +12,15 @@ import { runWillBeginStepHooks, type StubLoop } from '../../agent/loop/stubs';
 import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
 import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IBlobStore } from '#/persistence/interface/blobStore';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { createFakeHostFs, createFakeProcessRunner } from '../../tools/fixtures/fake-exec';
+import { createMapFs, stubPlanRuntime } from './stubs';
 import {
+  agentService,
   createCommandRunner,
   createTestAgent,
   execEnvServices,
@@ -154,9 +156,8 @@ describe('Plan service', () => {
   }
 
   function expectedPlanPath(id: string): string {
-    const session = ctx.get(ISessionContext);
     const agent = ctx.get(IAgentScopeContext);
-    return join(session.sessionDir, 'agents', agent.agentId, 'plans', `${id}.md`);
+    return join(tmpdir(), 'kimi-code', 'plans', agent.agentId, `${id}.md`);
   }
 
   async function expectPlanActive(active: boolean): Promise<void> {
@@ -185,7 +186,7 @@ describe('Plan service', () => {
       expect(ctx.llmCalls).toHaveLength(0);
     });
 
-    it('derives the plan path from the agent homedir on enter and restore', async () => {
+    it('derives the plan path from the runtime tempDir on enter and restore', async () => {
       useFakes(createPlanFakes({
         writeText: vi.fn(async (_path: string, _content: string): Promise<void> => {}),
       }));
@@ -233,6 +234,83 @@ describe('Plan service', () => {
       await expectPlanActive(true);
       expect(ctx.llmCalls).toHaveLength(2);
       expect(toolResultText(ctx.llmCalls[1]!.history)).toContain('Plan mode is now active');
+    });
+  });
+
+  describe('remote runtime binding', () => {
+    const remoteTempDir = '/remote/tmp';
+    let remoteCtx: TestAgentContext;
+    let remotePlan: IAgentPlanService;
+    let localFiles: Map<string, string>;
+    let remoteFiles: Map<string, string>;
+
+    beforeEach(async () => {
+      localFiles = new Map();
+      remoteFiles = new Map();
+      remoteCtx = createTestAgent([
+        execEnvServices({ hostFs: createMapFs(localFiles) }),
+        agentService(
+          IAgentRuntimeService,
+          stubPlanRuntime({ fs: createMapFs(remoteFiles), tempDir: remoteTempDir }),
+        ),
+      ]);
+      remotePlan = remoteCtx.get(IAgentPlanService);
+      await remoteCtx.restorePersisted();
+    });
+
+    afterEach(async () => {
+      await remoteCtx.dispose();
+    });
+
+    function useRemoteTools(tools: readonly string[]): void {
+      remoteCtx.get(IAgentProfileService).update({ activeToolNames: [...tools] });
+      remoteCtx.newEvents();
+    }
+
+    it('stores the plan file on the bound runtime fs under the runtime tempDir', async () => {
+      useRemoteTools(['Write']);
+      await remotePlan.enter('remote-plan', false);
+
+      const status = await remotePlan.status();
+      const planPath = `${remoteTempDir}/kimi-code/plans/main/remote-plan.md`;
+      expect(status?.path).toBe(planPath);
+
+      const content = '# Plan\n\n- Inspect the remote tree';
+      const writeCall: ToolCall = {
+        type: 'function',
+        id: 'call_write_remote_plan',
+        name: 'Write',
+        arguments: JSON.stringify({ path: planPath, content }),
+      };
+      remoteCtx.mockNextResponse({ type: 'text', text: 'I will write the plan.' }, writeCall);
+      remoteCtx.mockNextResponse({ type: 'text', text: 'Plan written.' });
+      await remoteCtx.rpc.prompt({ input: [{ type: 'text', text: 'Write the plan file' }] });
+
+      await remoteCtx.untilTurnEnd();
+
+      expect(remoteFiles.get(planPath)).toBe(content);
+      expect((await remotePlan.status())?.content).toBe(content);
+    });
+
+    it('keeps denying writes to non-plan files on a remote binding', async () => {
+      useRemoteTools(['Write']);
+      await remotePlan.enter('remote-plan', false);
+
+      const otherPath = '/remote/work/src/main.ts';
+      const writeCall: ToolCall = {
+        type: 'function',
+        id: 'call_write_other',
+        name: 'Write',
+        arguments: JSON.stringify({ path: otherPath, content: 'nope' }),
+      };
+      remoteCtx.mockNextResponse({ type: 'text', text: 'I will edit the source.' }, writeCall);
+      remoteCtx.mockNextResponse({ type: 'text', text: 'Understood.' });
+      await remoteCtx.rpc.prompt({ input: [{ type: 'text', text: 'Edit the source file' }] });
+
+      await remoteCtx.untilTurnEnd();
+
+      expect(remoteFiles.has(otherPath)).toBe(false);
+      expect(toolResultText(remoteCtx.llmCalls[1]!.history)).toContain('Plan mode is active');
     });
   });
 
