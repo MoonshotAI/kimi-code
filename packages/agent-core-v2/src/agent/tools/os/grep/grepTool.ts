@@ -157,7 +157,7 @@ export class GrepTool implements IGrepTool {
         return { isError: true, output: 'Grep aborted' };
       }
       this.telemetry.track2('grep_tool_rg_fallback', { outcome: 'failed' });
-      return { isError: true, output: rgUnavailableMessage(error) };
+      return { isError: true, output: rgUnavailableMessage(error, runtime) };
     }
 
     let runResult: RunRgResult;
@@ -184,7 +184,7 @@ export class GrepTool implements IGrepTool {
         runResult = retryRun;
       }
     } catch (error) {
-      return { isError: true, output: formatSpawnError(error) };
+      return { isError: true, output: formatSpawnError(error, runtime) };
     }
 
     const { exitCode, stderrText, bufferTruncated, stderrTruncated, timedOut } = runResult;
@@ -356,9 +356,9 @@ registerAgentToolService(IGrepTool, GrepTool, {
   requiredRuntimeCapabilities: ['fs', 'process'],
 });
 
-function formatSpawnError(error: unknown): string {
+function formatSpawnError(error: unknown, runtime: Runtime): string {
   return errorCode(error) === 'ENOENT'
-    ? rgUnavailableMessage(error)
+    ? rgUnavailableMessage(error, runtime)
     : error instanceof Error
       ? error.message
       : String(error);
