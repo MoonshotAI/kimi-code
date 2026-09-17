@@ -446,6 +446,8 @@ slug = "acme-dev"        # 可选
 disabled = ["EnterPlanMode", "ExitPlanMode", "mcp__github__*"]
 ```
 
+`disabled` 也可以用环境变量 `KIMI_CODE_TOOLS_DISABLED` 设置（逗号分隔，语义相同）；设置时整体替换本字段且不写回配置文件，适合不便改配置的容器和 CI 场景，见[环境变量](./env-vars.md#运行时开关)。
+
 ::: warning 注意
 与 Agent 文件中的 `tools` / `disallowedTools` 一样，本节不仅决定模型能"看到"哪些工具，还会在执行前再次强制检查。[权限规则](#permission)仍是独立的控制层，用于决定哪些操作需要审批。
 :::

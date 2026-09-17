@@ -483,6 +483,9 @@ strategy = "measured+estimated"
 # tools
 #   owner: src/agent/toolPolicy/configSection.ts
 #   scope: core
+#   hooks: stripEnv
+#   env:
+#     disabled <- KIMI_CODE_TOOLS_DISABLED (custom parse)
 # ##########################################################################
 
 [tools]
