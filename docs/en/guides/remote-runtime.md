@@ -71,6 +71,8 @@ A project entry with the same id overrides the user-level entry. When both level
 
 The runtime binding is per session: it records which runtime the session's tools execute on, plus the working directory on that runtime. Different sessions in the same workspace may bind different runtimes, and subagents inherit their parent agent's binding.
 
+The model is kept informed about where its tools run: creating a session bound to a remote runtime, and every switch in either direction, records a persisted reminder with the runtime id, OS and architecture, shell, and working directory. Creating a session on `local` records nothing.
+
 ### The `/runtime` dialog
 
 The `/runtime` slash command opens the runtime manager, modeled after the provider manager:
@@ -92,13 +94,15 @@ The hidden `--runtime <id>` flag binds a new session to a configured runtime dir
 kimi -p --runtime dev-box "Run the test suite"
 ```
 
-The flag is creation-only, like `--agent`: it cannot be combined with `--session`/`--continue`, because a resumed session restores its recorded binding automatically.
+The flag is creation-only, like `--agent`: it cannot be combined with `--session`/`--continue`, because a resumed session restores its recorded binding automatically. An unknown id, or an entry without `defaultCwd`, fails startup outright. Creation also connects to the target before the session starts, so a connection failure aborts with the reported reason instead of opening a broken session.
 
 ## Disconnects and reconnecting
 
 A remote session depends on one connection per (workspace, runtime). When that connection drops — network loss, a stopped container, the executor exiting — every process the session started on the target is terminated. Terminal scrollback stays readable locally.
 
-There is no automatic reconnect and **no silent fallback to the local runtime**: a command like `rm` or `git` that was meant for the remote machine must never land on yours. Instead, tool calls fail with a `runtime.unavailable` error, and you reconnect explicitly from the `/runtime` dialog. The same applies when resuming an old session: its binding is restored but not reconnected, so the first tool call errors until you reconnect.
+There is no automatic reconnect after a drop and **no silent fallback to the local runtime**: a command like `rm` or `git` that was meant for the remote machine must never land on yours. Instead, tool calls fail with a `runtime.unavailable` error, and you reconnect explicitly from the `/runtime` dialog.
+
+Resuming a session is the one exception: a restored remote binding reconnects automatically in the background, so the session opens immediately while the runtime moves from `connecting` to `ready` — or to `disconnected`, with the failure reason shown in the footer's runtime slot and in the `/runtime` manager. A tool call that arrives while the reconnect is still in flight waits for the connect attempt to finish (bounded by its own timeout) instead of erroring immediately, and there is never a silent fallback to `local`.
 
 SSH exit codes are shown as diagnostics when a connection dies — `255` indicates a network-level drop, `127` that the executor was not found on the target.
 
