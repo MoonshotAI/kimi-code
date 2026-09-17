@@ -570,6 +570,83 @@ describe('AgentRuntimeBindingService environment reminder', () => {
     );
   });
 
+  it('emits no reminder for a local to local transition with only a cwd change', () => {
+    const { binding, reminders, flagState } = setup();
+    flagState.remoteRuntime = true;
+
+    binding.switch('local', '/workspace');
+
+    expect(binding.current).toEqual({ workspaceId: 'workspace', runtimeId: 'local', cwd: '/workspace' });
+    expect(reminders).toHaveLength(0);
+  });
+
+  it('emits the reminder on a remote to remote switch', () => {
+    const { binding, registry, reminders, flagState } = setup();
+    flagState.remoteRuntime = true;
+    registry.register(
+      runtime('remote-two', 'remote-two-one', 'ready', ['process'], {
+        osKind: 'Linux',
+        osArch: 'x86_64',
+        osVersion: '5.15-remote-two',
+        shellName: 'bash',
+        shellPath: '/usr/bin/bash',
+      }),
+    );
+
+    binding.switch('remote', '/remote/work');
+    binding.switch('remote-two', '/remote/two');
+
+    expect(reminders).toHaveLength(2);
+    expect(reminders[1]!.content).toBe(
+      'The active runtime environment is now "remote-two": Linux 5.15-remote-two x86_64, ' +
+        'shell bash (/usr/bin/bash), working directory /remote/two. ' +
+        'Tool calls execute in this environment.',
+    );
+  });
+
+  it('emits no reminder when the non-local target reports the same environment as local', () => {
+    const { binding, registry, reminders, flagState } = setup();
+    flagState.remoteRuntime = true;
+    registry.register(
+      runtime('acp:session-1', 'acp-one', 'ready', ['fs', 'process'], {
+        osKind: 'Linux',
+        osArch: 'x86_64',
+        osVersion: '6.1.0-local',
+        shellName: 'bash',
+        shellPath: '/bin/bash',
+      }),
+    );
+
+    binding.switch('acp:session-1');
+
+    expect(binding.current).toEqual({ workspaceId: 'workspace', runtimeId: 'acp:session-1' });
+    expect(reminders).toHaveLength(0);
+  });
+
+  it('emits the reminder on a remote to remote switch even when the environments match', () => {
+    const { binding, registry, reminders, flagState } = setup();
+    flagState.remoteRuntime = true;
+    registry.register(
+      runtime('remote-two', 'remote-two-one', 'ready', ['process'], {
+        osKind: 'FreeBSD',
+        osArch: 'arm64',
+        osVersion: '13.2-remote',
+        shellName: 'sh',
+        shellPath: '/usr/local/bin/sh',
+      }),
+    );
+
+    binding.switch('remote', '/remote/work');
+    binding.switch('remote-two', '/remote/two');
+
+    expect(reminders).toHaveLength(2);
+    expect(reminders[1]!.content).toBe(
+      'The active runtime environment is now "remote-two": FreeBSD 13.2-remote arm64, ' +
+        'shell sh (/usr/local/bin/sh), working directory /remote/two. ' +
+        'Tool calls execute in this environment.',
+    );
+  });
+
   it('stays silent when the remote runtime flag is off', async () => {
     const { binding, restoreHooks, reminders } = setup();
 

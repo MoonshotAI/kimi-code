@@ -38,6 +38,18 @@ function environmentReminderText(binding: RuntimeBinding, environment: HostEnvir
   ].join(' ');
 }
 
+function hostEnvironmentEquals(left: HostEnvironmentInfo, right: HostEnvironmentInfo): boolean {
+  return (
+    left.osKind === right.osKind &&
+    left.osArch === right.osArch &&
+    left.osVersion === right.osVersion &&
+    left.shellName === right.shellName &&
+    left.shellPath === right.shellPath &&
+    left.pathClass === right.pathClass &&
+    left.homeDir === right.homeDir
+  );
+}
+
 export class AgentRuntimeBindingService implements IAgentRuntimeBindingService {
   declare readonly _serviceBrand: undefined;
   private readonly changeEmitter = new Emitter<RuntimeBinding>();
@@ -177,12 +189,13 @@ export class AgentRuntimeBindingService implements IAgentRuntimeBindingService {
   }
 
   private commit(binding: RuntimeBinding): RuntimeBinding {
+    const previous = this.current;
     if (
-      binding.workspaceId === this.current.workspaceId &&
-      binding.runtimeId === this.current.runtimeId &&
-      binding.cwd === this.current.cwd
+      binding.workspaceId === previous.workspaceId &&
+      binding.runtimeId === previous.runtimeId &&
+      binding.cwd === previous.cwd
     ) {
-      return this.current;
+      return previous;
     }
     const next = { workspaceId: binding.workspaceId, runtimeId: binding.runtimeId, cwd: binding.cwd };
     void this.dispatcher.dispatch(
@@ -190,9 +203,29 @@ export class AgentRuntimeBindingService implements IAgentRuntimeBindingService {
     );
     this.state.set(agentRuntimeBindingKey, next);
     this.applySessionWorkDir(next);
-    this.emitEnvironmentReminder(next);
+    if (this.machineIdentityChanged(previous, next)) {
+      this.emitEnvironmentReminder(next);
+    }
     this.changeEmitter.fire(next);
     return next;
+  }
+
+  private machineIdentityChanged(previous: RuntimeBinding, next: RuntimeBinding): boolean {
+    if (
+      previous.runtimeId !== LOCAL_RUNTIME_ID &&
+      next.runtimeId !== LOCAL_RUNTIME_ID &&
+      previous.runtimeId !== next.runtimeId
+    ) {
+      return true;
+    }
+    try {
+      return !hostEnvironmentEquals(
+        this.resolver.inspect(previous).environment,
+        this.resolver.inspect(next).environment,
+      );
+    } catch {
+      return true;
+    }
   }
 
   private emitEnvironmentReminder(binding: RuntimeBinding): void {
