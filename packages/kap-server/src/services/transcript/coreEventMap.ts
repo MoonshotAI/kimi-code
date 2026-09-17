@@ -196,6 +196,9 @@ export interface ToolFrameRecord {
   readonly frame: ToolCallFrame;
 }
 
+const TASK_OUTPUT_TAIL_MAX = 16_384;
+const TASK_OUTPUT_TAIL_KEEP = 8_192;
+
 export class AgentTranscriptProjector {
   private currentTurn: TurnHeader | undefined;
   private currentStep: StepHeader | undefined;
@@ -1029,8 +1032,15 @@ export class AgentTranscriptProjector {
       );
     }
     const offset = task.outputTail.length;
-    this.tasks.set(taskId, { ...task, outputTail: task.outputTail + text });
-    ops.push({ op: 'append', target: { type: 'task', taskId }, offset, text });
+    const outputTail = task.outputTail + text;
+    if (outputTail.length <= TASK_OUTPUT_TAIL_MAX) {
+      this.tasks.set(taskId, { ...task, outputTail });
+      ops.push({ op: 'append', target: { type: 'task', taskId }, offset, text });
+      return ops;
+    }
+    const trimmed = { ...task, outputTail: outputTail.slice(outputTail.length - TASK_OUTPUT_TAIL_KEEP) };
+    this.tasks.set(taskId, trimmed);
+    ops.push({ op: 'task.upsert', task: trimmed });
     return ops;
   }
 

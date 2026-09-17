@@ -1029,6 +1029,40 @@ describe('AgentTranscriptProjector', () => {
     expect(tx.getTask('task-1')).toMatchObject({ state: 'failed', outputTail: 'boom' });
   });
 
+  it('keeps the shell task output tail bounded and re-syncs it with a task upsert', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): TranscriptOperation[] => {
+      const mapped = projector.map(event);
+      tx.apply(mapped);
+      return mapped;
+    };
+
+    feed(ev({ type: 'shell.started', commandId: 'c1', taskId: 'task-1' }));
+    let full = '';
+    const chunk = 'x'.repeat(4095);
+    for (let i = 0; i < 4; i++) {
+      const text = `${i}${chunk}`;
+      full += text;
+      const ops = feed(ev({ type: 'shell.output', commandId: 'c1', update: { kind: 'stdout', text } }));
+      expect(ops.map((op) => op.op)).toEqual(['append']);
+    }
+    expect(tx.getTask('task-1')?.outputTail).toBe(full);
+
+    const overflow = feed(
+      ev({ type: 'shell.output', commandId: 'c1', update: { kind: 'stdout', text: 'tail' } }),
+    );
+    full += 'tail';
+    expect(overflow.map((op) => op.op)).toEqual(['task.upsert']);
+    const expectedTail = full.slice(full.length - 8192);
+    expect(overflow[0]).toMatchObject({ task: { taskId: 'task-1', outputTail: expectedTail } });
+    expect(tx.getTask('task-1')?.outputTail).toBe(expectedTail);
+
+    const after = feed(ev({ type: 'shell.output', commandId: 'c1', update: { kind: 'stdout', text: '!' } }));
+    expect(after).toEqual([{ op: 'append', target: { type: 'task', taskId: 'task-1' }, offset: 8192, text: '!' }]);
+    expect(tx.getTask('task-1')?.outputTail).toBe(`${expectedTail}!`);
+  });
+
   it('routes shell output/completion via the event taskId when shell.started was missed', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
