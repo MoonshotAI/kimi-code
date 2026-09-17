@@ -10,7 +10,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 ### Features
 
-- Add the `/desktop` slash command (alias `/install-desktop`) and the `kimi install-app` subcommand to open the Kimi Code desktop app page in the browser.
+- Add the `/desktop` slash command (alias `/install-desktop`) and the `kimi install-app` subcommand.
 - Render mermaid code blocks as diagrams in the terminal; turn it off under `/settings` → Mermaid diagrams, or set `mermaid = "off"` in the `[markdown]` section of tui.toml.
 
 ### Polish
