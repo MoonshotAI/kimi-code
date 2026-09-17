@@ -123,14 +123,6 @@ export function sectionEntries(
     .map(([id, entry]) => ({ id, entry: entry as RemoteRuntimeEntry, source }));
 }
 
-export function sectionDefault(section: RuntimesSection | undefined): RuntimeDeclarationDefault | undefined {
-  const defaultId = section?.default;
-  if (defaultId === undefined) return undefined;
-  const entry = (section as Record<string, unknown>)[defaultId] as RemoteRuntimeEntry | undefined;
-  if (entry?.defaultCwd === undefined) return undefined;
-  return { runtimeId: defaultId, cwd: entry.defaultCwd };
-}
-
 export function mergeRuntimeDeclarations(
   user: readonly RemoteRuntimeDeclaration[],
   project: readonly RemoteRuntimeDeclaration[],
