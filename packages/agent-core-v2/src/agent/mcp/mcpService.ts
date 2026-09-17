@@ -318,6 +318,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
       const disposable = this._register(
         this.registry.register(
           createMcpTool(qualified, tool, client, {
+            serverName,
             attachmentStore: this.attachmentStore,
             originals: () => this.originalsTarget(),
             telemetry: this.telemetry,
@@ -325,6 +326,8 @@ export class AgentMcpService extends Service implements IAgentMcpService {
             reconnect: (signal) => this.reconnectForToolCall(serverName, client, signal),
             isRemoved: () =>
               this.mcpHandle.connectionManager.get(serverName)?.status === 'removed',
+            onUnauthorized: (error, failedClient) =>
+              this.mcpHandle.connectionManager.markNeedsAuth(serverName, error, failedClient),
           }),
           { source: 'mcp', disclosure: deferred ? 'deferred' : 'inline' },
         ),
