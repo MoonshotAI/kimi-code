@@ -475,6 +475,9 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with runtime_id', () => {
   let remoteRoot: string | undefined;
   let provider: { dispose(): void | Promise<void> } | undefined;
   let base: string;
+  let sessionId: string;
+  let workspaceId: string;
+  const remoteRoots = new Map<string, string>();
 
   beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fsrt-home-'));
@@ -492,13 +495,16 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with runtime_id', () => {
   beforeEach(async () => {
     localRoot = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-fsrt-local-')));
     remoteRoot = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-fsrt-remote-')));
+    remoteRoots.set(localRoot, remoteRoot);
     const res = await fetch(`${base}/api/v1/sessions`, {
       method: 'POST',
       headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
       body: JSON.stringify({ metadata: { cwd: localRoot } }),
     } as never);
-    const created = (await res.json()) as Envelope<{ id: string }>;
+    const created = (await res.json()) as Envelope<{ id: string; workspace_id: string }>;
     if (created.code !== 0) throw new Error(`session create failed: ${created.msg}`);
+    sessionId = created.data.id;
+    workspaceId = created.data.workspace_id;
     provider = await server!.core.accessor.get(IWorkspaceInstanceManager).addProvider({
       id: 'remote-test-provider',
       imports: { root: [], imports: [], local: [] },
@@ -508,7 +514,7 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with runtime_id', () => {
             { workspaceId: context.id, runtimeId: 'remote-test', generation: 'remote-generation' },
             { capabilities: ['fs'] },
           ),
-          { fs: mappingHostFs(remoteRoot as string) },
+          { fs: mappingHostFs(remoteRoots.get(context.root) ?? (remoteRoot as string)) },
         );
         const registration = host.registerRuntime(runtime);
         return { dispose: () => registration.remove() };
@@ -521,14 +527,12 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with runtime_id', () => {
       await provider.dispose();
       provider = undefined;
     }
-    if (localRoot !== undefined) {
-      await rm(localRoot, { recursive: true, force: true });
-      localRoot = undefined;
+    for (const root of [...remoteRoots.keys(), ...remoteRoots.values()]) {
+      await rm(root, { recursive: true, force: true });
     }
-    if (remoteRoot !== undefined) {
-      await rm(remoteRoot, { recursive: true, force: true });
-      remoteRoot = undefined;
-    }
+    remoteRoots.clear();
+    localRoot = undefined;
+    remoteRoot = undefined;
   });
 
   afterAll(async () => {
@@ -542,9 +546,15 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with runtime_id', () => {
     }
   });
 
-  function contentUrl(path: string, runtimeId?: string): string {
+  function contentUrl(
+    path: string,
+    runtimeId?: string,
+    context?: { workspace_id?: string; session_id?: string },
+  ): string {
     const query = new URLSearchParams({ path });
     if (runtimeId !== undefined) query.set('runtime_id', runtimeId);
+    if (context?.workspace_id !== undefined) query.set('workspace_id', context.workspace_id);
+    if (context?.session_id !== undefined) query.set('session_id', context.session_id);
     return `${base}/api/v1/fs:content?${query.toString()}`;
   }
 
@@ -560,7 +570,7 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with runtime_id', () => {
   it('serves file content from the selected runtime fs', async () => {
     await writeFile(join(remoteRoot as string, 'remote-only.txt'), 'remote-bytes');
 
-    const res = await fetch(contentUrl('/remote-only.txt', 'remote-test'), {
+    const res = await fetch(contentUrl('/remote-only.txt', 'remote-test', { session_id: sessionId }), {
       headers: { connection: 'close', ...authHeaders(server as RunningServer) },
     } as never);
     expect(res.status).toBe(200);
@@ -575,7 +585,7 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with runtime_id', () => {
     await writeFile(remoteFile, 'remote-bytes');
     await writeFile(requestPath, 'local-decoy');
 
-    const res = await fetch(contentUrl(requestPath, 'remote-test'), {
+    const res = await fetch(contentUrl(requestPath, 'remote-test', { workspace_id: workspaceId }), {
       headers: { connection: 'close', ...authHeaders(server as RunningServer) },
     } as never);
     expect(res.status).toBe(200);
@@ -586,7 +596,7 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with runtime_id', () => {
   it('honors range requests against the runtime fs', async () => {
     await writeFile(join(remoteRoot as string, 'long.txt'), '0123456789');
 
-    const res = await fetch(contentUrl('/long.txt', 'remote-test'), {
+    const res = await fetch(contentUrl('/long.txt', 'remote-test', { session_id: sessionId }), {
       headers: { connection: 'close', range: 'bytes=2-5', ...authHeaders(server as RunningServer) },
     } as never);
     expect(res.status).toBe(206);
@@ -598,13 +608,13 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with runtime_id', () => {
   it('answers If-None-Match with 304 against the runtime fs etag', async () => {
     await writeFile(join(remoteRoot as string, 'cached.txt'), 'cache me');
 
-    const first = await fetch(contentUrl('/cached.txt', 'remote-test'), {
+    const first = await fetch(contentUrl('/cached.txt', 'remote-test', { workspace_id: workspaceId }), {
       headers: { connection: 'close', ...authHeaders(server as RunningServer) },
     } as never);
     const etag = first.headers.get('etag') as string;
     expect(typeof etag).toBe('string');
 
-    const res = await fetch(contentUrl('/cached.txt', 'remote-test'), {
+    const res = await fetch(contentUrl('/cached.txt', 'remote-test', { workspace_id: workspaceId }), {
       headers: { connection: 'close', 'if-none-match': etag, ...authHeaders(server as RunningServer) },
     } as never);
     expect(res.status).toBe(304);
@@ -623,8 +633,32 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with runtime_id', () => {
     expect(await res.text()).toBe('local-bytes');
   });
 
+  it('rejects a non-local content runtime_id without a workspace context (40001)', async () => {
+    const res = await fetch(contentUrl('/remote-only.txt', 'remote-test'), {
+      headers: { connection: 'close', ...authHeaders(server as RunningServer) },
+    } as never);
+    const body = (await res.json()) as Envelope<null>;
+    expect(body.code).toBe(40001);
+  });
+
+  it('rejects a non-local content runtime_id with an unknown session_id (40401)', async () => {
+    const res = await fetch(contentUrl('/remote-only.txt', 'remote-test', { session_id: 'no-such-session' }), {
+      headers: { connection: 'close', ...authHeaders(server as RunningServer) },
+    } as never);
+    const body = (await res.json()) as Envelope<null>;
+    expect(body.code).toBe(40401);
+  });
+
+  it('rejects a non-local content runtime_id with an unknown workspace_id (40410)', async () => {
+    const res = await fetch(contentUrl('/remote-only.txt', 'remote-test', { workspace_id: 'no-such-workspace' }), {
+      headers: { connection: 'close', ...authHeaders(server as RunningServer) },
+    } as never);
+    const body = (await res.json()) as Envelope<null>;
+    expect(body.code).toBe(40410);
+  });
+
   it('maps an unknown content runtime_id to RUNTIME_NOT_FOUND', async () => {
-    const res = await fetch(contentUrl('/remote-only.txt', 'no-such-runtime'), {
+    const res = await fetch(contentUrl('/remote-only.txt', 'no-such-runtime', { workspace_id: workspaceId }), {
       headers: { connection: 'close', ...authHeaders(server as RunningServer) },
     } as never);
     const body = (await res.json()) as Envelope<null>;
@@ -635,7 +669,7 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with runtime_id', () => {
     const requestPath = join(localRoot as string, 'made-remote');
     await mkdir(join(remoteRoot as string, localRoot as string), { recursive: true });
 
-    const body = await postMkdir({ path: requestPath, runtime_id: 'remote-test' });
+    const body = await postMkdir({ path: requestPath, runtime_id: 'remote-test', session_id: sessionId });
     expect(body.code).toBe(0);
     expect(body.data?.path).toBe(requestPath);
 
@@ -648,19 +682,93 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with runtime_id', () => {
     const requestPath = join(localRoot as string, 'already-here');
     await mkdir(join(remoteRoot as string, requestPath), { recursive: true });
 
-    const body = await postMkdir({ path: requestPath, runtime_id: 'remote-test' });
+    const body = await postMkdir({ path: requestPath, runtime_id: 'remote-test', workspace_id: workspaceId });
     expect(body.code).toBe(40919);
   });
 
   it('rejects mkdir with a missing runtime parent (40409)', async () => {
     const requestPath = join(localRoot as string, 'no-such-parent', 'child');
 
-    const body = await postMkdir({ path: requestPath, runtime_id: 'remote-test' });
+    const body = await postMkdir({ path: requestPath, runtime_id: 'remote-test', session_id: sessionId });
     expect(body.code).toBe(40409);
   });
 
+  it('rejects a non-local mkdir runtime_id without a workspace context (40001)', async () => {
+    const body = await postMkdir({ path: join(localRoot as string, 'x'), runtime_id: 'remote-test' });
+    expect(body.code).toBe(40001);
+  });
+
+  it('rejects a non-local mkdir runtime_id with an unknown session_id (40401)', async () => {
+    const body = await postMkdir({
+      path: join(localRoot as string, 'x'),
+      runtime_id: 'remote-test',
+      session_id: 'no-such-session',
+    });
+    expect(body.code).toBe(40401);
+  });
+
+  it('rejects a non-local mkdir runtime_id with an unknown workspace_id (40410)', async () => {
+    const body = await postMkdir({
+      path: join(localRoot as string, 'x'),
+      runtime_id: 'remote-test',
+      workspace_id: 'no-such-workspace',
+    });
+    expect(body.code).toBe(40410);
+  });
+
   it('maps an unknown mkdir runtime_id to RUNTIME_NOT_FOUND', async () => {
-    const body = await postMkdir({ path: join(localRoot as string, 'x'), runtime_id: 'no-such-runtime' });
+    const body = await postMkdir({
+      path: join(localRoot as string, 'x'),
+      runtime_id: 'no-such-runtime',
+      workspace_id: workspaceId,
+    });
     expect(body.code).toBe(40420);
+  });
+
+  it('resolves the same runtime id per workspace', async () => {
+    const localRootB = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-fsrt-local-b-')));
+    const remoteRootB = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-fsrt-remote-b-')));
+    remoteRoots.set(localRootB, remoteRootB);
+    const res = await fetch(`${base}/api/v1/sessions`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ metadata: { cwd: localRootB } }),
+    } as never);
+    const createdB = (await res.json()) as Envelope<{ id: string; workspace_id: string }>;
+    if (createdB.code !== 0) throw new Error(`session create failed: ${createdB.msg}`);
+
+    await writeFile(join(remoteRoot as string, 'shared.txt'), 'workspace-a-bytes');
+    await writeFile(join(remoteRootB, 'shared.txt'), 'workspace-b-bytes');
+
+    const fromA = await fetch(
+      contentUrl('/shared.txt', 'remote-test', { workspace_id: workspaceId }),
+      { headers: { connection: 'close', ...authHeaders(server as RunningServer) } } as never,
+    );
+    expect(fromA.status).toBe(200);
+    expect(await fromA.text()).toBe('workspace-a-bytes');
+
+    const fromB = await fetch(
+      contentUrl('/shared.txt', 'remote-test', { workspace_id: createdB.data.workspace_id }),
+      { headers: { connection: 'close', ...authHeaders(server as RunningServer) } } as never,
+    );
+    expect(fromB.status).toBe(200);
+    expect(await fromB.text()).toBe('workspace-b-bytes');
+
+    const viaSessionB = await fetch(
+      contentUrl('/shared.txt', 'remote-test', { session_id: createdB.data.id }),
+      { headers: { connection: 'close', ...authHeaders(server as RunningServer) } } as never,
+    );
+    expect(viaSessionB.status).toBe(200);
+    expect(await viaSessionB.text()).toBe('workspace-b-bytes');
+
+    const mkdirBody = await postMkdir({
+      path: '/made-on-b',
+      runtime_id: 'remote-test',
+      session_id: createdB.data.id,
+    });
+    expect(mkdirBody.code).toBe(0);
+    const statB = await stat(join(remoteRootB, 'made-on-b'));
+    expect(statB.isDirectory()).toBe(true);
+    await expect(stat(join(remoteRoot as string, 'made-on-b'))).rejects.toThrow();
   });
 });

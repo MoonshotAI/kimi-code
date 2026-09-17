@@ -2,13 +2,16 @@ import { isAbsolute } from 'node:path';
 import type { Readable } from 'node:stream';
 
 import {
+  Error2,
   ErrorCodes,
   HostFolderNotAbsoluteError,
   HostFolderNotFoundError,
   HostFolderPermissionError,
   IHostFileSystem,
   IHostFolderBrowser,
+  ISessionIndex,
   IWorkspaceInstanceManager,
+  IWorkspaceService,
   isError2,
   type HostFileStat,
   type Scope,
@@ -46,7 +49,11 @@ interface WorkspaceFsRouteHost {
     path: string,
     options: { preHandler: unknown[]; schema?: Record<string, unknown> } | undefined,
     handler: (
-      req: { id: string; query: { path?: string; runtime_id?: string }; headers: Record<string, unknown> },
+      req: {
+        id: string;
+        query: { path?: string; runtime_id?: string; workspace_id?: string; session_id?: string };
+        headers: Record<string, unknown>;
+      },
       reply: FsContentReply,
     ) => Promise<void> | void,
   ): unknown;
@@ -121,6 +128,8 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
       },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.WORKSPACE_NOT_FOUND]: {},
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
         [ErrorCode.FS_PERMISSION_DENIED]: {},
         [ErrorCode.FS_IS_DIRECTORY]: {},
@@ -128,7 +137,7 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
         [ErrorCode.RUNTIME_UNAVAILABLE]: {},
       },
       description:
-        'Serve the raw content of any file on the host filesystem by absolute path. Supports ETag caching and single-range requests. `runtime_id` selects the runtime filesystem; defaults to local.',
+        'Serve the raw content of any file on the host filesystem by absolute path. Supports ETag caching and single-range requests. `runtime_id` selects the runtime filesystem; defaults to local. A non-local `runtime_id` is workspace-scoped and requires `workspace_id` or `session_id` to name the workspace.',
       tags: ['workspaces'],
       operationId: 'fsContent',
     },
@@ -150,6 +159,8 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
       success: { data: fsMkdirResponseSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.WORKSPACE_NOT_FOUND]: {},
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
         [ErrorCode.FS_PERMISSION_DENIED]: {},
         [ErrorCode.FS_ALREADY_EXISTS]: {},
@@ -157,7 +168,7 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
         [ErrorCode.RUNTIME_UNAVAILABLE]: {},
       },
       description:
-        'Create a directory on the host filesystem by absolute path (folder-picker "new folder" backend). Non-recursive: the parent directory must already exist. `runtime_id` selects the runtime filesystem; defaults to local.',
+        'Create a directory on the host filesystem by absolute path (folder-picker "new folder" backend). Non-recursive: the parent directory must already exist. `runtime_id` selects the runtime filesystem; defaults to local. A non-local `runtime_id` is workspace-scoped and requires `workspace_id` or `session_id` to name the workspace.',
       tags: ['workspaces'],
       operationId: 'fsMkdir',
     },
@@ -175,32 +186,77 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
 const fsContentQuerySchema = z.object({
   path: z.string().min(1),
   runtime_id: z.string().min(1).optional(),
+  workspace_id: z.string().min(1).optional(),
+  session_id: z.string().min(1).optional(),
 });
 
 interface FsContentRequest {
   id: string;
-  query: { path: string; runtime_id?: string };
+  query: { path: string; runtime_id?: string; workspace_id?: string; session_id?: string };
   headers: Record<string, unknown>;
 }
 
-function acquireFsSource(core: Scope, runtimeId: string): RuntimeReadStreamSource {
+interface FsRuntimeContext {
+  readonly workspaceId?: string;
+  readonly sessionId?: string;
+}
+
+async function acquireFsSource(
+  core: Scope,
+  runtimeId: string,
+  context: FsRuntimeContext,
+): Promise<RuntimeReadStreamSource> {
   if (runtimeId === 'local') {
     return {
       hostFs: core.accessor.get(IHostFileSystem),
       lease: { track: (resource) => resource, dispose: () => {} },
     };
   }
-  const instances = core.accessor.get(IWorkspaceInstanceManager);
-  for (const instance of instances.list()) {
-    if (instance.runtimes.current(runtimeId) !== undefined) {
-      const lease = instance.runtimes.acquire({ workspaceId: instance.id, runtimeId }, ['fs']);
-      return { hostFs: lease.runtime.fs!, lease };
+  const workspaceId = await resolveContextWorkspaceId(core, runtimeId, context);
+  const manager = core.accessor.get(IWorkspaceInstanceManager);
+  let instance = manager.get(workspaceId);
+  if (instance === undefined) {
+    const workspace = await core.accessor.get(IWorkspaceService).get(workspaceId);
+    if (workspace === undefined) {
+      throw new Error2(
+        ErrorCodes.WORKSPACE_NOT_FOUND,
+        `workspace ${workspaceId} does not exist`,
+      );
     }
+    instance = await manager.getOrCreate({ workspaceId, root: workspace.root });
   }
-  throw new RuntimeError('runtime.not_found', `runtime ${runtimeId} does not exist`);
+  if (instance.runtimes.current(runtimeId) === undefined) {
+    throw new RuntimeError('runtime.not_found', `runtime ${runtimeId} does not exist`);
+  }
+  const lease = instance.runtimes.acquire({ workspaceId: instance.id, runtimeId }, ['fs']);
+  return { hostFs: lease.runtime.fs!, lease };
 }
 
-function sendRuntimeError(
+async function resolveContextWorkspaceId(
+  core: Scope,
+  runtimeId: string,
+  context: FsRuntimeContext,
+): Promise<string> {
+  if (context.sessionId !== undefined) {
+    const summary = await core.accessor.get(ISessionIndex).get(context.sessionId);
+    if (summary === undefined) {
+      throw new Error2(
+        ErrorCodes.SESSION_NOT_FOUND,
+        `session ${context.sessionId} does not exist`,
+      );
+    }
+    return summary.workspaceId;
+  }
+  if (context.workspaceId !== undefined) {
+    return context.workspaceId;
+  }
+  throw new Error2(
+    ErrorCodes.VALIDATION_FAILED,
+    `runtime_id ${runtimeId} is workspace-scoped: pass workspace_id or session_id`,
+  );
+}
+
+function sendAcquireError(
   reply: { send(payload: unknown): unknown },
   requestId: string,
   err: unknown,
@@ -211,6 +267,19 @@ function sendRuntimeError(
       : ErrorCode.RUNTIME_UNAVAILABLE;
     reply.send(errEnvelope(code, err.message, requestId));
     return;
+  }
+  if (isError2(err)) {
+    switch (err.code) {
+      case ErrorCodes.VALIDATION_FAILED:
+        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId));
+        return;
+      case ErrorCodes.SESSION_NOT_FOUND:
+        reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId));
+        return;
+      case ErrorCodes.WORKSPACE_NOT_FOUND:
+        reply.send(errEnvelope(ErrorCode.WORKSPACE_NOT_FOUND, err.message, requestId));
+        return;
+    }
   }
   throw err;
 }
@@ -231,9 +300,12 @@ async function handleFsContent(
 
   let source: RuntimeReadStreamSource;
   try {
-    source = acquireFsSource(core, req.query.runtime_id ?? 'local');
+    source = await acquireFsSource(core, req.query.runtime_id ?? 'local', {
+      workspaceId: req.query.workspace_id,
+      sessionId: req.query.session_id,
+    });
   } catch (error) {
-    sendRuntimeError(reply, requestId, error);
+    sendAcquireError(reply, requestId, error);
     return;
   }
 
@@ -325,6 +397,8 @@ async function handleFsContent(
 const fsMkdirBodySchema = z.object({
   path: z.string().min(1),
   runtime_id: z.string().min(1).optional(),
+  workspace_id: z.string().min(1).optional(),
+  session_id: z.string().min(1).optional(),
 });
 
 const fsMkdirResponseSchema = z.object({
@@ -333,7 +407,7 @@ const fsMkdirResponseSchema = z.object({
 
 interface FsMkdirRequest {
   id: string;
-  body: { path: string; runtime_id?: string };
+  body: { path: string; runtime_id?: string; workspace_id?: string; session_id?: string };
 }
 
 async function handleFsMkdir(
@@ -352,9 +426,12 @@ async function handleFsMkdir(
 
   let source: RuntimeReadStreamSource;
   try {
-    source = acquireFsSource(core, req.body.runtime_id ?? 'local');
+    source = await acquireFsSource(core, req.body.runtime_id ?? 'local', {
+      workspaceId: req.body.workspace_id,
+      sessionId: req.body.session_id,
+    });
   } catch (error) {
-    sendRuntimeError(reply, requestId, error);
+    sendAcquireError(reply, requestId, error);
     return;
   }
 
