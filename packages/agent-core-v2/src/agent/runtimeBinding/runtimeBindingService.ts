@@ -71,7 +71,9 @@ export class AgentRuntimeBindingService implements IAgentRuntimeBindingService {
           new RuntimeSetBinding({ ...this.current, agentId: this.scopeContext.agentId }),
         );
         this.applySessionWorkDir(this.current);
-        this.emitEnvironmentReminder(this.current);
+        if (this.current.runtimeId !== LOCAL_RUNTIME_ID) {
+          this.emitEnvironmentReminder(this.current);
+        }
       } else {
         this.assertSessionWorkspace(replayed);
         this.state.set(agentRuntimeBindingKey, replayed);

@@ -49,7 +49,7 @@ interface RestoreHook {
   (ctx: unknown, next: () => Promise<void>): Promise<void>;
 }
 
-function setup(options: { agentId?: string; sessionCwd?: string } = {}) {
+function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: RuntimeBinding } = {}) {
   const registry = new RuntimeRegistry('workspace');
   const local = runtime('local', 'local-one', 'ready', ['fs', 'process'], {
     osKind: 'Linux',
@@ -159,7 +159,7 @@ function setup(options: { agentId?: string; sessionCwd?: string } = {}) {
   const binding = new AgentRuntimeBindingService(
     scopeContext,
     state,
-    { _serviceBrand: undefined, binding: { workspaceId: 'workspace', runtimeId: 'local' } },
+    { _serviceBrand: undefined, binding: options.seedBinding ?? { workspaceId: 'workspace', runtimeId: 'local' } },
     session,
     workspaceContext,
     resolver,
@@ -520,16 +520,27 @@ describe('AgentRuntimeBindingService environment reminder', () => {
     expect(reminders).toHaveLength(1);
   });
 
-  it('emits the seed binding environment on a fresh session restore', async () => {
+  it('emits no reminder for a local create-seed on a fresh session restore', async () => {
     const { restoreHooks, reminders, flagState } = setup();
+    flagState.remoteRuntime = true;
+
+    await restoreHooks.get('agent-runtime-binding')?.(undefined, async () => {});
+
+    expect(reminders).toHaveLength(0);
+  });
+
+  it('emits the seed binding environment for a remote create-seed on a fresh session restore', async () => {
+    const { restoreHooks, reminders, flagState } = setup({
+      seedBinding: { workspaceId: 'workspace', runtimeId: 'remote', cwd: '/remote/work' },
+    });
     flagState.remoteRuntime = true;
 
     await restoreHooks.get('agent-runtime-binding')?.(undefined, async () => {});
 
     expect(reminders).toHaveLength(1);
     expect(reminders[0]!.content).toBe(
-      'The active runtime environment is now "local": Linux 6.1.0-local x86_64, ' +
-        'shell bash (/bin/bash), working directory /workspace. ' +
+      'The active runtime environment is now "remote": FreeBSD 13.2-remote arm64, ' +
+        'shell sh (/usr/local/bin/sh), working directory /remote/work. ' +
         'Tool calls execute in this environment.',
     );
   });
