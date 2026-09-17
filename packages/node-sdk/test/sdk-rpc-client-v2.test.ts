@@ -1175,6 +1175,25 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  it('rejects a global declare whose id is already declared, leaving config.toml untouched', async () => {
+    const { harness, homeDir } = await makeRuntimeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const before = await readFile(join(homeDir, 'config.toml'), 'utf-8');
+    expect(before).toContain('[runtimes.fake-box]');
+    try {
+      const session = await harness.createSession({ workDir });
+      await expect(
+        session.declareRuntime({ id: 'fake-box', entry: { type: 'ssh', host: 'other-box' } }),
+      ).rejects.toThrow(/already declared/);
+      expect(await readFile(join(homeDir, 'config.toml'), 'utf-8')).toBe(before);
+      await session.close();
+    } finally {
+      await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('declares a project runtime into .kimi-code/runtimes.toml without clobbering it, registering live', async () => {
     const { harness } = await makeRuntimeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));

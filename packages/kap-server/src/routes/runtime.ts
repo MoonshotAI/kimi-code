@@ -228,6 +228,13 @@ export function registerRuntimeRoutes(app: RuntimeRouteHost, core: Scope): void 
         } else {
           const config = core.accessor.get(IConfigService);
           await config.ready;
+          const declared = config.get<Record<string, unknown>>(RUNTIMES_SECTION);
+          if (declared?.[req.body.runtime_id] !== undefined) {
+            throw new Error2(
+              ErrorCodes.CONFIG_INVALID,
+              `Runtime id "${req.body.runtime_id}" is already declared in ${core.accessor.get(IBootstrapService).configPath}.`,
+            );
+          }
           await config.set(RUNTIMES_SECTION, { [req.body.runtime_id]: entry });
         }
         reply.send(okEnvelope({ workspace_id: workspaceId, runtime_id: req.body.runtime_id, scope }, req.id));

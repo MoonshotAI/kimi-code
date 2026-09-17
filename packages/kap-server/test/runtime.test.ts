@@ -341,6 +341,25 @@ describe('server-v2 /api/v1 runtime routes', () => {
       );
     });
 
+    it('rejects a duplicate global declare, leaving config.toml untouched', async () => {
+      const { id } = await createSessionWire();
+      const first = await call<DeclaredWire>('POST', `/api/v1/sessions/${id}/runtimes`, {
+        runtime_id: 'rest-dup-box',
+        entry: { type: 'ssh', host: 'rest-dup-box', default_cwd: '/remote/rest' },
+      });
+      expect(first.body.code).toBe(0);
+      const before = await readFile(join(home as string, 'config.toml'), 'utf-8');
+      expect(before).toContain('[runtimes.rest-dup-box]');
+
+      const duplicate = await call<null>('POST', `/api/v1/sessions/${id}/runtimes`, {
+        runtime_id: 'rest-dup-box',
+        entry: { type: 'ssh', host: 'other-box' },
+      });
+      expect(duplicate.body.code).toBe(40001);
+      expect(duplicate.body.msg).toContain('already declared');
+      expect(await readFile(join(home as string, 'config.toml'), 'utf-8')).toBe(before);
+    });
+
     it('declares a runtime at project scope into .kimi-code/runtimes.toml without clobbering it', async () => {
       const session = await createSessionWire();
       await mkdir(join(home as string, '.kimi-code'), { recursive: true });

@@ -1971,7 +1971,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * (declarations must exist before any remote connection, so the project
    * file always lives on the local disk). Both register through the
    * engine's live declaration watch; both require the `remote_runtime` flag,
-   * matching the rest of the runtime surface.
+   * matching the rest of the runtime surface. Both scopes fail closed on a
+   * duplicate id, rejecting before any write so an existing entry is never
+   * half-merged.
    */
   override async declareRuntime(input: DeclareRuntimeRpcInput): Promise<void> {
     if (!this.engineAccessor.get(IFlagService).enabled(REMOTE_RUNTIME_FLAG_ID)) {
@@ -1996,6 +1998,13 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       return;
     }
     await this.configReady;
+    const declared = await this.klient.global.config.get<Record<string, unknown>>(RUNTIMES_SECTION);
+    if (declared?.[input.id] !== undefined) {
+      throw new KimiError(
+        ErrorCodes.CONFIG_INVALID,
+        `Runtime id "${input.id}" is already declared in ${this.engineAccessor.get(IBootstrapService).configPath}.`,
+      );
+    }
     await this.klient.global.config.set({
       domain: RUNTIMES_SECTION,
       patch: { [input.id]: input.entry },
