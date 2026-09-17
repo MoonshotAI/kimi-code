@@ -5,10 +5,11 @@ import type { LiveRef } from '#/_base/di/instantiation';
 import type { ISessionEventBus } from '#/app/event/eventBus';
 import type { IFlagService } from '#/app/flag/flag';
 import { AgentRuntimeService, snapshotAgentRuntimeBinding } from '#/agent/runtimeBinding/agentRuntime';
-import { AgentRuntimeBindingService, agentRuntimeBindingKey } from '#/agent/runtimeBinding/runtimeBindingService';
+import { AgentRuntimeBindingService, agentRuntimeBindingKey, RUNTIME_ENVIRONMENT_REMINDER_VARIANT } from '#/agent/runtimeBinding/runtimeBindingService';
 import { runtimeBindingKey, type RuntimeSetBinding } from '#/agent/runtimeBinding/runtimeBindingOps';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import type { IAgentLoopService } from '#/agent/loop/loop';
+import type { IAgentReminderService } from '#/features/reminder/reminderService';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
 import type { Runtime, RuntimeBinding, RuntimeCapability, RuntimeLease } from '#/runtime/runtime';
 import { RuntimeError, RuntimeRegistry } from '#/runtime/runtimeRegistry';
@@ -31,10 +32,11 @@ function runtime(
   generation: string,
   status: Runtime['status'] = 'ready',
   capabilities: readonly RuntimeCapability[] = [],
+  environment?: Partial<Runtime['environment']>,
 ): FakeRuntime {
   const value = new FakeRuntime(
     { workspaceId: 'workspace', runtimeId, generation },
-    { status, capabilities },
+    { status, capabilities, environment },
   );
   return Object.assign(value, {
     fs: capabilities.includes('fs') ? {} : undefined,
@@ -49,8 +51,20 @@ interface RestoreHook {
 
 function setup(options: { agentId?: string; sessionCwd?: string } = {}) {
   const registry = new RuntimeRegistry('workspace');
-  const local = runtime('local', 'local-one', 'ready', ['fs', 'process']);
-  const remote = runtime('remote', 'remote-one', 'ready', ['process']);
+  const local = runtime('local', 'local-one', 'ready', ['fs', 'process'], {
+    osKind: 'Linux',
+    osArch: 'x86_64',
+    osVersion: '6.1.0-local',
+    shellName: 'bash',
+    shellPath: '/bin/bash',
+  });
+  const remote = runtime('remote', 'remote-one', 'ready', ['process'], {
+    osKind: 'FreeBSD',
+    osArch: 'arm64',
+    osVersion: '13.2-remote',
+    shellName: 'sh',
+    shellPath: '/usr/local/bin/sh',
+  });
   const localRegistration = registry.register(local);
   registry.register(remote);
   const resolver: IRuntimeResolver = {
@@ -128,6 +142,18 @@ function setup(options: { agentId?: string; sessionCwd?: string } = {}) {
   const publishBus = (type: string, event: { readonly agentId?: string }): void => {
     for (const handler of busHandlers.get(type) ?? []) handler(event);
   };
+  const reminders: { content: string; variant: string }[] = [];
+  const reminder = {
+    _serviceBrand: undefined,
+    notify: (content: string, notification: { variant: string }) => {
+      reminders.push({ content, variant: notification.variant });
+    },
+  } as unknown as IAgentReminderService;
+  const flagState = { remoteRuntime: false };
+  const flags = {
+    _serviceBrand: undefined,
+    enabled: () => flagState.remoteRuntime,
+  } as unknown as IFlagService;
   const binding = new AgentRuntimeBindingService(
     scopeContext,
     state,
@@ -138,6 +164,8 @@ function setup(options: { agentId?: string; sessionCwd?: string } = {}) {
     dispatcher,
     eventBus,
     loop,
+    flags,
+    reminder,
   );
   const workspaceChanges = new Emitter<{ workspaceId: string }>();
   const workspaces = {
@@ -149,7 +177,6 @@ function setup(options: { agentId?: string; sessionCwd?: string } = {}) {
   sessionState.contributeState(workspaceContextWorkDirKey);
   sessionState.contributeState(workspaceContextAdditionalDirsKey);
   sessionState.set(workspaceContextWorkDirKey, session.cwd);
-  const flags = { _serviceBrand: undefined, enabled: () => false } as unknown as IFlagService;
   return {
     registry,
     resolver,
@@ -167,6 +194,8 @@ function setup(options: { agentId?: string; sessionCwd?: string } = {}) {
     publishBus,
     sessionState,
     flags,
+    flagState,
+    reminders,
     agentRuntime: new AgentRuntimeService(scopeContext, binding, resolver, workspaces, eventBus, session, sessionState, flags),
   };
 }
@@ -441,6 +470,92 @@ describe('AgentRuntimeBindingService', () => {
     const lease = agentRuntime.acquire();
     expect(lease.runtime.identity.runtimeId).toBe('remote');
     lease.dispose();
+  });
+});
+
+describe('AgentRuntimeBindingService environment reminder', () => {
+  it('emits exactly one reminder with the runtime id and environment on switch', () => {
+    const { binding, reminders, flagState } = setup();
+    flagState.remoteRuntime = true;
+
+    binding.switch('remote', '/remote/work');
+    binding.switch('remote', '/remote/work');
+
+    expect(reminders).toHaveLength(1);
+    expect(reminders[0]!).toEqual({
+      variant: RUNTIME_ENVIRONMENT_REMINDER_VARIANT,
+      content:
+        'The active runtime environment is now "remote": FreeBSD 13.2-remote arm64, ' +
+        'shell sh (/usr/local/bin/sh), working directory /remote/work. ' +
+        'Tool calls execute in this environment.',
+    });
+  });
+
+  it('emits the reminder even when the switch commits mid-turn', () => {
+    const { binding, reminders, flagState, loopState } = setup();
+    flagState.remoteRuntime = true;
+    loopState.turn = { turnId: 1, phase: 'running', step: 1, activeToolCalls: [] };
+
+    binding.switch('remote', '/remote/work');
+
+    expect(reminders).toHaveLength(1);
+  });
+
+  it('emits the seed binding environment on a fresh session restore', async () => {
+    const { restoreHooks, reminders, flagState } = setup();
+    flagState.remoteRuntime = true;
+
+    await restoreHooks.get('agent-runtime-binding')?.(undefined, async () => {});
+
+    expect(reminders).toHaveLength(1);
+    expect(reminders[0]!.content).toBe(
+      'The active runtime environment is now "local": Linux 6.1.0-local x86_64, ' +
+        'shell bash (/bin/bash), working directory /workspace. ' +
+        'Tool calls execute in this environment.',
+    );
+  });
+
+  it('emits no reminder when the binding is restored from a replayed op', async () => {
+    const { state, restoreHooks, reminders, flagState } = setup();
+    flagState.remoteRuntime = true;
+    state.set(runtimeBindingKey, { workspaceId: 'workspace', runtimeId: 'remote', cwd: '/remote/work' });
+
+    await restoreHooks.get('agent-runtime-binding')?.(undefined, async () => {});
+
+    expect(reminders).toHaveLength(0);
+  });
+
+  it('emits the local environment when switching back to local', () => {
+    const { binding, reminders, flagState } = setup();
+    flagState.remoteRuntime = true;
+
+    binding.switch('remote', '/remote/work');
+    binding.switch('local');
+
+    expect(reminders).toHaveLength(2);
+    expect(reminders[1]!.content).toBe(
+      'The active runtime environment is now "local": Linux 6.1.0-local x86_64, ' +
+        'shell bash (/bin/bash), working directory /workspace. ' +
+        'Tool calls execute in this environment.',
+    );
+  });
+
+  it('stays silent when the remote runtime flag is off', async () => {
+    const { binding, restoreHooks, reminders } = setup();
+
+    binding.switch('remote', '/remote/work');
+    await restoreHooks.get('agent-runtime-binding')?.(undefined, async () => {});
+
+    expect(reminders).toHaveLength(0);
+  });
+
+  it('does not emit reminders for non-main agents', () => {
+    const { binding, reminders, flagState } = setup({ agentId: 'agent-1' });
+    flagState.remoteRuntime = true;
+
+    binding.switch('remote', '/remote/work');
+
+    expect(reminders).toHaveLength(0);
   });
 });
 

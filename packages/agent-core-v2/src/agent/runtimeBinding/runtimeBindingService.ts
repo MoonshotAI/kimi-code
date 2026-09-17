@@ -4,11 +4,15 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 import { ref, type LiveRef } from '#/_base/di/instantiation';
 import { Emitter } from '#/_base/event';
 import { ISessionEventBus } from '#/app/event/eventBus';
+import { IFlagService } from '#/app/flag/flag';
 import { LifecycleScope } from '#/app/scopes';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
+import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
+import { REMOTE_RUNTIME_FLAG_ID } from '#/runtime/flag';
 import { LOCAL_RUNTIME_ID, type RuntimeBinding } from '#/runtime/runtime';
 import { RuntimeError, runtimeStatusAllows } from '#/runtime/runtimeRegistry';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -21,6 +25,18 @@ import { IAgentRuntimeBindingSeed, IAgentRuntimeBindingService } from './runtime
 import { RuntimeSetBinding, runtimeBindingKey } from './runtimeBindingOps';
 
 export const agentRuntimeBindingKey = defineState<RuntimeBinding>('runtime.binding', () => ({ workspaceId: '', runtimeId: LOCAL_RUNTIME_ID }));
+
+export const RUNTIME_ENVIRONMENT_REMINDER_VARIANT = 'runtime_binding';
+
+function environmentReminderText(binding: RuntimeBinding, environment: HostEnvironmentInfo, fallbackCwd: string): string {
+  return [
+    `The active runtime environment is now "${binding.runtimeId}":`,
+    `${environment.osKind} ${environment.osVersion} ${environment.osArch},`,
+    `shell ${environment.shellName} (${environment.shellPath}),`,
+    `working directory ${binding.cwd ?? fallbackCwd}.`,
+    'Tool calls execute in this environment.',
+  ].join(' ');
+}
 
 export class AgentRuntimeBindingService implements IAgentRuntimeBindingService {
   declare readonly _serviceBrand: undefined;
@@ -40,6 +56,8 @@ export class AgentRuntimeBindingService implements IAgentRuntimeBindingService {
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ISessionEventBus private readonly eventBus: ISessionEventBus,
     @ref(IAgentLoopService) private readonly loop: LiveRef<IAgentLoopService>,
+    @IFlagService private readonly flags: IFlagService,
+    @IAgentReminderService private readonly reminder: IAgentReminderService,
   ) {
     this.state.contributeState(agentRuntimeBindingKey);
     this.state.contributeState(runtimeBindingKey);
@@ -53,6 +71,7 @@ export class AgentRuntimeBindingService implements IAgentRuntimeBindingService {
           new RuntimeSetBinding({ ...this.current, agentId: this.scopeContext.agentId }),
         );
         this.applySessionWorkDir(this.current);
+        this.emitEnvironmentReminder(this.current);
       } else {
         this.assertSessionWorkspace(replayed);
         this.state.set(agentRuntimeBindingKey, replayed);
@@ -169,8 +188,23 @@ export class AgentRuntimeBindingService implements IAgentRuntimeBindingService {
     );
     this.state.set(agentRuntimeBindingKey, next);
     this.applySessionWorkDir(next);
+    this.emitEnvironmentReminder(next);
     this.changeEmitter.fire(next);
     return next;
+  }
+
+  private emitEnvironmentReminder(binding: RuntimeBinding): void {
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
+    if (!this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) return;
+    let environment: HostEnvironmentInfo;
+    try {
+      environment = this.resolver.inspect(binding).environment;
+    } catch {
+      return;
+    }
+    this.reminder.notify(environmentReminderText(binding, environment, this.session.cwd), {
+      variant: RUNTIME_ENVIRONMENT_REMINDER_VARIANT,
+    });
   }
 
   switch(runtimeId: string, cwd?: string): RuntimeBinding {
