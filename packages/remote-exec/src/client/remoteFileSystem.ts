@@ -177,6 +177,7 @@ export class RemoteFileSystem implements IHostFileSystem {
       isSymbolicLink: result.isSymlink,
       size: result.size,
       mtimeMs: result.modifiedAtMs,
+      mode: result.mode,
     };
   }
 
@@ -197,8 +198,15 @@ export class RemoteFileSystem implements IHostFileSystem {
     }));
   }
 
-  async mkdir(path: string, options?: { readonly recursive?: boolean }): Promise<void> {
-    await this.call(FS_CREATE_DIRECTORY_METHOD, { path, recursive: options?.recursive ?? false });
+  async mkdir(
+    path: string,
+    options?: { readonly recursive?: boolean; readonly mode?: number },
+  ): Promise<void> {
+    await this.call(FS_CREATE_DIRECTORY_METHOD, {
+      path,
+      recursive: options?.recursive ?? false,
+      mode: options?.mode,
+    });
   }
 
   async remove(path: string): Promise<void> {
