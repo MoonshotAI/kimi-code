@@ -90,6 +90,15 @@ export class RemoteRuntime implements Runtime {
           { kind: 'executor-exit', exitCode: exit.code, cause: error },
         );
       }
+      if (error instanceof HandshakeError && error.kind === 'timeout') {
+        const stderr = bridge.getStderrTail().trim();
+        if (stderr.length > 0) {
+          throw new HandshakeError(`${error.message}; executor stderr: ${stderr}`, {
+            kind: 'timeout',
+            cause: error,
+          });
+        }
+      }
       throw error;
     }
     return new RemoteRuntime(options, bridge, connection);

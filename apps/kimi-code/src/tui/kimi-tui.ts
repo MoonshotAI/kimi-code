@@ -2421,7 +2421,10 @@ export class KimiTUI {
    * runtime registry's connection status (experimental remote runtime). A
    * no-op with the flag off, so flag-off sessions keep their exact current
    * behavior. Disconnection surfaces once per transition as a transcript
-   * notice pointing at /runtime.
+   * notice carrying the recorded connect error and pointing at /runtime.
+   * Runs at session load, turn end, explicit runtime actions, and on the
+   * engine's runtime.status.changed hint (background reconnect failure after
+   * resume, mid-session drops).
    */
   async refreshRuntimeSlot(session: Session | undefined = this.session): Promise<void> {
     if (session === undefined) return;
@@ -2470,9 +2473,10 @@ export class KimiTUI {
       next.status === 'disconnected' &&
       previous?.status !== 'disconnected'
     ) {
+      const reason = next.connectError?.split('\n', 1)[0];
       this.showNotice(
         `Runtime ${next.type}:${next.runtimeId} disconnected`,
-        'Use /runtime to reconnect.',
+        `${reason === undefined || reason.length === 0 ? '' : `${reason}\n`}Use /runtime to reconnect.`,
       );
     }
   }

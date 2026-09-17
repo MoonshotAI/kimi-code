@@ -11,7 +11,8 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { REMOTE_RUNTIME_FLAG_ID } from '#/runtime/flag';
 import type { Runtime, RuntimeBinding, RuntimeCapability, RuntimeLease, RuntimeWorkspaceRoots } from '#/runtime/runtime';
 import { LOCAL_RUNTIME_ID } from '#/runtime/runtime';
-import { RuntimeError, runtimeStatusAllows, type RuntimeGenerationSnapshot } from '#/runtime/runtimeRegistry';
+import { RuntimeError, runtimeStatusAllows, type RuntimeGenerationSnapshot, type RuntimeRegistryChange } from '#/runtime/runtimeRegistry';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
 import {
@@ -24,6 +25,7 @@ import {
 } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
 import { IAgentRuntimeBindingService } from './runtimeBinding';
+import { RuntimeStatusChanged } from './runtimeEvents';
 
 export interface AgentRuntimeBindingSnapshot {
   readonly binding: RuntimeBinding;
@@ -212,7 +214,17 @@ export class AgentRuntimeService implements IAgentRuntimeService {
       const current = workspace.runtimes.current(change.runtimeId);
       if (change.current !== undefined && change.current !== current) return;
       this.changeEmitter.fire();
+      this.publishRuntimeStatus(change);
     });
+  }
+
+  private publishRuntimeStatus(change: RuntimeRegistryChange): void {
+    const agent = this.scopeContext.agentContext;
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID || !this.eventBus.isAgentActive(agent)) return;
+    this.eventBus.publish(
+      new RuntimeStatusChanged({ agentId: agent.agentId, runtimeId: change.runtimeId, status: change.status }),
+      agent,
+    );
   }
 }
 

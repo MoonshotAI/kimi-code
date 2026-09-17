@@ -104,6 +104,8 @@ There is no automatic reconnect after a drop and **no silent fallback to the loc
 
 Resuming a session is the one exception: a restored remote binding reconnects automatically in the background, so the session opens immediately while the runtime moves from `connecting` to `ready` — or to `disconnected`, with the failure reason shown in the footer's runtime slot and in the `/runtime` manager. A tool call that arrives while the reconnect is still in flight waits for the connect attempt to finish (bounded by its own timeout) instead of erroring immediately, and there is never a silent fallback to `local`.
 
+Every connect attempt is bounded to 10 seconds: a target that never answers the handshake fails with an `initialize timed out` error instead of hanging silently, and when the launcher wrote anything to stderr — a stuck password prompt, an `npx` download's progress — the error includes that tail, so the cause is visible.
+
 SSH exit codes are shown as diagnostics when a connection dies — `255` indicates a network-level drop, `127` that the executor was not found on the target.
 
 ## SSH authentication

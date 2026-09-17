@@ -368,6 +368,65 @@ describe('RemoteRuntimeProviderFactory', () => {
     await registry.dispose();
   });
 
+  it('records the connection close reason when a connected runtime drops mid-session', async () => {
+    const registry = new RuntimeRegistry('workspace-1');
+    const connect = vi.fn(async (options: RemoteRuntimeOptions) => {
+      const runtime = connectedRuntime(options, 'connected-1') as unknown as FakeRuntime & {
+        connection: { closeReason?: { reason: string } };
+      };
+      runtime.connection = {
+        closeReason: { reason: 'control call fs/read timed out after 60000ms; closing the connection' },
+      };
+      return runtime as unknown as RemoteRuntime;
+    });
+    const factory = new RemoteRuntimeProviderFactory(factoryOptions({ connect }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
+
+    await registry.current('dev-box')!.connect!();
+    const managed = registry.current('dev-box')!;
+    expect(managed.status).toBe('ready');
+    expect(managed.connectError).toBeUndefined();
+
+    const inner = connect.mock.results[0]!.value as unknown as Promise<FakeRuntime>;
+    (await inner).setStatus('disconnected');
+
+    expect(managed.status).toBe('disconnected');
+    expect(managed.connectError).toBe('control call fs/read timed out after 60000ms; closing the connection');
+    expect(registry.snapshot().runtimes[0]).toMatchObject({
+      runtimeId: 'dev-box',
+      status: 'disconnected',
+      connectError: 'control call fs/read timed out after 60000ms; closing the connection',
+    });
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('does not record a connect error on a normal dispose', async () => {
+    const registry = new RuntimeRegistry('workspace-1');
+    const connect = vi.fn(async (options: RemoteRuntimeOptions) => {
+      const runtime = connectedRuntime(options, 'connected-1') as unknown as FakeRuntime & {
+        connection: { closeReason?: { reason: string } };
+      };
+      runtime.connection = {
+        closeReason: { reason: 'connection closed by client' },
+      };
+      return runtime as unknown as RemoteRuntime;
+    });
+    const factory = new RemoteRuntimeProviderFactory(factoryOptions({ connect }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
+
+    await registry.current('dev-box')!.connect!();
+    const managed = registry.current('dev-box')!;
+    await managed.dispose();
+
+    expect(managed.status).toBe('disposed');
+    expect(managed.connectError).toBeUndefined();
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
   it('does not load project declarations for an untrusted workspace', async () => {
     const registry = new RuntimeRegistry('workspace-1');
     const services = baseServices({

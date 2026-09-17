@@ -187,7 +187,11 @@ export class RuntimeRegistry {
       throw new RuntimeError('runtime.not_found', `runtime ${binding.runtimeId} does not exist in workspace ${this.workspaceId}`);
     }
     if (generation.draining || !runtimeStatusAllows(generation.runtime, required)) {
-      throw new RuntimeError('runtime.unavailable', `runtime ${binding.runtimeId} is ${generation.draining ? 'draining' : generation.runtime.status}`);
+      const reason = generation.runtime.connectError?.split('\n', 1)[0];
+      throw new RuntimeError(
+        'runtime.unavailable',
+        `runtime ${binding.runtimeId} is ${generation.draining ? 'draining' : generation.runtime.status}${reason === undefined || reason.length === 0 ? '' : `: ${reason}`}`,
+      );
     }
     for (const capability of required) {
       if (!generation.runtime.capabilities.has(capability)) {
