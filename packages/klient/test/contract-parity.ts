@@ -103,6 +103,14 @@ import type { ModelRecord } from '@moonshot-ai/agent-core-v2/llm-adapter/model/m
 import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
 import type {
+  ImportCustomRegistryOptions,
+  ImportCustomRegistryResult,
+} from '@moonshot-ai/agent-core-v2/app/kosongConfig/modelsDevImport';
+import {
+  importCustomRegistryOptionsSchema,
+  importCustomRegistryResultSchema,
+} from '../src/contract/global/registryImport.js';
+import type {
   GetPluginInfoInput,
   InstallPluginInput,
   RemovePluginInput,
@@ -336,6 +344,13 @@ type AssertWireToEngine<TSchema extends z.ZodType, TEngine> = [z.infer<TSchema>]
 ]
   ? true
   : never;
+
+const _registryImportOptions: AssertWire<
+  typeof importCustomRegistryOptionsSchema, ImportCustomRegistryOptions
+> = true;
+const _registryImportResult: AssertWire<
+  typeof importCustomRegistryResultSchema, ImportCustomRegistryResult
+> = true;
 
 // Wire shapes, derived from the engine interfaces.
 type OAuthFlowStart = Awaited<ReturnType<IOAuthService['startLogin']>>;

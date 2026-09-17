@@ -258,7 +258,14 @@ import {
   type ServicesAccessor,
   type SessionSummary as V2SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
-import type { AgentHandle, Klient } from '@moonshot-ai/klient';
+import {
+  RPCError,
+  type AgentHandle,
+  type Klient,
+  type ImportCustomRegistryOptions,
+  type ImportCustomRegistryResult,
+} from '@moonshot-ai/klient';
+import { RegistryImportError } from '#/catalog';
 import { createKlient } from '@moonshot-ai/klient/memory';
 import { assertKimiHostIdentity, createKimiDefaultHeaders, kimiRegionProfile } from '@moonshot-ai/kimi-code-oauth';
 import { CdnExecutorArtifactLocator, RemoteRuntimeProviderFactory } from '@moonshot-ai/remote-exec';
@@ -895,6 +902,24 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   override supportsAtomicSectionReplace(): boolean {
     return true;
+  }
+
+  override async importCustomRegistry(
+    options: ImportCustomRegistryOptions,
+  ): Promise<ImportCustomRegistryResult> {
+    await this.configReady;
+    try {
+      return await this.klient.global.kosong.importCustomRegistry(options);
+    } catch (error) {
+      if (!(error instanceof RPCError)) throw error;
+      const details = error.details as Record<string, unknown> | undefined;
+      const phase = details?.['phase'];
+      throw new RegistryImportError(
+        error.message,
+        phase === 'fetch' || phase === 'empty' ? phase : 'apply',
+        typeof details?.['status'] === 'number' ? details['status'] : undefined,
+      );
+    }
   }
 
   override async replaceConfigSections(sections: Record<string, unknown>): Promise<void> {

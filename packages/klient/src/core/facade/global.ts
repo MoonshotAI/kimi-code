@@ -36,6 +36,7 @@ import type { FileMeta } from '@moonshot-ai/agent-core-v2/app/file/fileService';
 import type { ModelRecord } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
 import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
+import type { IModelsDevImportService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/modelsDevImport';
 
 import type { McpServerConfig } from '../../contract/mcp.js';
 import type { CallOptions } from '../channel.js';
@@ -111,6 +112,13 @@ export type RefreshProviderModelsOptions = NonNullable<
 /** String-literal form of the engine's `ConfigTarget` enum, so consumers never import the enum value. */
 export type ConfigTargetLiteral = `${ConfigTarget}`;
 
+export type ImportCustomRegistryOptions = Parameters<
+  IModelsDevImportService['importCustomRegistry']
+>[0];
+export type ImportCustomRegistryResult = Awaited<
+  ReturnType<IModelsDevImportService['importCustomRegistry']>
+>;
+
 // ---------------------------------------------------------------------------
 // Facade interfaces
 // ---------------------------------------------------------------------------
@@ -174,6 +182,7 @@ export interface GlobalKosongFacade {
   addProvider(config: AnonymousProviderInput): Promise<void>;
   removeProvider(id: string): Promise<void>;
   refreshProviders(opts?: RefreshProviderModelsOptions): Promise<RefreshProviderModelsResponse>;
+  importCustomRegistry(options: ImportCustomRegistryOptions): Promise<ImportCustomRegistryResult>;
 
   // -- Model ------------------------------------------------------------
   listModels(): Promise<readonly ModelCatalogItem[]>;
@@ -386,7 +395,7 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
       const scalars = Object.fromEntries(
         ENV_SCALAR_PROPERTIES.map((prop, index) => [prop, values[index]]),
       );
-      const identity = values[values.length - 1] as { version: string };
+      const identity = values.at(-1) as { version: string };
       return { ...scalars, clientVersion: identity.version } as unknown as KlientEnvInfo;
     });
     return envPromise;
@@ -448,6 +457,8 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
     },
 
     kosong: {
+      importCustomRegistry: (options) =>
+        call('modelsDevImport', 'importCustomRegistry', [options]) as Promise<ImportCustomRegistryResult>,
       listProviders: () =>
         call('modelResolver', 'listProviders', []) as Promise<
           readonly ProviderCatalogItem[]

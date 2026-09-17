@@ -5,8 +5,9 @@
 
 import { isAbsolute, relative, sep } from 'node:path';
 
-import { Container, Markdown, Spacer, Text, truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
+import { Container, Spacer, Text, truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 import type { Component, TUI } from '@moonshot-ai/pi-tui';
+import { Markdown } from '#/tui/components/markdown/markdown';
 import { highlightLines, langFromPath } from '#/tui/components/media/code-highlight';
 import { renderDiffLinesClustered } from '#/tui/components/media/diff-preview';
 import {
@@ -2268,7 +2269,10 @@ export class ToolCallComponent extends Container {
       const message = str(this.toolCall.args['message']).trim();
       if (message.length === 0) return;
       this.addChild(
-        new Markdown(message, 2, 0, this.markdownTheme, undefined, createMarkdownOptions()),
+        new Markdown(message, 2, 0, this.markdownTheme, undefined, {
+          ...createMarkdownOptions(),
+          copySource: true,
+        }),
       );
       return;
     }

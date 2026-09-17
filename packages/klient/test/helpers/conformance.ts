@@ -14,6 +14,10 @@ import { join } from 'node:path';
 import { Service } from '@moonshot-ai/agent-core-v2/_base/di/service';
 import { CommandContribution } from '@moonshot-ai/agent-core-v2/agent/command/commandContribution';
 import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureManager';
+import {
+  resetModelsDevUpstreamForTest,
+  setModelsDevUpstreamForTest,
+} from '@moonshot-ai/agent-core-v2/app/kosongConfig/modelsDevUpstream';
 
 import type { Klient } from '../../src/index.js';
 import type { TestEngine } from './engine.js';
@@ -234,6 +238,54 @@ export function defineKlientConformance(
         await config.replaceSections({
           sections: { providers: beforeProviders.userValue, models: beforeModels.userValue },
         });
+      }
+    });
+
+    it('keeps a credential binding edited while the registry response is in flight', async () => {
+      const { config, kosong } = target.klient.global;
+      const domains = ['providers', 'models', 'defaultModel', 'defaultProvider', 'thinking'];
+      const before = Object.fromEntries(
+        await Promise.all(domains.map(async (domain) => [
+          domain, (await config.inspect(domain)).userValue,
+        ])),
+      );
+      const url = 'https://registry.example.test/api.json';
+      const source = { kind: 'apiJson', url, apiKey: '' };
+      const provider = { type: 'openai', baseUrl: 'https://owned.example.test/v1', source };
+      try {
+        await config.replaceSections({
+          sections: {
+            providers: { owned: { ...provider, apiKeyEnv: 'FIRST_EXAMPLE_KEY' } },
+            models: {},
+            defaultModel: undefined,
+            defaultProvider: undefined,
+            thinking: undefined,
+          },
+        });
+        setModelsDevUpstreamForTest({
+          fetchImpl: async () => {
+            await config.set({
+              domain: 'providers',
+              patch: { owned: { apiKeyEnv: 'SECOND_EXAMPLE_KEY' } },
+            });
+            return Response.json({
+              owned: {
+                id: 'owned',
+                name: 'Owned',
+                type: 'openai',
+                api: provider.baseUrl,
+                models: { m1: { id: 'm1' } },
+              },
+            });
+          },
+        });
+        await kosong.importCustomRegistry({ url, setDefaultWhenUnset: false });
+        await config.reload();
+        const providers = await config.inspect<Record<string, { apiKeyEnv?: string }>>('providers');
+        expect(providers.userValue?.['owned']?.apiKeyEnv).toBe('SECOND_EXAMPLE_KEY');
+      } finally {
+        resetModelsDevUpstreamForTest();
+        await config.replaceSections({ sections: before });
       }
     });
 

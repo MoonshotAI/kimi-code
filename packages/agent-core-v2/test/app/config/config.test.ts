@@ -2780,6 +2780,92 @@ describe('ConfigService replaceSections', () => {
     disposables.dispose();
   });
 
+  it('can replace selected domains exactly without touching other domains', async () => {
+    const toml = [
+      '[providers.acme]',
+      'type = "openai"',
+      'api_key = "sk-old"',
+      'future_field = 1',
+      '',
+      '[providers.other]',
+      'type = "openai"',
+      'api_key = "sk-other"',
+      'future_provider_field = 2',
+      '',
+      '[models."acme/m1"]',
+      'provider = "acme"',
+      'model = "m1"',
+      'max_context_size = 1000',
+      'beta_api = true',
+      '',
+      '[future]',
+      'keep = true',
+      '',
+    ].join('\n');
+    const { config, disposables, store, storage } = await createSectionsConfig(toml);
+    const setSpy = vi.spyOn(store, 'set');
+    const setTextSpy = vi.spyOn(store, 'setText');
+
+    await config.replaceSections(
+      {
+        [PROVIDERS_SECTION]: {
+          acme: { type: 'openai', apiKey: 'sk-new' },
+          other: { type: 'openai', apiKey: 'sk-other' },
+          stale: { type: 'openai', apiKey: 'sk-stale' },
+        },
+        [MODELS_SECTION]: {
+          'acme/m1': { provider: 'acme', model: 'm1', maxContextSize: 2000 },
+        },
+      },
+      undefined,
+      {
+        preserveUnknown: false,
+        exactKeys: {
+          [PROVIDERS_SECTION]: ['acme'],
+          [MODELS_SECTION]: ['acme/m1'],
+        },
+      },
+    );
+
+    expect(setSpy.mock.calls.length + setTextSpy.mock.calls.length).toBe(1);
+    const onDisk = new TextDecoder().decode(await storage.read('', 'config.toml'));
+    expect(onDisk).not.toContain('future_field');
+    expect(onDisk).not.toContain('beta_api');
+    expect(onDisk).not.toContain('[providers.stale]');
+    expect(onDisk).toContain('[providers.other]');
+    expect(onDisk).toContain('future_provider_field = 2');
+    expect(onDisk).toContain('[future]');
+    expect(onDisk).toContain('keep = true');
+    disposables.dispose();
+  });
+
+  it('rejects an atomic replacement when a guarded user value changed on disk', async () => {
+    const { config, disposables, store, storage } = await createSectionsConfig();
+    const setSpy = vi.spyOn(store, 'set');
+    const setTextSpy = vi.spyOn(store, 'setText');
+    const external = SEED_TOML.replace(
+      'default_model = "acme/m1"',
+      'default_model = "other/m1"',
+    );
+    await storage.write('', 'config.toml', new TextEncoder().encode(external));
+
+    await expect(
+      config.replaceSections(
+        {
+          [PROVIDERS_SECTION]: { acme: { type: 'openai', apiKey: 'sk-new' } },
+          [DEFAULT_MODEL_SECTION]: undefined,
+        },
+        undefined,
+        { expectedValues: { [DEFAULT_MODEL_SECTION]: 'acme/m1' } },
+      ),
+    ).rejects.toThrow(/changed.*retry/i);
+
+    expect(setSpy).not.toHaveBeenCalled();
+    expect(setTextSpy).not.toHaveBeenCalled();
+    expect(new TextDecoder().decode(await storage.read('', 'config.toml'))).toBe(external);
+    disposables.dispose();
+  });
+
   it('treats null as clear — the wire encoding JSON transports use for undefined', async () => {
     const { config, disposables, store } = await createSectionsConfig();
     const setSpy = vi.spyOn(store, 'set');

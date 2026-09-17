@@ -22,6 +22,7 @@ import {
   type KimiRegion,
   type ManagedKimiConfigShape,
 } from '@moonshot-ai/kimi-code-oauth';
+import { declaredProviderCredential } from '@moonshot-ai/kimi-code-oauth/provider-credential';
 import type {
   OAuthFlowSnapshot,
   OAuthFlowStart,
@@ -66,6 +67,7 @@ import { isOAuthCatalogVendor } from '#/llm-adapter/provider/provider-definition
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 
 import {
+  AuthCredentialEnvMissingError,
   AuthModelNotResolvedError,
   AuthProvisioningRequiredError,
   AuthTokenMissingError,
@@ -333,6 +335,8 @@ export class OAuthService extends Disposable implements IOAuthService {
     }
 
     try {
+      const declared = declaredProviderCredential(provider, KIMI_CODE_PROVIDER_NAME);
+      if (declared.kind === 'conflict') throw new Error(declared.message);
       const auth = resolveKimiCodeRuntimeAuth({
         configuredBaseUrl: provider.baseUrl,
         configuredOAuthRef: provider.oauth,
@@ -713,6 +717,10 @@ export class AuthSummaryService implements IAuthSummaryService {
         providerName,
       });
       if (auth.apiKey !== undefined) return;
+      if (auth.apiKeyEnv !== undefined) {
+        if (nonEmpty(process.env[auth.apiKeyEnv]) !== undefined) return;
+        throw new AuthCredentialEnvMissingError(providerName, auth.apiKeyEnv);
+      }
       if (auth.oauth !== undefined) {
         const providerKey = auth.oauthProviderKey ?? providerName;
         const token = await this.oauth.getCachedAccessToken(providerKey, auth.oauth);
@@ -751,6 +759,7 @@ function ensureReadyFailureReason(
   if (error instanceof AuthProvisioningRequiredError) return 'provisioning_required';
   if (error instanceof AuthModelNotResolvedError) return 'model_not_resolved';
   if (error instanceof AuthTokenMissingError) return 'token_missing';
+  if (error instanceof AuthCredentialEnvMissingError) return 'token_missing';
   return undefined;
 }
 

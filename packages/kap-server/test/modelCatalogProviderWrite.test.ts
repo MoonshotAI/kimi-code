@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { IConfigService } from '@moonshot-ai/agent-core-v2';
 import { parse as parseToml } from 'smol-toml';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -591,10 +591,60 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
       kimi: { type: 'kimi', api_key: 'sk-test' },
       openai: {
         type: 'openai',
-        api_key: '',
         base_url: 'https://api.openai.example/v1',
         default_model: 'openai/gpt-4.1',
       },
+    });
+  });
+
+  it('sets api_key_env and drops the inline key when only api_key_env is sent', async () => {
+    await boot(KEEP_DEFAULT_TOML);
+    const { status, body } = await putJson<{ provider: { has_api_key: boolean } }>(
+      '/api/v1/providers/openai',
+      { ...REPLACE_BODY, api_key_env: 'KIMI_TEST_REPLACE_ROUTE_KEY' },
+    );
+    expect(status).toBe(200);
+
+    const onDisk = await readConfigToml();
+    expect(onDisk['providers']).toEqual({
+      kimi: { type: 'kimi', api_key: 'sk-test' },
+      openai: {
+        type: 'openai',
+        api_key_env: 'KIMI_TEST_REPLACE_ROUTE_KEY',
+        base_url: 'https://api.openai.example/v1',
+        default_model: 'openai/gpt-4.1',
+      },
+    });
+    expect(body.data.provider.has_api_key).toBe(false);
+  });
+
+  it('rejects a replace that submits api_key and api_key_env together', async () => {
+    await boot(KEEP_DEFAULT_TOML);
+    const { body } = await putJson<unknown>('/api/v1/providers/openai', {
+      ...REPLACE_BODY,
+      api_key: 'sk-inline',
+      api_key_env: 'KIMI_TEST_REPLACE_ROUTE_KEY',
+    });
+    expect(body.code).toBe(40001);
+    expect(body.msg).toContain('mutually exclusive');
+
+    const onDisk = await readConfigToml();
+    expect(onDisk['providers']).toMatchObject({ openai: { api_key: 'sk-openai' } });
+  });
+
+  it('creates a provider with api_key_env', async () => {
+    await boot('');
+    const created = await postJson<unknown>('/api/v1/providers', {
+      ...CREATE_BODY,
+      id: 'env-openai',
+      api_key: undefined,
+      api_key_env: 'KIMI_TEST_REPLACE_ROUTE_KEY',
+    });
+    expect(created.status).toBe(201);
+
+    const onDisk = await readConfigToml();
+    expect(onDisk['providers']).toMatchObject({
+      'env-openai': { api_key_env: 'KIMI_TEST_REPLACE_ROUTE_KEY' },
     });
   });
 
