@@ -484,6 +484,44 @@ describe('applyOpenPlatformConfig', () => {
 
     expect(config.providers['moonshot-cn']).not.toHaveProperty('source');
   });
+
+  it('persists the apiKeyEnv declaration instead of a resolved secret and keeps hand-written fields', () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        'moonshot-cn': {
+          type: 'kimi',
+          baseUrl: 'https://api.moonshot.cn/v1',
+          apiKey: 'sk-resolved-secret',
+          customHeaders: { 'X-Team': 'infra' },
+        },
+      },
+    };
+    const platform = getOpenPlatformById('moonshot-cn')!;
+    const models = [
+      {
+        id: 'kimi-k2',
+        contextLength: 131072,
+        supportsReasoning: false,
+        supportsImageIn: false,
+        supportsVideoIn: false,
+      },
+    ];
+
+    applyOpenPlatformConfig(config, {
+      platform,
+      models,
+      selectedModel: models[0]!,
+      thinking: false,
+      credential: { apiKeyEnv: 'KIMI_TEST_OPEN_PLATFORM_KEY' },
+    });
+
+    expect(config.providers['moonshot-cn']).toEqual({
+      type: 'kimi',
+      baseUrl: 'https://api.moonshot.cn/v1',
+      apiKeyEnv: 'KIMI_TEST_OPEN_PLATFORM_KEY',
+      customHeaders: { 'X-Team': 'infra' },
+    });
+  });
 });
 
 describe('removeOpenPlatformConfig', () => {

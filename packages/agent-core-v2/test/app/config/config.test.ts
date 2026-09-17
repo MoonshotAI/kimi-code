@@ -2839,6 +2839,53 @@ describe('ConfigService replaceSections', () => {
     disposables.dispose();
   });
 
+  it('rejects an atomic replacement when a guarded user value changed on disk', async () => {
+    const { config, disposables, store, storage } = await createSectionsConfig();
+    const setSpy = vi.spyOn(store, 'set');
+    const setTextSpy = vi.spyOn(store, 'setText');
+    const external = SEED_TOML.replace(
+      'default_model = "acme/m1"',
+      'default_model = "other/m1"',
+    );
+    await storage.write('', 'config.toml', new TextEncoder().encode(external));
+
+    await expect(
+      config.replaceSections(
+        {
+          [PROVIDERS_SECTION]: { acme: { type: 'openai', apiKey: 'sk-new' } },
+          [DEFAULT_MODEL_SECTION]: undefined,
+        },
+        undefined,
+        { expectedValues: { [DEFAULT_MODEL_SECTION]: 'acme/m1' } },
+      ),
+    ).rejects.toThrow(/changed.*retry/i);
+
+    expect(setSpy).not.toHaveBeenCalled();
+    expect(setTextSpy).not.toHaveBeenCalled();
+    expect(new TextDecoder().decode(await storage.read('', 'config.toml'))).toBe(external);
+    disposables.dispose();
+  });
+
+  it('treats an absent object section as empty when checking a guard', async () => {
+    const { config, disposables } = await createSectionsConfig(
+      '[providers.acme]\ntype = "openai"\napi_key = "sk-acme"\n',
+    );
+
+    await expect(
+      config.replaceSections(
+        { [THINKING_SECTION]: undefined },
+        undefined,
+        {
+          preserveUnknown: false,
+          exactKeys: { [THINKING_SECTION]: ['enabled', 'effort', 'keep'] },
+          expectedValues: { [THINKING_SECTION]: {} },
+        },
+      ),
+    ).resolves.toBeUndefined();
+
+    disposables.dispose();
+  });
+
   it('treats null as clear — the wire encoding JSON transports use for undefined', async () => {
     const { config, disposables, store } = await createSectionsConfig();
     const setSpy = vi.spyOn(store, 'set');
