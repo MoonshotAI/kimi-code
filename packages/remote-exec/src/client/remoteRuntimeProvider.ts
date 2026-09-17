@@ -152,13 +152,17 @@ export class ManagedRemoteRuntime implements Runtime {
   }
 
   connect(): Promise<void> {
-    if (this.inner !== undefined) return this.connectCallback();
     this.connectInflight ??= (async () => {
       this.lastConnectError = undefined;
       this.setStatus('connecting');
       try {
         await this.connectCallback();
-        if (this.currentStatus === 'connecting') this.setStatus('disconnected');
+        // When this view's own connection was replaced, the inner's dispose
+        // already settled the view through the status subscription. Syncing
+        // with the inner covers a connect started by another view wrapping
+        // the same live connection: this view stays usable. Pending views
+        // have no inner and end disconnected, as before.
+        if (this.currentStatus === 'connecting') this.setStatus(this.inner?.status ?? 'disconnected');
       } catch (error) {
         this.lastConnectError = error instanceof Error ? error.message : String(error);
         this.setStatus('disconnected');
