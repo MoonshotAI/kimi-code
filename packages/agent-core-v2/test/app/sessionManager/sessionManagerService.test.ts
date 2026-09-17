@@ -989,6 +989,178 @@ describe('SessionManager remote runtime wiring', () => {
     await registry.dispose();
   });
 
+  function connectableRemote(
+    registry: RuntimeRegistry,
+    options: {
+      readonly runtimeId?: string;
+      readonly status?: 'ready' | 'disconnected';
+      readonly connect?: () => Promise<void>;
+    } = {},
+  ) {
+    const runtimeId = options.runtimeId ?? 'sandbox';
+    const fake = new FakeRuntime(
+      { workspaceId: 'workspace-1', runtimeId, generation: `${runtimeId}-pending` },
+      { status: options.status ?? 'disconnected', capabilities: ['fs', 'process'] },
+    );
+    const calls: string[] = [];
+    const connectable = Object.assign(fake, {
+      connect: async () => {
+        calls.push('connect');
+        if (options.connect !== undefined) return options.connect();
+        fake.setStatus('ready');
+      },
+      fs: {},
+      process: {},
+    });
+    registry.register(connectable);
+    return { fake: connectable, calls };
+  }
+
+  function remoteWiringSetup(options: {
+    readonly config: unknown;
+    readonly flagOn?: boolean;
+    readonly remote?: {
+      readonly runtimeId?: string;
+      readonly status?: 'ready' | 'disconnected';
+      readonly connect?: () => Promise<void>;
+    };
+  }) {
+    const registry = new RuntimeRegistry('workspace-1');
+    registry.register(Object.assign(new FakeRuntime(
+      { workspaceId: 'workspace-1', runtimeId: 'local', generation: 'local-one' },
+      { capabilities: ['fs', 'process'] },
+    ), { fs: {}, process: {} }));
+    const remote = options.remote === undefined ? undefined : connectableRemote(registry, options.remote);
+    const { program, byRuntime } = createCapture();
+    const workspace = workspaceWith(registry, program);
+    const workspaces = {
+      getOrCreate: async () => workspace,
+      get: () => workspace,
+    } as unknown as IWorkspaceInstanceManager;
+    const manager = makeSessionManager(
+      workspaces,
+      { get: async () => undefined } as unknown as ISessionIndex,
+      {
+        flags: options.flagOn === false ? undefined : flagsOn(),
+        config: configWith(options.config),
+      },
+    );
+    return { manager, registry, byRuntime, remote };
+  }
+
+  it('rejects an explicit runtime id whose declaration does not set defaultCwd', async () => {
+    const { manager, registry, byRuntime } = remoteWiringSetup({
+      config: { sandbox: { command: 'sandbox' } },
+    });
+
+    await expect(manager.create({ workDir: '/workspace', runtimeId: 'sandbox' })).rejects.toMatchObject({
+      code: 'config.invalid',
+    });
+    expect(byRuntime.size).toBe(0);
+
+    await manager.create({ workDir: '/workspace', runtimeId: 'sandbox', runtimeCwd: '/elsewhere' });
+    expect(byRuntime.get('local')!.options[0]).toMatchObject({ runtimeId: 'sandbox', runtimeCwd: '/elsewhere' });
+    manager.dispose();
+    await registry.dispose();
+  });
+
+  it('connects a disconnected declared runtime before creating the session', async () => {
+    const { manager, registry, byRuntime, remote } = remoteWiringSetup({
+      config: { sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
+      remote: {},
+    });
+
+    await manager.create({ workDir: '/workspace', runtimeId: 'sandbox' });
+    expect(remote!.calls).toEqual(['connect']);
+    expect(byRuntime.has('sandbox')).toBe(true);
+    expect(byRuntime.get('sandbox')!.options[0]).toMatchObject({ runtimeId: 'sandbox', runtimeCwd: '/home/me/sandbox' });
+    manager.dispose();
+    await registry.dispose();
+  });
+
+  it('aborts creation when the runtime connect fails', async () => {
+    const handshake = new Error('executor process exited before the handshake completed (code 255, signal null): ssh: connect failed');
+    const { manager, registry, byRuntime, remote } = remoteWiringSetup({
+      config: { sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
+      remote: {
+        connect: async () => {
+          throw handshake;
+        },
+      },
+    });
+
+    const failure = await manager.create({ workDir: '/workspace', runtimeId: 'sandbox' }).catch((error: unknown) => error);
+    expect(remote!.calls).toEqual(['connect']);
+    expect(failure).toMatchObject({ code: 'runtime.unavailable' });
+    expect((failure as Error).message).toContain('sandbox');
+    expect((failure as Error).message).toContain('code 255');
+    expect((failure as { cause?: unknown }).cause).toBe(handshake);
+    expect(byRuntime.size).toBe(0);
+    manager.dispose();
+    await registry.dispose();
+  });
+
+  it('connects the configured default runtime before creating the session', async () => {
+    const { manager, registry, byRuntime, remote } = remoteWiringSetup({
+      config: { default: 'sandbox', sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
+      remote: {},
+    });
+
+    await manager.create({ workDir: '/workspace' });
+    expect(remote!.calls).toEqual(['connect']);
+    expect(byRuntime.has('sandbox')).toBe(true);
+    expect(byRuntime.get('sandbox')!.options[0]).toMatchObject({ runtimeId: 'sandbox', runtimeCwd: '/home/me/sandbox' });
+    manager.dispose();
+    await registry.dispose();
+  });
+
+  it('aborts creation when the configured default runtime fails to connect', async () => {
+    const { manager, registry, byRuntime, remote } = remoteWiringSetup({
+      config: { default: 'sandbox', sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
+      remote: {
+        connect: async () => {
+          throw new Error('ssh: connect failed');
+        },
+      },
+    });
+
+    const failure = await manager.create({ workDir: '/workspace' }).catch((error: unknown) => error);
+    expect(remote!.calls).toEqual(['connect']);
+    expect(failure).toMatchObject({ code: 'runtime.unavailable' });
+    expect((failure as Error).message).toContain('sandbox');
+    expect(byRuntime.size).toBe(0);
+    manager.dispose();
+    await registry.dispose();
+  });
+
+  it('does not reconnect a runtime that is already ready', async () => {
+    const { manager, registry, byRuntime, remote } = remoteWiringSetup({
+      config: { sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
+      remote: { status: 'ready' },
+    });
+
+    await manager.create({ workDir: '/workspace', runtimeId: 'sandbox' });
+    expect(remote!.calls).toEqual([]);
+    expect(byRuntime.has('sandbox')).toBe(true);
+    manager.dispose();
+    await registry.dispose();
+  });
+
+  it('does not connect an explicit runtime id when the flag is off', async () => {
+    const { manager, registry, byRuntime, remote } = remoteWiringSetup({
+      config: { sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
+      flagOn: false,
+      remote: {},
+    });
+
+    await manager.create({ workDir: '/workspace', runtimeId: 'sandbox' });
+    expect(remote!.calls).toEqual([]);
+    expect(byRuntime.has('sandbox')).toBe(false);
+    expect(byRuntime.get('local')!.options[0]).toMatchObject({ runtimeId: 'sandbox' });
+    manager.dispose();
+    await registry.dispose();
+  });
+
   function restoreSetup(options: {
     readonly remoteStatus: 'ready' | 'disconnected';
     readonly flagOn: boolean;
@@ -998,10 +1170,11 @@ describe('SessionManager remote runtime wiring', () => {
       { workspaceId: 'workspace-1', runtimeId: 'local', generation: 'local-one' },
       { capabilities: ['fs', 'process'] },
     ), { fs: {}, process: {} }));
+    const remoteConnect = vi.fn(async () => {});
     registry.register(Object.assign(new FakeRuntime(
       { workspaceId: 'workspace-1', runtimeId: 'remote', generation: 'remote-one' },
       { status: options.remoteStatus, capabilities: ['fs', 'process'] },
-    ), { fs: {}, process: {} }));
+    ), { fs: {}, process: {}, connect: remoteConnect }));
     const { program, byRuntime } = createCapture();
     const workspace = workspaceWith(registry, program);
     const workspaces = {
@@ -1021,34 +1194,37 @@ describe('SessionManager remote runtime wiring', () => {
       flags: options.flagOn ? flagsOn() : undefined,
       appendLogStore,
     });
-    return { manager, byRuntime, registry };
+    return { manager, byRuntime, registry, remoteConnect };
   }
 
   it('restores a remote-bound session on the local controller without connecting when the runtime is disconnected', async () => {
-    const { manager, byRuntime, registry } = restoreSetup({ remoteStatus: 'disconnected', flagOn: true });
+    const { manager, byRuntime, registry, remoteConnect } = restoreSetup({ remoteStatus: 'disconnected', flagOn: true });
 
     await manager.resume('session-1');
     expect(byRuntime.has('local')).toBe(true);
     expect(byRuntime.has('remote')).toBe(false);
+    expect(remoteConnect).not.toHaveBeenCalled();
     manager.dispose();
     await registry.dispose();
   });
 
   it('restores a remote-bound session on the remote controller when the runtime is ready', async () => {
-    const { manager, byRuntime, registry } = restoreSetup({ remoteStatus: 'ready', flagOn: true });
+    const { manager, byRuntime, registry, remoteConnect } = restoreSetup({ remoteStatus: 'ready', flagOn: true });
 
     await manager.resume('session-1');
     expect(byRuntime.has('remote')).toBe(true);
+    expect(remoteConnect).not.toHaveBeenCalled();
     manager.dispose();
     await registry.dispose();
   });
 
   it('ignores the persisted remote binding when the flag is off', async () => {
-    const { manager, byRuntime, registry } = restoreSetup({ remoteStatus: 'ready', flagOn: false });
+    const { manager, byRuntime, registry, remoteConnect } = restoreSetup({ remoteStatus: 'ready', flagOn: false });
 
     await manager.resume('session-1');
     expect(byRuntime.has('local')).toBe(true);
     expect(byRuntime.has('remote')).toBe(false);
+    expect(remoteConnect).not.toHaveBeenCalled();
     manager.dispose();
     await registry.dispose();
   });
