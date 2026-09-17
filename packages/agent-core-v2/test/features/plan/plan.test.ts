@@ -12,13 +12,13 @@ import { runWillBeginStepHooks, type StubLoop } from '../../agent/loop/stubs';
 import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
 import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { createFakeHostFs, createFakeProcessRunner } from '../../tools/fixtures/fake-exec';
-import { createMapFs, stubPlanRuntime } from './stubs';
+import { createMapFs, stubPlanEnvironment } from './stubs';
 import {
   agentService,
   createCommandRunner,
@@ -240,7 +240,7 @@ describe('Plan service', () => {
     });
   });
 
-  describe('remote runtime binding', () => {
+  describe('remote environment binding', () => {
     const remoteTempDir = '/remote/tmp';
     let remoteCtx: TestAgentContext;
     let remotePlan: IAgentPlanService;
@@ -255,8 +255,8 @@ describe('Plan service', () => {
       remoteCtx = createTestAgent([
         execEnvServices({ hostFs: createMapFs(localFiles) }),
         agentService(
-          IAgentRuntimeService,
-          stubPlanRuntime({
+          IAgentEnvironmentService,
+          stubPlanEnvironment({
             fs: createMapFs(remoteFiles, { mkdir: remoteMkdir }),
             tempDir: remoteTempDir,
           }),

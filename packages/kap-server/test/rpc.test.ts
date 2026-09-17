@@ -9,7 +9,7 @@ import {
   IAgentLoopService,
   IAgentPromptChannel,
   IAgentPluginCommandService,
-  IAgentRuntimeBindingService,
+  IAgentEnvironmentBindingService,
   IAgentShellCommandService,
   IAppendLogStore,
   IDebugEventsService,
@@ -24,12 +24,12 @@ import {
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
 import type {
-  AgentRuntimeBindingSnapshot,
+  AgentEnvironmentBindingSnapshot,
   ServiceIdentifier,
   SessionWorkspaceAssociationSnapshot,
   WorkspaceInstanceSnapshot,
 } from '@moonshot-ai/agent-core-v2';
-import { FakeRuntime } from '@moonshot-ai/agent-core-v2/runtime/fakeRuntime';
+import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -253,11 +253,11 @@ describe('server-v2 /api/v1/debug RPC', () => {
       metadata: { id: workspaceId, root: home },
       lifecycle: 'active',
       program: {
-        binding: { workspaceId, runtimeId: 'local' },
+        binding: { workspaceId, environmentId: 'local' },
       },
-      runtimes: {
+      environments: {
         workspaceId,
-        runtimes: [{ runtimeId: 'local', status: 'ready' }],
+        environments: [{ environmentId: 'local', status: 'ready' }],
       },
     });
     expect(workspace.body.data).not.toHaveProperty('accessor');
@@ -273,14 +273,14 @@ describe('server-v2 /api/v1/debug RPC', () => {
       cwd: home,
     });
 
-    const binding = await call<AgentRuntimeBindingSnapshot>(
+    const binding = await call<AgentEnvironmentBindingSnapshot>(
       'GET',
-      `/api/v1/debug/session/${sessionId}/agent/main/runtime-binding`,
+      `/api/v1/debug/session/${sessionId}/agent/main/environment-binding`,
     );
     expect(binding.body.data).toMatchObject({
-      binding: { workspaceId, runtimeId: 'local' },
+      binding: { workspaceId, environmentId: 'local' },
       available: true,
-      runtime: { runtimeId: 'local', status: 'ready' },
+      environment: { environmentId: 'local', status: 'ready' },
     });
 
     const legacy = await fetch(
@@ -372,32 +372,32 @@ describe('server-v2 /api/v1/debug RPC', () => {
     expect(body.data.turn).toBeUndefined();
   });
 
-  it('exposes runtime binding through REST and debug dispatcher contracts', async () => {
+  it('exposes environment binding through REST and debug dispatcher contracts', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
 
-    const dispatched = await call<{ workspaceId: string; runtimeId: string }>(
+    const dispatched = await call<{ workspaceId: string; environmentId: string }>(
       'POST',
-      rpc('agent', IAgentRuntimeBindingService, 'get', { sid: id, aid: 'main' }),
+      rpc('agent', IAgentEnvironmentBindingService, 'get', { sid: id, aid: 'main' }),
     );
-    expect(dispatched.body.data.runtimeId).toBe('local');
+    expect(dispatched.body.data.environmentId).toBe('local');
 
-    const current = await call<{ workspace_id: string; runtime_id: string }>(
+    const current = await call<{ workspace_id: string; environment_id: string }>(
       'GET',
-      `/api/v1/sessions/${id}/runtime`,
+      `/api/v1/sessions/${id}/environment`,
     );
-    expect(current.body.data).toMatchObject({ runtime_id: 'local' });
+    expect(current.body.data).toMatchObject({ environment_id: 'local' });
 
     const invalid = await call<null>(
       'POST',
-      `/api/v1/sessions/${id}/runtime`,
-      { runtime_id: 'missing-runtime' },
+      `/api/v1/sessions/${id}/environment`,
+      { environment_id: 'missing-runtime' },
     );
     expect(invalid.body.code).toBe(40420);
 
-    const unchanged = await call<{ workspace_id: string; runtime_id: string }>(
+    const unchanged = await call<{ workspace_id: string; environment_id: string }>(
       'GET',
-      `/api/v1/sessions/${id}/runtime`,
+      `/api/v1/sessions/${id}/environment`,
     );
     expect(unchanged.body.data).toEqual(current.body.data);
 
@@ -405,29 +405,29 @@ describe('server-v2 /api/v1/debug RPC', () => {
       id: 'debug-remote-provider',
       imports: { root: [], imports: [], local: [] },
       attach: async (context, host) => {
-        host.registerRuntime(new FakeRuntime({
+        host.registerEnvironment(new FakeEnvironment({
           workspaceId: context.id,
-          runtimeId: 'remote',
+          environmentId: 'remote',
           generation: 'remote-two',
         }));
         return { dispose: () => {} };
       },
     });
     try {
-      const switched = await call<{ workspace_id: string; runtime_id: string }>(
+      const switched = await call<{ workspace_id: string; environment_id: string }>(
         'POST',
-        `/api/v1/sessions/${id}/runtime`,
-        { runtime_id: 'remote' },
+        `/api/v1/sessions/${id}/environment`,
+        { environment_id: 'remote' },
       );
-      expect(switched.body.data.runtime_id).toBe('remote');
-      const snapshot = await call<AgentRuntimeBindingSnapshot>(
+      expect(switched.body.data.environment_id).toBe('remote');
+      const snapshot = await call<AgentEnvironmentBindingSnapshot>(
         'GET',
-        `/api/v1/debug/session/${id}/agent/main/runtime-binding`,
+        `/api/v1/debug/session/${id}/agent/main/environment-binding`,
       );
       expect(snapshot.body.data).toMatchObject({
-        binding: { workspaceId: current.body.data.workspace_id, runtimeId: 'remote' },
+        binding: { workspaceId: current.body.data.workspace_id, environmentId: 'remote' },
         available: true,
-        runtime: { runtimeId: 'remote', generation: 'remote-two', status: 'ready' },
+        environment: { environmentId: 'remote', generation: 'remote-two', status: 'ready' },
       });
     } finally {
       await provider.dispose();

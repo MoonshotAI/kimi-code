@@ -71,12 +71,12 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
 
   // Stage 2: ask whether to attach diagnostics (logs / codebase).
   // The codebase scanner reads the local filesystem, so a remote-bound
-  // session (experimental remote runtime) cannot package its codebase —
+  // session (experimental remote environment) cannot package its codebase —
   // drop the option with a hint instead of scanning the wrong machine.
   const remoteSession =
     isExperimentalFlagEnabled('remote_runtime') &&
-    host.state.appState.runtime !== undefined &&
-    host.state.appState.runtime.runtimeId !== 'local';
+    host.state.appState.environment !== undefined &&
+    host.state.appState.environment.environmentId !== 'local';
   if (remoteSession) {
     host.showStatus(
       'Codebase attachment is not supported for remote sessions — the scanner only reads the local filesystem.',
@@ -176,7 +176,7 @@ export async function showUsage(host: SlashCommandHost): Promise<void> {
 }
 
 export async function showStatusReport(host: SlashCommandHost): Promise<void> {
-  const [runtimeStatus, managedUsage] = await Promise.all([
+  const [environmentStatus, managedUsage] = await Promise.all([
     loadRuntimeStatusReport(host),
     loadManagedUsageReport(host),
   ]);
@@ -196,8 +196,8 @@ export async function showStatusReport(host: SlashCommandHost): Promise<void> {
     contextTokens: appState.contextTokens,
     maxContextTokens: appState.maxContextTokens,
     availableModels: appState.availableModels,
-    status: runtimeStatus.status,
-    statusError: runtimeStatus.error,
+    status: environmentStatus.status,
+    statusError: environmentStatus.error,
     managedUsage: managedUsage?.usage,
     managedUsageError: managedUsage?.error,
   };

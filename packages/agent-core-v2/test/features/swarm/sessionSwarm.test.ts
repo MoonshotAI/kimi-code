@@ -40,7 +40,7 @@ import {
   type SessionMetadataChangedEvent,
 } from '#/session/sessionMetadata/sessionMetadata';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
+import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import {
   AgentRunBatch,
   resolveSwarmMaxConcurrency,
@@ -2232,13 +2232,13 @@ function agentHandle(
         const service = services.get(serviceId);
         if (service !== undefined) return service;
         if (serviceId === IAgentProfileService) return profile;
-        if (serviceId === IAgentRuntimeBindingService) {
+        if (serviceId === IAgentEnvironmentBindingService) {
           return {
             _serviceBrand: undefined,
-            current: { workspaceId: 'w1', runtimeId: 'local' },
+            current: { workspaceId: 'w1', environmentId: 'local' },
             switch: () => {},
             onDidChange: Event.None,
-          } as unknown as IAgentRuntimeBindingService;
+          } as unknown as IAgentEnvironmentBindingService;
         }
         if (serviceId === IAgentPermissionModeService) return permissionMode;
         if (serviceId === IAgentLoopService) {

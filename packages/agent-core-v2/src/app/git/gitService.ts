@@ -3,8 +3,8 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { LOCAL_RUNTIME_ID } from '#/runtime/runtime';
-import { IRuntimeResolver, IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
+import { IEnvironmentResolver, IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
 import { IGitService } from './git';
 import { parseNumstat, parsePorcelain, parsePullRequest } from './gitParsers';
@@ -24,7 +24,7 @@ export class GitService implements IGitService {
   >();
 
   constructor(
-    @IRuntimeResolver private readonly resolver: IRuntimeResolver,
+    @IEnvironmentResolver private readonly resolver: IEnvironmentResolver,
     @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
     @IHostFileSystem private readonly fs: IHostFileSystem,
   ) {}
@@ -146,8 +146,8 @@ export class GitService implements IGitService {
     options: RunOptions = {},
   ): Promise<RunResult> {
     const workspaceId = this.resolveWorkspaceId(cwd);
-    const lease = this.resolver.acquire({ workspaceId, runtimeId: LOCAL_RUNTIME_ID }, ['process']);
-    const spawned = await lease.runtime.process!
+    const lease = this.resolver.acquire({ workspaceId, environmentId: LOCAL_ENVIRONMENT_ID }, ['process']);
+    const spawned = await lease.environment.process!
       .spawn(cmd, args, { cwd, env: options.env })
       .then(
         (proc) => ({ ok: true as const, proc }),

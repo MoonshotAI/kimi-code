@@ -12,7 +12,7 @@ import { createMcpTool } from '#/agent/mcp/tools/mcp';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { StdioMcpClient } from '#/mcpCore/client-stdio';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { MCPClient, MCPContentBlock, MCPToolResult } from '#/mcpCore/types';
 import type { ToolExecution } from '#/tool/toolContract';
 import { sniffImageDimensions } from '#/agent/media/file-type';
@@ -999,8 +999,8 @@ describe('mcpResultToExecutableOutput over a real stdio server', () => {
 
   async function callFixtureTool(name: string) {
     const runtime = Object.assign(
-      new FakeRuntime(
-        { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+      new FakeEnvironment(
+        { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
         { capabilities: ['process'] },
       ),
       { process: new HostProcessService() },
@@ -1012,22 +1012,22 @@ describe('mcpResultToExecutableOutput over a real stdio server', () => {
         args: [fixture],
       },
       {
-        runtimeResolver: {
+        environmentResolver: {
           _serviceBrand: undefined,
           inspect: () => runtime,
           acquire: () => ({
-            runtime,
+            environment: runtime,
             track: (resource) => resource,
             dispose: () => {},
           }),
           acquireWhenReady: async () => ({
-            runtime,
+            environment: runtime,
             track: (resource) => resource,
             dispose: () => {},
           }),
         },
         workspaceId: 'workspace',
-        runtimeId: 'local',
+        environmentId: 'local',
         defaultCwd: process.cwd(),
       },
     );

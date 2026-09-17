@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { FileMeta, GetResult, IFileService } from '@moonshot-ai/agent-core-v2';
 import type { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
-import type { RuntimePath } from '@moonshot-ai/agent-core-v2/runtime/runtime';
+import type { EnvironmentPath } from '@moonshot-ai/agent-core-v2/environment/environment';
 
 import {
   resolvePromptMediaFiles,
@@ -23,7 +23,7 @@ function framePayloadBytes(data: Uint8Array): number {
   return Math.ceil(data.byteLength / 3) * 4;
 }
 
-function fakeRuntimeFs() {
+function fakeEnvironmentFs() {
   const files = new Map<string, Uint8Array>();
   const writes: WriteCall[] = [];
   const put = (path: string, data: Uint8Array, mode: 'truncate' | 'append'): void => {
@@ -54,7 +54,7 @@ function fakeRuntimeFs() {
   return { files, writes, fs };
 }
 
-const runtimePath: RuntimePath = {
+const environmentPath: EnvironmentPath = {
   separator: '/',
   delimiter: ':',
   isAbsolute: (path) => path.startsWith('/'),
@@ -97,7 +97,7 @@ function patternedBytes(size: number): Uint8Array {
 }
 
 function targetFor(fs: IHostFileSystem): PromptAttachmentsTarget {
-  return { dir: '/remote/tmp/kimi-code/attachments', fs, path: runtimePath };
+  return { dir: '/remote/tmp/kimi-code/attachments', fs, path: environmentPath };
 }
 
 function expectFrameSafe(writes: readonly WriteCall[]): void {
@@ -124,7 +124,7 @@ describe('resolvePromptMediaFiles with a runtime attachments target', () => {
     const store = fakeFileStore(
       new Map([['f_big', { meta: meta('f_big', 'big.bin', size), chunks }]]),
     );
-    const fake = fakeRuntimeFs();
+    const fake = fakeEnvironmentFs();
     const result = await resolvePromptMediaFiles(
       [
         {
@@ -159,7 +159,7 @@ describe('resolvePromptMediaFiles with a runtime attachments target', () => {
     const store = fakeFileStore(
       new Map([['f_small', { meta: meta('f_small', 'small.txt', expected.byteLength), chunks }]]),
     );
-    const fake = fakeRuntimeFs();
+    const fake = fakeEnvironmentFs();
     const result = await resolvePromptMediaFiles(
       [
         {
@@ -185,7 +185,7 @@ describe('resolvePromptMediaFiles with a runtime attachments target', () => {
     const bytes = patternedBytes(size);
     bytes.fill(0x61, 0, 4096);
     const base64 = Buffer.from(bytes).toString('base64');
-    const fake = fakeRuntimeFs();
+    const fake = fakeEnvironmentFs();
     const result = await resolvePromptMediaFiles(
       [
         {

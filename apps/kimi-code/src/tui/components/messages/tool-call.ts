@@ -2330,8 +2330,8 @@ export class ToolCallComponent extends Container {
       }
     } else if (name === 'Bash') {
       // The engine stamps the cwd the command actually executes in (the bound
-      // runtime's resolved path) into display.cwd; show it whenever it says
-      // something the card does not already — a remote runtime's path or an
+      // environment's resolved path) into display.cwd; show it whenever it says
+      // something the card does not already — a remote environment's path or an
       // explicit cwd argument. A stamp equal to the local workspace dir is
       // the default local case and keeps the card's current shape.
       const executionCwd = this.stampedExecutionCwd();

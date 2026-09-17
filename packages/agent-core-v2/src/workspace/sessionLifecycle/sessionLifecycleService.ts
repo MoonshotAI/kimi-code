@@ -4,7 +4,7 @@ import { join } from 'pathe';
 
 import type { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
-import { LOCAL_RUNTIME_ID } from '#/runtime/runtime';
+import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import {
   createScopedChildHandle,
   type ISessionScopeHandle,
@@ -218,10 +218,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           : await agents.create({
               agentId: MAIN_AGENT_ID,
               binding: opts.mainAgentBinding,
-              runtimeId: opts.runtimeId,
-              runtimeCwd:
-                opts.runtimeCwd ??
-                (opts.runtimeId === undefined || opts.runtimeId === LOCAL_RUNTIME_ID ? undefined : opts.workDir),
+              environmentId: opts.environmentId,
+              environmentCwd:
+                opts.environmentCwd ??
+                (opts.environmentId === undefined || opts.environmentId === LOCAL_ENVIRONMENT_ID ? undefined : opts.workDir),
             });
       if (this.config.get<boolean>(DEFAULT_PLAN_MODE_SECTION) === true) {
         const planAgent = main ?? (await ensureMainAgent(handle));

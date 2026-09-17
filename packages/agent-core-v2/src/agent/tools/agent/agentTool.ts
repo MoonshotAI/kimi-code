@@ -636,7 +636,7 @@ function truncateReason(reason: string): string {
 registerAgentToolService(ISubagentTool, SubagentTool, {
   name: 'Agent',
   domain: 'subagent',
-  requiredRuntimeCapabilities: ['process'],
+  requiredEnvironmentCapabilities: ['process'],
 });
 
 function buildProfileDescriptions(

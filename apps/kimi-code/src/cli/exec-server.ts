@@ -7,7 +7,7 @@
  * (config/OAuth/telemetry/session services) at import time, so the executor
  * reaches its implementation exclusively through a dynamic import of
  * `@moonshot-ai/remote-exec/server` — the spec-sanctioned exception to the
- * "CLI consumes core capabilities only via the SDK" rule (remote-runtime
+ * "CLI consumes core capabilities only via the SDK" rule (remote-environment
  * spec §6/§10). `test/cli/exec-server.test.ts` guards this import graph.
  *
  * Wire discipline: stdout carries protocol frames only; every diagnostic

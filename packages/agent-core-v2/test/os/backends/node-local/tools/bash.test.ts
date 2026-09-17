@@ -16,8 +16,8 @@ import { userCancellationReason } from '#/_base/utils/abort';
 import type { IConfigService } from '#/app/config/config';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
+import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
 import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { type ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
@@ -723,31 +723,31 @@ function bashTool(
     spawn: async (command, args = [], options) => runner.spawn(command, args, options),
   };
   const backend = Object.assign(
-    new FakeRuntime(
-      { workspaceId: ctx.workspaceId, runtimeId: 'local', generation: 'test' },
+    new FakeEnvironment(
+      { workspaceId: ctx.workspaceId, environmentId: 'local', generation: 'test' },
       { capabilities: ['process'], pathClass: env.pathClass },
     ),
-    { environment: env, process: processService },
+    { host: env, process: processService },
   );
-  const runtime: IAgentRuntimeService = {
+  const environment: IAgentEnvironmentService = {
     _serviceBrand: undefined,
     onDidChange: () => ({ dispose: () => {} }),
     isAvailable: () => true,
     inspect: () => backend,
     acquire: () => ({
-      runtime: backend,
+      environment: backend,
       track: (resource) => resource,
       dispose: () => {},
     }),
     acquireWhenReady: async () => ({
-      runtime: backend,
+      environment: backend,
       track: (resource) => resource,
       dispose: () => {},
     }),
     reconnect: async () => {},
     workspaceRoots: () => ({ workDir: ctx.cwd, additionalDirs: [] }),
   };
-  return new BashTool(runtime, ctx, stubWorkspaceContext(ctx.cwd), background, toolPolicy, config);
+  return new BashTool(environment, ctx, stubWorkspaceContext(ctx.cwd), background, toolPolicy, config);
 }
 
 describe('BashTool', () => {

@@ -1,7 +1,7 @@
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { isWithinWorkspace } from '#/tool/path-access';
 import { findGitWorkTree } from '#/app/git/workTree';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { ISessionWorkspaceContext as WorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type {
@@ -14,7 +14,7 @@ export class GitCwdWriteApprovePermissionPolicyService implements PermissionPoli
   readonly name = 'git-cwd-write-approve';
 
   constructor(
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @ISessionWorkspaceContext private readonly workspace: WorkspaceContext,
   ) {}
 
@@ -23,11 +23,11 @@ export class GitCwdWriteApprovePermissionPolicyService implements PermissionPoli
   ): Promise<PermissionPolicyResult | undefined> {
     const toolName = context.toolCall.name;
     if (toolName !== 'Write' && toolName !== 'Edit') return undefined;
-    const lease = this.runtime.acquire();
+    const lease = this.environment.acquire();
     try {
-      const pathClass = lease.runtime.environment.pathClass;
+      const pathClass = lease.environment.host.pathClass;
       if (pathClass !== 'posix') return undefined;
-      const fs = lease.runtime.fs;
+      const fs = lease.environment.fs;
       if (fs === undefined) return undefined;
 
       const cwd = this.workspace.workDir;

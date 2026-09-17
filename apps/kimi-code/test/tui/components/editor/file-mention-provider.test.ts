@@ -973,7 +973,7 @@ describe('FileMentionProvider', () => {
   });
 });
 
-describe('FileMentionProvider mentionSuggester (remote runtime)', () => {
+describe('FileMentionProvider mentionSuggester (remote environment)', () => {
   let suggestDir: string;
 
   beforeEach(() => {

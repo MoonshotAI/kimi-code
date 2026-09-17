@@ -15,8 +15,8 @@ import type { ToolCall } from '#human/llm/message';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
-import type { RuntimeLease } from '#/runtime/runtime';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import type { EnvironmentLease } from '#/environment/environment';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import type { WatchChange } from '#human/utils/watch';
@@ -106,7 +106,7 @@ function createHarness(
     readonly cwd?: string;
     readonly hostFs?: IHostFileSystem;
     readonly pathClass?: 'posix' | 'win32';
-    readonly runtimeWorkDir?: string;
+    readonly environmentWorkDir?: string;
     readonly log?: ILogService;
     readonly restoredProfile?: {
       readonly systemPrompt: string;
@@ -197,16 +197,16 @@ function createHarness(
       } as unknown as IHostEnvironment;
       reg.defineInstance(IHostFileSystem, hostFs);
       reg.defineInstance(IHostEnvironment, hostEnvironment);
-      reg.defineInstance(IAgentRuntimeService, {
+      reg.defineInstance(IAgentEnvironmentService, {
         _serviceBrand: undefined,
         onDidChange: () => ({ dispose: () => {} }),
         isAvailable: () => true,
-        inspect() { return this.acquire().runtime; },
-        acquire: (): RuntimeLease => ({
-          runtime: {
-            identity: { workspaceId: 'workspace-1', runtimeId: 'local', generation: 'test' },
+        inspect() { return this.acquire().environment; },
+        acquire: (): EnvironmentLease => ({
+          environment: {
+            identity: { workspaceId: 'workspace-1', environmentId: 'local', generation: 'test' },
             capabilities: new Set(['fs', 'process', 'terminal']),
-            environment: hostEnvironment,
+            host: hostEnvironment,
             path: {
               separator: options.pathClass === 'win32' ? '\\' : '/',
               delimiter: options.pathClass === 'win32' ? ';' : ':',
@@ -229,10 +229,10 @@ function createHarness(
         acquireWhenReady() { return Promise.resolve(this.acquire()); },
         reconnect: async () => {},
         workspaceRoots: () => ({
-          workDir: options.runtimeWorkDir ?? options.cwd ?? workDir,
+          workDir: options.environmentWorkDir ?? options.cwd ?? workDir,
           additionalDirs: [],
         }),
-      } satisfies IAgentRuntimeService);
+      } satisfies IAgentEnvironmentService);
       reg.defineInstance(IBashParserService, new BashParserService());
       reg.defineInstance(
         ITelemetryService,
@@ -1526,7 +1526,7 @@ describe('agentsMdReminder Windows Bash paths', () => {
   });
 });
 
-describe('agentsMdReminder remote runtime binding', () => {
+describe('agentsMdReminder remote environment binding', () => {
   const sessionCwd = '/Users/local/Projects/kimi-code';
   const remoteWorkDir = '/remote/work';
   const remoteSubDir = `${remoteWorkDir}/packages/kap-server`;
@@ -1553,7 +1553,7 @@ describe('agentsMdReminder remote runtime binding', () => {
     const h = createHarness({
       cwd: sessionCwd,
       hostFs: remoteProbeFs(),
-      runtimeWorkDir: remoteWorkDir,
+      environmentWorkDir: remoteWorkDir,
     });
     h.reminder.seedInjected([], remoteWorkDir);
     return h;

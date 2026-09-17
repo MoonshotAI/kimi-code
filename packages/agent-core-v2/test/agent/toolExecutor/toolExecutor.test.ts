@@ -48,8 +48,8 @@ import { ReadInputSchema, type ReadInput } from '#/agent/tools/os/read/read';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
-import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
+import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { stubWorkspaceContext } from '../../session/workspaceContext/stub-workspace-context';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
@@ -1054,7 +1054,7 @@ describe('truncation pipeline', () => {
   let readConfig: IConfigService;
   let globProcess: HostProcessService;
   let attachmentStore: SessionMediaStoreService;
-  let mediaRuntime: IAgentRuntimeService;
+  let mediaEnvironment: IAgentEnvironmentService;
 
   beforeEach(async () => {
     homeDir = await mkdtemp(join(tmpdir(), 'tool-executor-truncation-'));
@@ -1087,21 +1087,21 @@ describe('truncation pipeline', () => {
     readConfig = truncationContainer.get(IConfigService);
     await readConfig.ready;
     globProcess = new HostProcessService();
-    const runtime = Object.assign(new FakeRuntime(
-      { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+    const runtime = Object.assign(new FakeEnvironment(
+      { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
       { capabilities: ['fs', 'process'] },
     ), { fs: new HostFileSystem(), process: globProcess });
-    const binding: IAgentRuntimeService = {
+    const binding: IAgentEnvironmentService = {
       _serviceBrand: undefined,
       onDidChange: () => ({ dispose: () => {} }),
       isAvailable: () => true,
       inspect: () => runtime,
-      acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
-      acquireWhenReady: async () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
+      acquire: () => ({ environment: runtime, track: (resource) => resource, dispose: () => {} }),
+      acquireWhenReady: async () => ({ environment: runtime, track: (resource) => resource, dispose: () => {} }),
       reconnect: async () => {},
       workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
     };
-    mediaRuntime = binding;
+    mediaEnvironment = binding;
     registry.register(new ReadTool(
       binding,
       stubWorkspaceContext(homeDir),
@@ -1303,13 +1303,13 @@ describe('truncation pipeline', () => {
   });
 
   it('resolves attachment references for media reads and exposes binary paths for converters', async () => {
-    const runtimeFs = mediaRuntime.inspect().fs!;
-    vi.spyOn(runtimeFs, 'stat').mockRejectedValue(new Error('client cannot access daemon storage'));
-    vi.spyOn(runtimeFs, 'readBytes').mockRejectedValue(new Error('client cannot access daemon storage'));
-    vi.spyOn(runtimeFs, 'readLines').mockImplementation(() => {
+    const environmentFs = mediaEnvironment.inspect().fs!;
+    vi.spyOn(environmentFs, 'stat').mockRejectedValue(new Error('client cannot access daemon storage'));
+    vi.spyOn(environmentFs, 'readBytes').mockRejectedValue(new Error('client cannot access daemon storage'));
+    vi.spyOn(environmentFs, 'readLines').mockImplementation(() => {
       throw new Error('client cannot access daemon storage');
     });
-    registry.register(new ReadMediaFileTool(mediaRuntime, { workspaceDir: homeDir, additionalDirs: [] }, {
+    registry.register(new ReadMediaFileTool(mediaEnvironment, { workspaceDir: homeDir, additionalDirs: [] }, {
       image_in: true, video_in: false, audio_in: false, thinking: false, tool_use: true,
     }, undefined, undefined, undefined, undefined, attachmentStore));
     const png = Buffer.from(await new Jimp({ width: 32, height: 32, color: 0x3366ccff }).getBuffer('image/png'));
@@ -1346,8 +1346,8 @@ describe('truncation pipeline', () => {
   });
 
   it('reads session text from its owner while workspace text still uses the runtime buffer', async () => {
-    const runtimeFs = mediaRuntime.inspect().fs!;
-    const clientRead = vi.spyOn(runtimeFs, 'readLines').mockImplementation(async function* () {
+    const environmentFs = mediaEnvironment.inspect().fs!;
+    const clientRead = vi.spyOn(environmentFs, 'readLines').mockImplementation(async function* () {
       yield 'unsaved client buffer\n';
     });
     const workspaceFile = join(homeDir, 'workspace.txt');

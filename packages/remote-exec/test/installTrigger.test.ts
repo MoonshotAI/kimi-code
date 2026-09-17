@@ -233,7 +233,7 @@ describe('connectWithAutoInstall', () => {
     expect(wrapped.message).toContain('reconnect still failed');
   });
 
-  it('refuses auto-install for command runtimes and fails with guidance', async () => {
+  it('refuses auto-install for command environments and fails with guidance', async () => {
     const runner = vi.fn() as unknown as LocalRunner;
     const attempt = vi.fn(async () => {
       throw missingExecutorError();
@@ -249,11 +249,11 @@ describe('connectWithAutoInstall', () => {
     expect(runner).not.toHaveBeenCalled();
     const message = (error as Error).message;
     expect(message).toContain('code 127');
-    expect(message).toContain('Auto-install is not available for `command` runtimes');
+    expect(message).toContain('Auto-install is not available for `command` environments');
     expect(message).toContain('Install the executor manually');
   });
 
-  it('gives manual guidance for typed runtimes when no artifact locator is configured', async () => {
+  it('gives manual guidance for typed environments when no artifact locator is configured', async () => {
     const attempt = vi.fn(async () => {
       throw missingExecutorError();
     });

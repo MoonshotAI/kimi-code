@@ -4,7 +4,7 @@ import { isAbsolute, relative, resolve } from 'pathe';
 import { Service } from '#/_base/di/service';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -56,7 +56,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IEventBus eventBus: IEventBus,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @IBlobStore private readonly blobs: IBlobStore,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ISessionContext private readonly sessionCtx: ISessionContext,
@@ -464,9 +464,9 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     Uint8Array | 'missing' | 'unreadable' | { oversizeBytes: number; mtimeMs?: number }
   > {
     const absolute = isAbsolute(pathKey) ? pathKey : resolve(this.workspaceCtx.workDir, pathKey);
-    const lease = this.runtime.acquire(['fs']);
+    const lease = this.environment.acquire(['fs']);
     try {
-      const fs = lease.runtime.fs;
+      const fs = lease.environment.fs;
       if (fs === undefined) return 'unreadable';
       let info;
       try {
@@ -614,7 +614,7 @@ function splitLines(content: string): string[] {
   if (content === '') return [];
   const lines = content.split('\n');
   if (lines.at(-1) === '') lines.pop();
-  else lines[lines.length - 1] = `${lines[lines.length - 1]!}\u0000`;
+  else lines[lines.length - 1] = `${lines.at(-1)!}\u0000`;
   return lines;
 }
 

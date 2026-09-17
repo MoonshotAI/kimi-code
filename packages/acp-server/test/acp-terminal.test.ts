@@ -5,13 +5,13 @@ import type {
   IHostEnvironment,
   IHostProcess,
   IHostProcessService,
-  Runtime,
-  RuntimeProviderHost,
+  Environment,
+  EnvironmentProviderHost,
 } from '@moonshot-ai/agent-core-v2';
 
 import type { IAcpConnection, IAcpTerminalHandle } from '../src/acp-fs/acpConnection';
 import { AcpHostFileSystem } from '../src/acp-fs/acpFsService';
-import { AcpRuntimeProviderFactory } from '../src/acp-terminal/acpTerminalRunner';
+import { AcpEnvironmentProviderFactory } from '../src/acp-terminal/acpTerminalRunner';
 
 function makeConnection(
   options: { terminalEnabled?: boolean; createTerminal?: () => IAcpTerminalHandle } = {},
@@ -64,35 +64,35 @@ function makeEnvironment(overrides: Partial<IHostEnvironment> = {}): IHostEnviro
   } as IHostEnvironment;
 }
 
-async function bindRuntime(
+async function bindEnvironment(
   environment: IHostEnvironment,
   options: { connection?: IAcpConnection; local?: IHostProcessService } = {},
-): Promise<Runtime> {
-  const runtimes: Runtime[] = [];
+): Promise<Environment> {
+  const environments: Environment[] = [];
   const host = {
-    registerRuntime: (runtime: Runtime) => {
-      runtimes.push(runtime);
+    registerEnvironment: (runtime: Environment) => {
+      environments.push(runtime);
       return { remove: async () => {} };
     },
-  } as unknown as RuntimeProviderHost;
-  const factory = new AcpRuntimeProviderFactory(
+  } as unknown as EnvironmentProviderHost;
+  const factory = new AcpEnvironmentProviderFactory(
     options.connection ?? makeConnection(),
     environment,
     options.local ?? makeLocalProcessService().local,
   );
   await factory.attach({ id: 'w1' } as never, host);
   factory.bindSession('w1', 's1', '/repo');
-  const runtime = runtimes[0];
+  const runtime = environments[0];
   if (runtime === undefined) throw new Error('runtime was not registered');
   return runtime;
 }
 
-describe('AcpSessionRuntime', () => {
+describe('AcpSessionEnvironment', () => {
   it('mirrors the probed host environment and exposes fs + process capabilities', async () => {
-    const runtime = await bindRuntime(makeEnvironment());
+    const runtime = await bindEnvironment(makeEnvironment());
 
-    expect([...runtime.capabilities].sort()).toEqual(['fs', 'process']);
-    expect(runtime.environment).toMatchObject({
+    expect([...runtime.capabilities].toSorted()).toEqual(['fs', 'process']);
+    expect(runtime.host).toMatchObject({
       osKind: 'macOS',
       osArch: 'arm64',
       shellName: 'bash',
@@ -105,7 +105,7 @@ describe('AcpSessionRuntime', () => {
   });
 
   it('adapts path semantics and shell to a win32 host environment', async () => {
-    const runtime = await bindRuntime(
+    const runtime = await bindEnvironment(
       makeEnvironment({
         osKind: 'Windows',
         osArch: 'x64',
@@ -116,7 +116,7 @@ describe('AcpSessionRuntime', () => {
       }),
     );
 
-    expect(runtime.environment).toMatchObject({
+    expect(runtime.host).toMatchObject({
       osKind: 'Windows',
       shellPath: 'C:\\Program Files\\Git\\bin\\bash.exe',
       pathClass: 'win32',
@@ -152,7 +152,7 @@ describe('AcpProcessService local fallback', () => {
       },
     });
     const { local, calls } = makeLocalProcessService();
-    const runtime = await bindRuntime(makeEnvironment(), { connection, local });
+    const runtime = await bindEnvironment(makeEnvironment(), { connection, local });
 
     await runtime.process!.spawn('/bin/bash', ['-c', 'echo hi'], { env: { ...bashEnv } });
 
@@ -163,7 +163,7 @@ describe('AcpProcessService local fallback', () => {
   it('falls back to local execution for Bash-shaped spawns without the terminal capability', async () => {
     const connection = makeConnection({ terminalEnabled: false });
     const { local, calls } = makeLocalProcessService();
-    const runtime = await bindRuntime(makeEnvironment(), { connection, local });
+    const runtime = await bindEnvironment(makeEnvironment(), { connection, local });
 
     await runtime.process!.spawn('/bin/bash', ['-c', 'echo hi'], { env: { ...bashEnv } });
 
@@ -185,7 +185,7 @@ describe('AcpProcessService local fallback', () => {
       },
     });
     const { local, calls } = makeLocalProcessService();
-    const runtime = await bindRuntime(makeEnvironment(), { connection, local });
+    const runtime = await bindEnvironment(makeEnvironment(), { connection, local });
 
     await runtime.process!.spawn('rg', ['--files', '--hidden']);
 

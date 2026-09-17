@@ -112,7 +112,7 @@ timeout = 5
 | [`image`](#image) | `table` | — | 图片压缩参数 |
 | [`services`](#services) | `table` | — | 内置外部服务配置 |
 | [`permission`](#permission) | `table` | — | 初始权限规则 |
-| [`runtimes`](#runtimes) | `table` | — | 远程运行时声明（实验功能） |
+| [`environments`](#environments) | `table` | — | 远程环境声明（实验功能） |
 | [`hooks`](../customization/hooks.md) | `array<table>` | — | 生命周期 hook |
 | [`identity`](#identity) | `table` | — | 自定义 Agent 身份 |
 
@@ -542,13 +542,13 @@ pattern = "Bash"
 MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-code/mcp.json` 中，不在 `config.toml` 里。交互式配置入口是 `/mcp-config`，详见 [Model Context Protocol](../customization/mcp.md)。
 :::
 
-## `runtimes`
+## `environments`
 
-`runtimes` 声明远程运行时——SSH 主机、Docker 兼容容器或自定义启动命令——会话绑定后，Agent 的工具即在目标环境中执行。整个功能是实验性的，本节仅在 `remote_runtime` 实验开关启用时才会被读取；功能介绍、边界与限制见 [远程运行时](../guides/remote-runtime.md)。
+`environments` 声明远程环境——SSH 主机、Docker 兼容容器或自定义启动命令——会话绑定后，Agent 的工具即在目标环境中执行。整个功能是实验性的，本节仅在 `remote_runtime` 实验开关启用时才会被读取；功能介绍、边界与限制见 [远程环境](../guides/remote-environment.md)。
 
-每个条目以运行时 id 为键：不超过 64 个字符，首尾不能有空白，`local` 和 `default` 是保留字。同一条目内 `type` 与 `command` 互斥。
+每个条目以环境 id 为键：不超过 64 个字符，首尾不能有空白，`local` 和 `default` 是保留字。同一条目内 `type` 与 `command` 互斥。
 
-可选的顶层 `default` 指定新会话初始绑定的运行时。它必须指向一个已配置的条目，且该条目必须设置 `defaultCwd`——绑定由运行时和工作目录成对构成，缺了工作目录的默认绑定会悬空。未设置 `default` 时，新会话默认使用 `local` 运行时。
+可选的顶层 `default` 指定新会话初始绑定的环境。它必须指向一个已配置的条目，且该条目必须设置 `defaultCwd`——绑定由环境和工作目录成对构成，缺了工作目录的默认绑定会悬空。未设置 `default` 时，新会话默认使用 `local` 环境。
 
 ### SSH 条目
 
@@ -581,19 +581,19 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 | `defaultCwd` | `string` | 否 | 绑定会话时工作目录的预填值 |
 
 ```toml
-[runtimes]
+[environments]
 default = "dev-box"
 
-[runtimes.dev-box]
+[environments.dev-box]
 type = "ssh"
 host = "dev-box"
 defaultCwd = "/home/me/projects"
 
-[runtimes.dev-container]
+[environments.dev-container]
 type = "docker"
 container = "myapp-dev"
 
-[runtimes.sandbox]
+[environments.sandbox]
 command = "sandbox"
 args = ["ssh", "i-1234567890", "--",
         "/home/me/.kimi-code/bin/kimi", "exec-server", "--listen", "stdio"]
@@ -601,9 +601,9 @@ env = { SANDBOX_TOKEN = "..." }
 defaultCwd = "/home/me/kimi-code"
 ```
 
-### 项目级 `runtimes.toml`
+### 项目级 `environments.toml`
 
-项目可以在 `<项目根目录>/.kimi-code/runtimes.toml` 中声明自己的运行时，schema 与 `[runtimes]` 节相同（含可选的 `default`）。项目级声明只为受信任的工作区加载：启动时的信任提示会列出每个声明的运行时及其完整启动命令行，未信任工作区的该文件会被完全忽略。同 id 的项目级条目覆盖 user 级条目，项目级 `default` 优先于 user 级。详见 [项目级声明与信任](../guides/remote-runtime.md#项目级声明与信任)。
+项目可以在 `<项目根目录>/.kimi-code/environments.toml` 中声明自己的环境，schema 与 `[environments]` 节相同（含可选的 `default`）。项目级声明只为受信任的工作区加载：启动时的信任提示会列出每个声明的环境及其完整启动命令行，未信任工作区的该文件会被完全忽略。同 id 的项目级条目覆盖 user 级条目，项目级 `default` 优先于 user 级。详见 [项目级声明与信任](../guides/remote-environment.md#项目级声明与信任)。
 
 ## `tui.toml`
 
@@ -676,7 +676,7 @@ additional_dir = ["/absolute/path/to/shared"]
 
 目录以绝对路径存储，与具体机器相关。因此建议把 `.kimi-code/local.toml` 加入项目的 `.gitignore`，避免被提交。
 
-除了 `local.toml`，项目 `.kimi-code/` 目录还可以放 `mcp.json`（项目级 MCP server）和 `runtimes.toml`（项目级远程运行时声明）。两者都受工作区信任门控：在启动提示中选择信任该文件夹后才生效。详见 [Model Context Protocol](../customization/mcp.md) 和 [`runtimes`](#runtimes)。
+除了 `local.toml`，项目 `.kimi-code/` 目录还可以放 `mcp.json`（项目级 MCP server）和 `environments.toml`（项目级远程环境声明）。两者都受工作区信任门控：在启动提示中选择信任该文件夹后才生效。详见 [Model Context Protocol](../customization/mcp.md) 和 [`environments`](#environments)。
 
 ## 下一步
 

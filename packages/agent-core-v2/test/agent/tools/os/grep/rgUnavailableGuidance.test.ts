@@ -5,9 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { noopTelemetryService } from '#/app/telemetry/telemetry';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import {
   ensureRgPath,
   getShareBinRgPath,
@@ -37,10 +37,10 @@ function notImplemented(method: string): never {
 }
 
 function createBackend(options: {
-  readonly runtimeId: string;
+  readonly environmentId: string;
   readonly homeDir: string;
   readonly spawn?: IHostProcessService['spawn'];
-}): FakeRuntime {
+}): FakeEnvironment {
   const processService: IHostProcessService = {
     _serviceBrand: undefined,
     spawn: options.spawn ?? (() => notImplemented('spawn')),
@@ -62,31 +62,31 @@ function createBackend(options: {
     realpath: () => notImplemented('realpath'),
   };
   return Object.assign(
-    new FakeRuntime(
-      { workspaceId: 'workspace', runtimeId: options.runtimeId, generation: 'test' },
-      { capabilities: ['fs', 'process'], environment: { homeDir: options.homeDir } },
+    new FakeEnvironment(
+      { workspaceId: 'workspace', environmentId: options.environmentId, generation: 'test' },
+      { capabilities: ['fs', 'process'], host: { homeDir: options.homeDir } },
     ),
     { process: processService, fs },
   );
 }
 
 class TestGrepTool extends GrepTool {
-  constructor(backend: FakeRuntime) {
-    const runtime: IAgentRuntimeService = {
+  constructor(backend: FakeEnvironment) {
+    const environment: IAgentEnvironmentService = {
       _serviceBrand: undefined,
       onDidChange: () => ({ dispose: () => {} }),
       isAvailable: () => true,
       inspect: () => backend,
-      acquire: () => ({ runtime: backend, track: (resource) => resource, dispose: () => {} }),
+      acquire: () => ({ environment: backend, track: (resource) => resource, dispose: () => {} }),
       acquireWhenReady: async () => ({
-        runtime: backend,
+        environment: backend,
         track: (resource) => resource,
         dispose: () => {},
       }),
       reconnect: async () => {},
       workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
     };
-    super(runtime, stubWorkspaceContext('/workspace'), noopTelemetryService);
+    super(environment, stubWorkspaceContext('/workspace'), noopTelemetryService);
   }
 }
 
@@ -122,9 +122,9 @@ describe('GrepTool rg-unavailable guidance', () => {
     }
   });
 
-  it('names the bound runtime and the target-side share-bin path on a remote runtime', async () => {
+  it('names the bound runtime and the target-side share-bin path on a remote environment', async () => {
     ensureRgPathMock.mockRejectedValue(new Error('boom'));
-    const tool = new TestGrepTool(createBackend({ runtimeId: 'ssh-dev', homeDir: REMOTE_HOME }));
+    const tool = new TestGrepTool(createBackend({ environmentId: 'ssh-dev', homeDir: REMOTE_HOME }));
 
     const result = await execute(tool, { pattern: 'needle' });
 
@@ -139,7 +139,7 @@ describe('GrepTool rg-unavailable guidance', () => {
 
   it('keeps the local-binding guidance byte-identical', async () => {
     ensureRgPathMock.mockRejectedValue(new Error('boom'));
-    const tool = new TestGrepTool(createBackend({ runtimeId: 'local', homeDir: '/home/test' }));
+    const tool = new TestGrepTool(createBackend({ environmentId: 'local', homeDir: '/home/test' }));
 
     const result = await execute(tool, { pattern: 'needle' });
 
@@ -165,7 +165,7 @@ describe('GrepTool rg-unavailable guidance', () => {
     });
     const tool = new TestGrepTool(
       createBackend({
-        runtimeId: 'ssh-dev',
+        environmentId: 'ssh-dev',
         homeDir: REMOTE_HOME,
         spawn: async () => {
           throw enoent;

@@ -15,8 +15,8 @@ export const MAIN_AGENT_ID = 'main';
 export interface CreateAgentOptions {
   readonly agentId?: string;
   readonly binding?: BindAgentInput;
-  readonly runtimeId?: string;
-  readonly runtimeCwd?: string;
+  readonly environmentId?: string;
+  readonly environmentCwd?: string;
   readonly forkedFrom?: string;
   readonly labels?: Readonly<Record<string, string>>;
 }

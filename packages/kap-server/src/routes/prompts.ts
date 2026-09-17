@@ -6,13 +6,13 @@ import {
   IAgentLoopService,
   IAgentPermissionModeService,
   IAgentProfileService,
-  IAgentRuntimeBindingService,
+  IAgentEnvironmentBindingService,
   IAgentToolPolicyService,
   IAgentSkillService,
   IEventBus,
   IEventService,
   IFileService,
-  IRuntimeResolver,
+  IEnvironmentResolver,
   ISessionMediaStore,
   ISessionMetadata,
   ISessionSkillCatalog,
@@ -57,11 +57,11 @@ import {
   contentToCoreParts,
   resolvePromptMediaFiles,
   resolvePromptSessionMediaRefs,
-  runtimeAttachmentsTarget,
-  runtimeOriginalsTarget,
+  environmentAttachmentsTarget,
+  environmentOriginalsTarget,
   type PromptMediaPreparation,
 } from '../lib/promptMedia';
-import type { RuntimeLease } from '@moonshot-ai/agent-core-v2/runtime/runtime';
+import type { EnvironmentLease } from '@moonshot-ai/agent-core-v2/environment/environment';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
@@ -119,7 +119,7 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     profile: agent.accessor.get(IAgentProfileService),
     toolPolicy: agent.accessor.get(IAgentToolPolicyService),
     permissionMode: agent.accessor.get(IAgentPermissionModeService),
-    binding: agent.accessor.get(IAgentRuntimeBindingService),
+    binding: agent.accessor.get(IAgentEnvironmentBindingService),
   };
 }
 
@@ -218,10 +218,10 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         let resolved: Awaited<ReturnType<typeof resolvePromptFromSession>> | undefined;
         if (contentHasPathRefs(req.body.content)) {
           resolved = await resolvePromptFromSession(session, req.body.agent_id);
-          if (resolved.binding.get().runtimeId !== 'local') {
+          if (resolved.binding.get().environmentId !== 'local') {
             throw new Error2(
               ErrorCodes.REQUEST_INVALID,
-              'file attachments by server-local path require the local runtime',
+              'file attachments by server-local path require the local environment',
             );
           }
         }
@@ -248,7 +248,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
 
         const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
         const binding = resolved.binding.get();
-        let runtimeLease: RuntimeLease | undefined;
+        let environmentLease: EnvironmentLease | undefined;
         try {
           preparedMedia = await resolvePromptMediaFiles(
             resolvedSessionMedia,
@@ -262,27 +262,27 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
                 if (session === undefined) return undefined;
                 return sessionMediaOriginalsDir(session.accessor.get(ISessionContext).sessionDir);
               },
-              resolveOriginalsTarget: binding.runtimeId === 'local'
+              resolveOriginalsTarget: binding.environmentId === 'local'
                 ? undefined
                 : async () => {
-                    runtimeLease ??= core.accessor.get(IRuntimeResolver).acquire(binding, ['fs']);
-                    return runtimeOriginalsTarget(runtimeLease.runtime);
+                    environmentLease ??= core.accessor.get(IEnvironmentResolver).acquire(binding, ['fs']);
+                    return environmentOriginalsTarget(environmentLease.environment);
                   },
               resolveAttachmentsDir: async () => {
                 const session = await resumeSessionById(core.accessor, session_id);
                 if (session === undefined) return undefined;
                 return join(session.accessor.get(ISessionContext).sessionDir, 'attachments');
               },
-              resolveAttachmentsTarget: binding.runtimeId === 'local'
+              resolveAttachmentsTarget: binding.environmentId === 'local'
                 ? undefined
                 : async () => {
-                    runtimeLease ??= core.accessor.get(IRuntimeResolver).acquire(binding, ['fs']);
-                    return runtimeAttachmentsTarget(runtimeLease.runtime);
+                    environmentLease ??= core.accessor.get(IEnvironmentResolver).acquire(binding, ['fs']);
+                    return environmentAttachmentsTarget(environmentLease.environment);
                   },
             },
           );
         } finally {
-          runtimeLease?.dispose();
+          environmentLease?.dispose();
         }
         const resolvedContent = preparedMedia.content;
         const promptAttachments =

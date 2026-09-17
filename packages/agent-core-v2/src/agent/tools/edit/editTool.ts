@@ -6,9 +6,9 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
 import { IFileEditService } from '#/app/edit/fileEdit';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import type { Runtime } from '#/runtime/runtime';
-import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
-import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
+import type { Environment } from '#/environment/environment';
+import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
+import { IAgentEnvironmentService, inspectAgentEnvironment } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
@@ -29,13 +29,13 @@ export class EditTool implements IEditTool {
 
   constructor(
     @IFileEditService private readonly editor: IFileEditService,
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
   ) {}
 
-  private workspaceConfig(runtime: Runtime): WorkspaceConfig {
-    const view = new RuntimeWorkspaceView(runtime, {
+  private workspaceConfig(environment: Environment): WorkspaceConfig {
+    const view = new EnvironmentWorkspaceView(environment, {
       workDir: this.workspaceCtx.workDir,
       additionalDirs: [
         ...this.workspaceCtx.additionalDirs,
@@ -46,8 +46,8 @@ export class EditTool implements IEditTool {
   }
 
   resolveExecution(args: EditInput): ToolExecution {
-    const inspected = inspectAgentRuntime(this.runtime);
-    const env = inspected.environment;
+    const inspected = inspectAgentEnvironment(this.environment);
+    const env = inspected.host;
     const workspace = this.workspaceConfig(inspected);
     const path = resolvePathAccessPath(args.path, {
       env,
@@ -72,14 +72,14 @@ export class EditTool implements IEditTool {
           homeDir: env.homeDir,
         }),
       execute: async () => {
-        const lease = this.runtime.isAvailable(['fs'])
-          ? this.runtime.acquire(['fs'])
-          : await this.runtime.acquireWhenReady(['fs']);
+        const lease = this.environment.isAvailable(['fs'])
+          ? this.environment.acquire(['fs'])
+          : await this.environment.acquireWhenReady(['fs']);
         try {
-          if (lease.runtime.identity.generation !== inspected.identity.generation) {
-            return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
+          if (lease.environment.identity.generation !== inspected.identity.generation) {
+            return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
           }
-          return await this.execution(args, path, lease.runtime.fs!);
+          return await this.execution(args, path, lease.environment.fs!);
         } finally {
           lease.dispose();
         }
@@ -117,5 +117,5 @@ export class EditTool implements IEditTool {
 registerAgentToolService(IEditTool, EditTool, {
   name: 'Edit',
   domain: 'edit',
-  requiredRuntimeCapabilities: ['fs'],
+  requiredEnvironmentCapabilities: ['fs'],
 });

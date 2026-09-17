@@ -3,10 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Session, SuggestFilesResult } from '@moonshot-ai/kimi-code-sdk';
 
 import { remoteMentionSuggester } from '#/tui/utils/remote-mention-suggest';
-import type { RuntimeSlotState } from '#/tui/types';
+import type { EnvironmentSlotState } from '#/tui/types';
 
-const REMOTE: RuntimeSlotState = { runtimeId: 'dev-box', type: 'ssh', status: 'ready' };
-const LOCAL: RuntimeSlotState = { runtimeId: 'local', type: 'local', status: 'ready' };
+const REMOTE: EnvironmentSlotState = { environmentId: 'dev-box', type: 'ssh', status: 'ready' };
+const LOCAL: EnvironmentSlotState = { environmentId: 'local', type: 'local', status: 'ready' };
 
 function makeSession(result: SuggestFilesResult | undefined, options: { fail?: boolean } = {}) {
   const suggestFiles = vi.fn(async () => {

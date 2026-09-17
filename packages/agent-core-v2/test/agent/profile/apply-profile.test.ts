@@ -7,8 +7,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Emitter, Event } from '#/_base/event';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import type { Runtime, RuntimeCapability, RuntimeStatus } from '#/runtime/runtime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import type { Environment, EnvironmentCapability, EnvironmentStatus } from '#/environment/environment';
 import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSystemPrompt } from '#/app/plugin/types';
@@ -171,8 +171,8 @@ describe('AgentProfileService.applyProfile', () => {
       const fs = new HostFileSystem();
       const { profile: svc } = buildContext(
         agentService(
-          IAgentRuntimeService,
-          mappedRuntimeService(fs, homeDir, (path) => mapping.get(path) ?? path),
+          IAgentEnvironmentService,
+          mappedEnvironmentService(fs, homeDir, (path) => mapping.get(path) ?? path),
         ),
       );
 
@@ -195,7 +195,7 @@ describe('AgentProfileService.applyProfile', () => {
   it('skips the directory listing when the bound runtime has no fs capability', async () => {
     const fs = new HostFileSystem();
     const { profile: svc } = buildContext(
-      agentService(IAgentRuntimeService, mappedRuntimeService(fs, homeDir, (path) => path, [])),
+      agentService(IAgentEnvironmentService, mappedEnvironmentService(fs, homeDir, (path) => path, [])),
     );
 
     await svc.applyProfile(exactProfile);
@@ -496,16 +496,16 @@ function exactSystemPrompt(workDir: string, agentsMd: string): string {
   ].join('\n');
 }
 
-function mappedRuntimeService(
+function mappedEnvironmentService(
   fs: HostFileSystem,
   homeDir: string,
   map: (path: string) => string,
-  capabilities: readonly RuntimeCapability[] = ['fs'],
-): IAgentRuntimeService {
-  const runtime: Runtime = {
-    identity: { workspaceId: 'workspace-1', runtimeId: 'mapped', generation: 'g1' },
+  capabilities: readonly EnvironmentCapability[] = ['fs'],
+): IAgentEnvironmentService {
+  const runtime: Environment = {
+    identity: { workspaceId: 'workspace-1', environmentId: 'mapped', generation: 'g1' },
     capabilities: new Set(capabilities),
-    environment: {
+    host: {
       osKind: 'Linux',
       osArch: 'x64',
       osVersion: 'test',
@@ -532,7 +532,7 @@ function mappedRuntimeService(
     },
     fs,
     status: 'ready',
-    onDidChangeStatus: Event.None as Event<RuntimeStatus>,
+    onDidChangeStatus: Event.None as Event<EnvironmentStatus>,
     dispose: () => {},
   };
   return {
@@ -542,12 +542,12 @@ function mappedRuntimeService(
       required.every((capability) => runtime.capabilities.has(capability)),
     inspect: () => runtime,
     acquire: () => ({
-      runtime,
+      environment: runtime,
       track: <T,>(resource: T): T => resource,
       dispose: () => {},
     }),
     acquireWhenReady: async () => ({
-      runtime,
+      environment: runtime,
       track: <T,>(resource: T): T => resource,
       dispose: () => {},
     }),

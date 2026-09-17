@@ -53,6 +53,8 @@
 //     agentsMdReminder.seeded                         src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     contextMemory                                   src/agent/contextMemory/contextOps.ts
 //     contextProjector.lastRepairSignature            src/agent/contextProjector/contextProjectorService.ts
+//     environment.binding                             src/agent/environmentBinding/environmentBindingService.ts
+//     environmentBinding                              src/agent/environmentBinding/environmentBindingOps.ts
 //     externalHooks.stopHookContinuationUsed          src/features/externalHooks/agent/agentExternalHooksService.ts
 //     fileHistory                                     src/features/fileHistory/fileHistoryOps.ts
 //     fullCompaction                                  src/agent/fullCompaction/compactionOps.ts
@@ -91,8 +93,6 @@
 //     profile.emittedPluginBudgetWarnings             src/agent/profile/profileService.ts
 //     profile.emittedThinkingEffortWarnings           src/agent/profile/profileService.ts
 //     profile.emittedToolPatternWarnings              src/agent/profile/profileService.ts
-//     runtime.binding                                 src/agent/runtimeBinding/runtimeBindingService.ts
-//     runtimeBinding                                  src/agent/runtimeBinding/runtimeBindingOps.ts
 //     shellCommand.tasks                              src/agent/shellCommand/shellCommandService.ts
 //     swarm                                           src/features/swarm/swarmOps.ts
 //     task                                            src/agent/task/taskOps.ts
@@ -924,6 +924,19 @@ export interface AgentStateSnapshot {
   })[];
   // src/agent/contextProjector/contextProjectorService.ts
   'contextProjector.lastRepairSignature': string | null;
+  // src/agent/environmentBinding/environmentBindingOps.ts
+  // replayable · durable — folds: EnvironmentSetBinding
+  'environmentBinding': /* EnvironmentBinding — packages/agent-core-v2/src/environment/environment.ts */ {
+    readonly workspaceId: string;
+    readonly environmentId: string;
+    readonly cwd?: string;
+  } | undefined;
+  // src/agent/environmentBinding/environmentBindingService.ts
+  'environment.binding': /* EnvironmentBinding — packages/agent-core-v2/src/environment/environment.ts */ {
+    readonly workspaceId: string;
+    readonly environmentId: string;
+    readonly cwd?: string;
+  };
   // src/agent/fullCompaction/compactionOps.ts
   // replayable · durable — folds: FullCompactionBegin, FullCompactionCancel, FullCompactionComplete
   'fullCompaction': /* CompactionState — packages/agent-core-v2/src/agent/fullCompaction/compactionOps.ts */ {
@@ -1096,19 +1109,6 @@ export interface AgentStateSnapshot {
   'profile.emittedPluginBudgetWarnings': Set<string>;
   'profile.emittedThinkingEffortWarnings': Set<string>;
   'profile.emittedToolPatternWarnings': Set<string>;
-  // src/agent/runtimeBinding/runtimeBindingOps.ts
-  // replayable · durable — folds: RuntimeSetBinding
-  'runtimeBinding': /* RuntimeBinding — packages/agent-core-v2/src/runtime/runtime.ts */ {
-    readonly workspaceId: string;
-    readonly runtimeId: string;
-    readonly cwd?: string;
-  } | undefined;
-  // src/agent/runtimeBinding/runtimeBindingService.ts
-  'runtime.binding': /* RuntimeBinding — packages/agent-core-v2/src/runtime/runtime.ts */ {
-    readonly workspaceId: string;
-    readonly runtimeId: string;
-    readonly cwd?: string;
-  };
   // src/agent/shellCommand/shellCommandService.ts
   'shellCommand.tasks': Map<string, string>;
   // src/agent/task/taskOps.ts
@@ -1127,6 +1127,7 @@ export interface AgentStateSnapshot {
     readonly terminalNotificationSuppressed?: boolean;
     readonly resumeReminded?: boolean;
     readonly timeoutMs?: number;
+    readonly outputSpillDir?: string;
   } | /* SubagentTaskInfo — packages/agent-core-v2/src/agent/tools/agent/subagent-task.ts */ {
     readonly kind: 'agent';
     readonly agentId?: string;
@@ -1145,6 +1146,7 @@ export interface AgentStateSnapshot {
     readonly terminalNotificationSuppressed?: boolean;
     readonly resumeReminded?: boolean;
     readonly timeoutMs?: number;
+    readonly outputSpillDir?: string;
   } | /* ProcessTaskInfo — packages/agent-core-v2/src/agent/tools/os/bash/process-task.ts */ {
     readonly kind: 'process';
     readonly command: string;
@@ -1161,6 +1163,7 @@ export interface AgentStateSnapshot {
     readonly terminalNotificationSuppressed?: boolean;
     readonly resumeReminded?: boolean;
     readonly timeoutMs?: number;
+    readonly outputSpillDir?: string;
   }>;
   // src/agent/task/taskService.ts
   'task.activeTaskReminderPending': boolean;
@@ -1179,6 +1182,7 @@ export interface AgentStateSnapshot {
     readonly terminalNotificationSuppressed?: boolean;
     readonly resumeReminded?: boolean;
     readonly timeoutMs?: number;
+    readonly outputSpillDir?: string;
   } | /* SubagentTaskInfo — packages/agent-core-v2/src/agent/tools/agent/subagent-task.ts */ {
     readonly kind: 'agent';
     readonly agentId?: string;
@@ -1197,6 +1201,7 @@ export interface AgentStateSnapshot {
     readonly terminalNotificationSuppressed?: boolean;
     readonly resumeReminded?: boolean;
     readonly timeoutMs?: number;
+    readonly outputSpillDir?: string;
   } | /* ProcessTaskInfo — packages/agent-core-v2/src/agent/tools/os/bash/process-task.ts */ {
     readonly kind: 'process';
     readonly command: string;
@@ -1213,6 +1218,7 @@ export interface AgentStateSnapshot {
     readonly terminalNotificationSuppressed?: boolean;
     readonly resumeReminded?: boolean;
     readonly timeoutMs?: number;
+    readonly outputSpillDir?: string;
   }>;
   // replayable · durable · undoable — folds: ContextAppendMessage, TaskWaitDelivered
   'task.notificationDelivery': readonly string[];

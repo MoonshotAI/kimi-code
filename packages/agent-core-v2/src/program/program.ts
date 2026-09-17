@@ -2,9 +2,9 @@ import { Emitter, Event } from '#/_base/event';
 import { UserFileSkillSource } from '#/features/skill/catalog/userFileSkillSource';
 import { GitService } from '#/app/git/gitService';
 import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
-import type { Runtime, RuntimeBinding, RuntimeLease, RuntimeWorkspaceRoots } from '#/runtime/runtime';
-import { LOCAL_RUNTIME_ID } from '#/runtime/runtime';
-import { RuntimeError, type RuntimeGenerationSnapshot, type RuntimeRegistry, type RuntimeRegistryChange } from '#/runtime/runtimeRegistry';
+import type { Environment, EnvironmentBinding, EnvironmentLease, EnvironmentWorkspaceRoots } from '#/environment/environment';
+import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
+import { EnvironmentError, type EnvironmentGenerationSnapshot, type EnvironmentRegistry, type EnvironmentRegistryChange } from '#/environment/environmentRegistry';
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import type { IWorkspaceStateService } from '#/workspace/state/workspaceState';
@@ -37,10 +37,10 @@ import { ExplicitFileSkillSource } from '#/features/skill/workspace/explicitFile
 import { ExtraFileSkillSource } from '#/features/skill/workspace/extraFileSkillSource';
 import { PluginSkillSource } from '#/features/skill/workspace/pluginSkillSource';
 import { WorkspaceRootSkillSource } from '#/features/skill/workspace/rootFileSkillSource';
-import { RuntimeSkillDiscovery } from '#/features/skill/workspace/runtimeSkillDiscovery';
+import { EnvironmentSkillDiscovery } from '#/features/skill/workspace/environmentSkillDiscovery';
 import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
 import { WorkspaceSkillCatalogService } from '#/features/skill/workspace/workspaceSkillCatalogService';
-import type { IRuntimeResolver, IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import type { IEnvironmentResolver, IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
 import type { ProgramDependencies } from './programDependencies';
 
@@ -73,19 +73,19 @@ export interface ProgramSourceProvenanceSnapshot {
 
 export interface ProgramSnapshot {
   readonly workspaceId: string;
-  readonly binding: RuntimeBinding;
+  readonly binding: EnvironmentBinding;
   readonly status: ProgramStatus;
   readonly ready: boolean;
   readonly generation?: string;
   readonly trusted?: boolean;
   readonly catalog: ProgramCatalogSnapshot;
   readonly sources: ProgramSourceProvenanceSnapshot;
-  readonly runtimes: readonly RuntimeGenerationSnapshot[];
+  readonly environments: readonly EnvironmentGenerationSnapshot[];
 }
 
 interface ProgramGeneration {
   readonly id: string;
-  readonly lease: RuntimeLease;
+  readonly lease: EnvironmentLease;
   readonly state: IWorkspaceStateService;
   readonly dirs: IWorkspaceDirs;
   readonly fs: IWorkspaceFsService;
@@ -110,12 +110,12 @@ interface ProgramGeneration {
 const PROGRAM_CAPABILITIES = ['fs', 'process'] as const;
 
 export class Program {
-  readonly binding: RuntimeBinding;
+  readonly binding: EnvironmentBinding;
   private currentStatus: ProgramStatus = 'preparing';
   private readonly changeEmitter = new Emitter<ProgramSnapshot>();
   readonly onDidChange: Event<ProgramSnapshot> = this.changeEmitter.event;
   private readonly registrySubscription;
-  private readonly resolver: IRuntimeResolver;
+  private readonly resolver: IEnvironmentResolver;
   private readonly generations = new Map<string, ProgramGeneration>();
   private readonly failedGenerations = new Set<string>();
   private readonly reconciledGenerations = new Set<string>();
@@ -125,46 +125,46 @@ export class Program {
 
   constructor(
     readonly workspaceId: string,
-    private readonly runtimes: RuntimeRegistry,
+    private readonly environments: EnvironmentRegistry,
     private readonly context: IWorkspaceContext,
     private readonly dependencies: ProgramDependencies,
   ) {
-    this.binding = Object.freeze({ workspaceId, runtimeId: LOCAL_RUNTIME_ID });
+    this.binding = Object.freeze({ workspaceId, environmentId: LOCAL_ENVIRONMENT_ID });
     this.resolver = {
       _serviceBrand: undefined,
-      inspect: (binding) => this.runtimes.inspect(binding),
-      acquire: (binding, required) => this.runtimes.acquire(binding, required),
-      acquireWhenReady: (binding, required) => this.runtimes.acquireWhenReady(binding, required),
+      inspect: (binding) => this.environments.inspect(binding),
+      acquire: (binding, required) => this.environments.acquire(binding, required),
+      acquireWhenReady: (binding, required) => this.environments.acquireWhenReady(binding, required),
     };
-    this.registrySubscription = runtimes.onDidChange((change) => this.onRuntimeChange(change));
-    this.reconcileGeneration(LOCAL_RUNTIME_ID);
+    this.registrySubscription = environments.onDidChange((change) => this.onEnvironmentChange(change));
+    this.reconcileGeneration(LOCAL_ENVIRONMENT_ID);
   }
 
   get status(): ProgramStatus { return this.currentStatus; }
-  get state(): IWorkspaceStateService { return this.requireGeneration(LOCAL_RUNTIME_ID).state; }
-  get dirs(): IWorkspaceDirs { return this.requireGeneration(LOCAL_RUNTIME_ID).dirs; }
-  get fs(): IWorkspaceFsService { return this.requireGeneration(LOCAL_RUNTIME_ID).fs; }
-  get git(): IWorkspaceGitService { return this.requireGeneration(LOCAL_RUNTIME_ID).git; }
-  get instructions(): IWorkspaceInstructionsService { return this.requireGeneration(LOCAL_RUNTIME_ID).instructions; }
-  get mcpConfig(): IWorkspaceMcpConfigService { return this.requireGeneration(LOCAL_RUNTIME_ID).mcpConfig; }
-  get mcp(): IWorkspaceMcpService { return this.requireGeneration(LOCAL_RUNTIME_ID).mcp; }
-  get trust(): IWorkspaceTrust { return this.requireGeneration(LOCAL_RUNTIME_ID).trust; }
-  get skills(): IWorkspaceSkillCatalog { return this.requireGeneration(LOCAL_RUNTIME_ID).skills; }
-  get agentProfiles(): IWorkspaceAgentProfileLoader { return this.requireGeneration(LOCAL_RUNTIME_ID).agentProfiles; }
-  get sessionControllerGeneration(): string { return this.sessionControllerGenerationFor(LOCAL_RUNTIME_ID); }
+  get state(): IWorkspaceStateService { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).state; }
+  get dirs(): IWorkspaceDirs { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).dirs; }
+  get fs(): IWorkspaceFsService { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).fs; }
+  get git(): IWorkspaceGitService { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).git; }
+  get instructions(): IWorkspaceInstructionsService { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).instructions; }
+  get mcpConfig(): IWorkspaceMcpConfigService { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).mcpConfig; }
+  get mcp(): IWorkspaceMcpService { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).mcp; }
+  get trust(): IWorkspaceTrust { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).trust; }
+  get skills(): IWorkspaceSkillCatalog { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).skills; }
+  get agentProfiles(): IWorkspaceAgentProfileLoader { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).agentProfiles; }
+  get sessionControllerGeneration(): string { return this.sessionControllerGenerationFor(LOCAL_ENVIRONMENT_ID); }
 
-  sessionControllerGenerationFor(runtimeId: string): string {
-    return this.requireGeneration(runtimeId).id;
+  sessionControllerGenerationFor(environmentId: string): string {
+    return this.requireGeneration(environmentId).id;
   }
 
   async suggestFiles(
-    runtimeId: string,
-    roots: RuntimeWorkspaceRoots,
+    environmentId: string,
+    roots: EnvironmentWorkspaceRoots,
     request: FsSuggestRequest,
   ): Promise<FsSuggestResponse> {
-    const lease = this.resolver.acquire({ workspaceId: this.workspaceId, runtimeId }, ['fs']);
+    const lease = this.resolver.acquire({ workspaceId: this.workspaceId, environmentId }, ['fs']);
     try {
-      const mapped = lease.runtime.workspace.mapRoots(roots);
+      const mapped = lease.environment.workspace.mapRoots(roots);
       const context: IWorkspaceContext = { ...this.context, cwd: mapped.workDir };
       const dirs = {
         _serviceBrand: undefined,
@@ -182,11 +182,11 @@ export class Program {
       const fs = new WorkspaceFsService(
         context,
         dirs,
-        lease.runtime.fs!,
+        lease.environment.fs!,
         this.resolver,
         this.dependencies.telemetry,
         new WorkspaceGitService(context, this.dependencies.git),
-        runtimeId,
+        environmentId,
       );
       return await fs.suggest(request);
     } finally {
@@ -194,8 +194,8 @@ export class Program {
     }
   }
 
-  createSessionController(runtimeId: string = LOCAL_RUNTIME_ID): SessionLifecycleService {
-    const generation = this.requireGeneration(runtimeId);
+  createSessionController(environmentId: string = LOCAL_ENVIRONMENT_ID): SessionLifecycleService {
+    const generation = this.requireGeneration(environmentId);
     generation.references += 1;
     let released = false;
     const release = (): void => {
@@ -204,7 +204,7 @@ export class Program {
       this.releaseGeneration(generation);
     };
     try {
-      const runtime = generation.lease.runtime;
+      const runtime = generation.lease.environment;
       return this.dependencies.createSessionController({
         context: this.context,
         fs: runtime.fs!,
@@ -226,7 +226,7 @@ export class Program {
   }
 
   snapshot(): ProgramSnapshot {
-    const generation = this.generations.get(LOCAL_RUNTIME_ID);
+    const generation = this.generations.get(LOCAL_ENVIRONMENT_ID);
     const skills = generation?.skills.catalog.listSkills() ?? [];
     const skillsBySource = new Map<string, number>();
     for (const skill of skills) {
@@ -263,7 +263,7 @@ export class Program {
         instructionPaths: generation?.instructions.snapshot.agentsMdPaths ?? [],
         mcpServers,
       },
-      runtimes: this.runtimes.snapshot().runtimes,
+      environments: this.environments.snapshot().environments,
     };
   }
 
@@ -277,45 +277,45 @@ export class Program {
     this.changeEmitter.dispose();
   }
 
-  private requireGeneration(runtimeId: string): ProgramGeneration {
-    let generation = this.generations.get(runtimeId);
-    if (generation === undefined && !this.reconciledGenerations.has(runtimeId)) {
-      this.reconcileGeneration(runtimeId);
-      generation = this.generations.get(runtimeId);
+  private requireGeneration(environmentId: string): ProgramGeneration {
+    let generation = this.generations.get(environmentId);
+    if (generation === undefined && !this.reconciledGenerations.has(environmentId)) {
+      this.reconcileGeneration(environmentId);
+      generation = this.generations.get(environmentId);
     }
     if (generation === undefined) {
-      throw new Error(`program ${this.workspaceId} has no available generation for runtime ${runtimeId}`);
+      throw new Error(`program ${this.workspaceId} has no available generation for runtime ${environmentId}`);
     }
     return generation;
   }
 
-  private onRuntimeChange(change: RuntimeRegistryChange): void {
+  private onEnvironmentChange(change: EnvironmentRegistryChange): void {
     if (this.disposed) return;
-    if (change.runtimeId !== LOCAL_RUNTIME_ID && !this.reconciledGenerations.has(change.runtimeId)) return;
-    this.reconcileGeneration(change.runtimeId);
+    if (change.environmentId !== LOCAL_ENVIRONMENT_ID && !this.reconciledGenerations.has(change.environmentId)) return;
+    this.reconcileGeneration(change.environmentId);
   }
 
-  private reconcileGeneration(runtimeId: string): void {
-    this.reconciledGenerations.add(runtimeId);
-    const current = this.runtimes.current(runtimeId);
+  private reconcileGeneration(environmentId: string): void {
+    this.reconciledGenerations.add(environmentId);
+    const current = this.environments.current(environmentId);
     if (current === undefined) {
-      const previous = this.generations.get(runtimeId);
-      this.generations.delete(runtimeId);
+      const previous = this.generations.get(environmentId);
+      this.generations.delete(environmentId);
       if (previous !== undefined) this.retireGeneration(previous);
       this.refresh();
       return;
     }
-    if (this.generations.get(runtimeId)?.id !== current.identity.generation) {
-      const previous = this.generations.get(runtimeId);
-      this.failedGenerations.delete(runtimeId);
+    if (this.generations.get(environmentId)?.id !== current.identity.generation) {
+      const previous = this.generations.get(environmentId);
+      this.failedGenerations.delete(environmentId);
       try {
-        const next = this.createGeneration(runtimeId);
-        this.generations.set(runtimeId, next);
+        const next = this.createGeneration(environmentId);
+        this.generations.set(environmentId, next);
         if (previous !== undefined) this.retireGeneration(previous);
         this.observeReadiness(next);
       } catch (error) {
-        if (!(error instanceof RuntimeError && error.code === 'runtime.unavailable')) {
-          this.failedGenerations.add(runtimeId);
+        if (!(error instanceof EnvironmentError && error.code === 'environment.unavailable')) {
+          this.failedGenerations.add(environmentId);
           this.resolveProgramReady();
         }
       }
@@ -323,43 +323,43 @@ export class Program {
     this.refresh();
   }
 
-  private createGeneration(runtimeId: string): ProgramGeneration {
-    const lease = this.resolver.acquire({ workspaceId: this.workspaceId, runtimeId }, PROGRAM_CAPABILITIES);
-    const runtime = lease.runtime;
+  private createGeneration(environmentId: string): ProgramGeneration {
+    const lease = this.resolver.acquire({ workspaceId: this.workspaceId, environmentId }, PROGRAM_CAPABILITIES);
+    const runtime = lease.environment;
     const disposables: { dispose(): void | Promise<void> }[] = [];
     const own = <T extends { dispose(): void | Promise<void> }>(value: T): T => {
       disposables.push(value);
       return value;
     };
     try {
-      const localRuntime = this.runtimes.current(LOCAL_RUNTIME_ID);
-      if (localRuntime?.fs === undefined) {
-        throw new Error(`program ${this.workspaceId} has no local runtime fs`);
+      const localEnvironment = this.environments.current(LOCAL_ENVIRONMENT_ID);
+      if (localEnvironment?.fs === undefined) {
+        throw new Error(`program ${this.workspaceId} has no local environment fs`);
       }
-      const localFs = localRuntime.fs;
+      const localFs = localEnvironment.fs;
       const targetFs = runtime.fs!;
       const root = runtime.identity.cwd ?? this.context.cwd;
       const context: IWorkspaceContext = root === this.context.cwd ? this.context : { ...this.context, cwd: root };
       const state = own(new WorkspaceStateService(this.dependencies.appState));
       const localConfig = new FileProjectLocalConfigService(this.dependencies.bootstrap, targetFs);
       const dirs = own(new WorkspaceDirsService(context, localConfig, this.dependencies.log, state));
-      const git = runtimeId === LOCAL_RUNTIME_ID
+      const git = environmentId === LOCAL_ENVIRONMENT_ID
         ? new WorkspaceGitService(this.context, this.dependencies.git)
         : new WorkspaceGitService(context, {
             current: new GitService(
               {
                 _serviceBrand: undefined,
-                inspect: () => this.resolver.inspect({ workspaceId: this.workspaceId, runtimeId }),
-                acquire: (_binding, required) => this.resolver.acquire({ workspaceId: this.workspaceId, runtimeId }, required),
-                acquireWhenReady: (_binding, required) => this.resolver.acquireWhenReady({ workspaceId: this.workspaceId, runtimeId }, required),
+                inspect: () => this.resolver.inspect({ workspaceId: this.workspaceId, environmentId }),
+                acquire: (_binding, required) => this.resolver.acquire({ workspaceId: this.workspaceId, environmentId }, required),
+                acquireWhenReady: (_binding, required) => this.resolver.acquireWhenReady({ workspaceId: this.workspaceId, environmentId }, required),
               },
               { findByRoot: () => ({ id: this.workspaceId }) } as unknown as IWorkspaceInstanceManager,
               targetFs,
             ),
             onDidChange: Event.None as Event<void>,
           });
-      const fs = new WorkspaceFsService(context, dirs, targetFs, this.resolver, this.dependencies.telemetry, git, runtimeId);
-      const instructions = own(new WorkspaceInstructionsService(context, workspaceRoutingFs(root, targetFs, localFs), localRuntime.environment, this.dependencies.bootstrap, this.dependencies.log, state));
+      const fs = new WorkspaceFsService(context, dirs, targetFs, this.resolver, this.dependencies.telemetry, git, environmentId);
+      const instructions = own(new WorkspaceInstructionsService(context, workspaceRoutingFs(root, targetFs, localFs), localEnvironment.host, this.dependencies.bootstrap, this.dependencies.log, state));
       const trust = own(new WorkspaceTrustService(this.context, this.dependencies.docs, state, this.dependencies.telemetry));
       const mcpConfig = own(new WorkspaceMcpConfigService(this.context, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, localFs, trust, this.dependencies.configStore));
       const mcp = own(new WorkspaceMcpService(this.context, this.resolver, mcpConfig, this.dependencies.oauth, this.dependencies.log, this.dependencies.telemetry, this.dependencies.identity, this.dependencies.sessionManager));
@@ -368,8 +368,8 @@ export class Program {
       const explicitAgentProfiles = own(new ExplicitAgentProfileLoaderService(this.context, this.dependencies.bootstrap, localFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
       const extraAgentProfiles = own(new ExtraAgentProfileLoaderService(this.dependencies.config, this.context, this.dependencies.bootstrap, localFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
       const agentProfiles = own(new WorkspaceAgentProfileLoaderService(context, targetFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
-      const localSkillDiscovery = new RuntimeSkillDiscovery(this.dependencies.log, localFs);
-      const targetSkillDiscovery = new RuntimeSkillDiscovery(this.dependencies.log, targetFs);
+      const localSkillDiscovery = new EnvironmentSkillDiscovery(this.dependencies.log, localFs);
+      const targetSkillDiscovery = new EnvironmentSkillDiscovery(this.dependencies.log, targetFs);
       const userSkills = own(new UserFileSkillSource(localSkillDiscovery, this.dependencies.bootstrap, this.dependencies.config));
       const explicitSkills = new ExplicitFileSkillSource(localSkillDiscovery, this.context, this.dependencies.bootstrap, localFs);
       const extraSkills = own(new ExtraFileSkillSource(localSkillDiscovery, this.dependencies.config, this.context, this.dependencies.bootstrap, localFs));
@@ -416,13 +416,13 @@ export class Program {
       readiness(generation.agentProfiles),
     ]).then(
       () => {
-        if (this.generations.get(generation.lease.runtime.identity.runtimeId) !== generation) return;
+        if (this.generations.get(generation.lease.environment.identity.environmentId) !== generation) return;
         generation.ready = true;
         this.resolveProgramReady();
         this.refresh();
       },
       () => {
-        if (this.generations.get(generation.lease.runtime.identity.runtimeId) !== generation) return;
+        if (this.generations.get(generation.lease.environment.identity.environmentId) !== generation) return;
         generation.failed = true;
         this.resolveProgramReady();
         this.refresh();
@@ -449,21 +449,21 @@ export class Program {
   }
 
   private refresh(): void {
-    const local = this.runtimes.current(LOCAL_RUNTIME_ID);
-    const generation = this.generations.get(LOCAL_RUNTIME_ID);
+    const local = this.environments.current(LOCAL_ENVIRONMENT_ID);
+    const generation = this.generations.get(LOCAL_ENVIRONMENT_ID);
     if (local === undefined || local.status === 'connecting') this.currentStatus = 'preparing';
-    else if (this.failedGenerations.has(LOCAL_RUNTIME_ID) || generation?.failed === true) this.currentStatus = 'degraded';
+    else if (this.failedGenerations.has(LOCAL_ENVIRONMENT_ID) || generation?.failed === true) this.currentStatus = 'degraded';
     else if (generation?.ready !== true) this.currentStatus = generation === undefined && local.status !== 'ready' ? 'degraded' : 'preparing';
     else this.currentStatus = local.status === 'ready' ? 'ready' : 'degraded';
     this.changeEmitter.fire(this.snapshot());
   }
 }
 
-function workspaceRoutingFs(root: string, workspaceFs: NonNullable<Runtime['fs']>, localFs: NonNullable<Runtime['fs']>): NonNullable<Runtime['fs']> {
+function workspaceRoutingFs(root: string, workspaceFs: NonNullable<Environment['fs']>, localFs: NonNullable<Environment['fs']>): NonNullable<Environment['fs']> {
   const base = root.length > 1 && root.endsWith('/') ? root.slice(0, -1) : root;
   const onTarget = (path: string): boolean =>
     base === '/' || path === base || path.startsWith(`${base}/`) || base.startsWith(path.endsWith('/') ? path : `${path}/`);
-  const route = (path: string): NonNullable<Runtime['fs']> => (onTarget(path) ? workspaceFs : localFs);
+  const route = (path: string): NonNullable<Environment['fs']> => (onTarget(path) ? workspaceFs : localFs);
   return {
     _serviceBrand: undefined,
     readText: (path, options) => route(path).readText(path, options),

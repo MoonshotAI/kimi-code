@@ -28,25 +28,25 @@ import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStor
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { Error2, ErrorCodes } from '#/errors';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import { LocalRuntimeProviderFactory } from '#/runtime/localRuntime';
+import { LocalEnvironmentProviderFactory } from '#/environment/localEnvironment';
 import { canonicalWorkspaceRoot } from '#/_base/utils/paths';
-import type { Runtime, RuntimeBinding, RuntimeCapability, RuntimeLease } from '#/runtime/runtime';
-import { LOCAL_RUNTIME_ID } from '#/runtime/runtime';
-import { RuntimeError, RuntimeRegistry } from '#/runtime/runtimeRegistry';
-import type { RuntimeProviderFactory } from '#/runtime/runtimeProvider';
-import { SharedRuntimeUnitHostFactory, type RuntimeUnitHandle, type RuntimeUnitHostFactory } from '#/runtime/runtimeUnitHost';
+import type { Environment, EnvironmentBinding, EnvironmentCapability, EnvironmentLease } from '#/environment/environment';
+import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
+import { EnvironmentError, EnvironmentRegistry } from '#/environment/environmentRegistry';
+import type { EnvironmentProviderFactory } from '#/environment/environmentProvider';
+import { SharedEnvironmentUnitHostFactory, type EnvironmentUnitHandle, type EnvironmentUnitHostFactory } from '#/environment/environmentUnitHost';
 import { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 
 import { WorkspaceInstance } from './workspaceInstance';
-import { IRuntimeResolver, IWorkspaceInstanceManager, type WorkspaceInstanceRef } from './workspaceInstanceManager';
+import { IEnvironmentResolver, IWorkspaceInstanceManager, type WorkspaceInstanceRef } from './workspaceInstanceManager';
 
 export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
   declare readonly _serviceBrand: undefined;
   private readonly instances = new Map<string, WorkspaceInstance>();
   private readonly requests = new Map<string, Promise<WorkspaceInstance>>();
   private readonly inflight = new Map<string, Promise<WorkspaceInstance>>();
-  private readonly providers = new Map<string, RuntimeProviderFactory>();
-  private readonly attachments = new Map<string, Map<string, RuntimeUnitHandle>>();
+  private readonly providers = new Map<string, EnvironmentProviderFactory>();
+  private readonly attachments = new Map<string, Map<string, EnvironmentUnitHandle>>();
   private readonly changeEmitter = new Emitter<{ workspaceId: string; instance?: WorkspaceInstance }>();
   readonly onDidChange = this.changeEmitter.event;
 
@@ -77,9 +77,9 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
-    private readonly unitHostFactory: RuntimeUnitHostFactory = new SharedRuntimeUnitHostFactory(),
+    private readonly unitHostFactory: EnvironmentUnitHostFactory = new SharedEnvironmentUnitHostFactory(),
   ) {
-    const localProvider = new LocalRuntimeProviderFactory();
+    const localProvider = new LocalEnvironmentProviderFactory();
     this.providers.set(localProvider.id, localProvider);
   }
 
@@ -160,7 +160,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     this.changeEmitter.fire({ workspaceId });
   }
 
-  async addProvider(factory: RuntimeProviderFactory): Promise<{ dispose(): Promise<void> }> {
+  async addProvider(factory: EnvironmentProviderFactory): Promise<{ dispose(): Promise<void> }> {
     if (this.providers.has(factory.id)) throw new Error(`runtime provider ${factory.id} already exists`);
     this.providers.set(factory.id, factory);
     const attached: WorkspaceInstance[] = [];
@@ -188,11 +188,11 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
 
   private async materialize(workspace: Workspace): Promise<WorkspaceInstance> {
     await this.environment.ready;
-    const runtimes = new RuntimeRegistry(workspace.id);
-    const unitHost = this.unitHostFactory.create(this.instantiation, runtimes);
+    const environments = new EnvironmentRegistry(workspace.id);
+    const unitHost = this.unitHostFactory.create(this.instantiation, environments);
     const instance = new WorkspaceInstance(
       workspace,
-      runtimes,
+      environments,
       unitHost,
       {
         _serviceBrand: undefined,
@@ -250,7 +250,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     );
     try {
       for (const provider of this.providers.values()) await this.attach(instance, provider);
-      if (instance.runtimes.current(LOCAL_RUNTIME_ID) === undefined) throw new Error(`workspace ${workspace.id} has no local runtime`);
+      if (instance.environments.current(LOCAL_ENVIRONMENT_ID) === undefined) throw new Error(`workspace ${workspace.id} has no local environment`);
       instance.activate();
       this.instances.set(workspace.id, instance);
       this.changeEmitter.fire({ workspaceId: workspace.id, instance });
@@ -266,7 +266,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     }
   }
 
-  private async attach(instance: WorkspaceInstance, provider: RuntimeProviderFactory): Promise<void> {
+  private async attach(instance: WorkspaceInstance, provider: EnvironmentProviderFactory): Promise<void> {
     const existing = this.attachments.get(instance.id);
     if (existing?.has(provider.id) === true) throw new Error(`runtime provider ${provider.id} is already attached to workspace ${instance.id}`);
     const attachment = await instance.unitHost.provide(provider.imports, (host) => provider.attach({
@@ -292,31 +292,31 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
   }
 }
 
-export class RuntimeResolver implements IRuntimeResolver {
+export class EnvironmentResolver implements IEnvironmentResolver {
   declare readonly _serviceBrand: undefined;
   constructor(@IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager) {}
-  inspect(binding: RuntimeBinding): Runtime {
+  inspect(binding: EnvironmentBinding): Environment {
     const workspace = this.workspaces.get(binding.workspaceId);
     if (workspace === undefined) {
-      throw new RuntimeError('runtime.not_found', `workspace ${binding.workspaceId} is not materialized`);
+      throw new EnvironmentError('environment.not_found', `workspace ${binding.workspaceId} is not materialized`);
     }
-    return workspace.runtimes.inspect(binding);
+    return workspace.environments.inspect(binding);
   }
-  acquire(binding: RuntimeBinding, required: readonly RuntimeCapability[] = []): RuntimeLease {
+  acquire(binding: EnvironmentBinding, required: readonly EnvironmentCapability[] = []): EnvironmentLease {
     const workspace = this.workspaces.get(binding.workspaceId);
     if (workspace === undefined) {
-      throw new RuntimeError('runtime.not_found', `workspace ${binding.workspaceId} is not materialized`);
+      throw new EnvironmentError('environment.not_found', `workspace ${binding.workspaceId} is not materialized`);
     }
-    return workspace.runtimes.acquire(binding, required);
+    return workspace.environments.acquire(binding, required);
   }
-  async acquireWhenReady(binding: RuntimeBinding, required: readonly RuntimeCapability[] = []): Promise<RuntimeLease> {
+  async acquireWhenReady(binding: EnvironmentBinding, required: readonly EnvironmentCapability[] = []): Promise<EnvironmentLease> {
     const workspace = this.workspaces.get(binding.workspaceId);
     if (workspace === undefined) {
-      throw new RuntimeError('runtime.not_found', `workspace ${binding.workspaceId} is not materialized`);
+      throw new EnvironmentError('environment.not_found', `workspace ${binding.workspaceId} is not materialized`);
     }
-    return workspace.runtimes.acquireWhenReady(binding, required);
+    return workspace.environments.acquireWhenReady(binding, required);
   }
 }
 
 registerScopedService(LifecycleScope.App, IWorkspaceInstanceManager, WorkspaceInstanceManager, ScopeActivation.OnScopeCreated, 'workspaceInstanceManager');
-registerScopedService(LifecycleScope.App, IRuntimeResolver, RuntimeResolver, ScopeActivation.OnScopeCreated, 'runtimeResolver');
+registerScopedService(LifecycleScope.App, IEnvironmentResolver, EnvironmentResolver, ScopeActivation.OnScopeCreated, 'environmentResolver');

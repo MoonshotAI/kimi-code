@@ -14,8 +14,8 @@ import {
 } from '#/_base/errors/unexpectedError';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import type { Runtime } from '#/runtime/runtime';
+import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import type { Environment } from '#/environment/environment';
 import type { ITelemetryService, TelemetryProperties } from '#/app/telemetry/telemetry';
 import {
   ReadMediaFileInputSchema,
@@ -176,30 +176,30 @@ function createTestEnv(): IHostEnvironment {
   };
 }
 
-function runtimeFor(fs: IHostFileSystem, env: IHostEnvironment = createTestEnv()): IAgentRuntimeService {
+function environmentFor(fs: IHostFileSystem, env: IHostEnvironment = createTestEnv()): IAgentEnvironmentService {
   const runtime = {
-    identity: { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+    identity: { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
     capabilities: new Set(['fs'] as const),
-    environment: env,
+    host: env,
     path: posixPath,
     workspace: { mapRoots: (roots: { workDir: string; additionalDirs?: readonly string[] }) => roots },
     fs,
     status: 'ready',
     onDidChangeStatus: () => ({ dispose: () => {} }),
     dispose: () => {},
-  } as unknown as Runtime;
+  } as unknown as Environment;
   return {
     _serviceBrand: undefined,
     onDidChange: () => ({ dispose: () => {} }),
     isAvailable: (required = []) => required.every((capability) => runtime.capabilities.has(capability)),
     inspect: () => runtime,
     acquire: () => ({
-      runtime,
+      environment: runtime,
       track: (resource) => resource,
       dispose: () => {},
     }),
     acquireWhenReady: async () => ({
-      runtime,
+      environment: runtime,
       track: (resource) => resource,
       dispose: () => {},
     }),
@@ -217,7 +217,7 @@ function makeTool(
   providerType?: string,
 ): ReadMediaFileTool {
   return new ReadMediaFileTool(
-    runtimeFor(createTestFs(files)),
+    environmentFor(createTestFs(files)),
     WORKSPACE,
     caps,
     videoUploader,
@@ -421,7 +421,7 @@ describe('ReadMediaFileTool', () => {
     const fs = createTestFs({
       '/workspace/huge.png': { data: pngBuffer(), size: MAX_IMAGE_DECODE_BYTES + 1 },
     });
-    const tool = new ReadMediaFileTool(runtimeFor(fs), WORKSPACE, capabilities());
+    const tool = new ReadMediaFileTool(environmentFor(fs), WORKSPACE, capabilities());
 
     const result = await execute(tool, { path: '/workspace/huge.png' });
 
@@ -442,7 +442,7 @@ describe('ReadMediaFileTool', () => {
     const fs = createTestFs({
       '/workspace/large.png': { data: pngBuffer(), size: MAX_IMAGE_DECODE_BYTES + 1 },
     });
-    const tool = new ReadMediaFileTool(runtimeFor(fs), WORKSPACE, capabilities());
+    const tool = new ReadMediaFileTool(environmentFor(fs), WORKSPACE, capabilities());
 
     const result = await execute(tool, { path: '/workspace/large.png' });
 
@@ -455,7 +455,7 @@ describe('ReadMediaFileTool', () => {
     const fs = createTestFs({
       '/workspace/huge.png': { data: pngBuffer(), size: MAX_IMAGE_DECODE_BYTES + 1 },
     });
-    const tool = new ReadMediaFileTool(runtimeFor(fs), WORKSPACE, capabilities());
+    const tool = new ReadMediaFileTool(environmentFor(fs), WORKSPACE, capabilities());
 
     const result = await execute(tool, {
       path: '/workspace/huge.png',
@@ -541,7 +541,7 @@ describe('ReadMediaFileTool', () => {
   it('returns the existing full_resolution limit error before loading an over-budget image', async () => {
     const data = Buffer.concat([pngBuffer(), Buffer.alloc(4 * 1024 * 1024, 1)]);
     const fs = createTestFs({ '/workspace/huge.png': { data } });
-    const tool = new ReadMediaFileTool(runtimeFor(fs), WORKSPACE, capabilities());
+    const tool = new ReadMediaFileTool(environmentFor(fs), WORKSPACE, capabilities());
 
     const result = await execute(tool, {
       path: '/workspace/huge.png',
@@ -562,7 +562,7 @@ describe('ReadMediaFileTool', () => {
     const fs = createTestFs({
       '/workspace/huge.png': { data: pngBuffer(), size: MAX_IMAGE_DECODE_BYTES + 1 },
     });
-    const tool = new ReadMediaFileTool(runtimeFor(fs), WORKSPACE, capabilities());
+    const tool = new ReadMediaFileTool(environmentFor(fs), WORKSPACE, capabilities());
 
     const result = await execute(tool, {
       path: '/workspace/huge.png',
@@ -824,7 +824,7 @@ describe('registerMediaTools', () => {
   it('registers ReadMediaFile when the model supports image input', () => {
     const registry = new AgentToolRegistryService();
     const disposable = registerMediaTools(registry, {
-      runtime: runtimeFor(fs, env),
+      environment: environmentFor(fs, env),
       workspace: WORKSPACE,
       capabilities: capabilities({ image_in: true, video_in: false }),
     });
@@ -836,7 +836,7 @@ describe('registerMediaTools', () => {
   it('registers ReadMediaFile when the model supports video input', () => {
     const registry = new AgentToolRegistryService();
     registerMediaTools(registry, {
-      runtime: runtimeFor(fs, env),
+      environment: environmentFor(fs, env),
       workspace: WORKSPACE,
       capabilities: capabilities({ image_in: false, video_in: true }),
     });
@@ -846,7 +846,7 @@ describe('registerMediaTools', () => {
   it('does not register anything when the model lacks media capability', () => {
     const registry = new AgentToolRegistryService();
     const disposable = registerMediaTools(registry, {
-      runtime: runtimeFor(fs, env),
+      environment: environmentFor(fs, env),
       workspace: WORKSPACE,
       capabilities: capabilities({ image_in: false, video_in: false }),
     });
@@ -856,9 +856,9 @@ describe('registerMediaTools', () => {
 
   it('does not register when the runtime lacks filesystem availability', () => {
     const registry = new AgentToolRegistryService();
-    const availableRuntime = runtimeFor(fs, env);
+    const availableEnvironment = environmentFor(fs, env);
     registerMediaTools(registry, {
-      runtime: { ...availableRuntime, isAvailable: () => false },
+      environment: { ...availableEnvironment, isAvailable: () => false },
       workspace: WORKSPACE,
       capabilities: capabilities({ image_in: true, video_in: true }),
     });
@@ -910,19 +910,19 @@ describe('AgentMediaToolsRegistrar', () => {
       workDir: '/workspace',
       additionalDirs: [],
     } as unknown as ISessionWorkspaceContext;
-    const baseRuntime = runtimeFor(createTestFs(files));
-    const runtimeChanges = new Emitter<void>();
-    let runtimeAvailable = true;
-    const runtime: IAgentRuntimeService = {
+    const baseEnvironment = environmentFor(createTestFs(files));
+    const environmentChanges = new Emitter<void>();
+    let environmentAvailable = true;
+    const runtime: IAgentEnvironmentService = {
       _serviceBrand: undefined,
-      onDidChange: runtimeChanges.event,
-      isAvailable: (required = []) => runtimeAvailable && baseRuntime.isAvailable(required),
+      onDidChange: environmentChanges.event,
+      isAvailable: (required = []) => environmentAvailable && baseEnvironment.isAvailable(required),
       inspect: () => {
-        if (!runtimeAvailable) throw new Error('runtime unavailable');
-        return baseRuntime.inspect();
+        if (!environmentAvailable) throw new Error('runtime unavailable');
+        return baseEnvironment.inspect();
       },
-      acquire: (required = []) => baseRuntime.acquire(required),
-      acquireWhenReady: async (required = []) => baseRuntime.acquire(required),
+      acquire: (required = []) => baseEnvironment.acquire(required),
+      acquireWhenReady: async (required = []) => baseEnvironment.acquire(required),
       reconnect: async () => {},
       workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
     };
@@ -950,9 +950,9 @@ describe('AgentMediaToolsRegistrar', () => {
         agentContext,
       );
     };
-    const setRuntimeAvailable = (available: boolean): void => {
-      runtimeAvailable = available;
-      runtimeChanges.fire();
+    const setEnvironmentAvailable = (available: boolean): void => {
+      environmentAvailable = available;
+      environmentChanges.fire();
     };
     const breakAlias = (alias: string): void => {
       brokenAliases.add(alias);
@@ -960,7 +960,7 @@ describe('AgentMediaToolsRegistrar', () => {
     const healAlias = (alias: string): void => {
       brokenAliases.delete(alias);
     };
-    return { registry, registrar, bindModel, setRuntimeAvailable, breakAlias, healAlias };
+    return { registry, registrar, bindModel, setEnvironmentAvailable, breakAlias, healAlias };
   }
 
   it('registers nothing until a media-capable model binds, then registers ReadMediaFile', () => {
@@ -1023,14 +1023,14 @@ describe('AgentMediaToolsRegistrar', () => {
   });
 
   it('combines model media support with runtime filesystem availability', () => {
-    const { registry, bindModel, setRuntimeAvailable } = createRegistrarHarness();
+    const { registry, bindModel, setEnvironmentAvailable } = createRegistrarHarness();
     bindModel('vision-model', capabilities({ image_in: true, video_in: true }));
     expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
 
-    setRuntimeAvailable(false);
+    setEnvironmentAvailable(false);
     expect(registry.resolve('ReadMediaFile')).toBeUndefined();
 
-    setRuntimeAvailable(true);
+    setEnvironmentAvailable(true);
     expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
   });
 
@@ -1042,9 +1042,9 @@ describe('AgentMediaToolsRegistrar', () => {
     }), storage, new JsonAtomicDocumentStore(storage));
     const bytes = Buffer.from(await new Jimp({ width: 32, height: 32, color: 0x3366ccff }).getBuffer('image/png'));
     await store.materialize({ fileId: 'f_picture', name: 'picture.png', mimeType: 'image/png', size: bytes.length, stream: () => Readable.from([bytes]) });
-    const { registry, bindModel, setRuntimeAvailable } = createRegistrarHarness({}, {}, store);
+    const { registry, bindModel, setEnvironmentAvailable } = createRegistrarHarness({}, {}, store);
     bindModel('vision-model', capabilities({ image_in: true, video_in: false }));
-    setRuntimeAvailable(false);
+    setEnvironmentAvailable(false);
     const tool = registry.resolve('ReadMediaFile');
     expect(tool).toBeDefined();
     const execution = await tool!.resolveExecution({ path: 'kimi-file://f_picture' });

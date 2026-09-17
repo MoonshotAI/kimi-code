@@ -14,9 +14,9 @@ import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { Program } from '#/program/program';
 import type { ProgramSessionControllerInput } from '#/program/programDependencies';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
-import type { RuntimeStatus } from '#/runtime/runtime';
-import { RuntimeRegistry } from '#/runtime/runtimeRegistry';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
+import type { EnvironmentStatus } from '#/environment/environment';
+import { EnvironmentRegistry } from '#/environment/environmentRegistry';
 import { writeWorkspaceTrust } from '#/workspace/workspaceTrust/trustRecord';
 import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import type { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
@@ -27,24 +27,24 @@ import type { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileL
 import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
 import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
 
-function runtime(generation: string, status: RuntimeStatus = 'ready'): FakeRuntime {
+function runtime(generation: string, status: EnvironmentStatus = 'ready'): FakeEnvironment {
   return Object.assign(
-    new FakeRuntime(
-      { workspaceId: 'workspace', runtimeId: 'local', generation },
+    new FakeEnvironment(
+      { workspaceId: 'workspace', environmentId: 'local', generation },
       { status, capabilities: ['fs', 'process'] },
     ),
     { fs: {}, process: {} },
-  ) as FakeRuntime;
+  ) as FakeEnvironment;
 }
 
-function remoteRuntime(generation: string, status: RuntimeStatus = 'ready'): FakeRuntime {
+function remoteEnvironment(generation: string, status: EnvironmentStatus = 'ready'): FakeEnvironment {
   return Object.assign(
-    new FakeRuntime(
-      { workspaceId: 'workspace', runtimeId: 'remote', generation },
+    new FakeEnvironment(
+      { workspaceId: 'workspace', environmentId: 'remote', generation },
       { status, capabilities: ['fs', 'process'] },
     ),
     { fs: {}, process: {} },
-  ) as FakeRuntime;
+  ) as FakeEnvironment;
 }
 
 function deferred(): { readonly promise: Promise<void>; resolve(): void; reject(error: Error): void } {
@@ -58,7 +58,7 @@ function deferred(): { readonly promise: Promise<void>; resolve(): void; reject(
 }
 
 function setup(readiness = new Map<string, Promise<void>>(), order: string[] = []) {
-  const registry = new RuntimeRegistry('workspace', 50);
+  const registry = new EnvironmentRegistry('workspace', 50);
   const controllerInputs: ProgramSessionControllerInput[] = [];
   const program = new Program(
     'workspace',
@@ -85,9 +85,9 @@ function setup(readiness = new Map<string, Promise<void>>(), order: string[] = [
       },
     } as never,
   );
-  const create = vi.fn((runtimeId: string) => {
-    const lease = registry.acquire({ workspaceId: 'workspace', runtimeId }, ['fs', 'process']);
-    const id = lease.runtime.identity.generation;
+  const create = vi.fn((environmentId: string) => {
+    const lease = registry.acquire({ workspaceId: 'workspace', environmentId }, ['fs', 'process']);
+    const id = lease.environment.identity.generation;
     const behavior = {
       ready: readiness.get(id) ?? Promise.resolve(),
       dispose: () => { order.push(`behavior:${id}`); },
@@ -149,7 +149,7 @@ describe('Program', () => {
     const { registry, program } = setup(new Map([['one', pending.promise]]));
     registry.register(runtime('one'));
 
-    expect(program.binding).toEqual({ workspaceId: 'workspace', runtimeId: 'local' });
+    expect(program.binding).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
     expect(program.status).toBe('preparing');
     expect(program.snapshot().ready).toBe(false);
 
@@ -221,7 +221,7 @@ describe('Program', () => {
     expect(program.mcp).toBe(generation.mcp);
     expect(program.snapshot()).toMatchObject({
       workspaceId: 'workspace',
-      binding: { workspaceId: 'workspace', runtimeId: 'local' },
+      binding: { workspaceId: 'workspace', environmentId: 'local' },
       status: 'ready',
       ready: true,
       generation: 'one',
@@ -238,7 +238,7 @@ describe('Program', () => {
         instructionPaths: ['/workspace/AGENTS.md'],
         mcpServers: ['baseline'],
       },
-      runtimes: [{ runtimeId: 'local', generation: 'one', status: 'ready' }],
+      environments: [{ environmentId: 'local', generation: 'one', status: 'ready' }],
     });
 
     program.dispose();
@@ -269,7 +269,7 @@ describe('Program', () => {
   it('isolates generations per runtime so same-workspace sessions do not cross project context', async () => {
     const { registry, program, create, controllerInputs } = setup();
     registry.register(runtime('one'));
-    registry.register(remoteRuntime('remote-one'));
+    registry.register(remoteEnvironment('remote-one'));
 
     expect(create).toHaveBeenCalledTimes(1);
     expect(create.mock.calls[0]?.[0]).toBe('local');
@@ -285,8 +285,8 @@ describe('Program', () => {
     expect(program.sessionControllerGenerationFor('remote')).toBe('remote-one');
     expect(controllerInputs).toHaveLength(2);
     expect(controllerInputs[0]?.fs).not.toBe(controllerInputs[1]?.fs);
-    expect(controllerInputs[0]?.fs).toBe(create.mock.results[0]?.value.lease.runtime.fs);
-    expect(controllerInputs[1]?.fs).toBe(create.mock.results[1]?.value.lease.runtime.fs);
+    expect(controllerInputs[0]?.fs).toBe(create.mock.results[0]?.value.lease.environment.fs);
+    expect(controllerInputs[1]?.fs).toBe(create.mock.results[1]?.value.lease.environment.fs);
 
     expect(() => program.sessionControllerGenerationFor('missing')).toThrow(
       'no available generation for runtime missing',
@@ -299,7 +299,7 @@ describe('Program', () => {
   it('retires a remote generation when its runtime is removed without touching local', async () => {
     const { registry, program, create } = setup();
     registry.register(runtime('one'));
-    const remote = remoteRuntime('remote-one');
+    const remote = remoteEnvironment('remote-one');
     const remoteRegistration = registry.register(remote);
     program.createSessionController('remote');
     expect(program.sessionControllerGenerationFor('remote')).toBe('remote-one');
@@ -316,18 +316,18 @@ describe('Program', () => {
   });
 });
 
-function fakeFsRuntime(runtimeId: string, generation: string): FakeRuntime {
+function fakeFsEnvironment(environmentId: string, generation: string): FakeEnvironment {
   return Object.assign(
-    new FakeRuntime(
-      { workspaceId: 'workspace', runtimeId, generation },
+    new FakeEnvironment(
+      { workspaceId: 'workspace', environmentId, generation },
       { capabilities: ['fs'] },
     ),
     { fs: new HostFileSystem() },
-  ) as FakeRuntime;
+  ) as FakeEnvironment;
 }
 
 function suggestSetup() {
-  const registry = new RuntimeRegistry('workspace', 50);
+  const registry = new EnvironmentRegistry('workspace', 50);
   const program = new Program(
     'workspace',
     registry,
@@ -367,7 +367,7 @@ describe('Program.suggestFiles', () => {
       await writeFile(join(dir, 'src', 'index.ts'), 'index');
       await writeFile(join(dir, 'README.md'), 'readme');
       const { registry, program } = suggestSetup();
-      registry.register(fakeFsRuntime('local', 'local-one'));
+      registry.register(fakeFsEnvironment('local', 'local-one'));
 
       const result = await program.suggestFiles(
         'local',
@@ -399,8 +399,8 @@ describe('Program.suggestFiles', () => {
       await writeFile(join(localDir, 'local-only.ts'), 'local');
       await writeFile(join(remoteDir, 'remote-only.ts'), 'remote');
       const { registry, program } = suggestSetup();
-      registry.register(fakeFsRuntime('local', 'local-one'));
-      registry.register(fakeFsRuntime('remote', 'remote-one'));
+      registry.register(fakeFsEnvironment('local', 'local-one'));
+      registry.register(fakeFsEnvironment('remote', 'remote-one'));
 
       const remoteResult = await program.suggestFiles(
         'remote',
@@ -442,7 +442,7 @@ interface GenerationAccess {
 }
 
 interface LocalityFixture {
-  readonly registry: RuntimeRegistry;
+  readonly registry: EnvironmentRegistry;
   readonly program: Program;
   readonly generations: Map<string, GenerationAccess>;
   readonly controllerInputs: ProgramSessionControllerInput[];
@@ -545,7 +545,7 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
     findWorkTree: async () => null,
   };
 
-  const registry = new RuntimeRegistry('workspace', 50);
+  const registry = new EnvironmentRegistry('workspace', 50);
   const controllerInputs: ProgramSessionControllerInput[] = [];
   const profileRegistrations: { readonly sourceId: string; readonly profiles: readonly string[] }[] = [];
   const log = {
@@ -620,21 +620,21 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
 
   const realFs = new HostFileSystem();
   registry.register(Object.assign(
-    new FakeRuntime(
-      { workspaceId: 'workspace', runtimeId: 'local', generation: 'local-one' },
-      { capabilities: ['fs', 'process'], environment: { homeDir } },
+    new FakeEnvironment(
+      { workspaceId: 'workspace', environmentId: 'local', generation: 'local-one' },
+      { capabilities: ['fs', 'process'], host: { homeDir } },
     ),
     { fs: realFs, process: new HostProcessService() },
-  ) as FakeRuntime);
+  ) as FakeEnvironment);
   const remoteRegistration = registry.register(Object.assign(
-    new FakeRuntime(
-      { workspaceId: 'workspace', runtimeId: 'remote', generation: 'remote-one', cwd: remoteCwd },
-      { capabilities: ['fs', 'process'], environment: { homeDir: remoteHomeDir } },
+    new FakeEnvironment(
+      { workspaceId: 'workspace', environmentId: 'remote', generation: 'remote-one', cwd: remoteCwd },
+      { capabilities: ['fs', 'process'], host: { homeDir: remoteHomeDir } },
     ),
     remoteCwd === undefined
       ? { fs: realFs, process: new HostProcessService() }
       : { fs: scopedFs(remoteRoot, await realpath(remoteRoot), realFs), process: new HostProcessService() },
-  ) as FakeRuntime);
+  ) as FakeEnvironment);
 
   const generations = (program as unknown as { generations: Map<string, GenerationAccess> }).generations;
   return {
@@ -648,12 +648,12 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
     remoteRoot,
     replaceRemote: async (generation: string, cwd: string) => {
       await remoteRegistration.replace(Object.assign(
-        new FakeRuntime(
-          { workspaceId: 'workspace', runtimeId: 'remote', generation, cwd },
-          { capabilities: ['fs', 'process'], environment: { homeDir: remoteHomeDir } },
+        new FakeEnvironment(
+          { workspaceId: 'workspace', environmentId: 'remote', generation, cwd },
+          { capabilities: ['fs', 'process'], host: { homeDir: remoteHomeDir } },
         ),
         { fs: scopedFs(cwd, await realpath(cwd), realFs), process: new HostProcessService() },
-      ) as FakeRuntime);
+      ) as FakeEnvironment);
     },
     cleanup: async () => {
       program.dispose();

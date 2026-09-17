@@ -153,7 +153,7 @@ describe('server-v2 /api/v1/sessions/{sid}/terminals', () => {
   }
 
   async function post<T>(path: string, body: unknown): Promise<Envelope<T>> {
-    const requestBody = path.endsWith('/terminals') ? { runtime_id: 'local', ...(body as object) } : body;
+    const requestBody = path.endsWith('/terminals') ? { environment_id: 'local', ...(body as object) } : body;
     const res = await fetch(`${base}${path}`, {
       method: 'POST',
       headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
@@ -169,7 +169,7 @@ describe('server-v2 /api/v1/sessions/{sid}/terminals', () => {
     return (await res.json()) as Envelope<T>;
   }
 
-  it('defaults terminal creation to the local runtime when runtime_id is omitted', async () => {
+  it('defaults terminal creation to the local environment when environment_id is omitted', async () => {
     const sid = await createSession(work as string);
     const res = await fetch(`${base}/api/v1/sessions/${sid}/terminals`, {
       method: 'POST',

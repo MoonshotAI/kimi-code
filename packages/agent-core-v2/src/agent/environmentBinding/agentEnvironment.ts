@@ -1,0 +1,237 @@
+import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Emitter, type Event } from '#/_base/event';
+import type { IDisposable } from '#/_base/di/lifecycle';
+import { ISessionEventBus } from '#/app/event/eventBus';
+import { IFlagService } from '#/app/flag/flag';
+import { LifecycleScope } from '#/app/scopes';
+import { TurnStarted } from '#/agent/loop/turnEvents';
+import { TurnEnded } from '#/agent/loop/turnOps';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { REMOTE_RUNTIME_FLAG_ID } from '#/environment/flag';
+import type { Environment, EnvironmentBinding, EnvironmentCapability, EnvironmentLease, EnvironmentWorkspaceRoots } from '#/environment/environment';
+import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
+import { EnvironmentError, environmentStatusAllows, type EnvironmentGenerationSnapshot, type EnvironmentRegistryChange } from '#/environment/environmentRegistry';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionStateService } from '#/session/state/sessionState';
+import {
+  workspaceContextAdditionalDirsKey,
+  workspaceContextWorkDirKey,
+} from '#/session/workspaceContext/workspaceContextService';
+import {
+  IEnvironmentResolver,
+  IWorkspaceInstanceManager,
+} from '#/workspace/workspaceInstance/workspaceInstanceManager';
+
+import { IAgentEnvironmentBindingService } from './environmentBinding';
+import { EnvironmentStatusChanged } from './environmentEvents';
+
+export interface AgentEnvironmentBindingSnapshot {
+  readonly binding: EnvironmentBinding;
+  readonly available: boolean;
+  readonly environment?: EnvironmentGenerationSnapshot;
+}
+
+export interface IAgentEnvironmentService {
+  readonly _serviceBrand: undefined;
+  readonly onDidChange: Event<void>;
+  inspect(): Environment;
+  isAvailable(required?: readonly EnvironmentCapability[]): boolean;
+  acquire(required?: readonly EnvironmentCapability[]): EnvironmentLease;
+  acquireWhenReady(required?: readonly EnvironmentCapability[]): Promise<EnvironmentLease>;
+  reconnect(): Promise<void>;
+  workspaceRoots(): EnvironmentWorkspaceRoots;
+}
+
+export const IAgentEnvironmentService: ServiceIdentifier<IAgentEnvironmentService> =
+  createDecorator<IAgentEnvironmentService>('agentEnvironmentService');
+
+export function inspectAgentEnvironment(service: IAgentEnvironmentService): Environment {
+  return service.inspect();
+}
+
+export function snapshotAgentEnvironmentBinding(
+  bindingService: IAgentEnvironmentBindingService,
+  environmentService: IAgentEnvironmentService,
+): AgentEnvironmentBindingSnapshot {
+  const binding = bindingService.current;
+  try {
+    const environment = environmentService.inspect();
+    return {
+      binding,
+      available: environmentService.isAvailable(),
+      environment: {
+        environmentId: environment.identity.environmentId,
+        generation: environment.identity.generation,
+        status: environment.status,
+        capabilities: [...environment.capabilities],
+        connectError: environment.connectError,
+      },
+    };
+  } catch {
+    return { binding, available: false };
+  }
+}
+
+interface TurnEnvironmentSnapshot {
+  readonly binding: EnvironmentBinding;
+  readonly generation?: string;
+}
+
+export class AgentEnvironmentService implements IAgentEnvironmentService {
+  declare readonly _serviceBrand: undefined;
+  private readonly changeEmitter = new Emitter<void>();
+  readonly onDidChange = this.changeEmitter.event;
+  private readonly bindingSubscription: IDisposable;
+  private readonly workspaceSubscription: IDisposable;
+  private readonly turnSubscriptions: readonly IDisposable[];
+  private registrySubscription: IDisposable | undefined;
+  private turnSnapshot: TurnEnvironmentSnapshot | undefined;
+
+  constructor(
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    @IAgentEnvironmentBindingService private readonly binding: IAgentEnvironmentBindingService,
+    @IEnvironmentResolver private readonly resolver: IEnvironmentResolver,
+    @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
+    @ISessionEventBus private readonly eventBus: ISessionEventBus,
+    @ISessionContext private readonly session: ISessionContext,
+    @ISessionStateService private readonly sessionState: ISessionStateService,
+    @IFlagService private readonly flags: IFlagService,
+  ) {
+    this.bindingSubscription = this.binding.onDidChange(() => this.rebind());
+    this.workspaceSubscription = this.workspaces.onDidChange((change) => {
+      if (change.workspaceId === this.binding.current.workspaceId) this.rebind();
+    });
+    this.turnSubscriptions = [
+      this.eventBus.subscribe(TurnStarted, (event) => {
+        if (event.agentId !== this.scopeContext.agentId) return;
+        this.turnSnapshot = {
+          binding: this.binding.current,
+          generation: this.currentGeneration(this.binding.current),
+        };
+      }),
+      this.eventBus.subscribe(TurnEnded, (event) => {
+        if (event.agentId !== this.scopeContext.agentId) return;
+        this.turnSnapshot = undefined;
+      }),
+    ];
+    this.bindRegistry();
+  }
+
+  inspect(): Environment {
+    return this.resolver.inspect(this.binding.current);
+  }
+
+  async reconnect(): Promise<void> {
+    const environment = this.resolver.inspect(this.binding.current);
+    if (typeof environment.connect !== 'function') {
+      throw new EnvironmentError(
+        'environment.unavailable',
+        `environment ${this.binding.current.environmentId} does not support reconnect`,
+      );
+    }
+    await environment.connect();
+  }
+
+  workspaceRoots(): EnvironmentWorkspaceRoots {
+    if (!this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) {
+      return {
+        workDir: this.sessionState.get(workspaceContextWorkDirKey),
+        additionalDirs: this.sessionState.get(workspaceContextAdditionalDirsKey),
+      };
+    }
+    const binding = this.turnSnapshot?.binding ?? this.binding.current;
+    return {
+      workDir: binding.cwd ?? this.session.cwd,
+      additionalDirs:
+        binding.environmentId === LOCAL_ENVIRONMENT_ID
+          ? this.sessionState.get(workspaceContextAdditionalDirsKey)
+          : [],
+    };
+  }
+
+  isAvailable(required: readonly EnvironmentCapability[] = []): boolean {
+    try {
+      const environment = this.inspect();
+      return environmentStatusAllows(environment, required) && required.every((capability) => environment.capabilities.has(capability));
+    } catch {
+      return false;
+    }
+  }
+
+  acquire(required: readonly EnvironmentCapability[] = []): EnvironmentLease {
+    const snapshot = this.turnSnapshot;
+    if (snapshot === undefined) {
+      return this.resolver.acquire(this.binding.current, required);
+    }
+    if (this.currentGeneration(snapshot.binding) !== snapshot.generation) {
+      throw new EnvironmentError(
+        'environment.unavailable',
+        `environment ${snapshot.binding.environmentId} generation changed during the active turn`,
+      );
+    }
+    return this.resolver.acquire(snapshot.binding, required);
+  }
+
+  async acquireWhenReady(required: readonly EnvironmentCapability[] = []): Promise<EnvironmentLease> {
+    const snapshot = this.turnSnapshot;
+    if (snapshot === undefined) {
+      return this.resolver.acquireWhenReady(this.binding.current, required);
+    }
+    if (this.currentGeneration(snapshot.binding) !== snapshot.generation) {
+      throw new EnvironmentError(
+        'environment.unavailable',
+        `environment ${snapshot.binding.environmentId} generation changed during the active turn`,
+      );
+    }
+    return this.resolver.acquireWhenReady(snapshot.binding, required);
+  }
+
+  dispose(): void {
+    for (const subscription of this.turnSubscriptions) subscription.dispose();
+    this.registrySubscription?.dispose();
+    this.workspaceSubscription.dispose();
+    this.bindingSubscription.dispose();
+    this.changeEmitter.dispose();
+  }
+
+  private currentGeneration(binding: EnvironmentBinding): string | undefined {
+    return this.workspaces.get(binding.workspaceId)?.environments.current(binding.environmentId)?.identity.generation;
+  }
+
+  private rebind(): void {
+    this.bindRegistry();
+    this.changeEmitter.fire();
+  }
+
+  private bindRegistry(): void {
+    this.registrySubscription?.dispose();
+    const binding = this.binding.current;
+    const workspace = this.workspaces.get(binding.workspaceId);
+    this.registrySubscription = workspace?.environments.onDidChange((change) => {
+      if (change.environmentId !== this.binding.current.environmentId) return;
+      const current = workspace.environments.current(change.environmentId);
+      if (change.current !== undefined && change.current !== current) return;
+      this.changeEmitter.fire();
+      this.publishEnvironmentStatus(change);
+    });
+  }
+
+  private publishEnvironmentStatus(change: EnvironmentRegistryChange): void {
+    const agent = this.scopeContext.agentContext;
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID || !this.eventBus.isAgentActive(agent)) return;
+    this.eventBus.publish(
+      new EnvironmentStatusChanged({ agentId: agent.agentId, environmentId: change.environmentId, status: change.status }),
+      agent,
+    );
+  }
+}
+
+registerScopedService(
+  LifecycleScope.Agent,
+  IAgentEnvironmentService,
+  AgentEnvironmentService,
+  ScopeActivation.OnDemand,
+  'agentEnvironmentBinding',
+);

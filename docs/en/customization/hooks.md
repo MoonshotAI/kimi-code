@@ -1,6 +1,6 @@
 # Hooks
 
-Hooks are an automatic trigger mechanism: you tell Kimi Code CLI in advance "whenever X happens, run this script." The script runs on your local machine, and you can put any logic inside it. This stays true when a session is bound to a [remote runtime](../guides/remote-runtime.md): hooks always execute on the machine running Kimi Code, so in a remote session they observe local files and processes, not the target's. Typical use cases:
+Hooks are an automatic trigger mechanism: you tell Kimi Code CLI in advance "whenever X happens, run this script." The script runs on your local machine, and you can put any logic inside it. This stays true when a session is bound to a [remote environment](../guides/remote-environment.md): hooks always execute on the machine running Kimi Code, so in a remote session they observe local files and processes, not the target's. Typical use cases:
 
 - **Security interception**: Before the Agent executes a shell command, check whether it contains dangerous operations (such as `rm -rf`) and block execution if so
 - **Desktop notifications**: When a background task completes, pop up a system notification to bring you back to review the results
@@ -54,7 +54,7 @@ All hook rules are written in the `[[hooks]]` array in `~/.kimi-code/config.toml
 
 Hook rules live only in your user-level `config.toml` and in local plugins — there is no project-level hook file, so content checked out on a remote target can never inject hook definitions into your session.
 
-Hook commands always execute on the machine running Kimi Code, with the current session's **local** project directory as their working directory. When the session is bound to a [remote runtime](../guides/remote-runtime.md), hooks that reference project paths operate on that local directory (the carrier of the binding), never on the target; running hooks on the target itself is not supported and remains a future, undesigned concept.
+Hook commands always execute on the machine running Kimi Code, with the current session's **local** project directory as their working directory. When the session is bound to a [remote environment](../guides/remote-environment.md), hooks that reference project paths operate on that local directory (the carrier of the binding), never on the target; running hooks on the target itself is not supported and remains a future, undesigned concept.
 
 <details>
 <summary>Process group and timeout handling</summary>

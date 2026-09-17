@@ -4,7 +4,7 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { loadAgentsMdDetailed } from '#/agent/profile/context';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -80,14 +80,14 @@ export class SessionInitService implements ISessionInitService {
         cancel: (reason) => controller.abort(reason),
       });
 
-      const runtime = main.accessor.get(IAgentRuntimeService);
+      const runtime = main.accessor.get(IAgentEnvironmentService);
       const workDir = runtime.workspaceRoots().workDir;
       const lease = runtime.acquire(['fs']);
       let agentsMd: string;
       let agentsMdPaths: readonly string[];
       try {
         ({ content: agentsMd, paths: agentsMdPaths } = await loadAgentsMdDetailed(
-          { fs: lease.runtime.fs!, homeDir: lease.runtime.environment.homeDir },
+          { fs: lease.environment.fs!, homeDir: lease.environment.host.homeDir },
           workDir,
           this.bootstrap.homeDir,
         ));

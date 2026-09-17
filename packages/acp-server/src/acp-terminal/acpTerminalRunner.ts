@@ -10,12 +10,12 @@ import type {
   IHostProcess,
   IHostProcessService,
   ISessionContext,
-  Runtime,
-  RuntimePath,
-  RuntimeProviderAttachment,
-  RuntimeProviderContext,
-  RuntimeProviderFactory,
-  RuntimeProviderHost,
+  Environment,
+  EnvironmentPath,
+  EnvironmentProviderAttachment,
+  EnvironmentProviderContext,
+  EnvironmentProviderFactory,
+  EnvironmentProviderHost,
 } from '@moonshot-ai/agent-core-v2';
 
 import { AcpHostFileSystem, IAcpConnection, type IAcpTerminalHandle } from '../acp-fs';
@@ -157,11 +157,11 @@ class AcpTerminalProcess implements IHostProcess {
   }
 }
 
-class AcpSessionRuntime implements Runtime {
+class AcpSessionEnvironment implements Environment {
   readonly identity;
   readonly capabilities = new Set(['process', 'fs'] as const);
-  readonly environment: HostEnvironmentInfo;
-  readonly path: RuntimePath;
+  readonly host: HostEnvironmentInfo;
+  readonly path: EnvironmentPath;
   readonly workspace = { mapRoots: (roots: { workDir: string; additionalDirs?: readonly string[] }) => roots };
   readonly fs: IHostFileSystem;
   readonly process;
@@ -180,10 +180,10 @@ class AcpSessionRuntime implements Runtime {
   ) {
     this.identity = {
       workspaceId,
-      runtimeId: AcpRuntimeProviderFactory.runtimeId(sessionId),
+      environmentId: AcpEnvironmentProviderFactory.environmentId(sessionId),
       generation: `acp-${String(nextGeneration++)}`,
     };
-    this.environment = {
+    this.host = {
       osKind: environment.osKind,
       osArch: environment.osArch,
       osVersion: environment.osVersion,
@@ -210,25 +210,25 @@ class AcpSessionRuntime implements Runtime {
   dispose(): void {}
 }
 
-class AcpWorkspaceRuntimeAttachment implements RuntimeProviderAttachment {
+class AcpWorkspaceEnvironmentAttachment implements EnvironmentProviderAttachment {
   private readonly sessions = new Map<string, { remove(): Promise<void> }>();
 
   constructor(
-    private readonly workspace: RuntimeProviderContext,
-    private readonly host: RuntimeProviderHost,
+    private readonly workspace: EnvironmentProviderContext,
+    private readonly host: EnvironmentProviderHost,
     private readonly connection: IAcpConnection,
     private readonly environment: IHostEnvironment,
     private readonly local: IHostProcessService,
   ) {}
 
   bindSession(sessionId: string, cwd: string): string {
-    const runtimeId = AcpRuntimeProviderFactory.runtimeId(sessionId);
-    if (this.sessions.has(sessionId)) return runtimeId;
-    const registration = this.host.registerRuntime(
-      new AcpSessionRuntime(this.workspace.id, sessionId, cwd, this.connection, this.environment, this.local),
+    const environmentId = AcpEnvironmentProviderFactory.environmentId(sessionId);
+    if (this.sessions.has(sessionId)) return environmentId;
+    const registration = this.host.registerEnvironment(
+      new AcpSessionEnvironment(this.workspace.id, sessionId, cwd, this.connection, this.environment, this.local),
     );
     this.sessions.set(sessionId, registration);
-    return runtimeId;
+    return environmentId;
   }
 
   async unbindSession(sessionId: string): Promise<void> {
@@ -241,14 +241,14 @@ class AcpWorkspaceRuntimeAttachment implements RuntimeProviderAttachment {
   async dispose(): Promise<void> {
     const registrations = [...this.sessions.values()];
     this.sessions.clear();
-    for (const registration of registrations.reverse()) await registration.remove();
+    for (const registration of registrations.toReversed()) await registration.remove();
   }
 }
 
-export class AcpRuntimeProviderFactory implements RuntimeProviderFactory {
+export class AcpEnvironmentProviderFactory implements EnvironmentProviderFactory {
   readonly id = 'acp';
   readonly imports = { root: [], imports: [], local: [] };
-  private readonly attachments = new Map<string, AcpWorkspaceRuntimeAttachment>();
+  private readonly attachments = new Map<string, AcpWorkspaceEnvironmentAttachment>();
 
   constructor(
     private readonly connection: IAcpConnection,
@@ -256,12 +256,12 @@ export class AcpRuntimeProviderFactory implements RuntimeProviderFactory {
     private readonly local: IHostProcessService,
   ) {}
 
-  static runtimeId(sessionId: string): string {
+  static environmentId(sessionId: string): string {
     return `acp:${sessionId}`;
   }
 
-  async attach(workspace: RuntimeProviderContext, host: RuntimeProviderHost): Promise<RuntimeProviderAttachment> {
-    const attachment = new AcpWorkspaceRuntimeAttachment(workspace, host, this.connection, this.environment, this.local);
+  async attach(workspace: EnvironmentProviderContext, host: EnvironmentProviderHost): Promise<EnvironmentProviderAttachment> {
+    const attachment = new AcpWorkspaceEnvironmentAttachment(workspace, host, this.connection, this.environment, this.local);
     this.attachments.set(workspace.id, attachment);
     return {
       dispose: async () => {

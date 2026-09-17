@@ -20,8 +20,8 @@ import { GlobTool, splitCompletePaths } from '#/agent/tools/os/glob/globTool';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
-import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
+import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { probeHostEnvironmentFromNode } from '#/_base/execEnv/environmentProbe';
@@ -100,21 +100,21 @@ function createRuntime(
   fs: IHostFileSystem,
   environment: IHostEnvironment,
   process: IHostProcessService,
-): IAgentRuntimeService {
+): IAgentEnvironmentService {
   const runtime = Object.assign(
-    new FakeRuntime(
-      { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+    new FakeEnvironment(
+      { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
       { capabilities: ['fs', 'process'], pathClass: environment.pathClass },
     ),
-    { fs, environment, process },
+    { fs, host: environment, process },
   );
   return {
     _serviceBrand: undefined,
     onDidChange: () => ({ dispose: () => {} }),
     isAvailable: () => true,
     inspect: () => runtime,
-    acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
-    acquireWhenReady: async () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
+    acquire: () => ({ environment: runtime, track: (resource) => resource, dispose: () => {} }),
+    acquireWhenReady: async () => ({ environment: runtime, track: (resource) => resource, dispose: () => {} }),
     reconnect: async () => {},
     workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
   };

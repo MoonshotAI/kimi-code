@@ -150,7 +150,7 @@ function opts(overrides: Record<string, unknown> = {}) {
     skillsDirs: [],
     agent: undefined,
     agentFiles: [],
-    runtime: undefined,
+    environment: undefined,
     addDirs: [],
     ...overrides,
   } as const;
@@ -451,7 +451,7 @@ describe('runV2Print', () => {
     expect(profile.bind).not.toHaveBeenCalled();
   });
 
-  it('threads --runtime into the session creation options as the initial binding', async () => {
+  it('threads --environment into the session creation options as the initial binding', async () => {
     const stdout = writer();
     const stderr = writer();
     const { app, appServices } = makeFakeHarness();
@@ -459,14 +459,14 @@ describe('runV2Print', () => {
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
-    await runV2Print(opts({ runtime: 'dev-box' }) as never, '1.2.3-test', { stdout, stderr });
+    await runV2Print(opts({ environment: 'dev-box' }) as never, '1.2.3-test', { stdout, stderr });
 
     const sessions = appServices.get(ISessionManager) as { create: ReturnType<typeof vi.fn> };
     expect(sessions.create).toHaveBeenCalledWith({
       workDir: process.cwd(),
       additionalDirs: undefined,
       mainAgentBinding: { profile: 'agent', model: 'k2' },
-      runtimeId: 'dev-box',
+      environmentId: 'dev-box',
     });
   });
 

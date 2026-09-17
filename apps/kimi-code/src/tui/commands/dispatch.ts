@@ -53,7 +53,7 @@ import {
   type BuiltinSlashCommandName,
 } from './registry';
 import { handleReloadCommand, handleReloadTuiCommand } from './reload';
-import { handleRuntimeCommand } from './runtime';
+import { handleEnvironmentCommand } from './environment';
 import type { SkillListSession } from './skills';
 import {
   canRestoreSubmittedInput,
@@ -100,7 +100,7 @@ export { handleTowerCommand } from './tower';
 export { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
 export { handlePluginsCommand } from './plugins';
 export { handleReloadCommand, handleReloadTuiCommand } from './reload';
-export { handleRuntimeCommand } from './runtime';
+export { handleEnvironmentCommand } from './environment';
 export { handleGoalCommand } from './goal';
 export {
   handleExportDebugZipCommand,
@@ -153,10 +153,10 @@ export interface SlashCommandHost {
    */
   hydrateLazyConfigDefaults(): Promise<void>;
   /**
-   * Re-sync the footer runtime slot with the session's binding and connection
-   * status (experimental remote runtime). A no-op with the flag off.
+   * Re-sync the footer environment slot with the session's binding and connection
+   * status (experimental remote environment). A no-op with the flag off.
    */
-  refreshRuntimeSlot(): Promise<void>;
+  refreshEnvironmentSlot(): Promise<void>;
 
   // Session
   requireSession(): Session;
@@ -421,7 +421,7 @@ const SESSION_REQUIRING_COMMANDS: ReadonlySet<BuiltinSlashCommandName> = new Set
   'goal',
   'init',
   'plan',
-  'runtime',
+  'environment',
   'swarm',
   'undo',
   'web',
@@ -520,8 +520,8 @@ async function handleBuiltInSlashCommand(
     case 'reload-tui':
       await handleReloadTuiCommand(host);
       return;
-    case 'runtime':
-      await handleRuntimeCommand(host);
+    case 'environment':
+      await handleEnvironmentCommand(host);
       return;
     case 'editor':
       await handleEditorCommand(host, args);

@@ -48,12 +48,12 @@ export interface CLIOptions {
   agentFiles: string[];
   addDirs?: string[];
   /**
-   * `--runtime <id>`: one-shot override of the configured `[runtimes]`
-   * default — the new session's initial binding targets this runtime, with
+   * `--environment <id>`: one-shot override of the configured `[environments]`
+   * default — the new session's initial binding targets this environment, with
    * the cwd taken from the entry's `defaultCwd`. Creation-only, like
    * `--agent`: a resumed session restores its recorded binding instead.
    */
-  runtime: string | undefined;
+  environment: string | undefined;
 }
 
 export interface ValidatedOptions {
@@ -95,12 +95,12 @@ export function validateOptions(
   if (opts.agent !== undefined && opts.agent.trim().length === 0) {
     throw new OptionConflictError('Agent cannot be empty.');
   }
-  if (opts.runtime !== undefined && opts.runtime.trim().length === 0) {
-    throw new OptionConflictError('Runtime cannot be empty.');
+  if (opts.environment !== undefined && opts.environment.trim().length === 0) {
+    throw new OptionConflictError('Environment cannot be empty.');
   }
-  if (opts.runtime !== undefined && (opts.session !== undefined || opts.continue)) {
+  if (opts.environment !== undefined && (opts.session !== undefined || opts.continue)) {
     throw new OptionConflictError(
-      'Cannot combine --runtime with --session/--continue: the runtime is bound at session creation and the bound runtime is restored automatically on resume.',
+      'Cannot combine --environment with --session/--continue: the environment is bound at session creation and the bound environment is restored automatically on resume.',
     );
   }
   if (opts.agentFiles.length > 1) {

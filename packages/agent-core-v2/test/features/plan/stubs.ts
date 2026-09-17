@@ -1,13 +1,13 @@
 import * as posixPath from 'node:path/posix';
 
 import { Event } from '#/_base/event';
-import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
-import type { Runtime, RuntimeLease, RuntimePath, RuntimeStatus } from '#/runtime/runtime';
+import type { Environment, EnvironmentLease, EnvironmentPath, EnvironmentStatus } from '#/environment/environment';
 
 import { createFakeHostFs } from '../../tools/fixtures/fake-exec';
 
-export function posixRuntimePath(): RuntimePath {
+export function posixEnvironmentPath(): EnvironmentPath {
   return {
     separator: '/',
     delimiter: ':',
@@ -20,22 +20,22 @@ export function posixRuntimePath(): RuntimePath {
   };
 }
 
-export interface PlanRuntimeOptions {
+export interface PlanEnvironmentOptions {
   readonly fs: IHostFileSystem;
   readonly tempDir: string;
-  readonly runtimeId?: string;
+  readonly environmentId?: string;
   readonly workDir?: string;
 }
 
-export function stubPlanRuntime(options: PlanRuntimeOptions): IAgentRuntimeService {
-  const runtime: Runtime = {
+export function stubPlanEnvironment(options: PlanEnvironmentOptions): IAgentEnvironmentService {
+  const runtime: Environment = {
     identity: {
       workspaceId: 'workspace-1',
-      runtimeId: options.runtimeId ?? 'remote',
+      environmentId: options.environmentId ?? 'remote',
       generation: 'test-generation',
     },
     capabilities: new Set(['fs']),
-    environment: {
+    host: {
       osKind: 'Linux',
       osArch: 'x64',
       osVersion: 'test',
@@ -45,14 +45,14 @@ export function stubPlanRuntime(options: PlanRuntimeOptions): IAgentRuntimeServi
       homeDir: '/home/remote',
       tempDir: options.tempDir,
     },
-    path: posixRuntimePath(),
+    path: posixEnvironmentPath(),
     workspace: { mapRoots: (roots) => roots },
     fs: options.fs,
     status: 'ready',
-    onDidChangeStatus: Event.None as Event<RuntimeStatus>,
+    onDidChangeStatus: Event.None as Event<EnvironmentStatus>,
     dispose: () => {},
   };
-  const lease = (): RuntimeLease => ({ runtime, track: (resource) => resource, dispose: () => {} });
+  const lease = (): EnvironmentLease => ({ environment: runtime, track: (resource) => resource, dispose: () => {} });
   return {
     _serviceBrand: undefined,
     onDidChange: Event.None as Event<void>,

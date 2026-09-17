@@ -20,7 +20,7 @@ import { CdnExecutorArtifactLocator } from '@moonshot-ai/remote-exec';
 
 import { listLiveServerInstances } from '../src/instanceRegistry';
 import {
-  createRemoteRuntimeProviderOptions,
+  createRemoteEnvironmentProviderOptions,
   listenWithPortRetry,
   type RunningServer,
   startServer,
@@ -355,10 +355,10 @@ async function allocateAdjacentFreePair(
   throw new Error('could not allocate an adjacent free port pair');
 }
 
-describe('createRemoteRuntimeProviderOptions', () => {
-  it('attaches a region CDN artifact locator to the remote runtime provider factory', () => {
+describe('createRemoteEnvironmentProviderOptions', () => {
+  it('attaches a region CDN artifact locator to the remote environment provider factory', () => {
     const onDiagnostic = (): void => {};
-    const options = createRemoteRuntimeProviderOptions({
+    const options = createRemoteEnvironmentProviderOptions({
       region: 'global',
       clientVersion: '9.9.9-test',
       onDiagnostic,
@@ -379,7 +379,7 @@ describe('createRemoteRuntimeProviderOptions', () => {
   });
 
   it('derives the mainland-cn CDN base from the region profile', () => {
-    const options = createRemoteRuntimeProviderOptions({
+    const options = createRemoteEnvironmentProviderOptions({
       region: 'mainland-cn',
       clientVersion: '9.9.9-test',
       onDiagnostic: () => {},

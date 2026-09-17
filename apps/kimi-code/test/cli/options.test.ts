@@ -51,7 +51,7 @@ describe('CLI options parsing', () => {
       expect(opts.agent).toBeUndefined();
       expect(opts.agentFiles).toEqual([]);
       expect(opts.addDirs).toEqual([]);
-      expect(opts.runtime).toBeUndefined();
+      expect(opts.environment).toBeUndefined();
     });
   });
 
@@ -513,44 +513,44 @@ describe('CLI options parsing', () => {
     });
   });
 
-  describe('--runtime', () => {
-    it('parses --runtime as the new-session runtime override', () => {
-      expect(parse(['--runtime', 'dev-box']).runtime).toBe('dev-box');
+  describe('--environment', () => {
+    it('parses --environment as the new-session environment override', () => {
+      expect(parse(['--environment', 'dev-box']).environment).toBe('dev-box');
     });
 
     it('is hidden from the help output while the feature is experimental', () => {
       const help = createProgram('0.1.0-test', () => {}, () => {}).helpInformation();
-      expect(help).not.toContain('--runtime');
+      expect(help).not.toContain('--environment');
     });
 
     it('rejects empty runtime values', () => {
-      const opts = parse(['--runtime', '   ']);
+      const opts = parse(['--environment', '   ']);
       expect(() => validateOptions(opts)).toThrow(OptionConflictError);
-      expect(() => validateOptions(opts)).toThrow('Runtime cannot be empty.');
+      expect(() => validateOptions(opts)).toThrow('Environment cannot be empty.');
     });
 
-    it('rejects --runtime with --session', () => {
-      const opts = parse(['--runtime', 'dev-box', '--session', 'ses_123']);
+    it('rejects --environment with --session', () => {
+      const opts = parse(['--environment', 'dev-box', '--session', 'ses_123']);
       expect(() => validateOptions(opts)).toThrow(OptionConflictError);
       expect(() => validateOptions(opts)).toThrow(
-        'Cannot combine --runtime with --session/--continue',
+        'Cannot combine --environment with --session/--continue',
       );
     });
 
-    it('rejects --runtime with --continue', () => {
-      const opts = parse(['--runtime', 'dev-box', '--continue']);
+    it('rejects --environment with --continue', () => {
+      const opts = parse(['--environment', 'dev-box', '--continue']);
       expect(() => validateOptions(opts)).toThrow(OptionConflictError);
       expect(() => validateOptions(opts)).toThrow(
-        'Cannot combine --runtime with --session/--continue',
+        'Cannot combine --environment with --session/--continue',
       );
     });
 
-    it('accepts --runtime for a new interactive session', () => {
-      expect(validateOptions(parse(['--runtime', 'dev-box']), {}).uiMode).toBe('shell');
+    it('accepts --environment for a new interactive session', () => {
+      expect(validateOptions(parse(['--environment', 'dev-box']), {}).uiMode).toBe('shell');
     });
 
-    it('accepts --runtime in prompt mode', () => {
-      const opts = parse(['-p', 'hi', '--runtime', 'dev-box']);
+    it('accepts --environment in prompt mode', () => {
+      const opts = parse(['-p', 'hi', '--environment', 'dev-box']);
       expect(validateOptions(opts, {}).uiMode).toBe('print');
     });
   });

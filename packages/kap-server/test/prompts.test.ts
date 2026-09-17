@@ -5,7 +5,7 @@ import { deflateSync } from 'node:zlib';
 
 import {
   agentContextOf,
-  agentRuntimeBindingKey,
+  agentEnvironmentBindingKey,
   IAgentTitlePromptSource,
   IAgentContextMemoryService,
   IAgentLifecycleService,
@@ -27,7 +27,7 @@ import {
   sessionMediaOriginalsDir,
 } from '@moonshot-ai/agent-core-v2';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
-import { FakeRuntime } from '@moonshot-ai/agent-core-v2/runtime/fakeRuntime';
+import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -1525,15 +1525,15 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(body.code).toBe(40001);
   });
 
-  it('rejects path attachments on a non-local runtime before touching the filesystem', async () => {
+  it('rejects path attachments on a non-local environment before touching the filesystem', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
     const session = getLiveSessionById(server!.core.accessor, id);
     const workspaceId = session!.accessor.get(ISessionContext).workspaceId;
     const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
-    main.accessor.get(IAgentStateService).set(agentRuntimeBindingKey, {
+    main.accessor.get(IAgentStateService).set(agentEnvironmentBindingKey, {
       workspaceId,
-      runtimeId: 'fake-remote',
+      environmentId: 'fake-remote',
     });
 
     const sourcePath = join(home as string, 'note.txt');
@@ -1542,7 +1542,7 @@ describe('server-v2 /api/v1 prompts', () => {
       content: [{ type: 'file', path: sourcePath }],
     });
     expect(existing.body.code).toBe(40001);
-    expect(existing.body.msg).toContain('local runtime');
+    expect(existing.body.msg).toContain('local environment');
 
     const missing = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
       content: [{ type: 'file', path: join(home as string, 'nope.txt') }],
@@ -1552,13 +1552,13 @@ describe('server-v2 /api/v1 prompts', () => {
     const remoteRoot = await realpath(await mkdtemp(join(tmpdir(), 'kimi-prompt-fake-remote-')));
     try {
       const instance = server!.core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
-      const fake = new FakeRuntime(
-        { workspaceId, runtimeId: 'fake-remote', generation: 'fake-generation' },
+      const fake = new FakeEnvironment(
+        { workspaceId, environmentId: 'fake-remote', generation: 'fake-generation' },
         { capabilities: ['fs'] },
       );
-      instance!.runtimes.register(Object.assign(fake, {
+      instance!.environments.register(Object.assign(fake, {
         fs: new HostFileSystem(),
-        environment: { ...fake.environment, tempDir: join(remoteRoot, 'remote-tmp') },
+        host: { ...fake.host, tempDir: join(remoteRoot, 'remote-tmp') },
       }));
 
       const uploadBytes = Buffer.from('upload unaffected');
@@ -1584,29 +1584,29 @@ describe('server-v2 /api/v1 prompts', () => {
     }
   });
 
-  async function bindRemoteRuntime(sessionId: string): Promise<{ remoteTempDir: string; dispose(): Promise<void> }> {
+  async function bindRemoteEnvironment(sessionId: string): Promise<{ remoteTempDir: string; dispose(): Promise<void> }> {
     const remoteRoot = await realpath(await mkdtemp(join(tmpdir(), 'kimi-prompt-remote-')));
     const remoteTempDir = join(remoteRoot, 'remote-tmp');
     const provider = await server!.core.accessor.get(IWorkspaceInstanceManager).addProvider({
       id: 'prompt-remote-provider',
       imports: { root: [], imports: [], local: [] },
       attach: async (context, host) => {
-        const fake = new FakeRuntime(
-          { workspaceId: context.id, runtimeId: 'remote-test', generation: 'remote-generation' },
+        const fake = new FakeEnvironment(
+          { workspaceId: context.id, environmentId: 'remote-test', generation: 'remote-generation' },
           { capabilities: ['fs'] },
         );
         const runtime = Object.assign(fake, {
           fs: new HostFileSystem(),
-          environment: { ...fake.environment, tempDir: remoteTempDir },
+          host: { ...fake.host, tempDir: remoteTempDir },
         });
-        const registration = host.registerRuntime(runtime);
+        const registration = host.registerEnvironment(runtime);
         return { dispose: () => registration.remove() };
       },
     });
-    const bound = await call<{ workspace_id: string; runtime_id: string }>(
+    const bound = await call<{ workspace_id: string; environment_id: string }>(
       'POST',
-      `/api/v1/sessions/${sessionId}/runtime`,
-      { runtime_id: 'remote-test' },
+      `/api/v1/sessions/${sessionId}/environment`,
+      { environment_id: 'remote-test' },
     );
     expect(bound.body.code).toBe(0);
     return {
@@ -1626,7 +1626,7 @@ describe('server-v2 /api/v1 prompts', () => {
 
   it('materializes file_id attachments into the bound runtime tempDir, never the server-local session dir', async () => {
     const id = await createSession(home as string);
-    const remote = await bindRemoteRuntime(id);
+    const remote = await bindRemoteEnvironment(id);
     try {
       const pdfBytes = Buffer.from('%PDF-1.4 fake pdf bytes');
       const uploaded = await uploadFile(pdfBytes, 'application/pdf', 'report.pdf');
@@ -1654,7 +1654,7 @@ describe('server-v2 /api/v1 prompts', () => {
 
   it('persists an unsupported-format upload into the bound runtime tempDir', async () => {
     const id = await createSession(home as string);
-    const remote = await bindRemoteRuntime(id);
+    const remote = await bindRemoteEnvironment(id);
     try {
       const data = avifBytes();
       const uploaded = await uploadFile(data, 'image/avif', 'scan.avif');
@@ -1682,7 +1682,7 @@ describe('server-v2 /api/v1 prompts', () => {
 
   it('persists compressed image originals into the bound runtime tempDir, never the server-local session dir', async () => {
     const id = await createSession(home as string);
-    const remote = await bindRemoteRuntime(id);
+    const remote = await bindRemoteEnvironment(id);
     try {
       const bigPng = solidPng(3600, 1800);
       const uploaded = await uploadFile(bigPng, 'image/png', 'big.png');
@@ -1717,23 +1717,23 @@ describe('server-v2 /api/v1 prompts', () => {
     const workspaceId = session!.accessor.get(ISessionContext).workspaceId;
     try {
       const instance = server!.core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
-      const fake = new FakeRuntime(
-        { workspaceId, runtimeId: 'broken-remote', generation: 'broken-generation' },
+      const fake = new FakeEnvironment(
+        { workspaceId, environmentId: 'broken-remote', generation: 'broken-generation' },
         { capabilities: ['fs'] },
       );
-      instance!.runtimes.register(Object.assign(fake, {
+      instance!.environments.register(Object.assign(fake, {
         fs: Object.assign(new HostFileSystem(), {
           mkdir: async () => {
             throw new Error('remote fs unavailable');
           },
         }),
-        environment: { ...fake.environment, tempDir: join(remoteRoot, 'remote-tmp') },
+        host: { ...fake.host, tempDir: join(remoteRoot, 'remote-tmp') },
       }));
       await createMainAgent(id);
       const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
-      main.accessor.get(IAgentStateService).set(agentRuntimeBindingKey, {
+      main.accessor.get(IAgentStateService).set(agentEnvironmentBindingKey, {
         workspaceId,
-        runtimeId: 'broken-remote',
+        environmentId: 'broken-remote',
       });
 
       const bytes = Buffer.from('%PDF-1.4 fake pdf bytes');

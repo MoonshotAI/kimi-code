@@ -2,7 +2,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import {
   ensureRgPath,
   getShareBinRgPath,
@@ -22,26 +22,26 @@ function noRgProbe(): RgProbe & { exec: ReturnType<typeof vi.fn> } {
   return probeWith(() => -1);
 }
 
-function remoteRuntime(runtimeId: string, homeDir = '/home/remote'): FakeRuntime {
-  return new FakeRuntime(
-    { workspaceId: 'workspace', runtimeId, generation: `${runtimeId}-g1` },
-    { capabilities: ['process'], environment: { homeDir } },
+function remoteEnvironment(environmentId: string, homeDir = '/home/remote'): FakeEnvironment {
+  return new FakeEnvironment(
+    { workspaceId: 'workspace', environmentId, generation: `${environmentId}-g1` },
+    { capabilities: ['process'], host: { homeDir } },
   );
 }
 
-function localRuntime(): FakeRuntime {
-  return new FakeRuntime(
-    { workspaceId: 'workspace', runtimeId: 'local', generation: 'local-g1' },
+function localEnvironment(): FakeEnvironment {
+  return new FakeEnvironment(
+    { workspaceId: 'workspace', environmentId: 'local', generation: 'local-g1' },
     { capabilities: ['process'] },
   );
 }
 
 describe('ensureRgPath cached fallback', () => {
-  it('probes the target share bin on a remote runtime, never the local one', async () => {
+  it('probes the target share bin on a remote environment, never the local one', async () => {
     const probe = probeWith((args) => (args[0] === 'rg' ? -1 : 0));
 
     const resolution = await ensureRgPath(probe, {
-      runtime: remoteRuntime('ssh-dev'),
+      environment: remoteEnvironment('ssh-dev'),
       allowCachedFallback: true,
     });
 
@@ -57,7 +57,7 @@ describe('ensureRgPath cached fallback', () => {
     const probe = probeWith((args) => (args[0] === 'rg' ? -1 : 0));
 
     const resolution = await ensureRgPath(probe, {
-      runtime: remoteRuntime('docker-dev', '/root'),
+      environment: remoteEnvironment('docker-dev', '/root'),
       allowCachedFallback: true,
     });
 
@@ -68,17 +68,17 @@ describe('ensureRgPath cached fallback', () => {
     const probe = noRgProbe();
 
     await expect(
-      ensureRgPath(probe, { runtime: remoteRuntime('ssh-dev'), allowCachedFallback: true }),
+      ensureRgPath(probe, { environment: remoteEnvironment('ssh-dev'), allowCachedFallback: true }),
     ).rejects.toThrow(/on PATH/);
     expect(probe.exec).toHaveBeenCalledWith(['/home/remote/.kimi-code/bin/rg', '--version']);
     expect(probe.exec).not.toHaveBeenCalledWith([getShareBinRgPath(), '--version']);
   });
 
-  it('probes the local share bin on the local runtime', async () => {
+  it('probes the local share bin on the local environment', async () => {
     const probe = probeWith((args) => (args[0] === 'rg' ? -1 : 0));
 
     const resolution = await ensureRgPath(probe, {
-      runtime: localRuntime(),
+      environment: localEnvironment(),
       allowCachedFallback: true,
     });
 
@@ -95,8 +95,8 @@ describe('ensureRgPath cached fallback', () => {
 });
 
 describe('rgUnavailableMessage', () => {
-  it('names the runtime and the target-side path for a remote runtime', () => {
-    const msg = rgUnavailableMessage(new Error('boom'), remoteRuntime('ssh-dev'));
+  it('names the runtime and the target-side path for a remote environment', () => {
+    const msg = rgUnavailableMessage(new Error('boom'), remoteEnvironment('ssh-dev'));
 
     expect(msg).toContain('ssh-dev');
     expect(msg).toContain('boom');
@@ -106,7 +106,7 @@ describe('rgUnavailableMessage', () => {
     expect(msg).not.toContain(getShareBinRgPath());
   });
 
-  it('keeps the local message byte-identical for the local runtime and for no runtime', () => {
+  it('keeps the local message byte-identical for the local environment and for no runtime', () => {
     const saved = process.env['KIMI_CODE_HOME'];
     process.env['KIMI_CODE_HOME'] = '/kimi-home-test';
     try {
@@ -124,7 +124,7 @@ describe('rgUnavailableMessage', () => {
         `Alternatively, drop a static rg binary at ${shareBin}`;
 
       expect(rgUnavailableMessage(new Error('boom'))).toBe(expected);
-      expect(rgUnavailableMessage(new Error('boom'), localRuntime())).toBe(expected);
+      expect(rgUnavailableMessage(new Error('boom'), localEnvironment())).toBe(expected);
     } finally {
       if (saved === undefined) {
         delete process.env['KIMI_CODE_HOME'];

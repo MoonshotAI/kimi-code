@@ -5,8 +5,8 @@ import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSyste
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
 import { type WriteInput, WriteInputSchema } from '#/agent/tools/os/write/write';
 import { WriteTool } from '#/agent/tools/os/write/writeTool';
-import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
+import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 
@@ -63,23 +63,23 @@ function createWriteFs(options: WriteFsOptions = {}) {
 function makeTool(options: WriteFsOptions = {}, workspace = PERMISSIVE_WORKSPACE) {
   const fakes = createWriteFs(options);
   const backend = Object.assign(
-    new FakeRuntime(
-      { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+    new FakeEnvironment(
+      { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
       { capabilities: ['fs'] },
     ),
-    { fs: fakes.fs, environment: createTestEnv() },
+    { fs: fakes.fs, host: createTestEnv() },
   );
-  const runtime: IAgentRuntimeService = {
+  const environment: IAgentEnvironmentService = {
     _serviceBrand: undefined,
     onDidChange: () => ({ dispose: () => {} }),
     isAvailable: () => true,
     inspect: () => backend,
-    acquire: () => ({ runtime: backend, track: (resource) => resource, dispose: () => {} }),
-    acquireWhenReady: async () => ({ runtime: backend, track: (resource) => resource, dispose: () => {} }),
+    acquire: () => ({ environment: backend, track: (resource) => resource, dispose: () => {} }),
+    acquireWhenReady: async () => ({ environment: backend, track: (resource) => resource, dispose: () => {} }),
     reconnect: async () => {},
     workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
   };
-  const tool = new WriteTool(runtime, workspace);
+  const tool = new WriteTool(environment, workspace);
   return { tool, ...fakes };
 }
 
@@ -179,23 +179,23 @@ describe('WriteTool', () => {
     const fakes = createWriteFs();
     const environment = createTestEnv('/home/test');
     const backend = Object.assign(
-      new FakeRuntime(
-        { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+      new FakeEnvironment(
+        { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
         { capabilities: ['fs'] },
       ),
-      { fs: fakes.fs, environment },
+      { fs: fakes.fs, host: environment },
     );
-    const runtime: IAgentRuntimeService = {
+    const environmentService: IAgentEnvironmentService = {
       _serviceBrand: undefined,
       onDidChange: () => ({ dispose: () => {} }),
       isAvailable: () => true,
       inspect: () => backend,
-      acquire: () => ({ runtime: backend, track: (resource) => resource, dispose: () => {} }),
-      acquireWhenReady: async () => ({ runtime: backend, track: (resource) => resource, dispose: () => {} }),
+      acquire: () => ({ environment: backend, track: (resource) => resource, dispose: () => {} }),
+      acquireWhenReady: async () => ({ environment: backend, track: (resource) => resource, dispose: () => {} }),
       reconnect: async () => {},
       workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
     };
-    const tool = new WriteTool(runtime, PERMISSIVE_WORKSPACE);
+    const tool = new WriteTool(environmentService, PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, { path: '~/notes/today.txt', content: 'hello' });
 

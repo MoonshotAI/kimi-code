@@ -12,7 +12,7 @@ import { basename, dirname, join } from 'pathe';
 
 import { abortable } from '#/_base/utils/abort';
 import { ErrorCodes, Error2 } from '#/errors';
-import { LOCAL_RUNTIME_ID, type Runtime } from '#/runtime/runtime';
+import { LOCAL_ENVIRONMENT_ID, type Environment } from '#/environment/environment';
 
 const RG_VERSION = '15.0.0';
 const DOWNLOAD_TIMEOUT_MS = 600_000;
@@ -50,7 +50,7 @@ export interface EnsureRgPathOptions {
   readonly shareDir?: string | undefined;
   readonly signal?: AbortSignal | undefined;
   readonly allowCachedFallback?: boolean;
-  readonly runtime?: Runtime | undefined;
+  readonly environment?: Environment | undefined;
 }
 
 function rgBinaryName(): string {
@@ -67,13 +67,13 @@ export function getShareBinRgPath(): string {
   return join(getShareDir(), 'bin', rgBinaryName());
 }
 
-function isRemoteRuntime(runtime: Runtime | undefined): runtime is Runtime {
-  return runtime !== undefined && runtime.identity.runtimeId !== LOCAL_RUNTIME_ID;
+function isRemoteEnvironment(environment: Environment | undefined): environment is Environment {
+  return environment !== undefined && environment.identity.environmentId !== LOCAL_ENVIRONMENT_ID;
 }
 
-function shareBinRgPath(runtime: Runtime | undefined): string {
-  if (isRemoteRuntime(runtime)) {
-    return `${runtime.environment.homeDir}/.kimi-code/bin/rg`;
+function shareBinRgPath(environment: Environment | undefined): string {
+  if (isRemoteEnvironment(environment)) {
+    return `${environment.host.homeDir}/.kimi-code/bin/rg`;
   }
   return getShareBinRgPath();
 }
@@ -93,9 +93,9 @@ export async function ensureRgPath(
   options: EnsureRgPathOptions = {},
 ): Promise<RgResolution> {
   throwIfAborted(options.signal);
-  const runtime = options.runtime;
-  if (runtime !== undefined && runtime.identity.runtimeId !== LOCAL_RUNTIME_ID) {
-    const resolution = ensureRemoteRgPath(probe, runtime, options);
+  const environment = options.environment;
+  if (environment !== undefined && environment.identity.environmentId !== LOCAL_ENVIRONMENT_ID) {
+    const resolution = ensureRemoteRgPath(probe, environment, options);
     return options.signal === undefined ? resolution : abortable(resolution, options.signal);
   }
   const shareDir = options.shareDir ?? getShareDir();
@@ -121,13 +121,13 @@ const remoteRgResolutions = new Map<string, Promise<RgResolution>>();
 
 function ensureRemoteRgPath(
   probe: RgProbe,
-  runtime: Runtime,
+  environment: Environment,
   options: EnsureRgPathOptions,
 ): Promise<RgResolution> {
-  const key = `${runtime.identity.runtimeId} ${runtime.identity.generation}`;
+  const key = `${environment.identity.environmentId} ${environment.identity.generation}`;
   let pending = remoteRgResolutions.get(key);
   if (pending === undefined) {
-    pending = resolveRemoteRgPath(probe, runtime, options).catch((error: unknown) => {
+    pending = resolveRemoteRgPath(probe, environment, options).catch((error: unknown) => {
       remoteRgResolutions.delete(key);
       throw error;
     });
@@ -138,7 +138,7 @@ function ensureRemoteRgPath(
 
 async function resolveRemoteRgPath(
   probe: RgProbe,
-  runtime: Runtime,
+  environment: Environment,
   options: EnsureRgPathOptions,
 ): Promise<RgResolution> {
   throwIfAborted(options.signal);
@@ -148,12 +148,12 @@ async function resolveRemoteRgPath(
     throw new Error2(ErrorCodes.OS_FS_UNAVAILABLE, 'ripgrep (rg) is not available on PATH');
   }
   throwIfAborted(options.signal);
-  const binPath = shareBinRgPath(runtime);
+  const binPath = shareBinRgPath(environment);
   const binDir = dirname(binPath);
   const cached = await probe.exec([binPath, '--version']).catch(() => ({ exitCode: -1 }));
   if (cached.exitCode === 0) return { path: binPath, source: 'share-bin-cached' };
   throwIfAborted(options.signal);
-  await installRemoteRg(probe, runtime, binDir, binPath);
+  await installRemoteRg(probe, environment, binDir, binPath);
   const installed = await probe.exec([binPath, '--version']).catch(() => ({ exitCode: -1 }));
   if (installed.exitCode !== 0) {
     throw new Error2(
@@ -166,24 +166,24 @@ async function resolveRemoteRgPath(
 
 async function installRemoteRg(
   probe: RgProbe,
-  runtime: Runtime,
+  environment: Environment,
   binDir: string,
   binPath: string,
 ): Promise<void> {
-  const environment = runtime.environment;
-  const target = detectRemoteTarget(environment.osKind, environment.osArch);
+  const host = environment.host;
+  const target = detectRemoteTarget(host.osKind, host.osArch);
   if (target === undefined) {
     throw new Error2(
       ErrorCodes.OS_FS_UNAVAILABLE,
-      `Unsupported platform/arch for ripgrep download: ${environment.osKind}/${environment.osArch}`,
-      { details: { osKind: environment.osKind, osArch: environment.osArch } },
+      `Unsupported platform/arch for ripgrep download: ${host.osKind}/${host.osArch}`,
+      { details: { osKind: host.osKind, osArch: host.osArch } },
     );
   }
-  const fs = runtime.fs;
+  const fs = environment.fs;
   if (fs === undefined) {
     throw new Error2(
       ErrorCodes.OS_FS_UNAVAILABLE,
-      'runtime does not provide fs for the ripgrep install',
+      'environment does not provide fs for the ripgrep install',
     );
   }
   const binary = await downloadRgBinary(target);
@@ -508,13 +508,13 @@ export async function extractRgFromZip(archivePath: string, destination: string)
   });
 }
 
-export function rgUnavailableMessage(cause: unknown, runtime?: Runtime): string {
+export function rgUnavailableMessage(cause: unknown, environment?: Environment): string {
   const detail =
     cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : 'unknown error';
-  if (isRemoteRuntime(runtime)) {
-    const shareBin = shareBinRgPath(runtime);
+  if (isRemoteEnvironment(environment)) {
+    const shareBin = shareBinRgPath(environment);
     return (
-      `ripgrep (rg) is not available on runtime "${runtime.identity.runtimeId}" and the automatic bootstrap failed.\n` +
+      `ripgrep (rg) is not available on environment "${environment.identity.environmentId}" and the automatic bootstrap failed.\n` +
       `\n` +
       `Error: ${detail}\n` +
       `\n` +

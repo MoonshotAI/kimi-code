@@ -6,7 +6,7 @@ import {
   classifyHandshakeFailure,
   connectWithAutoInstall,
   installExecutor,
-  RemoteRuntime,
+  RemoteEnvironment,
   type ExecutorArtifactLocator,
   type LauncherSpec,
 } from '../../src/client/index';
@@ -128,17 +128,17 @@ async function collectStdout(proc: {
   return { out: Buffer.concat(chunks).toString(), code };
 }
 
-async function remotePidAlive(runtime: RemoteRuntime, pid: number): Promise<boolean> {
+async function remotePidAlive(runtime: RemoteEnvironment, pid: number): Promise<boolean> {
   const proc = await runtime.process.spawn('kill', ['-0', String(pid)]);
   const { code } = await collectStdout(proc);
   return code === 0;
 }
 
-async function scenarioBasic(runtime: RemoteRuntime, cwd: string): Promise<void> {
+async function scenarioBasic(runtime: RemoteEnvironment, cwd: string): Promise<void> {
   process.stdout.write('scenario: basic\n');
-  record('basic', 'connect + handshake', true, `executor ${runtime.executorVersion} on ${runtime.environment.osKind}/${runtime.environment.osArch}`);
+  record('basic', 'connect + handshake', true, `executor ${runtime.executorVersion} on ${runtime.host.osKind}/${runtime.host.osArch}`);
   await check('basic', 'environment payload is sane', async () => {
-    const env = runtime.environment;
+    const env = runtime.host;
     for (const field of ['osKind', 'osArch', 'osVersion', 'shellName', 'shellPath', 'pathClass', 'homeDir', 'cwd', 'tempDir'] as const) {
       if (env[field].length === 0) throw new Error(`environment.${field} is empty`);
     }
@@ -176,9 +176,9 @@ async function scenarioBasic(runtime: RemoteRuntime, cwd: string): Promise<void>
   });
 }
 
-async function scenarioPty(runtime: RemoteRuntime, cwd: string): Promise<void> {
+async function scenarioPty(runtime: RemoteEnvironment, cwd: string): Promise<void> {
   process.stdout.write('scenario: pty\n');
-  const shell = runtime.environment.shellPath;
+  const shell = runtime.host.shellPath;
   try {
     const terminal = await runtime.terminal.spawn({ cwd, shell, cols: 90, rows: 30 });
     await check('pty', 'interactive shell over pty with merged streams', async () => {
@@ -210,7 +210,7 @@ async function scenarioPty(runtime: RemoteRuntime, cwd: string): Promise<void> {
   }
 }
 
-async function scenarioTermIgnore(runtime: RemoteRuntime, cwd: string): Promise<void> {
+async function scenarioTermIgnore(runtime: RemoteEnvironment, cwd: string): Promise<void> {
   process.stdout.write('scenario: term-ignore\n');
   await check('term-ignore', 'SIGTERM-ignoring process is escalated to SIGKILL', async () => {
     const processId = randomUUID();
@@ -238,7 +238,7 @@ async function scenarioTermIgnore(runtime: RemoteRuntime, cwd: string): Promise<
   });
 }
 
-async function scenarioGroupResidue(runtime: RemoteRuntime, cwd: string): Promise<void> {
+async function scenarioGroupResidue(runtime: RemoteEnvironment, cwd: string): Promise<void> {
   process.stdout.write('scenario: group-residue\n');
   await check('group-residue', 'residue of an exited leader is cleaned on signal', async () => {
     const proc = await runtime.process.spawn('sh', ['-c', 'sleep 300 & echo $!; exit 0'], { cwd });
@@ -270,9 +270,9 @@ async function scenarioGroupResidue(runtime: RemoteRuntime, cwd: string): Promis
 }
 
 async function scenarioDisconnect(
-  runtime: RemoteRuntime,
+  runtime: RemoteEnvironment,
   cwd: string,
-  reconnect: () => Promise<RemoteRuntime>,
+  reconnect: () => Promise<RemoteEnvironment>,
 ): Promise<void> {
   process.stdout.write('scenario: disconnect\n');
   let sleepPid = -1;
@@ -311,7 +311,7 @@ async function scenarioDisconnect(
   });
 }
 
-async function scenarioContainerStop(runtime: RemoteRuntime, container: string, cwd: string): Promise<void> {
+async function scenarioContainerStop(runtime: RemoteEnvironment, container: string, cwd: string): Promise<void> {
   process.stdout.write('scenario: container-stop\n');
   const proc = await runtime.process.spawn('sleep', ['300'], { cwd });
   const stop = localSpawn('docker', ['stop', container], { stdio: 'ignore' });
@@ -359,7 +359,7 @@ async function scenarioInstall(flags: Flags): Promise<void> {
   };
   const connectBase = {
     workspaceId: 'remote-exec-e2e',
-    runtimeId: 'e2e-target',
+    environmentId: 'e2e-target',
     clientName: 'remote-exec-e2e-driver',
     clientVersion,
     onDiagnostic,
@@ -367,7 +367,7 @@ async function scenarioInstall(flags: Flags): Promise<void> {
 
   await check('install', 'connect on a fresh target fails as a missing executor', async () => {
     try {
-      await RemoteRuntime.connect({ ...connectBase, launcher });
+      await RemoteEnvironment.connect({ ...connectBase, launcher });
     } catch (error) {
       const cls = classifyHandshakeFailure(error);
       if (cls === 'missing' || cls === 'timeout') return;
@@ -392,7 +392,7 @@ async function scenarioInstall(flags: Flags): Promise<void> {
       await connectWithAutoInstall(
         async (retryLauncher) => {
           attempts += 1;
-          return RemoteRuntime.connect({ ...connectBase, launcher: retryLauncher });
+          return RemoteEnvironment.connect({ ...connectBase, launcher: retryLauncher });
         },
         { launcher, artifactLocator: badLocator, clientVersion, onDiagnostic },
       );
@@ -417,7 +417,7 @@ async function scenarioInstall(flags: Flags): Promise<void> {
     const runtime = await connectWithAutoInstall(
       async (retryLauncher) => {
         attempts += 1;
-        return RemoteRuntime.connect({ ...connectBase, launcher: retryLauncher });
+        return RemoteEnvironment.connect({ ...connectBase, launcher: retryLauncher });
       },
       { launcher, artifactLocator: locator, clientVersion, onDiagnostic },
     );
@@ -425,10 +425,10 @@ async function scenarioInstall(flags: Flags): Promise<void> {
       if (attempts !== 2) {
         throw new Error(`expected exactly 2 connect attempts (fail + one retry), got ${String(attempts)}`);
       }
-      const binPath = flags.remoteBin ?? `${runtime.environment.homeDir}/.kimi-code/bin/kimi`;
+      const binPath = flags.remoteBin ?? `${runtime.host.homeDir}/.kimi-code/bin/kimi`;
       const meta = await runtime.fs.stat(binPath);
       if (!meta.isFile) throw new Error(`${binPath} is not a file on the target`);
-      const probe = `${runtime.environment.tempDir}/remote-exec-e2e-install.txt`;
+      const probe = `${runtime.host.tempDir}/remote-exec-e2e-install.txt`;
       await runtime.fs.writeText(probe, 'installed');
       const text = await runtime.fs.readText(probe);
       await runtime.fs.remove(probe);
@@ -478,10 +478,10 @@ async function main(): Promise<void> {
     });
 
     process.stdout.write(`connecting via ${flags.target ?? ''} launcher...\n`);
-    const connect = (): Promise<RemoteRuntime> =>
-      RemoteRuntime.connect({
+    const connect = (): Promise<RemoteEnvironment> =>
+      RemoteEnvironment.connect({
         workspaceId: 'remote-exec-e2e',
-        runtimeId: 'e2e-target',
+        environmentId: 'e2e-target',
         launcher,
         clientName: 'remote-exec-e2e-driver',
         clientVersion: '0.0.0',
@@ -491,7 +491,7 @@ async function main(): Promise<void> {
         },
       });
     const runtime = await connect();
-    const cwd = flags.remoteCwd ?? runtime.environment.cwd;
+    const cwd = flags.remoteCwd ?? runtime.host.cwd;
 
     for (const name of ordered) {
       switch (name) {

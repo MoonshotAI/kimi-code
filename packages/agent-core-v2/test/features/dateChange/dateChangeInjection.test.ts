@@ -8,7 +8,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
+import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import {
@@ -464,7 +464,7 @@ describe('AgentDateChangeService', () => {
   });
 });
 
-describe('AgentDateChangeService on a remote runtime binding', () => {
+describe('AgentDateChangeService on a remote environment binding', () => {
   const REMOTE_WORK_DIR = '/remote/work';
   let ctx: TestAgentContext;
   let context: IAgentContextMemoryService;
@@ -476,12 +476,12 @@ describe('AgentDateChangeService on a remote runtime binding', () => {
     clock = testHostClock(INITIAL_INSTANT);
     const binding = {
       _serviceBrand: undefined,
-      current: { workspaceId: 'test-workspace', runtimeId: 'remote-1', cwd: REMOTE_WORK_DIR },
-    } as unknown as IAgentRuntimeBindingService;
+      current: { workspaceId: 'test-workspace', environmentId: 'remote-1', cwd: REMOTE_WORK_DIR },
+    } as unknown as IAgentEnvironmentBindingService;
     ctx = createTestAgent(
       { autoConfigure: false },
       appService(IHostClock, clock),
-      agentService(IAgentRuntimeBindingService, binding),
+      agentService(IAgentEnvironmentBindingService, binding),
     );
     context = ctx.get(IAgentContextMemoryService);
     loop = ctx.get(IAgentLoopService);

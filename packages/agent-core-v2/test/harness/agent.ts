@@ -89,10 +89,10 @@ interface UnregisterToolPayload { readonly name: string }
 import { type UsageStatus } from '#/agent/usage/usage';
 import { type PromptWithSkillsInput, type PromptWithSkillsResult, type SkillActivationInput } from '#/features/skill/skill';
 import { IAgentSkillService } from '#/features/skill/skillService';
-import { IAgentRuntimeBindingSeed } from '#/agent/runtimeBinding/runtimeBinding';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import type { RuntimeLease } from '#/runtime/runtime';
-import { LocalRuntime } from '#/runtime/localRuntime';
+import { IAgentEnvironmentBindingSeed } from '#/agent/environmentBinding/environmentBinding';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import type { EnvironmentLease } from '#/environment/environment';
+import { LocalEnvironment } from '#/environment/localEnvironment';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
 import type {
   ExecutableToolOutput as ToolOutput,
@@ -1336,28 +1336,28 @@ export class AgentTestContext {
       seeds: collectScopeSeed(
         [
           (reg) => {
-            reg.defineInstance(IAgentRuntimeBindingSeed, {
+            reg.defineInstance(IAgentEnvironmentBindingSeed, {
               _serviceBrand: undefined,
-              binding: { workspaceId: 'workspace-1', runtimeId: 'local' },
+              binding: { workspaceId: 'workspace-1', environmentId: 'local' },
             });
-            const runtime = new LocalRuntime(
+            const runtime = new LocalEnvironment(
               'workspace-1',
               this.root.accessor.get(IHostEnvironment),
               this.root.accessor.get(IHostFileSystem),
               this.root.accessor.get(IHostProcessService),
               this.root.accessor.get(IHostTerminalService),
             );
-            reg.defineInstance<IAgentRuntimeService>(IAgentRuntimeService, {
+            reg.defineInstance<IAgentEnvironmentService>(IAgentEnvironmentService, {
               _serviceBrand: undefined,
               onDidChange: () => ({ dispose: () => {} }),
               isAvailable: (required = []) => required.every((capability) => runtime.capabilities.has(capability)),
               inspect: () => runtime,
-              acquire: (required = []): RuntimeLease => {
+              acquire: (required = []): EnvironmentLease => {
                 const missing = required.filter((capability) => !runtime.capabilities.has(capability));
                 if (missing.length > 0) {
-                  throw new Error(`test runtime missing capabilities: ${missing.join(', ')}`);
+                  throw new Error(`test environment missing capabilities: ${missing.join(', ')}`);
                 }
-                return { runtime, track: (resource) => resource, dispose: () => {} };
+                return { environment: runtime, track: (resource) => resource, dispose: () => {} };
               },
               acquireWhenReady(required = []) { return Promise.resolve(this.acquire(required)); },
               reconnect: async () => {},

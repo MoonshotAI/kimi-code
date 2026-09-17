@@ -19,14 +19,14 @@ import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalo
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
-import type { Runtime } from '#/runtime/runtime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
+import type { Environment } from '#/environment/environment';
 import { IConfigService } from '#/app/config/config';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { ILogService } from '#/_base/log/log';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
+import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { createHooks } from '#/hooks';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
@@ -149,10 +149,10 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
   async spawn(opts: SpawnSubagentOptions): Promise<SpawnedSubagent> {
     const caller = this.requireCaller(opts.callerAgentId);
     const { plan } = opts;
-    const callerBinding = caller.accessor.get(IAgentRuntimeBindingService).current;
+    const callerBinding = caller.accessor.get(IAgentEnvironmentBindingService).current;
     const lease = plan.fork
       ? undefined
-      : caller.accessor.get(IAgentRuntimeService).acquire(['process']);
+      : caller.accessor.get(IAgentEnvironmentService).acquire(['process']);
     try {
       let created: IAgentScopeHandle;
       try {
@@ -172,8 +172,8 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
               thinking: plan.thinking,
             },
             labels: opts.labels,
-            runtimeId: callerBinding.runtimeId,
-            runtimeCwd: callerBinding.cwd,
+            environmentId: callerBinding.environmentId,
+            environmentCwd: callerBinding.cwd,
           });
           created = this.agentLifecycle.handleOf(createdContext.agentId)!;
         }
@@ -197,7 +197,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       }
       const promptText = plan.fork
         ? opts.prompt
-        : await this.applyPromptPrefix(plan.profileName, opts.prompt, lease!.runtime, callerBinding.cwd);
+        : await this.applyPromptPrefix(plan.profileName, opts.prompt, lease!.environment, callerBinding.cwd);
       return {
         agentId: created.id,
         profileName: plan.profileName,
@@ -217,12 +217,12 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
   private async applyPromptPrefix(
     profileName: string,
     prompt: string,
-    runtime: Runtime,
+    runtime: Environment,
     cwd: string | undefined,
   ): Promise<string> {
     const profile = this.catalog.get(profileName);
     if (profile?.promptPrefix === undefined) return prompt;
-    const view = new RuntimeWorkspaceView(runtime, {
+    const view = new EnvironmentWorkspaceView(runtime, {
       workDir: cwd ?? this.sessionContext.cwd,
     });
     return applyProfilePromptPrefix(profile, prompt, {

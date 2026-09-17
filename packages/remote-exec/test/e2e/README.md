@@ -6,7 +6,7 @@ scenarios the loopback cannot reach: real ssh, real docker, and fault
 injection (bridge drop, container stop, TERM-ignore, leader-exited group
 residue).
 
-The driver (`driver.ts`) connects a `RemoteRuntime` to a real target through a
+The driver (`driver.ts`) connects a `RemoteEnvironment` to a real target through a
 launcher and asserts behavior on the target itself (remote `kill -0`, remote
 file reads), so a PASS always means something really happened on the target —
 no fake success, and every failure path is checked for silent local fallback.

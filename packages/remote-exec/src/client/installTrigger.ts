@@ -61,22 +61,22 @@ function manualInstallGuidance(launcher: LauncherSpec): string {
       '     place it at the absolute path your launcher command invokes, with execute permission',
     );
   }
-  lines.push('Then reconnect the runtime.');
+  lines.push('Then reconnect the environment.');
   return lines.join('\n');
 }
 
 export interface MissingExecutorGuidanceContext {
   readonly launcher: LauncherSpec;
   readonly failure: HandshakeFailureClass;
-  readonly reason: 'command-runtime' | 'locator-unconfigured' | 'install-disabled' | 'install-failed';
+  readonly reason: 'command-environment' | 'locator-unconfigured' | 'install-disabled' | 'install-failed';
   readonly installError?: unknown;
 }
 
 export function missingExecutorGuidance(context: MissingExecutorGuidanceContext): string {
   const parts = [failureIntro(context.launcher, context.failure)];
   switch (context.reason) {
-    case 'command-runtime':
-      parts.push('Auto-install is not available for `command` runtimes.');
+    case 'command-environment':
+      parts.push('Auto-install is not available for `command` environments.');
       break;
     case 'locator-unconfigured':
       parts.push('Auto-install is not configured in this client (no executor artifact locator).');
@@ -135,7 +135,7 @@ export function reconnectAfterInstallGuidance(context: {
     `The executor ${context.install.version} was installed at ${context.install.remoteBin} on ` +
     `${launcherLabel(context.launcher)}, but the reconnect still failed. The executor is present on ` +
     'the target — check why it does not answer the handshake (run it manually on the target and ' +
-    'inspect its stderr), then reconnect the runtime.'
+    'inspect its stderr), then reconnect the environment.'
   );
 }
 
@@ -143,7 +143,7 @@ function withGuidance(error: unknown, guidance: string): HandshakeError {
   const base =
     error instanceof Error
       ? error
-      : new HandshakeError(typeof error === 'string' ? error : 'remote runtime connect failed');
+      : new HandshakeError(typeof error === 'string' ? error : 'remote environment connect failed');
   const details =
     error instanceof HandshakeError
       ? {
@@ -168,10 +168,10 @@ export interface ConnectWithAutoInstallOptions {
 }
 
 // Connect policy (spec D8/D9): a missing/timing-out executor on a typed
-// ssh/docker runtime triggers one auto-install attempt followed by exactly one
+// ssh/docker environment triggers one auto-install attempt followed by exactly one
 // connect retry; the retry uses the concrete install path (docker needs the
 // absolute home-based path, its exec has no `~` expansion). `command`
-// runtimes are never auto-installed — a missing executor there fails with
+// environments are never auto-installed — a missing executor there fails with
 // guidance. A too-old executor gets upgrade guidance, not an auto-upgrade. A
 // failed install or a failed retry both surface the guidance error.
 export async function connectWithAutoInstall<T>(
@@ -203,7 +203,7 @@ export async function connectWithAutoInstall<T>(
         missingExecutorGuidance({
           launcher,
           failure,
-          reason: 'command-runtime',
+          reason: 'command-environment',
         }),
       );
     }

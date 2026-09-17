@@ -11,7 +11,7 @@ import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSyste
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ErrorCodes, Error2 } from '#/errors';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
@@ -49,16 +49,16 @@ function stubHostFs(entries: Record<string, string>): IHostFileSystem {
   } as unknown as IHostFileSystem;
 }
 
-function stubRuntimeService(workDir: string, fs: IHostFileSystem, homeDir: string): IAgentRuntimeService {
+function stubEnvironmentService(workDir: string, fs: IHostFileSystem, homeDir: string): IAgentEnvironmentService {
   return {
     _serviceBrand: undefined,
     workspaceRoots: () => ({ workDir, additionalDirs: [] }),
     acquire: () => ({
-      runtime: { fs, environment: { homeDir } },
+      environment: { fs, host: { homeDir } },
       track: (resource: unknown) => resource,
       dispose: () => {},
     }),
-  } as unknown as IAgentRuntimeService;
+  } as unknown as IAgentEnvironmentService;
 }
 
 describe('SessionInitService', () => {
@@ -73,7 +73,7 @@ describe('SessionInitService', () => {
   let run: ReturnType<typeof vi.fn>;
   let runCompletion: Promise<{ summary: string; usage?: undefined }>;
   let hostFs: IHostFileSystem;
-  let runtimeWorkDir: string;
+  let environmentWorkDir: string;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -87,7 +87,7 @@ describe('SessionInitService', () => {
     });
     runCompletion = Promise.resolve({ summary: 'Explored and wrote AGENTS.md', usage: undefined });
     hostFs = stubHostFs({ [AGENTS_MD_PATH]: AGENTS_MD, [GIT_DIR_PATH]: '' });
-    runtimeWorkDir = WORK_DIR;
+    environmentWorkDir = WORK_DIR;
 
     const handles: Record<string, { id: string; accessor: { get: (id: unknown) => unknown } }> = {};
     const lifecycle = {
@@ -127,8 +127,8 @@ describe('SessionInitService', () => {
           if (id === IAgentPermissionModeService) return permissionMode;
           if (id === IAgentAgentsMdReminderService) return { seedInjected };
           if (id === IAgentReminderService) return { notify: appendReminder };
-          if (id === IAgentRuntimeService) {
-            return stubRuntimeService(runtimeWorkDir, hostFs, '/home');
+          if (id === IAgentEnvironmentService) {
+            return stubEnvironmentService(environmentWorkDir, hostFs, '/home');
           }
           if (id === IEventDispatcher) {
             return {
@@ -229,7 +229,7 @@ describe('SessionInitService', () => {
       [remoteAgentsMdPath]: 'remote target instructions',
       [`${remoteWorkDir}/.git`]: '',
     });
-    runtimeWorkDir = remoteWorkDir;
+    environmentWorkDir = remoteWorkDir;
 
     const svc = ix.get(ISessionInitService);
     await svc.generateAgentsMd();

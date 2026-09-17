@@ -1,1 +1,1 @@
-export { AcpRuntimeProviderFactory } from './acpTerminalRunner';
+export { AcpEnvironmentProviderFactory } from './acpTerminalRunner';

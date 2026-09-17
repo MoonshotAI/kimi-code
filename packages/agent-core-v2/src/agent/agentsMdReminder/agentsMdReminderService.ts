@@ -11,7 +11,7 @@ import type { AgentsMdReminderShownEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { WatchChange } from '#human/utils/watch';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { normalizeUserPath } from '#/tool/path-access';
@@ -74,7 +74,7 @@ export class AgentAgentsMdReminderService
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
     @ISessionContext private readonly sessionContext: ISessionContext,
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IBashParserService private readonly bashParser: IBashParserService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -168,10 +168,10 @@ export class AgentAgentsMdReminderService
 
   private async ensureSeeded(): Promise<void> {
     if (this.states.get(agentsMdReminderSeededKey)) return;
-    const lease = this.runtime.acquire(['fs']);
+    const lease = this.environment.acquire(['fs']);
     try {
       const { paths } = await loadAgentsMdDetailed(
-        { fs: lease.runtime.fs!, homeDir: lease.runtime.environment.homeDir },
+        { fs: lease.environment.fs!, homeDir: lease.environment.host.homeDir },
         this.agentCwd,
         this.bootstrap.homeDir,
       );
@@ -236,8 +236,8 @@ export class AgentAgentsMdReminderService
 
   private targetDirs(ctx: ToolDidExecuteContext): { dirs: string[]; selfKnown: string[] } {
     const selfKnown: string[] = [];
-    const lease = this.runtime.acquire();
-    const env = lease.runtime.environment;
+    const lease = this.environment.acquire();
+    const env = lease.environment.host;
     lease.dispose();
     switch (ctx.toolCall.name) {
       case 'Read':
@@ -251,7 +251,7 @@ export class AgentAgentsMdReminderService
         const command = stringArg(args, 'command');
         if (command === undefined) return { dirs: [], selfKnown };
         const cwdArg = stringArg(args, 'cwd');
-        const base = hostPath(this.runtime.workspaceRoots().workDir, env.pathClass);
+        const base = hostPath(this.environment.workspaceRoots().workDir, env.pathClass);
         const normalizedCwdArg =
           cwdArg === undefined ? undefined : normalizeUserPath(cwdArg, env.pathClass);
         const effectiveCwd =
@@ -308,9 +308,9 @@ export class AgentAgentsMdReminderService
   }
 
   private async probeDir(dir: string): Promise<string[]> {
-    const lease = this.runtime.acquire(['fs']);
+    const lease = this.environment.acquire(['fs']);
     try {
-      const fs = lease.runtime.fs!;
+      const fs = lease.environment.fs!;
       const anchor = await this.nearestExistingDir(fs, dir);
       if (anchor === undefined) return [];
       const deps = { fs };

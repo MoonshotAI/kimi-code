@@ -1,8 +1,8 @@
 import { ref, type LiveRef } from '#/_base/di/instantiation';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import type { RuntimeWorkspaceRoots } from '#/runtime/runtime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import type { EnvironmentWorkspaceRoots } from '#/environment/environment';
 import { ISessionStateService } from '#/session/state/sessionState';
 
 import { ISessionWorkspaceContext, type PathAccessOperation } from './workspaceContext';
@@ -17,11 +17,11 @@ export class AgentWorkspaceContextService implements ISessionWorkspaceContext {
 
   constructor(
     @ISessionStateService private readonly states: ISessionStateService,
-    @ref(IAgentRuntimeService) private readonly runtime: LiveRef<IAgentRuntimeService>,
+    @ref(IAgentEnvironmentService) private readonly environment: LiveRef<IAgentEnvironmentService>,
   ) {}
 
-  private roots(): RuntimeWorkspaceRoots {
-    const runtime = this.runtime.current;
+  private roots(): EnvironmentWorkspaceRoots {
+    const runtime = this.environment.current;
     if (runtime === undefined) {
       return {
         workDir: this.states.get(workspaceContextWorkDirKey),

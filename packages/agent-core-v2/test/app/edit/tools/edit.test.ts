@@ -17,8 +17,8 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import type { Runtime } from '#/runtime/runtime';
+import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import type { Environment } from '#/environment/environment';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 
@@ -68,36 +68,36 @@ function buildTool(
       reg.define(IFileEditService, FileEditService);
     },
   });
-  const runtimeValue = {
-    identity: { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+  const environmentValue = {
+    identity: { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
     capabilities: new Set(['fs'] as const),
-    environment: env,
+    host: env,
     path: posixPath,
     workspace: { mapRoots: (roots: { workDir: string; additionalDirs?: readonly string[] }) => roots },
     fs,
     status: 'ready',
     onDidChangeStatus: () => ({ dispose: () => {} }),
     dispose: () => {},
-  } as unknown as Runtime;
-  const runtime: IAgentRuntimeService = {
+  } as unknown as Environment;
+  const environment: IAgentEnvironmentService = {
     _serviceBrand: undefined,
     onDidChange: () => ({ dispose: () => {} }),
     isAvailable: () => true,
-    inspect: () => runtimeValue,
+    inspect: () => environmentValue,
     acquire: () => ({
-      runtime: runtimeValue,
+      environment: environmentValue,
       track: (resource) => resource,
       dispose: () => {},
     }),
     acquireWhenReady: async () => ({
-      runtime: runtimeValue,
+      environment: environmentValue,
       track: (resource) => resource,
       dispose: () => {},
     }),
     reconnect: async () => {},
     workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
   };
-  return new EditTool(ix.get(IFileEditService), runtime, workspace);
+  return new EditTool(ix.get(IFileEditService), environment, workspace);
 }
 
 function isPromiseLike(
@@ -218,15 +218,15 @@ describe('EditTool', () => {
   });
 
   it('executes against the selected runtime filesystem instead of the App filesystem', async () => {
-    const runtimeWrite = vi.fn().mockResolvedValue(undefined);
-    const { fs: runtimeFs } = createSpiedEditFs({
+    const environmentWrite = vi.fn().mockResolvedValue(undefined);
+    const { fs: environmentFs } = createSpiedEditFs({
       readText: vi.fn().mockResolvedValue('runtime content'),
-      writeText: runtimeWrite,
+      writeText: environmentWrite,
     });
     const appRead = vi.fn().mockRejectedValue(new Error('App filesystem bypass'));
     const appWrite = vi.fn().mockRejectedValue(new Error('App filesystem bypass'));
     const { fs: appFs } = createSpiedEditFs({ readText: appRead, writeText: appWrite });
-    const tool = buildTool(runtimeFs, createTestEnv(), PERMISSIVE_WORKSPACE, appFs);
+    const tool = buildTool(environmentFs, createTestEnv(), PERMISSIVE_WORKSPACE, appFs);
 
     const result = await execute(tool, {
       path: '/tmp/a.txt',
@@ -235,7 +235,7 @@ describe('EditTool', () => {
     });
 
     expect(result.output).toContain('Replaced 1 occurrence');
-    expect(runtimeWrite).toHaveBeenCalledWith('/tmp/a.txt', 'runtime generation');
+    expect(environmentWrite).toHaveBeenCalledWith('/tmp/a.txt', 'runtime generation');
     expect(appRead).not.toHaveBeenCalled();
     expect(appWrite).not.toHaveBeenCalled();
   });

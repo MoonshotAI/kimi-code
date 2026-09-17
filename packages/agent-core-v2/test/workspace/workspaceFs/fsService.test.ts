@@ -17,8 +17,8 @@ import { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
 import { WorkspaceFsService } from '#/workspace/workspaceFs/fsService';
 import { getShareBinRgPath } from '#/workspace/workspaceFs/internal/rgLocator';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { IEnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { ITelemetryService, type TelemetryProperties } from '#/app/telemetry/telemetry';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
@@ -385,13 +385,13 @@ function makeSession(
       ready: Promise.resolve(),
     }),
   ]);
-  const runtime = new FakeRuntime({ workspaceId: 'w', runtimeId: 'local', generation: 'test' }, { capabilities: ['process'], pathClass });
+  const runtime = new FakeEnvironment({ workspaceId: 'w', environmentId: 'local', generation: 'test' }, { capabilities: ['process'], pathClass });
   Object.defineProperty(runtime, 'process', { value: runner ?? fakeRunner(handler) });
-  host.app.instantiation.provide(IRuntimeResolver, {
+  host.app.instantiation.provide(IEnvironmentResolver, {
     _serviceBrand: undefined,
     inspect: () => runtime,
-    acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
-    acquireWhenReady: async () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
+    acquire: () => ({ environment: runtime, track: (resource) => resource, dispose: () => {} }),
+    acquireWhenReady: async () => ({ environment: runtime, track: (resource) => resource, dispose: () => {} }),
   });
   const workspace = host.child('program', 'w1', [
     stubPair(IWorkspaceContext, stubWorkspaceContext()),
@@ -410,19 +410,19 @@ function makeRemoteSession(
   files: Record<string, string | Buffer>,
   handler: RunHandler,
   events: Array<{ event: string; properties: Record<string, unknown> }> = [],
-  runtimeId = 'ssh-dev',
+  environmentId = 'ssh-dev',
   homeDir = '/home/target',
 ): IWorkspaceFsService {
-  const runtime = new FakeRuntime(
-    { workspaceId: 'w', runtimeId, generation: 'test' },
-    { capabilities: ['process'], environment: { homeDir } },
+  const runtime = new FakeEnvironment(
+    { workspaceId: 'w', environmentId, generation: 'test' },
+    { capabilities: ['process'], host: { homeDir } },
   );
   Object.defineProperty(runtime, 'process', { value: fakeRunner(handler) });
-  const resolver: IRuntimeResolver = {
+  const resolver: IEnvironmentResolver = {
     _serviceBrand: undefined,
     inspect: () => runtime,
-    acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
-    acquireWhenReady: async () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
+    acquire: () => ({ environment: runtime, track: (resource) => resource, dispose: () => {} }),
+    acquireWhenReady: async () => ({ environment: runtime, track: (resource) => resource, dispose: () => {} }),
   };
   return new WorkspaceFsService(
     stubWorkspaceContext(),
@@ -431,7 +431,7 @@ function makeRemoteSession(
     resolver,
     telemetryStub(events),
     workspaceGitStub(defaultGitStub()),
-    runtimeId,
+    environmentId,
   );
 }
 
