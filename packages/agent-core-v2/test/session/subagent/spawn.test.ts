@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Readable, type Writable } from 'node:stream';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -21,9 +22,11 @@ import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBindi
 import { Error2, ErrorCodes, isError2 } from '#/errors';
 import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
+import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
-import type { RuntimeLease } from '#/runtime/runtime';
+import type { RuntimeBinding, RuntimeLease } from '#/runtime/runtime';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { collectGitContext } from '#/session/agentLifecycle/profile/gitContext';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -64,6 +67,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   let createdUserTools: IAgentUserToolService;
   let createdReminder: { notify: ReturnType<typeof vi.fn> };
   let lease: RuntimeLease;
+  let callerBinding: RuntimeBinding;
 
   function userToolsStub(): IAgentUserToolService {
     return {
@@ -138,6 +142,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       dispose: vi.fn(),
     };
     acquireRuntime = vi.fn(() => lease);
+    callerBinding = { workspaceId: 'w1', runtimeId: 'acp:s1' };
     caller = {
       id: CALLER_ID,
       kind: LifecycleScope.Agent,
@@ -155,7 +160,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
           if (serviceId === IAgentRuntimeBindingService) {
             return {
               _serviceBrand: undefined,
-              current: { workspaceId: 'w1', runtimeId: 'acp:s1' },
+              current: callerBinding,
             };
           }
           if (serviceId === IAgentScopeContext) {
@@ -274,6 +279,78 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       plan: { profileName: 'orchestrator', model: 'main-model', modelSource: 'inherited', thinking: 'high', fork: true },
       labels: { parentAgentId: 'main' },
       prompt: 'Continue the analysis',
+    });
+  }
+
+  function processWith(stdout: string, exitCode: number, stderr = ''): IHostProcess {
+    const stdoutStream = Readable.from([Buffer.from(stdout)]);
+    const stderrStream = Readable.from([Buffer.from(stderr)]);
+    return {
+      _serviceBrand: undefined,
+      stdin: { end: vi.fn(), write: vi.fn() } as unknown as Writable,
+      stdout: stdoutStream,
+      stderr: stderrStream,
+      pid: 1,
+      exitCode,
+      wait: vi.fn().mockResolvedValue(exitCode),
+      kill: vi.fn(async () => {}),
+      dispose: vi.fn(async () => {
+        stdoutStream.destroy();
+        stderrStream.destroy();
+      }),
+    };
+  }
+
+  function gitProcessForRepo(repoCwd: string): { process: IHostProcessService; gitCwds: string[] } {
+    const gitCwds: string[] = [];
+    const script: Record<string, { stdout?: string; exitCode?: number; stderr?: string }> = {
+      'rev-parse --is-inside-work-tree': { stdout: 'true' },
+      'remote get-url origin': { stdout: 'git@github.com:owner/repo-only-there.git' },
+      'symbolic-ref --short HEAD': { stdout: 'main' },
+      'status --porcelain': { stdout: '' },
+      'log -3 --format=%h %s': { stdout: 'abc123 a commit' },
+    };
+    const spawn = vi.fn(async (_command: string, args: readonly string[]) => {
+      const cwd = args[1]!;
+      gitCwds.push(cwd);
+      if (cwd !== repoCwd) {
+        return processWith('', 128, 'fatal: not a git repository (or any of the parent directories): .git');
+      }
+      const out = script[args.slice(2).join(' ')];
+      if (out === undefined) return processWith('', 1);
+      return processWith(out.stdout ?? '', out.exitCode ?? 0, out.stderr ?? '');
+    });
+    return { process: { _serviceBrand: undefined, spawn } as IHostProcessService, gitCwds };
+  }
+
+  function spawnExploreWithGitContext(
+    svc: ISessionSubagentService,
+    git: { process: IHostProcessService; gitCwds: string[] },
+  ): Promise<SpawnedSubagent> {
+    const runtime = Object.assign(
+      new FakeRuntime({ workspaceId: 'w1', runtimeId: 'acp:s1', generation: 'g1' }),
+      { process: git.process },
+    );
+    lease = { runtime, track: (resource) => resource, dispose: vi.fn() };
+    profiles = [
+      normalizeAgentProfile({
+        name: 'explore',
+        description: 'Explorer',
+        systemPrompt: () => 'explore',
+        promptPrefix: async ({ cwd, process, log }) => {
+          try {
+            return await collectGitContext(process, cwd, log);
+          } catch {
+            return '';
+          }
+        },
+      }),
+    ];
+    return svc.spawn({
+      callerAgentId: CALLER_ID,
+      plan: { profileName: 'explore', model: 'provider/fast', modelSource: 'secondary_pool', thinking: 'low', fork: false },
+      labels: { parentAgentId: 'main' },
+      prompt: 'Survey the repo',
     });
   }
 
@@ -564,6 +641,32 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       modelSource: 'secondary_pool',
       promptText: 'FIXED-PREFIX\n\nReview the file',
     });
+  });
+
+  it('collects the explore git context at the inherited binding cwd on the bound runtime', async () => {
+    callerBinding = { workspaceId: 'w1', runtimeId: 'acp:s1', cwd: '/remote/repo' };
+    const git = gitProcessForRepo('/remote/repo');
+    const svc = service();
+
+    const spawned = await spawnExploreWithGitContext(svc, git);
+
+    expect(git.gitCwds.length).toBeGreaterThan(0);
+    expect(git.gitCwds.every((cwd) => cwd === '/remote/repo')).toBe(true);
+    expect(spawned.promptText).toContain('Working directory: /remote/repo');
+    expect(spawned.promptText).toContain('Project: owner/repo-only-there');
+    expect(spawned.promptText).toContain('Survey the repo');
+  });
+
+  it('collects the explore git context at the session cwd when the caller binding has no cwd', async () => {
+    const git = gitProcessForRepo('/repo');
+    const svc = service();
+
+    const spawned = await spawnExploreWithGitContext(svc, git);
+
+    expect(git.gitCwds.length).toBeGreaterThan(0);
+    expect(git.gitCwds.every((cwd) => cwd === '/repo')).toBe(true);
+    expect(spawned.promptText).toContain('Working directory: /repo');
+    expect(spawned.promptText).toContain('Project: owner/repo-only-there');
   });
 
   it('releases the runtime lease after spawn', async () => {
