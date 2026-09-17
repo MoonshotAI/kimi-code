@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
+import { ILogService } from '#/_base/log/log';
 import { IBashParserService } from '#/app/bashParser/bashParser';
 import { BashParserService } from '#/app/bashParser/bashParserService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -59,7 +60,7 @@ import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/st
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
 import { runWillBeginStepHooks, stubLoopWithHooks, type StubLoop } from '../loop/stubs';
 import { stubContextMemory, type StubContextMemory } from '../contextMemory/stubs';
-import { registerLogServices } from '../../_base/log/stubs';
+import { stubLog } from '../../_base/log/stubs';
 import { stubAgentContext } from '../agentContext/stubs';
 
 let disposables: DisposableStore;
@@ -105,6 +106,8 @@ function createHarness(
     readonly cwd?: string;
     readonly hostFs?: IHostFileSystem;
     readonly pathClass?: 'posix' | 'win32';
+    readonly runtimeWorkDir?: string;
+    readonly log?: ILogService;
     readonly restoredProfile?: {
       readonly systemPrompt: string;
       readonly agentsMdPaths?: readonly string[];
@@ -132,10 +135,10 @@ function createHarness(
           write: async () => {},
         });
         reg.define(IAgentToolResultTruncationService, ToolResultTruncationService);
-        registerLogServices(reg);
       } else {
         reg.defineInstance(IAgentToolExecutorService, events.executor);
       }
+      reg.defineInstance(ILogService, options.log ?? stubLog());
       reg.defineInstance(IAgentScopeContext, {
         _serviceBrand: undefined,
         agentId: 'main',
@@ -225,7 +228,10 @@ function createHarness(
         }),
         acquireWhenReady() { return Promise.resolve(this.acquire()); },
         reconnect: async () => {},
-        workspaceRoots: () => ({ workDir: homeDir, additionalDirs: [] }),
+        workspaceRoots: () => ({
+          workDir: options.runtimeWorkDir ?? options.cwd ?? workDir,
+          additionalDirs: [],
+        }),
       } satisfies IAgentRuntimeService);
       reg.defineInstance(IBashParserService, new BashParserService());
       reg.defineInstance(
@@ -1517,6 +1523,98 @@ describe('agentsMdReminder Windows Bash paths', () => {
       expect(outputText(result)).toBe('original result');
       expect(reminderText(h)).toContain(agentsMdPath);
     }
+  });
+});
+
+describe('agentsMdReminder remote runtime binding', () => {
+  const sessionCwd = '/Users/local/Projects/kimi-code';
+  const remoteWorkDir = '/remote/work';
+  const remoteSubDir = `${remoteWorkDir}/packages/kap-server`;
+  const remoteAgentsMd = `${remoteSubDir}/AGENTS.md`;
+
+  function remoteProbeFs(): IHostFileSystem {
+    const directory: HostFileStat = {
+      isFile: false,
+      isDirectory: true,
+      size: 0,
+    };
+    const stat = vi.fn(async (path: string): Promise<HostFileStat> => {
+      if (path === remoteSubDir || path === `${remoteWorkDir}/.git`) return directory;
+      throw new Error(`missing: ${path}`);
+    });
+    const readText = vi.fn(async (path: string): Promise<string> => {
+      if (path === remoteAgentsMd) return 'remote instructions';
+      throw new Error(`missing: ${path}`);
+    });
+    return { stat, readText } as unknown as IHostFileSystem;
+  }
+
+  function remoteHarness(): Harness {
+    const h = createHarness({
+      cwd: sessionCwd,
+      hostFs: remoteProbeFs(),
+      runtimeWorkDir: remoteWorkDir,
+    });
+    h.reminder.seedInjected([], remoteWorkDir);
+    return h;
+  }
+
+  it('reminds for a relative Bash target resolved against the bound runtime workDir', async () => {
+    const h = remoteHarness();
+
+    const result = await fire(h, didCtx('Bash', { command: 'ls packages/kap-server' }));
+
+    expect(outputText(result)).toBe('original result');
+    expect(reminderText(h)).toContain(remoteAgentsMd);
+  });
+
+  it('reminds for an explicit relative cwd argument resolved against the bound runtime workDir', async () => {
+    const h = remoteHarness();
+
+    const result = await fire(
+      h,
+      didCtx('Bash', { command: 'git status', cwd: 'packages/kap-server' }),
+    );
+
+    expect(outputText(result)).toBe('original result');
+    expect(reminderText(h)).toContain(remoteAgentsMd);
+  });
+
+  it('keeps absolute-path Bash targets working under a remote binding', async () => {
+    const h = remoteHarness();
+
+    const result = await fire(
+      h,
+      didCtx('Bash', { command: `ls ${remoteSubDir}` }),
+    );
+
+    expect(outputText(result)).toBe('original result');
+    expect(reminderText(h)).toContain(remoteAgentsMd);
+  });
+
+  it('logs at debug level when probing finds no existing anchor directory', async () => {
+    const debugLogs: { message: string; payload?: unknown }[] = [];
+    const log: ILogService = {
+      ...stubLog(),
+      debug: (message: string, payload?: unknown) => {
+        debugLogs.push({ message, payload });
+      },
+    };
+    const missingFs = {
+      stat: vi.fn(async (path: string): Promise<HostFileStat> => {
+        throw new Error(`missing: ${path}`);
+      }),
+    } as unknown as IHostFileSystem;
+    const h = createHarness({ hostFs: missingFs, log });
+    h.reminder.seedInjected([], workDir);
+
+    const result = await fire(h, didCtx('Bash', { command: 'ls /nonexistent/dir' }));
+
+    expect(outputText(result)).toBe('original result');
+    expect(agentsMdMessages(h)).toHaveLength(0);
+    expect(debugLogs).toHaveLength(1);
+    expect(debugLogs[0]?.message).toContain('no existing anchor');
+    expect(debugLogs[0]?.payload).toMatchObject({ path: '/nonexistent/dir' });
   });
 });
 

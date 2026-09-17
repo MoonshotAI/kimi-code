@@ -1,6 +1,7 @@
 import { basename, dirname, isAbsolute, join, normalize } from 'pathe';
 
 import { Disposable } from '#/_base/di/lifecycle';
+import { ILogService } from '#/_base/log/log';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
@@ -79,6 +80,7 @@ export class AgentAgentsMdReminderService
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ISessionInstructionsProvider private readonly instructions: ISessionInstructionsProvider,
+    @ILogService private readonly log: ILogService,
   ) {
     super();
     this.states.contributeState(agentsMdReminderKnownKey);
@@ -249,7 +251,7 @@ export class AgentAgentsMdReminderService
         const command = stringArg(args, 'command');
         if (command === undefined) return { dirs: [], selfKnown };
         const cwdArg = stringArg(args, 'cwd');
-        const base = hostPath(this.sessionContext.cwd, env.pathClass);
+        const base = hostPath(this.runtime.workspaceRoots().workDir, env.pathClass);
         const normalizedCwdArg =
           cwdArg === undefined ? undefined : normalizeUserPath(cwdArg, env.pathClass);
         const effectiveCwd =
@@ -334,7 +336,10 @@ export class AgentAgentsMdReminderService
       const stat = await fs.stat(current).catch(() => undefined);
       if (stat?.isDirectory === true) return current;
       const parent = dirname(current);
-      if (parent === current) return undefined;
+      if (parent === current) {
+        this.log.debug('agentsMdReminder probe found no existing anchor directory', { path });
+        return undefined;
+      }
       current = parent;
     }
   }
