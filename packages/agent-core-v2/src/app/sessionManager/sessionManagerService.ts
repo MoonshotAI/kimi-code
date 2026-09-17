@@ -54,6 +54,12 @@ interface SessionControllerEntry {
   sessionCount: number;
 }
 
+interface LocatedSession {
+  readonly controller: SessionLifecycleService;
+  readonly workspace?: WorkspaceInstance;
+  readonly persistedRuntimeId?: string;
+}
+
 export class SessionManager implements ISessionManager {
   declare readonly _serviceBrand: undefined;
   private readonly sessions = new Map<string, ISessionScopeHandle>();
@@ -179,9 +185,12 @@ export class SessionManager implements ISessionManager {
     const inflight = this.pendingResumes.get(sessionId);
     if (inflight !== undefined) return inflight;
     this.resumeFailures.delete(sessionId);
-    const promise = this.serializeLifecycle(sessionId, async () =>
-      (await this.controllerForSession(sessionId))?.resume(sessionId, options),
-    ).finally(() => this.pendingResumes.delete(sessionId));
+    const promise = this.serializeLifecycle(sessionId, async () => {
+      const located = await this.locateSession(sessionId);
+      if (located === undefined) return undefined;
+      this.reconnectRestoredBinding(located);
+      return located.controller.resume(sessionId, options);
+    }).finally(() => this.pendingResumes.delete(sessionId));
     this.pendingResumes.set(sessionId, promise);
     void promise.catch((error: unknown) => {
       this.resumeFailures.set(sessionId, error instanceof Error ? error : new Error('session resume failed'));
@@ -260,7 +269,10 @@ export class SessionManager implements ISessionManager {
     sessionId: string,
     options?: ResumeSessionOptions,
   ): Promise<ISessionScopeHandle | undefined> {
-    return (await this.controllerForSession(sessionId))?.restore(sessionId, options);
+    const located = await this.locateSession(sessionId);
+    if (located === undefined) return undefined;
+    this.reconnectRestoredBinding(located);
+    return located.controller.restore(sessionId, options);
   }
 
   async restore(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined> {
@@ -389,13 +401,33 @@ export class SessionManager implements ISessionManager {
   }
 
   private async controllerForSession(sessionId: string): Promise<SessionLifecycleService | undefined> {
+    return (await this.locateSession(sessionId))?.controller;
+  }
+
+  private async locateSession(sessionId: string): Promise<LocatedSession | undefined> {
     const live = this.owners.get(sessionId);
-    if (live !== undefined) return live;
+    if (live !== undefined) return { controller: live };
     const summary = await this.index.get(sessionId);
     if (summary === undefined) return undefined;
     const workspace = await this.workspaces.getOrCreate({ workspaceId: summary.workspaceId, root: summary.cwd });
-    const persisted = await this.peekPersistedRuntimeId(workspace.id, sessionId);
-    return this.controllerForWorkspace(workspace.id, this.selectControllerRuntimeId(workspace, persisted ?? LOCAL_RUNTIME_ID));
+    const persistedRuntimeId = await this.peekPersistedRuntimeId(workspace.id, sessionId);
+    return {
+      controller: this.controllerForWorkspace(workspace.id, this.selectControllerRuntimeId(workspace, persistedRuntimeId ?? LOCAL_RUNTIME_ID)),
+      workspace,
+      persistedRuntimeId,
+    };
+  }
+
+  private reconnectRestoredBinding(located: LocatedSession): void {
+    const runtimeId = located.persistedRuntimeId;
+    if (located.workspace === undefined || runtimeId === undefined || runtimeId === LOCAL_RUNTIME_ID) return;
+    if (!this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) return;
+    const runtime = located.workspace.runtimes.current(runtimeId);
+    if (runtime === undefined || runtimeStatusAllows(runtime, ['fs', 'process'])) return;
+    if (typeof runtime.connect !== 'function') return;
+    void runtime.connect().catch((error: unknown) => {
+      this.log.warn(`background reconnect of restored runtime ${runtimeId} failed`, { error });
+    });
   }
 
   private async peekPersistedRuntimeId(workspaceId: string, sessionId: string): Promise<string | undefined> {

@@ -239,6 +239,101 @@ describe('RemoteRuntimeProviderFactory', () => {
     await registry.dispose();
   });
 
+  it('marks the placeholder connecting while a connect is in flight and dedupes concurrent connects', async () => {
+    const registry = new RuntimeRegistry('workspace-1');
+    let releaseConnect!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseConnect = resolve;
+    });
+    const connect = vi.fn(async (options: RemoteRuntimeOptions) => {
+      await gate;
+      return connectedRuntime(options, 'connected-1');
+    });
+    const factory = new RemoteRuntimeProviderFactory(factoryOptions({ connect }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
+
+    const placeholder = registry.current('dev-box')!;
+    const statuses: string[] = [];
+    placeholder.onDidChangeStatus((status) => {
+      statuses.push(status);
+    });
+    const first = placeholder.connect!();
+    const second = placeholder.connect!();
+    expect(second).toBe(first);
+    expect(placeholder.status).toBe('connecting');
+    expect(placeholder.whenReady).toBe(first);
+    expect(connect).toHaveBeenCalledTimes(1);
+
+    releaseConnect();
+    await first;
+    expect(placeholder.whenReady).toBeUndefined();
+    expect(registry.current('dev-box')!.status).toBe('ready');
+    expect(registry.current('dev-box')!.identity.generation).toBe('connected-1');
+    expect(statuses[0]).toBe('connecting');
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('records the connect error on the placeholder and restores the immediate acquire error once settled', async () => {
+    const registry = new RuntimeRegistry('workspace-1');
+    const failure = new Error('executor process exited before the handshake completed (code 255, signal null): ssh: connect failed');
+    const connect = vi.fn(async () => {
+      throw failure;
+    });
+    const factory = new RemoteRuntimeProviderFactory(factoryOptions({ connect }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
+
+    const placeholder = registry.current('dev-box')!;
+    await expect(placeholder.connect!()).rejects.toBe(failure);
+    expect(registry.current('dev-box')).toBe(placeholder);
+    expect(placeholder.status).toBe('disconnected');
+    expect(placeholder.whenReady).toBeUndefined();
+    expect(placeholder.connectError).toContain('code 255');
+    expect(registry.snapshot().runtimes[0]).toMatchObject({
+      runtimeId: 'dev-box',
+      status: 'disconnected',
+      connectError: expect.stringContaining('code 255'),
+    });
+    await expect(registry.acquireWhenReady({ workspaceId: 'workspace-1', runtimeId: 'dev-box' })).rejects.toThrow('disconnected');
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('awaits the in-flight connect on acquireWhenReady and leases the connected runtime', async () => {
+    const registry = new RuntimeRegistry('workspace-1');
+    let releaseConnect!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseConnect = resolve;
+    });
+    const connect = vi.fn(async (options: RemoteRuntimeOptions) => {
+      await gate;
+      return connectedRuntime(options, 'connected-1');
+    });
+    const factory = new RemoteRuntimeProviderFactory(factoryOptions({ connect }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
+
+    const placeholder = registry.current('dev-box')!;
+    void placeholder.connect!();
+    let settled = false;
+    const pending = registry.acquireWhenReady({ workspaceId: 'workspace-1', runtimeId: 'dev-box' }, ['fs']).then((lease) => {
+      settled = true;
+      return lease;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    releaseConnect();
+    const lease = await pending;
+    expect(lease.runtime.status).toBe('ready');
+    expect(lease.runtime.identity.generation).toBe('connected-1');
+    lease.dispose();
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
   it('drains old leases on reconnect and never moves them to the new connection', async () => {
     const registry = new RuntimeRegistry('workspace-1', 50);
     let generation = 0;

@@ -39,6 +39,7 @@ export interface RuntimeGenerationSnapshot {
   readonly generation: string;
   readonly status: Runtime['status'];
   readonly capabilities: readonly RuntimeCapability[];
+  readonly connectError?: string;
 }
 
 export interface RuntimeRegistrySnapshot {
@@ -86,6 +87,7 @@ export class RuntimeRegistry {
         generation: runtime.identity.generation,
         status: runtime.status,
         capabilities: [...runtime.capabilities],
+        connectError: runtime.connectError,
       })),
     };
   }
@@ -162,6 +164,18 @@ export class RuntimeRegistry {
       prepared.flatMap((item) => item.previous === undefined ? [] : [this.drain(item.previous)]),
     ).then(() => {});
     return { registrations, cleanup };
+  }
+
+  async acquireWhenReady(binding: RuntimeBinding, required: readonly RuntimeCapability[] = []): Promise<RuntimeLease> {
+    if (binding.workspaceId !== this.workspaceId) {
+      throw new RuntimeError('runtime.not_found', `workspace ${binding.workspaceId} is not ${this.workspaceId}`);
+    }
+    const generation = this.currentGenerations.get(binding.runtimeId);
+    const pending = generation !== undefined && !generation.draining && !runtimeStatusAllows(generation.runtime, required)
+      ? generation.runtime.whenReady
+      : undefined;
+    if (pending !== undefined) await pending;
+    return this.acquire(binding, required);
   }
 
   acquire(binding: RuntimeBinding, required: readonly RuntimeCapability[] = []): RuntimeLease {

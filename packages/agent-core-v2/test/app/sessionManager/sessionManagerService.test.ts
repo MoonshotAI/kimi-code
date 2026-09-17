@@ -15,7 +15,7 @@ import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumen
 import { Program } from '#/program/program';
 import type { ProgramSessionControllerInput } from '#/program/programDependencies';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
-import { RuntimeRegistry } from '#/runtime/runtimeRegistry';
+import { RuntimeError, RuntimeRegistry } from '#/runtime/runtimeRegistry';
 import { writeWorkspaceTrust } from '#/workspace/workspaceTrust/trustRecord';
 import type {
   SessionArchivedEvent,
@@ -1164,17 +1164,22 @@ describe('SessionManager remote runtime wiring', () => {
   function restoreSetup(options: {
     readonly remoteStatus: 'ready' | 'disconnected';
     readonly flagOn: boolean;
+    readonly connect?: (fake: FakeRuntime) => Promise<void>;
+    readonly persistedRuntimeId?: string;
   }) {
     const registry = new RuntimeRegistry('workspace-1');
     registry.register(Object.assign(new FakeRuntime(
       { workspaceId: 'workspace-1', runtimeId: 'local', generation: 'local-one' },
       { capabilities: ['fs', 'process'] },
     ), { fs: {}, process: {} }));
-    const remoteConnect = vi.fn(async () => {});
-    registry.register(Object.assign(new FakeRuntime(
+    const remote = new FakeRuntime(
       { workspaceId: 'workspace-1', runtimeId: 'remote', generation: 'remote-one' },
       { status: options.remoteStatus, capabilities: ['fs', 'process'] },
-    ), { fs: {}, process: {}, connect: remoteConnect }));
+    );
+    const remoteConnect = vi.fn(async () => {
+      await options.connect?.(remote);
+    });
+    registry.register(Object.assign(remote, { fs: {}, process: {}, connect: remoteConnect }));
     const { program, byRuntime } = createCapture();
     const workspace = workspaceWith(registry, program);
     const workspaces = {
@@ -1184,26 +1189,122 @@ describe('SessionManager remote runtime wiring', () => {
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
     } as unknown as ISessionIndex;
+    const persistedRuntimeId = options.persistedRuntimeId ?? 'remote';
     const appendLogStore = {
       _serviceBrand: undefined,
       read: async function* () {
-        yield { type: 'runtime.set_binding', agentId: 'main', workspaceId: 'workspace-1', runtimeId: 'remote', cwd: '/remote/work', time: 1 };
+        yield { type: 'runtime.set_binding', agentId: 'main', workspaceId: 'workspace-1', runtimeId: persistedRuntimeId, cwd: '/remote/work', time: 1 };
       },
     } as unknown as IAppendLogStore;
+    const warn = vi.fn();
     const manager = makeSessionManager(workspaces, index, {
       flags: options.flagOn ? flagsOn() : undefined,
       appendLogStore,
+      log: { _serviceBrand: undefined, warn, info: () => {}, error: () => {} } as unknown as ILogService,
     });
-    return { manager, byRuntime, registry, remoteConnect };
+    return { manager, byRuntime, registry, remoteConnect, warn };
   }
 
-  it('restores a remote-bound session on the local controller without connecting when the runtime is disconnected', async () => {
-    const { manager, byRuntime, registry, remoteConnect } = restoreSetup({ remoteStatus: 'disconnected', flagOn: true });
+  it('restores a remote-bound session on the local controller and reconnects the disconnected runtime in the background', async () => {
+    let releaseConnect!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseConnect = resolve;
+    });
+    const { manager, byRuntime, registry, remoteConnect } = restoreSetup({
+      remoteStatus: 'disconnected',
+      flagOn: true,
+      connect: () => gate,
+    });
+
+    const handle = await manager.resume('session-1');
+    expect(handle).toBeDefined();
+    expect(byRuntime.has('local')).toBe(true);
+    expect(byRuntime.has('remote')).toBe(false);
+    expect(remoteConnect).toHaveBeenCalledTimes(1);
+    releaseConnect();
+    manager.dispose();
+    await registry.dispose();
+  });
+
+  it('opens a remote-bound session when the background reconnect fails and keeps the explicit acquire error', async () => {
+    const failure = new Error('executor process exited before the handshake completed (code 255, signal null): ssh: connect failed');
+    const { manager, registry, remoteConnect, warn } = restoreSetup({
+      remoteStatus: 'disconnected',
+      flagOn: true,
+      connect: async () => {
+        throw failure;
+      },
+    });
+
+    const handle = await manager.resume('session-1');
+    expect(handle).toBeDefined();
+    expect(remoteConnect).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('background reconnect'),
+        expect.objectContaining({ error: failure }),
+      );
+    });
+    expect(() => registry.acquire({ workspaceId: 'workspace-1', runtimeId: 'remote' })).toThrowError(
+      expect.objectContaining<Partial<RuntimeError>>({ code: 'runtime.unavailable' }),
+    );
+    manager.dispose();
+    await registry.dispose();
+  });
+
+  it('awaits the in-flight background reconnect when acquiring the restored runtime', async () => {
+    let releaseConnect!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseConnect = resolve;
+    });
+    const { manager, registry, remoteConnect } = restoreSetup({
+      remoteStatus: 'disconnected',
+      flagOn: true,
+      connect: async (fake) => {
+        fake.setStatus('connecting');
+        fake.whenReady = gate;
+        await gate;
+        fake.whenReady = undefined;
+        fake.setStatus('ready');
+      },
+    });
+
+    await manager.resume('session-1');
+    expect(remoteConnect).toHaveBeenCalledTimes(1);
+    let settled = false;
+    const pending = registry.acquireWhenReady({ workspaceId: 'workspace-1', runtimeId: 'remote' }, ['fs']).then((lease) => {
+      settled = true;
+      return lease;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    releaseConnect();
+    const lease = await pending;
+    expect(lease.runtime.status).toBe('ready');
+    lease.dispose();
+    manager.dispose();
+    await registry.dispose();
+  });
+
+  it('leaves a local restored binding untouched', async () => {
+    const { manager, byRuntime, registry, remoteConnect } = restoreSetup({
+      remoteStatus: 'disconnected',
+      flagOn: true,
+      persistedRuntimeId: 'local',
+    });
 
     await manager.resume('session-1');
     expect(byRuntime.has('local')).toBe(true);
-    expect(byRuntime.has('remote')).toBe(false);
     expect(remoteConnect).not.toHaveBeenCalled();
+    manager.dispose();
+    await registry.dispose();
+  });
+
+  it('reconnects in the background when restoring an archived remote-bound session', async () => {
+    const { manager, registry, remoteConnect } = restoreSetup({ remoteStatus: 'disconnected', flagOn: true });
+
+    await manager.restore('session-1');
+    expect(remoteConnect).toHaveBeenCalledTimes(1);
     manager.dispose();
     await registry.dispose();
   });

@@ -90,6 +90,8 @@ export class ManagedRemoteRuntime implements Runtime {
   private readonly statusEmitter = new Emitter<RuntimeStatus>();
   readonly onDidChangeStatus = this.statusEmitter.event;
   private readonly statusSubscription?: { dispose(): void };
+  private connectInflight?: Promise<void>;
+  private lastConnectError?: string;
 
   constructor(
     private readonly inner: RemoteRuntime | undefined,
@@ -138,8 +140,31 @@ export class ManagedRemoteRuntime implements Runtime {
     return this.currentStatus;
   }
 
+  get whenReady(): Promise<void> | undefined {
+    return this.connectInflight;
+  }
+
+  get connectError(): string | undefined {
+    return this.lastConnectError;
+  }
+
   connect(): Promise<void> {
-    return this.connectCallback();
+    if (this.inner !== undefined) return this.connectCallback();
+    this.connectInflight ??= (async () => {
+      this.lastConnectError = undefined;
+      this.setStatus('connecting');
+      try {
+        await this.connectCallback();
+        if (this.currentStatus === 'connecting') this.setStatus('disconnected');
+      } catch (error) {
+        this.lastConnectError = error instanceof Error ? error.message : String(error);
+        this.setStatus('disconnected');
+        throw error;
+      } finally {
+        this.connectInflight = undefined;
+      }
+    })();
+    return this.connectInflight;
   }
 
   private setStatus(status: RuntimeStatus): void {
