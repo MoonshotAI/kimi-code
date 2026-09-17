@@ -5202,8 +5202,8 @@ command = "vim"
     expect(dockChildren.indexOf(driver.state.surveyContainer)).toBe(
       dockChildren.indexOf(driver.state.editorContainer) - 1,
     );
-    expect(rootChildren.indexOf(driver.state.btwPanelContainer)).toBe(
-      rootChildren.indexOf(driver.state.surveyContainer) - 1,
+    expect(dockChildren.indexOf(driver.state.btwPanelContainer)).toBe(
+      dockChildren.indexOf(driver.state.surveyContainer) - 1,
     );
     expect(transcript).toContain('main answer after btw');
     expect(transcript).not.toContain('side answer');

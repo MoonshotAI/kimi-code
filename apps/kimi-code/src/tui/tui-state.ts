@@ -91,6 +91,24 @@ export interface TUIState {
   swarmModeEntry: 'manual' | 'task' | undefined;
 }
 
+// Undefined when no native clipboard binding loaded (SSH, headless), so the
+// renderer keeps its own OSC 52 path rather than reporting every copy failed.
+const nativeSetText = clipboard?.setText?.bind(clipboard);
+
+// Undefined when no native clipboard binding loaded (SSH, headless), so the
+// renderer keeps its own OSC 52 path rather than reporting every copy failed.
+const setClipboardText =
+  nativeSetText === undefined
+    ? undefined
+    : async (text: string): Promise<boolean> => {
+        try {
+          await nativeSetText(text);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+
 export function createTUIState(options: KimiTUIOptions): TUIState {
   const initialAppState = options.initialAppState;
   const theme = currentTheme;
@@ -132,6 +150,12 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
         })
         .catch(() => {});
     },
+    // Many terminals refuse OSC 52, so a bare write can flash "Copied!" while
+    // the system clipboard stays untouched. Hand the renderer the native
+    // binding when one loaded; it then reports real success/failure. Left
+    // undefined when there is no binding (SSH, headless) so the renderer keeps
+    // its OSC 52 path instead of reporting every copy as failed.
+    copySelection: setClipboardText,
   });
 
   setMarkdownAltScreenActive(ui instanceof TuiAltScreen);
