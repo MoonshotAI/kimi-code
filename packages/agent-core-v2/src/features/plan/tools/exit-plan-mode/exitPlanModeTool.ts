@@ -138,7 +138,8 @@ export class ExitPlanModeTool implements IExitPlanModeTool {
     }
 
     const status = await this.planMode.status();
-    const path = source?.path ?? status?.path ?? null;
+    const rawPath = source?.path ?? status?.path ?? null;
+    const path = rawPath !== null && rawPath.length > 0 ? rawPath : null;
     return {
       ok: false,
       error: {
