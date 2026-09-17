@@ -7,8 +7,8 @@ export const RUNTIME_DRAIN_TIMEOUT_MS = 5_000;
 export type RuntimeErrorCode = 'runtime.not_found' | 'runtime.unavailable' | 'runtime.capability_unavailable' | 'runtime.conflict' | 'runtime.invalid_cwd';
 
 export class RuntimeError extends Error {
-  constructor(readonly code: RuntimeErrorCode, message: string) {
-    super(message);
+  constructor(readonly code: RuntimeErrorCode, message: string, options?: { readonly cause?: unknown }) {
+    super(message, options);
     this.name = 'RuntimeError';
   }
 }

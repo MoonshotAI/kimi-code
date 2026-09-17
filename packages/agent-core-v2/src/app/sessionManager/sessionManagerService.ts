@@ -16,7 +16,7 @@ import { REMOTE_RUNTIME_FLAG_ID } from '#/runtime/flag';
 import { LOCAL_RUNTIME_ID } from '#/runtime/runtime';
 import { resolveWorkspaceRuntimeDeclarations } from '#/runtime/runtimeDeclarations';
 import type { RuntimeDeclarationSet } from '#/runtime/remoteRuntimeDeclaration';
-import { runtimeStatusAllows } from '#/runtime/runtimeRegistry';
+import { RuntimeError, runtimeStatusAllows } from '#/runtime/runtimeRegistry';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
@@ -97,29 +97,56 @@ export class SessionManager implements ISessionManager {
         : { workspaceId: options.workspaceId, root: options.workDir },
     );
     const declarations = await this.workspaceRuntimeDeclarations(workspace);
+    const declared =
+      options.runtimeId === undefined || options.runtimeId === LOCAL_RUNTIME_ID
+        ? undefined
+        : declarations?.entries.find((entry) => entry.id === options.runtimeId);
     if (options.runtimeId !== undefined && options.runtimeId !== LOCAL_RUNTIME_ID && declarations !== undefined) {
-      if (!declarations.entries.some((entry) => entry.id === options.runtimeId)) {
+      if (declared === undefined) {
         throw new Error2(
           ErrorCodes.CONFIG_INVALID,
           `runtime "${options.runtimeId}" is not declared in [runtimes]`,
         );
       }
+      if (options.runtimeCwd === undefined && declared.entry.defaultCwd === undefined) {
+        throw new Error2(
+          ErrorCodes.CONFIG_INVALID,
+          `runtime "${options.runtimeId}" does not set defaultCwd in [runtimes]`,
+        );
+      }
     }
     const resolved = options.runtimeId === undefined ? declarations?.default : undefined;
     const runtimeId = options.runtimeId ?? resolved?.runtimeId;
-    const declaredCwd =
-      options.runtimeId === undefined
-        ? undefined
-        : declarations?.entries.find((entry) => entry.id === options.runtimeId)?.entry.defaultCwd;
-    const runtimeCwd = options.runtimeCwd ?? resolved?.cwd ?? declaredCwd;
-    const controllerRuntimeId = this.selectControllerRuntimeId(workspace, runtimeId ?? LOCAL_RUNTIME_ID);
+    const runtimeCwd = options.runtimeCwd ?? resolved?.cwd ?? declared?.entry.defaultCwd;
     const effective =
       runtimeId === undefined && runtimeCwd === undefined
         ? options
         : { ...options, runtimeId, runtimeCwd };
-    const create = () => this.controllerForWorkspace(workspace.id, controllerRuntimeId).create(effective);
+    const create = async () => {
+      if (runtimeId !== undefined) await this.connectForCreate(workspace, runtimeId);
+      const controllerRuntimeId = this.selectControllerRuntimeId(workspace, runtimeId ?? LOCAL_RUNTIME_ID);
+      return this.controllerForWorkspace(workspace.id, controllerRuntimeId).create(effective);
+    };
     if (options.sessionId === undefined) return create();
     return this.serializeLifecycle(options.sessionId, create);
+  }
+
+  private async connectForCreate(workspace: WorkspaceInstance, runtimeId: string): Promise<void> {
+    if (runtimeId === LOCAL_RUNTIME_ID || !this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) return;
+    const runtime = workspace.runtimes.current(runtimeId);
+    if (runtime === undefined || runtimeStatusAllows(runtime, ['fs', 'process'])) return;
+    if (typeof runtime.connect !== 'function') {
+      throw new RuntimeError('runtime.unavailable', `runtime ${runtimeId} is ${runtime.status}`);
+    }
+    try {
+      await runtime.connect();
+    } catch (error) {
+      throw new RuntimeError(
+        'runtime.unavailable',
+        `failed to connect runtime ${runtimeId}: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
   }
 
   private async workspaceRuntimeDeclarations(workspace: WorkspaceInstance): Promise<RuntimeDeclarationSet | undefined> {
