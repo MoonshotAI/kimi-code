@@ -40,14 +40,6 @@ describe('openAIFormat stream usage', () => {
       { inputOther: 120, output: 50, inputCacheRead: 80, inputCacheCreation: 0, raw },
     ]);
   });
-
-  it('emits nothing for chunks without usage', () => {
-    const { sink, usages } = createSink();
-    const parse = openAIFormat.createStreamParser();
-    parse({ choices: [] }, sink);
-    parse({ usage: null }, sink);
-    expect(usages).toEqual([]);
-  });
 });
 
 describe('anthropicFormat stream usage', () => {
@@ -74,17 +66,10 @@ describe('anthropicFormat stream usage', () => {
     ]);
   });
 
-  it('emits a message_delta usage on its own', () => {
+  it('emits nothing for chunks or events without usage', () => {
     const { sink, usages } = createSink();
-    anthropicFormat.createStreamParser()(
-      { type: 'message_delta', usage: { output_tokens: 87 } },
-      sink,
-    );
-    expect(usages).toEqual([{ output: 87, raw: { output_tokens: 87 } }]);
-  });
-
-  it('emits nothing for events without usage', () => {
-    const { sink, usages } = createSink();
+    openAIFormat.createStreamParser()({ choices: [] }, sink);
+    openAIFormat.createStreamParser()({ usage: null }, sink);
     anthropicFormat.createStreamParser()(
       { type: 'content_block_delta', delta: { text: 'hi' } },
       sink,

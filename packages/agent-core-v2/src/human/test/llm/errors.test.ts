@@ -232,13 +232,10 @@ describe('classifyKimiQuotaError', () => {
     expect(classified).toMatchObject({ kind: 'quota_exhausted', statusCode: 429 });
   });
 
-  it('ignores 429 without quota signals', () => {
+  it('ignores errors without quota signals', () => {
     expect(
       classifyKimiQuotaError({ status: 429, message: 'slow down', headers: new Headers() }),
     ).toBeUndefined();
-  });
-
-  it('ignores non-429 errors', () => {
     expect(
       classifyKimiQuotaError({ status: 400, message: 'insufficient balance' }),
     ).toBeUndefined();

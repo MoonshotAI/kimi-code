@@ -51,6 +51,7 @@ const generateParamsSchema = z.object({
   topP: z.number().optional(),
   thinkingEffort: z.string().optional(),
   maxCompletionTokens: z.number().optional(),
+  stream: z.boolean().optional(),
 }).optional();
 
 const generateEventSchema = z.object({

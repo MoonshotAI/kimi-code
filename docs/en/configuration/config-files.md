@@ -295,6 +295,25 @@ Configuration errors fail loudly instead of falling back silently. Session creat
 - `force` is set without `default_model`, or combined with a `models` table.
 :::
 
+## `modelOverrides`
+
+The `modelOverrides` table overrides request parameters for the active model, applying to every request sent to it (chat turns, compaction, and so on); unset fields keep their defaults.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `temperature` | `number` | Sampling temperature for every request |
+| `topP` | `number` | Nucleus-sampling `top_p` for every request |
+| `thinkingKeep` | `string` | Preserved-thinking policy for subsequent requests; overrides `[thinking] keep` |
+| `maxCompletionTokens` | `integer` | Hard cap on completion tokens per request |
+| `stream` | `boolean` | Set to `false` to request the model without streaming (one complete response per request); streaming by default |
+
+```toml
+[modelOverrides]
+stream = false
+```
+
+Each field also has an environment-variable counterpart (`stream` maps to `KIMI_CODE_MODEL_STREAM`, the rest to the `KIMI_MODEL_*` series) with higher priority than the config file — see [Environment variables](./env-vars.md#runtime-switches).
+
 ## `thinking`
 
 `thinking` sets the global default behavior for Thinking mode.

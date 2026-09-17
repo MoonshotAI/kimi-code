@@ -42,6 +42,10 @@ export interface Model {
   readonly providerOptions?: ProtocolProviderOptions;
 }
 
+export interface ModelPingOptions {
+  readonly stream?: boolean;
+}
+
 export interface ModelPingResult {
   readonly ok: boolean;
   readonly durationMs: number;
@@ -175,7 +179,7 @@ export interface IModelCatalog {
     signal?: AbortSignal,
     params?: ModelRequestParams,
   ): AsyncIterable<ModelRequestEvent>;
-  ping(id: string): Promise<ModelPingResult>;
+  ping(id: string, options?: ModelPingOptions): Promise<ModelPingResult>;
   findByName(name: string): readonly string[];
 
   listModels(): Promise<readonly ModelCatalogItem[]>;

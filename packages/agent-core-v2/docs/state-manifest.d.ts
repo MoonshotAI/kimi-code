@@ -986,6 +986,7 @@ export interface AgentStateSnapshot {
       readonly maxCompletionTokens?: number;
       readonly usedContextTokens?: number;
       readonly maxContextTokens?: number;
+      readonly stream?: boolean;
       readonly onTraceId?: (traceId: string | null) => void;
     };
     readonly systemPrompt: string;

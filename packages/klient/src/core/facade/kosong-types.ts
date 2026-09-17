@@ -69,6 +69,7 @@ export interface GenerateParams {
   readonly topP?: number;
   readonly thinkingEffort?: string;
   readonly maxCompletionTokens?: number;
+  readonly stream?: boolean;
 }
 
 export type GenerateEvent =
