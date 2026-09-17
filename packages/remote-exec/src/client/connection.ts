@@ -13,6 +13,7 @@ import {
   compareVersions,
   INITIALIZE_METHOD,
   INITIALIZED_METHOD,
+  LONG_POLL_METHODS,
   MAX_IN_FLIGHT_CALLS,
   MIN_EXECUTOR_VERSION,
   SERVER_NOTIFICATION_METHODS,
@@ -22,11 +23,15 @@ import {
 } from '#/protocol/methods';
 import type { BytePipe } from './execBridge';
 
+export const DEFAULT_INITIALIZE_TIMEOUT_MS = 30_000;
+export const DEFAULT_CONTROL_CALL_TIMEOUT_MS = 60_000;
+
 export interface ConnectOptions {
   readonly clientName: string;
   readonly clientVersion: string;
   readonly minExecutorVersion?: string;
   readonly initializeTimeoutMs?: number;
+  readonly controlCallTimeoutMs?: number;
 }
 
 export interface ConnectionCloseInfo {
@@ -67,9 +72,25 @@ export class HandshakeError extends Error {
   }
 }
 
+// A control-plane call that the executor never answered. The connection is
+// treated as broken (the peer answered the handshake, so transport is alive —
+// the stall is application-level) and closed, which rejects every pending
+// call with ConnectionClosedError: the same D3 disconnect surface as a
+// transport drop.
+export class ControlCallTimeoutError extends Error {
+  constructor(
+    readonly method: string,
+    readonly timeoutMs: number,
+  ) {
+    super(`control call ${method} timed out after ${String(timeoutMs)}ms; closing the connection`);
+    this.name = 'ControlCallTimeoutError';
+  }
+}
+
 type PendingCall = {
   resolve: (result: unknown) => void;
   reject: (error: Error) => void;
+  timer?: NodeJS.Timeout;
 };
 
 export class RemoteExecConnection {
@@ -83,6 +104,7 @@ export class RemoteExecConnection {
   private state: 'handshake' | 'ready' | 'closed' = 'handshake';
   private handshakeComplete = false;
   private handshakeTimer: NodeJS.Timeout | undefined;
+  private controlCallTimeoutMs = DEFAULT_CONTROL_CALL_TIMEOUT_MS;
   private closeInfo: ConnectionCloseInfo | undefined;
 
   private constructor(private readonly pipe: BytePipe) {}
@@ -118,7 +140,8 @@ export class RemoteExecConnection {
 
   private handshake(options: ConnectOptions): Promise<RemoteExecConnection> {
     return new Promise<RemoteExecConnection>((resolve, reject) => {
-      const timeoutMs = options.initializeTimeoutMs ?? 10_000;
+      const timeoutMs = options.initializeTimeoutMs ?? DEFAULT_INITIALIZE_TIMEOUT_MS;
+      this.controlCallTimeoutMs = options.controlCallTimeoutMs ?? DEFAULT_CONTROL_CALL_TIMEOUT_MS;
       this.handshakeTimer = setTimeout(() => {
         this.fail(new HandshakeError(`initialize timed out after ${timeoutMs}ms`, { kind: 'timeout' }));
       }, timeoutMs);
@@ -270,7 +293,14 @@ export class RemoteExecConnection {
     }
     this.inFlight += 1;
     return new Promise<unknown>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      const pending: PendingCall = { resolve, reject };
+      if (!LONG_POLL_METHODS.has(method)) {
+        pending.timer = setTimeout(() => {
+          this.fail(new ControlCallTimeoutError(method, this.controlCallTimeoutMs));
+        }, this.controlCallTimeoutMs);
+        pending.timer.unref?.();
+      }
+      this.pending.set(id, pending);
       this.pipe.write(frame);
     });
   }
@@ -334,6 +364,7 @@ export class RemoteExecConnection {
         return;
       }
       this.pending.delete(message.id);
+      if (pending.timer !== undefined) clearTimeout(pending.timer);
       if (this.handshakeComplete) this.releaseSlot();
       if (isResponse(message)) {
         pending.resolve(message.result);
@@ -386,6 +417,7 @@ export class RemoteExecConnection {
     }
     const failure = error instanceof ConnectionClosedError ? error : new ConnectionClosedError(error.message);
     for (const pending of this.pending.values()) {
+      if (pending.timer !== undefined) clearTimeout(pending.timer);
       pending.reject(failure);
     }
     this.pending.clear();
