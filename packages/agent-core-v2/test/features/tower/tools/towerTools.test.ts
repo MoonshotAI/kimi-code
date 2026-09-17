@@ -414,15 +414,15 @@ describe('TowerPlanTool', () => {
     expect((await new TowerStore(repo).load()).missions).toHaveLength(1);
   });
 
-  it('rejects a CJK mission title and tells the tower to re-plan in English', async () => {
+  it('rejects a non-ASCII mission title and tells the tower to re-plan in English', async () => {
     await initViaTool();
 
     const result = await run(ix.get(ITowerPlanTool), {
-      missions: [{ title: '航运市场B010100迁移', scope: ['src/x/**'] }],
+      missions: [{ title: 'Исправить ошибку входа', scope: ['src/x/**'] }],
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('contains CJK characters');
+    expect(result.output).toContain('contains non-ASCII characters');
     expect((await new TowerStore(repo).load()).missions).toHaveLength(0);
   });
 });
