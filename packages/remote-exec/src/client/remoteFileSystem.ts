@@ -124,6 +124,10 @@ export class RemoteFileSystem implements IHostFileSystem {
     await this.writeMode(path, data, 'truncate');
   }
 
+  async appendBytes(path: string, data: Uint8Array): Promise<void> {
+    await this.writeMode(path, data, 'append');
+  }
+
   async *readLines(
     path: string,
     options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors },
