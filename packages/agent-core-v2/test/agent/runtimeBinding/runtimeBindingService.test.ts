@@ -133,12 +133,17 @@ function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: R
     scope: (subKey?: string) => subKey ?? '',
   };
   const busHandlers = new Map<string, ((event: { readonly agentId?: string }) => void)[]>();
+  const published: { readonly type: string; readonly runtimeId?: string; readonly status?: string }[] = [];
   const eventBus = {
     subscribe: (cls: { readonly type: string }, handler: (event: { readonly agentId?: string }) => void) => {
       const handlers = busHandlers.get(cls.type) ?? [];
       handlers.push(handler);
       busHandlers.set(cls.type, handlers);
       return { dispose: () => {} };
+    },
+    isAgentActive: () => true,
+    publish: (event: { readonly type: string; readonly runtimeId?: string; readonly status?: string }) => {
+      published.push(event);
     },
   } as unknown as ISessionEventBus;
   const publishBus = (type: string, event: { readonly agentId?: string }): void => {
@@ -194,6 +199,7 @@ function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: R
     activeToolCalls,
     loopState,
     publishBus,
+    published,
     sessionState,
     flags,
     flagState,
@@ -328,6 +334,30 @@ describe('AgentRuntimeBindingService', () => {
     workspaceChanges.fire({ workspaceId: 'workspace' });
 
     expect(changes).toHaveLength(3);
+  });
+
+  it('publishes a runtime status hint when the bound runtime changes status', () => {
+    const { local, remote, binding, published } = setup();
+    binding.switch('remote');
+
+    remote.setStatus('disconnected');
+    expect(published).toHaveLength(1);
+    expect(published[0]).toMatchObject({
+      type: 'runtime.status.changed',
+      runtimeId: 'remote',
+      status: 'disconnected',
+    });
+
+    published.length = 0;
+    local.setStatus('disconnected');
+    expect(published).toEqual([]);
+  });
+
+  it('does not publish runtime status hints for a non-main agent', () => {
+    const { remote, binding, published } = setup({ agentId: 'agent-1' });
+    binding.switch('remote');
+    remote.setStatus('disconnected');
+    expect(published).toEqual([]);
   });
 
   it('applies the shared status gate to every runtime lifecycle state', () => {

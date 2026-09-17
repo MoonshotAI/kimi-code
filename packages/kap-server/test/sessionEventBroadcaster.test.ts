@@ -560,6 +560,28 @@ describe('SessionEventBroadcaster', () => {
     ]);
   });
 
+  it('fans out a runtime status change hint like other session events', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+
+    const { target, envelopes } = collectingTarget();
+    expect(await bc.subscribe('s1', target)).toBe(true);
+
+    main.bus.emit(agentEvent('runtime.status.changed', { runtimeId: 'dev-box', status: 'disconnected' }));
+    await bc.getCursor('s1');
+
+    const envelope = envelopes.find((candidate) => candidate.type === 'runtime.status.changed');
+    expect(envelope?.volatile).not.toBe(true);
+    expect(envelope?.payload).toMatchObject({
+      type: 'runtime.status.changed',
+      runtimeId: 'dev-box',
+      status: 'disconnected',
+      agentId: 'main',
+      sessionId: 's1',
+    });
+  });
+
   it('fans out volatile events with the current watermark + offset, not journaled', async () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');

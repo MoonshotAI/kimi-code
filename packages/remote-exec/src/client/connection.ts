@@ -23,7 +23,7 @@ import {
 } from '#/protocol/methods';
 import type { BytePipe } from './execBridge';
 
-export const DEFAULT_INITIALIZE_TIMEOUT_MS = 30_000;
+export const DEFAULT_INITIALIZE_TIMEOUT_MS = 10_000;
 export const DEFAULT_CONTROL_CALL_TIMEOUT_MS = 60_000;
 
 export interface ConnectOptions {

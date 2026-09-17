@@ -9357,6 +9357,49 @@ describe('KimiTUI runtime slot (experimental remote runtime)', () => {
     expect(driver.state.appState.runtime).toBeUndefined();
   });
 
+  it('refreshes the slot and shows the recorded reason on a runtime.status.changed hint', async () => {
+    const session = runtimeSession({
+      listRuntimes: vi.fn(async () => ({
+        workspaceId: 'ws-1',
+        runtimes: [
+          { runtimeId: 'local', type: 'local', status: 'ready', generation: 'g0', capabilities: [] },
+          {
+            runtimeId: 'dev-box',
+            type: 'ssh',
+            status: 'disconnected',
+            generation: 'g1',
+            capabilities: ['fs'],
+            connectError: 'initialize timed out after 10000ms; executor stderr: Password:\nsecond line stays out',
+          },
+        ],
+        sshHosts: [],
+      })),
+    });
+    const { driver } = await makeDriver(session);
+    setExperimentalFeatures([{ id: 'remote_runtime', enabled: true }]);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'runtime.status.changed',
+        runtimeId: 'dev-box',
+        status: 'disconnected',
+        agentId: 'main',
+        sessionId: 'ses-1',
+      } as Event,
+      () => {},
+    );
+    await vi.waitFor(() => {
+      expect(driver.state.appState.runtime?.status).toBe('disconnected');
+    });
+
+    expect(driver.state.appState.runtime?.connectError).toContain('executor stderr: Password:');
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('Runtime ssh:dev-box disconnected');
+    expect(transcript).toContain('initialize timed out after 10000ms; executor stderr: Password:');
+    expect(transcript).toContain('Use /runtime to reconnect.');
+    expect(transcript).not.toContain('second line stays out');
+  });
+
   it('opens the runtime manager when /runtime is typed with the flag on', async () => {
     const { driver } = await makeDriver(runtimeSession());
     setExperimentalFeatures([{ id: 'remote_runtime', enabled: true }]);

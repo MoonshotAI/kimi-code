@@ -119,6 +119,10 @@ export class ManagedRemoteRuntime implements Runtime {
       this.workspace = inner.workspace;
       this.currentStatus = inner.status;
       this.statusSubscription = inner.onDidChangeStatus((status) => {
+        if (status === 'disconnected') {
+          const closeReason = inner.connection.closeReason;
+          if (closeReason !== undefined) this.lastConnectError = closeReason.reason;
+        }
         this.setStatus(status);
       });
     }
