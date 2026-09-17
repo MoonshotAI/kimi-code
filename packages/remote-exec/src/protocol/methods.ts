@@ -27,6 +27,13 @@ export const SERVER_NOTIFICATION_METHODS: ReadonlySet<string> = new Set([
   PROCESS_CLOSED_METHOD,
 ]);
 
+// Client→server request methods that are intentionally unbounded: process/read
+// long-polls server-side until output arrives or waitMs elapses, so a per-call
+// timeout would kill healthy polling. (Terminal streams ride server→client
+// notifications, not calls.) Every other request method is control-plane and
+// gets the client's bounded call timeout.
+export const LONG_POLL_METHODS: ReadonlySet<string> = new Set([PROCESS_READ_METHOD]);
+
 export interface InitializeParams {
   readonly clientName: string;
   readonly clientVersion: string;

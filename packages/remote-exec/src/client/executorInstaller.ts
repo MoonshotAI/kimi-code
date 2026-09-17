@@ -67,6 +67,7 @@ const LOCAL_RUN_CAPTURE_LIMIT = 64 * 1024;
 const PROBE_TIMEOUT_MS = 30_000;
 const STEP_TIMEOUT_MS = 60_000;
 const UPLOAD_TIMEOUT_MS = 600_000;
+const SIGKILL_GRACE_MS = 500;
 
 export function defaultLocalRunner(request: LocalRunRequest): Promise<LocalRunResult> {
   return new Promise((resolve, reject) => {
@@ -78,13 +79,25 @@ export function defaultLocalRunner(request: LocalRunRequest): Promise<LocalRunRe
     let stderr = '';
     let settled = false;
     const timeoutMs = request.timeoutMs ?? STEP_TIMEOUT_MS;
+    let killTimer: NodeJS.Timeout | undefined;
     const timer = setTimeout(() => {
       stderr = `${stderr}\ncommand timed out after ${String(timeoutMs)}ms`.slice(
         -LOCAL_RUN_CAPTURE_LIMIT,
       );
       child.kill('SIGTERM');
+      // A launcher child that ignores SIGTERM (command-type launchers are
+      // user-defined) must not hang the step forever: escalate to SIGKILL
+      // after a short grace, mirroring ExecBridge.close().
+      killTimer = setTimeout(() => {
+        child.kill('SIGKILL');
+      }, SIGKILL_GRACE_MS);
+      killTimer.unref?.();
     }, timeoutMs);
     timer.unref?.();
+    const clearTimers = (): void => {
+      clearTimeout(timer);
+      if (killTimer !== undefined) clearTimeout(killTimer);
+    };
     child.stdout.on('data', (chunk: Buffer) => {
       stdout = (stdout + chunk.toString('utf8')).slice(-LOCAL_RUN_CAPTURE_LIMIT);
     });
@@ -94,13 +107,13 @@ export function defaultLocalRunner(request: LocalRunRequest): Promise<LocalRunRe
     child.on('error', (error: Error) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      clearTimers();
       reject(error);
     });
     child.on('close', (code, signal) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      clearTimers();
       resolve({ code, signal, stdout, stderr });
     });
   });

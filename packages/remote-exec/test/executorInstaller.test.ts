@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ExecutorArtifact, ExecutorArtifactLocator } from '../src/client/artifactLocator';
 import {
+  defaultLocalRunner,
   ExecutorInstallError,
   installExecutor,
   type LocalRunner,
@@ -452,5 +453,30 @@ describe('installExecutor — failure diagnosability', () => {
     const installError = error as ExecutorInstallError;
     expect(installError.step).toBe('probe');
     expect(installError.message).toContain('home directory');
+  });
+});
+
+describe('defaultLocalRunner', () => {
+  it('escalates to SIGKILL when the child ignores SIGTERM on timeout', async () => {
+    const started = Date.now();
+    const result = await defaultLocalRunner({
+      program: process.execPath,
+      args: ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);'],
+      timeoutMs: 200,
+    });
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(result.signal).toBe('SIGKILL');
+    expect(result.code).toBeNull();
+    expect(result.stderr).toContain('command timed out after 200ms');
+  });
+
+  it('resolves with SIGTERM when the child exits on the first signal', async () => {
+    const result = await defaultLocalRunner({
+      program: process.execPath,
+      args: ['-e', 'setInterval(() => {}, 1000);'],
+      timeoutMs: 200,
+    });
+    expect(result.signal).toBe('SIGTERM');
+    expect(result.stderr).toContain('command timed out after 200ms');
   });
 });

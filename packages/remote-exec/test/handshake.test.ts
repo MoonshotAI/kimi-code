@@ -1,16 +1,71 @@
 import { PassThrough } from 'node:stream';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ConnectionClosedError, HandshakeError, RemoteExecConnection } from '../src/client/connection';
+import {
+  ConnectionClosedError,
+  ControlCallTimeoutError,
+  HandshakeError,
+  RemoteExecConnection,
+} from '../src/client/connection';
+import type { BytePipe } from '../src/client/execBridge';
+import { LineFrameDecoder } from '../src/protocol/codec';
 import { RpcError } from '../src/protocol/errors';
+import {
+  FS_READ_FILE_METHOD,
+  INITIALIZE_METHOD,
+  PROCESS_READ_METHOD,
+  type InitializeResult,
+} from '../src/protocol/methods';
 import {
   connectInProcess,
   connectSubprocess,
   createInProcessLoopback,
   RawClient,
   TEST_ENVIRONMENT,
+  TEST_VERSION,
 } from './helpers/loopback';
+
+type ScriptedFrame = { id?: number; method?: string; params?: unknown };
+
+// A minimal server-end pipe scripted per test: each inbound frame is handed to
+// onFrame, which decides whether (and when) to reply — letting tests stall
+// specific methods after a good handshake.
+function createScriptedServer(
+  onFrame: (frame: ScriptedFrame, reply: (value: unknown) => void) => void,
+): BytePipe {
+  const clientToServer = new PassThrough();
+  const serverToClient = new PassThrough();
+  const decoder = new LineFrameDecoder();
+  clientToServer.on('data', (chunk: Buffer) => {
+    for (const frame of decoder.push(chunk)) {
+      onFrame(frame as ScriptedFrame, (value) => {
+        serverToClient.write(`${JSON.stringify(value)}\n`);
+      });
+    }
+  });
+  return {
+    write: (chunk) => {
+      clientToServer.write(chunk);
+    },
+    end: () => {
+      clientToServer.end();
+    },
+    onData: (listener) => {
+      serverToClient.on('data', listener);
+    },
+    onEnd: (listener) => {
+      serverToClient.on('end', listener);
+    },
+    onError: (listener) => {
+      serverToClient.on('error', listener);
+    },
+  };
+}
+
+function testInitializeResult(): InitializeResult {
+  return { executorVersion: TEST_VERSION, environment: TEST_ENVIRONMENT, capabilities: {} };
+}
 
 describe('handshake', () => {
   it('completes initialize/initialized and answers environment/status', async () => {
@@ -180,5 +235,102 @@ describe('handshake', () => {
     await expect(
       RemoteExecConnection.connect(pipe, { clientName: 'test', clientVersion: '0.0.0' }),
     ).rejects.toThrow(/wrong dialect/);
+  });
+});
+
+describe('control call timeout', () => {
+  it('fails an unanswered control call within the bound and closes the connection', async () => {
+    const pipe = createScriptedServer((frame, reply) => {
+      if (frame.method === INITIALIZE_METHOD) {
+        reply({ id: frame.id, result: testInitializeResult() });
+      }
+      // Every later call is left unanswered: the executor stalled after the handshake.
+    });
+    const connection = await RemoteExecConnection.connect(pipe, {
+      clientName: 'test',
+      clientVersion: '0.0.0',
+      controlCallTimeoutMs: 100,
+    });
+    const started = Date.now();
+    const call = connection.call(FS_READ_FILE_METHOD, { path: '/etc/hostname' });
+    await expect(call).rejects.toThrow(ConnectionClosedError);
+    await expect(call).rejects.toThrow(/timed out/);
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(connection.closed).toBe(true);
+    expect(connection.closeReason?.error).toBeInstanceOf(ControlCallTimeoutError);
+  });
+
+  it('cancels an outstanding long-poll when a control call timeout closes the connection', async () => {
+    const pipe = createScriptedServer((frame, reply) => {
+      if (frame.method === INITIALIZE_METHOD) {
+        reply({ id: frame.id, result: testInitializeResult() });
+      }
+    });
+    const connection = await RemoteExecConnection.connect(pipe, {
+      clientName: 'test',
+      clientVersion: '0.0.0',
+      controlCallTimeoutMs: 100,
+    });
+    const longPoll = connection.call(PROCESS_READ_METHOD, { processId: 'p1', waitMs: 30_000 });
+    const control = connection.call(FS_READ_FILE_METHOD, { path: '/etc/hostname' });
+    await expect(control).rejects.toThrow(ConnectionClosedError);
+    await expect(longPoll).rejects.toThrow(ConnectionClosedError);
+    expect(connection.closed).toBe(true);
+  });
+
+  it('lets a long-poll process/read outlive the control call timeout', async () => {
+    const pipe = createScriptedServer((frame, reply) => {
+      if (frame.method === INITIALIZE_METHOD) {
+        reply({ id: frame.id, result: testInitializeResult() });
+        return;
+      }
+      if (frame.method === PROCESS_READ_METHOD) {
+        setTimeout(() => {
+          reply({ id: frame.id, result: { chunks: [], nextSeq: 0, exited: false, closed: false } });
+        }, 300);
+      }
+    });
+    const connection = await RemoteExecConnection.connect(pipe, {
+      clientName: 'test',
+      clientVersion: '0.0.0',
+      controlCallTimeoutMs: 100,
+    });
+    const result = await connection.call(PROCESS_READ_METHOD, { processId: 'p1', waitMs: 30_000 });
+    expect(result).toEqual({ chunks: [], nextSeq: 0, exited: false, closed: false });
+    expect(connection.closed).toBe(false);
+    connection.close();
+  });
+});
+
+describe('initialize timeout default', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('connects when the executor answers within the default window', async () => {
+    vi.useFakeTimers();
+    const pipe = createScriptedServer((frame, reply) => {
+      if (frame.method === INITIALIZE_METHOD) {
+        setTimeout(() => {
+          reply({ id: frame.id, result: testInitializeResult() });
+        }, 15_000);
+      }
+    });
+    const pending = RemoteExecConnection.connect(pipe, { clientName: 'test', clientVersion: '0.0.0' });
+    await vi.advanceTimersByTimeAsync(15_000);
+    const connection = await pending;
+    expect(connection.executorVersion).toBe(TEST_VERSION);
+    connection.close();
+  });
+
+  it('fails as a handshake timeout when the executor passes the default window', async () => {
+    vi.useFakeTimers();
+    const pipe = createScriptedServer(() => {});
+    const pending = RemoteExecConnection.connect(pipe, { clientName: 'test', clientVersion: '0.0.0' });
+    const message = expect(pending).rejects.toThrow(/timed out after 30000ms/);
+    const kind = expect(pending).rejects.toMatchObject({ name: 'HandshakeError', kind: 'timeout' });
+    await vi.advanceTimersByTimeAsync(31_000);
+    await message;
+    await kind;
   });
 });
