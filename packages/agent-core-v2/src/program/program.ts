@@ -204,10 +204,10 @@ export class Program {
       this.releaseGeneration(generation);
     };
     try {
-      const runtime = generation.lease.environment;
+      const environment = generation.lease.environment;
       return this.dependencies.createSessionController({
         context: this.context,
-        fs: runtime.fs!,
+        fs: environment.fs!,
         workspaceAgentProfiles: generation.agentProfiles,
         extraAgentProfiles: generation.extraAgentProfiles,
         explicitAgentProfiles: generation.explicitAgentProfiles,
@@ -325,7 +325,7 @@ export class Program {
 
   private createGeneration(environmentId: string): ProgramGeneration {
     const lease = this.resolver.acquire({ workspaceId: this.workspaceId, environmentId }, PROGRAM_CAPABILITIES);
-    const runtime = lease.environment;
+    const environment = lease.environment;
     const disposables: { dispose(): void | Promise<void> }[] = [];
     const own = <T extends { dispose(): void | Promise<void> }>(value: T): T => {
       disposables.push(value);
@@ -337,8 +337,8 @@ export class Program {
         throw new Error(`program ${this.workspaceId} has no local environment fs`);
       }
       const localFs = localEnvironment.fs;
-      const targetFs = runtime.fs!;
-      const root = runtime.identity.cwd ?? this.context.cwd;
+      const targetFs = environment.fs!;
+      const root = environment.identity.cwd ?? this.context.cwd;
       const context: IWorkspaceContext = root === this.context.cwd ? this.context : { ...this.context, cwd: root };
       const state = own(new WorkspaceStateService(this.dependencies.appState));
       const localConfig = new FileProjectLocalConfigService(this.dependencies.bootstrap, targetFs);
@@ -377,7 +377,7 @@ export class Program {
       const pluginSkills = new PluginSkillSource(localSkillDiscovery, this.dependencies.plugins);
       const skills = own(new WorkspaceSkillCatalogService(this.dependencies.builtinSkills, userSkills, explicitSkills, extraSkills, workspaceSkills, pluginSkills, state));
       return {
-        id: runtime.identity.generation,
+        id: environment.identity.generation,
         lease,
         state,
         dirs,

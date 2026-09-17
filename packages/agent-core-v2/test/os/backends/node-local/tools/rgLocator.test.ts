@@ -192,7 +192,7 @@ describe('ensureRgPath remote environment branch', () => {
     const fetchMock = vi.fn();
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    await expect(ensureRgPath(probe, { environment: environment })).rejects.toThrow(/on PATH/);
+    await expect(ensureRgPath(probe, { environment })).rejects.toThrow(/on PATH/);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(environment.fs!.mkdir as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
   });

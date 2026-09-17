@@ -133,7 +133,7 @@ describe('Program', () => {
     registry.register(current);
     expect(create).toHaveBeenCalledTimes(1);
     expect(program.status).toBe('degraded');
-    expect(() => program.dirs).toThrow('no available generation for runtime local');
+    expect(() => program.dirs).toThrow('no available generation for environment local');
 
     current.setStatus('ready');
     await program.ready;
@@ -289,7 +289,7 @@ describe('Program', () => {
     expect(controllerInputs[1]?.fs).toBe(create.mock.results[1]?.value.lease.environment.fs);
 
     expect(() => program.sessionControllerGenerationFor('missing')).toThrow(
-      'no available generation for runtime missing',
+      'no available generation for environment missing',
     );
 
     program.dispose();
@@ -306,7 +306,7 @@ describe('Program', () => {
 
     await remoteRegistration.remove();
     expect(() => program.sessionControllerGenerationFor('remote')).toThrow(
-      'no available generation for runtime remote',
+      'no available generation for environment remote',
     );
     expect(program.sessionControllerGeneration).toBe('one');
     expect(create).toHaveBeenCalledTimes(2);

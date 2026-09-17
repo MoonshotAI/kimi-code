@@ -79,7 +79,7 @@ function configToml(): string {
   ].join('\n');
 }
 
-describe('server-v2 /api/v1 runtime routes', () => {
+describe('server-v2 /api/v1 environment routes', () => {
   describe('with the remote_runtime flag off', () => {
     let server: RunningServer | undefined;
     let home: string | undefined;
