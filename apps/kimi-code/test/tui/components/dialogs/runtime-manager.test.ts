@@ -29,11 +29,11 @@ const DEV_BOX: RuntimeManagerRuntime = {
   status: 'ready',
   defaultCwd: '/home/me/projects',
 };
-const GYM: RuntimeManagerRuntime = { runtimeId: 'gym', type: 'command', status: 'disconnected' };
+const SANDBOX: RuntimeManagerRuntime = { runtimeId: 'sandbox', type: 'command', status: 'disconnected' };
 
 function makeComponent(overrides: Partial<RuntimeManagerOptions> = {}): RuntimeManagerComponent {
   return new RuntimeManagerComponent({
-    runtimes: [LOCAL, DEV_BOX, GYM],
+    runtimes: [LOCAL, DEV_BOX, SANDBOX],
     currentRuntimeId: 'local',
     onSwitch: vi.fn(),
     onReconnect: vi.fn(),
@@ -58,12 +58,12 @@ describe('RuntimeManagerComponent', () => {
     const plain = rendered(component);
     const localIdx = plain.indexOf('local');
     const devBoxIdx = plain.indexOf('dev-box');
-    const gymIdx = plain.indexOf('gym');
+    const sandboxIdx = plain.indexOf('sandbox');
     const addIdx = plain.indexOf('Add Runtime');
     expect(localIdx).toBeGreaterThanOrEqual(0);
     expect(devBoxIdx).toBeGreaterThan(localIdx);
-    expect(gymIdx).toBeGreaterThan(devBoxIdx);
-    expect(addIdx).toBeGreaterThan(gymIdx);
+    expect(sandboxIdx).toBeGreaterThan(devBoxIdx);
+    expect(addIdx).toBeGreaterThan(sandboxIdx);
   });
 
   it('marks the bound runtime with the shared current marker', () => {
@@ -133,11 +133,11 @@ describe('RuntimeManagerComponent', () => {
 
   it('offers R reconnect only on the disconnected bound remote row', () => {
     const onReconnect = vi.fn();
-    const component = makeComponent({ onReconnect, currentRuntimeId: 'gym' });
-    // Selection starts on the current (gym) row, which is disconnected.
+    const component = makeComponent({ onReconnect, currentRuntimeId: 'sandbox' });
+    // Selection starts on the current (sandbox) row, which is disconnected.
     expect(rendered(component)).toContain('R reconnect');
     component.handleInput('r');
-    expect(onReconnect).toHaveBeenCalledWith('gym');
+    expect(onReconnect).toHaveBeenCalledWith('sandbox');
   });
 
   it('ignores R on rows that are not the disconnected bound one', () => {
@@ -179,7 +179,7 @@ describe('RuntimeManagerComponent', () => {
     const component = makeComponent();
     component.handleInput(DOWN);
     component.setOptions({
-      runtimes: [LOCAL, DEV_BOX, { ...GYM, status: 'ready' }],
+      runtimes: [LOCAL, DEV_BOX, { ...SANDBOX, status: 'ready' }],
       currentRuntimeId: 'local',
       onSwitch: vi.fn(),
       onReconnect: vi.fn(),

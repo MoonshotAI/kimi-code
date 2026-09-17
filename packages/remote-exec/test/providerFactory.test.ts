@@ -653,16 +653,16 @@ describe('toLauncherSpec via factory connect', () => {
     const registry = new RuntimeRegistry('workspace-1');
     const services = baseServices({
       config: configService({
-        gym: { command: 'agi', args: ['sandbox', 'ssh'], env: { AGI_TOKEN: 'x' }, defaultCwd: '/home/me' },
+        sandbox: { command: 'sandbox', args: ['ssh'], env: { SANDBOX_TOKEN: 'x' }, defaultCwd: '/home/me' },
       }),
     });
     const connect = vi.fn(async (options: RemoteRuntimeOptions) => connectedRuntime(options, 'connected-1'));
     const factory = new RemoteRuntimeProviderFactory(factoryOptions({ connect }));
     const attachment = await factory.attach(CONTEXT, fakeHost(services, registry));
 
-    await registry.current('gym')!.connect!();
+    await registry.current('sandbox')!.connect!();
     expect(connect).toHaveBeenCalledWith(expect.objectContaining({
-      launcher: { type: 'command', program: 'agi', args: ['sandbox', 'ssh'], env: { AGI_TOKEN: 'x' } },
+      launcher: { type: 'command', program: 'sandbox', args: ['ssh'], env: { SANDBOX_TOKEN: 'x' } },
     }));
 
     await attachment.dispose();
@@ -774,7 +774,7 @@ describe('factory auto-install trigger', () => {
     const registry = new RuntimeRegistry('workspace-1');
     const services = baseServices({
       config: configService({
-        gym: { command: 'agi', args: ['sandbox', 'ssh'], defaultCwd: '/home/me' },
+        sandbox: { command: 'sandbox', args: ['ssh'], defaultCwd: '/home/me' },
       }),
     });
     const runner = vi.fn() as unknown as LocalRunner;
@@ -788,7 +788,7 @@ describe('factory auto-install trigger', () => {
     }));
     const attachment = await factory.attach(CONTEXT, fakeHost(services, registry));
 
-    await expect(registry.current('gym')!.connect!()).rejects.toThrow(
+    await expect(registry.current('sandbox')!.connect!()).rejects.toThrow(
       /code 127[\s\S]*Auto-install is not available for `command` runtimes/,
     );
     expect(connect).toHaveBeenCalledTimes(1);

@@ -83,17 +83,17 @@ describe('RuntimeAddDialogComponent', () => {
   it('splits command args on whitespace and drops the type field', () => {
     const onSubmit = vi.fn();
     const dialog = makeDialog({ type: 'command', onSubmit });
-    typeText(dialog, 'agi');
+    typeText(dialog, 'sandbox');
     dialog.handleInput(TAB);
-    typeText(dialog, 'sandbox ssh i-123 -- /home/me/.kimi-code/bin/kimi exec-server --listen stdio');
+    typeText(dialog, 'ssh i-123 -- /home/me/.kimi-code/bin/kimi exec-server --listen stdio');
     dialog.handleInput(TAB);
     dialog.handleInput(TAB);
     dialog.handleInput(ENTER);
     expect(onSubmit).toHaveBeenCalledWith({
-      id: 'agi',
+      id: 'sandbox',
       entry: {
-        command: 'agi',
-        args: ['sandbox', 'ssh', 'i-123', '--', '/home/me/.kimi-code/bin/kimi', 'exec-server', '--listen', 'stdio'],
+        command: 'sandbox',
+        args: ['ssh', 'i-123', '--', '/home/me/.kimi-code/bin/kimi', 'exec-server', '--listen', 'stdio'],
         defaultCwd: undefined,
       },
     });

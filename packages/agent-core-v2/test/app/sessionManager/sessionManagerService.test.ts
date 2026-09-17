@@ -871,15 +871,15 @@ describe('SessionManager remote runtime wiring', () => {
       {
         flags: flagsOn(),
         config: configWith({
-          default: 'gym',
-          gym: { command: 'agi', args: ['sandbox'], defaultCwd: '/home/me/gym' },
+          default: 'sandbox',
+          sandbox: { command: 'sandbox', args: ['ssh'], defaultCwd: '/home/me/sandbox' },
         }),
       },
     );
 
     await manager.create({ workDir: '/workspace' });
     expect(byRuntime.has('local')).toBe(true);
-    expect(byRuntime.get('local')!.options[0]).toMatchObject({ runtimeId: 'gym', runtimeCwd: '/home/me/gym' });
+    expect(byRuntime.get('local')!.options[0]).toMatchObject({ runtimeId: 'sandbox', runtimeCwd: '/home/me/sandbox' });
     manager.dispose();
     await registry.dispose();
   });
@@ -938,16 +938,16 @@ describe('SessionManager remote runtime wiring', () => {
       {
         flags: flagsOn(),
         config: configWith({
-          gym: { command: 'agi', defaultCwd: '/home/me/gym' },
+          sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' },
         }),
       },
     );
 
-    await manager.create({ workDir: '/workspace', runtimeId: 'gym' });
-    expect(byRuntime.get('local')!.options[0]).toMatchObject({ runtimeId: 'gym', runtimeCwd: '/home/me/gym' });
+    await manager.create({ workDir: '/workspace', runtimeId: 'sandbox' });
+    expect(byRuntime.get('local')!.options[0]).toMatchObject({ runtimeId: 'sandbox', runtimeCwd: '/home/me/sandbox' });
 
-    await manager.create({ workDir: '/workspace', runtimeId: 'gym', runtimeCwd: '/elsewhere' });
-    expect(byRuntime.get('local')!.options[1]).toMatchObject({ runtimeId: 'gym', runtimeCwd: '/elsewhere' });
+    await manager.create({ workDir: '/workspace', runtimeId: 'sandbox', runtimeCwd: '/elsewhere' });
+    expect(byRuntime.get('local')!.options[1]).toMatchObject({ runtimeId: 'sandbox', runtimeCwd: '/elsewhere' });
 
     await expect(manager.create({ workDir: '/workspace', runtimeId: 'missing' })).rejects.toMatchObject({
       code: 'config.invalid',
@@ -978,8 +978,8 @@ describe('SessionManager remote runtime wiring', () => {
 
     const flagOff = makeSessionManager(workspaces, index, {
       config: configWith({
-        default: 'gym',
-        gym: { command: 'agi', defaultCwd: '/home/me/gym' },
+        default: 'sandbox',
+        sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' },
       }),
     });
     await flagOff.create({ workDir: '/workspace' });
