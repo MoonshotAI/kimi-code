@@ -46,6 +46,14 @@ describe('fs group over a subprocess loopback', () => {
     await expect(fs.readText(path)).resolves.toBe('abc');
   });
 
+  it('appends bytes', async () => {
+    const path = join(workDir, 'append.bin');
+    await fs.writeBytes(path, new Uint8Array([1, 2]));
+    await fs.appendBytes(path, new Uint8Array([3, 4]));
+    await fs.appendBytes(path, new Uint8Array([5]));
+    await expect(fs.readBytes(path)).resolves.toEqual(new Uint8Array([1, 2, 3, 4, 5]));
+  });
+
   it('reads byte ranges', async () => {
     const path = join(workDir, 'range.bin');
     const data = new Uint8Array(256).map((_, index) => index);
