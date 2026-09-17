@@ -1,8 +1,11 @@
 import {
   applyCustomRegistryProvider,
   fetchCustomRegistry,
+  isReservedProviderId,
+  oauthManagedProviderMessage,
   readCustomRegistrySource,
   removeCustomRegistryProvider,
+  reservedProviderIdMessage,
   type CustomRegistrySource,
 } from './custom-registry';
 import {
@@ -731,15 +734,11 @@ export async function refreshProviderModels(
       // unscoped refresh; a scoped refresh must not add siblings.
       if (targetId === undefined) {
         for (const entry of remoteEntries) {
-          if (
-            entry.id === KIMI_CODE_PLATFORM_ID ||
-            entry.id === KIMI_CODE_PROVIDER_NAME ||
-            isOpenPlatformId(entry.id)
-          ) {
+          if (isReservedProviderId(entry.id)) {
             rejectedProviderIds.add(entry.id);
             failed.push({
               provider: entry.id,
-              reason: `Custom registry provider id "${entry.id}" is reserved by Kimi Code.`,
+              reason: reservedProviderIdMessage(entry.id),
             });
             continue;
           }
@@ -748,7 +747,7 @@ export async function refreshProviderModels(
             rejectedProviderIds.add(entry.id);
             failed.push({
               provider: entry.id,
-              reason: `Custom registry provider "${entry.id}" is managed by OAuth; log out before importing it.`,
+              reason: oauthManagedProviderMessage(entry.id),
             });
             continue;
           }
@@ -761,14 +760,10 @@ export async function refreshProviderModels(
         if (targetId !== undefined && providerId !== targetId) continue;
         const entry = remoteEntriesByProviderId.get(providerId);
         if (entry === undefined) {
-          if (
-            providerId === KIMI_CODE_PLATFORM_ID ||
-            providerId === KIMI_CODE_PROVIDER_NAME ||
-            isOpenPlatformId(providerId)
-          ) {
+          if (isReservedProviderId(providerId)) {
             failed.push({
               provider: providerId,
-              reason: `Custom registry provider id "${providerId}" is reserved by Kimi Code.`,
+              reason: reservedProviderIdMessage(providerId),
             });
             continue;
           }
@@ -788,7 +783,7 @@ export async function refreshProviderModels(
         if (existingProvider?.oauth !== undefined) {
           failed.push({
             provider: providerId,
-            reason: `Custom registry provider "${providerId}" is managed by OAuth; log out before importing it.`,
+            reason: oauthManagedProviderMessage(providerId),
           });
           continue;
         }

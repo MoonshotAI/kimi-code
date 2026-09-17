@@ -104,15 +104,33 @@ const ALLOWED_PROVIDER_TYPES: ReadonlySet<CustomRegistryProviderType> = new Set(
   'kimi',
 ]);
 
-const RESERVED_PROVIDER_IDS = new Set([
+const RESERVED_PROVIDER_IDS: ReadonlySet<string> = new Set([
   KIMI_CODE_PLATFORM_ID,
   KIMI_CODE_PROVIDER_NAME,
   ...OPEN_PLATFORMS.map((platform) => platform.id),
 ]);
 
+/**
+ * Provider ids a custom registry may never claim: the managed Kimi Code slots
+ * and the first-party open platforms. Shared by the import-time guard and the
+ * refresh orchestrator so the rejection rule — and its message — lives in one
+ * place.
+ */
+export function isReservedProviderId(providerId: string): boolean {
+  return RESERVED_PROVIDER_IDS.has(providerId);
+}
+
+export function reservedProviderIdMessage(providerId: string): string {
+  return `Custom registry provider id "${providerId}" is reserved by Kimi Code.`;
+}
+
+export function oauthManagedProviderMessage(providerId: string): string {
+  return `Custom registry provider "${providerId}" is managed by OAuth; log out before importing it.`;
+}
+
 function assertCustomRegistryProviderId(providerId: string): void {
-  if (RESERVED_PROVIDER_IDS.has(providerId)) {
-    throw new Error(`Custom registry provider id "${providerId}" is reserved by Kimi Code.`);
+  if (isReservedProviderId(providerId)) {
+    throw new Error(reservedProviderIdMessage(providerId));
   }
 }
 
@@ -372,9 +390,7 @@ function retainedApiKeyEnv(
 ): string | undefined {
   assertCustomRegistryProviderId(entry.id);
   if (isRecord(existing) && existing['oauth'] !== undefined) {
-    throw new Error(
-      `Custom registry provider "${entry.id}" is managed by OAuth; log out before importing it.`,
-    );
+    throw new Error(oauthManagedProviderMessage(entry.id));
   }
   if (!isRecord(existing) || readCustomRegistrySource(existing)?.url !== source.url) {
     return undefined;
@@ -537,7 +553,7 @@ export function removeCustomRegistryEntries(
   };
   for (const [providerId, provider] of Object.entries(config.providers)) {
     if (!isRecord(provider)) continue;
-    if (provider['oauth'] !== undefined || RESERVED_PROVIDER_IDS.has(providerId)) continue;
+    if (provider['oauth'] !== undefined || isReservedProviderId(providerId)) continue;
     const existingSource = provider['source'];
     const sameRegistry =
       isRecord(existingSource) &&
@@ -560,7 +576,7 @@ export function customRegistryReplacementKeys(
   const providerIds = new Set(Object.values(entries).map((entry) => entry.id));
   for (const [providerId, provider] of Object.entries(config.providers)) {
     if (!isRecord(provider)) continue;
-    if (provider['oauth'] !== undefined || RESERVED_PROVIDER_IDS.has(providerId)) continue;
+    if (provider['oauth'] !== undefined || isReservedProviderId(providerId)) continue;
     if (customRegistrySourceUrl(provider) === source.url) providerIds.add(providerId);
   }
   const modelIds = new Set<string>();
