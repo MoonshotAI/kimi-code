@@ -169,6 +169,8 @@ export type ProjectorStepOrdinalLookup = (turnId: string) => number | undefined;
 
 export type ProjectorTurnLookup = (turnId: string) => TurnHeader | undefined;
 
+export type ProjectorPromptLookup = (promptId: string) => TranscriptPrompt | undefined;
+
 export type ProjectorPlanRevisionKey = (key: string) => string;
 
 export interface ProjectorLookups {
@@ -176,6 +178,7 @@ export interface ProjectorLookups {
   readonly toolFrame?: ProjectorToolFrameLookup;
   readonly stepOrdinal?: ProjectorStepOrdinalLookup;
   readonly turn?: ProjectorTurnLookup;
+  readonly prompt?: ProjectorPromptLookup;
   readonly resolvePlanRevisionKey?: ProjectorPlanRevisionKey;
   readonly activitySnapshot?: () => AgentActivitySnapshot;
   readonly pendingApprovals?: () => readonly LegacyActivityApproval[];
@@ -1316,7 +1319,7 @@ export class AgentTranscriptProjector {
       promptId: event.promptId,
       status: 'queued',
       userMessageId: prev?.userMessageId,
-      content: projectPromptContentParts(event.content),
+      content: prev?.content ?? projectPromptContentParts(event.content),
       clientMetadata: event.clientMetadata ?? prev?.clientMetadata,
       createdAt: prev?.createdAt ?? nowIso(),
     }));
@@ -1385,7 +1388,7 @@ export class AgentTranscriptProjector {
       promptId: event.activePromptId,
       status: prev?.status ?? 'running',
       userMessageId: prev?.userMessageId,
-      content: projectPromptContentParts(event.content),
+      content: prev?.content ?? projectPromptContentParts(event.content),
       clientMetadata: prev?.clientMetadata,
       createdAt: prev?.createdAt ?? event.steeredAt,
       finishedAt: prev?.finishedAt,
@@ -1504,7 +1507,7 @@ export class AgentTranscriptProjector {
     promptId: string,
     build: (prev: TranscriptPrompt | undefined) => TranscriptPrompt,
   ): TranscriptPrompt {
-    const prompt = build(this.prompts.get(promptId));
+    const prompt = build(this.lookups?.prompt?.(promptId) ?? this.prompts.get(promptId));
     this.prompts.set(promptId, prompt);
     return prompt;
   }
