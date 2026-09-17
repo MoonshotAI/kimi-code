@@ -13,7 +13,7 @@ Kimi Code 把 Agent 循环、模型请求、凭据、审批和会话状态全部
 - **API 密钥不出本机**：LLM API 密钥和 OAuth token 永远不会发送到目标环境，执行器也不发任何模型请求。
 - **网络工具固定本机**：即使在远程会话中，`WebSearch` 和 `FetchURL` 也始终从本机发起。
 - **Hooks 与 MCP server 留在本机**：生命周期钩子和 stdio MCP server 继续在本机运行，详见 [限制](#限制)。
-- **SSH 走系统 `ssh`**：SSH 启动器调用系统 `ssh`，因此 `~/.ssh/config`（用户、端口、密钥、`ProxyJump`、`ControlMaster`）和 ssh-agent 照常生效。
+- **SSH 走系统 `ssh`**：SSH 启动器调用系统 `ssh`，因此 `~/.ssh/config`（用户、端口、密钥、`ProxyJump`、`ControlMaster`）和 ssh-agent 照常生效——密码、口令与主机密钥的处理详见 [SSH 认证](#ssh-认证)。
 
 仅支持 POSIX 目标，不支持 Windows 目标。
 
@@ -101,6 +101,31 @@ kimi -p --runtime dev-box "Run the test suite"
 没有自动重连，也**不会静默回退到本地运行时**：本该落在远程机器上的 `rm` 或 `git` 命令绝不能落到你的本机。断线后工具调用会以 `runtime.unavailable` 错误失败，你需要在 `/runtime` 对话框中显式重连。恢复旧会话时同理：绑定会被还原但不重建连接，首次工具调用会报错，直到你显式重连。
 
 连接中断时会显示 SSH 退出码作为诊断线索：`255` 表示网络层断开，`127` 表示目标上找不到执行器。
+
+## SSH 认证
+
+SSH 连接是非交互式的。启动器以 `-T`（不分配终端）和 `-o BatchMode=yes` 调用系统 `ssh`，自动安装执行器时使用的 `scp` 共享同一组选项。BatchMode 会禁用所有交互提示——密码、密钥口令（passphrase）、主机密钥确认——因为连接的输入输出流承载着协议流量，没有终端可以回答提示。需要这些提示的主机会立即失败，报出 `Permission denied (publickey,password)` 之类的错误，并在 `/runtime` 对话框中表现为连接失败，而不是挂在一个无人可见的提示上。
+
+系统 `ssh` 支持的所有非交互认证方式都照常生效，通过 `~/.ssh/config` 和你的 shell 环境配置：
+
+- **密钥**：`IdentityFile` 条目和 `~/.ssh/` 下的默认密钥路径，适用于无口令的密钥。
+- **ssh-agent**：`SSH_AUTH_SOCK` 从你启动 Kimi Code 的终端继承，agent（保存已解锁密钥的后台程序）因此可以为 BatchMode 连接完成认证，无需提示。带口令的密钥先在自己的终端里执行一次 `ssh-add`。
+- **`ProxyJump` / `ProxyCommand`**：`~/.ssh/config` 中配置的跳板机照常生效。
+- **`ControlMaster`**：BatchMode 连接可以复用已有的主连接——这也是下文密码主机方案的基础。
+
+主机密钥采用 `StrictHostKeyChecking=accept-new`（trust on first use，首次连接即信任）：首次连接新主机时不经询问直接将其密钥写入 `known_hosts`；之后主机密钥发生变化时连接会失败，需要手动修复对应条目。
+
+只接受密码的主机有两种可行配置，都在你自己的终端里一次性完成：
+
+- **复制密钥过去**：执行 `ssh-copy-id user@host`，只输入一次密码。此后密钥认证即可非交互工作。
+- **共享主连接**：在 `~/.ssh/config` 中启用连接共享，然后自己打开一条主连接——在终端里执行 `ssh user@host`，输入一次密码。主连接在后台存活期间，后续所有连接（包括 BatchMode 连接）都复用它，不再提示。
+
+```ssh-config
+Host dev-box
+  ControlMaster auto
+  ControlPath ~/.ssh/cm-%r@%h:%p
+  ControlPersist yes
+```
 
 ## 远程执行器
 
