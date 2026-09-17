@@ -50,6 +50,8 @@ export interface Runtime {
   readonly terminal?: IHostTerminalService;
   readonly status: RuntimeStatus;
   readonly onDidChangeStatus: Event<RuntimeStatus>;
+  readonly whenReady?: Promise<void>;
+  readonly connectError?: string;
   connect?(): Promise<void>;
   dispose(): void | Promise<void>;
 }

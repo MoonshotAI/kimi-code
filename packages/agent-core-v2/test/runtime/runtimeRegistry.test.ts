@@ -237,4 +237,72 @@ describe('RuntimeRegistry', () => {
     lease.dispose();
     await replacement;
   });
+
+  it('acquires a ready runtime through acquireWhenReady without waiting', async () => {
+    const registry = new RuntimeRegistry('workspace');
+    const current = runtime('one');
+    registry.register(current);
+    const lease = await registry.acquireWhenReady({ workspaceId: 'workspace', runtimeId: 'local' }, ['process']);
+    expect(lease.runtime).toBe(current);
+    lease.dispose();
+  });
+
+  it('awaits an in-flight readiness signal instead of erroring, then acquires once ready', async () => {
+    const registry = new RuntimeRegistry('workspace');
+    const current = runtime('one', 'disconnected');
+    registry.register(current);
+    let releaseReady!: () => void;
+    current.whenReady = new Promise<void>((resolve) => {
+      releaseReady = resolve;
+    });
+    current.setStatus('connecting');
+
+    let settled = false;
+    const pending = registry.acquireWhenReady({ workspaceId: 'workspace', runtimeId: 'local' }, ['fs']).then((lease) => {
+      settled = true;
+      return lease;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(() => registry.acquire({ workspaceId: 'workspace', runtimeId: 'local' })).toThrow('connecting');
+
+    current.setStatus('ready');
+    current.whenReady = undefined;
+    releaseReady();
+    const lease = await pending;
+    expect(settled).toBe(true);
+    expect(lease.runtime).toBe(current);
+    lease.dispose();
+  });
+
+  it('rejects acquireWhenReady with the connect failure reason when the readiness signal rejects', async () => {
+    const registry = new RuntimeRegistry('workspace');
+    const current = runtime('one', 'disconnected');
+    registry.register(current);
+    const failure = new Error('executor process exited before the handshake completed (code 255)');
+    current.whenReady = Promise.reject(failure);
+    void current.whenReady.catch(() => {});
+    current.setStatus('connecting');
+
+    await expect(registry.acquireWhenReady({ workspaceId: 'workspace', runtimeId: 'local' })).rejects.toBe(failure);
+  });
+
+  it('keeps the immediate unavailable error on a plainly disconnected runtime', async () => {
+    const registry = new RuntimeRegistry('workspace');
+    registry.register(runtime('one', 'disconnected'));
+    await expect(registry.acquireWhenReady({ workspaceId: 'workspace', runtimeId: 'local' })).rejects.toThrow('disconnected');
+    await expect(registry.acquireWhenReady({ workspaceId: 'workspace', runtimeId: 'missing' })).rejects.toThrow('not exist');
+  });
+
+  it('includes the recorded connect error in the generation snapshot', () => {
+    const registry = new RuntimeRegistry('workspace');
+    const current = runtime('one', 'disconnected');
+    current.connectError = 'ssh: connect failed (code 255)';
+    registry.register(current);
+    expect(registry.snapshot().runtimes[0]).toMatchObject({
+      runtimeId: 'local',
+      status: 'disconnected',
+      connectError: 'ssh: connect failed (code 255)',
+    });
+  });
 });

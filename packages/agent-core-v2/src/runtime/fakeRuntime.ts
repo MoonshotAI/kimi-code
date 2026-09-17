@@ -17,6 +17,8 @@ export class FakeRuntime implements Runtime {
   private currentStatus: RuntimeStatus;
   private readonly statusEmitter = new Emitter<RuntimeStatus>();
   readonly onDidChangeStatus = this.statusEmitter.event;
+  whenReady?: Promise<void>;
+  connectError?: string;
   disposed = false;
 
   constructor(
