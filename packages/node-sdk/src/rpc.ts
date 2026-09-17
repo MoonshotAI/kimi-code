@@ -67,6 +67,8 @@ import type {
   SessionSummary,
   SessionSummaryPage,
   SessionRuntimesInfo,
+  RemoteRuntimeEntry,
+  RuntimeDeclarationScope,
   SkillSummary,
   PluginCommandDef,
   SuggestFilesInput,
@@ -154,6 +156,13 @@ export interface RunCommandRpcInput extends SessionIdRpcInput {
 export interface SwitchSessionRuntimeRpcInput extends SessionIdRpcInput {
   readonly runtimeId: string;
   readonly cwd?: string;
+}
+
+export interface DeclareRuntimeRpcInput extends SessionIdRpcInput {
+  readonly id: string;
+  readonly entry: RemoteRuntimeEntry;
+  /** Write target: user-level `config.toml` (default) or the workspace's `.kimi-code/runtimes.toml`. */
+  readonly scope?: RuntimeDeclarationScope;
 }
 
 export interface ReconnectMcpServerRpcInput extends SessionIdRpcInput {
@@ -483,6 +492,8 @@ export abstract class SDKRpcClientBase {
   abstract reconnectRuntime(input: SessionIdRpcInput): Promise<AgentRuntimeBinding>;
 
   abstract listRuntimes(input: SessionIdRpcInput): Promise<SessionRuntimesInfo>;
+
+  abstract declareRuntime(input: DeclareRuntimeRpcInput): Promise<void>;
 
   onEvent(listener: (event: Event) => void): Unsubscribe {
     this.eventListeners.add(listener);

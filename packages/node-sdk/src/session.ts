@@ -14,6 +14,7 @@ import type {
   CapabilityStatus,
   CompactOptions,
   CreateGoalInput,
+  DeclareRuntimeInput,
   GetCronTasksResult,
   GoalSnapshot,
   GoalToolResult,
@@ -292,6 +293,21 @@ export class Session {
   async listRuntimes(): Promise<SessionRuntimesInfo> {
     this.ensureOpen();
     return this.rpc.listRuntimes({ sessionId: this.id });
+  }
+
+  /**
+   * Declare a new runtime for this session's workspace (experimental remote
+   * runtime). `scope: 'global'` (the default) deep-merges the entry into the
+   * user-level `config.toml` `[runtimes]` section; `scope: 'project'`
+   * merge-writes it into the workspace's `.kimi-code/runtimes.toml`,
+   * preserving existing entries and file layout. Either way the engine's
+   * declaration watch registers the runtime live — no restart. Fails closed:
+   * a duplicate id, an invalid entry, or an unreadable/invalid project file
+   * rejects without writing.
+   */
+  async declareRuntime(input: DeclareRuntimeInput): Promise<void> {
+    this.ensureOpen();
+    return this.rpc.declareRuntime({ sessionId: this.id, ...input });
   }
 
   /**

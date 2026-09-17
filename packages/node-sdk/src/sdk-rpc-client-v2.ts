@@ -228,6 +228,7 @@ import {
   programForSession,
   readSshConfigHosts,
   REMOTE_RUNTIME_FLAG_ID,
+  RUNTIMES_SECTION,
   resolveWorkspaceRuntimeDeclarations,
   resumeSessionById,
   sessionDirOf,
@@ -270,11 +271,13 @@ import type { ExperimentalFeatureState } from '#/flag';
 import { KimiHarness } from '#/kimi-harness';
 import type { BeginGlobalMcpServerAuthResult } from '#/mcp';
 import { limitAgentReplayByTurns } from '#/replay';
+import { writeProjectRuntimeDeclaration } from '#/runtime-declarations';
 import { noopTelemetryClient } from '#/telemetry';
 import {
   SDKRpcClientBase,
   type ActivatePluginCommandRpcInput,
   type ActivateSkillRpcInput,
+  type DeclareRuntimeRpcInput,
   type ImportContextRpcInput,
   type ReconnectMcpServerRpcInput,
   type ReloadSessionRpcInput,
@@ -1956,6 +1959,46 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       }),
       sshHosts: enabled ? await this.resolveSshHostCandidates() : [],
     };
+  }
+
+  /**
+   * Declare a runtime for the session's workspace. The `global` scope (the
+   * default) rides the exact config path the v1 patch flow uses — one
+   * deep-merge `config.set` over the `[runtimes]` section, so the persisted
+   * bytes match a `setConfig({ runtimes: ... })` call. The `project` scope
+   * merge-writes the workspace's `.kimi-code/runtimes.toml` on the host
+   * (declarations must exist before any remote connection, so the project
+   * file always lives on the local disk). Both register through the
+   * engine's live declaration watch; both require the `remote_runtime` flag,
+   * matching the rest of the runtime surface.
+   */
+  override async declareRuntime(input: DeclareRuntimeRpcInput): Promise<void> {
+    if (!this.engineAccessor.get(IFlagService).enabled(REMOTE_RUNTIME_FLAG_ID)) {
+      throw new KimiError(
+        ErrorCodes.REQUEST_INVALID,
+        'declareRuntime requires the remote_runtime experimental flag',
+      );
+    }
+    const session = this.requireLiveSession(input.sessionId);
+    const context = session.accessor.get(ISessionContext);
+    if ((input.scope ?? 'global') === 'project') {
+      const manager = this.engineAccessor.get(IWorkspaceInstanceManager);
+      const instance =
+        manager.get(context.workspaceId) ??
+        (await manager.getOrCreate({ root: context.cwd }));
+      await writeProjectRuntimeDeclaration(
+        this.engineAccessor.get(IHostFileSystem),
+        instance.root,
+        input.id,
+        input.entry,
+      );
+      return;
+    }
+    await this.configReady;
+    await this.klient.global.config.set({
+      domain: RUNTIMES_SECTION,
+      patch: { [input.id]: input.entry },
+    });
   }
 
   private async resolveRuntimeDeclarationEntries(root: string): Promise<ReadonlyMap<string, RemoteRuntimeEntry>> {

@@ -7,6 +7,7 @@ import type {
   RuntimeCapability as SessionRuntimeCapability,
   RuntimeStatus as SessionRuntimeStatus,
 } from '@moonshot-ai/agent-core-v2/runtime/runtime';
+import type { RemoteRuntimeEntry } from '@moonshot-ai/agent-core-v2/runtime/remoteRuntimeDeclaration';
 import type { Kaos } from '@moonshot-ai/kaos';
 import type { KimiHostIdentity, OAuthRefreshOutcome } from '@moonshot-ai/kimi-code-oauth';
 import type { ContentPart } from '@moonshot-ai/kosong';
@@ -51,6 +52,22 @@ export interface SessionRuntimesInfo {
   readonly workspaceId: string;
   readonly runtimes: readonly SessionRuntimeInfo[];
   readonly sshHosts: readonly string[];
+}
+
+export type { RemoteRuntimeEntry };
+
+/**
+ * Write target for a runtime declaration: `global` merges the entry into the
+ * user-level `config.toml` `[runtimes]` section; `project` merges it into the
+ * session workspace's `.kimi-code/runtimes.toml` (the file a team shares
+ * through git). Both register live through the engine's declaration watch.
+ */
+export type RuntimeDeclarationScope = 'global' | 'project';
+
+export interface DeclareRuntimeInput {
+  readonly id: string;
+  readonly entry: RemoteRuntimeEntry;
+  readonly scope?: RuntimeDeclarationScope;
 }
 
 export type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';

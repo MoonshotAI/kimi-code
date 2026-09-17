@@ -1,4 +1,4 @@
-import type { KimiConfigPatch, Session, SessionRuntimesInfo } from '@moonshot-ai/kimi-code-sdk';
+import type { Session, SessionRuntimesInfo } from '@moonshot-ai/kimi-code-sdk';
 
 import { ChoicePickerComponent } from '../components/dialogs/choice-picker';
 import {
@@ -197,7 +197,7 @@ async function addFlow(host: SlashCommandHost, session: Session, list: SessionRu
       existingIds,
       initialTarget,
       onSubmit: (submitted) => {
-        void submitAdd(host, dialog, submitted, resolve);
+        void submitAdd(session, dialog, submitted, resolve);
       },
       onCancel: () => {
         resolve(undefined);
@@ -210,10 +210,15 @@ async function addFlow(host: SlashCommandHost, session: Session, list: SessionRu
     await openRuntimeManager(host, session);
     return;
   }
-  // The engine watches the [runtimes] config section and registers new
-  // declarations live; wait for the registration to land so the reopened
-  // manager lists the new runtime immediately.
-  host.showStatus(`Runtime "${value.id}" added to config.toml.`);
+  // The engine watches the [runtimes] config section and the workspace's
+  // .kimi-code/runtimes.toml, registering new declarations live at either
+  // scope; wait for the registration to land so the reopened manager lists
+  // the new runtime immediately.
+  host.showStatus(
+    value.scope === 'project'
+      ? `Runtime "${value.id}" added to .kimi-code/runtimes.toml.`
+      : `Runtime "${value.id}" added to config.toml.`,
+  );
   await waitForRuntimeRegistration(session, value.id);
   await openRuntimeManager(host, session);
 }
@@ -233,18 +238,18 @@ async function waitForRuntimeRegistration(session: Session, runtimeId: string): 
 }
 
 async function submitAdd(
-  host: SlashCommandHost,
+  session: Session,
   feedback: ActionFeedback,
   value: RuntimeAddValue,
   resolve: (value: RuntimeAddValue | undefined) => void,
 ): Promise<void> {
-  feedback.setBusy('Writing config.toml…');
+  feedback.setBusy(
+    value.scope === 'project' ? 'Writing .kimi-code/runtimes.toml…' : 'Writing config.toml…',
+  );
   try {
-    // The SDK patch schema predates the [runtimes] section; the engine
-    // deep-merges the entry into the section and validates it on write.
-    await host.harness.setConfig({
-      runtimes: { [value.id]: value.entry },
-    } as unknown as KimiConfigPatch);
+    // The engine deep-merges the entry into the target scope's [runtimes]
+    // declarations and validates them on write.
+    await session.declareRuntime({ id: value.id, entry: value.entry, scope: value.scope });
   } catch (error) {
     feedback.showError(formatErrorMessage(error));
     return;
