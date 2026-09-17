@@ -124,6 +124,7 @@ export const turnIndexSlice = createSlice({
     [turnEnded.type]: (draft, event: TurnEnded, ctx) => {
       const entry = draft.turns.findLast((turn) => turn.turnId === event.turnId);
       if (entry !== undefined) entry.end = ctx.ref;
+      if (event.turnId >= draft.nextTurnId) draft.nextTurnId = event.turnId + 1;
     },
   },
 });
