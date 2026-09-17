@@ -56,7 +56,7 @@ When the conversation grows long, the system compacts the older part automatical
 
 # Environment
 
-You are running on **${os}**; the Bash tool executes commands using **${shell}**. The environment is not a sandbox: your actions take effect on the user's system immediately. Unless the user explicitly instructs otherwise, never read, write, or execute files outside the working directory.
+You are running on **${os}**; the Bash tool executes commands using **${shell}**. The environment is not a sandbox: your actions take effect on the user's system immediately.
 ${windows_notes}
 The current date is disclosed through reminders at the start of the conversation and whenever the date changes; rely on the latest one. Reminders carry only the date — when the precise time matters, get it fresh from the environment, for example by running `date`.
 
