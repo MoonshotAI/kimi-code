@@ -59,6 +59,64 @@ const OPENAI_CHAT_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
   maxLength: 64,
 };
 
+// ---------------------------------------------------------------------------
+// Alibaba gateway newline repair
+// ---------------------------------------------------------------------------
+// 部分模型（如 Qwen）经阿里 token plan / dashscope 网关返回的流式响应，会在
+// 中文行内短语边界插入多余换行符，破坏 Markdown 列表项与表格结构（列表续行
+// 丢失缩进、表格行被拆散）。此处仅对阿里系网关启用修复：把“非结构性换行”
+// 替换为空格，保留真正的结构性换行。其他渠道不受影响。
+
+/** 判断 baseUrl 是否为阿里系网关（token plan / dashscope 等）。 */
+export function isAlibabaGateway(baseUrl: string | undefined): boolean {
+  if (!baseUrl) return false;
+  return /aliyuncs\.com|dashscope/i.test(baseUrl);
+}
+
+/**
+ * 判断两行之间的换行是否为“结构性换行”（应保留）。
+ * 结构性换行包括：空行（段落分隔）、后行以块级标记开头（标题/列表/引用/表格/
+ * 代码围栏/水平线）、前行是标题。其余视为行内多余换行，应替换为空格。
+ */
+export function isStructuralNewline(prevLine: string, nextLine: string): boolean {
+  if (prevLine === '' || nextLine === '') return true;
+  if (/^(?:#{1,6}\s|\s*[-*+]\s|\s*\d+\.\s|\s*>|\||`{3,}|~{3,})/.test(nextLine)) return true;
+  if (/^#{1,6}\s/.test(prevLine)) return true;
+  // 前行是代码围栏（开始或结束）时，其后换行必须保留，否则围栏会与相邻行粘连。
+  if (/^(`{3,}|~{3,})/.test(prevLine.trim())) return true;
+  if (/^\s*([-*_])\s*\1\s*\1/.test(nextLine)) return true;
+  return false;
+}
+
+/** 非流式完整文本修复：逐行合并非结构性换行，保留代码块与块级结构。 */
+export function repairFullText(text: string): string {
+  const lines = text.split('\n');
+  if (lines.length <= 1) return text;
+  const result: string[] = [lines[0]!];
+  let inCodeBlock = false;
+  if (/^(`{3,}|~{3,})/.test(lines[0]!.trim())) inCodeBlock = true;
+  for (let i = 1; i < lines.length; i++) {
+    const prev = result[result.length - 1]!;
+    const curr = lines[i]!;
+    if (inCodeBlock) {
+      result.push(curr);
+      if (/^(`{3,}|~{3,})\s*$/.test(curr.trim())) inCodeBlock = false;
+      continue;
+    }
+    if (/^(`{3,}|~{3,})/.test(curr.trim())) {
+      result.push(curr);
+      inCodeBlock = true;
+      continue;
+    }
+    if (isStructuralNewline(prev, curr)) {
+      result.push(curr);
+    } else {
+      result[result.length - 1] = prev + ' ' + curr;
+    }
+  }
+  return result.join('\n');
+}
+
 function responseFormatToOpenAI(format: ResponseFormat): Record<string, unknown> {
   if (format.type === 'json_object') {
     return { type: 'json_object' };
@@ -334,12 +392,18 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
   private _finishReason: FinishReason | null = null;
   private _rawFinishReason: string | null = null;
   private readonly _iter: AsyncGenerator<StreamedMessagePart>;
+  // 阿里网关换行修复状态：仅当 _needsNlRepair 为 true 时使用。
+  private readonly _needsNlRepair: boolean;
+  private _nlBuffer = '';
+  private _nlInCodeBlock = false;
 
   constructor(
     response: OpenAI.Chat.ChatCompletion | AsyncIterable<OpenAI.Chat.ChatCompletionChunk>,
     isStream: boolean,
     reasoningKeyDialect: ReasoningKeyDialect,
+    needsNlRepair = false,
   ) {
+    this._needsNlRepair = needsNlRepair;
     if (isStream) {
       this._iter = this._convertStreamResponse(
         response as AsyncIterable<OpenAI.Chat.ChatCompletionChunk>,
@@ -351,6 +415,60 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
         reasoningKeyDialect,
       );
     }
+  }
+
+  /**
+   * 对单个 text delta 做行缓冲换行修复。
+   * 流式 delta 可能在任意位置切断一行，因此遇到位于 buffer 末尾的换行时先
+   * 暂存，等下一个 chunk 到来再判断该换行是否结构性。返回可立即 yield 的文本。
+   */
+  private _processNlRepair(content: string): string {
+    this._nlBuffer += content;
+    let output = '';
+    while (true) {
+      const nlIdx = this._nlBuffer.indexOf('\n');
+      if (nlIdx === -1) break;
+      const before = this._nlBuffer.slice(0, nlIdx);
+      const after = this._nlBuffer.slice(nlIdx + 1);
+      // 换行落在 buffer 末尾，下一行尚未到达，暂存待后续 chunk 判断。
+      if (after === '') {
+        this._nlBuffer = before + '\n';
+        break;
+      }
+      if (this._nlInCodeBlock) {
+        output += before + '\n';
+        if (/^(`{3,}|~{3,})\s*$/.test(before.trim())) this._nlInCodeBlock = false;
+        this._nlBuffer = after;
+        continue;
+      }
+      if (/^(`{3,}|~{3,})/.test(before.trim())) {
+        output += before + '\n';
+        this._nlInCodeBlock = true;
+        this._nlBuffer = after;
+        continue;
+      }
+      if (/^(`{3,}|~{3,})/.test(after.trim())) {
+        output += before + '\n';
+        this._nlInCodeBlock = true;
+        this._nlBuffer = after;
+        continue;
+      }
+      if (isStructuralNewline(before, after)) {
+        output += before + '\n';
+      } else {
+        output += before + ' ';
+      }
+      this._nlBuffer = after;
+    }
+    return output;
+  }
+
+  /** 流结束时 flush 残留 buffer（不再等待后续 chunk）。 */
+  private _flushNlRepair(): string | null {
+    if (this._nlBuffer === '') return null;
+    const result = this._nlBuffer;
+    this._nlBuffer = '';
+    return result;
   }
 
   get id(): string | null {
@@ -400,7 +518,9 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
     }
 
     if (message.content) {
-      yield { type: 'text', text: message.content } satisfies StreamedMessagePart;
+      // 阿里网关可能在非流式响应文本中插入行内多余换行，按需修复。
+      const text = this._needsNlRepair ? repairFullText(message.content) : message.content;
+      yield { type: 'text', text } satisfies StreamedMessagePart;
     }
 
     if (message.tool_calls) {
@@ -456,7 +576,15 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
 
         // text content
         if (delta.content) {
-          yield { type: 'text', text: delta.content } satisfies StreamedMessagePart;
+          if (this._needsNlRepair) {
+            // 阿里网关行内多余换行修复：经行缓冲判断后产出可立即下发的文本。
+            const repaired = this._processNlRepair(delta.content);
+            if (repaired) {
+              yield { type: 'text', text: repaired } satisfies StreamedMessagePart;
+            }
+          } else {
+            yield { type: 'text', text: delta.content } satisfies StreamedMessagePart;
+          }
         }
 
         // tool calls — preserve `index` on every yielded part so the generate
@@ -465,6 +593,13 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
           for (const part of convertChatCompletionStreamToolCall(toolCall, bufferedToolCalls)) {
             yield part;
           }
+        }
+      }
+      // 流结束：flush 行缓冲中残留的文本（含此前暂存的末尾换行）。
+      if (this._needsNlRepair) {
+        const flushed = this._flushNlRepair();
+        if (flushed) {
+          yield { type: 'text', text: flushed } satisfies StreamedMessagePart;
         }
       }
     } catch (error: unknown) {
@@ -648,7 +783,12 @@ export class OpenAILegacyChatProvider implements ChatProvider {
         createParams as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
         options?.signal ? { signal: options.signal } : undefined,
       )) as unknown as OpenAI.Chat.ChatCompletion | AsyncIterable<OpenAI.Chat.ChatCompletionChunk>;
-      return new OpenAILegacyStreamedMessage(response, this._stream, this._reasoningKeyDialect);
+      return new OpenAILegacyStreamedMessage(
+        response,
+        this._stream,
+        this._reasoningKeyDialect,
+        isAlibabaGateway(this._baseUrl),
+      );
     } catch (error: unknown) {
       throw convertOpenAIError(error);
     }
