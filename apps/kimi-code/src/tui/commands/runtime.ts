@@ -56,6 +56,7 @@ function toManagerRuntimes(list: SessionRuntimesInfo): readonly RuntimeManagerRu
     type: runtime.type,
     status: runtime.status,
     defaultCwd: runtime.defaultCwd,
+    connectError: runtime.connectError,
   }));
 }
 

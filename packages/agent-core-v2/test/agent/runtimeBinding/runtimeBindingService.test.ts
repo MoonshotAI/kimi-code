@@ -72,6 +72,8 @@ function setup(options: { agentId?: string; sessionCwd?: string } = {}) {
     inspect: (binding: RuntimeBinding) => registry.inspect(binding),
     acquire: (binding: RuntimeBinding, required: readonly RuntimeCapability[] = []): RuntimeLease =>
       registry.acquire(binding, required),
+    acquireWhenReady: (binding: RuntimeBinding, required: readonly RuntimeCapability[] = []): Promise<RuntimeLease> =>
+      registry.acquireWhenReady(binding, required),
   };
   const state = new AgentStateService();
   const session = makeSessionContext({
@@ -294,6 +296,23 @@ describe('AgentRuntimeBindingService', () => {
       binding: { workspaceId: 'workspace', runtimeId: 'remote' },
       available: true,
       runtime: { runtimeId: 'remote', generation: 'remote-one' },
+    });
+  });
+
+  it('forwards the bound runtime connectError into the snapshot', () => {
+    const { remote, binding, agentRuntime } = setup();
+    binding.switch('remote');
+    remote.setStatus('disconnected');
+    remote.connectError = 'executor process exited before the handshake completed (code 255): ssh: connect failed';
+
+    expect(snapshotAgentRuntimeBinding(binding, agentRuntime)).toMatchObject({
+      binding: { workspaceId: 'workspace', runtimeId: 'remote' },
+      available: false,
+      runtime: {
+        runtimeId: 'remote',
+        status: 'disconnected',
+        connectError: 'executor process exited before the handshake completed (code 255): ssh: connect failed',
+      },
     });
   });
 
@@ -712,5 +731,78 @@ describe('AgentRuntimeService reconnect', () => {
     await expect(agentRuntime.reconnect()).rejects.toThrowError(
       expect.objectContaining<Partial<RuntimeError>>({ code: 'runtime.unavailable' }),
     );
+  });
+});
+
+describe('AgentRuntimeService.acquireWhenReady', () => {
+  it('acquires a ready runtime without waiting on a readiness signal', async () => {
+    const { remote, binding, agentRuntime } = setup();
+    binding.switch('remote');
+    remote.whenReady = new Promise<void>(() => {});
+
+    const lease = await agentRuntime.acquireWhenReady(['process']);
+    expect(lease.runtime.identity).toMatchObject({ runtimeId: 'remote', generation: 'remote-one' });
+    lease.dispose();
+  });
+
+  it('waits for the in-flight connect of a connecting runtime and acquires once ready', async () => {
+    const { remote, binding, agentRuntime } = setup();
+    binding.switch('remote');
+    remote.setStatus('connecting');
+    let releaseReady!: () => void;
+    remote.whenReady = new Promise<void>((resolve) => {
+      releaseReady = resolve;
+    });
+
+    let settled = false;
+    const pending = agentRuntime.acquireWhenReady(['process']).then((lease) => {
+      settled = true;
+      return lease;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    remote.whenReady = undefined;
+    remote.setStatus('ready');
+    releaseReady();
+    const lease = await pending;
+    expect(lease.runtime.status).toBe('ready');
+    lease.dispose();
+  });
+
+  it('rejects with the connect reason when the in-flight connect fails', async () => {
+    const { remote, binding, agentRuntime } = setup();
+    binding.switch('remote');
+    remote.setStatus('connecting');
+    const failure = new Error('executor process exited before the handshake completed (code 255, signal null): ssh: connect failed');
+    remote.whenReady = Promise.reject(failure);
+    void remote.whenReady.catch(() => {});
+
+    await expect(agentRuntime.acquireWhenReady(['process'])).rejects.toBe(failure);
+  });
+
+  it('keeps the immediate runtime.unavailable error for a plainly disconnected runtime', async () => {
+    const { remote, binding, agentRuntime } = setup();
+    binding.switch('remote');
+    remote.setStatus('disconnected');
+
+    await expect(agentRuntime.acquireWhenReady(['process'])).rejects.toThrowError(
+      expect.objectContaining<Partial<RuntimeError>>({ code: 'runtime.unavailable' }),
+    );
+  });
+
+  it('fails when the pinned turn generation changes mid-turn', async () => {
+    const { agentRuntime, localRegistration, publishBus } = setup();
+    publishBus('turn.started', { agentId: 'main' });
+    await localRegistration.replace(runtime('local', 'local-two', 'ready', ['fs', 'process']));
+
+    await expect(agentRuntime.acquireWhenReady()).rejects.toThrowError(
+      expect.objectContaining<Partial<RuntimeError>>({ code: 'runtime.unavailable' }),
+    );
+
+    publishBus('turn.ended', { agentId: 'main' });
+    const lease = await agentRuntime.acquireWhenReady();
+    expect(lease.runtime.identity.generation).toBe('local-two');
+    lease.dispose();
   });
 });

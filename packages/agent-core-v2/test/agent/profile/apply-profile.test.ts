@@ -546,6 +546,11 @@ function mappedRuntimeService(
       track: <T,>(resource: T): T => resource,
       dispose: () => {},
     }),
+    acquireWhenReady: async () => ({
+      runtime,
+      track: <T,>(resource: T): T => resource,
+      dispose: () => {},
+    }),
     reconnect: async () => {},
     workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
   };

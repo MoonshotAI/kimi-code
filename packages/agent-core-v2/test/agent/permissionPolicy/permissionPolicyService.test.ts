@@ -116,6 +116,7 @@ describe('AgentPermissionPolicyService chain', () => {
             },
             dispose: () => {},
           }),
+          acquireWhenReady() { return Promise.resolve((this as IAgentRuntimeService).acquire()); },
           reconnect: async () => {},
           workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
         });
@@ -525,6 +526,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
             },
             dispose: () => {},
           }),
+          acquireWhenReady() { return Promise.resolve((this as IAgentRuntimeService).acquire()); },
           reconnect: async () => {},
           workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
         });

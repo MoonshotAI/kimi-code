@@ -93,6 +93,23 @@ describe('RuntimeManagerComponent', () => {
     expect(readyLine).toContain(SUCCESS);
   });
 
+  it('shows the first line of the disconnect reason next to a disconnected status', () => {
+    const component = makeComponent({
+      runtimes: [
+        LOCAL,
+        {
+          runtimeId: 'dev-box',
+          type: 'ssh',
+          status: 'disconnected',
+          connectError: 'ssh: connect failed\nretry guidance must not render',
+        },
+      ],
+    });
+    const plain = rendered(component);
+    expect(plain).toContain('ssh · disconnected · ssh: connect failed');
+    expect(plain).not.toContain('retry guidance');
+  });
+
   it('uses the provider-manager header shape (one top border, title, hint, no inner border)', () => {
     const component = makeComponent();
     const lines = component.render(120).map((line) => line.replaceAll(SGR, ''));

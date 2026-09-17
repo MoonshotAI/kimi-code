@@ -739,6 +739,11 @@ function bashTool(
       track: (resource) => resource,
       dispose: () => {},
     }),
+    acquireWhenReady: async () => ({
+      runtime: backend,
+      track: (resource) => resource,
+      dispose: () => {},
+    }),
     reconnect: async () => {},
     workspaceRoots: () => ({ workDir: ctx.cwd, additionalDirs: [] }),
   };

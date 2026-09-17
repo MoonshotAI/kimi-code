@@ -216,7 +216,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
 
   async function attachFakeBoxRuntime(
     client: SDKRpcClientV2,
-    options: { readonly connect?: () => Promise<void> } = {},
+    options: { readonly connect?: () => Promise<void>; readonly configure?: (fake: FakeRuntime) => void } = {},
   ) {
     // The constructor attaches the real remote-exec provider, which owns every
     // declared runtime as a placeholder; retire it so the fake provider can
@@ -238,6 +238,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
           process: new HostProcessService(),
           connect: options.connect,
         });
+        options.configure?.(fake);
         const registration = host.registerRuntime(runtime);
         return { dispose: () => registration.remove() };
       },
@@ -291,6 +292,31 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
 
       await session.switchRuntime('local');
       await expect(session.reconnectRuntime()).rejects.toThrow(/does not support reconnect/);
+    } finally {
+      await provider.dispose();
+      await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('surfaces the recorded connectError of a disconnected runtime in listRuntimes', async () => {
+    const { harness, client } = await makeRuntimeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const provider = await attachFakeBoxRuntime(client, {
+      configure: (fake) => {
+        fake.setStatus('disconnected');
+        fake.connectError = 'executor process exited before the handshake completed (code 255, signal null): ssh: connect failed';
+      },
+    });
+    try {
+      const session = await harness.createSession({ workDir });
+      const listed = await session.listRuntimes();
+      const fakeBox = listed.runtimes.find((entry) => entry.runtimeId === 'fake-box');
+      expect(fakeBox).toMatchObject({
+        status: 'disconnected',
+        connectError: 'executor process exited before the handshake completed (code 255, signal null): ssh: connect failed',
+      });
     } finally {
       await provider.dispose();
       await harness.close();

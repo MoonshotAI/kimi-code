@@ -434,6 +434,7 @@ function toEntry(runtime: RuntimeGenerationSnapshot, entry: RemoteRuntimeEntry |
     generation: runtime.generation,
     capabilities: [...runtime.capabilities],
     default_cwd: entry?.defaultCwd,
+    connect_error: runtime.connectError,
   };
 }
 

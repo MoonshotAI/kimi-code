@@ -37,6 +37,7 @@ export interface IAgentRuntimeService {
   inspect(): Runtime;
   isAvailable(required?: readonly RuntimeCapability[]): boolean;
   acquire(required?: readonly RuntimeCapability[]): RuntimeLease;
+  acquireWhenReady(required?: readonly RuntimeCapability[]): Promise<RuntimeLease>;
   reconnect(): Promise<void>;
   workspaceRoots(): RuntimeWorkspaceRoots;
 }
@@ -63,6 +64,7 @@ export function snapshotAgentRuntimeBinding(
         generation: runtime.identity.generation,
         status: runtime.status,
         capabilities: [...runtime.capabilities],
+        connectError: runtime.connectError,
       },
     };
   } catch {
@@ -168,6 +170,20 @@ export class AgentRuntimeService implements IAgentRuntimeService {
       );
     }
     return this.resolver.acquire(snapshot.binding, required);
+  }
+
+  async acquireWhenReady(required: readonly RuntimeCapability[] = []): Promise<RuntimeLease> {
+    const snapshot = this.turnSnapshot;
+    if (snapshot === undefined) {
+      return this.resolver.acquireWhenReady(this.binding.current, required);
+    }
+    if (this.currentGeneration(snapshot.binding) !== snapshot.generation) {
+      throw new RuntimeError(
+        'runtime.unavailable',
+        `runtime ${snapshot.binding.runtimeId} generation changed during the active turn`,
+      );
+    }
+    return this.resolver.acquireWhenReady(snapshot.binding, required);
   }
 
   dispose(): void {

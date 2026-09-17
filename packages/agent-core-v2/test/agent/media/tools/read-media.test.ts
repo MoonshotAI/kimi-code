@@ -198,6 +198,11 @@ function runtimeFor(fs: IHostFileSystem, env: IHostEnvironment = createTestEnv()
       track: (resource) => resource,
       dispose: () => {},
     }),
+    acquireWhenReady: async () => ({
+      runtime,
+      track: (resource) => resource,
+      dispose: () => {},
+    }),
     reconnect: async () => {},
     workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
   };
@@ -917,6 +922,7 @@ describe('AgentMediaToolsRegistrar', () => {
         return baseRuntime.inspect();
       },
       acquire: (required = []) => baseRuntime.acquire(required),
+      acquireWhenReady: async (required = []) => baseRuntime.acquire(required),
       reconnect: async () => {},
       workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
     };

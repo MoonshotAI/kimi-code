@@ -92,6 +92,7 @@ function setup(options: { readonly flagOn?: boolean; readonly sessionCwd?: strin
       _serviceBrand: undefined,
       inspect: (b: RuntimeBinding) => registry.inspect(b),
       acquire: (b: RuntimeBinding, required?: never) => registry.acquire(b, required),
+      acquireWhenReady: (b: RuntimeBinding, required?: never) => registry.acquireWhenReady(b, required),
     }, workspaces, eventBus, session, sessionState, flags);
     const shadow = new AgentWorkspaceContextService(sessionState, {
       current: runtime,

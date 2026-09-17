@@ -1955,6 +1955,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
           generation: runtime.generation,
           capabilities: [...runtime.capabilities],
           defaultCwd: entry?.defaultCwd,
+          connectError: runtime.connectError,
         };
       }),
       sshHosts: enabled ? await this.resolveSshHostCandidates() : [],

@@ -405,4 +405,30 @@ describe('FooterComponent runtime slot', () => {
     expect(rendered).toContain(ERROR);
     footer.dispose();
   });
+
+  it('appends the disconnect reason to a disconnected remote identifier', () => {
+    const footer = footerWith({
+      runtimeId: 'dev-box',
+      type: 'ssh',
+      status: 'disconnected',
+      connectError: 'ssh: connect failed',
+    });
+    const rendered = line1(footer);
+    expect(rendered).toContain('ssh:dev-box (ssh: connect failed)');
+    footer.dispose();
+  });
+
+  it('bounds the disconnect reason to its first line and a fixed width', () => {
+    const footer = footerWith({
+      runtimeId: 'dev-box',
+      type: 'ssh',
+      status: 'disconnected',
+      connectError: 'ssh: connect failed with a very long reason that keeps going\nretry guidance must not render',
+    });
+    const rendered = line1(footer);
+    expect(rendered).toContain('ssh:dev-box (');
+    expect(rendered).toContain('…');
+    expect(rendered).not.toContain('retry guidance');
+    footer.dispose();
+  });
 });

@@ -112,6 +112,10 @@ class FakeRuntimeResolver implements RuntimeResolver {
       },
     };
   }
+
+  acquireWhenReady(binding: { workspaceId: string; runtimeId: string }): Promise<RuntimeLease> {
+    return Promise.resolve(this.acquire(binding));
+  }
 }
 
 function stubWorkspace(workDir = '/ws'): ISessionWorkspaceContext {

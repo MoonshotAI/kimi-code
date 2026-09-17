@@ -77,7 +77,9 @@ function stripTrailingLf(line: string): string {
 }
 
 function splitsSurrogatePair(text: string, offset: number): boolean {
+  // oxlint-disable-next-line eslint-plugin-unicorn/prefer-code-point -- surrogate halves are UTF-16 code units; codePointAt would hide them
   const previous = text.charCodeAt(offset - 1);
+  // oxlint-disable-next-line eslint-plugin-unicorn/prefer-code-point -- surrogate halves are UTF-16 code units; codePointAt would hide them
   const next = text.charCodeAt(offset);
   return previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff;
 }
@@ -223,7 +225,9 @@ export class ReadTool implements IReadTool {
           homeDir: env.homeDir,
         }),
       execute: async () => {
-        const lease = this.runtime.acquire(['fs']);
+        const lease = this.runtime.isAvailable(['fs'])
+          ? this.runtime.acquire(['fs'])
+          : await this.runtime.acquireWhenReady(['fs']);
         try {
           if (lease.runtime.identity.generation !== inspected.identity.generation) {
             return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };

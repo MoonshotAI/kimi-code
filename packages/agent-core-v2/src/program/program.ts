@@ -133,6 +133,7 @@ export class Program {
       _serviceBrand: undefined,
       inspect: (binding) => this.runtimes.inspect(binding),
       acquire: (binding, required) => this.runtimes.acquire(binding, required),
+      acquireWhenReady: (binding, required) => this.runtimes.acquireWhenReady(binding, required),
     };
     this.registrySubscription = runtimes.onDidChange((change) => this.onRuntimeChange(change));
     this.reconcileGeneration(LOCAL_RUNTIME_ID);

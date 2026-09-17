@@ -108,7 +108,9 @@ export class GrepTool implements IGrepTool {
       approvalRule: literalRulePattern(this.name, args.pattern),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.pattern),
       execute: async ({ signal }) => {
-        const lease = this.runtime.acquire(['fs', 'process']);
+        const lease = this.runtime.isAvailable(['fs', 'process'])
+          ? this.runtime.acquire(['fs', 'process'])
+          : await this.runtime.acquireWhenReady(['fs', 'process']);
         try {
           if (lease.runtime.identity.generation !== inspected.identity.generation) {
             return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };

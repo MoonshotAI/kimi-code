@@ -84,7 +84,7 @@ describe('runtime architecture boundaries', () => {
     ]) {
       const contents = source(path);
       expect(contents).toContain('new RuntimeWorkspaceView(');
-      expect(contents).toMatch(/\.runtime\.(acquire|inspect)\(/);
+      expect(contents).toMatch(/\.runtime\.(acquire|acquireWhenReady|inspect)\(/);
       expect(contents).not.toMatch(/@IHost(?:Environment|FileSystem|FsWatchService|ProcessService|TerminalService)/);
     }
     const readTool = source('agent/tools/os/read/readTool.ts');

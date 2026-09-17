@@ -85,7 +85,7 @@ describe('Workspace MCP initialization', () => {
           new FakeRuntime({ workspaceId: 'test-workspace', runtimeId: 'local', generation: 'test-generation' }, { capabilities: ['process'] }),
           { process: new HostProcessService() },
         );
-        reg.defineInstance(IRuntimeResolver, { _serviceBrand: undefined, inspect: () => runtime, acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }) });
+        reg.defineInstance(IRuntimeResolver, { _serviceBrand: undefined, inspect: () => runtime, acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }), acquireWhenReady: async () => ({ runtime, track: (resource) => resource, dispose: () => {} }) });
         reg.definePartialInstance(IConfigService, {
           ready,
           get: (<T = unknown>(domain: string): T =>

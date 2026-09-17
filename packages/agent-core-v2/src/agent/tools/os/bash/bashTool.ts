@@ -184,7 +184,9 @@ export class BashTool implements IBashTool {
 
     const startsInBackground = args.run_in_background === true;
     const foregroundTimeoutMs = normalizeTimeoutMs(args.timeout, false);
-    const lease = this.runtime.acquire(['process']);
+    const lease = this.runtime.isAvailable(['process'])
+      ? this.runtime.acquire(['process'])
+      : await this.runtime.acquireWhenReady(['process']);
     const view = new RuntimeWorkspaceView(lease.runtime, this.workspaceCtx);
     const env = lease.runtime.environment;
     const command = env.osKind === 'Windows' ? rewriteWindowsNullRedirect(args.command) : args.command;

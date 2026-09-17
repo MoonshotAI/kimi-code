@@ -44,6 +44,11 @@ const testRuntimeResolver = {
     track: <T extends { dispose(): void | Promise<void> }>(resource: T): T => resource,
     dispose: () => {},
   }),
+  acquireWhenReady: async () => ({
+    runtime: testRuntime,
+    track: <T extends { dispose(): void | Promise<void> }>(resource: T): T => resource,
+    dispose: () => {},
+  }),
 };
 
 function createManager(options: McpConnectionManagerOptions = {}): McpConnectionManager {

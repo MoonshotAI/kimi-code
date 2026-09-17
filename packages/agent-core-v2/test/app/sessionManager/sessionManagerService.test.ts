@@ -1252,6 +1252,29 @@ describe('SessionManager remote runtime wiring', () => {
     await registry.dispose();
   });
 
+  it('opens a remote-bound session when the background reconnect throws synchronously', async () => {
+    const failure = new Error('connect blew up before returning a promise');
+    const { manager, registry, warn } = restoreSetup({
+      remoteStatus: 'disconnected',
+      flagOn: true,
+    });
+    const remote = registry.current('remote')!;
+    remote.connect = () => {
+      throw failure;
+    };
+
+    const handle = await manager.resume('session-1');
+    expect(handle).toBeDefined();
+    await vi.waitFor(() => {
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('background reconnect'),
+        expect.objectContaining({ error: failure }),
+      );
+    });
+    manager.dispose();
+    await registry.dispose();
+  });
+
   it('awaits the in-flight background reconnect when acquiring the restored runtime', async () => {
     let releaseConnect!: () => void;
     const gate = new Promise<void>((resolve) => {
