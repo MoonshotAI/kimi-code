@@ -143,7 +143,7 @@ export class BashTool implements IBashTool {
       display: {
         kind: 'command',
         command: args.command,
-        cwd: args.cwd ?? this.ctx.cwd,
+        cwd: this.executionCwd(args),
         description: args.description,
         language: 'bash',
       },
@@ -152,6 +152,15 @@ export class BashTool implements IBashTool {
       execute: ({ signal, onUpdate, onForegroundTaskStart, toolCallId }) =>
         this.execution(args, signal, toolCallId, onUpdate, onForegroundTaskStart),
     };
+  }
+
+  private executionCwd(args: BashInput): string {
+    try {
+      const view = new RuntimeWorkspaceView(inspectAgentRuntime(this.runtime), this.workspaceCtx);
+      return view.resolve(args.cwd ?? view.workDir);
+    } catch {
+      return args.cwd ?? this.ctx.cwd;
+    }
   }
 
   private spawn(
