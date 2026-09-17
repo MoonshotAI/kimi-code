@@ -8,7 +8,7 @@ import { pipeline } from 'node:stream/promises';
 import { kimiRegionProfile, resolveKimiRegion } from '@moonshot-ai/kimi-code-oauth';
 import { extract as extractTar } from 'tar';
 import { type Entry, fromBuffer as yauzlFromBuffer } from 'yauzl';
-import { basename, join } from 'pathe';
+import { basename, dirname, join } from 'pathe';
 
 import { abortable } from '#/_base/utils/abort';
 import { ErrorCodes, Error2 } from '#/errors';
@@ -65,6 +65,17 @@ function getShareDir(): string {
 
 export function getShareBinRgPath(): string {
   return join(getShareDir(), 'bin', rgBinaryName());
+}
+
+function isRemoteRuntime(runtime: Runtime | undefined): runtime is Runtime {
+  return runtime !== undefined && runtime.identity.runtimeId !== LOCAL_RUNTIME_ID;
+}
+
+function shareBinRgPath(runtime: Runtime | undefined): string {
+  if (isRemoteRuntime(runtime)) {
+    return `${runtime.environment.homeDir}/.kimi-code/bin/rg`;
+  }
+  return getShareBinRgPath();
 }
 
 function rgBaseUrl(): string {
@@ -137,9 +148,8 @@ async function resolveRemoteRgPath(
     throw new Error2(ErrorCodes.OS_FS_UNAVAILABLE, 'ripgrep (rg) is not available on PATH');
   }
   throwIfAborted(options.signal);
-  const environment = runtime.environment;
-  const binDir = `${environment.homeDir}/.kimi-code/bin`;
-  const binPath = `${binDir}/rg`;
+  const binPath = shareBinRgPath(runtime);
+  const binDir = dirname(binPath);
   const cached = await probe.exec([binPath, '--version']).catch(() => ({ exitCode: -1 }));
   if (cached.exitCode === 0) return { path: binPath, source: 'share-bin-cached' };
   throwIfAborted(options.signal);
@@ -498,9 +508,24 @@ export async function extractRgFromZip(archivePath: string, destination: string)
   });
 }
 
-export function rgUnavailableMessage(cause: unknown): string {
+export function rgUnavailableMessage(cause: unknown, runtime?: Runtime): string {
   const detail =
     cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : 'unknown error';
+  if (isRemoteRuntime(runtime)) {
+    const shareBin = shareBinRgPath(runtime);
+    return (
+      `ripgrep (rg) is not available on runtime "${runtime.identity.runtimeId}" and the automatic bootstrap failed.\n` +
+      `\n` +
+      `Error: ${detail}\n` +
+      `\n` +
+      `Fix options (install on the target):\n` +
+      `  macOS:   brew install ripgrep\n` +
+      `  Ubuntu:  sudo apt-get install ripgrep\n` +
+      `  Other:   https://github.com/BurntSushi/ripgrep#installation\n` +
+      `\n` +
+      `Alternatively, drop a static rg binary at ${shareBin} on the target`
+    );
+  }
   const shareBin = getShareBinRgPath();
   return (
     `ripgrep (rg) is not available and the automatic bootstrap failed.\n` +

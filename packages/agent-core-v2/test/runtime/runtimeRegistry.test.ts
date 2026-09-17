@@ -294,6 +294,22 @@ describe('RuntimeRegistry', () => {
     await expect(registry.acquireWhenReady({ workspaceId: 'workspace', runtimeId: 'missing' })).rejects.toThrow('not exist');
   });
 
+  it('appends the recorded connect error first line to the unavailable error', async () => {
+    const registry = new RuntimeRegistry('workspace');
+    const current = runtime('one', 'disconnected');
+    current.connectError = 'initialize timed out after 10000ms; executor stderr: Password:\nsecond line stays out';
+    registry.register(current);
+
+    const binding = { workspaceId: 'workspace', runtimeId: 'local' };
+    const attempt = (): unknown => registry.acquire(binding);
+    expect(attempt).toThrowError(
+      expect.objectContaining<Partial<RuntimeError>>({ code: 'runtime.unavailable' }),
+    );
+    expect(attempt).toThrow('runtime local is disconnected: initialize timed out after 10000ms; executor stderr: Password:');
+    expect(attempt).not.toThrow('second line');
+    await expect(registry.acquireWhenReady(binding)).rejects.toThrow('executor stderr: Password:');
+  });
+
   it('includes the recorded connect error in the generation snapshot', () => {
     const registry = new RuntimeRegistry('workspace');
     const current = runtime('one', 'disconnected');

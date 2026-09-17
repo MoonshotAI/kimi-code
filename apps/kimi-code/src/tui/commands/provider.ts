@@ -1,13 +1,9 @@
 import {
-  applyCustomRegistryEntries,
-  fetchCustomRegistry,
-  type CustomRegistrySource,
-  type ManagedKimiConfigShape,
-} from '@moonshot-ai/kimi-code-oauth';
-import {
   applyCatalogProvider,
   catalogProviderModels,
   CatalogFetchError,
+  RegistryImportError,
+  type ImportCustomRegistryResult,
   DEFAULT_CATALOG_URL,
   resolveCatalogImport,
   SECONDARY_DERIVED_MODEL_ALIAS,
@@ -22,6 +18,7 @@ import { ChoicePickerComponent } from '../components/dialogs/choice-picker';
 import {
   CustomRegistryImportDialogComponent,
   type CustomRegistryImportResult,
+  type CustomRegistryImportValue,
 } from '../components/dialogs/custom-registry-import';
 import {
   ProviderManagerComponent,
@@ -342,49 +339,49 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
   const value = await promptCustomRegistryImport(host);
   if (value === undefined) return false;
 
-  const source: CustomRegistrySource = {
-    kind: 'apiJson',
-    url: value.url,
-    apiKey: value.apiKey,
-  };
-
-  let entries: Awaited<ReturnType<typeof fetchCustomRegistry>>;
+  let result: ImportCustomRegistryResult;
   try {
-    entries = await fetchCustomRegistry(source, { userAgent: createKimiCodeUserAgent() });
+    result = await host.harness.importCustomRegistry({
+      url: value.url,
+      apiKey: value.apiKey,
+      setDefaultWhenUnset: false,
+    });
   } catch (error) {
-    host.showError(`Failed to import registry: ${formatErrorMessage(error)}`);
+    if (error instanceof RegistryImportError && error.phase === 'empty') {
+      host.showStatus('Registry contained no providers.');
+      return false;
+    }
+    const phase =
+      error instanceof RegistryImportError && error.phase === 'fetch' ? 'import' : 'apply';
+    host.showError(`Failed to ${phase} registry: ${formatErrorMessage(error)}`);
+    if (
+      value.apiKey === undefined &&
+      error instanceof RegistryImportError &&
+      (error.status === 401 || error.status === 403)
+    ) {
+      host.showStatus('This registry requires authentication — paste its Bearer token.', 'warning');
+    }
     return false;
   }
-
-  const addedProviderIds = Object.values(entries).map((entry) => entry.id);
   try {
-    const config = await host.harness.getConfig();
-    applyCustomRegistryEntries(
-      config as unknown as ManagedKimiConfigShape,
-      entries,
-      source,
-    );
-    await host.harness.setConfig({
-      providers: config.providers,
-      models: config.models,
-    });
     await host.authFlow.refreshConfigAfterLogin();
   } catch (error) {
     host.showError(`Failed to apply registry: ${formatErrorMessage(error)}`);
     return false;
   }
-
+  const addedProviderIds = result.providers.map((provider) => provider.id);
   const count = addedProviderIds.length;
-  if (count === 0) {
-    host.showStatus('Registry contained no providers.');
-    return false;
-  }
   host.showStatus(
     count === 1
       ? 'Imported 1 provider from registry.'
       : `Imported ${String(count)} providers from registry.`,
     'success',
   );
+  for (const [id, envName] of Object.entries(result.credentialEnv)) {
+    host.showStatus(
+      `provider "${id}" declares credential env var "${envName}" — set api_key_env in config.toml to use it`,
+    );
+  }
 
   // Offer the model selector so the user can pick a default, just like the
   // catalog (known-provider) flow. Copy without the v1-synthesized
@@ -419,7 +416,7 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
 
 function promptCustomRegistryImport(
   host: SlashCommandHost,
-): Promise<{ readonly url: string; readonly apiKey: string } | undefined> {
+): Promise<CustomRegistryImportValue | undefined> {
   return new Promise((resolve) => {
     const dialog = new CustomRegistryImportDialogComponent(
       (result: CustomRegistryImportResult) => {

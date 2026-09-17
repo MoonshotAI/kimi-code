@@ -368,6 +368,65 @@ describe('RemoteRuntimeProviderFactory', () => {
     await registry.dispose();
   });
 
+  it('records the connection close reason when a connected runtime drops mid-session', async () => {
+    const registry = new RuntimeRegistry('workspace-1');
+    const connect = vi.fn(async (options: RemoteRuntimeOptions) => {
+      const runtime = connectedRuntime(options, 'connected-1') as unknown as FakeRuntime & {
+        connection: { closeReason?: { reason: string } };
+      };
+      runtime.connection = {
+        closeReason: { reason: 'control call fs/read timed out after 60000ms; closing the connection' },
+      };
+      return runtime as unknown as RemoteRuntime;
+    });
+    const factory = new RemoteRuntimeProviderFactory(factoryOptions({ connect }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
+
+    await registry.current('dev-box')!.connect!();
+    const managed = registry.current('dev-box')!;
+    expect(managed.status).toBe('ready');
+    expect(managed.connectError).toBeUndefined();
+
+    const inner = connect.mock.results[0]!.value as unknown as Promise<FakeRuntime>;
+    (await inner).setStatus('disconnected');
+
+    expect(managed.status).toBe('disconnected');
+    expect(managed.connectError).toBe('control call fs/read timed out after 60000ms; closing the connection');
+    expect(registry.snapshot().runtimes[0]).toMatchObject({
+      runtimeId: 'dev-box',
+      status: 'disconnected',
+      connectError: 'control call fs/read timed out after 60000ms; closing the connection',
+    });
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('does not record a connect error on a normal dispose', async () => {
+    const registry = new RuntimeRegistry('workspace-1');
+    const connect = vi.fn(async (options: RemoteRuntimeOptions) => {
+      const runtime = connectedRuntime(options, 'connected-1') as unknown as FakeRuntime & {
+        connection: { closeReason?: { reason: string } };
+      };
+      runtime.connection = {
+        closeReason: { reason: 'connection closed by client' },
+      };
+      return runtime as unknown as RemoteRuntime;
+    });
+    const factory = new RemoteRuntimeProviderFactory(factoryOptions({ connect }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
+
+    await registry.current('dev-box')!.connect!();
+    const managed = registry.current('dev-box')!;
+    await managed.dispose();
+
+    expect(managed.status).toBe('disposed');
+    expect(managed.connectError).toBeUndefined();
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
   it('does not load project declarations for an untrusted workspace', async () => {
     const registry = new RuntimeRegistry('workspace-1');
     const services = baseServices({
@@ -439,6 +498,88 @@ describe('RemoteRuntimeProviderFactory', () => {
 
     await attachment.dispose();
     expect(registry.current('dev-box')).toBeUndefined();
+    await registry.dispose();
+  });
+});
+
+describe('ManagedRemoteRuntime reroot', () => {
+  it('re-registers the connected runtime with identity.cwd on a fresh generation, keeping the connection alive', async () => {
+    const registry = new RuntimeRegistry('workspace-1');
+    const produced: FakeRuntime[] = [];
+    const connect = vi.fn(async (options: RemoteRuntimeOptions) => {
+      const runtime = connectedRuntime(options, `connected-${produced.length + 1}`);
+      produced.push(runtime as unknown as FakeRuntime);
+      return runtime;
+    });
+    const factory = new RemoteRuntimeProviderFactory(factoryOptions({ connect }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
+
+    await registry.current('dev-box')!.connect!();
+    const bound = registry.current('dev-box')!;
+    expect(bound.identity.cwd).toBeUndefined();
+
+    await bound.reroot!('/home/me/project');
+
+    const rerooted = registry.current('dev-box')!;
+    expect(rerooted).not.toBe(bound);
+    expect(rerooted.identity.cwd).toBe('/home/me/project');
+    expect(rerooted.identity.generation).not.toBe(bound.identity.generation);
+    expect(rerooted.status).toBe('ready');
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect((produced[0]! as unknown as { disposed: boolean }).disposed).toBe(false);
+    const lease = registry.acquire({ workspaceId: 'workspace-1', runtimeId: 'dev-box' }, ['fs']);
+    expect(lease.runtime).toBe(rerooted);
+    lease.dispose();
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('carries a pending reroot into the connected registration without an extra swap', async () => {
+    const registry = new RuntimeRegistry('workspace-1');
+    const changes: (string | undefined)[] = [];
+    const connect = vi.fn(async (options: RemoteRuntimeOptions) => connectedRuntime(options, 'connected-1'));
+    const factory = new RemoteRuntimeProviderFactory(factoryOptions({ connect }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
+
+    const placeholder = registry.current('dev-box')!;
+    await placeholder.reroot!('/home/me/project');
+    expect(connect).not.toHaveBeenCalled();
+    expect(registry.current('dev-box')).toBe(placeholder);
+
+    registry.onDidChange((change) => {
+      if (change.current !== undefined) changes.push(change.current.identity.generation);
+    });
+    await registry.current('dev-box')!.connect!();
+
+    const connected = registry.current('dev-box')!;
+    expect(connected.identity.cwd).toBe('/home/me/project');
+    expect(connected.status).toBe('ready');
+    expect(changes.filter((generation) => generation === 'connected-1')).toHaveLength(1);
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('keeps the bound cwd across a reconnect', async () => {
+    const registry = new RuntimeRegistry('workspace-1');
+    let generation = 0;
+    const connect = vi.fn(async (options: RemoteRuntimeOptions) => {
+      generation += 1;
+      return connectedRuntime(options, `connected-${generation}`);
+    });
+    const factory = new RemoteRuntimeProviderFactory(factoryOptions({ connect }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
+
+    await registry.current('dev-box')!.connect!();
+    await registry.current('dev-box')!.reroot!('/home/me/project');
+    await registry.current('dev-box')!.connect!();
+
+    const reconnected = registry.current('dev-box')!;
+    expect(reconnected.identity.cwd).toBe('/home/me/project');
+    expect(reconnected.identity.generation).toBe('connected-2');
+
+    await attachment.dispose();
     await registry.dispose();
   });
 });

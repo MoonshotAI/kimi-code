@@ -15,6 +15,7 @@ import { type HostDirEntry, IHostFileSystem } from '#/os/interface/hostFileSyste
 import { IHostProcessService, type IHostProcess } from '#/os/interface/hostProcess';
 import { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
 import { WorkspaceFsService } from '#/workspace/workspaceFs/fsService';
+import { getShareBinRgPath } from '#/workspace/workspaceFs/internal/rgLocator';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
@@ -405,6 +406,35 @@ function makeSession(
 
 const emptyHandler: RunHandler = () => ({ stdout: '', exitCode: 0 });
 
+function makeRemoteSession(
+  files: Record<string, string | Buffer>,
+  handler: RunHandler,
+  events: Array<{ event: string; properties: Record<string, unknown> }> = [],
+  runtimeId = 'ssh-dev',
+  homeDir = '/home/target',
+): IWorkspaceFsService {
+  const runtime = new FakeRuntime(
+    { workspaceId: 'w', runtimeId, generation: 'test' },
+    { capabilities: ['process'], environment: { homeDir } },
+  );
+  Object.defineProperty(runtime, 'process', { value: fakeRunner(handler) });
+  const resolver: IRuntimeResolver = {
+    _serviceBrand: undefined,
+    inspect: () => runtime,
+    acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
+    acquireWhenReady: async () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
+  };
+  return new WorkspaceFsService(
+    stubWorkspaceContext(),
+    stubWorkspaceDirs(),
+    fakeFs(files),
+    resolver,
+    telemetryStub(events),
+    workspaceGitStub(defaultGitStub()),
+    runtimeId,
+  );
+}
+
 describe('WorkspaceFsService.gitStatus', () => {
   it('delegates to IWorkspaceGitService with the handler root and a confined filter', async () => {
     const calls: Array<{ cwd: string; filter: ReadonlySet<string> | undefined }> = [];
@@ -562,7 +592,7 @@ describe('WorkspaceFsService.suggest', () => {
   }
 
   function rgMissingHandler(args: readonly string[]): { stdout: string; exitCode: number } {
-    if (args[0] === 'rg' && args[1] === '--version') return { stdout: '', exitCode: 1 };
+    if (args[1] === '--version') return { stdout: '', exitCode: 1 };
     return { stdout: '', exitCode: 0 };
   }
 
@@ -1211,7 +1241,7 @@ describe('WorkspaceFsService.grep', () => {
     const fs = makeSession(
       { 'src/a.ts': 'hello world\nfoo bar\nhello again\n' },
       (args) => {
-        if (args[0] === 'rg' && args[1] === '--version') return { stdout: '', exitCode: 1 };
+        if (args[1] === '--version') return { stdout: '', exitCode: 1 };
         return { stdout: '', exitCode: 0 };
       },
       events,
@@ -1318,6 +1348,95 @@ describe('WorkspaceFsService.grep', () => {
     expect(result.files[0]?.matches).toHaveLength(CAP);
     expect(streaming?.wasKilled()).toBe(true);
     expect(streaming?.yieldedLines()).toBeLessThan(TOTAL);
+  });
+});
+
+describe('WorkspaceFsService rg share-bin fallback', () => {
+  it('probes the target share bin on a remote binding and runs rg from it', async () => {
+    const captured: string[][] = [];
+    const fs = makeRemoteSession({}, (args) => {
+      captured.push([...args]);
+      if (args[1] === '--version') {
+        return args[0] === '/home/target/.kimi-code/bin/rg'
+          ? { stdout: 'ripgrep 15.0.0', exitCode: 0 }
+          : { stdout: '', exitCode: 1 };
+      }
+      if (args[0] === '/home/target/.kimi-code/bin/rg' && args.includes('--files')) {
+        return { stdout: 'src/foo.ts\n', exitCode: 0 };
+      }
+      return { stdout: '', exitCode: 1 };
+    });
+
+    const result = await fs.suggest({
+      query: 'foo',
+      limit: 50,
+      follow_gitignore: true,
+      show_hidden: false,
+    });
+
+    expect(result.items.map((i) => i.path)).toContain('src/foo.ts');
+    const versionProbes = captured.filter((a) => a[1] === '--version').map((a) => a[0]);
+    expect(versionProbes).toEqual(['rg', '/home/target/.kimi-code/bin/rg']);
+    expect(versionProbes).not.toContain(getShareBinRgPath());
+    const filesRun = captured.find((a) => a.includes('--files'))!;
+    expect(filesRun[0]).toBe('/home/target/.kimi-code/bin/rg');
+  });
+
+  it('falls back to the node walk on a remote binding when the target has no rg anywhere', async () => {
+    const events: Array<{ event: string; properties: Record<string, unknown> }> = [];
+    const captured: string[][] = [];
+    const fs = makeRemoteSession(
+      { 'src/foo.ts': '' },
+      (args) => {
+        captured.push([...args]);
+        return { stdout: '', exitCode: 1 };
+      },
+      events,
+    );
+
+    const result = await fs.suggest({
+      query: 'foo',
+      limit: 50,
+      follow_gitignore: true,
+      show_hidden: false,
+    });
+
+    expect(result.items.map((i) => i.path)).toContain('src/foo.ts');
+    expect(events).toContainEqual({
+      event: 'fs_suggest_node_fallback',
+      properties: { reason: 'rg_missing' },
+    });
+    const versionProbes = captured.filter((a) => a[1] === '--version').map((a) => a[0]);
+    expect(versionProbes).toEqual(['rg', '/home/target/.kimi-code/bin/rg']);
+    expect(versionProbes).not.toContain(getShareBinRgPath());
+  });
+
+  it('finds a local cached rg on a local binding', async () => {
+    const localShareBin = getShareBinRgPath();
+    const captured: string[][] = [];
+    const fs = makeSession({}, (args) => {
+      captured.push([...args]);
+      if (args[1] === '--version') {
+        return args[0] === localShareBin
+          ? { stdout: 'ripgrep 15.0.0', exitCode: 0 }
+          : { stdout: '', exitCode: 1 };
+      }
+      if (args[0] === localShareBin && args.includes('--files')) {
+        return { stdout: 'src/foo.ts\n', exitCode: 0 };
+      }
+      return { stdout: '', exitCode: 1 };
+    });
+
+    const result = await fs.suggest({
+      query: 'foo',
+      limit: 50,
+      follow_gitignore: true,
+      show_hidden: false,
+    });
+
+    expect(result.items.map((i) => i.path)).toContain('src/foo.ts');
+    const filesRun = captured.find((a) => a.includes('--files'))!;
+    expect(filesRun[0]).toBe(localShareBin);
   });
 });
 

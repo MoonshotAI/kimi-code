@@ -1,0 +1,104 @@
+import { describe, expect, it } from 'vitest';
+
+import type { IAgentTaskService } from '#/agent/task/task';
+import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
+import type { IConfigService } from '#/app/config/config';
+import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { FakeRuntime } from '#/runtime/fakeRuntime';
+import type { Runtime } from '#/runtime/runtime';
+import { makeSessionContext, type ISessionContext } from '#/session/sessionContext/sessionContext';
+import type { ToolExecution } from '#/tool/toolContract';
+import { BashTool } from '#/agent/tools/os/bash/bashTool';
+import type { BashInput } from '#/agent/tools/os/bash/bash';
+
+import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
+
+function testCtx(cwd: string): ISessionContext {
+  return makeSessionContext({
+    sessionId: 's',
+    workspaceId: 'w',
+    sessionDir: cwd,
+    sessionScope: 'sessions/w/s',
+    cwd,
+  });
+}
+
+function runtimeService(runtime: Runtime): IAgentRuntimeService {
+  return {
+    _serviceBrand: undefined,
+    onDidChange: () => ({ dispose: () => {} }),
+    inspect: () => runtime,
+    isAvailable: () => true,
+    acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
+    acquireWhenReady: async () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
+    reconnect: async () => {},
+    workspaceRoots: () => ({ workDir: '', additionalDirs: [] }),
+  };
+}
+
+function throwingRuntimeService(): IAgentRuntimeService {
+  return {
+    ...runtimeService(new FakeRuntime({ workspaceId: 'w', runtimeId: 'local', generation: 'g' })),
+    inspect: () => {
+      throw new Error('runtime w is not materialized');
+    },
+  };
+}
+
+function bashTool(runtime: IAgentRuntimeService, ctx: ISessionContext, workDir: string): BashTool {
+  return new BashTool(
+    runtime,
+    ctx,
+    stubWorkspaceContext(workDir),
+    {} as unknown as IAgentTaskService,
+    {} as unknown as IAgentToolPolicyService,
+    {} as unknown as IConfigService,
+  );
+}
+
+async function displayCwd(tool: BashTool, args: BashInput): Promise<string | undefined> {
+  const resolved: ToolExecution = await Promise.resolve(tool.resolveExecution(args));
+  if (resolved.isError === true) return undefined;
+  const display = resolved.display;
+  return display?.kind === 'command' ? display.cwd : undefined;
+}
+
+describe('BashTool display cwd', () => {
+  it('stamps the binding cwd resolved on the bound runtime when no cwd argument is given', async () => {
+    const runtime = new FakeRuntime({ workspaceId: 'w', runtimeId: 'dev-box', generation: 'g' });
+    const tool = bashTool(runtimeService(runtime), testCtx('/Users/mac/project'), '/home/deploy/app');
+
+    await expect(displayCwd(tool, { command: 'ls' })).resolves.toBe('/home/deploy/app');
+  });
+
+  it('resolves a relative cwd argument against the binding cwd on the bound runtime', async () => {
+    const runtime = new FakeRuntime({ workspaceId: 'w', runtimeId: 'dev-box', generation: 'g' });
+    const tool = bashTool(runtimeService(runtime), testCtx('/Users/mac/project'), '/home/deploy/app');
+
+    await expect(displayCwd(tool, { command: 'ls', cwd: 'src/lib' })).resolves.toBe(
+      '/home/deploy/app/src/lib',
+    );
+  });
+
+  it('keeps an absolute cwd argument as resolved on the bound runtime', async () => {
+    const runtime = new FakeRuntime({ workspaceId: 'w', runtimeId: 'dev-box', generation: 'g' });
+    const tool = bashTool(runtimeService(runtime), testCtx('/Users/mac/project'), '/home/deploy/app');
+
+    await expect(displayCwd(tool, { command: 'ls', cwd: '/var/log' })).resolves.toBe('/var/log');
+  });
+
+  it('stamps the resolved local workspace dir for a local runtime', async () => {
+    const runtime = new FakeRuntime({ workspaceId: 'w', runtimeId: 'local', generation: 'g' });
+    const tool = bashTool(runtimeService(runtime), testCtx('/workspace'), '/workspace');
+
+    await expect(displayCwd(tool, { command: 'ls' })).resolves.toBe('/workspace');
+    await expect(displayCwd(tool, { command: 'ls', cwd: 'src' })).resolves.toBe('/workspace/src');
+  });
+
+  it('falls back to the raw argument or session cwd when the runtime cannot be inspected', async () => {
+    const tool = bashTool(throwingRuntimeService(), testCtx('/workspace'), '/workspace');
+
+    await expect(displayCwd(tool, { command: 'ls' })).resolves.toBe('/workspace');
+    await expect(displayCwd(tool, { command: 'ls', cwd: 'src' })).resolves.toBe('src');
+  });
+});

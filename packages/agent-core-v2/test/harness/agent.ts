@@ -722,6 +722,7 @@ const noopHookRunner: IExternalHooksRunnerService = {
   _serviceBrand: undefined,
   ready: Promise.resolve(),
   onDidReload: Event.None as Event<void>,
+  onDidHookError: Event.None as IExternalHooksRunnerService['onDidHookError'],
   trigger: async () => [],
   triggerBlock: async () => undefined,
   fireAndForgetTrigger: async () => [],

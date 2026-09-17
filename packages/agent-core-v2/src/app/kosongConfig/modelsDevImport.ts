@@ -38,11 +38,13 @@ export interface ImportModelsDevProviderResult {
 export interface ImportCustomRegistryOptions {
   readonly url: string;
   readonly apiKey?: string;
+  readonly setDefaultWhenUnset?: boolean;
 }
 
 export interface ImportCustomRegistryResult {
   readonly providers: readonly ProviderCatalogItem[];
   readonly modelsImported: number;
+  readonly credentialEnv: Readonly<Record<string, string>>;
 }
 
 export interface IModelsDevImportService {

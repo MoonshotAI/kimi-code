@@ -104,6 +104,8 @@ There is no automatic reconnect after a drop and **no silent fallback to the loc
 
 Resuming a session is the one exception: a restored remote binding reconnects automatically in the background, so the session opens immediately while the runtime moves from `connecting` to `ready` — or to `disconnected`, with the failure reason shown in the footer's runtime slot and in the `/runtime` manager. A tool call that arrives while the reconnect is still in flight waits for the connect attempt to finish (bounded by its own timeout) instead of erroring immediately, and there is never a silent fallback to `local`.
 
+Every connect attempt is bounded to 10 seconds: a target that never answers the handshake fails with an `initialize timed out` error instead of hanging silently, and when the launcher wrote anything to stderr — a stuck password prompt, an `npx` download's progress — the error includes that tail, so the cause is visible.
+
 SSH exit codes are shown as diagnostics when a connection dies — `255` indicates a network-level drop, `127` that the executor was not found on the target.
 
 ## SSH authentication
@@ -151,7 +153,7 @@ The connection handshake requires a minimum executor version and a POSIX target.
 
 Remote runtimes are experimental, and several behaviors are deliberately scoped. Each of the following is a known limitation:
 
-- **Hooks run on the Kimi Code host**: `PreToolUse` and other lifecycle hooks always execute on the machine running Kimi Code, so in a remote session they observe local facts (local files, local processes), not the target's.
+- **Hooks run on the Kimi Code host**: `PreToolUse` and other lifecycle hooks always execute on the machine running Kimi Code, so in a remote session they observe local facts (local files, local processes), not the target's. They run with the session's local working directory; hooks that would execute on the target itself are a future, undesigned concept.
 - **MCP servers stay local**: stdio MCP servers keep running on your machine even in remote sessions; they do not see the target's filesystem.
 - **No hot reload on remote workspaces**: file watching is outside the remote abstraction, so changes to `AGENTS.md`, project skills, or MCP configuration on the target are not picked up live. The initial load when a session starts works normally; reconnect or restart the session to pick up later changes.
 - **Tower mode unsupported**: tower multi-agent orchestration does not work on remote workspaces.

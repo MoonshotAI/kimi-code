@@ -52,7 +52,9 @@ command = "terminal-notifier -title Kimi -message 'Task done'"
 
 **同一事件匹配多条规则时**，所有命中的 hook 并行运行；`command` 完全相同的多条规则只运行一次。
 
-Hook 命令的工作目录是当前会话的项目目录。
+Hook 规则只存在于用户级 `config.toml` 和本地插件中，没有项目级 hook 文件，因此远程目标上检出的内容永远无法向你的会话注入 hook 定义。
+
+Hook 命令始终在运行 Kimi Code 的机器上执行，工作目录是当前会话的**本地**项目目录。会话绑定 [远程运行时](../guides/remote-runtime.md) 时，引用项目路径的 hook 操作的是这个本地目录（绑定的载体），而不是目标环境；暂不支持在目标环境上运行 hook，这仍是未来才可能设计的能力。
 
 <details>
 <summary>进程组与超时处理</summary>
@@ -87,6 +89,8 @@ Hook 命令的工作目录是当前会话的项目目录。
 | `2` | 主动阻断 | 停止当前操作；错误输出（stderr，`console.error` 打印的内容）作为阻断原因 |
 | 其他非零值 | 脚本出错 | 默认放行（fail-open） |
 | 超时或崩溃 | 脚本异常 | 默认放行（fail-open） |
+
+当 hook 执行失败时（无法启动、超时或以错误退出码结束），CLI 会记录日志，并在会话中显示一次警告；之后的失败只记录日志。阻断决策保持 fail-open：失败的 hook 永远不会阻断操作。
 
 也可以通过标准输出返回一段 JSON 来阻断：
 

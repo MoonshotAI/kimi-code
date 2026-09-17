@@ -116,4 +116,37 @@ describe('RemoteRuntime over a subprocess loopback', () => {
       }),
     ).rejects.toThrow(/exited before the handshake/);
   });
+
+  it('times out a silent executor inside the initialize window', async () => {
+    const started = Date.now();
+    const pending = RemoteRuntime.connect({
+      workspaceId: 'ws-test',
+      runtimeId: 'loopback',
+      initializeTimeoutMs: 500,
+      launcher: {
+        type: 'command',
+        program: process.execPath,
+        args: ['-e', 'setInterval(() => {}, 1000)'],
+      },
+    });
+    await expect(pending).rejects.toMatchObject({ name: 'HandshakeError', kind: 'timeout' });
+    await expect(pending).rejects.toThrow(/initialize timed out after 500ms/);
+    await expect(pending).rejects.toThrow(/^(?!.*executor stderr).*$/);
+    expect(Date.now() - started).toBeLessThan(10_000);
+  });
+
+  it('carries the executor stderr tail in the initialize timeout error', async () => {
+    const pending = RemoteRuntime.connect({
+      workspaceId: 'ws-test',
+      runtimeId: 'loopback',
+      initializeTimeoutMs: 500,
+      launcher: {
+        type: 'command',
+        program: process.execPath,
+        args: ['-e', 'process.stderr.write("Password: "); setInterval(() => {}, 1000)'],
+      },
+    });
+    await expect(pending).rejects.toMatchObject({ name: 'HandshakeError', kind: 'timeout' });
+    await expect(pending).rejects.toThrow(/initialize timed out after 500ms; executor stderr: Password:/);
+  });
 });

@@ -24,8 +24,7 @@ import type {
 } from '#/agent/toolExecutor/toolHooks';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ToolCall } from '#human/llm/message';
-import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { ToolAccesses } from '#/tool/toolContract';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
@@ -34,11 +33,12 @@ import { createFakeHostFs } from '../../tools/fixtures/fake-exec';
 import { registerTestAgentWireServices } from '../../wire/stubs';
 import { stubPermissionModeService } from '../../agent/permissionMode/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
+import { stubPlanRuntime } from './stubs';
 
 const signal = new AbortController().signal;
-const SESSION_DIR = '/session';
+const TEMP_DIR = '/var/folders/x/T';
 const PLAN_ID = 'plan-1';
-const PLAN_PATH = `${SESSION_DIR}/agents/test-agent/plans/${PLAN_ID}.md`;
+const PLAN_PATH = `${TEMP_DIR}/kimi-code/plans/test-agent/${PLAN_ID}.md`;
 
 const options = [
   { label: 'Approach A', description: 'Small change.' },
@@ -141,7 +141,36 @@ describe('AgentPlanService plan-guard listener', () => {
     permissionRan = false;
     permissionStandInRegistered = false;
     executorEvents = stubToolExecutorEvents();
+    buildServices(availableRuntime());
+  });
 
+  function availableRuntime(): IAgentRuntimeService {
+    return stubPlanRuntime({
+      fs: createFakeHostFs({
+        mkdir: vi.fn().mockResolvedValue(undefined),
+        readText: vi.fn(async (path: string) => files.get(path) ?? ''),
+        writeText: vi.fn(async (path: string, content: string) => {
+          files.set(path, content);
+        }),
+        realpath: vi.fn(async (path: string) =>
+          path.startsWith('/var/') ? `/private${path}` : path,
+        ),
+      }),
+      tempDir: TEMP_DIR,
+    });
+  }
+
+  function unavailableRuntime(): IAgentRuntimeService {
+    const stub = availableRuntime();
+    return {
+      ...stub,
+      acquire: () => {
+        throw new Error('runtime unavailable');
+      },
+    };
+  }
+
+  function buildServices(runtime: IAgentRuntimeService): void {
     const toolApproval: IAgentToolApprovalService = {
       _serviceBrand: undefined,
       resolvePermissionResolution: async () => {
@@ -159,20 +188,7 @@ describe('AgentPlanService plan-guard listener', () => {
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         registerTestAgentWireServices(reg);
-        reg.defineInstance(
-          IHostFileSystem,
-          createFakeHostFs({
-            mkdir: vi.fn().mockResolvedValue(undefined),
-            readText: vi.fn(async (path: string) => files.get(path) ?? ''),
-            writeText: vi.fn(async (path: string, content: string) => {
-              files.set(path, content);
-            }),
-          }),
-        );
-        reg.definePartialInstance(ISessionContext, {
-          sessionId: 'session-1',
-          sessionDir: SESSION_DIR,
-        });
+        reg.defineInstance(IAgentRuntimeService, runtime);
         reg.definePartialInstance(IAgentContextMemoryService, {});
         reg.defineInstance(IAgentReminderService, createReminderStub());
         reg.defineInstance(IAgentToolExecutorService, executorEvents.executor);
@@ -183,7 +199,7 @@ describe('AgentPlanService plan-guard listener', () => {
         reg.define(IAgentPlanService, AgentPlanService);
       },
     });
-  });
+  }
 
   afterEach(() => disposables.dispose());
 
@@ -241,6 +257,52 @@ describe('AgentPlanService plan-guard listener', () => {
       );
 
       expect(decision).toBeUndefined();
+      expect(permissionRan).toBe(false);
+    });
+
+    it('lets a write through when the plan file is addressed through a symlinked tempDir alias', async () => {
+      await enterPlan();
+      const aliasPath = `/private${PLAN_PATH}`;
+      const decision = await run(
+        hookContext('Write', {
+          args: { path: aliasPath },
+          accesses: ToolAccesses.writeFile(aliasPath),
+        }),
+      );
+
+      expect(decision).toBeUndefined();
+      expect(permissionRan).toBe(false);
+    });
+
+    it('blocks a non-plan file addressed through the same tempDir alias prefix', async () => {
+      await enterPlan();
+      const otherPath = `/private${TEMP_DIR}/kimi-code/plans/test-agent/other.md`;
+      const decision = await run(
+        hookContext('Write', {
+          args: { path: otherPath },
+          accesses: ToolAccesses.writeFile(otherPath),
+        }),
+      );
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain('current plan file');
+      expect(permissionRan).toBe(false);
+    });
+
+    it('denies every write when the plan file location cannot be resolved', async () => {
+      buildServices(unavailableRuntime());
+      const svc = await enterPlan();
+
+      expect((await svc.status())?.path).toBe('');
+      const decision = await run(
+        hookContext('Write', {
+          args: { path: PLAN_PATH },
+          accesses: ToolAccesses.writeFile(PLAN_PATH),
+        }),
+      );
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain('no plan file selected yet');
       expect(permissionRan).toBe(false);
     });
 

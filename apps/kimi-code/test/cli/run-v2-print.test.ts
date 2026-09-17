@@ -388,6 +388,96 @@ describe('applyPrintBackgroundPolicy', () => {
     expect(warn.mock.calls[0]?.[0]).toContain('cron');
   });
 
+  it('waits for an in-flight turn instead of treating an empty cron schedule as quiescent', async () => {
+    // A fired one-shot task disappears from the schedule at once, while the
+    // turn it steered is still running: the policy must wait the turn out
+    // rather than return (and let teardown cancel the turn mid-flight).
+    let active = true;
+    let consumed = 0;
+    const warn = vi.fn();
+    await applyPrintBackgroundPolicy({
+      mode: 'steer',
+      ceilingS: 3600,
+      maxTurns: 50,
+      countPending: () => 0,
+      drain: async () => {},
+      turnEndings: scriptedTurnEndings([
+        { event: ending(2), apply: () => { consumed += 1; active = false; } },
+      ]),
+      skipTurnId: 1,
+      warn,
+      now: () => 0,
+      turnActive: () => active,
+      cronNextFireAt: () => null,
+    });
+    expect(consumed).toBe(1);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('does not read a past fire time as a wedged tick while a turn is running', async () => {
+    // A recurring task's fire comes due during a long turn: the tick waits
+    // for the loop to go idle, so the same past fire time is reported until
+    // the turn ends. That is a held fire, not a wedged tick.
+    let active = true;
+    let nextFire: number | null = 500;
+    const warn = vi.fn();
+    const turnEndings: PrintTurnEndings = {
+      next: async (remainingMs) => {
+        // The running turn outlives short grace waits; only a patient wait
+        // observes its ending.
+        if (remainingMs <= 10_000) return null;
+        if (active) {
+          active = false;
+          nextFire = 60_000;
+          return ending(2);
+        }
+        nextFire = null;
+        return ending(3);
+      },
+    };
+    await applyPrintBackgroundPolicy({
+      mode: 'steer',
+      ceilingS: 3600,
+      maxTurns: 50,
+      countPending: () => 0,
+      drain: async () => {},
+      turnEndings,
+      skipTurnId: 1,
+      warn,
+      now: () => 1_000,
+      turnActive: () => active,
+      cronNextFireAt: () => nextFire,
+    });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('fails the run when an in-flight steered turn does not complete', async () => {
+    await expect(
+      applyPrintBackgroundPolicy({
+        mode: 'steer',
+        ceilingS: 3600,
+        maxTurns: 50,
+        countPending: () => 0,
+        drain: async () => {},
+        turnEndings: scriptedTurnEndings([
+          {
+            event: {
+              type: 'turn.ended',
+              turnId: 2,
+              reason: 'failed',
+              error: { code: 'provider.overloaded', message: 'try later' },
+            } as PrintTurnEnding,
+          },
+        ]),
+        skipTurnId: 1,
+        warn: () => {},
+        now: () => 0,
+        turnActive: () => true,
+        cronNextFireAt: () => null,
+      }),
+    ).rejects.toThrow(PrintSteeredTurnFailedError);
+  });
+
   it('finishes goal waiting before consulting the cron schedule', async () => {
     let active = true;
     let consumed = 0;

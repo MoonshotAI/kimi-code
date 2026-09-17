@@ -508,6 +508,9 @@ function setSection<T>(
 
 function providerToToml(provider: ProviderConfig, rawProvider: unknown): Record<string, unknown> {
   const out = cloneRecord(rawProvider);
+  for (const key of PROVIDER_CREDENTIAL_FIELDS) {
+    if (provider[key] === undefined) delete out[camelToSnake(key)];
+  }
   for (const [key, value] of Object.entries(provider)) {
     if (key === 'oauth' && value !== undefined) {
       out[camelToSnake(key)] = oauthToToml(value as OAuthRef);
@@ -519,6 +522,8 @@ function providerToToml(provider: ProviderConfig, rawProvider: unknown): Record<
   }
   return out;
 }
+
+const PROVIDER_CREDENTIAL_FIELDS = ['apiKey', 'oauth', 'apiKeyEnv'] as const;
 
 function modelToToml(model: ModelAlias, rawModel: unknown): Record<string, unknown> {
   const out = cloneRecord(rawModel);

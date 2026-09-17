@@ -148,6 +148,53 @@ describe('resolveWorkspaceRuntimeDeclarations', () => {
     expect(noDefault.default).toBeUndefined();
     expect(noDefault.entries).toEqual([]);
   });
+
+  it('takes the default cwd from the merged project entry when the project overrides the user default id', async () => {
+    const docs = fakeDocs();
+    await writeWorkspaceTrust(docs, ROOT, Date.now());
+    const user = RuntimesSectionSchema.parse({
+      default: 'dev',
+      dev: { type: 'ssh', host: 'user-dev', defaultCwd: '/home/me/user-dev' },
+    });
+    const resolved = await resolveWorkspaceRuntimeDeclarations({
+      config: fakeConfig(user),
+      fs: fakeFs({
+        [PROJECT_FILE]: `
+[dev]
+type = "ssh"
+host = "project-dev"
+defaultCwd = "/home/me/project-dev"
+`,
+      }),
+      docs,
+      root: ROOT,
+    });
+    expect(resolved.entries.find((entry) => entry.id === 'dev')).toMatchObject({ source: 'project' });
+    expect(resolved.default).toEqual({ runtimeId: 'dev', cwd: '/home/me/project-dev' });
+  });
+
+  it('yields no default when the merged winning entry for the default id has no defaultCwd', async () => {
+    const docs = fakeDocs();
+    await writeWorkspaceTrust(docs, ROOT, Date.now());
+    const user = RuntimesSectionSchema.parse({
+      default: 'dev',
+      dev: { type: 'ssh', host: 'user-dev', defaultCwd: '/home/me/user-dev' },
+    });
+    const resolved = await resolveWorkspaceRuntimeDeclarations({
+      config: fakeConfig(user),
+      fs: fakeFs({
+        [PROJECT_FILE]: `
+[dev]
+type = "ssh"
+host = "project-dev"
+`,
+      }),
+      docs,
+      root: ROOT,
+    });
+    expect(resolved.entries.find((entry) => entry.id === 'dev')).toMatchObject({ source: 'project' });
+    expect(resolved.default).toBeUndefined();
+  });
 });
 
 describe('previewProjectRuntimeDeclarations', () => {

@@ -1,7 +1,8 @@
-import { Emitter, type Event } from '#/_base/event';
+import { Emitter, Event } from '#/_base/event';
 import { UserFileSkillSource } from '#/features/skill/catalog/userFileSkillSource';
+import { GitService } from '#/app/git/gitService';
 import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
-import type { RuntimeBinding, RuntimeLease, RuntimeWorkspaceRoots } from '#/runtime/runtime';
+import type { Runtime, RuntimeBinding, RuntimeLease, RuntimeWorkspaceRoots } from '#/runtime/runtime';
 import { LOCAL_RUNTIME_ID } from '#/runtime/runtime';
 import { RuntimeError, type RuntimeGenerationSnapshot, type RuntimeRegistry, type RuntimeRegistryChange } from '#/runtime/runtimeRegistry';
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
@@ -39,7 +40,7 @@ import { WorkspaceRootSkillSource } from '#/features/skill/workspace/rootFileSki
 import { RuntimeSkillDiscovery } from '#/features/skill/workspace/runtimeSkillDiscovery';
 import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
 import { WorkspaceSkillCatalogService } from '#/features/skill/workspace/workspaceSkillCatalogService';
-import type { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import type { IRuntimeResolver, IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
 import type { ProgramDependencies } from './programDependencies';
 
@@ -331,26 +332,49 @@ export class Program {
       return value;
     };
     try {
+      const localRuntime = this.runtimes.current(LOCAL_RUNTIME_ID);
+      if (localRuntime?.fs === undefined) {
+        throw new Error(`program ${this.workspaceId} has no local runtime fs`);
+      }
+      const localFs = localRuntime.fs;
+      const targetFs = runtime.fs!;
+      const root = runtime.identity.cwd ?? this.context.cwd;
+      const context: IWorkspaceContext = root === this.context.cwd ? this.context : { ...this.context, cwd: root };
       const state = own(new WorkspaceStateService(this.dependencies.appState));
-      const localConfig = new FileProjectLocalConfigService(this.dependencies.bootstrap, runtime.fs!);
-      const dirs = own(new WorkspaceDirsService(this.context, localConfig, this.dependencies.log, state));
-      const git = new WorkspaceGitService(this.context, this.dependencies.git);
-      const fs = new WorkspaceFsService(this.context, dirs, runtime.fs!, this.resolver, this.dependencies.telemetry, git);
-      const instructions = own(new WorkspaceInstructionsService(this.context, runtime.fs!, runtime.environment, this.dependencies.bootstrap, this.dependencies.log, state));
+      const localConfig = new FileProjectLocalConfigService(this.dependencies.bootstrap, targetFs);
+      const dirs = own(new WorkspaceDirsService(context, localConfig, this.dependencies.log, state));
+      const git = runtimeId === LOCAL_RUNTIME_ID
+        ? new WorkspaceGitService(this.context, this.dependencies.git)
+        : new WorkspaceGitService(context, {
+            current: new GitService(
+              {
+                _serviceBrand: undefined,
+                inspect: () => this.resolver.inspect({ workspaceId: this.workspaceId, runtimeId }),
+                acquire: (_binding, required) => this.resolver.acquire({ workspaceId: this.workspaceId, runtimeId }, required),
+                acquireWhenReady: (_binding, required) => this.resolver.acquireWhenReady({ workspaceId: this.workspaceId, runtimeId }, required),
+              },
+              { findByRoot: () => ({ id: this.workspaceId }) } as unknown as IWorkspaceInstanceManager,
+              targetFs,
+            ),
+            onDidChange: Event.None as Event<void>,
+          });
+      const fs = new WorkspaceFsService(context, dirs, targetFs, this.resolver, this.dependencies.telemetry, git, runtimeId);
+      const instructions = own(new WorkspaceInstructionsService(context, workspaceRoutingFs(root, targetFs, localFs), localRuntime.environment, this.dependencies.bootstrap, this.dependencies.log, state));
       const trust = own(new WorkspaceTrustService(this.context, this.dependencies.docs, state, this.dependencies.telemetry));
-      const mcpConfig = own(new WorkspaceMcpConfigService(this.context, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, runtime.fs!, trust, this.dependencies.configStore));
+      const mcpConfig = own(new WorkspaceMcpConfigService(this.context, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, localFs, trust, this.dependencies.configStore));
       const mcp = own(new WorkspaceMcpService(this.context, this.resolver, mcpConfig, this.dependencies.oauth, this.dependencies.log, this.dependencies.telemetry, this.dependencies.identity, this.dependencies.sessionManager));
-      const userAgentProfiles = own(new UserAgentProfileLoaderService(this.dependencies.bootstrap, runtime.fs!, this.dependencies.log, this.dependencies.builtinAgentProfiles, this.context, this.dependencies.agentProfiles));
-      const pluginAgentProfiles = own(new PluginAgentProfileLoaderService(this.dependencies.plugins, runtime.fs!, this.dependencies.log, userAgentProfiles, this.context, this.dependencies.agentProfiles));
-      const explicitAgentProfiles = own(new ExplicitAgentProfileLoaderService(this.context, this.dependencies.bootstrap, runtime.fs!, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
-      const extraAgentProfiles = own(new ExtraAgentProfileLoaderService(this.dependencies.config, this.context, this.dependencies.bootstrap, runtime.fs!, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
-      const agentProfiles = own(new WorkspaceAgentProfileLoaderService(this.context, runtime.fs!, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
-      const skillDiscovery = new RuntimeSkillDiscovery(this.dependencies.log, runtime.fs!);
-      const userSkills = own(new UserFileSkillSource(skillDiscovery, this.dependencies.bootstrap, this.dependencies.config));
-      const explicitSkills = new ExplicitFileSkillSource(skillDiscovery, this.context, this.dependencies.bootstrap, runtime.fs!);
-      const extraSkills = own(new ExtraFileSkillSource(skillDiscovery, this.dependencies.config, this.context, this.dependencies.bootstrap, runtime.fs!));
-      const workspaceSkills = own(new WorkspaceRootSkillSource(skillDiscovery, this.context, this.dependencies.config, this.dependencies.bootstrap, runtime.fs!));
-      const pluginSkills = new PluginSkillSource(skillDiscovery, this.dependencies.plugins);
+      const userAgentProfiles = own(new UserAgentProfileLoaderService(this.dependencies.bootstrap, localFs, this.dependencies.log, this.dependencies.builtinAgentProfiles, this.context, this.dependencies.agentProfiles));
+      const pluginAgentProfiles = own(new PluginAgentProfileLoaderService(this.dependencies.plugins, localFs, this.dependencies.log, userAgentProfiles, this.context, this.dependencies.agentProfiles));
+      const explicitAgentProfiles = own(new ExplicitAgentProfileLoaderService(this.context, this.dependencies.bootstrap, localFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
+      const extraAgentProfiles = own(new ExtraAgentProfileLoaderService(this.dependencies.config, this.context, this.dependencies.bootstrap, localFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
+      const agentProfiles = own(new WorkspaceAgentProfileLoaderService(context, targetFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
+      const localSkillDiscovery = new RuntimeSkillDiscovery(this.dependencies.log, localFs);
+      const targetSkillDiscovery = new RuntimeSkillDiscovery(this.dependencies.log, targetFs);
+      const userSkills = own(new UserFileSkillSource(localSkillDiscovery, this.dependencies.bootstrap, this.dependencies.config));
+      const explicitSkills = new ExplicitFileSkillSource(localSkillDiscovery, this.context, this.dependencies.bootstrap, localFs);
+      const extraSkills = own(new ExtraFileSkillSource(localSkillDiscovery, this.dependencies.config, this.context, this.dependencies.bootstrap, localFs));
+      const workspaceSkills = own(new WorkspaceRootSkillSource(targetSkillDiscovery, context, this.dependencies.config, this.dependencies.bootstrap, targetFs));
+      const pluginSkills = new PluginSkillSource(localSkillDiscovery, this.dependencies.plugins);
       const skills = own(new WorkspaceSkillCatalogService(this.dependencies.builtinSkills, userSkills, explicitSkills, extraSkills, workspaceSkills, pluginSkills, state));
       return {
         id: runtime.identity.generation,
@@ -433,6 +457,29 @@ export class Program {
     else this.currentStatus = local.status === 'ready' ? 'ready' : 'degraded';
     this.changeEmitter.fire(this.snapshot());
   }
+}
+
+function workspaceRoutingFs(root: string, workspaceFs: NonNullable<Runtime['fs']>, localFs: NonNullable<Runtime['fs']>): NonNullable<Runtime['fs']> {
+  const base = root.length > 1 && root.endsWith('/') ? root.slice(0, -1) : root;
+  const onTarget = (path: string): boolean =>
+    base === '/' || path === base || path.startsWith(`${base}/`) || base.startsWith(path.endsWith('/') ? path : `${path}/`);
+  const route = (path: string): NonNullable<Runtime['fs']> => (onTarget(path) ? workspaceFs : localFs);
+  return {
+    _serviceBrand: undefined,
+    readText: (path, options) => route(path).readText(path, options),
+    writeText: (path, data) => route(path).writeText(path, data),
+    appendText: (path, data) => route(path).appendText(path, data),
+    readBytes: (path, n, offset) => route(path).readBytes(path, n, offset),
+    writeBytes: (path, data) => route(path).writeBytes(path, data),
+    readLines: (path, options) => route(path).readLines(path, options),
+    createExclusive: (path, data) => route(path).createExclusive(path, data),
+    stat: (path) => route(path).stat(path),
+    lstat: (path) => route(path).lstat(path),
+    readdir: (path) => route(path).readdir(path),
+    mkdir: (path, options) => route(path).mkdir(path, options),
+    remove: (path) => route(path).remove(path),
+    realpath: (path) => route(path).realpath(path),
+  };
 }
 
 function readiness(value: unknown): Promise<void> {

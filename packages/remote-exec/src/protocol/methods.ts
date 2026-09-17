@@ -87,6 +87,7 @@ export interface FsWriteFileParams {
 export interface FsCreateDirectoryParams {
   readonly path: string;
   readonly recursive?: boolean;
+  readonly mode?: number;
 }
 
 export interface FsGetMetadataParams {
@@ -101,6 +102,7 @@ export interface FsGetMetadataResult {
   readonly size: number;
   readonly createdAtMs: number;
   readonly modifiedAtMs: number;
+  readonly mode?: number;
 }
 
 export interface FsCanonicalizeParams {

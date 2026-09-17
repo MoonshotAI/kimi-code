@@ -13,7 +13,7 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { RuntimeSetBinding } from '#/agent/runtimeBinding/runtimeBindingOps';
 import { REMOTE_RUNTIME_FLAG_ID } from '#/runtime/flag';
-import { LOCAL_RUNTIME_ID } from '#/runtime/runtime';
+import { LOCAL_RUNTIME_ID, type RuntimeBinding } from '#/runtime/runtime';
 import { resolveWorkspaceRuntimeDeclarations } from '#/runtime/runtimeDeclarations';
 import type { RuntimeDeclarationSet } from '#/runtime/remoteRuntimeDeclaration';
 import { RuntimeError, runtimeStatusAllows } from '#/runtime/runtimeRegistry';
@@ -57,7 +57,7 @@ interface SessionControllerEntry {
 interface LocatedSession {
   readonly controller: SessionLifecycleService;
   readonly workspace?: WorkspaceInstance;
-  readonly persistedRuntimeId?: string;
+  readonly persistedBinding?: RuntimeBinding;
 }
 
 export class SessionManager implements ISessionManager {
@@ -129,7 +129,7 @@ export class SessionManager implements ISessionManager {
         ? options
         : { ...options, runtimeId, runtimeCwd };
     const create = async () => {
-      if (runtimeId !== undefined) await this.connectForCreate(workspace, runtimeId);
+      if (runtimeId !== undefined) await this.connectForCreate(workspace, runtimeId, runtimeCwd);
       const controllerRuntimeId = this.selectControllerRuntimeId(workspace, runtimeId ?? LOCAL_RUNTIME_ID);
       return this.controllerForWorkspace(workspace.id, controllerRuntimeId).create(effective);
     };
@@ -137,22 +137,42 @@ export class SessionManager implements ISessionManager {
     return this.serializeLifecycle(options.sessionId, create);
   }
 
-  private async connectForCreate(workspace: WorkspaceInstance, runtimeId: string): Promise<void> {
+  private async connectForCreate(workspace: WorkspaceInstance, runtimeId: string, runtimeCwd?: string): Promise<void> {
     if (runtimeId === LOCAL_RUNTIME_ID || !this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) return;
-    const runtime = workspace.runtimes.current(runtimeId);
-    if (runtime === undefined || runtimeStatusAllows(runtime, ['fs', 'process'])) return;
-    if (typeof runtime.connect !== 'function') {
-      throw new RuntimeError('runtime.unavailable', `runtime ${runtimeId} is ${runtime.status}`);
+    let runtime = workspace.runtimes.current(runtimeId);
+    if (runtime === undefined) return;
+    if (!runtimeStatusAllows(runtime, ['fs', 'process'])) {
+      if (typeof runtime.connect !== 'function') {
+        throw new RuntimeError('runtime.unavailable', `runtime ${runtimeId} is ${runtime.status}`);
+      }
+      try {
+        await runtime.connect();
+      } catch (error) {
+        throw new RuntimeError(
+          'runtime.unavailable',
+          `failed to connect runtime ${runtimeId}: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error },
+        );
+      }
     }
+    if (runtimeCwd === undefined) return;
+    runtime = workspace.runtimes.current(runtimeId);
+    if (runtime === undefined || runtime.identity.cwd === runtimeCwd) return;
+    const lease = workspace.runtimes.acquire({ workspaceId: workspace.id, runtimeId }, ['fs']);
     try {
-      await runtime.connect();
-    } catch (error) {
-      throw new RuntimeError(
-        'runtime.unavailable',
-        `failed to connect runtime ${runtimeId}: ${error instanceof Error ? error.message : String(error)}`,
-        { cause: error },
-      );
+      const stat = await lease.runtime.fs!.stat(runtimeCwd).catch((error: unknown) => {
+        throw new RuntimeError(
+          'runtime.invalid_cwd',
+          `cwd ${runtimeCwd} is not readable on runtime ${runtimeId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+      if (!stat.isDirectory) {
+        throw new RuntimeError('runtime.invalid_cwd', `cwd ${runtimeCwd} is not a directory on runtime ${runtimeId}`);
+      }
+    } finally {
+      lease.dispose();
     }
+    await workspace.runtimes.current(runtimeId)?.reroot?.(runtimeCwd);
   }
 
   private async workspaceRuntimeDeclarations(workspace: WorkspaceInstance): Promise<RuntimeDeclarationSet | undefined> {
@@ -410,44 +430,53 @@ export class SessionManager implements ISessionManager {
     const summary = await this.index.get(sessionId);
     if (summary === undefined) return undefined;
     const workspace = await this.workspaces.getOrCreate({ workspaceId: summary.workspaceId, root: summary.cwd });
-    const persistedRuntimeId = await this.peekPersistedRuntimeId(workspace.id, sessionId);
+    const persistedBinding = await this.peekPersistedBinding(workspace.id, sessionId);
     return {
-      controller: this.controllerForWorkspace(workspace.id, this.selectControllerRuntimeId(workspace, persistedRuntimeId ?? LOCAL_RUNTIME_ID)),
+      controller: this.controllerForWorkspace(workspace.id, this.selectControllerRuntimeId(workspace, persistedBinding?.runtimeId ?? LOCAL_RUNTIME_ID)),
       workspace,
-      persistedRuntimeId,
+      persistedBinding,
     };
   }
 
   private reconnectRestoredBinding(located: LocatedSession): void {
-    const runtimeId = located.persistedRuntimeId;
-    if (located.workspace === undefined || runtimeId === undefined || runtimeId === LOCAL_RUNTIME_ID) return;
+    const binding = located.persistedBinding;
+    if (located.workspace === undefined || binding === undefined || binding.runtimeId === LOCAL_RUNTIME_ID) return;
     if (!this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) return;
-    const runtime = located.workspace.runtimes.current(runtimeId);
+    const runtime = located.workspace.runtimes.current(binding.runtimeId);
     if (runtime === undefined || runtimeStatusAllows(runtime, ['fs', 'process'])) return;
     if (typeof runtime.connect !== 'function') return;
     try {
+      if (binding.cwd !== undefined) {
+        void runtime.reroot?.(binding.cwd)?.catch((error: unknown) => {
+          this.log.warn(`background reroot of restored runtime ${binding.runtimeId} failed`, { error });
+        });
+      }
       void runtime.connect().catch((error: unknown) => {
-        this.log.warn(`background reconnect of restored runtime ${runtimeId} failed`, { error });
+        this.log.warn(`background reconnect of restored runtime ${binding.runtimeId} failed`, { error });
       });
     } catch (error) {
-      this.log.warn(`background reconnect of restored runtime ${runtimeId} failed`, { error });
+      this.log.warn(`background reconnect of restored runtime ${binding.runtimeId} failed`, { error });
     }
   }
 
-  private async peekPersistedRuntimeId(workspaceId: string, sessionId: string): Promise<string | undefined> {
+  private async peekPersistedBinding(workspaceId: string, sessionId: string): Promise<RuntimeBinding | undefined> {
     if (!this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) return undefined;
     try {
       const scope = agentScopeOf(
         sessionScopeOf(workspacePersistenceScope(this.bootstrap.scope('sessions'), workspaceId), sessionId),
         MAIN_AGENT_ID,
       );
-      let runtimeId: string | undefined;
+      let binding: RuntimeBinding | undefined;
       for await (const record of this.appendLogStore.read<WireRecord>(scope, AGENT_WIRE_RECORD_KEY)) {
         if (record.type === RuntimeSetBinding.type && typeof record['runtimeId'] === 'string') {
-          runtimeId = record['runtimeId'];
+          binding = {
+            workspaceId,
+            runtimeId: record['runtimeId'],
+            cwd: typeof record['cwd'] === 'string' ? record['cwd'] : undefined,
+          };
         }
       }
-      return runtimeId;
+      return binding;
     } catch {
       return undefined;
     }

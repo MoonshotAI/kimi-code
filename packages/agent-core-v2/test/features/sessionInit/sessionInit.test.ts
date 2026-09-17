@@ -7,17 +7,16 @@ import { UserCancellationError } from '#/_base/utils/abort';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ErrorCodes, Error2 } from '#/errors';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInitService } from '#/features/sessionInit/sessionInit';
 import { SessionInitService } from '#/features/sessionInit/sessionInitService';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
@@ -28,6 +27,39 @@ const WORK_DIR = '/project';
 const AGENTS_MD = 'latest project instructions';
 const AGENTS_MD_PATH = `${WORK_DIR}/AGENTS.md`;
 const GIT_DIR_PATH = `${WORK_DIR}/.git`;
+
+function stubHostFs(entries: Record<string, string>): IHostFileSystem {
+  const directories = new Set(
+    Object.keys(entries)
+      .filter((path) => path.endsWith('/.git')),
+  );
+  return {
+    _serviceBrand: undefined,
+    stat: vi.fn(async (path: string): Promise<HostFileStat> => {
+      if (directories.has(path)) return { isFile: false, isDirectory: true, size: 0 };
+      const content = entries[path];
+      if (content !== undefined) return { isFile: true, isDirectory: false, size: content.length };
+      throw new Error(`ENOENT: ${path}`);
+    }),
+    readText: vi.fn(async (path: string) => {
+      const content = entries[path];
+      if (content !== undefined) return content;
+      throw new Error(`ENOENT: ${path}`);
+    }),
+  } as unknown as IHostFileSystem;
+}
+
+function stubRuntimeService(workDir: string, fs: IHostFileSystem, homeDir: string): IAgentRuntimeService {
+  return {
+    _serviceBrand: undefined,
+    workspaceRoots: () => ({ workDir, additionalDirs: [] }),
+    acquire: () => ({
+      runtime: { fs, environment: { homeDir } },
+      track: (resource: unknown) => resource,
+      dispose: () => {},
+    }),
+  } as unknown as IAgentRuntimeService;
+}
 
 describe('SessionInitService', () => {
   let disposables: DisposableStore;
@@ -40,6 +72,8 @@ describe('SessionInitService', () => {
   let create: ReturnType<typeof vi.fn>;
   let run: ReturnType<typeof vi.fn>;
   let runCompletion: Promise<{ summary: string; usage?: undefined }>;
+  let hostFs: IHostFileSystem;
+  let runtimeWorkDir: string;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -52,6 +86,8 @@ describe('SessionInitService', () => {
       events.push({ type: 'agent.status.updated', model: 'mock-model' });
     });
     runCompletion = Promise.resolve({ summary: 'Explored and wrote AGENTS.md', usage: undefined });
+    hostFs = stubHostFs({ [AGENTS_MD_PATH]: AGENTS_MD, [GIT_DIR_PATH]: '' });
+    runtimeWorkDir = WORK_DIR;
 
     const handles: Record<string, { id: string; accessor: { get: (id: unknown) => unknown } }> = {};
     const lifecycle = {
@@ -91,6 +127,9 @@ describe('SessionInitService', () => {
           if (id === IAgentPermissionModeService) return permissionMode;
           if (id === IAgentAgentsMdReminderService) return { seedInjected };
           if (id === IAgentReminderService) return { notify: appendReminder };
+          if (id === IAgentRuntimeService) {
+            return stubRuntimeService(runtimeWorkDir, hostFs, '/home');
+          }
           if (id === IEventDispatcher) {
             return {
               flush,
@@ -125,31 +164,10 @@ describe('SessionInitService', () => {
 
     ix.stub(IAgentLifecycleService, lifecycle as unknown as IAgentLifecycleService);
     ix.stub(ISessionSubagentService, lifecycle as unknown as ISessionSubagentService);
-    ix.stub(IHostFileSystem, {
-      _serviceBrand: undefined,
-      stat: vi.fn(async (path: string): Promise<HostFileStat> => {
-        if (path === GIT_DIR_PATH) return { isFile: false, isDirectory: true, size: 0 };
-        if (path === AGENTS_MD_PATH)
-          return { isFile: true, isDirectory: false, size: AGENTS_MD.length };
-        throw new Error(`ENOENT: ${path}`);
-      }),
-      readText: vi.fn(async (path: string) => {
-        if (path === AGENTS_MD_PATH) return AGENTS_MD;
-        throw new Error(`ENOENT: ${path}`);
-      }),
-    } as unknown as IHostFileSystem);
-    ix.stub(IHostEnvironment, {
-      _serviceBrand: undefined,
-      homeDir: '/home',
-    } as unknown as IHostEnvironment);
     ix.stub(IBootstrapService, {
       _serviceBrand: undefined,
       homeDir: '/home/brand',
     } as unknown as IBootstrapService);
-    ix.stub(ISessionContext, {
-      _serviceBrand: undefined,
-      cwd: WORK_DIR,
-    } as unknown as ISessionContext);
     ix.set(ISessionInitService, new SyncDescriptor(SessionInitService));
   });
 
@@ -204,6 +222,24 @@ describe('SessionInitService', () => {
     );
   });
 
+  it('reloads and seeds AGENTS.md from the bound runtime at the binding cwd', async () => {
+    const remoteWorkDir = '/remote/work';
+    const remoteAgentsMdPath = `${remoteWorkDir}/AGENTS.md`;
+    hostFs = stubHostFs({
+      [remoteAgentsMdPath]: 'remote target instructions',
+      [`${remoteWorkDir}/.git`]: '',
+    });
+    runtimeWorkDir = remoteWorkDir;
+
+    const svc = ix.get(ISessionInitService);
+    await svc.generateAgentsMd();
+
+    expect(appendReminder).toHaveBeenCalledTimes(1);
+    const [content] = appendReminder.mock.calls[0] as [string, { variant: string }];
+    expect(content).toContain('remote target instructions');
+    expect(seedInjected).toHaveBeenCalledWith([remoteAgentsMdPath], remoteWorkDir);
+  });
+
   it('wraps a subagent failure in SESSION_INIT_FAILED', async () => {
     run.mockImplementationOnce((agentId: string) => ({
       agentId,
@@ -212,7 +248,7 @@ describe('SessionInitService', () => {
     }));
     const svc = ix.get(ISessionInitService);
 
-    const error = await svc.generateAgentsMd().catch((e) => e);
+    const error = await svc.generateAgentsMd().catch((error) => error);
     expect(error).toBeInstanceOf(Error2);
     expect((error as Error2).code).toBe(ErrorCodes.SESSION_INIT_FAILED);
     expect((error as Error2).message).toContain('coder exploded');
@@ -225,7 +261,7 @@ describe('SessionInitService', () => {
     lifecycle.handleOf.mockReturnValue(undefined);
     const svc = ix.get(ISessionInitService);
 
-    const error = await svc.generateAgentsMd().catch((e) => e);
+    const error = await svc.generateAgentsMd().catch((error) => error);
     expect(error).toBeInstanceOf(Error2);
     expect((error as Error2).code).toBe(ErrorCodes.AGENT_NOT_FOUND);
   });
@@ -244,7 +280,7 @@ describe('SessionInitService', () => {
     await vi.waitFor(() => expect(run).toHaveBeenCalled());
     svc.cancelInit();
 
-    const error = await pending.catch((e) => e);
+    const error = await pending.catch((error) => error);
     expect(error).toBeInstanceOf(UserCancellationError);
     expect(events).not.toContainEqual(
       expect.objectContaining({ type: 'subagent.failed', subagentId: 'agent-0' }),

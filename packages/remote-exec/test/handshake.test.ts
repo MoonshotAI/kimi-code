@@ -313,11 +313,11 @@ describe('initialize timeout default', () => {
       if (frame.method === INITIALIZE_METHOD) {
         setTimeout(() => {
           reply({ id: frame.id, result: testInitializeResult() });
-        }, 15_000);
+        }, 5_000);
       }
     });
     const pending = RemoteExecConnection.connect(pipe, { clientName: 'test', clientVersion: '0.0.0' });
-    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(5_000);
     const connection = await pending;
     expect(connection.executorVersion).toBe(TEST_VERSION);
     connection.close();
@@ -327,9 +327,9 @@ describe('initialize timeout default', () => {
     vi.useFakeTimers();
     const pipe = createScriptedServer(() => {});
     const pending = RemoteExecConnection.connect(pipe, { clientName: 'test', clientVersion: '0.0.0' });
-    const message = expect(pending).rejects.toThrow(/timed out after 30000ms/);
+    const message = expect(pending).rejects.toThrow(/timed out after 10000ms/);
     const kind = expect(pending).rejects.toMatchObject({ name: 'HandshakeError', kind: 'timeout' });
-    await vi.advanceTimersByTimeAsync(31_000);
+    await vi.advanceTimersByTimeAsync(11_000);
     await message;
     await kind;
   });

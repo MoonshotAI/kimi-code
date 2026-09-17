@@ -152,14 +152,13 @@ function modelDisplayName(state: AppState): string {
   return effective?.displayName ?? effective?.model ?? state.model;
 }
 
-function shortenCwd(path: string): string {
+function shortenCwd(path: string, home: string | undefined): string {
   if (!path) return path;
-  const home = process.env['HOME'] ?? '';
   let work = path;
-  if (home && path === home) {
+  if (home !== undefined && home.length > 0 && path === home) {
     return '~';
   }
-  if (home && path.startsWith(home + '/')) {
+  if (home !== undefined && home.length > 0 && path.startsWith(home + '/')) {
     work = '~' + path.slice(home.length);
   }
 
@@ -493,9 +492,9 @@ export class FooterComponent implements Component {
     slots['tasks'] = taskBadges;
 
     // Runtime slot (experimental remote runtime): the local runtime renders
-    // nothing; a remote binding shows its `type:id` identifier ahead of the
-    // cwd — error-colored while disconnected, with the first connect-error
-    // line appended so the failure reason is visible at a glance.
+    // nothing; a remote binding shows its bare runtime id ahead of the cwd —
+    // error-colored while disconnected, with the first connect-error line
+    // appended so the failure reason is visible at a glance.
     const runtime = state.runtime;
     const remote = runtime !== undefined && runtime.runtimeId !== 'local';
     if (remote) {
@@ -505,7 +504,7 @@ export class FooterComponent implements Component {
           : runtime.status === 'ready'
             ? colors.textDim
             : colors.warning;
-      const label = `${runtime.type}:${runtime.runtimeId}`;
+      const label = runtime.runtimeId;
       const reason =
         runtime.status === 'disconnected' && runtime.connectError !== undefined
           ? runtime.connectError.split('\n', 1)[0]
@@ -519,7 +518,16 @@ export class FooterComponent implements Component {
       ];
     }
 
-    const cwd = shortenCwd(state.workDir);
+    // A remote-bound session works on the target host, so the slot shows the
+    // binding cwd rather than the frozen local workDir. The runtime-info
+    // surface (getRuntime/listRuntimes) does not carry the remote home dir,
+    // so the remote path shortens by segments only and never claims ~ — a
+    // wrong ~ would be worse than a full path.
+    const bindingCwd = remote ? runtime.cwd : undefined;
+    const cwd =
+      bindingCwd !== undefined
+        ? shortenCwd(bindingCwd, undefined)
+        : shortenCwd(state.workDir, process.env['HOME']);
     if (cwd) slots['cwd'] = [chalk.hex(colors.textDim)(cwd)];
 
     // The git badge reads the local filesystem; a remote-bound session's

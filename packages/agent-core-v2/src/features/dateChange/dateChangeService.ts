@@ -7,6 +7,7 @@ import {
   type AgentActorRestoreEvent,
 } from '#/agent/actorService/agentActorService';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import type {
@@ -67,12 +68,19 @@ const dateChangeInjection = fromCallback(({
   const profile = runtime.get(IAgentProfileService);
   const clock = runtime.get(IHostClock);
   const sessionContext = runtime.get(ISessionContext);
+  const bindingCwd = (): string | undefined => {
+    try {
+      return runtime.get(IAgentRuntimeBindingService).current.cwd;
+    } catch {
+      return undefined;
+    }
+  };
   const belongsToCurrentCwd = (): boolean => {
     const environment = profile.data().environmentDisclosure;
     return !(
       environment !== undefined &&
       environment.cwd !== '' &&
-      environment.cwd !== sessionContext.cwd
+      environment.cwd !== (bindingCwd() ?? sessionContext.cwd)
     );
   };
   const registration = reminder.register<DateInjectionDisclosure>(
@@ -88,7 +96,7 @@ const dateChangeInjection = fromCallback(({
       const baseline = pickDisclosureBaseline<DateDisclosure>(lastDisclosure, seed);
       if (baseline !== undefined && baseline.localDate !== current.localDate) {
         return {
-          content: `The date has changed. Today's date is now ${current.localDate}. Rely on this reminder over any earlier date statement for the current date. DO NOT mention this to the user explicitly.`,
+          content: `The date has changed. Today's date is now ${current.localDate}, in the local client machine's timezone (${current.timeZone}). Rely on this reminder over any earlier date statement for the current date. DO NOT mention this to the user explicitly.`,
           disclosure: {
             kind: 'date',
             renderGeneration,
@@ -105,7 +113,7 @@ const dateChangeInjection = fromCallback(({
         });
       }
       return {
-        content: `Today's date is ${current.localDate}. The current date is restated in a reminder whenever it changes; rely on the latest such reminder for the current date. DO NOT mention this to the user explicitly.`,
+        content: `Today's date is ${current.localDate}, in the local client machine's timezone (${current.timeZone}). The current date is restated in a reminder whenever it changes; rely on the latest such reminder for the current date. DO NOT mention this to the user explicitly.`,
         disclosure: {
           kind: 'date',
           renderGeneration,

@@ -64,6 +64,10 @@ import { FakeRuntime } from '@moonshot-ai/agent-core-v2/runtime/fakeRuntime';
 import { McpOAuthService as McpOAuthServiceV2 } from '@moonshot-ai/agent-core-v2/mcpCore/oauth/service';
 
 import { TEST_IDENTITY } from './test-identity';
+import {
+  resetModelsDevUpstreamForTest,
+  setModelsDevUpstreamForTest,
+} from '@moonshot-ai/agent-core-v2/app/kosongConfig/modelsDevUpstream';
 import { recordingTelemetry, type TelemetryRecord } from './telemetry';
 
 const hostEnvProbe = vi.hoisted(() => ({ failWithMissingShell: false }));
@@ -88,6 +92,7 @@ vi.mock('@moonshot-ai/agent-core-v2/_base/execEnv/environmentProbe', async (impo
 const tempDirs: string[] = [];
 
 afterEach(async () => {
+  resetModelsDevUpstreamForTest();
   // The read-model mirror/query-store close asynchronously on dispose; await
   // the drains so the rm below never races their final flush (ENOTEMPTY).
   await drainSessionIndexMirror();
@@ -1175,6 +1180,25 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  it('rejects a global declare whose id is already declared, leaving config.toml untouched', async () => {
+    const { harness, homeDir } = await makeRuntimeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const before = await readFile(join(homeDir, 'config.toml'), 'utf-8');
+    expect(before).toContain('[runtimes.fake-box]');
+    try {
+      const session = await harness.createSession({ workDir });
+      await expect(
+        session.declareRuntime({ id: 'fake-box', entry: { type: 'ssh', host: 'other-box' } }),
+      ).rejects.toThrow(/already declared/);
+      expect(await readFile(join(homeDir, 'config.toml'), 'utf-8')).toBe(before);
+      await session.close();
+    } finally {
+      await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('declares a project runtime into .kimi-code/runtimes.toml without clobbering it, registering live', async () => {
     const { harness } = await makeRuntimeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
@@ -1440,6 +1464,34 @@ key = "${titleOAuthRef.key}"
       // Sections absent from the write stay untouched.
       expect(next.providers['a']).toBeDefined();
       expect(next.models?.['a/m1']).toBeDefined();
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('imports a registry through the harness without selecting a default when the caller defers selection', async () => {
+    setModelsDevUpstreamForTest({
+      fetchImpl: async () => Response.json({
+        example: {
+          id: 'example',
+          name: 'Example',
+          type: 'openai',
+          api: 'https://api.example.test/v1',
+          models: { m1: { id: 'm1' } },
+        },
+      }),
+    });
+    const { harness } = await makeHarness();
+    try {
+      const result = await harness.importCustomRegistry({
+        url: 'https://registry.example.test/api.json',
+        setDefaultWhenUnset: false,
+      });
+      expect(result.modelsImported).toBe(1);
+      const config = await harness.getConfig({ reload: true });
+      expect(config.providers['example']).toMatchObject({ type: 'openai', apiKey: '' });
+      expect(config.models?.['example/m1']).toMatchObject({ provider: 'example', model: 'm1' });
+      expect(config.defaultModel).toBeUndefined();
     } finally {
       await harness.close();
     }

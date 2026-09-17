@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
@@ -50,6 +50,27 @@ describe('HostFileSystem stat / lstat', () => {
 
     await expect(fs.stat(link)).rejects.toThrow();
     expect((await fs.lstat(link)).isSymbolicLink).toBe(true);
+  });
+});
+
+describe('HostFileSystem unix mode', () => {
+  it('creates a directory with the given mode and reads it back via stat', async () => {
+    const target = join(dir, 'private');
+
+    await fs.mkdir(target, { mode: 0o700 });
+
+    const st = await fs.stat(target);
+    expect(st.isDirectory).toBe(true);
+    expect(st.mode).toBe(0o700);
+  });
+
+  it('reports the mode of files via stat and lstat', async () => {
+    const target = join(dir, 'file.txt');
+    await writeFile(target, 'x', 'utf-8');
+    await chmod(target, 0o640);
+
+    expect((await fs.stat(target)).mode).toBe(0o640);
+    expect((await fs.lstat(target)).mode).toBe(0o640);
   });
 });
 
