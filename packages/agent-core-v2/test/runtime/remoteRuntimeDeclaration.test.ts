@@ -4,7 +4,6 @@ import {
   describeRuntimeEntry,
   mergeRuntimeDeclarations,
   RuntimesSectionSchema,
-  sectionDefault,
   sectionEntries,
   runtimeIdProblem,
   type RemoteRuntimeDeclaration,
@@ -85,14 +84,13 @@ describe('declaration merge and defaults', () => {
     expect(devBox).toMatchObject({ source: 'project', entry: { host: 'project-box' } });
   });
 
-  it('resolves the default from the layer that declared it', () => {
+  it('lists section entries with their source, skipping the default key', () => {
     const section = parse({
       default: 'dev-box',
       'dev-box': { type: 'ssh', host: 'x', defaultCwd: '/home/me' },
     });
     expect(section.success).toBe(true);
     if (section.success) {
-      expect(sectionDefault(section.data)).toEqual({ runtimeId: 'dev-box', cwd: '/home/me' });
       expect(sectionEntries(section.data, 'user')).toEqual([
         { id: 'dev-box', entry: { type: 'ssh', host: 'x', defaultCwd: '/home/me' }, source: 'user' },
       ]);

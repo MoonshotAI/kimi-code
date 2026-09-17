@@ -13,7 +13,6 @@ import {
   describeRuntimeEntry,
   mergeRuntimeDeclarations,
   RuntimesSectionSchema,
-  sectionDefault,
   sectionEntries,
   type RemoteRuntimeEntry,
   type RuntimeDeclarationSet,
@@ -83,9 +82,13 @@ export async function resolveWorkspaceRuntimeDeclarations(
       projectError = error;
     }
   }
+  const entries = mergeRuntimeDeclarations(sectionEntries(user, 'user'), sectionEntries(project, 'project'));
+  const defaultId = project?.default ?? user?.default;
+  const defaultEntry = defaultId === undefined ? undefined : entries.find((entry) => entry.id === defaultId);
+  const defaultCwd = defaultEntry?.entry.defaultCwd;
   return {
-    entries: mergeRuntimeDeclarations(sectionEntries(user, 'user'), sectionEntries(project, 'project')),
-    default: sectionDefault(project) ?? sectionDefault(user),
+    entries,
+    default: defaultEntry === undefined || defaultCwd === undefined ? undefined : { runtimeId: defaultEntry.id, cwd: defaultCwd },
     projectError,
   };
 }
