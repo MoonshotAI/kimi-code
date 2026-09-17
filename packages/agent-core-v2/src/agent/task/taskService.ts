@@ -123,6 +123,7 @@ interface ManagedTask {
   outputSizeBytes: number;
   retainedOutputBytes: number;
   outputLimitTripped: boolean;
+  outputSpillDir?: string;
   status: AgentTaskStatus;
   options: RegisterAgentTaskOptions & { description?: string };
   readonly startedAt: number;
@@ -1004,7 +1005,13 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   private appendTaskOutput(entry: ManagedTask, chunk: string): void {
     const persistence = this.persistence;
     entry.outputWriteQueue = entry.outputWriteQueue
-      .then(() => persistence.appendTaskOutput(entry.taskId, chunk))
+      .then(async () => {
+        const spillDir = await persistence.appendTaskOutput(entry.taskId, chunk);
+        if (spillDir !== undefined && entry.outputSpillDir === undefined) {
+          entry.outputSpillDir = spillDir;
+          await this.persistLive(entry);
+        }
+      })
       .catch(() => { });
   }
 
@@ -1399,6 +1406,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       stopReason: entry.stopReason,
       terminalNotificationSuppressed: entry.terminalNotificationSuppressed,
       timeoutMs: entry.options.timeoutMs,
+      outputSpillDir: entry.outputSpillDir,
     };
     if (entry.toInfoFn) return entry.toInfoFn(base);
     return entry.task!.toInfo(base);

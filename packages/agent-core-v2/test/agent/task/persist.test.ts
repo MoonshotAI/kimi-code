@@ -11,6 +11,7 @@ import {
   AgentTaskPersistence,
   type AgentTaskInfo,
 } from '#/agent/task/task';
+import type { AgentTaskSpillTarget } from '#/agent/task/persist';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -338,6 +339,137 @@ describe('AgentTaskPersistence', () => {
       expect(snapshot?.outputPath).toBe(
         join(sessionDir, 'tasks', 'bash-local001', 'output.log'),
       );
+    });
+
+    it('pins the spill target at first spill and keeps it across runtime switches', async () => {
+      const writesA: { path: string; data: string }[] = [];
+      const writesB: { path: string; data: string }[] = [];
+      const fsFor = (writes: { path: string; data: string }[]) =>
+        ({
+          mkdir: async () => {},
+          appendText: async (path: string, data: string) => {
+            writes.push({ path, data });
+          },
+        }) as never;
+      const dirA = '/remote-a/tmp/kimi-code/task-output';
+      const dirB = '/remote-b/tmp/kimi-code/task-output';
+      let current: AgentTaskSpillTarget = { fs: fsFor(writesA), dir: dirA };
+      const spill = new AgentTaskPersistence(
+        join(sessionDir, AGENT_SCOPE),
+        AGENT_SCOPE,
+        docs,
+        bytes,
+        undefined,
+        () => current,
+      );
+
+      await spill.writeTask(sample({ taskId: 'bash-pinned01' }));
+      const firstDir = await spill.appendTaskOutput('bash-pinned01', 'chunk-one');
+      current = { fs: fsFor(writesB), dir: dirB };
+      const secondDir = await spill.appendTaskOutput('bash-pinned01', 'chunk-two');
+
+      expect(firstDir).toBe(dirA);
+      expect(secondDir).toBe(dirA);
+      expect(writesA).toEqual([
+        { path: `${dirA}/bash-pinned01.log`, data: 'chunk-one' },
+        { path: `${dirA}/bash-pinned01.log`, data: 'chunk-two' },
+      ]);
+      expect(writesB).toEqual([]);
+      const snapshot = await spill.readTaskOutputSnapshot('bash-pinned01', 100);
+      expect(snapshot?.outputPath).toBe(`${dirA}/bash-pinned01.log`);
+      expect(await spill.readTaskOutputBytes('bash-pinned01', 0, 1000)).toBe('chunk-onechunk-two');
+    });
+
+    it('reports the record-pinned spill path after a restart and reads back the full output', async () => {
+      const dirA = '/remote-a/tmp/kimi-code/task-output';
+      const task = sample({ taskId: 'bash-pinned02', outputSpillDir: dirA });
+      const before = rootedPersistence(AGENT_SCOPE);
+      await before.writeTask(task);
+      await before.appendTaskOutput('bash-pinned02', 'full output');
+
+      expect(await before.readTask('bash-pinned02')).toEqual(task);
+
+      const restarted = new AgentTaskPersistence(
+        join(sessionDir, AGENT_SCOPE),
+        AGENT_SCOPE,
+        docs,
+        bytes,
+        undefined,
+        () => ({
+          fs: { mkdir: async () => {}, appendText: async () => {} } as never,
+          dir: '/remote-b/tmp/kimi-code/task-output',
+        }),
+      );
+
+      const snapshot = await restarted.readTaskOutputSnapshot('bash-pinned02', 100);
+      expect(snapshot?.outputPath).toBe(`${dirA}/bash-pinned02.log`);
+      expect(snapshot?.preview).toBe('full output');
+      expect(await restarted.readTaskOutputBytes('bash-pinned02', 0, 1000)).toBe('full output');
+    });
+
+    it('pins a pre-existing unpinned record at its first spill', async () => {
+      const taskId = 'bash-pinned03';
+      const before = rootedPersistence(AGENT_SCOPE);
+      await before.writeTask(sample({ taskId }));
+      await before.appendTaskOutput(taskId, 'before');
+
+      const writesA: { path: string; data: string }[] = [];
+      const writesB: { path: string; data: string }[] = [];
+      const fsFor = (writes: { path: string; data: string }[]) =>
+        ({
+          mkdir: async () => {},
+          appendText: async (path: string, data: string) => {
+            writes.push({ path, data });
+          },
+        }) as never;
+      const dirA = '/remote-a/tmp/kimi-code/task-output';
+      const dirB = '/remote-b/tmp/kimi-code/task-output';
+      let current: AgentTaskSpillTarget = { fs: fsFor(writesA), dir: dirA };
+      const spill = new AgentTaskPersistence(
+        join(sessionDir, AGENT_SCOPE),
+        AGENT_SCOPE,
+        docs,
+        bytes,
+        undefined,
+        () => current,
+      );
+
+      const firstDir = await spill.appendTaskOutput(taskId, 'after-one');
+      current = { fs: fsFor(writesB), dir: dirB };
+      const secondDir = await spill.appendTaskOutput(taskId, 'after-two');
+
+      expect(firstDir).toBe(dirA);
+      expect(secondDir).toBe(dirA);
+      expect(writesA).toEqual([
+        { path: `${dirA}/${taskId}.log`, data: 'after-one' },
+        { path: `${dirA}/${taskId}.log`, data: 'after-two' },
+      ]);
+      expect(writesB).toEqual([]);
+    });
+
+    it('keeps computing the current spill target for output that never spilled', async () => {
+      const taskId = 'bash-nosp0001';
+      const dirA = '/remote-a/tmp/kimi-code/task-output';
+      const dirB = '/remote-b/tmp/kimi-code/task-output';
+      let current: AgentTaskSpillTarget | undefined = undefined;
+      const spill = new AgentTaskPersistence(
+        join(sessionDir, AGENT_SCOPE),
+        AGENT_SCOPE,
+        docs,
+        bytes,
+        undefined,
+        () => current,
+      );
+
+      expect(await spill.appendTaskOutput(taskId, 'buffered')).toBeUndefined();
+
+      current = { fs: { mkdir: async () => {}, appendText: async () => {} } as never, dir: dirA };
+      const first = await spill.readTaskOutputSnapshot(taskId, 100);
+      expect(first?.outputPath).toBe(`${dirA}/${taskId}.log`);
+
+      current = { fs: { mkdir: async () => {}, appendText: async () => {} } as never, dir: dirB };
+      const second = await spill.readTaskOutputSnapshot(taskId, 100);
+      expect(second?.outputPath).toBe(`${dirB}/${taskId}.log`);
     });
   });
 });

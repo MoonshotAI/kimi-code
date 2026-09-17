@@ -1,17 +1,21 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import * as posixPath from 'node:path/posix';
 import { Readable } from 'node:stream';
 import type { Writable } from 'node:stream';
 import { join } from 'pathe';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostProcess } from '#/os/interface/hostProcess';
+import type { Runtime, RuntimeLease } from '#/runtime/runtime';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
 import { TaskOutputTool } from '#/agent/tools/task/task-output/taskOutputTool';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import { createAgentTaskPersistence, type TaskServiceTestManager } from './stubs';
-import { taskServices, createTestAgent, homeDirServices, type TestAgentContext } from '../../harness';
+import { taskServices, createTestAgent, homeDirServices, agentService, type TestAgentContext } from '../../harness';
 import { executeTool, type TestExecutableToolContext } from '../../tools/fixtures/execute-tool';
 
 interface TaskServiceFixture {
@@ -284,5 +288,170 @@ describe('AgentTaskService — readOutput / getOutputSnapshot', () => {
 
     expect(await manager.readOutput(taskId, 5)).toBe('ddddd');
     await manager.wait(taskId);
+  });
+});
+
+describe('AgentTaskService — spill target pinning', () => {
+  const dirA = '/remote-a/tmp/kimi-code/task-output';
+  const dirB = '/remote-b/tmp/kimi-code/task-output';
+
+  let sessionDir: string;
+  let ctx: TestAgentContext;
+  let manager: TaskServiceTestManager;
+  let persistence: ReturnType<typeof createAgentTaskPersistence>;
+  let writesA: { path: string; data: string }[];
+  let writesB: { path: string; data: string }[];
+  let runtimeA: Runtime;
+  let runtimeB: Runtime;
+  let currentRuntime: Runtime;
+
+  function recordingFs(writes: { path: string; data: string }[]): IHostFileSystem {
+    return {
+      mkdir: async () => {},
+      appendText: async (path: string, data: string) => {
+        writes.push({ path, data });
+      },
+    } as unknown as IHostFileSystem;
+  }
+
+  function fakeRuntime(fs: IHostFileSystem, tempDir: string): Runtime {
+    return {
+      identity: { workspaceId: 'workspace-1', runtimeId: 'remote', generation: 'test' },
+      capabilities: new Set(['fs'] as const),
+      environment: { tempDir },
+      path: posixPath,
+      workspace: { mapRoots: (roots: { workDir: string }) => roots },
+      fs,
+      status: 'ready',
+      onDidChangeStatus: () => ({ dispose: () => {} }),
+      dispose: () => {},
+    } as unknown as Runtime;
+  }
+
+  function runtimeService(): IAgentRuntimeService {
+    const lease = (): RuntimeLease => ({
+      runtime: currentRuntime,
+      track: <T extends { dispose(): void | Promise<void> }>(resource: T): T => resource,
+      dispose: () => {},
+    });
+    return {
+      _serviceBrand: undefined,
+      onDidChange: () => ({ dispose: () => {} }),
+      isAvailable: () => true,
+      inspect: () => currentRuntime,
+      acquire: lease,
+      acquireWhenReady: async () => lease(),
+      reconnect: async () => {},
+      workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
+    };
+  }
+
+  function createSpillTaskService(homedir: string): TaskServiceFixture {
+    const fixturePersistence = createAgentTaskPersistence(homedir);
+    const fixtureCtx = createTestAgent(
+      homeDirServices(homedir),
+      taskServices(),
+      agentService(IAgentRuntimeService, runtimeService()),
+    );
+    return {
+      ctx: fixtureCtx,
+      manager: fixtureCtx.get(IAgentTaskService) as TaskServiceTestManager,
+      persistence: fixturePersistence,
+    };
+  }
+
+  function controllableProcess(): {
+    readonly proc: IHostProcess;
+    push(text: string): void;
+    end(exitCode: number): void;
+  } {
+    const stdout = new Readable({ read() {} });
+    let resolveWait!: (exitCode: number) => void;
+    const proc: IHostProcess = {
+      _serviceBrand: undefined,
+      stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
+      stdout,
+      stderr: Readable.from([]),
+      pid: 50099,
+      exitCode: null,
+      wait: vi.fn(
+        () => new Promise<number>((resolve) => { resolveWait = resolve; }),
+      ) as IHostProcess['wait'],
+      kill: vi.fn().mockResolvedValue(undefined) as IHostProcess['kill'],
+      dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
+    };
+    return {
+      proc,
+      push: (text) => {
+        stdout.push(text);
+      },
+      end: (exitCode) => {
+        stdout.push(null);
+        resolveWait(exitCode);
+      },
+    };
+  }
+
+  beforeEach(() => {
+    sessionDir = mkdtempSync(join(tmpdir(), 'bpm-spill-pin-'));
+    writesA = [];
+    writesB = [];
+    runtimeA = fakeRuntime(recordingFs(writesA), '/remote-a/tmp');
+    runtimeB = fakeRuntime(recordingFs(writesB), '/remote-b/tmp');
+    currentRuntime = runtimeA;
+    const fixture = createSpillTaskService(sessionDir);
+    ctx = fixture.ctx;
+    manager = fixture.manager;
+    persistence = fixture.persistence;
+  });
+
+  afterEach(async () => {
+    try {
+      await waitForTaskNotifications(ctx, manager);
+      await ctx.expectResumeMatches();
+    } finally {
+      await ctx.dispose();
+      rmSync(sessionDir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps appending to the original runtime after a switch and reports its path across a restart', async () => {
+    const { proc, push, end } = controllableProcess();
+    const taskId = registerProcess(manager, proc, 'tail -f', 'spill pinning');
+
+    push('first\n');
+    await waitForOutput(manager, taskId, 'first');
+    await manager.getOutputSnapshot(taskId, 1_000);
+    expect(writesA).toEqual([{ path: `${dirA}/${taskId}.log`, data: 'first\n' }]);
+
+    currentRuntime = runtimeB;
+    push('second\n');
+    await waitForOutput(manager, taskId, 'second');
+    const snapshot = await manager.getOutputSnapshot(taskId, 1_000);
+
+    expect(writesA).toEqual([
+      { path: `${dirA}/${taskId}.log`, data: 'first\n' },
+      { path: `${dirA}/${taskId}.log`, data: 'second\n' },
+    ]);
+    expect(writesB).toEqual([]);
+    expect(snapshot.outputPath).toBe(`${dirA}/${taskId}.log`);
+
+    end(0);
+    await manager.wait(taskId);
+    expect((await persistence.readTask(taskId))?.outputSpillDir).toBe(dirA);
+
+    const freshFixture = createSpillTaskService(sessionDir);
+    const fresh = freshFixture.manager;
+    try {
+      await fresh.loadFromDisk();
+      await fresh.reconcile();
+
+      const restored = await fresh.getOutputSnapshot(taskId, 1_000);
+      expect(restored.outputPath).toBe(`${dirA}/${taskId}.log`);
+      expect(await fresh.readOutput(taskId)).toBe('first\nsecond\n');
+      await freshFixture.ctx.expectResumeMatches();
+    } finally {
+      await freshFixture.ctx.dispose();
+    }
   });
 });
