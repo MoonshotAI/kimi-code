@@ -158,7 +158,7 @@ async function reconnectFlow(
 }
 
 // ---------------------------------------------------------------------------
-// Add (declare a runtime in config.toml [runtimes])
+// Add (declare a runtime in config.toml [runtimes] or .kimi-code/runtimes.toml)
 // ---------------------------------------------------------------------------
 
 const ADD_TYPE_OPTIONS = [
