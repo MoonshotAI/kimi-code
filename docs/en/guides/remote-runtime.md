@@ -153,7 +153,7 @@ The connection handshake requires a minimum executor version and a POSIX target.
 
 Remote runtimes are experimental, and several behaviors are deliberately scoped. Each of the following is a known limitation:
 
-- **Hooks run on the Kimi Code host**: `PreToolUse` and other lifecycle hooks always execute on the machine running Kimi Code, so in a remote session they observe local facts (local files, local processes), not the target's.
+- **Hooks run on the Kimi Code host**: `PreToolUse` and other lifecycle hooks always execute on the machine running Kimi Code, so in a remote session they observe local facts (local files, local processes), not the target's. They run with the session's local working directory; hooks that would execute on the target itself are a future, undesigned concept.
 - **MCP servers stay local**: stdio MCP servers keep running on your machine even in remote sessions; they do not see the target's filesystem.
 - **No hot reload on remote workspaces**: file watching is outside the remote abstraction, so changes to `AGENTS.md`, project skills, or MCP configuration on the target are not picked up live. The initial load when a session starts works normally; reconnect or restart the session to pick up later changes.
 - **Tower mode unsupported**: tower multi-agent orchestration does not work on remote workspaces.
