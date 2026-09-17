@@ -193,14 +193,14 @@ export class GlobTool implements IGlobTool {
         return { isError: true, output: 'Glob aborted' };
       }
       this.telemetry.track2('glob_tool_rg_fallback', { outcome: 'failed' });
-      return { isError: true, output: rgUnavailableMessage(error) };
+      return { isError: true, output: rgUnavailableMessage(error, runtime) };
     }
 
     let run;
     try {
       run = await runRgOnce(processService, buildRgArgs(rgPath, args), signal, { cwd: searchRoot });
     } catch (error) {
-      return { isError: true, output: formatSpawnError(error) };
+      return { isError: true, output: formatSpawnError(error, runtime) };
     }
     if (run.kind === 'aborted') {
       return { isError: true, output: 'Glob aborted' };
@@ -210,7 +210,7 @@ export class GlobTool implements IGlobTool {
       try {
         run = await runRgOnce(processService, buildRgArgs(rgPath, args, true), signal, { cwd: searchRoot });
       } catch (error) {
-        return { isError: true, output: formatSpawnError(error) };
+        return { isError: true, output: formatSpawnError(error, runtime) };
       }
       if (run.kind === 'aborted') {
         return { isError: true, output: 'Glob aborted' };
@@ -391,9 +391,9 @@ function formatGlobWarning(stderr: string): string {
     : 'Glob completed with warnings; some directories could not be read.';
 }
 
-function formatSpawnError(error: unknown): string {
+function formatSpawnError(error: unknown, runtime: Runtime): string {
   return errorCode(error) === 'ENOENT'
-    ? rgUnavailableMessage(error)
+    ? rgUnavailableMessage(error, runtime)
     : error instanceof Error
       ? error.message
       : String(error);
