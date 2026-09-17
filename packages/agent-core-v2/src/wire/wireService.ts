@@ -9,7 +9,7 @@ import {
   type AppendLogTruncation,
   IAppendLogStore,
 } from '#/persistence/interface/appendLogStore';
-import { IFileSystemStorageService, StorageError, StorageErrors } from '#/persistence/interface/storage';
+import { IFileSystemStorageService, isStorageError, StorageError, StorageErrors } from '#/persistence/interface/storage';
 
 import { IWireService } from './wire';
 import { WireError, WireErrors } from './errors';
@@ -81,6 +81,15 @@ export class WireService extends Service implements IWireService, IAgentJournal 
     this.wireScope = scopeContext.scope();
     this.agentId = scopeContext.agentId;
     this._register(this.log.acquire(this.wireScope, AGENT_WIRE_RECORD_KEY));
+    this._register(
+      this.log.onDidRecover((write) => {
+        if (write.scope === this.wireScope && write.key === AGENT_WIRE_RECORD_KEY) {
+          this.logger.info('session wire persistence recovered after storage failure', {
+            scope: this.wireScope,
+          });
+        }
+      }),
+    );
   }
 
   async seal(): Promise<void> {
@@ -562,7 +571,15 @@ export class WireService extends Service implements IWireService, IAgentJournal 
 
   private appendRecordLow(record: WireRecord): void {
     this.log.append(this.wireScope, AGENT_WIRE_RECORD_KEY, record, {
-      onError: onUnexpectedError,
+      onError: (error) => {
+        onUnexpectedError(error);
+        if (isStorageError(error, StorageErrors.codes.STORAGE_DISK_FULL)) {
+          this.logger.error(
+            'session wire persistence degraded: no space left on device; new records stay buffered in memory and the store retries in the background — free disk space to resume durable writes',
+            { scope: this.wireScope },
+          );
+        }
+      },
     });
     this.lines += 1;
     if (isHumanRecordType(record.type)) {
