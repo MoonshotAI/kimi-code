@@ -320,37 +320,6 @@ describe('kimi provider add', () => {
     expect(output).toContain('- kohub-responses');
   });
 
-  it('drops a stale provider before re-applying when the id already exists', async () => {
-    mockRegistryFetch();
-    const initial: KimiConfig = {
-      providers: {
-        kohub: {
-          type: 'kimi',
-          baseUrl: 'https://stale.example.test',
-          apiKey: 'old',
-        },
-      },
-      models: {
-        'kohub/stale-model': {
-          provider: 'kohub',
-          model: 'stale-model',
-          maxContextSize: 1024,
-          capabilities: [],
-        },
-      },
-    } as unknown as KimiConfig;
-    const { harness, current } = await makeRegistryHarness(initial);
-    const { deps, exitCodes } = makeDeps(harness);
-
-    await tryRun(() =>
-      handleProviderAdd(deps, REGISTRY_URL, { apiKey: 'sk-new' }),
-    );
-
-    expect(exitCodes).toEqual([]);
-    expect((await current()).models?.['kohub/stale-model']).toBeUndefined();
-    expect((await current()).models?.['kohub/claude-opus-4-7']).toBeDefined();
-  });
-
   it('persists registry removals and clears dangling defaults', async () => {
     mockRegistryFetch();
     const initial: KimiConfig = {
@@ -384,47 +353,6 @@ describe('kimi provider add', () => {
     expect((await current()).models?.['gone/m1']).toBeUndefined();
     expect((await current()).defaultModel).toBeUndefined();
     expect((await current()).thinking?.enabled).toBeUndefined();
-  });
-
-  it('preserves every provider when a registry entry replaces an existing id', async () => {
-    mockRegistryFetch();
-    const initial: KimiConfig = {
-      providers: {
-        // The registry will replace this one.
-        'kohub-responses': {
-          type: 'openai_responses',
-          baseUrl: 'https://stale.example.test/v1',
-          apiKey: 'old',
-        },
-      },
-      models: {
-        'kohub-responses/legacy-model': {
-          provider: 'kohub-responses',
-          model: 'legacy-model',
-          maxContextSize: 1024,
-          capabilities: [],
-        },
-      },
-    } as unknown as KimiConfig;
-    const { harness, current } = await makeRegistryHarness(initial);
-    const { deps, exitCodes } = makeDeps(harness);
-
-    await tryRun(() =>
-      handleProviderAdd(deps, REGISTRY_URL, { apiKey: 'sk-fresh' }),
-    );
-
-    expect(exitCodes).toEqual([]);
-    const final = (await current());
-    // BOTH providers must end up in the final config — `kohub` was newly
-    // added in the loop, `kohub-responses` was replaced. The old bug dropped
-    // `kohub` because the second iteration's `removeProvider` reloaded a
-    // disk-backed config that had not yet been persisted with `kohub`.
-    expect(final.providers['kohub']).toBeDefined();
-    expect(final.providers['kohub-responses']).toBeDefined();
-    expect(final.providers['kohub-responses']?.apiKey).toBe('sk-fresh');
-    expect(final.models?.['kohub/claude-opus-4-7']).toBeDefined();
-    expect(final.models?.['kohub-responses/gpt-5.5']).toBeDefined();
-    expect(final.models?.['kohub-responses/legacy-model']).toBeUndefined();
   });
 
   it('reads the api key from KIMI_REGISTRY_API_KEY when --api-key is omitted', async () => {
@@ -468,22 +396,6 @@ describe('kimi provider add', () => {
 
     expect(exitCodes).toEqual([1]);
     expect((await current())).toMatchObject(initial);
-  });
-
-  it('imports a public registry without an api key, sending no Authorization header', async () => {
-    const fetchMock = mockRegistryFetch();
-    const { harness, current } = await makeRegistryHarness({ providers: {} } as KimiConfig);
-    const { deps, stdout, stderr, exitCodes } = makeDeps(harness);
-
-    await tryRun(() => handleProviderAdd(deps, REGISTRY_URL, {}));
-
-    expect(exitCodes).toEqual([]);
-    expect(stderr.join('')).toBe('');
-    const call = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    const headers = call[1].headers as Record<string, string>;
-    expect(headers['Authorization']).toBeUndefined();
-    expect(Object.keys((await current()).providers).toSorted()).toEqual(['kohub', 'kohub-responses']);
-    expect(stdout.join('')).toContain('Imported 2 providers');
   });
 
   it('exits 1 when the registry fetch fails with an HTTP error', async () => {

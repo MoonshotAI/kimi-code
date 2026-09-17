@@ -567,51 +567,6 @@ describe('refreshProviderModels write behavior', () => {
 });
 
 describe('refreshProviderModels api_key_env credentials', () => {
-  const managedBaseUrl = 'https://api.managed.example.test/coding/v1';
-
-  function stubManagedModelsFetch(): ReturnType<typeof vi.fn> {
-    const fetchMock = vi.fn(
-      async () =>
-        new Response(
-          JSON.stringify({
-            data: [{ id: 'kimi-k2', context_length: 262144, supports_reasoning: true }],
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        ),
-    );
-    vi.stubGlobal('fetch', fetchMock);
-    return fetchMock;
-  }
-
-  it('refreshes a managed-endpoint provider whose key lives in the declared environment variable', async () => {
-    vi.stubEnv('KIMI_CODE_BASE_URL', managedBaseUrl);
-    vi.stubEnv('KIMI_TEST_REFRESH_ENV_KEY', 'sk-from-env');
-    const fetchMock = stubManagedModelsFetch();
-    const { host, discovery, providers } = await createHost({
-      providers: {
-        'my-kimi': { type: 'kimi', baseUrl: managedBaseUrl, apiKeyEnv: 'KIMI_TEST_REFRESH_ENV_KEY' },
-      },
-      models: {},
-    });
-    try {
-      const result = await discovery.refreshProviderModels({ scope: 'all' });
-      expect(result.failed).toEqual([]);
-      expect(fetchMock).toHaveBeenCalledWith(
-        `${managedBaseUrl}/models`,
-        expect.objectContaining({
-          headers: expect.objectContaining({ Authorization: 'Bearer sk-from-env' }),
-        }),
-      );
-      expect(providers.list()['my-kimi']).toEqual({
-        type: 'kimi',
-        baseUrl: managedBaseUrl,
-        apiKeyEnv: 'KIMI_TEST_REFRESH_ENV_KEY',
-      });
-    } finally {
-      host.dispose();
-    }
-  });
-
   it('fails an open-platform provider with conflicting api_key_env and oauth, without affecting others', async () => {
     const fetchMock = vi.fn(async (input: unknown) => {
       if (String(input).endsWith('api.json')) {

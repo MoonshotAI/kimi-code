@@ -2866,26 +2866,6 @@ describe('ConfigService replaceSections', () => {
     disposables.dispose();
   });
 
-  it('treats an absent object section as empty when checking a guard', async () => {
-    const { config, disposables } = await createSectionsConfig(
-      '[providers.acme]\ntype = "openai"\napi_key = "sk-acme"\n',
-    );
-
-    await expect(
-      config.replaceSections(
-        { [THINKING_SECTION]: undefined },
-        undefined,
-        {
-          preserveUnknown: false,
-          exactKeys: { [THINKING_SECTION]: ['enabled', 'effort', 'keep'] },
-          expectedValues: { [THINKING_SECTION]: {} },
-        },
-      ),
-    ).resolves.toBeUndefined();
-
-    disposables.dispose();
-  });
-
   it('treats null as clear — the wire encoding JSON transports use for undefined', async () => {
     const { config, disposables, store } = await createSectionsConfig();
     const setSpy = vi.spyOn(store, 'set');

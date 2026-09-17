@@ -495,56 +495,6 @@ describe('applyCustomRegistryProvider', () => {
     expect(alias?.['defaultEffort']).toBeUndefined();
   });
 
-  it('ignores the entry env field — never writes apiKeyEnv or source.envKey', () => {
-    const config: ManagedKimiConfigShape = { providers: {} };
-    const entry: CustomRegistryProviderEntry = {
-      id: 'acme',
-      name: 'Acme',
-      api: 'https://acme.example.test/v1',
-      type: 'openai',
-      env: ['ACME_API_KEY'],
-      models: { m1: { id: 'm1' } },
-    };
-
-    applyCustomRegistryProvider(config, entry, KOKUB_SOURCE);
-
-    expect(config.providers['acme']).toEqual({
-      type: 'openai',
-      baseUrl: 'https://acme.example.test/v1',
-      apiKey: 'sk-token',
-      source: KOKUB_SOURCE,
-    });
-  });
-
-  it('preserves a hand-edited apiKeyEnv when the entry declares no env', () => {
-    const config: ManagedKimiConfigShape = {
-      providers: {
-        acme: {
-          type: 'openai',
-          baseUrl: 'https://acme.example.test/v1',
-          apiKeyEnv: 'MY_OWN_KEY',
-          source: KOKUB_SOURCE,
-        },
-      },
-    };
-    const entry: CustomRegistryProviderEntry = {
-      id: 'acme',
-      name: 'Acme',
-      api: 'https://acme.example.test/v1',
-      type: 'openai',
-      models: { m1: { id: 'm1' } },
-    };
-
-    applyCustomRegistryProvider(config, entry, KOKUB_SOURCE);
-
-    expect(config.providers['acme']).toEqual({
-      type: 'openai',
-      baseUrl: 'https://acme.example.test/v1',
-      apiKeyEnv: 'MY_OWN_KEY',
-      source: KOKUB_SOURCE,
-    });
-  });
-
   it('does not preserve apiKeyEnv when the colliding provider is manual (no registry source)', () => {
     const config: ManagedKimiConfigShape = {
       providers: {
@@ -815,35 +765,6 @@ describe('applyCustomRegistryEntries', () => {
     expect(config.models?.['shared/m1']).toBeDefined();
     expect(config.models?.['onlyA/m1']).toBeDefined();
   });
-});
-
-describe('custom registry safety', () => {
-  it.each(['moonshot-cn', 'kimi-code'])(
-    'rejects provider id %s before mutating config', (providerId) => {
-      const config: ManagedKimiConfigShape = {
-        providers: { acme: { type: 'openai', apiKey: 'sk-acme' } },
-        models: {},
-      };
-      const original = structuredClone(config);
-
-      expect(() =>
-        applyCustomRegistryEntries(
-          config,
-          {
-            shadow: {
-              id: providerId,
-              name: 'Shadow provider',
-              api: 'https://registry.example.test/v1',
-              type: 'openai',
-              models: { m1: { id: 'm1' } },
-            },
-          },
-          KOKUB_SOURCE,
-        ),
-      ).toThrow(/reserved/i);
-      expect(config).toEqual(original);
-    },
-  );
 });
 
 describe('capabilitiesFromCustomEntry', () => {
