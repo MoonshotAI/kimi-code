@@ -40,11 +40,11 @@ container = "myapp-dev"
 # context = "orbstack"       # 可选 docker context
 defaultCwd = "/workspace"
 
-[runtimes.gym]
-command = "agi"              # 可执行名或绝对路径
-args = ["sandbox", "ssh", "i-1234567890", "--",
+[runtimes.sandbox]
+command = "sandbox"              # 可执行名或绝对路径
+args = ["ssh", "i-1234567890", "--",
         "/home/me/.kimi-code/bin/kimi", "exec-server", "--listen", "stdio"]
-env = { AGI_TOKEN = "..." }  # 可选：仅作用于本机启动器进程的环境变量
+env = { SANDBOX_TOKEN = "..." }  # 可选：仅作用于本机启动器进程的环境变量
 defaultCwd = "/home/me/kimi-code"
 ```
 

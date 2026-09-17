@@ -20,14 +20,14 @@ describe('RuntimesSectionSchema', () => {
       default: 'dev-box',
       'dev-box': { type: 'ssh', host: 'dev-box', defaultCwd: '/home/me/projects' },
       container: { type: 'docker', container: 'myapp-dev', context: 'orbstack' },
-      gym: { command: 'agi', args: ['sandbox', 'ssh', 'i-1'], env: { AGI_TOKEN: 'x' } },
+      sandbox: { command: 'sandbox', args: ['ssh', 'i-1'], env: { SANDBOX_TOKEN: 'x' } },
     });
     expect(result.success).toBe(true);
   });
 
   it('rejects entries that set both type and command', () => {
     const result = parse({
-      bad: { type: 'ssh', host: 'dev-box', command: 'agi' },
+      bad: { type: 'ssh', host: 'dev-box', command: 'sandbox' },
     });
     expect(result.success).toBe(false);
   });

@@ -21,8 +21,8 @@ const SSH: LauncherSpec = { type: 'ssh', host: 'dev-box' };
 const DOCKER: LauncherSpec = { type: 'docker', container: 'myapp-dev' };
 const COMMAND: LauncherSpec = {
   type: 'command',
-  program: '/usr/bin/agi',
-  args: ['sandbox', 'ssh', 'i-1', '--', '/home/me/.kimi-code/bin/kimi', 'exec-server', '--listen', 'stdio'],
+  program: '/usr/bin/sandbox',
+  args: ['ssh', 'i-1', '--', '/home/me/.kimi-code/bin/kimi', 'exec-server', '--listen', 'stdio'],
 };
 
 const BINARY_BYTES = new TextEncoder().encode('fake-kimi-sea-binary\n');

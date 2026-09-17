@@ -592,11 +592,11 @@ defaultCwd = "/home/me/projects"
 type = "docker"
 container = "myapp-dev"
 
-[runtimes.gym]
-command = "agi"
-args = ["sandbox", "ssh", "i-1234567890", "--",
+[runtimes.sandbox]
+command = "sandbox"
+args = ["ssh", "i-1234567890", "--",
         "/home/me/.kimi-code/bin/kimi", "exec-server", "--listen", "stdio"]
-env = { AGI_TOKEN = "..." }
+env = { SANDBOX_TOKEN = "..." }
 defaultCwd = "/home/me/kimi-code"
 ```
 

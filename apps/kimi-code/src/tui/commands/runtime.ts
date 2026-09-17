@@ -163,7 +163,7 @@ async function reconnectFlow(
 const ADD_TYPE_OPTIONS = [
   { value: 'ssh', label: 'SSH host', description: 'ssh <host> — user, key, and proxy resolve via ~/.ssh/config' },
   { value: 'docker', label: 'Docker container', description: 'docker exec into a running container' },
-  { value: 'command', label: 'Custom command', description: 'Any launcher command (orb, agi, kubectl, …)' },
+  { value: 'command', label: 'Custom command', description: 'Any launcher command (orb, kubectl, …)' },
 ] as const;
 
 const CUSTOM_HOST_VALUE = '__custom__';

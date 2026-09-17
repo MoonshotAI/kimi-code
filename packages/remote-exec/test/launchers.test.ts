@@ -66,12 +66,12 @@ describe('launcher lowering', () => {
       type: 'command',
       program: process.execPath,
       args: ['run', 'this'],
-      env: { AGI_TOKEN: 'x' },
+      env: { SANDBOX_TOKEN: 'x' },
     });
     expect(resolved).toEqual({
       program: process.execPath,
       args: ['run', 'this'],
-      env: { AGI_TOKEN: 'x' },
+      env: { SANDBOX_TOKEN: 'x' },
     });
   });
 });
@@ -87,8 +87,8 @@ describe('command program PATH resolution', () => {
     cwdDir = join(sandbox, 'cwd-dir');
     await mkdir(pathDir);
     await mkdir(cwdDir);
-    await writeFile(join(pathDir, 'agi'), '#!/bin/sh\nexit 0\n');
-    await chmod(join(pathDir, 'agi'), 0o755);
+    await writeFile(join(pathDir, 'sandbox'), '#!/bin/sh\nexit 0\n');
+    await chmod(join(pathDir, 'sandbox'), 0o755);
     await writeFile(join(pathDir, 'not-executable'), 'x');
     await chmod(join(pathDir, 'not-executable'), 0o644);
     await writeFile(join(cwdDir, 'smuggled'), '#!/bin/sh\nexit 0\n');
@@ -100,8 +100,8 @@ describe('command program PATH resolution', () => {
   });
 
   it('resolves a bare name to an absolute PATH hit', () => {
-    expect(resolveProgramPath('agi', { cwd: cwdDir, pathEnv: pathDir })).toBe(
-      join(pathDir, 'agi'),
+    expect(resolveProgramPath('sandbox', { cwd: cwdDir, pathEnv: pathDir })).toBe(
+      join(pathDir, 'sandbox'),
     );
   });
 
@@ -115,8 +115,8 @@ describe('command program PATH resolution', () => {
   });
 
   it('skips relative PATH entries', () => {
-    expect(resolveProgramPath('agi', { cwd: cwdDir, pathEnv: `relative:${pathDir}` })).toBe(
-      join(pathDir, 'agi'),
+    expect(resolveProgramPath('sandbox', { cwd: cwdDir, pathEnv: `relative:${pathDir}` })).toBe(
+      join(pathDir, 'sandbox'),
     );
   });
 
@@ -127,7 +127,7 @@ describe('command program PATH resolution', () => {
   });
 
   it('refuses relative program paths and cwd-local absolute paths', () => {
-    expect(() => resolveProgramPath('./agi', { cwd: cwdDir, pathEnv: pathDir })).toThrow(
+    expect(() => resolveProgramPath('./sandbox', { cwd: cwdDir, pathEnv: pathDir })).toThrow(
       /must be an absolute path/,
     );
     expect(() =>
@@ -136,8 +136,8 @@ describe('command program PATH resolution', () => {
   });
 
   it('accepts an absolute program path outside the working directory', () => {
-    expect(resolveProgramPath(join(pathDir, 'agi'), { cwd: cwdDir, pathEnv: '' })).toBe(
-      join(pathDir, 'agi'),
+    expect(resolveProgramPath(join(pathDir, 'sandbox'), { cwd: cwdDir, pathEnv: '' })).toBe(
+      join(pathDir, 'sandbox'),
     );
   });
 });

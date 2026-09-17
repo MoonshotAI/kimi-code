@@ -30,7 +30,7 @@ function makeRuntimesInfo(overrides: Partial<SessionRuntimesInfo> = {}): Session
         capabilities: ['fs', 'process'],
         defaultCwd: '/home/me/projects',
       },
-      { runtimeId: 'gym', type: 'command', status: 'disconnected', generation: 'g2', capabilities: [] },
+      { runtimeId: 'sandbox', type: 'command', status: 'disconnected', generation: 'g2', capabilities: [] },
     ],
     sshHosts: ['dev-box', 'staging'],
     ...overrides,
@@ -124,7 +124,7 @@ describe('handleRuntimeCommand', () => {
     const manager = latest(mounted, RuntimeManagerComponent);
     const plain = manager.render(120).join('\n').replaceAll(/\[[0-9;]*m/g, '');
     expect(plain).toContain('dev-box');
-    expect(plain).toContain('gym');
+    expect(plain).toContain('sandbox');
     expect(plain).toContain('← current');
   });
 
@@ -184,7 +184,7 @@ describe('handleRuntimeCommand', () => {
   });
 
   it('reconnects the bound disconnected runtime on R and refreshes the list', async () => {
-    const { host, session, mounted } = makeHost({ currentRuntimeId: 'gym' });
+    const { host, session, mounted } = makeHost({ currentRuntimeId: 'sandbox' });
     await handleRuntimeCommand(host);
 
     const manager = latest(mounted, RuntimeManagerComponent);
@@ -200,7 +200,7 @@ describe('handleRuntimeCommand', () => {
 
   it('shows a reconnect failure inline in the manager', async () => {
     const { host, mounted } = makeHost({
-      currentRuntimeId: 'gym',
+      currentRuntimeId: 'sandbox',
       reconnectError: new Error('ssh exited 255'),
     });
     await handleRuntimeCommand(host);
