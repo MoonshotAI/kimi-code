@@ -449,6 +449,8 @@ Name matching follows the same rules as the same-named fields in an agent file: 
 disabled = ["EnterPlanMode", "ExitPlanMode", "mcp__github__*"]
 ```
 
+`disabled` can also be set via the `KIMI_CODE_TOOLS_DISABLED` environment variable (comma-separated, same semantics); when set it replaces this field wholesale and is never written back to the config file — handy for containers and CI where editing config is inconvenient. See [Environment variables](./env-vars.md#runtime-switches).
+
 ::: warning Note
 Like the `tools` / `disallowedTools` fields of an agent file, this section shapes the tools shown to the model and is enforced again before execution. [Permission rules](#permission) remain a separate control for operations that require approval.
 :::
