@@ -592,7 +592,7 @@ describe('CLI options parsing', () => {
         'login',
         'doctor',
         'vis',
-        'install-app',
+        'install-desktop',
         'migrate',
         'upgrade',
       ]);

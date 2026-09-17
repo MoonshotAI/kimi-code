@@ -196,15 +196,15 @@ kimi web --port 58628    # 指定绑定端口
 
 生成新的持久化 bearer token（写入 `~/.kimi-code/server.token`），旧 token 立即失效。token 是整个 home 目录共享的，所有运行中的实例会在下一次鉴权校验时自动换用新 token，无需重启。
 
-### `kimi install-app`
+### `kimi install-desktop`
 
 打印 Kimi Code 桌面端页面地址并在默认浏览器中打开，无需离开终端即可下载并安装桌面端应用。页面地址随当前区域而定：国内区域为 `https://www.kimi.com/code`，全球区域为 `https://www.kimi.ai/code`。
 
 ```sh
-kimi install-app
+kimi install-desktop
 ```
 
-该子命令没有任何选项。在 TUI 中也可以通过斜杠命令 `/desktop`（别名 `/install-desktop`）打开同一页面。
+该子命令没有任何选项。旧名称 `kimi install-app` 仍可作为隐藏别名使用。在 TUI 中也可以通过斜杠命令 `/desktop`（别名 `/install-desktop`）打开同一页面。
 
 ### `kimi doctor`
 

@@ -7,7 +7,7 @@ import { registerAcpCommand } from './sub/acp';
 import { registerDoctorCommand } from './sub/doctor';
 import { registerExportCommand } from './sub/export';
 import { registerForkCommand } from './sub/fork';
-import { registerInstallAppCommand } from './sub/install-app';
+import { registerInstallDesktopCommand } from './sub/install-desktop';
 import { registerLoginCommand } from './sub/login';
 import { registerProviderCommand } from './sub/provider';
 import { registerSessionCommand } from './sub/session';
@@ -128,7 +128,7 @@ export function createProgram(
   registerLoginCommand(program);
   registerDoctorCommand(program);
   registerVisCommand(program);
-  registerInstallAppCommand(program);
+  registerInstallDesktopCommand(program);
   registerMigrateCommand(program, onMigrate);
   program
     .command('upgrade')

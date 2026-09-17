@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { KimiRegionProfile } from '@moonshot-ai/kimi-code-oauth';
 
-import { registerInstallAppCommand } from '#/cli/sub/install-app';
+import { registerInstallDesktopCommand } from '#/cli/sub/install-desktop';
 
 const mocks = vi.hoisted(() => ({
   openUrl: vi.fn(),
@@ -20,14 +20,25 @@ vi.mock('#/utils/region', async (importOriginal) => {
   return { ...actual, currentKimiProfile: mocks.currentKimiProfile };
 });
 
-describe('kimi install-app', () => {
+describe('kimi install-desktop', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
   it('prints the region-derived desktop app page URL and opens it in the browser', async () => {
     const program = new Command('kimi');
-    registerInstallAppCommand(program);
+    registerInstallDesktopCommand(program);
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+
+    await program.parseAsync(['node', 'kimi', 'install-desktop']);
+
+    expect(write).toHaveBeenCalledWith('https://example.com/code\n');
+    expect(mocks.openUrl).toHaveBeenCalledWith('https://example.com/code');
+  });
+
+  it('keeps install-app working as a hidden alias', async () => {
+    const program = new Command('kimi');
+    registerInstallDesktopCommand(program);
     const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
 
     await program.parseAsync(['node', 'kimi', 'install-app']);
