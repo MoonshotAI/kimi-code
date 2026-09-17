@@ -8,7 +8,7 @@ import { TurnStarted } from '#/agent/loop/turnEvents';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
+import { USER_PROMPT_ORIGIN, type PromptOrigin } from '#/agent/contextMemory/types';
 import { AgentGoalService, IAgentGoalService } from '#/features/goal/goalService';
 import { IGoalDeadlineScheduler } from '#/features/goal/goalDeadlineScheduler';
 
@@ -92,13 +92,13 @@ type TurnEndedInput = {
   readonly error?: unknown;
 };
 
+const GOAL_CONTINUATION_ORIGIN: PromptOrigin = { kind: 'system_trigger', name: 'goal_continuation' };
+
 interface ManualDeadline {
   readonly dueAt: number;
   readonly callback: () => void;
   cancelled: boolean;
-}
-
-class ManualGoalDeadlineScheduler implements IGoalDeadlineScheduler {
+}class ManualGoalDeadlineScheduler implements IGoalDeadlineScheduler {
   declare readonly _serviceBrand: undefined;
 
   private currentTime = 0;
@@ -1321,6 +1321,146 @@ describe('AgentGoalService core workflow hooks', () => {
     });
     expect(JSON.stringify(context.get().at(-1)?.content)).toContain('Continue working toward');
     expect(JSON.stringify(context.get().at(-1)?.content)).toContain('WaitFor');
+  });
+
+  it('backs off idle goal continuations after consecutive turns make no tool progress', async () => {
+    vi.useFakeTimers();
+    try {
+      await goals.createGoal({ objective: 'wait for external work' });
+
+      const starter = makeTurn(1);
+      eventBus.publish(new TurnStarted({ agentId: 'main', turnId: starter.id, origin: USER_PROMPT_ORIGIN }));
+      await runGoalStep(loopService, starter);
+      endTurn(eventBus, starter);
+
+      expect(loopService.launches).toHaveLength(1);
+
+      const second = makeTurn(loopService.launches[0]!);
+      eventBus.publish(
+        new TurnStarted({ agentId: 'main', turnId: second.id, origin: GOAL_CONTINUATION_ORIGIN }),
+      );
+      await runGoalStep(loopService, second);
+      endTurn(eventBus, second);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(loopService.launches).toHaveLength(1);
+
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(loopService.launches).toHaveLength(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(loopService.launches).toHaveLength(2);
+
+      const third = makeTurn(loopService.launches[1]!);
+      eventBus.publish(
+        new TurnStarted({ agentId: 'main', turnId: third.id, origin: GOAL_CONTINUATION_ORIGIN }),
+      );
+      await runGoalStep(loopService, third);
+      endTurn(eventBus, third);
+      await vi.advanceTimersByTimeAsync(5 * 60_000 - 1);
+
+      expect(loopService.launches).toHaveLength(2);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(loopService.launches).toHaveLength(3);
+
+      const fourth = makeTurn(loopService.launches[2]!);
+      eventBus.publish(
+        new TurnStarted({ agentId: 'main', turnId: fourth.id, origin: GOAL_CONTINUATION_ORIGIN }),
+      );
+      await runGoalStep(loopService, fourth);
+      endTurn(eventBus, fourth);
+      await vi.advanceTimersByTimeAsync(15 * 60_000 - 1);
+
+      expect(loopService.launches).toHaveLength(3);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(loopService.launches).toHaveLength(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('resets the idle continuation backoff when a goal turn makes tool progress', async () => {
+    vi.useFakeTimers();
+    try {
+      await goals.createGoal({ objective: 'wait for external work' });
+
+      const starter = makeTurn(1);
+      eventBus.publish(new TurnStarted({ agentId: 'main', turnId: starter.id, origin: USER_PROMPT_ORIGIN }));
+      await runGoalStep(loopService, starter);
+      endTurn(eventBus, starter);
+      expect(loopService.launches).toHaveLength(1);
+
+      const second = makeTurn(loopService.launches[0]!);
+      eventBus.publish(
+        new TurnStarted({ agentId: 'main', turnId: second.id, origin: GOAL_CONTINUATION_ORIGIN }),
+      );
+      await runGoalStep(loopService, second);
+      endTurn(eventBus, second);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(loopService.launches).toHaveLength(1);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(loopService.launches).toHaveLength(2);
+
+      const progressing = makeTurn(loopService.launches[1]!);
+      eventBus.publish(
+        new TurnStarted({ agentId: 'main', turnId: progressing.id, origin: GOAL_CONTINUATION_ORIGIN }),
+      );
+      await runGoalStep(loopService, progressing);
+      const toolCall: ToolCall = {
+        type: 'function',
+        id: 'call_get_goal',
+        name: 'GetGoal',
+        arguments: '{}',
+      };
+      await toolExecutor.hooks.onDidExecuteTool.run({
+        turnId: progressing.id,
+        signal: progressing.signal,
+        toolCall,
+        toolCalls: [toolCall],
+        args: {},
+        outcome: 'executed',
+        result: { output: '{}', stopTurn: false },
+      });
+      endTurn(eventBus, progressing);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(loopService.launches).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('wakes a backed-off idle continuation when steered input arrives', async () => {
+    vi.useFakeTimers();
+    try {
+      await goals.createGoal({ objective: 'wait for external work' });
+
+      const starter = makeTurn(1);
+      eventBus.publish(new TurnStarted({ agentId: 'main', turnId: starter.id, origin: USER_PROMPT_ORIGIN }));
+      await runGoalStep(loopService, starter);
+      endTurn(eventBus, starter);
+      expect(loopService.launches).toHaveLength(1);
+
+      const second = makeTurn(loopService.launches[0]!);
+      eventBus.publish(
+        new TurnStarted({ agentId: 'main', turnId: second.id, origin: GOAL_CONTINUATION_ORIGIN }),
+      );
+      await runGoalStep(loopService, second);
+      endTurn(eventBus, second);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(loopService.launches).toHaveLength(1);
+
+      eventBus.publish(new TurnStarted({ agentId: 'main', turnId: 77, origin: USER_PROMPT_ORIGIN }));
+      await vi.advanceTimersByTimeAsync(0);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(loopService.launches).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('blocks the next continuation only after the final allowed turn ends', async () => {
@@ -2808,10 +2948,15 @@ describe('AgentGoalService WaitFor background scenarios', () => {
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start work' }] });
       await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(3));
 
+      vi.useFakeTimers();
       sh.pushOutput('BG-OUTPUT\n');
       sh.finish(0);
+      for (let round = 0; round < 40 && ctx.llmCalls.length < 13; round++) {
+        await vi.advanceTimersByTimeAsync(15 * 60_000);
+      }
+      vi.useRealTimers();
 
-      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(13), { timeout: 5000 });
+      expect(ctx.llmCalls).toHaveLength(13);
 
       expect(continuationTurnIds).toHaveLength(9);
       expect(endedReasons).toEqual(Array<string>(10).fill('completed'));
@@ -2820,6 +2965,7 @@ describe('AgentGoalService WaitFor background scenarios', () => {
       expect(waitResultHistory).toContain('BG-OUTPUT');
       expect((await ctx.rpc.getGoal({})).goal).toBeNull();
     } finally {
+      vi.useRealTimers();
       await ctx.dispose();
     }
   });
