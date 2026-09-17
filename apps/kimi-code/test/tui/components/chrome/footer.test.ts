@@ -440,4 +440,52 @@ describe('FooterComponent runtime slot', () => {
     expect(rendered).not.toContain('retry guidance');
     footer.dispose();
   });
+
+  it('shows the binding cwd instead of the local workDir for a remote-bound session', () => {
+    const footer = footerWith({
+      runtimeId: 'dev-box',
+      type: 'ssh',
+      status: 'ready',
+      cwd: '/home/deploy/app',
+    });
+    const rendered = line1(footer);
+    expect(rendered).toContain('/home/deploy/app');
+    expect(rendered).not.toContain('kimi-footer-runtime');
+    footer.dispose();
+  });
+
+  it('never claims ~ for a remote cwd that happens to sit under the local home', () => {
+    const home = process.env['HOME'] ?? '';
+    const footer = new FooterComponent({
+      ...appState,
+      workDir: repoDir,
+      statusLine: { items: ['runtime', 'cwd'], command: null },
+      runtime: { runtimeId: 'dev-box', type: 'ssh', status: 'ready', cwd: `${home}/remote-project` },
+    });
+    const rendered = line1(footer);
+    expect(rendered).toContain('remote-project');
+    expect(rendered).not.toContain('~');
+    footer.dispose();
+  });
+
+  it('shortens a deep remote cwd by segments without a home claim', () => {
+    const footer = footerWith({
+      runtimeId: 'dev-box',
+      type: 'ssh',
+      status: 'ready',
+      cwd: '/home/deploy/very/deep/nested/project',
+    });
+    const rendered = line1(footer);
+    expect(rendered).toContain('…/deep/nested/project');
+    expect(rendered).not.toContain('~');
+    footer.dispose();
+  });
+
+  it('keeps shortening the local workDir against the local home', () => {
+    const home = process.env['HOME'] ?? '';
+    const footer = new FooterComponent({ ...appState, workDir: `${home}/local-project` });
+    const rendered = line1(footer);
+    expect(rendered).toContain('~/local-project');
+    footer.dispose();
+  });
 });

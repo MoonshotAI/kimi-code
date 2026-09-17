@@ -2325,6 +2325,15 @@ export class ToolCallComponent extends Container {
         this.addChild(new Text(line, 2, 0));
       }
     } else if (name === 'Bash') {
+      // The engine stamps the cwd the command actually executes in (the bound
+      // runtime's resolved path) into display.cwd; show it whenever it says
+      // something the card does not already — a remote runtime's path or an
+      // explicit cwd argument. A stamp equal to the local workspace dir is
+      // the default local case and keeps the card's current shape.
+      const executionCwd = this.stampedExecutionCwd();
+      if (executionCwd !== undefined) {
+        this.addChild(new Text(currentTheme.dim(`cwd: ${executionCwd}`), 2, 0));
+      }
       // Collapsed: the header already carries the command's first line, so no
       // command body is added; the outcome row comes from the live tail or the
       // result renderer. Expanded: the full command, across the whole lifecycle.
@@ -2341,6 +2350,14 @@ export class ToolCallComponent extends Container {
         }),
       );
     }
+  }
+
+  private stampedExecutionCwd(): string | undefined {
+    const display = this.toolCall.display;
+    if (display?.kind !== 'command') return undefined;
+    const cwd = display.cwd;
+    if (cwd === undefined || cwd.length === 0 || cwd === this.workspaceDir) return undefined;
+    return cwd;
   }
 
   /**

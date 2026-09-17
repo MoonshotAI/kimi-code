@@ -6,6 +6,7 @@ import type {
   ResumedAgentState,
   Session,
   ToolCall,
+  ToolInputDisplay,
 } from '@moonshot-ai/kimi-code-sdk';
 
 import { ToolCallComponent } from '../components/messages/tool-call';
@@ -309,12 +310,12 @@ export class SessionReplayRenderer {
       case 'assistant':
         if (message.origin?.kind === 'hook_result') {
           this.renderHookResult(context, message);
-          this.renderToolCalls(context, message.toolCalls);
+          this.renderToolCalls(context, message.toolCalls, message.toolCallDisplays);
           return;
         }
         collectReplayMessageContent(context.assistant, message.content);
         this.flushAssistant(context);
-        this.renderToolCalls(context, message.toolCalls);
+        this.renderToolCalls(context, message.toolCalls, message.toolCallDisplays);
         return;
       case 'tool':
         this.flushAssistant(context);
@@ -455,13 +456,17 @@ export class SessionReplayRenderer {
     }
   }
 
-  private renderToolCalls(context: ReplayRenderContext, toolCalls: readonly ToolCall[]): void {
+  private renderToolCalls(
+    context: ReplayRenderContext,
+    toolCalls: readonly ToolCall[],
+    displays?: Record<string, ToolInputDisplay>,
+  ): void {
     if (toolCalls.length === 0) return;
     const { streamingUI } = this.host;
     context.stepIndex += 1;
     this.applyStepContext(context);
     for (const rawToolCall of toolCalls) {
-      const toolCall = toolCallFromReplayMessage(rawToolCall, context);
+      const toolCall = toolCallFromReplayMessage(rawToolCall, context, displays?.[rawToolCall.id]);
       if (toolCall === undefined) continue;
       context.toolCalls.set(toolCall.id, toolCall);
       streamingUI.setActiveToolCall(toolCall.id, toolCall);
