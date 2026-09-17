@@ -4,12 +4,14 @@ import { Emitter } from '#/_base/event';
 import type { LiveRef } from '#/_base/di/instantiation';
 import type { ISessionEventBus } from '#/app/event/eventBus';
 import type { IFlagService } from '#/app/flag/flag';
+import type { ILogService } from '#/_base/log/log';
 import { AgentRuntimeService, snapshotAgentRuntimeBinding } from '#/agent/runtimeBinding/agentRuntime';
 import { AgentRuntimeBindingService, agentRuntimeBindingKey, RUNTIME_ENVIRONMENT_REMINDER_VARIANT } from '#/agent/runtimeBinding/runtimeBindingService';
 import { runtimeBindingKey, type RuntimeSetBinding } from '#/agent/runtimeBinding/runtimeBindingOps';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import type { IAgentLoopService } from '#/agent/loop/loop';
 import type { IAgentReminderService } from '#/features/reminder/reminderService';
+import type { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
 import type { Runtime, RuntimeBinding, RuntimeCapability, RuntimeLease } from '#/runtime/runtime';
 import { RuntimeError, RuntimeRegistry } from '#/runtime/runtimeRegistry';
@@ -21,6 +23,7 @@ import {
   workspaceContextWorkDirKey,
 } from '#/session/workspaceContext/workspaceContextService';
 import type { IEventDispatcher } from '#/state/eventDispatcher';
+import type { WireRecord } from '#/wire/record';
 import type {
   IRuntimeResolver,
   IWorkspaceInstanceManager,
@@ -161,6 +164,24 @@ function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: R
     _serviceBrand: undefined,
     enabled: () => flagState.remoteRuntime,
   } as unknown as IFlagService;
+  const appendLogRecords: WireRecord[] = [];
+  const appendLog = {
+    _serviceBrand: undefined,
+    read: async function* <R>(): AsyncIterable<R> {
+      for (const record of appendLogRecords) yield record as R;
+    },
+  } as unknown as IAppendLogStore;
+  const noopLog = {
+    _serviceBrand: undefined,
+    level: 'off',
+    setLevel: () => {},
+    flush: async () => {},
+    error: () => {},
+    warn: () => {},
+    info: () => {},
+    debug: () => {},
+    child: () => noopLog,
+  } as unknown as ILogService;
   const binding = new AgentRuntimeBindingService(
     scopeContext,
     state,
@@ -173,6 +194,8 @@ function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: R
     loop,
     flags,
     reminder,
+    appendLog,
+    noopLog,
   );
   const workspaceChanges = new Emitter<{ workspaceId: string }>();
   const workspaces = {
@@ -204,6 +227,7 @@ function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: R
     flags,
     flagState,
     reminders,
+    appendLogRecords,
     agentRuntime: new AgentRuntimeService(scopeContext, binding, resolver, workspaces, eventBus, session, sessionState, flags),
   };
 }
@@ -519,6 +543,115 @@ describe('AgentRuntimeBindingService', () => {
     const lease = agentRuntime.acquire();
     expect(lease.runtime.identity.runtimeId).toBe('remote');
     lease.dispose();
+  });
+});
+
+describe('AgentRuntimeBindingService restore from wire records', () => {
+  function connectableRemote(registry: RuntimeRegistry, runtimeId: string) {
+    const connectCalls: string[] = [];
+    const rerootCalls: string[] = [];
+    const fake = new FakeRuntime(
+      { workspaceId: 'workspace', runtimeId, generation: `${runtimeId}-pending` },
+      { status: 'disconnected', capabilities: ['fs', 'process'] },
+    );
+    registry.register(Object.assign(fake, {
+      connect: async () => {
+        connectCalls.push('connect');
+        fake.setStatus('ready');
+      },
+      reroot: async (cwd: string) => {
+        rerootCalls.push(cwd);
+      },
+      fs: {},
+      process: {},
+    }));
+    return { fake, connectCalls, rerootCalls };
+  }
+
+  it('reseeds a remote binding from the agent wire records when replay produced none', async () => {
+    const { binding, restoreHooks, dispatched, appendLogRecords } = setup({ agentId: 'agent-1' });
+    appendLogRecords.push({ type: 'runtime.set_binding', agentId: 'agent-1', runtimeId: 'remote', cwd: '/remote/work', time: 2 });
+
+    await restoreHooks.get('agent-runtime-binding')?.(undefined, async () => {});
+
+    expect(binding.current).toEqual({ workspaceId: 'workspace', runtimeId: 'remote', cwd: '/remote/work' });
+    expect(dispatched.at(-1)).toMatchObject({
+      agentId: 'agent-1',
+      workspaceId: 'workspace',
+      runtimeId: 'remote',
+      cwd: '/remote/work',
+    });
+  });
+
+  it('background-reconnects and reroots a reseeded remote binding', async () => {
+    const { registry, restoreHooks, appendLogRecords, flagState } = setup({ agentId: 'agent-1' });
+    flagState.remoteRuntime = true;
+    const { connectCalls, rerootCalls } = connectableRemote(registry, 'connectable');
+    appendLogRecords.push({ type: 'runtime.set_binding', agentId: 'agent-1', runtimeId: 'connectable', cwd: '/connectable/work', time: 2 });
+
+    await restoreHooks.get('agent-runtime-binding')?.(undefined, async () => {});
+
+    expect(connectCalls).toEqual(['connect']);
+    expect(rerootCalls).toEqual(['/connectable/work']);
+  });
+
+  it('keeps a gone declaration bound after reseed and fails explicitly at use', async () => {
+    const { binding, agentRuntime, restoreHooks, appendLogRecords, flagState } = setup({ agentId: 'agent-1' });
+    flagState.remoteRuntime = true;
+    appendLogRecords.push({ type: 'runtime.set_binding', agentId: 'agent-1', runtimeId: 'ghost', cwd: '/ghost/work', time: 2 });
+
+    await restoreHooks.get('agent-runtime-binding')?.(undefined, async () => {});
+
+    expect(binding.current).toEqual({ workspaceId: 'workspace', runtimeId: 'ghost', cwd: '/ghost/work' });
+    expect(() => agentRuntime.acquire()).toThrowError(
+      expect.objectContaining<Partial<RuntimeError>>({ code: 'runtime.not_found' }),
+    );
+  });
+
+  it('background-reconnects and reroots a replayed remote binding for non-main agents', async () => {
+    const { registry, state, restoreHooks, flagState } = setup({ agentId: 'agent-1' });
+    flagState.remoteRuntime = true;
+    const { connectCalls, rerootCalls } = connectableRemote(registry, 'connectable');
+    state.set(runtimeBindingKey, { workspaceId: 'workspace', runtimeId: 'connectable', cwd: '/connectable/work' });
+
+    await restoreHooks.get('agent-runtime-binding')?.(undefined, async () => {});
+
+    expect(connectCalls).toEqual(['connect']);
+    expect(rerootCalls).toEqual(['/connectable/work']);
+  });
+
+  it('does not reconnect a replayed remote binding for the main agent', async () => {
+    const { registry, state, restoreHooks, flagState } = setup();
+    flagState.remoteRuntime = true;
+    const { connectCalls } = connectableRemote(registry, 'connectable');
+    state.set(runtimeBindingKey, { workspaceId: 'workspace', runtimeId: 'connectable', cwd: '/connectable/work' });
+
+    await restoreHooks.get('agent-runtime-binding')?.(undefined, async () => {});
+
+    expect(connectCalls).toEqual([]);
+  });
+
+  it('ignores local binding records and keeps the seed dispatch', async () => {
+    const { binding, restoreHooks, dispatched, appendLogRecords } = setup({ agentId: 'agent-1' });
+    appendLogRecords.push({ type: 'runtime.set_binding', agentId: 'agent-1', runtimeId: 'local', time: 2 });
+
+    await restoreHooks.get('agent-runtime-binding')?.(undefined, async () => {});
+
+    expect(binding.current).toEqual({ workspaceId: 'workspace', runtimeId: 'local' });
+    expect(dispatched.at(-1)).toMatchObject({ agentId: 'agent-1', workspaceId: 'workspace', runtimeId: 'local' });
+  });
+
+  it('emits the seed environment reminder when a remote seed round-trips through a replayed op', async () => {
+    const { state, restoreHooks, reminders, flagState } = setup({
+      seedBinding: { workspaceId: 'workspace', runtimeId: 'remote', cwd: '/remote/work' },
+    });
+    flagState.remoteRuntime = true;
+    state.set(runtimeBindingKey, { workspaceId: 'workspace', runtimeId: 'remote', cwd: '/remote/work' });
+
+    await restoreHooks.get('agent-runtime-binding')?.(undefined, async () => {});
+
+    expect(reminders).toHaveLength(1);
+    expect(reminders[0]!.variant).toBe(RUNTIME_ENVIRONMENT_REMINDER_VARIANT);
   });
 });
 

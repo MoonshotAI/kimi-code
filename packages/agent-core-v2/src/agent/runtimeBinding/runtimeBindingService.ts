@@ -3,6 +3,7 @@ import { defineState } from '#/state/state';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { ref, type LiveRef } from '#/_base/di/instantiation';
 import { Emitter } from '#/_base/event';
+import { ILogService } from '#/_base/log/log';
 import { ISessionEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
 import { LifecycleScope } from '#/app/scopes';
@@ -12,13 +13,15 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
+import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { REMOTE_RUNTIME_FLAG_ID } from '#/runtime/flag';
-import { LOCAL_RUNTIME_ID, type RuntimeBinding } from '#/runtime/runtime';
+import { LOCAL_RUNTIME_ID, type Runtime, type RuntimeBinding } from '#/runtime/runtime';
 import { RuntimeError, runtimeStatusAllows } from '#/runtime/runtimeRegistry';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
+import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
 import { IAgentRuntimeBindingSeed, IAgentRuntimeBindingService } from './runtimeBinding';
@@ -61,7 +64,7 @@ export class AgentRuntimeBindingService implements IAgentRuntimeBindingService {
   constructor(
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly state: IAgentStateService,
-    @IAgentRuntimeBindingSeed seed: IAgentRuntimeBindingSeed,
+    @IAgentRuntimeBindingSeed private readonly seed: IAgentRuntimeBindingSeed,
     @ISessionContext private readonly session: ISessionContext,
     @ISessionWorkspaceContext private readonly workspaceContext: ISessionWorkspaceContext,
     @IRuntimeResolver private readonly resolver: IRuntimeResolver,
@@ -70,6 +73,8 @@ export class AgentRuntimeBindingService implements IAgentRuntimeBindingService {
     @ref(IAgentLoopService) private readonly loop: LiveRef<IAgentLoopService>,
     @IFlagService private readonly flags: IFlagService,
     @IAgentReminderService private readonly reminder: IAgentReminderService,
+    @IAppendLogStore private readonly appendLog: IAppendLogStore,
+    @ILogService private readonly log: ILogService,
   ) {
     this.state.contributeState(agentRuntimeBindingKey);
     this.state.contributeState(runtimeBindingKey);
@@ -78,18 +83,32 @@ export class AgentRuntimeBindingService implements IAgentRuntimeBindingService {
     this.state.set(agentRuntimeBindingKey, initial);
     this.restoreHook = dispatcher.hooks.onDidRestore.register('agent-runtime-binding', async (_ctx, next) => {
       const replayed = this.state.get(runtimeBindingKey);
-      if (replayed === undefined) {
-        void this.dispatcher.dispatch(
-          new RuntimeSetBinding({ ...this.current, agentId: this.scopeContext.agentId }),
-        );
-        this.applySessionWorkDir(this.current);
-        if (this.current.runtimeId !== LOCAL_RUNTIME_ID) {
-          this.emitEnvironmentReminder(this.current);
-        }
-      } else {
+      if (replayed !== undefined) {
         this.assertSessionWorkspace(replayed);
         this.state.set(agentRuntimeBindingKey, replayed);
         this.applySessionWorkDir(replayed);
+        if (this.isSeedRoundTrip(replayed)) {
+          this.emitEnvironmentReminder(replayed);
+        }
+        this.reconnectRestoredBinding(replayed);
+      } else {
+        const persisted = await this.peekPersistedBinding();
+        if (persisted !== undefined && persisted.runtimeId !== LOCAL_RUNTIME_ID) {
+          this.state.set(agentRuntimeBindingKey, persisted);
+          await this.dispatcher.dispatch(
+            new RuntimeSetBinding({ ...persisted, agentId: this.scopeContext.agentId }),
+          );
+          this.applySessionWorkDir(persisted);
+          this.reconnectRestoredBinding(persisted);
+        } else {
+          await this.dispatcher.dispatch(
+            new RuntimeSetBinding({ ...this.current, agentId: this.scopeContext.agentId }),
+          );
+          this.applySessionWorkDir(this.current);
+          if (this.current.runtimeId !== LOCAL_RUNTIME_ID) {
+            this.emitEnvironmentReminder(this.current);
+          }
+        }
       }
       await next();
     });
@@ -105,6 +124,60 @@ export class AgentRuntimeBindingService implements IAgentRuntimeBindingService {
         'runtime.not_found',
         `runtime binding workspace ${binding.workspaceId} does not match session workspace ${this.session.workspaceId}`,
       );
+    }
+  }
+
+  private isSeedRoundTrip(binding: RuntimeBinding): boolean {
+    const seed = this.seed.binding;
+    return (
+      binding.runtimeId !== LOCAL_RUNTIME_ID &&
+      binding.workspaceId === seed.workspaceId &&
+      binding.runtimeId === seed.runtimeId &&
+      binding.cwd === seed.cwd
+    );
+  }
+
+  private async peekPersistedBinding(): Promise<RuntimeBinding | undefined> {
+    try {
+      let binding: RuntimeBinding | undefined;
+      for await (const record of this.appendLog.read<WireRecord>(this.scopeContext.scope(), AGENT_WIRE_RECORD_KEY)) {
+        if (record.type === RuntimeSetBinding.type && typeof record['runtimeId'] === 'string') {
+          binding = {
+            workspaceId: this.session.workspaceId,
+            runtimeId: record['runtimeId'],
+            cwd: typeof record['cwd'] === 'string' ? record['cwd'] : undefined,
+          };
+        }
+      }
+      return binding;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private reconnectRestoredBinding(binding: RuntimeBinding): void {
+    if (this.scopeContext.agentId === MAIN_AGENT_ID) return;
+    if (binding.runtimeId === LOCAL_RUNTIME_ID) return;
+    if (!this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) return;
+    let runtime: Runtime;
+    try {
+      runtime = this.resolver.inspect(binding);
+    } catch {
+      return;
+    }
+    if (runtimeStatusAllows(runtime, ['fs', 'process'])) return;
+    if (typeof runtime.connect !== 'function') return;
+    try {
+      if (binding.cwd !== undefined) {
+        void runtime.reroot?.(binding.cwd)?.catch((error: unknown) => {
+          this.log.warn(`background reroot of restored runtime ${binding.runtimeId} failed`, { error });
+        });
+      }
+      void runtime.connect().catch((error: unknown) => {
+        this.log.warn(`background reconnect of restored runtime ${binding.runtimeId} failed`, { error });
+      });
+    } catch (error) {
+      this.log.warn(`background reconnect of restored runtime ${binding.runtimeId} failed`, { error });
     }
   }
 

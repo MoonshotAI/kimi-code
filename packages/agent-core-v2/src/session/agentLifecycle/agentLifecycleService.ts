@@ -51,6 +51,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { closeTrailingOpenToolExchange } from '#/agent/contextMemory/openToolExchange';
 import { IAgentRuntimeBindingSeed, IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
 import '#/agent/runtimeBinding/runtimeBindingService';
+import { RuntimeSetBinding } from '#/agent/runtimeBinding/runtimeBindingOps';
 import { LOCAL_RUNTIME_ID } from '#/runtime/runtime';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
@@ -342,6 +343,17 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       this.onDidCreateEmitter.fire(agent);
       didCreate = true;
       this.onDidCreateScopeEmitter.fire({ context: agent, handle });
+      stage = 'binding';
+      if (opts.runtimeId !== undefined && opts.runtimeId !== LOCAL_RUNTIME_ID) {
+        await handle.accessor.get(IEventDispatcher).dispatch(
+          new RuntimeSetBinding({
+            agentId,
+            workspaceId: this.ctx.workspaceId,
+            runtimeId: opts.runtimeId,
+            cwd: opts.runtimeCwd,
+          }),
+        );
+      }
       stage = 'restore';
       await handle.accessor.get(IEventDispatcher).restore();
       attachInteractionAgent(agentId, this.ctx.sessionId, handle.accessor.get(IEventDispatcher));
