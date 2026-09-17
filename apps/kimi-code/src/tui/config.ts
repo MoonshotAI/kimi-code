@@ -12,6 +12,7 @@ import { dirname, join } from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import { z } from 'zod';
 
+import type { MermaidRenderMode } from '#/tui/utils/markdown-options';
 import { getDataDir } from '#/utils/paths';
 
 export const INVALID_TUI_CONFIG_MESSAGE =
@@ -51,6 +52,15 @@ export const DEFAULT_STATUS_LINE_CONFIG: StatusLineConfig = {
   command: null,
 };
 
+export const MarkdownConfigSchema = z.object({
+  mermaid: z.enum(['off', 'final']),
+});
+export type MarkdownConfig = z.infer<typeof MarkdownConfigSchema>;
+
+export const DEFAULT_MARKDOWN_CONFIG: MarkdownConfig = {
+  mermaid: 'final',
+};
+
 export const TuiConfigFileSchema = z.object({
   theme: TuiThemeSchema.optional(),
   render_latex: z.boolean().optional(),
@@ -74,6 +84,11 @@ export const TuiConfigFileSchema = z.object({
     })
     .optional(),
   status_line: StatusLineFileConfigSchema.optional(),
+  markdown: z
+    .object({
+      mermaid: z.string().optional(),
+    })
+    .optional(),
 });
 
 export const TuiConfigSchema = z.object({
@@ -92,6 +107,9 @@ export const TuiConfigSchema = z.object({
   /** Present in every normalized config; optional only so hand-built test
    * fixtures from before this field existed still typecheck. */
   statusLine: StatusLineConfigSchema.optional(),
+  /** Present in every normalized config; optional only so hand-built test
+   * fixtures from before this field existed still typecheck. */
+  markdown: MarkdownConfigSchema.optional(),
 });
 
 export type TuiConfigFileShape = z.infer<typeof TuiConfigFileSchema>;
@@ -118,6 +136,7 @@ export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({
   notifications: DEFAULT_NOTIFICATIONS_CONFIG,
   upgrade: DEFAULT_UPGRADE_PREFERENCES,
   statusLine: DEFAULT_STATUS_LINE_CONFIG,
+  markdown: DEFAULT_MARKDOWN_CONFIG,
 });
 
 /**
@@ -196,6 +215,15 @@ export function normalizeTuiConfig(
         return known;
       })
       .map((item) => item as StatusLineItem) ?? null;
+  const mermaidValue = config.markdown?.mermaid;
+  let mermaidMode: MermaidRenderMode = DEFAULT_MARKDOWN_CONFIG.mermaid;
+  if (mermaidValue !== undefined) {
+    if (mermaidValue === 'off' || mermaidValue === 'final') {
+      mermaidMode = mermaidValue;
+    } else {
+      warn(`[tui.toml] ignoring unknown markdown.mermaid value: ${mermaidValue}`);
+    }
+  }
   return TuiConfigSchema.parse({
     theme: config.theme ?? DEFAULT_TUI_CONFIG.theme,
     renderLatex: config.render_latex ?? DEFAULT_TUI_CONFIG.renderLatex,
@@ -219,13 +247,18 @@ export function normalizeTuiConfig(
           ? null
           : statusLineCommand,
     },
+    markdown: {
+      mermaid: mermaidMode,
+    },
   });
 }
 
 export function renderTuiConfig(config: TuiConfig): string {
   // An active status_line must round-trip: any preference save rewrites the
   // whole file, so the section is emitted live when set and left as a
-  // commented-out guide when unset.
+  // commented-out guide when unset. The [markdown] section follows the same
+  // pattern: live when mermaid rendering is turned off, commented guide at
+  // the default.
   const statusItems = config.statusLine?.items;
   const statusCommand = config.statusLine?.command;
   const statusLines: string[] = [];
@@ -235,6 +268,13 @@ export function renderTuiConfig(config: TuiConfig): string {
   if (statusCommand) {
     statusLines.push(`command = "${escapeTomlBasicString(statusCommand)}"`);
   }
+  const markdownSection =
+    config.markdown?.mermaid === 'off'
+      ? `[markdown]\nmermaid = "off" # "final" | "off"\n`
+      : `# [markdown]
+# Draw mermaid code blocks as diagrams in the terminal; "off" keeps highlighted source.
+# mermaid = "final" # "final" | "off"
+`;
   const statusSection =
     statusLines.length > 0
       ? `[status_line]\n${statusLines.join('\n')}\n`
@@ -265,6 +305,7 @@ notification_condition = "${config.notifications.condition}" # "unfocused" | "al
 [upgrade]
 auto_install = ${String(config.upgrade.autoInstall)} # true | false
 
+${markdownSection}
 ${statusSection}`;
 }
 
