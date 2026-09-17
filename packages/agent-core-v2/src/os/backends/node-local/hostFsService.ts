@@ -148,6 +148,7 @@ export class HostFileSystem implements IHostFileSystem {
         size: s.size,
         mtimeMs: s.mtimeMs,
         ino: s.ino,
+        mode: s.mode & 0o7777,
       };
     } catch (error) {
       throw toHostFsError(error, { path, op: 'stat' });
@@ -164,6 +165,7 @@ export class HostFileSystem implements IHostFileSystem {
         size: s.size,
         mtimeMs: s.mtimeMs,
         ino: s.ino,
+        mode: s.mode & 0o7777,
       };
     } catch (error) {
       throw toHostFsError(error, { path, op: 'lstat' });
@@ -184,9 +186,12 @@ export class HostFileSystem implements IHostFileSystem {
     }
   }
 
-  async mkdir(path: string, options?: { readonly recursive?: boolean }): Promise<void> {
+  async mkdir(
+    path: string,
+    options?: { readonly recursive?: boolean; readonly mode?: number },
+  ): Promise<void> {
     try {
-      await mkdir(path, { recursive: options?.recursive ?? false });
+      await mkdir(path, { recursive: options?.recursive ?? false, mode: options?.mode });
     } catch (error) {
       throw toHostFsError(error, { path, op: 'mkdir' });
     }

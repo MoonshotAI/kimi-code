@@ -1,4 +1,4 @@
-import { mkdtemp, rm, symlink } from 'node:fs/promises';
+import { chmod, mkdtemp, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -117,6 +117,24 @@ describe('fs group over a subprocess loopback', () => {
 
     await fs.remove(join(workDir, 'a'));
     await expect(fs.stat(dir)).rejects.toMatchObject({ code: 'os.fs.not_found' });
+  });
+
+  it('creates a directory with a unix mode and reads it back', async () => {
+    const dir = join(workDir, 'private');
+    await fs.mkdir(dir, { mode: 0o700 });
+
+    const st = await fs.stat(dir);
+    expect(st.isDirectory).toBe(true);
+    expect(st.mode).toBe(0o700);
+  });
+
+  it('reads back the unix mode of an existing file', async () => {
+    const file = join(workDir, 'mode.txt');
+    await fs.writeText(file, 'x');
+    await chmod(file, 0o640);
+
+    expect((await fs.stat(file)).mode).toBe(0o640);
+    expect((await fs.lstat(file)).mode).toBe(0o640);
   });
 
   it('maps io failures to fs domain errors', async () => {
