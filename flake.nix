@@ -216,7 +216,14 @@
             '';
 
             postInstall = ''
-              wrapProgram $out/bin/kimi --prefix PATH : ${lib.makeBinPath [ pkgs.ripgrep pkgs.fd ]}
+              wrapProgram $out/bin/kimi --prefix PATH : ${lib.makeBinPath [
+                pkgs.ripgrep
+                pkgs.fd
+                # procps supplies pgrep (darwin) / ps (linux) for process
+                # management in minimal environments (nix-built containers,
+                # bare nix profiles) where the system tools are absent.
+                pkgs.procps
+              ]}
             '';
 
             meta = {
