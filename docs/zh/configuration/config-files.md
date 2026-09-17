@@ -296,6 +296,25 @@ k3-max = "同一模型的 max Thinking 档位。适合最难的子任务。"
 - `force` 未搭配 `default_model`，或与 `models` 表同时使用。
 :::
 
+## `modelOverrides`
+
+`modelOverrides` 表覆盖当前活跃模型的请求参数，对该模型的所有请求生效（对话轮次、压缩等）；未设置的字段保持默认。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `temperature` | `number` | 每次请求的采样温度 |
+| `topP` | `number` | 每次请求的核采样 `top_p` |
+| `thinkingKeep` | `string` | 思考内容在后续请求中的保留策略，覆盖 `[thinking] keep` |
+| `maxCompletionTokens` | `integer` | 单次请求补全 token 的硬上限 |
+| `stream` | `boolean` | 设为 `false` 时以非流式（一次性返回完整响应）请求模型；缺省为流式 |
+
+```toml
+[modelOverrides]
+stream = false
+```
+
+这些字段也都有环境变量对应项（如 `stream` 对应 `KIMI_CODE_MODEL_STREAM`，其余为 `KIMI_MODEL_*` 系列），优先级高于配置文件，完整列表见[环境变量](./env-vars.md#运行时开关)。
+
 ## `thinking`
 
 `thinking` 设置 Thinking 模式的全局默认行为。

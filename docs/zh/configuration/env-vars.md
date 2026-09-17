@@ -180,6 +180,7 @@ kimi
 | `KIMI_MODEL_TOP_P` | 每次请求的核采样 `top_p`，仅对 `kimi` 供应商生效（全局生效） | 数字，如 `0.95` |
 | `KIMI_MODEL_THINKING_EFFORT` | 在线上强制使用指定的思考强度，绕过模型声明的 `support_efforts`；仅 `kimi` 供应商生效 | 思考强度值，如 `max` |
 | `KIMI_MODEL_THINKING_KEEP` | 保留思考透传；`kimi` 以 `thinking.keep` 发送，`anthropic` 以 `clear_thinking_20251015` 编辑发送；覆盖 `[thinking] keep` | API 接受的值，如 `all`；传入关值（`false`/`0`/`no`/`off`/`none`/`null`）可禁用 |
+| `KIMI_CODE_MODEL_STREAM` | 当前活跃模型的 LLM 请求是否使用流式；设为假值时改用非流式（一次性返回完整响应），全局生效（不依赖 `KIMI_MODEL_NAME`），优先级高于 `config.toml` 的 `[modelOverrides] stream` | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off`；非法值会立即失败 |
 | `KIMI_CODE_NO_AUTO_UPDATE` | 完全禁用更新预检：不检查、不后台安装、不提示。同时兼容旧名 `KIMI_CLI_NO_AUTO_UPDATE` | 真值：`1`/`true`/`yes`/`on` |
 | `KIMI_DISABLE_CRON` | 禁用定时任务工具（`CronCreate` 拒绝新计划，已有任务不触发） | `1` 表示禁用 |
 
