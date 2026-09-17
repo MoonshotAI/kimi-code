@@ -274,7 +274,7 @@ export class AcpEnvironmentProviderFactory implements EnvironmentProviderFactory
 
   bindSession(workspaceId: string, sessionId: string, cwd: string): string {
     const attachment = this.attachments.get(workspaceId);
-    if (attachment === undefined) throw new Error(`ACP runtime provider is not attached to workspace ${workspaceId}`);
+    if (attachment === undefined) throw new Error(`ACP environment provider is not attached to workspace ${workspaceId}`);
     return attachment.bindSession(sessionId, cwd);
   }
 

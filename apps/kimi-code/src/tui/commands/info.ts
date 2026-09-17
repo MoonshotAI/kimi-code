@@ -176,7 +176,7 @@ export async function showUsage(host: SlashCommandHost): Promise<void> {
 }
 
 export async function showStatusReport(host: SlashCommandHost): Promise<void> {
-  const [environmentStatus, managedUsage] = await Promise.all([
+  const [runtimeStatus, managedUsage] = await Promise.all([
     loadRuntimeStatusReport(host),
     loadManagedUsageReport(host),
   ]);
@@ -196,8 +196,8 @@ export async function showStatusReport(host: SlashCommandHost): Promise<void> {
     contextTokens: appState.contextTokens,
     maxContextTokens: appState.maxContextTokens,
     availableModels: appState.availableModels,
-    status: environmentStatus.status,
-    statusError: environmentStatus.error,
+    status: runtimeStatus.status,
+    statusError: runtimeStatus.error,
     managedUsage: managedUsage?.usage,
     managedUsageError: managedUsage?.error,
   };

@@ -161,7 +161,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
   }
 
   async addProvider(factory: EnvironmentProviderFactory): Promise<{ dispose(): Promise<void> }> {
-    if (this.providers.has(factory.id)) throw new Error(`runtime provider ${factory.id} already exists`);
+    if (this.providers.has(factory.id)) throw new Error(`environment provider ${factory.id} already exists`);
     this.providers.set(factory.id, factory);
     const attached: WorkspaceInstance[] = [];
     try {
@@ -268,7 +268,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
 
   private async attach(instance: WorkspaceInstance, provider: EnvironmentProviderFactory): Promise<void> {
     const existing = this.attachments.get(instance.id);
-    if (existing?.has(provider.id) === true) throw new Error(`runtime provider ${provider.id} is already attached to workspace ${instance.id}`);
+    if (existing?.has(provider.id) === true) throw new Error(`environment provider ${provider.id} is already attached to workspace ${instance.id}`);
     const attachment = await instance.unitHost.provide(provider.imports, (host) => provider.attach({
       id: instance.id,
       root: instance.root,

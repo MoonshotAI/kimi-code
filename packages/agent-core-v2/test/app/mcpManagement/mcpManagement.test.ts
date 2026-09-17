@@ -100,7 +100,7 @@ describe('McpManagementService', () => {
     );
     findContaining = vi.fn<IWorkspaceInstanceManager['findContaining']>(() => undefined);
     const hostProcess = new HostProcessService();
-    const runtime = Object.assign(
+    const environment = Object.assign(
       new FakeEnvironment(
         { workspaceId: 'test-workspace', environmentId: 'local', generation: 'test-generation' },
         { capabilities: ['process'] },
@@ -149,9 +149,9 @@ describe('McpManagementService', () => {
         });
         reg.defineInstance(IEnvironmentResolver, {
           _serviceBrand: undefined,
-          inspect: () => runtime,
-          acquire: () => ({ environment: runtime, track: (resource) => resource, dispose: () => {} }),
-          acquireWhenReady: async () => ({ environment: runtime, track: (resource) => resource, dispose: () => {} }),
+          inspect: () => environment,
+          acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
+          acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
         });
         reg.definePartialInstance(IWorkspaceInstanceManager, { findContaining, getOrCreate });
         reg.defineInstance(ILogService, stubLog());

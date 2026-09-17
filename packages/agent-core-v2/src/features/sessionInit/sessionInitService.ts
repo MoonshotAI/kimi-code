@@ -80,9 +80,9 @@ export class SessionInitService implements ISessionInitService {
         cancel: (reason) => controller.abort(reason),
       });
 
-      const runtime = main.accessor.get(IAgentEnvironmentService);
-      const workDir = runtime.workspaceRoots().workDir;
-      const lease = runtime.acquire(['fs']);
+      const environment = main.accessor.get(IAgentEnvironmentService);
+      const workDir = environment.workspaceRoots().workDir;
+      const lease = environment.acquire(['fs']);
       let agentsMd: string;
       let agentsMdPaths: readonly string[];
       try {

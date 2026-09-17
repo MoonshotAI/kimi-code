@@ -284,7 +284,7 @@ export class Program {
       generation = this.generations.get(environmentId);
     }
     if (generation === undefined) {
-      throw new Error(`program ${this.workspaceId} has no available generation for runtime ${environmentId}`);
+      throw new Error(`program ${this.workspaceId} has no available generation for environment ${environmentId}`);
     }
     return generation;
   }

@@ -340,20 +340,20 @@ describe('GrepTool', () => {
           const processService = createTestProcessService(kaos);
           const fs = createTestFs(kaos);
           reg.defineInstance(IHostEnvironment, environment);
-          const runtime = Object.assign(
+          const backend = Object.assign(
             new FakeEnvironment(
               { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
               { capabilities: ['fs', 'process'], pathClass: environment.pathClass },
             ),
-            { process: processService, fs, environment },
+            { process: processService, fs, host: environment },
           );
           reg.defineInstance(IAgentEnvironmentService, {
             _serviceBrand: undefined,
             onDidChange: () => ({ dispose: () => {} }),
             isAvailable: () => true,
-            inspect: () => runtime,
-            acquire: () => ({ environment: runtime, track: (resource) => resource, dispose: () => {} }),
-            acquireWhenReady: async () => ({ environment: runtime, track: (resource) => resource, dispose: () => {} }),
+            inspect: () => backend,
+            acquire: () => ({ environment: backend, track: (resource) => resource, dispose: () => {} }),
+            acquireWhenReady: async () => ({ environment: backend, track: (resource) => resource, dispose: () => {} }),
             reconnect: async () => {},
             workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
           });

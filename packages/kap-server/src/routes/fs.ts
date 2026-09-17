@@ -161,12 +161,12 @@ function createLocalEnvironmentFs(
   roots: { readonly workDir: string; readonly additionalDirs?: readonly string[] },
 ): EnvironmentFsScope {
   const workspaceId = encodeWorkDirKey(roots.workDir);
-  const runtime = core.accessor.get(IStandaloneEnvironmentFactory).createLocalEnvironment(workspaceId);
+  const environment = core.accessor.get(IStandaloneEnvironmentFactory).createLocalEnvironment(workspaceId);
   const lease: EnvironmentLease = {
-    environment: runtime,
+    environment,
     track: (resource) => resource,
     dispose: () => {
-      void runtime.dispose();
+      void environment.dispose();
     },
   };
   try {
@@ -687,13 +687,13 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
   );
 }
 
-export interface RuntimeReadStreamSource {
+export interface EnvironmentReadStreamSource {
   readonly hostFs: IHostFileSystem;
   readonly lease: Pick<EnvironmentLease, 'track' | 'dispose'>;
 }
 
 export function createEnvironmentReadStream(
-  source: RuntimeReadStreamSource,
+  source: EnvironmentReadStreamSource,
   path: string,
   start: number,
   length: number,

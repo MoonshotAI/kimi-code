@@ -301,8 +301,8 @@ describe('AgentTaskService — spill target pinning', () => {
   let persistence: ReturnType<typeof createAgentTaskPersistence>;
   let writesA: { path: string; data: string }[];
   let writesB: { path: string; data: string }[];
-  let runtimeA: Environment;
-  let runtimeB: Environment;
+  let environmentA: Environment;
+  let environmentB: Environment;
   let currentEnvironment: Environment;
 
   function recordingFs(writes: { path: string; data: string }[]): IHostFileSystem {
@@ -396,9 +396,9 @@ describe('AgentTaskService — spill target pinning', () => {
     sessionDir = mkdtempSync(join(tmpdir(), 'bpm-spill-pin-'));
     writesA = [];
     writesB = [];
-    runtimeA = fakeEnvironment(recordingFs(writesA), '/remote-a/tmp');
-    runtimeB = fakeEnvironment(recordingFs(writesB), '/remote-b/tmp');
-    currentEnvironment = runtimeA;
+    environmentA = fakeEnvironment(recordingFs(writesA), '/remote-a/tmp');
+    environmentB = fakeEnvironment(recordingFs(writesB), '/remote-b/tmp');
+    currentEnvironment = environmentA;
     const fixture = createSpillTaskService(sessionDir);
     ctx = fixture.ctx;
     manager = fixture.manager;
@@ -415,7 +415,7 @@ describe('AgentTaskService — spill target pinning', () => {
     }
   });
 
-  it('keeps appending to the original runtime after a switch and reports its path across a restart', async () => {
+  it('keeps appending to the original environment after a switch and reports its path across a restart', async () => {
     const { proc, push, end } = controllableProcess();
     const taskId = registerProcess(manager, proc, 'tail -f', 'spill pinning');
 
@@ -424,7 +424,7 @@ describe('AgentTaskService — spill target pinning', () => {
     await manager.getOutputSnapshot(taskId, 1_000);
     expect(writesA).toEqual([{ path: `${dirA}/${taskId}.log`, data: 'first\n' }]);
 
-    currentEnvironment = runtimeB;
+    currentEnvironment = environmentB;
     push('second\n');
     await waitForOutput(manager, taskId, 'second');
     const snapshot = await manager.getOutputSnapshot(taskId, 1_000);

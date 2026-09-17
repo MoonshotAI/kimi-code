@@ -1022,7 +1022,7 @@ describe('AgentMediaToolsRegistrar', () => {
     expect(registry.resolve('ReadMediaFile')).toBeUndefined();
   });
 
-  it('combines model media support with runtime filesystem availability', () => {
+  it('combines model media support with environment filesystem availability', () => {
     const { registry, bindModel, setEnvironmentAvailable } = createRegistrarHarness();
     bindModel('vision-model', capabilities({ image_in: true, video_in: true }));
     expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);

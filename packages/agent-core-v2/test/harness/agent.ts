@@ -1340,7 +1340,7 @@ export class AgentTestContext {
               _serviceBrand: undefined,
               binding: { workspaceId: 'workspace-1', environmentId: 'local' },
             });
-            const runtime = new LocalEnvironment(
+            const environment = new LocalEnvironment(
               'workspace-1',
               this.root.accessor.get(IHostEnvironment),
               this.root.accessor.get(IHostFileSystem),
@@ -1350,14 +1350,14 @@ export class AgentTestContext {
             reg.defineInstance<IAgentEnvironmentService>(IAgentEnvironmentService, {
               _serviceBrand: undefined,
               onDidChange: () => ({ dispose: () => {} }),
-              isAvailable: (required = []) => required.every((capability) => runtime.capabilities.has(capability)),
-              inspect: () => runtime,
+              isAvailable: (required = []) => required.every((capability) => environment.capabilities.has(capability)),
+              inspect: () => environment,
               acquire: (required = []): EnvironmentLease => {
-                const missing = required.filter((capability) => !runtime.capabilities.has(capability));
+                const missing = required.filter((capability) => !environment.capabilities.has(capability));
                 if (missing.length > 0) {
                   throw new Error(`test environment missing capabilities: ${missing.join(', ')}`);
                 }
-                return { environment: runtime, track: (resource) => resource, dispose: () => {} };
+                return { environment, track: (resource) => resource, dispose: () => {} };
               },
               acquireWhenReady(required = []) { return Promise.resolve(this.acquire(required)); },
               reconnect: async () => {},

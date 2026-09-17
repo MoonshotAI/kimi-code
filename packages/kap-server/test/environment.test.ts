@@ -24,7 +24,7 @@ interface EnvironmentBindingWire {
   cwd?: string;
 }
 
-interface RuntimeEntryWire {
+interface EnvironmentEntryWire {
   environment_id: string;
   type: 'local' | 'ssh' | 'docker' | 'command';
   status: string;
@@ -34,9 +34,9 @@ interface RuntimeEntryWire {
   connect_error?: string;
 }
 
-interface RuntimesWire {
+interface EnvironmentsWire {
   workspace_id: string;
-  environments: RuntimeEntryWire[];
+  environments: EnvironmentEntryWire[];
   ssh_hosts: string[];
 }
 
@@ -150,7 +150,7 @@ describe('server-v2 /api/v1 runtime routes', () => {
       expect(reconnect.body.code).toBe(40926);
       expect(reconnect.body.msg).toContain('remote_runtime');
 
-      const environments = await call<RuntimesWire>('GET', `/api/v1/sessions/${id}/environments`);
+      const environments = await call<EnvironmentsWire>('GET', `/api/v1/sessions/${id}/environments`);
       expect(environments.body.code).toBe(0);
       expect(environments.body.data.environments).toHaveLength(1);
       expect(environments.body.data.environments[0]).toMatchObject({ environment_id: 'local', type: 'local', status: 'ready' });
@@ -212,7 +212,7 @@ describe('server-v2 /api/v1 runtime routes', () => {
 
     it('lists declared environments as disconnected placeholders before any connect', async () => {
       const id = await createSession();
-      const environments = await call<RuntimesWire>('GET', `/api/v1/sessions/${id}/environments`);
+      const environments = await call<EnvironmentsWire>('GET', `/api/v1/sessions/${id}/environments`);
       expect(environments.body.code).toBe(0);
       const byId = new Map(environments.body.data.environments.map((entry) => [entry.environment_id, entry]));
       expect(byId.get('local')).toMatchObject({ type: 'local', status: 'ready' });
@@ -234,7 +234,7 @@ describe('server-v2 /api/v1 runtime routes', () => {
       const binding = await call<EnvironmentBindingWire>('GET', `/api/v1/sessions/${id}/environment`);
       expect(binding.body.data).toMatchObject({ environment_id: 'loop', cwd: '/tmp' });
 
-      const connected = await call<RuntimesWire>('GET', `/api/v1/sessions/${id}/environments`);
+      const connected = await call<EnvironmentsWire>('GET', `/api/v1/sessions/${id}/environments`);
       expect(connected.body.data.environments.find((entry) => entry.environment_id === 'loop')?.status).toBe('ready');
 
       const invalidCwd = await call<null>('POST', `/api/v1/sessions/${id}/environment`, {
@@ -285,7 +285,7 @@ describe('server-v2 /api/v1 runtime routes', () => {
       });
       expect(dying.body.code).toBe(40926);
 
-      const environments = await call<RuntimesWire>('GET', `/api/v1/sessions/${id}/environments`);
+      const environments = await call<EnvironmentsWire>('GET', `/api/v1/sessions/${id}/environments`);
       const entry = environments.body.data.environments.find((candidate) => candidate.environment_id === 'dying');
       expect(entry?.status).toBe('disconnected');
       expect(entry?.connect_error).toContain('code 127');
@@ -334,7 +334,7 @@ describe('server-v2 /api/v1 runtime routes', () => {
       expect(toml).toContain('defaultCwd = "/remote/rest"');
       await vi.waitFor(
         async () => {
-          const environments = await call<RuntimesWire>('GET', `/api/v1/sessions/${id}/environments`);
+          const environments = await call<EnvironmentsWire>('GET', `/api/v1/sessions/${id}/environments`);
           expect(environments.body.data.environments.some((entry) => entry.environment_id === 'rest-box')).toBe(true);
         },
         { timeout: 10_000, interval: 100 },
@@ -386,7 +386,7 @@ describe('server-v2 /api/v1 runtime routes', () => {
 
       await vi.waitFor(
         async () => {
-          const environments = await call<RuntimesWire>('GET', `/api/v1/sessions/${session.id}/environments`);
+          const environments = await call<EnvironmentsWire>('GET', `/api/v1/sessions/${session.id}/environments`);
           const projBox = environments.body.data.environments.find((entry) => entry.environment_id === 'proj-box');
           expect(projBox).toMatchObject({ type: 'ssh', default_cwd: '/remote/proj' });
         },

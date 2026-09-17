@@ -385,13 +385,13 @@ function makeSession(
       ready: Promise.resolve(),
     }),
   ]);
-  const runtime = new FakeEnvironment({ workspaceId: 'w', environmentId: 'local', generation: 'test' }, { capabilities: ['process'], pathClass });
-  Object.defineProperty(runtime, 'process', { value: runner ?? fakeRunner(handler) });
+  const environment = new FakeEnvironment({ workspaceId: 'w', environmentId: 'local', generation: 'test' }, { capabilities: ['process'], pathClass });
+  Object.defineProperty(environment, 'process', { value: runner ?? fakeRunner(handler) });
   host.app.instantiation.provide(IEnvironmentResolver, {
     _serviceBrand: undefined,
-    inspect: () => runtime,
-    acquire: () => ({ environment: runtime, track: (resource) => resource, dispose: () => {} }),
-    acquireWhenReady: async () => ({ environment: runtime, track: (resource) => resource, dispose: () => {} }),
+    inspect: () => environment,
+    acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
+    acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
   });
   const workspace = host.child('program', 'w1', [
     stubPair(IWorkspaceContext, stubWorkspaceContext()),
@@ -413,16 +413,16 @@ function makeRemoteSession(
   environmentId = 'ssh-dev',
   homeDir = '/home/target',
 ): IWorkspaceFsService {
-  const runtime = new FakeEnvironment(
+  const environment = new FakeEnvironment(
     { workspaceId: 'w', environmentId, generation: 'test' },
     { capabilities: ['process'], host: { homeDir } },
   );
-  Object.defineProperty(runtime, 'process', { value: fakeRunner(handler) });
+  Object.defineProperty(environment, 'process', { value: fakeRunner(handler) });
   const resolver: IEnvironmentResolver = {
     _serviceBrand: undefined,
-    inspect: () => runtime,
-    acquire: () => ({ environment: runtime, track: (resource) => resource, dispose: () => {} }),
-    acquireWhenReady: async () => ({ environment: runtime, track: (resource) => resource, dispose: () => {} }),
+    inspect: () => environment,
+    acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
+    acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
   };
   return new WorkspaceFsService(
     stubWorkspaceContext(),

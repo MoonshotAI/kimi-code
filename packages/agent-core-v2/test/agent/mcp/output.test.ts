@@ -820,7 +820,7 @@ describe('mcpResultToExecutableOutput', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  test('persists originals through the provided runtime filesystem', async () => {
+  test('persists originals through the provided environment filesystem', async () => {
     const bigBytes = Buffer.from(
       await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
     );

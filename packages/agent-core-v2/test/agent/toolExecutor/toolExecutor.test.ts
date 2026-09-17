@@ -1087,7 +1087,7 @@ describe('truncation pipeline', () => {
     readConfig = truncationContainer.get(IConfigService);
     await readConfig.ready;
     globProcess = new HostProcessService();
-    const runtime = Object.assign(new FakeEnvironment(
+    const environment = Object.assign(new FakeEnvironment(
       { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
       { capabilities: ['fs', 'process'] },
     ), { fs: new HostFileSystem(), process: globProcess });
@@ -1095,9 +1095,9 @@ describe('truncation pipeline', () => {
       _serviceBrand: undefined,
       onDidChange: () => ({ dispose: () => {} }),
       isAvailable: () => true,
-      inspect: () => runtime,
-      acquire: () => ({ environment: runtime, track: (resource) => resource, dispose: () => {} }),
-      acquireWhenReady: async () => ({ environment: runtime, track: (resource) => resource, dispose: () => {} }),
+      inspect: () => environment,
+      acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
+      acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
       reconnect: async () => {},
       workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
     };

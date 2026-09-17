@@ -217,17 +217,17 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
   private async applyPromptPrefix(
     profileName: string,
     prompt: string,
-    runtime: Environment,
+    environment: Environment,
     cwd: string | undefined,
   ): Promise<string> {
     const profile = this.catalog.get(profileName);
     if (profile?.promptPrefix === undefined) return prompt;
-    const view = new EnvironmentWorkspaceView(runtime, {
+    const view = new EnvironmentWorkspaceView(environment, {
       workDir: cwd ?? this.sessionContext.cwd,
     });
     return applyProfilePromptPrefix(profile, prompt, {
       cwd: view.workDir,
-      process: runtime.process!,
+      process: environment.process!,
       log: this.log,
     });
   }

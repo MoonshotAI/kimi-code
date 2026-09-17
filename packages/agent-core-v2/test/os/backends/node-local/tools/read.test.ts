@@ -74,7 +74,7 @@ function createReadTool(
   } as unknown as ISessionSkillCatalog,
   truncation: IAgentToolResultTruncationService = stubToolResultTruncationService(),
 ): ReadTool {
-  const runtime = Object.assign(
+  const environment = Object.assign(
     new FakeEnvironment(
       { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
       { capabilities: ['fs'], pathClass: env.pathClass },
@@ -85,9 +85,9 @@ function createReadTool(
     _serviceBrand: undefined,
     onDidChange: () => ({ dispose: () => {} }),
     isAvailable: () => true,
-    inspect: () => runtime,
-    acquire: () => ({ environment: runtime, track: (resource) => resource, dispose: () => {} }),
-    acquireWhenReady: async () => ({ environment: runtime, track: (resource) => resource, dispose: () => {} }),
+    inspect: () => environment,
+    acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
+    acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
     reconnect: async () => {},
     workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
   };

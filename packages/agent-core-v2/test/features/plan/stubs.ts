@@ -28,7 +28,7 @@ export interface PlanEnvironmentOptions {
 }
 
 export function stubPlanEnvironment(options: PlanEnvironmentOptions): IAgentEnvironmentService {
-  const runtime: Environment = {
+  const environment: Environment = {
     identity: {
       workspaceId: 'workspace-1',
       environmentId: options.environmentId ?? 'remote',
@@ -52,11 +52,11 @@ export function stubPlanEnvironment(options: PlanEnvironmentOptions): IAgentEnvi
     onDidChangeStatus: Event.None as Event<EnvironmentStatus>,
     dispose: () => {},
   };
-  const lease = (): EnvironmentLease => ({ environment: runtime, track: (resource) => resource, dispose: () => {} });
+  const lease = (): EnvironmentLease => ({ environment, track: (resource) => resource, dispose: () => {} });
   return {
     _serviceBrand: undefined,
     onDidChange: Event.None as Event<void>,
-    inspect: () => runtime,
+    inspect: () => environment,
     isAvailable: () => true,
     acquire: lease,
     acquireWhenReady: () => Promise.resolve(lease()),

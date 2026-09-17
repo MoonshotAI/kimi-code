@@ -21,14 +21,14 @@ export class AgentWorkspaceContextService implements ISessionWorkspaceContext {
   ) {}
 
   private roots(): EnvironmentWorkspaceRoots {
-    const runtime = this.environment.current;
-    if (runtime === undefined) {
+    const environment = this.environment.current;
+    if (environment === undefined) {
       return {
         workDir: this.states.get(workspaceContextWorkDirKey),
         additionalDirs: this.states.get(workspaceContextAdditionalDirsKey),
       };
     }
-    return runtime.workspaceRoots();
+    return environment.workspaceRoots();
   }
 
   get workDir(): string {

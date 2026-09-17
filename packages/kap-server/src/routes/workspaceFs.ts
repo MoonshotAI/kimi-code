@@ -35,7 +35,7 @@ import { parseRangeHeader, pickHeader } from '../lib/httpRange';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
-import { createEnvironmentReadStream, type RuntimeReadStreamSource } from './fs';
+import { createEnvironmentReadStream, type EnvironmentReadStreamSource } from './fs';
 
 interface FsContentReply {
   type(mime: string): FsContentReply;
@@ -137,7 +137,7 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
         [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
       },
       description:
-        'Serve the raw content of any file on the host filesystem by absolute path. Supports ETag caching and single-range requests. `environment_id` selects the runtime filesystem; defaults to local. A non-local `environment_id` is workspace-scoped and requires `workspace_id` or `session_id` to name the workspace.',
+        'Serve the raw content of any file on the host filesystem by absolute path. Supports ETag caching and single-range requests. `environment_id` selects the environment filesystem; defaults to local. A non-local `environment_id` is workspace-scoped and requires `workspace_id` or `session_id` to name the workspace.',
       tags: ['workspaces'],
       operationId: 'fsContent',
     },
@@ -168,7 +168,7 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
         [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
       },
       description:
-        'Create a directory on the host filesystem by absolute path (folder-picker "new folder" backend). Non-recursive: the parent directory must already exist. `environment_id` selects the runtime filesystem; defaults to local. A non-local `environment_id` is workspace-scoped and requires `workspace_id` or `session_id` to name the workspace.',
+        'Create a directory on the host filesystem by absolute path (folder-picker "new folder" backend). Non-recursive: the parent directory must already exist. `environment_id` selects the environment filesystem; defaults to local. A non-local `environment_id` is workspace-scoped and requires `workspace_id` or `session_id` to name the workspace.',
       tags: ['workspaces'],
       operationId: 'fsMkdir',
     },
@@ -205,7 +205,7 @@ async function acquireFsSource(
   core: Scope,
   environmentId: string,
   context: FsEnvironmentContext,
-): Promise<RuntimeReadStreamSource> {
+): Promise<EnvironmentReadStreamSource> {
   if (environmentId === 'local') {
     return {
       hostFs: core.accessor.get(IHostFileSystem),
@@ -226,7 +226,7 @@ async function acquireFsSource(
     instance = await manager.getOrCreate({ workspaceId, root: workspace.root });
   }
   if (instance.environments.current(environmentId) === undefined) {
-    throw new EnvironmentError('environment.not_found', `runtime ${environmentId} does not exist`);
+    throw new EnvironmentError('environment.not_found', `environment ${environmentId} does not exist`);
   }
   const lease = instance.environments.acquire({ workspaceId: instance.id, environmentId }, ['fs']);
   return { hostFs: lease.environment.fs!, lease };
@@ -298,7 +298,7 @@ async function handleFsContent(
     return;
   }
 
-  let source: RuntimeReadStreamSource;
+  let source: EnvironmentReadStreamSource;
   try {
     source = await acquireFsSource(core, req.query.environment_id ?? 'local', {
       workspaceId: req.query.workspace_id,
@@ -424,7 +424,7 @@ async function handleFsMkdir(
     return;
   }
 
-  let source: RuntimeReadStreamSource;
+  let source: EnvironmentReadStreamSource;
   try {
     source = await acquireFsSource(core, req.body.environment_id ?? 'local', {
       workspaceId: req.body.workspace_id,

@@ -327,11 +327,11 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     svc: ISessionSubagentService,
     git: { process: IHostProcessService; gitCwds: string[] },
   ): Promise<SpawnedSubagent> {
-    const runtime = Object.assign(
+    const environment = Object.assign(
       new FakeEnvironment({ workspaceId: 'w1', environmentId: 'acp:s1', generation: 'g1' }),
       { process: git.process },
     );
-    lease = { environment: runtime, track: (resource) => resource, dispose: vi.fn() };
+    lease = { environment, track: (resource) => resource, dispose: vi.fn() };
     profiles = [
       normalizeAgentProfile({
         name: 'explore',

@@ -36,7 +36,7 @@ const STDERR_BUFFER_CAPACITY = 4 * 1024;
 
 export class StdioMcpClient implements MCPClient {
   private readonly client: Client;
-  private readonly transport: RuntimeStdioTransport;
+  private readonly transport: EnvironmentStdioTransport;
   private readonly startupTimeoutMs?: number;
   private readonly toolCallTimeoutMs?: number;
   private readonly stderrBuffer = new BoundedTail(STDERR_BUFFER_CAPACITY);
@@ -54,7 +54,7 @@ export class StdioMcpClient implements MCPClient {
     if (config.executor !== undefined && config.executor !== 'local') {
       throw new Error2(ErrorCodes.NOT_IMPLEMENTED, `MCP stdio executor '${config.executor}' is not yet implemented`);
     }
-    this.transport = new RuntimeStdioTransport(config, options, this.stderrBuffer);
+    this.transport = new EnvironmentStdioTransport(config, options, this.stderrBuffer);
     this.client = new Client({
       name: options.clientName ?? KIMI_MCP_CLIENT_NAME,
       version: options.clientVersion ?? KIMI_MCP_CLIENT_VERSION,
@@ -157,7 +157,7 @@ export class StdioMcpClient implements MCPClient {
   }
 }
 
-class RuntimeStdioTransport implements Transport {
+class EnvironmentStdioTransport implements Transport {
   onclose?: () => void;
   onerror?: (error: Error) => void;
   onmessage?: <T extends JSONRPCMessage>(message: T) => void;

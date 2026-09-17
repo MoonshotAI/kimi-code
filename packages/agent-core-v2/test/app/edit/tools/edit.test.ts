@@ -217,7 +217,7 @@ describe('EditTool', () => {
     expect(writeText).toHaveBeenCalledWith('/tmp/a.txt', 'alpha gamma');
   });
 
-  it('executes against the selected runtime filesystem instead of the App filesystem', async () => {
+  it('executes against the selected environment filesystem instead of the App filesystem', async () => {
     const environmentWrite = vi.fn().mockResolvedValue(undefined);
     const { fs: environmentFs } = createSpiedEditFs({
       readText: vi.fn().mockResolvedValue('runtime content'),

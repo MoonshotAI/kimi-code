@@ -23,14 +23,14 @@ function testCtx(cwd: string): ISessionContext {
   });
 }
 
-function environmentService(runtime: Environment): IAgentEnvironmentService {
+function environmentService(environment: Environment): IAgentEnvironmentService {
   return {
     _serviceBrand: undefined,
     onDidChange: () => ({ dispose: () => {} }),
-    inspect: () => runtime,
+    inspect: () => environment,
     isAvailable: () => true,
-    acquire: () => ({ environment: runtime, track: (resource) => resource, dispose: () => {} }),
-    acquireWhenReady: async () => ({ environment: runtime, track: (resource) => resource, dispose: () => {} }),
+    acquire: () => ({ environment: environment, track: (resource) => resource, dispose: () => {} }),
+    acquireWhenReady: async () => ({ environment: environment, track: (resource) => resource, dispose: () => {} }),
     reconnect: async () => {},
     workspaceRoots: () => ({ workDir: '', additionalDirs: [] }),
   };
@@ -40,14 +40,14 @@ function throwingEnvironmentService(): IAgentEnvironmentService {
   return {
     ...environmentService(new FakeEnvironment({ workspaceId: 'w', environmentId: 'local', generation: 'g' })),
     inspect: () => {
-      throw new Error('runtime w is not materialized');
+      throw new Error('environment w is not materialized');
     },
   };
 }
 
-function bashTool(runtime: IAgentEnvironmentService, ctx: ISessionContext, workDir: string): BashTool {
+function bashTool(environment: IAgentEnvironmentService, ctx: ISessionContext, workDir: string): BashTool {
   return new BashTool(
-    runtime,
+    environment,
     ctx,
     stubWorkspaceContext(workDir),
     {} as unknown as IAgentTaskService,
@@ -64,38 +64,38 @@ async function displayCwd(tool: BashTool, args: BashInput): Promise<string | und
 }
 
 describe('BashTool display cwd', () => {
-  it('stamps the binding cwd resolved on the bound runtime when no cwd argument is given', async () => {
-    const runtime = new FakeEnvironment({ workspaceId: 'w', environmentId: 'dev-box', generation: 'g' });
-    const tool = bashTool(environmentService(runtime), testCtx('/Users/mac/project'), '/home/deploy/app');
+  it('stamps the binding cwd resolved on the bound environment when no cwd argument is given', async () => {
+    const environment = new FakeEnvironment({ workspaceId: 'w', environmentId: 'dev-box', generation: 'g' });
+    const tool = bashTool(environmentService(environment), testCtx('/Users/mac/project'), '/home/deploy/app');
 
     await expect(displayCwd(tool, { command: 'ls' })).resolves.toBe('/home/deploy/app');
   });
 
-  it('resolves a relative cwd argument against the binding cwd on the bound runtime', async () => {
-    const runtime = new FakeEnvironment({ workspaceId: 'w', environmentId: 'dev-box', generation: 'g' });
-    const tool = bashTool(environmentService(runtime), testCtx('/Users/mac/project'), '/home/deploy/app');
+  it('resolves a relative cwd argument against the binding cwd on the bound environment', async () => {
+    const environment = new FakeEnvironment({ workspaceId: 'w', environmentId: 'dev-box', generation: 'g' });
+    const tool = bashTool(environmentService(environment), testCtx('/Users/mac/project'), '/home/deploy/app');
 
     await expect(displayCwd(tool, { command: 'ls', cwd: 'src/lib' })).resolves.toBe(
       '/home/deploy/app/src/lib',
     );
   });
 
-  it('keeps an absolute cwd argument as resolved on the bound runtime', async () => {
-    const runtime = new FakeEnvironment({ workspaceId: 'w', environmentId: 'dev-box', generation: 'g' });
-    const tool = bashTool(environmentService(runtime), testCtx('/Users/mac/project'), '/home/deploy/app');
+  it('keeps an absolute cwd argument as resolved on the bound environment', async () => {
+    const environment = new FakeEnvironment({ workspaceId: 'w', environmentId: 'dev-box', generation: 'g' });
+    const tool = bashTool(environmentService(environment), testCtx('/Users/mac/project'), '/home/deploy/app');
 
     await expect(displayCwd(tool, { command: 'ls', cwd: '/var/log' })).resolves.toBe('/var/log');
   });
 
   it('stamps the resolved local workspace dir for a local environment', async () => {
-    const runtime = new FakeEnvironment({ workspaceId: 'w', environmentId: 'local', generation: 'g' });
-    const tool = bashTool(environmentService(runtime), testCtx('/workspace'), '/workspace');
+    const environment = new FakeEnvironment({ workspaceId: 'w', environmentId: 'local', generation: 'g' });
+    const tool = bashTool(environmentService(environment), testCtx('/workspace'), '/workspace');
 
     await expect(displayCwd(tool, { command: 'ls' })).resolves.toBe('/workspace');
     await expect(displayCwd(tool, { command: 'ls', cwd: 'src' })).resolves.toBe('/workspace/src');
   });
 
-  it('falls back to the raw argument or session cwd when the runtime cannot be inspected', async () => {
+  it('falls back to the raw argument or session cwd when the environment cannot be inspected', async () => {
     const tool = bashTool(throwingEnvironmentService(), testCtx('/workspace'), '/workspace');
 
     await expect(displayCwd(tool, { command: 'ls' })).resolves.toBe('/workspace');
