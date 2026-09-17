@@ -41,7 +41,7 @@ import {
   isReservedTowerAgentName,
   dateDash,
   findingFileName,
-  hasCjkCharacters,
+  hasNonAsciiCharacters,
   inboxFileName,
   missionFileName,
   reviewFileName,
@@ -502,9 +502,10 @@ export class TowerStore {
       throw new TowerProtocolError('TowerPlan needs at least one mission');
     }
     for (const item of input) {
-      if (hasCjkCharacters(item.title)) {
+      if (hasNonAsciiCharacters(item.title)) {
+        const offending = /[^\u0020-\u007E]/.exec(item.title)![0];
         throw new TowerProtocolError(
-          `mission title "${item.title}" contains CJK characters — titles must be ASCII English: the title becomes the branch/worktree slug, and non-ASCII text slugs to a generic word like "item" that collides across missions; rewrite the title in English with a unique identifier word (e.g. a business code like B010100) and plan again`,
+          `mission title "${item.title}" contains non-ASCII characters (first: "${offending}") — titles must be printable ASCII English: the title becomes the branch/worktree slug, and non-ASCII text slugs to a generic word like "item" that collides across missions; rewrite the title in English with a unique identifier word (e.g. a business code like B010100) and plan again`,
         );
       }
     }

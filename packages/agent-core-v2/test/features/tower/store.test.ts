@@ -595,21 +595,40 @@ describe('plan', () => {
     expect((await store.load()).missions).toHaveLength(0);
   });
 
-  it('rejects titles containing CJK characters and says to re-plan in English', async () => {
+  it('rejects titles containing non-ASCII characters and names the first offender', async () => {
     await expect(
       store.plan([{ title: '航运市场B010100迁移', scope: ['src/x/**'] }]),
-    ).rejects.toThrow(/contains CJK characters/);
+    ).rejects.toThrow(/contains non-ASCII characters \(first: "航"\)/);
     expect((await store.load()).missions).toHaveLength(0);
   });
 
-  it('rejects a batch when any title contains CJK characters, even mixed with ASCII ones', async () => {
+  it('rejects a batch when any title contains non-ASCII characters, even mixed with ASCII ones', async () => {
     await expect(
       store.plan([
         { title: 'Build engine', scope: ['src/engine/**'] },
         { title: '金融市场B010400迁移', scope: ['src/finance/**'] },
       ]),
-    ).rejects.toThrow(/contains CJK characters/);
+    ).rejects.toThrow(/contains non-ASCII characters/);
     expect((await store.load()).missions).toHaveLength(0);
+  });
+
+  it('rejects Russian and Korean titles — they slug to the same generic word as CJK', async () => {
+    await expect(
+      store.plan([{ title: 'Исправить ошибку входа', scope: ['src/x/**'] }]),
+    ).rejects.toThrow(/contains non-ASCII characters \(first: "И"\)/);
+    await expect(
+      store.plan([{ title: '한글 제목', scope: ['src/x/**'] }]),
+    ).rejects.toThrow(/contains non-ASCII characters \(first: "한"\)/);
+    expect((await store.load()).missions).toHaveLength(0);
+  });
+
+  it('accepts titles with printable ASCII punctuation — dashes, underscores, spaces, plus signs', async () => {
+    const missions = await store.plan([
+      { title: 'fix login_error + retry-logic', scope: ['src/x/**'] },
+    ]);
+
+    expect(missions[0]?.title).toBe('fix login_error + retry-logic');
+    expect(missions[0]?.branch).toBe('feat/fix-login-error-retry-logic');
   });
 });
 
