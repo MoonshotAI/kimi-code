@@ -13,7 +13,7 @@ The security boundaries are fixed:
 - **API keys never leave your machine**: LLM API keys and OAuth tokens are never sent to the target, and the executor never makes model requests.
 - **Web tools stay local**: `WebSearch` and `FetchURL` always run from your machine, even in a remote session.
 - **Hooks and MCP servers stay local**: lifecycle hooks and stdio MCP servers keep running on your machine — see [Limitations](#limitations).
-- **SSH uses the system `ssh`**: the SSH launcher spawns the system `ssh` binary, so `~/.ssh/config` (users, ports, keys, `ProxyJump`, `ControlMaster`) and your ssh-agent apply as usual.
+- **SSH uses the system `ssh`**: the SSH launcher spawns the system `ssh` binary, so `~/.ssh/config` (users, ports, keys, `ProxyJump`, `ControlMaster`) and your ssh-agent apply as usual — see [SSH authentication](#ssh-authentication) for passwords, passphrases, and host keys.
 
 Only POSIX targets are supported; Windows targets are not.
 
@@ -101,6 +101,31 @@ A remote session depends on one connection per (workspace, runtime). When that c
 There is no automatic reconnect and **no silent fallback to the local runtime**: a command like `rm` or `git` that was meant for the remote machine must never land on yours. Instead, tool calls fail with a `runtime.unavailable` error, and you reconnect explicitly from the `/runtime` dialog. The same applies when resuming an old session: its binding is restored but not reconnected, so the first tool call errors until you reconnect.
 
 SSH exit codes are shown as diagnostics when a connection dies — `255` indicates a network-level drop, `127` that the executor was not found on the target.
+
+## SSH authentication
+
+SSH connections are non-interactive. The launcher spawns the system `ssh` with `-T` (no terminal allocated) and `-o BatchMode=yes`, and the `scp` used for executor installation shares the same options. BatchMode disables every interactive prompt — password, key passphrase, host-key confirmation — because the connection's input and output streams carry the protocol traffic, leaving no terminal to answer a prompt on. A host that requires any of these fails fast with an error like `Permission denied (publickey,password)`, surfaced as a connection failure in the `/runtime` dialog, instead of hanging on a prompt nobody can see.
+
+Every non-interactive method the system `ssh` supports works unchanged, configured through `~/.ssh/config` and your shell environment:
+
+- **Keys**: `IdentityFile` entries and the default key paths under `~/.ssh/`, for keys without a passphrase.
+- **ssh-agent**: `SSH_AUTH_SOCK` is inherited from the terminal you start Kimi Code from, so the agent (a background program that holds your unlocked keys) authenticates BatchMode connections without prompting. For a passphrase-protected key, run `ssh-add` once in your own terminal first.
+- **`ProxyJump` / `ProxyCommand`**: jump hosts configured in `~/.ssh/config` apply as usual.
+- **`ControlMaster`**: BatchMode connections can ride an existing master connection — the basis of the password-only setup below.
+
+Host keys use `StrictHostKeyChecking=accept-new` (trust on first use): the first connection to a new host records its key in `known_hosts` without asking, while a later host-key change fails the connection until you fix the entry by hand.
+
+A host that only accepts passwords has two working setups, both prepared once from your own terminal:
+
+- **Copy a key over**: run `ssh-copy-id user@host` and type the password a single time. From then on, key authentication works non-interactively.
+- **Share a master connection**: enable connection sharing in `~/.ssh/config`, then open one master connection yourself — `ssh user@host` in a terminal, typing the password once. While that master stays alive in the background, every later connection (including BatchMode ones) reuses it without prompting.
+
+```ssh-config
+Host dev-box
+  ControlMaster auto
+  ControlPath ~/.ssh/cm-%r@%h:%p
+  ControlPersist yes
+```
 
 ## The remote executor
 
