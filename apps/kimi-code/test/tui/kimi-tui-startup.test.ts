@@ -216,6 +216,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
       login: vi.fn(async () => {}),
       logout: vi.fn(),
       getManagedUsage: vi.fn(),
+      getCachedAccessToken: vi.fn(async () => undefined),
     },
     ...overrides,
   };
