@@ -700,9 +700,13 @@ describe('AgentRuntimeBindingService.connectAndSwitch', () => {
   function connectableRuntime(
     registry: RuntimeRegistry,
     runtimeId: string,
-    options: { readonly stat?: (path: string) => Promise<{ isDirectory: boolean }> } = {},
+    options: {
+      readonly stat?: (path: string) => Promise<{ isDirectory: boolean }>;
+      readonly reroot?: (cwd: string) => Promise<void>;
+    } = {},
   ) {
     const calls: string[] = [];
+    const rerootCalls: string[] = [];
     const fake = new FakeRuntime(
       { workspaceId: 'workspace', runtimeId, generation: `${runtimeId}-pending` },
       { status: 'disconnected', capabilities: ['fs', 'process'] },
@@ -716,9 +720,15 @@ describe('AgentRuntimeBindingService.connectAndSwitch', () => {
         stat: options.stat ?? (async () => ({ isDirectory: true })),
       },
       process: {},
+      reroot: options.reroot === undefined
+        ? undefined
+        : async (cwd: string) => {
+          rerootCalls.push(cwd);
+          await options.reroot!(cwd);
+        },
     });
     registry.register(connectable);
-    return { fake: connectable, calls };
+    return { fake: connectable, calls, rerootCalls };
   }
 
   it('connects a disconnected runtime, validates the cwd with the target fs, and commits', async () => {
@@ -821,6 +831,59 @@ describe('AgentRuntimeBindingService.connectAndSwitch', () => {
       cwd: '/remote/work',
     });
     expect(stats).toEqual(['/remote/work']);
+  });
+
+  it('re-roots the connected runtime with the validated cwd before committing', async () => {
+    const { registry, binding } = setup();
+    const { calls, rerootCalls } = connectableRuntime(registry, 'rootable', { reroot: async () => {} });
+
+    await expect(binding.connectAndSwitch('rootable', '/remote/work')).resolves.toEqual({
+      workspaceId: 'workspace',
+      runtimeId: 'rootable',
+      cwd: '/remote/work',
+    });
+    expect(calls).toEqual(['connect']);
+    expect(rerootCalls).toEqual(['/remote/work']);
+    expect(binding.current).toMatchObject({ runtimeId: 'rootable', cwd: '/remote/work' });
+  });
+
+  it('does not reroot when the cwd validation fails', async () => {
+    const { registry, binding } = setup();
+    const { rerootCalls } = connectableRuntime(registry, 'invalid-root', {
+      stat: async (path) => {
+        throw new Error(`ENOENT: ${path}`);
+      },
+      reroot: async () => {},
+    });
+
+    await expect(binding.connectAndSwitch('invalid-root', '/missing')).rejects.toThrowError(
+      expect.objectContaining<Partial<RuntimeError>>({ code: 'runtime.invalid_cwd' }),
+    );
+    expect(rerootCalls).toEqual([]);
+  });
+
+  it('keeps the old binding when the reroot fails', async () => {
+    const { registry, binding, dispatched } = setup();
+    connectableRuntime(registry, 'failing-root', {
+      reroot: async () => {
+        throw new Error('registry drained');
+      },
+    });
+
+    await expect(binding.connectAndSwitch('failing-root', '/remote/work')).rejects.toThrow('registry drained');
+    expect(binding.current).toEqual({ workspaceId: 'workspace', runtimeId: 'local' });
+    expect(dispatched).toHaveLength(0);
+  });
+
+  it('does not reroot when switching back to local', async () => {
+    const { registry, binding } = setup();
+    const { rerootCalls } = connectableRuntime(registry, 'rootable', { reroot: async () => {} });
+
+    await binding.connectAndSwitch('rootable', '/remote/work');
+    await binding.connectAndSwitch('local');
+
+    expect(rerootCalls).toEqual(['/remote/work']);
+    expect(binding.current).toEqual({ workspaceId: 'workspace', runtimeId: 'local', cwd: undefined });
   });
 });
 

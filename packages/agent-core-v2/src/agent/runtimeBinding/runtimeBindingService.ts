@@ -185,6 +185,9 @@ export class AgentRuntimeBindingService implements IAgentRuntimeBindingService {
     } finally {
       lease.dispose();
     }
+    if (runtimeId !== LOCAL_RUNTIME_ID && cwd !== undefined) {
+      await this.resolver.inspect(binding).reroot?.(cwd);
+    }
     return this.commit(binding);
   }
 
