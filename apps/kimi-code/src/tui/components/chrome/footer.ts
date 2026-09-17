@@ -493,9 +493,9 @@ export class FooterComponent implements Component {
     slots['tasks'] = taskBadges;
 
     // Runtime slot (experimental remote runtime): the local runtime renders
-    // nothing; a remote binding shows its `type:id` identifier ahead of the
-    // cwd — error-colored while disconnected, with the first connect-error
-    // line appended so the failure reason is visible at a glance.
+    // nothing; a remote binding shows its bare runtime id ahead of the cwd —
+    // error-colored while disconnected, with the first connect-error line
+    // appended so the failure reason is visible at a glance.
     const runtime = state.runtime;
     const remote = runtime !== undefined && runtime.runtimeId !== 'local';
     if (remote) {
@@ -505,7 +505,7 @@ export class FooterComponent implements Component {
           : runtime.status === 'ready'
             ? colors.textDim
             : colors.warning;
-      const label = `${runtime.type}:${runtime.runtimeId}`;
+      const label = runtime.runtimeId;
       const reason =
         runtime.status === 'disconnected' && runtime.connectError !== undefined
           ? runtime.connectError.split('\n', 1)[0]
