@@ -498,6 +498,33 @@ describe('kimi provider add', () => {
     expect(exitCodes).toEqual([1]);
     expect(stderr.join('')).toMatch(/HTTP 401/);
   });
+
+  it('reuses the stored registry key when a re-import passes no key', async () => {
+    const fetchMock = mockRegistryFetch();
+    const initial: KimiConfig = {
+      providers: {
+        kohub: {
+          type: 'anthropic',
+          baseUrl: 'https://registry.example.test',
+          apiKey: 'sk-stored',
+          source: { kind: 'apiJson', url: REGISTRY_URL, apiKey: 'sk-stored' },
+        },
+      },
+    } as unknown as KimiConfig;
+    const { harness } = await makeRegistryHarness(initial);
+    const { deps, stderr, exitCodes } = makeDeps(harness);
+
+    await tryRun(() => handleProviderAdd(deps, REGISTRY_URL, {}));
+
+    expect(exitCodes).toEqual([]);
+    expect(stderr.join('')).toBe('');
+    expect(fetchMock).toHaveBeenCalledWith(
+      REGISTRY_URL,
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer sk-stored' }),
+      }),
+    );
+  });
 });
 
 describe('kimi provider remove', () => {

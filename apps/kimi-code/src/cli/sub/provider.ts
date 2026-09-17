@@ -69,7 +69,7 @@ export async function handleProviderAdd(
   url: string,
   opts: AddOptions,
 ): Promise<void> {
-  const apiKey = resolveApiKey(opts.apiKey, deps.env) ?? '';
+  const apiKey = resolveApiKey(opts.apiKey, deps.env);
 
   const trimmedUrl = url.trim();
   if (trimmedUrl.length === 0) {
@@ -95,7 +95,7 @@ export async function handleProviderAdd(
     }
     const suffix = error.status === undefined ? '' : ` (HTTP ${String(error.status)})`;
     deps.stderr.write(`Failed to fetch registry${suffix}: ${errorMessage(error)}\n`);
-    if (apiKey.length === 0 && (error.status === 401 || error.status === 403)) {
+    if (apiKey === undefined && (error.status === 401 || error.status === 403)) {
       deps.stderr.write(
         'This registry requires authentication — pass --api-key <key> or set KIMI_REGISTRY_API_KEY.\n',
       );

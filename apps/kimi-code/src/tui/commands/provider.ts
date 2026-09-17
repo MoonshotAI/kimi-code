@@ -18,6 +18,7 @@ import { ChoicePickerComponent } from '../components/dialogs/choice-picker';
 import {
   CustomRegistryImportDialogComponent,
   type CustomRegistryImportResult,
+  type CustomRegistryImportValue,
 } from '../components/dialogs/custom-registry-import';
 import {
   ProviderManagerComponent,
@@ -354,7 +355,7 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
       error instanceof RegistryImportError && error.phase === 'fetch' ? 'import' : 'apply';
     host.showError(`Failed to ${phase} registry: ${formatErrorMessage(error)}`);
     if (
-      value.apiKey.length === 0 &&
+      value.apiKey === undefined &&
       error instanceof RegistryImportError &&
       (error.status === 401 || error.status === 403)
     ) {
@@ -415,7 +416,7 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
 
 function promptCustomRegistryImport(
   host: SlashCommandHost,
-): Promise<{ readonly url: string; readonly apiKey: string } | undefined> {
+): Promise<CustomRegistryImportValue | undefined> {
   return new Promise((resolve) => {
     const dialog = new CustomRegistryImportDialogComponent(
       (result: CustomRegistryImportResult) => {

@@ -24,7 +24,7 @@ import { currentTheme } from '#/tui/theme';
 
 export interface CustomRegistryImportValue {
   readonly url: string;
-  readonly apiKey: string;
+  readonly apiKey?: string;
 }
 
 export type CustomRegistryImportResult =
@@ -230,7 +230,10 @@ export class CustomRegistryImportDialogComponent extends Container implements Fo
     }
 
     this.done = true;
-    this.onDone({ kind: 'ok', value: { url: urlValue, apiKey: tokenValue } });
+    this.onDone({
+      kind: 'ok',
+      value: { url: urlValue, apiKey: tokenValue.length > 0 ? tokenValue : undefined },
+    });
   }
 
   private cancel(): void {

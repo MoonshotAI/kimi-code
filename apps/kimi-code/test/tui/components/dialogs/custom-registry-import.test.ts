@@ -56,7 +56,7 @@ describe('CustomRegistryImportDialogComponent', () => {
 
     expect(onDone).toHaveBeenCalledWith({
       kind: 'ok',
-      value: { url: 'https://example.com/api.json', apiKey: '' },
+      value: { url: 'https://example.com/api.json', apiKey: undefined },
     });
   });
 
