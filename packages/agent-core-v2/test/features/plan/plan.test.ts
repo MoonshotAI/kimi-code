@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 
 import type { ToolCall } from '#human/llm/message';
 import { dirname, join } from 'pathe';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -180,7 +180,10 @@ describe('Plan service', () => {
       const status = await expectActivePlan();
       const expectedPath = expectedPlanPath(status.id);
       expect(status.path).toBe(expectedPath);
-      expect(mkdir).toHaveBeenCalledWith(dirname(expectedPath), { recursive: true });
+      expect(mkdir).toHaveBeenCalledWith(dirname(expectedPath), {
+        recursive: true,
+        mode: 0o700,
+      });
       expect(writeText).not.toHaveBeenCalled();
       expect(ctx.allEvents.some((event) => event.event === 'turn.started')).toBe(false);
       expect(ctx.llmCalls).toHaveLength(0);
@@ -243,15 +246,20 @@ describe('Plan service', () => {
     let remotePlan: IAgentPlanService;
     let localFiles: Map<string, string>;
     let remoteFiles: Map<string, string>;
+    let remoteMkdir: Mock<IHostFileSystem['mkdir']>;
 
     beforeEach(async () => {
       localFiles = new Map();
       remoteFiles = new Map();
+      remoteMkdir = vi.fn<IHostFileSystem['mkdir']>().mockResolvedValue(undefined);
       remoteCtx = createTestAgent([
         execEnvServices({ hostFs: createMapFs(localFiles) }),
         agentService(
           IAgentRuntimeService,
-          stubPlanRuntime({ fs: createMapFs(remoteFiles), tempDir: remoteTempDir }),
+          stubPlanRuntime({
+            fs: createMapFs(remoteFiles, { mkdir: remoteMkdir }),
+            tempDir: remoteTempDir,
+          }),
         ),
       ]);
       remotePlan = remoteCtx.get(IAgentPlanService);
@@ -290,6 +298,16 @@ describe('Plan service', () => {
 
       expect(remoteFiles.get(planPath)).toBe(content);
       expect((await remotePlan.status())?.content).toBe(content);
+    });
+
+    it('creates the plans directory on the runtime fs with owner-only permissions', async () => {
+      await remotePlan.enter('remote-plan', false);
+
+      const planPath = `${remoteTempDir}/kimi-code/plans/main/remote-plan.md`;
+      expect(remoteMkdir).toHaveBeenCalledWith(dirname(planPath), {
+        recursive: true,
+        mode: 0o700,
+      });
     });
 
     it('keeps denying writes to non-plan files on a remote binding', async () => {
