@@ -11,6 +11,7 @@ import {
 } from '#/features/skill/catalog/configSection';
 import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
 import { projectRoots, projectSkillRootCandidates } from '#/features/skill/catalog/skillRoots';
+import { skillRootWatchEnabled } from '#/features/skill/catalog/skillRootWatch';
 import {
   SKILL_SOURCE_PRIORITY,
   type ISkillSource,
@@ -80,6 +81,7 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
   private async updateProjectSkillRootWatch(
     scannedDirectories: readonly string[],
   ): Promise<boolean> {
+    if (!skillRootWatchEnabled()) return false;
     const { projectRoot, candidates } = await projectSkillRootCandidates(this.workspace.cwd);
     const signature = [...scannedDirectories].toSorted().join('\0');
     if (signature === this.watchSignature) return false;

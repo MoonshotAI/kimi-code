@@ -2,6 +2,7 @@ import { IInstantiationService, ref, type LiveRef } from '#/_base/di/instantiati
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
+import { startupTrace } from '#/_base/utils/startupTrace';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
@@ -120,12 +121,14 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     if (request !== undefined) return request;
     const promise = (async () => {
       let workspace: Workspace | undefined;
+      startupTrace('workspace:catalog:begin');
       if ('workspaceId' in ref) {
         workspace = await this.workspaces.get(ref.workspaceId);
         if (workspace === undefined && ref.root !== undefined) workspace = await this.workspaces.createOrTouch(ref.root);
       } else {
         workspace = await this.workspaces.createOrTouch(ref.root);
       }
+      startupTrace('workspace:catalog:end');
       if (workspace === undefined) throw new Error2(ErrorCodes.WORKSPACE_NOT_FOUND, `workspace ${'workspaceId' in ref ? ref.workspaceId : ref.root} does not exist`);
       const existing = this.instances.get(workspace.id);
       if (existing !== undefined) return existing;
@@ -153,7 +156,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     this.instances.delete(workspaceId);
     const attachments = this.attachments.get(workspaceId);
     this.attachments.delete(workspaceId);
-    if (attachments !== undefined) for (const attachment of [...attachments.values()].reverse()) await attachment.dispose();
+    if (attachments !== undefined) for (const attachment of [...attachments.values()].toReversed()) await attachment.dispose();
     await instance.dispose();
     this.changeEmitter.fire({ workspaceId });
   }
@@ -169,23 +172,25 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
       }
     } catch (error) {
       this.providers.delete(factory.id);
-      for (const instance of attached.reverse()) await this.detach(instance.id, factory.id);
+      for (const instance of attached.toReversed()) await this.detach(instance.id, factory.id);
       throw error;
     }
     return { dispose: async () => {
       if (this.providers.get(factory.id) !== factory) return;
       this.providers.delete(factory.id);
-      for (const workspaceId of [...this.attachments.keys()].reverse()) await this.detach(workspaceId, factory.id);
+      for (const workspaceId of [...this.attachments.keys()].toReversed()) await this.detach(workspaceId, factory.id);
     } };
   }
 
   async dispose(): Promise<void> {
-    for (const workspaceId of [...this.instances.keys()].reverse()) await this.close(workspaceId);
+    for (const workspaceId of [...this.instances.keys()].toReversed()) await this.close(workspaceId);
     this.changeEmitter.dispose();
   }
 
   private async materialize(workspace: Workspace): Promise<WorkspaceInstance> {
+    startupTrace('workspace:materialize:begin');
     await this.environment.ready;
+    startupTrace('workspace:materialize:envReady');
     const runtimes = new RuntimeRegistry(workspace.id);
     const unitHost = this.unitHostFactory.create(this.instantiation, runtimes);
     const instance = new WorkspaceInstance(
@@ -246,18 +251,20 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
         ),
       },
     );
+    startupTrace('workspace:materialize:constructed');
     try {
       for (const provider of this.providers.values()) await this.attach(instance, provider);
       if (instance.runtimes.current('local') === undefined) throw new Error(`workspace ${workspace.id} has no local runtime`);
       instance.activate();
       this.instances.set(workspace.id, instance);
       this.changeEmitter.fire({ workspaceId: workspace.id, instance });
+      startupTrace('workspace:materialize:end');
       return instance;
     } catch (error) {
       const attachments = this.attachments.get(instance.id);
       this.attachments.delete(instance.id);
       if (attachments !== undefined) {
-        for (const attachment of [...attachments.values()].reverse()) await attachment.dispose();
+        for (const attachment of [...attachments.values()].toReversed()) await attachment.dispose();
       }
       await instance.dispose();
       throw error;
