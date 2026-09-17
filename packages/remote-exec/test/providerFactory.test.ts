@@ -334,6 +334,95 @@ describe('RemoteRuntimeProviderFactory', () => {
     await registry.dispose();
   });
 
+  it('awaits an in-flight reconnect on a connected view and leases the swapped runtime', async () => {
+    const registry = new RuntimeRegistry('workspace-1');
+    let generation = 0;
+    let releaseReconnect!: () => void;
+    const reconnectGate = new Promise<void>((resolve) => {
+      releaseReconnect = resolve;
+    });
+    const connect = vi.fn(async (options: RemoteRuntimeOptions) => {
+      generation += 1;
+      const current = generation;
+      if (current === 2) await reconnectGate;
+      const runtime = connectedRuntime(options, `connected-${current}`) as unknown as FakeRuntime & {
+        connection: { closeReason?: { reason: string } };
+      };
+      runtime.connection = {
+        closeReason: { reason: 'control call fs/read timed out after 60000ms; closing the connection' },
+      };
+      return runtime as unknown as RemoteRuntime;
+    });
+    const factory = new RemoteRuntimeProviderFactory(factoryOptions({ connect }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
+
+    await registry.current('dev-box')!.connect!();
+    const managed = registry.current('dev-box')!;
+    expect(managed.status).toBe('ready');
+
+    const firstInner = connect.mock.results[0]!.value as unknown as Promise<FakeRuntime>;
+    (await firstInner).setStatus('disconnected');
+    expect(managed.status).toBe('disconnected');
+
+    const reconnect = managed.connect!();
+    expect(managed.status).toBe('connecting');
+    expect(managed.whenReady).toBe(reconnect);
+    expect(managed.connectError).toBeUndefined();
+
+    let settled: 'pending' | 'acquired' | 'failed' = 'pending';
+    const pending = registry.acquireWhenReady({ workspaceId: 'workspace-1', runtimeId: 'dev-box' }, ['fs']).then(
+      (lease) => {
+        settled = 'acquired';
+        return lease;
+      },
+      (error: unknown) => {
+        settled = 'failed';
+        throw error;
+      },
+    );
+    await Promise.resolve();
+    expect(settled).toBe('pending');
+
+    releaseReconnect();
+    const lease = await pending;
+    await reconnect;
+    expect(settled).toBe('acquired');
+    expect(lease.runtime.status).toBe('ready');
+    expect(lease.runtime.identity.generation).toBe('connected-2');
+    expect(lease.runtime).not.toBe(managed);
+    lease.dispose();
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('records the failure and clears whenReady when a connected-view reconnect fails', async () => {
+    const registry = new RuntimeRegistry('workspace-1');
+    const failure = new Error('executor process exited before the handshake completed (code 255, signal null): ssh: connect to host dev-box port 22: Connection refused');
+    let generation = 0;
+    const connect = vi.fn(async (options: RemoteRuntimeOptions) => {
+      generation += 1;
+      if (generation === 2) throw failure;
+      return connectedRuntime(options, `connected-${generation}`);
+    });
+    const factory = new RemoteRuntimeProviderFactory(factoryOptions({ connect }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
+
+    await registry.current('dev-box')!.connect!();
+    const managed = registry.current('dev-box')!;
+    expect(managed.status).toBe('ready');
+
+    await expect(managed.connect!()).rejects.toBe(failure);
+    expect(registry.current('dev-box')).toBe(managed);
+    expect(managed.status).toBe('disconnected');
+    expect(managed.whenReady).toBeUndefined();
+    expect(managed.connectError).toContain('Connection refused');
+    await expect(registry.acquireWhenReady({ workspaceId: 'workspace-1', runtimeId: 'dev-box' })).rejects.toThrow('disconnected');
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
   it('drains old leases on reconnect and never moves them to the new connection', async () => {
     const registry = new RuntimeRegistry('workspace-1', 50);
     let generation = 0;

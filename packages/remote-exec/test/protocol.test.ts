@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   classifyMessage,
@@ -67,6 +67,28 @@ describe('NDJSON line framing', () => {
     const decoder = new LineFrameDecoder();
     decoder.push(Buffer.alloc(MAX_MESSAGE_BYTES, 0x61));
     expect(() => decoder.push(Buffer.from('x'))).toThrow(ProtocolViolationError);
+  });
+
+  it('assembles a large frame from small chunks with bounded copying', () => {
+    const decoder = new LineFrameDecoder();
+    const payload = 'x'.repeat(16 * 1024 * 1024);
+    const frame = encodeFrame({ data: payload });
+    const originalConcat = Buffer.concat.bind(Buffer);
+    let copied = 0;
+    const concatSpy = vi.spyOn(Buffer, 'concat').mockImplementation((list: readonly Uint8Array[], totalLength?: number) => {
+      copied += list.reduce((total, part) => total + part.length, 0);
+      return originalConcat(list, totalLength);
+    });
+    try {
+      const frames: unknown[] = [];
+      for (let offset = 0; offset < frame.length; offset += 64 * 1024) {
+        frames.push(...decoder.push(frame.subarray(offset, offset + 64 * 1024)));
+      }
+      expect(frames).toEqual([{ data: payload }]);
+      expect(copied).toBeLessThanOrEqual(frame.length * 2);
+    } finally {
+      concatSpy.mockRestore();
+    }
   });
 
   it('rejects invalid UTF-8', () => {
