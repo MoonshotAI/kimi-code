@@ -111,6 +111,8 @@ import '#/agent/toolActivation/toolActivationService';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
+import type { RuntimeBinding } from '#/runtime/runtime';
+import { RuntimeError } from '#/runtime/runtimeRegistry';
 import { ScopeUnits, type Fiber } from '#/_base/di/fiber';
 import {
   IRuntimeResolver,
@@ -1046,6 +1048,155 @@ describe('AgentLifecycleService', () => {
       runtimeId: 'remote',
     });
     expect(agent.accessor.get(IAgentRuntimeService).inspect().identity.generation).toBe('remote-one');
+  });
+
+  function stubRemoteResolver(options: { remoteStatus?: 'ready' | 'disconnected' } = {}) {
+    const connectCalls: string[] = [];
+    const rerootCalls: string[] = [];
+    const localRuntime = new FakeRuntime(
+      { workspaceId: 'ws_test', runtimeId: 'local', generation: 'local-one' },
+      { status: 'ready', capabilities: ['fs', 'process'] },
+    );
+    const remoteRuntime = new FakeRuntime(
+      { workspaceId: 'ws_test', runtimeId: 'remote', generation: 'remote-one' },
+      { status: options.remoteStatus ?? 'disconnected', capabilities: ['fs', 'process'] },
+    );
+    Object.assign(remoteRuntime, {
+      connect: async () => {
+        connectCalls.push('remote');
+        remoteRuntime.setStatus('ready');
+      },
+      reroot: async (cwd: string) => {
+        rerootCalls.push(cwd);
+      },
+    });
+    const runtimeFor = (binding: RuntimeBinding): FakeRuntime => {
+      if (binding.runtimeId === 'local') return localRuntime;
+      if (binding.runtimeId === 'remote') return remoteRuntime;
+      throw new RuntimeError('runtime.not_found', `runtime ${binding.runtimeId} does not exist in workspace ws_test`);
+    };
+    ix.stub(IRuntimeResolver, {
+      _serviceBrand: undefined,
+      inspect: (binding: RuntimeBinding) => runtimeFor(binding),
+      acquire: (binding: RuntimeBinding) => ({
+        runtime: runtimeFor(binding),
+        track: (resource: unknown) => resource,
+        dispose: () => {},
+      }),
+    } as unknown as IRuntimeResolver);
+    return { connectCalls, rerootCalls, remoteRuntime };
+  }
+
+  function enableRemoteRuntimeFlag(): void {
+    ix.stub(IFlagService, {
+      _serviceBrand: undefined,
+      enabled: () => true,
+    } as unknown as IFlagService);
+  }
+
+  it('persists a create-seeded remote binding at create time', async () => {
+    const log = recordingAppendLog();
+    ix.stub(IAppendLogStore, log.store);
+    stubRemoteResolver({ remoteStatus: 'ready' });
+
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'agent-1', runtimeId: 'remote', runtimeCwd: '/remote/work' });
+
+    expect(log.appended.filter((record) => record.type === 'runtime.set_binding')).toEqual([
+      expect.objectContaining({
+        agentId: 'agent-1',
+        workspaceId: 'ws_test',
+        runtimeId: 'remote',
+        cwd: '/remote/work',
+      }),
+    ]);
+    expect(svc.handleOf('agent-1')!.accessor.get(IAgentRuntimeBindingService).current).toEqual({
+      workspaceId: 'ws_test',
+      runtimeId: 'remote',
+      cwd: '/remote/work',
+    });
+  });
+
+  it('restores a remote-bound subagent from wire records and background-reconnects', async () => {
+    ix.stub(IAppendLogStore, recordingAppendLog([
+      createWireMetadataRecord(1),
+      { type: 'runtime.set_binding', agentId: 'agent-1', runtimeId: 'remote', cwd: '/remote/work', time: 2 },
+    ]).store);
+    enableRemoteRuntimeFlag();
+    const { connectCalls, rerootCalls } = stubRemoteResolver();
+
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'agent-1' });
+
+    expect(svc.handleOf('agent-1')!.accessor.get(IAgentRuntimeBindingService).current).toEqual({
+      workspaceId: 'ws_test',
+      runtimeId: 'remote',
+      cwd: '/remote/work',
+    });
+    expect(connectCalls).toEqual(['remote']);
+    expect(rerootCalls).toEqual(['/remote/work']);
+  });
+
+  it('keeps a restored gone runtime declaration bound and fails explicitly at use', async () => {
+    ix.stub(IAppendLogStore, recordingAppendLog([
+      createWireMetadataRecord(1),
+      { type: 'runtime.set_binding', agentId: 'agent-1', runtimeId: 'ghost', cwd: '/ghost/work', time: 2 },
+    ]).store);
+    enableRemoteRuntimeFlag();
+    stubRemoteResolver();
+
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'agent-1' });
+    const agent = svc.handleOf('agent-1')!;
+
+    expect(agent.accessor.get(IAgentRuntimeBindingService).current).toEqual({
+      workspaceId: 'ws_test',
+      runtimeId: 'ghost',
+      cwd: '/ghost/work',
+    });
+    expect(() => agent.accessor.get(IAgentRuntimeService).acquire()).toThrowError(
+      expect.objectContaining<Partial<RuntimeError>>({ code: 'runtime.not_found' }),
+    );
+  });
+
+  it('keeps a create-seeded remote binding durable across an agent rebuild and reconnects', async () => {
+    const log = recordingAppendLog();
+    ix.stub(IAppendLogStore, log.store);
+    enableRemoteRuntimeFlag();
+    const { connectCalls, remoteRuntime } = stubRemoteResolver({ remoteStatus: 'ready' });
+
+    const svc = ix.get(IAgentLifecycleService);
+    const created = await svc.create({ agentId: 'agent-1', runtimeId: 'remote', runtimeCwd: '/remote/work' });
+    await svc.remove(created);
+    remoteRuntime.setStatus('disconnected');
+
+    await svc.create({ agentId: 'agent-1' });
+
+    expect(svc.handleOf('agent-1')!.accessor.get(IAgentRuntimeBindingService).current).toEqual({
+      workspaceId: 'ws_test',
+      runtimeId: 'remote',
+      cwd: '/remote/work',
+    });
+    expect(connectCalls).toEqual(['remote']);
+  });
+
+  it('restores the main agent binding without the binding service reconnecting it', async () => {
+    ix.stub(IAppendLogStore, recordingAppendLog([
+      createWireMetadataRecord(1),
+      { type: 'runtime.set_binding', agentId: 'main', workspaceId: 'ws_test', runtimeId: 'remote', cwd: '/remote/work', time: 2 },
+    ]).store);
+    enableRemoteRuntimeFlag();
+    const { connectCalls } = stubRemoteResolver();
+
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+
+    expect(svc.handleOf('main')!.accessor.get(IAgentRuntimeBindingService).current).toEqual({
+      workspaceId: 'ws_test',
+      runtimeId: 'remote',
+      cwd: '/remote/work',
+    });
+    expect(connectCalls).toEqual([]);
   });
 
   it('attaches durable runtimes before restore and replays their records', async () => {
