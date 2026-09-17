@@ -96,11 +96,11 @@ export class ManagedRemoteRuntime implements Runtime {
   constructor(
     private readonly inner: RemoteRuntime | undefined,
     private readonly connectCallback: () => Promise<void>,
-    pendingIdentity?: RuntimeIdentity,
+    private readonly rerootCallback: (cwd: string) => Promise<void>,
+    identity: RuntimeIdentity,
   ) {
+    this.identity = identity;
     if (inner === undefined) {
-      if (pendingIdentity === undefined) throw new Error('pending managed runtime requires an identity');
-      this.identity = pendingIdentity;
       this.capabilities = new Set();
       this.environment = PENDING_ENVIRONMENT;
       this.path = PENDING_PATH;
@@ -112,7 +112,6 @@ export class ManagedRemoteRuntime implements Runtime {
       };
       this.currentStatus = 'disconnected';
     } else {
-      this.identity = inner.identity;
       this.capabilities = inner.capabilities;
       this.environment = inner.environment;
       this.path = inner.path;
@@ -171,12 +170,19 @@ export class ManagedRemoteRuntime implements Runtime {
     return this.connectInflight;
   }
 
+  reroot(cwd: string): Promise<void> {
+    return this.rerootCallback(cwd);
+  }
+
   private setStatus(status: RuntimeStatus): void {
     if (this.currentStatus === status || this.currentStatus === 'disposed') return;
     this.currentStatus = status;
     this.statusEmitter.fire(status);
   }
 
+  // The executor connection is owned by the declaring record, not by this
+  // view: replacements (reconnect, reroot, declaration update) drain views
+  // without tearing the connection down, and the record disposes it.
   async dispose(): Promise<void> {
     this.statusSubscription?.dispose();
     if (this.currentStatus !== 'disposed') {
@@ -184,7 +190,6 @@ export class ManagedRemoteRuntime implements Runtime {
       this.statusEmitter.fire('disposed');
     }
     this.statusEmitter.dispose();
-    await this.inner?.dispose();
   }
 }
 
@@ -221,6 +226,14 @@ interface DeclaredRuntimeRecord {
   // instead of swapping a runtime built from a stale declaration into the
   // registry.
   version: number;
+  // The live executor connection, owned by the record: managed views share it
+  // and never dispose it, so a reroot replacement keeps serving the same
+  // connection. The record disposes it on reconnect, update, and removal.
+  connection?: RemoteRuntime;
+  // The latest reroot cwd; carried into the identity of every connected view.
+  boundCwd?: string;
+  // The most recent view's connect callback, reused by reroot replacements.
+  connect?: () => Promise<void>;
 }
 
 const PROJECT_DECLARATION_WATCH_DEBOUNCE_MS = 200;
@@ -296,9 +309,11 @@ export class RemoteRuntimeProviderFactory implements RuntimeProviderFactory {
           // (bounded by the registry drain timeout). Bindings to the removed
           // runtime keep failing explicitly — no silent local fallback (D3).
           record.version += 1;
-          void record.handle.remove().catch((error: unknown) => {
-            log.warn(`remote runtime ${id} removal failed`, { error });
-          });
+          void record.handle.remove()
+            .then(() => discardConnection(record))
+            .catch((error: unknown) => {
+              log.warn(`remote runtime ${id} removal failed`, { error });
+            });
         }
         for (const declaration of resolved.entries) {
           if (disposed) return;
@@ -319,6 +334,7 @@ export class RemoteRuntimeProviderFactory implements RuntimeProviderFactory {
           try {
             await record.handle.update(() => this.createPendingRuntime(context, record));
             record.fingerprint = fingerprint;
+            await discardConnection(record);
           } catch (error) {
             log.warn(`remote runtime ${declaration.id} update failed`, { error });
           }
@@ -337,7 +353,11 @@ export class RemoteRuntimeProviderFactory implements RuntimeProviderFactory {
         projectWatch.dispose();
         for (const record of [...records.values()].toReversed()) {
           record.version += 1;
-          await record.handle.remove();
+          try {
+            await record.handle.remove();
+          } finally {
+            await discardConnection(record);
+          }
         }
         records.clear();
         await tail.catch(() => {});
@@ -364,6 +384,7 @@ export class RemoteRuntimeProviderFactory implements RuntimeProviderFactory {
     let inflight: Promise<void> | undefined;
     const version = record.version;
     const declaration = record.declaration;
+    const reroot = (cwd: string): Promise<void> => this.rerootRecord(context, record, cwd);
     const connectRuntime = (): Promise<void> => {
       inflight ??= (async () => {
         try {
@@ -393,19 +414,58 @@ export class RemoteRuntimeProviderFactory implements RuntimeProviderFactory {
             await connected.dispose();
             return;
           }
-          await record.handle.update(() => new ManagedRemoteRuntime(connected, connectRuntime));
+          const previous = record.connection;
+          record.connection = connected;
+          try {
+            await record.handle.update(() => new ManagedRemoteRuntime(connected, connectRuntime, reroot, {
+              workspaceId: context.id,
+              runtimeId: declaration.id,
+              generation: connected.identity.generation,
+              cwd: record.boundCwd,
+            }));
+          } catch (error) {
+            record.connection = previous;
+            await connected.dispose();
+            throw error;
+          }
+          await previous?.dispose();
         } finally {
           inflight = undefined;
         }
       })();
       return inflight;
     };
-    return new ManagedRemoteRuntime(undefined, connectRuntime, {
+    record.connect = connectRuntime;
+    return new ManagedRemoteRuntime(undefined, connectRuntime, reroot, {
       workspaceId: context.id,
       runtimeId: declaration.id,
       generation: `${declaration.id}-pending-${randomUUID()}`,
     });
   }
+
+  private async rerootRecord(context: RuntimeProviderContext, record: DeclaredRuntimeRecord, cwd: string): Promise<void> {
+    const connection = record.connection;
+    if (connection === undefined) {
+      // Pending or disconnected: the next connected view carries the cwd.
+      record.boundCwd = cwd;
+      return;
+    }
+    const connect = record.connect;
+    if (connect === undefined) throw new Error(`remote runtime ${record.declaration.id} has no connect callback`);
+    await record.handle.update(() => new ManagedRemoteRuntime(connection, connect, (next) => this.rerootRecord(context, record, next), {
+      workspaceId: context.id,
+      runtimeId: record.declaration.id,
+      generation: `${record.declaration.id}-root-${randomUUID()}`,
+      cwd,
+    }));
+    record.boundCwd = cwd;
+  }
+}
+
+async function discardConnection(record: DeclaredRuntimeRecord): Promise<void> {
+  const connection = record.connection;
+  record.connection = undefined;
+  await connection?.dispose();
 }
 
 export function watchProjectDeclarationFile(path: string, onChange: () => void): { dispose(): void } {

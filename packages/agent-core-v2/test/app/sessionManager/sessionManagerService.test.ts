@@ -995,6 +995,8 @@ describe('SessionManager remote runtime wiring', () => {
       readonly runtimeId?: string;
       readonly status?: 'ready' | 'disconnected';
       readonly connect?: () => Promise<void>;
+      readonly stat?: (path: string) => Promise<{ isDirectory: boolean }>;
+      readonly reroot?: (cwd: string) => Promise<void>;
     } = {},
   ) {
     const runtimeId = options.runtimeId ?? 'sandbox';
@@ -1009,8 +1011,16 @@ describe('SessionManager remote runtime wiring', () => {
         if (options.connect !== undefined) return options.connect();
         fake.setStatus('ready');
       },
-      fs: {},
+      fs: {
+        stat: options.stat ?? (async () => ({ isDirectory: true })),
+      },
       process: {},
+      reroot: options.reroot === undefined
+        ? undefined
+        : async (cwd: string) => {
+          calls.push(`reroot:${cwd}`);
+          await options.reroot!(cwd);
+        },
     });
     registry.register(connectable);
     return { fake: connectable, calls };
@@ -1023,6 +1033,8 @@ describe('SessionManager remote runtime wiring', () => {
       readonly runtimeId?: string;
       readonly status?: 'ready' | 'disconnected';
       readonly connect?: () => Promise<void>;
+      readonly stat?: (path: string) => Promise<{ isDirectory: boolean }>;
+      readonly reroot?: (cwd: string) => Promise<void>;
     };
   }) {
     const registry = new RuntimeRegistry('workspace-1');
@@ -1146,6 +1158,62 @@ describe('SessionManager remote runtime wiring', () => {
     await registry.dispose();
   });
 
+  it('re-roots the connected runtime with the validated cwd before creating the session', async () => {
+    const { manager, registry, byRuntime, remote } = remoteWiringSetup({
+      config: { sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
+      remote: { reroot: async () => {} },
+    });
+
+    await manager.create({ workDir: '/workspace', runtimeId: 'sandbox' });
+    expect(remote!.calls).toEqual(['connect', 'reroot:/home/me/sandbox']);
+    expect(byRuntime.has('sandbox')).toBe(true);
+    manager.dispose();
+    await registry.dispose();
+  });
+
+  it('re-roots an already-ready runtime when the session binds a different cwd', async () => {
+    const { manager, registry, remote } = remoteWiringSetup({
+      config: { sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
+      remote: { status: 'ready', reroot: async () => {} },
+    });
+
+    await manager.create({ workDir: '/workspace', runtimeId: 'sandbox', runtimeCwd: '/elsewhere' });
+    expect(remote!.calls).toEqual(['reroot:/elsewhere']);
+    manager.dispose();
+    await registry.dispose();
+  });
+
+  it('aborts creation with runtime.invalid_cwd when the cwd is not a directory on the target', async () => {
+    const { manager, registry, byRuntime, remote } = remoteWiringSetup({
+      config: { sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
+      remote: { stat: async () => ({ isDirectory: false }), reroot: async () => {} },
+    });
+
+    const failure = await manager.create({ workDir: '/workspace', runtimeId: 'sandbox' }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: 'runtime.invalid_cwd' });
+    expect(remote!.calls).toEqual(['connect']);
+    expect(byRuntime.size).toBe(0);
+    manager.dispose();
+    await registry.dispose();
+  });
+
+  it('aborts creation with runtime.invalid_cwd when the cwd is not readable on the target', async () => {
+    const { manager, registry, byRuntime } = remoteWiringSetup({
+      config: { sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
+      remote: {
+        stat: async (path) => {
+          throw new Error(`ENOENT: ${path}`);
+        },
+      },
+    });
+
+    const failure = await manager.create({ workDir: '/workspace', runtimeId: 'sandbox' }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: 'runtime.invalid_cwd' });
+    expect(byRuntime.size).toBe(0);
+    manager.dispose();
+    await registry.dispose();
+  });
+
   it('does not connect an explicit runtime id when the flag is off', async () => {
     const { manager, registry, byRuntime, remote } = remoteWiringSetup({
       config: { sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
@@ -1166,6 +1234,7 @@ describe('SessionManager remote runtime wiring', () => {
     readonly flagOn: boolean;
     readonly connect?: (fake: FakeRuntime) => Promise<void>;
     readonly persistedRuntimeId?: string;
+    readonly persistedCwd?: string | null;
   }) {
     const registry = new RuntimeRegistry('workspace-1');
     registry.register(Object.assign(new FakeRuntime(
@@ -1176,10 +1245,15 @@ describe('SessionManager remote runtime wiring', () => {
       { workspaceId: 'workspace-1', runtimeId: 'remote', generation: 'remote-one' },
       { status: options.remoteStatus, capabilities: ['fs', 'process'] },
     );
+    const callOrder: string[] = [];
     const remoteConnect = vi.fn(async () => {
+      callOrder.push('connect');
       await options.connect?.(remote);
     });
-    registry.register(Object.assign(remote, { fs: {}, process: {}, connect: remoteConnect }));
+    const remoteReroot = vi.fn(async (cwd: string) => {
+      callOrder.push(`reroot:${cwd}`);
+    });
+    registry.register(Object.assign(remote, { fs: {}, process: {}, connect: remoteConnect, reroot: remoteReroot }));
     const { program, byRuntime } = createCapture();
     const workspace = workspaceWith(registry, program);
     const workspaces = {
@@ -1190,10 +1264,18 @@ describe('SessionManager remote runtime wiring', () => {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
     } as unknown as ISessionIndex;
     const persistedRuntimeId = options.persistedRuntimeId ?? 'remote';
+    const persistedCwd = options.persistedCwd === undefined ? '/remote/work' : options.persistedCwd;
     const appendLogStore = {
       _serviceBrand: undefined,
       read: async function* () {
-        yield { type: 'runtime.set_binding', agentId: 'main', workspaceId: 'workspace-1', runtimeId: persistedRuntimeId, cwd: '/remote/work', time: 1 };
+        yield {
+          type: 'runtime.set_binding',
+          agentId: 'main',
+          workspaceId: 'workspace-1',
+          runtimeId: persistedRuntimeId,
+          cwd: persistedCwd ?? undefined,
+          time: 1,
+        };
       },
     } as unknown as IAppendLogStore;
     const warn = vi.fn();
@@ -1202,7 +1284,7 @@ describe('SessionManager remote runtime wiring', () => {
       appendLogStore,
       log: { _serviceBrand: undefined, warn, info: () => {}, error: () => {} } as unknown as ILogService,
     });
-    return { manager, byRuntime, registry, remoteConnect, warn };
+    return { manager, byRuntime, registry, remoteConnect, remoteReroot, callOrder, warn };
   }
 
   it('restores a remote-bound session on the local controller and reconnects the disconnected runtime in the background', async () => {
@@ -1348,6 +1430,48 @@ describe('SessionManager remote runtime wiring', () => {
     await manager.resume('session-1');
     expect(byRuntime.has('local')).toBe(true);
     expect(byRuntime.has('remote')).toBe(false);
+    expect(remoteConnect).not.toHaveBeenCalled();
+    manager.dispose();
+    await registry.dispose();
+  });
+
+  it('re-roots the restored runtime with the persisted cwd before the background reconnect', async () => {
+    const { manager, registry, remoteConnect, remoteReroot, callOrder } = restoreSetup({
+      remoteStatus: 'disconnected',
+      flagOn: true,
+    });
+
+    await manager.resume('session-1');
+    expect(remoteReroot).toHaveBeenCalledTimes(1);
+    expect(remoteReroot).toHaveBeenCalledWith('/remote/work');
+    expect(remoteConnect).toHaveBeenCalledTimes(1);
+    expect(callOrder).toEqual(['reroot:/remote/work', 'connect']);
+    manager.dispose();
+    await registry.dispose();
+  });
+
+  it('does not reroot a restored binding that has no persisted cwd', async () => {
+    const { manager, registry, remoteConnect, remoteReroot } = restoreSetup({
+      remoteStatus: 'disconnected',
+      flagOn: true,
+      persistedCwd: null,
+    });
+
+    await manager.resume('session-1');
+    expect(remoteReroot).not.toHaveBeenCalled();
+    expect(remoteConnect).toHaveBeenCalledTimes(1);
+    manager.dispose();
+    await registry.dispose();
+  });
+
+  it('does not reroot a restored binding when the runtime is already ready', async () => {
+    const { manager, registry, remoteConnect, remoteReroot } = restoreSetup({
+      remoteStatus: 'ready',
+      flagOn: true,
+    });
+
+    await manager.resume('session-1');
+    expect(remoteReroot).not.toHaveBeenCalled();
     expect(remoteConnect).not.toHaveBeenCalled();
     manager.dispose();
     await registry.dispose();

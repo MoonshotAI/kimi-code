@@ -450,6 +450,7 @@ interface LocalityFixture {
   readonly localGitCalls: string[];
   readonly localRoot: string;
   readonly remoteRoot: string;
+  readonly replaceRemote: (generation: string, cwd: string) => Promise<void>;
   readonly cleanup: () => Promise<void>;
 }
 
@@ -477,10 +478,11 @@ function scopedFs(base: string, realBase: string, inner: IHostFileSystem): IHost
   };
 }
 
-async function localityFixture(): Promise<LocalityFixture> {
+async function localityFixture(options: { readonly remoteCwd?: string } = {}): Promise<LocalityFixture> {
   const base = await mkdtemp(join(tmpdir(), 'kimi-program-locality-'));
   const localRoot = join(base, 'local');
   const remoteRoot = join(base, 'target');
+  const remoteCwd = 'remoteCwd' in options ? options.remoteCwd : remoteRoot;
   const homeDir = join(base, 'home');
   const remoteHomeDir = join(base, 'remote-home');
   const kimiHome = join(homeDir, '.kimi-code');
@@ -624,12 +626,14 @@ async function localityFixture(): Promise<LocalityFixture> {
     ),
     { fs: realFs, process: new HostProcessService() },
   ) as FakeRuntime);
-  registry.register(Object.assign(
+  const remoteRegistration = registry.register(Object.assign(
     new FakeRuntime(
-      { workspaceId: 'workspace', runtimeId: 'remote', generation: 'remote-one', cwd: remoteRoot },
+      { workspaceId: 'workspace', runtimeId: 'remote', generation: 'remote-one', cwd: remoteCwd },
       { capabilities: ['fs', 'process'], environment: { homeDir: remoteHomeDir } },
     ),
-    { fs: scopedFs(remoteRoot, await realpath(remoteRoot), realFs), process: new HostProcessService() },
+    remoteCwd === undefined
+      ? { fs: realFs, process: new HostProcessService() }
+      : { fs: scopedFs(remoteRoot, await realpath(remoteRoot), realFs), process: new HostProcessService() },
   ) as FakeRuntime);
 
   const generations = (program as unknown as { generations: Map<string, GenerationAccess> }).generations;
@@ -642,6 +646,15 @@ async function localityFixture(): Promise<LocalityFixture> {
     localGitCalls,
     localRoot,
     remoteRoot,
+    replaceRemote: async (generation: string, cwd: string) => {
+      await remoteRegistration.replace(Object.assign(
+        new FakeRuntime(
+          { workspaceId: 'workspace', runtimeId: 'remote', generation, cwd },
+          { capabilities: ['fs', 'process'], environment: { homeDir: remoteHomeDir } },
+        ),
+        { fs: scopedFs(cwd, await realpath(cwd), realFs), process: new HostProcessService() },
+      ) as FakeRuntime);
+    },
     cleanup: async () => {
       program.dispose();
       await registry.dispose();
@@ -725,6 +738,63 @@ describe('Program.createGeneration workspace and user locality', () => {
 
       const listed = await remote.fs.list({ path: '.', depth: 1, limit: 100, show_hidden: false, follow_gitignore: false, sort: 'name_asc', include_git_status: false });
       expect(listed.items.map((entry) => entry.name)).toContain('AGENTS.md');
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+});
+
+describe('Program remote generation activation', () => {
+  it('re-roots a reconciled remote generation when the runtime registration gains identity.cwd', async () => {
+    const fixture = await localityFixture({ remoteCwd: undefined });
+    try {
+      const local = fixture.generations.get('local')!;
+      await awaitLocality(local);
+      const first = fixture.program.createSessionController('remote');
+      expect(fixture.program.sessionControllerGenerationFor('remote')).toBe('remote-one');
+      expect(fixture.controllerInputs).toHaveLength(1);
+      const stale = fixture.generations.get('remote')!;
+      await awaitLocality(stale);
+      expect(stale.instructions.snapshot.agentsMd).toContain('local project instructions');
+      expect(stale.dirs.additionalDirs).toEqual([join(fixture.localRoot, 'localextra')]);
+
+      await fixture.replaceRemote('remote-two', fixture.remoteRoot);
+
+      expect(fixture.program.sessionControllerGenerationFor('remote')).toBe('remote-two');
+      fixture.program.createSessionController('remote');
+      expect(fixture.controllerInputs).toHaveLength(2);
+      const remote = fixture.generations.get('remote')!;
+      await awaitLocality(remote);
+
+      const agentsMd = remote.instructions.snapshot.agentsMd ?? '';
+      expect(agentsMd).toContain('target project instructions');
+      expect(agentsMd).not.toContain('local project instructions');
+      expect(remote.dirs.additionalDirs).toEqual([join(fixture.remoteRoot, 'targetextra')]);
+      expect(remote.skills.catalog.listSkills().map((skill) => skill.name)).toEqual(['target-skill', 'user-skill']);
+      expect(fixture.controllerInputs[0]!.instructions).not.toBe(remote.instructions);
+      expect(fixture.controllerInputs[1]!.instructions).toBe(remote.instructions);
+
+      expect(local.instructions.snapshot.agentsMd).toContain('local project instructions');
+      expect(local.dirs.additionalDirs).toEqual([join(fixture.localRoot, 'localextra')]);
+      first.dispose();
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it('roots the first remote generation at the target when the registration is re-rooted before the controller', async () => {
+    const fixture = await localityFixture({ remoteCwd: undefined });
+    try {
+      await fixture.replaceRemote('remote-two', fixture.remoteRoot);
+
+      fixture.program.createSessionController('remote');
+      const remote = fixture.generations.get('remote')!;
+      await awaitLocality(remote);
+
+      expect(fixture.program.sessionControllerGenerationFor('remote')).toBe('remote-two');
+      expect(remote.instructions.snapshot.agentsMd).toContain('target project instructions');
+      expect(remote.dirs.additionalDirs).toEqual([join(fixture.remoteRoot, 'targetextra')]);
+      expect(remote.skills.catalog.listSkills().map((skill) => skill.name)).toEqual(['target-skill', 'user-skill']);
     } finally {
       await fixture.cleanup();
     }
