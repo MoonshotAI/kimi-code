@@ -197,7 +197,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       }
       const promptText = plan.fork
         ? opts.prompt
-        : await this.applyPromptPrefix(plan.profileName, opts.prompt, lease!.runtime);
+        : await this.applyPromptPrefix(plan.profileName, opts.prompt, lease!.runtime, callerBinding.cwd);
       return {
         agentId: created.id,
         profileName: plan.profileName,
@@ -218,11 +218,12 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     profileName: string,
     prompt: string,
     runtime: Runtime,
+    cwd: string | undefined,
   ): Promise<string> {
     const profile = this.catalog.get(profileName);
     if (profile?.promptPrefix === undefined) return prompt;
     const view = new RuntimeWorkspaceView(runtime, {
-      workDir: this.sessionContext.cwd,
+      workDir: cwd ?? this.sessionContext.cwd,
     });
     return applyProfilePromptPrefix(profile, prompt, {
       cwd: view.workDir,
