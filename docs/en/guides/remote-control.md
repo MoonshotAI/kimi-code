@@ -88,6 +88,10 @@ Remote Control is only a remote window — all computation and file operations s
 - **Local process exits**: pressing `Ctrl+C` or closing the terminal stops Remote Control and takes the device off the remote list. Restart it to recover
 - **End the remote connection but keep the local task**: just close the web page — the local task is unaffected
 
+## Performance on slow links
+
+How the tunnel caches the web UI depends on whether it had to rewrite a file. Fonts, wasm and other binary assets (the hashed files under `/assets/`) keep their long-lived `Cache-Control` headers, so the remote browser caches them across sessions. HTML, JavaScript and CSS are rewritten under the device prefix, so they are stored with `Cache-Control: public, no-cache` and a versioned `ETag`: the browser revalidates them on every load, which is a cheap `304 Not Modified` when the bundle has not changed, and only refetches what actually changed. The first load on a slow link still transfers the full bundle once. Text responses (HTML, JavaScript, CSS, JSON, SVG) are gzip-compressed on the tunnel when the browser accepts gzip; the versioned validator is weak, so a compressed copy still revalidates with a `304`.
+
 ## What's the difference between Remote Control and Kimi Code Web?
 
 [Kimi Code Web](../guides/web.md) is the graphical interface on your machine or LAN; Remote Control extends it to any device on the public internet:

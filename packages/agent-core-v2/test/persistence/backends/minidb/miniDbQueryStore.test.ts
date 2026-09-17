@@ -237,7 +237,7 @@ describe('MiniDbQueryStore', () => {
       { kind: 'put', collection: COLLECTION, key: 'b', value: { v: 2 } },
     ]);
     const found = await store.getMany<{ v: number }>(COLLECTION, ['a', 'missing', 'b']);
-    expect([...found.keys()].sort()).toEqual(['a', 'b']);
+    expect([...found.keys()].toSorted()).toEqual(['a', 'b']);
     expect(found.get('a')).toEqual({ v: 1 });
     expect(found.get('b')).toEqual({ v: 2 });
     expect(await store.getMany(COLLECTION, [])).toEqual(new Map());

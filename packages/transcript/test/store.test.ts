@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { AgentTranscript } from '#/store/agentTranscript';
 import { TranscriptStore } from '#/store/transcriptStore';
 import { appendAtOffset } from '#/ops/apply';
+import { coalesceAppendOps } from '#/ops/coalesce';
 import type {
+  AppendOp,
   FrameUpsertOp,
   TurnUpsertOp,
   TranscriptOperation,
@@ -583,5 +585,83 @@ describe('TranscriptStore', () => {
     store.markDisposed('main', '2026-07-20T02:00:00.000Z');
     expect(store.agents()[0]?.disposedAt).toBe('2026-07-20T01:00:00.000Z');
     expect(rosters).toHaveLength(1);
+  });
+});
+
+describe('coalesceAppendOps', () => {
+  const frame = { type: 'frame', turnId: 't1', stepId: 't1.1', frameId: 't1.1.f1' } as const;
+  const append = (
+    target: AppendOp['target'],
+    offset: number,
+    text: string,
+  ): AppendOp => ({ op: 'append', target, offset, text });
+
+  it('merges adjacent contiguous appends to the same target into one op', () => {
+    expect(
+      coalesceAppendOps([append(frame, 0, 'Hel'), append(frame, 3, 'lo'), append(frame, 5, ' 🙂')]),
+    ).toEqual([append(frame, 0, 'Hello 🙂')]);
+  });
+
+  it('measures contiguity in UTF-16 code units like appendAtOffset', () => {
+    expect(coalesceAppendOps([append(frame, 0, '🙂'), append(frame, 2, '!')])).toEqual([
+      append(frame, 0, '🙂!'),
+    ]);
+    expect(coalesceAppendOps([append(frame, 0, '🙂'), append(frame, 1, '!')])).toEqual([
+      append(frame, 0, '🙂'),
+      append(frame, 1, '!'),
+    ]);
+  });
+
+  it('keeps appends apart when the next offset leaves a gap or overlaps', () => {
+    expect(coalesceAppendOps([append(frame, 0, 'ab'), append(frame, 3, 'c')])).toEqual([
+      append(frame, 0, 'ab'),
+      append(frame, 3, 'c'),
+    ]);
+    expect(coalesceAppendOps([append(frame, 0, 'ab'), append(frame, 1, 'bc')])).toEqual([
+      append(frame, 0, 'ab'),
+      append(frame, 1, 'bc'),
+    ]);
+  });
+
+  it('keeps appends apart when the targets differ', () => {
+    const otherFrame = { ...frame, frameId: 't1.1.f2' } as const;
+    const task = { type: 'task', taskId: 'task_1' } as const;
+    expect(
+      coalesceAppendOps([
+        append(frame, 0, 'a'),
+        append(otherFrame, 1, 'b'),
+        append(task, 0, 'x'),
+        append(task, 1, 'y'),
+        append({ type: 'task', taskId: 'task_2' }, 2, 'z'),
+      ]),
+    ).toEqual([
+      append(frame, 0, 'a'),
+      append(otherFrame, 1, 'b'),
+      append(task, 0, 'xy'),
+      append({ type: 'task', taskId: 'task_2' }, 2, 'z'),
+    ]);
+  });
+
+  it('passes non-append ops through untouched and preserves order across them', () => {
+    const stepUpsert: TranscriptOperation = {
+      op: 'step.upsert',
+      turnId: 't1',
+      step: { kind: 'step', stepId: 't1.1', turnId: 't1', ordinal: 1, state: 'running' },
+    };
+    const meta: TranscriptOperation = { op: 'meta.merge', meta: { activity: 'turn' } };
+    expect(
+      coalesceAppendOps([
+        stepUpsert,
+        append(frame, 0, 'a'),
+        append(frame, 1, 'b'),
+        meta,
+        append(frame, 2, 'c'),
+        append(frame, 3, 'd'),
+      ]),
+    ).toEqual([stepUpsert, append(frame, 0, 'ab'), meta, append(frame, 2, 'cd')]);
+  });
+
+  it('returns an empty list for empty input', () => {
+    expect(coalesceAppendOps([])).toEqual([]);
   });
 });

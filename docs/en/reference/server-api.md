@@ -953,15 +953,16 @@ The page unit is the turn: without a cursor the newest page is returned, and `ha
 
 #### `GET /api/v1/sessions/{session_id}/transcript/ops`
 
-Serves point-to-point catch-up from the server's op journal: the journaled op batches with `seq > since_seq` for one agent, oldest first. It is the REST counterpart of the `transcript_since` resume cursor described in [Transcript protocol](#transcript-protocol) and shares the same bounded journal, so the same fallback rule applies.
+Serves point-to-point catch-up from the server's op journal: the journaled op batches with `seq > since_seq` for one agent, oldest first, at most `limit` batches per response. It is the REST counterpart of the `transcript_since` resume cursor described in [Transcript protocol](#transcript-protocol) and shares the same bounded journal, so the same fallback rule applies.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 | `agent_id` | query | string | **Required.** Agent id (plain id, same constraint as the transcript endpoint) |
 | `since_seq` | query | integer | **Required.** The caller's last applied op-batch seq, minimum `0`; batches above it are returned |
+| `limit` | query | integer | Maximum batches per response, 1–500. Omit to receive every batch after `since_seq` (the pre-`limit` behaviour) |
 
-On success, `data` is `{ agent_id, batches, latest_seq, complete }`, each batch `{ seq, ops }`. `complete: true` means every batch up to `latest_seq` is present; `complete: false` means the journal no longer reaches back to `since_seq` (or the session is not live at all), and the caller must fall back to a full `GET .../transcript` refresh.
+On success, `data` is `{ agent_id, batches, latest_seq, complete, has_more }`, each batch `{ seq, ops }`. `latest_seq` is the newest seq covered by this response: the journal's newest seq, or the last returned batch `seq` when the response is capped. `has_more: true` means the cap cut the response short and newer batches remain — call again with `since_seq` set to `latest_seq` until `has_more` is `false`. `complete: true` means every batch from `since_seq` up to `latest_seq` is present (a capped response is still `complete`); `complete: false` means the journal no longer reaches back to `since_seq` (or the session is not live at all), and the caller must fall back to a full `GET .../transcript` refresh.
 
 - `40001`: validation failure
 - `40401`: session not found
@@ -2353,7 +2354,9 @@ The only endpoint is `ws://<host>:<port>/api/v1/ws`; authentication happens at t
 }
 ```
 
-Note that the server never sends heartbeats and never disconnects an idle connection — keepalive and reconnection are the client's job.
+`capabilities.compression` is `true` when the connection negotiated `permessage-deflate`; the server offers it by default (`KIMI_CODE_WS_COMPRESSION=0` disables it).
+
+The server sends an application-level `ping` frame every 10 s (`KIMI_CODE_WS_HEARTBEAT_MS`) and closes the connection (`1001`) after two intervals without any inbound frame — reply with `pong` (any frame counts). A peer that stops reading is closed with `1013 slow consumer` once outbound frames stall for 15 s or the queue exceeds 4096 frames. Reconnection is the client's job.
 
 ### Control frames
 
