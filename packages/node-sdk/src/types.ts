@@ -46,6 +46,7 @@ export interface SessionRuntimeInfo {
   readonly generation: string;
   readonly capabilities: readonly SessionRuntimeCapability[];
   readonly defaultCwd?: string;
+  readonly connectError?: string;
 }
 
 export interface SessionRuntimesInfo {

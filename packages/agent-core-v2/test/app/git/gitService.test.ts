@@ -53,6 +53,7 @@ describe('GitService', () => {
           _serviceBrand: undefined,
           inspect: () => runtime,
           acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
+          acquireWhenReady: async () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
         });
         reg.definePartialInstance(IWorkspaceInstanceManager, {
           findByRoot: () => ({ id: 'workspace-1' } as never),

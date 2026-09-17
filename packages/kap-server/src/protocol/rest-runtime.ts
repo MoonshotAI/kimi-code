@@ -22,6 +22,7 @@ export const sessionRuntimeEntrySchema = z.object({
   generation: z.string(),
   capabilities: z.array(z.enum(['fs', 'process', 'terminal'])),
   default_cwd: z.string().optional(),
+  connect_error: z.string().optional(),
 });
 
 export const sessionRuntimesResponseSchema = z.object({

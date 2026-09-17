@@ -89,6 +89,11 @@ function buildTool(
       track: (resource) => resource,
       dispose: () => {},
     }),
+    acquireWhenReady: async () => ({
+      runtime: runtimeValue,
+      track: (resource) => resource,
+      dispose: () => {},
+    }),
     reconnect: async () => {},
     workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
   };

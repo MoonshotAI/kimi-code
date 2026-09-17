@@ -9316,6 +9316,36 @@ describe('KimiTUI runtime slot (experimental remote runtime)', () => {
     expect(after.split('Runtime ssh:dev-box disconnected').length - 1).toBe(1);
   });
 
+  it('carries the disconnect reason into appState for the footer slot', async () => {
+    const session = runtimeSession({
+      listRuntimes: vi.fn(async () => ({
+        workspaceId: 'ws-1',
+        runtimes: [
+          { runtimeId: 'local', type: 'local', status: 'ready', generation: 'g0', capabilities: [] },
+          {
+            runtimeId: 'dev-box',
+            type: 'ssh',
+            status: 'disconnected',
+            generation: 'g1',
+            capabilities: ['fs'],
+            connectError: 'ssh: connect failed (code 255)',
+          },
+        ],
+        sshHosts: [],
+      })),
+    });
+    const { driver } = await makeDriver(session);
+    setExperimentalFeatures([{ id: 'remote_runtime', enabled: true }]);
+    await driver.refreshRuntimeSlot();
+    expect(driver.state.appState.runtime).toEqual({
+      runtimeId: 'dev-box',
+      type: 'ssh',
+      status: 'disconnected',
+      cwd: '/home/me/projects',
+      connectError: 'ssh: connect failed (code 255)',
+    });
+  });
+
   it('clears the slot when the flag is toggled off mid-session', async () => {
     const { driver } = await makeDriver(runtimeSession());
     setExperimentalFeatures([{ id: 'remote_runtime', enabled: true }]);

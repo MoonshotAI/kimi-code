@@ -220,6 +220,9 @@ function buildRuntimeFsScope(
         dispose: () => {},
       };
     },
+    acquireWhenReady(_binding, capabilities = []) {
+      return Promise.resolve(this.acquire(_binding, capabilities));
+    },
   };
   const instances = {
     findByRoot: (root: string) => root === mapped.workDir ? { id: workspaceId } : undefined,
@@ -971,5 +974,5 @@ function buildValidationEnvelope(
 function sanitizeFilename(rel: string): string {
   const segs = rel.split('/');
   const base = segs.at(-1) ?? rel;
-  return base.replaceAll(/"/g, '\\"');
+  return base.replaceAll('"', '\\"');
 }

@@ -110,6 +110,10 @@ class TestRuntimeResolver implements IRuntimeResolver {
   acquire(_binding: RuntimeBinding, _required?: readonly RuntimeCapability[]): RuntimeLease {
     return { runtime: this.runtime, track: (resource) => resource, dispose: () => {} };
   }
+
+  acquireWhenReady(_binding: RuntimeBinding, _required?: readonly RuntimeCapability[]): Promise<RuntimeLease> {
+    return Promise.resolve({ runtime: this.runtime, track: (resource) => resource, dispose: () => {} });
+  }
 }
 
 const PARENT_SYSTEM_PROMPT = 'You are the parity probe parent.';

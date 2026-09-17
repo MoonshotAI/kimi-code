@@ -75,6 +75,7 @@ function makeTool(options: WriteFsOptions = {}, workspace = PERMISSIVE_WORKSPACE
     isAvailable: () => true,
     inspect: () => backend,
     acquire: () => ({ runtime: backend, track: (resource) => resource, dispose: () => {} }),
+    acquireWhenReady: async () => ({ runtime: backend, track: (resource) => resource, dispose: () => {} }),
     reconnect: async () => {},
     workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
   };
@@ -190,6 +191,7 @@ describe('WriteTool', () => {
       isAvailable: () => true,
       inspect: () => backend,
       acquire: () => ({ runtime: backend, track: (resource) => resource, dispose: () => {} }),
+      acquireWhenReady: async () => ({ runtime: backend, track: (resource) => resource, dispose: () => {} }),
       reconnect: async () => {},
       workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
     };

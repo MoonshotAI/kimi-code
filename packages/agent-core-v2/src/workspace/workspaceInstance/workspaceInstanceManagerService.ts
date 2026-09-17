@@ -309,6 +309,13 @@ export class RuntimeResolver implements IRuntimeResolver {
     }
     return workspace.runtimes.acquire(binding, required);
   }
+  async acquireWhenReady(binding: RuntimeBinding, required: readonly RuntimeCapability[] = []): Promise<RuntimeLease> {
+    const workspace = this.workspaces.get(binding.workspaceId);
+    if (workspace === undefined) {
+      throw new RuntimeError('runtime.not_found', `workspace ${binding.workspaceId} is not materialized`);
+    }
+    return workspace.runtimes.acquireWhenReady(binding, required);
+  }
 }
 
 registerScopedService(LifecycleScope.App, IWorkspaceInstanceManager, WorkspaceInstanceManager, ScopeActivation.OnScopeCreated, 'workspaceInstanceManager');

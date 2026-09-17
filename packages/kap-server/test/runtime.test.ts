@@ -31,6 +31,7 @@ interface RuntimeEntryWire {
   generation: string;
   capabilities: string[];
   default_cwd?: string;
+  connect_error?: string;
 }
 
 interface RuntimesWire {
@@ -274,6 +275,22 @@ describe('server-v2 /api/v1 runtime routes', () => {
       });
       expect(missing.body.code).toBe(40420);
     }, 90_000);
+
+    it('surfaces the connect failure reason as connect_error in the runtime list', async () => {
+      const id = await createSession();
+
+      const dying = await call<null>('POST', `/api/v1/sessions/${id}/runtime`, {
+        runtime_id: 'dying',
+        cwd: '/tmp',
+      });
+      expect(dying.body.code).toBe(40926);
+
+      const runtimes = await call<RuntimesWire>('GET', `/api/v1/sessions/${id}/runtimes`);
+      const entry = runtimes.body.data.runtimes.find((candidate) => candidate.runtime_id === 'dying');
+      expect(entry?.status).toBe('disconnected');
+      expect(entry?.connect_error).toContain('code 127');
+      expect(entry?.connect_error).toContain('kimi: command not found');
+    }, 30_000);
 
     it('defers workspace root validation to the first runtime binding', async () => {
       const missingRoot = join(home as string, 'never-created');

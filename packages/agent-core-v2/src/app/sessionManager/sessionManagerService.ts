@@ -425,9 +425,13 @@ export class SessionManager implements ISessionManager {
     const runtime = located.workspace.runtimes.current(runtimeId);
     if (runtime === undefined || runtimeStatusAllows(runtime, ['fs', 'process'])) return;
     if (typeof runtime.connect !== 'function') return;
-    void runtime.connect().catch((error: unknown) => {
+    try {
+      void runtime.connect().catch((error: unknown) => {
+        this.log.warn(`background reconnect of restored runtime ${runtimeId} failed`, { error });
+      });
+    } catch (error) {
       this.log.warn(`background reconnect of restored runtime ${runtimeId} failed`, { error });
-    });
+    }
   }
 
   private async peekPersistedRuntimeId(workspaceId: string, sessionId: string): Promise<string | undefined> {

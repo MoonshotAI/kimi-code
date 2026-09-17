@@ -72,7 +72,9 @@ export class EditTool implements IEditTool {
           homeDir: env.homeDir,
         }),
       execute: async () => {
-        const lease = this.runtime.acquire(['fs']);
+        const lease = this.runtime.isAvailable(['fs'])
+          ? this.runtime.acquire(['fs'])
+          : await this.runtime.acquireWhenReady(['fs']);
         try {
           if (lease.runtime.identity.generation !== inspected.identity.generation) {
             return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };

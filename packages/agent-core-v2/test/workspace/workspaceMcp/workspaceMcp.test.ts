@@ -128,6 +128,7 @@ describe('WorkspaceMcpService', () => {
           _serviceBrand: undefined,
           inspect: () => runtime,
           acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
+          acquireWhenReady: async () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
         });
         reg.definePartialInstance(ISessionManager, {
           onWillCreateSession: assemblyEvents.event,

@@ -2448,6 +2448,7 @@ export class KimiTUI {
       type: info?.type ?? (binding.runtimeId === 'local' ? 'local' : 'command'),
       status: info?.status ?? 'ready',
       cwd: binding.cwd,
+      connectError: info?.connectError,
     };
     const previous = this.state.appState.runtime;
     if (
@@ -2455,7 +2456,8 @@ export class KimiTUI {
       previous.runtimeId === next.runtimeId &&
       previous.type === next.type &&
       previous.status === next.status &&
-      previous.cwd === next.cwd
+      previous.cwd === next.cwd &&
+      previous.connectError === next.connectError
     ) {
       return;
     }

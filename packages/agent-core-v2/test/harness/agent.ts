@@ -1358,6 +1358,7 @@ export class AgentTestContext {
                 }
                 return { runtime, track: (resource) => resource, dispose: () => {} };
               },
+              acquireWhenReady(required = []) { return Promise.resolve(this.acquire(required)); },
               reconnect: async () => {},
               workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
             });

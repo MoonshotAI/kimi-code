@@ -212,6 +212,7 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
           _serviceBrand: undefined,
           inspect: (binding) => transientRuntimes!.inspect(binding),
           acquire: (binding, required) => transientRuntimes!.acquire(binding, required),
+          acquireWhenReady: (binding, required) => transientRuntimes!.acquireWhenReady(binding, required),
         };
       }
     }

@@ -35,6 +35,7 @@ export interface IRuntimeResolver {
   readonly _serviceBrand: undefined;
   inspect(binding: RuntimeBinding): Runtime;
   acquire(binding: RuntimeBinding, required?: readonly RuntimeCapability[]): RuntimeLease;
+  acquireWhenReady(binding: RuntimeBinding, required?: readonly RuntimeCapability[]): Promise<RuntimeLease>;
 }
 
 export const IRuntimeResolver: ServiceIdentifier<IRuntimeResolver> = createDecorator<IRuntimeResolver>('runtimeResolver');

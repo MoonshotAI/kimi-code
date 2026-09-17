@@ -114,6 +114,7 @@ function createRuntime(
     isAvailable: () => true,
     inspect: () => runtime,
     acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
+    acquireWhenReady: async () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
     reconnect: async () => {},
     workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
   };

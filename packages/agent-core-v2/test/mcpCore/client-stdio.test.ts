@@ -37,6 +37,11 @@ function createClient(
         track: (resource) => resource,
         dispose: () => {},
       }),
+      acquireWhenReady: async () => ({
+        runtime,
+        track: (resource) => resource,
+        dispose: () => {},
+      }),
     },
     workspaceId: 'workspace',
     runtimeId: 'local',

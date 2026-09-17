@@ -223,6 +223,7 @@ function createHarness(
           track: (resource) => resource,
           dispose: () => {},
         }),
+        acquireWhenReady() { return Promise.resolve(this.acquire()); },
         reconnect: async () => {},
         workspaceRoots: () => ({ workDir: homeDir, additionalDirs: [] }),
       } satisfies IAgentRuntimeService);

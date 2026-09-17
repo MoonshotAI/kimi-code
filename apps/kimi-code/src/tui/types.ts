@@ -32,6 +32,7 @@ export interface RuntimeSlotState {
   readonly type: SessionRuntimeType;
   readonly status: SessionRuntimeStatus;
   readonly cwd?: string;
+  readonly connectError?: string;
 }
 
 export interface AppState {

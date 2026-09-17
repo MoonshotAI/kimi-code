@@ -5,7 +5,8 @@
  * One row per registered runtime (local first) plus a synthetic
  * `[ Add Runtime ]` action row. Each runtime row shows its id, the bound
  * runtime's `← current` marker, and a secondary line with type, connection
- * status, and the declaration's defaultCwd. A disconnected bound row offers
+ * status, the disconnect reason while disconnected, and the declaration's
+ * defaultCwd. A disconnected bound row offers
  * an explicit reconnect on `R`; switch and reconnect failures surface inline
  * (exit code and bounded stderr ride the engine's error message).
  *
@@ -42,6 +43,7 @@ export interface RuntimeManagerRuntime {
   readonly type: SessionRuntimeType;
   readonly status: SessionRuntimeStatus;
   readonly defaultCwd?: string;
+  readonly connectError?: string;
 }
 
 export interface RuntimeManagerOptions {
@@ -296,6 +298,9 @@ function renderSecondary(runtime: RuntimeManagerRuntime, width: number): string 
         ? currentTheme.fg('error', text)
         : currentTheme.fg('textDim', text);
   let line = currentTheme.fg('textMuted', `      ${runtime.type} · `) + statusStyle(runtime.status);
+  if (runtime.status === 'disconnected' && runtime.connectError !== undefined) {
+    line += currentTheme.fg('error', ` · ${runtime.connectError.split('\n', 1)[0]}`);
+  }
   if (runtime.defaultCwd !== undefined && runtime.defaultCwd.length > 0) {
     line += currentTheme.fg('textMuted', ` · ${runtime.defaultCwd}`);
   }
