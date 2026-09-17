@@ -11,11 +11,14 @@ import {
   ISessionContext,
   IWorkspaceInstanceManager,
   IWorkspaceService,
+  PROJECT_RUNTIMES_FILE,
   REMOTE_RUNTIME_FLAG_ID,
+  RUNTIMES_SECTION,
   readSshConfigHosts,
   resolveWorkspaceRuntimeDeclarations,
   resumeSessionById,
   RuntimeError,
+  RuntimesSectionSchema,
   type IAgentScopeHandle,
   type RemoteRuntimeEntry,
   type RuntimeBinding,
@@ -23,7 +26,12 @@ import {
   type Scope,
   type WorkspaceInstance,
 } from '@moonshot-ai/agent-core-v2';
+import { planConfigWriteback } from '@moonshot-ai/agent-core-v2/app/config/tomlWriteback';
+import { HostFsError, OsFsErrors } from '@moonshot-ai/agent-core-v2/os/interface/hostFsErrors';
 import { HandshakeError } from '@moonshot-ai/remote-exec';
+import { dirname, join } from 'node:path';
+import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
+import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
@@ -174,10 +182,201 @@ export function registerRuntimeRoutes(app: RuntimeRouteHost, core: Scope): void 
     },
   );
   app.get(listRoute.path, listRoute.options, listRoute.handler as Parameters<RuntimeRouteHost['get']>[2]);
+
+  const declareRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/sessions/{session_id}/runtimes',
+      params: sessionRuntimeParamsSchema,
+      body: declareRuntimeRequestSchema,
+      success: { data: declareRuntimeResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: {},
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.RUNTIME_UNAVAILABLE]: {},
+      },
+      description: 'Declare a runtime for the session workspace (experimental remote runtime)',
+      tags: ['sessions'],
+    },
+    async (req, reply) => {
+      try {
+        if (!remoteRuntimeEnabled(core)) {
+          reply.send(
+            errEnvelope(
+              ErrorCode.RUNTIME_UNAVAILABLE,
+              'runtime declare is unavailable: experimental flag remote_runtime is disabled',
+              req.id,
+            ),
+          );
+          return;
+        }
+        const session = await resumeSessionById(core.accessor, req.params.session_id);
+        if (session === undefined) {
+          throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${req.params.session_id} does not exist`);
+        }
+        const workspaceId = session.accessor.get(ISessionContext).workspaceId;
+        const scope = req.body.scope ?? 'global';
+        const entry = toEngineRuntimeEntry(req.body.entry);
+        if (scope === 'project') {
+          const instance = await resolveWorkspaceInstance(core, workspaceId);
+          await writeProjectRuntimeDeclaration(
+            core.accessor.get(IHostFileSystem),
+            instance.root,
+            req.body.runtime_id,
+            entry,
+          );
+        } else {
+          const config = core.accessor.get(IConfigService);
+          await config.ready;
+          await config.set(RUNTIMES_SECTION, { [req.body.runtime_id]: entry });
+        }
+        reply.send(okEnvelope({ workspace_id: workspaceId, runtime_id: req.body.runtime_id, scope }, req.id));
+      } catch (error) {
+        sendRuntimeRouteError(reply, req.id, error);
+      }
+    },
+  );
+  app.post(declareRoute.path, declareRoute.options, declareRoute.handler as Parameters<RuntimeRouteHost['post']>[2]);
 }
 
 function remoteRuntimeEnabled(core: Scope): boolean {
   return core.accessor.get(IFlagService).enabled(REMOTE_RUNTIME_FLAG_ID);
+}
+
+const declareRuntimeEntrySchema = z.union([
+  z
+    .object({
+      type: z.literal('ssh'),
+      host: z.string().min(1),
+      remote_bin: z.string().min(1).optional(),
+      default_cwd: z.string().min(1).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('docker'),
+      container: z.string().min(1),
+      context: z.string().min(1).optional(),
+      remote_bin: z.string().min(1).optional(),
+      default_cwd: z.string().min(1).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      command: z.string().min(1),
+      args: z.array(z.string()).optional(),
+      env: z.record(z.string(), z.string()).optional(),
+      default_cwd: z.string().min(1).optional(),
+    })
+    .strict(),
+]);
+
+const declareRuntimeRequestSchema = z.object({
+  runtime_id: z.string().min(1),
+  scope: z.enum(['global', 'project']).optional(),
+  entry: declareRuntimeEntrySchema,
+});
+
+const declareRuntimeResponseSchema = z.object({
+  workspace_id: z.string(),
+  runtime_id: z.string(),
+  scope: z.enum(['global', 'project']),
+});
+
+function toEngineRuntimeEntry(entry: z.infer<typeof declareRuntimeEntrySchema>): RemoteRuntimeEntry {
+  if ('command' in entry) {
+    return { command: entry.command, args: entry.args, env: entry.env, defaultCwd: entry.default_cwd };
+  }
+  if (entry.type === 'ssh') {
+    return { type: 'ssh', host: entry.host, remoteBin: entry.remote_bin, defaultCwd: entry.default_cwd };
+  }
+  return {
+    type: 'docker',
+    container: entry.container,
+    context: entry.context,
+    remoteBin: entry.remote_bin,
+    defaultCwd: entry.default_cwd,
+  };
+}
+
+async function writeProjectRuntimeDeclaration(
+  fs: IHostFileSystem,
+  root: string,
+  id: string,
+  entry: RemoteRuntimeEntry,
+): Promise<void> {
+  const filePath = join(root, PROJECT_RUNTIMES_FILE);
+  const onDiskText = await readProjectRuntimesText(fs, filePath);
+  const previous = parseProjectRuntimes(onDiskText, filePath);
+  if (previous[id] !== undefined) {
+    throw new Error2(ErrorCodes.CONFIG_INVALID, `Runtime id "${id}" is already declared in ${filePath}.`);
+  }
+  const nextEntry = stripUndefined(entry) as RemoteRuntimeEntry;
+  const merged = { ...previous, [id]: nextEntry };
+  const validation = RuntimesSectionSchema.safeParse(merged);
+  if (!validation.success) {
+    throw new Error2(
+      ErrorCodes.CONFIG_INVALID,
+      `Invalid runtimes in ${filePath}: ${validation.error.issues.map((issue) => issue.message).join('; ')}`,
+    );
+  }
+  const planned =
+    onDiskText === undefined
+      ? undefined
+      : planConfigWriteback(
+          onDiskText,
+          [{ snakeKey: id, previousValue: undefined, nextValue: nextEntry }],
+          merged,
+        );
+  const text = planned ?? stringifyToml(merged);
+  await fs.mkdir(dirname(filePath), { recursive: true });
+  await fs.writeText(filePath, text.endsWith('\n') ? text : `${text}\n`);
+}
+
+async function readProjectRuntimesText(
+  fs: IHostFileSystem,
+  filePath: string,
+): Promise<string | undefined> {
+  try {
+    return await fs.readText(filePath);
+  } catch (error: unknown) {
+    if (error instanceof HostFsError && error.code === OsFsErrors.codes.OS_FS_NOT_FOUND) return undefined;
+    throw new Error2(
+      ErrorCodes.CONFIG_INVALID,
+      `Failed to read ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+}
+
+function parseProjectRuntimes(text: string | undefined, filePath: string): Record<string, unknown> {
+  if (text === undefined || text.trim().length === 0) return {};
+  let data: unknown;
+  try {
+    data = parseToml(text);
+  } catch (error: unknown) {
+    throw new Error2(
+      ErrorCodes.CONFIG_INVALID,
+      `Invalid TOML in ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    throw new Error2(ErrorCodes.CONFIG_INVALID, `Invalid runtimes in ${filePath}: not a table`);
+  }
+  return data as Record<string, unknown>;
+}
+
+function stripUndefined(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripUndefined);
+  if (typeof value === 'object' && value !== null) {
+    const out: Record<string, unknown> = {};
+    for (const [key, nested] of Object.entries(value)) {
+      if (nested !== undefined) out[key] = stripUndefined(nested);
+    }
+    return out;
+  }
+  return value;
 }
 
 async function resolveRuntimeAgent(core: Scope, sessionId: string): Promise<IAgentScopeHandle> {

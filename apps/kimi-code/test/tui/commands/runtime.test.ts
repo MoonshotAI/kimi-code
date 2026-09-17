@@ -42,11 +42,11 @@ function makeHost(options: {
   currentRuntimeId?: string;
   switchError?: Error;
   reconnectError?: Error;
-  setConfigError?: Error;
+  declareError?: Error;
   registrationDelayCalls?: number;
 }) {
   let currentList = options.list ?? makeRuntimesInfo();
-  // Simulate the engine's declaration watch: once setConfig writes a
+  // Simulate the engine's declaration watch: once declareRuntime writes a
   // [runtimes] entry, listRuntimes includes the new runtime — after
   // `registrationDelayCalls` polls, to mimic the async reconcile.
   let callsAfterAdd = -1;
@@ -70,30 +70,27 @@ function makeHost(options: {
       if (options.reconnectError !== undefined) throw options.reconnectError;
       return { workspaceId: 'ws-1', runtimeId: options.currentRuntimeId ?? 'local' };
     }),
+    declareRuntime: vi.fn(
+      async (input: { id: string; entry: { type?: string; defaultCwd?: string }; scope?: string }) => {
+        if (options.declareError !== undefined) throw options.declareError;
+        callsAfterAdd = 0;
+        pending = {
+          runtimeId: input.id,
+          type: input.entry.type ?? 'command',
+          status: 'disconnected',
+          generation: `g-${input.id}`,
+          capabilities: [],
+          defaultCwd: input.entry.defaultCwd,
+        } as unknown as SessionRuntimesInfo['runtimes'][number];
+      },
+    ),
   };
   const mounted: MountedPanel[] = [];
   const host = {
     state: { appState: { model: 'test-model' } },
     session: session as unknown as Session,
     requireSession: () => session as unknown as Session,
-    harness: {
-      setConfig: vi.fn(async (patch: unknown) => {
-        if (options.setConfigError !== undefined) throw options.setConfigError;
-        callsAfterAdd = 0;
-        const declared = (patch as { runtimes?: Record<string, { type?: string; defaultCwd?: string }> }).runtimes ?? {};
-        for (const [id, entry] of Object.entries(declared)) {
-          pending = {
-            runtimeId: id,
-            type: entry.type ?? 'command',
-            status: 'disconnected',
-            generation: `g-${id}`,
-            capabilities: [],
-            defaultCwd: entry.defaultCwd,
-          } as unknown as SessionRuntimesInfo['runtimes'][number];
-        }
-        return patch;
-      }),
-    },
+    harness: {},
     mountEditorReplacement: vi.fn((panel: MountedPanel) => {
       mounted.push(panel);
     }),
@@ -215,7 +212,7 @@ describe('handleRuntimeCommand', () => {
   });
 
   it('adds an ssh runtime from a discovery candidate through the full form flow', async () => {
-    const { host, mounted } = makeHost({});
+    const { host, session, mounted } = makeHost({});
     await handleRuntimeCommand(host);
 
     const manager = latest(mounted, RuntimeManagerComponent);
@@ -244,11 +241,14 @@ describe('handleRuntimeCommand', () => {
     form.handleInput(TAB); // id (empty -> derives from host)
     form.handleInput(TAB); // defaultCwd
     typeText(form, '/home/me/projects');
-    form.handleInput(ENTER);
+    form.handleInput(ENTER); // defaultCwd → scope
+    form.handleInput(ENTER); // scope → submit (default: global)
 
     await vi.waitFor(() => {
-      expect(host.harness.setConfig).toHaveBeenCalledWith({
-        runtimes: { staging: { type: 'ssh', host: 'staging', defaultCwd: '/home/me/projects' } },
+      expect(session.declareRuntime).toHaveBeenCalledWith({
+        id: 'staging',
+        entry: { type: 'ssh', host: 'staging', defaultCwd: '/home/me/projects' },
+        scope: 'global',
       });
     });
     await vi.waitFor(() => {
@@ -256,6 +256,56 @@ describe('handleRuntimeCommand', () => {
     });
     // The watch-driven registration lands before the manager reopens, so the
     // new runtime is listed immediately.
+    await vi.waitFor(() => {
+      const reopened = latest(mounted, RuntimeManagerComponent);
+      const plain = reopened.render(120).join('\n').replaceAll(/\[[0-9;]*m/g, '');
+      expect(plain).toContain('staging');
+    });
+  });
+
+  it('adds a project-scope runtime through the form scope control', async () => {
+    const { host, session, mounted } = makeHost({});
+    await handleRuntimeCommand(host);
+
+    const manager = latest(mounted, RuntimeManagerComponent);
+    manager.handleInput(DOWN);
+    manager.handleInput(DOWN);
+    manager.handleInput(DOWN);
+    manager.handleInput(ENTER); // [ Add Runtime ]
+
+    await vi.waitFor(() => {
+      expect(mounted.some((p) => p instanceof ChoicePickerComponent)).toBe(true);
+    });
+    const typePicker = latest(mounted, ChoicePickerComponent);
+    typePicker.handleInput(ENTER); // SSH host
+
+    await vi.waitFor(() => {
+      expect(mounted.filter((p) => p instanceof ChoicePickerComponent).length).toBe(2);
+    });
+    const hostPicker = latest(mounted, ChoicePickerComponent);
+    hostPicker.handleInput(DOWN); // 'staging'
+    hostPicker.handleInput(ENTER);
+
+    await vi.waitFor(() => {
+      expect(mounted.some((p) => p instanceof RuntimeAddDialogComponent)).toBe(true);
+    });
+    const form = latest(mounted, RuntimeAddDialogComponent);
+    form.handleInput(TAB); // id
+    form.handleInput(TAB); // defaultCwd
+    form.handleInput(TAB); // scope
+    form.handleInput('\u001B[C'); // → project
+    form.handleInput(ENTER); // submit
+
+    await vi.waitFor(() => {
+      expect(session.declareRuntime).toHaveBeenCalledWith({
+        id: 'staging',
+        entry: { type: 'ssh', host: 'staging', defaultCwd: undefined },
+        scope: 'project',
+      });
+    });
+    await vi.waitFor(() => {
+      expect(host.showStatus).toHaveBeenCalledWith('Runtime "staging" added to .kimi-code/runtimes.toml.');
+    });
     await vi.waitFor(() => {
       const reopened = latest(mounted, RuntimeManagerComponent);
       const plain = reopened.render(120).join('\n').replaceAll(/\[[0-9;]*m/g, '');
@@ -293,7 +343,8 @@ describe('handleRuntimeCommand', () => {
     form.handleInput(TAB); // id (empty -> derives from host)
     form.handleInput(TAB); // defaultCwd
     typeText(form, '/home/me/projects');
-    form.handleInput(ENTER);
+    form.handleInput(ENTER); // defaultCwd → scope
+    form.handleInput(ENTER); // scope → submit
 
     await vi.waitFor(() => {
       expect(host.showStatus).toHaveBeenCalledWith('Runtime "staging" added to config.toml.');
@@ -307,7 +358,7 @@ describe('handleRuntimeCommand', () => {
 
   it('keeps engine validation failures inline in the add form', async () => {
     const { host, mounted } = makeHost({
-      setConfigError: new Error('runtimes section is invalid'),
+      declareError: new Error('runtimes section is invalid'),
     });
     await handleRuntimeCommand(host);
 
@@ -334,6 +385,7 @@ describe('handleRuntimeCommand', () => {
       expect(mounted.some((p) => p instanceof RuntimeAddDialogComponent)).toBe(true);
     });
     const form = latest(mounted, RuntimeAddDialogComponent);
+    form.handleInput(TAB);
     form.handleInput(TAB);
     form.handleInput(TAB);
     form.handleInput(ENTER);

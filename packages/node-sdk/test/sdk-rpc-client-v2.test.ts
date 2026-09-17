@@ -1116,6 +1116,156 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  it('declares a global runtime byte-identically to the setConfig patch flow', async () => {
+    const viaDeclare = await makeRuntimeHarness();
+    const viaPatch = await makeRuntimeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    // The payload mirrors the /runtime Add form: defaultCwd stays undefined
+    // when the field is left empty.
+    const entry = { type: 'ssh', host: 'new-box', defaultCwd: undefined } as const;
+    try {
+      const declareSession = await viaDeclare.harness.createSession({ workDir });
+      const patchSession = await viaPatch.harness.createSession({ workDir });
+      // The default scope is global.
+      await declareSession.declareRuntime({ id: 'new-box', entry });
+      await viaPatch.harness.setConfig({ runtimes: { 'new-box': entry } } as never);
+      const [declareToml, patchToml] = await Promise.all([
+        readFile(join(viaDeclare.homeDir, 'config.toml'), 'utf-8'),
+        readFile(join(viaPatch.homeDir, 'config.toml'), 'utf-8'),
+      ]);
+      expect(declareToml).toBe(patchToml);
+      expect(declareToml).toContain('[runtimes.new-box]');
+      await vi.waitFor(async () => {
+        const listed = await declareSession.listRuntimes();
+        expect(listed.runtimes.some((runtime) => runtime.runtimeId === 'new-box')).toBe(true);
+      });
+      await declareSession.close();
+      await patchSession.close();
+    } finally {
+      await viaDeclare.harness.close();
+      await viaPatch.harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('declares a project runtime into .kimi-code/runtimes.toml without clobbering it, registering live', async () => {
+    const { harness } = await makeRuntimeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    await mkdir(join(workDir, '.kimi-code'), { recursive: true });
+    await writeFile(
+      join(workDir, '.kimi-code', 'runtimes.toml'),
+      [
+        '# Shared with the team — keep this comment.',
+        '[existing-box]',
+        'type = "ssh"',
+        'host = "existing-box"',
+        'defaultCwd = "/remote/existing"',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+    try {
+      await harness.trustWorkspace(workDir);
+      const session = await harness.createSession({ workDir });
+      await session.declareRuntime({
+        id: 'proj-box',
+        entry: { type: 'ssh', host: 'proj-box', defaultCwd: '/remote/proj' },
+        scope: 'project',
+      });
+      const toml = await readFile(join(workDir, '.kimi-code', 'runtimes.toml'), 'utf-8');
+      expect(toml).toContain('# Shared with the team — keep this comment.');
+      expect(toml).toContain('[existing-box]');
+      expect(toml).toContain('[proj-box]');
+      expect(toml).toContain('host = "proj-box"');
+      // The project declaration watch (M11) registers the new runtime without
+      // a restart.
+      await vi.waitFor(
+        async () => {
+          const listed = await session.listRuntimes();
+          const projBox = listed.runtimes.find((runtime) => runtime.runtimeId === 'proj-box');
+          expect(projBox).toMatchObject({ type: 'ssh', defaultCwd: '/remote/proj' });
+        },
+        { timeout: 10_000, interval: 100 },
+      );
+      const listed = await session.listRuntimes();
+      expect(listed.runtimes.some((runtime) => runtime.runtimeId === 'existing-box')).toBe(true);
+      await session.close();
+    } finally {
+      await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('rejects a project declare whose id is already declared, leaving the file untouched', async () => {
+    const { harness } = await makeRuntimeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    await mkdir(join(workDir, '.kimi-code'), { recursive: true });
+    const before = ['[proj-box]', 'type = "ssh"', 'host = "proj-box"', ''].join('\n');
+    await writeFile(join(workDir, '.kimi-code', 'runtimes.toml'), before, 'utf-8');
+    try {
+      await harness.trustWorkspace(workDir);
+      const session = await harness.createSession({ workDir });
+      await expect(
+        session.declareRuntime({
+          id: 'proj-box',
+          entry: { type: 'ssh', host: 'other-box' },
+          scope: 'project',
+        }),
+      ).rejects.toThrow(/already declared/);
+      expect(await readFile(join(workDir, '.kimi-code', 'runtimes.toml'), 'utf-8')).toBe(before);
+      await session.close();
+    } finally {
+      await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('refuses a project declare when the existing file is invalid, leaving it untouched', async () => {
+    const { harness } = await makeRuntimeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    await mkdir(join(workDir, '.kimi-code'), { recursive: true });
+    const before = '[broken\n';
+    await writeFile(join(workDir, '.kimi-code', 'runtimes.toml'), before, 'utf-8');
+    try {
+      await harness.trustWorkspace(workDir);
+      const session = await harness.createSession({ workDir });
+      await expect(
+        session.declareRuntime({
+          id: 'proj-box',
+          entry: { type: 'ssh', host: 'proj-box' },
+          scope: 'project',
+        }),
+      ).rejects.toThrow(/Invalid TOML/);
+      expect(await readFile(join(workDir, '.kimi-code', 'runtimes.toml'), 'utf-8')).toBe(before);
+      await session.close();
+    } finally {
+      await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('rejects declareRuntime while the remote_runtime flag is off', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', 'false');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_RUNTIME', 'false');
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    try {
+      const session = await harness.createSession({ workDir });
+      await expect(
+        session.declareRuntime({ id: 'box', entry: { type: 'ssh', host: 'box' } }),
+      ).rejects.toThrow(/remote_runtime/);
+      await session.close();
+    } finally {
+      await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('honors skillDirs (explicit dirs) over default user / project discovery', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);

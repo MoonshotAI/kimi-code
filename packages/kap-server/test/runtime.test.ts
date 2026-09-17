@@ -1,9 +1,9 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -154,6 +154,13 @@ describe('server-v2 /api/v1 runtime routes', () => {
       expect(runtimes.body.data.runtimes).toHaveLength(1);
       expect(runtimes.body.data.runtimes[0]).toMatchObject({ runtime_id: 'local', type: 'local', status: 'ready' });
       expect(runtimes.body.data.ssh_hosts).toEqual([]);
+
+      const declared = await call<null>('POST', `/api/v1/sessions/${id}/runtimes`, {
+        runtime_id: 'box',
+        entry: { type: 'ssh', host: 'box' },
+      });
+      expect(declared.body.code).toBe(40926);
+      expect(declared.body.msg).toContain('remote_runtime');
     });
   });
 
@@ -284,5 +291,96 @@ describe('server-v2 /api/v1 runtime routes', () => {
       const binding = await call<RuntimeBindingWire>('GET', `/api/v1/sessions/${id}/runtime`);
       expect(binding.body.data.runtime_id).toBe('local');
     }, 90_000);
+
+    interface DeclaredWire {
+      workspace_id: string;
+      runtime_id: string;
+      scope: 'global' | 'project';
+    }
+
+    async function createSessionWire(cwd: string = home as string): Promise<SessionWire> {
+      const created = await call<SessionWire>('POST', '/api/v1/sessions', { metadata: { cwd } });
+      expect(created.body.code).toBe(0);
+      return created.body.data;
+    }
+
+    it('declares a runtime at global scope into config.toml and registers it live', async () => {
+      const { id } = await createSessionWire();
+      const declared = await call<DeclaredWire>('POST', `/api/v1/sessions/${id}/runtimes`, {
+        runtime_id: 'rest-box',
+        entry: { type: 'ssh', host: 'rest-box', default_cwd: '/remote/rest' },
+      });
+      expect(declared.body.code).toBe(0);
+      expect(declared.body.data).toMatchObject({ runtime_id: 'rest-box', scope: 'global' });
+      const toml = await readFile(join(home as string, 'config.toml'), 'utf-8');
+      expect(toml).toContain('[runtimes.rest-box]');
+      expect(toml).toContain('defaultCwd = "/remote/rest"');
+      await vi.waitFor(
+        async () => {
+          const runtimes = await call<RuntimesWire>('GET', `/api/v1/sessions/${id}/runtimes`);
+          expect(runtimes.body.data.runtimes.some((entry) => entry.runtime_id === 'rest-box')).toBe(true);
+        },
+        { timeout: 10_000, interval: 100 },
+      );
+    });
+
+    it('declares a runtime at project scope into .kimi-code/runtimes.toml without clobbering it', async () => {
+      const session = await createSessionWire();
+      await mkdir(join(home as string, '.kimi-code'), { recursive: true });
+      await writeFile(
+        join(home as string, '.kimi-code', 'runtimes.toml'),
+        ['# Team-shared declarations.', '[existing-box]', 'type = "ssh"', 'host = "existing-box"', ''].join('\n'),
+        'utf-8',
+      );
+      const trusted = await call('POST', `/api/v1/workspaces/${session.workspace_id}/trust`);
+      expect(trusted.body.code).toBe(0);
+
+      const declared = await call<DeclaredWire>('POST', `/api/v1/sessions/${session.id}/runtimes`, {
+        runtime_id: 'proj-box',
+        scope: 'project',
+        entry: { type: 'ssh', host: 'proj-box', default_cwd: '/remote/proj' },
+      });
+      expect(declared.body.code).toBe(0);
+      expect(declared.body.data).toMatchObject({ runtime_id: 'proj-box', scope: 'project' });
+
+      const toml = await readFile(join(home as string, '.kimi-code', 'runtimes.toml'), 'utf-8');
+      expect(toml).toContain('# Team-shared declarations.');
+      expect(toml).toContain('[existing-box]');
+      expect(toml).toContain('[proj-box]');
+
+      await vi.waitFor(
+        async () => {
+          const runtimes = await call<RuntimesWire>('GET', `/api/v1/sessions/${session.id}/runtimes`);
+          const projBox = runtimes.body.data.runtimes.find((entry) => entry.runtime_id === 'proj-box');
+          expect(projBox).toMatchObject({ type: 'ssh', default_cwd: '/remote/proj' });
+        },
+        { timeout: 10_000, interval: 100 },
+      );
+    });
+
+    it('rejects a duplicate project declare and an invalid entry payload', async () => {
+      const wsDir = join(home as string, 'dup-ws');
+      await mkdir(wsDir, { recursive: true });
+      const { id } = await createSessionWire(wsDir);
+      const first = await call<DeclaredWire>('POST', `/api/v1/sessions/${id}/runtimes`, {
+        runtime_id: 'proj-box',
+        scope: 'project',
+        entry: { type: 'ssh', host: 'proj-box' },
+      });
+      expect(first.body.code).toBe(0);
+      const duplicate = await call<null>('POST', `/api/v1/sessions/${id}/runtimes`, {
+        runtime_id: 'proj-box',
+        scope: 'project',
+        entry: { type: 'ssh', host: 'other-box' },
+      });
+      expect(duplicate.body.code).toBe(40001);
+      expect(duplicate.body.msg).toContain('already declared');
+
+      const invalid = await call<null>('POST', `/api/v1/sessions/${id}/runtimes`, {
+        runtime_id: 'no-host',
+        entry: { type: 'ssh' },
+      });
+      expect(invalid.body.code).toBe(40001);
+    });
   });
 });
