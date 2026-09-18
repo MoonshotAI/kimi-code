@@ -567,8 +567,9 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `GET /api/v1/sessions/{session_id}/warnings` | 会话级告警 |
 | `GET /api/v1/sessions/{session_id}/environment` | 读取 main agent 的环境绑定 |
 | `POST /api/v1/sessions/{session_id}/environment` | 切换 main agent 的环境绑定 |
-| `POST /api/v1/sessions/{session_id}/environment/reconnect` | 重连已绑定的环境（实验性远程环境） |
+| `POST /api/v1/sessions/{session_id}/environment/reconnect` | 重连已绑定的环境 |
 | `GET /api/v1/sessions/{session_id}/environments` | 列出会话工作区已注册的环境 |
+| `POST /api/v1/sessions/{session_id}/environments` | 为会话工作区声明环境 |
 | `POST /api/v1/sessions/{session_id}/export` | 导出会话与诊断信息（zip 流，不走信封） |
 | `GET /api/v1/sessions/{session_id}/snapshot` | 客户端重建用全量快照（含 `as_of_seq` 与 `epoch`） |
 | `GET /api/v1/sessions/{session_id}/media/{file_id}` | 按文件 id 下载提示词媒体（二进制） |
@@ -849,17 +850,17 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 
 #### `POST /api/v1/sessions/{session_id}/environment`
 
-切换 main agent 的环境绑定。切换到非 `local` 环境属于实验功能，需要启用 `remote_runtime` 实验开关（见 [远程环境](../guides/remote-environment.md)）；新绑定持久化之前会先建立连接，并用目标文件系统校验给定的 `cwd`——失败时保留原绑定。
+切换 main agent 的环境绑定。新绑定持久化之前会先建立连接，并用目标文件系统校验给定的 `cwd`——失败时保留原绑定。功能介绍见 [远程环境](../guides/remote-environment.md)。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
 | `environment_id` | body | string | **必填。** 目标环境 id |
-| `cwd` | body | string | 目标环境上的工作目录；默认取该条目配置的 `defaultCwd` |
+| `cwd` | body | string | 目标环境上的工作目录；非 `local` 环境必填（缺省时返回 `40001`）——条目的 `defaultCwd` 仅在创建会话绑定该环境时生效 |
 
 成功时，`data` 为新的绑定 `{ workspace_id, environment_id, cwd? }`。
 
-- `40001`：给定的 `cwd` 在目标环境上不是有效目录
+- `40001`：非 `local` 的 `environment_id` 未提供 `cwd`，或给定的 `cwd` 在目标环境上不是有效目录
 - `40401`：会话不存在
 - `40420`：不存在该 `environment_id` 的环境
 - `40901`：会话有正在执行的轮次或待审批调用，切换在轮次边界生效
@@ -867,7 +868,7 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 
 #### `POST /api/v1/sessions/{session_id}/environment/reconnect`
 
-在断连后显式重连 main agent 已绑定的环境（实验性远程环境）。远程环境不会自动重连，也绝不静默回退到 `local`——连接断开后，工具调用会以环境不可用错误失败，直到通过本端点（或 `/environment` 对话框）重新建立连接。
+在断连后显式重连 main agent 已绑定的环境。远程环境不会自动重连，也绝不静默回退到 `local`——连接断开后，工具调用会以环境不可用错误失败，直到通过本端点（或 `/environment` 对话框）重新建立连接。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -877,7 +878,7 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 
 - `40401`：会话不存在
 - `40420`：不存在该 `environment_id` 的环境
-- `40926`：环境存在但不可用（`remote_runtime` 实验开关未启用时也返回此错误）
+- `40926`：环境存在但不可用
 
 #### `GET /api/v1/sessions/{session_id}/environments`
 
@@ -887,8 +888,24 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
 
-成功时，`data` 为 `{ workspace_id, environments, ssh_hosts }`。`environments` 每项为 `{ environment_id, type, status, generation, capabilities, default_cwd? }`，其中 `type` 取 `local` / `ssh` / `docker` / `command` 之一，`status` 取 `connecting` / `ready` / `degraded` / `disconnected` / `draining` / `disposed` 之一，`capabilities` 从 `fs` / `process` / `terminal` 中取值。`ssh_hosts` 为主机名列表（`remote_runtime` 实验开关未启用时为空）。
+成功时，`data` 为 `{ workspace_id, environments, ssh_hosts }`。`environments` 每项为 `{ environment_id, type, status, generation, capabilities, default_cwd?, connect_error? }`，其中 `type` 取 `local` / `ssh` / `docker` / `command` 之一，`status` 取 `connecting` / `ready` / `degraded` / `disconnected` / `draining` / `disposed` 之一，`capabilities` 从 `fs` / `process` / `terminal` 中取值；`connect_error` 记录 `disconnected` 条目的失败原因。`ssh_hosts` 为主机名列表。
 
+- `40401`：会话不存在
+
+#### `POST /api/v1/sessions/{session_id}/environments`
+
+为会话工作区声明一个新环境并即时注册——无需重启。`scope` 为 `global`（默认）时，条目深度合并进用户级 `config.toml` 的 `[environments]` 节；为 `project` 时，合并写入工作区的 `.kimi-code/environments.toml`（项目级声明仅对受信任的工作区加载）。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **必填。** 会话 id |
+| `environment_id` | body | string | **必填。** 新环境的 id |
+| `scope` | body | string | `global`（默认）或 `project` |
+| `entry` | body | object | **必填。** 环境条目：`{ type: "ssh", host, remote_bin?, default_cwd? }`、`{ type: "docker", container, context?, remote_bin?, default_cwd? }` 或 `{ command, args?, env?, default_cwd? }` |
+
+成功时，`data` 为 `{ workspace_id, environment_id, scope }`。
+
+- `40001`：条目不合法、id 已声明，或项目文件不可读、内容非法
 - `40401`：会话不存在
 
 #### `POST /api/v1/sessions/{session_id}/export`

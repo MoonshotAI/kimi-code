@@ -21,6 +21,7 @@ function makeDialog(overrides: Partial<EnvironmentCwdDialogOptions> = {}): Envir
     defaultValue: '/home/me/projects',
     onSubmit: vi.fn(),
     onCancel: vi.fn(),
+    requestRender: vi.fn(),
     ...overrides,
   });
   dialog.focused = true;
@@ -87,6 +88,14 @@ describe('EnvironmentCwdDialogComponent', () => {
     dialog.handleInput(ESC);
     expect(onSubmit).not.toHaveBeenCalled();
     expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it('requests a repaint on setBusy and showError', () => {
+    const requestRender = vi.fn();
+    const dialog = makeDialog({ requestRender });
+    dialog.setBusy('Connecting to dev-box…');
+    dialog.showError('boom');
+    expect(requestRender).toHaveBeenCalledTimes(2);
   });
 
   it('bounds a multi-line handshake error', () => {

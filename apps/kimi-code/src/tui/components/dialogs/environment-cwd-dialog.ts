@@ -1,6 +1,6 @@
 /**
  * EnvironmentCwdDialogComponent — single-field rounded box collecting the remote
- * working directory for a environment switch (experimental remote environment).
+ * working directory for a environment switch.
  *
  * The input is prefilled with the declaration's `defaultCwd`; the value is
  * validated server-side against the target fs on submit (no local checks, no
@@ -28,6 +28,8 @@ export interface EnvironmentCwdDialogOptions {
   readonly defaultValue: string;
   readonly onSubmit: (cwd: string) => void;
   readonly onCancel: () => void;
+  /** Triggers a re-render; the host wires this to `ui.requestRender()`. */
+  readonly requestRender: () => void;
 }
 
 const SUBTITLE_DEFAULT = 'Validated on the target host when connecting.';
@@ -62,12 +64,14 @@ export class EnvironmentCwdDialogComponent extends Container implements Focusabl
   setBusy(message: string): void {
     this.state = { kind: 'busy', message };
     this.invalidate();
+    this.opts.requestRender();
   }
 
   /** Show a server-side failure inline (validation, handshake exit code + stderr). */
   showError(message: string): void {
     this.state = { kind: 'error', message };
     this.invalidate();
+    this.opts.requestRender();
   }
 
   handleInput(data: string): void {

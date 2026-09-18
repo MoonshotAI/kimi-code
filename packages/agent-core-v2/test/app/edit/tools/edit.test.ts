@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PathSecurityError } from '#/tool/path-access';
 import { stubWorkspaceContext } from '../../../session/workspaceContext/stub-workspace-context';
+import { stubAgentEnvironment } from '../../../environment/stubs';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { type EditInput, EditInputSchema } from '#/agent/tools/edit/edit';
@@ -17,7 +18,6 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { Environment } from '#/environment/environment';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
@@ -79,24 +79,7 @@ function buildTool(
     onDidChangeStatus: () => ({ dispose: () => {} }),
     dispose: () => {},
   } as unknown as Environment;
-  const environment: IAgentEnvironmentService = {
-    _serviceBrand: undefined,
-    onDidChange: () => ({ dispose: () => {} }),
-    isAvailable: () => true,
-    inspect: () => environmentValue,
-    acquire: () => ({
-      environment: environmentValue,
-      track: (resource) => resource,
-      dispose: () => {},
-    }),
-    acquireWhenReady: async () => ({
-      environment: environmentValue,
-      track: (resource) => resource,
-      dispose: () => {},
-    }),
-    reconnect: async () => {},
-    workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
-  };
+  const environment = stubAgentEnvironment(environmentValue);
   return new EditTool(ix.get(IFileEditService), environment, workspace);
 }
 

@@ -4,9 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import chalk from 'chalk';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FooterComponent } from '#/tui/components/chrome/footer';
+import {
+  BRAILLE_SPINNER_FRAMES,
+  BRAILLE_SPINNER_INTERVAL_MS,
+} from '#/tui/constant/rendering';
 import { setRainbowDance, type RainbowDanceController } from '#/tui/easter-eggs/dance';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
@@ -337,6 +341,7 @@ describe('FooterComponent environment slot', () => {
 
   afterEach(() => {
     chalk.level = previousChalkLevel;
+    vi.useRealTimers();
   });
 
   function plain(text: string): string {
@@ -405,6 +410,39 @@ describe('FooterComponent environment slot', () => {
     expect(rendered).toContain('dev-box');
     expect(rendered).not.toContain('main');
     footer.dispose();
+  });
+
+  describe('status line command payload', () => {
+    async function payloadOf(footer: FooterComponent): Promise<{ gitBranch: string | null }> {
+      footer.render(400);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const line = plain(footer.render(400)[0] ?? '');
+      return JSON.parse(line.slice(line.indexOf('{'), line.lastIndexOf('}') + 1)) as { gitBranch: string | null };
+    }
+
+    it('feeds gitBranch null to the status line command for a remote-bound session', async () => {
+      const footer = new FooterComponent({
+        ...appState,
+        workDir: repoDir,
+        environment: { environmentId: 'dev-box', type: 'ssh', status: 'ready' },
+        statusLine: { items: null, command: 'cat' },
+      });
+      const payload = await payloadOf(footer);
+      expect(payload.gitBranch).toBeNull();
+      footer.dispose();
+    });
+
+    it('feeds the local branch to the status line command for a local session', async () => {
+      const footer = new FooterComponent({
+        ...appState,
+        workDir: repoDir,
+        environment: { environmentId: 'local', type: 'local', status: 'ready' },
+        statusLine: { items: null, command: 'cat' },
+      });
+      const payload = await payloadOf(footer);
+      expect(payload.gitBranch).toBe('main');
+      footer.dispose();
+    });
   });
 
   it('renders a disconnected remote identifier in the error color', () => {
@@ -487,5 +525,111 @@ describe('FooterComponent environment slot', () => {
     const rendered = line1(footer);
     expect(rendered).toContain('~/local-project');
     footer.dispose();
+  });
+
+  it('renders a spinner frame beside the identifier while connecting', () => {
+    const footer = footerWith({ environmentId: 'dev-box', type: 'ssh', status: 'connecting' });
+    const rendered = line1(footer);
+    expect(rendered).toContain(`${BRAILLE_SPINNER_FRAMES[0] ?? ''} dev-box`);
+    footer.dispose();
+  });
+
+  it('ticks the spinner through frames on the shared interval while connecting', () => {
+    vi.useFakeTimers();
+    const onRefresh = vi.fn();
+    const footer = new FooterComponent(
+      {
+        ...appState,
+        workDir: repoDir,
+        environment: { environmentId: 'dev-box', type: 'ssh', status: 'connecting' },
+      },
+      onRefresh,
+    );
+    vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 2);
+    expect(onRefresh).toHaveBeenCalledTimes(2);
+    expect(line1(footer)).toContain(`${BRAILLE_SPINNER_FRAMES[2] ?? ''} dev-box`);
+    footer.dispose();
+  });
+
+  it('starts the spinner when the environment enters connecting', () => {
+    vi.useFakeTimers();
+    const onRefresh = vi.fn();
+    const footer = new FooterComponent(
+      {
+        ...appState,
+        workDir: repoDir,
+        environment: { environmentId: 'dev-box', type: 'ssh', status: 'ready' },
+      },
+      onRefresh,
+    );
+    vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 5);
+    expect(onRefresh).not.toHaveBeenCalled();
+    footer.setState({
+      ...appState,
+      workDir: repoDir,
+      environment: { environmentId: 'dev-box', type: 'ssh', status: 'connecting' },
+    });
+    vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    footer.dispose();
+  });
+
+  it('stops the spinner the moment the environment leaves connecting', () => {
+    vi.useFakeTimers();
+    const onRefresh = vi.fn();
+    const footer = new FooterComponent(
+      {
+        ...appState,
+        workDir: repoDir,
+        environment: { environmentId: 'dev-box', type: 'ssh', status: 'connecting' },
+      },
+      onRefresh,
+    );
+    footer.setState({
+      ...appState,
+      workDir: repoDir,
+      environment: { environmentId: 'dev-box', type: 'ssh', status: 'ready' },
+    });
+    vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 5);
+    expect(onRefresh).not.toHaveBeenCalled();
+    const rendered = line1(footer);
+    expect(rendered).toContain('dev-box');
+    for (const frame of BRAILLE_SPINNER_FRAMES) {
+      expect(rendered).not.toContain(frame);
+    }
+    footer.dispose();
+  });
+
+  it('starts no spinner for the local environment even while connecting', () => {
+    vi.useFakeTimers();
+    const onRefresh = vi.fn();
+    const footer = new FooterComponent(
+      {
+        ...appState,
+        workDir: repoDir,
+        environment: { environmentId: 'local', type: 'local', status: 'connecting' },
+      },
+      onRefresh,
+    );
+    expect(line1(footer)).not.toContain('local');
+    vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 5);
+    expect(onRefresh).not.toHaveBeenCalled();
+    footer.dispose();
+  });
+
+  it('leaves no spinner timer running after dispose', () => {
+    vi.useFakeTimers();
+    const onRefresh = vi.fn();
+    const footer = new FooterComponent(
+      {
+        ...appState,
+        workDir: repoDir,
+        environment: { environmentId: 'dev-box', type: 'ssh', status: 'connecting' },
+      },
+      onRefresh,
+    );
+    footer.dispose();
+    vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 5);
+    expect(onRefresh).not.toHaveBeenCalled();
   });
 });

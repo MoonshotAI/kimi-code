@@ -12,6 +12,7 @@ import {
   hasGitPathComponent,
   isGitControlPath,
 } from './path-utils';
+import { acquireEnvironmentLease } from './environment-lease';
 
 export class GitControlPathAccessAskPermissionPolicyService implements PermissionPolicy {
   readonly name = 'git-control-path-access-ask';
@@ -26,7 +27,8 @@ export class GitControlPathAccessAskPermissionPolicyService implements Permissio
   ): Promise<PermissionPolicyResult | undefined> {
     const cwd = this.workspace.workDir;
     if (cwd.length === 0) return undefined;
-    const lease = this.environment.acquire();
+    const lease = acquireEnvironmentLease(this.environment);
+    if (lease === undefined) return undefined;
     try {
       const pathClass = lease.environment.host.pathClass;
       const fs = lease.environment.fs;

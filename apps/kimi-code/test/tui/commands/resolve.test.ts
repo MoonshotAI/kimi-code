@@ -277,20 +277,11 @@ describe('resolveSlashCommandInput', () => {
     });
   });
 
-  it('resolves /environment to the builtin command when the remote_runtime flag is enabled', () => {
-    setExperimentalFeatures([{ id: 'remote_runtime', enabled: true }]);
-
+  it('resolves /environment to the builtin command', () => {
     expect(resolve('/environment')).toMatchObject({
       kind: 'builtin',
       name: 'environment',
       args: '',
-    });
-  });
-
-  it('does not resolve /environment as a builtin when the remote_runtime flag is disabled', () => {
-    expect(resolve('/environment')).toEqual({
-      kind: 'message',
-      input: '/environment',
     });
   });
 });

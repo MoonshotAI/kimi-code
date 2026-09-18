@@ -59,6 +59,7 @@ import {
   fsOpenRequestSchema,
   fsRevealRequestSchema,
 } from '../protocol/rest-fs';
+import { environmentErrorCode } from './environment';
 
 interface FsRouteHost {
   post(
@@ -294,6 +295,8 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
         [ErrorCode.FS_IS_DIRECTORY]: {},
         [ErrorCode.FS_IS_BINARY]: {},
@@ -420,6 +423,8 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.WORKSPACE_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
         [ErrorCode.FS_TOO_MANY_RESULTS]: {},
       },
       description:
@@ -466,6 +471,8 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.WORKSPACE_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
       },
       description:
         'Suggest file and directory completion candidates in a workspace without a session. `workspace` accepts a registered workspace id or an absolute root (registered on the spot).',
@@ -555,10 +562,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         reply.send(okEnvelope(data, req.id));
       } catch (error) {
         if (error instanceof EnvironmentError) {
-          const code = error.code === 'environment.not_found'
-            ? ErrorCode.ENVIRONMENT_NOT_FOUND
-            : ErrorCode.ENVIRONMENT_UNAVAILABLE;
-          reply.send(errEnvelope(code, error.message, req.id));
+          reply.send(errEnvelope(environmentErrorCode(error.code), error.message, req.id));
           return;
         }
         sendMappedError(reply, req, error);
@@ -584,6 +588,8 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
         [ErrorCode.FS_PATH_ESCAPES_SESSION]: {},
       },
@@ -883,6 +889,10 @@ async function handleOpenIn(fs: IWorkspaceFsService, sessionId: string, req: Req
 function sendMappedError(reply: Reply, req: { id: string }, err: unknown): void {
   const requestId = req.id;
   const log = requestLog(req);
+  if (err instanceof EnvironmentError) {
+    reply.send(errEnvelope(environmentErrorCode(err.code), err.message, requestId));
+    return;
+  }
   if (isError2(err)) {
     switch (err.code) {
       case ErrorCodes.FS_PATH_ESCAPES:

@@ -2,12 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
+import { fakeEnvironment } from './stubs';
 
 function environment(generation: string, pathClass: 'posix' | 'win32'): FakeEnvironment {
-  return new FakeEnvironment(
-    { workspaceId: 'workspace', environmentId: 'local', generation },
-    { pathClass },
-  );
+  return fakeEnvironment('local', generation, { pathClass, capabilities: [] });
 }
 
 describe('EnvironmentWorkspaceView', () => {

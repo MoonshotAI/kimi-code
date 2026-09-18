@@ -21,16 +21,22 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
-import type { Environment } from '#/environment/environment';
+import type { Environment, EnvironmentBinding } from '#/environment/environment';
+import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
+import { EnvironmentError, environmentStatusAllows } from '#/environment/environmentRegistry';
+import { resolveWorkspaceEnvironmentDeclarations } from '#/environment/environmentDeclarations';
 import { IConfigService } from '#/app/config/config';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { ILogService } from '#/_base/log/log';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { createHooks } from '#/hooks';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
+import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
 import {
   type AgentRunHandle,
@@ -74,6 +80,9 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ILogService private readonly log: ILogService,
+    @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
+    @IHostFileSystem private readonly fs: IHostFileSystem,
+    @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
   ) {
     super();
   }
@@ -150,6 +159,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     const caller = this.requireCaller(opts.callerAgentId);
     const { plan } = opts;
     const callerBinding = caller.accessor.get(IAgentEnvironmentBindingService).current;
+    const spawnBinding = await this.resolveSpawnBinding(callerBinding, opts.environment);
     const lease = plan.fork
       ? undefined
       : caller.accessor.get(IAgentEnvironmentService).acquire(['process']);
@@ -172,8 +182,8 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
               thinking: plan.thinking,
             },
             labels: opts.labels,
-            environmentId: callerBinding.environmentId,
-            environmentCwd: callerBinding.cwd,
+            environmentId: spawnBinding.environmentId,
+            environmentCwd: spawnBinding.cwd,
           });
           created = this.agentLifecycle.handleOf(createdContext.agentId)!;
         }
@@ -230,6 +240,71 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       process: environment.process!,
       log: this.log,
     });
+  }
+
+  private async resolveSpawnBinding(
+    callerBinding: EnvironmentBinding,
+    requested: string | undefined,
+  ): Promise<EnvironmentBinding> {
+    const environmentId = requested?.trim();
+    if (environmentId === undefined || environmentId.length === 0 || environmentId === callerBinding.environmentId) {
+      return callerBinding;
+    }
+    if (environmentId === LOCAL_ENVIRONMENT_ID) {
+      return { workspaceId: callerBinding.workspaceId, environmentId: LOCAL_ENVIRONMENT_ID };
+    }
+    const workspace = this.workspaces.get(this.sessionContext.workspaceId);
+    const environment = workspace?.environments.current(environmentId);
+    if (workspace === undefined || environment === undefined) {
+      const available =
+        workspace?.environments.list().map((entry) => entry.identity.environmentId).join(', ') ?? '';
+      throw new EnvironmentError(
+        'environment.not_found',
+        `environment "${environmentId}" does not exist in this workspace. Available environments: ${available}.`,
+      );
+    }
+    if (!environmentStatusAllows(environment, ['fs', 'process'])) {
+      if (typeof environment.connect !== 'function') {
+        throw new EnvironmentError('environment.unavailable', `environment ${environmentId} is ${environment.status}`);
+      }
+      await environment.connect();
+    }
+    const connected = workspace.environments.current(environmentId)!;
+    const declaredDefaultCwd = await this.declaredDefaultCwd(workspace.root, environmentId);
+    if (declaredDefaultCwd !== undefined) {
+      if (connected.fs !== undefined) {
+        const stat = await connected.fs.stat(declaredDefaultCwd).catch((error: unknown) => {
+          throw new EnvironmentError(
+            'environment.invalid_cwd',
+            `cwd ${declaredDefaultCwd} is not readable on environment ${environmentId}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        });
+        if (!stat.isDirectory) {
+          throw new EnvironmentError('environment.invalid_cwd', `cwd ${declaredDefaultCwd} is not a directory on environment ${environmentId}`);
+        }
+      }
+      return { workspaceId: callerBinding.workspaceId, environmentId, cwd: declaredDefaultCwd };
+    }
+    const host = connected.host as { readonly cwd?: string };
+    return {
+      workspaceId: callerBinding.workspaceId,
+      environmentId,
+      cwd: host.cwd ?? connected.host.homeDir,
+    };
+  }
+
+  private async declaredDefaultCwd(root: string, environmentId: string): Promise<string | undefined> {
+    try {
+      const declarations = await resolveWorkspaceEnvironmentDeclarations({
+        config: this.configService,
+        fs: this.fs,
+        docs: this.docs,
+        root,
+      });
+      return declarations.entries.find((entry) => entry.id === environmentId)?.entry.defaultCwd;
+    } catch {
+      return undefined;
+    }
   }
 
   private requireCaller(agentId: string): IAgentScopeHandle {

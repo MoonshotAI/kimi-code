@@ -10,6 +10,7 @@ export interface IAgentEnvironmentBindingService {
   set(binding: EnvironmentBinding): EnvironmentBinding;
   switch(environmentId: string, cwd?: string): EnvironmentBinding;
   connectAndSwitch(environmentId: string, cwd?: string): Promise<EnvironmentBinding>;
+  connectAndSwitchAtTurnBoundary(environmentId: string, cwd?: string): Promise<EnvironmentBinding>;
 }
 
 export const IAgentEnvironmentBindingService: ServiceIdentifier<IAgentEnvironmentBindingService> = createDecorator<IAgentEnvironmentBindingService>('agentEnvironmentBindingService');

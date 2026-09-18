@@ -9,13 +9,12 @@ import {
   rgUnavailableMessage,
   type RgProbe,
 } from '#/workspace/workspaceFs/internal/rgLocator';
+import { stubRgProbe } from '../../os/stubs';
 
 function probeWith(
   resolveExitCode: (args: readonly string[]) => number,
 ): RgProbe & { exec: ReturnType<typeof vi.fn> } {
-  return {
-    exec: vi.fn(async (args: readonly string[]) => ({ exitCode: resolveExitCode(args) })),
-  };
+  return stubRgProbe(resolveExitCode);
 }
 
 function noRgProbe(): RgProbe & { exec: ReturnType<typeof vi.fn> } {

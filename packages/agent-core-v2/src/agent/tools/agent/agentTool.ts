@@ -61,17 +61,23 @@ import { type AgentMeta, ISessionMetadata } from '#/session/sessionMetadata/sess
 import { emitAgentRunSpawned, mirrorAgentRun, SubagentStarted } from '#/session/subagent/mirrorAgentRun';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
-import { FORK_EXPERIMENTAL_UNAVAILABLE, forkIncompatibility } from '#/session/subagent/spawn';
+import {
+  ENVIRONMENT_EXPERIMENTAL_UNAVAILABLE,
+  FORK_EXPERIMENTAL_UNAVAILABLE,
+  forkIncompatibility,
+} from '#/session/subagent/spawn';
 import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
 import {
   buildSubagentModelDescriptions,
   exposesSubagentModelChoice,
   formatSubagentTimeoutDescription,
   resolveSubagentTimeoutMs,
+  stripSubagentEnvironmentParameter,
   stripSubagentForkParameter,
   stripSubagentModelParameter,
   type SubagentModelSource,
 } from '#/session/subagent/configSection';
+import { AGENT_ENVIRONMENT_TOOLS_FLAG_ID } from '#/features/environmentTools/flag';
 import {
   BACKGROUND_AGENT_UNAVAILABLE,
   DEFAULT_PROFILE_NAME,
@@ -88,6 +94,7 @@ import { SubagentTask, type SubagentHandle } from './subagent-task';
 import AGENT_BACKGROUND_DISABLED_DESCRIPTION from './agent-background-disabled.md?raw';
 import AGENT_BACKGROUND_DESCRIPTION from './agent-background-enabled.md?raw';
 import AGENT_DESCRIPTION_BASE from './agent.md?raw';
+import AGENT_ENVIRONMENT_DESCRIPTION from './agent-environment.md?raw';
 import AGENT_FORK_DESCRIPTION from './agent-fork.md?raw';
 
 const SUBAGENT_TOOL_PARAMETERS = toInputJsonSchema(SubagentToolInputSchema);
@@ -101,9 +108,12 @@ export class SubagentTool implements ISubagentTool {
     const parameters = exposesSubagentModelChoice(this.config)
       ? SUBAGENT_TOOL_PARAMETERS
       : SUBAGENT_TOOL_PARAMETERS_NO_MODEL;
-    return this.flags.enabled(SUBAGENT_FORK_FLAG_ID)
+    const withFork = this.flags.enabled(SUBAGENT_FORK_FLAG_ID)
       ? parameters
       : stripSubagentForkParameter(parameters);
+    return this.flags.enabled(AGENT_ENVIRONMENT_TOOLS_FLAG_ID)
+      ? withFork
+      : stripSubagentEnvironmentParameter(withFork);
   }
 
   private readonly callerAgentId: string;
@@ -145,6 +155,9 @@ export class SubagentTool implements ISubagentTool {
     let description = `${AGENT_DESCRIPTION_BASE}\n\n${backgroundDescription}`;
     if (this.flags.enabled(SUBAGENT_FORK_FLAG_ID)) {
       description += `\n\n${AGENT_FORK_DESCRIPTION}`;
+    }
+    if (this.flags.enabled(AGENT_ENVIRONMENT_TOOLS_FLAG_ID)) {
+      description += `\n\n${AGENT_ENVIRONMENT_DESCRIPTION}`;
     }
     const own = this.profile.data();
     const catalogProfiles = this.catalogProfiles();
@@ -246,6 +259,16 @@ export class SubagentTool implements ISubagentTool {
       }
     }
 
+    const requestedEnvironment = args.environment?.trim();
+    if (
+      requestedEnvironment !== undefined &&
+      requestedEnvironment.length > 0 &&
+      (resumeAgentId === undefined || resumeAgentId.length === 0) &&
+      !this.flags.enabled(AGENT_ENVIRONMENT_TOOLS_FLAG_ID)
+    ) {
+      return { output: ENVIRONMENT_EXPERIMENTAL_UNAVAILABLE, isError: true };
+    }
+
     const profileNameForDisplay =
       resumeAgentId !== undefined && resumeAgentId.length > 0
         ? (await this.resumeProfileName(resumeAgentId)) ?? RESUMED_LABEL
@@ -315,6 +338,7 @@ export class SubagentTool implements ISubagentTool {
         plan,
         labels: subagentLabels(this.callerAgentId),
         prompt: args.prompt,
+        environment: args.environment,
       });
       agentId = spawned.agentId;
       profileName = spawned.profileName;
@@ -436,6 +460,16 @@ export class SubagentTool implements ISubagentTool {
         if (forkError !== undefined) {
           return { output: forkError, isError: true };
         }
+      }
+
+      const requestedEnvironment = args.environment?.trim();
+      if (
+        requestedEnvironment !== undefined &&
+        requestedEnvironment.length > 0 &&
+        !isResume &&
+        !this.flags.enabled(AGENT_ENVIRONMENT_TOOLS_FLAG_ID)
+      ) {
+        return { output: ENVIRONMENT_EXPERIMENTAL_UNAVAILABLE, isError: true };
       }
 
       const allowBackground = this.canRunInBackground();

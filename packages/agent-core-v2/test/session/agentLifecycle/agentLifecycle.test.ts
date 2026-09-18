@@ -1052,7 +1052,6 @@ describe('AgentLifecycleService', () => {
 
   function stubRemoteResolver(options: { remoteStatus?: 'ready' | 'disconnected' } = {}) {
     const connectCalls: string[] = [];
-    const rerootCalls: string[] = [];
     const localEnvironment = new FakeEnvironment(
       { workspaceId: 'ws_test', environmentId: 'local', generation: 'local-one' },
       { status: 'ready', capabilities: ['fs', 'process'] },
@@ -1065,9 +1064,6 @@ describe('AgentLifecycleService', () => {
       connect: async () => {
         connectCalls.push('remote');
         remoteEnvironment.setStatus('ready');
-      },
-      reroot: async (cwd: string) => {
-        rerootCalls.push(cwd);
       },
     });
     const environmentFor = (binding: EnvironmentBinding): FakeEnvironment => {
@@ -1084,14 +1080,12 @@ describe('AgentLifecycleService', () => {
         dispose: () => {},
       }),
     } as unknown as IEnvironmentResolver);
-    return { connectCalls, rerootCalls, remoteEnvironment };
+    return { connectCalls, remoteEnvironment };
   }
 
-  function enableRemoteRuntimeFlag(): void {
-    ix.stub(IFlagService, {
-      _serviceBrand: undefined,
-      enabled: () => true,
-    } as unknown as IFlagService);
+  function expectCurrentBinding(agentId: string, expected: EnvironmentBinding): void {
+    const svc = ix.get(IAgentLifecycleService);
+    expect(svc.handleOf(agentId)!.accessor.get(IAgentEnvironmentBindingService).current).toEqual(expected);
   }
 
   it('persists a create-seeded remote binding at create time', async () => {
@@ -1110,31 +1104,21 @@ describe('AgentLifecycleService', () => {
         cwd: '/remote/work',
       }),
     ]);
-    expect(svc.handleOf('agent-1')!.accessor.get(IAgentEnvironmentBindingService).current).toEqual({
-      workspaceId: 'ws_test',
-      environmentId: 'remote',
-      cwd: '/remote/work',
-    });
+    expectCurrentBinding('agent-1', { workspaceId: 'ws_test', environmentId: 'remote', cwd: '/remote/work' });
   });
 
-  it('restores a remote-bound subagent from wire records and background-reconnects', async () => {
+  it('restores a remote-bound subagent from wire records without reconnecting', async () => {
     ix.stub(IAppendLogStore, recordingAppendLog([
       createWireMetadataRecord(1),
       { type: 'environment.set_binding', agentId: 'agent-1', environmentId: 'remote', cwd: '/remote/work', time: 2 },
     ]).store);
-    enableRemoteRuntimeFlag();
-    const { connectCalls, rerootCalls } = stubRemoteResolver();
+    const { connectCalls } = stubRemoteResolver();
 
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'agent-1' });
 
-    expect(svc.handleOf('agent-1')!.accessor.get(IAgentEnvironmentBindingService).current).toEqual({
-      workspaceId: 'ws_test',
-      environmentId: 'remote',
-      cwd: '/remote/work',
-    });
-    expect(connectCalls).toEqual(['remote']);
-    expect(rerootCalls).toEqual(['/remote/work']);
+    expectCurrentBinding('agent-1', { workspaceId: 'ws_test', environmentId: 'remote', cwd: '/remote/work' });
+    expect(connectCalls).toEqual([]);
   });
 
   it('keeps a restored gone environment declaration bound and fails explicitly at use', async () => {
@@ -1142,27 +1126,21 @@ describe('AgentLifecycleService', () => {
       createWireMetadataRecord(1),
       { type: 'environment.set_binding', agentId: 'agent-1', environmentId: 'ghost', cwd: '/ghost/work', time: 2 },
     ]).store);
-    enableRemoteRuntimeFlag();
     stubRemoteResolver();
 
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'agent-1' });
     const agent = svc.handleOf('agent-1')!;
 
-    expect(agent.accessor.get(IAgentEnvironmentBindingService).current).toEqual({
-      workspaceId: 'ws_test',
-      environmentId: 'ghost',
-      cwd: '/ghost/work',
-    });
+    expectCurrentBinding('agent-1', { workspaceId: 'ws_test', environmentId: 'ghost', cwd: '/ghost/work' });
     expect(() => agent.accessor.get(IAgentEnvironmentService).acquire()).toThrowError(
       expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.not_found' }),
     );
   });
 
-  it('keeps a create-seeded remote binding durable across an agent rebuild and reconnects', async () => {
+  it('keeps a create-seeded remote binding durable across an agent rebuild without reconnecting', async () => {
     const log = recordingAppendLog();
     ix.stub(IAppendLogStore, log.store);
-    enableRemoteRuntimeFlag();
     const { connectCalls, remoteEnvironment } = stubRemoteResolver({ remoteStatus: 'ready' });
 
     const svc = ix.get(IAgentLifecycleService);
@@ -1172,12 +1150,8 @@ describe('AgentLifecycleService', () => {
 
     await svc.create({ agentId: 'agent-1' });
 
-    expect(svc.handleOf('agent-1')!.accessor.get(IAgentEnvironmentBindingService).current).toEqual({
-      workspaceId: 'ws_test',
-      environmentId: 'remote',
-      cwd: '/remote/work',
-    });
-    expect(connectCalls).toEqual(['remote']);
+    expectCurrentBinding('agent-1', { workspaceId: 'ws_test', environmentId: 'remote', cwd: '/remote/work' });
+    expect(connectCalls).toEqual([]);
   });
 
   it('restores the main agent binding without the binding service reconnecting it', async () => {
@@ -1185,17 +1159,12 @@ describe('AgentLifecycleService', () => {
       createWireMetadataRecord(1),
       { type: 'environment.set_binding', agentId: 'main', workspaceId: 'ws_test', environmentId: 'remote', cwd: '/remote/work', time: 2 },
     ]).store);
-    enableRemoteRuntimeFlag();
     const { connectCalls } = stubRemoteResolver();
 
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'main' });
 
-    expect(svc.handleOf('main')!.accessor.get(IAgentEnvironmentBindingService).current).toEqual({
-      workspaceId: 'ws_test',
-      environmentId: 'remote',
-      cwd: '/remote/work',
-    });
+    expectCurrentBinding('main', { workspaceId: 'ws_test', environmentId: 'remote', cwd: '/remote/work' });
     expect(connectCalls).toEqual([]);
   });
 

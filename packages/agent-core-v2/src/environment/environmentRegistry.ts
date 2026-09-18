@@ -19,7 +19,7 @@ export interface EnvironmentResource {
 
 interface Generation {
   readonly environment: Environment;
-  readonly resources: Set<EnvironmentResource>;
+  readonly resources: Map<EnvironmentResource, string | undefined>;
   readonly statusSubscription: { dispose(): void };
   leases: number;
   draining: boolean;
@@ -208,7 +208,7 @@ export class EnvironmentRegistry {
     };
     return {
       environment: generation.environment,
-      track: <T extends EnvironmentResource>(resource: T): T => {
+      track: <T extends EnvironmentResource>(resource: T, sessionId?: string): T => {
         if (!active || generation.draining) throw new EnvironmentError('environment.unavailable', `environment ${binding.environmentId} is draining`);
         const originalDispose = resource.dispose.bind(resource);
         let disposed = false;
@@ -218,7 +218,7 @@ export class EnvironmentRegistry {
           generation.resources.delete(resource);
           return originalDispose();
         } as T['dispose'];
-        generation.resources.add(resource);
+        generation.resources.set(resource, sessionId);
         return resource;
       },
       dispose: release,
@@ -232,6 +232,20 @@ export class EnvironmentRegistry {
     this.currentGenerations.clear();
     for (const generation of generations.toReversed()) await this.drain(generation);
     this.changeEmitter.dispose();
+  }
+
+  async drainSession(sessionId: string): Promise<void> {
+    const resources: EnvironmentResource[] = [];
+    for (const generation of this.currentGenerations.values()) {
+      for (const [resource, owner] of generation.resources) {
+        if (owner === sessionId) resources.push(resource);
+      }
+    }
+    for (const resource of resources.toReversed()) {
+      try {
+        await resource.dispose();
+      } catch {}
+    }
   }
 
   private createRegistration(environmentId: string): EnvironmentRegistrationHandle {
@@ -284,7 +298,7 @@ export class EnvironmentRegistry {
   private createGeneration(environment: Environment): Generation {
     const generation = {
       environment,
-      resources: new Set<EnvironmentResource>(),
+      resources: new Map<EnvironmentResource, string | undefined>(),
       leases: 0,
       draining: false,
       disposed: false,
@@ -324,7 +338,7 @@ export class EnvironmentRegistry {
         current: generation.environment,
         status: 'draining',
       });
-      const resources = [...generation.resources].toReversed();
+      const resources = [...generation.resources.keys()].toReversed();
       generation.resources.clear();
       for (const resource of resources) {
         try {

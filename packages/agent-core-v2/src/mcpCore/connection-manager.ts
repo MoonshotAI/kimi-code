@@ -87,6 +87,7 @@ export interface McpConnectionManagerOptions {
   readonly workspaceId?: string;
   readonly environmentId?: string;
   readonly requireStdioEnvironmentId?: boolean;
+  readonly sessionId?: string;
   readonly oauthService?: McpOAuthService;
   readonly log?: Logger;
   readonly resolveDefaultTimeouts?: () => McpDefaultTimeouts;
@@ -450,6 +451,7 @@ export class McpConnectionManager implements McpConnectionView {
         environmentResolver,
         workspaceId,
         environmentId,
+        sessionId: this.options.sessionId,
       });
     }
     if (config.transport === 'sse') {

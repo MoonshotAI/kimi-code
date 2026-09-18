@@ -1,5 +1,6 @@
 /**
- * Scenario: the `kimi exec-server --listen stdio` light entry — argv
+ * Scenario: the `kimi exec-server` light entry (bare or with the explicit
+ * `--listen stdio` spelling) — argv
  * pre-dispatch shape, transport validation, hidden Commander subcommand, and
  * the import-graph rule that keeps the SDK mega-module out of the executor
  * path — plus a real stdio handshake against the source entry (tsx).
@@ -36,6 +37,11 @@ describe('isExecServerArgv', () => {
     );
   });
 
+  it('matches the bare command, which defaults to stdio', () => {
+    expect(isExecServerArgv(['node', 'dist/main.mjs', 'exec-server'])).toBe(true);
+    expect(isExecServerArgv(['/home/me/.kimi-code/bin/kimi', 'exec-server'])).toBe(true);
+  });
+
   it('matches the SEA argv shape without a script slot', () => {
     expect(isExecServerArgv(['/home/me/.kimi-code/bin/kimi', 'exec-server', '--listen', 'stdio'])).toBe(
       true,
@@ -48,10 +54,10 @@ describe('isExecServerArgv', () => {
     ).toBe(true);
   });
 
-  it('rejects the bare command and malformed transports', () => {
-    expect(isExecServerArgv(['node', 'main.mjs', 'exec-server'])).toBe(false);
+  it('rejects malformed transports, unknown options, and excess args', () => {
     expect(isExecServerArgv(['node', 'main.mjs', 'exec-server', '--listen', 'ws'])).toBe(false);
     expect(isExecServerArgv(['node', 'main.mjs', 'exec-server', '--listen=stdio'])).toBe(false);
+    expect(isExecServerArgv(['node', 'main.mjs', 'exec-server', '--bogus'])).toBe(false);
     expect(
       isExecServerArgv(['node', 'main.mjs', 'exec-server', '--listen', 'stdio', '--verbose']),
     ).toBe(false);
@@ -66,19 +72,22 @@ describe('isExecServerArgv', () => {
 });
 
 describe('runExecServerCommand transport validation', () => {
-  it('rejects a non-stdio transport with exit code 2 and a stderr-only error', async () => {
-    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    try {
-      const code = await runExecServerCommand('ws');
-      expect(code).toBe(2);
-      expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('--listen stdio'));
-      expect(stdoutSpy).not.toHaveBeenCalled();
-    } finally {
-      stderrSpy.mockRestore();
-      stdoutSpy.mockRestore();
-    }
-  });
+  it.each(['ws', 'tcp'])(
+    'rejects the %s transport with exit code 2 and a stderr-only error',
+    async (transport) => {
+      const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+      try {
+        const code = await runExecServerCommand(transport);
+        expect(code).toBe(2);
+        expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('--listen stdio'));
+        expect(stdoutSpy).not.toHaveBeenCalled();
+      } finally {
+        stderrSpy.mockRestore();
+        stdoutSpy.mockRestore();
+      }
+    },
+  );
 });
 
 describe('resolveExecutorVersion', () => {
@@ -117,15 +126,28 @@ describe('hidden exec-server subcommand', () => {
     expect(calls).toEqual(['stdio']);
   });
 
+  it('defaults --listen to stdio on a bare invocation', () => {
+    const { program, calls } = createExecServerProgram();
+    program.parse(['node', 'kimi', 'exec-server']);
+    expect(calls).toEqual(['stdio']);
+  });
+
   it('accepts the --listen=stdio spelling', () => {
     const { program, calls } = createExecServerProgram();
     program.parse(['node', 'kimi', 'exec-server', '--listen=stdio']);
     expect(calls).toEqual(['stdio']);
   });
 
-  it('requires --listen', () => {
-    const { program } = createExecServerProgram();
-    expect(() => program.parse(['node', 'kimi', 'exec-server'])).toThrow();
+  it('passes an unsupported transport through for the runner to reject', () => {
+    const { program, calls } = createExecServerProgram();
+    program.parse(['node', 'kimi', 'exec-server', '--listen', 'ws']);
+    expect(calls).toEqual(['ws']);
+  });
+
+  it('rejects unknown options instead of silently starting', () => {
+    const { program, calls } = createExecServerProgram();
+    expect(() => program.parse(['node', 'kimi', 'exec-server', '--bogus'])).toThrow();
+    expect(calls).toEqual([]);
   });
 
   it('rejects excess arguments', () => {
@@ -293,12 +315,15 @@ async function runExecServerHandshake(
 }
 
 describe('exec-server stdio handshake (source entry)', () => {
-  it(
-    'answers initialize with the host version and a posix environment, then exits 0 on stdin EOF',
+  it.each([
+    ['bare', ['src/main.ts', 'exec-server']],
+    ['explicit --listen stdio', ['src/main.ts', 'exec-server', '--listen', 'stdio']],
+  ] as const)(
+    'answers initialize with the host version and a posix environment, then exits 0 on stdin EOF (%s argv)',
     { timeout: 60_000 },
-    async () => {
+    async (_label, argv) => {
       const tsxBin = resolve(appRoot, 'node_modules/.bin/tsx');
-      const result = await runExecServerHandshake(tsxBin, ['src/main.ts', 'exec-server', '--listen', 'stdio']);
+      const result = await runExecServerHandshake(tsxBin, argv);
 
       expect(result.initialize['id']).toBe(1);
       const initializeResult = result.initialize['result'] as {

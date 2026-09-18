@@ -12,6 +12,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { WatchChange } from '#human/utils/watch';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { acquireEnvironmentLease } from '#/agent/permissionPolicy/policies/environment-lease';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { normalizeUserPath } from '#/tool/path-access';
@@ -168,7 +169,8 @@ export class AgentAgentsMdReminderService
 
   private async ensureSeeded(): Promise<void> {
     if (this.states.get(agentsMdReminderSeededKey)) return;
-    const lease = this.environment.acquire(['fs']);
+    const lease = acquireEnvironmentLease(this.environment, ['fs']);
+    if (lease === undefined) return;
     try {
       const { paths } = await loadAgentsMdDetailed(
         { fs: lease.environment.fs!, homeDir: lease.environment.host.homeDir },
@@ -236,7 +238,8 @@ export class AgentAgentsMdReminderService
 
   private targetDirs(ctx: ToolDidExecuteContext): { dirs: string[]; selfKnown: string[] } {
     const selfKnown: string[] = [];
-    const lease = this.environment.acquire();
+    const lease = acquireEnvironmentLease(this.environment);
+    if (lease === undefined) return { dirs: [], selfKnown };
     const env = lease.environment.host;
     lease.dispose();
     switch (ctx.toolCall.name) {
@@ -308,7 +311,8 @@ export class AgentAgentsMdReminderService
   }
 
   private async probeDir(dir: string): Promise<string[]> {
-    const lease = this.environment.acquire(['fs']);
+    const lease = acquireEnvironmentLease(this.environment, ['fs']);
+    if (lease === undefined) return [];
     try {
       const fs = lease.environment.fs!;
       const anchor = await this.nearestExistingDir(fs, dir);

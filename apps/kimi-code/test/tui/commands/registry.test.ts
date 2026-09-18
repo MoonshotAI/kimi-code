@@ -225,10 +225,10 @@ describe('built-in slash command registry', () => {
     expect((command as KimiSlashCommand).experimentalFlag).toBe('tower');
   });
 
-  it('gates environment behind the remote_runtime experiment and keeps it idle-only', () => {
+  it('exposes environment unconditionally and keeps it idle-only', () => {
     const command = findBuiltInSlashCommand('environment');
     expect(command).toBeDefined();
-    expect((command as KimiSlashCommand).experimentalFlag).toBe('remote_runtime');
+    expect((command as KimiSlashCommand).experimentalFlag).toBeUndefined();
     expect(command?.aliases).toContain('environments');
     expect(resolveSlashCommandAvailability(command!, '')).toBe('idle-only');
   });

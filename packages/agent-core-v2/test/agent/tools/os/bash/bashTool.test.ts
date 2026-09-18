@@ -1,3 +1,5 @@
+import { Readable, Writable } from 'node:stream';
+
 import { describe, expect, it } from 'vitest';
 
 import type { IAgentTaskService } from '#/agent/task/task';
@@ -6,12 +8,14 @@ import type { IConfigService } from '#/app/config/config';
 import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { Environment } from '#/environment/environment';
+import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { makeSessionContext, type ISessionContext } from '#/session/sessionContext/sessionContext';
-import type { ToolExecution } from '#/tool/toolContract';
+import type { ToolExecution, ExecutableToolOutput } from '#/tool/toolContract';
 import { BashTool } from '#/agent/tools/os/bash/bashTool';
 import type { BashInput } from '#/agent/tools/os/bash/bash';
 
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
+import { stubAgentEnvironment } from '../../../../environment/stubs';
 
 function testCtx(cwd: string): ISessionContext {
   return makeSessionContext({
@@ -24,21 +28,12 @@ function testCtx(cwd: string): ISessionContext {
 }
 
 function environmentService(environment: Environment): IAgentEnvironmentService {
-  return {
-    _serviceBrand: undefined,
-    onDidChange: () => ({ dispose: () => {} }),
-    inspect: () => environment,
-    isAvailable: () => true,
-    acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
-    acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
-    reconnect: async () => {},
-    workspaceRoots: () => ({ workDir: '', additionalDirs: [] }),
-  };
+  return stubAgentEnvironment(environment, { workDir: '' });
 }
 
 function throwingEnvironmentService(): IAgentEnvironmentService {
   return {
-    ...environmentService(new FakeEnvironment({ workspaceId: 'w', environmentId: 'local', generation: 'g' })),
+    ...stubAgentEnvironment(new FakeEnvironment({ workspaceId: 'w', environmentId: 'local', generation: 'g' }), { workDir: '' }),
     inspect: () => {
       throw new Error('environment w is not materialized');
     },
@@ -100,5 +95,100 @@ describe('BashTool display cwd', () => {
 
     await expect(displayCwd(tool, { command: 'ls' })).resolves.toBe('/workspace');
     await expect(displayCwd(tool, { command: 'ls', cwd: 'src' })).resolves.toBe('src');
+  });
+});
+
+interface SpawnRecord {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly options: { readonly cwd?: string; readonly env?: Record<string, string> };
+}
+
+function fakeProcess(records: SpawnRecord[]): IHostProcessService {
+  return {
+    _serviceBrand: undefined,
+    spawn: async (command: string, args: readonly string[] = [], options: { cwd?: string; env?: Record<string, string> } = {}) => {
+      records.push({ command, args, options });
+      const stdout = new Readable({ read() { stdout.push(null); } });
+      const stderr = new Readable({ read() { stderr.push(null); } });
+      const proc: IHostProcess = {
+        _serviceBrand: undefined,
+        pid: 123,
+        exitCode: 0,
+        stdin: new Writable({ write: (_chunk, _encoding, callback) => { callback(); } }),
+        stdout,
+        stderr,
+        wait: async () => 0,
+        kill: async () => {},
+        dispose: () => {},
+      };
+      return proc;
+    },
+  } as IHostProcessService;
+}
+
+function stubTasks(): IAgentTaskService {
+  return {
+    registerTask: () => 'bash-1',
+    waitForForegroundRelease: async () => 'completed',
+    getTask: () => undefined,
+  } as unknown as IAgentTaskService;
+}
+
+function errorText(output: ExecutableToolOutput): string {
+  return typeof output === 'string' ? output : JSON.stringify(output);
+}
+
+async function runCommand(tool: BashTool, args: BashInput): Promise<void> {
+  const resolved: ToolExecution = await Promise.resolve(tool.resolveExecution(args));
+  if (resolved.isError === true) throw new Error(errorText(resolved.output));
+  const result = await resolved.execute({ turnId: 0, toolCallId: 'call_1', signal: new AbortController().signal });
+  if (result.isError === true) throw new Error(errorText(result.output));
+}
+
+describe('BashTool spawn cwd', () => {
+  it('passes the session workDir as an explicit spawn cwd', async () => {
+    const records: SpawnRecord[] = [];
+    const environment = Object.assign(
+      new FakeEnvironment({ workspaceId: 'w', environmentId: 'dev-box', generation: 'g' }),
+      { process: fakeProcess(records) },
+    );
+    const tool = new BashTool(
+      stubAgentEnvironment(environment),
+      testCtx('/Users/mac/project'),
+      stubWorkspaceContext('/home/deploy/app'),
+      stubTasks(),
+      { isToolActive: () => false } as unknown as IAgentToolPolicyService,
+      { get: () => undefined } as unknown as IConfigService,
+    );
+
+    await runCommand(tool, { command: 'ls' });
+
+    expect(records).toHaveLength(1);
+    expect(records[0]!.command).toBe('/bin/sh');
+    expect(records[0]!.args[1]).toBe("cd '/home/deploy/app' && ls");
+    expect(records[0]!.options.cwd).toBe('/home/deploy/app');
+    expect(records[0]!.options.env).toMatchObject({ NO_COLOR: '1', TERM: 'dumb' });
+  });
+
+  it('spawns each session command with its own workDir on a shared environment', async () => {
+    const records: SpawnRecord[] = [];
+    const environment = Object.assign(
+      new FakeEnvironment({ workspaceId: 'w', environmentId: 'dev-box', generation: 'g' }),
+      { process: fakeProcess(records) },
+    );
+    const makeTool = (workDir: string) => new BashTool(
+      stubAgentEnvironment(environment),
+      testCtx('/Users/mac/project'),
+      stubWorkspaceContext(workDir),
+      stubTasks(),
+      { isToolActive: () => false } as unknown as IAgentToolPolicyService,
+      { get: () => undefined } as unknown as IConfigService,
+    );
+
+    await runCommand(makeTool('/remote/a'), { command: 'ls' });
+    await runCommand(makeTool('/remote/b'), { command: 'ls', cwd: 'src' });
+
+    expect(records.map((record) => record.options.cwd)).toEqual(['/remote/a', '/remote/b/src']);
   });
 });

@@ -45,9 +45,10 @@ import {
   guessLanguageId,
   guessMime,
 } from '#/_base/utils/fileMeta';
-import { ErrorCodes, Error2, isError2, unwrapErrorCause } from '#/errors';
+import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem, type HostDirEntry, type HostFileStat } from '#/os/interface/hostFileSystem';
+import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import type { EnvironmentPath } from '#/environment/environment';
 import { IEnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
@@ -388,13 +389,12 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     try {
       await this.hostFs.mkdir(abs, { recursive: req.recursive });
     } catch (error) {
-      const code = errnoCode(error);
-      if (code === 'EEXIST') {
+      if (errnoCode(error) === 'EEXIST') {
         throw new Error2(ErrorCodes.FS_ALREADY_EXISTS, `path already exists: ${req.path}`, {
           details: { path: req.path },
         });
       }
-      if (code === 'ENOENT' || code === 'ENOTDIR') {
+      if (isHostFsNotFound(error) || isHostFsNotDirectory(error)) {
         throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `parent not found: ${req.path}`, {
           details: { path: req.path },
         });
@@ -1350,13 +1350,7 @@ function errnoCode(err: unknown): string | undefined {
 }
 
 function isMissingPathError(err: unknown): boolean {
-  if (isError2(err)) {
-    return (
-      err.code === ErrorCodes.OS_FS_NOT_FOUND || err.code === ErrorCodes.OS_FS_NOT_DIRECTORY
-    );
-  }
-  const code = errnoCode(err);
-  return code === 'ENOENT' || code === 'ENOTDIR';
+  return isHostFsNotFound(err) || isHostFsNotDirectory(err);
 }
 
 function isInsideOrEqual(path: EnvironmentPath, child: string, parent: string): boolean {
@@ -1368,8 +1362,7 @@ function isInsideOrEqual(path: EnvironmentPath, child: string, parent: string): 
 }
 
 function mapFsError(err: unknown, inputPath: string): Error {
-  const code = errnoCode(err);
-  if (code === 'ENOENT' || code === 'ENOTDIR') {
+  if (isHostFsNotFound(err) || isHostFsNotDirectory(err)) {
     return new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `path not found: ${inputPath}`, {
       details: { path: inputPath },
     });

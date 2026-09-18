@@ -59,6 +59,7 @@
   },
   "dependencies": {
     "@moonshot-ai/agent-core-v2": "workspace:^",
+    "@moonshot-ai/kimi-code-oauth": "workspace:^",
     "node-pty": "^1.1.0"
   },
   "devDependencies": {

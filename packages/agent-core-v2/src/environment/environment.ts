@@ -53,12 +53,11 @@ export interface Environment {
   readonly whenReady?: Promise<void>;
   readonly connectError?: string;
   connect?(): Promise<void>;
-  reroot?(cwd: string): Promise<void>;
   dispose(): void | Promise<void>;
 }
 
 export interface EnvironmentLease {
   readonly environment: Environment;
-  track<T extends { dispose(): void | Promise<void> }>(resource: T): T;
+  track<T extends { dispose(): void | Promise<void> }>(resource: T, sessionId?: string): T;
   dispose(): void;
 }

@@ -19,15 +19,14 @@ import {
 } from '#/os/backends/node-local/tools/rgLocator';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { Environment } from '#/environment/environment';
+import { stubRgProbe } from '../../../stubs';
 
 vi.mock('tar', () => ({ extract: vi.fn() }));
 
 function probeWith(
   resolveExitCode: (args: readonly string[]) => number,
 ): RgProbe & { exec: ReturnType<typeof vi.fn> } {
-  return {
-    exec: vi.fn(async (args: readonly string[]) => ({ exitCode: resolveExitCode(args) })),
-  };
+  return stubRgProbe(resolveExitCode);
 }
 
 function noRgProbe(): RgProbe & { exec: ReturnType<typeof vi.fn> } {

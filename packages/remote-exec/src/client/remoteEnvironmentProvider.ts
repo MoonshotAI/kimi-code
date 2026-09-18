@@ -7,13 +7,11 @@ import { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
 import { subtreeWatchFilter } from '@moonshot-ai/agent-core-v2/_base/utils/paths';
 import { TimeoutTimer } from '@moonshot-ai/agent-core-v2/_base/utils/timer';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
-import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
 import { watch } from '@moonshot-ai/agent-core-v2/human/utils/watch';
 import type { HostEnvironmentInfo } from '@moonshot-ai/agent-core-v2/os/interface/hostEnvironment';
 import { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
 import { IAtomicDocumentStore } from '@moonshot-ai/agent-core-v2/persistence/interface/atomicDocumentStore';
 import { ENVIRONMENTS_SECTION } from '@moonshot-ai/agent-core-v2/environment/configSection';
-import { REMOTE_RUNTIME_FLAG_ID } from '@moonshot-ai/agent-core-v2/environment/flag';
 import {
   PROJECT_ENVIRONMENTS_FILE,
   resolveWorkspaceEnvironmentDeclarations,
@@ -96,7 +94,6 @@ export class ManagedRemoteEnvironment implements Environment {
   constructor(
     private readonly inner: RemoteEnvironment | undefined,
     private readonly connectCallback: () => Promise<void>,
-    private readonly rerootCallback: (cwd: string) => Promise<void>,
     identity: EnvironmentIdentity,
   ) {
     this.identity = identity;
@@ -174,10 +171,6 @@ export class ManagedRemoteEnvironment implements Environment {
     return this.connectInflight;
   }
 
-  reroot(cwd: string): Promise<void> {
-    return this.rerootCallback(cwd);
-  }
-
   private setStatus(status: EnvironmentStatus): void {
     if (this.currentStatus === status || this.currentStatus === 'disposed') return;
     this.currentStatus = status;
@@ -185,8 +178,8 @@ export class ManagedRemoteEnvironment implements Environment {
   }
 
   // The executor connection is owned by the declaring record, not by this
-  // view: replacements (reconnect, reroot, declaration update) drain views
-  // without tearing the connection down, and the record disposes it.
+  // view: replacements (reconnect, declaration update) drain views without
+  // tearing the connection down, and the record disposes it.
   async dispose(): Promise<void> {
     this.statusSubscription?.dispose();
     if (this.currentStatus !== 'disposed') {
@@ -231,13 +224,9 @@ interface DeclaredEnvironmentRecord {
   // registry.
   version: number;
   // The live executor connection, owned by the record: managed views share it
-  // and never dispose it, so a reroot replacement keeps serving the same
-  // connection. The record disposes it on reconnect, update, and removal.
+  // and never dispose it. The record disposes it on reconnect, update, and
+  // removal.
   connection?: RemoteEnvironment;
-  // The latest reroot cwd; carried into the identity of every connected view.
-  boundCwd?: string;
-  // The most recent view's connect callback, reused by reroot replacements.
-  connect?: () => Promise<void>;
 }
 
 const PROJECT_DECLARATION_WATCH_DEBOUNCE_MS = 200;
@@ -245,7 +234,7 @@ const PROJECT_DECLARATION_WATCH_DEBOUNCE_MS = 200;
 export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFactory {
   readonly id = 'remote-exec';
   readonly imports: EnvironmentUnitImports = {
-    root: [IFlagService, IConfigService, IHostFileSystem, IAtomicDocumentStore, ILogService],
+    root: [IConfigService, IHostFileSystem, IAtomicDocumentStore, ILogService],
     imports: [],
     local: [],
   };
@@ -253,11 +242,6 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
   constructor(private readonly options: RemoteEnvironmentProviderFactoryOptions = {}) {}
 
   async attach(context: EnvironmentProviderContext, host: EnvironmentProviderHost): Promise<EnvironmentProviderAttachment> {
-    if (!host.get(IFlagService).enabled(REMOTE_RUNTIME_FLAG_ID)) {
-      return {
-        dispose() {},
-      };
-    }
     const log = host.get(ILogService);
     const config = host.get(IConfigService);
     const fs = host.get(IHostFileSystem);
@@ -348,12 +332,16 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
     const configListener = config.onDidSectionChange((event) => {
       if (event.domain === ENVIRONMENTS_SECTION) reconcile();
     });
+    const trustListener = context.onDidChangeTrust(() => {
+      reconcile();
+    });
     const watchProjectDeclarations = this.options.watchProjectDeclarations ?? watchProjectDeclarationFile;
     const projectWatch = watchProjectDeclarations(join(context.root, PROJECT_ENVIRONMENTS_FILE), reconcile);
     return {
       dispose: async () => {
         disposed = true;
         configListener.dispose();
+        trustListener.dispose();
         projectWatch.dispose();
         for (const record of [...records.values()].toReversed()) {
           record.version += 1;
@@ -388,7 +376,6 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
     let inflight: Promise<void> | undefined;
     const version = record.version;
     const declaration = record.declaration;
-    const reroot = (cwd: string): Promise<void> => this.rerootRecord(context, record, cwd);
     const connectEnvironment = (): Promise<void> => {
       inflight ??= (async () => {
         try {
@@ -421,11 +408,10 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
           const previous = record.connection;
           record.connection = connected;
           try {
-            await record.handle.update(() => new ManagedRemoteEnvironment(connected, connectEnvironment, reroot, {
+            await record.handle.update(() => new ManagedRemoteEnvironment(connected, connectEnvironment, {
               workspaceId: context.id,
               environmentId: declaration.id,
               generation: connected.identity.generation,
-              cwd: record.boundCwd,
             }));
           } catch (error) {
             record.connection = previous;
@@ -439,30 +425,11 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
       })();
       return inflight;
     };
-    record.connect = connectEnvironment;
-    return new ManagedRemoteEnvironment(undefined, connectEnvironment, reroot, {
+    return new ManagedRemoteEnvironment(undefined, connectEnvironment, {
       workspaceId: context.id,
       environmentId: declaration.id,
       generation: `${declaration.id}-pending-${randomUUID()}`,
     });
-  }
-
-  private async rerootRecord(context: EnvironmentProviderContext, record: DeclaredEnvironmentRecord, cwd: string): Promise<void> {
-    const connection = record.connection;
-    if (connection === undefined) {
-      // Pending or disconnected: the next connected view carries the cwd.
-      record.boundCwd = cwd;
-      return;
-    }
-    const connect = record.connect;
-    if (connect === undefined) throw new Error(`remote environment ${record.declaration.id} has no connect callback`);
-    await record.handle.update(() => new ManagedRemoteEnvironment(connection, connect, (next) => this.rerootRecord(context, record, next), {
-      workspaceId: context.id,
-      environmentId: record.declaration.id,
-      generation: `${record.declaration.id}-root-${randomUUID()}`,
-      cwd,
-    }));
-    record.boundCwd = cwd;
   }
 }
 

@@ -39,6 +39,7 @@ function makeComponent(overrides: Partial<EnvironmentManagerOptions> = {}): Envi
     onReconnect: vi.fn(),
     onAdd: vi.fn(),
     onClose: vi.fn(),
+    requestRender: vi.fn(),
     ...overrides,
   });
 }
@@ -148,13 +149,31 @@ describe('EnvironmentManagerComponent', () => {
     expect(onAdd).toHaveBeenCalledTimes(1);
   });
 
-  it('offers R reconnect only on the disconnected bound remote row', () => {
+  it('offers Enter/R reconnect only on the disconnected bound remote row', () => {
     const onReconnect = vi.fn();
     const component = makeComponent({ onReconnect, currentEnvironmentId: 'sandbox' });
     // Selection starts on the current (sandbox) row, which is disconnected.
-    expect(rendered(component)).toContain('R reconnect');
+    expect(rendered(component)).toContain('Enter/R reconnect');
     component.handleInput('r');
     expect(onReconnect).toHaveBeenCalledWith('sandbox');
+  });
+
+  it('reconnects on Enter when the current row is the disconnected bound remote', () => {
+    const onReconnect = vi.fn();
+    const onSwitch = vi.fn();
+    const component = makeComponent({ onReconnect, onSwitch, currentEnvironmentId: 'sandbox' });
+    component.handleInput(ENTER);
+    expect(onReconnect).toHaveBeenCalledWith('sandbox');
+    expect(onSwitch).not.toHaveBeenCalled();
+  });
+
+  it('keeps Enter a no-op on the current row while it is ready', () => {
+    const onReconnect = vi.fn();
+    const onSwitch = vi.fn();
+    const component = makeComponent({ onReconnect, onSwitch, currentEnvironmentId: 'dev-box' });
+    component.handleInput(ENTER);
+    expect(onReconnect).not.toHaveBeenCalled();
+    expect(onSwitch).not.toHaveBeenCalled();
   });
 
   it('ignores R on rows that are not the disconnected bound one', () => {
@@ -202,11 +221,29 @@ describe('EnvironmentManagerComponent', () => {
       onReconnect: vi.fn(),
       onAdd: vi.fn(),
       onClose: vi.fn(),
+      requestRender: vi.fn(),
     });
     const plain = rendered(component);
     const selectedLine = plain.split('\n').find((line) => line.includes('❯'));
     expect(selectedLine).toContain('dev-box');
     expect(plain).toContain('command · ready');
+  });
+
+  it('requests a repaint on setBusy, showError, and setOptions', () => {
+    const requestRender = vi.fn();
+    const component = makeComponent({ requestRender });
+    component.setBusy('Reconnecting dev-box…');
+    component.showError('boom');
+    component.setOptions({
+      environments: [LOCAL, DEV_BOX, SANDBOX],
+      currentEnvironmentId: 'local',
+      onSwitch: vi.fn(),
+      onReconnect: vi.fn(),
+      onAdd: vi.fn(),
+      onClose: vi.fn(),
+      requestRender,
+    });
+    expect(requestRender).toHaveBeenCalledTimes(3);
   });
 
   it('bounds the inline error to a few lines', () => {

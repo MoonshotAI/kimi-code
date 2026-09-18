@@ -112,7 +112,7 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | [`image`](#image) | `table` | — | Image compression parameters |
 | [`services`](#services) | `table` | — | Built-in external service configuration |
 | [`permission`](#permission) | `table` | — | Initial permission rules |
-| [`environments`](#environments) | `table` | — | Remote environment declarations (experimental) |
+| [`environments`](#environments) | `table` | — | Remote environment declarations |
 | [`hooks`](../customization/hooks.md) | `array<table>` | — | Lifecycle hooks |
 | [`identity`](#identity) | `table` | — | Custom agent identity |
 
@@ -545,7 +545,7 @@ MCP server declarations are configured in `~/.kimi-code/mcp.json` or the project
 
 ## `environments`
 
-`environments` declares remote environments — SSH hosts, Docker-compatible containers, or custom launcher commands — that sessions can bind to so the agent's tools execute in the target environment. The whole feature is experimental and this section is only read when the `remote_runtime` flag is enabled; see [Remote environments](../guides/remote-environment.md) for the feature walkthrough, boundaries, and limitations.
+`environments` declares remote environments — SSH hosts, Docker-compatible containers, or custom launcher commands — that sessions can bind to so the agent's tools execute in the target environment. See [Remote environments](../guides/remote-environment.md) for the feature walkthrough, boundaries, and limitations.
 
 Each entry is keyed by its environment id: at most 64 characters, no leading or trailing whitespace, and `local` and `default` are reserved words. Within one entry, `type` and `command` are mutually exclusive.
 
@@ -572,12 +572,12 @@ The optional top-level `default` names the environment new sessions bind to init
 
 ### Command entries
 
-The generic launcher form, for any environment the built-in launchers do not cover (OrbStack machines, `kubectl exec`, Apple Container, managed sandboxes). The declared command must bridge stdio to `kimi exec-server --listen stdio` on the target.
+The generic launcher form, for any environment the built-in launchers do not cover (OrbStack machines, `kubectl exec`, Apple Container, managed sandboxes). The declared command must bridge stdio to `kimi exec-server` on the target.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `command` | `string` | Yes | Launcher executable: a name resolved against `PATH`, or an absolute path. A resolution landing inside the working directory is refused, so a project cannot shadow the launcher with a same-named binary |
-| `args` | `array<string>` | No | Launcher arguments; must include the executor invocation (`... exec-server --listen stdio`) |
+| `args` | `array<string>` | No | Launcher arguments; must include the executor invocation (`... exec-server`) |
 | `env` | `table<string, string>` | No | Environment for the launcher process on your machine; never propagated into commands running on the target |
 | `defaultCwd` | `string` | No | Working-directory prefill when binding a session |
 
@@ -597,7 +597,7 @@ container = "myapp-dev"
 [environments.sandbox]
 command = "sandbox"
 args = ["ssh", "i-1234567890", "--",
-        "/home/me/.kimi-code/bin/kimi", "exec-server", "--listen", "stdio"]
+        "/home/me/.kimi-code/bin/kimi", "exec-server"]
 env = { SANDBOX_TOKEN = "..." }
 defaultCwd = "/home/me/kimi-code"
 ```

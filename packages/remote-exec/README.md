@@ -80,8 +80,7 @@ Client-surface notes beyond the wire protocol:
   are made at registration. An explicit `connect()` (the binding
   `connectAndSwitch` flow, or reconnect) builds the `RemoteEnvironment` and swaps
   it into the registry with a fresh generation; the old generation drains and
-  its leases never migrate. The whole provider is inert unless
-  `KIMI_CODE_EXPERIMENTAL_REMOTE_RUNTIME` is enabled.
+  its leases never migrate.
 
 ## Executor install and version guidance (spec D8/D9)
 

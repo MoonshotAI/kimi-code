@@ -300,6 +300,7 @@ function makeFakeHarness() {
         getOrCreate: vi.fn(async () => ({
           program: { trust: { get: vi.fn(async () => trustState.trusted) } },
         })),
+        addProvider: vi.fn(async () => ({ dispose: vi.fn() })),
       },
     ],
     [

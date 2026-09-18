@@ -2,8 +2,6 @@
 
 远程环境让 Agent 的工具——读写文件、执行 Shell 命令、交互终端——在另一台机器或容器里执行，而 Kimi Code CLI 本身、所有模型请求和你的凭据都留在本机。适合代码在远程服务器上，或希望把工具执行隔离在 Docker 兼容容器里的场景。
 
-> 远程环境是实验功能。启动 Kimi Code 前设置 `KIMI_CODE_EXPERIMENTAL_REMOTE_RUNTIME=1`，或在 `config.toml` 的 `[experimental]` 下写 `remote_runtime = true` 启用；总开关 `KIMI_CODE_EXPERIMENTAL_FLAG=1` 也会一并启用。
-
 ## 远程环境的工作原理
 
 Kimi Code 把 Agent 循环、模型请求、凭据、审批和会话状态全部留在本机，目标环境只执行三组 OS 原语：文件系统、进程、终端。目标机器上运行一个小型执行器（`kimi exec-server`），通过一条连接提供这些原语；其余一切——包括每一次 LLM 请求——都留在本机。
@@ -43,7 +41,7 @@ defaultCwd = "/workspace"
 [environments.sandbox]
 command = "sandbox"              # 可执行名或绝对路径
 args = ["ssh", "i-1234567890", "--",
-        "/home/me/.kimi-code/bin/kimi", "exec-server", "--listen", "stdio"]
+        "/home/me/.kimi-code/bin/kimi", "exec-server"]
 env = { SANDBOX_TOKEN = "..." }  # 可选：仅作用于本机启动器进程的环境变量
 defaultCwd = "/home/me/kimi-code"
 ```
@@ -96,13 +94,27 @@ kimi -p --environment dev-box "Run the test suite"
 
 该标志与 `--agent` 一样只在创建会话时生效：不能与 `--session`/`--continue` 组合，因为恢复会话时会自动还原其记录的绑定。id 未声明、或条目未设置 `defaultCwd` 时，启动会直接失败。创建会话会先连接目标环境再启动，连接失败会带着具体原因中止，而不是打开一个无法正常工作的会话。
 
+## Agent 环境工具（实验性）
+
+上面的切换都由你手动完成。一个实验性标志则把环境切换交给 Agent 自己：main agent 会获得两个工具，其系统提示词中会列出会话工作区内可用的环境，让它知道有哪些 id 可用。本页的其他机制——绑定模型、每次切换记录的提醒、undo 恢复上一个绑定——都原样适用。
+
+该功能默认关闭。通过 `KIMI_CODE_EXPERIMENTAL_AGENT_ENVIRONMENT_TOOLS=1`、`config.toml` 中的 `[experimental] agent_environment_tools = true`，或创建会话前的 `/experiments` 启用；总开关 `KIMI_CODE_EXPERIMENTAL_FLAG=1` 也会一并启用。在功能关闭时创建的会话既没有这些工具，也没有提示词中的环境列表。
+
+启用后，main agent 可以：
+
+- **用 `change_environment` 切换**：传入环境 `id`（`local` 或已声明的 id），可选 `cwd`（缺省时回退到声明的 `defaultCwd`）。目标环境会先立即连接——连接或 `cwd` 校验失败会立刻报错且不改变任何状态——切换本身在当前轮次边界生效：本轮剩余的工具调用仍在前一个环境上执行，新环境的详情提醒随下一轮次到达。
+- **用 `connect` 创建临时环境**：传入启动器规格——`{ type: "ssh", host: "..." }`、`{ type: "docker", container: "..." }` 或 `{ type: "command", command: "...", args: [...] }`，可选 `id`。环境会立即连接并像声明的环境一样注册到工作区，但不会写入 `config.toml` 或 `.kimi-code/environments.toml`：临时环境在进程退出时消失，连接断开后无法重连（重新创建一个即可），恢复会话时也找不到它。
+- **用 `environment` 参数绑定 subagent**：`Agent` 工具接受可选的 `environment` id；新启动的 subagent 绑定到该环境（工作目录取其 `defaultCwd`），而不是继承父 Agent 的绑定。恢复的 subagent 保留自己的绑定。
+
+两个工具都有两条限制。Plan 模式下会被拒绝——先退出 Plan 模式。它们也遵循权限模式：「始终询问」和「必要时询问」模式下，切换或连接前都会请求确认；「完全自动」模式则直接执行。tower 模式激活期间不会注册这组工具。
+
 ## 断线与重连
 
 远程会话依赖每个「工作区 + 环境」一条的连接。连接断开时——网络中断、容器停止、执行器退出——会话在目标环境启动的全部进程都会被终止，终端滚动回放在本机保持只读可读。
 
 连接断开后没有自动重连，也**不会静默回退到本地环境**：本该落在远程机器上的 `rm` 或 `git` 命令绝不能落到你的本机。断线后工具调用会以 `environment.unavailable` 错误失败，你需要在 `/environment` 对话框中显式重连。
 
-恢复旧会话是唯一的例外：还原的远程绑定会在后台自动重连，会话立即打开，环境状态从 `connecting` 变为 `ready`——或变为 `disconnected`，失败原因显示在底部状态栏的环境槽位和 `/environment` 管理器中。重连仍在进行时到达的工具调用会等待这次连接完成（以连接尝试自身的超时为上界），而不是立即报错；同样绝不会静默回退到 `local`。
+恢复旧会话也不例外：还原的远程绑定不会在后台自动重连，会话立即打开，但环境保持 `disconnected` 状态。在 `/environment` 对话框中显式重连之前，针对目标环境的工具调用会以 `environment.unavailable` 错误失败；同样绝不会静默回退到 `local`。
 
 每次连接尝试最多等待 10 秒：目标一直不应答握手时，会以 `initialize timed out` 错误失败，而不是无声地一直等待；如果启动器曾向 stderr 写入内容——卡住的密码提示、`npx` 下载的进度——错误信息会带上这段尾部输出，让失败原因直接可见。
 
@@ -135,7 +147,7 @@ Host dev-box
 
 ## 远程执行器
 
-执行器是 Kimi Code 自身的轻量构建，在目标环境以 `kimi exec-server --listen stdio` 启动。它只响应文件系统、进程、终端请求——不接触模型 API、凭据和会话状态。
+执行器是 Kimi Code 自身的轻量构建，在目标环境以 `kimi exec-server` 启动。它只响应文件系统、进程、终端请求——不接触模型 API、凭据和会话状态。stdio 是默认且唯一支持的传输方式，显式写法 `kimi exec-server --listen stdio` 与之等价且依然可用。
 
 固定安装路径是目标环境上的 `~/.kimi-code/bin/kimi`（执行器位于其他位置时——例如预装的容器镜像——可用条目里的 `remoteBin` 覆盖）。
 
@@ -151,7 +163,7 @@ Host dev-box
 
 ## 限制
 
-远程环境仍是实验功能，以下行为均为已知限制，逐条列出：
+以下行为均为有意限定的范围，逐条列出已知限制：
 
 - **Hooks 在 Kimi Code 所在主机执行**：`PreToolUse` 等生命周期钩子始终在运行 Kimi Code 的机器上执行，因此在远程会话中它们读到的是本机事实（本机文件、本机进程），而非目标环境的。它们以会话的本地工作目录运行；在目标环境上执行 hook 仍是未来才可能设计的能力。
 - **MCP server 留在本机**：远程会话中的 stdio MCP server 仍在本机运行，看不到目标环境的文件系统。

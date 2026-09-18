@@ -15,6 +15,7 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { HostFsError } from '#/os/interface/hostFsErrors';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { createFakeHostFs, createFakeProcessRunner } from '../../tools/fixtures/fake-exec';
@@ -282,6 +283,10 @@ describe('Plan service', () => {
       const status = await remotePlan.status();
       const planPath = `${remoteTempDir}/kimi-code/plans/main/remote-plan.md`;
       expect(status?.path).toBe(planPath);
+      expect(remoteMkdir).toHaveBeenCalledWith(dirname(planPath), {
+        recursive: true,
+        mode: 0o700,
+      });
 
       const content = '# Plan\n\n- Inspect the remote tree';
       const writeCall: ToolCall = {
@@ -300,14 +305,44 @@ describe('Plan service', () => {
       expect((await remotePlan.status())?.content).toBe(content);
     });
 
-    it('creates the plans directory on the environment fs with owner-only permissions', async () => {
-      await remotePlan.enter('remote-plan', false);
+    it('returns empty plan content when the remote fs reports fs-domain not_found for the plan file', async () => {
+      const files = new Map<string, string>();
+      const ctx = createTestAgent([
+        execEnvServices({ hostFs: createMapFs(new Map()) }),
+        agentService(
+          IAgentEnvironmentService,
+          stubPlanEnvironment({
+            fs: createMapFs(files, {
+              readText: (path) => {
+                const content = files.get(path);
+                if (content === undefined) {
+                  return Promise.reject(
+                    new HostFsError('os.fs.not_found', 'read failed: path does not exist', {
+                      details: { path, op: 'read', domainCode: 'os.fs.not_found' },
+                    }),
+                  );
+                }
+                return Promise.resolve(content);
+              },
+            }),
+            tempDir: remoteTempDir,
+          }),
+        ),
+      ]);
+      try {
+        const plan = ctx.get(IAgentPlanService);
+        await ctx.restorePersisted();
+        await plan.enter('remote-shape-plan', false);
+        const planPath = `${remoteTempDir}/kimi-code/plans/main/remote-shape-plan.md`;
+        files.delete(planPath);
 
-      const planPath = `${remoteTempDir}/kimi-code/plans/main/remote-plan.md`;
-      expect(remoteMkdir).toHaveBeenCalledWith(dirname(planPath), {
-        recursive: true,
-        mode: 0o700,
-      });
+        const status = await plan.status();
+
+        expect(status?.path).toBe(planPath);
+        expect(status?.content).toBe('');
+      } finally {
+        await ctx.dispose();
+      }
     });
 
     it('keeps denying writes to non-plan files on a remote binding', async () => {

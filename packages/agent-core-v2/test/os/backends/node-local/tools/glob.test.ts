@@ -10,6 +10,7 @@ import { PathSecurityError, type PathClass } from '#/tool/path-access';
 import { noopTelemetryService } from '#/app/telemetry/telemetry';
 import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
+import { stubAgentEnvironment } from '../../../../environment/stubs';
 import {
   type GlobInput,
   GlobInputSchema,
@@ -19,6 +20,7 @@ import {
 import { GlobTool, splitCompletePaths } from '#/agent/tools/os/glob/globTool';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { HostFsError } from '#/os/interface/hostFsErrors';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
@@ -108,16 +110,7 @@ function createEnvironment(
     ),
     { fs, host: environment, process },
   );
-  return {
-    _serviceBrand: undefined,
-    onDidChange: () => ({ dispose: () => {} }),
-    isAvailable: () => true,
-    inspect: () => backend,
-    acquire: () => ({ environment: backend, track: (resource) => resource, dispose: () => {} }),
-    acquireWhenReady: async () => ({ environment: backend, track: (resource) => resource, dispose: () => {} }),
-    reconnect: async () => {},
-    workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
-  };
+  return stubAgentEnvironment(backend);
 }
 
 function createRealRgProbe(processService: IHostProcessService): RgProbe {
@@ -743,6 +736,23 @@ describe('GlobTool', () => {
     withCwd.not.toHaveBeenCalled();
   });
 
+  it('reports "does not exist" when a remote fs reports fs-domain not_found for the search directory', async () => {
+    const stat = vi.fn(async (): Promise<HostFileStat> => {
+      throw new HostFsError('os.fs.not_found', 'stat failed: path does not exist', {
+        details: { path: '/workspace/nonexistent', op: 'stat', domainCode: 'os.fs.not_found' },
+      });
+    });
+    const exec = vi.fn();
+    const { tool, withCwd } = makeTool(workspace, { exec, stat });
+
+    const result = await execute(tool, { pattern: '*.py', path: '/workspace/nonexistent' });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toBe('/workspace/nonexistent does not exist');
+    expect(exec).not.toHaveBeenCalled();
+    withCwd.not.toHaveBeenCalled();
+  });
+
   it('reports "is not a directory" when the search target is a file', async () => {
     const stat = vi.fn(async (): Promise<HostFileStat> => fileStat());
     const exec = vi.fn();
@@ -906,6 +916,7 @@ describe('GlobTool integration (real ripgrep)', () => {
   let realEnv: IHostEnvironment;
   let realProcessService: IHostProcessService;
   let realFs: IHostFileSystem;
+  let tool: GlobTool;
   let runRealRg = false;
 
   beforeAll(async () => {
@@ -940,6 +951,7 @@ describe('GlobTool integration (real ripgrep)', () => {
     };
     realProcessService = new HostProcessService();
     realFs = new HostFileSystem();
+    tool = new GlobTool(createEnvironment(realFs, realEnv, realProcessService), stubWorkspaceContext(tmpDir!), noopTelemetryService);
   });
 
   afterEach(async () => {
@@ -956,12 +968,9 @@ describe('GlobTool integration (real ripgrep)', () => {
     await fs.utimes(full, mtime, mtime);
   }
 
-  const ws = () => stubWorkspaceContext(tmpDir!);
-
   it('continues through every match beyond the default page without duplicates', async () => {
     const expected = Array.from({ length: 347 }, (_, index) => `file-${String(index).padStart(3, '0')}.ts`);
     await Promise.all(expected.map((name, index) => touch(name, new Date(1_700_000_000_000 - index * 1000))));
-    const tool = new GlobTool(createEnvironment(realFs, realEnv, realProcessService), ws(), noopTelemetryService);
     const recovered: string[] = [];
     for (const offset of [0, 100, 200, 300]) {
       const result = await execute(tool, GlobInputSchema.parse({ pattern: '*.ts', offset }));
@@ -979,7 +988,6 @@ describe('GlobTool integration (real ripgrep)', () => {
     await touch('old.ts', new Date('2020-01-01T00:00:00Z'));
     await touch('mid.ts', new Date('2022-01-01T00:00:00Z'));
     await touch('new.ts', new Date('2024-01-01T00:00:00Z'));
-    const tool = new GlobTool(createEnvironment(realFs, realEnv, realProcessService), ws(), noopTelemetryService);
 
     const result = await execute(tool, { pattern: '*.ts', path: tmpDir! });
 
@@ -990,7 +998,6 @@ describe('GlobTool integration (real ripgrep)', () => {
     await touch('root.ts', new Date('2024-01-01T00:00:00Z'));
     await touch('src/a.ts', new Date('2023-01-01T00:00:00Z'));
     await touch('src/sub/b.ts', new Date('2022-01-01T00:00:00Z'));
-    const tool = new GlobTool(createEnvironment(realFs, realEnv, realProcessService), ws(), noopTelemetryService);
 
     const result = await execute(tool, { pattern: '*.ts', path: tmpDir! });
 
@@ -1003,7 +1010,6 @@ describe('GlobTool integration (real ripgrep)', () => {
     await touch('src/a.ts', new Date('2024-01-01T00:00:00Z'));
     await touch('test/a.ts', new Date('2023-01-01T00:00:00Z'));
     await touch('other/a.ts', new Date('2022-01-01T00:00:00Z'));
-    const tool = new GlobTool(createEnvironment(realFs, realEnv, realProcessService), ws(), noopTelemetryService);
 
     const result = await execute(tool, { pattern: '{src,test}/*.ts', path: tmpDir! });
 
@@ -1016,7 +1022,6 @@ describe('GlobTool integration (real ripgrep)', () => {
     await touch('src/a.ts', new Date('2024-01-01T00:00:00Z'));
     await touch('src/sub/b.ts', new Date('2023-01-01T00:00:00Z'));
     await touch('other/c.ts', new Date('2022-01-01T00:00:00Z'));
-    const tool = new GlobTool(createEnvironment(realFs, realEnv, realProcessService), ws(), noopTelemetryService);
 
     const result = await execute(tool, { pattern: 'src/**/*.ts', path: tmpDir! });
 
@@ -1027,7 +1032,6 @@ describe('GlobTool integration (real ripgrep)', () => {
 
   it('treats an escaped brace as a literal filename', async () => {
     await touch('{a,b}.ts', new Date('2024-01-01T00:00:00Z'));
-    const tool = new GlobTool(createEnvironment(realFs, realEnv, realProcessService), ws(), noopTelemetryService);
 
     const result = await execute(tool, { pattern: '\\{a,b\\}.ts', path: tmpDir! });
 
@@ -1039,8 +1043,7 @@ describe('GlobTool integration (real ripgrep)', () => {
     try {
       const extFile = path.join(externalDir, 'pkg.ts');
       await fs.writeFile(extFile, '');
-      const tool = new GlobTool(createEnvironment(realFs, realEnv, realProcessService), ws(), noopTelemetryService);
-
+  
       const result = await execute(tool, { pattern: '*.ts', path: externalDir });
 
       expect(result.output).toBe(extFile);

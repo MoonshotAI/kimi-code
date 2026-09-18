@@ -2,8 +2,6 @@
 
 A remote environment lets the agent's tools — reading and writing files, running Shell commands, and interactive terminals — execute on another machine or inside a container, while Kimi Code CLI itself, all model requests, and your credentials stay on your machine. Use it when the code lives on a remote server, or when you want tool execution isolated in a Docker-compatible container.
 
-> Remote environments are experimental. Enable them with `KIMI_CODE_EXPERIMENTAL_REMOTE_RUNTIME=1` before starting Kimi Code, or write `remote_runtime = true` under `[experimental]` in `config.toml`. The master switch `KIMI_CODE_EXPERIMENTAL_FLAG=1` enables them too.
-
 ## How remote environments work
 
 Kimi Code keeps the agent loop, model requests, credentials, approvals, and session state on your machine. The target environment only executes three groups of OS primitives: filesystem, process, and terminal. A small executor process (`kimi exec-server`) runs on the target and serves those primitives over a single connection; everything else — including every LLM request — stays local.
@@ -43,7 +41,7 @@ defaultCwd = "/workspace"
 [environments.sandbox]
 command = "sandbox"              # executable name or absolute path
 args = ["ssh", "i-1234567890", "--",
-        "/home/me/.kimi-code/bin/kimi", "exec-server", "--listen", "stdio"]
+        "/home/me/.kimi-code/bin/kimi", "exec-server"]
 env = { SANDBOX_TOKEN = "..." }  # optional: environment for the launcher process only
 defaultCwd = "/home/me/kimi-code"
 ```
@@ -96,13 +94,27 @@ kimi -p --environment dev-box "Run the test suite"
 
 The flag is creation-only, like `--agent`: it cannot be combined with `--session`/`--continue`, because a resumed session restores its recorded binding automatically. An unknown id, or an entry without `defaultCwd`, fails startup outright. Creation also connects to the target before the session starts, so a connection failure aborts with the reported reason instead of opening a broken session.
 
+## Agent environment tools (experimental)
+
+The switches above are driven by you. An experimental flag instead hands environment switching to the agent itself: the main agent gains two tools, and its system prompt lists the environments available in the session's workspace so it knows which ids exist. Everything else on this page — the binding model, the reminder recorded on every switch, undo restoring the previous binding — applies unchanged.
+
+The feature is off by default. Enable it with `KIMI_CODE_EXPERIMENTAL_AGENT_ENVIRONMENT_TOOLS=1`, `[experimental] agent_environment_tools = true` in `config.toml`, or `/experiments` before creating the session; the master switch `KIMI_CODE_EXPERIMENTAL_FLAG=1` enables it too. Sessions created while it is disabled have neither the tools nor the prompt section.
+
+With the flag on, the main agent can:
+
+- **Switch with `change_environment`**: pass an environment `id` (`local` or a declared id) and optionally a `cwd` (falls back to the declaration's `defaultCwd`). The target connects eagerly — a connection or `cwd` validation failure is reported immediately and changes nothing — and the switch itself takes effect at the boundary of the current turn: tool calls in the rest of the turn keep running on the previous environment, and the reminder with the new environment's details arrives with the next turn.
+- **Create a temporary environment with `connect`**: pass a launcher spec — `{ type: "ssh", host: "..." }`, `{ type: "docker", container: "..." }`, or `{ type: "command", command: "...", args: [...] }`, with an optional `id`. The environment connects right away and is registered in the workspace like a declared one, but nothing is written to `config.toml` or `.kimi-code/environments.toml`: a temporary environment vanishes when the process exits, cannot be reconnected after a connection drop (create a fresh one instead), and a session resumed onto it finds it gone.
+- **Bind a subagent with the `environment` parameter**: the `Agent` tool accepts an optional `environment` id; the spawned subagent binds to that environment (at its `defaultCwd`) instead of inheriting the parent's binding. Resumed subagents keep their own binding.
+
+Two guardrails apply to both tools. They are rejected in Plan mode — exit plan mode first. And they follow the permission mode: Always Ask and Ask When Needed modes ask for confirmation before switching or connecting, while Never Ask mode proceeds without asking. The tool group is not registered while tower mode is active.
+
 ## Disconnects and reconnecting
 
 A remote session depends on one connection per (workspace, environment). When that connection drops — network loss, a stopped container, the executor exiting — every process the session started on the target is terminated. Terminal scrollback stays readable locally.
 
 There is no automatic reconnect after a drop and **no silent fallback to the local environment**: a command like `rm` or `git` that was meant for the remote machine must never land on yours. Instead, tool calls fail with an `environment.unavailable` error, and you reconnect explicitly from the `/environment` dialog.
 
-Resuming a session is the one exception: a restored remote binding reconnects automatically in the background, so the session opens immediately while the environment moves from `connecting` to `ready` — or to `disconnected`, with the failure reason shown in the footer's environment slot and in the `/environment` manager. A tool call that arrives while the reconnect is still in flight waits for the connect attempt to finish (bounded by its own timeout) instead of erroring immediately, and there is never a silent fallback to `local`.
+Resuming a session is no exception: a restored remote binding does not reconnect in the background, so the session opens immediately while the environment stays `disconnected`. Tool calls on the target fail with `environment.unavailable` until you reconnect explicitly from the `/environment` dialog — and there is never a silent fallback to `local`.
 
 Every connect attempt is bounded to 10 seconds: a target that never answers the handshake fails with an `initialize timed out` error instead of hanging silently, and when the launcher wrote anything to stderr — a stuck password prompt, an `npx` download's progress — the error includes that tail, so the cause is visible.
 
@@ -135,7 +147,7 @@ Host dev-box
 
 ## The remote executor
 
-The executor is a light build of Kimi Code itself, started as `kimi exec-server --listen stdio` on the target. It only serves filesystem, process, and terminal requests — it never touches model APIs, credentials, or session state.
+The executor is a light build of Kimi Code itself, started as `kimi exec-server` on the target. It only serves filesystem, process, and terminal requests — it never touches model APIs, credentials, or session state. stdio is the default and only supported transport, so the explicit `kimi exec-server --listen stdio` spelling is equivalent and keeps working.
 
 The fixed install path is `~/.kimi-code/bin/kimi` on the target (override it per entry with `remoteBin` when the executor lives elsewhere, for example a preinstalled container image).
 
@@ -151,7 +163,7 @@ The connection handshake requires a minimum executor version and a POSIX target.
 
 ## Limitations
 
-Remote environments are experimental, and several behaviors are deliberately scoped. Each of the following is a known limitation:
+Several behaviors are deliberately scoped. Each of the following is a known limitation:
 
 - **Hooks run on the Kimi Code host**: `PreToolUse` and other lifecycle hooks always execute on the machine running Kimi Code, so in a remote session they observe local facts (local files, local processes), not the target's. They run with the session's local working directory; hooks that would execute on the target itself are a future, undesigned concept.
 - **MCP servers stay local**: stdio MCP servers keep running on your machine even in remote sessions; they do not see the target's filesystem.

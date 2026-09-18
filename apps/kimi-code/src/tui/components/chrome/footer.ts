@@ -11,11 +11,15 @@ import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import { effectiveModelAlias } from '@moonshot-ai/kimi-code-sdk';
 
+import {
+  BRAILLE_SPINNER_FRAMES,
+  BRAILLE_SPINNER_INTERVAL_MS,
+} from '#/tui/constant/rendering';
 import { ALL_TIPS, type ToolbarTip } from '#/tui/constant/tips';
 import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/dance';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
-import type { AppState } from '#/tui/types';
+import type { AppState, EnvironmentSlotState } from '#/tui/types';
 import { PERMISSION_MODE_DISPLAY_NAMES } from '#/tui/utils/permission-mode';
 import {
   StatusLineCommandRunner,
@@ -152,6 +156,10 @@ function modelDisplayName(state: AppState): string {
   return effective?.displayName ?? effective?.model ?? state.model;
 }
 
+function isRemoteEnvironment(environment: AppState['environment']): environment is EnvironmentSlotState {
+  return environment !== undefined && environment.environmentId !== 'local';
+}
+
 function shortenCwd(path: string, home: string | undefined): string {
   if (!path) return path;
   let work = path;
@@ -203,6 +211,8 @@ export class FooterComponent implements Component {
   private goalSnapshotKey: string | null = null;
   private goalObservedAtMs = Date.now();
   private goalTimer: ReturnType<typeof setInterval> | null = null;
+  private environmentSpinnerFrame = 0;
+  private environmentSpinnerTimer: ReturnType<typeof setInterval> | null = null;
   private statusLineRunner: StatusLineCommandRunner | null = null;
   /**
    * Non-terminal background-task counts split by kind so the footer can
@@ -221,6 +231,7 @@ export class FooterComponent implements Component {
     this.gitCache = createGitStatusCache(state.workDir, { onChange: this.onRefresh });
     this.syncGoalClock(state.goal);
     this.syncGoalTimer(state.goal);
+    this.syncEnvironmentSpinner(state.environment);
     this.syncStatusLineRunner(state);
   }
 
@@ -231,6 +242,7 @@ export class FooterComponent implements Component {
     }
     this.syncGoalClock(state.goal);
     this.syncGoalTimer(state.goal);
+    this.syncEnvironmentSpinner(state.environment);
     this.syncStatusLineRunner(state);
     this.state = state;
   }
@@ -491,12 +503,13 @@ export class FooterComponent implements Component {
     }
     slots['tasks'] = taskBadges;
 
-    // Environment slot (experimental remote environment): the local environment renders
-    // nothing; a remote binding shows its bare environment id ahead of the cwd —
-    // error-colored while disconnected, with the first connect-error line
-    // appended so the failure reason is visible at a glance.
+    // Environment slot: the local environment renders nothing; a remote binding
+    // shows its bare environment id ahead of the cwd — error-colored while
+    // disconnected, with the first connect-error line appended so the failure
+    // reason is visible at a glance. While connecting, a braille spinner ticks
+    // ahead of the id (see syncEnvironmentSpinner for the bounded timer).
     const environment = state.environment;
-    const remote = environment !== undefined && environment.environmentId !== 'local';
+    const remote = isRemoteEnvironment(environment);
     if (remote) {
       const tone =
         environment.status === 'disconnected'
@@ -509,11 +522,15 @@ export class FooterComponent implements Component {
         environment.status === 'disconnected' && environment.connectError !== undefined
           ? environment.connectError.split('\n', 1)[0]
           : undefined;
+      const spinner =
+        environment.status === 'connecting'
+          ? `${BRAILLE_SPINNER_FRAMES[this.environmentSpinnerFrame] ?? BRAILLE_SPINNER_FRAMES[0]} `
+          : '';
       slots['environment'] = [
         chalk.hex(tone)(
           reason === undefined
-            ? label
-            : `${label} (${truncateToWidth(reason, MAX_ENVIRONMENT_REASON_WIDTH, '…')})`,
+            ? `${spinner}${label}`
+            : `${spinner}${label} (${truncateToWidth(reason, MAX_ENVIRONMENT_REASON_WIDTH, '…')})`,
         ),
       ];
     }
@@ -543,7 +560,7 @@ export class FooterComponent implements Component {
     return {
       model: modelDisplayName(state),
       cwd: state.workDir,
-      gitBranch: this.gitCache.getStatus()?.branch ?? null,
+      gitBranch: isRemoteEnvironment(state.environment) ? null : (this.gitCache.getStatus()?.branch ?? null),
       permissionMode: state.permissionMode,
       planMode: state.planMode,
       contextUsage: state.contextUsage,
@@ -577,10 +594,44 @@ export class FooterComponent implements Component {
     }
   }
 
+  /**
+   * The connecting spinner is client-side frame ticking on the shared braille
+   * interval — the slot state itself only changes with the environment status.
+   * The timer is strictly bounded to the connecting status: it starts when the
+   * slot enters connecting and stops the moment the status moves on, so no
+   * always-on ticker exists. Each frame repaints through onRefresh.
+   */
+  private syncEnvironmentSpinner(environment: AppState['environment']): void {
+    const connecting =
+      environment !== undefined &&
+      environment.environmentId !== 'local' &&
+      environment.status === 'connecting';
+    if (connecting) {
+      if (this.environmentSpinnerTimer !== null) return;
+      this.environmentSpinnerFrame = 0;
+      this.environmentSpinnerTimer = setInterval(() => {
+        this.environmentSpinnerFrame =
+          (this.environmentSpinnerFrame + 1) % BRAILLE_SPINNER_FRAMES.length;
+        this.onRefresh();
+      }, BRAILLE_SPINNER_INTERVAL_MS);
+      this.environmentSpinnerTimer.unref?.();
+      return;
+    }
+
+    if (this.environmentSpinnerTimer !== null) {
+      clearInterval(this.environmentSpinnerTimer);
+      this.environmentSpinnerTimer = null;
+    }
+  }
+
   dispose(): void {
     if (this.goalTimer !== null) {
       clearInterval(this.goalTimer);
       this.goalTimer = null;
+    }
+    if (this.environmentSpinnerTimer !== null) {
+      clearInterval(this.environmentSpinnerTimer);
+      this.environmentSpinnerTimer = null;
     }
   }
 

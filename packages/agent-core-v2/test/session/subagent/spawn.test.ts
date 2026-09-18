@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Readable, type Writable } from 'node:stream';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -22,7 +21,8 @@ import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/envi
 import { Error2, ErrorCodes, isError2 } from '#/errors';
 import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
-import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
+import type { IHostProcessService } from '#/os/interface/hostProcess';
+import { stubHostProcess } from '../../os/stubs';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { EnvironmentBinding, EnvironmentLease } from '#/environment/environment';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -30,17 +30,30 @@ import { collectGitContext } from '#/session/agentLifecycle/profile/gitContext';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { SECONDARY_MODEL_SECTION } from '#/session/subagent/configSection';
+import {
+  SECONDARY_MODEL_SECTION,
+  stripSubagentEnvironmentParameter,
+} from '#/session/subagent/configSection';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
 import {
   FORK_CONTEXT_NOTICE,
+  FORK_WITH_ENVIRONMENT_UNAVAILABLE,
+  forkIncompatibility,
   type SpawnedSubagent,
   type SpawnSubagentOptions,
   type SubagentSpawnPlan,
   type SubagentSpawnPlanInput,
 } from '#/session/subagent/spawn';
+import { SubagentToolInputSchema } from '#/agent/tools/agent/agent';
+import { toInputJsonSchema } from '#/tool/input-schema';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
+import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { EnvironmentRegistry, EnvironmentError } from '#/environment/environmentRegistry';
+import { ENVIRONMENTS_SECTION } from '#/environment/configSection';
+import { fakeEnvironment } from '../../environment/stubs';
 
 import { stubLog } from '../../_base/log/stubs';
 import { stubFlag } from '../../app/flag/stubs';
@@ -224,8 +237,17 @@ describe('SessionSubagentService planSpawn and spawn', () => {
         return { id: alias, ...modelMeta.get(alias) } as Model;
       },
     } as unknown as IModelCatalog);
-    ix.stub(ISessionContext, { _serviceBrand: undefined, cwd: '/repo' } as unknown as ISessionContext);
+    ix.stub(ISessionContext, { _serviceBrand: undefined, cwd: '/repo', workspaceId: 'w1' } as unknown as ISessionContext);
     ix.stub(ILogService, stubLog());
+    ix.stub(IWorkspaceInstanceManager, {
+      _serviceBrand: undefined,
+      get: () => undefined,
+    } as unknown as IWorkspaceInstanceManager);
+    ix.stub(IHostFileSystem, {} as IHostFileSystem);
+    ix.stub(IAtomicDocumentStore, {
+      _serviceBrand: undefined,
+      get: async () => undefined,
+    } as unknown as IAtomicDocumentStore);
   });
 
   afterEach(() => {
@@ -282,25 +304,6 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     });
   }
 
-  function processWith(stdout: string, exitCode: number, stderr = ''): IHostProcess {
-    const stdoutStream = Readable.from([Buffer.from(stdout)]);
-    const stderrStream = Readable.from([Buffer.from(stderr)]);
-    return {
-      _serviceBrand: undefined,
-      stdin: { end: vi.fn(), write: vi.fn() } as unknown as Writable,
-      stdout: stdoutStream,
-      stderr: stderrStream,
-      pid: 1,
-      exitCode,
-      wait: vi.fn().mockResolvedValue(exitCode),
-      kill: vi.fn(async () => {}),
-      dispose: vi.fn(async () => {
-        stdoutStream.destroy();
-        stderrStream.destroy();
-      }),
-    };
-  }
-
   function gitProcessForRepo(repoCwd: string): { process: IHostProcessService; gitCwds: string[] } {
     const gitCwds: string[] = [];
     const script: Record<string, { stdout?: string; exitCode?: number; stderr?: string }> = {
@@ -314,11 +317,11 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       const cwd = args[1]!;
       gitCwds.push(cwd);
       if (cwd !== repoCwd) {
-        return processWith('', 128, 'fatal: not a git repository (or any of the parent directories): .git');
+        return stubHostProcess('', 128, 'fatal: not a git repository (or any of the parent directories): .git');
       }
       const out = script[args.slice(2).join(' ')];
-      if (out === undefined) return processWith('', 1);
-      return processWith(out.stdout ?? '', out.exitCode ?? 0, out.stderr ?? '');
+      if (out === undefined) return stubHostProcess('', 1);
+      return stubHostProcess(out.stdout ?? '', out.exitCode ?? 0, out.stderr ?? '');
     });
     return { process: { _serviceBrand: undefined, spawn } as IHostProcessService, gitCwds };
   }
@@ -612,6 +615,204 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     expect(createAgent).toHaveBeenCalledWith(expect.objectContaining({ environmentId: 'acp:s1' }));
   });
 
+  it('binds the child to the requested environment with the declaration defaultCwd', async () => {
+    const registry = new EnvironmentRegistry('w1');
+    const stats: string[] = [];
+    registry.register(Object.assign(
+      new FakeEnvironment(
+        { workspaceId: 'w1', environmentId: 'staging', generation: 'staging-one' },
+        { status: 'ready', capabilities: ['fs', 'process'] },
+      ),
+      {
+        fs: {
+          stat: async (path: string) => {
+            stats.push(path);
+            return { isDirectory: true };
+          },
+        },
+        process: {},
+      },
+    ));
+    ix.stub(IWorkspaceInstanceManager, {
+      _serviceBrand: undefined,
+      get: (workspaceId: string) => (workspaceId === 'w1' ? { environments: registry, root: '/repo' } : undefined),
+    } as unknown as IWorkspaceInstanceManager);
+    const svc = service({ [ENVIRONMENTS_SECTION]: { staging: { type: 'ssh', host: 'staging', defaultCwd: '/srv/app' } } });
+
+    await svc.spawn({
+      callerAgentId: CALLER_ID,
+      plan: { profileName: 'coder', model: 'provider/fast', modelSource: 'secondary_pool', thinking: 'low', fork: false },
+      labels: { parentAgentId: 'main' },
+      prompt: 'Review the file',
+      environment: 'staging',
+    });
+
+    expect(stats).toContain('/srv/app');
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: 'staging', environmentCwd: '/srv/app' }),
+    );
+  });
+
+  it('inherits the caller binding when the requested environment matches the current one', async () => {
+    callerBinding = { workspaceId: 'w1', environmentId: 'acp:s1', cwd: '/remote/repo' };
+    const svc = service();
+
+    await svc.spawn({
+      callerAgentId: CALLER_ID,
+      plan: { profileName: 'coder', model: 'provider/fast', modelSource: 'secondary_pool', thinking: 'low', fork: false },
+      labels: { parentAgentId: 'main' },
+      prompt: 'Review the file',
+      environment: 'acp:s1',
+    });
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: 'acp:s1', environmentCwd: '/remote/repo' }),
+    );
+  });
+
+  it('binds the child to local without a cwd when local is requested', async () => {
+    const svc = service();
+
+    await svc.spawn({
+      callerAgentId: CALLER_ID,
+      plan: { profileName: 'coder', model: 'provider/fast', modelSource: 'secondary_pool', thinking: 'low', fork: false },
+      labels: { parentAgentId: 'main' },
+      prompt: 'Review the file',
+      environment: 'local',
+    });
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: 'local', environmentCwd: undefined }),
+    );
+  });
+
+  it('rejects an unknown environment and lists the available ids', async () => {
+    const registry = new EnvironmentRegistry('w1');
+    registry.register(fakeEnvironment('local', 'local-one', { workspaceId: 'w1' }));
+    registry.register(fakeEnvironment('staging', 'staging-one', { workspaceId: 'w1' }));
+    ix.stub(IWorkspaceInstanceManager, {
+      _serviceBrand: undefined,
+      get: (workspaceId: string) => (workspaceId === 'w1' ? { environments: registry, root: '/repo' } : undefined),
+    } as unknown as IWorkspaceInstanceManager);
+    const svc = service();
+
+    const error = await svc.spawn({
+      callerAgentId: CALLER_ID,
+      plan: { profileName: 'coder', model: 'provider/fast', modelSource: 'secondary_pool', thinking: 'low', fork: false },
+      labels: { parentAgentId: 'main' },
+      prompt: 'Review the file',
+      environment: 'ghost',
+    }).then(
+      () => {
+        throw new Error('spawn did not throw');
+      },
+      (error: unknown) => error,
+    );
+
+    expect(error).toBeInstanceOf(EnvironmentError);
+    expect((error as EnvironmentError).code).toBe('environment.not_found');
+    expect((error as EnvironmentError).message).toContain('local, staging');
+    expect(createAgent).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the environment host cwd when the declaration sets no defaultCwd', async () => {
+    const registry = new EnvironmentRegistry('w1');
+    registry.register(fakeEnvironment('ephemeral-box', 'ephemeral-one', {
+      workspaceId: 'w1',
+      host: { homeDir: '/home/remote' },
+    }));
+    ix.stub(IWorkspaceInstanceManager, {
+      _serviceBrand: undefined,
+      get: (workspaceId: string) => (workspaceId === 'w1' ? { environments: registry, root: '/repo' } : undefined),
+    } as unknown as IWorkspaceInstanceManager);
+    const svc = service();
+
+    await svc.spawn({
+      callerAgentId: CALLER_ID,
+      plan: { profileName: 'coder', model: 'provider/fast', modelSource: 'secondary_pool', thinking: 'low', fork: false },
+      labels: { parentAgentId: 'main' },
+      prompt: 'Review the file',
+      environment: 'ephemeral-box',
+    });
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: 'ephemeral-box', environmentCwd: '/home/remote' }),
+    );
+  });
+
+  it('connects a disconnected requested environment before binding', async () => {
+    const registry = new EnvironmentRegistry('w1');
+    const connectCalls: string[] = [];
+    const staging = new FakeEnvironment(
+      { workspaceId: 'w1', environmentId: 'staging', generation: 'staging-pending' },
+      { status: 'disconnected', capabilities: ['fs', 'process'] },
+    );
+    Object.assign(staging, {
+      connect: async () => {
+        connectCalls.push('connect');
+        staging.setStatus('ready');
+      },
+      fs: {
+        stat: async () => ({ isDirectory: true }),
+      },
+      process: {},
+    });
+    registry.register(staging);
+    ix.stub(IWorkspaceInstanceManager, {
+      _serviceBrand: undefined,
+      get: (workspaceId: string) => (workspaceId === 'w1' ? { environments: registry, root: '/repo' } : undefined),
+    } as unknown as IWorkspaceInstanceManager);
+    const svc = service();
+
+    await svc.spawn({
+      callerAgentId: CALLER_ID,
+      plan: { profileName: 'coder', model: 'provider/fast', modelSource: 'secondary_pool', thinking: 'low', fork: false },
+      labels: { parentAgentId: 'main' },
+      prompt: 'Review the file',
+      environment: 'staging',
+    });
+
+    expect(connectCalls).toEqual(['connect']);
+    expect(createAgent).toHaveBeenCalledWith(expect.objectContaining({ environmentId: 'staging' }));
+  });
+
+  it('binds the host of the replaced view after connect swaps the registry generation', async () => {
+    const registry = new EnvironmentRegistry('w1');
+    const pending = new FakeEnvironment(
+      { workspaceId: 'w1', environmentId: 'staging', generation: 'staging-pending' },
+      { status: 'disconnected', capabilities: ['fs', 'process'], host: { homeDir: '/' } },
+    );
+    Object.assign(pending, { fs: {}, process: {} });
+    const registration = registry.register(pending);
+    const connected = new FakeEnvironment(
+      { workspaceId: 'w1', environmentId: 'staging', generation: 'staging-connected' },
+      { status: 'ready', capabilities: ['fs', 'process'], host: { homeDir: '/home/remote' } },
+    );
+    Object.assign(connected, { fs: {}, process: {} });
+    Object.assign(pending, {
+      connect: async () => {
+        await registration.replace(connected);
+      },
+    });
+    ix.stub(IWorkspaceInstanceManager, {
+      _serviceBrand: undefined,
+      get: (workspaceId: string) => (workspaceId === 'w1' ? { environments: registry, root: '/repo' } : undefined),
+    } as unknown as IWorkspaceInstanceManager);
+    const svc = service();
+
+    await svc.spawn({
+      callerAgentId: CALLER_ID,
+      plan: { profileName: 'coder', model: 'provider/fast', modelSource: 'secondary_pool', thinking: 'low', fork: false },
+      labels: { parentAgentId: 'main' },
+      prompt: 'Review the file',
+      environment: 'staging',
+    });
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: 'staging', environmentCwd: '/home/remote' }),
+    );
+  });
+
   it('inherits the caller permission mode and user tools', async () => {
     const svc = service();
 
@@ -772,5 +973,37 @@ describe('SessionSubagentService planSpawn and spawn', () => {
 
     expect(createAgent).not.toHaveBeenCalled();
     expect(forkAgent).not.toHaveBeenCalled();
+  });
+});
+
+describe('subagent environment parameter', () => {
+  it('accepts an environment id in the Agent tool input schema', () => {
+    const parsed = SubagentToolInputSchema.parse({
+      prompt: 'Review the file',
+      description: 'review file',
+      environment: 'staging',
+    });
+    expect(parsed.environment).toBe('staging');
+  });
+
+  it('strips the environment property from the tool parameters', () => {
+    const parameters = toInputJsonSchema(SubagentToolInputSchema);
+    expect(parameters['properties']).toHaveProperty('environment');
+
+    const stripped = stripSubagentEnvironmentParameter(parameters);
+
+    expect(stripped['properties']).not.toHaveProperty('environment');
+    expect(stripped['properties']).toHaveProperty('prompt');
+    expect(parameters['properties']).toHaveProperty('environment');
+  });
+
+  it('rejects environment with fork since a fork inherits the caller binding', () => {
+    expect(
+      forkIncompatibility({ environment: 'staging' }, { profileName: 'coder', modelAlias: 'main-model' }),
+    ).toBe(FORK_WITH_ENVIRONMENT_UNAVAILABLE);
+    expect(
+      forkIncompatibility({ environment: '  ' }, { profileName: 'coder', modelAlias: 'main-model' }),
+    ).toBeUndefined();
+    expect(forkIncompatibility({}, { profileName: 'coder', modelAlias: 'main-model' })).toBeUndefined();
   });
 });

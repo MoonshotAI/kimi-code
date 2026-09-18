@@ -89,9 +89,9 @@ interface UnregisterToolPayload { readonly name: string }
 import { type UsageStatus } from '#/agent/usage/usage';
 import { type PromptWithSkillsInput, type PromptWithSkillsResult, type SkillActivationInput } from '#/features/skill/skill';
 import { IAgentSkillService } from '#/features/skill/skillService';
-import { IAgentEnvironmentBindingSeed } from '#/agent/environmentBinding/environmentBinding';
+import { IAgentEnvironmentBindingSeed, IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
-import type { EnvironmentLease } from '#/environment/environment';
+import type { EnvironmentBinding, EnvironmentLease } from '#/environment/environment';
 import { LocalEnvironment } from '#/environment/localEnvironment';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
 import type {
@@ -1339,6 +1339,19 @@ export class AgentTestContext {
             reg.defineInstance(IAgentEnvironmentBindingSeed, {
               _serviceBrand: undefined,
               binding: { workspaceId: 'workspace-1', environmentId: 'local' },
+            });
+            const harnessBinding = { workspaceId: 'workspace-1', environmentId: 'local' };
+            reg.defineInstance<IAgentEnvironmentBindingService>(IAgentEnvironmentBindingService, {
+              _serviceBrand: undefined,
+              onDidChange: Event.None as IAgentEnvironmentBindingService['onDidChange'],
+              get current() {
+                return harnessBinding;
+              },
+              get: () => harnessBinding,
+              set: (next: EnvironmentBinding) => next,
+              switch: (environmentId: string, cwd?: string) => ({ ...harnessBinding, environmentId, cwd }),
+              connectAndSwitch: async (environmentId: string, cwd?: string) => ({ ...harnessBinding, environmentId, cwd }),
+              connectAndSwitchAtTurnBoundary: async (environmentId: string, cwd?: string) => ({ ...harnessBinding, environmentId, cwd }),
             });
             const environment = new LocalEnvironment(
               'workspace-1',

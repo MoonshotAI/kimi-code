@@ -15,7 +15,7 @@ import { formatErrorMessage } from '../utils/event-payload';
 import type { SlashCommandHost } from './dispatch';
 
 // ---------------------------------------------------------------------------
-// /environment command (experimental remote environment)
+// /environment command
 // ---------------------------------------------------------------------------
 
 export async function handleEnvironmentCommand(host: SlashCommandHost): Promise<void> {
@@ -45,6 +45,9 @@ async function openEnvironmentManager(host: SlashCommandHost, session: Session):
     },
     onClose: () => {
       host.restoreEditor();
+    },
+    requestRender: () => {
+      host.requestRender();
     },
   });
   host.mountEditorReplacement(manager);
@@ -92,6 +95,9 @@ async function switchFlow(
     },
     onCancel: () => {
       void openEnvironmentManager(host, session);
+    },
+    requestRender: () => {
+      host.requestRender();
     },
   });
   host.mountEditorReplacement(dialog);
@@ -154,6 +160,9 @@ async function reconnectFlow(
     onClose: () => {
       host.restoreEditor();
     },
+    requestRender: () => {
+      host.requestRender();
+    },
   });
 }
 
@@ -202,6 +211,9 @@ async function addFlow(host: SlashCommandHost, session: Session, list: SessionEn
       },
       onCancel: () => {
         resolve(undefined);
+      },
+      requestRender: () => {
+        host.requestRender();
       },
     });
     host.mountEditorReplacement(dialog);

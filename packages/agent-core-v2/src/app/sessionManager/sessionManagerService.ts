@@ -5,14 +5,12 @@ import { ScopeActivation, registerScopedService, type ISessionScopeHandle } from
 import { LifecycleScope } from '#/app/scopes';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
-import { IFlagService } from '#/app/flag/flag';
 import { Error2, ErrorCodes } from '#/errors';
 import { ILogService } from '#/_base/log/log';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { EnvironmentSetBinding } from '#/agent/environmentBinding/environmentBindingOps';
-import { REMOTE_RUNTIME_FLAG_ID } from '#/environment/flag';
 import { LOCAL_ENVIRONMENT_ID, type EnvironmentBinding } from '#/environment/environment';
 import { resolveWorkspaceEnvironmentDeclarations } from '#/environment/environmentDeclarations';
 import type { EnvironmentDeclarationSet } from '#/environment/remoteEnvironmentDeclaration';
@@ -56,8 +54,6 @@ interface SessionControllerEntry {
 
 interface LocatedSession {
   readonly controller: SessionLifecycleService;
-  readonly workspace?: WorkspaceInstance;
-  readonly persistedBinding?: EnvironmentBinding;
 }
 
 export class SessionManager implements ISessionManager {
@@ -87,7 +83,6 @@ export class SessionManager implements ISessionManager {
   constructor(
     @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
     @ISessionIndex private readonly index: ISessionIndex,
-    @IFlagService private readonly flags: IFlagService,
     @IConfigService private readonly config: IConfigService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
@@ -131,14 +126,15 @@ export class SessionManager implements ISessionManager {
     const create = async () => {
       if (environmentId !== undefined) await this.connectForCreate(workspace, environmentId, environmentCwd);
       const controllerEnvironmentId = this.selectControllerEnvironmentId(workspace, environmentId ?? LOCAL_ENVIRONMENT_ID);
-      return this.controllerForWorkspace(workspace.id, controllerEnvironmentId).create(effective);
+      const controllerCwd = controllerEnvironmentId === LOCAL_ENVIRONMENT_ID ? undefined : environmentCwd ?? options.workDir;
+      return this.controllerForWorkspace(workspace.id, controllerEnvironmentId, controllerCwd).create(effective);
     };
     if (options.sessionId === undefined) return create();
     return this.serializeLifecycle(options.sessionId, create);
   }
 
   private async connectForCreate(workspace: WorkspaceInstance, environmentId: string, environmentCwd?: string): Promise<void> {
-    if (environmentId === LOCAL_ENVIRONMENT_ID || !this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) return;
+    if (environmentId === LOCAL_ENVIRONMENT_ID) return;
     let environment = workspace.environments.current(environmentId);
     if (environment === undefined) return;
     if (!environmentStatusAllows(environment, ['fs', 'process'])) {
@@ -157,7 +153,7 @@ export class SessionManager implements ISessionManager {
     }
     if (environmentCwd === undefined) return;
     environment = workspace.environments.current(environmentId);
-    if (environment === undefined || environment.identity.cwd === environmentCwd) return;
+    if (environment === undefined) return;
     const lease = workspace.environments.acquire({ workspaceId: workspace.id, environmentId }, ['fs']);
     try {
       const stat = await lease.environment.fs!.stat(environmentCwd).catch((error: unknown) => {
@@ -172,11 +168,9 @@ export class SessionManager implements ISessionManager {
     } finally {
       lease.dispose();
     }
-    await workspace.environments.current(environmentId)?.reroot?.(environmentCwd);
   }
 
   private async workspaceEnvironmentDeclarations(workspace: WorkspaceInstance): Promise<EnvironmentDeclarationSet | undefined> {
-    if (!this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) return undefined;
     try {
       const declarations = await resolveWorkspaceEnvironmentDeclarations({
         config: this.config,
@@ -208,7 +202,6 @@ export class SessionManager implements ISessionManager {
     const promise = this.serializeLifecycle(sessionId, async () => {
       const located = await this.locateSession(sessionId);
       if (located === undefined) return undefined;
-      this.reconnectRestoredBinding(located);
       return located.controller.resume(sessionId, options);
     }).finally(() => this.pendingResumes.delete(sessionId));
     this.pendingResumes.set(sessionId, promise);
@@ -291,7 +284,6 @@ export class SessionManager implements ISessionManager {
   ): Promise<ISessionScopeHandle | undefined> {
     const located = await this.locateSession(sessionId);
     if (located === undefined) return undefined;
-    this.reconnectRestoredBinding(located);
     return located.controller.restore(sessionId, options);
   }
 
@@ -373,14 +365,14 @@ export class SessionManager implements ISessionManager {
     this.didForkEmitter.dispose();
   }
 
-  private controllerForWorkspace(workspaceId: string, environmentId: string = LOCAL_ENVIRONMENT_ID): SessionLifecycleService {
+  private controllerForWorkspace(workspaceId: string, environmentId: string = LOCAL_ENVIRONMENT_ID, cwd?: string): SessionLifecycleService {
     const workspace = this.workspaces.get(workspaceId);
     if (workspace === undefined) throw new Error(`workspace ${workspaceId} is not materialized`);
-    const key = `${workspaceId}\0${environmentId}`;
-    const generation = workspace.program.sessionControllerGenerationFor(environmentId);
+    const key = `${workspaceId}\0${environmentId}\0${cwd ?? ''}`;
+    const generation = workspace.program.sessionControllerGenerationFor(environmentId, cwd);
     const existing = this.controllers.get(key);
     if (existing?.generation === generation) return existing.controller;
-    const controller = workspace.program.createSessionController(environmentId);
+    const controller = workspace.program.createSessionController(environmentId, cwd);
     const subscriptions = new DisposableStore();
     const entry: SessionControllerEntry = { generation, controller, subscriptions, sessionCount: 0 };
     subscriptions.add(controller.onWillCreateSession((event) => this.willCreateEmitter.fire(event)));
@@ -431,36 +423,17 @@ export class SessionManager implements ISessionManager {
     if (summary === undefined) return undefined;
     const workspace = await this.workspaces.getOrCreate({ workspaceId: summary.workspaceId, root: summary.cwd });
     const persistedBinding = await this.peekPersistedBinding(workspace.id, sessionId);
+    const controllerEnvironmentId = this.selectControllerEnvironmentId(workspace, persistedBinding?.environmentId ?? LOCAL_ENVIRONMENT_ID);
     return {
-      controller: this.controllerForWorkspace(workspace.id, this.selectControllerEnvironmentId(workspace, persistedBinding?.environmentId ?? LOCAL_ENVIRONMENT_ID)),
-      workspace,
-      persistedBinding,
+      controller: this.controllerForWorkspace(
+        workspace.id,
+        controllerEnvironmentId,
+        controllerEnvironmentId === LOCAL_ENVIRONMENT_ID ? undefined : persistedBinding?.cwd,
+      ),
     };
   }
 
-  private reconnectRestoredBinding(located: LocatedSession): void {
-    const binding = located.persistedBinding;
-    if (located.workspace === undefined || binding === undefined || binding.environmentId === LOCAL_ENVIRONMENT_ID) return;
-    if (!this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) return;
-    const environment = located.workspace.environments.current(binding.environmentId);
-    if (environment === undefined || environmentStatusAllows(environment, ['fs', 'process'])) return;
-    if (typeof environment.connect !== 'function') return;
-    try {
-      if (binding.cwd !== undefined) {
-        void environment.reroot?.(binding.cwd)?.catch((error: unknown) => {
-          this.log.warn(`background reroot of restored environment ${binding.environmentId} failed`, { error });
-        });
-      }
-      void environment.connect().catch((error: unknown) => {
-        this.log.warn(`background reconnect of restored environment ${binding.environmentId} failed`, { error });
-      });
-    } catch (error) {
-      this.log.warn(`background reconnect of restored environment ${binding.environmentId} failed`, { error });
-    }
-  }
-
   private async peekPersistedBinding(workspaceId: string, sessionId: string): Promise<EnvironmentBinding | undefined> {
-    if (!this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) return undefined;
     try {
       const scope = agentScopeOf(
         sessionScopeOf(workspacePersistenceScope(this.bootstrap.scope('sessions'), workspaceId), sessionId),

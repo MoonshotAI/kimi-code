@@ -244,6 +244,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
           input.mcp,
           this.models,
           this.modelProviders,
+          input.environments,
           input.onDispose,
         ),
       },
@@ -273,6 +274,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
       id: instance.id,
       root: instance.root,
       metadata: instance.metadata,
+      onDidChangeTrust: instance.program.onDidChangeTrust,
     }, host));
     let attachments = this.attachments.get(instance.id);
     if (attachments === undefined) {

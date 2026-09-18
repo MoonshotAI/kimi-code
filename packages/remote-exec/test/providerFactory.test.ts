@@ -8,7 +8,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { Emitter } from '@moonshot-ai/agent-core-v2/_base/event';
 import { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
 import { IConfigService, type ConfigSectionChangedEvent } from '@moonshot-ai/agent-core-v2/app/config/config';
-import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
 import { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
 import { HostFsError, OsFsErrors } from '@moonshot-ai/agent-core-v2/os/interface/hostFsErrors';
 import { IAtomicDocumentStore } from '@moonshot-ai/agent-core-v2/persistence/interface/atomicDocumentStore';
@@ -22,6 +21,7 @@ import type {
   EnvironmentProviderHost,
 } from '@moonshot-ai/agent-core-v2/environment/environmentUnitHost';
 import { deleteWorkspaceTrust, writeWorkspaceTrust } from '@moonshot-ai/agent-core-v2/workspace/workspaceTrust/trustRecord';
+import type { WorkspaceTrustChange } from '@moonshot-ai/agent-core-v2/workspace/workspaceTrust/workspaceTrust';
 
 import { HandshakeError } from '../src/client/connection';
 import type { LocalRunner, LocalRunRequest } from '../src/client/executorInstaller';
@@ -30,10 +30,6 @@ import {
   type RemoteEnvironmentProviderFactoryOptions,
 } from '../src/client/remoteEnvironmentProvider';
 import type { RemoteEnvironment, RemoteEnvironmentOptions } from '../src/client/remoteEnvironment';
-
-function flagsService(enabled: boolean): IFlagService {
-  return { _serviceBrand: undefined, enabled: () => enabled } as unknown as IFlagService;
-}
 
 function configService(section: unknown): IConfigService {
   return {
@@ -102,14 +98,16 @@ const NOOP_LOG = {
   error: () => {},
 } as unknown as ILogService;
 
+const trustChange = new Emitter<WorkspaceTrustChange>();
+
 const CONTEXT: EnvironmentProviderContext = {
   id: 'workspace-1',
   root: '/repo',
   metadata: {} as EnvironmentProviderContext['metadata'],
+  onDidChangeTrust: trustChange.event,
 };
 
 interface HostServices {
-  readonly flags: IFlagService;
   readonly config: IConfigService;
   readonly fs: IHostFileSystem;
   readonly docs: IAtomicDocumentStore;
@@ -119,7 +117,6 @@ interface HostServices {
 function fakeHost(services: HostServices, registry: EnvironmentRegistry): EnvironmentProviderHost {
   return {
     get: (id: unknown) => {
-      if (id === IFlagService) return services.flags;
       if (id === IConfigService) return services.config;
       if (id === IHostFileSystem) return services.fs;
       if (id === IAtomicDocumentStore) return services.docs;
@@ -152,7 +149,6 @@ function connectedEnvironment(options: RemoteEnvironmentOptions, generation: str
 
 function baseServices(overrides: Partial<HostServices> = {}): HostServices {
   return {
-    flags: flagsService(true),
     config: configService({
       'dev-box': { type: 'ssh', host: 'dev-box', defaultCwd: '/home/me' },
     }),
@@ -170,14 +166,50 @@ function factoryOptions(extra: RemoteEnvironmentProviderFactoryOptions = {}): Re
 }
 
 describe('RemoteEnvironmentProviderFactory', () => {
-  it('registers nothing when the experimental flag is off', async () => {
+  it('registers project declarations when workspace trust flips on after an untrusted attach', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({
-      connect: vi.fn(),
-    }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices({ flags: flagsService(false) }), registry));
+    const docs = docsService();
+    const services = baseServices({
+      docs,
+      fs: fsService({
+        '/repo/.kimi-code/environments.toml': '[project-box]\ntype = "ssh"\nhost = "project-box"\ndefaultCwd = "/project"\n',
+      }),
+    });
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect: vi.fn() }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(services, registry));
+    expect(registry.current('project-box')).toBeUndefined();
 
-    expect(registry.list()).toEqual([]);
+    await writeWorkspaceTrust(docs, '/repo', Date.now());
+    trustChange.fire({ trusted: true });
+    await vi.waitFor(() => {
+      expect(registry.current('project-box')).toBeDefined();
+    });
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('un-registers project declarations when workspace trust flips off', async () => {
+    const registry = new EnvironmentRegistry('workspace-1');
+    const docs = docsService();
+    await writeWorkspaceTrust(docs, '/repo', Date.now());
+    const services = baseServices({
+      docs,
+      fs: fsService({
+        '/repo/.kimi-code/environments.toml': '[project-box]\ntype = "ssh"\nhost = "project-box"\ndefaultCwd = "/project"\n',
+      }),
+    });
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect: vi.fn() }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(services, registry));
+    expect(registry.current('project-box')).toBeDefined();
+
+    await deleteWorkspaceTrust(docs, '/repo');
+    trustChange.fire({ trusted: false });
+    await vi.waitFor(() => {
+      expect(registry.current('project-box')).toBeUndefined();
+    });
+    expect(registry.current('dev-box')).toBeDefined();
+
     await attachment.dispose();
     await registry.dispose();
   });
@@ -587,88 +619,6 @@ describe('RemoteEnvironmentProviderFactory', () => {
 
     await attachment.dispose();
     expect(registry.current('dev-box')).toBeUndefined();
-    await registry.dispose();
-  });
-});
-
-describe('ManagedRemoteEnvironment reroot', () => {
-  it('re-registers the connected environment with identity.cwd on a fresh generation, keeping the connection alive', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    const produced: FakeEnvironment[] = [];
-    const connect = vi.fn(async (options: RemoteEnvironmentOptions) => {
-      const environment = connectedEnvironment(options, `connected-${produced.length + 1}`);
-      produced.push(environment as unknown as FakeEnvironment);
-      return environment;
-    });
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
-
-    await registry.current('dev-box')!.connect!();
-    const bound = registry.current('dev-box')!;
-    expect(bound.identity.cwd).toBeUndefined();
-
-    await bound.reroot!('/home/me/project');
-
-    const rerooted = registry.current('dev-box')!;
-    expect(rerooted).not.toBe(bound);
-    expect(rerooted.identity.cwd).toBe('/home/me/project');
-    expect(rerooted.identity.generation).not.toBe(bound.identity.generation);
-    expect(rerooted.status).toBe('ready');
-    expect(connect).toHaveBeenCalledTimes(1);
-    expect((produced[0]! as unknown as { disposed: boolean }).disposed).toBe(false);
-    const lease = registry.acquire({ workspaceId: 'workspace-1', environmentId: 'dev-box' }, ['fs']);
-    expect(lease.environment).toBe(rerooted);
-    lease.dispose();
-
-    await attachment.dispose();
-    await registry.dispose();
-  });
-
-  it('carries a pending reroot into the connected registration without an extra swap', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    const changes: (string | undefined)[] = [];
-    const connect = vi.fn(async (options: RemoteEnvironmentOptions) => connectedEnvironment(options, 'connected-1'));
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
-
-    const placeholder = registry.current('dev-box')!;
-    await placeholder.reroot!('/home/me/project');
-    expect(connect).not.toHaveBeenCalled();
-    expect(registry.current('dev-box')).toBe(placeholder);
-
-    registry.onDidChange((change) => {
-      if (change.current !== undefined) changes.push(change.current.identity.generation);
-    });
-    await registry.current('dev-box')!.connect!();
-
-    const connected = registry.current('dev-box')!;
-    expect(connected.identity.cwd).toBe('/home/me/project');
-    expect(connected.status).toBe('ready');
-    expect(changes.filter((generation) => generation === 'connected-1')).toHaveLength(1);
-
-    await attachment.dispose();
-    await registry.dispose();
-  });
-
-  it('keeps the bound cwd across a reconnect', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    let generation = 0;
-    const connect = vi.fn(async (options: RemoteEnvironmentOptions) => {
-      generation += 1;
-      return connectedEnvironment(options, `connected-${generation}`);
-    });
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
-
-    await registry.current('dev-box')!.connect!();
-    await registry.current('dev-box')!.reroot!('/home/me/project');
-    await registry.current('dev-box')!.connect!();
-
-    const reconnected = registry.current('dev-box')!;
-    expect(reconnected.identity.cwd).toBe('/home/me/project');
-    expect(reconnected.identity.generation).toBe('connected-2');
-
-    await attachment.dispose();
     await registry.dispose();
   });
 });

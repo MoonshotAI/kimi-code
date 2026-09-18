@@ -40,6 +40,9 @@ import {
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {
@@ -270,6 +273,9 @@ function realSubagents(
     modelCatalog,
     sessionContext,
     stubLog(),
+    { _serviceBrand: undefined, get: () => undefined } as unknown as IWorkspaceInstanceManager,
+    {} as IHostFileSystem,
+    {} as IAtomicDocumentStore,
   );
 }
 

@@ -1,9 +1,9 @@
 import { dirname } from 'pathe';
 
 import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import { IAgentEnvironmentService, inspectAgentEnvironment } from '#/agent/environmentBinding/agentEnvironment';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
-import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
@@ -98,8 +98,7 @@ export class WriteTool implements IWriteTool {
         output: `${mode === 'append' ? 'Appended' : 'Wrote'} ${String(bytesWritten)} bytes to ${args.path}`,
       };
     } catch (error) {
-      const code = (unwrapErrorCause(error) as { code?: unknown } | null)?.code;
-      if (code === 'ENOENT') {
+      if (isHostFsNotFound(error)) {
         return {
           isError: true,
           output: `Failed to write ${args.path}: parent directory does not exist.`,
@@ -118,7 +117,7 @@ export class WriteTool implements IWriteTool {
     try {
       stat = await fs.stat(parent);
     } catch (error) {
-      if ((unwrapErrorCause(error) as { code?: unknown } | null)?.code === 'ENOENT') {
+      if (isHostFsNotFound(error)) {
         try {
           await fs.mkdir(parent, { recursive: true });
           return undefined;

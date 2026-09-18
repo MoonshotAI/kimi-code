@@ -6,15 +6,16 @@ import type { Writable } from 'node:stream';
 import { join } from 'pathe';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostProcess } from '#/os/interface/hostProcess';
-import type { Environment, EnvironmentLease } from '#/environment/environment';
+import type { Environment } from '#/environment/environment';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { stubAgentEnvironment } from '../../environment/stubs';
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
 import { TaskOutputTool } from '#/agent/tools/task/task-output/taskOutputTool';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
-import { createAgentTaskPersistence, type TaskServiceTestManager } from './stubs';
+import { createAgentTaskPersistence, recordingAppendFs, type TaskServiceTestManager } from './stubs';
 import { taskServices, createTestAgent, homeDirServices, agentService, type TestAgentContext } from '../../harness';
 import { executeTool, type TestExecutableToolContext } from '../../tools/fixtures/execute-tool';
 
@@ -305,15 +306,6 @@ describe('AgentTaskService — spill target pinning', () => {
   let environmentB: Environment;
   let currentEnvironment: Environment;
 
-  function recordingFs(writes: { path: string; data: string }[]): IHostFileSystem {
-    return {
-      mkdir: async () => {},
-      appendText: async (path: string, data: string) => {
-        writes.push({ path, data });
-      },
-    } as unknown as IHostFileSystem;
-  }
-
   function fakeEnvironment(fs: IHostFileSystem, tempDir: string): Environment {
     return {
       identity: { workspaceId: 'workspace-1', environmentId: 'remote', generation: 'test' },
@@ -329,21 +321,7 @@ describe('AgentTaskService — spill target pinning', () => {
   }
 
   function environmentService(): IAgentEnvironmentService {
-    const lease = (): EnvironmentLease => ({
-      environment: currentEnvironment,
-      track: <T extends { dispose(): void | Promise<void> }>(resource: T): T => resource,
-      dispose: () => {},
-    });
-    return {
-      _serviceBrand: undefined,
-      onDidChange: () => ({ dispose: () => {} }),
-      isAvailable: () => true,
-      inspect: () => currentEnvironment,
-      acquire: lease,
-      acquireWhenReady: async () => lease(),
-      reconnect: async () => {},
-      workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
-    };
+    return stubAgentEnvironment(() => currentEnvironment);
   }
 
   function createSpillTaskService(homedir: string): TaskServiceFixture {
@@ -396,8 +374,8 @@ describe('AgentTaskService — spill target pinning', () => {
     sessionDir = mkdtempSync(join(tmpdir(), 'bpm-spill-pin-'));
     writesA = [];
     writesB = [];
-    environmentA = fakeEnvironment(recordingFs(writesA), '/remote-a/tmp');
-    environmentB = fakeEnvironment(recordingFs(writesB), '/remote-b/tmp');
+    environmentA = fakeEnvironment(recordingAppendFs(writesA), '/remote-a/tmp');
+    environmentB = fakeEnvironment(recordingAppendFs(writesB), '/remote-b/tmp');
     currentEnvironment = environmentA;
     const fixture = createSpillTaskService(sessionDir);
     ctx = fixture.ctx;

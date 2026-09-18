@@ -52,6 +52,7 @@ import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { stubWorkspaceContext } from '../../session/workspaceContext/stub-workspace-context';
+import { stubAgentEnvironment } from '../../environment/stubs';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -1091,16 +1092,7 @@ describe('truncation pipeline', () => {
       { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
       { capabilities: ['fs', 'process'] },
     ), { fs: new HostFileSystem(), process: globProcess });
-    const binding: IAgentEnvironmentService = {
-      _serviceBrand: undefined,
-      onDidChange: () => ({ dispose: () => {} }),
-      isAvailable: () => true,
-      inspect: () => environment,
-      acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
-      acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
-      reconnect: async () => {},
-      workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
-    };
+    const binding = stubAgentEnvironment(environment);
     mediaEnvironment = binding;
     registry.register(new ReadTool(
       binding,

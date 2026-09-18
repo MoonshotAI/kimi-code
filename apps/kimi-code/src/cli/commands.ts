@@ -121,9 +121,8 @@ export function createProgram(
     .addOption(new Option('--yes').hideHelp().default(false))
     .addOption(new Option('--auto-approve').hideHelp().default(false))
     .addOption(
-      // Remote environments are experimental: the [environments] config layer resolves
-      // and validates the id (unknown id / missing defaultCwd → startup
-      // error). Hidden until that lands.
+      // The [environments] config layer resolves and validates the id (unknown
+      // id / missing defaultCwd → startup error). Hidden from help output.
       new Option('--environment <id>', 'Bind the new session to the configured environment <id>.')
         .hideHelp(),
     )
@@ -169,14 +168,16 @@ export function createProgram(
       onUpdateDownload(targetVersion, options.manual === true);
     });
 
-  // Remote-executor entry (remote-environment spec §6). The exact argv shape
-  // `exec-server --listen stdio` is pre-dispatched in `src/main.ts` before
-  // this program is even loaded; this hidden command owns every other
-  // spelling (`--listen=stdio`, unsupported transports, excess args) so they
-  // still route to the executor or fail with a clean stderr error.
+  // Remote-executor entry (remote-environment spec §6). The exact argv shapes
+  // `exec-server` and `exec-server --listen stdio` are pre-dispatched in
+  // `src/main.ts` before this program is even loaded; this hidden command owns
+  // every other spelling (`--listen=stdio`, unsupported transports, excess
+  // args) so they still route to the executor or fail with a clean stderr
+  // error. `--listen` defaults to stdio, the only supported transport, so a
+  // bare invocation reaching this program agrees with the light path.
   program
     .command(EXEC_SERVER_COMMAND, { hidden: true })
-    .requiredOption('--listen <transport>', 'Transport to listen on. Only "stdio" is supported.')
+    .option('--listen <transport>', 'Transport to listen on. Only "stdio" is supported.', 'stdio')
     .allowExcessArguments(false)
     .action((options: { listen: string }) => {
       onExecServer(options.listen);

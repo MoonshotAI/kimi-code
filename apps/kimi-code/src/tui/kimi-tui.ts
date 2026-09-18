@@ -454,6 +454,7 @@ export class KimiTUI {
         model: startupInput.cliOptions.model,
         agentProfile: startupInput.agentProfile,
         agentFiles: startupInput.cliOptions.agentFiles,
+        environment: startupInput.cliOptions.environment,
         startupNotice: startupInput.startupNotice,
       },
     };
@@ -531,9 +532,7 @@ export class KimiTUI {
       this.state.appState.additionalDirs,
       () => this.state.appState.inputMode,
       skillCommandNames,
-      isExperimentalFlagEnabled('remote_runtime')
-        ? remoteMentionSuggester(this.session, this.state.appState.environment)
-        : undefined,
+      remoteMentionSuggester(this.session, this.state.appState.environment),
     );
     this.state.editor.setAutocompleteProvider(provider);
 
@@ -552,6 +551,10 @@ export class KimiTUI {
   refreshSlashCommandAutocomplete(): void {
     this.sessionEventHandler.notifications.setEnabled(isExperimentalFlagEnabled('notify_user'));
     this.setupAutocomplete();
+  }
+
+  requestRender(): void {
+    this.state.ui.requestRender();
   }
 
   async refreshSkillCommands(session?: SkillListSession): Promise<void> {
@@ -2297,13 +2300,17 @@ export class KimiTUI {
       options.additionalDirs = [...this.state.appState.additionalDirs];
     }
     if (bindStartupAgent) {
-      // The --agent/--agent-file startup binding is consumed by the first
-      // lazy-created session; `/new` sessions fall back to the default profile.
+      // The --agent/--agent-file/--environment startup bindings are consumed by
+      // the first lazy-created session; `/new` sessions fall back to the
+      // default profile and the `[environments]` default.
       if (this.state.appState.agentProfile !== undefined) {
         options.agentProfile = this.state.appState.agentProfile;
       }
       if (this.state.appState.agentFiles !== undefined) {
         options.agentFiles = [...this.state.appState.agentFiles];
+      }
+      if (this.options.startup.environment !== undefined) {
+        options.environmentId = this.options.startup.environment;
       }
     }
     return this.harness.createSession(options);
@@ -2419,25 +2426,14 @@ export class KimiTUI {
 
   /**
    * Sync the footer environment slot with the session's current binding and the
-   * environment registry's connection status (experimental remote environment). A
-   * no-op with the flag off, so flag-off sessions keep their exact current
-   * behavior. Disconnection surfaces once per transition as a transcript
-   * notice carrying the recorded connect error and pointing at /environment.
-   * Runs at session load, turn end, explicit environment actions, and on the
-   * engine's environment.status.changed hint (background reconnect failure after
-   * resume, mid-session drops).
+   * environment registry's connection status. Disconnection surfaces once per
+   * transition as a transcript notice carrying the recorded connect error and
+   * pointing at /environment. Runs at session load, turn end, explicit
+   * environment actions, and on the engine's environment.status.changed hint
+   * (mid-session drops, explicit reconnects).
    */
   async refreshEnvironmentSlot(session: Session | undefined = this.session): Promise<void> {
     if (session === undefined) return;
-    if (!isExperimentalFlagEnabled('remote_runtime')) {
-      // A mid-session flag toggle-off (via /experiments + session reload)
-      // drops the slot and the mention suggester with it.
-      if (this.state.appState.environment !== undefined) {
-        this.setAppState({ environment: undefined });
-        this.setupAutocomplete();
-      }
-      return;
-    }
     let binding;
     let list;
     try {
@@ -3926,6 +3922,7 @@ export class KimiTUI {
         new TrustPromptComponent({
           workDir,
           gatedMcpServers: info.gatedMcpServers,
+          gatedEnvironments: info.gatedEnvironments,
           onSelect: (c) => {
             resolve(c);
           },

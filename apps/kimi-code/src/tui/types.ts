@@ -103,9 +103,8 @@ export interface AppState {
   /** Optional banner shown below the welcome panel; null means no banner to render. */
   banner?: BannerState | null;
   /**
-   * Current session's environment binding + connection status (experimental
-   * remote environment). Undefined while unsynced or when the `remote_runtime`
-   * flag is off — every consumer must treat that as the plain local session.
+   * Current session's environment binding + connection status. Undefined while
+   * unsynced — every consumer must treat that as the plain local session.
    */
   environment?: EnvironmentSlotState;
 }
@@ -343,6 +342,8 @@ export interface TUIStartupOptions {
   readonly agentProfile?: string;
   /** Raw --agent-file paths, passed to session creation alongside `agentProfile`. */
   readonly agentFiles?: readonly string[];
+  /** --environment <id> one-shot binding override, consumed by the startup session only. */
+  readonly environment?: string;
   readonly startupNotice?: string;
 }
 

@@ -3,12 +3,10 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { ISessionEventBus } from '#/app/event/eventBus';
-import { IFlagService } from '#/app/flag/flag';
 import { LifecycleScope } from '#/app/scopes';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { REMOTE_RUNTIME_FLAG_ID } from '#/environment/flag';
 import type { Environment, EnvironmentBinding, EnvironmentCapability, EnvironmentLease, EnvironmentWorkspaceRoots } from '#/environment/environment';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { EnvironmentError, environmentStatusAllows, type EnvironmentGenerationSnapshot, type EnvironmentRegistryChange } from '#/environment/environmentRegistry';
@@ -17,7 +15,6 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
 import {
   workspaceContextAdditionalDirsKey,
-  workspaceContextWorkDirKey,
 } from '#/session/workspaceContext/workspaceContextService';
 import {
   IEnvironmentResolver,
@@ -97,7 +94,6 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
     @ISessionEventBus private readonly eventBus: ISessionEventBus,
     @ISessionContext private readonly session: ISessionContext,
     @ISessionStateService private readonly sessionState: ISessionStateService,
-    @IFlagService private readonly flags: IFlagService,
   ) {
     this.bindingSubscription = this.binding.onDidChange(() => this.rebind());
     this.workspaceSubscription = this.workspaces.onDidChange((change) => {
@@ -106,9 +102,10 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
     this.turnSubscriptions = [
       this.eventBus.subscribe(TurnStarted, (event) => {
         if (event.agentId !== this.scopeContext.agentId) return;
+        const binding = this.binding.current;
         this.turnSnapshot = {
-          binding: this.binding.current,
-          generation: this.currentGeneration(this.binding.current),
+          binding,
+          generation: this.readyGeneration(binding),
         };
       }),
       this.eventBus.subscribe(TurnEnded, (event) => {
@@ -135,12 +132,6 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
   }
 
   workspaceRoots(): EnvironmentWorkspaceRoots {
-    if (!this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) {
-      return {
-        workDir: this.sessionState.get(workspaceContextWorkDirKey),
-        additionalDirs: this.sessionState.get(workspaceContextAdditionalDirsKey),
-      };
-    }
     const binding = this.turnSnapshot?.binding ?? this.binding.current;
     return {
       workDir: binding.cwd ?? this.session.cwd,
@@ -165,27 +156,29 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
     if (snapshot === undefined) {
       return this.resolver.acquire(this.binding.current, required);
     }
-    if (this.currentGeneration(snapshot.binding) !== snapshot.generation) {
-      throw new EnvironmentError(
-        'environment.unavailable',
-        `environment ${snapshot.binding.environmentId} generation changed during the active turn`,
-      );
+    this.assertPinnedGeneration(snapshot);
+    const lease = this.resolver.acquire(snapshot.binding, required);
+    if (snapshot.generation === undefined) {
+      this.turnSnapshot = { binding: snapshot.binding, generation: this.currentGeneration(snapshot.binding) };
     }
-    return this.resolver.acquire(snapshot.binding, required);
+    return lease;
   }
 
   async acquireWhenReady(required: readonly EnvironmentCapability[] = []): Promise<EnvironmentLease> {
     const snapshot = this.turnSnapshot;
-    if (snapshot === undefined) {
-      return this.resolver.acquireWhenReady(this.binding.current, required);
+    const binding = snapshot?.binding ?? this.binding.current;
+    if (snapshot !== undefined) this.assertPinnedGeneration(snapshot);
+    let connected = false;
+    const environment = this.resolver.inspect(binding);
+    if (!environmentStatusAllows(environment, required) && typeof environment.connect === 'function') {
+      await environment.connect();
+      connected = true;
     }
-    if (this.currentGeneration(snapshot.binding) !== snapshot.generation) {
-      throw new EnvironmentError(
-        'environment.unavailable',
-        `environment ${snapshot.binding.environmentId} generation changed during the active turn`,
-      );
+    const lease = await this.resolver.acquireWhenReady(binding, required);
+    if (snapshot !== undefined && (snapshot.generation === undefined || connected)) {
+      this.turnSnapshot = { binding, generation: this.currentGeneration(binding) };
     }
-    return this.resolver.acquireWhenReady(snapshot.binding, required);
+    return lease;
   }
 
   dispose(): void {
@@ -198,6 +191,22 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
 
   private currentGeneration(binding: EnvironmentBinding): string | undefined {
     return this.workspaces.get(binding.workspaceId)?.environments.current(binding.environmentId)?.identity.generation;
+  }
+
+  private readyGeneration(binding: EnvironmentBinding): string | undefined {
+    const environment = this.workspaces.get(binding.workspaceId)?.environments.current(binding.environmentId);
+    if (environment === undefined || !environmentStatusAllows(environment, [])) return undefined;
+    return environment.identity.generation;
+  }
+
+  private assertPinnedGeneration(snapshot: TurnEnvironmentSnapshot): void {
+    if (snapshot.generation === undefined) return;
+    if (this.currentGeneration(snapshot.binding) !== snapshot.generation) {
+      throw new EnvironmentError(
+        'environment.unavailable',
+        `environment ${snapshot.binding.environmentId} generation changed during the active turn`,
+      );
+    }
   }
 
   private rebind(): void {

@@ -112,7 +112,7 @@ timeout = 5
 | [`image`](#image) | `table` | — | 图片压缩参数 |
 | [`services`](#services) | `table` | — | 内置外部服务配置 |
 | [`permission`](#permission) | `table` | — | 初始权限规则 |
-| [`environments`](#environments) | `table` | — | 远程环境声明（实验功能） |
+| [`environments`](#environments) | `table` | — | 远程环境声明 |
 | [`hooks`](../customization/hooks.md) | `array<table>` | — | 生命周期 hook |
 | [`identity`](#identity) | `table` | — | 自定义 Agent 身份 |
 
@@ -544,7 +544,7 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 
 ## `environments`
 
-`environments` 声明远程环境——SSH 主机、Docker 兼容容器或自定义启动命令——会话绑定后，Agent 的工具即在目标环境中执行。整个功能是实验性的，本节仅在 `remote_runtime` 实验开关启用时才会被读取；功能介绍、边界与限制见 [远程环境](../guides/remote-environment.md)。
+`environments` 声明远程环境——SSH 主机、Docker 兼容容器或自定义启动命令——会话绑定后，Agent 的工具即在目标环境中执行。功能介绍、边界与限制见 [远程环境](../guides/remote-environment.md)。
 
 每个条目以环境 id 为键：不超过 64 个字符，首尾不能有空白，`local` 和 `default` 是保留字。同一条目内 `type` 与 `command` 互斥。
 
@@ -571,12 +571,12 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 
 ### command 条目
 
-通用启动器形式，用于内置启动器未覆盖的环境（OrbStack 机器、`kubectl exec`、Apple Container、受管沙箱等）。声明的命令必须能把 stdio 桥接到目标上的 `kimi exec-server --listen stdio`。
+通用启动器形式，用于内置启动器未覆盖的环境（OrbStack 机器、`kubectl exec`、Apple Container、受管沙箱等）。声明的命令必须能把 stdio 桥接到目标上的 `kimi exec-server`。
 
 | 字段 | 类型 | 是否必填 | 说明 |
 | --- | --- | --- | --- |
 | `command` | `string` | 是 | 启动器可执行文件：按 `PATH` 解析的名称，或绝对路径。解析结果落在工作目录内会被拒绝，项目无法用同名二进制冒名顶替启动器 |
-| `args` | `array<string>` | 否 | 启动器参数；必须包含执行器调用（`... exec-server --listen stdio`） |
+| `args` | `array<string>` | 否 | 启动器参数；必须包含执行器调用（`... exec-server`） |
 | `env` | `table<string, string>` | 否 | 本机启动器进程的环境变量，不会传播到目标环境执行的命令中 |
 | `defaultCwd` | `string` | 否 | 绑定会话时工作目录的预填值 |
 
@@ -596,7 +596,7 @@ container = "myapp-dev"
 [environments.sandbox]
 command = "sandbox"
 args = ["ssh", "i-1234567890", "--",
-        "/home/me/.kimi-code/bin/kimi", "exec-server", "--listen", "stdio"]
+        "/home/me/.kimi-code/bin/kimi", "exec-server"]
 env = { SANDBOX_TOKEN = "..." }
 defaultCwd = "/home/me/kimi-code"
 ```

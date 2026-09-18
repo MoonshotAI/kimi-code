@@ -1,7 +1,7 @@
 /**
- * EnvironmentAddDialogComponent — multi-field rounded box declaring a new environment
- * (experimental remote environment), per type: ssh (host, optionally prefilled
- * from the discovery candidates), docker (container + optional context), or a
+ * EnvironmentAddDialogComponent — multi-field rounded box declaring a new
+ * environment, per type: ssh (host, optionally prefilled from the discovery
+ * candidates), docker (container + optional context), or a
  * custom command (program + space-separated args). The environment id is derived
  * from the target when the id field is left empty. The last field is a
  * segmented scope control (DESIGN.md §8): `Global` writes the user-level
@@ -57,6 +57,8 @@ export interface EnvironmentAddDialogOptions {
   readonly initialTarget?: string;
   readonly onSubmit: (value: EnvironmentAddValue) => void;
   readonly onCancel: () => void;
+  /** Triggers a re-render; the host wires this to `ui.requestRender()`. */
+  readonly requestRender: () => void;
 }
 
 type FieldId = 'target' | 'extra' | 'id' | 'defaultCwd' | 'scope';
@@ -146,12 +148,14 @@ export class EnvironmentAddDialogComponent extends Container implements Focusabl
   setBusy(message: string): void {
     this.state = { kind: 'busy', message };
     this.invalidate();
+    this.opts.requestRender();
   }
 
   /** Show an engine-side validation failure inline; the form stays editable. */
   showError(message: string): void {
     this.state = { kind: 'error', message };
     this.invalidate();
+    this.opts.requestRender();
   }
 
   handleInput(data: string): void {

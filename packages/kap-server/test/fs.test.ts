@@ -181,6 +181,45 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect(body.code).toBe(ErrorCode.FS_IS_DIRECTORY);
   });
 
+  it('fs:git_status maps an unknown environment to ENVIRONMENT_NOT_FOUND without a stack', async () => {
+    const id = await createSession();
+    const body = await postFs<null>(id, 'git_status', {}, 'no-such-environment');
+    expect(body.code).toBe(ErrorCode.ENVIRONMENT_NOT_FOUND);
+    expect(body.msg).toContain('no-such-environment');
+    expect((body as { details?: unknown }).details).toBeUndefined();
+  });
+
+  it('fs:git_status maps a disconnected environment to ENVIRONMENT_UNAVAILABLE without a stack', async () => {
+    const id = await createSession();
+    const provider = await server!.core.accessor.get(IWorkspaceInstanceManager).addProvider({
+      id: 'disconnected-test-provider',
+      imports: { root: [], imports: [], local: [] },
+      attach: async (context, host) => {
+        const environment = Object.assign(
+          new FakeEnvironment(
+            { workspaceId: context.id, environmentId: 'remote-down', generation: 'remote-generation' },
+            {
+              capabilities: ['fs'],
+              status: 'disconnected',
+              mapWorkspaceRoots: () => ({ workDir: work!, additionalDirs: [] }),
+            },
+          ),
+          { fs: new HostFileSystem() },
+        );
+        const registration = host.registerEnvironment(environment);
+        return { dispose: () => registration.remove() };
+      },
+    });
+    try {
+      const body = await postFs<null>(id, 'git_status', {}, 'remote-down');
+      expect(body.code).toBe(ErrorCode.ENVIRONMENT_UNAVAILABLE);
+      expect(body.msg).toContain('remote-down');
+      expect((body as { details?: unknown }).details).toBeUndefined();
+    } finally {
+      await provider.dispose();
+    }
+  });
+
   it('fs:read maps a permission-denied host error to FS_PERMISSION_DENIED', async () => {
     if (process.getuid?.() === 0) return;
     const file = join(work!, 'locked.txt');
