@@ -80,7 +80,7 @@ describe('runHook process runner', () => {
     expect(result.action).toBe('allow');
   });
 
-  it('returns allow with timedOut=true when the command exceeds the timeout', async () => {
+  it('returns allow with timedOut=true past the timeout, and runs to completion with timeout 0', async () => {
     const result = await runHook(
       hostProcess,
       nodeCommand('setTimeout(() => {}, 10000);'),
@@ -90,6 +90,17 @@ describe('runHook process runner', () => {
 
     expect(result.action).toBe('allow');
     expect(result.timedOut).toBe(true);
+
+    const noTimeout = await runHook(
+      hostProcess,
+      nodeCommand('setTimeout(() => { process.exit(0); }, 200);'),
+      { tool_name: 'Bash' },
+      { timeout: 0 },
+    );
+
+    expect(noTimeout.action).toBe('allow');
+    expect(noTimeout.timedOut).toBeUndefined();
+    expect(noTimeout.exitCode).toBe(0);
   });
 
   it('parses stdout JSON permissionDecision=deny into a block result with the supplied reason', async () => {

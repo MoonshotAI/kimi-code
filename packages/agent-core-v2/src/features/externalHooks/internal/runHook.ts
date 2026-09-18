@@ -112,10 +112,12 @@ export async function runHook(
       },
     );
 
-    const timeout = setTimeout(() => {
-      killProcess(proc);
-      settle(allowResult({ stdout, stderr, timedOut: true }));
-    }, timeoutMs);
+    const timeout = Number.isFinite(timeoutMs)
+      ? setTimeout(() => {
+          killProcess(proc);
+          settle(allowResult({ stdout, stderr, timedOut: true }));
+        }, timeoutMs)
+      : undefined;
 
     const onAbort = (): void => {
       killProcess(proc);
@@ -134,6 +136,7 @@ export async function runHook(
 }
 
 function timeoutSeconds(timeout: number): number {
+  if (timeout === 0) return Number.POSITIVE_INFINITY;
   return Number.isFinite(timeout) && timeout > 0 ? timeout : DEFAULT_TIMEOUT_SECONDS;
 }
 

@@ -46,7 +46,7 @@ command = "terminal-notifier -title Kimi -message 'Task done'"
 | `event` | `string` | 是 | 触发事件名，取值见 [事件一览](#事件一览) |
 | `matcher` | `string` | 否 | 用正则表达式（一种字符串匹配语法）过滤事件目标；不填则匹配全部 |
 | `command` | `string` | 是 | 触发时要运行的 Shell 命令 |
-| `timeout` | `integer` | 否 | 超时秒数，范围 1–600；默认 30 秒 |
+| `timeout` | `integer` | 否 | 超时秒数，范围 0–600，`0` 表示不超时；默认 30 秒 |
 
 `[[hooks]]` 只允许这四个字段，多写会导致配置文件加载失败。
 
@@ -100,7 +100,7 @@ Hook 命令的工作目录是当前会话的项目目录。
 ```
 
 ::: info 说明
-只有**可阻断事件**（`PreToolUse`、`Stop`、`UserPromptSubmit`）的返回值会影响主流程。其余事件属于**观察型事件**：触发后即发即忘，不管脚本返回什么，主流程都不会改变。
+只有**可阻断事件**（`PreToolUse`、`Stop`、`UserPromptSubmit`）的返回值会影响主流程。其余事件属于**观察型事件**：脚本返回什么都会被忽略。观察型事件触发后即发即忘、主流程不等待，只有 `StepFinished` 例外——Agent 循环会等它执行完再发起下一次模型请求。
 :::
 
 ## 事件一览
@@ -112,6 +112,7 @@ Hook 命令的工作目录是当前会话的项目目录。
 | `PreToolUse` | 工具名 | ✓ | 工具调用前、权限检查前触发；阻断后工具不会执行 |
 | `Stop` | 空字符串 | ✓ | 模型准备结束本轮时触发；阻断后可追加一条消息让模型继续 |
 | `TurnStarted` | 回合来源类型（如 `user`、`task`、`system_trigger`） | — | 新回合开始时触发；payload 含 `turn_id`、`origin_kind`、`origin_name`、`prompt` |
+| `StepFinished` | 结束原因（如 `tool_calls`、`completed`） | — | 每个 step 结束时触发：在其全部工具调用完成之后、下一次模型请求发起之前；Agent 循环会等它执行完，但返回值被忽略；payload 含 `turn_id`、`step`、`first_step_of_turn`、`finish_reason`、`usage` |
 | `PostToolUse` | 工具名 | — | 工具成功执行后触发 |
 | `PostToolUseFailure` | 工具名 | — | 工具失败或被阻断后触发 |
 | `PermissionRequest` | 工具名 | — | 即将等待用户审批前触发 |

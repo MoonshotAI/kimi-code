@@ -46,7 +46,7 @@ All hook rules are written in the `[[hooks]]` array in `~/.kimi-code/config.toml
 | `event` | `string` | Yes | Trigger event name; must be one of the events in the [event reference](#event-reference) |
 | `matcher` | `string` | No | A regular expression to filter event targets; if omitted, matches all |
 | `command` | `string` | Yes | The shell command to run when triggered |
-| `timeout` | `integer` | No | Timeout in seconds, range 1–600; defaults to 30 seconds |
+| `timeout` | `integer` | No | Timeout in seconds, range 0–600; `0` means no timeout; defaults to 30 seconds |
 
 `[[hooks]]` only allows these four fields; extra fields will cause the config file to fail to load.
 
@@ -100,7 +100,7 @@ You can also return a JSON object via stdout to block:
 ```
 
 ::: info Which events support blocking?
-Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) have return values that affect the main flow. All other events are **observation-only events**: they fire and forget, and the main flow is unaffected regardless of what the script returns.
+Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) have return values that affect the main flow. All other events are **observation-only events**: whatever the script returns is ignored. Observation-only events are fire-and-forget — the main flow does not wait for them — except `StepFinished`, which the agent loop waits for before starting the next model request.
 :::
 
 ## Event Reference
@@ -112,6 +112,7 @@ Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) have return
 | `PreToolUse` | Tool name | ✓ | Triggered before a tool call (before permission checks); the tool will not execute if blocked |
 | `Stop` | Empty string | ✓ | Triggered when the model is about to end the turn; if blocked, a message can be appended to let the model continue |
 | `TurnStarted` | Turn origin kind (e.g. `user`, `task`, `system_trigger`) | — | Triggered when a new turn begins; payload includes `turn_id`, `origin_kind`, `origin_name`, `prompt` |
+| `StepFinished` | Finish reason (e.g. `tool_calls`, `completed`) | — | Triggered when a step finishes: after all of its tool calls complete and before the next model request; the agent loop waits for the hook to finish, but its return value is ignored; payload includes `turn_id`, `step`, `first_step_of_turn`, `finish_reason`, `usage` |
 | `PostToolUse` | Tool name | — | Triggered after a tool executes successfully |
 | `PostToolUseFailure` | Tool name | — | Triggered after a tool fails or is blocked |
 | `PermissionRequest` | Tool name | — | Triggered just before waiting for user approval |

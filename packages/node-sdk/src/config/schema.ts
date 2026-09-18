@@ -10,6 +10,7 @@ const HOOK_EVENT_TYPES = [
   'PermissionRequest',
   'PermissionResult',
   'UserPromptSubmit',
+  'StepFinished',
   'Stop',
   'StopFailure',
   'Interrupt',
@@ -196,7 +197,7 @@ export const HookDefSchema = z
     event: z.enum(HOOK_EVENT_TYPES),
     matcher: z.string().optional(),
     command: z.string().min(1),
-    timeout: z.number().int().min(1).max(600).optional(),
+    timeout: z.number().int().min(0).max(600).optional(),
   })
   .strict();
 
