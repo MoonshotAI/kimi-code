@@ -489,6 +489,25 @@ describe('KimiTUI startup', () => {
     });
   });
 
+  it('threads the --environment flag into the lazy-created first session (v2)', async () => {
+    const harness = makeHarness(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: { model: 'moonshot-v1', maxContextSize: 100 },
+        },
+        defaultModel: 'k2',
+      })),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ environment: 'dev-box' }));
+
+    await expect(driver.init()).resolves.toBe(false);
+    await driver.ensureSession();
+
+    expect(harness.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: 'dev-box' }),
+    );
+  });
+
   it('resumes the latest session for --continue and marks history for replay', async () => {
     const session = makeSession({ id: 'ses-latest' });
     const harness = makeHarness(session, {

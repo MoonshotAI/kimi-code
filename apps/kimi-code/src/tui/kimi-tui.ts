@@ -454,6 +454,7 @@ export class KimiTUI {
         model: startupInput.cliOptions.model,
         agentProfile: startupInput.agentProfile,
         agentFiles: startupInput.cliOptions.agentFiles,
+        environment: startupInput.cliOptions.environment,
         startupNotice: startupInput.startupNotice,
       },
     };
@@ -2295,13 +2296,17 @@ export class KimiTUI {
       options.additionalDirs = [...this.state.appState.additionalDirs];
     }
     if (bindStartupAgent) {
-      // The --agent/--agent-file startup binding is consumed by the first
-      // lazy-created session; `/new` sessions fall back to the default profile.
+      // The --agent/--agent-file/--environment startup bindings are consumed by
+      // the first lazy-created session; `/new` sessions fall back to the
+      // default profile and the `[environments]` default.
       if (this.state.appState.agentProfile !== undefined) {
         options.agentProfile = this.state.appState.agentProfile;
       }
       if (this.state.appState.agentFiles !== undefined) {
         options.agentFiles = [...this.state.appState.agentFiles];
+      }
+      if (this.options.startup.environment !== undefined) {
+        options.environmentId = this.options.startup.environment;
       }
     }
     return this.harness.createSession(options);
