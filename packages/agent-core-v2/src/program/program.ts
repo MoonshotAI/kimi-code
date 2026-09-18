@@ -21,7 +21,7 @@ import type { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp
 import { WorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcpService';
 import type { IWorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
 import { WorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfigService';
-import type { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
+import type { IWorkspaceTrust, WorkspaceTrustChange } from '#/workspace/workspaceTrust/workspaceTrust';
 import { WorkspaceTrustService } from '#/workspace/workspaceTrust/workspaceTrustService';
 import type { IExtraAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/extraAgentProfileLoader';
 import { ExtraAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/extraAgentProfileLoaderService';
@@ -114,6 +114,8 @@ export class Program {
   private currentStatus: ProgramStatus = 'preparing';
   private readonly changeEmitter = new Emitter<ProgramSnapshot>();
   readonly onDidChange: Event<ProgramSnapshot> = this.changeEmitter.event;
+  private readonly trustChangeEmitter = new Emitter<WorkspaceTrustChange>();
+  readonly onDidChangeTrust: Event<WorkspaceTrustChange> = this.trustChangeEmitter.event;
   private readonly registrySubscription;
   private readonly resolver: IEnvironmentResolver;
   private readonly generations = new Map<string, ProgramGeneration>();
@@ -275,6 +277,7 @@ export class Program {
     this.generations.clear();
     for (const generation of generations) this.retireGeneration(generation);
     this.changeEmitter.dispose();
+    this.trustChangeEmitter.dispose();
   }
 
   private requireGeneration(environmentId: string): ProgramGeneration {
@@ -361,6 +364,9 @@ export class Program {
       const fs = new WorkspaceFsService(context, dirs, targetFs, this.resolver, this.dependencies.telemetry, git, environmentId);
       const instructions = own(new WorkspaceInstructionsService(context, workspaceRoutingFs(root, targetFs, localFs), localEnvironment.host, this.dependencies.bootstrap, this.dependencies.log, state));
       const trust = own(new WorkspaceTrustService(this.context, this.dependencies.docs, state, this.dependencies.telemetry));
+      if (environmentId === LOCAL_ENVIRONMENT_ID) {
+        own(trust.onDidChange((change) => this.trustChangeEmitter.fire(change)));
+      }
       const mcpConfig = own(new WorkspaceMcpConfigService(this.context, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, localFs, trust, this.dependencies.configStore));
       const mcp = own(new WorkspaceMcpService(this.context, this.resolver, mcpConfig, this.dependencies.oauth, this.dependencies.log, this.dependencies.telemetry, this.dependencies.identity, this.dependencies.sessionManager));
       const userAgentProfiles = own(new UserAgentProfileLoaderService(this.dependencies.bootstrap, localFs, this.dependencies.log, this.dependencies.builtinAgentProfiles, this.context, this.dependencies.agentProfiles));

@@ -21,6 +21,7 @@ import type {
   EnvironmentProviderHost,
 } from '@moonshot-ai/agent-core-v2/environment/environmentUnitHost';
 import { deleteWorkspaceTrust, writeWorkspaceTrust } from '@moonshot-ai/agent-core-v2/workspace/workspaceTrust/trustRecord';
+import type { WorkspaceTrustChange } from '@moonshot-ai/agent-core-v2/workspace/workspaceTrust/workspaceTrust';
 
 import { HandshakeError } from '../src/client/connection';
 import type { LocalRunner, LocalRunRequest } from '../src/client/executorInstaller';
@@ -97,10 +98,13 @@ const NOOP_LOG = {
   error: () => {},
 } as unknown as ILogService;
 
+const trustChange = new Emitter<WorkspaceTrustChange>();
+
 const CONTEXT: EnvironmentProviderContext = {
   id: 'workspace-1',
   root: '/repo',
   metadata: {} as EnvironmentProviderContext['metadata'],
+  onDidChangeTrust: trustChange.event,
 };
 
 interface HostServices {
@@ -162,6 +166,54 @@ function factoryOptions(extra: RemoteEnvironmentProviderFactoryOptions = {}): Re
 }
 
 describe('RemoteEnvironmentProviderFactory', () => {
+  it('registers project declarations when workspace trust flips on after an untrusted attach', async () => {
+    const registry = new EnvironmentRegistry('workspace-1');
+    const docs = docsService();
+    const services = baseServices({
+      docs,
+      fs: fsService({
+        '/repo/.kimi-code/environments.toml': '[project-box]\ntype = "ssh"\nhost = "project-box"\ndefaultCwd = "/project"\n',
+      }),
+    });
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect: vi.fn() }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(services, registry));
+    expect(registry.current('project-box')).toBeUndefined();
+
+    await writeWorkspaceTrust(docs, '/repo', Date.now());
+    trustChange.fire({ trusted: true });
+    await vi.waitFor(() => {
+      expect(registry.current('project-box')).toBeDefined();
+    });
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('un-registers project declarations when workspace trust flips off', async () => {
+    const registry = new EnvironmentRegistry('workspace-1');
+    const docs = docsService();
+    await writeWorkspaceTrust(docs, '/repo', Date.now());
+    const services = baseServices({
+      docs,
+      fs: fsService({
+        '/repo/.kimi-code/environments.toml': '[project-box]\ntype = "ssh"\nhost = "project-box"\ndefaultCwd = "/project"\n',
+      }),
+    });
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect: vi.fn() }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(services, registry));
+    expect(registry.current('project-box')).toBeDefined();
+
+    await deleteWorkspaceTrust(docs, '/repo');
+    trustChange.fire({ trusted: false });
+    await vi.waitFor(() => {
+      expect(registry.current('project-box')).toBeUndefined();
+    });
+    expect(registry.current('dev-box')).toBeDefined();
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
   it('registers declared environments as disconnected placeholders without connecting', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
     const connect = vi.fn(async (options: RemoteEnvironmentOptions) => connectedEnvironment(options, 'connected-1'));

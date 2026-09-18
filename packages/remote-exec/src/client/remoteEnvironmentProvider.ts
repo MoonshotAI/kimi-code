@@ -341,12 +341,14 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
     const configListener = config.onDidSectionChange((event) => {
       if (event.domain === ENVIRONMENTS_SECTION) reconcile();
     });
+    const trustListener = context.onDidChangeTrust(() => reconcile());
     const watchProjectDeclarations = this.options.watchProjectDeclarations ?? watchProjectDeclarationFile;
     const projectWatch = watchProjectDeclarations(join(context.root, PROJECT_ENVIRONMENTS_FILE), reconcile);
     return {
       dispose: async () => {
         disposed = true;
         configListener.dispose();
+        trustListener.dispose();
         projectWatch.dispose();
         for (const record of [...records.values()].toReversed()) {
           record.version += 1;

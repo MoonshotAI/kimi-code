@@ -450,6 +450,7 @@ interface LocalityFixture {
   readonly localGitCalls: string[];
   readonly localRoot: string;
   readonly remoteRoot: string;
+  readonly replaceLocal: (generation: string) => Promise<void>;
   readonly replaceRemote: (generation: string, cwd: string) => Promise<void>;
   readonly cleanup: () => Promise<void>;
 }
@@ -619,7 +620,7 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
   );
 
   const realFs = new HostFileSystem();
-  registry.register(Object.assign(
+  const localRegistration = registry.register(Object.assign(
     new FakeEnvironment(
       { workspaceId: 'workspace', environmentId: 'local', generation: 'local-one' },
       { capabilities: ['fs', 'process'], host: { homeDir } },
@@ -646,6 +647,15 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
     localGitCalls,
     localRoot,
     remoteRoot,
+    replaceLocal: async (generation: string) => {
+      await localRegistration.replace(Object.assign(
+        new FakeEnvironment(
+          { workspaceId: 'workspace', environmentId: 'local', generation },
+          { capabilities: ['fs', 'process'], host: { homeDir } },
+        ),
+        { fs: realFs, process: new HostProcessService() },
+      ) as FakeEnvironment);
+    },
     replaceRemote: async (generation: string, cwd: string) => {
       await remoteRegistration.replace(Object.assign(
         new FakeEnvironment(
@@ -795,6 +805,30 @@ describe('Program remote generation activation', () => {
       expect(remote.instructions.snapshot.agentsMd).toContain('target project instructions');
       expect(remote.dirs.additionalDirs).toEqual([join(fixture.remoteRoot, 'targetextra')]);
       expect(remote.skills.catalog.listSkills().map((skill) => skill.name)).toEqual(['target-skill', 'user-skill']);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+});
+
+describe('Program.onDidChangeTrust', () => {
+  it('re-fires local generation trust changes, including across a generation rebuild', async () => {
+    const fixture = await localityFixture();
+    try {
+      const events: boolean[] = [];
+      const subscription = fixture.program.onDidChangeTrust((change) => {
+        events.push(change.trusted);
+      });
+
+      await fixture.program.trust.untrust();
+      await fixture.program.trust.trust();
+      expect(events).toEqual([false, true]);
+
+      await fixture.replaceLocal('local-two');
+      await fixture.program.trust.untrust();
+      expect(events).toEqual([false, true, false]);
+
+      subscription.dispose();
     } finally {
       await fixture.cleanup();
     }
