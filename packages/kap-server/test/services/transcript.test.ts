@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, mkdir, readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -61,6 +61,7 @@ import {
   snapshotToOps,
   TRANSCRIPT_OPS_JOURNAL_CAPACITY,
 } from '../../src/services/transcript/transcriptService';
+import { WireRecordCache, type ContextRecord } from '../../src/services/transcript/wireCache';
 
 _setTowerFeatureAssembledForTests(true);
 
@@ -4362,5 +4363,263 @@ describe('bindSessionTranscript', () => {
       );
       service.dropSession('s1');
     });
+  });
+});
+
+describe('WireRecordCache', () => {
+  const wireText = (records: readonly unknown[]): string =>
+    `${records.map((r) => JSON.stringify(r)).join('\n')}\n`;
+  const userMessage = (text: string, time: number): Record<string, unknown> => ({
+    type: 'context.append_message',
+    message: {
+      role: 'user',
+      content: [{ type: 'text', text }],
+      toolCalls: [],
+      origin: { kind: 'user' },
+    },
+    time,
+  });
+
+  it('serves appended records with results identical to a fresh full read', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wire-cache-append-'));
+    try {
+      const wirePath = join(home, 'wire.jsonl');
+      const a = userMessage('one', 1);
+      const b = { type: 'turn.ended', turnId: 0, reason: 'completed', time: 2 };
+      await writeFile(wirePath, wireText([a]));
+      const cache = new WireRecordCache();
+      expect(await cache.read(wirePath)).toEqual([a]);
+
+      await appendFile(wirePath, wireText([b]));
+      const grown = await cache.read(wirePath);
+      expect(grown).toEqual([a, b]);
+      expect(await new WireRecordCache().read(wirePath)).toEqual(grown);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('re-reads from scratch after a truncate-rewrite', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wire-cache-truncate-'));
+    try {
+      const wirePath = join(home, 'wire.jsonl');
+      await writeFile(
+        wirePath,
+        wireText([userMessage('one', 1), userMessage('two', 2), userMessage('three', 3)]),
+      );
+      const cache = new WireRecordCache();
+      expect(await cache.read(wirePath)).toHaveLength(3);
+
+      const rewritten = userMessage('fresh', 4);
+      await writeFile(wirePath, wireText([rewritten]));
+      expect(await cache.read(wirePath)).toEqual([rewritten]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('detects an in-place rewrite of the same size via mtime', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wire-cache-inplace-'));
+    try {
+      const wirePath = join(home, 'wire.jsonl');
+      await writeFile(wirePath, wireText([{ type: 'aaaaaaaa', value: 1 }]));
+      const cache = new WireRecordCache();
+      expect(await cache.read(wirePath)).toEqual([{ type: 'aaaaaaaa', value: 1 }]);
+
+      await writeFile(wirePath, wireText([{ type: 'bbbbbbbb', value: 2 }]));
+      const bumped = new Date(Date.now() + 5000);
+      await utimes(wirePath, bumped, bumped);
+      expect(await cache.read(wirePath)).toEqual([{ type: 'bbbbbbbb', value: 2 }]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('detects an atomic replace with identical size and mtime via the inode', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wire-cache-rename-'));
+    try {
+      const wirePath = join(home, 'wire.jsonl');
+      await writeFile(wirePath, wireText([{ type: 'aaaaaaaa', value: 1 }]));
+      const cache = new WireRecordCache();
+      expect(await cache.read(wirePath)).toEqual([{ type: 'aaaaaaaa', value: 1 }]);
+
+      const before = await stat(wirePath);
+      const tmpPath = join(home, 'wire.jsonl.tmp');
+      await writeFile(tmpPath, wireText([{ type: 'bbbbbbbb', value: 2 }]));
+      await utimes(tmpPath, before.atime, before.mtime);
+      await rename(tmpPath, wirePath);
+      expect(await cache.read(wirePath)).toEqual([{ type: 'bbbbbbbb', value: 2 }]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('holds an unterminated trailing fragment until its line completes', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wire-cache-tail-'));
+    try {
+      const wirePath = join(home, 'wire.jsonl');
+      const a = userMessage('one', 1);
+      await writeFile(wirePath, `${JSON.stringify(a)}\n{"type":"turn.steer"`);
+      const cache = new WireRecordCache();
+      expect(await cache.read(wirePath)).toEqual([a]);
+
+      const completed = { type: 'turn.steer', input: [{ type: 'text', text: 'go' }] };
+      await appendFile(wirePath, `,"input":${JSON.stringify(completed.input)}}\n`);
+      expect(await cache.read(wirePath)).toEqual([a, completed]);
+      expect(await new WireRecordCache().read(wirePath)).toEqual([a, completed]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('includes a valid unterminated final line exactly like a full read', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wire-cache-tailvalid-'));
+    try {
+      const wirePath = join(home, 'wire.jsonl');
+      const a = userMessage('one', 1);
+      const b = { type: 'turn.ended', turnId: 0, reason: 'completed' };
+      await writeFile(wirePath, `${JSON.stringify(a)}\n${JSON.stringify(b)}`);
+      const cache = new WireRecordCache();
+      expect(await cache.read(wirePath)).toEqual([a, b]);
+      expect(await cache.read(wirePath)).toEqual([a, b]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('skips a corrupt trailing fragment but throws on a corrupt terminated line', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wire-cache-corrupt-'));
+    try {
+      const a = userMessage('one', 1);
+      const tolerantPath = join(home, 'tolerant.jsonl');
+      await writeFile(tolerantPath, `${JSON.stringify(a)}\n{"type":broken`);
+      const cache = new WireRecordCache();
+      expect(await cache.read(tolerantPath)).toEqual([a]);
+
+      const strictPath = join(home, 'strict.jsonl');
+      await writeFile(
+        strictPath,
+        `${JSON.stringify(a)}\n{"type":broken}\n${JSON.stringify(userMessage('two', 2))}\n`,
+      );
+      await expect(cache.read(strictPath)).rejects.toThrow(/corrupted line 2/);
+      await expect(cache.read(strictPath)).rejects.toThrow(/corrupted line 2/);
+
+      await writeFile(strictPath, wireText([a]));
+      expect(await cache.read(strictPath)).toEqual([a]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('propagates ENOENT and recovers once the file appears', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wire-cache-enoent-'));
+    try {
+      const wirePath = join(home, 'wire.jsonl');
+      const cache = new WireRecordCache();
+      await expect(cache.read(wirePath)).rejects.toMatchObject({ code: 'ENOENT' });
+
+      const a = userMessage('one', 1);
+      await writeFile(wirePath, wireText([a]));
+      expect(await cache.read(wirePath)).toEqual([a]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('bounds the cache by entry count and stays correct after eviction', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wire-cache-lru-count-'));
+    try {
+      const cache = new WireRecordCache({ maxEntries: 2 });
+      const paths = [join(home, 'a.jsonl'), join(home, 'b.jsonl'), join(home, 'c.jsonl')];
+      for (const [index, path] of paths.entries()) {
+        await writeFile(path, wireText([userMessage(`m${index}`, index)]));
+      }
+      for (const path of paths) await cache.read(path);
+      expect(cache.size).toBe(2);
+
+      expect(await cache.read(paths[0]!)).toEqual([userMessage('m0', 0)]);
+      expect(cache.size).toBe(2);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('bounds the cache by total bytes and stays correct after eviction', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wire-cache-lru-bytes-'));
+    try {
+      const a = join(home, 'a.jsonl');
+      const b = join(home, 'b.jsonl');
+      await writeFile(a, wireText([userMessage('x'.repeat(40), 1)]));
+      await writeFile(b, wireText([userMessage('y'.repeat(40), 2)]));
+      const cache = new WireRecordCache({ maxTotalBytes: 200 });
+      await cache.read(a);
+      await cache.read(b);
+      expect(cache.size).toBe(1);
+
+      expect(await cache.read(a)).toEqual([userMessage('x'.repeat(40), 1)]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('readColdSnapshot matches a fresh full read across appended turns and undo', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wire-cache-heals-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const wirePath = join(wireDir, 'wire.jsonl');
+      const turnRecords = (
+        ordinal: number,
+        prompt: string,
+        t: number,
+      ): Record<string, unknown>[] => [
+        {
+          type: 'context.append_message',
+          message: {
+            id: `msg_${ordinal}`,
+            role: 'user',
+            content: [{ type: 'text', text: prompt }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+          time: t,
+        },
+        {
+          type: 'turn.prompt',
+          input: [{ type: 'text', text: prompt }],
+          origin: { kind: 'user' },
+          promptId: `msg_${ordinal}`,
+          turnId: ordinal,
+          time: t + 1,
+        },
+        {
+          type: 'context.append_message',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: `answer ${ordinal}` }],
+            toolCalls: [],
+          },
+          time: t + 2,
+        },
+        { type: 'turn.ended', turnId: ordinal, reason: 'completed', time: t + 3 },
+      ];
+      const service = coldTranscriptService(home);
+      await writeFile(wirePath, wireText(turnRecords(0, 'first', 1000)));
+      const snap1 = await service.readColdSnapshot('s1', 'main');
+      expect(snap1!.items.filter((item) => item.kind === 'turn')).toHaveLength(1);
+
+      await appendFile(wirePath, wireText(turnRecords(1, 'second', 2000)));
+      const snap2 = await service.readColdSnapshot('s1', 'main');
+      expect(snap2!.items.filter((item) => item.kind === 'turn')).toHaveLength(2);
+      expect(snap2).toEqual(await coldTranscriptService(home).readColdSnapshot('s1', 'main'));
+
+      await appendFile(wirePath, wireText([{ type: 'context.undo', count: 1, time: 3000 }]));
+      const snap3 = await service.readColdSnapshot('s1', 'main');
+      expect(snap3!.items.filter((item) => item.kind === 'turn')).toHaveLength(1);
+      expect(snap3).toEqual(await coldTranscriptService(home).readColdSnapshot('s1', 'main'));
+      service.dropSession('s1');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 });

@@ -106,11 +106,15 @@ manual_tick = false
 #   env:
 #     base <- KIMI_CODE_PERSISTENCE_MINIDB_READMODEL (custom parse)
 #     search <- KIMI_CODE_SEARCH_WORKER (custom parse)
+#     search_sync_session_cap <- KIMI_CODE_SEARCH_SYNC_SESSION_CAP (custom parse)
+#     search_sync_debounce_ms <- KIMI_CODE_SEARCH_SYNC_DEBOUNCE_MS (custom parse)
 # ##########################################################################
 
 [database]
 # base: boolean
 # search: boolean
+# search_sync_session_cap: integer
+# search_sync_debounce_ms: integer
 
 # ##########################################################################
 # defaultPermissionMode (config.toml: default_permission_mode)

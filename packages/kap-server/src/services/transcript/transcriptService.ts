@@ -41,7 +41,7 @@ import {
   type TranscriptTurn,
 } from '@moonshot-ai/transcript';
 
-import { readWireRecords, type ContextRecord } from './wireRecords';
+import { WireRecordCache, type ContextRecord } from './wireCache';
 import { toWireQuestion } from '../../protocol/question-wire';
 import { projectPromptContentParts } from '../messages/messageProjection';
 import {
@@ -92,6 +92,7 @@ export class TranscriptService {
     Set<(event: TranscriptChangeEvent, seq: number) => void>
   >();
   private readonly healTimers = new Map<string, { ordinals: Set<number>; timer: NodeJS.Timeout }>();
+  private readonly wireCache = new WireRecordCache();
 
   constructor(private readonly deps: TranscriptServiceDeps) {
     followSessionLifecycles(deps.core.accessor, (service) => {
@@ -513,9 +514,9 @@ export class TranscriptService {
       agentId,
       WIRE_FILE,
     );
-    let records: Awaited<ReturnType<typeof readWireRecords>>;
+    let records: ContextRecord[];
     try {
-      records = await readWireRecords(wirePath);
+      records = await this.wireCache.read(wirePath);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         return groupMessagesIntoSnapshot([]);

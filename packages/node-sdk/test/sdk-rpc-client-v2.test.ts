@@ -26,6 +26,7 @@ import {
   isDaemonFileUrl,
   isKimiError,
   KimiHarness,
+  limitAgentReplayByTurns,
   removeProviderFromConfig,
   SDKRpcClientV2,
   toKimiErrorPayload,
@@ -53,6 +54,7 @@ import {
   IMcpManagementService,
   IMcpOAuthService,
   ISessionManager,
+  MAIN_AGENT_ID,
   OsProcessErrors,
 } from '@moonshot-ai/agent-core-v2';
 
@@ -130,6 +132,20 @@ async function sessionDirExists(homeDir: string, sessionId: string): Promise<boo
     }
   }
   return false;
+}
+
+/** The persisted session directory under `<home>/sessions/<bucket>/<id>`. */
+async function findSessionDir(homeDir: string, sessionId: string): Promise<string> {
+  for (const bucket of await readdir(join(homeDir, 'sessions'))) {
+    const candidate = join(homeDir, 'sessions', bucket, sessionId);
+    try {
+      await readdir(candidate);
+      return candidate;
+    } catch {
+      // Not under this bucket.
+    }
+  }
+  throw new Error(`no persisted directory found for session ${sessionId}`);
 }
 
 describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
@@ -782,6 +798,94 @@ key = "${titleOAuthRef.key}"
       expect(resumed.summary?.titleKind).toBe('custom');
     } finally {
       await harness.close();
+    }
+  });
+
+  it('folds the resumed main agent replay from the persisted wire on cold and live resumes', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-resume-fold-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(homeDir, workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      await client.createSession({ id: 'ses_resume_fold', workDir });
+      await client.importContext({
+        sessionId: 'ses_resume_fold',
+        content: 'first imported turn',
+        source: "session 'source-a'",
+      });
+      await client.importContext({
+        sessionId: 'ses_resume_fold',
+        content: 'second imported turn',
+        source: "session 'source-b'",
+      });
+      await client.closeSession({ sessionId: 'ses_resume_fold' });
+      const sessionDir = await findSessionDir(homeDir, 'ses_resume_fold');
+      const wirePath = join(sessionDir, 'agents', MAIN_AGENT_ID, 'wire.jsonl');
+
+      // Cold resume with a turn window: the summary serves exactly the fold
+      // of the persisted wire, trimmed to the last user turn.
+      const limited = await client.resumeSession({ id: 'ses_resume_fold', replayTurnLimit: 1 });
+      const expectedLimited = await foldAgentWireReplay(wirePath, 1);
+      const limitedMain = limited.agents[MAIN_AGENT_ID];
+      expect(limitedMain?.replay).toEqual(expectedLimited.replay);
+      expect(limitedMain?.toolStore).toEqual(expectedLimited.toolStore);
+      expect(JSON.stringify(limitedMain?.replay)).toContain('second imported turn');
+      expect(JSON.stringify(limitedMain?.replay)).not.toContain('first imported turn');
+      expect(Object.keys(limited.agents)).toEqual([MAIN_AGENT_ID]);
+
+      // A live re-resume serves the same fold off the live scope.
+      const live = await client.resumeSession({ id: 'ses_resume_fold', replayTurnLimit: 1 });
+      expect(live.agents[MAIN_AGENT_ID]?.replay).toEqual(expectedLimited.replay);
+      await client.closeSession({ sessionId: 'ses_resume_fold' });
+
+      // Without a window the whole journal folds in.
+      const full = await client.resumeSession({ id: 'ses_resume_fold' });
+      const expectedFull = await foldAgentWireReplay(wirePath);
+      expect(full.agents[MAIN_AGENT_ID]?.replay).toEqual(expectedFull.replay);
+      expect(JSON.stringify(full.agents[MAIN_AGENT_ID]?.replay)).toContain('first imported turn');
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('rejects a resume whose engine restore fails without an unhandled rejection from the overlapped fold', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-resume-fail-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(homeDir, workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+
+    try {
+      await client.createSession({ id: 'ses_resume_fail', workDir });
+      await client.importContext({
+        sessionId: 'ses_resume_fail',
+        content: 'imported turn',
+        source: "session 'source-a'",
+      });
+      await client.closeSession({ sessionId: 'ses_resume_fail' });
+      // Malform the wire's metadata record: the engine's cold restore throws,
+      // while the index entry (and thus the overlapped fold's wire path)
+      // stays intact.
+      const sessionDir = await findSessionDir(homeDir, 'ses_resume_fail');
+      await writeFile(
+        join(sessionDir, 'agents', MAIN_AGENT_ID, 'wire.jsonl'),
+        '{"type":"metadata"}\n',
+        'utf-8',
+      );
+      await expect(client.resumeSession({ id: 'ses_resume_fail' })).rejects.toThrow(
+        'Agent wire metadata is malformed',
+      );
+      // The abandoned fold promise must settle quietly.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.removeListener('unhandledRejection', onUnhandled);
+      await client.close();
     }
   });
 
@@ -1549,6 +1653,337 @@ describe('foldAgentWireReplay', () => {
     );
     const folded = await foldAgentWireReplay(truncatedTail);
     expect(folded.replay).toEqual([{ type: 'permission_updated', mode: 'auto', time: 2 }]);
+  });
+});
+
+describe('foldAgentWireReplay turn limiting', () => {
+  function appendUser(
+    text: string,
+    time: number,
+    origin?: Record<string, unknown>,
+  ): Record<string, unknown> {
+    return {
+      type: 'context.append_message',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text }],
+        toolCalls: [],
+        ...(origin === undefined ? {} : { origin }),
+      },
+      time,
+    };
+  }
+
+  function stepRecords(
+    uuid: string,
+    time: number,
+    opts: { readonly withTool?: boolean; readonly text?: string } = {},
+  ): Record<string, unknown>[] {
+    const records: Record<string, unknown>[] = [
+      { type: 'context.append_loop_event', event: { type: 'step.begin', uuid }, time },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'content.part',
+          stepUuid: uuid,
+          part: { type: 'text', text: opts.text ?? `answer ${uuid}` },
+        },
+        time: time + 1,
+      },
+    ];
+    if (opts.withTool === true) {
+      records.push(
+        {
+          type: 'context.append_loop_event',
+          event: {
+            type: 'tool.call',
+            stepUuid: uuid,
+            toolCallId: `call-${uuid}`,
+            name: 'Bash',
+            args: { command: 'ls' },
+          },
+          time: time + 2,
+        },
+        {
+          type: 'context.append_loop_event',
+          event: {
+            type: 'tool.result',
+            toolCallId: `call-${uuid}`,
+            result: { output: 'ok', isError: false },
+          },
+          time: time + 3,
+        },
+        { type: 'context.append_loop_event', event: { type: 'step.end', uuid }, time: time + 4 },
+      );
+    } else {
+      records.push({
+        type: 'context.append_loop_event',
+        event: { type: 'step.end', uuid },
+        time: time + 2,
+      });
+    }
+    return records;
+  }
+
+  function turnRecords(index: number, time: number): Record<string, unknown>[] {
+    return [
+      appendUser(`prompt ${index}`, time),
+      ...stepRecords(`s${index}`, time + 1, { withTool: index % 3 === 0 }),
+    ];
+  }
+
+  async function writeWire(records: readonly Record<string, unknown>[]): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-fold-limit-'));
+    tempDirs.push(dir);
+    const wirePath = join(dir, 'wire.jsonl');
+    await writeFile(
+      wirePath,
+      records.map((record) => JSON.stringify(record)).join('\n') + '\n',
+      'utf-8',
+    );
+    return wirePath;
+  }
+
+  async function referenceFold(wirePath: string, turnLimit?: number) {
+    const full = await foldAgentWireReplay(wirePath);
+    return {
+      replay: limitAgentReplayByTurns(full.replay, turnLimit),
+      toolStore: full.toolStore,
+    };
+  }
+
+  it('matches the unlimited fold truncated to the last N turns on a rich journal', async () => {
+    const records: Record<string, unknown>[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      { type: 'config.update', modelAlias: 'm1', thinkingEffort: 'high', time: 2 },
+      { type: 'permission.set_mode', mode: 'auto', time: 3 },
+      { type: 'goal.create', goalId: 'g1', objective: 'ship it', time: 4 },
+      {
+        type: 'tools.update_store',
+        key: 'todo',
+        value: [{ title: 'early', status: 'pending' }],
+        time: 5,
+      },
+    ];
+    let time = 100;
+    for (let index = 0; index < 15; index++) {
+      records.push(...turnRecords(index, time));
+      time += 10;
+      records.push({
+        type: 'goal.update',
+        status: 'active',
+        turnsUsed: index + 1,
+        tokensUsed: (index + 1) * 100,
+        wallClockMs: (index + 1) * 1000,
+        time: time++,
+      });
+      if (index === 5) {
+        records.push({
+          type: 'tools.update_store',
+          key: 'todo',
+          value: [{ title: 'mid', status: 'done' }],
+          time: time++,
+        });
+      }
+      if (index === 7) {
+        records.push(
+          { type: 'plan_mode.enter', time: time++ },
+          { type: 'plan_mode.exit', time: time++ },
+        );
+      }
+      if (index === 9 || index === 13) {
+        records.push(
+          { type: 'full_compaction.begin', instruction: 'compact', time: time++ },
+          {
+            type: 'context.apply_compaction',
+            summary: 'summary',
+            contextSummary: 'context summary',
+            compactedCount: 3,
+            tokensBefore: 1000,
+            tokensAfter: 100,
+            keptUserMessageCount: 2,
+            time: time++,
+          },
+        );
+      }
+      if (index === 12) {
+        records.push({ type: 'forked', time: time++ });
+      }
+    }
+    records.push({
+      type: 'tools.update_store',
+      key: 'todo',
+      value: [{ title: 'final', status: 'done' }],
+      time: time++,
+    });
+    const wirePath = await writeWire(records);
+    for (const limit of [1, 3, 11, 15, 16]) {
+      expect(await foldAgentWireReplay(wirePath, limit)).toEqual(
+        await referenceFold(wirePath, limit),
+      );
+    }
+  });
+
+  it('matches the reference on a legacy-version journal with goal usage records', async () => {
+    const records: Record<string, unknown>[] = [
+      { type: 'metadata', protocol_version: '1.3', created_at: 1 },
+      { type: 'goal.create', goalId: 'g1', objective: 'legacy goal', time: 2 },
+      { type: 'goal.account_usage', goalId: 'g1', tokensUsed: 42, wallClockMs: 900, time: 3 },
+      { type: 'goal.continuation', goalId: 'g1', turnsUsed: 7, time: 4 },
+    ];
+    let time = 100;
+    for (let index = 0; index < 6; index++) {
+      records.push(...turnRecords(index, time));
+      time += 10;
+    }
+    records.push({
+      type: 'goal.update',
+      goalId: 'g1',
+      status: 'complete',
+      reason: 'done',
+      turnsUsed: 8,
+      time: time++,
+    });
+    const wirePath = await writeWire(records);
+    expect(await foldAgentWireReplay(wirePath, 2)).toEqual(await referenceFold(wirePath, 2));
+  });
+
+  it('shifts the window across undo-erased turns exactly like the reference', async () => {
+    const records: Record<string, unknown>[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+    ];
+    let time = 100;
+    for (let index = 0; index < 14; index++) {
+      records.push(...turnRecords(index, time));
+      time += 10;
+    }
+    records.push(
+      appendUser('cron fire', time++, {
+        kind: 'cron_job',
+        jobId: 'job-1',
+        cron: '*/15 * * * *',
+        recurring: true,
+        coalescedCount: 1,
+        stale: false,
+      }),
+      ...stepRecords('cron-step', time, {}),
+    );
+    time += 10;
+    records.push({ type: 'context.undo', count: 2, time: time++ });
+    const wirePath = await writeWire(records);
+    for (const limit of [5, 11, 12, 13]) {
+      expect(await foldAgentWireReplay(wirePath, limit)).toEqual(
+        await referenceFold(wirePath, limit),
+      );
+    }
+  });
+
+  it('reproduces a tool call pending across the turn boundary', async () => {
+    const records: Record<string, unknown>[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+    ];
+    let time = 100;
+    for (let index = 0; index < 3; index++) {
+      records.push(...turnRecords(index, time));
+      time += 10;
+    }
+    records.push(
+      { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 'sx' }, time: time++ },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'tool.call', stepUuid: 'sx', toolCallId: 'call-x', name: 'Bash', args: {} },
+        time: time++,
+      },
+      appendUser('prompt while pending', time++),
+      { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 'sy' }, time: time++ },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'content.part',
+          stepUuid: 'sy',
+          part: { type: 'text', text: 'recovered' },
+        },
+        time: time++,
+      },
+      { type: 'context.append_loop_event', event: { type: 'step.end', uuid: 'sy' }, time: time++ },
+    );
+    const wirePath = await writeWire(records);
+    for (const limit of [1, 2, 4]) {
+      expect(await foldAgentWireReplay(wirePath, limit)).toEqual(
+        await referenceFold(wirePath, limit),
+      );
+    }
+  });
+
+  it('falls back to a full fold when a legacy compaction lands inside the window', async () => {
+    const records: Record<string, unknown>[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+    ];
+    let time = 100;
+    for (let index = 0; index < 11; index++) {
+      if (index === 8) {
+        records.push(
+          { type: 'full_compaction.begin', instruction: 'compact', time: time++ },
+          {
+            type: 'context.apply_compaction',
+            summary: 'legacy summary',
+            compactedCount: 2,
+            tokensBefore: 5000,
+            time: time++,
+          },
+        );
+      }
+      records.push(...turnRecords(index, time));
+      time += 10;
+    }
+    const wirePath = await writeWire(records);
+    for (const limit of [1, 3]) {
+      expect(await foldAgentWireReplay(wirePath, limit)).toEqual(
+        await referenceFold(wirePath, limit),
+      );
+    }
+  });
+
+  it('returns the full replay when the journal has fewer turns than the limit', async () => {
+    const records: Record<string, unknown>[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      { type: 'permission.set_mode', mode: 'auto', time: 2 },
+      ...turnRecords(0, 100),
+      ...turnRecords(1, 200),
+    ];
+    const wirePath = await writeWire(records);
+    expect(await foldAgentWireReplay(wirePath, 11)).toEqual(await referenceFold(wirePath, 11));
+  });
+
+  it('returns an empty replay but the full tool store for a zero turn limit', async () => {
+    const records: Record<string, unknown>[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      { type: 'tools.update_store', key: 'todo', value: [{ title: 'kept', status: 'done' }], time: 2 },
+      ...turnRecords(0, 100),
+      ...turnRecords(1, 200),
+    ];
+    const wirePath = await writeWire(records);
+    expect(await foldAgentWireReplay(wirePath, 0)).toEqual(await referenceFold(wirePath, 0));
+  });
+
+  it('tolerates a truncated tail line with a turn limit and degrades like the reference', async () => {
+    const records: Record<string, unknown>[] = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      ...turnRecords(0, 100),
+      ...turnRecords(1, 200),
+      ...turnRecords(2, 300),
+    ];
+    const wirePath = await writeWire(records);
+    await writeFile(
+      wirePath,
+      records.map((record) => JSON.stringify(record)).join('\n') + '\n{"type":"context.append_messa',
+      'utf-8',
+    );
+    expect(await foldAgentWireReplay(wirePath, 2)).toEqual(await referenceFold(wirePath, 2));
+    await expect(foldAgentWireReplay(join(wirePath, '..', 'missing.jsonl'), 2)).resolves.toEqual({
+      replay: [],
+      toolStore: {},
+    });
   });
 });
 

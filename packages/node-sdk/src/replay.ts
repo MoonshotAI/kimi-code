@@ -101,8 +101,10 @@ export function limitAgentReplayByTurns(
 }
 
 function isAgentReplayUserTurnRecord(record: AgentReplayRecord): boolean {
-  if (record.type !== 'message') return false;
-  const { message } = record;
+  return record.type === 'message' && isAgentReplayUserTurnMessage(record.message);
+}
+
+export function isAgentReplayUserTurnMessage(message: ContextMessage): boolean {
   if (message.role !== 'user') return false;
   switch (message.origin?.kind) {
     case undefined:

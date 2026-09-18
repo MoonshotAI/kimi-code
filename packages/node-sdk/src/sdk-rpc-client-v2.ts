@@ -246,7 +246,6 @@ import { ErrorCodes, isKimiErrorCode, KimiError, type KimiErrorCode } from '#/er
 import type { ExperimentalFeatureState } from '#/flag';
 import { KimiHarness } from '#/kimi-harness';
 import type { BeginGlobalMcpServerAuthResult } from '#/mcp';
-import { limitAgentReplayByTurns } from '#/replay';
 import { noopTelemetryClient } from '#/telemetry';
 import {
   SDKRpcClientBase,
@@ -332,7 +331,7 @@ import {
 } from '#/v2/config-mapper';
 import { translateGlobalEvent } from '#/v2/event-mapper';
 import { assertImportFits, buildImportContextMessage } from '#/v2/import-context';
-import { foldAgentWireReplay } from '#/v2/resume-replay';
+import { foldAgentWireReplay, type FoldedAgentReplay } from '#/v2/resume-replay';
 import {
   mcpConfigWithoutName,
   normalizeServerName,
@@ -1106,12 +1105,18 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * agent scope (profile / permission / swarm services and the klient agent
    * facade for context / plan / usage / background tasks), while `replay` and
    * `toolStore` are folded from the agent's `wire.jsonl` by
-   * {@link foldAgentWireReplay} over the engine's `foldWireRecords`.
+   * {@link foldAgentWireReplay} over the engine's `foldWireRecords`. The main
+   * agent's fold may arrive already in flight via `mainWireFold` (started by
+   * `resumeSession` ahead of the restore; subagents always fold lazily here).
    * `warning` stays undefined — v2's resume has no migration-warning channel.
    */
   private async resumedSessionSummary(
     handle: ISessionScopeHandle,
-    replay?: { readonly includeSubagents?: boolean; readonly replayTurnLimit?: number },
+    replay?: {
+      readonly includeSubagents?: boolean;
+      readonly replayTurnLimit?: number;
+      readonly mainWireFold?: Promise<FoldedAgentReplay | undefined>;
+    },
   ): Promise<ResumedSessionSummary> {
     const meta = await handle.accessor.get(ISessionMetadata).read();
     const agents: Record<string, ResumedAgentState> = {};
@@ -1123,6 +1128,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       main,
       'main',
       replay?.replayTurnLimit,
+      replay?.mainWireFold,
     );
     if (replay?.includeSubagents === true) {
       const agentsDir = join(handle.accessor.get(ISessionContext).sessionDir, 'agents');
@@ -1166,22 +1172,28 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * deliberate gap: `config.provider` is always undefined — v1 resolves the
    * full runtime `ProviderConfig` into the snapshot, agent-core-v2 has no
    * equivalent read, and the TUI only falls back to `provider?.model` when
-   * `modelAlias` is unset (pinned in the parity KNOWN_DIFFS).
+   * `modelAlias` is unset (pinned in the parity KNOWN_DIFFS). `earlyWireFold`
+   * is the main agent's fold started before the engine restore finished; an
+   * `undefined` outcome (path unknown ahead of time) falls back to folding
+   * from the live handle here.
    */
   private async resumedAgentState(
     session: ISessionScopeHandle,
     agent: IAgentScopeHandle,
     type: 'main' | 'sub',
     replayTurnLimit?: number,
+    earlyWireFold?: Promise<FoldedAgentReplay | undefined>,
   ): Promise<ResumedAgentState> {
     const facade = this.klient.session(session.id).agent(agent.id);
     const ctx = session.accessor.get(ISessionContext);
+    const foldWire = () =>
+      foldAgentWireReplay(join(ctx.sessionDir, 'agents', agent.id, 'wire.jsonl'), replayTurnLimit);
     const [context, plan, usage, background, folded] = await Promise.all([
       facade.getContext(),
       facade.getPlan(),
       facade.getUsage(),
       facade.getTasks({ activeOnly: false }),
-      foldAgentWireReplay(join(ctx.sessionDir, 'agents', agent.id, 'wire.jsonl')),
+      earlyWireFold?.then((early) => early ?? foldWire()) ?? foldWire(),
     ]);
     const profile = agent.accessor.get(IAgentProfileService).data();
     const toolPolicy = agent.accessor.get(IAgentToolPolicyService);
@@ -1203,7 +1215,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         systemPrompt: profile.systemPrompt,
       },
       context: context as AgentContextData,
-      replay: limitAgentReplayByTurns(folded.replay, replayTurnLimit),
+      replay: folded.replay,
       permission: {
         mode: agent.accessor.get(IAgentPermissionModeService).mode,
         rules: [...agent.accessor.get(IAgentPermissionRulesService).rules],
@@ -1516,6 +1528,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     // engine has no caller `mcpServers` channel on create/resume (caller
     // servers are an ACP-side concern to be designed separately).
     return this.runSessionAccess(input.id, async () => {
+      // The main agent's fold depends only on the persisted wire, never on
+      // the restore outcome, so it starts as soon as the wire path is known
+      // and overlaps the engine's materialization.
+      const mainWireFold = this.startMainWireFold(input.id, input.replayTurnLimit);
       const handle = await resumeSessionById(this.engineAccessor, input.id, {
         additionalDirs: input.additionalDirs,
       });
@@ -1524,8 +1540,49 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       return this.resumedSessionSummary(handle, {
         includeSubagents: input.includeSubagents,
         replayTurnLimit: input.replayTurnLimit,
+        mainWireFold,
       });
     });
+  }
+
+  /**
+   * Starts the main agent's wire fold as soon as its path is known — a live
+   * session's own context, or the bucket computed from the index summary —
+   * so the read-only fold overlaps the engine's restore instead of waiting
+   * for it. The returned promise never rejects: the fold swallows its own
+   * failures into an empty fold, and the path lookup degrades to `undefined`,
+   * which makes {@link resumedAgentState} fold from the materialized handle
+   * exactly as it would without the early start.
+   */
+  private startMainWireFold(
+    sessionId: string,
+    replayTurnLimit?: number,
+  ): Promise<FoldedAgentReplay | undefined> {
+    const live = this.liveSession(sessionId);
+    if (live !== undefined) {
+      const sessionDir = live.accessor.get(ISessionContext).sessionDir;
+      return foldAgentWireReplay(
+        join(sessionDir, 'agents', MAIN_AGENT_ID, 'wire.jsonl'),
+        replayTurnLimit,
+      );
+    }
+    const bootstrap = this.engineAccessor.get(IBootstrapService);
+    return this.engineAccessor
+      .get(ISessionIndex)
+      .get(sessionId)
+      .then((summary) => {
+        if (summary === undefined) return undefined;
+        const sessionDir = sessionDirOf(
+          bootstrap.homeDir,
+          workspacePersistenceScope(bootstrap.scope('sessions'), summary.workspaceId),
+          sessionId,
+        );
+        return foldAgentWireReplay(
+          join(sessionDir, 'agents', MAIN_AGENT_ID, 'wire.jsonl'),
+          replayTurnLimit,
+        );
+      })
+      .catch(() => undefined);
   }
 
   /**

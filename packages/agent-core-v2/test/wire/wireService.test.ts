@@ -1212,3 +1212,51 @@ describe('WireService tree projection', () => {
     ]);
   });
 });
+
+describe('WireService readRestoreChains', () => {
+  it('returns restorable and journal chains from a single read with shared record identity', async () => {
+    const seeded: WireRecord[] = [
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'wire.test.one', time: 1 },
+      { type: 'wire.test.two', time: 2 },
+      {
+        type: 'agent.switched',
+        agentId: 'test-agent',
+        branch: 'b1',
+        reason: 'undo',
+        base: { branch: 'main', line: 2 },
+        turns: 1,
+        legacyUndoLine: 5,
+        time: 3,
+      },
+      { type: 'context.undo', agentId: 'test-agent', count: 1, time: 3 },
+      { type: 'context.undone', agentId: 'test-agent', turns: 1, time: 3 },
+      { type: 'wire.test.three', time: 4 },
+    ];
+    const stub = wireOverLog(recordingWireLog(seeded), 'restore-chains');
+
+    const chains = await stub.readRestoreChains();
+
+    expect(chains.journal).toEqual(seeded);
+    expect(chains.restorable).toEqual([seeded[0]!, seeded[1]!, seeded[6]!]);
+    for (const record of chains.restorable) {
+      expect(chains.journal).toContain(record);
+    }
+    expect(await collect(stub.readJournal())).toEqual(chains.journal);
+    expect(await collect(stub.readRestorable())).toEqual(chains.restorable);
+    expect(stub.journalRef.branch).toBe('b1');
+  });
+
+  it('bootstraps the metadata envelope onto an empty journal', async () => {
+    const chains = await wire.readRestoreChains();
+
+    const envelope = {
+      type: 'metadata',
+      protocol_version: WIRE_PROTOCOL_VERSION,
+      created_at: expect.any(Number),
+    };
+    expect(chains).toEqual({ restorable: [envelope], journal: [envelope] });
+    expect(await collect(wire.readRestorable())).toEqual([envelope]);
+    expect(await readRecords()).toEqual([envelope]);
+  });
+});
