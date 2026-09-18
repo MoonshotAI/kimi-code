@@ -1114,10 +1114,10 @@ function stubWireJournal(journal: WireRecord[]): IWireService {
     _serviceBrand: undefined,
     seal: async () => {},
     appendRecord: (record) => {
-      journal.push(record as WireRecord);
+      journal.push(record);
     },
     append: (record) => {
-      journal.push(record as WireRecord);
+      journal.push(record);
     },
     readJournal: async function* () {
       for (const record of journal) yield record;
@@ -1181,11 +1181,11 @@ function undoSetup(): UndoHarness {
   const appendingWire: IWireService = {
     ...wire,
     appendRecord: (record) => {
-      appendLogRecords.push(record as WireRecord);
+      appendLogRecords.push(record);
       wire.appendRecord(record);
     },
     append: (record) => {
-      appendLogRecords.push(record as WireRecord);
+      appendLogRecords.push(record);
       wire.append(record);
     },
   };

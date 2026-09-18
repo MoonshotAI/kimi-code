@@ -173,7 +173,6 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
         [ErrorCode.SESSION_NOT_FOUND]: {},
-        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
       },
       description: 'Declare an environment for the session workspace',
       tags: ['sessions'],

@@ -365,7 +365,9 @@ export class Program {
       const instructions = own(new WorkspaceInstructionsService(context, workspaceRoutingFs(root, targetFs, localFs), localEnvironment.host, this.dependencies.bootstrap, this.dependencies.log, state));
       const trust = own(new WorkspaceTrustService(this.context, this.dependencies.docs, state, this.dependencies.telemetry));
       if (environmentId === LOCAL_ENVIRONMENT_ID) {
-        own(trust.onDidChange((change) => this.trustChangeEmitter.fire(change)));
+        own(trust.onDidChange((change) => {
+          this.trustChangeEmitter.fire(change);
+        }));
       }
       const mcpConfig = own(new WorkspaceMcpConfigService(this.context, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, localFs, trust, this.dependencies.configStore));
       const mcp = own(new WorkspaceMcpService(this.context, this.resolver, mcpConfig, this.dependencies.oauth, this.dependencies.log, this.dependencies.telemetry, this.dependencies.identity, this.dependencies.sessionManager));

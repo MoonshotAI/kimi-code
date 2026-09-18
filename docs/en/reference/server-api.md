@@ -856,11 +856,11 @@ Switches the main agent's environment binding. The connection is established and
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 | `environment_id` | body | string | **Required.** Target environment id |
-| `cwd` | body | string | Working directory on the target environment; defaults to the entry's configured `defaultCwd` |
+| `cwd` | body | string | Working directory on the target environment; required for non-local environments (`40001` when missing) — the entry's `defaultCwd` applies only when a session is created bound to the environment |
 
 On success, `data` is the new binding `{ workspace_id, environment_id, cwd? }`.
 
-- `40001`: the given `cwd` does not resolve to a directory on the target environment
+- `40001`: a non-local `environment_id` without a `cwd`, or the given `cwd` does not resolve to a directory on the target environment
 - `40401`: session not found
 - `40420`: no environment with that `environment_id`
 - `40901`: the session has a running turn or a pending approval; switching applies at the turn boundary

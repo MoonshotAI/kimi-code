@@ -15,7 +15,7 @@ import { formatErrorMessage } from '../utils/event-payload';
 import type { SlashCommandHost } from './dispatch';
 
 // ---------------------------------------------------------------------------
-// /environment command (experimental remote environment)
+// /environment command
 // ---------------------------------------------------------------------------
 
 export async function handleEnvironmentCommand(host: SlashCommandHost): Promise<void> {

@@ -856,11 +856,11 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
 | `environment_id` | body | string | **必填。** 目标环境 id |
-| `cwd` | body | string | 目标环境上的工作目录；默认取该条目配置的 `defaultCwd` |
+| `cwd` | body | string | 目标环境上的工作目录；非 `local` 环境必填（缺省时返回 `40001`）——条目的 `defaultCwd` 仅在创建会话绑定该环境时生效 |
 
 成功时，`data` 为新的绑定 `{ workspace_id, environment_id, cwd? }`。
 
-- `40001`：给定的 `cwd` 在目标环境上不是有效目录
+- `40001`：非 `local` 的 `environment_id` 未提供 `cwd`，或给定的 `cwd` 在目标环境上不是有效目录
 - `40401`：会话不存在
 - `40420`：不存在该 `environment_id` 的环境
 - `40901`：会话有正在执行的轮次或待审批调用，切换在轮次边界生效
