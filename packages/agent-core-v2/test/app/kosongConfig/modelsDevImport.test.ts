@@ -175,6 +175,7 @@ describe('IModelsDevImportService', () => {
     const openai = byId.get('openai');
     expect(openai).toMatchObject({
       wire_type: 'openai',
+      base_url: 'https://api.openai.com/v1',
       guessed: false,
       needs_base_url: false,
       rejected: false,
@@ -183,10 +184,11 @@ describe('IModelsDevImportService', () => {
     expect(openai?.models).toEqual([
       expect.objectContaining({ id: 'gpt-4.1', max_context_size: 1047576 }),
     ]);
-    expect(byId.get('gateway')).toMatchObject({ needs_base_url: true, wire_type: 'openai' });
+    expect(byId.get('gateway')).toMatchObject({ needs_base_url: true, wire_type: 'openai', base_url: null });
     expect(byId.get('bedrock')).toMatchObject({
       rejected: true,
       wire_type: null,
+      base_url: null,
       reject_reason: 'proprietary-sdk',
     });
   });
