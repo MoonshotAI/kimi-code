@@ -29,8 +29,8 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
     @IPluginService private readonly plugins: IPluginService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IHostProcessService private readonly hostProcess: IHostProcessService,
-    private readonly callbacks: HookRunCallbacks = {},
     @ITelemetryService private readonly telemetry: ITelemetryService = noopTelemetryService,
+    private readonly callbacks: HookRunCallbacks = {},
   ) {
     super();
     this.ready = this.loadSafe();

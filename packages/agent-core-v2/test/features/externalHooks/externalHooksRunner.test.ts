@@ -4,7 +4,18 @@ import { tmpdir } from 'node:os';
 import type { ContentPart } from '#human/llm/message';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ITelemetryService } from '#/app/telemetry/telemetry';
+import { SyncDescriptor } from '#/_base/di/descriptors';
+import { TestInstantiationService } from '#/_base/di/test';
+import { Event } from '#/_base/event';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IConfigService } from '#/app/config/config';
+import { IPluginService } from '#/app/plugin/plugin';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
+import { ExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunnerService';
+import { HOOKS_SECTION } from '#/features/externalHooks/configSection';
+import { IHostProcessService } from '#/os/interface/hostProcess';
+import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 
 import { makeHookRunner } from './runner-stub';
 
@@ -348,6 +359,38 @@ describe('ExternalHooksRunnerService', () => {
         'external_hook_resolved',
         expect.objectContaining({ action: 'allow', matched_count: 1, failed_count: 0 }),
       ],
+    ]);
+  });
+
+  it('emits telemetry when constructed through DI', async () => {
+    const ix = new TestInstantiationService();
+    const tracked: [string, unknown][] = [];
+    ix.stub(ITelemetryService, {
+      track2: (event: string, properties: unknown) => tracked.push([event, properties]),
+    });
+    ix.stub(IConfigService, {
+      ready: Promise.resolve(),
+      get: (section: string) =>
+        section === HOOKS_SECTION
+          ? [{ event: 'Stop', command: nodeCommand('process.exit(0);'), timeout: 5 }]
+          : undefined,
+    } as unknown as IConfigService);
+    ix.stub(IPluginService, {
+      enabledHooks: async () => [],
+      onDidReload: Event.None,
+    } as unknown as IPluginService);
+    ix.stub(IBootstrapService, {
+      cwd: '',
+      clientIdentity: { platform: 'test_platform' },
+    } as unknown as IBootstrapService);
+    ix.stub(IHostProcessService, new HostProcessService());
+    ix.set(IExternalHooksRunnerService, new SyncDescriptor(ExternalHooksRunnerService));
+
+    const runner = ix.get(IExternalHooksRunnerService);
+    await runner.trigger('Stop', { inputData: {} });
+
+    expect(tracked).toEqual([
+      ['external_hook_resolved', expect.objectContaining({ event: 'Stop', matched_count: 1 })],
     ]);
   });
 

@@ -40,7 +40,7 @@ export function makeHookRunner(
       clientIdentity: { productName: 'test', version: '0.0.0-test', platform: 'test_platform' },
     } as unknown as IBootstrapService,
     new HostProcessService(),
-    { onTriggered: options.onTriggered, onResolved: options.onResolved },
     options.telemetry ?? noopTelemetryService,
+    { onTriggered: options.onTriggered, onResolved: options.onResolved },
   );
 }
