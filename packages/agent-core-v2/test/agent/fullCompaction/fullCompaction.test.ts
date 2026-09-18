@@ -1319,6 +1319,47 @@ describe('FullCompaction', () => {
     await pending;
   });
 
+  it('does not apply a summary that arrives after the compaction was cancelled', async () => {
+    const started = deferred<void>();
+    const release = deferred<void>();
+    const generate: GenerateFn = {
+      async generate(_config, _content, control) {
+        started.resolve();
+        await release.promise;
+        control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'Late summary.' } });
+        control.onEvent?.({
+          type: 'llm.streaming.finish',
+          finish: { finishReason: 'completed', rawFinishReason: 'stop' },
+        });
+        control.onEvent?.({ type: 'llm.done' });
+      },
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+
+    await ctx.rpc.beginCompaction({});
+    await started.promise;
+    const fullCompaction = ctx.get(IAgentFullCompactionService);
+    const task = fullCompaction.compacting;
+    expect(task).not.toBeNull();
+    fullCompaction.cancel();
+    release.resolve();
+    await task?.promise.catch(() => undefined);
+
+    expect(countEvents(ctx.newEvents(), 'context.apply_compaction')).toBe(0);
+    expect(ctx.compactHistory()).toEqual([
+      { role: 'user', text: 'old user one' },
+      { role: 'assistant', text: 'old assistant one' },
+      { role: 'user', text: 'recent user two' },
+      { role: 'assistant', text: 'recent assistant two' },
+    ]);
+  });
+
   it('names truncated compaction responses when retries are exhausted', async () => {
     vi.useFakeTimers();
     const firstAttemptFinished = deferred<void>();

@@ -748,6 +748,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
       const summary = await this.postProcessSummary(attempt.summary);
       const wireLines = await this.captureWireLines();
+      signal.throwIfAborted();
       const recoveryFooter = this.renderRecoveryFooter(wireLines);
       const summaryText = buildCompactionSummaryText(summary);
       const result = this.context.applyCompaction({
