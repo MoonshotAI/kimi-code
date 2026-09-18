@@ -1,5 +1,6 @@
 /**
- * `kimi exec-server --listen stdio` — the remote-executor light entry.
+ * `kimi exec-server` (equivalently `--listen stdio`) — the remote-executor
+ * light entry.
  *
  * This module is the argv pre-dispatch target of `src/main.ts` and must stay
  * light: only node builtins plus `./build-info` / `./host-package`. The SDK
@@ -21,12 +22,17 @@ import { getHostPackageJsonPath } from './host-package';
 
 export const EXEC_SERVER_COMMAND = 'exec-server';
 
-const EXEC_SERVER_ARGV_SHAPE = [EXEC_SERVER_COMMAND, '--listen', 'stdio'] as const;
+const EXEC_SERVER_ARGV_SHAPES: readonly (readonly string[])[] = [
+  [EXEC_SERVER_COMMAND],
+  [EXEC_SERVER_COMMAND, '--listen', 'stdio'],
+];
 
 /**
- * Exact-shape match for the light path. Node/tsx invoke as
+ * Exact-shape match for the light path: the bare command or the explicit
+ * `--listen stdio` spelling (stdio is the only transport, so the flag is
+ * ceremony kept for compatibility). Node/tsx invoke as
  * `[exec, script, ...args]`, the SEA binary as `[exec, exec, ...args]` (or
- * `[exec, ...args]`), so the shape is accepted at either offset. Anything
+ * `[exec, ...args]`), so each shape is accepted at either offset. Anything
  * else named `exec-server` falls through to the full CLI, where the hidden
  * Commander subcommand in `cli/commands.ts` owns validation and errors.
  */
@@ -35,9 +41,8 @@ export function isExecServerArgv(argv: readonly string[]): boolean {
 }
 
 function hasExecServerShape(args: readonly string[]): boolean {
-  return (
-    args.length === EXEC_SERVER_ARGV_SHAPE.length &&
-    args.every((arg, index) => arg === EXEC_SERVER_ARGV_SHAPE[index])
+  return EXEC_SERVER_ARGV_SHAPES.some(
+    (shape) => shape.length === args.length && shape.every((arg, index) => arg === args[index]),
   );
 }
 
