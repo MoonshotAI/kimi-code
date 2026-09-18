@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { PathSecurityError } from '#/tool/path-access';
 import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { HostFsError } from '#/os/interface/hostFsErrors';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
 import { stubAgentEnvironment } from '../../../../environment/stubs';
 import { type WriteInput, WriteInputSchema } from '#/agent/tools/os/write/write';
@@ -352,6 +353,19 @@ describe('WriteTool', () => {
     expect(writeText).toHaveBeenCalledWith('/tmp/empty.txt', '');
   });
 
+  it('creates missing parents when a remote fs reports fs-domain not_found without a Node cause', async () => {
+    const remoteNotFound = new HostFsError('os.fs.not_found', 'stat failed: path does not exist', {
+      details: { path: '/tmp/missing-dir', op: 'stat', domainCode: 'os.fs.not_found' },
+    });
+    const { tool, mkdir, writeText } = makeTool({ stat: vi.fn().mockRejectedValue(remoteNotFound) });
+
+    const result = await execute(tool, { path: '/tmp/missing-dir/nested/file.txt', content: 'data' });
+
+    expect(result.isError).toBeFalsy();
+    expect(mkdir).toHaveBeenCalledWith('/tmp/missing-dir/nested', { recursive: true });
+    expect(writeText).toHaveBeenCalledWith('/tmp/missing-dir/nested/file.txt', 'data');
+  });
+
   it('still reports parent-directory ENOENT surfaced by writeText itself', async () => {
     const { tool } = makeTool({
       writeText: vi
@@ -360,6 +374,18 @@ describe('WriteTool', () => {
           Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' }),
         ),
     });
+
+    const result = await execute(tool, { path: '/tmp/missing-dir/file.txt', content: 'data' });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('parent directory does not exist');
+  });
+
+  it('still reports parent-directory not_found surfaced by a remote-shaped writeText failure', async () => {
+    const remoteNotFound = new HostFsError('os.fs.not_found', 'write failed: path does not exist', {
+      details: { path: '/tmp/missing-dir/file.txt', op: 'write', domainCode: 'os.fs.not_found' },
+    });
+    const { tool } = makeTool({ writeText: vi.fn().mockRejectedValue(remoteNotFound) });
 
     const result = await execute(tool, { path: '/tmp/missing-dir/file.txt', content: 'data' });
 

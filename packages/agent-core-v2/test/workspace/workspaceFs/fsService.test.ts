@@ -12,6 +12,7 @@ import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { IGitService } from '#/app/git/git';
 import { ErrorCodes, Error2 } from '#/errors';
 import { type HostDirEntry, IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { HostFsError, toHostFsError } from '#/os/interface/hostFsErrors';
 import { IHostProcessService, type IHostProcess } from '#/os/interface/hostProcess';
 import { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
 import { WorkspaceFsService } from '#/workspace/workspaceFs/fsService';
@@ -242,6 +243,27 @@ function fakeFs(
   };
 }
 
+function remoteShapedFs(files: Record<string, string | Buffer>): IHostFileSystem {
+  const base = fakeFs(files) as unknown as Record<string, unknown>;
+  const wrapped: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(base)) {
+    if (typeof value !== 'function') {
+      wrapped[key] = value;
+      continue;
+    }
+    const fn = value as (...args: unknown[]) => Promise<unknown>;
+    wrapped[key] = async (...args: unknown[]) => {
+      try {
+        return await fn(...args);
+      } catch (error) {
+        const domain = toHostFsError(error, { path: String(args[0]), op: key });
+        throw new HostFsError(domain.code, domain.message, { details: domain.details });
+      }
+    };
+  }
+  return wrapped as unknown as IHostFileSystem;
+}
+
 function fakeProcess(stdout: string, stderr: string, exitCode: number): IHostProcess {
   return {
     _serviceBrand: undefined,
@@ -416,6 +438,7 @@ function makeRemoteSession(
   events: Array<{ event: string; properties: Record<string, unknown> }> = [],
   environmentId = 'ssh-dev',
   homeDir = '/home/target',
+  hostFs?: IHostFileSystem,
 ): IWorkspaceFsService {
   const environment = new FakeEnvironment(
     { workspaceId: 'w', environmentId, generation: 'test' },
@@ -426,7 +449,7 @@ function makeRemoteSession(
   return new WorkspaceFsService(
     stubWorkspaceContext(),
     stubWorkspaceDirs(),
-    fakeFs(files),
+    hostFs ?? fakeFs(files),
     resolver,
     telemetryStub(events),
     workspaceGitStub(defaultGitStub()),
@@ -1490,6 +1513,31 @@ describe('WorkspaceFsService.list', () => {
       }),
     ).rejects.toMatchObject({ code: 'fs.path_escapes' });
   });
+
+  it('throws fs.path_not_found when a remote fs reports fs-domain not_found for the path', async () => {
+    const fs = makeRemoteSession(
+      {},
+      emptyHandler,
+      [],
+      'ssh-dev',
+      '/home/target',
+      remoteShapedFs({}),
+    );
+    await expect(
+      fs.list({
+        path: 'missing-dir',
+        depth: 1,
+        limit: 200,
+        show_hidden: false,
+        follow_gitignore: false,
+        sort: 'name_asc',
+        include_git_status: false,
+      }),
+    ).rejects.toMatchObject({
+      code: 'fs.path_not_found',
+      message: 'path not found: missing-dir',
+    });
+  });
 });
 
 describe('WorkspaceFsService.read', () => {
@@ -1665,6 +1713,23 @@ describe('WorkspaceFsService.mkdir', () => {
     await expect(fs.mkdir({ path: 'src', recursive: false })).rejects.toMatchObject({
       code: 'fs.already_exists',
     });
+  });
+
+  it('throws fs.path_not_found when a remote fs reports fs-domain not_found for the parent', async () => {
+    const fs = makeRemoteSession(
+      {},
+      emptyHandler,
+      [],
+      'ssh-dev',
+      '/home/target',
+      remoteShapedFs({}),
+    );
+    await expect(fs.mkdir({ path: 'missing-parent/newdir', recursive: false })).rejects.toMatchObject(
+      {
+        code: 'fs.path_not_found',
+        message: 'parent not found: missing-parent/newdir',
+      },
+    );
   });
 });
 

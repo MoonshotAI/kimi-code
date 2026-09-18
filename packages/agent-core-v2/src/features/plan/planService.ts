@@ -5,7 +5,6 @@ import { normalize } from 'pathe';
 
 import { type IDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
-import { unwrapErrorCause } from '#/_base/errors/errors';
 import { Error2, ErrorCodes } from '#/errors';
 import { generateHeroSlug } from '#/_base/utils/hero-slug';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
@@ -25,6 +24,7 @@ import type {
 import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import type { EnvironmentLease, EnvironmentPath } from '#/environment/environment';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -237,7 +237,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     try {
       content = await target.fs.readText(target.path);
     } catch (error) {
-      if (!isMissingFileError(error)) throw error;
+      if (!isHostFsNotFound(error)) throw error;
     }
     return {
       id: state.id,
@@ -320,7 +320,7 @@ async function canonicalizeExistingPrefix(target: PlanFileTarget, path: string):
       const real = await target.fs.realpath(current);
       return tail.length === 0 ? real : target.environmentPath.join(real, ...tail.toReversed());
     } catch (error) {
-      if (!isMissingFileError(error)) return path;
+      if (!isHostFsNotFound(error)) return path;
       const parent = target.environmentPath.dirname(current);
       if (parent === current) return path;
       tail.push(target.environmentPath.basename(current));
@@ -328,13 +328,6 @@ async function canonicalizeExistingPrefix(target: PlanFileTarget, path: string):
     }
   }
   return path;
-}
-
-function isMissingFileError(error: unknown): boolean {
-  const unwrapped = unwrapErrorCause(error);
-  if (unwrapped === null || typeof unwrapped !== 'object') return false;
-  const code = (unwrapped as { readonly code?: unknown }).code;
-  return code === 'ENOENT';
 }
 
 function planModeWriteDeniedMessage(planFilePath: string | null): string {

@@ -1,4 +1,5 @@
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import { IAgentEnvironmentService, inspectAgentEnvironment } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { isDaemonFileUrl } from '#/agent/media/mediaRef';
@@ -114,13 +115,6 @@ function renderLine(entry: ReadLineEntry, lineEndingStyle: LineEndingStyle): str
   const renderedContent =
     lineEndingStyle === 'mixed' ? makeCarriageReturnsVisible(modelContent) : modelContent;
   return `${String(entry.lineNo)}\t${renderedContent}`;
-}
-
-function isFileNotFoundError(error: unknown): boolean {
-  const unwrapped = unwrapErrorCause(error);
-  if (typeof unwrapped !== 'object' || unwrapped === null) return false;
-  const code = (unwrapped as { code?: unknown })['code'];
-  return code === 'ENOENT' || code === 'ENOTDIR';
 }
 
 function isTextDecodeError(error: unknown): boolean {
@@ -267,7 +261,7 @@ export class ReadTool implements IReadTool {
       try {
         stat = await source.stat();
       } catch (error) {
-        if (isFileNotFoundError(error)) {
+        if (isHostFsNotFound(error) || isHostFsNotDirectory(error)) {
           return { isError: true, output: `"${args.path}" does not exist.` };
         }
         throw error;

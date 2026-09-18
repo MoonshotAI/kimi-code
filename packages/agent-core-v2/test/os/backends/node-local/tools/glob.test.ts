@@ -20,6 +20,7 @@ import {
 import { GlobTool, splitCompletePaths } from '#/agent/tools/os/glob/globTool';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { HostFsError } from '#/os/interface/hostFsErrors';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
@@ -731,6 +732,23 @@ describe('GlobTool', () => {
 
     expect(result).toMatchObject({ isError: true });
     expect(result.output).toContain('does not exist');
+    expect(exec).not.toHaveBeenCalled();
+    withCwd.not.toHaveBeenCalled();
+  });
+
+  it('reports "does not exist" when a remote fs reports fs-domain not_found for the search directory', async () => {
+    const stat = vi.fn(async (): Promise<HostFileStat> => {
+      throw new HostFsError('os.fs.not_found', 'stat failed: path does not exist', {
+        details: { path: '/workspace/nonexistent', op: 'stat', domainCode: 'os.fs.not_found' },
+      });
+    });
+    const exec = vi.fn();
+    const { tool, withCwd } = makeTool(workspace, { exec, stat });
+
+    const result = await execute(tool, { pattern: '*.py', path: '/workspace/nonexistent' });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toBe('/workspace/nonexistent does not exist');
     expect(exec).not.toHaveBeenCalled();
     withCwd.not.toHaveBeenCalled();
   });

@@ -15,6 +15,7 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { HostFsError } from '#/os/interface/hostFsErrors';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { createFakeHostFs, createFakeProcessRunner } from '../../tools/fixtures/fake-exec';
@@ -302,6 +303,46 @@ describe('Plan service', () => {
 
       expect(remoteFiles.get(planPath)).toBe(content);
       expect((await remotePlan.status())?.content).toBe(content);
+    });
+
+    it('returns empty plan content when the remote fs reports fs-domain not_found for the plan file', async () => {
+      const files = new Map<string, string>();
+      const ctx = createTestAgent([
+        execEnvServices({ hostFs: createMapFs(new Map()) }),
+        agentService(
+          IAgentEnvironmentService,
+          stubPlanEnvironment({
+            fs: createMapFs(files, {
+              readText: (path) => {
+                const content = files.get(path);
+                if (content === undefined) {
+                  return Promise.reject(
+                    new HostFsError('os.fs.not_found', 'read failed: path does not exist', {
+                      details: { path, op: 'read', domainCode: 'os.fs.not_found' },
+                    }),
+                  );
+                }
+                return Promise.resolve(content);
+              },
+            }),
+            tempDir: remoteTempDir,
+          }),
+        ),
+      ]);
+      try {
+        const plan = ctx.get(IAgentPlanService);
+        await ctx.restorePersisted();
+        await plan.enter('remote-shape-plan', false);
+        const planPath = `${remoteTempDir}/kimi-code/plans/main/remote-shape-plan.md`;
+        files.delete(planPath);
+
+        const status = await plan.status();
+
+        expect(status?.path).toBe(planPath);
+        expect(status?.content).toBe('');
+      } finally {
+        await ctx.dispose();
+      }
     });
 
     it('keeps denying writes to non-plan files on a remote binding', async () => {

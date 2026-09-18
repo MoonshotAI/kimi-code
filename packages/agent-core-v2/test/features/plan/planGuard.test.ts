@@ -25,6 +25,7 @@ import type {
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ToolCall } from '#human/llm/message';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { HostFsError } from '#/os/interface/hostFsErrors';
 import { ToolAccesses } from '#/tool/toolContract';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
@@ -263,6 +264,40 @@ describe('AgentPlanService plan-guard listener', () => {
     it('lets a write through when the plan file is addressed through a symlinked tempDir alias', async () => {
       await enterPlan();
       const aliasPath = `/private${PLAN_PATH}`;
+      const decision = await run(
+        hookContext('Write', {
+          args: { path: aliasPath },
+          accesses: ToolAccesses.writeFile(aliasPath),
+        }),
+      );
+
+      expect(decision).toBeUndefined();
+      expect(permissionRan).toBe(false);
+    });
+
+    it('lets a write through when a remote fs reports fs-domain not_found while canonicalizing the plan path', async () => {
+      const remoteNotFound = (path: string): HostFsError =>
+        new HostFsError('os.fs.not_found', 'realpath failed: path does not exist', {
+          details: { path, op: 'realpath', domainCode: 'os.fs.not_found' },
+        });
+      const environment = stubPlanEnvironment({
+        fs: createFakeHostFs({
+          mkdir: vi.fn().mockResolvedValue(undefined),
+          readText: vi.fn(async (path: string) => files.get(path) ?? ''),
+          writeText: vi.fn(async (path: string, content: string) => {
+            files.set(path, content);
+          }),
+          realpath: vi.fn(async (path: string) => {
+            if (path.endsWith(`${PLAN_ID}.md`)) throw remoteNotFound(path);
+            return path.startsWith('/var/') ? `/private${path}` : path;
+          }),
+        }),
+        tempDir: TEMP_DIR,
+      });
+      buildServices(environment);
+      await enterPlan();
+      const aliasPath = `/private${PLAN_PATH}`;
+
       const decision = await run(
         hookContext('Write', {
           args: { path: aliasPath },
