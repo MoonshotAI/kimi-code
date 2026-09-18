@@ -62,7 +62,10 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
       for (const record of records) {
         const { id, options } = record;
         const source = options.source ?? 'builtin';
-        if (this.toolRegistry.resolve(options.name) !== undefined) continue;
+        if (this.toolRegistry.resolve(options.name) !== undefined) {
+          if (options.when !== undefined && !options.when(accessor)) this.deactivateRecord(record);
+          continue;
+        }
         if (!this.environmentAllows(record)) continue;
         if (!isToolActive(workspaceVeto, options.name, source)) continue;
         const activeByProfile =

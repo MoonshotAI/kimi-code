@@ -9,3 +9,4 @@ export * from './remoteProcess';
 export * from './remoteTerminal';
 export * from './remoteEnvironment';
 export * from './remoteEnvironmentProvider';
+export * from './ephemeralEnvironmentConnector';

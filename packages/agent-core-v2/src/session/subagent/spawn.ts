@@ -8,6 +8,8 @@ export const FORK_WITH_TYPE_UNAVAILABLE =
   'Cannot set a different subagent_type when forking the current context. A fork inherits this agent\'s own agent type.';
 export const FORK_WITH_MODEL_UNAVAILABLE =
   'Cannot override the model when forking the current context. A fork inherits this agent\'s model.';
+export const FORK_WITH_ENVIRONMENT_UNAVAILABLE =
+  'Cannot override the environment when forking the current context. A fork inherits this agent\'s environment binding.';
 export const FORK_EXPERIMENTAL_UNAVAILABLE =
   'fork is disabled: the subagent_fork experimental flag is off.';
 export const FORK_CONTEXT_NOTICE =
@@ -17,6 +19,7 @@ export interface ForkCompatibilityArgs {
   readonly resume?: string;
   readonly subagent_type?: string;
   readonly model?: string;
+  readonly environment?: string;
 }
 
 export function forkIncompatibility(
@@ -41,6 +44,9 @@ export function forkIncompatibility(
   ) {
     return FORK_WITH_MODEL_UNAVAILABLE;
   }
+  if (args.environment !== undefined && args.environment.trim().length > 0) {
+    return FORK_WITH_ENVIRONMENT_UNAVAILABLE;
+  }
   return undefined;
 }
 
@@ -64,6 +70,7 @@ export interface SpawnSubagentOptions {
   readonly plan: SubagentSpawnPlan;
   readonly labels?: Readonly<Record<string, string>>;
   readonly prompt: string;
+  readonly environment?: string;
 }
 
 export interface SpawnedSubagent {

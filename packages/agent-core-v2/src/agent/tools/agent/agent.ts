@@ -53,6 +53,12 @@ export const SubagentToolInputSchema = z.preprocess(
       .describe(
         'Fork the current context: the subagent starts with a snapshot of this agent\'s completed conversation history instead of zero context, inheriting this agent\'s agent type, tool set, and model. A non-empty resume is rejected. If subagent_type is provided, it must match this agent\'s type; if model is provided, it must be this agent\'s model or "primary". Different types and model overrides are rejected.',
       ),
+    environment: z
+      .string()
+      .optional()
+      .describe(
+        'Environment id to bind the subagent to: "local" or one of the environment ids from the available environments list. When set, the subagent runs its tools on that environment instead of inheriting your current binding. Ignored when resuming — resumed agents keep their own binding.',
+      ),
     model: z
       .string()
       .optional()

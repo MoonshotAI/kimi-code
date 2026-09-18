@@ -67,7 +67,7 @@ The directory listing of current working directory is:
 ```
 ${cwd_listing}
 ```
-${additional_dirs_section}
+${additional_dirs_section}${environments_section}
 # Project information
 
 When working in subdirectories, check whether they contain their own `AGENTS.md` with more specific guidance. If you change anything an `AGENTS.md` documents, update that `AGENTS.md` to match.

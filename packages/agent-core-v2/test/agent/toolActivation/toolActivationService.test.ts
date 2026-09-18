@@ -380,6 +380,25 @@ describe('AgentToolActivationService', () => {
     expect(gammaConstructions).toBe(0);
   });
 
+  it('withdraws and restores a contribution when its when predicate flips across re-activations', async () => {
+    let allowed = true;
+    registerAgentToolService(IGammaTool, GammaTool, { name: 'Gamma', when: () => allowed });
+    const ix = createActivationHost();
+    const activation = ix.get(IAgentToolActivationService);
+    const registry = ix.get(IAgentToolRegistryService);
+
+    await activation.activate();
+    expect(registry.resolve('Gamma')).toBeInstanceOf(GammaTool);
+
+    allowed = false;
+    await activation.activate();
+    expect(registry.resolve('Gamma')).toBeUndefined();
+
+    allowed = true;
+    await activation.activate();
+    expect(registry.resolve('Gamma')).toBeInstanceOf(GammaTool);
+  });
+
   it('honors the workspace tool-policy veto before the profile', async () => {
     gateData.disabledTools = ['Beta'];
     registerAgentToolService(IAlphaTool, AlphaTool, { name: 'Alpha' });

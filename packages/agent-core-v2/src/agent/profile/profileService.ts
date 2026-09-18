@@ -65,6 +65,12 @@ import { isToolActiveComposed, findInactiveToolPatterns, literalToolNames, type 
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { NOTIFY_USER_TOOL_NAME } from '#/features/notify/tools/notify-user/notify-user';
+import { buildEnvironmentsInfo } from '#/features/environmentTools/environmentsInfo';
+import { AGENT_ENVIRONMENT_TOOLS_FLAG_ID } from '#/features/environmentTools/flag';
+import { towerKey } from '#/features/tower/towerOps';
+import { IFlagService } from '#/app/flag/flag';
+import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { renderAgentProfilePrompt } from '#/app/agentProfileCatalog/profile-shared';
 import { getAgentToolContributions } from '#/agent/toolRegistry/toolContribution';
 import {
@@ -162,6 +168,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IPluginService private readonly plugins: IPluginService,
     @IAgentIdentity private readonly identity: IAgentIdentity,
     @IAgentAgentsMdReminderService private readonly agentsMdReminder: IAgentAgentsMdReminderService,
+    @IFlagService private readonly flags: IFlagService,
+    @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
   ) {
     super();
     this.states.contributeState(profileKey);
@@ -811,6 +819,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     const fsAvailable = this.environment.isAvailable(['fs']);
     const lease = this.environment.acquire(fsAvailable ? ['fs'] : []);
     const env = lease.environment.host;
+    const currentEnvironmentId = lease.environment.identity.environmentId;
     const view = new EnvironmentWorkspaceView(lease.environment, {
       workDir: this.sessionContext.cwd,
       additionalDirs: options?.additionalDirs ?? this.workspace.additionalDirs,
@@ -839,6 +848,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       osKind: env.osKind,
       shellName: env.shellName,
       shellPath: env.shellPath,
+      environmentsInfo: this.resolveEnvironmentsInfo(currentEnvironmentId),
       skills,
       pluginSections,
       skillActive: this.isToolActiveForProfile(profile, 'Skill'),
@@ -886,6 +896,15 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     } catch {
       return '';
     }
+  }
+
+  private resolveEnvironmentsInfo(currentEnvironmentId: string): string {
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID) return '';
+    if (!this.flags.enabled(AGENT_ENVIRONMENT_TOOLS_FLAG_ID)) return '';
+    if (this.states.has(towerKey) && this.states.get(towerKey)) return '';
+    const workspace = this.workspaces.get(this.sessionContext.workspaceId);
+    if (workspace === undefined) return '';
+    return buildEnvironmentsInfo(workspace.environments.snapshot(), currentEnvironmentId);
   }
 
   private async resolvePluginSections(): Promise<string> {

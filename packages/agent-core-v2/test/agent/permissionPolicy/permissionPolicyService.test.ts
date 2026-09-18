@@ -225,6 +225,53 @@ describe('AgentPermissionPolicyService chain', () => {
   });
 
   it.each(['manual', 'yolo'] as const)(
+    'asks for environment switching tools in %s mode',
+    async (currentMode) => {
+      mode = currentMode;
+
+      await expect(evaluate({
+        toolName: 'change_environment',
+        args: { id: 'staging' },
+      })).resolves.toMatchObject({
+        policyName: 'environment-switch-ask',
+        result: { kind: 'ask' },
+      });
+      await expect(evaluate({
+        toolName: 'connect',
+        args: { type: 'ssh', host: 'dev-box' },
+      })).resolves.toMatchObject({
+        policyName: 'environment-switch-ask',
+        result: { kind: 'ask' },
+      });
+    },
+  );
+
+  it('approves environment switching tools in auto mode', async () => {
+    mode = 'auto';
+
+    await expect(evaluate({
+      toolName: 'change_environment',
+      args: { id: 'staging' },
+    })).resolves.toMatchObject({
+      policyName: 'auto-mode-approve',
+      result: { kind: 'approve' },
+    });
+  });
+
+  it('reuses approve-for-session for environment switching tools', async () => {
+    mode = 'yolo';
+    sessionApprovalRulePatterns.push('change_environment');
+
+    await expect(evaluate({
+      toolName: 'change_environment',
+      args: { id: 'staging' },
+    })).resolves.toMatchObject({
+      policyName: 'session-approval-history',
+      result: { kind: 'approve' },
+    });
+  });
+
+  it.each(['manual', 'yolo'] as const)(
     'asks for shutdown in %s mode',
     async (currentMode) => {
       mode = currentMode;
