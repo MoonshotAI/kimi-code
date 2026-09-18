@@ -738,6 +738,23 @@ describe('idle connection reaping', () => {
     await registry.dispose();
   });
 
+  it('does not reap early when the configured TTL exceeds the maximum timer delay', async () => {
+    const registry = new EnvironmentRegistry('workspace-1');
+    const { connect, produced } = producingConnect();
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(ttlServices(3_000_000), registry));
+
+    await registry.current('dev-box')!.connect!();
+    expect(registry.current('dev-box')!.status).toBe('ready');
+
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(registry.current('dev-box')!.status).toBe('ready');
+    expect(disposed(produced[0])).toBe(false);
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
   it('applies an idle TTL change without tearing the connection down', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
     const config = watchableConfigService({

@@ -5,7 +5,7 @@ import * as posixPath from 'node:path/posix';
 import { Emitter } from '@moonshot-ai/agent-core-v2/_base/event';
 import { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
 import { subtreeWatchFilter } from '@moonshot-ai/agent-core-v2/_base/utils/paths';
-import { TimeoutTimer } from '@moonshot-ai/agent-core-v2/_base/utils/timer';
+import { MAX_TIMER_DELAY_MS, TimeoutTimer } from '@moonshot-ai/agent-core-v2/_base/utils/timer';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { watch } from '@moonshot-ai/agent-core-v2/human/utils/watch';
 import type { HostEnvironmentInfo } from '@moonshot-ai/agent-core-v2/os/interface/hostEnvironment';
@@ -238,7 +238,7 @@ const PROJECT_DECLARATION_WATCH_DEBOUNCE_MS = 200;
 const DEFAULT_IDLE_TTL_SECONDS = 300;
 
 function idleReapTtlMs(entry: RemoteEnvironmentEntry): number {
-  return (entry.idleTtlSeconds ?? DEFAULT_IDLE_TTL_SECONDS) * 1000;
+  return Math.min((entry.idleTtlSeconds ?? DEFAULT_IDLE_TTL_SECONDS) * 1000, MAX_TIMER_DELAY_MS);
 }
 
 class EnvironmentReapAbortedError extends Error {
@@ -305,6 +305,7 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
         if (disposed || !record.idle || record.connection !== connection) throw new EnvironmentReapAbortedError();
         return this.createPendingEnvironment(context, record);
       });
+      if (disposed || !record.idle || record.connection !== connection) return;
       if (record.connection === connection) record.connection = undefined;
       await connection.dispose();
     };
