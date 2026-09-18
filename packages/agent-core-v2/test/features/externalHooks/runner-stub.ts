@@ -5,12 +5,14 @@ import type { HookDef } from '#/features/externalHooks/internal/types';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IPluginService } from '#/app/plugin/plugin';
+import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 
 export function makeHookRunner(
   hooks: readonly HookDef[],
   options: {
     cwd?: string;
+    telemetry?: ITelemetryService;
     onTriggered?: (event: string, target: string, count: number) => void;
     onResolved?: (
       event: string,
@@ -39,5 +41,6 @@ export function makeHookRunner(
     } as unknown as IBootstrapService,
     new HostProcessService(),
     { onTriggered: options.onTriggered, onResolved: options.onResolved },
+    options.telemetry ?? noopTelemetryService,
   );
 }

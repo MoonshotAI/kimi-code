@@ -3,6 +3,7 @@ import { Emitter, type Event } from '#/_base/event';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IPluginService } from '#/app/plugin/plugin';
+import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 
 import { HOOKS_SECTION, type HookDefConfig } from '../configSection';
@@ -29,6 +30,7 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IHostProcessService private readonly hostProcess: IHostProcessService,
     private readonly callbacks: HookRunCallbacks = {},
+    @ITelemetryService private readonly telemetry: ITelemetryService = noopTelemetryService,
   ) {
     super();
     this.ready = this.loadSafe();
@@ -82,7 +84,8 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
     args: ExternalHooksRunnerTriggerArgs,
   ): Promise<HookResult[]> {
     await this.ready;
-    return runMatchedHooks(
+    const startedAt = Date.now();
+    const results = await runMatchedHooks(
       this.hostProcess,
       this.byEvent,
       event,
@@ -96,6 +99,16 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
       },
       this.callbacks,
     );
+    if (results.length > 0) {
+      this.telemetry.track2('external_hook_resolved', {
+        event,
+        action: blockDecision(event, results) === undefined ? 'allow' : 'block',
+        matched_count: results.length,
+        failed_count: results.filter(isFailedHookResult).length,
+        duration_ms: Date.now() - startedAt,
+      });
+    }
+    return results;
   }
 
   private async loadSafe(): Promise<void> {
@@ -117,4 +130,9 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
     this.byEvent = indexHooks([...(configured ?? []), ...pluginHooks]);
     this._onDidReload.fire();
   }
+}
+
+function isFailedHookResult(result: HookResult): boolean {
+  if (result.timedOut === true) return true;
+  return result.exitCode !== 0 && result.exitCode !== 2;
 }

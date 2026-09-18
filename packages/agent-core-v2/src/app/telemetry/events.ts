@@ -213,6 +213,14 @@ export interface SwarmModeExitedEvent {
   trigger: 'manual' | 'task' | 'tool';
 }
 
+export interface ExternalHookResolvedEvent {
+  event: string;
+  action: 'allow' | 'block';
+  matched_count: number;
+  failed_count: number;
+  duration_ms: number;
+}
+
 export interface CompactionFinishedEvent {
   turn_id?: number;
   source: 'manual' | 'auto';
@@ -799,6 +807,17 @@ export const telemetryEventDefinitions = {
     comment: 'Swarm mode is exited.',
     properties: {
       trigger: 'What originally triggered the swarm mode being exited',
+    },
+  }),
+  external_hook_resolved: defineTelemetryEvent<ExternalHookResolvedEvent>({
+    owner: 'kimi-code',
+    comment: 'An external hook trigger finishes running its matched hooks.',
+    properties: {
+      event: 'Hook event type (e.g. PreToolUse, UserPromptSubmit, Stop)',
+      action: 'Whether the trigger resolved to allow or block',
+      matched_count: 'Number of hooks that ran for the trigger',
+      failed_count: 'Number of hooks that failed (timeout, spawn error, or a non-zero exit code other than 2)',
+      duration_ms: 'Wall-clock time running the matched hooks in milliseconds',
     },
   }),
   compaction_finished: defineAgentTelemetryEvent<CompactionFinishedEvent>({

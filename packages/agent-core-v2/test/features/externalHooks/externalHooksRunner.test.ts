@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import type { ContentPart } from '#human/llm/message';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { ITelemetryService } from '#/app/telemetry/telemetry';
+
 import { makeHookRunner } from './runner-stub';
 
 function nodeCommand(source: string): string {
@@ -288,6 +290,36 @@ describe('ExternalHooksRunnerService', () => {
     const results = await runner.trigger('PreToolUse', { matcherValue: 'Read', inputData: {} });
     expect(results).toHaveLength(1);
     expect(results[0]?.action).toBe('block');
+  });
+
+  it('reports external_hook_resolved telemetry only when hooks run', async () => {
+    const tracked: [string, unknown][] = [];
+    const telemetry = {
+      track2: (event: string, properties: unknown) => tracked.push([event, properties]),
+    } as unknown as ITelemetryService;
+    const runner = makeHookRunner(
+      [
+        { event: 'PreToolUse', matcher: 'Bash', command: nodeCommand('process.exit(2);'), timeout: 5 },
+        { event: 'PreToolUse', matcher: 'Bash', command: nodeCommand('process.exit(1);'), timeout: 5 },
+      ],
+      { telemetry },
+    );
+
+    await runner.trigger('PreToolUse', { matcherValue: 'Bash', inputData: {} });
+    await runner.trigger('PreToolUse', { matcherValue: 'Grep', inputData: {} });
+
+    expect(tracked).toEqual([
+      [
+        'external_hook_resolved',
+        {
+          event: 'PreToolUse',
+          action: 'block',
+          matched_count: 2,
+          failed_count: 1,
+          duration_ms: expect.any(Number),
+        },
+      ],
+    ]);
   });
 
   it('injects the bootstrap client platform as client_type into every payload', async () => {
