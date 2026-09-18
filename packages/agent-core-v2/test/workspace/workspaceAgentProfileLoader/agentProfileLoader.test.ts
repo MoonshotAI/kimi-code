@@ -52,16 +52,25 @@ const watchMockState = vi.hoisted(() => ({ mode: 'inert' as 'inert' | 'real' }))
 
 vi.mock('#human/utils/watch', async (importOriginal) => {
   const original = await importOriginal<typeof import('#human/utils/watch')>();
+  const watch = (path: string, options?: Parameters<typeof original.watch>[1]) => {
+    if (watchMockState.mode === 'real') return original.watch(path, options);
+    return {
+      ready: Promise.resolve(),
+      onDidChange: () => ({ dispose: () => {} }),
+      dispose: () => {},
+    };
+  };
   return {
     ...original,
-    watch: (path: string, options?: Parameters<typeof original.watch>[1]) => {
-      if (watchMockState.mode === 'real') return original.watch(path, options);
-      return {
-        ready: Promise.resolve(),
-        onDidChange: () => ({ dispose: () => {} }),
-        dispose: () => {},
-      };
-    },
+    watch,
+    watchCandidates: (
+      root: string,
+      candidates: readonly string[],
+      options?: Parameters<typeof original.watch>[1],
+    ) =>
+      watchMockState.mode === 'real'
+        ? original.watchCandidates(root, candidates, options)
+        : watch(root, options),
   };
 });
 

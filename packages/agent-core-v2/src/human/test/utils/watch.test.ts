@@ -8,7 +8,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   createWatchService,
+  setWatchEnabled,
   watch,
+  watchCandidates,
   type WatchChange,
   type WatchHandle,
   type WatchRuntime,
@@ -412,15 +414,21 @@ describe('watch chokidar mode', () => {
     expect(events.find((e) => e.path === file)?.kind).toBe('file');
   });
 
-  it('does not fire for paths ignored by default (.git)', async () => {
-    root = await mkdtemp(join(tmpdir(), 'watch-'));
-    const events = await start();
+  it('does not emit sibling flood names when watching candidate paths', async () => {
+    root = await mkdtemp(join(tmpdir(), 'watch-candidates-'));
+    await writeFile(join(root, 'ck_0001'), 'x');
+    const events: WatchChange[] = [];
+    handle = watchCandidates(root, [join(root, 'AGENTS.md')]);
+    handle.onDidChange((e) => events.push(e));
+    await handle.ready;
 
-    await mkdir(join(root, '.git'));
-    await writeFile(join(root, '.git', 'config'), 'x');
+    await writeFile(join(root, 'ck_0002'), 'y');
     await wait(300);
+    expect(events.some((e) => e.path.includes('ck_'))).toBe(false);
 
-    expect(events.some((e) => e.path.includes('/.git/') || e.path.endsWith('/.git'))).toBe(false);
+    const file = join(root, 'AGENTS.md');
+    await writeFile(file, 'hello');
+    await expect.poll(() => events.some((e) => e.path === file || e.path === root)).toBe(true);
   });
 
   it('prunes events matching a custom ignored predicate', async () => {
@@ -450,17 +458,17 @@ describe('watch chokidar mode', () => {
     expect(events.some((e) => e.path.endsWith('nested.txt'))).toBe(false);
   });
 
-  it('treats recursive false as depth zero', async () => {
-    root = await mkdtemp(join(tmpdir(), 'watch-'));
-    const events = await start({ recursive: false });
-
-    await mkdir(join(root, 'sub'));
-    await writeFile(join(root, 'top.txt'), 'x');
-    await writeFile(join(root, 'sub', 'nested.txt'), 'x');
-    await wait(300);
-
-    await expect.poll(() => events.some((e) => e.path === join(root, 'top.txt'))).toBe(true);
-    expect(events.some((e) => e.path.endsWith('nested.txt'))).toBe(false);
+  it('does not start a filesystem watch when watch is disabled', async () => {
+    root = await mkdtemp(join(tmpdir(), 'watch-disabled-'));
+    setWatchEnabled(false);
+    try {
+      const events = await start();
+      await writeFile(join(root, 'a.txt'), 'x');
+      await wait(300);
+      expect(events).toHaveLength(0);
+    } finally {
+      setWatchEnabled(true);
+    }
   });
 
   it('stops firing after the handle is disposed', async () => {
