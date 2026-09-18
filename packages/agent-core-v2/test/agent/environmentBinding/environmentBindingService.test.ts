@@ -1067,6 +1067,130 @@ describe('AgentEnvironmentBindingService.connectAndSwitch', () => {
   });
 });
 
+describe('AgentEnvironmentBindingService.connectAndSwitchAtTurnBoundary', () => {
+  it('commits immediately when no turn is active', async () => {
+    const { registry, binding, dispatched } = setup();
+    const { connectCalls } = connectableEnvironment(registry, { environmentId: 'connectable' });
+
+    await expect(binding.connectAndSwitchAtTurnBoundary('connectable', '/remote/work')).resolves.toEqual({
+      workspaceId: 'workspace',
+      environmentId: 'connectable',
+      cwd: '/remote/work',
+    });
+    expect(connectCalls).toEqual(['connect']);
+    expect(binding.current).toMatchObject({ environmentId: 'connectable', cwd: '/remote/work' });
+    expect(dispatched.at(-1)).toMatchObject({ environmentId: 'connectable', cwd: '/remote/work' });
+  });
+
+  it('connects and validates eagerly but commits the binding at the turn boundary', async () => {
+    const { registry, binding, dispatched, loopState, workDirWrites, publishBus } = setup();
+    loopState.turn = { turnId: 1, phase: 'tool_call', step: 1, activeToolCalls: [{ toolCallId: 'call-1', name: 'change_environment' }] };
+    const stats: string[] = [];
+    const { connectCalls, rerootCalls } = connectableEnvironment(registry, {
+      environmentId: 'connectable',
+      stat: async (path) => {
+        stats.push(path);
+        return { isDirectory: true };
+      },
+      reroot: async () => {},
+    });
+
+    await expect(binding.connectAndSwitchAtTurnBoundary('connectable', '/remote/work')).resolves.toEqual({
+      workspaceId: 'workspace',
+      environmentId: 'connectable',
+      cwd: '/remote/work',
+    });
+    expect(connectCalls).toEqual(['connect']);
+    expect(stats).toContain('/remote/work');
+    expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+    expect(dispatched).toHaveLength(0);
+    expect(rerootCalls).toEqual([]);
+
+    loopState.turn = undefined;
+    publishBus('turn.ended', { agentId: 'main' });
+    await vi.waitFor(() => {
+      expect(binding.current).toMatchObject({ environmentId: 'connectable', cwd: '/remote/work' });
+    });
+    expect(rerootCalls).toEqual(['/remote/work']);
+    expect(dispatched.at(-1)).toMatchObject({ environmentId: 'connectable', cwd: '/remote/work' });
+    expect(workDirWrites).toEqual(['/remote/work']);
+  });
+
+  it('keeps the old binding and schedules nothing when the eager connect fails', async () => {
+    const { registry, binding, loopState, publishBus } = setup();
+    loopState.turn = { turnId: 1, phase: 'tool_call', step: 1, activeToolCalls: [] };
+    const fake = new FakeEnvironment(
+      { workspaceId: 'workspace', environmentId: 'failing', generation: 'failing-pending' },
+      { status: 'disconnected', capabilities: [] },
+    );
+    registry.register(Object.assign(fake, {
+      connect: async () => {
+        throw new Error('executor process exited before the handshake completed (code 255, signal null)');
+      },
+    }));
+
+    await expect(binding.connectAndSwitchAtTurnBoundary('failing', '/remote/work')).rejects.toThrow(/code 255/);
+    loopState.turn = undefined;
+    publishBus('turn.ended', { agentId: 'main' });
+    await Promise.resolve();
+    expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+  });
+
+  it('commits only the latest scheduled switch when several are queued in one turn', async () => {
+    const { registry, binding, loopState, publishBus } = setup();
+    loopState.turn = { turnId: 1, phase: 'tool_call', step: 1, activeToolCalls: [] };
+    connectableEnvironment(registry, { environmentId: 'first', reroot: async () => {} });
+    connectableEnvironment(registry, { environmentId: 'second', reroot: async () => {} });
+
+    await binding.connectAndSwitchAtTurnBoundary('first', '/remote/one');
+    await binding.connectAndSwitchAtTurnBoundary('second', '/remote/two');
+
+    loopState.turn = undefined;
+    publishBus('turn.ended', { agentId: 'main' });
+    await vi.waitFor(() => {
+      expect(binding.current).toMatchObject({ environmentId: 'second', cwd: '/remote/two' });
+    });
+  });
+
+  it('reports a failed deferred commit with a reminder and keeps the old binding', async () => {
+    const { registry, binding, loopState, publishBus, reminders } = setup();
+    loopState.turn = { turnId: 1, phase: 'tool_call', step: 1, activeToolCalls: [] };
+    connectableEnvironment(registry, {
+      environmentId: 'failing-root',
+      reroot: async () => {
+        throw new Error('registry drained');
+      },
+    });
+
+    await binding.connectAndSwitchAtTurnBoundary('failing-root', '/remote/work');
+    loopState.turn = undefined;
+    publishBus('turn.ended', { agentId: 'main' });
+    await vi.waitFor(() => {
+      expect(reminders.some((entry) => entry.content.includes('failed'))).toBe(true);
+    });
+    expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+    expect(reminders.at(-1)!.variant).toBe(ENVIRONMENT_BINDING_REMINDER_VARIANT);
+    expect(reminders.at(-1)!.content).toContain('failing-root');
+  });
+
+  it('emits the environment reminder only after the turn-boundary commit', async () => {
+    const { registry, binding, loopState, publishBus, reminders } = setup();
+    loopState.turn = { turnId: 1, phase: 'tool_call', step: 1, activeToolCalls: [] };
+    connectableEnvironment(registry, { environmentId: 'connectable', reroot: async () => {} });
+
+    await binding.connectAndSwitchAtTurnBoundary('connectable', '/remote/work');
+    expect(reminders).toHaveLength(0);
+
+    loopState.turn = undefined;
+    publishBus('turn.ended', { agentId: 'main' });
+    await vi.waitFor(() => {
+      expect(reminders).toHaveLength(1);
+    });
+    expect(reminders[0]!.variant).toBe(ENVIRONMENT_BINDING_REMINDER_VARIANT);
+    expect(reminders[0]!.content).toContain('"connectable"');
+  });
+});
+
 describe('AgentEnvironmentService reconnect', () => {
   it('delegates to the connect method of the bound environment', async () => {
     const { registry, binding, agentEnvironment } = setup();

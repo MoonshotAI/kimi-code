@@ -78,6 +78,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
   private readonly undoParticipant: IDisposable;
   private readonly turnEndSubscription: IDisposable;
   private pendingWorkDir: string | undefined;
+  private pendingSwitch: EnvironmentBinding | undefined;
   private readonly visitedViews = new Set<string>();
 
   constructor(
@@ -137,6 +138,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     this.turnEndSubscription = this.eventBus.subscribe(TurnEnded, (event) => {
       if (event.agentId !== this.scopeContext.agentId) return;
       this.flushPendingWorkDir();
+      this.flushPendingSwitch();
     });
     const participant: AgentConversationUndoParticipant = {
       id: 'agent-environment-binding',
@@ -234,6 +236,20 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     this.workspaceContext.setWorkDir(pending);
   }
 
+  private flushPendingSwitch(): void {
+    const pending = this.pendingSwitch;
+    if (pending === undefined) return;
+    this.pendingSwitch = undefined;
+    void this.commitSwitch(pending).catch((error: unknown) => {
+      this.log.warn(`deferred environment switch to ${pending.environmentId} failed`, { error });
+      this.reminder.notify(
+        `The scheduled environment switch to "${pending.environmentId}" failed: ${error instanceof Error ? error.message : String(error)}. ` +
+          `The session remains on environment "${this.current.environmentId}".`,
+        { variant: ENVIRONMENT_BINDING_REMINDER_VARIANT },
+      );
+    });
+  }
+
   get current(): EnvironmentBinding {
     return this.state.get(agentEnvironmentBindingKey);
   }
@@ -254,38 +270,57 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     const binding: EnvironmentBinding = { workspaceId: this.session.workspaceId, environmentId, cwd };
     this.assertSessionWorkspace(binding);
     this.assertSwitchAllowed();
-    if (environmentId !== LOCAL_ENVIRONMENT_ID && cwd === undefined) {
-      throw new EnvironmentError('environment.invalid_cwd', `binding environment ${environmentId} requires a cwd`);
+    await this.prepareSwitch(binding);
+    return this.commitSwitch(binding);
+  }
+
+  async connectAndSwitchAtTurnBoundary(environmentId: string, cwd?: string): Promise<EnvironmentBinding> {
+    const binding: EnvironmentBinding = { workspaceId: this.session.workspaceId, environmentId, cwd };
+    this.assertSessionWorkspace(binding);
+    await this.prepareSwitch(binding);
+    if (this.loop.current?.snapshot().turn === undefined) {
+      return this.commitSwitch(binding);
+    }
+    this.pendingSwitch = binding;
+    return binding;
+  }
+
+  private async prepareSwitch(binding: EnvironmentBinding): Promise<void> {
+    if (binding.environmentId !== LOCAL_ENVIRONMENT_ID && binding.cwd === undefined) {
+      throw new EnvironmentError('environment.invalid_cwd', `binding environment ${binding.environmentId} requires a cwd`);
     }
     const inspected = this.resolver.inspect(binding);
     if (!environmentStatusAllows(inspected, [])) {
       if (typeof inspected.connect !== 'function') {
-        throw new EnvironmentError('environment.unavailable', `environment ${environmentId} is ${inspected.status}`);
+        throw new EnvironmentError('environment.unavailable', `environment ${binding.environmentId} is ${inspected.status}`);
       }
       await inspected.connect();
     }
+    if (binding.environmentId === LOCAL_ENVIRONMENT_ID || binding.cwd === undefined) return;
     const lease = this.resolver.acquire(binding, []);
     try {
-      if (environmentId !== LOCAL_ENVIRONMENT_ID && cwd !== undefined) {
-        const fs = lease.environment.fs;
-        if (fs === undefined) {
-          throw new EnvironmentError('environment.capability_unavailable', `environment ${environmentId} does not provide fs`);
-        }
-        const stat = await fs.stat(cwd).catch((error: unknown) => {
-          throw new EnvironmentError(
-            'environment.invalid_cwd',
-            `cwd ${cwd} is not readable on environment ${environmentId}: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        });
-        if (!stat.isDirectory) {
-          throw new EnvironmentError('environment.invalid_cwd', `cwd ${cwd} is not a directory on environment ${environmentId}`);
-        }
+      const fs = lease.environment.fs;
+      if (fs === undefined) {
+        throw new EnvironmentError('environment.capability_unavailable', `environment ${binding.environmentId} does not provide fs`);
+      }
+      const cwd = binding.cwd;
+      const stat = await fs.stat(cwd).catch((error: unknown) => {
+        throw new EnvironmentError(
+          'environment.invalid_cwd',
+          `cwd ${cwd} is not readable on environment ${binding.environmentId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+      if (!stat.isDirectory) {
+        throw new EnvironmentError('environment.invalid_cwd', `cwd ${cwd} is not a directory on environment ${binding.environmentId}`);
       }
     } finally {
       lease.dispose();
     }
-    if (environmentId !== LOCAL_ENVIRONMENT_ID && cwd !== undefined) {
-      await this.resolver.inspect(binding).reroot?.(cwd);
+  }
+
+  private async commitSwitch(binding: EnvironmentBinding): Promise<EnvironmentBinding> {
+    if (binding.environmentId !== LOCAL_ENVIRONMENT_ID && binding.cwd !== undefined) {
+      await this.resolver.inspect(binding).reroot?.(binding.cwd);
     }
     return this.commit(binding);
   }
