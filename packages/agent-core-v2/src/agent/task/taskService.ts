@@ -29,8 +29,8 @@ import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentLoopService, type LoopNotifyHandle } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import type { RuntimeLease } from '#/runtime/runtime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import type { EnvironmentLease } from '#/environment/environment';
 import { ITaskService, type ITaskHandle, TERMINAL_TASK_STATES } from '#/app/task/task';
 import {
   TERMINAL_STATUSES,
@@ -232,7 +232,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     undoParticipants: IAgentConversationUndoParticipantRegistry,
     @ILogService private readonly log: ILogService,
     @IAgentStateService private readonly states: IAgentStateService,
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
   ) {
     super();
     this.states.contributeState(taskKey);
@@ -292,17 +292,17 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private spillTarget(): AgentTaskSpillTarget | undefined {
-    let lease: RuntimeLease;
+    let lease: EnvironmentLease;
     try {
-      lease = this.runtime.acquire();
+      lease = this.environment.acquire();
     } catch {
       return undefined;
     }
     try {
-      const tempDir = lease.runtime.environment.tempDir;
-      const fs = lease.runtime.fs;
+      const tempDir = lease.environment.host.tempDir;
+      const fs = lease.environment.fs;
       if (tempDir === undefined || fs === undefined) return undefined;
-      return { fs, dir: lease.runtime.path.join(tempDir, 'kimi-code', 'task-output') };
+      return { fs, dir: lease.environment.path.join(tempDir, 'kimi-code', 'task-output') };
     } finally {
       lease.dispose();
     }

@@ -280,7 +280,7 @@ describe('AgentTaskPersistence', () => {
     });
   });
 
-  describe('runtime spill mirror', () => {
+  describe('environment spill mirror', () => {
     it('mirrors appended output into the spill target and reports the spill path', async () => {
       const writes: { path: string; data: string }[] = [];
       const spillFs = {
@@ -341,7 +341,7 @@ describe('AgentTaskPersistence', () => {
       );
     });
 
-    it('pins the spill target at first spill and keeps it across runtime switches', async () => {
+    it('pins the spill target at first spill and keeps it across environment switches', async () => {
       const writesA: { path: string; data: string }[] = [];
       const writesB: { path: string; data: string }[] = [];
       const fsFor = (writes: { path: string; data: string }[]) =>

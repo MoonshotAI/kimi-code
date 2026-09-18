@@ -15,9 +15,9 @@ import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender
 import { stubToolResultTruncationService } from '../../../../agent/toolResultTruncation/stubs';
 import { stubConfigService } from '../../../../app/config/stubs';
 import type { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
-import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
-import { RuntimeRegistry } from '#/runtime/runtimeRegistry';
+import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
+import { EnvironmentRegistry } from '#/environment/environmentRegistry';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 
@@ -74,20 +74,20 @@ function createReadTool(
   } as unknown as ISessionSkillCatalog,
   truncation: IAgentToolResultTruncationService = stubToolResultTruncationService(),
 ): ReadTool {
-  const runtime = Object.assign(
-    new FakeRuntime(
-      { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+  const environment = Object.assign(
+    new FakeEnvironment(
+      { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
       { capabilities: ['fs'], pathClass: env.pathClass },
     ),
-    { environment: env, fs },
+    { host: env, fs },
   );
-  const resolver: IAgentRuntimeService = {
+  const resolver: IAgentEnvironmentService = {
     _serviceBrand: undefined,
     onDidChange: () => ({ dispose: () => {} }),
     isAvailable: () => true,
-    inspect: () => runtime,
-    acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
-    acquireWhenReady: async () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
+    inspect: () => environment,
+    acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
+    acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
     reconnect: async () => {},
     workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
   };
@@ -179,11 +179,11 @@ async function execute(tool: ReadTool, args: ReadInput): Promise<ExecutableToolR
   return execution.execute(ctx);
 }
 
-function createRegistryBackedTool(runtimeValue: FakeRuntime) {
-  const registry = new RuntimeRegistry('workspace');
-  registry.register(runtimeValue);
-  const binding = { workspaceId: 'workspace', runtimeId: 'local' } as const;
-  const runtime: IAgentRuntimeService = {
+function createRegistryBackedTool(environmentValue: FakeEnvironment) {
+  const registry = new EnvironmentRegistry('workspace');
+  registry.register(environmentValue);
+  const binding = { workspaceId: 'workspace', environmentId: 'local' } as const;
+  const environment: IAgentEnvironmentService = {
     _serviceBrand: undefined,
     onDidChange: (listener) => registry.onDidChange(() => listener()),
     isAvailable: (required = []) => {
@@ -202,7 +202,7 @@ function createRegistryBackedTool(runtimeValue: FakeRuntime) {
     workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
   };
   const tool = new ReadTool(
-    runtime,
+    environment,
     stubWorkspaceContext('/workspace'),
     { catalog: { getSkillRoots: () => [] } } as unknown as ISessionSkillCatalog,
     stubToolResultTruncationService(),
@@ -1370,40 +1370,40 @@ describe('ReadTool', () => {
     expect(result.truncated).toBeUndefined();
   });
 
-  it('rechecks runtime availability when execution starts after the tool was shown', async () => {
+  it('rechecks environment availability when execution starts after the tool was shown', async () => {
     const env = createTestEnv();
     const fs = createSpiedFs('visible').fs;
-    const runtimeValue = new FakeRuntime(
-      { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+    const environmentValue = new FakeEnvironment(
+      { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
       { capabilities: ['fs'] },
     );
-    Object.assign(runtimeValue, { environment: env, fs });
-    const { tool } = createRegistryBackedTool(runtimeValue);
+    Object.assign(environmentValue, { host: env, fs });
+    const { tool } = createRegistryBackedTool(environmentValue);
     const execution = await tool.resolveExecution({ path: '/workspace/a.txt' });
     expect('execute' in execution).toBe(true);
 
-    runtimeValue.setStatus('disconnected');
+    environmentValue.setStatus('disconnected');
 
     if (!('execute' in execution)) throw new Error('expected executable Read tool');
     await expect(
       execution.execute({ turnId: 0, toolCallId: 'call_read_late', signal }),
-    ).rejects.toMatchObject({ code: 'runtime.unavailable' });
+    ).rejects.toMatchObject({ code: 'environment.unavailable' });
   });
 
-  it('waits for an in-flight connect when execution starts while the runtime is connecting', async () => {
+  it('waits for an in-flight connect when execution starts while the environment is connecting', async () => {
     const env = createTestEnv();
     const fs = createSpiedFs('visible').fs;
-    const runtimeValue = new FakeRuntime(
-      { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+    const environmentValue = new FakeEnvironment(
+      { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
       { capabilities: ['fs'], status: 'connecting' },
     );
-    Object.assign(runtimeValue, { environment: env, fs });
-    const { tool } = createRegistryBackedTool(runtimeValue);
+    Object.assign(environmentValue, { host: env, fs });
+    const { tool } = createRegistryBackedTool(environmentValue);
     const execution = await tool.resolveExecution({ path: '/workspace/a.txt' });
     if (!('execute' in execution)) throw new Error('expected executable Read tool');
 
     let releaseConnect!: () => void;
-    runtimeValue.whenReady = new Promise<void>((resolve) => {
+    environmentValue.whenReady = new Promise<void>((resolve) => {
       releaseConnect = resolve;
     });
     let settled = false;
@@ -1418,8 +1418,8 @@ describe('ReadTool', () => {
     });
     expect(settled).toBe(false);
 
-    runtimeValue.whenReady = undefined;
-    runtimeValue.setStatus('ready');
+    environmentValue.whenReady = undefined;
+    environmentValue.setStatus('ready');
     releaseConnect();
     const result = await pending;
     expect(result.isError).not.toBe(true);
@@ -1429,18 +1429,18 @@ describe('ReadTool', () => {
   it('fails with the connect reason when the in-flight connect fails during execution', async () => {
     const env = createTestEnv();
     const fs = createSpiedFs('visible').fs;
-    const runtimeValue = new FakeRuntime(
-      { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+    const environmentValue = new FakeEnvironment(
+      { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
       { capabilities: ['fs'], status: 'connecting' },
     );
-    Object.assign(runtimeValue, { environment: env, fs });
-    const { tool } = createRegistryBackedTool(runtimeValue);
+    Object.assign(environmentValue, { host: env, fs });
+    const { tool } = createRegistryBackedTool(environmentValue);
     const execution = await tool.resolveExecution({ path: '/workspace/a.txt' });
     if (!('execute' in execution)) throw new Error('expected executable Read tool');
 
     const failure = new Error('executor process exited before the handshake completed (code 255, signal null): ssh: connect failed');
-    runtimeValue.whenReady = Promise.reject(failure);
-    void runtimeValue.whenReady.catch(() => {});
+    environmentValue.whenReady = Promise.reject(failure);
+    void environmentValue.whenReady.catch(() => {});
 
     await expect(
       execution.execute({ turnId: 0, toolCallId: 'call_read_connect_failed', signal }),

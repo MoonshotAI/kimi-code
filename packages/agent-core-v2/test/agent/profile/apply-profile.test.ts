@@ -7,8 +7,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Emitter, Event } from '#/_base/event';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import type { Runtime, RuntimeCapability, RuntimeStatus } from '#/runtime/runtime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import type { Environment, EnvironmentCapability, EnvironmentStatus } from '#/environment/environment';
 import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSystemPrompt } from '#/app/plugin/types';
@@ -146,7 +146,7 @@ describe('AgentProfileService.applyProfile', () => {
     expect(svc.getAgentsMdWarning()).toBeUndefined();
   });
 
-  it('renders the complete runtime context exactly', async () => {
+  it('renders the complete environment context exactly', async () => {
     await writeFile(join(workDir, 'AGENTS.md'), 'project instructions', 'utf-8');
     const { profile: svc } = buildContext();
 
@@ -155,7 +155,7 @@ describe('AgentProfileService.applyProfile', () => {
     expect(svc.data().systemPrompt).toBe(exactSystemPrompt(workDir, 'project instructions'));
   });
 
-  it('maps prompt context roots through the bound runtime workspace view', async () => {
+  it('maps prompt context roots through the bound environment workspace view', async () => {
     const mappedDir = await mkdtemp(join(tmpdir(), 'kimi-apply-mapped-'));
     const localExtra = await mkdtemp(join(tmpdir(), 'kimi-apply-extra-local-'));
     const mappedExtra = await mkdtemp(join(tmpdir(), 'kimi-apply-extra-mapped-'));
@@ -171,8 +171,8 @@ describe('AgentProfileService.applyProfile', () => {
       const fs = new HostFileSystem();
       const { profile: svc } = buildContext(
         agentService(
-          IAgentRuntimeService,
-          mappedRuntimeService(fs, homeDir, (path) => mapping.get(path) ?? path),
+          IAgentEnvironmentService,
+          mappedEnvironmentService(fs, homeDir, (path) => mapping.get(path) ?? path),
         ),
       );
 
@@ -192,10 +192,10 @@ describe('AgentProfileService.applyProfile', () => {
     }
   });
 
-  it('skips the directory listing when the bound runtime has no fs capability', async () => {
+  it('skips the directory listing when the bound environment has no fs capability', async () => {
     const fs = new HostFileSystem();
     const { profile: svc } = buildContext(
-      agentService(IAgentRuntimeService, mappedRuntimeService(fs, homeDir, (path) => path, [])),
+      agentService(IAgentEnvironmentService, mappedEnvironmentService(fs, homeDir, (path) => path, [])),
     );
 
     await svc.applyProfile(exactProfile);
@@ -496,16 +496,16 @@ function exactSystemPrompt(workDir: string, agentsMd: string): string {
   ].join('\n');
 }
 
-function mappedRuntimeService(
+function mappedEnvironmentService(
   fs: HostFileSystem,
   homeDir: string,
   map: (path: string) => string,
-  capabilities: readonly RuntimeCapability[] = ['fs'],
-): IAgentRuntimeService {
-  const runtime: Runtime = {
-    identity: { workspaceId: 'workspace-1', runtimeId: 'mapped', generation: 'g1' },
+  capabilities: readonly EnvironmentCapability[] = ['fs'],
+): IAgentEnvironmentService {
+  const environment: Environment = {
+    identity: { workspaceId: 'workspace-1', environmentId: 'mapped', generation: 'g1' },
     capabilities: new Set(capabilities),
-    environment: {
+    host: {
       osKind: 'Linux',
       osArch: 'x64',
       osVersion: 'test',
@@ -532,22 +532,22 @@ function mappedRuntimeService(
     },
     fs,
     status: 'ready',
-    onDidChangeStatus: Event.None as Event<RuntimeStatus>,
+    onDidChangeStatus: Event.None as Event<EnvironmentStatus>,
     dispose: () => {},
   };
   return {
     _serviceBrand: undefined,
     onDidChange: Event.None as Event<void>,
     isAvailable: (required = []) =>
-      required.every((capability) => runtime.capabilities.has(capability)),
-    inspect: () => runtime,
+      required.every((capability) => environment.capabilities.has(capability)),
+    inspect: () => environment,
     acquire: () => ({
-      runtime,
+      environment,
       track: <T,>(resource: T): T => resource,
       dispose: () => {},
     }),
     acquireWhenReady: async () => ({
-      runtime,
+      environment,
       track: <T,>(resource: T): T => resource,
       dispose: () => {},
     }),

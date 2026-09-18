@@ -35,7 +35,7 @@ import {
 } from '@moonshot-ai/agent-core-v2/agent/media/mediaRef';
 import { isSensitiveFile } from '@moonshot-ai/agent-core-v2/tool/path-access';
 import type { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
-import type { Runtime, RuntimePath } from '@moonshot-ai/agent-core-v2/runtime/runtime';
+import type { Environment, EnvironmentPath } from '@moonshot-ai/agent-core-v2/environment/environment';
 
 import type { PromptSubmission } from '../protocol/rest-prompt';
 
@@ -142,29 +142,29 @@ export interface ResolvePromptMediaOptions {
 export interface PromptAttachmentsTarget {
   readonly dir: string;
   readonly fs: IHostFileSystem;
-  readonly path: RuntimePath;
+  readonly path: EnvironmentPath;
 }
 
-export function runtimeAttachmentsTarget(runtime: Runtime): PromptAttachmentsTarget {
-  return runtimeTempDirTarget(runtime, 'attachments');
+export function environmentAttachmentsTarget(environment: Environment): PromptAttachmentsTarget {
+  return environmentTempDirTarget(environment, 'attachments');
 }
 
-export function runtimeOriginalsTarget(runtime: Runtime): PromptAttachmentsTarget {
-  return runtimeTempDirTarget(runtime, 'original-images');
+export function environmentOriginalsTarget(environment: Environment): PromptAttachmentsTarget {
+  return environmentTempDirTarget(environment, 'original-images');
 }
 
-function runtimeTempDirTarget(runtime: Runtime, subdir: string): PromptAttachmentsTarget {
-  const tempDir = (runtime.environment as Runtime['environment'] & { tempDir?: string }).tempDir;
-  if (tempDir === undefined || runtime.fs === undefined) {
+function environmentTempDirTarget(environment: Environment, subdir: string): PromptAttachmentsTarget {
+  const tempDir = (environment.host as Environment['host'] & { tempDir?: string }).tempDir;
+  if (tempDir === undefined || environment.fs === undefined) {
     throw new Error2(
       ErrorCodes.INTERNAL,
-      `runtime ${runtime.identity.runtimeId} does not provide a writable environment tempDir`,
+      `environment ${environment.identity.environmentId} does not provide a writable tempDir`,
     );
   }
   return {
-    dir: runtime.path.join(tempDir, 'kimi-code', subdir),
-    fs: runtime.fs,
-    path: runtime.path,
+    dir: environment.path.join(tempDir, 'kimi-code', subdir),
+    fs: environment.fs,
+    path: environment.path,
   };
 }
 
@@ -254,7 +254,7 @@ async function writeAttachmentChunks(
   if (!truncated) await writeChunk(new Uint8Array(0));
 }
 
-function runtimeAttachmentSink(target: PromptAttachmentsTarget): AttachmentSink {
+function environmentAttachmentSink(target: PromptAttachmentsTarget): AttachmentSink {
   return {
     dir: target.dir,
     join: (...parts) => target.path.join(...parts),
@@ -289,11 +289,11 @@ export async function resolvePromptMediaFiles(
   };
   let changed = false;
   let originals:
-    | { readonly dir?: string; readonly fs?: IHostFileSystem; readonly path?: RuntimePath }
+    | { readonly dir?: string; readonly fs?: IHostFileSystem; readonly path?: EnvironmentPath }
     | undefined;
   let originalsResolved = false;
   const resolveOriginals = async (): Promise<
-    { readonly dir?: string; readonly fs?: IHostFileSystem; readonly path?: RuntimePath } | undefined
+    { readonly dir?: string; readonly fs?: IHostFileSystem; readonly path?: EnvironmentPath } | undefined
   > => {
     if (!originalsResolved) {
       originalsResolved = true;
@@ -311,7 +311,7 @@ export async function resolvePromptMediaFiles(
     if (attachmentsSink !== undefined) return attachmentsSink;
     const target = await options.resolveAttachmentsTarget?.();
     if (target !== undefined) {
-      attachmentsSink = runtimeAttachmentSink(target);
+      attachmentsSink = environmentAttachmentSink(target);
     } else {
       const dir = await options.resolveAttachmentsDir?.().catch(() => undefined);
       attachmentsSink = localAttachmentSink(dir ?? cacheDir);

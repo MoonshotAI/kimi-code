@@ -121,10 +121,10 @@ export function createProgram(
     .addOption(new Option('--yes').hideHelp().default(false))
     .addOption(new Option('--auto-approve').hideHelp().default(false))
     .addOption(
-      // Remote-runtime is experimental: the [runtimes] config layer resolves
+      // Remote environments are experimental: the [environments] config layer resolves
       // and validates the id (unknown id / missing defaultCwd → startup
       // error). Hidden until that lands.
-      new Option('--runtime <id>', 'Bind the new session to the configured runtime <id>.')
+      new Option('--environment <id>', 'Bind the new session to the configured environment <id>.')
         .hideHelp(),
     )
     .option('--plan', 'Start in plan mode.', false);
@@ -169,7 +169,7 @@ export function createProgram(
       onUpdateDownload(targetVersion, options.manual === true);
     });
 
-  // Remote-executor entry (remote-runtime spec §6). The exact argv shape
+  // Remote-executor entry (remote-environment spec §6). The exact argv shape
   // `exec-server --listen stdio` is pre-dispatched in `src/main.ts` before
   // this program is even loaded; this hidden command owns every other
   // spelling (`--listen=stdio`, unsupported transports, excess args) so they
@@ -207,7 +207,7 @@ export function createProgram(
       agent: raw['agent'] as string | undefined,
       agentFiles: raw['agentFile'] as string[],
       addDirs: raw['addDir'] as string[],
-      runtime: raw['runtime'] as string | undefined,
+      environment: raw['environment'] as string | undefined,
     };
 
     onMain(opts);

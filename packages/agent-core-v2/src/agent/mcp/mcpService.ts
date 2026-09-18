@@ -10,7 +10,7 @@ import { ErrorCodes, makeErrorPayload } from "#/errors";
 import { abortable } from '#/_base/utils/abort';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { McpOriginalsTarget } from '#/agent/mcp/output';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
@@ -18,7 +18,7 @@ import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import type { RuntimeLease } from '#/runtime/runtime';
+import type { EnvironmentLease } from '#/environment/environment';
 import { createMcpAuthTool } from '#/agent/mcp/tools/auth';
 import { createMcpTool } from '#/agent/mcp/tools/mcp';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
@@ -64,7 +64,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     @IAgentStateService private readonly states: IAgentStateService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @ISessionMediaStore private readonly attachmentStore: ISessionMediaStore,
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
   ) {
     super();
     this.states.contributeState(mcpDiscoveryKey);
@@ -105,20 +105,20 @@ export class AgentMcpService extends Service implements IAgentMcpService {
   }
 
   private originalsTarget(): McpOriginalsTarget | undefined {
-    let lease: RuntimeLease;
+    let lease: EnvironmentLease;
     try {
-      lease = this.runtime.acquire();
+      lease = this.environment.acquire();
     } catch {
       return undefined;
     }
     try {
-      const tempDir = lease.runtime.environment.tempDir;
-      const fs = lease.runtime.fs;
+      const tempDir = lease.environment.host.tempDir;
+      const fs = lease.environment.fs;
       if (tempDir === undefined || fs === undefined) return undefined;
       return {
         fs,
-        dir: lease.runtime.path.join(tempDir, 'kimi-code', 'original-images'),
-        path: lease.runtime.path,
+        dir: lease.environment.path.join(tempDir, 'kimi-code', 'original-images'),
+        path: lease.environment.path,
       };
     } finally {
       lease.dispose();

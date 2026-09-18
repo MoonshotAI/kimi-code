@@ -27,7 +27,7 @@ import {
   guessMime,
 } from '@moonshot-ai/agent-core-v2/_base/utils/fileMeta';
 import { classifyTextSample } from '@moonshot-ai/agent-core-v2/_base/text/encoding';
-import { RuntimeError } from '@moonshot-ai/agent-core-v2/runtime/runtimeRegistry';
+import { EnvironmentError } from '@moonshot-ai/agent-core-v2/environment/environmentRegistry';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -35,7 +35,7 @@ import { parseRangeHeader, pickHeader } from '../lib/httpRange';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
-import { createRuntimeReadStream, type RuntimeReadStreamSource } from './fs';
+import { createEnvironmentReadStream, type EnvironmentReadStreamSource } from './fs';
 
 interface FsContentReply {
   type(mime: string): FsContentReply;
@@ -51,7 +51,7 @@ interface WorkspaceFsRouteHost {
     handler: (
       req: {
         id: string;
-        query: { path?: string; runtime_id?: string; workspace_id?: string; session_id?: string };
+        query: { path?: string; environment_id?: string; workspace_id?: string; session_id?: string };
         headers: Record<string, unknown>;
       },
       reply: FsContentReply,
@@ -133,11 +133,11 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
         [ErrorCode.FS_PERMISSION_DENIED]: {},
         [ErrorCode.FS_IS_DIRECTORY]: {},
-        [ErrorCode.RUNTIME_NOT_FOUND]: {},
-        [ErrorCode.RUNTIME_UNAVAILABLE]: {},
+        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
       },
       description:
-        'Serve the raw content of any file on the host filesystem by absolute path. Supports ETag caching and single-range requests. `runtime_id` selects the runtime filesystem; defaults to local. A non-local `runtime_id` is workspace-scoped and requires `workspace_id` or `session_id` to name the workspace.',
+        'Serve the raw content of any file on the host filesystem by absolute path. Supports ETag caching and single-range requests. `environment_id` selects the environment filesystem; defaults to local. A non-local `environment_id` is workspace-scoped and requires `workspace_id` or `session_id` to name the workspace.',
       tags: ['workspaces'],
       operationId: 'fsContent',
     },
@@ -164,11 +164,11 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
         [ErrorCode.FS_PERMISSION_DENIED]: {},
         [ErrorCode.FS_ALREADY_EXISTS]: {},
-        [ErrorCode.RUNTIME_NOT_FOUND]: {},
-        [ErrorCode.RUNTIME_UNAVAILABLE]: {},
+        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
       },
       description:
-        'Create a directory on the host filesystem by absolute path (folder-picker "new folder" backend). Non-recursive: the parent directory must already exist. `runtime_id` selects the runtime filesystem; defaults to local. A non-local `runtime_id` is workspace-scoped and requires `workspace_id` or `session_id` to name the workspace.',
+        'Create a directory on the host filesystem by absolute path (folder-picker "new folder" backend). Non-recursive: the parent directory must already exist. `environment_id` selects the environment filesystem; defaults to local. A non-local `environment_id` is workspace-scoped and requires `workspace_id` or `session_id` to name the workspace.',
       tags: ['workspaces'],
       operationId: 'fsMkdir',
     },
@@ -185,34 +185,34 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
 
 const fsContentQuerySchema = z.object({
   path: z.string().min(1),
-  runtime_id: z.string().min(1).optional(),
+  environment_id: z.string().min(1).optional(),
   workspace_id: z.string().min(1).optional(),
   session_id: z.string().min(1).optional(),
 });
 
 interface FsContentRequest {
   id: string;
-  query: { path: string; runtime_id?: string; workspace_id?: string; session_id?: string };
+  query: { path: string; environment_id?: string; workspace_id?: string; session_id?: string };
   headers: Record<string, unknown>;
 }
 
-interface FsRuntimeContext {
+interface FsEnvironmentContext {
   readonly workspaceId?: string;
   readonly sessionId?: string;
 }
 
 async function acquireFsSource(
   core: Scope,
-  runtimeId: string,
-  context: FsRuntimeContext,
-): Promise<RuntimeReadStreamSource> {
-  if (runtimeId === 'local') {
+  environmentId: string,
+  context: FsEnvironmentContext,
+): Promise<EnvironmentReadStreamSource> {
+  if (environmentId === 'local') {
     return {
       hostFs: core.accessor.get(IHostFileSystem),
       lease: { track: (resource) => resource, dispose: () => {} },
     };
   }
-  const workspaceId = await resolveContextWorkspaceId(core, runtimeId, context);
+  const workspaceId = await resolveContextWorkspaceId(core, environmentId, context);
   const manager = core.accessor.get(IWorkspaceInstanceManager);
   let instance = manager.get(workspaceId);
   if (instance === undefined) {
@@ -225,17 +225,17 @@ async function acquireFsSource(
     }
     instance = await manager.getOrCreate({ workspaceId, root: workspace.root });
   }
-  if (instance.runtimes.current(runtimeId) === undefined) {
-    throw new RuntimeError('runtime.not_found', `runtime ${runtimeId} does not exist`);
+  if (instance.environments.current(environmentId) === undefined) {
+    throw new EnvironmentError('environment.not_found', `environment ${environmentId} does not exist`);
   }
-  const lease = instance.runtimes.acquire({ workspaceId: instance.id, runtimeId }, ['fs']);
-  return { hostFs: lease.runtime.fs!, lease };
+  const lease = instance.environments.acquire({ workspaceId: instance.id, environmentId }, ['fs']);
+  return { hostFs: lease.environment.fs!, lease };
 }
 
 async function resolveContextWorkspaceId(
   core: Scope,
-  runtimeId: string,
-  context: FsRuntimeContext,
+  environmentId: string,
+  context: FsEnvironmentContext,
 ): Promise<string> {
   if (context.sessionId !== undefined) {
     const summary = await core.accessor.get(ISessionIndex).get(context.sessionId);
@@ -252,7 +252,7 @@ async function resolveContextWorkspaceId(
   }
   throw new Error2(
     ErrorCodes.VALIDATION_FAILED,
-    `runtime_id ${runtimeId} is workspace-scoped: pass workspace_id or session_id`,
+    `environment_id ${environmentId} is workspace-scoped: pass workspace_id or session_id`,
   );
 }
 
@@ -261,10 +261,10 @@ function sendAcquireError(
   requestId: string,
   err: unknown,
 ): void {
-  if (err instanceof RuntimeError) {
-    const code = err.code === 'runtime.not_found'
-      ? ErrorCode.RUNTIME_NOT_FOUND
-      : ErrorCode.RUNTIME_UNAVAILABLE;
+  if (err instanceof EnvironmentError) {
+    const code = err.code === 'environment.not_found'
+      ? ErrorCode.ENVIRONMENT_NOT_FOUND
+      : ErrorCode.ENVIRONMENT_UNAVAILABLE;
     reply.send(errEnvelope(code, err.message, requestId));
     return;
   }
@@ -298,9 +298,9 @@ async function handleFsContent(
     return;
   }
 
-  let source: RuntimeReadStreamSource;
+  let source: EnvironmentReadStreamSource;
   try {
-    source = await acquireFsSource(core, req.query.runtime_id ?? 'local', {
+    source = await acquireFsSource(core, req.query.environment_id ?? 'local', {
       workspaceId: req.query.workspace_id,
       sessionId: req.query.session_id,
     });
@@ -378,14 +378,14 @@ async function handleFsContent(
         .code(206)
         .header('content-length', String(range.length))
         .header('content-range', `bytes ${range.start}-${range.end}/${st.size}`);
-      const stream = createRuntimeReadStream(source, abs, range.start, range.length);
+      const stream = createEnvironmentReadStream(source, abs, range.start, range.length);
       streaming = true;
       stream.on('error', onStreamError(stream));
       return reply.send(stream) as unknown as void;
     }
 
     reply.code(200).header('content-length', String(st.size));
-    const stream = createRuntimeReadStream(source, abs, 0, st.size);
+    const stream = createEnvironmentReadStream(source, abs, 0, st.size);
     streaming = true;
     stream.on('error', onStreamError(stream));
     return reply.send(stream) as unknown as void;
@@ -396,7 +396,7 @@ async function handleFsContent(
 
 const fsMkdirBodySchema = z.object({
   path: z.string().min(1),
-  runtime_id: z.string().min(1).optional(),
+  environment_id: z.string().min(1).optional(),
   workspace_id: z.string().min(1).optional(),
   session_id: z.string().min(1).optional(),
 });
@@ -407,7 +407,7 @@ const fsMkdirResponseSchema = z.object({
 
 interface FsMkdirRequest {
   id: string;
-  body: { path: string; runtime_id?: string; workspace_id?: string; session_id?: string };
+  body: { path: string; environment_id?: string; workspace_id?: string; session_id?: string };
 }
 
 async function handleFsMkdir(
@@ -424,9 +424,9 @@ async function handleFsMkdir(
     return;
   }
 
-  let source: RuntimeReadStreamSource;
+  let source: EnvironmentReadStreamSource;
   try {
-    source = await acquireFsSource(core, req.body.runtime_id ?? 'local', {
+    source = await acquireFsSource(core, req.body.environment_id ?? 'local', {
       workspaceId: req.body.workspace_id,
       sessionId: req.body.session_id,
     });

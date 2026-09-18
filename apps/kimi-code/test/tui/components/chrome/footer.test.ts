@@ -326,7 +326,7 @@ describe('FooterComponent ctrl+o hint beside an inline tips slot', () => {
   });
 });
 
-describe('FooterComponent runtime slot', () => {
+describe('FooterComponent environment slot', () => {
   const ERROR = '38;2;232;84;84'; // colors.error #E85454
   let repoDir: string;
   const previousChalkLevel = chalk.level;
@@ -349,7 +349,7 @@ describe('FooterComponent runtime slot', () => {
 
   beforeEach(() => {
     // A real repo so the local git slot has a branch to render when visible.
-    repoDir = mkdtempSync(join(tmpdir(), 'kimi-footer-runtime-'));
+    repoDir = mkdtempSync(join(tmpdir(), 'kimi-footer-environment-'));
     spawnSync('git', ['init', '-b', 'main'], { cwd: repoDir });
     writeFileSync(join(repoDir, 'a.txt'), 'a');
     spawnSync('git', ['add', '.'], { cwd: repoDir });
@@ -362,19 +362,19 @@ describe('FooterComponent runtime slot', () => {
     rmSync(repoDir, { recursive: true, force: true });
   });
 
-  function footerWith(runtime: AppState['runtime']): FooterComponent {
-    return new FooterComponent({ ...appState, workDir: repoDir, runtime });
+  function footerWith(environment: AppState['environment']): FooterComponent {
+    return new FooterComponent({ ...appState, workDir: repoDir, environment });
   }
 
-  it('renders no runtime identifier for the local runtime and keeps the git slot', () => {
-    const footer = footerWith({ runtimeId: 'local', type: 'local', status: 'ready' });
+  it('renders no environment identifier for the local environment and keeps the git slot', () => {
+    const footer = footerWith({ environmentId: 'local', type: 'local', status: 'ready' });
     const rendered = line1(footer);
     expect(rendered).not.toContain('local');
     expect(rendered).toContain('main');
     footer.dispose();
   });
 
-  it('renders no runtime identifier while the runtime state is unsynced', () => {
+  it('renders no environment identifier while the environment state is unsynced', () => {
     const footer = footerWith(undefined);
     const rendered = line1(footer);
     expect(rendered).not.toContain('local');
@@ -383,15 +383,15 @@ describe('FooterComponent runtime slot', () => {
   });
 
   it('shows the remote identifier ahead of the cwd', () => {
-    const footer = footerWith({ runtimeId: 'dev-box', type: 'ssh', status: 'ready' });
+    const footer = footerWith({ environmentId: 'dev-box', type: 'ssh', status: 'ready' });
     const rendered = line1(footer);
     expect(rendered).toContain('dev-box');
-    expect(rendered.indexOf('dev-box')).toBeLessThan(rendered.indexOf('kimi-footer-runtime'));
+    expect(rendered.indexOf('dev-box')).toBeLessThan(rendered.indexOf('kimi-footer-environment'));
     footer.dispose();
   });
 
-  it('renders the bare runtime id with no type prefix, even for command runtimes', () => {
-    const footer = footerWith({ runtimeId: 'kimi-dev', type: 'command', status: 'ready' });
+  it('renders the bare environment id with no type prefix, even for command environments', () => {
+    const footer = footerWith({ environmentId: 'kimi-dev', type: 'command', status: 'ready' });
     const rendered = line1(footer);
     expect(rendered).toContain('kimi-dev');
     expect(rendered).not.toContain('command:kimi-dev');
@@ -400,7 +400,7 @@ describe('FooterComponent runtime slot', () => {
   });
 
   it('hides the local git slot for a remote-bound session', () => {
-    const footer = footerWith({ runtimeId: 'dev-box', type: 'ssh', status: 'ready' });
+    const footer = footerWith({ environmentId: 'dev-box', type: 'ssh', status: 'ready' });
     const rendered = line1(footer);
     expect(rendered).toContain('dev-box');
     expect(rendered).not.toContain('main');
@@ -408,7 +408,7 @@ describe('FooterComponent runtime slot', () => {
   });
 
   it('renders a disconnected remote identifier in the error color', () => {
-    const footer = footerWith({ runtimeId: 'dev-box', type: 'ssh', status: 'disconnected' });
+    const footer = footerWith({ environmentId: 'dev-box', type: 'ssh', status: 'disconnected' });
     const rendered = footer.render(160)[0] ?? '';
     expect(rendered).toContain('dev-box');
     expect(rendered).toContain(ERROR);
@@ -417,7 +417,7 @@ describe('FooterComponent runtime slot', () => {
 
   it('appends the disconnect reason to a disconnected remote identifier', () => {
     const footer = footerWith({
-      runtimeId: 'dev-box',
+      environmentId: 'dev-box',
       type: 'ssh',
       status: 'disconnected',
       connectError: 'ssh: connect failed',
@@ -429,7 +429,7 @@ describe('FooterComponent runtime slot', () => {
 
   it('bounds the disconnect reason to its first line and a fixed width', () => {
     const footer = footerWith({
-      runtimeId: 'dev-box',
+      environmentId: 'dev-box',
       type: 'ssh',
       status: 'disconnected',
       connectError: 'ssh: connect failed with a very long reason that keeps going\nretry guidance must not render',
@@ -443,14 +443,14 @@ describe('FooterComponent runtime slot', () => {
 
   it('shows the binding cwd instead of the local workDir for a remote-bound session', () => {
     const footer = footerWith({
-      runtimeId: 'dev-box',
+      environmentId: 'dev-box',
       type: 'ssh',
       status: 'ready',
       cwd: '/home/deploy/app',
     });
     const rendered = line1(footer);
     expect(rendered).toContain('/home/deploy/app');
-    expect(rendered).not.toContain('kimi-footer-runtime');
+    expect(rendered).not.toContain('kimi-footer-environment');
     footer.dispose();
   });
 
@@ -459,8 +459,8 @@ describe('FooterComponent runtime slot', () => {
     const footer = new FooterComponent({
       ...appState,
       workDir: repoDir,
-      statusLine: { items: ['runtime', 'cwd'], command: null },
-      runtime: { runtimeId: 'dev-box', type: 'ssh', status: 'ready', cwd: `${home}/remote-project` },
+      statusLine: { items: ['environment', 'cwd'], command: null },
+      environment: { environmentId: 'dev-box', type: 'ssh', status: 'ready', cwd: `${home}/remote-project` },
     });
     const rendered = line1(footer);
     expect(rendered).toContain('remote-project');
@@ -470,7 +470,7 @@ describe('FooterComponent runtime slot', () => {
 
   it('shortens a deep remote cwd by segments without a home claim', () => {
     const footer = footerWith({
-      runtimeId: 'dev-box',
+      environmentId: 'dev-box',
       type: 'ssh',
       status: 'ready',
       cwd: '/home/deploy/very/deep/nested/project',

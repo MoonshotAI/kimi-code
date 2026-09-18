@@ -6,7 +6,7 @@ import {
 } from '@moonshot-ai/agent-core-v2/os/interface/terminal';
 
 export const createTerminalRequestSchema = engineCreateTerminalRequestSchema.extend({
-  runtime_id: z.string().min(1).optional(),
+  environment_id: z.string().min(1).optional(),
 });
 export type CreateTerminalRequest = z.infer<typeof createTerminalRequestSchema>;
 

@@ -20,7 +20,7 @@ import { AgentFileHistoryService, countLineDiff } from '#/features/fileHistory/f
 import { displacedCheckpoints } from '#/features/fileHistory/fileHistoryOps';
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ToolCall } from '#human/llm/message';
-import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
@@ -82,17 +82,17 @@ describe('AgentFileHistoryService', () => {
     disposables.dispose();
   });
 
-  function stubRuntime(): IAgentRuntimeService {
+  function stubEnvironment(): IAgentEnvironmentService {
     return {
       acquire: () => ({
-        runtime: {
+        environment: {
           fs: hostFs(),
           path: posix,
           workspace: { mapRoots: (roots: unknown) => roots },
         },
         dispose: () => {},
       }),
-    } as unknown as IAgentRuntimeService;
+    } as unknown as IAgentEnvironmentService;
   }
 
   function hostFs(): IHostFileSystem {
@@ -133,7 +133,7 @@ describe('AgentFileHistoryService', () => {
         executorEvents.executor,
         eventBus,
         ix.get(IEventDispatcher),
-        stubRuntime(),
+        stubEnvironment(),
             blobs,
           workspace,
           {

@@ -11,7 +11,7 @@
 import type { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
 import type { IAgentContextMemoryService } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextMemory';
 import type { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
-import type { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/agent/runtimeBinding/runtimeBinding';
+import type { IAgentEnvironmentBindingService } from '@moonshot-ai/agent-core-v2/agent/environmentBinding/environmentBinding';
 
 import type { ISessionTokenCountingService } from '@moonshot-ai/agent-core-v2/session/tokenCounting/sessionTokenCounting';
 import type { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
@@ -40,7 +40,7 @@ export type AgentContextData = {
   tokenCount: ReturnType<ISessionTokenCountingService['statusSize']>;
 };
 export type AgentCommandInfo = Awaited<ReturnType<IAgentCommandService['list']>>[number];
-export type RuntimeBinding = ReturnType<IAgentRuntimeBindingService['get']>;
+export type EnvironmentBinding = ReturnType<IAgentEnvironmentBindingService['get']>;
 export type PlanData = Awaited<ReturnType<IAgentPlanService['status']>>;
 export type AgentTaskInfo = Awaited<ReturnType<IAgentTaskService['list']>>[number];
 export type McpServerEntry = ReturnType<IAgentMcpService['list']>[number];
@@ -80,8 +80,8 @@ export interface AgentFacade {
   getContext(): Promise<AgentContextData>;
   listCommands(): Promise<readonly AgentCommandInfo[]>;
   runCommand(input: { name: string; args?: string }): Promise<void>;
-  getRuntime(): Promise<RuntimeBinding>;
-  switchRuntime(runtimeId: string): Promise<RuntimeBinding>;
+  getEnvironment(): Promise<EnvironmentBinding>;
+  switchEnvironment(environmentId: string): Promise<EnvironmentBinding>;
   getPlan(): Promise<PlanData>;
   enterPlan(): Promise<void>;
   clearPlan(): Promise<void>;
@@ -149,10 +149,10 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
         'run',
         input.args === undefined ? [input.name] : [input.name, input.args],
       ) as Promise<void>,
-    getRuntime: () =>
-      call(scope, 'agentRuntimeBindingService', 'get', []) as Promise<RuntimeBinding>,
-    switchRuntime: (runtimeId) =>
-      call(scope, 'agentRuntimeBindingService', 'switch', [runtimeId]) as Promise<RuntimeBinding>,
+    getEnvironment: () =>
+      call(scope, 'agentEnvironmentBindingService', 'get', []) as Promise<EnvironmentBinding>,
+    switchEnvironment: (environmentId) =>
+      call(scope, 'agentEnvironmentBindingService', 'switch', [environmentId]) as Promise<EnvironmentBinding>,
     getPlan: () => call(scope, 'agentPlanService', 'status', []) as Promise<PlanData>,
     enterPlan: () => call(scope, 'agentPlanService', 'enter', []) as Promise<void>,
     clearPlan: () => call(scope, 'agentPlanService', 'clear', []) as Promise<void>,

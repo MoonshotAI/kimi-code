@@ -260,7 +260,7 @@ export class RemoteExecConnection {
     }
     if (this.environmentValue.pathClass !== 'posix') {
       return new HandshakeError(
-        `executor environment ${this.environmentValue.osKind} is not posix; remote runtimes require a posix target`,
+        `executor environment ${this.environmentValue.osKind} is not posix; remote environments require a posix target`,
         { kind: 'incompatible' },
       );
     }

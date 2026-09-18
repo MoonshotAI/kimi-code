@@ -107,7 +107,7 @@ export interface SessionEventHost {
   showError(msg: string): void;
   showStatus(msg: string, color?: ColorToken): void;
   showNotice(title: string, detail?: string): void;
-  refreshRuntimeSlot(): Promise<void>;
+  refreshEnvironmentSlot(): Promise<void>;
   updateActivityPane(): void;
   track(event: string, props?: Record<string, unknown>): void;
   recordSessionActivity(): void;
@@ -313,7 +313,7 @@ export class SessionEventHandler {
       case 'background.task.terminated':
         this.handleBackgroundTaskEvent(event); break;
       case 'cron.fired': this.handleCronFired(event); break;
-      case 'runtime.status.changed': void this.host.refreshRuntimeSlot(); break;
+      case 'environment.status.changed': void this.host.refreshEnvironmentSlot(); break;
       case 'mcp.server.status': this.renderMcpServerStatus(event.server); break;
       case 'tool.list.updated': break;
       default: break;

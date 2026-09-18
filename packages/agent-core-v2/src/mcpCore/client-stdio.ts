@@ -5,7 +5,7 @@ import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 
 import { ErrorCodes, Error2 } from '#/errors';
 import type { IHostProcess } from '#/os/interface/hostProcess';
-import type { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import type { IEnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import { proxyEnvForChild, reconcileChildNoProxy } from '#/_base/utils/proxy';
 
 import {
@@ -27,16 +27,16 @@ export interface StdioMcpClientOptions {
   readonly startupTimeoutMs?: number;
   readonly toolCallTimeoutMs?: number;
   readonly defaultCwd?: string;
-  readonly runtimeResolver: IRuntimeResolver;
+  readonly environmentResolver: IEnvironmentResolver;
   readonly workspaceId: string;
-  readonly runtimeId: string;
+  readonly environmentId: string;
 }
 
 const STDERR_BUFFER_CAPACITY = 4 * 1024;
 
 export class StdioMcpClient implements MCPClient {
   private readonly client: Client;
-  private readonly transport: RuntimeStdioTransport;
+  private readonly transport: EnvironmentStdioTransport;
   private readonly startupTimeoutMs?: number;
   private readonly toolCallTimeoutMs?: number;
   private readonly stderrBuffer = new BoundedTail(STDERR_BUFFER_CAPACITY);
@@ -54,7 +54,7 @@ export class StdioMcpClient implements MCPClient {
     if (config.executor !== undefined && config.executor !== 'local') {
       throw new Error2(ErrorCodes.NOT_IMPLEMENTED, `MCP stdio executor '${config.executor}' is not yet implemented`);
     }
-    this.transport = new RuntimeStdioTransport(config, options, this.stderrBuffer);
+    this.transport = new EnvironmentStdioTransport(config, options, this.stderrBuffer);
     this.client = new Client({
       name: options.clientName ?? KIMI_MCP_CLIENT_NAME,
       version: options.clientVersion ?? KIMI_MCP_CLIENT_VERSION,
@@ -157,13 +157,13 @@ export class StdioMcpClient implements MCPClient {
   }
 }
 
-class RuntimeStdioTransport implements Transport {
+class EnvironmentStdioTransport implements Transport {
   onclose?: () => void;
   onerror?: (error: Error) => void;
   onmessage?: <T extends JSONRPCMessage>(message: T) => void;
   private readonly readBuffer = new ReadBuffer();
   private process: IHostProcess | undefined;
-  private lease: ReturnType<IRuntimeResolver['acquire']> | undefined;
+  private lease: ReturnType<IEnvironmentResolver['acquire']> | undefined;
   private started = false;
   private closed = false;
 
@@ -174,18 +174,18 @@ class RuntimeStdioTransport implements Transport {
   ) {}
 
   async start(): Promise<void> {
-    if (this.started) throw new Error('Runtime stdio transport is already started');
-    if (this.closed) throw new Error('Runtime stdio transport is closed');
+    if (this.started) throw new Error('Environment stdio transport is already started');
+    if (this.closed) throw new Error('Environment stdio transport is closed');
     this.started = true;
-    const lease = this.options.runtimeResolver.acquire(
-      { workspaceId: this.options.workspaceId, runtimeId: this.options.runtimeId },
+    const lease = this.options.environmentResolver.acquire(
+      { workspaceId: this.options.workspaceId, environmentId: this.options.environmentId },
       ['process'],
     );
     this.lease = lease;
     try {
-      const base = lease.runtime.path.resolve(this.options.defaultCwd ?? lease.runtime.environment.homeDir);
-      const cwd = this.config.cwd === undefined ? base : lease.runtime.path.resolve(base, this.config.cwd);
-      const process = lease.track(await lease.runtime.process!.spawn(
+      const base = lease.environment.path.resolve(this.options.defaultCwd ?? lease.environment.host.homeDir);
+      const cwd = this.config.cwd === undefined ? base : lease.environment.path.resolve(base, this.config.cwd);
+      const process = lease.track(await lease.environment.process!.spawn(
         this.config.command,
         this.config.args,
         { cwd, env: mergeStdioEnv(this.config.env) },
@@ -216,7 +216,7 @@ class RuntimeStdioTransport implements Transport {
 
   async send(message: JSONRPCMessage): Promise<void> {
     const process = this.process;
-    if (process === undefined || this.closed) throw new Error('Runtime stdio transport is not running');
+    if (process === undefined || this.closed) throw new Error('Environment stdio transport is not running');
     const data = serializeMessage(message);
     await new Promise<void>((resolve, reject) => {
       process.stdin.write(data, (error) => {

@@ -2,7 +2,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { ErrorCodes, Error2 } from '#/errors';
-import { LOCAL_RUNTIME_ID, type Runtime } from '#/runtime/runtime';
+import { LOCAL_ENVIRONMENT_ID, type Environment } from '#/environment/environment';
 
 export type RgResolutionSource = 'system-path' | 'share-bin-cached';
 
@@ -18,7 +18,7 @@ export interface RgProbe {
 export interface EnsureRgPathOptions {
   readonly signal?: AbortSignal;
   readonly allowCachedFallback?: boolean;
-  readonly runtime?: Runtime;
+  readonly environment?: Environment;
 }
 
 function rgBinaryName(): string {
@@ -35,13 +35,13 @@ export function getShareBinRgPath(): string {
   return join(getShareDir(), 'bin', rgBinaryName());
 }
 
-function isRemoteRuntime(runtime: Runtime | undefined): runtime is Runtime {
-  return runtime !== undefined && runtime.identity.runtimeId !== LOCAL_RUNTIME_ID;
+function isRemoteEnvironment(environment: Environment | undefined): environment is Environment {
+  return environment !== undefined && environment.identity.environmentId !== LOCAL_ENVIRONMENT_ID;
 }
 
-function shareBinRgPath(runtime: Runtime | undefined): string {
-  if (isRemoteRuntime(runtime)) {
-    return `${runtime.environment.homeDir}/.kimi-code/bin/rg`;
+function shareBinRgPath(environment: Environment | undefined): string {
+  if (isRemoteEnvironment(environment)) {
+    return `${environment.host.homeDir}/.kimi-code/bin/rg`;
   }
   return getShareBinRgPath();
 }
@@ -65,7 +65,7 @@ export async function ensureRgPath(
 
   if (options.allowCachedFallback === true) {
     throwIfAborted(options.signal);
-    const cached = shareBinRgPath(options.runtime);
+    const cached = shareBinRgPath(options.environment);
     const cachedRun = await probe.exec([cached, '--version']).catch(() => ({ exitCode: -1 }));
     if (cachedRun.exitCode === 0) {
       return { path: cached, source: 'share-bin-cached' };
@@ -75,13 +75,13 @@ export async function ensureRgPath(
   throw new Error2(ErrorCodes.OS_FS_UNAVAILABLE, 'ripgrep (rg) is not available on PATH');
 }
 
-export function rgUnavailableMessage(cause: unknown, runtime?: Runtime): string {
+export function rgUnavailableMessage(cause: unknown, environment?: Environment): string {
   const detail =
     cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : 'unknown error';
-  if (isRemoteRuntime(runtime)) {
-    const shareBin = shareBinRgPath(runtime);
+  if (isRemoteEnvironment(environment)) {
+    const shareBin = shareBinRgPath(environment);
     return (
-      `ripgrep (rg) is not available on runtime "${runtime.identity.runtimeId}".\n` +
+      `ripgrep (rg) is not available on environment "${environment.identity.environmentId}".\n` +
       `\n` +
       `Error: ${detail}\n` +
       `\n` +

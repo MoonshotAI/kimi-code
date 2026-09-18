@@ -14,8 +14,8 @@
  *   `IWorkspaceFsService`); the v1 client inherits the base's `undefined`
  *   (capability absent). `suggestSessionFiles` is the session-scoped twin:
  *   roots come from the live session's workspace context and the suggest
- *   runs on the session's currently bound runtime through the workspace
- *   program's per-runtime accessor.
+ *   runs on the session's currently bound environment through the workspace
+ *   program's per-environment accessor.
  * - `getConfig` / `setConfig` / `removeProvider` / `getConfigDiagnostics` →
  *   `klient.global.config.*`, with the v1 `KimiConfig` shape restored by the
  *   pure mapping layer in `src/v2/config-mapper.ts`.
@@ -55,17 +55,17 @@
  *   the engine has no import capability of its own. `createSession`'s
  *   `model` / `thinking` / `permission` options are applied in this batch
  *   too (default-profile bind + permission mode).
- * - `getRuntime` / `switchRuntime` / `reconnectRuntime` / `listRuntimes` →
- *   agent-scope services (`IAgentRuntimeBindingService` /
- *   `IAgentRuntimeService`) and the workspace instance's runtime registry —
- *   the klient contract's `runtimeBindingSchema` predates the binding `cwd`
- *   and would strip it over the wire. `switchRuntime` with the
+ * - `getEnvironment` / `switchEnvironment` / `reconnectEnvironment` / `listEnvironments` →
+ *   agent-scope services (`IAgentEnvironmentBindingService` /
+ *   `IAgentEnvironmentService`) and the workspace instance's environment registry —
+ *   the klient contract's `environmentBindingSchema` predates the binding `cwd`
+ *   and would strip it over the wire. `switchEnvironment` with the
  *   `remote_runtime` flag on is the engine's `connectAndSwitch` (explicit
  *   connect + target-fs cwd validation); flag off keeps the legacy sync
  *   `switch` and rejects a caller-supplied `cwd`. `createSession`'s
- *   `runtimeId` / `runtimeCwd` options ride the engine's own
- *   `mainAgentBinding` + runtime seed path. The constructor attaches the
- *   `remote-exec` runtime provider (flag-self-gated) with the region CDN
+ *   `environmentId` / `environmentCwd` options ride the engine's own
+ *   `mainAgentBinding` + environment seed path. The constructor attaches the
+ *   `remote-exec` environment provider (flag-self-gated) with the region CDN
  *   artifact locator, mirroring the kap-server composition root.
  * - `prompt` / `steer` / `runShellCommand` / `cancelShellCommand` → the
  *   `klient.session(id).agent(id)` facade; `activatePluginCommand` →
@@ -182,8 +182,8 @@ import {
   IAgentPluginCommandService,
   IAgentProfileService,
   IAgentReminderService,
-  IAgentRuntimeBindingService,
-  IAgentRuntimeService,
+  IAgentEnvironmentBindingService,
+  IAgentEnvironmentService,
   IAgentSkillService,
   IAgentSwarmService,
   IAgentTaskService,
@@ -224,12 +224,12 @@ import {
   followSessionLifecycles,
   getLiveSessionById,
   isError2,
-  previewProjectRuntimeDeclarations,
+  previewProjectEnvironmentDeclarations,
   programForSession,
   readSshConfigHosts,
   REMOTE_RUNTIME_FLAG_ID,
-  RUNTIMES_SECTION,
-  resolveWorkspaceRuntimeDeclarations,
+  ENVIRONMENTS_SECTION,
+  resolveWorkspaceEnvironmentDeclarations,
   resumeSessionById,
   sessionDirOf,
   workspacePersistenceScope,
@@ -253,7 +253,7 @@ import {
   type IDisposable,
   type ISessionScopeHandle,
   type McpManagedServer,
-  type RemoteRuntimeEntry,
+  type RemoteEnvironmentEntry,
   type Scope,
   type ServicesAccessor,
   type SessionSummary as V2SessionSummary,
@@ -268,7 +268,7 @@ import {
 import { RegistryImportError } from '#/catalog';
 import { createKlient } from '@moonshot-ai/klient/memory';
 import { assertKimiHostIdentity, createKimiDefaultHeaders, kimiRegionProfile } from '@moonshot-ai/kimi-code-oauth';
-import { CdnExecutorArtifactLocator, RemoteRuntimeProviderFactory } from '@moonshot-ai/remote-exec';
+import { CdnExecutorArtifactLocator, RemoteEnvironmentProviderFactory } from '@moonshot-ai/remote-exec';
 
 import { KimiAuthFacade } from '#/auth';
 import { ensureConfigFile, HookDefSchema } from '#/config/index';
@@ -278,19 +278,19 @@ import type { ExperimentalFeatureState } from '#/flag';
 import { KimiHarness } from '#/kimi-harness';
 import type { BeginGlobalMcpServerAuthResult } from '#/mcp';
 import { limitAgentReplayByTurns } from '#/replay';
-import { writeProjectRuntimeDeclaration } from '#/runtime-declarations';
+import { writeProjectEnvironmentDeclaration } from '#/environment-declarations';
 import { noopTelemetryClient } from '#/telemetry';
 import {
   SDKRpcClientBase,
   type ActivatePluginCommandRpcInput,
   type ActivateSkillRpcInput,
-  type DeclareRuntimeRpcInput,
+  type DeclareEnvironmentRpcInput,
   type ImportContextRpcInput,
   type ReconnectMcpServerRpcInput,
   type ReloadSessionRpcInput,
   type RunCommandRpcInput,
   type SessionIdRpcInput,
-  type SwitchSessionRuntimeRpcInput,
+  type SwitchSessionEnvironmentRpcInput,
   type SessionPromptRpcInput,
   type SessionPromptWithSkillsRpcInput,
   type SetSessionModelRpcInput,
@@ -306,7 +306,7 @@ import type {
   AddAdditionalDirInput,
   AddAdditionalDirResult,
   AgentCommandInfo,
-  AgentRuntimeBinding,
+  AgentEnvironmentBinding,
   AppMcpServerInspection,
   BackgroundTaskInfo,
   CapabilityStatus,
@@ -349,7 +349,7 @@ import type {
   SessionStatus,
   SessionSummary,
   SessionSummaryPage,
-  SessionRuntimesInfo,
+  SessionEnvironmentsInfo,
   SessionTodoItem,
   SessionUsage,
   SkillSummary,
@@ -358,7 +358,7 @@ import type {
   TelemetryClient,
   UploadFileOptions,
   WorkspaceTrustInfo,
-  WorkspaceTrustRuntimeInfo,
+  WorkspaceTrustEnvironmentInfo,
 } from '#/types';
 import {
   diagnosticsToConfigDiagnostics,
@@ -416,12 +416,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   private readonly app: Scope;
   /**
-   * The remote runtime provider attach handle (`remote-exec` factory), held
+   * The remote environment provider attach handle (`remote-exec` factory), held
    * as a promise because the constructor is synchronous. Disposed in
    * {@link close} before the app scope; an attach failure degrades to no
-   * remote runtimes instead of killing the client.
+   * remote environments instead of killing the client.
    */
-  private readonly remoteRuntimeProvider: Promise<{ dispose(): void | Promise<void> } | undefined>;
+  private readonly remoteEnvironmentProvider: Promise<{ dispose(): void | Promise<void> } | undefined>;
   /**
    * The engine's config reads (`get`/`getAll`/`inspect`/`diagnostics`) are
    * synchronous over state that only exists once the initial load settles;
@@ -509,10 +509,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       [...logSeed(resolveLoggingConfig({ homeDir: this.homeDir, env: process.env }))],
     );
     this.app = app;
-    this.remoteRuntimeProvider = app.accessor
+    this.remoteEnvironmentProvider = app.accessor
       .get(IWorkspaceInstanceManager)
       .addProvider(
-        new RemoteRuntimeProviderFactory({
+        new RemoteEnvironmentProviderFactory({
           clientName: 'kimi-code',
           clientVersion: identity.version,
           artifactLocator: new CdnExecutorArtifactLocator({
@@ -524,7 +524,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         }),
       )
       .catch((error) => {
-        app.accessor.get(ILogService).warn('remote runtime provider attach failed', { error });
+        app.accessor.get(ILogService).warn('remote environment provider attach failed', { error });
         return undefined;
       });
     this.klient = createKlient({ scope: app });
@@ -587,8 +587,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     // the accessor throws once the scope is disposed. shutdown() is
     // idempotent, so the ledger's own teardown turns into a no-op.
     await this.app.accessor.get(IMcpOAuthService).shutdown();
-    const remoteRuntimeProvider = await this.remoteRuntimeProvider;
-    await remoteRuntimeProvider?.dispose();
+    const remoteEnvironmentProvider = await this.remoteEnvironmentProvider;
+    await remoteEnvironmentProvider?.dispose();
     const appendLogStore = this.app.accessor.get(IAppendLogStore);
     this.app.dispose();
     await appendLogStore.drainRetirements();
@@ -727,8 +727,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   /**
    * Session-scoped twin of {@link suggestFiles}: roots come from the live
    * session's workspace context (a remote binding's cwd already lives there)
-   * and the suggest runs on the session's currently bound runtime through
-   * the workspace program's per-runtime fs accessor. A local binding serves
+   * and the suggest runs on the session's currently bound environment through
+   * the workspace program's per-environment fs accessor. A local binding serves
    * the same candidates as the session-less variant.
    */
   override async suggestSessionFiles(
@@ -737,7 +737,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const parsed = parseSuggestFilesInput(input);
     const session = this.requireLiveSession(input.sessionId);
     const agent = await this.agentScope(input.sessionId);
-    const binding = agent.accessor.get(IAgentRuntimeBindingService).get();
+    const binding = agent.accessor.get(IAgentEnvironmentBindingService).get();
     const workspace = session.accessor.get(ISessionWorkspaceContext);
     const context = session.accessor.get(ISessionContext);
     const manager = this.engineAccessor.get(IWorkspaceInstanceManager);
@@ -745,7 +745,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       manager.get(context.workspaceId) ??
       (await manager.getOrCreate({ root: context.cwd }));
     const result = await instance.program.suggestFiles(
-      binding.runtimeId,
+      binding.environmentId,
       { workDir: workspace.workDir, additionalDirs: workspace.additionalDirs },
       parsed,
     );
@@ -767,8 +767,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       .get(IWorkspaceInstanceManager)
       .getOrCreate({ root: workDir });
     const trusted = await handler.program.trust.get();
-    if (trusted) return { trusted: true, gatedMcpServers: [], gatedRuntimes: [] };
-    const gatedRuntimes = await this.previewGatedRuntimes(workDir);
+    if (trusted) return { trusted: true, gatedMcpServers: [], gatedEnvironments: [] };
+    const gatedEnvironments = await this.previewGatedEnvironments(workDir);
     try {
       const fs = this.engineAccessor.get(IHostFileSystem);
       const [paths, loaded] = await Promise.all([
@@ -785,22 +785,22 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         .filter(([name]) => projectPaths.has(loaded.origins[name] ?? ''))
         .map(([name, config]) => describeWorkspaceMcpServer(name, config))
         .toSorted((a, b) => a.name.localeCompare(b.name));
-      return { trusted: false, gatedMcpServers, gatedRuntimes };
+      return { trusted: false, gatedMcpServers, gatedEnvironments };
     } catch {
-      return { trusted: false, gatedMcpServers: [], gatedRuntimes };
+      return { trusted: false, gatedMcpServers: [], gatedEnvironments };
     }
   }
 
   /**
-   * Display-only preview of the project-declared runtimes trusting would
+   * Display-only preview of the project-declared environments trusting would
    * register (the engine never loads project declarations while untrusted).
    * Flag off or an unreadable/invalid project file degrades to an empty list,
    * matching the MCP preview's best-effort semantics.
    */
-  private async previewGatedRuntimes(workDir: string): Promise<readonly WorkspaceTrustRuntimeInfo[]> {
+  private async previewGatedEnvironments(workDir: string): Promise<readonly WorkspaceTrustEnvironmentInfo[]> {
     if (!this.engineAccessor.get(IFlagService).enabled(REMOTE_RUNTIME_FLAG_ID)) return [];
     try {
-      return await previewProjectRuntimeDeclarations(
+      return await previewProjectEnvironmentDeclarations(
         this.engineAccessor.get(IHostFileSystem),
         workDir,
       );
@@ -1434,16 +1434,16 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   private async doCreateSession(input: CreateSessionOptions): Promise<SessionSummary> {
     const workDir = normalizeRequiredWorkDir('createSession', input.workDir);
-    if (input.runtimeCwd !== undefined && input.runtimeId === undefined) {
-      throw new KimiError(ErrorCodes.REQUEST_INVALID, 'createSession runtimeCwd requires runtimeId');
+    if (input.environmentCwd !== undefined && input.environmentId === undefined) {
+      throw new KimiError(ErrorCodes.REQUEST_INVALID, 'createSession environmentCwd requires environmentId');
     }
     if (
-      input.runtimeId !== undefined &&
+      input.environmentId !== undefined &&
       !this.engineAccessor.get(IFlagService).enabled(REMOTE_RUNTIME_FLAG_ID)
     ) {
       throw new KimiError(
         ErrorCodes.REQUEST_INVALID,
-        'createSession runtimeId requires the remote_runtime experimental flag',
+        'createSession environmentId requires the remote_runtime experimental flag',
       );
     }
     if (input.id !== undefined) {
@@ -1461,9 +1461,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       sessionId: input.id,
       workDir,
       additionalDirs: input.additionalDirs,
-      runtimeId: input.runtimeId,
-      runtimeCwd: input.runtimeCwd,
-      mainAgentBinding: input.runtimeId === undefined
+      environmentId: input.environmentId,
+      environmentCwd: input.environmentCwd,
+      mainAgentBinding: input.environmentId === undefined
         ? undefined
         : {
             profile: DEFAULT_AGENT_PROFILE_NAME,
@@ -1913,54 +1913,54 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Through the agent scope (`IAgentRuntimeBindingService.get`) — the klient
-   * contract's `runtimeBindingSchema` predates the binding `cwd` and would
+   * Through the agent scope (`IAgentEnvironmentBindingService.get`) — the klient
+   * contract's `environmentBindingSchema` predates the binding `cwd` and would
    * strip it over the wire.
    */
-  override async getRuntime(input: SessionIdRpcInput): Promise<AgentRuntimeBinding> {
+  override async getEnvironment(input: SessionIdRpcInput): Promise<AgentEnvironmentBinding> {
     const agent = await this.agentScope(input.sessionId);
-    return agent.accessor.get(IAgentRuntimeBindingService).get();
+    return agent.accessor.get(IAgentEnvironmentBindingService).get();
   }
 
   /**
-   * Agent scope (`IAgentRuntimeBindingService`). With the experimental flag
+   * Agent scope (`IAgentEnvironmentBindingService`). With the experimental flag
    * on this is `connectAndSwitch` (explicit connect, target-fs cwd
    * validation); with it off the legacy sync `switch` keeps its exact
    * behavior and a `cwd` is rejected instead of silently dropped.
    */
-  override async switchRuntime(input: SwitchSessionRuntimeRpcInput): Promise<AgentRuntimeBinding> {
+  override async switchEnvironment(input: SwitchSessionEnvironmentRpcInput): Promise<AgentEnvironmentBinding> {
     const agent = await this.agentScope(input.sessionId);
-    const service = agent.accessor.get(IAgentRuntimeBindingService);
+    const service = agent.accessor.get(IAgentEnvironmentBindingService);
     if (!this.engineAccessor.get(IFlagService).enabled(REMOTE_RUNTIME_FLAG_ID)) {
       if (input.cwd !== undefined) {
         throw new KimiError(
           ErrorCodes.REQUEST_INVALID,
-          'switchRuntime cwd requires the remote_runtime experimental flag',
+          'switchEnvironment cwd requires the remote_runtime experimental flag',
         );
       }
-      return service.switch(input.runtimeId);
+      return service.switch(input.environmentId);
     }
-    return service.connectAndSwitch(input.runtimeId, input.cwd);
+    return service.connectAndSwitch(input.environmentId, input.cwd);
   }
 
   /**
-   * Agent scope (`IAgentRuntimeService.reconnect`) — no klient facade exists.
-   * The engine rejects runtimes without a connect path (local, disposed).
+   * Agent scope (`IAgentEnvironmentService.reconnect`) — no klient facade exists.
+   * The engine rejects environments without a connect path (local, disposed).
    */
-  override async reconnectRuntime(input: SessionIdRpcInput): Promise<AgentRuntimeBinding> {
+  override async reconnectEnvironment(input: SessionIdRpcInput): Promise<AgentEnvironmentBinding> {
     const agent = await this.agentScope(input.sessionId);
-    await agent.accessor.get(IAgentRuntimeService).reconnect();
-    return agent.accessor.get(IAgentRuntimeBindingService).get();
+    await agent.accessor.get(IAgentEnvironmentService).reconnect();
+    return agent.accessor.get(IAgentEnvironmentBindingService).get();
   }
 
   /**
-   * The workspace instance's runtime registry snapshot (status / generation /
+   * The workspace instance's environment registry snapshot (status / generation /
    * capabilities) joined with the resolved declarations (type / defaultCwd),
-   * plus the ssh host candidates for the runtime-add flow. Flag off: only the
-   * local runtime is ever registered, declarations and ssh discovery stay
+   * plus the ssh host candidates for the environment-add flow. Flag off: only the
+   * local environment is ever registered, declarations and ssh discovery stay
    * unread.
    */
-  override async listRuntimes(input: SessionIdRpcInput): Promise<SessionRuntimesInfo> {
+  override async listEnvironments(input: SessionIdRpcInput): Promise<SessionEnvironmentsInfo> {
     const session = this.requireLiveSession(input.sessionId);
     const context = session.accessor.get(ISessionContext);
     const manager = this.engineAccessor.get(IWorkspaceInstanceManager);
@@ -1968,19 +1968,19 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       manager.get(context.workspaceId) ??
       (await manager.getOrCreate({ root: context.cwd }));
     const enabled = this.engineAccessor.get(IFlagService).enabled(REMOTE_RUNTIME_FLAG_ID);
-    const declarations = enabled ? await this.resolveRuntimeDeclarationEntries(instance.root) : new Map<string, RemoteRuntimeEntry>();
+    const declarations = enabled ? await this.resolveEnvironmentDeclarationEntries(instance.root) : new Map<string, RemoteEnvironmentEntry>();
     return {
       workspaceId: context.workspaceId,
-      runtimes: instance.runtimes.snapshot().runtimes.map((runtime) => {
-        const entry = declarations.get(runtime.runtimeId);
+      environments: instance.environments.snapshot().environments.map((environment) => {
+        const entry = declarations.get(environment.environmentId);
         return {
-          runtimeId: runtime.runtimeId,
-          type: runtimeEntryType(runtime.runtimeId, entry),
-          status: runtime.status,
-          generation: runtime.generation,
-          capabilities: [...runtime.capabilities],
+          environmentId: environment.environmentId,
+          type: environmentEntryType(environment.environmentId, entry),
+          status: environment.status,
+          generation: environment.generation,
+          capabilities: [...environment.capabilities],
           defaultCwd: entry?.defaultCwd,
-          connectError: runtime.connectError,
+          connectError: environment.connectError,
         };
       }),
       sshHosts: enabled ? await this.resolveSshHostCandidates() : [],
@@ -1988,23 +1988,23 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Declare a runtime for the session's workspace. The `global` scope (the
+   * Declare an environment for the session's workspace. The `global` scope (the
    * default) rides the exact config path the v1 patch flow uses — one
-   * deep-merge `config.set` over the `[runtimes]` section, so the persisted
-   * bytes match a `setConfig({ runtimes: ... })` call. The `project` scope
-   * merge-writes the workspace's `.kimi-code/runtimes.toml` on the host
+   * deep-merge `config.set` over the `[environments]` section, so the persisted
+   * bytes match a `setConfig({ environments: ... })` call. The `project` scope
+   * merge-writes the workspace's `.kimi-code/environments.toml` on the host
    * (declarations must exist before any remote connection, so the project
    * file always lives on the local disk). Both register through the
    * engine's live declaration watch; both require the `remote_runtime` flag,
-   * matching the rest of the runtime surface. Both scopes fail closed on a
+   * matching the rest of the environment surface. Both scopes fail closed on a
    * duplicate id, rejecting before any write so an existing entry is never
    * half-merged.
    */
-  override async declareRuntime(input: DeclareRuntimeRpcInput): Promise<void> {
+  override async declareEnvironment(input: DeclareEnvironmentRpcInput): Promise<void> {
     if (!this.engineAccessor.get(IFlagService).enabled(REMOTE_RUNTIME_FLAG_ID)) {
       throw new KimiError(
         ErrorCodes.REQUEST_INVALID,
-        'declareRuntime requires the remote_runtime experimental flag',
+        'declareEnvironment requires the remote_runtime experimental flag',
       );
     }
     const session = this.requireLiveSession(input.sessionId);
@@ -2014,7 +2014,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       const instance =
         manager.get(context.workspaceId) ??
         (await manager.getOrCreate({ root: context.cwd }));
-      await writeProjectRuntimeDeclaration(
+      await writeProjectEnvironmentDeclaration(
         this.engineAccessor.get(IHostFileSystem),
         instance.root,
         input.id,
@@ -2023,22 +2023,22 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       return;
     }
     await this.configReady;
-    const declared = await this.klient.global.config.get<Record<string, unknown>>(RUNTIMES_SECTION);
+    const declared = await this.klient.global.config.get<Record<string, unknown>>(ENVIRONMENTS_SECTION);
     if (declared?.[input.id] !== undefined) {
       throw new KimiError(
         ErrorCodes.CONFIG_INVALID,
-        `Runtime id "${input.id}" is already declared in ${this.engineAccessor.get(IBootstrapService).configPath}.`,
+        `Environment id "${input.id}" is already declared in ${this.engineAccessor.get(IBootstrapService).configPath}.`,
       );
     }
     await this.klient.global.config.set({
-      domain: RUNTIMES_SECTION,
+      domain: ENVIRONMENTS_SECTION,
       patch: { [input.id]: input.entry },
     });
   }
 
-  private async resolveRuntimeDeclarationEntries(root: string): Promise<ReadonlyMap<string, RemoteRuntimeEntry>> {
+  private async resolveEnvironmentDeclarationEntries(root: string): Promise<ReadonlyMap<string, RemoteEnvironmentEntry>> {
     try {
-      const resolved = await resolveWorkspaceRuntimeDeclarations({
+      const resolved = await resolveWorkspaceEnvironmentDeclarations({
         config: this.engineAccessor.get(IConfigService),
         fs: this.engineAccessor.get(IHostFileSystem),
         docs: this.engineAccessor.get(IAtomicDocumentStore),
@@ -3108,11 +3108,11 @@ function describeWorkspaceMcpServer(
   return { name, transport: config.transport, url: config.url };
 }
 
-function runtimeEntryType(
-  runtimeId: string,
-  entry: RemoteRuntimeEntry | undefined,
-): SessionRuntimesInfo['runtimes'][number]['type'] {
-  if (runtimeId === 'local') return 'local';
+function environmentEntryType(
+  environmentId: string,
+  entry: RemoteEnvironmentEntry | undefined,
+): SessionEnvironmentsInfo['environments'][number]['type'] {
+  if (environmentId === 'local') return 'local';
   if (entry === undefined || 'command' in entry) return 'command';
   return entry.type;
 }

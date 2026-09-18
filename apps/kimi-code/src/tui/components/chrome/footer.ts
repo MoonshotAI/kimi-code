@@ -37,10 +37,10 @@ import {
 /** What the footer's fixed ctrl+o hint offers: expand collapsed tool output, or collapse it again. */
 export type ToolOutputExpandHint = 'expand' | 'collapse';
 
-const DEFAULT_STATUS_LINE_ITEMS = ['mode', 'goal', 'model', 'tasks', 'runtime', 'cwd', 'git'] as const;
+const DEFAULT_STATUS_LINE_ITEMS = ['mode', 'goal', 'model', 'tasks', 'environment', 'cwd', 'git'] as const;
 
 const MAX_CWD_SEGMENTS = 3;
-const MAX_RUNTIME_REASON_WIDTH = 40;
+const MAX_ENVIRONMENT_REASON_WIDTH = 40;
 const GOAL_TIMER_INTERVAL_MS = 1_000;
 
 // Toolbar tips — rotates every 10s. Most tips are short and pair up (two
@@ -427,7 +427,7 @@ export class FooterComponent implements Component {
       goal: [],
       model: [],
       tasks: [],
-      runtime: [],
+      environment: [],
       cwd: [],
       git: [],
       tips: [],
@@ -491,39 +491,39 @@ export class FooterComponent implements Component {
     }
     slots['tasks'] = taskBadges;
 
-    // Runtime slot (experimental remote runtime): the local runtime renders
-    // nothing; a remote binding shows its bare runtime id ahead of the cwd —
+    // Environment slot (experimental remote environment): the local environment renders
+    // nothing; a remote binding shows its bare environment id ahead of the cwd —
     // error-colored while disconnected, with the first connect-error line
     // appended so the failure reason is visible at a glance.
-    const runtime = state.runtime;
-    const remote = runtime !== undefined && runtime.runtimeId !== 'local';
+    const environment = state.environment;
+    const remote = environment !== undefined && environment.environmentId !== 'local';
     if (remote) {
       const tone =
-        runtime.status === 'disconnected'
+        environment.status === 'disconnected'
           ? colors.error
-          : runtime.status === 'ready'
+          : environment.status === 'ready'
             ? colors.textDim
             : colors.warning;
-      const label = runtime.runtimeId;
+      const label = environment.environmentId;
       const reason =
-        runtime.status === 'disconnected' && runtime.connectError !== undefined
-          ? runtime.connectError.split('\n', 1)[0]
+        environment.status === 'disconnected' && environment.connectError !== undefined
+          ? environment.connectError.split('\n', 1)[0]
           : undefined;
-      slots['runtime'] = [
+      slots['environment'] = [
         chalk.hex(tone)(
           reason === undefined
             ? label
-            : `${label} (${truncateToWidth(reason, MAX_RUNTIME_REASON_WIDTH, '…')})`,
+            : `${label} (${truncateToWidth(reason, MAX_ENVIRONMENT_REASON_WIDTH, '…')})`,
         ),
       ];
     }
 
     // A remote-bound session works on the target host, so the slot shows the
-    // binding cwd rather than the frozen local workDir. The runtime-info
-    // surface (getRuntime/listRuntimes) does not carry the remote home dir,
+    // binding cwd rather than the frozen local workDir. The environment-info
+    // surface (getEnvironment/listEnvironments) does not carry the remote home dir,
     // so the remote path shortens by segments only and never claims ~ — a
     // wrong ~ would be worse than a full path.
-    const bindingCwd = remote ? runtime.cwd : undefined;
+    const bindingCwd = remote ? environment.cwd : undefined;
     const cwd =
       bindingCwd !== undefined
         ? shortenCwd(bindingCwd, undefined)

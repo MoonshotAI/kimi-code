@@ -31,7 +31,7 @@ export const UpgradePreferencesSchema = z.object({
   autoInstall: z.boolean(),
 });
 
-export const STATUS_LINE_ITEMS = ['mode', 'goal', 'model', 'tasks', 'runtime', 'cwd', 'git', 'tips'] as const;
+export const STATUS_LINE_ITEMS = ['mode', 'goal', 'model', 'tasks', 'environment', 'cwd', 'git', 'tips'] as const;
 export type StatusLineItem = (typeof STATUS_LINE_ITEMS)[number];
 
 export const StatusLineFileConfigSchema = z.object({

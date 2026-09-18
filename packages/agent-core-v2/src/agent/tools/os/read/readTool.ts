@@ -1,9 +1,9 @@
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentEnvironmentService, inspectAgentEnvironment } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { isDaemonFileUrl } from '#/agent/media/mediaRef';
-import { attachmentFileSource, runtimeFileSource, withAttachmentLocation, type FileReadSource } from '#/agent/tools/fileReadSource';
-import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
+import { attachmentFileSource, environmentFileSource, withAttachmentLocation, type FileReadSource } from '#/agent/tools/fileReadSource';
+import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -175,7 +175,7 @@ export class ReadTool implements IReadTool {
   }
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadInputSchema);
   constructor(
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
     @IAgentToolResultTruncationService private readonly resultTruncation: IAgentToolResultTruncationService,
@@ -192,7 +192,7 @@ export class ReadTool implements IReadTool {
     };
   }
 
-  private workspaceConfig(view: RuntimeWorkspaceView): WorkspaceConfig {
+  private workspaceConfig(view: EnvironmentWorkspaceView): WorkspaceConfig {
     return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
@@ -201,12 +201,12 @@ export class ReadTool implements IReadTool {
       return { isError: true, output: 'column_offset is only supported for forward reads. Use a positive line_offset or the forward Next Read arguments.' };
     }
     if (isDaemonFileUrl(args.path)) return this.attachmentExecution(args);
-    const inspected = inspectAgentRuntime(this.runtime);
-    const view = new RuntimeWorkspaceView(inspected, {
+    const inspected = inspectAgentEnvironment(this.environment);
+    const view = new EnvironmentWorkspaceView(inspected, {
       workDir: this.workspaceCtx.workDir,
       additionalDirs: [...this.workspaceCtx.additionalDirs, ...this.skillCatalog.catalog.getSkillRoots()],
     });
-    const env = { _serviceBrand: undefined, ...inspected.environment, ready: Promise.resolve() };
+    const env = { _serviceBrand: undefined, ...inspected.host, ready: Promise.resolve() };
     const workspace = this.workspaceConfig(view);
     const path = resolvePathAccessPath(args.path, {
       env,
@@ -225,15 +225,15 @@ export class ReadTool implements IReadTool {
           homeDir: env.homeDir,
         }),
       execute: async () => {
-        const lease = this.runtime.isAvailable(['fs'])
-          ? this.runtime.acquire(['fs'])
-          : await this.runtime.acquireWhenReady(['fs']);
+        const lease = this.environment.isAvailable(['fs'])
+          ? this.environment.acquire(['fs'])
+          : await this.environment.acquireWhenReady(['fs']);
         try {
-          if (lease.runtime.identity.generation !== inspected.identity.generation) {
-            return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
+          if (lease.environment.identity.generation !== inspected.identity.generation) {
+            return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
           }
           const eventLog = this.resultTruncation.isWireJournalPath(path);
-          const result = await this.execution(runtimeFileSource(lease.runtime.fs!, path), args, eventLog);
+          const result = await this.execution(environmentFileSource(lease.environment.fs!, path), args, eventLog);
           return { ...result, spillExempt: true };
         } finally {
           lease.dispose();

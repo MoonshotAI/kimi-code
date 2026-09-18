@@ -34,6 +34,7 @@
 //   cron.add                           (none)                                                src/features/cron/cronOps.ts
 //   cron.cursor                        (none)                                                src/features/cron/cronOps.ts
 //   cron.delete                        (none)                                                src/features/cron/cronOps.ts
+//   environment.set_binding            environmentBinding                                    src/agent/environmentBinding/environmentBindingOps.ts
 //   file_history.checkpoint            fileHistory                                           src/features/fileHistory/fileHistoryOps.ts
 //   file_history.tracked               fileHistory                                           src/features/fileHistory/fileHistoryOps.ts
 //   forked                             (none)                                                src/features/goal/goalOps.ts
@@ -60,7 +61,6 @@
 //   prompt.aborted                     (none)                                                src/agent/prompt/promptEvents.ts
 //   prompt.completed                   (none)                                                src/agent/prompt/promptEvents.ts
 //   prompt.steered                     (none)                                                src/agent/prompt/promptEvents.ts
-//   runtime.set_binding                runtimeBinding                                        src/agent/runtimeBinding/runtimeBindingOps.ts
 //   swarm_mode.enter                   swarm                                                 src/features/swarm/swarmOps.ts
 //   swarm_mode.exit                    contextMemory, swarm                                  src/features/swarm/swarmOps.ts
 //   task.started                       task                                                  src/agent/task/taskOps.ts
@@ -202,6 +202,18 @@ interface CronCursorPayload {
 interface CronDeletePayload {
   _name: 'cron.delete';
   ids: string[];
+}
+
+/**
+ * states: environmentBinding
+ * owner: src/agent/environmentBinding/environmentBindingOps.ts
+ */
+interface EnvironmentSetBindingPayload {
+  _name: 'environment.set_binding';
+  agentId: string;
+  workspaceId: string;
+  environmentId: string;
+  cwd?: string;
 }
 
 /**
@@ -559,18 +571,6 @@ interface PromptSteeredPayload {
 }
 
 /**
- * states: runtimeBinding
- * owner: src/agent/runtimeBinding/runtimeBindingOps.ts
- */
-interface RuntimeSetBindingPayload {
-  _name: 'runtime.set_binding';
-  agentId: string;
-  workspaceId: string;
-  runtimeId: string;
-  cwd?: string;
-}
-
-/**
  * states: swarm
  * owner: src/features/swarm/swarmOps.ts
  */
@@ -894,6 +894,7 @@ interface WirePayloadMap {
   "cron.add": CronAddPayload;
   "cron.cursor": CronCursorPayload;
   "cron.delete": CronDeletePayload;
+  "environment.set_binding": EnvironmentSetBindingPayload;
   "file_history.checkpoint": FileHistoryCheckpointPayload;
   "file_history.tracked": FileHistoryTrackedPayload;
   "forked": ForkedPayload;
@@ -920,7 +921,6 @@ interface WirePayloadMap {
   "prompt.aborted": PromptAbortedPayload;
   "prompt.completed": PromptCompletedPayload;
   "prompt.steered": PromptSteeredPayload;
-  "runtime.set_binding": RuntimeSetBindingPayload;
   "swarm_mode.enter": SwarmModeEnterPayload;
   "swarm_mode.exit": SwarmModeExitPayload;
   "task.started": TaskStartedPayload;

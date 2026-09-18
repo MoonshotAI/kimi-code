@@ -159,7 +159,7 @@ function remoteBinPlan(
       throw new ExecutorInstallError(
         'probe',
         `could not determine the remote home directory on ${launcherLabel(launcher)}; ` +
-          'set remoteBin to an absolute path in the runtime declaration to skip the probe',
+          'set remoteBin to an absolute path in the environment declaration to skip the probe',
       );
     }
     const dir = `${homeDir}/.kimi-code/bin`;
@@ -460,7 +460,7 @@ export interface ExecutorInstallResult {
   readonly alreadyInstalled: boolean;
 }
 
-// Installs (or repairs) the remote executor for a typed ssh/docker runtime:
+// Installs (or repairs) the remote executor for a typed ssh/docker environment:
 // probe the target environment → skip when a usable executor is already at the
 // destination → locate the SEA artifact → download with pinned SHA-256
 // verification → upload to a unique tmp path → chmod + atomic rename → verify

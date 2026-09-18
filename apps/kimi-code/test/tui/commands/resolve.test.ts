@@ -277,20 +277,20 @@ describe('resolveSlashCommandInput', () => {
     });
   });
 
-  it('resolves /runtime to the builtin command when the remote_runtime flag is enabled', () => {
+  it('resolves /environment to the builtin command when the remote_runtime flag is enabled', () => {
     setExperimentalFeatures([{ id: 'remote_runtime', enabled: true }]);
 
-    expect(resolve('/runtime')).toMatchObject({
+    expect(resolve('/environment')).toMatchObject({
       kind: 'builtin',
-      name: 'runtime',
+      name: 'environment',
       args: '',
     });
   });
 
-  it('does not resolve /runtime as a builtin when the remote_runtime flag is disabled', () => {
-    expect(resolve('/runtime')).toEqual({
+  it('does not resolve /environment as a builtin when the remote_runtime flag is disabled', () => {
+    expect(resolve('/environment')).toEqual({
       kind: 'message',
-      input: '/runtime',
+      input: '/environment',
     });
   });
 });

@@ -4,7 +4,7 @@ import {
   Error2,
   ErrorCodes,
   EXTRA_SKILL_DIRS_SECTION,
-  IAgentRuntimeBindingService,
+  IAgentEnvironmentBindingService,
   IAgentSkillService,
   IBootstrapService,
   IConfigService,
@@ -17,7 +17,7 @@ import {
   ISessionSkillCatalog,
   ISkillDiscovery,
   ITelemetryService,
-  IRuntimeResolver,
+  IEnvironmentResolver,
   IWorkspaceService,
   InMemorySkillCatalog,
   isError2,
@@ -48,11 +48,11 @@ import {
   contentToCoreParts,
   resolvePromptMediaFiles,
   resolvePromptSessionMediaRefs,
-  runtimeAttachmentsTarget,
-  runtimeOriginalsTarget,
+  environmentAttachmentsTarget,
+  environmentOriginalsTarget,
   type PromptMediaPreparation,
 } from '../lib/promptMedia';
-import type { RuntimeLease } from '@moonshot-ai/agent-core-v2/runtime/runtime';
+import type { EnvironmentLease } from '@moonshot-ai/agent-core-v2/environment/environment';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
@@ -232,10 +232,10 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         if (attachments.length > 0) {
           if (contentHasPathRefs(attachments)) {
             const mainAgent = await ensureMainAgentHandle(resolved.handle);
-            if (mainAgent.accessor.get(IAgentRuntimeBindingService).get().runtimeId !== 'local') {
+            if (mainAgent.accessor.get(IAgentEnvironmentBindingService).get().environmentId !== 'local') {
               throw new Error2(
                 ErrorCodes.REQUEST_INVALID,
-                'file attachments by server-local path require the local runtime',
+                'file attachments by server-local path require the local environment',
               );
             }
           }
@@ -260,8 +260,8 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
           const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
           const sessionDir = resolved.handle.accessor.get(ISessionContext).sessionDir;
           const mainAgent = await ensureMainAgentHandle(resolved.handle);
-          const binding = mainAgent.accessor.get(IAgentRuntimeBindingService).get();
-          let runtimeLease: RuntimeLease | undefined;
+          const binding = mainAgent.accessor.get(IAgentEnvironmentBindingService).get();
+          let environmentLease: EnvironmentLease | undefined;
           try {
             preparedMedia = await resolvePromptMediaFiles(
               resolvedSessionMedia,
@@ -273,23 +273,23 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
                   .get(IAgentProfileService)
                   .getModelProviderType(),
                 resolveOriginalsDir: async () => sessionMediaOriginalsDir(sessionDir),
-                resolveOriginalsTarget: binding.runtimeId === 'local'
+                resolveOriginalsTarget: binding.environmentId === 'local'
                   ? undefined
                   : async () => {
-                      runtimeLease ??= core.accessor.get(IRuntimeResolver).acquire(binding, ['fs']);
-                      return runtimeOriginalsTarget(runtimeLease.runtime);
+                      environmentLease ??= core.accessor.get(IEnvironmentResolver).acquire(binding, ['fs']);
+                      return environmentOriginalsTarget(environmentLease.environment);
                     },
                 resolveAttachmentsDir: async () => join(sessionDir, 'attachments'),
-                resolveAttachmentsTarget: binding.runtimeId === 'local'
+                resolveAttachmentsTarget: binding.environmentId === 'local'
                   ? undefined
                   : async () => {
-                      runtimeLease ??= core.accessor.get(IRuntimeResolver).acquire(binding, ['fs']);
-                      return runtimeAttachmentsTarget(runtimeLease.runtime);
+                      environmentLease ??= core.accessor.get(IEnvironmentResolver).acquire(binding, ['fs']);
+                      return environmentAttachmentsTarget(environmentLease.environment);
                     },
               },
             );
           } finally {
-            runtimeLease?.dispose();
+            environmentLease?.dispose();
           }
           attachmentParts.push(...contentToCoreParts(preparedMedia.content));
         }

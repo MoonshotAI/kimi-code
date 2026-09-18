@@ -475,10 +475,10 @@ async function resolveNativeSession(
       profile: agentProfileName ?? 'agent',
       model,
     },
-    // `--runtime <id>` one-shot override of the `[runtimes]` default for the
+    // `--environment <id>` one-shot override of the `[environments]` default for the
     // new session's initial binding; id/defaultCwd validation is enforced by
-    // the runtimes config-resolution layer at this seam.
-    runtimeId: opts.runtime,
+    // the environments config-resolution layer at this seam.
+    environmentId: opts.environment,
   });
   const agentContext = await ensureMainAgent(session);
   const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;

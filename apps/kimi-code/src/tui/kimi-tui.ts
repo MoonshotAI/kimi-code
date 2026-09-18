@@ -151,7 +151,7 @@ import {
   type LivePaneState,
   type LoginProgressSpinnerHandle,
   type QueuedMessage,
-  type RuntimeSlotState,
+  type EnvironmentSlotState,
   type SteerInputItem,
   type StepRetryState,
   type TranscriptEntry,
@@ -532,7 +532,7 @@ export class KimiTUI {
       () => this.state.appState.inputMode,
       skillCommandNames,
       isExperimentalFlagEnabled('remote_runtime')
-        ? remoteMentionSuggester(this.session, this.state.appState.runtime)
+        ? remoteMentionSuggester(this.session, this.state.appState.environment)
         : undefined,
     );
     this.state.editor.setAutocompleteProvider(provider);
@@ -1765,8 +1765,8 @@ export class KimiTUI {
     this.staging.handleTurnEnded(event);
     this.surveyController.notifyTurnEnded();
     // A disconnect mid-turn surfaces here: the slot flips to the error color
-    // and the one-shot notice points at /runtime for the explicit reconnect.
-    void this.refreshRuntimeSlot();
+    // and the one-shot notice points at /environment for the explicit reconnect.
+    void this.refreshEnvironmentSlot();
   }
 
   releaseStagingMedia(mediaAttachmentIds: readonly number[]): void {
@@ -2191,7 +2191,7 @@ export class KimiTUI {
   }
 
   // =========================================================================
-  // Session Runtime
+  // Session Environment
   // =========================================================================
 
   requireSession(): Session {
@@ -2414,26 +2414,26 @@ export class KimiTUI {
       goal: goalResult.goal,
     });
     this.syncAdditionalDirs(session);
-    await this.refreshRuntimeSlot(session);
+    await this.refreshEnvironmentSlot(session);
   }
 
   /**
-   * Sync the footer runtime slot with the session's current binding and the
-   * runtime registry's connection status (experimental remote runtime). A
+   * Sync the footer environment slot with the session's current binding and the
+   * environment registry's connection status (experimental remote environment). A
    * no-op with the flag off, so flag-off sessions keep their exact current
    * behavior. Disconnection surfaces once per transition as a transcript
-   * notice carrying the recorded connect error and pointing at /runtime.
-   * Runs at session load, turn end, explicit runtime actions, and on the
-   * engine's runtime.status.changed hint (background reconnect failure after
+   * notice carrying the recorded connect error and pointing at /environment.
+   * Runs at session load, turn end, explicit environment actions, and on the
+   * engine's environment.status.changed hint (background reconnect failure after
    * resume, mid-session drops).
    */
-  async refreshRuntimeSlot(session: Session | undefined = this.session): Promise<void> {
+  async refreshEnvironmentSlot(session: Session | undefined = this.session): Promise<void> {
     if (session === undefined) return;
     if (!isExperimentalFlagEnabled('remote_runtime')) {
       // A mid-session flag toggle-off (via /experiments + session reload)
       // drops the slot and the mention suggester with it.
-      if (this.state.appState.runtime !== undefined) {
-        this.setAppState({ runtime: undefined });
+      if (this.state.appState.environment !== undefined) {
+        this.setAppState({ environment: undefined });
         this.setupAutocomplete();
       }
       return;
@@ -2441,23 +2441,23 @@ export class KimiTUI {
     let binding;
     let list;
     try {
-      [binding, list] = await Promise.all([session.getRuntime(), session.listRuntimes()]);
+      [binding, list] = await Promise.all([session.getEnvironment(), session.listEnvironments()]);
     } catch {
       return;
     }
     if (this.session !== session) return;
-    const info = list.runtimes.find((entry) => entry.runtimeId === binding.runtimeId);
-    const next: RuntimeSlotState = {
-      runtimeId: binding.runtimeId,
-      type: info?.type ?? (binding.runtimeId === 'local' ? 'local' : 'command'),
+    const info = list.environments.find((entry) => entry.environmentId === binding.environmentId);
+    const next: EnvironmentSlotState = {
+      environmentId: binding.environmentId,
+      type: info?.type ?? (binding.environmentId === 'local' ? 'local' : 'command'),
       status: info?.status ?? 'ready',
       cwd: binding.cwd,
       connectError: info?.connectError,
     };
-    const previous = this.state.appState.runtime;
+    const previous = this.state.appState.environment;
     if (
       previous !== undefined &&
-      previous.runtimeId === next.runtimeId &&
+      previous.environmentId === next.environmentId &&
       previous.type === next.type &&
       previous.status === next.status &&
       previous.cwd === next.cwd &&
@@ -2465,19 +2465,19 @@ export class KimiTUI {
     ) {
       return;
     }
-    this.setAppState({ runtime: next });
-    if (previous?.runtimeId !== next.runtimeId || previous?.type !== next.type) {
+    this.setAppState({ environment: next });
+    if (previous?.environmentId !== next.environmentId || previous?.type !== next.type) {
       this.setupAutocomplete();
     }
     if (
-      next.runtimeId !== 'local' &&
+      next.environmentId !== 'local' &&
       next.status === 'disconnected' &&
       previous?.status !== 'disconnected'
     ) {
       const reason = next.connectError?.split('\n', 1)[0];
       this.showNotice(
-        `Runtime ${next.type}:${next.runtimeId} disconnected`,
-        `${reason === undefined || reason.length === 0 ? '' : `${reason}\n`}Use /runtime to reconnect.`,
+        `Environment ${next.type}:${next.environmentId} disconnected`,
+        `${reason === undefined || reason.length === 0 ? '' : `${reason}\n`}Use /environment to reconnect.`,
       );
     }
   }
@@ -2541,7 +2541,7 @@ export class KimiTUI {
     this.session = undefined;
     this.state.swarmModeEntry = undefined;
     this.harness.setTelemetryContext({ sessionId: null });
-    this.setAppState({ goal: null, runtime: undefined });
+    this.setAppState({ goal: null, environment: undefined });
     return previous;
   }
 
@@ -4177,7 +4177,7 @@ export class KimiTUI {
   }
 
   private showApprovalPanel(payload: ApprovalPanelData): void {
-    const environment = this.runtimeEnvironmentBadge();
+    const environment = this.environmentBadge();
     const data = environment === undefined ? payload : { ...payload, environment };
     this.patchLivePane({ pendingApproval: { data } });
     notifyTerminalOnce(this.state, `approval:${data.id}`, {
@@ -4201,10 +4201,10 @@ export class KimiTUI {
   }
 
   /** The approval panel's environment identifier for a remote-bound session. */
-  private runtimeEnvironmentBadge(): string | undefined {
-    const runtime = this.state.appState.runtime;
-    if (runtime === undefined || runtime.runtimeId === 'local') return undefined;
-    return `${runtime.type}:${runtime.runtimeId}`;
+  private environmentBadge(): string | undefined {
+    const environment = this.state.appState.environment;
+    if (environment === undefined || environment.environmentId === 'local') return undefined;
+    return `${environment.type}:${environment.environmentId}`;
   }
 
   private hideApprovalPanel(): void {

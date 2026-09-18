@@ -1,0 +1,398 @@
+import { describe, expect, it, vi } from 'vitest';
+
+import type { Session, SessionEnvironmentsInfo } from '@moonshot-ai/kimi-code-sdk';
+
+import { handleEnvironmentCommand } from '#/tui/commands/index';
+import type { SlashCommandHost } from '#/tui/commands/dispatch';
+import { EnvironmentAddDialogComponent } from '#/tui/components/dialogs/environment-add-dialog';
+import { EnvironmentCwdDialogComponent } from '#/tui/components/dialogs/environment-cwd-dialog';
+import { EnvironmentManagerComponent } from '#/tui/components/dialogs/environment-manager';
+import { ChoicePickerComponent } from '#/tui/components/dialogs/choice-picker';
+
+const ENTER = '\r';
+const DOWN = '[B';
+const TAB = '\t';
+
+interface MountedPanel {
+  handleInput(data: string): void;
+}
+
+function makeEnvironmentsInfo(overrides: Partial<SessionEnvironmentsInfo> = {}): SessionEnvironmentsInfo {
+  return {
+    workspaceId: 'ws-1',
+    environments: [
+      { environmentId: 'local', type: 'local', status: 'ready', generation: 'g0', capabilities: ['fs', 'process'] },
+      {
+        environmentId: 'dev-box',
+        type: 'ssh',
+        status: 'ready',
+        generation: 'g1',
+        capabilities: ['fs', 'process'],
+        defaultCwd: '/home/me/projects',
+      },
+      { environmentId: 'sandbox', type: 'command', status: 'disconnected', generation: 'g2', capabilities: [] },
+    ],
+    sshHosts: ['dev-box', 'staging'],
+    ...overrides,
+  };
+}
+
+function makeHost(options: {
+  list?: SessionEnvironmentsInfo;
+  currentEnvironmentId?: string;
+  switchError?: Error;
+  reconnectError?: Error;
+  declareError?: Error;
+  registrationDelayCalls?: number;
+}) {
+  let currentList = options.list ?? makeEnvironmentsInfo();
+  // Simulate the engine's declaration watch: once declareEnvironment writes a
+  // [environments] entry, listEnvironments includes the new environment — after
+  // `registrationDelayCalls` polls, to mimic the async reconcile.
+  let callsAfterAdd = -1;
+  let pending: SessionEnvironmentsInfo['environments'][number] | undefined;
+  const session = {
+    id: 'ses-1',
+    listEnvironments: vi.fn(async () => {
+      if (callsAfterAdd >= 0) callsAfterAdd += 1;
+      if (pending !== undefined && callsAfterAdd > (options.registrationDelayCalls ?? 0)) {
+        currentList = { ...currentList, environments: [...currentList.environments, pending] };
+        pending = undefined;
+      }
+      return currentList;
+    }),
+    getEnvironment: vi.fn(async () => ({ workspaceId: 'ws-1', environmentId: options.currentEnvironmentId ?? 'local' })),
+    switchEnvironment: vi.fn(async (environmentId: string, opts?: { cwd?: string }) => {
+      if (options.switchError !== undefined) throw options.switchError;
+      return { workspaceId: 'ws-1', environmentId, cwd: opts?.cwd };
+    }),
+    reconnectEnvironment: vi.fn(async () => {
+      if (options.reconnectError !== undefined) throw options.reconnectError;
+      return { workspaceId: 'ws-1', environmentId: options.currentEnvironmentId ?? 'local' };
+    }),
+    declareEnvironment: vi.fn(
+      async (input: { id: string; entry: { type?: string; defaultCwd?: string }; scope?: string }) => {
+        if (options.declareError !== undefined) throw options.declareError;
+        callsAfterAdd = 0;
+        pending = {
+          environmentId: input.id,
+          type: input.entry.type ?? 'command',
+          status: 'disconnected',
+          generation: `g-${input.id}`,
+          capabilities: [],
+          defaultCwd: input.entry.defaultCwd,
+        } as unknown as SessionEnvironmentsInfo['environments'][number];
+      },
+    ),
+  };
+  const mounted: MountedPanel[] = [];
+  const host = {
+    state: { appState: { model: 'test-model' } },
+    session: session as unknown as Session,
+    requireSession: () => session as unknown as Session,
+    harness: {},
+    mountEditorReplacement: vi.fn((panel: MountedPanel) => {
+      mounted.push(panel);
+    }),
+    restoreEditor: vi.fn(),
+    showStatus: vi.fn(),
+    showError: vi.fn(),
+    refreshEnvironmentSlot: vi.fn(async () => {}),
+  } as unknown as SlashCommandHost;
+  return { host, session, mounted, list: currentList };
+}
+
+function latest<T>(mounted: MountedPanel[], type: new (...args: never[]) => T): T {
+  const panel = mounted.toReversed().find((p) => p instanceof type);
+  if (panel === undefined) throw new Error(`no mounted panel of type ${type.name}`);
+  return panel as T;
+}
+
+function typeText(panel: MountedPanel, text: string): void {
+  for (const char of text) panel.handleInput(char);
+}
+
+describe('handleEnvironmentCommand', () => {
+  it('mounts the manager with the fetched environment list and binding', async () => {
+    const { host, session, mounted } = makeHost({});
+    await handleEnvironmentCommand(host);
+
+    expect(session.listEnvironments).toHaveBeenCalledTimes(1);
+    const manager = latest(mounted, EnvironmentManagerComponent);
+    const plain = manager.render(120).join('\n').replaceAll(/\[[0-9;]*m/g, '');
+    expect(plain).toContain('dev-box');
+    expect(plain).toContain('sandbox');
+    expect(plain).toContain('← current');
+  });
+
+  it('switches to a remote environment through the cwd dialog', async () => {
+    const { host, session, mounted } = makeHost({});
+    await handleEnvironmentCommand(host);
+
+    const manager = latest(mounted, EnvironmentManagerComponent);
+    manager.handleInput(DOWN);
+    manager.handleInput(ENTER);
+
+    const dialog = latest(mounted, EnvironmentCwdDialogComponent);
+    dialog.handleInput(ENTER); // accept the prefilled defaultCwd
+    await vi.waitFor(() => {
+      expect(session.switchEnvironment).toHaveBeenCalledWith('dev-box', { cwd: '/home/me/projects' });
+    });
+    await vi.waitFor(() => {
+      expect(host.restoreEditor).toHaveBeenCalled();
+    });
+    expect(host.refreshEnvironmentSlot).toHaveBeenCalled();
+    expect(host.showStatus).toHaveBeenCalledWith('Environment switched to dev-box.');
+  });
+
+  it('keeps handshake or validation failures inline in the cwd dialog', async () => {
+    const { host, mounted } = makeHost({
+      switchError: new Error('handshake failed: exit code 127\nkimi: command not found'),
+    });
+    await handleEnvironmentCommand(host);
+
+    const manager = latest(mounted, EnvironmentManagerComponent);
+    manager.handleInput(DOWN);
+    manager.handleInput(ENTER);
+    const dialog = latest(mounted, EnvironmentCwdDialogComponent);
+    dialog.handleInput(ENTER);
+    await vi.waitFor(() => {
+      const plain = dialog.render(100).join('\n').replaceAll(/\[[0-9;]*m/g, '');
+      expect(plain).toContain('handshake failed: exit code 127');
+    });
+    expect(host.restoreEditor).not.toHaveBeenCalled();
+  });
+
+  it('switches to local directly without a cwd prompt', async () => {
+    const { host, session, mounted } = makeHost({ currentEnvironmentId: 'dev-box' });
+    await handleEnvironmentCommand(host);
+
+    const manager = latest(mounted, EnvironmentManagerComponent);
+    // Selection starts on the current (dev-box) row; local sits above it.
+    manager.handleInput('[A');
+    manager.handleInput(ENTER);
+    await vi.waitFor(() => {
+      expect(session.switchEnvironment).toHaveBeenCalledWith('local', undefined);
+    });
+    expect(mounted.some((p) => p instanceof EnvironmentCwdDialogComponent)).toBe(false);
+    await vi.waitFor(() => {
+      expect(host.restoreEditor).toHaveBeenCalled();
+    });
+  });
+
+  it('reconnects the bound disconnected environment on R and refreshes the list', async () => {
+    const { host, session, mounted } = makeHost({ currentEnvironmentId: 'sandbox' });
+    await handleEnvironmentCommand(host);
+
+    const manager = latest(mounted, EnvironmentManagerComponent);
+    manager.handleInput('r');
+    await vi.waitFor(() => {
+      expect(session.reconnectEnvironment).toHaveBeenCalledTimes(1);
+    });
+    await vi.waitFor(() => {
+      expect(host.refreshEnvironmentSlot).toHaveBeenCalled();
+    });
+    expect(session.listEnvironments).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows a reconnect failure inline in the manager', async () => {
+    const { host, mounted } = makeHost({
+      currentEnvironmentId: 'sandbox',
+      reconnectError: new Error('ssh exited 255'),
+    });
+    await handleEnvironmentCommand(host);
+
+    const manager = latest(mounted, EnvironmentManagerComponent);
+    manager.handleInput('r');
+    await vi.waitFor(() => {
+      const plain = manager.render(120).join('\n').replaceAll(/\[[0-9;]*m/g, '');
+      expect(plain).toContain('ssh exited 255');
+    });
+    expect(host.restoreEditor).not.toHaveBeenCalled();
+  });
+
+  it('adds an ssh environment from a discovery candidate through the full form flow', async () => {
+    const { host, session, mounted } = makeHost({});
+    await handleEnvironmentCommand(host);
+
+    const manager = latest(mounted, EnvironmentManagerComponent);
+    manager.handleInput(DOWN);
+    manager.handleInput(DOWN);
+    manager.handleInput(DOWN);
+    manager.handleInput(ENTER); // [ Add Environment ]
+
+    await vi.waitFor(() => {
+      expect(mounted.some((p) => p instanceof ChoicePickerComponent)).toBe(true);
+    });
+    const typePicker = latest(mounted, ChoicePickerComponent);
+    typePicker.handleInput(ENTER); // first option: SSH host
+
+    await vi.waitFor(() => {
+      expect(mounted.filter((p) => p instanceof ChoicePickerComponent).length).toBe(2);
+    });
+    const hostPicker = latest(mounted, ChoicePickerComponent);
+    hostPicker.handleInput(DOWN); // 'staging' — not an existing environment id
+    hostPicker.handleInput(ENTER);
+
+    await vi.waitFor(() => {
+      expect(mounted.some((p) => p instanceof EnvironmentAddDialogComponent)).toBe(true);
+    });
+    const form = latest(mounted, EnvironmentAddDialogComponent);
+    form.handleInput(TAB); // id (empty -> derives from host)
+    form.handleInput(TAB); // defaultCwd
+    typeText(form, '/home/me/projects');
+    form.handleInput(ENTER); // defaultCwd → scope
+    form.handleInput(ENTER); // scope → submit (default: global)
+
+    await vi.waitFor(() => {
+      expect(session.declareEnvironment).toHaveBeenCalledWith({
+        id: 'staging',
+        entry: { type: 'ssh', host: 'staging', defaultCwd: '/home/me/projects' },
+        scope: 'global',
+      });
+    });
+    await vi.waitFor(() => {
+      expect(host.showStatus).toHaveBeenCalledWith('Environment "staging" added to config.toml.');
+    });
+    // The watch-driven registration lands before the manager reopens, so the
+    // new environment is listed immediately.
+    await vi.waitFor(() => {
+      const reopened = latest(mounted, EnvironmentManagerComponent);
+      const plain = reopened.render(120).join('\n').replaceAll(/\[[0-9;]*m/g, '');
+      expect(plain).toContain('staging');
+    });
+  });
+
+  it('adds a project-scope environment through the form scope control', async () => {
+    const { host, session, mounted } = makeHost({});
+    await handleEnvironmentCommand(host);
+
+    const manager = latest(mounted, EnvironmentManagerComponent);
+    manager.handleInput(DOWN);
+    manager.handleInput(DOWN);
+    manager.handleInput(DOWN);
+    manager.handleInput(ENTER); // [ Add Environment ]
+
+    await vi.waitFor(() => {
+      expect(mounted.some((p) => p instanceof ChoicePickerComponent)).toBe(true);
+    });
+    const typePicker = latest(mounted, ChoicePickerComponent);
+    typePicker.handleInput(ENTER); // SSH host
+
+    await vi.waitFor(() => {
+      expect(mounted.filter((p) => p instanceof ChoicePickerComponent).length).toBe(2);
+    });
+    const hostPicker = latest(mounted, ChoicePickerComponent);
+    hostPicker.handleInput(DOWN); // 'staging'
+    hostPicker.handleInput(ENTER);
+
+    await vi.waitFor(() => {
+      expect(mounted.some((p) => p instanceof EnvironmentAddDialogComponent)).toBe(true);
+    });
+    const form = latest(mounted, EnvironmentAddDialogComponent);
+    form.handleInput(TAB); // id
+    form.handleInput(TAB); // defaultCwd
+    form.handleInput(TAB); // scope
+    form.handleInput('\u001B[C'); // → project
+    form.handleInput(ENTER); // submit
+
+    await vi.waitFor(() => {
+      expect(session.declareEnvironment).toHaveBeenCalledWith({
+        id: 'staging',
+        entry: { type: 'ssh', host: 'staging', defaultCwd: undefined },
+        scope: 'project',
+      });
+    });
+    await vi.waitFor(() => {
+      expect(host.showStatus).toHaveBeenCalledWith('Environment "staging" added to .kimi-code/environments.toml.');
+    });
+    await vi.waitFor(() => {
+      const reopened = latest(mounted, EnvironmentManagerComponent);
+      const plain = reopened.render(120).join('\n').replaceAll(/\[[0-9;]*m/g, '');
+      expect(plain).toContain('staging');
+    });
+  });
+
+  it('waits for a delayed watch registration before reopening the manager', async () => {
+    const { host, mounted } = makeHost({ registrationDelayCalls: 2 });
+    await handleEnvironmentCommand(host);
+
+    const manager = latest(mounted, EnvironmentManagerComponent);
+    manager.handleInput(DOWN);
+    manager.handleInput(DOWN);
+    manager.handleInput(DOWN);
+    manager.handleInput(ENTER); // [ Add Environment ]
+
+    await vi.waitFor(() => {
+      expect(mounted.some((p) => p instanceof ChoicePickerComponent)).toBe(true);
+    });
+    const typePicker = latest(mounted, ChoicePickerComponent);
+    typePicker.handleInput(ENTER); // first option: SSH host
+
+    await vi.waitFor(() => {
+      expect(mounted.filter((p) => p instanceof ChoicePickerComponent).length).toBe(2);
+    });
+    const hostPicker = latest(mounted, ChoicePickerComponent);
+    hostPicker.handleInput(DOWN); // 'staging' — not an existing environment id
+    hostPicker.handleInput(ENTER);
+
+    await vi.waitFor(() => {
+      expect(mounted.some((p) => p instanceof EnvironmentAddDialogComponent)).toBe(true);
+    });
+    const form = latest(mounted, EnvironmentAddDialogComponent);
+    form.handleInput(TAB); // id (empty -> derives from host)
+    form.handleInput(TAB); // defaultCwd
+    typeText(form, '/home/me/projects');
+    form.handleInput(ENTER); // defaultCwd → scope
+    form.handleInput(ENTER); // scope → submit
+
+    await vi.waitFor(() => {
+      expect(host.showStatus).toHaveBeenCalledWith('Environment "staging" added to config.toml.');
+    });
+    await vi.waitFor(() => {
+      const reopened = latest(mounted, EnvironmentManagerComponent);
+      const plain = reopened.render(120).join('\n').replaceAll(/\[[0-9;]*m/g, '');
+      expect(plain).toContain('staging');
+    });
+  });
+
+  it('keeps engine validation failures inline in the add form', async () => {
+    const { host, mounted } = makeHost({
+      declareError: new Error('environments section is invalid'),
+    });
+    await handleEnvironmentCommand(host);
+
+    const manager = latest(mounted, EnvironmentManagerComponent);
+    manager.handleInput(DOWN);
+    manager.handleInput(DOWN);
+    manager.handleInput(DOWN);
+    manager.handleInput(ENTER);
+
+    await vi.waitFor(() => {
+      expect(mounted.some((p) => p instanceof ChoicePickerComponent)).toBe(true);
+    });
+    const typePicker = latest(mounted, ChoicePickerComponent);
+    typePicker.handleInput(ENTER);
+
+    await vi.waitFor(() => {
+      expect(mounted.filter((p) => p instanceof ChoicePickerComponent).length).toBe(2);
+    });
+    const hostPicker = latest(mounted, ChoicePickerComponent);
+    hostPicker.handleInput(DOWN); // 'staging' — not an existing environment id
+    hostPicker.handleInput(ENTER);
+
+    await vi.waitFor(() => {
+      expect(mounted.some((p) => p instanceof EnvironmentAddDialogComponent)).toBe(true);
+    });
+    const form = latest(mounted, EnvironmentAddDialogComponent);
+    form.handleInput(TAB);
+    form.handleInput(TAB);
+    form.handleInput(TAB);
+    form.handleInput(ENTER);
+    await vi.waitFor(() => {
+      const plain = form.render(100).join('\n').replaceAll(/\[[0-9;]*m/g, '');
+      expect(plain).toContain('environments section is invalid');
+    });
+    expect(host.showStatus).not.toHaveBeenCalled();
+  });
+});

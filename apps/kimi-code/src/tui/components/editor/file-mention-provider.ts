@@ -22,7 +22,7 @@ export interface SlashAutocompleteCommand extends SlashCommand {
 
 /**
  * Async `@` mention suggestions backed by the engine's fs suggest (remote
- * runtimes list files on the target host, where the local fd scan is blind).
+ * environments list files on the target host, where the local fd scan is blind).
  * Returns `null` when the endpoint is unavailable or the query has no hits —
  * the caller then keeps the mention list closed rather than falling back to
  * local files a remote session cannot see.
@@ -92,7 +92,7 @@ export class FileMentionProvider implements AutocompleteProvider {
     const atPrefix = extractAtPrefix(textBeforeCursor);
     if (atPrefix !== null) {
       // A remote-bound session completes `@` from the target host's fs (the
-      // local fd scan would list files the runtime cannot see). The hook is
+      // local fd scan would list files the environment cannot see). The hook is
       // only installed for remote sessions; local behavior is unchanged.
       if (this.mentionSuggester !== undefined) {
         const items = await this.mentionSuggester(atPrefix.slice(1), options.signal).catch(() => null);

@@ -185,7 +185,7 @@ describe('built-in slash command registry', () => {
         'plan',
         'reload',
         'reload-tui',
-        'runtime',
+        'environment',
         'secondary-model',
         'sessions',
         'settings',
@@ -225,11 +225,11 @@ describe('built-in slash command registry', () => {
     expect((command as KimiSlashCommand).experimentalFlag).toBe('tower');
   });
 
-  it('gates runtime behind the remote_runtime experiment and keeps it idle-only', () => {
-    const command = findBuiltInSlashCommand('runtime');
+  it('gates environment behind the remote_runtime experiment and keeps it idle-only', () => {
+    const command = findBuiltInSlashCommand('environment');
     expect(command).toBeDefined();
     expect((command as KimiSlashCommand).experimentalFlag).toBe('remote_runtime');
-    expect(command?.aliases).toContain('runtimes');
+    expect(command?.aliases).toContain('environments');
     expect(resolveSlashCommandAvailability(command!, '')).toBe('idle-only');
   });
 

@@ -24,7 +24,7 @@ import type {
   AddAdditionalDirInput,
   AddAdditionalDirResult,
   AgentCommandInfo,
-  AgentRuntimeBinding,
+  AgentEnvironmentBinding,
   AppMcpServerInspection,
   BackgroundTaskInfo,
   ConfigDiagnostics,
@@ -68,9 +68,9 @@ import type {
   ResumedSessionSummary,
   SessionSummary,
   SessionSummaryPage,
-  SessionRuntimesInfo,
-  RemoteRuntimeEntry,
-  RuntimeDeclarationScope,
+  SessionEnvironmentsInfo,
+  RemoteEnvironmentEntry,
+  EnvironmentDeclarationScope,
   SkillSummary,
   PluginCommandDef,
   SuggestFilesInput,
@@ -155,16 +155,16 @@ export interface RunCommandRpcInput extends SessionIdRpcInput {
   readonly args?: string | undefined;
 }
 
-export interface SwitchSessionRuntimeRpcInput extends SessionIdRpcInput {
-  readonly runtimeId: string;
+export interface SwitchSessionEnvironmentRpcInput extends SessionIdRpcInput {
+  readonly environmentId: string;
   readonly cwd?: string;
 }
 
-export interface DeclareRuntimeRpcInput extends SessionIdRpcInput {
+export interface DeclareEnvironmentRpcInput extends SessionIdRpcInput {
   readonly id: string;
-  readonly entry: RemoteRuntimeEntry;
-  /** Write target: user-level `config.toml` (default) or the workspace's `.kimi-code/runtimes.toml`. */
-  readonly scope?: RuntimeDeclarationScope;
+  readonly entry: RemoteEnvironmentEntry;
+  /** Write target: user-level `config.toml` (default) or the workspace's `.kimi-code/environments.toml`. */
+  readonly scope?: EnvironmentDeclarationScope;
 }
 
 export interface ReconnectMcpServerRpcInput extends SessionIdRpcInput {
@@ -412,7 +412,7 @@ export abstract class SDKRpcClientBase {
 
   /**
    * Session-scoped file suggestions rooted at the session's workspace
-   * context and served by the session's currently bound runtime. Only the
+   * context and served by the session's currently bound environment. Only the
    * agent-core-v2 engine implements it; the v1 engine reports `undefined`
    * (capability absent), same convention as the session-less variant.
    */
@@ -491,15 +491,15 @@ export abstract class SDKRpcClientBase {
 
   abstract runCommand(input: RunCommandRpcInput): Promise<void>;
 
-  abstract getRuntime(input: SessionIdRpcInput): Promise<AgentRuntimeBinding>;
+  abstract getEnvironment(input: SessionIdRpcInput): Promise<AgentEnvironmentBinding>;
 
-  abstract switchRuntime(input: SwitchSessionRuntimeRpcInput): Promise<AgentRuntimeBinding>;
+  abstract switchEnvironment(input: SwitchSessionEnvironmentRpcInput): Promise<AgentEnvironmentBinding>;
 
-  abstract reconnectRuntime(input: SessionIdRpcInput): Promise<AgentRuntimeBinding>;
+  abstract reconnectEnvironment(input: SessionIdRpcInput): Promise<AgentEnvironmentBinding>;
 
-  abstract listRuntimes(input: SessionIdRpcInput): Promise<SessionRuntimesInfo>;
+  abstract listEnvironments(input: SessionIdRpcInput): Promise<SessionEnvironmentsInfo>;
 
-  abstract declareRuntime(input: DeclareRuntimeRpcInput): Promise<void>;
+  abstract declareEnvironment(input: DeclareEnvironmentRpcInput): Promise<void>;
 
   onEvent(listener: (event: Event) => void): Unsubscribe {
     this.eventListeners.add(listener);

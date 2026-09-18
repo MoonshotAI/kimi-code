@@ -12,7 +12,7 @@ import { SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 
 import { IAgentToolActivationService } from './toolActivation';
 
@@ -26,7 +26,7 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @ISessionToolPolicyGate private readonly toolPolicyGate: ISessionToolPolicyGate,
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @IEventBus eventBus: IEventBus,
     @AgentToolContribution private readonly contributions: CollectionView<AgentToolContribution>,
   ) {
@@ -36,7 +36,7 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
         void this.activate();
       }),
     );
-    this._register(this.runtime.onDidChange(() => this.refreshRuntimeRecords()));
+    this._register(this.environment.onDidChange(() => this.refreshEnvironmentRecords()));
     this._register(
       this.contributions.onDidChange((change) => {
         this.activateRecords(change.added);
@@ -63,7 +63,7 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
         const { id, options } = record;
         const source = options.source ?? 'builtin';
         if (this.toolRegistry.resolve(options.name) !== undefined) continue;
-        if (!this.runtimeAllows(record)) continue;
+        if (!this.environmentAllows(record)) continue;
         if (!isToolActive(workspaceVeto, options.name, source)) continue;
         const activeByProfile =
           options.name === SELECT_TOOLS_TOOL_NAME
@@ -82,16 +82,16 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
     });
   }
 
-  private refreshRuntimeRecords(): void {
+  private refreshEnvironmentRecords(): void {
     for (const record of this.contributions.items) {
-      if (!this.runtimeAllows(record)) this.deactivateRecord(record);
+      if (!this.environmentAllows(record)) this.deactivateRecord(record);
     }
     this.activateRecords(this.contributions.items);
   }
 
-  private runtimeAllows(record: AgentToolContribution): boolean {
-    const required = record.options.requiredRuntimeCapabilities;
-    return required === undefined || this.runtime.isAvailable(required);
+  private environmentAllows(record: AgentToolContribution): boolean {
+    const required = record.options.requiredEnvironmentCapabilities;
+    return required === undefined || this.environment.isAvailable(required);
   }
 
   private deactivateRecord(record: AgentToolContribution): void {

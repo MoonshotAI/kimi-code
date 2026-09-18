@@ -15,6 +15,7 @@
 #   database                 src/persistence/configSection.ts
 #   defaultPermissionMode    src/agent/permissionMode/configSection.ts
 #   defaultPlanMode          src/features/plan/configSection.ts
+#   environments             src/environment/configSection.ts
 #   experimental             src/app/flag/flag.ts
 #   extraAgentDirs           src/workspace/workspaceAgentProfileLoader/configSection.ts
 #   extraSkillDirs           src/features/skill/catalog/configSection.ts
@@ -29,7 +30,6 @@
 #   permission               src/agent/permissionRules/configSection.ts
 #   providers                src/app/kosongConfig/configSection.ts
 #   read                     src/agent/tools/os/read/configSection.ts
-#   runtimes                 src/runtime/configSection.ts
 #   secondaryModel           src/session/subagent/configSection.ts
 #   services                 src/app/auth/configSection.ts
 #   subagent                 src/session/subagent/configSection.ts
@@ -128,6 +128,15 @@ manual_tick = false
 # ##########################################################################
 
 default_plan_mode = false
+
+# ##########################################################################
+# environments
+#   owner: src/environment/configSection.ts
+#   scope: core
+# ##########################################################################
+
+[environments]
+# default: string
 
 # ##########################################################################
 # experimental
@@ -351,15 +360,6 @@ merge_all_available_skills = true
 [read]
 # default_max_chars: integer
 # max_chars: integer
-
-# ##########################################################################
-# runtimes
-#   owner: src/runtime/configSection.ts
-#   scope: core
-# ##########################################################################
-
-[runtimes]
-# default: string
 
 # ##########################################################################
 # secondaryModel (config.toml: secondary_model)

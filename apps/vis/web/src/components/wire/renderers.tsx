@@ -1408,13 +1408,13 @@ export const WIRE_RENDERERS: RendererMap = {
     }),
   },
 
-  'runtime.set_binding': {
+  'environment.set_binding': {
     tone: 'meta',
-    label: 'runtime',
+    label: 'environment',
     headline: (r) => ({
       main: (
         <span className="flex items-center gap-2 min-w-0">
-          <Mono>{r.runtimeId}</Mono>
+          <Mono>{r.environmentId}</Mono>
           <Dim className="truncate">workspace {r.workspaceId}</Dim>
         </span>
       ),
