@@ -416,19 +416,27 @@ describe('watch chokidar mode', () => {
 
   it('does not emit sibling flood names when watching candidate paths', async () => {
     root = await mkdtemp(join(tmpdir(), 'watch-candidates-'));
+    const kimi = join(root, '.kimi-code');
+    const sessions = join(kimi, 'sessions', 's1.json');
+    await mkdir(join(kimi, 'sessions'), { recursive: true });
     await writeFile(join(root, 'ck_0001'), 'x');
+    await writeFile(sessions, 'old');
     const events: WatchChange[] = [];
-    handle = watchCandidates(root, [join(root, 'AGENTS.md')]);
+    const file = join(kimi, 'local.toml');
+    handle = watchCandidates(root, [file]);
     handle.onDidChange((e) => events.push(e));
     await handle.ready;
 
     await writeFile(join(root, 'ck_0002'), 'y');
+    await writeFile(sessions, 'new');
     await wait(300);
-    expect(events.some((e) => e.path.includes('ck_'))).toBe(false);
+    expect(events.some((e) => e.path.includes('ck_') || e.path.includes('sessions'))).toBe(false);
 
-    const file = join(root, 'AGENTS.md');
     await writeFile(file, 'hello');
-    await expect.poll(() => events.some((e) => e.path === file || e.path === root)).toBe(true);
+    await expect.poll(() => events.some((e) => e.path === file), { timeout: 5000 }).toBe(true);
+    expect(events.some((e) => e.path === kimi || e.path === root || e.path.includes('sessions'))).toBe(
+      false,
+    );
   });
 
   it('prunes events matching a custom ignored predicate', async () => {

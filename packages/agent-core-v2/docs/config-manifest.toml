@@ -8,7 +8,7 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (28 sections · 2 overlay(s))
+# Index (29 sections · 2 overlay(s))
 #   background               src/agent/task/configSection.ts
 #   builtinProductSkills     src/features/skill/catalog/configSection.ts
 #   cron                     src/features/cron/configSection.ts
@@ -37,6 +37,7 @@
 #   thinking                 src/app/kosongConfig/configSection.ts
 #   tokenCounting            src/agent/tokenCounting/configSection.ts
 #   tools                    src/agent/toolPolicy/configSection.ts
+#   watch                    src/app/watch/configSection.ts
 #   (overlay) servicesCredentialEnvOverlay  src/app/auth/configSection.ts
 #   (overlay) kimiModelEnvOverlay  src/app/kosongConfig/envOverlay.ts
 
@@ -489,3 +490,15 @@ strategy = "measured+estimated"
 [tools]
 # enabled: string[]
 # disabled: string[]
+
+# ##########################################################################
+# watch
+#   owner: src/app/watch/configSection.ts
+#   scope: core
+#   hooks: stripEnv
+#   env:
+#     enabled <- KIMI_CODE_WATCH (custom parse)
+# ##########################################################################
+
+[watch]
+# enabled: boolean

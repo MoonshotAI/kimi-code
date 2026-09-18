@@ -13,7 +13,7 @@ import { BugIndicatingError, Error2, ErrorCodes, onUnexpectedError } from '#/err
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ILogService } from '#/_base/log/log';
 import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { setWatchEnabled, watch } from '#human/utils/watch';
+import { setWatchEnabled, watchCandidates } from '#human/utils/watch';
 import { WATCH_SECTION, type WatchConfig } from '#/app/watch/configSection';
 
 import {
@@ -351,7 +351,7 @@ export class ConfigService extends Disposable implements IConfigService {
     this.applyWatchEnabled();
     this.ready = this.load('load');
     const configFile = join(homeDir, configKey);
-    const handle = watch(homeDir, { depth: 0 });
+    const handle = watchCandidates(homeDir, [configFile]);
     this._register(handle);
     this._register(
       handle.onDidChange((change) => {

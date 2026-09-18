@@ -70,6 +70,7 @@ const CHOKIDAR_EVENTS: Record<string, { action: WatchChangeAction; kind: WatchCh
 
 const NATIVE_RETRY_BASE_MS = 1000;
 const NATIVE_RETRY_MAX_MS = 30000;
+const LISTING_MISSING_RETRY_MS = 250;
 
 const NODE_WATCH_RUNTIME: WatchRuntime = {
   platform: process.platform,
@@ -296,7 +297,12 @@ const watchMachine = setup({
           {
             guard: ({ context, event }) =>
               context.input.options?.listing === false && event.error.code === 'ENOENT',
-            actions: assign({ ready: true }),
+            target: 'backoff',
+            actions: assign({
+              ready: true,
+              recovering: true,
+              retryDelayMs: LISTING_MISSING_RETRY_MS,
+            }),
           },
           {
             guard: ({ event }) => event.error.code === 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM',
@@ -587,23 +593,27 @@ class CandidateWatchHandle implements WatchHandle {
   private async rebuild(initial: boolean): Promise<void> {
     if (this.disposed) return;
     const plan = planCandidateWatches(this.root, this.candidates);
-    const key = `${plan.watchRoot ? '*' : ''}\0${plan.paths.join('\0')}`;
+    const key = `${plan.notify.join('\0')}\0\0${plan.paths.join('\0')}\0\0${plan.pending.join('\0')}`;
     if (!initial && key === this.planKey) return;
     this.planKey = key;
     this.teardown();
     const next: WatchHandle[] = [];
     for (const path of plan.paths) next.push(watch(path, this.options));
-    if (plan.watchRoot && watchPathExists(this.root)) {
+    for (const dir of plan.notify) {
+      if (!watchPathExists(dir)) continue;
       next.push(
-        watch(this.root, {
+        watch(dir, {
           ...this.options,
           listing: false,
           recursive: false,
           ignored: (path) =>
-            !isCandidateRelated(this.root, this.candidates, path) ||
+            !isCandidateRelated(dir, this.candidates, path) ||
             (this.options?.ignored?.(path) ?? false),
         }),
       );
+    }
+    for (const path of plan.pending) {
+      next.push(watch(path, { ...this.options, listing: false }));
     }
     this.handles.push(...next);
     for (const handle of next) {
@@ -640,20 +650,38 @@ class CandidateWatchHandle implements WatchHandle {
 function planCandidateWatches(
   root: string,
   candidates: readonly string[],
-): { readonly paths: readonly string[]; readonly watchRoot: boolean } {
+): {
+  readonly paths: readonly string[];
+  readonly notify: readonly string[];
+  readonly pending: readonly string[];
+} {
   const paths = new Set<string>();
-  let watchRoot = false;
+  const notify = new Set<string>();
+  const pending = new Set<string>();
   for (const candidate of candidates) {
-    let current = candidate;
-    while (!sameWatchPath(current, root) && !watchPathExists(current)) {
+    if (watchPathExists(candidate)) {
+      paths.add(candidate);
+      continue;
+    }
+    let current = dirname(candidate);
+    while (!watchPathExists(current) && !sameWatchPath(current, root)) {
       const parent = dirname(current);
       if (parent === current) break;
       current = parent;
     }
-    if (sameWatchPath(current, root) || !watchPathExists(current)) watchRoot = true;
-    else paths.add(current);
+    if (watchPathExists(current) && !isKimiCodeDir(current)) notify.add(current);
+    else pending.add(candidate);
   }
-  return { paths: [...paths].toSorted(), watchRoot };
+  return {
+    paths: [...paths].toSorted(),
+    notify: [...notify].toSorted(),
+    pending: [...pending].toSorted(),
+  };
+}
+
+function isKimiCodeDir(path: string): boolean {
+  const name = basename(path);
+  return process.platform === 'win32' ? name.toLowerCase() === '.kimi-code' : name === '.kimi-code';
 }
 
 function isCandidateRelated(root: string, candidates: readonly string[], path: string): boolean {
