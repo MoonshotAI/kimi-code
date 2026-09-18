@@ -171,7 +171,6 @@ function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: E
   const localRegistration = registry.register(local);
   registry.register(remote);
   const resolver = registryResolver(registry);
-  const state = new AgentStateService();
   const session = makeSessionContext({
     sessionId: 'session',
     workspaceId: 'workspace',
@@ -203,7 +202,6 @@ function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: E
     turn?: { turnId: number; phase: string; step: number; activeToolCalls: { toolCallId: string; name: string }[] };
   } = { turn: undefined };
   const loop = stubLoop(loopState);
-  const scopeContext = stubScopeContext(options.agentId ?? 'main');
   const busHandlers = new Map<string, ((event: { readonly agentId?: string }) => void)[]>();
   const published: { readonly type: string; readonly environmentId?: string; readonly status?: string }[] = [];
   const eventBus = {
@@ -225,26 +223,6 @@ function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: E
   const reminder = stubReminder(reminders);
   const appendLogRecords: WireRecord[] = [];
   const appendLog = stubAppendLog(appendLogRecords);
-  const binding = new AgentEnvironmentBindingService(
-    scopeContext,
-    state,
-    { _serviceBrand: undefined, binding: options.seedBinding ?? { workspaceId: 'workspace', environmentId: 'local' } },
-    session,
-    workspaceContext,
-    resolver,
-    dispatcher,
-    eventBus,
-    loop,
-    reminder,
-    appendLog,
-    noopLogger,
-    {
-      _serviceBrand: undefined,
-      register: () => ({ dispose: () => {} }),
-      list: () => [],
-    } as unknown as IAgentConversationUndoParticipantRegistry,
-    stubBootstrap(),
-  );
   const workspaceChanges = new Emitter<{ workspaceId: string }>();
   const workspaces = {
     _serviceBrand: undefined,
@@ -255,11 +233,42 @@ function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: E
   sessionState.contributeState(workspaceContextWorkDirKey);
   sessionState.contributeState(workspaceContextAdditionalDirsKey);
   sessionState.set(workspaceContextWorkDirKey, session.cwd);
+  const makeAgent = (agentId: string) => {
+    const agentScopeContext = stubScopeContext(agentId);
+    const agentState = new AgentStateService();
+    const agentBinding = new AgentEnvironmentBindingService(
+      agentScopeContext,
+      agentState,
+      { _serviceBrand: undefined, binding: options.seedBinding ?? { workspaceId: 'workspace', environmentId: 'local' } },
+      session,
+      workspaceContext,
+      resolver,
+      dispatcher,
+      eventBus,
+      loop,
+      reminder,
+      appendLog,
+      noopLogger,
+      {
+        _serviceBrand: undefined,
+        register: () => ({ dispose: () => {} }),
+        list: () => [],
+      } as unknown as IAgentConversationUndoParticipantRegistry,
+      stubBootstrap(),
+    );
+    return {
+      binding: agentBinding,
+      agentEnvironment: new AgentEnvironmentService(agentScopeContext, agentBinding, resolver, workspaces, eventBus, session, sessionState),
+      state: agentState,
+    };
+  };
+  const main = makeAgent(options.agentId ?? 'main');
+  const state = main.state;
   return {
     registry,
     resolver,
     state,
-    binding,
+    binding: main.binding,
     local,
     remote,
     localRegistration,
@@ -274,7 +283,8 @@ function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: E
     sessionState,
     reminders,
     appendLogRecords,
-    agentEnvironment: new AgentEnvironmentService(scopeContext, binding, resolver, workspaces, eventBus, session, sessionState),
+    makeAgent,
+    agentEnvironment: main.agentEnvironment,
   };
 }
 
@@ -567,6 +577,22 @@ describe('AgentEnvironmentBindingService', () => {
     lease.dispose();
   });
 
+  it('keeps turn acquires working when another session switches cwd on the pinned environment', async () => {
+    const { binding, agentEnvironment, registry, publishBus, makeAgent } = setup();
+    connectableEnvironment(registry, { environmentId: 'shared', status: 'ready' });
+    binding.switch('shared', '/remote/work');
+    publishBus('turn.started', { agentId: 'main' });
+
+    const other = makeAgent('agent-2');
+    await other.binding.connectAndSwitch('shared', '/remote/other');
+
+    const lease = agentEnvironment.acquire();
+    expect(lease.environment.identity).toMatchObject({ environmentId: 'shared', generation: 'shared-pending' });
+    lease.dispose();
+
+    publishBus('turn.ended', { agentId: 'main' });
+  });
+
   it('replays the restored binding without reconnecting and raises unavailable on first acquire', async () => {
     const { state, remote, restoreHooks, binding, agentEnvironment, workDirWrites } = setup();
     state.set(environmentBindingKey, { workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' });
@@ -608,15 +634,14 @@ describe('AgentEnvironmentBindingService restore from wire records', () => {
     });
   });
 
-  it('background-reconnects and reroots a reseeded remote binding', async () => {
+  it('does not connect or reroot a reseeded remote binding', async () => {
     const { registry, restoreHooks, appendLogRecords } = setup({ agentId: 'agent-1' });
-    const { connectCalls, rerootCalls } = connectableEnvironment(registry, { environmentId: 'connectable', reroot: async () => {} });
+    const { connectCalls } = connectableEnvironment(registry, { environmentId: 'connectable' });
     appendLogRecords.push({ type: 'environment.set_binding', agentId: 'agent-1', environmentId: 'connectable', cwd: '/connectable/work', time: 2 });
 
     await restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
 
-    expect(connectCalls).toEqual(['connect']);
-    expect(rerootCalls).toEqual(['/connectable/work']);
+    expect(connectCalls).toEqual([]);
   });
 
   it('ignores local binding records and keeps the seed dispatch', async () => {
@@ -959,14 +984,13 @@ describe('AgentEnvironmentBindingService.connectAndSwitch', () => {
     expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
   });
 
-  it('keeps the old binding without dispatch or reroot when the cwd check fails', async () => {
+  it('keeps the old binding without dispatch when the cwd check fails', async () => {
     const { registry, binding, dispatched } = setup();
-    const { rerootCalls } = connectableEnvironment(registry, {
+    connectableEnvironment(registry, {
       environmentId: 'invalid-stat',
       stat: async (path) => {
         throw new Error(`ENOENT: ${path}`);
       },
-      reroot: async () => {},
     });
 
     await expect(binding.connectAndSwitch('invalid-stat', '/missing')).rejects.toThrowError(
@@ -974,7 +998,6 @@ describe('AgentEnvironmentBindingService.connectAndSwitch', () => {
     );
     expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
     expect(dispatched).toHaveLength(0);
-    expect(rerootCalls).toEqual([]);
   });
 
   it('rejects a non-directory cwd and a missing cwd for non-local environments', async () => {
@@ -1027,42 +1050,42 @@ describe('AgentEnvironmentBindingService.connectAndSwitch', () => {
     expect(stats).toContain('/remote/work');
   });
 
-  it('re-roots the connected environment with the validated cwd before committing', async () => {
+  it('commits the validated cwd without replacing the shared environment generation', async () => {
     const { registry, binding } = setup();
-    const { connectCalls, rerootCalls } = connectableEnvironment(registry, { environmentId: 'rootable', reroot: async () => {} });
+    const { fake, connectCalls } = connectableEnvironment(registry, { environmentId: 'rootable' });
 
-    await expect(binding.connectAndSwitch('rootable', '/remote/work')).resolves.toEqual({
-      workspaceId: 'workspace',
-      environmentId: 'rootable',
-      cwd: '/remote/work',
-    });
+    await binding.connectAndSwitch('rootable', '/remote/work');
+
     expect(connectCalls).toEqual(['connect']);
-    expect(rerootCalls).toEqual(['/remote/work']);
     expect(binding.current).toMatchObject({ environmentId: 'rootable', cwd: '/remote/work' });
+    const generation = registry.current('rootable')!.identity.generation;
+    await binding.connectAndSwitch('rootable', '/remote/other');
+    expect(registry.current('rootable')).toBe(fake);
+    expect(registry.current('rootable')!.identity.generation).toBe(generation);
   });
 
-  it('keeps the old binding when the reroot fails', async () => {
-    const { registry, binding, dispatched } = setup();
-    connectableEnvironment(registry, {
-      environmentId: 'failing-root',
-      reroot: async () => {
-        throw new Error('registry drained');
-      },
-    });
-
-    await expect(binding.connectAndSwitch('failing-root', '/remote/work')).rejects.toThrow('registry drained');
-    expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
-    expect(dispatched).toHaveLength(0);
-  });
-
-  it('does not reroot when switching back to local', async () => {
+  it('keeps other sessions\' tracked resources alive when one session switches cwd', async () => {
     const { registry, binding } = setup();
-    const { rerootCalls } = connectableEnvironment(registry, { environmentId: 'rootable', reroot: async () => {} });
+    connectableEnvironment(registry, { environmentId: 'shared', status: 'ready' });
+    const lease = registry.acquire({ workspaceId: 'workspace', environmentId: 'shared' }, []);
+    let disposed = false;
+    lease.track({ dispose: () => { disposed = true; } });
+
+    await binding.connectAndSwitch('shared', '/remote/work');
+
+    expect(disposed).toBe(false);
+    expect(registry.current('shared')).toBe(lease.environment);
+    lease.dispose();
+  });
+
+  it('leaves the remote environment untouched when switching back to local', async () => {
+    const { registry, binding } = setup();
+    const { calls } = connectableEnvironment(registry, { environmentId: 'rootable' });
 
     await binding.connectAndSwitch('rootable', '/remote/work');
     await binding.connectAndSwitch('local');
 
-    expect(rerootCalls).toEqual(['/remote/work']);
+    expect(calls).toEqual(['connect']);
     expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local', cwd: undefined });
   });
 });
@@ -1086,13 +1109,12 @@ describe('AgentEnvironmentBindingService.connectAndSwitchAtTurnBoundary', () => 
     const { registry, binding, dispatched, loopState, workDirWrites, publishBus } = setup();
     loopState.turn = { turnId: 1, phase: 'tool_call', step: 1, activeToolCalls: [{ toolCallId: 'call-1', name: 'change_environment' }] };
     const stats: string[] = [];
-    const { connectCalls, rerootCalls } = connectableEnvironment(registry, {
+    const { connectCalls } = connectableEnvironment(registry, {
       environmentId: 'connectable',
       stat: async (path) => {
         stats.push(path);
         return { isDirectory: true };
       },
-      reroot: async () => {},
     });
 
     await expect(binding.connectAndSwitchAtTurnBoundary('connectable', '/remote/work')).resolves.toEqual({
@@ -1104,14 +1126,12 @@ describe('AgentEnvironmentBindingService.connectAndSwitchAtTurnBoundary', () => 
     expect(stats).toContain('/remote/work');
     expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
     expect(dispatched).toHaveLength(0);
-    expect(rerootCalls).toEqual([]);
 
     loopState.turn = undefined;
     publishBus('turn.ended', { agentId: 'main' });
     await vi.waitFor(() => {
       expect(binding.current).toMatchObject({ environmentId: 'connectable', cwd: '/remote/work' });
     });
-    expect(rerootCalls).toEqual(['/remote/work']);
     expect(dispatched.at(-1)).toMatchObject({ environmentId: 'connectable', cwd: '/remote/work' });
     expect(workDirWrites).toEqual(['/remote/work']);
   });
@@ -1139,8 +1159,8 @@ describe('AgentEnvironmentBindingService.connectAndSwitchAtTurnBoundary', () => 
   it('commits only the latest scheduled switch when several are queued in one turn', async () => {
     const { registry, binding, loopState, publishBus } = setup();
     loopState.turn = { turnId: 1, phase: 'tool_call', step: 1, activeToolCalls: [] };
-    connectableEnvironment(registry, { environmentId: 'first', reroot: async () => {} });
-    connectableEnvironment(registry, { environmentId: 'second', reroot: async () => {} });
+    connectableEnvironment(registry, { environmentId: 'first' });
+    connectableEnvironment(registry, { environmentId: 'second' });
 
     await binding.connectAndSwitchAtTurnBoundary('first', '/remote/one');
     await binding.connectAndSwitchAtTurnBoundary('second', '/remote/two');
@@ -1152,31 +1172,10 @@ describe('AgentEnvironmentBindingService.connectAndSwitchAtTurnBoundary', () => 
     });
   });
 
-  it('reports a failed deferred commit with a reminder and keeps the old binding', async () => {
-    const { registry, binding, loopState, publishBus, reminders } = setup();
-    loopState.turn = { turnId: 1, phase: 'tool_call', step: 1, activeToolCalls: [] };
-    connectableEnvironment(registry, {
-      environmentId: 'failing-root',
-      reroot: async () => {
-        throw new Error('registry drained');
-      },
-    });
-
-    await binding.connectAndSwitchAtTurnBoundary('failing-root', '/remote/work');
-    loopState.turn = undefined;
-    publishBus('turn.ended', { agentId: 'main' });
-    await vi.waitFor(() => {
-      expect(reminders.some((entry) => entry.content.includes('failed'))).toBe(true);
-    });
-    expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
-    expect(reminders.at(-1)!.variant).toBe(ENVIRONMENT_BINDING_REMINDER_VARIANT);
-    expect(reminders.at(-1)!.content).toContain('failing-root');
-  });
-
   it('emits the environment reminder only after the turn-boundary commit', async () => {
     const { registry, binding, loopState, publishBus, reminders } = setup();
     loopState.turn = { turnId: 1, phase: 'tool_call', step: 1, activeToolCalls: [] };
-    connectableEnvironment(registry, { environmentId: 'connectable', reroot: async () => {} });
+    connectableEnvironment(registry, { environmentId: 'connectable' });
 
     await binding.connectAndSwitchAtTurnBoundary('connectable', '/remote/work');
     expect(reminders).toHaveLength(0);

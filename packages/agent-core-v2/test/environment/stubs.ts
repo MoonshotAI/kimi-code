@@ -73,13 +73,11 @@ export function connectableEnvironment(
     readonly status?: 'ready' | 'disconnected';
     readonly connect?: () => Promise<void>;
     readonly stat?: (path: string) => Promise<{ isDirectory: boolean }>;
-    readonly reroot?: (cwd: string) => Promise<void>;
   } = {},
 ): {
   readonly fake: FakeEnvironment;
   readonly calls: string[];
   readonly connectCalls: string[];
-  readonly rerootCalls: string[];
 } {
   const environmentId = options.environmentId ?? 'connectable';
   const fake = new FakeEnvironment(
@@ -88,7 +86,6 @@ export function connectableEnvironment(
   );
   const calls: string[] = [];
   const connectCalls: string[] = [];
-  const rerootCalls: string[] = [];
   const connectable = Object.assign(fake, {
     connect: async () => {
       calls.push('connect');
@@ -100,14 +97,7 @@ export function connectableEnvironment(
       stat: options.stat ?? (async () => ({ isDirectory: true })),
     },
     process: {},
-    reroot: options.reroot === undefined
-      ? undefined
-      : async (cwd: string) => {
-        calls.push(`reroot:${cwd}`);
-        rerootCalls.push(cwd);
-        await options.reroot!(cwd);
-      },
   });
   registry.register(connectable);
-  return { fake: connectable, calls, connectCalls, rerootCalls };
+  return { fake: connectable, calls, connectCalls };
 }

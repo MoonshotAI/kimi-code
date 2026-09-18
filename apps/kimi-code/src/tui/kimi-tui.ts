@@ -2430,7 +2430,7 @@ export class KimiTUI {
    * transition as a transcript notice carrying the recorded connect error and
    * pointing at /environment. Runs at session load, turn end, explicit
    * environment actions, and on the engine's environment.status.changed hint
-   * (background reconnect failure after resume, mid-session drops).
+   * (mid-session drops, explicit reconnects).
    */
   async refreshEnvironmentSlot(session: Session | undefined = this.session): Promise<void> {
     if (session === undefined) return;

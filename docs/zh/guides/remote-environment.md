@@ -114,7 +114,7 @@ kimi -p --environment dev-box "Run the test suite"
 
 连接断开后没有自动重连，也**不会静默回退到本地环境**：本该落在远程机器上的 `rm` 或 `git` 命令绝不能落到你的本机。断线后工具调用会以 `environment.unavailable` 错误失败，你需要在 `/environment` 对话框中显式重连。
 
-恢复旧会话是唯一的例外：还原的远程绑定会在后台自动重连，会话立即打开，环境状态从 `connecting` 变为 `ready`——或变为 `disconnected`，失败原因显示在底部状态栏的环境槽位和 `/environment` 管理器中。重连仍在进行时到达的工具调用会等待这次连接完成（以连接尝试自身的超时为上界），而不是立即报错；同样绝不会静默回退到 `local`。
+恢复旧会话也不例外：还原的远程绑定不会在后台自动重连，会话立即打开，但环境保持 `disconnected` 状态。在 `/environment` 对话框中显式重连之前，针对目标环境的工具调用会以 `environment.unavailable` 错误失败；同样绝不会静默回退到 `local`。
 
 每次连接尝试最多等待 10 秒：目标一直不应答握手时，会以 `initialize timed out` 错误失败，而不是无声地一直等待；如果启动器曾向 stderr 写入内容——卡住的密码提示、`npx` 下载的进度——错误信息会带上这段尾部输出，让失败原因直接可见。
 

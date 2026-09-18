@@ -543,7 +543,7 @@ describe('SessionManager controller retirement', () => {
         { workspaceId: 'workspace', environmentId: 'remote', generation },
         { capabilities: ['fs', 'process'] },
       ),
-      { fs: { stat: async () => ({ isDirectory: true }) }, process: {}, reroot: async () => {} },
+      { fs: { stat: async () => ({ isDirectory: true }) }, process: {} },
     ) as FakeEnvironment;
   }
 
@@ -931,7 +931,6 @@ describe('SessionManager remote environment wiring', () => {
       readonly status?: 'ready' | 'disconnected';
       readonly connect?: () => Promise<void>;
       readonly stat?: (path: string) => Promise<{ isDirectory: boolean }>;
-      readonly reroot?: (cwd: string) => Promise<void>;
     };
     readonly fs?: IHostFileSystem;
     readonly docs?: IAtomicDocumentStore;
@@ -1022,31 +1021,33 @@ describe('SessionManager remote environment wiring', () => {
     expect(byEnvironment.has('sandbox')).toBe(true);
   });
 
-  it('re-roots the connected environment with the validated cwd before creating the session', async () => {
+  it('validates the session cwd on the connected environment without mutating the shared registration', async () => {
     const { manager, registry, byEnvironment, remote } = remoteWiringSetup({
       config: { sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
-      remote: { reroot: async () => {} },
+      remote: {},
     });
 
     await manager.create({ workDir: '/workspace', environmentId: 'sandbox' });
-    expect(remote!.calls).toEqual(['connect', 'reroot:/home/me/sandbox']);
+    expect(remote!.calls).toEqual(['connect']);
+    expect(registry.current('sandbox')).toBe(remote!.fake);
     expect(byEnvironment.has('sandbox')).toBe(true);
   });
 
-  it('re-roots an already-ready environment when the session binds a different cwd', async () => {
+  it('does not reroot an already-ready environment when the session binds a different cwd', async () => {
     const { manager, registry, remote } = remoteWiringSetup({
       config: { sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
-      remote: { status: 'ready', reroot: async () => {} },
+      remote: { status: 'ready' },
     });
 
     await manager.create({ workDir: '/workspace', environmentId: 'sandbox', environmentCwd: '/elsewhere' });
-    expect(remote!.calls).toEqual(['reroot:/elsewhere']);
+    expect(remote!.calls).toEqual([]);
+    expect(registry.current('sandbox')).toBe(remote!.fake);
   });
 
   it('aborts creation with environment.invalid_cwd when the cwd is not a directory on the target', async () => {
     const { manager, registry, byEnvironment, remote } = remoteWiringSetup({
       config: { sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
-      remote: { stat: async () => ({ isDirectory: false }), reroot: async () => {} },
+      remote: { stat: async () => ({ isDirectory: false }) },
     });
 
     const failure = await manager.create({ workDir: '/workspace', environmentId: 'sandbox' }).catch((error: unknown) => error);
@@ -1072,7 +1073,6 @@ describe('SessionManager remote environment wiring', () => {
 
   function restoreSetup(options: {
     readonly remoteStatus: 'ready' | 'disconnected';
-    readonly connect?: (fake: FakeEnvironment) => Promise<void>;
     readonly persistedEnvironmentId?: string;
     readonly persistedCwd?: string | null;
   }) {
@@ -1081,15 +1081,10 @@ describe('SessionManager remote environment wiring', () => {
       { workspaceId: 'workspace-1', environmentId: 'remote', generation: 'remote-one' },
       { status: options.remoteStatus, capabilities: ['fs', 'process'] },
     );
-    const callOrder: string[] = [];
     const remoteConnect = vi.fn(async () => {
-      callOrder.push('connect');
-      await options.connect?.(remote);
+      remote.setStatus('ready');
     });
-    const remoteReroot = vi.fn(async (cwd: string) => {
-      callOrder.push(`reroot:${cwd}`);
-    });
-    registry.register(Object.assign(remote, { fs: {}, process: {}, connect: remoteConnect, reroot: remoteReroot }));
+    registry.register(Object.assign(remote, { fs: {}, process: {}, connect: remoteConnect }));
     const { program, byEnvironment } = createCapture();
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
@@ -1109,104 +1104,37 @@ describe('SessionManager remote environment wiring', () => {
         };
       },
     } as unknown as IAppendLogStore;
-    const warn = vi.fn();
     manager = makeSessionManager(workspacesFor(registry, program), index, {
       appendLogStore,
-      log: { _serviceBrand: undefined, warn, info: () => {}, error: () => {} } as unknown as ILogService,
+      log: { _serviceBrand: undefined, warn: () => {}, info: () => {}, error: () => {} } as unknown as ILogService,
     });
-    return { manager, byEnvironment, registry, remoteConnect, remoteReroot, callOrder, warn };
+    return { manager, byEnvironment, registry, remote, remoteConnect };
   }
 
-  it('restores a remote-bound session on the local controller and reconnects the disconnected environment in the background', async () => {
-    let releaseConnect!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      releaseConnect = resolve;
-    });
+  it('restores a remote-bound session on the local controller without connecting the disconnected environment', async () => {
     const { manager, byEnvironment, registry, remoteConnect } = restoreSetup({
       remoteStatus: 'disconnected',
-      connect: () => gate,
     });
 
     const handle = await manager.resume('session-1');
     expect(handle).toBeDefined();
     expect(byEnvironment.has('local')).toBe(true);
     expect(byEnvironment.has('remote')).toBe(false);
-    expect(remoteConnect).toHaveBeenCalledTimes(1);
-    releaseConnect();
+    expect(remoteConnect).not.toHaveBeenCalled();
+    expect(registry.current('remote')!.status).toBe('disconnected');
   });
 
-  it('opens a remote-bound session when the background reconnect fails and keeps the explicit acquire error', async () => {
-    const failure = new Error('executor process exited before the handshake completed (code 255, signal null): ssh: connect failed');
-    const { manager, registry, remoteConnect, warn } = restoreSetup({
+  it('opens a remote-bound session without connecting and keeps the explicit acquire error', async () => {
+    const { manager, registry, remoteConnect } = restoreSetup({
       remoteStatus: 'disconnected',
-      connect: async () => {
-        throw failure;
-      },
     });
 
     const handle = await manager.resume('session-1');
     expect(handle).toBeDefined();
-    expect(remoteConnect).toHaveBeenCalledTimes(1);
-    await vi.waitFor(() => {
-      expect(warn).toHaveBeenCalledWith(
-        expect.stringContaining('background reconnect'),
-        expect.objectContaining({ error: failure }),
-      );
-    });
+    expect(remoteConnect).not.toHaveBeenCalled();
     expect(() => registry.acquire({ workspaceId: 'workspace-1', environmentId: 'remote' })).toThrowError(
       expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.unavailable' }),
     );
-  });
-
-  it('opens a remote-bound session when the background reconnect throws synchronously', async () => {
-    const failure = new Error('connect blew up before returning a promise');
-    const { manager, registry, warn } = restoreSetup({
-      remoteStatus: 'disconnected',
-    });
-    const remote = registry.current('remote')!;
-    remote.connect = () => {
-      throw failure;
-    };
-
-    const handle = await manager.resume('session-1');
-    expect(handle).toBeDefined();
-    await vi.waitFor(() => {
-      expect(warn).toHaveBeenCalledWith(
-        expect.stringContaining('background reconnect'),
-        expect.objectContaining({ error: failure }),
-      );
-    });
-  });
-
-  it('awaits the in-flight background reconnect when acquiring the restored environment', async () => {
-    let releaseConnect!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      releaseConnect = resolve;
-    });
-    const { manager, registry, remoteConnect } = restoreSetup({
-      remoteStatus: 'disconnected',
-      connect: async (fake) => {
-        fake.setStatus('connecting');
-        fake.whenReady = gate;
-        await gate;
-        fake.whenReady = undefined;
-        fake.setStatus('ready');
-      },
-    });
-
-    await manager.resume('session-1');
-    expect(remoteConnect).toHaveBeenCalledTimes(1);
-    let settled = false;
-    const pending = registry.acquireWhenReady({ workspaceId: 'workspace-1', environmentId: 'remote' }, ['fs']).then((lease) => {
-      settled = true;
-      return lease;
-    });
-    await Promise.resolve();
-    expect(settled).toBe(false);
-    releaseConnect();
-    const lease = await pending;
-    expect(lease.environment.status).toBe('ready');
-    lease.dispose();
   });
 
   it('leaves a local restored binding untouched', async () => {
@@ -1220,11 +1148,12 @@ describe('SessionManager remote environment wiring', () => {
     expect(remoteConnect).not.toHaveBeenCalled();
   });
 
-  it('reconnects in the background when restoring an archived remote-bound session', async () => {
+  it('does not connect the shared environment when restoring an archived remote-bound session', async () => {
     const { manager, registry, remoteConnect } = restoreSetup({ remoteStatus: 'disconnected' });
 
     await manager.restore('session-1');
-    expect(remoteConnect).toHaveBeenCalledTimes(1);
+    expect(remoteConnect).not.toHaveBeenCalled();
+    expect(registry.current('remote')!.status).toBe('disconnected');
   });
 
   it('restores a remote-bound session on the remote controller when the environment is ready', async () => {
@@ -1235,36 +1164,36 @@ describe('SessionManager remote environment wiring', () => {
     expect(remoteConnect).not.toHaveBeenCalled();
   });
 
-  it('re-roots the restored environment with the persisted cwd before the background reconnect', async () => {
-    const { manager, registry, remoteConnect, remoteReroot, callOrder } = restoreSetup({
+  it('does not mutate the shared environment when resuming a remote-bound session with a persisted cwd', async () => {
+    const { manager, registry, remote, remoteConnect } = restoreSetup({
       remoteStatus: 'disconnected',
     });
 
     await manager.resume('session-1');
-    expect(remoteReroot).toHaveBeenCalledTimes(1);
-    expect(remoteReroot).toHaveBeenCalledWith('/remote/work');
-    expect(remoteConnect).toHaveBeenCalledTimes(1);
-    expect(callOrder).toEqual(['reroot:/remote/work', 'connect']);
+    expect(remoteConnect).not.toHaveBeenCalled();
+    expect(registry.current('remote')).toBe(remote);
+    expect(registry.current('remote')!.identity.generation).toBe('remote-one');
+    expect(registry.current('remote')!.status).toBe('disconnected');
   });
 
-  it('does not reroot a restored binding that has no persisted cwd', async () => {
-    const { manager, registry, remoteConnect, remoteReroot } = restoreSetup({
+  it('does not mutate the shared environment when the restored binding has no persisted cwd', async () => {
+    const { manager, registry, remote, remoteConnect } = restoreSetup({
       remoteStatus: 'disconnected',
       persistedCwd: null,
     });
 
     await manager.resume('session-1');
-    expect(remoteReroot).not.toHaveBeenCalled();
-    expect(remoteConnect).toHaveBeenCalledTimes(1);
+    expect(remoteConnect).not.toHaveBeenCalled();
+    expect(registry.current('remote')).toBe(remote);
   });
 
-  it('does not reroot a restored binding when the environment is already ready', async () => {
-    const { manager, registry, remoteConnect, remoteReroot } = restoreSetup({
+  it('leaves an already-ready restored environment untouched', async () => {
+    const { manager, registry, remote, remoteConnect } = restoreSetup({
       remoteStatus: 'ready',
     });
 
     await manager.resume('session-1');
-    expect(remoteReroot).not.toHaveBeenCalled();
     expect(remoteConnect).not.toHaveBeenCalled();
+    expect(registry.current('remote')).toBe(remote);
   });
 });
