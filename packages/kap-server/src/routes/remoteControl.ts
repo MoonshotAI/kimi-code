@@ -88,8 +88,9 @@ export function registerRemoteControlRoutes(
       };
       if (!enabled) {
         try {
+          const wasOff = opts.service.status().state === 'off';
           const status = await opts.service.disable();
-          const failed = status.error !== undefined;
+          const failed = !wasOff && status.error !== undefined;
           trackToggle(failed ? 'error' : 'ok', failed ? 'disable_failed' : undefined);
           reply.send(okEnvelope(toRemoteControlStatusResponse(status), req.id));
         } catch (error) {
