@@ -6,6 +6,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import {
   IProjectLocalConfigService,
+  projectLocalConfigPath,
   type ProjectAdditionalDirsLoadResult,
 } from '#/app/projectLocalConfig/projectLocalConfig';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
@@ -37,7 +38,7 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
 
   async readAdditionalDirs(workDir: string): Promise<ProjectAdditionalDirsLoadResult> {
     const projectRoot = await this.findProjectRoot(workDir);
-    const configPath = this.getProjectLocalConfigPath(projectRoot);
+    const configPath = projectLocalConfigPath(projectRoot);
     const file = await this.readProjectLocalToml(configPath);
 
     const additionalDirs = file?.parsed.workspace?.additional_dir;
@@ -48,7 +49,7 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     return {
       projectRoot,
       configPath,
-      additionalDirs: await this.resolveAdditionalDirs(projectRoot, additionalDirs),
+      additionalDirs: await this.resolvePersistedAdditionalDirs(projectRoot, additionalDirs),
     };
   }
 
@@ -61,7 +62,7 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     inputPath: string,
   ): Promise<ProjectAdditionalDirsLoadResult> {
     const projectRoot = await this.findProjectRoot(workDir);
-    const configPath = this.getProjectLocalConfigPath(projectRoot);
+    const configPath = projectLocalConfigPath(projectRoot);
     const additionalDir = await this.resolveAdditionalDir(workDir, inputPath);
     const file = (await this.readProjectLocalToml(configPath)) ?? { raw: {}, parsed: {} };
     const fileAdditionalDirs = file.parsed.workspace?.additional_dir ?? [];
@@ -83,10 +84,6 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     }
 
     return { projectRoot, configPath, additionalDirs: [...fileExistingDirs, additionalDir] };
-  }
-
-  private getProjectLocalConfigPath(projectRoot: string): string {
-    return join(projectRoot, '.kimi-code', 'local.toml');
   }
 
   private async findProjectRoot(workDir: string): Promise<string> {
@@ -168,6 +165,24 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     return resolvedDirs;
   }
 
+  private async resolvePersistedAdditionalDirs(
+    projectRoot: string,
+    additionalDirs: readonly string[],
+  ): Promise<string[]> {
+    const resolvedDirs: string[] = [];
+
+    for (const additionalDir of normalizeAdditionalDirs(additionalDirs)) {
+      const trimmed = additionalDir.trim();
+      if (trimmed.length === 0) continue;
+      const resolvedDir = this.resolvePath(projectRoot, trimmed);
+      if (!(await this.isDirectory(resolvedDir))) continue;
+      if (this.hasSameAdditionalDir(resolvedDirs, resolvedDir)) continue;
+      resolvedDirs.push(resolvedDir);
+    }
+
+    return resolvedDirs;
+  }
+
   private async resolveAdditionalDir(
     baseDir: string,
     additionalDir: string,
@@ -214,6 +229,17 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
         'workspace.additional_dir must exist and be a directory',
       );
     }
+  }
+
+  private async isDirectory(filePath: string): Promise<boolean> {
+    let stat: Awaited<ReturnType<IHostFileSystem['stat']>>;
+    try {
+      stat = await this.fs.stat(filePath);
+    } catch (error: unknown) {
+      if (isPathMissing(error)) return false;
+      throw toStorageIoError(error, { path: filePath, op: 'stat' });
+    }
+    return stat.isDirectory;
   }
 
   private async pathExists(filePath: string): Promise<boolean> {
