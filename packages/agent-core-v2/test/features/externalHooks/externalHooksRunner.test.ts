@@ -94,6 +94,7 @@ describe('ExternalHooksRunnerService', () => {
     expect(results).toHaveLength(1);
     expect(results[0]?.action).toBe('allow');
     expect(results[0]?.timedOut).toBeUndefined();
+    expect(results[0]?.aborted).toBe(true);
   });
 
   it('serializes camelCase inputData as snake_case for hook stdin', async () => {
@@ -318,6 +319,34 @@ describe('ExternalHooksRunnerService', () => {
           failed_count: 1,
           duration_ms: expect.any(Number),
         },
+      ],
+    ]);
+  });
+
+  it('does not count aborted hooks as failures in telemetry', async () => {
+    const tracked: [string, unknown][] = [];
+    const telemetry = {
+      track2: (event: string, properties: unknown) => tracked.push([event, properties]),
+    } as unknown as ITelemetryService;
+    const abortController = new AbortController();
+    const runner = makeHookRunner(
+      [{ event: 'PreToolUse', matcher: 'Bash', command: nodeCommand('setTimeout(() => {}, 10000);'), timeout: 5 }],
+      { telemetry },
+    );
+    setTimeout(() => {
+      abortController.abort();
+    }, 50);
+
+    await runner.trigger('PreToolUse', {
+      matcherValue: 'Bash',
+      inputData: {},
+      signal: abortController.signal,
+    });
+
+    expect(tracked).toEqual([
+      [
+        'external_hook_resolved',
+        expect.objectContaining({ action: 'allow', matched_count: 1, failed_count: 0 }),
       ],
     ]);
   });

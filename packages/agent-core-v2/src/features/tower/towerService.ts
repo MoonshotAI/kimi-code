@@ -24,6 +24,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { IFlagService } from '#/app/flag/flag';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { TowerModeEnterEvent } from '#/app/telemetry/events';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ISessionActivityView } from '#/session/sessionActivity/sessionActivity';
 import { isWithinDirectory } from '#/tool/path-access';
@@ -251,13 +252,24 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
   }
 
   async enter(base?: string): Promise<TowerEnterResult> {
-    const result = await this.resolveEnter(base);
-    this.telemetry.track2('tower_mode_enter', {
-      outcome: result.entered ? 'entered' : 'rejected',
-      reason: result.entered ? undefined : result.reason,
-      has_base: base !== undefined,
-    });
-    return result;
+    try {
+      const result = await this.resolveEnter(base);
+      const properties: TowerModeEnterEvent = {
+        outcome: result.entered ? 'entered' : 'rejected',
+        reason: result.entered ? undefined : result.reason,
+        has_base: base !== undefined,
+      };
+      this.telemetry.track2('tower_mode_enter', properties);
+      return result;
+    } catch (error) {
+      const properties: TowerModeEnterEvent = {
+        outcome: 'error',
+        has_base: base !== undefined,
+        error_type: error instanceof Error ? error.name : 'unknown',
+      };
+      this.telemetry.track2('tower_mode_enter', properties);
+      throw error;
+    }
   }
 
   private async resolveEnter(base?: string): Promise<TowerEnterResult> {

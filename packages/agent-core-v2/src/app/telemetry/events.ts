@@ -200,9 +200,10 @@ export interface PlanEnterResolvedEvent {
 }
 
 export interface TowerModeEnterEvent {
-  outcome: 'entered' | 'rejected';
+  outcome: 'entered' | 'rejected' | 'error';
   reason?: 'not-main-agent' | 'experiment-off' | 'feature-not-assembled' | 'owned-by-live-session';
   has_base: boolean;
+  error_type?: string;
 }
 
 export interface TowerModeExitEvent {
@@ -801,9 +802,10 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A request to enter tower mode resolves.',
     properties: {
-      outcome: 'Whether tower mode was entered or the request was rejected',
+      outcome: 'Whether tower mode was entered, the request was rejected, or the entry failed',
       reason: 'Why the request was rejected; omitted when tower mode was entered',
       has_base: 'Whether a base branch was specified',
+      error_type: 'Error class name when the entry failed',
     },
   }),
   tower_mode_exit: defineAgentTelemetryEvent<TowerModeExitEvent>({
@@ -836,7 +838,7 @@ export const telemetryEventDefinitions = {
       event: 'Hook event type (e.g. PreToolUse, UserPromptSubmit, Stop)',
       action: 'Whether the trigger resolved to allow or block',
       matched_count: 'Number of hooks that ran for the trigger',
-      failed_count: 'Number of hooks that failed (timeout, spawn error, or a non-zero exit code other than 2)',
+      failed_count: 'Number of hooks that failed (timeout, spawn error, or a non-zero exit code other than 2); aborted hooks are excluded',
       duration_ms: 'Wall-clock time running the matched hooks in milliseconds',
     },
   }),

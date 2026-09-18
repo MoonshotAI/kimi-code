@@ -133,6 +133,7 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
 }
 
 function isFailedHookResult(result: HookResult): boolean {
+  if (result.aborted === true) return false;
   if (result.timedOut === true) return true;
   return result.exitCode !== 0 && result.exitCode !== 2;
 }

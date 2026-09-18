@@ -330,6 +330,16 @@ describe('AgentTowerService', () => {
       reason: 'experiment-off',
       has_base: false,
     });
+
+    telemetryTrack2.mockClear();
+    towerFlagOn = true;
+    await expect(tower.enter('some-base')).rejects.toThrow();
+    expect(telemetryTrack2).toHaveBeenCalledWith('tower_mode_enter', {
+      outcome: 'error',
+      reason: undefined,
+      has_base: true,
+      error_type: expect.any(String),
+    });
   });
 
   it('tracks tower_mode_exit on exit only', async () => {
