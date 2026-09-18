@@ -85,7 +85,7 @@ export interface ProgramSnapshot {
 
 interface ProgramGeneration {
   readonly id: string;
-  readonly lease: EnvironmentLease;
+  lease?: EnvironmentLease;
   readonly state: IWorkspaceStateService;
   readonly dirs: IWorkspaceDirs;
   readonly fs: IWorkspaceFsService;
@@ -198,6 +198,7 @@ export class Program {
 
   createSessionController(environmentId: string = LOCAL_ENVIRONMENT_ID, cwd?: string): SessionLifecycleService {
     const generation = this.requireGeneration(environmentId, cwd);
+    generation.lease ??= this.resolver.acquire({ workspaceId: this.workspaceId, environmentId }, PROGRAM_CAPABILITIES);
     generation.references += 1;
     let released = false;
     const release = (): void => {
@@ -392,7 +393,6 @@ export class Program {
       const skills = own(new WorkspaceSkillCatalogService(this.dependencies.builtinSkills, userSkills, explicitSkills, extraSkills, workspaceSkills, pluginSkills, state));
       return {
         id: environment.identity.generation,
-        lease,
         state,
         dirs,
         fs,
@@ -415,8 +415,9 @@ export class Program {
       };
     } catch (error) {
       for (const disposable of disposables.toReversed()) void disposable.dispose();
-      lease.dispose();
       throw error;
+    } finally {
+      lease.dispose();
     }
   }
 
@@ -452,9 +453,16 @@ export class Program {
 
   private releaseGeneration(generation: ProgramGeneration): void {
     generation.references -= 1;
-    if (generation.references !== 0 || !generation.retired) return;
-    for (const disposable of [...generation.disposables].toReversed()) void disposable.dispose();
-    generation.lease.dispose();
+    if (generation.references === 0 && generation.retired) {
+      for (const disposable of [...generation.disposables].toReversed()) void disposable.dispose();
+      generation.lease?.dispose();
+      generation.lease = undefined;
+      return;
+    }
+    if (generation.references === 1 && !generation.retired) {
+      generation.lease?.dispose();
+      generation.lease = undefined;
+    }
   }
 
   private resolveProgramReady(): void {

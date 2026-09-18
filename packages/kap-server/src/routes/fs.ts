@@ -157,6 +157,16 @@ function createEnvironmentFs(
   }
 }
 
+function environmentWorkspaceId(core: Scope, environmentId: string): string {
+  const instance = core.accessor.get(IWorkspaceInstanceManager)
+    .list()
+    .find((workspace) => workspace.environments.current(environmentId) !== undefined);
+  if (instance === undefined) {
+    throw new EnvironmentError('environment.not_found', `environment ${environmentId} is not registered in any materialized workspace`);
+  }
+  return instance.id;
+}
+
 function createLocalEnvironmentFs(
   core: Scope,
   roots: { readonly workDir: string; readonly additionalDirs?: readonly string[] },
@@ -542,7 +552,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       try {
         environmentFs = environmentId === 'local'
           ? createLocalEnvironmentFs(core, fsRoots)
-          : createEnvironmentFs(core, encodeWorkDirKey(roots[0]!), fsRoots, environmentId, ['fs']);
+          : createEnvironmentFs(core, environmentWorkspaceId(core, environmentId), fsRoots, environmentId, ['fs']);
         for (const root of [environmentFs.roots.workDir, ...environmentFs.roots.additionalDirs]) {
           let stat;
           try {

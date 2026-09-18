@@ -671,6 +671,12 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   });
 
   it('binds the child to local without a cwd when local is requested', async () => {
+    const registry = new EnvironmentRegistry('w1');
+    registry.register(fakeEnvironment('local', 'local-one', { workspaceId: 'w1' }));
+    ix.stub(IWorkspaceInstanceManager, {
+      _serviceBrand: undefined,
+      get: (workspaceId: string) => (workspaceId === 'w1' ? { environments: registry, root: '/repo' } : undefined),
+    } as unknown as IWorkspaceInstanceManager);
     const svc = service();
 
     await svc.spawn({
@@ -867,6 +873,54 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     expect(git.gitCwds.length).toBeGreaterThan(0);
     expect(git.gitCwds.every((cwd) => cwd === '/repo')).toBe(true);
     expect(spawned.promptText).toContain('Working directory: /repo');
+    expect(spawned.promptText).toContain('Project: owner/repo-only-there');
+  });
+
+  it('collects the prompt prefix git context on the requested environment instead of the caller one', async () => {
+    const git = gitProcessForRepo('/srv/app');
+    const registry = new EnvironmentRegistry('w1');
+    registry.register(Object.assign(
+      new FakeEnvironment(
+        { workspaceId: 'w1', environmentId: 'staging', generation: 'staging-one' },
+        { status: 'ready', capabilities: ['fs', 'process'] },
+      ),
+      {
+        fs: { stat: async () => ({ isDirectory: true }) },
+        process: git.process,
+      },
+    ));
+    ix.stub(IWorkspaceInstanceManager, {
+      _serviceBrand: undefined,
+      get: (workspaceId: string) => (workspaceId === 'w1' ? { environments: registry, root: '/repo' } : undefined),
+    } as unknown as IWorkspaceInstanceManager);
+    profiles = [
+      normalizeAgentProfile({
+        name: 'explore',
+        description: 'Explorer',
+        systemPrompt: () => 'explore',
+        promptPrefix: async ({ cwd, process, log }) => {
+          try {
+            return await collectGitContext(process, cwd, log);
+          } catch {
+            return '';
+          }
+        },
+      }),
+    ];
+    const svc = service({ [ENVIRONMENTS_SECTION]: { staging: { type: 'ssh', host: 'staging', defaultCwd: '/srv/app' } } });
+
+    const spawned = await svc.spawn({
+      callerAgentId: CALLER_ID,
+      plan: { profileName: 'explore', model: 'provider/fast', modelSource: 'secondary_pool', thinking: 'low', fork: false },
+      labels: { parentAgentId: 'main' },
+      prompt: 'Survey the repo',
+      environment: 'staging',
+    });
+
+    expect(acquireEnvironment).not.toHaveBeenCalled();
+    expect(git.gitCwds.length).toBeGreaterThan(0);
+    expect(git.gitCwds.every((cwd) => cwd === '/srv/app')).toBe(true);
+    expect(spawned.promptText).toContain('Working directory: /srv/app');
     expect(spawned.promptText).toContain('Project: owner/repo-only-there');
   });
 
