@@ -126,7 +126,8 @@ export class SessionManager implements ISessionManager {
     const create = async () => {
       if (environmentId !== undefined) await this.connectForCreate(workspace, environmentId, environmentCwd);
       const controllerEnvironmentId = this.selectControllerEnvironmentId(workspace, environmentId ?? LOCAL_ENVIRONMENT_ID);
-      return this.controllerForWorkspace(workspace.id, controllerEnvironmentId).create(effective);
+      const controllerCwd = controllerEnvironmentId === LOCAL_ENVIRONMENT_ID ? undefined : environmentCwd ?? options.workDir;
+      return this.controllerForWorkspace(workspace.id, controllerEnvironmentId, controllerCwd).create(effective);
     };
     if (options.sessionId === undefined) return create();
     return this.serializeLifecycle(options.sessionId, create);
@@ -364,14 +365,14 @@ export class SessionManager implements ISessionManager {
     this.didForkEmitter.dispose();
   }
 
-  private controllerForWorkspace(workspaceId: string, environmentId: string = LOCAL_ENVIRONMENT_ID): SessionLifecycleService {
+  private controllerForWorkspace(workspaceId: string, environmentId: string = LOCAL_ENVIRONMENT_ID, cwd?: string): SessionLifecycleService {
     const workspace = this.workspaces.get(workspaceId);
     if (workspace === undefined) throw new Error(`workspace ${workspaceId} is not materialized`);
-    const key = `${workspaceId}\0${environmentId}`;
-    const generation = workspace.program.sessionControllerGenerationFor(environmentId);
+    const key = `${workspaceId}\0${environmentId}\0${cwd ?? ''}`;
+    const generation = workspace.program.sessionControllerGenerationFor(environmentId, cwd);
     const existing = this.controllers.get(key);
     if (existing?.generation === generation) return existing.controller;
-    const controller = workspace.program.createSessionController(environmentId);
+    const controller = workspace.program.createSessionController(environmentId, cwd);
     const subscriptions = new DisposableStore();
     const entry: SessionControllerEntry = { generation, controller, subscriptions, sessionCount: 0 };
     subscriptions.add(controller.onWillCreateSession((event) => this.willCreateEmitter.fire(event)));
@@ -422,8 +423,13 @@ export class SessionManager implements ISessionManager {
     if (summary === undefined) return undefined;
     const workspace = await this.workspaces.getOrCreate({ workspaceId: summary.workspaceId, root: summary.cwd });
     const persistedBinding = await this.peekPersistedBinding(workspace.id, sessionId);
+    const controllerEnvironmentId = this.selectControllerEnvironmentId(workspace, persistedBinding?.environmentId ?? LOCAL_ENVIRONMENT_ID);
     return {
-      controller: this.controllerForWorkspace(workspace.id, this.selectControllerEnvironmentId(workspace, persistedBinding?.environmentId ?? LOCAL_ENVIRONMENT_ID)),
+      controller: this.controllerForWorkspace(
+        workspace.id,
+        controllerEnvironmentId,
+        controllerEnvironmentId === LOCAL_ENVIRONMENT_ID ? undefined : persistedBinding?.cwd,
+      ),
     };
   }
 

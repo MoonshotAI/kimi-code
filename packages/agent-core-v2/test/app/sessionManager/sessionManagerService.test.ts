@@ -806,10 +806,12 @@ describe('SessionManager remote environment wiring', () => {
 
   function createCapture() {
     const created: { readonly options: readonly unknown[]; readonly service: SessionLifecycleService }[] = [];
+    const createCalls: { readonly environmentId: string; readonly cwd?: string }[] = [];
     const byEnvironment = new Map<string, { options: unknown[]; service: SessionLifecycleService; handle: ISessionScopeHandle }>();
     const program = {
       sessionControllerGenerationFor: (environmentId: string) => `generation-${environmentId}`,
-      createSessionController: (environmentId: string) => {
+      createSessionController: (environmentId: string, cwd?: string) => {
+        createCalls.push({ environmentId, cwd });
         const handle = { id: `session-${environmentId}` } as unknown as ISessionScopeHandle;
         const options: unknown[] = [];
         const service = {
@@ -839,7 +841,7 @@ describe('SessionManager remote environment wiring', () => {
         return service;
       },
     } as unknown as Program;
-    return { program, byEnvironment };
+    return { program, byEnvironment, createCalls };
   }
 
   function workspaceWith(
@@ -939,7 +941,7 @@ describe('SessionManager remote environment wiring', () => {
     const remote = options.remote === undefined
       ? undefined
       : connectableEnvironment(registry, { workspaceId: 'workspace-1', environmentId: 'sandbox', ...options.remote });
-    const { program, byEnvironment } = createCapture();
+    const { program, byEnvironment, createCalls } = createCapture();
     manager = makeSessionManager(
       workspacesFor(registry, program),
       { get: async () => undefined } as unknown as ISessionIndex,
@@ -949,7 +951,7 @@ describe('SessionManager remote environment wiring', () => {
         docs: options.docs,
       },
     );
-    return { manager, registry, byEnvironment, remote };
+    return { manager, registry, byEnvironment, createCalls, remote };
   }
 
   it('rejects an explicit environment id whose declaration does not set defaultCwd', async () => {
@@ -1044,6 +1046,33 @@ describe('SessionManager remote environment wiring', () => {
     expect(registry.current('sandbox')).toBe(remote!.fake);
   });
 
+  it('creates a controller per session cwd on the same environment', async () => {
+    const { manager, createCalls } = remoteWiringSetup({
+      config: { sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
+      remote: { status: 'ready' },
+    });
+
+    await manager.create({ workDir: '/workspace', environmentId: 'sandbox', environmentCwd: '/remote/a' });
+    await manager.create({ workDir: '/workspace', environmentId: 'sandbox', environmentCwd: '/remote/b' });
+
+    expect(createCalls).toEqual([
+      { environmentId: 'sandbox', cwd: '/remote/a' },
+      { environmentId: 'sandbox', cwd: '/remote/b' },
+    ]);
+  });
+
+  it('reuses the controller for a second session with the same environment cwd', async () => {
+    const { manager, createCalls } = remoteWiringSetup({
+      config: { sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
+      remote: { status: 'ready' },
+    });
+
+    await manager.create({ workDir: '/workspace', environmentId: 'sandbox', environmentCwd: '/remote/a' });
+    await manager.create({ workDir: '/workspace', environmentId: 'sandbox', environmentCwd: '/remote/a' });
+
+    expect(createCalls).toEqual([{ environmentId: 'sandbox', cwd: '/remote/a' }]);
+  });
+
   it('aborts creation with environment.invalid_cwd when the cwd is not a directory on the target', async () => {
     const { manager, registry, byEnvironment, remote } = remoteWiringSetup({
       config: { sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
@@ -1085,7 +1114,7 @@ describe('SessionManager remote environment wiring', () => {
       remote.setStatus('ready');
     });
     registry.register(Object.assign(remote, { fs: {}, process: {}, connect: remoteConnect }));
-    const { program, byEnvironment } = createCapture();
+    const { program, byEnvironment, createCalls } = createCapture();
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
     } as unknown as ISessionIndex;
@@ -1108,11 +1137,11 @@ describe('SessionManager remote environment wiring', () => {
       appendLogStore,
       log: { _serviceBrand: undefined, warn: () => {}, info: () => {}, error: () => {} } as unknown as ILogService,
     });
-    return { manager, byEnvironment, registry, remote, remoteConnect };
+    return { manager, byEnvironment, createCalls, registry, remote, remoteConnect };
   }
 
   it('restores a remote-bound session on the local controller without connecting the disconnected environment', async () => {
-    const { manager, byEnvironment, registry, remoteConnect } = restoreSetup({
+    const { manager, byEnvironment, createCalls, registry, remoteConnect } = restoreSetup({
       remoteStatus: 'disconnected',
     });
 
@@ -1120,6 +1149,7 @@ describe('SessionManager remote environment wiring', () => {
     expect(handle).toBeDefined();
     expect(byEnvironment.has('local')).toBe(true);
     expect(byEnvironment.has('remote')).toBe(false);
+    expect(createCalls).toEqual([{ environmentId: 'local', cwd: undefined }]);
     expect(remoteConnect).not.toHaveBeenCalled();
     expect(registry.current('remote')!.status).toBe('disconnected');
   });
@@ -1156,11 +1186,12 @@ describe('SessionManager remote environment wiring', () => {
     expect(registry.current('remote')!.status).toBe('disconnected');
   });
 
-  it('restores a remote-bound session on the remote controller when the environment is ready', async () => {
-    const { manager, byEnvironment, registry, remoteConnect } = restoreSetup({ remoteStatus: 'ready' });
+  it('restores a remote-bound session on the remote controller rooted at the persisted cwd when the environment is ready', async () => {
+    const { manager, byEnvironment, createCalls, registry, remoteConnect } = restoreSetup({ remoteStatus: 'ready' });
 
     await manager.resume('session-1');
     expect(byEnvironment.has('remote')).toBe(true);
+    expect(createCalls).toEqual([{ environmentId: 'remote', cwd: '/remote/work' }]);
     expect(remoteConnect).not.toHaveBeenCalled();
   });
 

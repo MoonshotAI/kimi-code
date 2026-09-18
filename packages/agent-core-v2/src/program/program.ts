@@ -120,7 +120,7 @@ export class Program {
   private readonly resolver: IEnvironmentResolver;
   private readonly generations = new Map<string, ProgramGeneration>();
   private readonly failedGenerations = new Set<string>();
-  private readonly reconciledGenerations = new Set<string>();
+  private readonly reconciledGenerations = new Map<string, { readonly environmentId: string; readonly cwd?: string }>();
   private disposed = false;
   private resolveReady?: () => void;
   readonly ready = new Promise<void>((resolve) => { this.resolveReady = resolve; });
@@ -155,8 +155,8 @@ export class Program {
   get agentProfiles(): IWorkspaceAgentProfileLoader { return this.requireGeneration(LOCAL_ENVIRONMENT_ID).agentProfiles; }
   get sessionControllerGeneration(): string { return this.sessionControllerGenerationFor(LOCAL_ENVIRONMENT_ID); }
 
-  sessionControllerGenerationFor(environmentId: string): string {
-    return this.requireGeneration(environmentId).id;
+  sessionControllerGenerationFor(environmentId: string, cwd?: string): string {
+    return this.requireGeneration(environmentId, cwd).id;
   }
 
   async suggestFiles(
@@ -196,8 +196,8 @@ export class Program {
     }
   }
 
-  createSessionController(environmentId: string = LOCAL_ENVIRONMENT_ID): SessionLifecycleService {
-    const generation = this.requireGeneration(environmentId);
+  createSessionController(environmentId: string = LOCAL_ENVIRONMENT_ID, cwd?: string): SessionLifecycleService {
+    const generation = this.requireGeneration(environmentId, cwd);
     generation.references += 1;
     let released = false;
     const release = (): void => {
@@ -280,11 +280,12 @@ export class Program {
     this.trustChangeEmitter.dispose();
   }
 
-  private requireGeneration(environmentId: string): ProgramGeneration {
-    let generation = this.generations.get(environmentId);
-    if (generation === undefined && !this.reconciledGenerations.has(environmentId)) {
-      this.reconcileGeneration(environmentId);
-      generation = this.generations.get(environmentId);
+  private requireGeneration(environmentId: string, cwd?: string): ProgramGeneration {
+    const key = generationKey(environmentId, cwd);
+    let generation = this.generations.get(key);
+    if (generation === undefined && !this.reconciledGenerations.has(key)) {
+      this.reconcileGeneration(environmentId, cwd);
+      generation = this.generations.get(key);
     }
     if (generation === undefined) {
       throw new Error(`program ${this.workspaceId} has no available generation for environment ${environmentId}`);
@@ -294,31 +295,35 @@ export class Program {
 
   private onEnvironmentChange(change: EnvironmentRegistryChange): void {
     if (this.disposed) return;
-    if (change.environmentId !== LOCAL_ENVIRONMENT_ID && !this.reconciledGenerations.has(change.environmentId)) return;
-    this.reconcileGeneration(change.environmentId);
+    for (const request of this.reconciledGenerations.values()) {
+      if (request.environmentId === change.environmentId) {
+        this.reconcileGeneration(request.environmentId, request.cwd);
+      }
+    }
   }
 
-  private reconcileGeneration(environmentId: string): void {
-    this.reconciledGenerations.add(environmentId);
+  private reconcileGeneration(environmentId: string, cwd?: string): void {
+    const key = generationKey(environmentId, cwd);
+    this.reconciledGenerations.set(key, { environmentId, cwd });
     const current = this.environments.current(environmentId);
     if (current === undefined) {
-      const previous = this.generations.get(environmentId);
-      this.generations.delete(environmentId);
+      const previous = this.generations.get(key);
+      this.generations.delete(key);
       if (previous !== undefined) this.retireGeneration(previous);
       this.refresh();
       return;
     }
-    if (this.generations.get(environmentId)?.id !== current.identity.generation) {
-      const previous = this.generations.get(environmentId);
-      this.failedGenerations.delete(environmentId);
+    if (this.generations.get(key)?.id !== current.identity.generation) {
+      const previous = this.generations.get(key);
+      this.failedGenerations.delete(key);
       try {
-        const next = this.createGeneration(environmentId);
-        this.generations.set(environmentId, next);
+        const next = this.createGeneration(environmentId, cwd);
+        this.generations.set(key, next);
         if (previous !== undefined) this.retireGeneration(previous);
-        this.observeReadiness(next);
+        this.observeReadiness(key, next);
       } catch (error) {
         if (!(error instanceof EnvironmentError && error.code === 'environment.unavailable')) {
-          this.failedGenerations.add(environmentId);
+          this.failedGenerations.add(key);
           this.resolveProgramReady();
         }
       }
@@ -326,7 +331,7 @@ export class Program {
     this.refresh();
   }
 
-  private createGeneration(environmentId: string): ProgramGeneration {
+  private createGeneration(environmentId: string, cwd?: string): ProgramGeneration {
     const lease = this.resolver.acquire({ workspaceId: this.workspaceId, environmentId }, PROGRAM_CAPABILITIES);
     const environment = lease.environment;
     const disposables: { dispose(): void | Promise<void> }[] = [];
@@ -341,7 +346,7 @@ export class Program {
       }
       const localFs = localEnvironment.fs;
       const targetFs = environment.fs!;
-      const root = environment.identity.cwd ?? this.context.cwd;
+      const root = cwd ?? this.context.cwd;
       const context: IWorkspaceContext = root === this.context.cwd ? this.context : { ...this.context, cwd: root };
       const state = own(new WorkspaceStateService(this.dependencies.appState));
       const localConfig = new FileProjectLocalConfigService(this.dependencies.bootstrap, targetFs);
@@ -414,7 +419,7 @@ export class Program {
     }
   }
 
-  private observeReadiness(generation: ProgramGeneration): void {
+  private observeReadiness(key: string, generation: ProgramGeneration): void {
     void Promise.all([
       readiness(generation.dirs),
       readiness(generation.instructions),
@@ -424,13 +429,13 @@ export class Program {
       readiness(generation.agentProfiles),
     ]).then(
       () => {
-        if (this.generations.get(generation.lease.environment.identity.environmentId) !== generation) return;
+        if (this.generations.get(key) !== generation) return;
         generation.ready = true;
         this.resolveProgramReady();
         this.refresh();
       },
       () => {
-        if (this.generations.get(generation.lease.environment.identity.environmentId) !== generation) return;
+        if (this.generations.get(key) !== generation) return;
         generation.failed = true;
         this.resolveProgramReady();
         this.refresh();
@@ -465,6 +470,10 @@ export class Program {
     else this.currentStatus = local.status === 'ready' ? 'ready' : 'degraded';
     this.changeEmitter.fire(this.snapshot());
   }
+}
+
+function generationKey(environmentId: string, cwd?: string): string {
+  return cwd === undefined ? environmentId : `${environmentId}\0${cwd}`;
 }
 
 function workspaceRoutingFs(root: string, workspaceFs: NonNullable<Environment['fs']>, localFs: NonNullable<Environment['fs']>): NonNullable<Environment['fs']> {
