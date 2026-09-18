@@ -205,6 +205,11 @@ export interface TowerModeEnterEvent {
   has_base: boolean;
 }
 
+export interface TowerModeExitEvent {
+  reason: 'user' | 'takeover' | 'foreign-reconcile';
+  has_base: boolean;
+}
+
 export interface SwarmModeEnteredEvent {
   trigger: 'manual' | 'task' | 'tool';
 }
@@ -793,6 +798,15 @@ export const telemetryEventDefinitions = {
       outcome: 'Whether tower mode was entered or the request was rejected',
       reason: 'Why the request was rejected; omitted when tower mode was entered',
       has_base: 'Whether a base branch was specified',
+    },
+  }),
+  tower_mode_exit: defineAgentTelemetryEvent<TowerModeExitEvent>({
+    owner: 'kimi-code',
+    comment: 'Tower mode is exited.',
+    properties: {
+      reason:
+        'Why tower mode was exited: the user turned it off, another session took the tower over, or a foreign tower was reconciled away',
+      has_base: 'Whether a base branch was recorded at exit',
     },
   }),
   swarm_mode_entered: defineAgentTelemetryEvent<SwarmModeEnteredEvent>({

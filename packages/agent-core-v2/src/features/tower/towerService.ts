@@ -52,6 +52,7 @@ import {
   TOWER_TOOL_NAMES,
   TOWER_WORKER_PROFILE,
   type TowerEnterResult,
+  type TowerExitReason,
 } from './tower';
 import { isTowerFeatureAssembled } from './towerFeature';
 import { TowerInboxSent, TowerModeEnter, TowerModeExit, towerBaseKey, towerKey, towerOwnerKey } from './towerOps';
@@ -285,7 +286,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
           .get(IAgentLifecycleService)
           .handleOf('main')
           ?.accessor.get(IAgentTowerService)
-          .exit();
+          .exit('takeover');
       }
     }
     await this.adoptTowerRoster();
@@ -364,11 +365,13 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     );
   }
 
-  async exit(): Promise<void> {
+  async exit(reason: TowerExitReason = 'user'): Promise<void> {
     if (!this.agentState.get(towerKey)) return;
+    const hasBase = this.agentState.get(towerBaseKey) !== null;
     this.lastPublished = false;
     this.dropInboxWake();
     void this.dispatcher.dispatch(new TowerModeExit({ agentId: this.agentCtx.agentId }));
+    this.telemetry.track2('tower_mode_exit', { reason, has_base: hasBase });
     await this.releaseTowerOwnership();
   }
 
@@ -422,11 +425,11 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
         this.log.warn(
           `failed to adopt tower workspace roster on restore: ${error instanceof Error ? error.message : String(error)}`,
         );
-        await this.exit();
+        await this.exit('foreign-reconcile');
       }
       return;
     }
-    void this.exit();
+    void this.exit('foreign-reconcile');
   }
 
   private async resolveTowerOwner(): Promise<string | undefined> {
