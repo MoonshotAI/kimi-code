@@ -19,7 +19,7 @@ import { ALL_TIPS, type ToolbarTip } from '#/tui/constant/tips';
 import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/dance';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
-import type { AppState } from '#/tui/types';
+import type { AppState, EnvironmentSlotState } from '#/tui/types';
 import { PERMISSION_MODE_DISPLAY_NAMES } from '#/tui/utils/permission-mode';
 import {
   StatusLineCommandRunner,
@@ -154,6 +154,10 @@ function modelDisplayName(state: AppState): string {
   const model = state.availableModels[state.model];
   const effective = model === undefined ? undefined : effectiveModelAlias(model);
   return effective?.displayName ?? effective?.model ?? state.model;
+}
+
+function isRemoteEnvironment(environment: AppState['environment']): environment is EnvironmentSlotState {
+  return environment !== undefined && environment.environmentId !== 'local';
 }
 
 function shortenCwd(path: string, home: string | undefined): string {
@@ -505,7 +509,7 @@ export class FooterComponent implements Component {
     // reason is visible at a glance. While connecting, a braille spinner ticks
     // ahead of the id (see syncEnvironmentSpinner for the bounded timer).
     const environment = state.environment;
-    const remote = environment !== undefined && environment.environmentId !== 'local';
+    const remote = isRemoteEnvironment(environment);
     if (remote) {
       const tone =
         environment.status === 'disconnected'
@@ -556,7 +560,7 @@ export class FooterComponent implements Component {
     return {
       model: modelDisplayName(state),
       cwd: state.workDir,
-      gitBranch: this.gitCache.getStatus()?.branch ?? null,
+      gitBranch: isRemoteEnvironment(state.environment) ? null : (this.gitCache.getStatus()?.branch ?? null),
       permissionMode: state.permissionMode,
       planMode: state.planMode,
       contextUsage: state.contextUsage,
