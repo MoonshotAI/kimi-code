@@ -22,7 +22,7 @@ import type { IAgentReminderService } from '#/features/reminder/reminderService'
 import type { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { Environment, EnvironmentBinding, EnvironmentCapability, EnvironmentLease } from '#/environment/environment';
-import { EnvironmentError, EnvironmentRegistry } from '#/environment/environmentRegistry';
+import { EnvironmentError, EnvironmentRegistry, type EnvironmentRegistrationHandle } from '#/environment/environmentRegistry';
 import type { IHostFileSystem, HostFileStat } from '#/os/interface/hostFileSystem';
 import { makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { SessionStateService } from '#/session/state/sessionStateService';
@@ -1256,6 +1256,127 @@ describe('AgentEnvironmentService.acquireWhenReady', () => {
     publishBus('turn.ended', { agentId: 'main' });
     const lease = await agentEnvironment.acquireWhenReady();
     expect(lease.environment.identity.generation).toBe('local-two');
+    lease.dispose();
+  });
+});
+
+describe('AgentEnvironmentService on-demand connect', () => {
+  function connectSwappingEnvironment(
+    registry: EnvironmentRegistry,
+    environmentId: string,
+    options: { readonly failFirst?: boolean } = {},
+  ): { readonly calls: string[]; readonly registration: EnvironmentRegistrationHandle } {
+    const calls: string[] = [];
+    let attempts = 0;
+    let registration: EnvironmentRegistrationHandle;
+    const pending = new FakeEnvironment(
+      { workspaceId: 'workspace', environmentId, generation: `${environmentId}-pending` },
+      { status: 'disconnected', capabilities: ['fs', 'process'] },
+    );
+    registration = registry.register(Object.assign(pending, {
+      fs: {},
+      process: {},
+      connect: async () => {
+        calls.push('connect');
+        attempts += 1;
+        if (options.failFirst === true && attempts === 1) throw new Error('connect failed');
+        await registration.replace(Object.assign(new FakeEnvironment(
+          { workspaceId: 'workspace', environmentId, generation: `${environmentId}-ready` },
+          { status: 'ready', capabilities: ['fs', 'process'] },
+        ), { fs: {}, process: {} }));
+      },
+    }));
+    return { calls, registration };
+  }
+
+  it('connects a restored disconnected environment on the first acquireWhenReady and keeps serving the turn', async () => {
+    const { registry, state, restoreHooks, agentEnvironment, publishBus } = setup();
+    const { calls } = connectSwappingEnvironment(registry, 'remote-x');
+    state.set(environmentBindingKey, { workspaceId: 'workspace', environmentId: 'remote-x', cwd: '/remote/x' });
+    await restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
+    publishBus('turn.started', { agentId: 'main' });
+
+    expect(calls).toEqual([]);
+    const lease = await agentEnvironment.acquireWhenReady(['fs']);
+    expect(calls).toEqual(['connect']);
+    expect(lease.environment.identity.generation).toBe('remote-x-ready');
+    expect(lease.environment.status).toBe('ready');
+    lease.dispose();
+
+    const next = agentEnvironment.acquire(['fs']);
+    expect(next.environment.identity.generation).toBe('remote-x-ready');
+    next.dispose();
+    publishBus('turn.ended', { agentId: 'main' });
+  });
+
+  it('connects on demand without an active turn', async () => {
+    const { registry, state, restoreHooks, agentEnvironment } = setup();
+    const { calls } = connectSwappingEnvironment(registry, 'remote-x');
+    state.set(environmentBindingKey, { workspaceId: 'workspace', environmentId: 'remote-x', cwd: '/remote/x' });
+    await restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
+
+    const lease = await agentEnvironment.acquireWhenReady(['fs']);
+    expect(calls).toEqual(['connect']);
+    expect(lease.environment.identity.generation).toBe('remote-x-ready');
+    lease.dispose();
+  });
+
+  it('adopts the generation another session connected before the first turn acquire without reconnecting', async () => {
+    const { registry, state, restoreHooks, agentEnvironment, publishBus } = setup();
+    const { calls } = connectSwappingEnvironment(registry, 'remote-x');
+    state.set(environmentBindingKey, { workspaceId: 'workspace', environmentId: 'remote-x', cwd: '/remote/x' });
+    await restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
+    publishBus('turn.started', { agentId: 'main' });
+
+    await registry.current('remote-x')!.connect!();
+    expect(calls).toEqual(['connect']);
+
+    const lease = await agentEnvironment.acquireWhenReady(['fs']);
+    expect(calls).toEqual(['connect']);
+    expect(lease.environment.identity.generation).toBe('remote-x-ready');
+    lease.dispose();
+
+    const next = agentEnvironment.acquire(['fs']);
+    expect(next.environment.identity.generation).toBe('remote-x-ready');
+    next.dispose();
+    publishBus('turn.ended', { agentId: 'main' });
+  });
+
+  it('rejects turn acquires once the on-demand-connected generation is replaced mid-turn', async () => {
+    const { registry, state, restoreHooks, agentEnvironment, publishBus } = setup();
+    const { registration } = connectSwappingEnvironment(registry, 'remote-x');
+    state.set(environmentBindingKey, { workspaceId: 'workspace', environmentId: 'remote-x', cwd: '/remote/x' });
+    await restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
+    publishBus('turn.started', { agentId: 'main' });
+
+    const lease = await agentEnvironment.acquireWhenReady(['fs']);
+    lease.dispose();
+
+    await registration.replace(Object.assign(new FakeEnvironment(
+      { workspaceId: 'workspace', environmentId: 'remote-x', generation: 'remote-x-two' },
+      { status: 'ready', capabilities: ['fs', 'process'] },
+    ), { fs: {}, process: {} }));
+
+    expect(() => agentEnvironment.acquire(['fs'])).toThrowError(
+      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.unavailable' }),
+    );
+    await expect(agentEnvironment.acquireWhenReady(['fs'])).rejects.toThrowError(
+      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.unavailable' }),
+    );
+    publishBus('turn.ended', { agentId: 'main' });
+  });
+
+  it('propagates a failed on-demand connect and retries on the next call', async () => {
+    const { registry, state, restoreHooks, agentEnvironment } = setup();
+    const { calls } = connectSwappingEnvironment(registry, 'remote-x', { failFirst: true });
+    state.set(environmentBindingKey, { workspaceId: 'workspace', environmentId: 'remote-x', cwd: '/remote/x' });
+    await restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
+
+    await expect(agentEnvironment.acquireWhenReady(['fs'])).rejects.toThrow('connect failed');
+
+    const lease = await agentEnvironment.acquireWhenReady(['fs']);
+    expect(calls).toEqual(['connect', 'connect']);
+    expect(lease.environment.identity.generation).toBe('remote-x-ready');
     lease.dispose();
   });
 });

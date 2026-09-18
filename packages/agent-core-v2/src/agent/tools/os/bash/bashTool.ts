@@ -178,7 +178,7 @@ export class BashTool implements IBashTool {
       SHELL: env.shellPath,
     };
 
-    return processService.spawn(env.shellPath, ['-c', shellCommand], { env: noninteractiveEnv });
+    return processService.spawn(env.shellPath, ['-c', shellCommand], { cwd: effectiveCwd, env: noninteractiveEnv });
   }
 
   private async execution(
