@@ -4,7 +4,10 @@ import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
 import { TimeoutTimer } from '#/_base/utils/timer';
 import { subtreeWatchFilter } from '#/_base/utils/paths';
-import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
+import {
+  IProjectLocalConfigService,
+  projectLocalConfigPath,
+} from '#/app/projectLocalConfig/projectLocalConfig';
 import type { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
@@ -49,7 +52,7 @@ export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
     this.states.contributeState(workspaceDirsEphemeralDirsKey);
     this.projectRoot = workspace.cwd;
     this.configPath = '';
-    this.ready = this.enqueue(() => this.reloadFromDisk());
+    this.ready = this.enqueue(() => this.loadInitialDirs());
     void this.ready.then(() => this.watchLocalToml());
   }
 
@@ -137,6 +140,15 @@ export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
       additionalDirs: this.additionalDirs,
       persisted: false,
     };
+  }
+
+  private async loadInitialDirs(): Promise<void> {
+    try {
+      await this.reloadFromDisk();
+    } catch (error: unknown) {
+      this.configPath = projectLocalConfigPath(this.projectRoot);
+      this.log.warn(`local.toml load failed, starting with no additional dirs: ${String(error)}`);
+    }
   }
 
   private async reloadFromDisk(): Promise<void> {

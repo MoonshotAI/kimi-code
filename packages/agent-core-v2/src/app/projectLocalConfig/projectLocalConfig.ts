@@ -1,4 +1,10 @@
+import { join } from 'pathe';
+
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+
+export function projectLocalConfigPath(projectRoot: string): string {
+  return join(projectRoot, '.kimi-code', 'local.toml');
+}
 
 export interface ProjectAdditionalDirsLoadResult {
   readonly projectRoot: string;
