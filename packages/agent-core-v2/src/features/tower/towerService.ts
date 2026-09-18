@@ -255,7 +255,6 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     this.telemetry.track2('tower_mode_enter', {
       outcome: result.entered ? 'entered' : 'rejected',
       reason: result.entered ? undefined : result.reason,
-      has_base: base !== undefined,
     });
     return result;
   }

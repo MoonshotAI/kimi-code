@@ -4,7 +4,7 @@ import {
   type RemoteControlStatusInfo,
 } from '@moonshot-ai/remote-control';
 
-import type { ITelemetryService, RemoteControlToggleEvent } from '@moonshot-ai/agent-core-v2';
+import type { ITelemetryService } from '@moonshot-ai/agent-core-v2';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
@@ -79,33 +79,30 @@ export function registerRemoteControlRoutes(
     },
     async (req, reply) => {
       const { enabled } = req.body as { enabled: boolean };
-      const trackToggle = (outcome: RemoteControlToggleEvent['outcome']): void => {
-        opts.telemetry?.track2('remote_control_toggle', { enabled, outcome });
-      };
       if (!enabled) {
         const status = await opts.service.disable();
-        trackToggle('ok');
+        opts.telemetry?.track2('remote_control_toggle', { enabled, outcome: 'ok' });
         reply.send(okEnvelope(toRemoteControlStatusResponse(status), req.id));
         return;
       }
       if (opts.staticEnableError !== undefined) {
-        trackToggle('rejected');
+        opts.telemetry?.track2('remote_control_toggle', { enabled, outcome: 'rejected' });
         reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, opts.staticEnableError, req.id));
         return;
       }
       try {
         const status = await opts.service.enable();
-        trackToggle('ok');
+        opts.telemetry?.track2('remote_control_toggle', { enabled, outcome: 'ok' });
         reply.send(okEnvelope(toRemoteControlStatusResponse(status), req.id));
       } catch (error) {
         if (error instanceof RemoteControlAlreadyRunningError) {
-          trackToggle('already_running');
+          opts.telemetry?.track2('remote_control_toggle', { enabled, outcome: 'already_running' });
           reply.send(
             errEnvelope(ErrorCode.REMOTE_CONTROL_ALREADY_RUNNING, error.message, req.id),
           );
           return;
         }
-        trackToggle('error');
+        opts.telemetry?.track2('remote_control_toggle', { enabled, outcome: 'error' });
         const message = error instanceof Error ? error.message : String(error);
         requestLog(req)?.error({ err: error }, 'remote-control enable failed');
         reply.send(errEnvelope(ErrorCode.INTERNAL_ERROR, message, req.id));

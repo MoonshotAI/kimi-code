@@ -199,9 +199,7 @@ describe('remote-control route telemetry', () => {
   }
 
   function postHandler(opts: RemoteControlRouteOptions): (enabled: boolean) => Promise<void> {
-    let handler:
-      | ((req: { id: string; body: unknown }, reply: { send(payload: unknown): unknown }) => Promise<void> | void)
-      | undefined;
+    let handler: ((req: unknown, reply: unknown) => unknown) | undefined;
     const app = {
       get: () => {},
       post: (_path: string, _options: unknown, h: unknown) => {
@@ -209,8 +207,8 @@ describe('remote-control route telemetry', () => {
       },
     };
     registerRemoteControlRoutes(app as never, opts);
-    return async (enabled: boolean) => {
-      await handler!({ id: 'req-1', body: { enabled } }, { send: (payload: unknown) => payload });
+    return async (enabled) => {
+      await handler!({ id: 'req-1', body: { enabled } }, { send: () => {} });
     };
   }
 

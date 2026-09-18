@@ -202,18 +202,13 @@ export interface PlanEnterResolvedEvent {
 export interface TowerModeEnterEvent {
   outcome: 'entered' | 'rejected';
   reason?: 'not-main-agent' | 'experiment-off' | 'feature-not-assembled' | 'owned-by-live-session';
-  has_base: boolean;
 }
 
 export interface TowerModeExitEvent {
   reason: 'user' | 'takeover' | 'foreign-reconcile';
 }
 
-export interface SwarmModeEnteredEvent {
-  trigger: 'manual' | 'task' | 'tool';
-}
-
-export interface SwarmModeExitedEvent {
+export interface SwarmModeTransitionEvent {
   trigger: 'manual' | 'task' | 'tool';
 }
 
@@ -800,7 +795,6 @@ export const telemetryEventDefinitions = {
     properties: {
       outcome: 'Whether tower mode was entered or the request was rejected',
       reason: 'Why the request was rejected; omitted when tower mode was entered',
-      has_base: 'Whether a base branch was specified',
     },
   }),
   tower_mode_exit: defineAgentTelemetryEvent<TowerModeExitEvent>({
@@ -811,14 +805,14 @@ export const telemetryEventDefinitions = {
         'Why tower mode was exited: the user turned it off, another session took the tower over, or a foreign tower was reconciled away',
     },
   }),
-  swarm_mode_entered: defineAgentTelemetryEvent<SwarmModeEnteredEvent>({
+  swarm_mode_entered: defineAgentTelemetryEvent<SwarmModeTransitionEvent>({
     owner: 'kimi-code',
     comment: 'Swarm mode is entered.',
     properties: {
       trigger: 'What triggered swarm mode',
     },
   }),
-  swarm_mode_exited: defineAgentTelemetryEvent<SwarmModeExitedEvent>({
+  swarm_mode_exited: defineAgentTelemetryEvent<SwarmModeTransitionEvent>({
     owner: 'kimi-code',
     comment: 'Swarm mode is exited.',
     properties: {

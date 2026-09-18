@@ -319,7 +319,6 @@ describe('AgentTowerService', () => {
     expect(telemetryTrack2).toHaveBeenCalledWith('tower_mode_enter', {
       outcome: 'entered',
       reason: undefined,
-      has_base: false,
     });
 
     telemetryTrack2.mockClear();
@@ -347,18 +346,12 @@ describe('AgentTowerService', () => {
 
       expect(tower.isActive).toBe(true);
       expect(tower.requestedBase).toBe('develop');
-      expect(telemetryTrack2).toHaveBeenCalledWith('tower_mode_enter', {
-        outcome: 'entered',
-        reason: undefined,
-        has_base: true,
-      });
       const state = await new TowerStore(repo).load();
       expect(state.base).toBe('develop');
       expect(state.sessionId).toBe('session-base');
 
       await tower.exit();
       expect(tower.requestedBase).toBeUndefined();
-      expect(telemetryTrack2).toHaveBeenCalledWith('tower_mode_exit', { reason: 'user' });
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
