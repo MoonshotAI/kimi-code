@@ -10,9 +10,9 @@ import {
 } from '#/os/backends/node-local/tools/runRg';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { IAgentEnvironmentService, inspectAgentEnvironment } from '#/agent/environmentBinding/agentEnvironment';
-import { unwrapErrorCause } from '#/_base/errors/errors';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -164,7 +164,7 @@ export class GlobTool implements IGlobTool {
         return { isError: true, output: `${searchRoot} is not a directory` };
       }
     } catch (error) {
-      if (errorCode(error) === 'ENOENT') {
+      if (isHostFsNotFound(error)) {
         return { isError: true, output: `${searchRoot} does not exist` };
       }
       return { isError: true, output: error instanceof Error ? error.message : String(error) };
@@ -392,20 +392,11 @@ function formatGlobWarning(stderr: string): string {
 }
 
 function formatSpawnError(error: unknown, environment: Environment): string {
-  return errorCode(error) === 'ENOENT'
+  return isHostFsNotFound(error)
     ? rgUnavailableMessage(error, environment)
     : error instanceof Error
       ? error.message
       : String(error);
-}
-
-function errorCode(error: unknown): string | undefined {
-  const unwrapped = unwrapErrorCause(error);
-  if (unwrapped !== null && typeof unwrapped === 'object' && 'code' in unwrapped) {
-    const code = (unwrapped as { code?: unknown }).code;
-    return typeof code === 'string' ? code : undefined;
-  }
-  return undefined;
 }
 
 export function splitCompletePaths(stdoutText: string, truncatedOutput: boolean): string[] {

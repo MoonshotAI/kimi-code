@@ -6,6 +6,7 @@ import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
 import { stubAgentEnvironment } from '../../../../environment/stubs';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { HostFsError } from '#/os/interface/hostFsErrors';
 import {
   type ReadInput,
   ReadInputSchema,
@@ -669,6 +670,25 @@ describe('ReadTool', () => {
 
   it('returns a friendly error for missing files before sniffing bytes', async () => {
     const { fs, readBytes, readLines } = createSpiedMapFs({});
+    const tool = createReadTool(fs, createTestEnv(), stubWorkspaceContext('/workspace'));
+
+    const result = await execute(tool, { path: '/workspace/missing.txt' });
+
+    expect(result).toMatchObject({
+      isError: true,
+      output: '"/workspace/missing.txt" does not exist.',
+    });
+    expect(readBytes).not.toHaveBeenCalled();
+    expect(readLines).not.toHaveBeenCalled();
+  });
+
+  it('returns a friendly missing-file error when a remote fs reports fs-domain not_found', async () => {
+    const { fs, readBytes, readLines, stat } = createSpiedMapFs({});
+    stat.mockRejectedValue(
+      new HostFsError('os.fs.not_found', 'stat failed: path does not exist', {
+        details: { path: '/workspace/missing.txt', op: 'stat', domainCode: 'os.fs.not_found' },
+      }),
+    );
     const tool = createReadTool(fs, createTestEnv(), stubWorkspaceContext('/workspace'));
 
     const result = await execute(tool, { path: '/workspace/missing.txt' });

@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import { isAbsolute, relative, resolve } from 'pathe';
 
 import { Service } from '#/_base/di/service';
-import { unwrapErrorCause } from '#/_base/errors/errors';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -12,6 +11,7 @@ import type { WillExecuteToolEvent } from '#/agent/toolExecutor/toolHooks';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IEventBus } from '#/app/event/eventBus';
@@ -472,8 +472,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
       try {
         info = await fs.stat(absolute);
       } catch (error) {
-        const code = (unwrapErrorCause(error) as { code?: unknown } | null)?.code;
-        return code === 'ENOENT' ? 'missing' : 'unreadable';
+        return isHostFsNotFound(error) ? 'missing' : 'unreadable';
       }
       if (!info.isFile) return 'unreadable';
       if (info.size > FILE_HISTORY_MAX_FILE_BYTES) {
