@@ -5,6 +5,7 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { EnvironmentRegistry } from '#/environment/environmentRegistry';
+import { fakeEnvironment } from './stubs';
 import { SharedEnvironmentUnitHostFactory, type EnvironmentProviderHost, type EnvironmentUnitImports } from '#/environment/environmentUnitHost';
 
 interface IValue {
@@ -46,10 +47,7 @@ class DependentUnit implements IValue {
 }
 
 function environment(generation: string, environmentId = 'local'): FakeEnvironment {
-  return new FakeEnvironment(
-    { workspaceId: 'workspace', environmentId, generation },
-    { capabilities: [] },
-  );
+  return fakeEnvironment(environmentId, generation, { capabilities: [] });
 }
 
 function setup() {

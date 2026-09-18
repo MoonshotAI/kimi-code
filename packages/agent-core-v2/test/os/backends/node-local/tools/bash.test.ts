@@ -16,9 +16,9 @@ import { userCancellationReason } from '#/_base/utils/abort';
 import type { IConfigService } from '#/app/config/config';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
+import { stubAgentEnvironment } from '../../../../environment/stubs';
 import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { type ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
@@ -729,24 +729,7 @@ function bashTool(
     ),
     { host: env, process: processService },
   );
-  const environment: IAgentEnvironmentService = {
-    _serviceBrand: undefined,
-    onDidChange: () => ({ dispose: () => {} }),
-    isAvailable: () => true,
-    inspect: () => backend,
-    acquire: () => ({
-      environment: backend,
-      track: (resource) => resource,
-      dispose: () => {},
-    }),
-    acquireWhenReady: async () => ({
-      environment: backend,
-      track: (resource) => resource,
-      dispose: () => {},
-    }),
-    reconnect: async () => {},
-    workspaceRoots: () => ({ workDir: ctx.cwd, additionalDirs: [] }),
-  };
+  const environment = stubAgentEnvironment(backend, { workDir: ctx.cwd });
   return new BashTool(environment, ctx, stubWorkspaceContext(ctx.cwd), background, toolPolicy, config);
 }
 

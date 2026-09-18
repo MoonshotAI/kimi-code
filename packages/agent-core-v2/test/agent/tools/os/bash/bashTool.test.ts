@@ -12,6 +12,7 @@ import { BashTool } from '#/agent/tools/os/bash/bashTool';
 import type { BashInput } from '#/agent/tools/os/bash/bash';
 
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
+import { stubAgentEnvironment } from '../../../../environment/stubs';
 
 function testCtx(cwd: string): ISessionContext {
   return makeSessionContext({
@@ -24,21 +25,12 @@ function testCtx(cwd: string): ISessionContext {
 }
 
 function environmentService(environment: Environment): IAgentEnvironmentService {
-  return {
-    _serviceBrand: undefined,
-    onDidChange: () => ({ dispose: () => {} }),
-    inspect: () => environment,
-    isAvailable: () => true,
-    acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
-    acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
-    reconnect: async () => {},
-    workspaceRoots: () => ({ workDir: '', additionalDirs: [] }),
-  };
+  return stubAgentEnvironment(environment, { workDir: '' });
 }
 
 function throwingEnvironmentService(): IAgentEnvironmentService {
   return {
-    ...environmentService(new FakeEnvironment({ workspaceId: 'w', environmentId: 'local', generation: 'g' })),
+    ...stubAgentEnvironment(new FakeEnvironment({ workspaceId: 'w', environmentId: 'local', generation: 'g' }), { workDir: '' }),
     inspect: () => {
       throw new Error('environment w is not materialized');
     },

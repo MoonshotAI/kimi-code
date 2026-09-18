@@ -4,6 +4,7 @@ import { PathSecurityError } from '#/tool/path-access';
 import { MEDIA_SNIFF_BYTES } from '#/agent/media/file-type';
 import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
+import { stubAgentEnvironment } from '../../../../environment/stubs';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import {
   type ReadInput,
@@ -81,16 +82,7 @@ function createReadTool(
     ),
     { host: env, fs },
   );
-  const resolver: IAgentEnvironmentService = {
-    _serviceBrand: undefined,
-    onDidChange: () => ({ dispose: () => {} }),
-    isAvailable: () => true,
-    inspect: () => environment,
-    acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
-    acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
-    reconnect: async () => {},
-    workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
-  };
+  const resolver = stubAgentEnvironment(environment);
   return new ReadTool(resolver, workspace, skillCatalog, truncation, stubConfigService());
 }
 

@@ -47,6 +47,7 @@ import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnviro
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { ensureRgPath } from '#/os/backends/node-local/tools/rgLocator';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
+import { stubAgentEnvironment } from '../../../../environment/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../../../app/telemetry/stubs';
 import { registerStateServices } from '../../../../state/stubs';
 
@@ -189,16 +190,10 @@ class GrepTool extends ProductionGrepTool {
         host: environment,
       },
     );
-    const environmentService: IAgentEnvironmentService = {
-      _serviceBrand: undefined,
-      onDidChange: () => ({ dispose: () => {} }),
-      isAvailable: () => true,
-      inspect: () => backend,
-      acquire: () => ({ environment: backend, track: (resource) => resource, dispose: () => {} }),
-      acquireWhenReady: async () => ({ environment: backend, track: (resource) => resource, dispose: () => {} }),
-      reconnect: async () => {},
-      workspaceRoots: () => ({ workDir: workspaceConfig.workspaceDir, additionalDirs: workspaceConfig.additionalDirs ?? [] }),
-    };
+    const environmentService = stubAgentEnvironment(backend, {
+      workDir: workspaceConfig.workspaceDir,
+      additionalDirs: workspaceConfig.additionalDirs,
+    });
     super(
       environmentService,
       stubWorkspaceContext(workspaceConfig.workspaceDir, workspaceConfig.additionalDirs),
@@ -347,16 +342,7 @@ describe('GrepTool', () => {
             ),
             { process: processService, fs, host: environment },
           );
-          reg.defineInstance(IAgentEnvironmentService, {
-            _serviceBrand: undefined,
-            onDidChange: () => ({ dispose: () => {} }),
-            isAvailable: () => true,
-            inspect: () => backend,
-            acquire: () => ({ environment: backend, track: (resource) => resource, dispose: () => {} }),
-            acquireWhenReady: async () => ({ environment: backend, track: (resource) => resource, dispose: () => {} }),
-            reconnect: async () => {},
-            workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
-          });
+          reg.defineInstance(IAgentEnvironmentService, stubAgentEnvironment(backend));
           reg.defineInstance(ISessionWorkspaceContext, stubWorkspaceContext('/workspace'));
           reg.defineInstance(ITelemetryService, noopTelemetryService);
           reg.defineInstance(ISessionSkillCatalog, {

@@ -10,6 +10,7 @@ import { PathSecurityError, type PathClass } from '#/tool/path-access';
 import { noopTelemetryService } from '#/app/telemetry/telemetry';
 import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
+import { stubAgentEnvironment } from '../../../../environment/stubs';
 import {
   type GlobInput,
   GlobInputSchema,
@@ -108,16 +109,7 @@ function createEnvironment(
     ),
     { fs, host: environment, process },
   );
-  return {
-    _serviceBrand: undefined,
-    onDidChange: () => ({ dispose: () => {} }),
-    isAvailable: () => true,
-    inspect: () => backend,
-    acquire: () => ({ environment: backend, track: (resource) => resource, dispose: () => {} }),
-    acquireWhenReady: async () => ({ environment: backend, track: (resource) => resource, dispose: () => {} }),
-    reconnect: async () => {},
-    workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
-  };
+  return stubAgentEnvironment(backend);
 }
 
 function createRealRgProbe(processService: IHostProcessService): RgProbe {
