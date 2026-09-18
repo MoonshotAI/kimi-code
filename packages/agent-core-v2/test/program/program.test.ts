@@ -800,6 +800,45 @@ describe('Program remote generation activation', () => {
       await fixture.cleanup();
     }
   });
+
+  it('releases the remote generation lease while no session controller uses it and re-acquires on demand', async () => {
+    const fixture = await localityFixture();
+    try {
+      expect(fixture.registry.idleEnvironments()).toContain('remote');
+
+      const first = fixture.program.createSessionController('remote', fixture.remoteRoot);
+      expect(fixture.registry.idleEnvironments()).not.toContain('remote');
+
+      first.dispose();
+      expect(fixture.registry.idleEnvironments()).toContain('remote');
+
+      const second = fixture.program.createSessionController('remote', fixture.remoteRoot);
+      expect(fixture.registry.idleEnvironments()).not.toContain('remote');
+
+      second.dispose();
+      expect(fixture.registry.idleEnvironments()).toContain('remote');
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it('does not pin a remote environment for a generation rebuilt without controllers', async () => {
+    const fixture = await localityFixture();
+    try {
+      const controller = fixture.program.createSessionController('remote', fixture.remoteRoot);
+      controller.dispose();
+      expect(fixture.registry.idleEnvironments()).toContain('remote');
+
+      await fixture.replaceRemote('remote-two', fixture.remoteRoot);
+      expect(fixture.registry.idleEnvironments()).toContain('remote');
+
+      const next = fixture.program.createSessionController('remote', fixture.remoteRoot);
+      expect(fixture.registry.idleEnvironments()).not.toContain('remote');
+      next.dispose();
+    } finally {
+      await fixture.cleanup();
+    }
+  });
 });
 
 describe('Program.onDidChangeTrust', () => {

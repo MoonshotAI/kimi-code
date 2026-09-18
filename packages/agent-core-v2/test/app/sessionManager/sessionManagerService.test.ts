@@ -15,7 +15,7 @@ import { Program } from '#/program/program';
 import type { ProgramSessionControllerInput } from '#/program/programDependencies';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { fakeEnvironment, connectableEnvironment } from '../../environment/stubs';
-import { EnvironmentError, EnvironmentRegistry } from '#/environment/environmentRegistry';
+import { EnvironmentRegistry } from '#/environment/environmentRegistry';
 import { writeWorkspaceTrust } from '#/workspace/workspaceTrust/trustRecord';
 import type {
   SessionArchivedEvent,
@@ -1104,6 +1104,7 @@ describe('SessionManager remote environment wiring', () => {
     readonly remoteStatus: 'ready' | 'disconnected';
     readonly persistedEnvironmentId?: string;
     readonly persistedCwd?: string | null;
+    readonly connectFails?: boolean;
   }) {
     registry = localRegistry();
     const remote = new FakeEnvironment(
@@ -1111,6 +1112,7 @@ describe('SessionManager remote environment wiring', () => {
       { status: options.remoteStatus, capabilities: ['fs', 'process'] },
     );
     const remoteConnect = vi.fn(async () => {
+      if (options.connectFails === true) throw new Error('ssh unreachable');
       remote.setStatus('ready');
     });
     registry.register(Object.assign(remote, { fs: {}, process: {}, connect: remoteConnect }));
@@ -1140,31 +1142,40 @@ describe('SessionManager remote environment wiring', () => {
     return { manager, byEnvironment, createCalls, registry, remote, remoteConnect };
   }
 
-  it('restores a remote-bound session on the local controller without connecting the disconnected environment', async () => {
-    const { manager, byEnvironment, createCalls, registry, remoteConnect } = restoreSetup({
+  it('restores a remote-bound session on the remote controller after connecting the disconnected environment', async () => {
+    const { manager, byEnvironment, createCalls, remoteConnect } = restoreSetup({
       remoteStatus: 'disconnected',
     });
 
     const handle = await manager.resume('session-1');
     expect(handle).toBeDefined();
-    expect(byEnvironment.has('local')).toBe(true);
-    expect(byEnvironment.has('remote')).toBe(false);
-    expect(createCalls).toEqual([{ environmentId: 'local', cwd: undefined }]);
-    expect(remoteConnect).not.toHaveBeenCalled();
-    expect(registry.current('remote')!.status).toBe('disconnected');
+    expect(remoteConnect).toHaveBeenCalledTimes(1);
+    expect(byEnvironment.has('remote')).toBe(true);
+    expect(byEnvironment.has('local')).toBe(false);
+    expect(createCalls).toEqual([{ environmentId: 'remote', cwd: '/remote/work' }]);
   });
 
-  it('opens a remote-bound session without connecting and keeps the explicit acquire error', async () => {
+  it('makes the persisted environment acquirable once resume connected it on demand', async () => {
     const { manager, registry, remoteConnect } = restoreSetup({
       remoteStatus: 'disconnected',
     });
 
     const handle = await manager.resume('session-1');
     expect(handle).toBeDefined();
-    expect(remoteConnect).not.toHaveBeenCalled();
-    expect(() => registry.acquire({ workspaceId: 'workspace-1', environmentId: 'remote' })).toThrowError(
-      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.unavailable' }),
-    );
+    expect(remoteConnect).toHaveBeenCalledTimes(1);
+    registry.acquire({ workspaceId: 'workspace-1', environmentId: 'remote' }).dispose();
+  });
+
+  it('fails the resume instead of falling back to local when the persisted environment cannot connect', async () => {
+    const { manager, byEnvironment, remoteConnect } = restoreSetup({
+      remoteStatus: 'disconnected',
+      connectFails: true,
+    });
+
+    await expect(manager.resume('session-1')).rejects.toMatchObject({ code: 'environment.unavailable' });
+    expect(remoteConnect).toHaveBeenCalledTimes(1);
+    expect(byEnvironment.has('local')).toBe(false);
+    expect(byEnvironment.has('remote')).toBe(false);
   });
 
   it('leaves a local restored binding untouched', async () => {
@@ -1178,12 +1189,12 @@ describe('SessionManager remote environment wiring', () => {
     expect(remoteConnect).not.toHaveBeenCalled();
   });
 
-  it('does not connect the shared environment when restoring an archived remote-bound session', async () => {
+  it('connects the persisted environment when restoring an archived remote-bound session', async () => {
     const { manager, registry, remoteConnect } = restoreSetup({ remoteStatus: 'disconnected' });
 
     await manager.restore('session-1');
-    expect(remoteConnect).not.toHaveBeenCalled();
-    expect(registry.current('remote')!.status).toBe('disconnected');
+    expect(remoteConnect).toHaveBeenCalledTimes(1);
+    expect(registry.current('remote')!.status).toBe('ready');
   });
 
   it('restores a remote-bound session on the remote controller rooted at the persisted cwd when the environment is ready', async () => {
@@ -1195,26 +1206,27 @@ describe('SessionManager remote environment wiring', () => {
     expect(remoteConnect).not.toHaveBeenCalled();
   });
 
-  it('does not mutate the shared environment when resuming a remote-bound session with a persisted cwd', async () => {
+  it('does not replace the shared environment registration when resuming a remote-bound session with a persisted cwd', async () => {
     const { manager, registry, remote, remoteConnect } = restoreSetup({
       remoteStatus: 'disconnected',
     });
 
     await manager.resume('session-1');
-    expect(remoteConnect).not.toHaveBeenCalled();
+    expect(remoteConnect).toHaveBeenCalledTimes(1);
     expect(registry.current('remote')).toBe(remote);
     expect(registry.current('remote')!.identity.generation).toBe('remote-one');
-    expect(registry.current('remote')!.status).toBe('disconnected');
+    expect(registry.current('remote')!.status).toBe('ready');
   });
 
-  it('does not mutate the shared environment when the restored binding has no persisted cwd', async () => {
-    const { manager, registry, remote, remoteConnect } = restoreSetup({
+  it('resumes a remote-bound session without a persisted cwd on the remote controller at the default root', async () => {
+    const { manager, createCalls, registry, remote, remoteConnect } = restoreSetup({
       remoteStatus: 'disconnected',
       persistedCwd: null,
     });
 
     await manager.resume('session-1');
-    expect(remoteConnect).not.toHaveBeenCalled();
+    expect(remoteConnect).toHaveBeenCalledTimes(1);
+    expect(createCalls).toEqual([{ environmentId: 'remote', cwd: undefined }]);
     expect(registry.current('remote')).toBe(remote);
   });
 
