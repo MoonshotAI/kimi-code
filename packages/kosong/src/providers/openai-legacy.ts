@@ -394,8 +394,17 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
 
     // Reasoning content: honor the explicit key when set, otherwise scan the
     // de facto field set and remember the dialect for outbound echo.
+    // Skip empty strings on pure content messages: some gateways pad every
+    // content-phase chunk with an empty reasoning field, which would otherwise
+    // interleave empty think parts between text deltas and defeat sequential
+    // merging downstream. Tool-call messages keep the empty marker so the
+    // reasoning field is replayed on continuation, as some reasoning
+    // endpoints require.
     const reasoning = reasoningKeyDialect.observe(message);
-    if (reasoning !== undefined) {
+    if (
+      reasoning !== undefined &&
+      (reasoning.length > 0 || (message.tool_calls?.length ?? 0) > 0)
+    ) {
       yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
     }
 
@@ -449,8 +458,18 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
 
         // Reasoning content: honor the explicit key when set, otherwise scan
         // the de facto field set and remember the dialect for outbound echo.
+        // Skip empty strings on content-only chunks: some gateways pad every
+        // content-phase chunk with an empty reasoning field, which would
+        // otherwise interleave empty think parts between text deltas and
+        // defeat sequential merging. Tool-call chunks keep the empty marker
+        // so the reasoning field is replayed on continuation, as some
+        // reasoning endpoints require; adjacent empty think parts merge into
+        // one, so at most a single marker survives.
         const reasoning = reasoningKeyDialect.observe(delta);
-        if (reasoning !== undefined) {
+        if (
+          reasoning !== undefined &&
+          (reasoning.length > 0 || (delta.tool_calls?.length ?? 0) > 0)
+        ) {
           yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
         }
 
