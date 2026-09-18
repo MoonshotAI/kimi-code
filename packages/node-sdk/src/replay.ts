@@ -37,6 +37,7 @@ export interface AgentMeta {
   readonly type: AgentType;
   readonly parentAgentId?: string | null;
   readonly swarmItem?: string;
+  readonly profileName?: string;
 }
 
 export interface SessionMeta {

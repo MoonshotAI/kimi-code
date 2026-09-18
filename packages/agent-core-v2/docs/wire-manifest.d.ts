@@ -808,6 +808,7 @@ interface TurnEndedPayload {
   };
   durationMs?: number;
   stopReason?: string;
+  traceId?: string;
 }
 
 /**

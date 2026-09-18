@@ -420,8 +420,16 @@ export class KimiTUI {
    */
   public exitForegroundTask: ((exitCode: number) => Promise<void>) | undefined;
 
-  track(event: string, properties?: Parameters<KimiHarness['track']>[1]): void {
-    this.harness.track(event, properties);
+  track(
+    event: string,
+    properties?: Parameters<KimiHarness['track']>[1],
+    context?: { readonly sessionId?: string },
+  ): void {
+    if (context === undefined) {
+      this.harness.track(event, properties);
+      return;
+    }
+    this.harness.trackWithContext(event, properties, { sessionId: context.sessionId });
   }
 
   constructor(harness: KimiHarness, startupInput: KimiTUIStartupInput) {
@@ -836,6 +844,7 @@ export class KimiTUI {
       this.applyStartupPermissionAndPlanToAppState();
     }
     const resumeState = this.session?.getResumeState();
+    this.surveyController.seedFromResumedAgents(resumeState?.sessionMetadata.agents ?? {});
     if (resumeState?.warning !== undefined) {
       this.showStatus(`Warning: ${resumeState.warning}`, 'warning');
     }
@@ -1758,7 +1767,7 @@ export class KimiTUI {
 
   handleTurnEnded(event: TurnEndedEvent): void {
     this.staging.handleTurnEnded(event);
-    this.surveyController.notifyTurnEnded();
+    this.surveyController.notifyTurnEnded(event.traceId);
   }
 
   releaseStagingMedia(mediaAttachmentIds: readonly number[]): void {
@@ -2683,6 +2692,7 @@ export class KimiTUI {
       this.sessionEventHandler.startSubscription();
     }
     const resumeState = session.getResumeState();
+    this.surveyController.seedFromResumedAgents(resumeState?.sessionMetadata.agents ?? {});
     if (resumeState?.warning !== undefined) {
       this.showStatus(`Warning: ${resumeState.warning}`, 'warning');
     }
@@ -2714,6 +2724,7 @@ export class KimiTUI {
     }
     this.sessionEventHandler.startSubscription();
     const resumeState = session.getResumeState();
+    this.surveyController.seedFromResumedAgents(resumeState?.sessionMetadata.agents ?? {});
     if (resumeState?.warning !== undefined) {
       this.showStatus(`Warning: ${resumeState.warning}`, 'warning');
     }
@@ -3751,7 +3762,7 @@ export class KimiTUI {
   // =========================================================================
 
   mountEditorReplacement(panel: Component & Focusable): void {
-    this.surveyController.closeSilently();
+    this.surveyController.notifyDisplaced();
     this.state.editorReplacementMounted = true;
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(panel);
