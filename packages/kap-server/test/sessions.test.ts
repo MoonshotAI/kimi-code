@@ -1230,10 +1230,10 @@ describe('server-v2 /api/v1/sessions', () => {
   });
 
   it.each([
-    { count: 1, texts: ['answer before steer', 'steered prompt', 'answer after steer'] },
-    { count: 2, texts: ['answer before steer'] },
-    { count: 3, texts: [] },
-  ])('keeps the correct messages when undoing $count anchors in a steered turn', async ({ count, texts }) => {
+    { count: 1, code: 0, prompts: [] as string[], texts: [] as string[] },
+    { count: 2, code: 40911, prompts: ['original prompt'], texts: ['answer before steer', 'steered prompt', 'answer after steer', 'second steer', 'answer after second steer'] },
+    { count: 3, code: 40911, prompts: ['original prompt'], texts: ['answer before steer', 'steered prompt', 'answer after steer', 'second steer', 'answer after second steer'] },
+  ])('keeps the correct messages when undoing $count anchors in a steered turn', async ({ count, code, prompts, texts }) => {
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
     const id = created.body.data.id;
     const session = getLiveSessionById((server as RunningServer).core.accessor, id)!;
@@ -1247,19 +1247,19 @@ describe('server-v2 /api/v1/sessions', () => {
     await agent.accessor.get(IEventDispatcher).dispatch(new TurnSteer({
       agentId: MAIN_AGENT_ID,
       input: [{ type: 'text', text: 'steered prompt' }],
-      origin: { kind: 'user' },
+      origin: { kind: 'user', inTurn: true },
     }));
     context.append(
-      { role: 'user', content: [{ type: 'text', text: 'steered prompt' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'user', content: [{ type: 'text', text: 'steered prompt' }], toolCalls: [], origin: { kind: 'user', inTurn: true } },
       { role: 'assistant', content: [{ type: 'text', text: 'answer after steer' }], toolCalls: [] },
     );
     await agent.accessor.get(IEventDispatcher).dispatch(new TurnSteer({
       agentId: MAIN_AGENT_ID,
       input: [{ type: 'text', text: 'second steer' }],
-      origin: { kind: 'user' },
+      origin: { kind: 'user', inTurn: true },
     }));
     context.append(
-      { role: 'user', content: [{ type: 'text', text: 'second steer' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'user', content: [{ type: 'text', text: 'second steer' }], toolCalls: [], origin: { kind: 'user', inTurn: true } },
       { role: 'assistant', content: [{ type: 'text', text: 'answer after second steer' }], toolCalls: [] },
     );
     await agent.accessor.get(IWireService).flush();
@@ -1268,10 +1268,10 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(before.body.code).toBe(0);
     expect(before.body.data.items.filter((item) => item.kind === 'turn')).toHaveLength(1);
     const undone = await postJson(`/api/v1/sessions/${id}:undo`, { count });
-    expect(undone.body.code).toBe(0);
+    expect(undone.body.code).toBe(code);
     const after = await getJson<AgentTranscriptSnapshot>(path);
     const turns = after.body.data.items.filter((item) => item.kind === 'turn');
-    expect(turns.map((turn) => turn.prompt)).toEqual(count === 3 ? [] : ['original prompt']);
+    expect(turns.map((turn) => turn.prompt)).toEqual(prompts);
     expect(turns.flatMap((turn) => turn.steps).flatMap((step) => step.frames).filter((frame) => frame.kind === 'text').map((frame) => frame.text)).toEqual(texts);
     expect(after.body.data.prompts).toEqual([]);
   });

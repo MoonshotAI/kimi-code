@@ -2255,6 +2255,7 @@ export function userOriginOf(origin: unknown): UserMessageOrigin | undefined {
   const candidate = origin as
     | {
         kind?: unknown;
+        inTurn?: unknown;
         jobId?: unknown;
         cron?: unknown;
         skillName?: unknown;
@@ -2266,6 +2267,14 @@ export function userOriginOf(origin: unknown): UserMessageOrigin | undefined {
       }
     | null
     | undefined;
+  if (
+    candidate?.inTurn === true &&
+    (candidate.kind === 'user' ||
+      candidate.kind === 'skill_activation' ||
+      candidate.kind === 'plugin_command')
+  ) {
+    return { kind: 'user' };
+  }
   if (candidate?.kind === 'cron_job') return cronUserOrigin(candidate);
   if (candidate?.kind === 'cron_missed') return { kind: 'cron' };
   if (candidate?.kind === 'skill_activation' && typeof candidate.skillName === 'string') {
