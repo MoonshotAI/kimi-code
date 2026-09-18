@@ -572,12 +572,12 @@ The optional top-level `default` names the environment new sessions bind to init
 
 ### Command entries
 
-The generic launcher form, for any environment the built-in launchers do not cover (OrbStack machines, `kubectl exec`, Apple Container, managed sandboxes). The declared command must bridge stdio to `kimi exec-server --listen stdio` on the target.
+The generic launcher form, for any environment the built-in launchers do not cover (OrbStack machines, `kubectl exec`, Apple Container, managed sandboxes). The declared command must bridge stdio to `kimi exec-server` on the target.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `command` | `string` | Yes | Launcher executable: a name resolved against `PATH`, or an absolute path. A resolution landing inside the working directory is refused, so a project cannot shadow the launcher with a same-named binary |
-| `args` | `array<string>` | No | Launcher arguments; must include the executor invocation (`... exec-server --listen stdio`) |
+| `args` | `array<string>` | No | Launcher arguments; must include the executor invocation (`... exec-server`) |
 | `env` | `table<string, string>` | No | Environment for the launcher process on your machine; never propagated into commands running on the target |
 | `defaultCwd` | `string` | No | Working-directory prefill when binding a session |
 
@@ -597,7 +597,7 @@ container = "myapp-dev"
 [environments.sandbox]
 command = "sandbox"
 args = ["ssh", "i-1234567890", "--",
-        "/home/me/.kimi-code/bin/kimi", "exec-server", "--listen", "stdio"]
+        "/home/me/.kimi-code/bin/kimi", "exec-server"]
 env = { SANDBOX_TOKEN = "..." }
 defaultCwd = "/home/me/kimi-code"
 ```

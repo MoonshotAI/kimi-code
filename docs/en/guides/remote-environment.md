@@ -41,7 +41,7 @@ defaultCwd = "/workspace"
 [environments.sandbox]
 command = "sandbox"              # executable name or absolute path
 args = ["ssh", "i-1234567890", "--",
-        "/home/me/.kimi-code/bin/kimi", "exec-server", "--listen", "stdio"]
+        "/home/me/.kimi-code/bin/kimi", "exec-server"]
 env = { SANDBOX_TOKEN = "..." }  # optional: environment for the launcher process only
 defaultCwd = "/home/me/kimi-code"
 ```
@@ -133,7 +133,7 @@ Host dev-box
 
 ## The remote executor
 
-The executor is a light build of Kimi Code itself, started as `kimi exec-server --listen stdio` on the target. It only serves filesystem, process, and terminal requests — it never touches model APIs, credentials, or session state.
+The executor is a light build of Kimi Code itself, started as `kimi exec-server` on the target. It only serves filesystem, process, and terminal requests — it never touches model APIs, credentials, or session state. stdio is the default and only supported transport, so the explicit `kimi exec-server --listen stdio` spelling is equivalent and keeps working.
 
 The fixed install path is `~/.kimi-code/bin/kimi` on the target (override it per entry with `remoteBin` when the executor lives elsewhere, for example a preinstalled container image).
 

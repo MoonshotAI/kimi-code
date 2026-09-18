@@ -41,7 +41,7 @@ defaultCwd = "/workspace"
 [environments.sandbox]
 command = "sandbox"              # 可执行名或绝对路径
 args = ["ssh", "i-1234567890", "--",
-        "/home/me/.kimi-code/bin/kimi", "exec-server", "--listen", "stdio"]
+        "/home/me/.kimi-code/bin/kimi", "exec-server"]
 env = { SANDBOX_TOKEN = "..." }  # 可选：仅作用于本机启动器进程的环境变量
 defaultCwd = "/home/me/kimi-code"
 ```
@@ -133,7 +133,7 @@ Host dev-box
 
 ## 远程执行器
 
-执行器是 Kimi Code 自身的轻量构建，在目标环境以 `kimi exec-server --listen stdio` 启动。它只响应文件系统、进程、终端请求——不接触模型 API、凭据和会话状态。
+执行器是 Kimi Code 自身的轻量构建，在目标环境以 `kimi exec-server` 启动。它只响应文件系统、进程、终端请求——不接触模型 API、凭据和会话状态。stdio 是默认且唯一支持的传输方式，显式写法 `kimi exec-server --listen stdio` 与之等价且依然可用。
 
 固定安装路径是目标环境上的 `~/.kimi-code/bin/kimi`（执行器位于其他位置时——例如预装的容器镜像——可用条目里的 `remoteBin` 覆盖）。
 

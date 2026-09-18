@@ -1,7 +1,8 @@
 /**
  * Kimi Code process entry.
  *
- * `kimi exec-server --listen stdio` is the remote-executor light entry
+ * `kimi exec-server` (or the explicit `--listen stdio` spelling) is the
+ * remote-executor light entry
  * (remote-environment spec §6): it must dispatch before the CLI's static import
  * chain pulls `@moonshot-ai/kimi-code-sdk` into module evaluation (full
  * registration, config/OAuth/telemetry/session services). This module
