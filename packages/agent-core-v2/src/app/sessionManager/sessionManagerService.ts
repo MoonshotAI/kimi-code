@@ -54,8 +54,6 @@ interface SessionControllerEntry {
 
 interface LocatedSession {
   readonly controller: SessionLifecycleService;
-  readonly workspace?: WorkspaceInstance;
-  readonly persistedBinding?: EnvironmentBinding;
 }
 
 export class SessionManager implements ISessionManager {
@@ -154,7 +152,7 @@ export class SessionManager implements ISessionManager {
     }
     if (environmentCwd === undefined) return;
     environment = workspace.environments.current(environmentId);
-    if (environment === undefined || environment.identity.cwd === environmentCwd) return;
+    if (environment === undefined) return;
     const lease = workspace.environments.acquire({ workspaceId: workspace.id, environmentId }, ['fs']);
     try {
       const stat = await lease.environment.fs!.stat(environmentCwd).catch((error: unknown) => {
@@ -169,7 +167,6 @@ export class SessionManager implements ISessionManager {
     } finally {
       lease.dispose();
     }
-    await workspace.environments.current(environmentId)?.reroot?.(environmentCwd);
   }
 
   private async workspaceEnvironmentDeclarations(workspace: WorkspaceInstance): Promise<EnvironmentDeclarationSet | undefined> {
@@ -204,7 +201,6 @@ export class SessionManager implements ISessionManager {
     const promise = this.serializeLifecycle(sessionId, async () => {
       const located = await this.locateSession(sessionId);
       if (located === undefined) return undefined;
-      this.reconnectRestoredBinding(located);
       return located.controller.resume(sessionId, options);
     }).finally(() => this.pendingResumes.delete(sessionId));
     this.pendingResumes.set(sessionId, promise);
@@ -287,7 +283,6 @@ export class SessionManager implements ISessionManager {
   ): Promise<ISessionScopeHandle | undefined> {
     const located = await this.locateSession(sessionId);
     if (located === undefined) return undefined;
-    this.reconnectRestoredBinding(located);
     return located.controller.restore(sessionId, options);
   }
 
@@ -429,29 +424,7 @@ export class SessionManager implements ISessionManager {
     const persistedBinding = await this.peekPersistedBinding(workspace.id, sessionId);
     return {
       controller: this.controllerForWorkspace(workspace.id, this.selectControllerEnvironmentId(workspace, persistedBinding?.environmentId ?? LOCAL_ENVIRONMENT_ID)),
-      workspace,
-      persistedBinding,
     };
-  }
-
-  private reconnectRestoredBinding(located: LocatedSession): void {
-    const binding = located.persistedBinding;
-    if (located.workspace === undefined || binding === undefined || binding.environmentId === LOCAL_ENVIRONMENT_ID) return;
-    const environment = located.workspace.environments.current(binding.environmentId);
-    if (environment === undefined || environmentStatusAllows(environment, ['fs', 'process'])) return;
-    if (typeof environment.connect !== 'function') return;
-    try {
-      if (binding.cwd !== undefined) {
-        void environment.reroot?.(binding.cwd)?.catch((error: unknown) => {
-          this.log.warn(`background reroot of restored environment ${binding.environmentId} failed`, { error });
-        });
-      }
-      void environment.connect().catch((error: unknown) => {
-        this.log.warn(`background reconnect of restored environment ${binding.environmentId} failed`, { error });
-      });
-    } catch (error) {
-      this.log.warn(`background reconnect of restored environment ${binding.environmentId} failed`, { error });
-    }
   }
 
   private async peekPersistedBinding(workspaceId: string, sessionId: string): Promise<EnvironmentBinding | undefined> {

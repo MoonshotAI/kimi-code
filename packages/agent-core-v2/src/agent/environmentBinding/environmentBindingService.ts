@@ -16,7 +16,7 @@ import { IAgentConversationUndoParticipantRegistry, type AgentConversationUndoPa
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
-import { LOCAL_ENVIRONMENT_ID, type Environment, type EnvironmentBinding, type EnvironmentLease } from '#/environment/environment';
+import { LOCAL_ENVIRONMENT_ID, type EnvironmentBinding, type EnvironmentLease } from '#/environment/environment';
 import { EnvironmentError, environmentStatusAllows } from '#/environment/environmentRegistry';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -112,7 +112,6 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
         if (this.isSeedRoundTrip(replayed)) {
           this.emitEnvironmentReminder(replayed);
         }
-        this.reconnectRestoredBinding(replayed);
       } else {
         const persisted = await this.peekPersistedBinding();
         if (persisted !== undefined && persisted.environmentId !== LOCAL_ENVIRONMENT_ID) {
@@ -121,7 +120,6 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
             new EnvironmentSetBinding({ ...persisted, agentId: this.scopeContext.agentId }),
           );
           this.applySessionWorkDir(persisted);
-          this.reconnectRestoredBinding(persisted);
         } else {
           await this.dispatcher.dispatch(
             new EnvironmentSetBinding({ ...this.current, agentId: this.scopeContext.agentId }),
@@ -184,31 +182,6 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     }
   }
 
-  private reconnectRestoredBinding(binding: EnvironmentBinding): void {
-    if (this.scopeContext.agentId === MAIN_AGENT_ID) return;
-    if (binding.environmentId === LOCAL_ENVIRONMENT_ID) return;
-    let environment: Environment;
-    try {
-      environment = this.resolver.inspect(binding);
-    } catch {
-      return;
-    }
-    if (environmentStatusAllows(environment, ['fs', 'process'])) return;
-    if (typeof environment.connect !== 'function') return;
-    try {
-      if (binding.cwd !== undefined) {
-        void environment.reroot?.(binding.cwd)?.catch((error: unknown) => {
-          this.log.warn(`background reroot of restored environment ${binding.environmentId} failed`, { error });
-        });
-      }
-      void environment.connect().catch((error: unknown) => {
-        this.log.warn(`background reconnect of restored environment ${binding.environmentId} failed`, { error });
-      });
-    } catch (error) {
-      this.log.warn(`background reconnect of restored environment ${binding.environmentId} failed`, { error });
-    }
-  }
-
   private assertSwitchAllowed(): void {
     const busy = this.loop.current?.snapshot().turn?.activeToolCalls.length ?? 0;
     if (busy > 0) {
@@ -240,14 +213,16 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     const pending = this.pendingSwitch;
     if (pending === undefined) return;
     this.pendingSwitch = undefined;
-    void this.commitSwitch(pending).catch((error: unknown) => {
+    try {
+      this.commit(pending);
+    } catch (error) {
       this.log.warn(`deferred environment switch to ${pending.environmentId} failed`, { error });
       this.reminder.notify(
         `The scheduled environment switch to "${pending.environmentId}" failed: ${error instanceof Error ? error.message : String(error)}. ` +
           `The session remains on environment "${this.current.environmentId}".`,
         { variant: ENVIRONMENT_BINDING_REMINDER_VARIANT },
       );
-    });
+    }
   }
 
   get current(): EnvironmentBinding {
@@ -271,7 +246,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     this.assertSessionWorkspace(binding);
     this.assertSwitchAllowed();
     await this.prepareSwitch(binding);
-    return this.commitSwitch(binding);
+    return this.commit(binding);
   }
 
   async connectAndSwitchAtTurnBoundary(environmentId: string, cwd?: string): Promise<EnvironmentBinding> {
@@ -279,7 +254,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     this.assertSessionWorkspace(binding);
     await this.prepareSwitch(binding);
     if (this.loop.current?.snapshot().turn === undefined) {
-      return this.commitSwitch(binding);
+      return this.commit(binding);
     }
     this.pendingSwitch = binding;
     return binding;
@@ -316,13 +291,6 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     } finally {
       lease.dispose();
     }
-  }
-
-  private async commitSwitch(binding: EnvironmentBinding): Promise<EnvironmentBinding> {
-    if (binding.environmentId !== LOCAL_ENVIRONMENT_ID && binding.cwd !== undefined) {
-      await this.resolver.inspect(binding).reroot?.(binding.cwd);
-    }
-    return this.commit(binding);
   }
 
   private commit(binding: EnvironmentBinding): EnvironmentBinding {
@@ -378,7 +346,6 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     }
     this.state.set(agentEnvironmentBindingKey, target);
     this.applySessionWorkDir(target);
-    this.reconnectRestoredBinding(target);
     if (this.machineIdentityChanged(previous, target)) {
       this.emitEnvironmentReminder(target);
     }

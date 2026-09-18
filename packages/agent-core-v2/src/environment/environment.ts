@@ -53,7 +53,6 @@ export interface Environment {
   readonly whenReady?: Promise<void>;
   readonly connectError?: string;
   connect?(): Promise<void>;
-  reroot?(cwd: string): Promise<void>;
   dispose(): void | Promise<void>;
 }
 
