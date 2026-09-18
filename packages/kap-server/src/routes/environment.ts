@@ -10,13 +10,12 @@ import {
   ISessionContext,
   IWorkspaceInstanceManager,
   IWorkspaceService,
-  PROJECT_ENVIRONMENTS_FILE,
   ENVIRONMENTS_SECTION,
   readSshConfigHosts,
   resolveWorkspaceEnvironmentDeclarations,
   resumeSessionById,
+  writeProjectEnvironmentDeclaration,
   EnvironmentError,
-  EnvironmentsSectionSchema,
   type IAgentScopeHandle,
   type RemoteEnvironmentEntry,
   type EnvironmentBinding,
@@ -24,11 +23,7 @@ import {
   type Scope,
   type WorkspaceInstance,
 } from '@moonshot-ai/agent-core-v2';
-import { planConfigWriteback } from '@moonshot-ai/agent-core-v2/app/config/tomlWriteback';
-import { HostFsError, OsFsErrors } from '@moonshot-ai/agent-core-v2/os/interface/hostFsErrors';
 import { HandshakeError } from '@moonshot-ai/remote-exec';
-import { dirname, join } from 'node:path';
-import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -275,86 +270,6 @@ function toEngineEnvironmentEntry(entry: z.infer<typeof declareEnvironmentEntryS
     remoteBin: entry.remote_bin,
     defaultCwd: entry.default_cwd,
   };
-}
-
-async function writeProjectEnvironmentDeclaration(
-  fs: IHostFileSystem,
-  root: string,
-  id: string,
-  entry: RemoteEnvironmentEntry,
-): Promise<void> {
-  const filePath = join(root, PROJECT_ENVIRONMENTS_FILE);
-  const onDiskText = await readProjectEnvironmentsText(fs, filePath);
-  const previous = parseProjectEnvironments(onDiskText, filePath);
-  if (previous[id] !== undefined) {
-    throw new Error2(ErrorCodes.CONFIG_INVALID, `Environment id "${id}" is already declared in ${filePath}.`);
-  }
-  const nextEntry = stripUndefined(entry) as RemoteEnvironmentEntry;
-  const merged = { ...previous, [id]: nextEntry };
-  const validation = EnvironmentsSectionSchema.safeParse(merged);
-  if (!validation.success) {
-    throw new Error2(
-      ErrorCodes.CONFIG_INVALID,
-      `Invalid environments in ${filePath}: ${validation.error.issues.map((issue) => issue.message).join('; ')}`,
-    );
-  }
-  const planned =
-    onDiskText === undefined
-      ? undefined
-      : planConfigWriteback(
-          onDiskText,
-          [{ snakeKey: id, previousValue: undefined, nextValue: nextEntry }],
-          merged,
-        );
-  const text = planned ?? stringifyToml(merged);
-  await fs.mkdir(dirname(filePath), { recursive: true });
-  await fs.writeText(filePath, text.endsWith('\n') ? text : `${text}\n`);
-}
-
-async function readProjectEnvironmentsText(
-  fs: IHostFileSystem,
-  filePath: string,
-): Promise<string | undefined> {
-  try {
-    return await fs.readText(filePath);
-  } catch (error: unknown) {
-    if (error instanceof HostFsError && error.code === OsFsErrors.codes.OS_FS_NOT_FOUND) return undefined;
-    throw new Error2(
-      ErrorCodes.CONFIG_INVALID,
-      `Failed to read ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
-    );
-  }
-}
-
-function parseProjectEnvironments(text: string | undefined, filePath: string): Record<string, unknown> {
-  if (text === undefined || text.trim().length === 0) return {};
-  let data: unknown;
-  try {
-    data = parseToml(text);
-  } catch (error: unknown) {
-    throw new Error2(
-      ErrorCodes.CONFIG_INVALID,
-      `Invalid TOML in ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
-    );
-  }
-  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-    throw new Error2(ErrorCodes.CONFIG_INVALID, `Invalid environments in ${filePath}: not a table`);
-  }
-  return data as Record<string, unknown>;
-}
-
-function stripUndefined(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stripUndefined);
-  if (typeof value === 'object' && value !== null) {
-    const out: Record<string, unknown> = {};
-    for (const [key, nested] of Object.entries(value)) {
-      if (nested !== undefined) out[key] = stripUndefined(nested);
-    }
-    return out;
-  }
-  return value;
 }
 
 async function resolveEnvironmentAgent(core: Scope, sessionId: string): Promise<IAgentScopeHandle> {

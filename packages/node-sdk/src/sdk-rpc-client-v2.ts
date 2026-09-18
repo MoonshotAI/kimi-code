@@ -230,6 +230,7 @@ import {
   resumeSessionById,
   sessionDirOf,
   workspacePersistenceScope,
+  writeProjectEnvironmentDeclaration,
   logSeed,
   MAIN_AGENT_ID,
   prepareSystemPromptContext,
@@ -275,7 +276,6 @@ import type { ExperimentalFeatureState } from '#/flag';
 import { KimiHarness } from '#/kimi-harness';
 import type { BeginGlobalMcpServerAuthResult } from '#/mcp';
 import { limitAgentReplayByTurns } from '#/replay';
-import { writeProjectEnvironmentDeclaration } from '#/environment-declarations';
 import { noopTelemetryClient } from '#/telemetry';
 import {
   SDKRpcClientBase,
