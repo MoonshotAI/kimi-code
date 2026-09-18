@@ -165,7 +165,7 @@ interface RestoreHook {
 }
 
 function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: EnvironmentBinding } = {}) {
-  const registry = new EnvironmentRegistry('workspace');
+  const registry = new EnvironmentRegistry('workspace', 50);
   const local = environment('local', 'local-one', 'ready', ['fs', 'process'], LOCAL_HOST);
   const remote = environment('remote', 'remote-one', 'ready', ['process'], REMOTE_HOST);
   const localRegistration = registry.register(local);
@@ -559,6 +559,26 @@ describe('AgentEnvironmentBindingService', () => {
     const next = agentEnvironment.acquire();
     expect(next.environment.identity).toMatchObject({ environmentId: 'remote', generation: 'remote-one' });
     next.dispose();
+  });
+
+  it('leases the pinned environment for the turn duration so it never reports idle', () => {
+    const { registry, publishBus } = setup();
+    expect(registry.idleEnvironments()).toContain('local');
+
+    publishBus('turn.started', { agentId: 'main' });
+    expect(registry.idleEnvironments()).not.toContain('local');
+
+    publishBus('turn.ended', { agentId: 'main' });
+    expect(registry.idleEnvironments()).toContain('local');
+  });
+
+  it('releases the turn lease when the service is disposed mid-turn', () => {
+    const { registry, agentEnvironment, publishBus } = setup();
+    publishBus('turn.started', { agentId: 'main' });
+    expect(registry.idleEnvironments()).not.toContain('local');
+
+    agentEnvironment.dispose();
+    expect(registry.idleEnvironments()).toContain('local');
   });
 
   it('fails turn acquires when the pinned environment generation changes mid-turn', async () => {
@@ -1307,6 +1327,22 @@ describe('AgentEnvironmentService on-demand connect', () => {
     expect(next.environment.identity.generation).toBe('remote-x-ready');
     next.dispose();
     publishBus('turn.ended', { agentId: 'main' });
+  });
+
+  it('takes the turn lease once the pinned environment connects mid-turn', async () => {
+    const { registry, state, restoreHooks, agentEnvironment, publishBus } = setup();
+    connectSwappingEnvironment(registry, 'remote-x');
+    state.set(environmentBindingKey, { workspaceId: 'workspace', environmentId: 'remote-x', cwd: '/remote/x' });
+    await restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
+    publishBus('turn.started', { agentId: 'main' });
+    expect(registry.idleEnvironments()).toContain('remote-x');
+
+    const lease = await agentEnvironment.acquireWhenReady(['fs']);
+    lease.dispose();
+    expect(registry.idleEnvironments()).not.toContain('remote-x');
+
+    publishBus('turn.ended', { agentId: 'main' });
+    expect(registry.idleEnvironments()).toContain('remote-x');
   });
 
   it('connects on demand without an active turn', async () => {

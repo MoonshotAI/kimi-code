@@ -5,7 +5,7 @@ import * as posixPath from 'node:path/posix';
 import { Emitter } from '@moonshot-ai/agent-core-v2/_base/event';
 import { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
 import { subtreeWatchFilter } from '@moonshot-ai/agent-core-v2/_base/utils/paths';
-import { TimeoutTimer } from '@moonshot-ai/agent-core-v2/_base/utils/timer';
+import { MAX_TIMER_DELAY_MS, TimeoutTimer } from '@moonshot-ai/agent-core-v2/_base/utils/timer';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { watch } from '@moonshot-ai/agent-core-v2/human/utils/watch';
 import type { HostEnvironmentInfo } from '@moonshot-ai/agent-core-v2/os/interface/hostEnvironment';
@@ -227,9 +227,26 @@ interface DeclaredEnvironmentRecord {
   // and never dispose it. The record disposes it on reconnect, update, and
   // removal.
   connection?: RemoteEnvironment;
+  // Mirrors the registry idleness events for this environment: true while it
+  // has zero active leases and zero tracked resources.
+  idle: boolean;
+  // Fires the idle reap once the environment has stayed idle for its TTL.
+  reapTimer: TimeoutTimer;
 }
 
 const PROJECT_DECLARATION_WATCH_DEBOUNCE_MS = 200;
+const DEFAULT_IDLE_TTL_SECONDS = 300;
+
+function idleReapTtlMs(entry: RemoteEnvironmentEntry): number {
+  return Math.min((entry.idleTtlSeconds ?? DEFAULT_IDLE_TTL_SECONDS) * 1000, MAX_TIMER_DELAY_MS);
+}
+
+class EnvironmentReapAbortedError extends Error {
+  constructor() {
+    super('environment is no longer idle');
+    this.name = 'EnvironmentReapAbortedError';
+  }
+}
 
 export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFactory {
   readonly id = 'remote-exec';
@@ -273,6 +290,45 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
     // registered records. Reconciles are serialized on `tail`.
     let disposed = false;
     let tail = Promise.resolve();
+    // Idle connection reaping: the registry reports environments with zero
+    // active leases and zero tracked resources; once one stays idle for its
+    // declaration TTL the provider swaps the live view for a pending
+    // placeholder and disposes the connection. The next use reconnects on
+    // demand through the placeholder, exactly like the first connect. The
+    // timer captures the connection it armed against: a reconnect that lands
+    // mid-reap replaces it, and the identity check then aborts the reap
+    // instead of tearing the fresh connection down.
+    const reapIdleConnection = async (record: DeclaredEnvironmentRecord, connection: RemoteEnvironment): Promise<void> => {
+      if (disposed || !record.idle || record.connection !== connection) return;
+      record.reapTimer.cancel();
+      await record.handle.update(() => {
+        if (disposed || !record.idle || record.connection !== connection) throw new EnvironmentReapAbortedError();
+        return this.createPendingEnvironment(context, record);
+      });
+      if (disposed || !record.idle || record.connection !== connection) return;
+      if (record.connection === connection) record.connection = undefined;
+      await connection.dispose();
+    };
+    const armReapTimer = (record: DeclaredEnvironmentRecord): void => {
+      const ttlMs = idleReapTtlMs(record.declaration.entry);
+      const connection = record.connection;
+      if (!record.idle || ttlMs === 0 || connection === undefined) {
+        record.reapTimer.cancel();
+        return;
+      }
+      record.reapTimer.cancelAndSet(() => {
+        void reapIdleConnection(record, connection).catch((error: unknown) => {
+          if (error instanceof EnvironmentReapAbortedError) return;
+          log.warn(`remote environment ${record.declaration.id} idle connection reap failed`, { error });
+        });
+      }, ttlMs);
+    };
+    const idlenessSubscription = host.onDidChangeEnvironmentIdleness((change) => {
+      const record = records.get(change.environmentId);
+      if (record === undefined) return;
+      record.idle = change.idle;
+      armReapTimer(record);
+    });
     const reconcile = (): void => {
       tail = tail.catch(() => {}).then(async () => {
         if (disposed) return;
@@ -297,6 +353,7 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
           // (bounded by the registry drain timeout). Bindings to the removed
           // environment keep failing explicitly — no silent local fallback (D3).
           record.version += 1;
+          record.reapTimer.dispose();
           void record.handle.remove()
             .then(() => discardConnection(record))
             .catch((error: unknown) => {
@@ -316,9 +373,16 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
             }
             continue;
           }
-          if (record.fingerprint === fingerprint) continue;
+          if (record.fingerprint === fingerprint) {
+            // The connection identity is unchanged; only reap policy (the
+            // idle TTL is excluded from the fingerprint) may have moved.
+            record.declaration = declaration;
+            armReapTimer(record);
+            continue;
+          }
           record.version += 1;
           record.declaration = declaration;
+          record.reapTimer.cancel();
           try {
             await record.handle.update(() => this.createPendingEnvironment(context, record));
             record.fingerprint = fingerprint;
@@ -343,8 +407,10 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
         configListener.dispose();
         trustListener.dispose();
         projectWatch.dispose();
+        idlenessSubscription.dispose();
         for (const record of [...records.values()].toReversed()) {
           record.version += 1;
+          record.reapTimer.dispose();
           try {
             await record.handle.remove();
           } finally {
@@ -367,6 +433,8 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
       declaration,
       fingerprint: declarationFingerprint(declaration.entry),
       version: 0,
+      idle: true,
+      reapTimer: new TimeoutTimer(),
     };
     record.handle = host.registerEnvironment(this.createPendingEnvironment(context, record));
     return record;
@@ -461,7 +529,11 @@ export function watchProjectDeclarationFile(path: string, onChange: () => void):
 }
 
 function declarationFingerprint(entry: RemoteEnvironmentEntry): string {
-  return JSON.stringify(sortKeysDeep(entry));
+  // The idle TTL is reap policy, not connection identity: changing it must
+  // not tear the connection down, so it stays out of the fingerprint.
+  const connectionIdentity = { ...entry };
+  delete connectionIdentity.idleTtlSeconds;
+  return JSON.stringify(sortKeysDeep(connectionIdentity));
 }
 
 function sortKeysDeep(value: unknown): unknown {

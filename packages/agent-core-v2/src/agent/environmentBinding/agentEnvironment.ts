@@ -85,6 +85,7 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
   private readonly turnSubscriptions: readonly IDisposable[];
   private registrySubscription: IDisposable | undefined;
   private turnSnapshot: TurnEnvironmentSnapshot | undefined;
+  private turnLease: EnvironmentLease | undefined;
 
   constructor(
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
@@ -107,10 +108,12 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
           binding,
           generation: this.readyGeneration(binding),
         };
+        this.holdTurnLease();
       }),
       this.eventBus.subscribe(TurnEnded, (event) => {
         if (event.agentId !== this.scopeContext.agentId) return;
         this.turnSnapshot = undefined;
+        this.releaseTurnLease();
       }),
     ];
     this.bindRegistry();
@@ -161,6 +164,7 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
     if (snapshot.generation === undefined) {
       this.turnSnapshot = { binding: snapshot.binding, generation: this.currentGeneration(snapshot.binding) };
     }
+    this.holdTurnLease();
     return lease;
   }
 
@@ -178,6 +182,7 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
     if (snapshot !== undefined && (snapshot.generation === undefined || connected)) {
       this.turnSnapshot = { binding, generation: this.currentGeneration(binding) };
     }
+    this.holdTurnLease();
     return lease;
   }
 
@@ -186,7 +191,23 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
     this.registrySubscription?.dispose();
     this.workspaceSubscription.dispose();
     this.bindingSubscription.dispose();
+    this.releaseTurnLease();
     this.changeEmitter.dispose();
+  }
+
+  private holdTurnLease(): void {
+    const snapshot = this.turnSnapshot;
+    if (snapshot === undefined || this.turnLease !== undefined) return;
+    try {
+      this.turnLease = this.resolver.acquire(snapshot.binding);
+    } catch {
+      this.turnLease = undefined;
+    }
+  }
+
+  private releaseTurnLease(): void {
+    this.turnLease?.dispose();
+    this.turnLease = undefined;
   }
 
   private currentGeneration(binding: EnvironmentBinding): string | undefined {
@@ -224,6 +245,7 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
       if (change.current !== undefined && change.current !== current) return;
       this.changeEmitter.fire();
       this.publishEnvironmentStatus(change);
+      this.holdTurnLease();
     });
   }
 
