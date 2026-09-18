@@ -273,6 +273,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
       id: instance.id,
       root: instance.root,
       metadata: instance.metadata,
+      onDidChangeTrust: instance.program.onDidChangeTrust,
     }, host));
     let attachments = this.attachments.get(instance.id);
     if (attachments === undefined) {

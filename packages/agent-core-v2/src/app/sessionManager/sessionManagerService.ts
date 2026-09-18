@@ -5,14 +5,12 @@ import { ScopeActivation, registerScopedService, type ISessionScopeHandle } from
 import { LifecycleScope } from '#/app/scopes';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
-import { IFlagService } from '#/app/flag/flag';
 import { Error2, ErrorCodes } from '#/errors';
 import { ILogService } from '#/_base/log/log';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { EnvironmentSetBinding } from '#/agent/environmentBinding/environmentBindingOps';
-import { REMOTE_RUNTIME_FLAG_ID } from '#/environment/flag';
 import { LOCAL_ENVIRONMENT_ID, type EnvironmentBinding } from '#/environment/environment';
 import { resolveWorkspaceEnvironmentDeclarations } from '#/environment/environmentDeclarations';
 import type { EnvironmentDeclarationSet } from '#/environment/remoteEnvironmentDeclaration';
@@ -87,7 +85,6 @@ export class SessionManager implements ISessionManager {
   constructor(
     @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
     @ISessionIndex private readonly index: ISessionIndex,
-    @IFlagService private readonly flags: IFlagService,
     @IConfigService private readonly config: IConfigService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
@@ -138,7 +135,7 @@ export class SessionManager implements ISessionManager {
   }
 
   private async connectForCreate(workspace: WorkspaceInstance, environmentId: string, environmentCwd?: string): Promise<void> {
-    if (environmentId === LOCAL_ENVIRONMENT_ID || !this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) return;
+    if (environmentId === LOCAL_ENVIRONMENT_ID) return;
     let environment = workspace.environments.current(environmentId);
     if (environment === undefined) return;
     if (!environmentStatusAllows(environment, ['fs', 'process'])) {
@@ -176,7 +173,6 @@ export class SessionManager implements ISessionManager {
   }
 
   private async workspaceEnvironmentDeclarations(workspace: WorkspaceInstance): Promise<EnvironmentDeclarationSet | undefined> {
-    if (!this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) return undefined;
     try {
       const declarations = await resolveWorkspaceEnvironmentDeclarations({
         config: this.config,
@@ -441,7 +437,6 @@ export class SessionManager implements ISessionManager {
   private reconnectRestoredBinding(located: LocatedSession): void {
     const binding = located.persistedBinding;
     if (located.workspace === undefined || binding === undefined || binding.environmentId === LOCAL_ENVIRONMENT_ID) return;
-    if (!this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) return;
     const environment = located.workspace.environments.current(binding.environmentId);
     if (environment === undefined || environmentStatusAllows(environment, ['fs', 'process'])) return;
     if (typeof environment.connect !== 'function') return;
@@ -460,7 +455,6 @@ export class SessionManager implements ISessionManager {
   }
 
   private async peekPersistedBinding(workspaceId: string, sessionId: string): Promise<EnvironmentBinding | undefined> {
-    if (!this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) return undefined;
     try {
       const scope = agentScopeOf(
         sessionScopeOf(workspacePersistenceScope(this.bootstrap.scope('sessions'), workspaceId), sessionId),

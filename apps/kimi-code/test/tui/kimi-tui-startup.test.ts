@@ -42,6 +42,7 @@ interface StartupDriver {
   stop(exitCode?: number): Promise<void>;
   setSession(session: unknown): Promise<void>;
   syncRuntimeState(session?: unknown): Promise<void>;
+  ensureSession(): Promise<unknown>;
 }
 
 interface RuntimeStateDriver extends StartupDriver {
@@ -487,6 +488,25 @@ describe('KimiTUI startup', () => {
       agentProfile: 'reviewer',
       agentFiles: ['agent.md'],
     });
+  });
+
+  it('threads the --environment flag into the lazy-created first session (v2)', async () => {
+    const harness = makeHarness(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: { model: 'moonshot-v1', maxContextSize: 100 },
+        },
+        defaultModel: 'k2',
+      })),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ environment: 'dev-box' }));
+
+    await expect(driver.init()).resolves.toBe(false);
+    await driver.ensureSession();
+
+    expect(harness.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: 'dev-box' }),
+    );
   });
 
   it('resumes the latest session for --continue and marks history for replay', async () => {
@@ -2429,6 +2449,7 @@ describe('KimiTUI startup', () => {
     const getWorkspaceTrustInfo = vi.fn(async () => ({
       trusted: true,
       gatedMcpServers: [],
+      gatedEnvironments: [],
     }));
     const harness = makeHarness(makeSession(), { getWorkspaceTrustInfo });
     const driver = makeDriver(harness, {
@@ -2458,6 +2479,7 @@ describe('KimiTUI startup', () => {
     const getWorkspaceTrustInfo = vi.fn(async () => ({
       trusted: false,
       gatedMcpServers: [],
+      gatedEnvironments: [],
     }));
     const trustWorkspace = vi.fn(async () => {});
     const harness = makeHarness(makeSession(), { getWorkspaceTrustInfo, trustWorkspace });

@@ -39,6 +39,7 @@ function makeComponent(overrides: Partial<EnvironmentManagerOptions> = {}): Envi
     onReconnect: vi.fn(),
     onAdd: vi.fn(),
     onClose: vi.fn(),
+    requestRender: vi.fn(),
     ...overrides,
   });
 }
@@ -202,11 +203,29 @@ describe('EnvironmentManagerComponent', () => {
       onReconnect: vi.fn(),
       onAdd: vi.fn(),
       onClose: vi.fn(),
+      requestRender: vi.fn(),
     });
     const plain = rendered(component);
     const selectedLine = plain.split('\n').find((line) => line.includes('❯'));
     expect(selectedLine).toContain('dev-box');
     expect(plain).toContain('command · ready');
+  });
+
+  it('requests a repaint on setBusy, showError, and setOptions', () => {
+    const requestRender = vi.fn();
+    const component = makeComponent({ requestRender });
+    component.setBusy('Reconnecting dev-box…');
+    component.showError('boom');
+    component.setOptions({
+      environments: [LOCAL, DEV_BOX, SANDBOX],
+      currentEnvironmentId: 'local',
+      onSwitch: vi.fn(),
+      onReconnect: vi.fn(),
+      onAdd: vi.fn(),
+      onClose: vi.fn(),
+      requestRender,
+    });
+    expect(requestRender).toHaveBeenCalledTimes(3);
   });
 
   it('bounds the inline error to a few lines', () => {

@@ -491,10 +491,10 @@ export class FooterComponent implements Component {
     }
     slots['tasks'] = taskBadges;
 
-    // Environment slot (experimental remote environment): the local environment renders
-    // nothing; a remote binding shows its bare environment id ahead of the cwd —
-    // error-colored while disconnected, with the first connect-error line
-    // appended so the failure reason is visible at a glance.
+    // Environment slot: the local environment renders nothing; a remote binding
+    // shows its bare environment id ahead of the cwd — error-colored while
+    // disconnected, with the first connect-error line appended so the failure
+    // reason is visible at a glance.
     const environment = state.environment;
     const remote = environment !== undefined && environment.environmentId !== 'local';
     if (remote) {

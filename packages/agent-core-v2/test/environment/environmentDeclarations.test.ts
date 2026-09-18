@@ -8,6 +8,7 @@ import {
   loadProjectEnvironmentsSection,
   previewProjectEnvironmentDeclarations,
   resolveWorkspaceEnvironmentDeclarations,
+  writeProjectEnvironmentDeclaration,
 } from '#/environment/environmentDeclarations';
 import { EnvironmentsSectionSchema, type EnvironmentsSection } from '#/environment/remoteEnvironmentDeclaration';
 import { writeWorkspaceTrust } from '#/workspace/workspaceTrust/trustRecord';
@@ -234,5 +235,55 @@ command = "definitely-not-a-real-binary-xyz"
     expect(preview).toHaveLength(1);
     expect(preview[0]!.commandLine).toContain('definitely-not-a-real-binary-xyz');
     expect(preview[0]!.commandLine).toContain('invalid:');
+  });
+});
+
+describe('writeProjectEnvironmentDeclaration', () => {
+  function writableFs(files: Record<string, string>): IHostFileSystem {
+    return {
+      _serviceBrand: undefined,
+      readText: async (path: string) => {
+        const text = files[path];
+        if (text === undefined) {
+          throw new HostFsError(OsFsErrors.codes.OS_FS_NOT_FOUND, `not found: ${path}`);
+        }
+        return text;
+      },
+      mkdir: async () => {},
+      writeText: async (path: string, text: string) => {
+        files[path] = text;
+      },
+    } as unknown as IHostFileSystem;
+  }
+
+  it('writes a new declaration into an empty project file', async () => {
+    const files: Record<string, string> = {};
+    await writeProjectEnvironmentDeclaration(writableFs(files), ROOT, 'box', { type: 'ssh', host: 'box', defaultCwd: '/remote' });
+    const section = await loadProjectEnvironmentsSection(fakeFs(files), ROOT);
+    expect(section?.['box']).toMatchObject({ type: 'ssh', host: 'box', defaultCwd: '/remote' });
+  });
+
+  it('preserves existing entries and comments on merge and rejects a duplicate id', async () => {
+    const files = { [PROJECT_FILE]: '# Team declarations.\n[existing]\ntype = "ssh"\nhost = "existing"\n' };
+    const fs = writableFs(files);
+    await writeProjectEnvironmentDeclaration(fs, ROOT, 'added', { command: 'added-cmd', defaultCwd: '/remote' });
+    expect(files[PROJECT_FILE]).toContain('# Team declarations.');
+    expect(files[PROJECT_FILE]).toContain('[existing]');
+    expect(files[PROJECT_FILE]).toContain('added-cmd');
+    await expect(
+      writeProjectEnvironmentDeclaration(fs, ROOT, 'added', { command: 'other-cmd', defaultCwd: '/remote' }),
+    ).rejects.toMatchObject({ code: 'config.invalid' });
+  });
+
+  it('serializes concurrent declarations so every entry lands', async () => {
+    const files: Record<string, string> = {};
+    const fs = writableFs(files);
+    await Promise.all([
+      writeProjectEnvironmentDeclaration(fs, ROOT, 'box-a', { type: 'ssh', host: 'box-a', defaultCwd: '/a' }),
+      writeProjectEnvironmentDeclaration(fs, ROOT, 'box-b', { type: 'ssh', host: 'box-b', defaultCwd: '/b' }),
+      writeProjectEnvironmentDeclaration(fs, ROOT, 'box-c', { type: 'ssh', host: 'box-c', defaultCwd: '/c' }),
+    ]);
+    const section = await loadProjectEnvironmentsSection(fakeFs(files), ROOT);
+    expect(Object.keys(section ?? {})).toEqual(expect.arrayContaining(['box-a', 'box-b', 'box-c']));
   });
 });

@@ -283,7 +283,6 @@ export const BUILTIN_SLASH_COMMANDS = [
     description: 'Manage environments (local machine and remote environments)',
     priority: 60,
     availability: 'idle-only',
-    experimentalFlag: 'remote_runtime',
   },
   {
     name: 'add-dir',

@@ -30,6 +30,7 @@ import {
   IEventBus,
   IEventDispatcher,
   IHostFileSystem,
+  ILogService,
   IOAuthToolkit,
   ISessionIndex,
   ISessionManager,
@@ -67,6 +68,7 @@ import {
   createKimiDeviceId,
   KIMI_CODE_PROVIDER_NAME,
 } from '@moonshot-ai/kimi-code-oauth';
+import { CdnExecutorArtifactLocator, RemoteEnvironmentProviderFactory } from '@moonshot-ai/remote-exec';
 import {
   initializeTelemetry,
   setCrashPhase,
@@ -183,6 +185,25 @@ export async function runV2Print(
   );
   const auth = app.accessor.get(IOAuthToolkit);
 
+  const remoteEnvironmentProvider = await app.accessor
+    .get(IWorkspaceInstanceManager)
+    .addProvider(
+      new RemoteEnvironmentProviderFactory({
+        clientName: 'kimi-code',
+        clientVersion: version,
+        artifactLocator: new CdnExecutorArtifactLocator({
+          cdnBaseUrl: currentKimiProfile().cdnBase,
+        }),
+        onDiagnostic: (line) => {
+          app.accessor.get(ILogService).warn(line.trimEnd());
+        },
+      }),
+    )
+    .catch((error) => {
+      app.accessor.get(ILogService).warn('remote environment provider attach failed', { error });
+      return undefined;
+    });
+
   const configService = app.accessor.get(IConfigService);
   await configService.ready;
   // Print-mode config defaults (task timeouts / loop step cap / subagent
@@ -229,6 +250,7 @@ export async function runV2Print(
               ? raceWithTimeout(telemetryService.shutdown(), CLI_SHUTDOWN_TIMEOUT_MS)
               : Promise.resolve(),
             shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS }).catch(() => {}),
+            remoteEnvironmentProvider?.dispose(),
           ]);
           app.dispose();
         } finally {

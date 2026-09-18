@@ -273,10 +273,9 @@ export class Session {
   }
 
   /**
-   * Explicitly reconnect the currently bound environment (experimental remote
-   * environment). Replaces the connection handle and drains old leases; the
-   * binding itself is unchanged. Rejects when the bound environment is local or
-   * unavailable.
+   * Explicitly reconnect the currently bound environment. Replaces the
+   * connection handle and drains old leases; the binding itself is unchanged.
+   * Rejects when the bound environment is local or unavailable.
    */
   async reconnectEnvironment(): Promise<AgentEnvironmentBinding> {
     this.ensureOpen();
@@ -284,11 +283,10 @@ export class Session {
   }
 
   /**
-   * List the environments registered for this session's workspace (experimental
-   * remote environment): `local` plus every declared environment with its connection
-   * status, plus the ssh host candidates discovered from `~/.ssh/config` for
-   * the environment-add flow. With the `remote_runtime` flag off this reports only
-   * the local environment and no ssh candidates.
+   * List the environments registered for this session's workspace: `local`
+   * plus every declared environment with its connection status, plus the ssh
+   * host candidates discovered from `~/.ssh/config` for the environment-add
+   * flow.
    */
   async listEnvironments(): Promise<SessionEnvironmentsInfo> {
     this.ensureOpen();
@@ -296,14 +294,13 @@ export class Session {
   }
 
   /**
-   * Declare a new environment for this session's workspace (experimental remote
-   * environment). `scope: 'global'` (the default) deep-merges the entry into the
-   * user-level `config.toml` `[environments]` section; `scope: 'project'`
-   * merge-writes it into the workspace's `.kimi-code/environments.toml`,
-   * preserving existing entries and file layout. Either way the engine's
-   * declaration watch registers the environment live — no restart. Fails closed:
-   * a duplicate id, an invalid entry, or an unreadable/invalid project file
-   * rejects without writing.
+   * Declare a new environment for this session's workspace. `scope: 'global'`
+   * (the default) deep-merges the entry into the user-level `config.toml`
+   * `[environments]` section; `scope: 'project'` merge-writes it into the
+   * workspace's `.kimi-code/environments.toml`, preserving existing entries
+   * and file layout. Either way the engine's declaration watch registers the
+   * environment live — no restart. Fails closed: a duplicate id, an invalid
+   * entry, or an unreadable/invalid project file rejects without writing.
    */
   async declareEnvironment(input: DeclareEnvironmentInput): Promise<void> {
     this.ensureOpen();

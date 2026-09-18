@@ -567,8 +567,9 @@ These endpoints create, list, and inspect sessions, drive session-level actions 
 | `GET /api/v1/sessions/{session_id}/warnings` | Session-level warnings |
 | `GET /api/v1/sessions/{session_id}/environment` | Read the main agent's environment binding |
 | `POST /api/v1/sessions/{session_id}/environment` | Switch the main agent's environment binding |
-| `POST /api/v1/sessions/{session_id}/environment/reconnect` | Reconnect the bound environment (experimental remote environment) |
+| `POST /api/v1/sessions/{session_id}/environment/reconnect` | Reconnect the bound environment |
 | `GET /api/v1/sessions/{session_id}/environments` | List the environments registered for the session workspace |
+| `POST /api/v1/sessions/{session_id}/environments` | Declare an environment for the session workspace |
 | `POST /api/v1/sessions/{session_id}/export` | Export the session with diagnostics (zip stream, not enveloped) |
 | `GET /api/v1/sessions/{session_id}/snapshot` | Full snapshot for client rebuilds (with `as_of_seq` and `epoch`) |
 | `GET /api/v1/sessions/{session_id}/media/{file_id}` | Download prompt media by file id (binary) |
@@ -849,17 +850,17 @@ On success, `data` is `{ workspace_id, environment_id, cwd? }`; `cwd` is the wor
 
 #### `POST /api/v1/sessions/{session_id}/environment`
 
-Switches the main agent's environment binding. Switching to a non-local environment is experimental and requires the `remote_runtime` flag (see [Remote environments](../guides/remote-environment.md)); the connection is established and the given `cwd` is validated against the target's filesystem before the new binding is persisted — on failure the previous binding is kept.
+Switches the main agent's environment binding. The connection is established and the given `cwd` is validated against the target's filesystem before the new binding is persisted — on failure the previous binding is kept. See [Remote environments](../guides/remote-environment.md) for the feature walkthrough.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 | `environment_id` | body | string | **Required.** Target environment id |
-| `cwd` | body | string | Working directory on the target environment; defaults to the entry's configured `defaultCwd` |
+| `cwd` | body | string | Working directory on the target environment; required for non-local environments (`40001` when missing) — the entry's `defaultCwd` applies only when a session is created bound to the environment |
 
 On success, `data` is the new binding `{ workspace_id, environment_id, cwd? }`.
 
-- `40001`: the given `cwd` does not resolve to a directory on the target environment
+- `40001`: a non-local `environment_id` without a `cwd`, or the given `cwd` does not resolve to a directory on the target environment
 - `40401`: session not found
 - `40420`: no environment with that `environment_id`
 - `40901`: the session has a running turn or a pending approval; switching applies at the turn boundary
@@ -867,7 +868,7 @@ On success, `data` is the new binding `{ workspace_id, environment_id, cwd? }`.
 
 #### `POST /api/v1/sessions/{session_id}/environment/reconnect`
 
-Explicitly reconnects the main agent's bound environment after a disconnect (experimental remote environment). Remote environments never reconnect automatically and never fall back to `local` silently — after a connection drop, tool calls fail with an environment-unavailable error until this endpoint (or the `/environment` dialog) re-establishes the connection.
+Explicitly reconnects the main agent's bound environment after a disconnect. Remote environments never reconnect automatically and never fall back to `local` silently — after a connection drop, tool calls fail with an environment-unavailable error until this endpoint (or the `/environment` dialog) re-establishes the connection.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -877,7 +878,7 @@ On success, `data` is the current binding `{ workspace_id, environment_id, cwd? 
 
 - `40401`: session not found
 - `40420`: no environment with that `environment_id`
-- `40926`: the environment exists but is unavailable (also returned when the `remote_runtime` flag is disabled)
+- `40926`: the environment exists but is unavailable
 
 #### `GET /api/v1/sessions/{session_id}/environments`
 
@@ -887,8 +888,24 @@ Lists the environments registered for the session's workspace, plus the SSH host
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 
-On success, `data` is `{ workspace_id, environments, ssh_hosts }`. Each `environments` entry is `{ environment_id, type, status, generation, capabilities, default_cwd? }` with `type` one of `local` / `ssh` / `docker` / `command`, `status` one of `connecting` / `ready` / `degraded` / `disconnected` / `draining` / `disposed`, and `capabilities` drawn from `fs` / `process` / `terminal`. `ssh_hosts` is a list of host names (empty when the `remote_runtime` flag is disabled).
+On success, `data` is `{ workspace_id, environments, ssh_hosts }`. Each `environments` entry is `{ environment_id, type, status, generation, capabilities, default_cwd?, connect_error? }` with `type` one of `local` / `ssh` / `docker` / `command`, `status` one of `connecting` / `ready` / `degraded` / `disconnected` / `draining` / `disposed`, and `capabilities` drawn from `fs` / `process` / `terminal`; `connect_error` carries the recorded failure reason for a `disconnected` entry. `ssh_hosts` is a list of host names.
 
+- `40401`: session not found
+
+#### `POST /api/v1/sessions/{session_id}/environments`
+
+Declares a new environment for the session's workspace and registers it live — no restart. With `scope` `global` (the default) the entry is deep-merged into the user-level `config.toml` `[environments]` section; with `scope` `project` it is merge-written into the workspace's `.kimi-code/environments.toml` (project declarations load only for trusted workspaces).
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **Required.** Session id |
+| `environment_id` | body | string | **Required.** Id for the new environment |
+| `scope` | body | string | `global` (default) or `project` |
+| `entry` | body | object | **Required.** The environment entry: `{ type: "ssh", host, remote_bin?, default_cwd? }`, `{ type: "docker", container, context?, remote_bin?, default_cwd? }`, or `{ command, args?, env?, default_cwd? }` |
+
+On success, `data` is `{ workspace_id, environment_id, scope }`.
+
+- `40001`: the entry fails validation, the id is already declared, or the project file is unreadable or invalid
 - `40401`: session not found
 
 #### `POST /api/v1/sessions/{session_id}/export`

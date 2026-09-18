@@ -1087,13 +1087,6 @@ describe('AgentLifecycleService', () => {
     return { connectCalls, rerootCalls, remoteEnvironment };
   }
 
-  function enableRemoteRuntimeFlag(): void {
-    ix.stub(IFlagService, {
-      _serviceBrand: undefined,
-      enabled: () => true,
-    } as unknown as IFlagService);
-  }
-
   it('persists a create-seeded remote binding at create time', async () => {
     const log = recordingAppendLog();
     ix.stub(IAppendLogStore, log.store);
@@ -1122,7 +1115,6 @@ describe('AgentLifecycleService', () => {
       createWireMetadataRecord(1),
       { type: 'environment.set_binding', agentId: 'agent-1', environmentId: 'remote', cwd: '/remote/work', time: 2 },
     ]).store);
-    enableRemoteRuntimeFlag();
     const { connectCalls, rerootCalls } = stubRemoteResolver();
 
     const svc = ix.get(IAgentLifecycleService);
@@ -1142,7 +1134,6 @@ describe('AgentLifecycleService', () => {
       createWireMetadataRecord(1),
       { type: 'environment.set_binding', agentId: 'agent-1', environmentId: 'ghost', cwd: '/ghost/work', time: 2 },
     ]).store);
-    enableRemoteRuntimeFlag();
     stubRemoteResolver();
 
     const svc = ix.get(IAgentLifecycleService);
@@ -1162,7 +1153,6 @@ describe('AgentLifecycleService', () => {
   it('keeps a create-seeded remote binding durable across an agent rebuild and reconnects', async () => {
     const log = recordingAppendLog();
     ix.stub(IAppendLogStore, log.store);
-    enableRemoteRuntimeFlag();
     const { connectCalls, remoteEnvironment } = stubRemoteResolver({ remoteStatus: 'ready' });
 
     const svc = ix.get(IAgentLifecycleService);
@@ -1185,7 +1175,6 @@ describe('AgentLifecycleService', () => {
       createWireMetadataRecord(1),
       { type: 'environment.set_binding', agentId: 'main', workspaceId: 'ws_test', environmentId: 'remote', cwd: '/remote/work', time: 2 },
     ]).store);
-    enableRemoteRuntimeFlag();
     const { connectCalls } = stubRemoteResolver();
 
     const svc = ix.get(IAgentLifecycleService);

@@ -5,16 +5,15 @@ import { ref, type LiveRef } from '#/_base/di/instantiation';
 import { Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { ISessionEventBus } from '#/app/event/eventBus';
-import { IFlagService } from '#/app/flag/flag';
 import { LifecycleScope } from '#/app/scopes';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IAgentConversationUndoParticipantRegistry, type AgentConversationUndoParticipant } from '#/agent/contextMemory/conversationUndoParticipants';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
-import { REMOTE_RUNTIME_FLAG_ID } from '#/environment/flag';
 import { LOCAL_ENVIRONMENT_ID, type Environment, type EnvironmentBinding } from '#/environment/environment';
 import { EnvironmentError, environmentStatusAllows } from '#/environment/environmentRegistry';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -58,6 +57,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
   private readonly changeEmitter = new Emitter<EnvironmentBinding>();
   readonly onDidChange = this.changeEmitter.event;
   private readonly restoreHook: IDisposable;
+  private readonly undoParticipant: IDisposable;
   private readonly turnEndSubscription: IDisposable;
   private pendingWorkDir: string | undefined;
 
@@ -71,10 +71,10 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ISessionEventBus private readonly eventBus: ISessionEventBus,
     @ref(IAgentLoopService) private readonly loop: LiveRef<IAgentLoopService>,
-    @IFlagService private readonly flags: IFlagService,
     @IAgentReminderService private readonly reminder: IAgentReminderService,
     @IAppendLogStore private readonly appendLog: IAppendLogStore,
     @ILogService private readonly log: ILogService,
+    @IAgentConversationUndoParticipantRegistry undoParticipants: IAgentConversationUndoParticipantRegistry,
   ) {
     this.state.contributeState(agentEnvironmentBindingKey);
     this.state.contributeState(environmentBindingKey);
@@ -116,6 +116,11 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
       if (event.agentId !== this.scopeContext.agentId) return;
       this.flushPendingWorkDir();
     });
+    const participant: AgentConversationUndoParticipant = {
+      id: 'agent-environment-binding',
+      reconcileAfterUndo: () => this.reconcileAfterUndo(),
+    };
+    this.undoParticipant = undoParticipants.register(participant);
   }
 
   private assertSessionWorkspace(binding: EnvironmentBinding): void {
@@ -158,7 +163,6 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
   private reconnectRestoredBinding(binding: EnvironmentBinding): void {
     if (this.scopeContext.agentId === MAIN_AGENT_ID) return;
     if (binding.environmentId === LOCAL_ENVIRONMENT_ID) return;
-    if (!this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) return;
     let environment: Environment;
     try {
       environment = this.resolver.inspect(binding);
@@ -304,9 +308,27 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     }
   }
 
+  private async reconcileAfterUndo(): Promise<void> {
+    const target = this.state.get(environmentBindingKey) ?? this.seed.binding;
+    const previous = this.current;
+    if (
+      target.workspaceId === previous.workspaceId &&
+      target.environmentId === previous.environmentId &&
+      target.cwd === previous.cwd
+    ) {
+      return;
+    }
+    this.state.set(agentEnvironmentBindingKey, target);
+    this.applySessionWorkDir(target);
+    this.reconnectRestoredBinding(target);
+    if (this.machineIdentityChanged(previous, target)) {
+      this.emitEnvironmentReminder(target);
+    }
+    this.changeEmitter.fire(target);
+  }
+
   private emitEnvironmentReminder(binding: EnvironmentBinding): void {
     if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
-    if (!this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) return;
     let environment: HostEnvironmentInfo;
     try {
       environment = this.resolver.inspect(binding).host;
@@ -323,6 +345,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
   }
 
   dispose(): void {
+    this.undoParticipant.dispose();
     this.turnEndSubscription.dispose();
     this.restoreHook.dispose();
     this.changeEmitter.dispose();

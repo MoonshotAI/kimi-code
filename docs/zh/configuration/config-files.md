@@ -112,7 +112,7 @@ timeout = 5
 | [`image`](#image) | `table` | — | 图片压缩参数 |
 | [`services`](#services) | `table` | — | 内置外部服务配置 |
 | [`permission`](#permission) | `table` | — | 初始权限规则 |
-| [`environments`](#environments) | `table` | — | 远程环境声明（实验功能） |
+| [`environments`](#environments) | `table` | — | 远程环境声明 |
 | [`hooks`](../customization/hooks.md) | `array<table>` | — | 生命周期 hook |
 | [`identity`](#identity) | `table` | — | 自定义 Agent 身份 |
 
@@ -544,7 +544,7 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 
 ## `environments`
 
-`environments` 声明远程环境——SSH 主机、Docker 兼容容器或自定义启动命令——会话绑定后，Agent 的工具即在目标环境中执行。整个功能是实验性的，本节仅在 `remote_runtime` 实验开关启用时才会被读取；功能介绍、边界与限制见 [远程环境](../guides/remote-environment.md)。
+`environments` 声明远程环境——SSH 主机、Docker 兼容容器或自定义启动命令——会话绑定后，Agent 的工具即在目标环境中执行。功能介绍、边界与限制见 [远程环境](../guides/remote-environment.md)。
 
 每个条目以环境 id 为键：不超过 64 个字符，首尾不能有空白，`local` 和 `default` 是保留字。同一条目内 `type` 与 `command` 互斥。
 

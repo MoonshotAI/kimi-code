@@ -2,8 +2,6 @@
 
 远程环境让 Agent 的工具——读写文件、执行 Shell 命令、交互终端——在另一台机器或容器里执行，而 Kimi Code CLI 本身、所有模型请求和你的凭据都留在本机。适合代码在远程服务器上，或希望把工具执行隔离在 Docker 兼容容器里的场景。
 
-> 远程环境是实验功能。启动 Kimi Code 前设置 `KIMI_CODE_EXPERIMENTAL_REMOTE_RUNTIME=1`，或在 `config.toml` 的 `[experimental]` 下写 `remote_runtime = true` 启用；总开关 `KIMI_CODE_EXPERIMENTAL_FLAG=1` 也会一并启用。
-
 ## 远程环境的工作原理
 
 Kimi Code 把 Agent 循环、模型请求、凭据、审批和会话状态全部留在本机，目标环境只执行三组 OS 原语：文件系统、进程、终端。目标机器上运行一个小型执行器（`kimi exec-server`），通过一条连接提供这些原语；其余一切——包括每一次 LLM 请求——都留在本机。
@@ -151,7 +149,7 @@ Host dev-box
 
 ## 限制
 
-远程环境仍是实验功能，以下行为均为已知限制，逐条列出：
+以下行为均为有意限定的范围，逐条列出已知限制：
 
 - **Hooks 在 Kimi Code 所在主机执行**：`PreToolUse` 等生命周期钩子始终在运行 Kimi Code 的机器上执行，因此在远程会话中它们读到的是本机事实（本机文件、本机进程），而非目标环境的。它们以会话的本地工作目录运行；在目标环境上执行 hook 仍是未来才可能设计的能力。
 - **MCP server 留在本机**：远程会话中的 stdio MCP server 仍在本机运行，看不到目标环境的文件系统。

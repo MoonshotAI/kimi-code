@@ -98,6 +98,7 @@ function makeHost(options: {
     showStatus: vi.fn(),
     showError: vi.fn(),
     refreshEnvironmentSlot: vi.fn(async () => {}),
+    requestRender: vi.fn(),
   } as unknown as SlashCommandHost;
   return { host, session, mounted, list: currentList };
 }
