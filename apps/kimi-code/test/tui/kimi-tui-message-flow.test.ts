@@ -53,7 +53,6 @@ import type { SessionReplayRenderer } from '#/tui/controllers/session-replay';
 import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
 import type { SurveyController } from '#/tui/controllers/survey-controller';
 import { handleFeedbackCommand } from '#/tui/commands/info';
-import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
 import { EnvironmentManagerComponent } from '#/tui/components/dialogs/environment-manager';
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { openUrl } from '#/utils/open-url';
@@ -2296,21 +2295,16 @@ command = "vim"
   it('drops the codebase attachment option with a hint for remote-bound sessions', async () => {
     const { driver, harness } = await makeDriver(makeSession());
     driver.state.appState.environment = { environmentId: 'dev-box', type: 'ssh', status: 'ready' };
-    setExperimentalFeatures([{ id: 'remote_runtime', enabled: true }]);
-    try {
-      const feedbackDriver = driver as unknown as FeedbackDriver;
-      vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
-      vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'none');
-      harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 9 });
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'none');
+    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 9 });
 
-      await handleFeedbackCommand(feedbackDriver as any);
+    await handleFeedbackCommand(feedbackDriver as any);
 
-      expect(promptFeedbackAttachment).toHaveBeenCalledWith(expect.anything(), true);
-      const transcript = stripSgr(renderTranscript(driver));
-      expect(transcript).toContain('Codebase attachment is not supported for remote sessions');
-    } finally {
-      setExperimentalFeatures([]);
-    }
+    expect(promptFeedbackAttachment).toHaveBeenCalledWith(expect.anything(), true);
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('Codebase attachment is not supported for remote sessions');
   });
 
   it('tracks successful feedback submissions only after the request succeeds', async () => {
@@ -9250,11 +9244,7 @@ describe('KimiTUI session rating survey', () => {
   });
 });
 
-describe('KimiTUI environment slot (experimental remote environment)', () => {
-  afterEach(() => {
-    setExperimentalFeatures([]);
-  });
-
+describe('KimiTUI environment slot', () => {
   function environmentSession(overrides: Record<string, unknown> = {}) {
     return makeSession({
       getEnvironment: vi.fn(async () => ({
@@ -9274,15 +9264,8 @@ describe('KimiTUI environment slot (experimental remote environment)', () => {
     });
   }
 
-  it('keeps the slot empty when the remote_runtime flag is off', async () => {
+  it('syncs the binding and connection status into appState', async () => {
     const { driver } = await makeDriver(environmentSession());
-    await driver.refreshEnvironmentSlot();
-    expect(driver.state.appState.environment).toBeUndefined();
-  });
-
-  it('syncs the binding and connection status into appState when the flag is on', async () => {
-    const { driver } = await makeDriver(environmentSession());
-    setExperimentalFeatures([{ id: 'remote_runtime', enabled: true }]);
     await driver.refreshEnvironmentSlot();
     expect(driver.state.appState.environment).toEqual({
       environmentId: 'dev-box',
@@ -9304,7 +9287,6 @@ describe('KimiTUI environment slot (experimental remote environment)', () => {
       })),
     });
     const { driver } = await makeDriver(session);
-    setExperimentalFeatures([{ id: 'remote_runtime', enabled: true }]);
     await driver.refreshEnvironmentSlot();
 
     const transcript = stripSgr(renderTranscript(driver));
@@ -9335,7 +9317,6 @@ describe('KimiTUI environment slot (experimental remote environment)', () => {
       })),
     });
     const { driver } = await makeDriver(session);
-    setExperimentalFeatures([{ id: 'remote_runtime', enabled: true }]);
     await driver.refreshEnvironmentSlot();
     expect(driver.state.appState.environment).toEqual({
       environmentId: 'dev-box',
@@ -9344,17 +9325,6 @@ describe('KimiTUI environment slot (experimental remote environment)', () => {
       cwd: '/home/me/projects',
       connectError: 'ssh: connect failed (code 255)',
     });
-  });
-
-  it('clears the slot when the flag is toggled off mid-session', async () => {
-    const { driver } = await makeDriver(environmentSession());
-    setExperimentalFeatures([{ id: 'remote_runtime', enabled: true }]);
-    await driver.refreshEnvironmentSlot();
-    expect(driver.state.appState.environment).toBeDefined();
-
-    setExperimentalFeatures([]);
-    await driver.refreshEnvironmentSlot();
-    expect(driver.state.appState.environment).toBeUndefined();
   });
 
   it('refreshes the slot and shows the recorded reason on a environment.status.changed hint', async () => {
@@ -9376,7 +9346,6 @@ describe('KimiTUI environment slot (experimental remote environment)', () => {
       })),
     });
     const { driver } = await makeDriver(session);
-    setExperimentalFeatures([{ id: 'remote_runtime', enabled: true }]);
 
     driver.sessionEventHandler.handleEvent(
       {
@@ -9400,21 +9369,11 @@ describe('KimiTUI environment slot (experimental remote environment)', () => {
     expect(transcript).not.toContain('second line stays out');
   });
 
-  it('opens the environment manager when /environment is typed with the flag on', async () => {
+  it('opens the environment manager when /environment is typed', async () => {
     const { driver } = await makeDriver(environmentSession());
-    setExperimentalFeatures([{ id: 'remote_runtime', enabled: true }]);
     driver.handleUserInput('/environment');
     await vi.waitFor(() => {
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EnvironmentManagerComponent);
     });
-  });
-
-  it('sends /environment as a plain message when the flag is off', async () => {
-    const { driver, session } = await makeDriver(environmentSession());
-    driver.handleUserInput('/environment');
-    await vi.waitFor(() => {
-      expect(session.prompt).toHaveBeenCalled();
-    });
-    expect(driver.state.editorContainer.children[0]).not.toBeInstanceOf(EnvironmentManagerComponent);
   });
 });

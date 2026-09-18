@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { Emitter } from '#/_base/event';
 import type { LiveRef } from '#/_base/di/instantiation';
 import type { ISessionEventBus } from '#/app/event/eventBus';
-import type { IFlagService } from '#/app/flag/flag';
 import type { ILogService } from '#/_base/log/log';
 import { AgentEnvironmentService, snapshotAgentEnvironmentBinding } from '#/agent/environmentBinding/agentEnvironment';
 import { AgentEnvironmentBindingService, agentEnvironmentBindingKey, ENVIRONMENT_BINDING_REMINDER_VARIANT } from '#/agent/environmentBinding/environmentBindingService';
@@ -159,11 +158,6 @@ function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: E
       reminders.push({ content, variant: notification.variant });
     },
   } as unknown as IAgentReminderService;
-  const flagState = { remoteEnvironment: false };
-  const flags = {
-    _serviceBrand: undefined,
-    enabled: () => flagState.remoteEnvironment,
-  } as unknown as IFlagService;
   const appendLogRecords: WireRecord[] = [];
   const appendLog = {
     _serviceBrand: undefined,
@@ -192,7 +186,6 @@ function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: E
     dispatcher,
     eventBus,
     loop,
-    flags,
     reminder,
     appendLog,
     noopLog,
@@ -224,11 +217,9 @@ function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: E
     publishBus,
     published,
     sessionState,
-    flags,
-    flagState,
     reminders,
     appendLogRecords,
-    agentEnvironment: new AgentEnvironmentService(scopeContext, binding, resolver, workspaces, eventBus, session, sessionState, flags),
+    agentEnvironment: new AgentEnvironmentService(scopeContext, binding, resolver, workspaces, eventBus, session, sessionState),
   };
 }
 
@@ -584,8 +575,7 @@ describe('AgentEnvironmentBindingService restore from wire records', () => {
   });
 
   it('background-reconnects and reroots a reseeded remote binding', async () => {
-    const { registry, restoreHooks, appendLogRecords, flagState } = setup({ agentId: 'agent-1' });
-    flagState.remoteEnvironment = true;
+    const { registry, restoreHooks, appendLogRecords } = setup({ agentId: 'agent-1' });
     const { connectCalls, rerootCalls } = connectableRemote(registry, 'connectable');
     appendLogRecords.push({ type: 'environment.set_binding', agentId: 'agent-1', environmentId: 'connectable', cwd: '/connectable/work', time: 2 });
 
@@ -596,8 +586,7 @@ describe('AgentEnvironmentBindingService restore from wire records', () => {
   });
 
   it('keeps a gone declaration bound after reseed and fails explicitly at use', async () => {
-    const { binding, agentEnvironment, restoreHooks, appendLogRecords, flagState } = setup({ agentId: 'agent-1' });
-    flagState.remoteEnvironment = true;
+    const { binding, agentEnvironment, restoreHooks, appendLogRecords } = setup({ agentId: 'agent-1' });
     appendLogRecords.push({ type: 'environment.set_binding', agentId: 'agent-1', environmentId: 'ghost', cwd: '/ghost/work', time: 2 });
 
     await restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
@@ -609,8 +598,7 @@ describe('AgentEnvironmentBindingService restore from wire records', () => {
   });
 
   it('background-reconnects and reroots a replayed remote binding for non-main agents', async () => {
-    const { registry, state, restoreHooks, flagState } = setup({ agentId: 'agent-1' });
-    flagState.remoteEnvironment = true;
+    const { registry, state, restoreHooks } = setup({ agentId: 'agent-1' });
     const { connectCalls, rerootCalls } = connectableRemote(registry, 'connectable');
     state.set(environmentBindingKey, { workspaceId: 'workspace', environmentId: 'connectable', cwd: '/connectable/work' });
 
@@ -621,8 +609,7 @@ describe('AgentEnvironmentBindingService restore from wire records', () => {
   });
 
   it('does not reconnect a replayed remote binding for the main agent', async () => {
-    const { registry, state, restoreHooks, flagState } = setup();
-    flagState.remoteEnvironment = true;
+    const { registry, state, restoreHooks } = setup();
     const { connectCalls } = connectableRemote(registry, 'connectable');
     state.set(environmentBindingKey, { workspaceId: 'workspace', environmentId: 'connectable', cwd: '/connectable/work' });
 
@@ -642,10 +629,9 @@ describe('AgentEnvironmentBindingService restore from wire records', () => {
   });
 
   it('emits the seed environment reminder when a remote seed round-trips through a replayed op', async () => {
-    const { state, restoreHooks, reminders, flagState } = setup({
+    const { state, restoreHooks, reminders } = setup({
       seedBinding: { workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' },
     });
-    flagState.remoteEnvironment = true;
     state.set(environmentBindingKey, { workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' });
 
     await restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
@@ -657,8 +643,7 @@ describe('AgentEnvironmentBindingService restore from wire records', () => {
 
 describe('AgentEnvironmentBindingService environment reminder', () => {
   it('emits exactly one reminder with the environment id and environment on switch', () => {
-    const { binding, reminders, flagState } = setup();
-    flagState.remoteEnvironment = true;
+    const { binding, reminders } = setup();
 
     binding.switch('remote', '/remote/work');
     binding.switch('remote', '/remote/work');
@@ -674,8 +659,7 @@ describe('AgentEnvironmentBindingService environment reminder', () => {
   });
 
   it('emits the reminder even when the switch commits mid-turn', () => {
-    const { binding, reminders, flagState, loopState } = setup();
-    flagState.remoteEnvironment = true;
+    const { binding, reminders, loopState } = setup();
     loopState.turn = { turnId: 1, phase: 'running', step: 1, activeToolCalls: [] };
 
     binding.switch('remote', '/remote/work');
@@ -684,8 +668,7 @@ describe('AgentEnvironmentBindingService environment reminder', () => {
   });
 
   it('emits no reminder for a local create-seed on a fresh session restore', async () => {
-    const { restoreHooks, reminders, flagState } = setup();
-    flagState.remoteEnvironment = true;
+    const { restoreHooks, reminders } = setup();
 
     await restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
 
@@ -693,10 +676,9 @@ describe('AgentEnvironmentBindingService environment reminder', () => {
   });
 
   it('emits the seed binding environment for a remote create-seed on a fresh session restore', async () => {
-    const { restoreHooks, reminders, flagState } = setup({
+    const { restoreHooks, reminders } = setup({
       seedBinding: { workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' },
     });
-    flagState.remoteEnvironment = true;
 
     await restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
 
@@ -709,8 +691,7 @@ describe('AgentEnvironmentBindingService environment reminder', () => {
   });
 
   it('emits no reminder when the binding is restored from a replayed op', async () => {
-    const { state, restoreHooks, reminders, flagState } = setup();
-    flagState.remoteEnvironment = true;
+    const { state, restoreHooks, reminders } = setup();
     state.set(environmentBindingKey, { workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' });
 
     await restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
@@ -719,8 +700,7 @@ describe('AgentEnvironmentBindingService environment reminder', () => {
   });
 
   it('emits the local environment when switching back to local', () => {
-    const { binding, reminders, flagState } = setup();
-    flagState.remoteEnvironment = true;
+    const { binding, reminders } = setup();
 
     binding.switch('remote', '/remote/work');
     binding.switch('local');
@@ -734,8 +714,7 @@ describe('AgentEnvironmentBindingService environment reminder', () => {
   });
 
   it('emits no reminder for a local to local transition with only a cwd change', () => {
-    const { binding, reminders, flagState } = setup();
-    flagState.remoteEnvironment = true;
+    const { binding, reminders } = setup();
 
     binding.switch('local', '/workspace');
 
@@ -744,8 +723,7 @@ describe('AgentEnvironmentBindingService environment reminder', () => {
   });
 
   it('emits the reminder on a remote to remote switch', () => {
-    const { binding, registry, reminders, flagState } = setup();
-    flagState.remoteEnvironment = true;
+    const { binding, registry, reminders } = setup();
     registry.register(
       environment('remote-two', 'remote-two-one', 'ready', ['process'], {
         osKind: 'Linux',
@@ -768,8 +746,7 @@ describe('AgentEnvironmentBindingService environment reminder', () => {
   });
 
   it('emits no reminder when the non-local target reports the same environment as local', () => {
-    const { binding, registry, reminders, flagState } = setup();
-    flagState.remoteEnvironment = true;
+    const { binding, registry, reminders } = setup();
     registry.register(
       environment('acp:session-1', 'acp-one', 'ready', ['fs', 'process'], {
         osKind: 'Linux',
@@ -787,8 +764,7 @@ describe('AgentEnvironmentBindingService environment reminder', () => {
   });
 
   it('emits the reminder on a remote to remote switch even when the environments match', () => {
-    const { binding, registry, reminders, flagState } = setup();
-    flagState.remoteEnvironment = true;
+    const { binding, registry, reminders } = setup();
     registry.register(
       environment('remote-two', 'remote-two-one', 'ready', ['process'], {
         osKind: 'FreeBSD',
@@ -810,18 +786,8 @@ describe('AgentEnvironmentBindingService environment reminder', () => {
     );
   });
 
-  it('stays silent when the remote environment flag is off', async () => {
-    const { binding, restoreHooks, reminders } = setup();
-
-    binding.switch('remote', '/remote/work');
-    await restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
-
-    expect(reminders).toHaveLength(0);
-  });
-
   it('does not emit reminders for non-main agents', () => {
-    const { binding, reminders, flagState } = setup({ agentId: 'agent-1' });
-    flagState.remoteEnvironment = true;
+    const { binding, reminders } = setup({ agentId: 'agent-1' });
 
     binding.switch('remote', '/remote/work');
 

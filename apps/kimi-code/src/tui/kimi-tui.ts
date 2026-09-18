@@ -531,9 +531,7 @@ export class KimiTUI {
       this.state.appState.additionalDirs,
       () => this.state.appState.inputMode,
       skillCommandNames,
-      isExperimentalFlagEnabled('remote_runtime')
-        ? remoteMentionSuggester(this.session, this.state.appState.environment)
-        : undefined,
+      remoteMentionSuggester(this.session, this.state.appState.environment),
     );
     this.state.editor.setAutocompleteProvider(provider);
 
@@ -2419,25 +2417,14 @@ export class KimiTUI {
 
   /**
    * Sync the footer environment slot with the session's current binding and the
-   * environment registry's connection status (experimental remote environment). A
-   * no-op with the flag off, so flag-off sessions keep their exact current
-   * behavior. Disconnection surfaces once per transition as a transcript
-   * notice carrying the recorded connect error and pointing at /environment.
-   * Runs at session load, turn end, explicit environment actions, and on the
-   * engine's environment.status.changed hint (background reconnect failure after
-   * resume, mid-session drops).
+   * environment registry's connection status. Disconnection surfaces once per
+   * transition as a transcript notice carrying the recorded connect error and
+   * pointing at /environment. Runs at session load, turn end, explicit
+   * environment actions, and on the engine's environment.status.changed hint
+   * (background reconnect failure after resume, mid-session drops).
    */
   async refreshEnvironmentSlot(session: Session | undefined = this.session): Promise<void> {
     if (session === undefined) return;
-    if (!isExperimentalFlagEnabled('remote_runtime')) {
-      // A mid-session flag toggle-off (via /experiments + session reload)
-      // drops the slot and the mention suggester with it.
-      if (this.state.appState.environment !== undefined) {
-        this.setAppState({ environment: undefined });
-        this.setupAutocomplete();
-      }
-      return;
-    }
     let binding;
     let list;
     try {

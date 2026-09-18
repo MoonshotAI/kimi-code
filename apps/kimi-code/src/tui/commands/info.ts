@@ -71,10 +71,9 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
 
   // Stage 2: ask whether to attach diagnostics (logs / codebase).
   // The codebase scanner reads the local filesystem, so a remote-bound
-  // session (experimental remote environment) cannot package its codebase —
-  // drop the option with a hint instead of scanning the wrong machine.
+  // session cannot package its codebase — drop the option with a hint
+  // instead of scanning the wrong machine.
   const remoteSession =
-    isExperimentalFlagEnabled('remote_runtime') &&
     host.state.appState.environment !== undefined &&
     host.state.appState.environment.environmentId !== 'local';
   if (remoteSession) {

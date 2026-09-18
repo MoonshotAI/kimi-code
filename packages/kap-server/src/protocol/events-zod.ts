@@ -63,6 +63,8 @@ import type {
 
 import type { TurnStepRetryingPayload } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { AgentTaskStatus } from '@moonshot-ai/agent-core-v2/agent/task/types';
+import type { EnvironmentStatusChangedPayload } from '@moonshot-ai/agent-core-v2/agent/environmentBinding/environmentEvents';
+import type { EnvironmentStatus } from '@moonshot-ai/agent-core-v2/environment/environment';
 import type {
   ToolCallStartedPayload,
   ToolProgressPayload,
@@ -618,6 +620,22 @@ export const sessionStatusChangedEventSchema = z.object({
   current_prompt_id: z.string().min(1).optional(),
 });
 
+export const environmentStatusSchema = z.enum([
+  'connecting',
+  'ready',
+  'degraded',
+  'disconnected',
+  'draining',
+  'disposed',
+]) satisfies z.ZodType<EnvironmentStatus>;
+
+export const environmentStatusChangedEventSchema = z.object({
+  type: z.literal('environment.status.changed'),
+  agentId: z.string(),
+  environmentId: z.string(),
+  status: environmentStatusSchema.optional(),
+}) satisfies z.ZodType<EnvironmentStatusChangedPayload>;
+
 export const configChangedEventSchema = z.object({
   type: z.literal('event.config.changed'),
   changedFields: z.array(z.string().min(1)),
@@ -1062,6 +1080,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   workspaceDeletedEventSchema,
   sessionWorkChangedEventSchema,
   sessionStatusChangedEventSchema,
+  environmentStatusChangedEventSchema,
   configChangedEventSchema,
   configWarningEventSchema,
   modelCatalogChangedEventSchema,

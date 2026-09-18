@@ -62,9 +62,6 @@ function configToml(): string {
   const tsx = resolveTsxCli();
   const fixture = resolveExecServerFixture();
   return [
-    '[experimental]',
-    'remote_runtime = true',
-    '',
     '[environments.loop]',
     `command = ${JSON.stringify(node)}`,
     `args = ${JSON.stringify([tsx, fixture])}`,
@@ -80,92 +77,7 @@ function configToml(): string {
 }
 
 describe('server-v2 /api/v1 environment routes', () => {
-  describe('with the remote_runtime flag off', () => {
-    let server: RunningServer | undefined;
-    let home: string | undefined;
-    let base: string;
-
-    beforeAll(async () => {
-      home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-environment-off-'));
-      server = await startServer({
-        hostIdentity: TEST_HOST_IDENTITY,
-        host: '127.0.0.1',
-        port: 0,
-        homeDir: home,
-        logLevel: 'silent',
-      });
-      base = `http://127.0.0.1:${server.port}`;
-    });
-
-    afterAll(async () => {
-      if (server !== undefined) {
-        await server.close();
-        server = undefined;
-      }
-      if (home !== undefined) {
-        await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-        home = undefined;
-      }
-    });
-
-    async function call<T>(method: string, path: string, body?: unknown): Promise<{ status: number; body: Envelope<T> }> {
-      const hasBody = body !== undefined;
-      const res = await fetch(`${base}${path}`, {
-        method,
-        headers: authHeaders(server as RunningServer, hasBody ? { 'content-type': 'application/json' } : {}),
-        body: hasBody ? JSON.stringify(body) : undefined,
-      } as never);
-      return { status: res.status, body: (await res.json()) as Envelope<T> };
-    }
-
-    async function createSession(): Promise<string> {
-      const created = await call<SessionWire>('POST', '/api/v1/sessions', { metadata: { cwd: home as string } });
-      expect(created.body.code).toBe(0);
-      return created.body.data.id;
-    }
-
-    it('keeps the legacy surface: local binding, sync switch, no new endpoint behavior', async () => {
-      const id = await createSession();
-
-      const binding = await call<EnvironmentBindingWire>('GET', `/api/v1/sessions/${id}/environment`);
-      expect(binding.body.code).toBe(0);
-      expect(binding.body.data.environment_id).toBe('local');
-      expect(binding.body.data.cwd).toBeUndefined();
-
-      const switched = await call<EnvironmentBindingWire>('POST', `/api/v1/sessions/${id}/environment`, { environment_id: 'local' });
-      expect(switched.body.code).toBe(0);
-      expect(switched.body.data.environment_id).toBe('local');
-
-      const ignoredCwd = await call<EnvironmentBindingWire>('POST', `/api/v1/sessions/${id}/environment`, {
-        environment_id: 'local',
-        cwd: '/tmp',
-      });
-      expect(ignoredCwd.body.code).toBe(0);
-      expect(ignoredCwd.body.data.cwd).toBeUndefined();
-
-      const missing = await call<null>('POST', `/api/v1/sessions/${id}/environment`, { environment_id: 'ghost' });
-      expect(missing.body.code).toBe(40420);
-
-      const reconnect = await call<null>('POST', `/api/v1/sessions/${id}/environment/reconnect`);
-      expect(reconnect.body.code).toBe(40926);
-      expect(reconnect.body.msg).toContain('remote_runtime');
-
-      const environments = await call<EnvironmentsWire>('GET', `/api/v1/sessions/${id}/environments`);
-      expect(environments.body.code).toBe(0);
-      expect(environments.body.data.environments).toHaveLength(1);
-      expect(environments.body.data.environments[0]).toMatchObject({ environment_id: 'local', type: 'local', status: 'ready' });
-      expect(environments.body.data.ssh_hosts).toEqual([]);
-
-      const declared = await call<null>('POST', `/api/v1/sessions/${id}/environments`, {
-        environment_id: 'box',
-        entry: { type: 'ssh', host: 'box' },
-      });
-      expect(declared.body.code).toBe(40926);
-      expect(declared.body.msg).toContain('remote_runtime');
-    });
-  });
-
-  describe('with the remote_runtime flag on and a loopback command environment', () => {
+  describe('with a loopback command environment', () => {
     let server: RunningServer | undefined;
     let home: string | undefined;
     let base: string;
@@ -209,6 +121,22 @@ describe('server-v2 /api/v1 environment routes', () => {
       expect(created.body.code).toBe(0);
       return created.body.data.id;
     }
+
+    it('serves the local binding surface by default', async () => {
+      const id = await createSession();
+
+      const binding = await call<EnvironmentBindingWire>('GET', `/api/v1/sessions/${id}/environment`);
+      expect(binding.body.code).toBe(0);
+      expect(binding.body.data.environment_id).toBe('local');
+      expect(binding.body.data.cwd).toBeUndefined();
+
+      const switched = await call<EnvironmentBindingWire>('POST', `/api/v1/sessions/${id}/environment`, { environment_id: 'local' });
+      expect(switched.body.code).toBe(0);
+      expect(switched.body.data.environment_id).toBe('local');
+
+      const missing = await call<null>('POST', `/api/v1/sessions/${id}/environment`, { environment_id: 'ghost' });
+      expect(missing.body.code).toBe(40001);
+    });
 
     it('lists declared environments as disconnected placeholders before any connect', async () => {
       const id = await createSession();

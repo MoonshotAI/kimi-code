@@ -154,21 +154,20 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     }
   });
 
-  it('rejects createSession environment options while the remote_runtime flag is off', async () => {
+  it('rejects environment options that name an undeclared environment', async () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', 'false');
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_RUNTIME', 'false');
     const { harness } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(workDir);
     try {
       await expect(harness.createSession({ workDir, environmentId: 'box', environmentCwd: '/remote' })).rejects.toThrow(
-        /remote_runtime/,
+        /not declared/,
       );
       await expect(harness.createSession({ workDir, environmentCwd: '/remote' })).rejects.toThrow(
         /environmentCwd requires environmentId/,
       );
       const session = await harness.createSession({ workDir });
-      await expect(session.switchEnvironment('box', { cwd: '/remote' })).rejects.toThrow(/remote_runtime/);
+      await expect(session.switchEnvironment('box', { cwd: '/remote' })).rejects.toThrow(/box/);
     } finally {
       await harness.close();
       vi.unstubAllEnvs();
@@ -189,9 +188,6 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       'model = "stub"',
       'max_context_size = 1000',
       '',
-      '[experimental]',
-      'remote_runtime = true',
-      '',
       '[environments.fake-box]',
       'type = "ssh"',
       'host = "fake-box"',
@@ -202,7 +198,6 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
 
   async function makeEnvironmentHarness(options: { readonly defaultCwd?: string } = {}): Promise<{ harness: KimiHarness; client: SDKRpcClientV2; homeDir: string }> {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', 'false');
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_RUNTIME', 'true');
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);
     await writeFile(join(homeDir, 'config.toml'), runtimeConfigToml(options.defaultCwd ?? '/remote/work'), 'utf-8');
@@ -1291,24 +1286,6 @@ key = "${titleOAuthRef.key}"
         }),
       ).rejects.toThrow(/Invalid TOML/);
       expect(await readFile(join(workDir, '.kimi-code', 'environments.toml'), 'utf-8')).toBe(before);
-      await session.close();
-    } finally {
-      await harness.close();
-      vi.unstubAllEnvs();
-    }
-  });
-
-  it('rejects declareEnvironment while the remote_runtime flag is off', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', 'false');
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_RUNTIME', 'false');
-    const { harness } = await makeHarness();
-    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
-    tempDirs.push(workDir);
-    try {
-      const session = await harness.createSession({ workDir });
-      await expect(
-        session.declareEnvironment({ id: 'box', entry: { type: 'ssh', host: 'box' } }),
-      ).rejects.toThrow(/remote_runtime/);
       await session.close();
     } finally {
       await harness.close();

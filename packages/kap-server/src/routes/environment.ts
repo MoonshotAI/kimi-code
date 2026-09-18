@@ -6,13 +6,11 @@ import {
   IAtomicDocumentStore,
   IBootstrapService,
   IConfigService,
-  IFlagService,
   IHostFileSystem,
   ISessionContext,
   IWorkspaceInstanceManager,
   IWorkspaceService,
   PROJECT_ENVIRONMENTS_FILE,
-  REMOTE_RUNTIME_FLAG_ID,
   ENVIRONMENTS_SECTION,
   readSshConfigHosts,
   resolveWorkspaceEnvironmentDeclarations,
@@ -105,9 +103,7 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
       try {
         const agent = await resolveEnvironmentAgent(core, req.params.session_id);
         const service = agent.accessor.get(IAgentEnvironmentBindingService);
-        const binding = remoteEnvironmentEnabled(core)
-          ? await service.connectAndSwitch(req.body.environment_id, req.body.cwd)
-          : service.switch(req.body.environment_id);
+        const binding = await service.connectAndSwitch(req.body.environment_id, req.body.cwd);
         reply.send(okEnvelope(toResponse(binding), req.id));
       } catch (error) {
         sendEnvironmentRouteError(reply, req.id, error);
@@ -127,21 +123,11 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
         [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
         [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
       },
-      description: 'Reconnect the main agent environment (experimental remote environment)',
+      description: 'Reconnect the main agent environment',
       tags: ['sessions'],
     },
     async (req, reply) => {
       try {
-        if (!remoteEnvironmentEnabled(core)) {
-          reply.send(
-            errEnvelope(
-              ErrorCode.ENVIRONMENT_UNAVAILABLE,
-              'environment reconnect is unavailable: experimental flag remote_runtime is disabled',
-              req.id,
-            ),
-          );
-          return;
-        }
         const agent = await resolveEnvironmentAgent(core, req.params.session_id);
         await agent.accessor.get(IAgentEnvironmentService).reconnect();
         reply.send(okEnvelope(toResponse(agent.accessor.get(IAgentEnvironmentBindingService).get()), req.id));
@@ -169,14 +155,13 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
       }
       const workspaceId = session.accessor.get(ISessionContext).workspaceId;
       const instance = await resolveWorkspaceInstance(core, workspaceId);
-      const enabled = remoteEnvironmentEnabled(core);
-      const declarations = enabled ? await resolveDeclarations(core, instance.root) : new Map<string, RemoteEnvironmentEntry>();
+      const declarations = await resolveDeclarations(core, instance.root);
       const payload: SessionEnvironmentsResponse = {
         workspace_id: workspaceId,
         environments: instance.environments.snapshot().environments.map((environment) =>
           toEntry(environment, declarations.get(environment.environmentId)),
         ),
-        ssh_hosts: enabled ? [...await resolveSshHosts(core)] : [],
+        ssh_hosts: [...await resolveSshHosts(core)],
       };
       reply.send(okEnvelope(payload, req.id));
     },
@@ -195,21 +180,11 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
       },
-      description: 'Declare an environment for the session workspace (experimental remote environment)',
+      description: 'Declare an environment for the session workspace',
       tags: ['sessions'],
     },
     async (req, reply) => {
       try {
-        if (!remoteEnvironmentEnabled(core)) {
-          reply.send(
-            errEnvelope(
-              ErrorCode.ENVIRONMENT_UNAVAILABLE,
-              'environment declare is unavailable: experimental flag remote_runtime is disabled',
-              req.id,
-            ),
-          );
-          return;
-        }
         const session = await resumeSessionById(core.accessor, req.params.session_id);
         if (session === undefined) {
           throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${req.params.session_id} does not exist`);
@@ -244,10 +219,6 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
     },
   );
   app.post(declareRoute.path, declareRoute.options, declareRoute.handler as Parameters<EnvironmentRouteHost['post']>[2]);
-}
-
-function remoteEnvironmentEnabled(core: Scope): boolean {
-  return core.accessor.get(IFlagService).enabled(REMOTE_RUNTIME_FLAG_ID);
 }
 
 const declareEnvironmentEntrySchema = z.union([

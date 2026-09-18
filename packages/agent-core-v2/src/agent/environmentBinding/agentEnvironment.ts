@@ -3,12 +3,10 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { ISessionEventBus } from '#/app/event/eventBus';
-import { IFlagService } from '#/app/flag/flag';
 import { LifecycleScope } from '#/app/scopes';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { REMOTE_RUNTIME_FLAG_ID } from '#/environment/flag';
 import type { Environment, EnvironmentBinding, EnvironmentCapability, EnvironmentLease, EnvironmentWorkspaceRoots } from '#/environment/environment';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { EnvironmentError, environmentStatusAllows, type EnvironmentGenerationSnapshot, type EnvironmentRegistryChange } from '#/environment/environmentRegistry';
@@ -17,7 +15,6 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
 import {
   workspaceContextAdditionalDirsKey,
-  workspaceContextWorkDirKey,
 } from '#/session/workspaceContext/workspaceContextService';
 import {
   IEnvironmentResolver,
@@ -97,7 +94,6 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
     @ISessionEventBus private readonly eventBus: ISessionEventBus,
     @ISessionContext private readonly session: ISessionContext,
     @ISessionStateService private readonly sessionState: ISessionStateService,
-    @IFlagService private readonly flags: IFlagService,
   ) {
     this.bindingSubscription = this.binding.onDidChange(() => this.rebind());
     this.workspaceSubscription = this.workspaces.onDidChange((change) => {
@@ -135,12 +131,6 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
   }
 
   workspaceRoots(): EnvironmentWorkspaceRoots {
-    if (!this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) {
-      return {
-        workDir: this.sessionState.get(workspaceContextWorkDirKey),
-        additionalDirs: this.sessionState.get(workspaceContextAdditionalDirsKey),
-      };
-    }
     const binding = this.turnSnapshot?.binding ?? this.binding.current;
     return {
       workDir: binding.cwd ?? this.session.cwd,

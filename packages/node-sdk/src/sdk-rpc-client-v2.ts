@@ -59,13 +59,11 @@
  *   agent-scope services (`IAgentEnvironmentBindingService` /
  *   `IAgentEnvironmentService`) and the workspace instance's environment registry —
  *   the klient contract's `environmentBindingSchema` predates the binding `cwd`
- *   and would strip it over the wire. `switchEnvironment` with the
- *   `remote_runtime` flag on is the engine's `connectAndSwitch` (explicit
- *   connect + target-fs cwd validation); flag off keeps the legacy sync
- *   `switch` and rejects a caller-supplied `cwd`. `createSession`'s
- *   `environmentId` / `environmentCwd` options ride the engine's own
- *   `mainAgentBinding` + environment seed path. The constructor attaches the
- *   `remote-exec` environment provider (flag-self-gated) with the region CDN
+ *   and would strip it over the wire. `switchEnvironment` is the engine's
+ *   `connectAndSwitch` (explicit connect + target-fs cwd validation).
+ *   `createSession`'s `environmentId` / `environmentCwd` options ride the
+ *   engine's own `mainAgentBinding` + environment seed path. The constructor
+ *   attaches the `remote-exec` environment provider with the region CDN
  *   artifact locator, mirroring the kap-server composition root.
  * - `prompt` / `steer` / `runShellCommand` / `cancelShellCommand` → the
  *   `klient.session(id).agent(id)` facade; `activatePluginCommand` →
@@ -227,7 +225,6 @@ import {
   previewProjectEnvironmentDeclarations,
   programForSession,
   readSshConfigHosts,
-  REMOTE_RUNTIME_FLAG_ID,
   ENVIRONMENTS_SECTION,
   resolveWorkspaceEnvironmentDeclarations,
   resumeSessionById,
@@ -794,11 +791,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   /**
    * Display-only preview of the project-declared environments trusting would
    * register (the engine never loads project declarations while untrusted).
-   * Flag off or an unreadable/invalid project file degrades to an empty list,
-   * matching the MCP preview's best-effort semantics.
+   * An unreadable/invalid project file degrades to an empty list, matching
+   * the MCP preview's best-effort semantics.
    */
   private async previewGatedEnvironments(workDir: string): Promise<readonly WorkspaceTrustEnvironmentInfo[]> {
-    if (!this.engineAccessor.get(IFlagService).enabled(REMOTE_RUNTIME_FLAG_ID)) return [];
     try {
       return await previewProjectEnvironmentDeclarations(
         this.engineAccessor.get(IHostFileSystem),
@@ -1437,15 +1433,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     if (input.environmentCwd !== undefined && input.environmentId === undefined) {
       throw new KimiError(ErrorCodes.REQUEST_INVALID, 'createSession environmentCwd requires environmentId');
     }
-    if (
-      input.environmentId !== undefined &&
-      !this.engineAccessor.get(IFlagService).enabled(REMOTE_RUNTIME_FLAG_ID)
-    ) {
-      throw new KimiError(
-        ErrorCodes.REQUEST_INVALID,
-        'createSession environmentId requires the remote_runtime experimental flag',
-      );
-    }
     if (input.id !== undefined) {
       const existing =
         this.liveSession(input.id) ??
@@ -1923,23 +1910,13 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Agent scope (`IAgentEnvironmentBindingService`). With the experimental flag
-   * on this is `connectAndSwitch` (explicit connect, target-fs cwd
-   * validation); with it off the legacy sync `switch` keeps its exact
-   * behavior and a `cwd` is rejected instead of silently dropped.
+   * Agent scope (`IAgentEnvironmentBindingService`) — the engine's
+   * `connectAndSwitch`: explicit connect plus target-fs cwd validation, so a
+   * failed switch keeps the previous binding.
    */
   override async switchEnvironment(input: SwitchSessionEnvironmentRpcInput): Promise<AgentEnvironmentBinding> {
     const agent = await this.agentScope(input.sessionId);
     const service = agent.accessor.get(IAgentEnvironmentBindingService);
-    if (!this.engineAccessor.get(IFlagService).enabled(REMOTE_RUNTIME_FLAG_ID)) {
-      if (input.cwd !== undefined) {
-        throw new KimiError(
-          ErrorCodes.REQUEST_INVALID,
-          'switchEnvironment cwd requires the remote_runtime experimental flag',
-        );
-      }
-      return service.switch(input.environmentId);
-    }
     return service.connectAndSwitch(input.environmentId, input.cwd);
   }
 
@@ -1956,9 +1933,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   /**
    * The workspace instance's environment registry snapshot (status / generation /
    * capabilities) joined with the resolved declarations (type / defaultCwd),
-   * plus the ssh host candidates for the environment-add flow. Flag off: only the
-   * local environment is ever registered, declarations and ssh discovery stay
-   * unread.
+   * plus the ssh host candidates for the environment-add flow.
    */
   override async listEnvironments(input: SessionIdRpcInput): Promise<SessionEnvironmentsInfo> {
     const session = this.requireLiveSession(input.sessionId);
@@ -1967,8 +1942,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const instance =
       manager.get(context.workspaceId) ??
       (await manager.getOrCreate({ root: context.cwd }));
-    const enabled = this.engineAccessor.get(IFlagService).enabled(REMOTE_RUNTIME_FLAG_ID);
-    const declarations = enabled ? await this.resolveEnvironmentDeclarationEntries(instance.root) : new Map<string, RemoteEnvironmentEntry>();
+    const declarations = await this.resolveEnvironmentDeclarationEntries(instance.root);
     return {
       workspaceId: context.workspaceId,
       environments: instance.environments.snapshot().environments.map((environment) => {
@@ -1983,7 +1957,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
           connectError: environment.connectError,
         };
       }),
-      sshHosts: enabled ? await this.resolveSshHostCandidates() : [],
+      sshHosts: await this.resolveSshHostCandidates(),
     };
   }
 
@@ -1995,18 +1969,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * merge-writes the workspace's `.kimi-code/environments.toml` on the host
    * (declarations must exist before any remote connection, so the project
    * file always lives on the local disk). Both register through the
-   * engine's live declaration watch; both require the `remote_runtime` flag,
-   * matching the rest of the environment surface. Both scopes fail closed on a
+   * engine's live declaration watch. Both scopes fail closed on a
    * duplicate id, rejecting before any write so an existing entry is never
    * half-merged.
    */
   override async declareEnvironment(input: DeclareEnvironmentRpcInput): Promise<void> {
-    if (!this.engineAccessor.get(IFlagService).enabled(REMOTE_RUNTIME_FLAG_ID)) {
-      throw new KimiError(
-        ErrorCodes.REQUEST_INVALID,
-        'declareEnvironment requires the remote_runtime experimental flag',
-      );
-    }
     const session = this.requireLiveSession(input.sessionId);
     const context = session.accessor.get(ISessionContext);
     if ((input.scope ?? 'global') === 'project') {

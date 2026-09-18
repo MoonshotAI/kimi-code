@@ -121,9 +121,8 @@ export function createProgram(
     .addOption(new Option('--yes').hideHelp().default(false))
     .addOption(new Option('--auto-approve').hideHelp().default(false))
     .addOption(
-      // Remote environments are experimental: the [environments] config layer resolves
-      // and validates the id (unknown id / missing defaultCwd → startup
-      // error). Hidden until that lands.
+      // The [environments] config layer resolves and validates the id (unknown
+      // id / missing defaultCwd → startup error). Hidden from help output.
       new Option('--environment <id>', 'Bind the new session to the configured environment <id>.')
         .hideHelp(),
     )

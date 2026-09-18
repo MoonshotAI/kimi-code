@@ -5,7 +5,6 @@ import { ref, type LiveRef } from '#/_base/di/instantiation';
 import { Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { ISessionEventBus } from '#/app/event/eventBus';
-import { IFlagService } from '#/app/flag/flag';
 import { LifecycleScope } from '#/app/scopes';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { TurnEnded } from '#/agent/loop/turnOps';
@@ -14,7 +13,6 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
-import { REMOTE_RUNTIME_FLAG_ID } from '#/environment/flag';
 import { LOCAL_ENVIRONMENT_ID, type Environment, type EnvironmentBinding } from '#/environment/environment';
 import { EnvironmentError, environmentStatusAllows } from '#/environment/environmentRegistry';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -71,7 +69,6 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ISessionEventBus private readonly eventBus: ISessionEventBus,
     @ref(IAgentLoopService) private readonly loop: LiveRef<IAgentLoopService>,
-    @IFlagService private readonly flags: IFlagService,
     @IAgentReminderService private readonly reminder: IAgentReminderService,
     @IAppendLogStore private readonly appendLog: IAppendLogStore,
     @ILogService private readonly log: ILogService,
@@ -158,7 +155,6 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
   private reconnectRestoredBinding(binding: EnvironmentBinding): void {
     if (this.scopeContext.agentId === MAIN_AGENT_ID) return;
     if (binding.environmentId === LOCAL_ENVIRONMENT_ID) return;
-    if (!this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) return;
     let environment: Environment;
     try {
       environment = this.resolver.inspect(binding);
@@ -306,7 +302,6 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
 
   private emitEnvironmentReminder(binding: EnvironmentBinding): void {
     if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
-    if (!this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) return;
     let environment: HostEnvironmentInfo;
     try {
       environment = this.resolver.inspect(binding).host;

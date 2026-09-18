@@ -299,10 +299,10 @@ export interface CreateSessionOptions {
    */
   readonly drainAgentTasksOnStop?: boolean;
   /**
-   * Initial environment binding for the main agent (experimental remote environment):
-   * an environment declared in the `[environments]` config section or the project's
-   * `.kimi-code/environments.toml`. Requires the `remote_runtime` experimental
-   * flag; omit to start on the local environment (or the configured default).
+   * Initial environment binding for the main agent: an environment declared in
+   * the `[environments]` config section or the project's
+   * `.kimi-code/environments.toml`; omit to start on the local environment (or
+   * the configured default).
    */
   readonly environmentId?: string;
   /**

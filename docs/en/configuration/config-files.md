@@ -112,7 +112,7 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | [`image`](#image) | `table` | — | Image compression parameters |
 | [`services`](#services) | `table` | — | Built-in external service configuration |
 | [`permission`](#permission) | `table` | — | Initial permission rules |
-| [`environments`](#environments) | `table` | — | Remote environment declarations (experimental) |
+| [`environments`](#environments) | `table` | — | Remote environment declarations |
 | [`hooks`](../customization/hooks.md) | `array<table>` | — | Lifecycle hooks |
 | [`identity`](#identity) | `table` | — | Custom agent identity |
 
@@ -545,7 +545,7 @@ MCP server declarations are configured in `~/.kimi-code/mcp.json` or the project
 
 ## `environments`
 
-`environments` declares remote environments — SSH hosts, Docker-compatible containers, or custom launcher commands — that sessions can bind to so the agent's tools execute in the target environment. The whole feature is experimental and this section is only read when the `remote_runtime` flag is enabled; see [Remote environments](../guides/remote-environment.md) for the feature walkthrough, boundaries, and limitations.
+`environments` declares remote environments — SSH hosts, Docker-compatible containers, or custom launcher commands — that sessions can bind to so the agent's tools execute in the target environment. See [Remote environments](../guides/remote-environment.md) for the feature walkthrough, boundaries, and limitations.
 
 Each entry is keyed by its environment id: at most 64 characters, no leading or trailing whitespace, and `local` and `default` are reserved words. Within one entry, `type` and `command` are mutually exclusive.
 

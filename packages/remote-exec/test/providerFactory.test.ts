@@ -8,7 +8,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { Emitter } from '@moonshot-ai/agent-core-v2/_base/event';
 import { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
 import { IConfigService, type ConfigSectionChangedEvent } from '@moonshot-ai/agent-core-v2/app/config/config';
-import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
 import { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
 import { HostFsError, OsFsErrors } from '@moonshot-ai/agent-core-v2/os/interface/hostFsErrors';
 import { IAtomicDocumentStore } from '@moonshot-ai/agent-core-v2/persistence/interface/atomicDocumentStore';
@@ -30,10 +29,6 @@ import {
   type RemoteEnvironmentProviderFactoryOptions,
 } from '../src/client/remoteEnvironmentProvider';
 import type { RemoteEnvironment, RemoteEnvironmentOptions } from '../src/client/remoteEnvironment';
-
-function flagsService(enabled: boolean): IFlagService {
-  return { _serviceBrand: undefined, enabled: () => enabled } as unknown as IFlagService;
-}
 
 function configService(section: unknown): IConfigService {
   return {
@@ -109,7 +104,6 @@ const CONTEXT: EnvironmentProviderContext = {
 };
 
 interface HostServices {
-  readonly flags: IFlagService;
   readonly config: IConfigService;
   readonly fs: IHostFileSystem;
   readonly docs: IAtomicDocumentStore;
@@ -119,7 +113,6 @@ interface HostServices {
 function fakeHost(services: HostServices, registry: EnvironmentRegistry): EnvironmentProviderHost {
   return {
     get: (id: unknown) => {
-      if (id === IFlagService) return services.flags;
       if (id === IConfigService) return services.config;
       if (id === IHostFileSystem) return services.fs;
       if (id === IAtomicDocumentStore) return services.docs;
@@ -152,7 +145,6 @@ function connectedEnvironment(options: RemoteEnvironmentOptions, generation: str
 
 function baseServices(overrides: Partial<HostServices> = {}): HostServices {
   return {
-    flags: flagsService(true),
     config: configService({
       'dev-box': { type: 'ssh', host: 'dev-box', defaultCwd: '/home/me' },
     }),
@@ -170,18 +162,6 @@ function factoryOptions(extra: RemoteEnvironmentProviderFactoryOptions = {}): Re
 }
 
 describe('RemoteEnvironmentProviderFactory', () => {
-  it('registers nothing when the experimental flag is off', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({
-      connect: vi.fn(),
-    }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices({ flags: flagsService(false) }), registry));
-
-    expect(registry.list()).toEqual([]);
-    await attachment.dispose();
-    await registry.dispose();
-  });
-
   it('registers declared environments as disconnected placeholders without connecting', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
     const connect = vi.fn(async (options: RemoteEnvironmentOptions) => connectedEnvironment(options, 'connected-1'));

@@ -2,8 +2,6 @@
 
 A remote environment lets the agent's tools — reading and writing files, running Shell commands, and interactive terminals — execute on another machine or inside a container, while Kimi Code CLI itself, all model requests, and your credentials stay on your machine. Use it when the code lives on a remote server, or when you want tool execution isolated in a Docker-compatible container.
 
-> Remote environments are experimental. Enable them with `KIMI_CODE_EXPERIMENTAL_REMOTE_RUNTIME=1` before starting Kimi Code, or write `remote_runtime = true` under `[experimental]` in `config.toml`. The master switch `KIMI_CODE_EXPERIMENTAL_FLAG=1` enables them too.
-
 ## How remote environments work
 
 Kimi Code keeps the agent loop, model requests, credentials, approvals, and session state on your machine. The target environment only executes three groups of OS primitives: filesystem, process, and terminal. A small executor process (`kimi exec-server`) runs on the target and serves those primitives over a single connection; everything else — including every LLM request — stays local.
@@ -151,7 +149,7 @@ The connection handshake requires a minimum executor version and a POSIX target.
 
 ## Limitations
 
-Remote environments are experimental, and several behaviors are deliberately scoped. Each of the following is a known limitation:
+Several behaviors are deliberately scoped. Each of the following is a known limitation:
 
 - **Hooks run on the Kimi Code host**: `PreToolUse` and other lifecycle hooks always execute on the machine running Kimi Code, so in a remote session they observe local facts (local files, local processes), not the target's. They run with the session's local working directory; hooks that would execute on the target itself are a future, undesigned concept.
 - **MCP servers stay local**: stdio MCP servers keep running on your machine even in remote sessions; they do not see the target's filesystem.

@@ -7,13 +7,11 @@ import { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
 import { subtreeWatchFilter } from '@moonshot-ai/agent-core-v2/_base/utils/paths';
 import { TimeoutTimer } from '@moonshot-ai/agent-core-v2/_base/utils/timer';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
-import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
 import { watch } from '@moonshot-ai/agent-core-v2/human/utils/watch';
 import type { HostEnvironmentInfo } from '@moonshot-ai/agent-core-v2/os/interface/hostEnvironment';
 import { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
 import { IAtomicDocumentStore } from '@moonshot-ai/agent-core-v2/persistence/interface/atomicDocumentStore';
 import { ENVIRONMENTS_SECTION } from '@moonshot-ai/agent-core-v2/environment/configSection';
-import { REMOTE_RUNTIME_FLAG_ID } from '@moonshot-ai/agent-core-v2/environment/flag';
 import {
   PROJECT_ENVIRONMENTS_FILE,
   resolveWorkspaceEnvironmentDeclarations,
@@ -245,7 +243,7 @@ const PROJECT_DECLARATION_WATCH_DEBOUNCE_MS = 200;
 export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFactory {
   readonly id = 'remote-exec';
   readonly imports: EnvironmentUnitImports = {
-    root: [IFlagService, IConfigService, IHostFileSystem, IAtomicDocumentStore, ILogService],
+    root: [IConfigService, IHostFileSystem, IAtomicDocumentStore, ILogService],
     imports: [],
     local: [],
   };
@@ -253,11 +251,6 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
   constructor(private readonly options: RemoteEnvironmentProviderFactoryOptions = {}) {}
 
   async attach(context: EnvironmentProviderContext, host: EnvironmentProviderHost): Promise<EnvironmentProviderAttachment> {
-    if (!host.get(IFlagService).enabled(REMOTE_RUNTIME_FLAG_ID)) {
-      return {
-        dispose() {},
-      };
-    }
     const log = host.get(ILogService);
     const config = host.get(IConfigService);
     const fs = host.get(IHostFileSystem);
