@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { Emitter } from '#/_base/event';
 import type { LiveRef } from '#/_base/di/instantiation';
@@ -7,12 +7,13 @@ import { TestInstantiationService } from '#/_base/di/test';
 import type { ISessionEventBus } from '#/app/event/eventBus';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
+import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import type { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { ILogService } from '#/_base/log/log';
 import { AgentEnvironmentService, snapshotAgentEnvironmentBinding } from '#/agent/environmentBinding/agentEnvironment';
-import { AgentEnvironmentBindingService, agentEnvironmentBindingKey, ENVIRONMENT_BINDING_REMINDER_VARIANT } from '#/agent/environmentBinding/environmentBindingService';
+import { AgentEnvironmentBindingService, agentEnvironmentBindingKey, ENVIRONMENT_BINDING_REMINDER_VARIANT, PROJECT_CONTEXT_REMINDER_VARIANT } from '#/agent/environmentBinding/environmentBindingService';
 import { environmentBindingKey, EnvironmentSetBinding } from '#/agent/environmentBinding/environmentBindingOps';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -22,6 +23,7 @@ import type { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { Environment, EnvironmentBinding, EnvironmentCapability, EnvironmentLease } from '#/environment/environment';
 import { EnvironmentError, EnvironmentRegistry } from '#/environment/environmentRegistry';
+import type { IHostFileSystem, HostFileStat } from '#/os/interface/hostFileSystem';
 import { makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { SessionStateService } from '#/session/state/sessionStateService';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
@@ -108,6 +110,15 @@ function stubAppendLog(records: WireRecord[]): IAppendLogStore {
       for (const record of records) yield record as R;
     },
   } as unknown as IAppendLogStore;
+}
+
+const BOOTSTRAP_HOME = '/kimi-home';
+
+function stubBootstrap(): IBootstrapService {
+  return {
+    _serviceBrand: undefined,
+    homeDir: BOOTSTRAP_HOME,
+  } as unknown as IBootstrapService;
 }
 
 function stubLoop(loopState: {
@@ -232,6 +243,7 @@ function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: E
       register: () => ({ dispose: () => {} }),
       list: () => [],
     } as unknown as IAgentConversationUndoParticipantRegistry,
+    stubBootstrap(),
   );
   const workspaceChanges = new Emitter<{ workspaceId: string }>();
   const workspaces = {
@@ -756,6 +768,158 @@ describe('AgentEnvironmentBindingService environment reminder', () => {
   });
 });
 
+function probeFs(files: Record<string, string>, directories: readonly string[] = []): IHostFileSystem {
+  const stat = vi.fn(async (path: string): Promise<HostFileStat> => {
+    const content = files[path];
+    if (content !== undefined) return { isFile: true, isDirectory: false, size: content.length };
+    if (directories.includes(path)) return { isFile: false, isDirectory: true, size: 0 };
+    throw new Error(`missing: ${path}`);
+  });
+  const readText = vi.fn(async (path: string): Promise<string> => {
+    const content = files[path];
+    if (content === undefined) throw new Error(`missing: ${path}`);
+    return content;
+  });
+  return { stat, lstat: stat, readText } as unknown as IHostFileSystem;
+}
+
+function probingEnvironment(
+  environmentId: string,
+  host: Partial<Environment['host']>,
+  fs: IHostFileSystem,
+): FakeEnvironment {
+  const fake = new FakeEnvironment(
+    { workspaceId: 'workspace', environmentId, generation: `${environmentId}-one` },
+    { status: 'ready', capabilities: ['fs', 'process'], host },
+  );
+  return Object.assign(fake, { fs, process: {} });
+}
+
+function flushProbe(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function projectContextReminders(
+  reminders: readonly { content: string; variant: string }[],
+): { content: string; variant: string }[] {
+  return reminders.filter((reminder) => reminder.variant === PROJECT_CONTEXT_REMINDER_VARIANT);
+}
+
+describe('AgentEnvironmentBindingService project context reminder', () => {
+  it('injects the probed AGENTS.md path chain with supersession text on the first switch to a remote view', async () => {
+    const { registry, binding, reminders } = setup();
+    const fs = probeFs(
+      {
+        '/remote/work/AGENTS.md': 'remote root instructions',
+        '/remote/work/sub/AGENTS.md': 'remote sub instructions',
+      },
+      ['/remote/work/.git'],
+    );
+    registry.register(probingEnvironment('remote-view', REMOTE_HOST, fs));
+
+    binding.switch('remote-view', '/remote/work/sub');
+    await flushProbe();
+
+    expect(reminders.map((reminder) => reminder.variant)).toEqual([
+      ENVIRONMENT_BINDING_REMINDER_VARIANT,
+      PROJECT_CONTEXT_REMINDER_VARIANT,
+    ]);
+    expect(projectContextReminders(reminders)[0]!.content).toBe(
+      'The active project context is now "remote-view" at working directory /remote/work/sub. ' +
+        'Project instructions from previously used directories no longer apply. ' +
+        'The AGENTS.md file(s) below apply to this working directory but were not included in your system prompt:\n' +
+        '- /remote/work/AGENTS.md\n' +
+        '- /remote/work/sub/AGENTS.md\n' +
+        'Read them with your tools before making changes in this working directory.',
+    );
+  });
+
+  it('injects nothing when the same view is revisited within the session', async () => {
+    const { registry, binding, reminders } = setup();
+    const fs = probeFs({ '/remote/work/AGENTS.md': 'remote instructions' }, ['/remote/work/.git']);
+    registry.register(probingEnvironment('remote-view', REMOTE_HOST, fs));
+
+    binding.switch('remote-view', '/remote/work');
+    await flushProbe();
+    binding.switch('local');
+    await flushProbe();
+    binding.switch('remote-view', '/remote/work');
+    await flushProbe();
+
+    expect(projectContextReminders(reminders)).toHaveLength(1);
+  });
+
+  it('injects on a remote to same-host remote switch because the view is new', async () => {
+    const { registry, binding, reminders } = setup();
+    registry.register(
+      probingEnvironment('remote-one', REMOTE_HOST, probeFs({ '/remote/one/AGENTS.md': 'one' }, ['/remote/one/.git'])),
+    );
+    registry.register(
+      probingEnvironment('remote-two', REMOTE_HOST, probeFs({ '/remote/two/AGENTS.md': 'two' }, ['/remote/two/.git'])),
+    );
+
+    binding.switch('remote-one', '/remote/one');
+    await flushProbe();
+    binding.switch('remote-two', '/remote/two');
+    await flushProbe();
+
+    const injected = projectContextReminders(reminders);
+    expect(injected).toHaveLength(2);
+    expect(injected[1]!.content).toContain('"remote-two"');
+    expect(injected[1]!.content).toContain('- /remote/two/AGENTS.md');
+  });
+
+  it('injects the local paths when a session created remote switches to local for the first time', async () => {
+    const { binding, local, reminders } = setup({
+      seedBinding: { workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' },
+    });
+    Object.assign(local, { fs: probeFs({ '/workspace/AGENTS.md': 'local instructions' }, ['/workspace/.git']) });
+
+    binding.switch('local');
+    await flushProbe();
+
+    const injected = projectContextReminders(reminders);
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.content).toContain('"local"');
+    expect(injected[0]!.content).toContain('at working directory /workspace');
+    expect(injected[0]!.content).toContain('- /workspace/AGENTS.md');
+  });
+
+  it('injects on a local to local switch when the cwd view was never visited, without the environment reminder', async () => {
+    const { binding, local, reminders } = setup();
+    Object.assign(local, { fs: probeFs({ '/other/AGENTS.md': 'other instructions' }, ['/other/.git']) });
+
+    binding.switch('local', '/other');
+    await flushProbe();
+
+    expect(reminders).toHaveLength(1);
+    expect(reminders[0]!.variant).toBe(PROJECT_CONTEXT_REMINDER_VARIANT);
+    expect(reminders[0]!.content).toContain('at working directory /other');
+    expect(reminders[0]!.content).toContain('- /other/AGENTS.md');
+  });
+
+  it('injects nothing when the new view has no AGENTS.md files', async () => {
+    const { registry, binding, reminders } = setup();
+    registry.register(probingEnvironment('bare-remote', REMOTE_HOST, probeFs({})));
+
+    binding.switch('bare-remote', '/bare/work');
+    await flushProbe();
+
+    expect(projectContextReminders(reminders)).toHaveLength(0);
+  });
+
+  it('does not inject for non-main agents', async () => {
+    const { registry, binding, reminders } = setup({ agentId: 'agent-1' });
+    const fs = probeFs({ '/remote/work/AGENTS.md': 'remote instructions' }, ['/remote/work/.git']);
+    registry.register(probingEnvironment('remote-view', REMOTE_HOST, fs));
+
+    binding.switch('remote-view', '/remote/work');
+    await flushProbe();
+
+    expect(reminders).toHaveLength(0);
+  });
+});
+
 describe('AgentEnvironmentBindingService.connectAndSwitch', () => {
   it('connects a disconnected environment, validates the cwd with the target fs, and commits', async () => {
     const { registry, binding, dispatched } = setup();
@@ -774,7 +938,7 @@ describe('AgentEnvironmentBindingService.connectAndSwitch', () => {
       cwd: '/remote/work',
     });
     expect(connectCalls).toEqual(['connect']);
-    expect(stats).toEqual(['/remote/work']);
+    expect(stats).toContain('/remote/work');
     expect(binding.current).toMatchObject({ environmentId: 'connectable', cwd: '/remote/work' });
     expect(dispatched.at(-1)).toMatchObject({ environmentId: 'connectable', cwd: '/remote/work' });
   });
@@ -860,7 +1024,7 @@ describe('AgentEnvironmentBindingService.connectAndSwitch', () => {
       environmentId: 'already-ready',
       cwd: '/remote/work',
     });
-    expect(stats).toEqual(['/remote/work']);
+    expect(stats).toContain('/remote/work');
   });
 
   it('re-roots the connected environment with the validated cwd before committing', async () => {
@@ -1099,6 +1263,7 @@ function undoSetup(): UndoHarness {
     appendLog,
     noopLogger,
     undoParticipants,
+    stubBootstrap(),
   );
   const changes: EnvironmentBinding[] = [];
   binding.onDidChange((next) => changes.push(next));
