@@ -11,6 +11,7 @@ import {
 } from '#/protocol/messages';
 import {
   compareVersions,
+  CONTROL_CALL_METHODS,
   INITIALIZE_METHOD,
   INITIALIZED_METHOD,
   LONG_POLL_METHODS,
@@ -25,6 +26,7 @@ import type { BytePipe } from './execBridge';
 
 export const DEFAULT_INITIALIZE_TIMEOUT_MS = 10_000;
 export const DEFAULT_CONTROL_CALL_TIMEOUT_MS = 60_000;
+export const DEFAULT_REQUEST_CALL_TIMEOUT_MS = 60_000;
 
 export interface ConnectOptions {
   readonly clientName: string;
@@ -32,6 +34,7 @@ export interface ConnectOptions {
   readonly minExecutorVersion?: string;
   readonly initializeTimeoutMs?: number;
   readonly controlCallTimeoutMs?: number;
+  readonly requestCallTimeoutMs?: number;
 }
 
 export interface ConnectionCloseInfo {
@@ -87,6 +90,20 @@ export class ControlCallTimeoutError extends Error {
   }
 }
 
+// A business call that the executor did not answer in time. Only the stalled
+// request fails — the connection stays up, and the request id is remembered
+// so the late response, if it ever arrives, is discarded instead of being
+// treated as a protocol violation.
+export class RequestTimeoutError extends Error {
+  constructor(
+    readonly method: string,
+    readonly timeoutMs: number,
+  ) {
+    super(`request ${method} timed out after ${String(timeoutMs)}ms`);
+    this.name = 'RequestTimeoutError';
+  }
+}
+
 type PendingCall = {
   resolve: (result: unknown) => void;
   reject: (error: Error) => void;
@@ -105,7 +122,13 @@ export class RemoteExecConnection {
   private handshakeComplete = false;
   private handshakeTimer: NodeJS.Timeout | undefined;
   private controlCallTimeoutMs = DEFAULT_CONTROL_CALL_TIMEOUT_MS;
+  private requestCallTimeoutMs = DEFAULT_REQUEST_CALL_TIMEOUT_MS;
   private closeInfo: ConnectionCloseInfo | undefined;
+  // Ids of requests that timed out and whose late response must be discarded.
+  // Bounded like the in-flight cap: ids are consumed by the late response, and
+  // the oldest is evicted beyond the cap so a long-lived connection cannot
+  // grow the set without limit.
+  private readonly expiredIds = new Set<RequestId>();
 
   private constructor(private readonly pipe: BytePipe) {}
 
@@ -142,6 +165,7 @@ export class RemoteExecConnection {
     return new Promise<RemoteExecConnection>((resolve, reject) => {
       const timeoutMs = options.initializeTimeoutMs ?? DEFAULT_INITIALIZE_TIMEOUT_MS;
       this.controlCallTimeoutMs = options.controlCallTimeoutMs ?? DEFAULT_CONTROL_CALL_TIMEOUT_MS;
+      this.requestCallTimeoutMs = options.requestCallTimeoutMs ?? DEFAULT_REQUEST_CALL_TIMEOUT_MS;
       this.handshakeTimer = setTimeout(() => {
         this.fail(new HandshakeError(`initialize timed out after ${timeoutMs}ms`, { kind: 'timeout' }));
       }, timeoutMs);
@@ -294,10 +318,15 @@ export class RemoteExecConnection {
     this.inFlight += 1;
     return new Promise<unknown>((resolve, reject) => {
       const pending: PendingCall = { resolve, reject };
-      if (!LONG_POLL_METHODS.has(method)) {
+      if (CONTROL_CALL_METHODS.has(method)) {
         pending.timer = setTimeout(() => {
           this.fail(new ControlCallTimeoutError(method, this.controlCallTimeoutMs));
         }, this.controlCallTimeoutMs);
+        pending.timer.unref?.();
+      } else if (!LONG_POLL_METHODS.has(method)) {
+        pending.timer = setTimeout(() => {
+          this.expireRequest(id, method);
+        }, this.requestCallTimeoutMs);
         pending.timer.unref?.();
       }
       this.pending.set(id, pending);
@@ -360,7 +389,11 @@ export class RemoteExecConnection {
     if (isResponse(message) || isErrorResponse(message)) {
       const pending = this.pending.get(message.id);
       if (pending === undefined) {
-        this.fail(new ProtocolViolationError(`response for unknown id ${String(message.id)}`));
+        // A response to a request that already timed out is stale: discard it
+        // instead of faulting the connection it arrived on.
+        if (!this.expiredIds.delete(message.id)) {
+          this.fail(new ProtocolViolationError(`response for unknown id ${String(message.id)}`));
+        }
         return;
       }
       this.pending.delete(message.id);
@@ -398,6 +431,19 @@ export class RemoteExecConnection {
     this.inFlight = Math.max(0, this.inFlight - 1);
     const next = this.callQueue.shift();
     if (next !== undefined) next();
+  }
+
+  private expireRequest(id: RequestId, method: string): void {
+    const pending = this.pending.get(id);
+    if (pending === undefined) return;
+    this.pending.delete(id);
+    this.expiredIds.add(id);
+    if (this.expiredIds.size > MAX_IN_FLIGHT_CALLS) {
+      const oldest = this.expiredIds.values().next();
+      if (!oldest.done) this.expiredIds.delete(oldest.value);
+    }
+    this.releaseSlot();
+    pending.reject(new RequestTimeoutError(method, this.requestCallTimeoutMs));
   }
 
   private onPipeEnd(): void {

@@ -103,6 +103,36 @@ describe('RemoteEnvironment over a subprocess loopback', () => {
     await expect(environment.process.spawn('true')).rejects.toThrow(ConnectionClosedError);
   });
 
+  it('marks the environment unavailable and drains in-flight work when the transport drops', async () => {
+    const environment = await RemoteEnvironment.connect({
+      workspaceId: 'ws-test',
+      environmentId: 'loopback',
+      launcher: loopbackLauncher({ EXEC_SERVER_EXIT_AFTER_MS: '3000' }),
+    });
+    const disconnected = new Promise<void>((resolve) => {
+      environment.onDidChangeStatus((status) => {
+        if (status === 'disconnected') resolve();
+      });
+    });
+    const proc = await environment.process.spawn('sleep', ['300']);
+    await environment.connection.call('process/start', {
+      processId: 'drain-test',
+      argv: ['sleep', '300'],
+      cwd: workDir,
+      pipeStdin: false,
+    });
+    const longPoll = environment.connection.call('process/read', {
+      processId: 'drain-test',
+      waitMs: 30_000,
+    });
+    await disconnected;
+    expect(environment.status).toBe('disconnected');
+    await expect(longPoll).rejects.toThrow(ConnectionClosedError);
+    await expect(proc.wait()).resolves.toBe(-1);
+    await expect(environment.fs.readText('/etc/hostname')).rejects.toThrow(ConnectionClosedError);
+    await environment.dispose();
+  });
+
   it('fails to connect when the executor is missing, with exit diagnostics', async () => {
     await expect(
       RemoteEnvironment.connect({

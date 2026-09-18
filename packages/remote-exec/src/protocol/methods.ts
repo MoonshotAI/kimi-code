@@ -30,9 +30,16 @@ export const SERVER_NOTIFICATION_METHODS: ReadonlySet<string> = new Set([
 // Client→server request methods that are intentionally unbounded: process/read
 // long-polls server-side until output arrives or waitMs elapses, so a per-call
 // timeout would kill healthy polling. (Terminal streams ride server→client
-// notifications, not calls.) Every other request method is control-plane and
-// gets the client's bounded call timeout.
+// notifications, not calls.)
 export const LONG_POLL_METHODS: ReadonlySet<string> = new Set([PROCESS_READ_METHOD]);
+
+// Client→server control calls whose stall is treated as a broken connection:
+// an unanswered health check cannot be distinguished from a half-dead peer, so
+// the client closes the connection (the same surface as a transport drop). The
+// handshake has its own initialize window. Every other bounded method is a
+// business call: a stall fails only that request, and a late response to a
+// timed-out request is discarded.
+export const CONTROL_CALL_METHODS: ReadonlySet<string> = new Set([ENVIRONMENT_STATUS_METHOD]);
 
 export interface InitializeParams {
   readonly clientName: string;
