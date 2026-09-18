@@ -7,14 +7,16 @@
  * environment's `← current` marker, and a secondary line with type, connection
  * status, the disconnect reason while disconnected, and the declaration's
  * defaultCwd. A disconnected bound row offers
- * an explicit reconnect on `R`; switch and reconnect failures surface inline
- * (exit code and bounded stderr ride the engine's error message).
+ * an explicit reconnect on `Enter` / `R`; switch and reconnect failures surface
+ * inline (exit code and bounded stderr ride the engine's error message).
  *
  * Keyboard:
  *   - ↑ / ↓             move highlight
  *   - ← / → · PgUp/PgDn page
  *   - Enter             switch to the highlighted environment (no-op on the
- *                       current one); on `[ Add Environment ]` → `onAdd()`
+ *                       current one, or reconnect when the current one is a
+ *                       disconnected remote); on `[ Add Environment ]` →
+ *                       `onAdd()`
  *   - R                 reconnect the bound environment (only while the
  *                       highlighted row is the bound one and disconnected)
  *   - Esc               clear an inline error first, then `onClose()`
@@ -205,6 +207,10 @@ export class EnvironmentManagerComponent extends Container implements Focusable 
       }
       if (selected.environment.environmentId !== this.opts.currentEnvironmentId) {
         this.opts.onSwitch(selected.environment.environmentId);
+        return;
+      }
+      if (this.reconnectableSelected()) {
+        this.opts.onReconnect(this.opts.currentEnvironmentId);
       }
       return;
     }
@@ -224,7 +230,7 @@ export class EnvironmentManagerComponent extends Container implements Focusable 
     lines.push(border);
     lines.push(currentTheme.boldFg('primary', ' Environments'));
     const hint = this.reconnectableSelected()
-      ? ' ↑↓ navigate · Enter switch · R reconnect · Esc cancel'
+      ? ' ↑↓ navigate · Enter/R reconnect · Esc cancel'
       : ' ↑↓ navigate · Enter switch · Esc cancel';
     lines.push(currentTheme.fg('textMuted', hint));
     lines.push('');
