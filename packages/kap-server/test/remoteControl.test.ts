@@ -186,13 +186,15 @@ describe('remote-control route telemetry', () => {
     startedAt: 0,
   };
 
-  function fakeService(behavior: 'ok' | 'already' | 'error' | 'disable_error' | 'disable_throw' | 'stale_error'): RemoteControlManager {
+  function fakeService(behavior: 'ok' | 'already' | 'error' | 'disable_error' | 'disable_throw' | 'stale_error' | 'starting_failed'): RemoteControlManager {
     const status =
       behavior === 'disable_error'
         ? { enabled: true, state: 'on' }
         : behavior === 'stale_error'
           ? { enabled: false, state: 'off', error: 'stale failure' }
-          : { enabled: false, state: 'off' };
+          : behavior === 'starting_failed'
+            ? { enabled: false, state: 'starting' }
+            : { enabled: false, state: 'off' };
     return {
       status: () => status,
       enable: async () => {
@@ -203,6 +205,7 @@ describe('remote-control route telemetry', () => {
       disable: async () => {
         if (behavior === 'disable_error') return { enabled: false, state: 'off', error: 'close failed' };
         if (behavior === 'disable_throw') throw new Error('disable boom');
+        if (behavior === 'starting_failed') return { enabled: false, state: 'off', error: 'startup failed' };
         return status;
       },
     } as unknown as RemoteControlManager;
@@ -242,6 +245,7 @@ describe('remote-control route telemetry', () => {
     await postHandler({ service: fakeService('disable_error'), telemetry })(false);
     await expect(postHandler({ service: fakeService('disable_throw'), telemetry })(false)).rejects.toThrow('disable boom');
     await postHandler({ service: fakeService('stale_error'), telemetry })(false);
+    await postHandler({ service: fakeService('starting_failed'), telemetry })(false);
 
     expect(tracked).toEqual([
       ['remote_control_toggle', { enabled: true, outcome: 'ok', error_type: undefined }],
@@ -251,6 +255,7 @@ describe('remote-control route telemetry', () => {
       ['remote_control_toggle', { enabled: true, outcome: 'error', error_type: 'Error' }],
       ['remote_control_toggle', { enabled: false, outcome: 'error', error_type: 'disable_failed' }],
       ['remote_control_toggle', { enabled: false, outcome: 'error', error_type: 'Error' }],
+      ['remote_control_toggle', { enabled: false, outcome: 'ok', error_type: undefined }],
       ['remote_control_toggle', { enabled: false, outcome: 'ok', error_type: undefined }],
     ]);
   });
