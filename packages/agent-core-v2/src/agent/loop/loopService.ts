@@ -1426,6 +1426,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
               encrypted: delta.encrypted,
               detailsIndex: delta.detailsIndex,
               hidden: delta.hidden,
+              reasoningKey: delta.reasoningKey,
             });
             if (part?.type === 'think' && part.hidden === true) return;
             void this.dispatcher.dispatch(
