@@ -1239,6 +1239,18 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       nudge.consumed = true;
       if (nudge.contextMessage !== undefined && nudge.contextMessage.content.length > 0) {
         this.materializeMessage(nudge.contextMessage);
+        if (nudge.promptIds !== undefined && nudge.promptIds.length > 0) {
+          void this.dispatcher.dispatch(
+            new TurnSteer({
+              agentId: this.scopeContext.agentId,
+              input: nudge.contextMessage.content,
+              origin: nudge.contextMessage.origin ?? { kind: 'user' },
+              messageId: nudge.contextMessage.id,
+              promptIds: [...nudge.promptIds],
+              turnId: this.active?.id,
+            }),
+          );
+        }
       }
       nudge.onConsume?.();
     }
@@ -1320,14 +1332,17 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           merged.content,
           this.profile.getModelProviderType(),
         );
+        const messageId = newMessageId();
+        const promptIds = children.map((child) => child.waiter.id);
         this.nudges.push({
           contextMessage: {
             role: 'user',
             content: gatedContent,
             toolCalls: [],
             origin: merged.origin,
-            id: newMessageId(),
+            id: messageId,
           },
+          promptIds,
           bypassMaxSteps: false,
           turnScoped: false,
           sentToMachine: true,
@@ -1336,18 +1351,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           new PromptSteered({
             agentId: this.scopeContext.agentId,
             activePromptId: active.prompt.id,
-            promptIds: children.map((child) => child.waiter.id),
+            promptIds,
+            messageId,
             content: children.flatMap((child) =>
               stripBundledSkillBlocks(child.projection.message),
             ),
             steeredAt: new Date().toISOString(),
-          }),
-        );
-        void this.dispatcher.dispatch(
-          new TurnSteer({
-            agentId: this.scopeContext.agentId,
-            input: gatedContent,
-            origin: merged.origin,
           }),
         );
         return;
@@ -2170,6 +2179,7 @@ function projectionFromEntry(entry: UserEntry): PromptProjection {
 
 interface Nudge {
   readonly contextMessage?: ContextMessage;
+  readonly promptIds?: readonly string[];
   readonly bypassMaxSteps: boolean;
   readonly turnScoped: boolean;
   readonly onConsume?: () => void;

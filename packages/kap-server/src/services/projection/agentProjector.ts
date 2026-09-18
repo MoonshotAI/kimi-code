@@ -1452,6 +1452,8 @@ export class AgentMessageProjector {
     time: number;
     input: readonly ContentPart[];
     origin: unknown;
+    messageId?: string;
+    promptIds?: readonly string[];
   }): ServerMessage[] {
     const origin = event.origin as {
       kind?: string;
@@ -1469,12 +1471,49 @@ export class AgentMessageProjector {
     const skipBlocks = kind === 'user' ? (origin.skillActivations?.length ?? 0) : 0;
     const step = this.currentStep;
     const stepStarted = step !== undefined && step.turnId === turn.turnId;
-    if (!stepStarted && !turn.openingSteerDeduped && turn.openingKey !== undefined) {
+    if (
+      event.messageId === undefined &&
+      !stepStarted &&
+      !turn.openingSteerDeduped &&
+      turn.openingKey !== undefined
+    ) {
       const key = steerKeyOf(event.input, skipBlocks);
       if (key.text === turn.openingKey.text && key.attachments === turn.openingKey.attachments) {
         turn.openingSteerDeduped = true;
         return ops;
       }
+    }
+    const matchedByIds =
+      kind === 'user' ? this.matchSteerPromptIds(event.promptIds) : undefined;
+    if (matchedByIds !== undefined) {
+      if (matchedByIds.length === 1) {
+        const matched = matchedByIds[0]!;
+        this.mergedSteers = this.mergedSteers.filter(
+          (entry) => !entry.promptIds.some((id) => event.promptIds?.includes(id)),
+        );
+        const existing = this.users.get(matched);
+        if (existing !== undefined) {
+          if (existing.status === 'unread') {
+            existing.status = 'read';
+            existing.turnId = turn.turnId;
+            existing.timestamp = event.time;
+            ops.push(this.userOp(existing));
+          }
+          return ops;
+        }
+        ops.push(
+          this.steerUserMessage(turn, event.input, {
+            origin: userOriginOf(event.origin),
+            skillActivations: skillActivationsOf(event.origin),
+            skipBlocks,
+            at: event.time,
+            messageId: matched,
+          }),
+        );
+        return ops;
+      }
+      ops.push(...this.readSteeredUsers({ promptIds: matchedByIds }, turn, event.time));
+      return ops;
     }
     const matched =
       kind === 'user' ? this.matchQueuedPrompt(event.input, skipBlocks) : undefined;
@@ -1518,6 +1557,18 @@ export class AgentMessageProjector {
       }),
     );
     return ops;
+  }
+
+  private matchSteerPromptIds(promptIds: readonly string[] | undefined): string[] | undefined {
+    if (promptIds === undefined || promptIds.length === 0) return undefined;
+    const matched: string[] = [];
+    for (const promptId of promptIds) {
+      const prompt = this.prompts.get(promptId);
+      if (prompt === undefined) continue;
+      if (prompt.status !== 'queued' && prompt.status !== 'steered') continue;
+      matched.push(prompt.userMessageId);
+    }
+    return matched.length > 0 ? matched : undefined;
   }
 
   private matchQueuedPrompt(

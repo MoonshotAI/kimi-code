@@ -239,12 +239,14 @@ describe('prompt queue', () => {
     await loop.settled();
   });
 
-  it('publishes turn.steer at steer time without altering the wire payload shape', async () => {
+  it('reserves a messageId on prompt.steered and publishes turn.steer at materialize', async () => {
     setup();
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'active' });
     ctx.mockNextResponse({ type: 'text', text: 'merged' });
+    const steered: PromptSteered[] = [];
     const events: TurnSteer[] = [];
+    ctx.get(IEventBus).subscribe(PromptSteered, (event) => steered.push(event));
     ctx.get(IEventBus).subscribe(TurnSteer, (event) => events.push(event));
 
     await enqueue(loop, { message: message('active') });
@@ -253,16 +255,19 @@ describe('prompt queue', () => {
     const two = await enqueue(loop, { message: message('two') });
 
     await loop.steer([two.id, one.id]);
+    expect(events).toHaveLength(0);
+    expect(steered[0]?.messageId).toEqual(expect.any(String));
+    expect(steered[0]?.promptIds).toEqual([one.id, two.id]);
+
+    hold.release();
+    await loop.settled();
     expect(events).toHaveLength(1);
     expect(events[0]?.input).toEqual([
       { type: 'text', text: 'one' },
       { type: 'text', text: 'two' },
     ]);
-    expect(events[0]).not.toHaveProperty('messageId');
-    expect(events[0]).not.toHaveProperty('promptIds');
-
-    hold.release();
-    await loop.settled();
+    expect(events[0]?.messageId).toBe(steered[0]?.messageId);
+    expect(events[0]?.promptIds).toEqual([one.id, two.id]);
   });
 
   it('keeps each steered prompt client metadata in FIFO order without adding it to model content', async () => {
@@ -285,13 +290,15 @@ describe('prompt queue', () => {
     const two = await enqueue(loop, { message: { ...message('two'), origin: { kind: 'user', clientMetadata: [second] } } });
     await loop.steer([two.id, one.id]);
     await Promise.resolve();
-    expect(events[0]?.origin).toMatchObject({ kind: 'user', clientMetadata: [first, second] });
+    expect(events).toHaveLength(0);
     expect(submitted.find((event) => event.promptId === one.id)?.clientMetadata).toEqual([first]);
     expect(queued.find((event) => event.promptId === two.id)?.clientMetadata).toEqual([second]);
     expect(PromptSteered.schema.parse(steered[0]).promptIds).toEqual([one.id, two.id]);
-    expect(events[0]?.input).toEqual([{ type: 'text', text: 'one' }, { type: 'text', text: 'two' }]);
     hold.release();
     await loop.settled();
+    expect(events[0]?.origin).toMatchObject({ kind: 'user', clientMetadata: [first, second] });
+    expect(events[0]?.input).toEqual([{ type: 'text', text: 'one' }, { type: 'text', text: 'two' }]);
+    expect(events[0]?.messageId).toBe(steered[0]?.messageId);
   });
 
   it('keeps plain inputs beside composer metadata in a mixed steer', async () => {
@@ -308,10 +315,11 @@ describe('prompt queue', () => {
     const three = await enqueue(loop, { message: message('last instruction') });
     await loop.steer([three.id, two.id, one.id]);
     await Promise.resolve();
-    expect(events[0]?.origin).toMatchObject({ clientMetadata: [{ display_text: '[literal](example.md)' }, metadata, { display_text: 'last instruction' }] });
-    expect(events[0]?.input).toEqual([{ type: 'text', text: '[literal](example.md)' }, { type: 'text', text: 'browser wire' }, { type: 'text', text: 'last instruction' }]);
+    expect(events).toHaveLength(0);
     hold.release();
     await loop.settled();
+    expect(events[0]?.origin).toMatchObject({ clientMetadata: [{ display_text: '[literal](example.md)' }, metadata, { display_text: 'last instruction' }] });
+    expect(events[0]?.input).toEqual([{ type: 'text', text: '[literal](example.md)' }, { type: 'text', text: 'browser wire' }, { type: 'text', text: 'last instruction' }]);
   });
 
   it('publishes prompt identities before each steered user message', async () => {
@@ -330,16 +338,25 @@ describe('prompt queue', () => {
     await loop.steer([two.id, one.id]);
     const three = await enqueue(loop, { message: message('same text') });
     await loop.steer([three.id]);
+    const reserved = events.filter((event) => event.type === 'prompt.steered');
+    expect(reserved).toMatchObject([
+      { type: 'prompt.steered', activePromptId: active.id, promptIds: [one.id, two.id] },
+      { type: 'prompt.steered', activePromptId: active.id, promptIds: [three.id] },
+    ]);
+    expect(events.filter((event) => event.type === 'turn.steer')).toHaveLength(0);
 
     hold.release();
     await loop.settled();
 
-    expect(events).toMatchObject([
-      { type: 'prompt.steered', activePromptId: active.id, promptIds: [one.id, two.id] },
+    const materialized = events.filter((event) => event.type === 'turn.steer');
+    expect(materialized).toMatchObject([
       { type: 'turn.steer', input: [{ type: 'text', text: 'same text' }, { type: 'text', text: 'same text' }] },
-      { type: 'prompt.steered', activePromptId: active.id, promptIds: [three.id] },
       { type: 'turn.steer', input: [{ type: 'text', text: 'same text' }] },
     ]);
+    expect(materialized[0]?.messageId).toBe(reserved[0]?.messageId);
+    expect(materialized[0]?.promptIds).toEqual([one.id, two.id]);
+    expect(materialized[1]?.messageId).toBe(reserved[1]?.messageId);
+    expect(materialized[1]?.promptIds).toEqual([three.id]);
   });
 
   it('aborts pending prompts and settles completion', async () => {

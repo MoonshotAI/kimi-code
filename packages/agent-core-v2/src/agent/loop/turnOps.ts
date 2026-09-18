@@ -27,12 +27,6 @@ export interface TurnModelState {
   };
 }
 
-const turnInputShape = {
-  agentId: z.string(),
-  input: z.custom<readonly ContentPart[]>(),
-  origin: z.custom<PromptOrigin>(),
-};
-
 const turnPromptSchema = z.object({
   agentId: z.string(),
   input: z.custom<readonly ContentPart[]>(),
@@ -54,7 +48,14 @@ export interface TurnPrompt {
   readonly turnId?: number;
 }
 
-const turnSteerSchema = z.object(turnInputShape);
+const turnSteerSchema = z.object({
+  agentId: z.string(),
+  input: z.custom<readonly ContentPart[]>(),
+  origin: z.custom<PromptOrigin>(),
+  messageId: z.string().optional(),
+  promptIds: z.array(z.string()).optional(),
+  turnId: z.number().optional(),
+});
 
 export class TurnSteer extends AgentEvent2<z.infer<typeof turnSteerSchema>> {
   static override readonly type = 'turn.steer';
@@ -66,6 +67,9 @@ export interface TurnSteer {
   readonly agentId: string;
   readonly input: readonly ContentPart[];
   readonly origin: PromptOrigin;
+  readonly messageId?: string;
+  readonly promptIds?: readonly string[];
+  readonly turnId?: number;
 }
 
 const turnCancelSchema = z.object({

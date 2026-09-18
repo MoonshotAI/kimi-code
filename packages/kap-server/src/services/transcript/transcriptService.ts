@@ -526,7 +526,7 @@ export class TranscriptService {
     const taskOriginTurnTaskIds = new Set<string>();
     const steeredContents = new Map<string, Map<string, number>>();
     const pendingSteers = new Map<string, Map<string, number>>();
-    const matchedSteers: { key: string; kind: string }[] = [];
+    const matchedSteers: ({ messageId: string } | { key: string; kind: string })[] = [];
     const turnPromptIds = new Set<string>();
     const anchorStack: { taskIdsSnapshot: Set<string>; steerCount: number }[] = [];
     let anchorFloor = 0;
@@ -564,6 +564,11 @@ export class TranscriptService {
         continue;
       }
       if (record.type === 'turn.steer') {
+        const messageId = record['messageId'];
+        if (typeof messageId === 'string' && messageId.length > 0) {
+          matchedSteers.push({ messageId });
+          continue;
+        }
         const input = record['input'];
         if (Array.isArray(input)) {
           const key = JSON.stringify(input);
@@ -588,15 +593,20 @@ export class TranscriptService {
         taskOriginTurnTaskIds.add(origin.taskId);
       }
     }
+    const steeredMessageIds = new Set<string>();
     for (const steer of matchedSteers) {
+      if ('messageId' in steer) {
+        steeredMessageIds.add(steer.messageId);
+        continue;
+      }
       const byKind = steeredContents.get(steer.key) ?? new Map<string, number>();
       byKind.set(steer.kind, (byKind.get(steer.kind) ?? 0) + 1);
       steeredContents.set(steer.key, byKind);
     }
     const base = groupMessagesIntoSnapshot(
       messages,
-      sawTurnPrompt || steeredContents.size > 0
-        ? { taskOriginTurnTaskIds, steeredContents, turnPromptIds }
+      sawTurnPrompt || steeredContents.size > 0 || steeredMessageIds.size > 0
+        ? { taskOriginTurnTaskIds, steeredContents, steeredMessageIds, turnPromptIds }
         : undefined,
     );
     const folded = foldWireRecordFacts(projectQuestionInteractionRecords(records, sessionId), base, {
