@@ -356,7 +356,7 @@ function sendEnvironmentRouteError(
   throw error;
 }
 
-function environmentErrorCode(code: EnvironmentError['code']): ErrorCode {
+export function environmentErrorCode(code: EnvironmentError['code']): ErrorCode {
   switch (code) {
     case 'environment.not_found':
       return ErrorCode.ENVIRONMENT_NOT_FOUND;

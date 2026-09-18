@@ -412,6 +412,39 @@ describe('FooterComponent environment slot', () => {
     footer.dispose();
   });
 
+  describe('status line command payload', () => {
+    async function payloadOf(footer: FooterComponent): Promise<{ gitBranch: string | null }> {
+      footer.render(400);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const line = plain(footer.render(400)[0] ?? '');
+      return JSON.parse(line.slice(line.indexOf('{'), line.lastIndexOf('}') + 1)) as { gitBranch: string | null };
+    }
+
+    it('feeds gitBranch null to the status line command for a remote-bound session', async () => {
+      const footer = new FooterComponent({
+        ...appState,
+        workDir: repoDir,
+        environment: { environmentId: 'dev-box', type: 'ssh', status: 'ready' },
+        statusLine: { items: null, command: 'cat' },
+      });
+      const payload = await payloadOf(footer);
+      expect(payload.gitBranch).toBeNull();
+      footer.dispose();
+    });
+
+    it('feeds the local branch to the status line command for a local session', async () => {
+      const footer = new FooterComponent({
+        ...appState,
+        workDir: repoDir,
+        environment: { environmentId: 'local', type: 'local', status: 'ready' },
+        statusLine: { items: null, command: 'cat' },
+      });
+      const payload = await payloadOf(footer);
+      expect(payload.gitBranch).toBe('main');
+      footer.dispose();
+    });
+  });
+
   it('renders a disconnected remote identifier in the error color', () => {
     const footer = footerWith({ environmentId: 'dev-box', type: 'ssh', status: 'disconnected' });
     const rendered = footer.render(160)[0] ?? '';
