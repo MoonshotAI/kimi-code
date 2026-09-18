@@ -803,4 +803,38 @@ describe('server-v2 /api/v1 fs routes', () => {
     });
     expect(body.code).toBe(ErrorCode.ENVIRONMENT_NOT_FOUND);
   });
+
+  it('fs:suggest resolves a non-local environment through its registered workspace instead of the root path', async () => {
+    const remote = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-remote-'));
+    await writeFile(join(remote, 'remote-only.ts'), '');
+    const id = await createSession();
+    expect(id).toBeTruthy();
+    const provider = await server!.core.accessor.get(IWorkspaceInstanceManager).addProvider({
+      id: 'remote-suggest-provider',
+      imports: { root: [], imports: [], local: [] },
+      attach: async (context, host) => {
+        const environment = Object.assign(
+          new FakeEnvironment(
+            { workspaceId: context.id, environmentId: 'remote-suggest', generation: 'remote-generation' },
+            { capabilities: ['fs'] },
+          ),
+          { fs: new HostFileSystem() },
+        );
+        const registration = host.registerEnvironment(environment);
+        return { dispose: () => registration.remove() };
+      },
+    });
+    try {
+      const body = await postRootSuggest<{ items: SuggestItemWire[] }>({
+        roots: [remote],
+        query: 'remote-only',
+        environment_id: 'remote-suggest',
+      });
+      expect(body.code).toBe(0);
+      expect(body.data.items.map((i) => i.path)).toContain('remote-only.ts');
+    } finally {
+      await provider.dispose();
+      await rm(remote, { recursive: true, force: true });
+    }
+  });
 });
