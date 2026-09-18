@@ -13,6 +13,7 @@ import { APIProviderRateLimitError } from '#/llm-adapter/contract/errors';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import { IAgentGoalService } from '#/features/goal/goalService';
+import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
 import { createActor } from '#human/xstate2';
 import { createAgentMachine } from '#human/agent/machine';
@@ -1447,6 +1448,161 @@ describe('turn telemetry', () => {
           trace_id: 'trace-turn-2',
         }),
       });
+    } finally {
+      await local.dispose();
+    }
+  });
+
+  it('carries the last step trace id on the turn.ended event payload', async () => {
+    const local = createTestAgent();
+    try {
+      local.get(IAgentProfileService).update({ activeToolNames: [] });
+      const ended: TurnEnded[] = [];
+      const subscription = local.get(IEventBus).subscribe((event) => {
+        if (event instanceof TurnEnded) ended.push(event);
+      });
+      local.mockNextProviderResponse({
+        parts: [{ type: 'text', text: 'hi' }],
+        traceId: 'trace-payload-completed',
+      });
+      await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+      await local.untilTurnEnd();
+      subscription.dispose();
+
+      expect(ended).toHaveLength(1);
+      expect(ended[0]!.traceId).toBe('trace-payload-completed');
+      const record = (await local.persistedWireRecords()).find(
+        (entry) => entry.type === 'turn.ended',
+      );
+      expect(record).toMatchObject({ traceId: 'trace-payload-completed' });
+    } finally {
+      await local.dispose();
+    }
+  });
+
+  it('carries the in-flight trace id on the turn.ended payload when the turn fails', async () => {
+    const local = createTestAgent();
+    try {
+      local.get(IAgentProfileService).update({ activeToolNames: [] });
+      const ended: TurnEnded[] = [];
+      const subscription = local.get(IEventBus).subscribe((event) => {
+        if (event instanceof TurnEnded) ended.push(event);
+      });
+      local.mockNextProviderResponse({
+        parts: [{ type: 'text', text: 'blocked' }],
+        finishReason: 'filtered',
+        traceId: 'trace-payload-failed',
+      });
+      await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+      await local.untilTurnEnd();
+      subscription.dispose();
+
+      expect(ended).toHaveLength(1);
+      expect(ended[0]!.reason).toBe('failed');
+      expect(ended[0]!.traceId).toBe('trace-payload-failed');
+    } finally {
+      await local.dispose();
+    }
+  });
+
+  it('carries the in-flight trace id on the turn.ended payload when the turn is cancelled', async () => {
+    let requestStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      requestStarted = resolve;
+    });
+    const generate: GenerateFn = {
+      async generate(_config, _content, control) {
+        control.onEvent?.({
+          type: 'llm.streaming.headers',
+          headers: { 'x-trace-id': 'trace-payload-cancelled' },
+        });
+        requestStarted();
+        await new Promise<void>((_, reject) => {
+          control.signal.addEventListener('abort', () => reject(control.signal.reason as unknown), {
+            once: true,
+          });
+        });
+      },
+    };
+    const local = createTestAgent({ generate });
+    try {
+      const ended: TurnEnded[] = [];
+      const subscription = local.get(IEventBus).subscribe((event) => {
+        if (event instanceof TurnEnded) ended.push(event);
+      });
+      const prompt = local.rpc
+        .prompt({ input: [{ type: 'text', text: 'Hello' }] })
+        .catch(() => undefined);
+      await started;
+      const turnEnd = local.untilTurnEnd();
+      local.get(IAgentLoopService).cancel({ turnId: 0 }, new Error('stop'));
+      await turnEnd;
+      await prompt;
+      subscription.dispose();
+
+      expect(ended).toHaveLength(1);
+      expect(ended[0]!.reason).toBe('cancelled');
+      expect(ended[0]!.traceId).toBe('trace-payload-cancelled');
+    } finally {
+      await local.dispose();
+    }
+  });
+
+  it('omits the trace id on the turn.ended payload when the turn saw none', async () => {
+    const local = createTestAgent();
+    try {
+      local.get(IAgentProfileService).update({ activeToolNames: [] });
+      const ended: TurnEnded[] = [];
+      const subscription = local.get(IEventBus).subscribe((event) => {
+        if (event instanceof TurnEnded) ended.push(event);
+      });
+      local.mockNextProviderResponse({ parts: [{ type: 'text', text: 'hi' }] });
+      await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+      await local.untilTurnEnd();
+      subscription.dispose();
+
+      expect(ended).toHaveLength(1);
+      expect(ended[0]!.traceId).toBeUndefined();
+      const record = (await local.persistedWireRecords()).find(
+        (entry) => entry.type === 'turn.ended',
+      );
+      expect(record).not.toHaveProperty('traceId');
+    } finally {
+      await local.dispose();
+    }
+  });
+
+  it('does not leak a compaction request trace id into the turn.ended payload', async () => {
+    const local = createTestAgent();
+    try {
+      local.get(IAgentProfileService).update({ activeToolNames: [] });
+      const ended: TurnEnded[] = [];
+      const subscription = local.get(IEventBus).subscribe((event) => {
+        if (event instanceof TurnEnded) ended.push(event);
+      });
+      local.mockNextProviderResponse({
+        parts: [{ type: 'text', text: 'first' }],
+        traceId: 'trace-turn-one',
+      });
+      await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+      await local.untilTurnEnd();
+
+      local.appendExchange(2, 'old user two', 'old assistant two', 80);
+      local.mockNextProviderResponse({
+        parts: [{ type: 'text', text: 'Compacted summary.' }],
+        traceId: 'trace-compaction',
+      });
+      expect(local.get(IAgentFullCompactionService).begin({ source: 'manual' })).toBe(true);
+      await local.get(IAgentFullCompactionService).compacting?.promise;
+
+      local.mockNextProviderResponse({ parts: [{ type: 'text', text: 'second' }] });
+      await local.rpc.prompt({ input: [{ type: 'text', text: 'Again' }] });
+      await local.untilTurnEnd();
+      subscription.dispose();
+
+      expect(ended).toHaveLength(2);
+      expect(ended[0]!.traceId).toBe('trace-turn-one');
+      expect(ended[1]!.traceId).toBeUndefined();
     } finally {
       await local.dispose();
     }

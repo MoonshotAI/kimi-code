@@ -751,6 +751,7 @@ export const turnEndedEventSchema = z.object({
   interruptReason: z
     .enum(['user_cancelled', 'aborted', 'max_steps', 'error', 'filtered', 'blocked'])
     .optional(),
+  traceId: z.string().optional(),
 });
 
 export const turnStepStartedEventSchema = z.object({

@@ -71,7 +71,7 @@ export function groupMessagesIntoSnapshot(
   options?: {
     readonly taskOriginTurnTaskIds?: ReadonlySet<string>;
     readonly steeredContents?: ReadonlyMap<string, ReadonlyMap<string, number>>;
-    readonly steeredMessageIds?: ReadonlySet<string>;
+    readonly steeredByMessageId?: ReadonlyMap<string, readonly string[]>;
     readonly turnPromptIds?: ReadonlySet<string>;
   },
 ): AgentTranscriptSnapshot {
@@ -80,7 +80,7 @@ export function groupMessagesIntoSnapshot(
   const steeredContents = new Map(
     [...(options?.steeredContents ?? [])].map(([key, byKind]) => [key, new Map(byKind)]),
   );
-  const steeredMessageIds = new Set(options?.steeredMessageIds);
+  const steeredByMessageId = new Map(options?.steeredByMessageId);
   let turn: TurnDraft | undefined;
   let pendingNotificationFrames: {
     text: string;
@@ -249,10 +249,12 @@ export function groupMessagesIntoSnapshot(
       const steerKind = originKind ?? 'user';
       const opensAsTurnPrompt =
         message.id !== undefined && options?.turnPromptIds?.has(message.id) === true;
-      const steeredById =
-        !opensAsTurnPrompt &&
-        message.id !== undefined &&
-        steeredMessageIds.delete(message.id);
+      const steeredPromptIds =
+        !opensAsTurnPrompt && message.id !== undefined
+          ? steeredByMessageId.get(message.id)
+          : undefined;
+      const steeredById = steeredPromptIds !== undefined;
+      if (steeredById && message.id !== undefined) steeredByMessageId.delete(message.id);
       const steeredByKind = opensAsTurnPrompt || steeredById ? undefined : steeredContents.get(contentKey);
       const steeredRemaining = steeredByKind?.get(steerKind) ?? 0;
       if (steeredById || (steeredByKind !== undefined && steeredRemaining > 0)) {
@@ -272,6 +274,10 @@ export function groupMessagesIntoSnapshot(
           taskId: undefined,
           attachmentIds: opening.attachmentIds,
           origin: projectTranscriptUserOrigin(message.origin),
+          promptIds:
+            steeredPromptIds !== undefined && steeredPromptIds.length > 0
+              ? steeredPromptIds
+              : undefined,
           steered: true,
         });
         continue;

@@ -49,6 +49,7 @@ import { IConfigService } from '#/app/config/config';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { IFlagService } from '#/app/flag/flag';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
   ISessionActivityView,
   type SessionPendingInteraction,
@@ -146,6 +147,7 @@ describe('AgentTowerService', () => {
   let executorEvents: ToolExecutorEventStubs;
   let permissionGateRan: boolean;
   let formatDenyMessage: Mock<(message: string) => string>;
+  let telemetryTrack2: Mock<(event: string, properties?: unknown) => void>;
   let towerFlagOn: boolean;
   let addedTools: string[];
   let removedTools: string[];
@@ -165,6 +167,8 @@ describe('AgentTowerService', () => {
     ix.stub(IAgentToolExecutorService, executorEvents.executor);
     formatDenyMessage = vi.fn((message: string) => message);
     ix.stub(IAgentToolApprovalService, { formatDenyMessage });
+    telemetryTrack2 = vi.fn();
+    ix.stub(ITelemetryService, { track2: telemetryTrack2 });
     towerFlagOn = true;
     ix.stub(IFlagService, stubFlag((id) => towerFlagOn && id === TOWER_FLAG_ID));
     liveSessions = new Map();
@@ -306,6 +310,24 @@ describe('AgentTowerService', () => {
     expect(tower.isActive).toBe(true);
 
     expect(events).toEqual([{ type: 'agent.status.updated', towerMode: true }]);
+  });
+
+  it('tracks tower_mode_enter and tower_mode_exit on transitions only', async () => {
+    const tower = ix.get(IAgentTowerService);
+
+    await tower.enter();
+    expect(telemetryTrack2).toHaveBeenCalledWith('tower_mode_enter', {
+      outcome: 'entered',
+      reason: undefined,
+    });
+
+    telemetryTrack2.mockClear();
+    await tower.exit();
+    expect(telemetryTrack2).toHaveBeenCalledWith('tower_mode_exit', { reason: 'user' });
+
+    telemetryTrack2.mockClear();
+    await tower.exit();
+    expect(telemetryTrack2).not.toHaveBeenCalled();
   });
 
   it('enter(base) records the requested base; exit clears it', async () => {
@@ -1463,6 +1485,7 @@ describe('AgentTowerService', () => {
     ix2.set(IEventBus, new SyncDescriptor(EventBusService));
     ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
     ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
+    ix2.stub(ITelemetryService, { track2: () => {} });
     ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
     ix2.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
     ix2.stub(
@@ -1563,6 +1586,7 @@ describe('AgentTowerService', () => {
     ix2.set(IEventBus, new SyncDescriptor(EventBusService));
     ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
     ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
+    ix2.stub(ITelemetryService, { track2: () => {} });
     ix2.stub(IFlagService, stubFlag(() => false));
     ix2.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
     ix2.stub(
@@ -1628,6 +1652,7 @@ describe('AgentTowerService', () => {
     ix2.set(IEventBus, new SyncDescriptor(EventBusService));
     ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
     ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
+    ix2.stub(ITelemetryService, { track2: () => {} });
     ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
     ix2.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
     ix2.stub(
@@ -1700,6 +1725,7 @@ describe('AgentTowerService', () => {
       ix2.set(IEventBus, new SyncDescriptor(EventBusService));
       ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
       ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
+      ix2.stub(ITelemetryService, { track2: () => {} });
       ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
       ix2.stub(ISessionManager, {
         get: (id: string) => (id === 'session-original' ? {} : undefined),
@@ -1809,6 +1835,7 @@ describe('AgentTowerService', () => {
       ix2.set(IEventBus, new SyncDescriptor(EventBusService));
       ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
       ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
+      ix2.stub(ITelemetryService, { track2: () => {} });
       ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
       ix2.stub(ISessionManager, {
         get: () => undefined,
@@ -1902,6 +1929,7 @@ describe('AgentTowerService', () => {
       ix2.set(IEventBus, new SyncDescriptor(EventBusService));
       ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
       ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
+      ix2.stub(ITelemetryService, { track2: () => {} });
       ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
       ix2.stub(ILogService, stubLog());
       ix2.stub(ISessionManager, {
@@ -1991,6 +2019,7 @@ describe('AgentTowerService', () => {
       ix2.set(IEventBus, new SyncDescriptor(EventBusService));
       ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
       ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
+      ix2.stub(ITelemetryService, { track2: () => {} });
       ix2.stub(IFlagService, stubFlag(() => false));
       ix2.stub(ISessionManager, {
         get: (id: string) => (id === 'session-original' ? {} : undefined),
@@ -2070,6 +2099,7 @@ describe('AgentTowerService', () => {
     ix2.set(IEventBus, new SyncDescriptor(EventBusService));
     ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
     ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
+    ix2.stub(ITelemetryService, { track2: () => {} });
     ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
     ix2.stub(ISessionManager, {
       get: (id: string) => (id === 'session-original' ? {} : undefined),
@@ -2145,6 +2175,7 @@ describe('AgentTowerService', () => {
     ix2.set(IEventBus, new SyncDescriptor(EventBusService));
     ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
     ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
+    ix2.stub(ITelemetryService, { track2: () => {} });
     ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
     ix2.stub(ISessionContext, {
       cwd: '/nonexistent-tower-repo',
@@ -2201,6 +2232,7 @@ describe('AgentTowerService', () => {
     ix2.set(IEventBus, new SyncDescriptor(EventBusService));
     ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
     ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
+    ix2.stub(ITelemetryService, { track2: () => {} });
     ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
     ix2.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
     ix2.stub(

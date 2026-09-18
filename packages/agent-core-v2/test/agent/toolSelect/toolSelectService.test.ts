@@ -742,7 +742,10 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     expect(h.sut.load([USER_DEFERRED])).toEqual({
       toLoad: [],
       alreadyAvailable: [],
+      alreadyCallable: [],
       unknown: [USER_DEFERRED],
+      suggestions: {},
+      loadable: [],
     });
     expect(h.contextMemory.get()[0]?.tools?.map((tool) => tool.name)).toEqual([
       USER_DEFERRED,
@@ -766,7 +769,10 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     expect(h.sut.load([USER_DEFERRED])).toEqual({
       toLoad: [],
       alreadyAvailable: [],
-      unknown: [USER_DEFERRED],
+      alreadyCallable: [USER_DEFERRED],
+      unknown: [],
+      suggestions: {},
+      loadable: [],
     });
   });
 });
@@ -801,7 +807,10 @@ describe('AgentToolSelectService.load', () => {
     expect(h.sut.load([USER_DEFERRED])).toEqual({
       toLoad: [USER_DEFERRED],
       alreadyAvailable: [],
+      alreadyCallable: [],
       unknown: [],
+      suggestions: {},
+      loadable: [USER_DEFERRED],
     });
     const declared = await declareSchemas(h);
     expect(declared?.tools?.map((tool) => tool.name)).toEqual([USER_DEFERRED]);
@@ -942,7 +951,7 @@ describe('AgentToolSelectService.load', () => {
       output: [
         `Loaded: ${MCP_BETA}`,
         `Already available: ${MCP_ALPHA}`,
-        `Unknown tool: ${MCP_GONE}. Pick from the latest announced tools list.`,
+        `Unknown tool: ${MCP_GONE}. Loadable tools: ${MCP_BETA}.`,
       ].join('\n'),
     });
   });
@@ -954,7 +963,142 @@ describe('AgentToolSelectService.load', () => {
     const unknownOnly = selectTools.resolveExecution({ names: [MCP_GONE] });
     if (unknownOnly.isError === true) throw new Error('expected a runnable execution');
     expect(await unknownOnly.execute(ctx)).toEqual({
+      output:
+        `Unknown tool: ${MCP_GONE}. No tools can be loaded in this session — ` +
+        'use the tools you already have.',
+      isError: true,
+    });
+  });
+
+  it('names the loadable tools inline when the list is short', async () => {
+    const h = createHarness();
+    registerMcp(h, new StubMcpTool(MCP_ALPHA));
+    registerMcp(h, new StubMcpTool(MCP_BETA));
+    const selectTools = h.ix.createInstance(SelectToolsTool);
+    const ctx = { turnId: 1, toolCallId: 'call-1', signal: new AbortController().signal };
+    const unknownOnly = selectTools.resolveExecution({ names: [MCP_GONE] });
+    if (unknownOnly.isError === true) throw new Error('expected a runnable execution');
+    expect(await unknownOnly.execute(ctx)).toEqual({
+      output: `Unknown tool: ${MCP_GONE}. Loadable tools: ${MCP_ALPHA}, ${MCP_BETA}.`,
+      isError: true,
+    });
+  });
+
+  it('falls back to the generic hint when the loadable list is long', async () => {
+    const h = createHarness();
+    const names = [
+      'mcp__srv__t1',
+      'mcp__srv__t2',
+      'mcp__srv__t3',
+      'mcp__srv__t4',
+      'mcp__srv__t5',
+      'mcp__srv__t6',
+    ];
+    for (const name of names) registerMcp(h, new StubMcpTool(name));
+    const selectTools = h.ix.createInstance(SelectToolsTool);
+    const ctx = { turnId: 1, toolCallId: 'call-1', signal: new AbortController().signal };
+    const unknownOnly = selectTools.resolveExecution({ names: [MCP_GONE] });
+    if (unknownOnly.isError === true) throw new Error('expected a runnable execution');
+    expect(await unknownOnly.execute(ctx)).toEqual({
       output: `Unknown tool: ${MCP_GONE}. Pick from the latest announced tools list.`,
+      isError: true,
+    });
+  });
+
+  it('says so explicitly when nothing is loadable in the session', async () => {
+    const h = createHarness();
+    const selectTools = h.ix.createInstance(SelectToolsTool);
+    const ctx = { turnId: 1, toolCallId: 'call-1', signal: new AbortController().signal };
+    const unknownOnly = selectTools.resolveExecution({ names: ['some_unavailable_tool'] });
+    if (unknownOnly.isError === true) throw new Error('expected a runnable execution');
+    expect(await unknownOnly.execute(ctx)).toEqual({
+      output:
+        'Unknown tool: some_unavailable_tool. No tools can be loaded in this session — ' +
+        'use the tools you already have.',
+      isError: true,
+    });
+  });
+
+  it('classifies an active static tool as alreadyCallable', () => {
+    const h = createHarness();
+    registerBuiltin(h, new EchoTool());
+
+    expect(h.sut.load(['Echo'])).toEqual({
+      toLoad: [],
+      alreadyAvailable: [],
+      alreadyCallable: ['Echo'],
+      unknown: [],
+      suggestions: {},
+      loadable: [],
+    });
+    expect(h.contextMemory.appended).toHaveLength(0);
+  });
+
+  it('suggests the announced name for a casing-only miss', () => {
+    const h = createHarness();
+    registerMcp(h, new StubMcpTool(MCP_ALPHA));
+
+    expect(h.sut.load(['MCP__SRV__ALPHA'])).toEqual({
+      toLoad: [],
+      alreadyAvailable: [],
+      alreadyCallable: [],
+      unknown: ['MCP__SRV__ALPHA'],
+      suggestions: { 'MCP__SRV__ALPHA': [MCP_ALPHA] },
+      loadable: [MCP_ALPHA],
+    });
+  });
+
+  it('suggests candidates when the input is a substring of a loadable name', () => {
+    const h = createHarness();
+    registerMcp(h, new StubMcpTool(MCP_ALPHA));
+
+    expect(h.sut.load(['mcp__alpha'])).toEqual({
+      toLoad: [],
+      alreadyAvailable: [],
+      alreadyCallable: [],
+      unknown: ['mcp__alpha'],
+      suggestions: { 'mcp__alpha': [MCP_ALPHA] },
+      loadable: [MCP_ALPHA],
+    });
+  });
+
+  it('suggests candidates when the input contains a candidate name segment', () => {
+    const h = createHarness();
+    registerMcp(h, new StubMcpTool(MCP_ALPHA));
+
+    expect(h.sut.load(['alpha_extra'])).toEqual({
+      toLoad: [],
+      alreadyAvailable: [],
+      alreadyCallable: [],
+      unknown: ['alpha_extra'],
+      suggestions: { 'alpha_extra': [MCP_ALPHA] },
+      loadable: [MCP_ALPHA],
+    });
+  });
+
+  it('tells the model to call static tools directly instead of selecting them', async () => {
+    const h = createHarness();
+    registerBuiltin(h, new EchoTool());
+    const selectTools = h.ix.createInstance(SelectToolsTool);
+    const ctx = { turnId: 1, toolCallId: 'call-1', signal: new AbortController().signal };
+    const staticOnly = selectTools.resolveExecution({ names: ['Echo'] });
+    if (staticOnly.isError === true) throw new Error('expected a runnable execution');
+    expect(await staticOnly.execute(ctx)).toEqual({
+      output:
+        '"Echo" is already available — call it directly; ' +
+        'select_tools is only for names in the <tools_added> announcements.',
+    });
+  });
+
+  it('renders did-you-mean candidates in the select_tools output', async () => {
+    const h = createHarness();
+    registerMcp(h, new StubMcpTool(MCP_ALPHA));
+    const selectTools = h.ix.createInstance(SelectToolsTool);
+    const ctx = { turnId: 1, toolCallId: 'call-1', signal: new AbortController().signal };
+    const casingMiss = selectTools.resolveExecution({ names: ['MCP__SRV__ALPHA'] });
+    if (casingMiss.isError === true) throw new Error('expected a runnable execution');
+    expect(await casingMiss.execute(ctx)).toEqual({
+      output: `Unknown tool: MCP__SRV__ALPHA. Did you mean: ${MCP_ALPHA}?`,
       isError: true,
     });
   });

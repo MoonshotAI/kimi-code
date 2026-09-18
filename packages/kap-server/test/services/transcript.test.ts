@@ -2984,6 +2984,7 @@ describe('AgentTranscriptProjector', () => {
         role: 'user',
         text: 'steered in',
         origin: { kind: 'user' },
+        promptIds: ['p2'],
       });
     } finally {
       await rm(home, { recursive: true, force: true });

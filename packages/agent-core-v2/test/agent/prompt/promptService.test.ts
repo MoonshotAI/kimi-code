@@ -355,7 +355,8 @@ describe('prompt queue', () => {
     ]);
     expect(materialized[0]?.messageId).toBe(reserved[0]?.messageId);
     expect(materialized[0]?.promptIds).toEqual([one.id, two.id]);
-    expect(materialized[1]?.messageId).toBe(reserved[1]?.messageId);
+    expect(reserved[1]?.messageId).toBe(three.id);
+    expect(materialized[1]?.messageId).toBe(three.id);
     expect(materialized[1]?.promptIds).toEqual([three.id]);
   });
 

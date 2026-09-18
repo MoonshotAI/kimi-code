@@ -6,6 +6,20 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 2.0.1（2026-09-18）
+
+### 优化
+
+- 移除系统提示词中禁止访问工作目录以外所有文件的规则。
+- 供应商可通过 `config.toml` 中的 [`api_key_env`](../configuration/providers.md) 从指定的环境变量读取 API 密钥。
+- 工作区文件监听不再无上限地扫描项目根目录，并新增 `[watch] enabled` 配置与 `KIMI_CODE_WATCH` 环境变量，可完全关闭文件监听，详见 [`watch`](../configuration/config-files.md#watch)。
+- 「必要时询问」权限模式下，无法静态分析的 bash 命令不再触发审批请求。
+- `kimi install-app` 子命令更名为 `kimi install-desktop`，旧名称仍作为隐藏别名可用。
+
+### 修复
+
+- 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
 ## 2.0.0（2026-09-17）
 
 ### 新功能

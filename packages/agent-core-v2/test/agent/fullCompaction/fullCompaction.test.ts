@@ -1768,7 +1768,7 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
-  it('auto-compacts very large context in one full-history round when the summarizer accepts it', async () => {
+  it('auto-compacts over-window context in one pre-shrunk round when the summarizer accepts it', async () => {
     const maxContextTokens = 22_000;
     const ctx = testAgent();
     ctx.configure({
@@ -1802,7 +1802,10 @@ describe('FullCompaction', () => {
     expect(countEvents(events, 'full_compaction.complete')).toBe(1);
     expect(countEvents(events, 'compaction.completed')).toBe(1);
     expect(compactedPrefixSizes).toHaveLength(1);
-    expect(compactedPrefixSizes[0]).toBe(initialTokens);
+    expect(compactedPrefixSizes[0]!).toBeLessThan(initialTokens);
+    const firstCallTexts = ctx.llmCalls[0]!.history.map(messageText);
+    expect(firstCallTexts.some((text) => text.includes('history chunk 1 '))).toBe(false);
+    expect(firstCallTexts.some((text) => text.includes('history chunk 22'))).toBe(true);
     expect(ctx.contextData().tokenCount).toBeLessThan(maxContextTokens * 0.85);
     await ctx.expectResumeMatches();
   });
@@ -4163,5 +4166,296 @@ describe('goal reminder re-injection after full compaction', () => {
     expect(turnRequest).toContain('deferred prompt');
     expect(goalReminderCount(turnRequest)).toBeGreaterThanOrEqual(1);
     expect(turnRequest.some((text) => text.includes('Compacted summary.'))).toBe(true);
+  });
+});
+
+describe('FullCompaction pre-shrink', () => {
+  const PRE_SHRINK_WINDOW = 40_000;
+  const PRE_SHRINK_CAPABILITIES = {
+    ...CATALOGUED_MODEL_CAPABILITIES,
+    max_context_tokens: PRE_SHRINK_WINDOW,
+  } as const;
+
+  function appendPreShrinkHistory(ctx: TestAgentContext, tokenTotals?: readonly [number, number, number]): void {
+    const [oldTotal = 20, midTotal = 40, recentTotal = 80] = tokenTotals ?? [];
+    ctx.appendExchange(1, 'old user one', `old assistant one ${'a'.repeat(32_000)}`, oldTotal);
+    ctx.appendExchange(2, 'mid user two', `mid assistant two ${'b'.repeat(16_000)}`, midTotal);
+    ctx.appendExchange(3, 'recent user three', `recent assistant three ${'c'.repeat(1_000)}`, recentTotal);
+  }
+
+  it('pre-shrinks the summary request history to the effective window budget before the first request', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: PRE_SHRINK_CAPABILITIES,
+    });
+    appendPreShrinkHistory(ctx);
+    const completed = ctx.once('compaction.completed');
+
+    ctx.mockNextResponse({ type: 'text', text: 'Pre-shrunk summary.' });
+    await ctx.rpc.beginCompaction({});
+    await completed;
+
+    expect(ctx.llmCalls).toHaveLength(1);
+    const history = ctx.llmCalls[0]!.history;
+    expect(history.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'user',
+      'assistant',
+      'user',
+    ]);
+    const texts = history.map(messageText);
+    expect(texts.some((text) => text.includes('old user one'))).toBe(false);
+    expect(texts.some((text) => text.includes('old assistant one'))).toBe(false);
+    expect(texts.some((text) => text.includes('mid user two'))).toBe(true);
+    expect(texts.some((text) => text.includes('recent assistant three'))).toBe(true);
+    expect(
+      ctx.compactHistory().some((message) => message.text.includes('Pre-shrunk summary.')),
+    ).toBe(true);
+    await ctx.expectResumeMatches();
+  });
+
+  it('sends the full history on the first request when it already fits the budget', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 40);
+    const completed = ctx.once('compaction.completed');
+
+    ctx.mockNextResponse({ type: 'text', text: 'Full history summary.' });
+    await ctx.rpc.beginCompaction({});
+    await completed;
+
+    expect(ctx.llmCalls).toHaveLength(1);
+    const history = ctx.llmCalls[0]!.history;
+    expect(history.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'user',
+      'assistant',
+      'user',
+    ]);
+    const texts = history.map(messageText);
+    expect(texts.some((text) => text.includes('old user one'))).toBe(true);
+    expect(texts.some((text) => text.includes('recent assistant two'))).toBe(true);
+    await ctx.expectResumeMatches();
+  });
+
+  it('counts system prompt and tool overhead into the pre-shrink budget', async () => {
+    const bare = testAgent();
+    bare.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: PRE_SHRINK_CAPABILITIES,
+    });
+    const loaded = testAgent(
+      agentService(IAgentToolSelectAnnouncementsService, { _serviceBrand: undefined }),
+    );
+    loaded.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: PRE_SHRINK_CAPABILITIES,
+    });
+    loaded.get(IAgentProfileService).update({ systemPrompt: 'y'.repeat(16_000) });
+    const registration = loaded.get(IAgentToolRegistryService).register(
+      mcpTool('mcp__srv__preshrink', {
+        type: 'object',
+        properties: {
+          payload: { type: 'string', description: 'x'.repeat(16_000) },
+        },
+      }),
+      { source: 'mcp' },
+    );
+    try {
+      for (const ctx of [bare, loaded]) {
+        appendPreShrinkHistory(ctx);
+        ctx.mockNextResponse({ type: 'text', text: 'Overhead-aware summary.' });
+      }
+      const bareCompleted = bare.once('compaction.completed');
+      const loadedCompleted = loaded.once('compaction.completed');
+
+      await bare.rpc.beginCompaction({});
+      await loaded.rpc.beginCompaction({});
+      await bareCompleted;
+      await loadedCompleted;
+
+      expect(bare.llmCalls).toHaveLength(1);
+      expect(loaded.llmCalls).toHaveLength(1);
+      const bareHistory = bare.llmCalls[0]!.history;
+      const loadedHistory = loaded.llmCalls[0]!.history;
+      expect(bareHistory.length).toBeGreaterThan(loadedHistory.length);
+      const bareTexts = bareHistory.map(messageText);
+      const loadedTexts = loadedHistory.map(messageText);
+      expect(bareTexts.some((text) => text.includes('mid user two'))).toBe(true);
+      expect(loadedTexts.some((text) => text.includes('mid user two'))).toBe(false);
+      expect(loadedTexts.some((text) => text.includes('recent user three'))).toBe(true);
+    } finally {
+      registration.dispose();
+    }
+  });
+
+  it('reports pre-shrunk messages in the compaction droppedCount', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: PRE_SHRINK_CAPABILITIES,
+    });
+    appendPreShrinkHistory(ctx);
+    const completed = ctx.once('compaction.completed');
+
+    ctx.mockNextResponse({ type: 'text', text: 'Dropped-count summary.' });
+    await ctx.rpc.beginCompaction({});
+    await completed;
+
+    const events = ctx.newEvents();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'compaction.completed',
+        args: expect.objectContaining({
+          result: expect.objectContaining({ droppedCount: 2 }),
+        }),
+      }),
+    );
+    await ctx.expectResumeMatches();
+  });
+
+  it('falls back to reactive overflow shrinking when the pre-shrunk request still overflows', async () => {
+    let attempts = 0;
+    const inputs: string[][] = [];
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, history) => {
+      attempts += 1;
+      inputs.push(inputHistorySnapshot(history));
+      if (attempts === 1) {
+        throw new APIContextOverflowError(400, 'Context length exceeded', 'req-preshrink-overflow');
+      }
+      return textResult('Recovered pre-shrunk summary.');
+    });
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: PRE_SHRINK_CAPABILITIES,
+    });
+    appendPreShrinkHistory(ctx);
+    const completed = ctx.once('compaction.completed');
+
+    await ctx.rpc.beginCompaction({});
+    await completed;
+
+    expect(inputs).toHaveLength(2);
+    expect(inputs[0]).toHaveLength(5);
+    expect(inputs[0]!.some((entry) => entry.includes('old user one'))).toBe(false);
+    expect(inputs[0]!.some((entry) => entry.includes('mid user two'))).toBe(true);
+    expect(inputs[1]).toHaveLength(3);
+    expect(inputs[1]!.some((entry) => entry.includes('mid user two'))).toBe(false);
+    expect(inputs[1]!.some((entry) => entry.includes('recent user three'))).toBe(true);
+    const events = ctx.newEvents();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'compaction.completed',
+        args: expect.objectContaining({
+          result: expect.objectContaining({ droppedCount: 4 }),
+        }),
+      }),
+    );
+    expect(
+      ctx.compactHistory().some((message) => message.text.includes('Recovered pre-shrunk summary.')),
+    ).toBe(true);
+    await ctx.expectResumeMatches();
+  });
+
+  it('pre-shrinks the auto compaction triggered before a step', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: PRE_SHRINK_CAPABILITIES,
+    });
+    appendPreShrinkHistory(ctx, [14_000, 20_000, 36_000]);
+
+    ctx.mockNextResponse({ type: 'text', text: 'Auto pre-shrunk summary.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Answer after the pre-shrunk compaction.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue the task' }] });
+    const events = await ctx.untilTurnEnd();
+
+    expect(ctx.llmCalls).toHaveLength(2);
+    const [compactionCall, answerCall] = ctx.llmCalls;
+    const compactionTexts = compactionCall!.history.map(messageText);
+    expect(compactionTexts.some((text) => text.includes('old user one'))).toBe(false);
+    expect(compactionTexts.some((text) => text.includes('mid user two'))).toBe(true);
+    expect(compactionTexts.some((text) => text.includes('recent user three'))).toBe(true);
+    expect(compactionTexts.some((text) => text.includes('continue the task'))).toBe(true);
+    const answerTexts = answerCall!.history.map(messageText);
+    expect(answerTexts.some((text) => text.includes('Auto pre-shrunk summary.'))).toBe(true);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'turn.ended',
+        args: expect.objectContaining({ reason: 'completed' }),
+      }),
+    );
+    await ctx.expectResumeMatches();
+  });
+
+  it('does not pre-shrink when the effective context window is unknown', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    const modelResolver = ctx.modelResolver;
+    if (modelResolver === undefined) throw new Error('Expected model provider');
+    const get = modelResolver.get.bind(modelResolver);
+    modelResolver.get = (id: string) => {
+      const resolved = get(id);
+      Object.defineProperty(resolved, 'capabilities', { value: UNKNOWN_CAPABILITY });
+      return resolved;
+    };
+    expect(ctx.get(IAgentProfileService).data().modelCapabilities.max_context_tokens).toBe(0);
+    appendPreShrinkHistory(ctx);
+    const completed = ctx.once('compaction.completed');
+
+    ctx.mockNextResponse({ type: 'text', text: 'Unknown window summary.' });
+    await ctx.rpc.beginCompaction({});
+    await completed;
+
+    expect(ctx.llmCalls).toHaveLength(1);
+    const history = ctx.llmCalls[0]!.history;
+    expect(history).toHaveLength(7);
+    const texts = history.map(messageText);
+    expect(texts.some((text) => text.includes('old user one'))).toBe(true);
+    expect(texts.some((text) => text.includes('recent assistant three'))).toBe(true);
+    await ctx.expectResumeMatches();
+  });
+
+  it('sends the full history when the newest message alone exceeds the budget', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: PRE_SHRINK_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', `recent assistant two ${'d'.repeat(200_000)}`, 40);
+    const completed = ctx.once('compaction.completed');
+
+    ctx.mockNextResponse({ type: 'text', text: 'Oversized-tail summary.' });
+    await ctx.rpc.beginCompaction({});
+    await completed;
+
+    expect(ctx.llmCalls).toHaveLength(1);
+    const history = ctx.llmCalls[0]!.history;
+    expect(history).toHaveLength(5);
+    const texts = history.map(messageText);
+    expect(texts.some((text) => text.includes('old user one'))).toBe(true);
+    expect(texts.some((text) => text.includes('recent assistant two'))).toBe(true);
+    const events = ctx.newEvents();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'compaction.completed',
+        args: expect.objectContaining({
+          result: expect.objectContaining({ compactedCount: 4 }),
+        }),
+      }),
+    );
+    await ctx.expectResumeMatches();
   });
 });

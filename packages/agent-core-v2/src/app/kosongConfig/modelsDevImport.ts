@@ -13,6 +13,7 @@ export interface ModelsDevProviderItem {
   readonly id: string;
   readonly name: string;
   readonly wire_type: string | null;
+  readonly base_url: string | null;
   readonly guessed: boolean;
   readonly needs_base_url: boolean;
   readonly rejected: boolean;
