@@ -58,6 +58,6 @@ export interface Environment {
 
 export interface EnvironmentLease {
   readonly environment: Environment;
-  track<T extends { dispose(): void | Promise<void> }>(resource: T): T;
+  track<T extends { dispose(): void | Promise<void> }>(resource: T, sessionId?: string): T;
   dispose(): void;
 }

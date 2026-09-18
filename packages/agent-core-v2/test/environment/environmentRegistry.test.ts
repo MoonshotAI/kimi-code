@@ -221,6 +221,96 @@ describe('EnvironmentRegistry', () => {
     await replacement;
   });
 
+  it('drains only the closing session resources and keeps other sessions and untagged resources alive', async () => {
+    const registration = registry.register(fakeEnvironment('local', 'one'));
+    const leaseA = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
+    const leaseB = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
+    const order: string[] = [];
+    const counts = new Map<string, number>();
+    const resource = (name: string) => ({
+      dispose: () => {
+        counts.set(name, (counts.get(name) ?? 0) + 1);
+        order.push(name);
+      },
+    });
+    leaseA.track(resource('terminal-a'), 'session-a');
+    leaseA.track(resource('background-a'), 'session-a');
+    leaseB.track(resource('terminal-b'), 'session-b');
+    leaseA.track(resource('shared-mcp'));
+
+    await registry.drainSession('session-a');
+    expect(order).toEqual(['background-a', 'terminal-a']);
+
+    leaseA.dispose();
+    leaseB.dispose();
+    await registration.remove();
+    expect(order).toEqual(['background-a', 'terminal-a', 'shared-mcp', 'terminal-b']);
+    for (const name of ['terminal-a', 'background-a', 'terminal-b', 'shared-mcp']) {
+      expect(counts.get(name)).toBe(1);
+    }
+  });
+
+  it('drains a session resources across every environment in the workspace', async () => {
+    registry.register(fakeEnvironment('local', 'one'));
+    registry.register(fakeEnvironment('ssh1', 'one'));
+    const localLease = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
+    const sshLease = registry.acquire({ workspaceId: 'workspace', environmentId: 'ssh1' });
+    const order: string[] = [];
+    localLease.track({ dispose: () => { order.push('local-a'); } }, 'session-a');
+    sshLease.track({ dispose: () => { order.push('ssh-a'); } }, 'session-a');
+    sshLease.track({ dispose: () => { order.push('ssh-b'); } }, 'session-b');
+
+    await registry.drainSession('session-a');
+    expect(order).toEqual(['ssh-a', 'local-a']);
+
+    localLease.dispose();
+    sshLease.dispose();
+  });
+
+  it('drains every session resource when the generation drains', async () => {
+    const registration = registry.register(fakeEnvironment('local', 'one'));
+    const leaseA = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
+    const leaseB = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
+    const order: string[] = [];
+    leaseA.track({ dispose: () => { order.push('a'); } }, 'session-a');
+    leaseB.track({ dispose: () => { order.push('b'); } }, 'session-b');
+
+    const replacement = registration.replace(fakeEnvironment('local', 'two'));
+    leaseA.dispose();
+    leaseB.dispose();
+    await replacement;
+    expect(order).toEqual(['b', 'a']);
+  });
+
+  it('drainSession is a no-op for a session without tracked resources', async () => {
+    registry.register(fakeEnvironment('local', 'one'));
+    const lease = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
+    const order: string[] = [];
+    lease.track({ dispose: () => { order.push('a'); } }, 'session-a');
+
+    await registry.drainSession('session-missing');
+    expect(order).toEqual([]);
+    lease.dispose();
+  });
+
+  it('drainSession continues past a failing resource', async () => {
+    registry.register(fakeEnvironment('local', 'one'));
+    const lease = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
+    const order: string[] = [];
+    lease.track({ dispose: () => { order.push('first'); } }, 'session-a');
+    lease.track({
+      dispose: () => {
+        order.push('boom');
+        throw new Error('kill failed');
+      },
+    }, 'session-a');
+    lease.track({ dispose: () => { order.push('survivor'); } }, 'session-b');
+
+    await registry.drainSession('session-a');
+    expect(order).toEqual(['boom', 'first']);
+    lease.dispose();
+  });
+
   it('acquires a ready environment through acquireWhenReady without waiting', async () => {
     const current = fakeEnvironment('local', 'one');
     current.whenReady = new Promise<void>(() => {});

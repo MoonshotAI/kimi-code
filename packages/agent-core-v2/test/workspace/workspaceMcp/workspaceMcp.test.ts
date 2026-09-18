@@ -73,11 +73,13 @@ describe('WorkspaceMcpService', () => {
   let oauthService: McpOAuthService;
   let oauthScheduler: ManualMcpOAuthScheduler;
   let manager: InstanceType<typeof McpConnectionManager> | undefined;
+  let trackedSessions: Array<string | undefined>;
 
   beforeEach(() => {
     cwd = mkdtempSync(join(tmpdir(), 'kimi-workspace-mcp-cwd-'));
     disposables = new DisposableStore();
     current = {};
+    trackedSessions = [];
     tunablesValue = {};
     tunablesFn = vi.fn(() => tunablesValue);
     configChanges = disposables.add(new AsyncEmitter<McpServersChangeEvent>());
@@ -127,8 +129,22 @@ describe('WorkspaceMcpService', () => {
         reg.defineInstance(IEnvironmentResolver, {
           _serviceBrand: undefined,
           inspect: () => environment,
-          acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
-          acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
+          acquire: () => ({
+            environment,
+            track: <T,>(resource: T, sessionId?: string): T => {
+              trackedSessions.push(sessionId);
+              return resource;
+            },
+            dispose: () => {},
+          }),
+          acquireWhenReady: async () => ({
+            environment,
+            track: <T,>(resource: T, sessionId?: string): T => {
+              trackedSessions.push(sessionId);
+              return resource;
+            },
+            dispose: () => {},
+          }),
         });
         reg.definePartialInstance(ISessionManager, {
           onWillCreateSession: assemblyEvents.event,
@@ -363,6 +379,21 @@ describe('WorkspaceMcpService', () => {
     expect(view.get('base')?.status).toBe('connected');
   }, 20000);
 
+  it('tags overlay stdio resources with the session id while workspace servers stay untagged', async () => {
+    current = { base: stdioServer() };
+    const service = createService();
+    manager = service.connectionManager();
+    await service.ready;
+
+    const overlay = service.sessionOverlay({ eph: stdioServer() }, { sessionId: 'session-1' });
+    await overlay.handle.ready;
+
+    expect(trackedSessions.filter((id) => id === undefined)).toHaveLength(2);
+    expect(trackedSessions.filter((id) => id === 'session-1')).toHaveLength(2);
+
+    await overlay.shutdown();
+  }, 20000);
+
   describe('session overlay activation (onWillCreateSession)', () => {
     function willCreateEvent(
       servers: Record<string, McpServerConfig>,
@@ -408,7 +439,7 @@ describe('WorkspaceMcpService', () => {
       const { event, contributed, disposers } = willCreateEvent(servers, sessionCwd);
       assemblyEvents.fire(event);
 
-      expect(sessionOverlay).toHaveBeenCalledWith(servers, { stdioCwd: sessionCwd });
+      expect(sessionOverlay).toHaveBeenCalledWith(servers, { stdioCwd: sessionCwd, sessionId: 's1' });
       const overlay = sessionOverlay.mock.results[0]?.value as ISessionMcpOverlay;
       expect(contributed.get(ISessionMcpHandle)).toBe(overlay.handle);
       await overlay.handle.ready;

@@ -210,7 +210,7 @@ export class BashTool implements IBashTool {
     const builder = new ToolOutputAccumulator();
     let proc: IHostProcess;
     try {
-      proc = lease.track(await this.spawn(lease.environment.process!, env, effectiveCwd, command));
+      proc = lease.track(await this.spawn(lease.environment.process!, env, effectiveCwd, command), this.ctx.sessionId);
     } catch (error) {
       lease.dispose();
       return {

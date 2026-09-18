@@ -249,4 +249,24 @@ describe('server-v2 /api/v1/sessions/{sid}/terminals', () => {
     const noSession = await get<unknown>(`/api/v1/sessions/sess_missing/terminals`);
     expect(noSession.code).toBe(ErrorCode.SESSION_NOT_FOUND);
   });
+
+  it('keeps other sessions terminals running when a session on the same environment is deleted', async () => {
+    const sidA = await createSession(work as string);
+    const sidB = await createSession(work as string);
+    const termA = (await post<Terminal>(`/api/v1/sessions/${sidA}/terminals`, {})).data;
+    const termB = (await post<Terminal>(`/api/v1/sessions/${sidB}/terminals`, {})).data;
+    expect(termA.session_id).toBe(sidA);
+    expect(termB.session_id).toBe(sidB);
+
+    const deleted = await post<{ deleted: boolean }>(`/api/v1/sessions/${sidA}:delete`, {});
+    expect(deleted.code).toBe(0);
+    expect(deleted.data).toEqual({ deleted: true });
+
+    expect(processes[0]?.killed).toBe(true);
+    expect(processes[1]?.killed).toBe(false);
+
+    const listB = (await get<{ items: Terminal[] }>(`/api/v1/sessions/${sidB}/terminals`)).data;
+    expect(listB.items.map((terminal) => terminal.id)).toEqual([termB.id]);
+    expect(listB.items[0]?.status).toBe('running');
+  });
 });

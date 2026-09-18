@@ -210,6 +210,7 @@ export class Program {
       return this.dependencies.createSessionController({
         context: this.context,
         fs: environment.fs!,
+        environments: this.environments,
         workspaceAgentProfiles: generation.agentProfiles,
         extraAgentProfiles: generation.extraAgentProfiles,
         explicitAgentProfiles: generation.explicitAgentProfiles,

@@ -244,6 +244,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
           input.mcp,
           this.models,
           this.modelProviders,
+          input.environments,
           input.onDispose,
         ),
       },

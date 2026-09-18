@@ -75,6 +75,7 @@ class FakeEnvironmentResolver implements EnvironmentResolver {
   declare readonly _serviceBrand: undefined;
   activeLeases = 0;
   readonly bindings: Array<{ workspaceId: string; environmentId: string }> = [];
+  readonly tracked: Array<{ resource: unknown; sessionId?: string }> = [];
   private readonly environment;
 
   constructor(
@@ -104,7 +105,10 @@ class FakeEnvironmentResolver implements EnvironmentResolver {
     let active = true;
     return {
       environment: this.environment,
-      track: (resource) => resource,
+      track: (resource, sessionId) => {
+        this.tracked.push({ resource, sessionId });
+        return resource;
+      },
       dispose: () => {
         if (!active) return;
         active = false;
@@ -207,6 +211,13 @@ describe('SessionTerminalService', () => {
     expect(terminal.cwd).toBe('/ws');
     expect(terminal.cols).toBe(80);
     expect(terminal.rows).toBe(24);
+  });
+
+  it('tags the tracked terminal killer with the owning session id', async () => {
+    const svc = ix.get(ISessionTerminalService);
+    await svc.create({ environment_id: 'local' });
+    expect(resolver.tracked).toHaveLength(1);
+    expect(resolver.tracked[0]?.sessionId).toBe('s1');
   });
 
   it('lists and gets terminals', async () => {

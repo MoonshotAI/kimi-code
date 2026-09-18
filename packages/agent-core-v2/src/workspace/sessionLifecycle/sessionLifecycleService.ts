@@ -5,6 +5,7 @@ import { join } from 'pathe';
 import type { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
+import type { EnvironmentRegistry } from '#/environment/environmentRegistry';
 import {
   createScopedChildHandle,
   type ISessionScopeHandle,
@@ -190,6 +191,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IWorkspaceMcpService private readonly workspaceMcp: IWorkspaceMcpService,
     @IModelService private readonly models: IModelService,
     @IProviderService private readonly providers: IProviderService,
+    private readonly environments: EnvironmentRegistry,
     onDispose?: () => void,
   ) {
     super();
@@ -426,6 +428,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await drainSessionMetadataWrites();
     await this.indexMirror.drain();
     void handle.dispose();
+    await this.environments.drainSession(sessionId);
     await drainLogCloses();
     this._onDidCloseSession.fire({ sessionId });
     this.telemetry.withContext({ session_id: sessionId }).track2('session_ended', { reason: 'exit' });
@@ -448,6 +451,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await drainSessionMetadataWrites();
     await this.indexMirror.drain();
     void handle.dispose();
+    await this.environments.drainSession(sessionId);
     await drainLogCloses();
     this._onDidArchiveSession.fire({ sessionId });
     this.telemetry.withContext({ session_id: sessionId }).track2('session_ended', { reason: 'archive' });
