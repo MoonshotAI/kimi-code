@@ -38,6 +38,7 @@ export interface AgentMeta {
   readonly parentAgentId?: string | null;
   readonly swarmItem?: string;
   readonly profileName?: string;
+  readonly sessionInit?: string;
 }
 
 export interface SessionMeta {

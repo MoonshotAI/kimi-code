@@ -179,4 +179,28 @@ describe('v2MetaToSessionMeta', () => {
     expect(meta.agents['agent-tower']?.profileName).toBe('tower-worker');
     expect(meta.agents['agent-coder']?.profileName).toBe('coder');
   });
+
+  it('surfaces the session-init marker persisted in v2 agent labels', () => {
+    const meta = v2MetaToSessionMeta({
+      id: 'ses_1',
+      createdAt: 1000,
+      updatedAt: 2000,
+      archived: false,
+      agents: {
+        'agent-init': {
+          type: 'sub',
+          parentAgentId: 'main',
+          labels: { profileName: 'coder', sessionInit: 'agents-md' },
+        },
+        'agent-plain': {
+          type: 'sub',
+          parentAgentId: 'main',
+          labels: { profileName: 'coder' },
+        },
+      },
+    });
+
+    expect(meta.agents['agent-init']?.sessionInit).toBe('agents-md');
+    expect(meta.agents['agent-plain']?.sessionInit).toBeUndefined();
+  });
 });

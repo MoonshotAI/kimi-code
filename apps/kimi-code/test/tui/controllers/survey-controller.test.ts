@@ -2461,6 +2461,7 @@ describe('SurveyController copilot stats', () => {
       'agent-4': { type: 'independent' },
       'agent-5': { type: 'sub', profileName: 'tower-worker' },
       'agent-6': { type: 'sub', profileName: 'coder' },
+      'agent-7': { type: 'sub', profileName: 'coder', sessionInit: 'agents-md' },
     });
     harness.appear();
 

@@ -77,6 +77,7 @@ interface ResumedAgentSeed {
   readonly type: string;
   readonly profileName?: string;
   readonly swarmItem?: string;
+  readonly sessionInit?: string;
 }
 
 const TOWER_WORKER_PROFILE_NAME = 'tower-worker';
@@ -304,6 +305,7 @@ export class SurveyController {
       (agent) =>
         agent.type === 'sub' &&
         agent.swarmItem === undefined &&
+        agent.sessionInit === undefined &&
         agent.profileName !== TOWER_WORKER_PROFILE_NAME,
     ).length;
   }

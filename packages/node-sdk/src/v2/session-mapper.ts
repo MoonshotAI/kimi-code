@@ -90,6 +90,7 @@ function v2AgentsToV1(agents: Readonly<Record<string, V2AgentMeta>>): Record<str
       parentAgentId: agent.parentAgentId ?? null,
       swarmItem: agent.labels?.['swarmItem'] ?? agent.swarmItem,
       profileName: agent.labels?.['profileName'],
+      sessionInit: agent.labels?.['sessionInit'],
     };
   }
   return mapped;
