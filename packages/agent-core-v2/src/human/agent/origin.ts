@@ -31,6 +31,7 @@ export const USER_PROMPT_ORIGIN: UserPromptOrigin = { kind: 'user' };
 
 export interface PromptOrigin {
   readonly kind: string;
+  readonly inTurn?: true;
 }
 
 export interface SteerMessage {
