@@ -136,6 +136,7 @@ function fakeHost(services: HostServices, registry: EnvironmentRegistry): Enviro
         remove: () => registration.remove(),
       };
     },
+    onDidChangeEnvironmentIdleness: registry.onDidChangeIdleness,
   } as unknown as EnvironmentProviderHost;
 }
 
@@ -619,6 +620,165 @@ describe('RemoteEnvironmentProviderFactory', () => {
 
     await attachment.dispose();
     expect(registry.current('dev-box')).toBeUndefined();
+    await registry.dispose();
+  });
+});
+
+describe('idle connection reaping', () => {
+  function ttlServices(idleTtlSeconds: number): HostServices {
+    return baseServices({
+      config: configService({
+        'dev-box': { type: 'ssh', host: 'dev-box', defaultCwd: '/home/me', idleTtlSeconds },
+      }),
+    });
+  }
+
+  function producingConnect(): {
+    connect: ReturnType<typeof vi.fn<(options: RemoteEnvironmentOptions) => Promise<RemoteEnvironment>>>;
+    produced: FakeEnvironment[];
+  } {
+    const produced: FakeEnvironment[] = [];
+    let generation = 0;
+    const connect = vi.fn<(options: RemoteEnvironmentOptions) => Promise<RemoteEnvironment>>(async (options) => {
+      generation += 1;
+      const environment = connectedEnvironment(options, `connected-${generation}`);
+      produced.push(environment as unknown as FakeEnvironment);
+      return environment;
+    });
+    return { connect, produced };
+  }
+
+  function disposed(environment: FakeEnvironment | undefined): boolean {
+    return (environment as unknown as { disposed: boolean }).disposed;
+  }
+
+  it('reaps the connection once the environment stays idle for its TTL and reconnects on demand', async () => {
+    const registry = new EnvironmentRegistry('workspace-1');
+    const { connect, produced } = producingConnect();
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(ttlServices(0.2), registry));
+
+    await registry.current('dev-box')!.connect!();
+    expect(registry.current('dev-box')!.status).toBe('ready');
+
+    await vi.waitFor(() => {
+      expect(registry.current('dev-box')!.status).toBe('disconnected');
+    }, { timeout: 5_000 });
+    expect(disposed(produced[0])).toBe(true);
+
+    await registry.current('dev-box')!.connect!();
+    expect(connect).toHaveBeenCalledTimes(2);
+    expect(registry.current('dev-box')!.status).toBe('ready');
+    expect(registry.current('dev-box')!.identity.generation).toBe('connected-2');
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('does not reap while a lease is held and reaps once it releases', async () => {
+    const registry = new EnvironmentRegistry('workspace-1');
+    const { connect, produced } = producingConnect();
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(ttlServices(0.2), registry));
+
+    await registry.current('dev-box')!.connect!();
+    const lease = registry.acquire({ workspaceId: 'workspace-1', environmentId: 'dev-box' }, ['fs']);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(registry.current('dev-box')!.status).toBe('ready');
+    expect(disposed(produced[0])).toBe(false);
+
+    lease.dispose();
+    await vi.waitFor(() => {
+      expect(registry.current('dev-box')!.status).toBe('disconnected');
+    }, { timeout: 5_000 });
+    expect(disposed(produced[0])).toBe(true);
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('does not reap while a tracked resource is alive', async () => {
+    const registry = new EnvironmentRegistry('workspace-1');
+    const { connect, produced } = producingConnect();
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(ttlServices(0.2), registry));
+
+    await registry.current('dev-box')!.connect!();
+    const lease = registry.acquire({ workspaceId: 'workspace-1', environmentId: 'dev-box' }, ['fs']);
+    const resource = lease.track({ dispose: () => {} });
+    lease.dispose();
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(registry.current('dev-box')!.status).toBe('ready');
+    expect(disposed(produced[0])).toBe(false);
+
+    resource.dispose();
+    await vi.waitFor(() => {
+      expect(registry.current('dev-box')!.status).toBe('disconnected');
+    }, { timeout: 5_000 });
+    expect(disposed(produced[0])).toBe(true);
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('never reaps when the declaration sets idleTtlSeconds to 0', async () => {
+    const registry = new EnvironmentRegistry('workspace-1');
+    const { connect, produced } = producingConnect();
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(ttlServices(0), registry));
+
+    await registry.current('dev-box')!.connect!();
+    expect(registry.current('dev-box')!.status).toBe('ready');
+
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(registry.current('dev-box')!.status).toBe('ready');
+    expect(disposed(produced[0])).toBe(false);
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('does not reap early when the configured TTL exceeds the maximum timer delay', async () => {
+    const registry = new EnvironmentRegistry('workspace-1');
+    const { connect, produced } = producingConnect();
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(ttlServices(3_000_000), registry));
+
+    await registry.current('dev-box')!.connect!();
+    expect(registry.current('dev-box')!.status).toBe('ready');
+
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(registry.current('dev-box')!.status).toBe('ready');
+    expect(disposed(produced[0])).toBe(false);
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('applies an idle TTL change without tearing the connection down', async () => {
+    const registry = new EnvironmentRegistry('workspace-1');
+    const config = watchableConfigService({
+      'dev-box': { type: 'ssh', host: 'dev-box', defaultCwd: '/home/me', idleTtlSeconds: 0 },
+    });
+    const { connect, produced } = producingConnect();
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices({ config: config.service }), registry));
+
+    await registry.current('dev-box')!.connect!();
+    const connected = registry.current('dev-box')!;
+    config.setSection({
+      'dev-box': { type: 'ssh', host: 'dev-box', defaultCwd: '/home/me', idleTtlSeconds: 0.2 },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(registry.current('dev-box')!.identity.generation).toBe(connected.identity.generation);
+    expect(disposed(produced[0])).toBe(false);
+
+    await vi.waitFor(() => {
+      expect(registry.current('dev-box')!.status).toBe('disconnected');
+    }, { timeout: 5_000 });
+    expect(disposed(produced[0])).toBe(true);
+
+    await attachment.dispose();
     await registry.dispose();
   });
 });

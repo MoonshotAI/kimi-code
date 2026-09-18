@@ -1,8 +1,9 @@
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { _util, type IInstantiationService, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { ServiceCollection } from '#/_base/di/serviceCollection';
+import type { Event } from '#/_base/event';
 import type { Environment } from './environment';
-import type { EnvironmentRegistrationHandle, EnvironmentRegistry } from './environmentRegistry';
+import type { EnvironmentIdlenessChange, EnvironmentRegistrationHandle, EnvironmentRegistry } from './environmentRegistry';
 
 type EnvironmentUnitConstructor<T> = new (...args: never[]) => T;
 
@@ -22,6 +23,7 @@ export interface EnvironmentProviderHost {
   get<T>(id: ServiceIdentifier<T>): T;
   provide<T>(id: ServiceIdentifier<T>, ctor: EnvironmentUnitConstructor<T>, ...staticArguments: unknown[]): T;
   registerEnvironment(environment: Environment): EnvironmentProviderEnvironmentHandle;
+  readonly onDidChangeEnvironmentIdleness: Event<EnvironmentIdlenessChange>;
 }
 
 export interface EnvironmentUnitHandle {
@@ -315,6 +317,7 @@ class SharedEnvironmentUnitHost implements EnvironmentUnitHost {
         };
         return handle;
       },
+      onDidChangeEnvironmentIdleness: this.registry.onDidChangeIdleness,
     };
     const transaction: EnvironmentUnitTransaction = {
       host,
