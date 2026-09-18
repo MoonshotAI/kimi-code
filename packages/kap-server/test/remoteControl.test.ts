@@ -188,7 +188,6 @@ describe('remote-control route telemetry', () => {
 
   function fakeService(behavior: 'ok' | 'already' | 'error'): RemoteControlManager {
     return {
-      status: () => ({ enabled: false, state: 'off' }),
       enable: async () => {
         if (behavior === 'already') throw new RemoteControlAlreadyRunningError(HOLDER);
         if (behavior === 'error') throw new Error('boom');
