@@ -205,6 +205,14 @@ export interface TowerModeEnterEvent {
   has_base: boolean;
 }
 
+export interface SwarmModeEnteredEvent {
+  trigger: 'manual' | 'task' | 'tool';
+}
+
+export interface SwarmModeExitedEvent {
+  trigger: 'manual' | 'task' | 'tool';
+}
+
 export interface CompactionFinishedEvent {
   turn_id?: number;
   source: 'manual' | 'auto';
@@ -777,6 +785,20 @@ export const telemetryEventDefinitions = {
       outcome: 'Whether tower mode was entered or the request was rejected',
       reason: 'Why the request was rejected; omitted when tower mode was entered',
       has_base: 'Whether a base branch was specified',
+    },
+  }),
+  swarm_mode_entered: defineAgentTelemetryEvent<SwarmModeEnteredEvent>({
+    owner: 'kimi-code',
+    comment: 'Swarm mode is entered.',
+    properties: {
+      trigger: 'What triggered swarm mode',
+    },
+  }),
+  swarm_mode_exited: defineAgentTelemetryEvent<SwarmModeExitedEvent>({
+    owner: 'kimi-code',
+    comment: 'Swarm mode is exited.',
+    properties: {
+      trigger: 'What originally triggered the swarm mode being exited',
     },
   }),
   compaction_finished: defineAgentTelemetryEvent<CompactionFinishedEvent>({
