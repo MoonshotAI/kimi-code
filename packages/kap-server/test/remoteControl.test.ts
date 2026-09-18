@@ -9,11 +9,13 @@ import {
   resolveKimiTokenStorageName,
   type TokenInfo,
 } from '@moonshot-ai/kimi-code-oauth';
-import { remoteControlLockPath } from '@moonshot-ai/remote-control';
+import { remoteControlLockPath, RemoteControlAlreadyRunningError, type RemoteControlManager } from '@moonshot-ai/remote-control';
+import type { ITelemetryService } from '@moonshot-ai/agent-core-v2';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 
 import { ErrorCode } from '../src/protocol/error-codes';
+import { registerRemoteControlRoutes, type RemoteControlRouteOptions } from '../src/routes/remoteControl';
 import { writeServerToken } from '../src/services/auth/persistentToken';
 import { type RunningServer, startServer } from '../src/start';
 import { authedFetch } from './helpers/auth';
@@ -171,6 +173,71 @@ describe('server-v2 /api/v1/remote-control', () => {
     const posted = await postRemoteControl(true);
     expect(posted.code).toBe(ErrorCode.REMOTE_CONTROL_ALREADY_RUNNING);
     expect(posted.msg).toContain('already running');
+  });
+});
+
+describe('remote-control route telemetry', () => {
+  const HOLDER = {
+    pid: 1,
+    nonce: 'n',
+    localOrigin: 'http://127.0.0.1:1',
+    deviceId: 'd',
+    url: 'https://example.com/devices/d/',
+    startedAt: 0,
+  };
+
+  function fakeService(behavior: 'ok' | 'already' | 'error'): RemoteControlManager {
+    const status = { enabled: false, state: 'off' };
+    return {
+      status: () => status,
+      enable: async () => {
+        if (behavior === 'already') throw new RemoteControlAlreadyRunningError(HOLDER);
+        if (behavior === 'error') throw new Error('boom');
+        return { enabled: true, state: 'on' };
+      },
+      disable: async () => status,
+    } as unknown as RemoteControlManager;
+  }
+
+  function postHandler(opts: RemoteControlRouteOptions): (enabled: boolean) => Promise<void> {
+    let handler:
+      | ((req: { id: string; body: unknown }, reply: { send(payload: unknown): unknown }) => Promise<void> | void)
+      | undefined;
+    const app = {
+      get: () => {},
+      post: (_path: string, _options: unknown, h: unknown) => {
+        handler = h as typeof handler;
+      },
+    };
+    registerRemoteControlRoutes(app as never, opts);
+    return async (enabled: boolean) => {
+      await handler!({ id: 'req-1', body: { enabled } }, { send: (payload: unknown) => payload });
+    };
+  }
+
+  it('tracks remote_control_toggle outcomes', async () => {
+    const tracked: [string, unknown][] = [];
+    const telemetry = {
+      track2: (event: string, properties: unknown) => tracked.push([event, properties]),
+    } as unknown as ITelemetryService;
+
+    await postHandler({ service: fakeService('ok'), telemetry })(true);
+    await postHandler({ service: fakeService('ok'), telemetry })(false);
+    await postHandler({ service: fakeService('already'), telemetry })(true);
+    await postHandler({
+      service: fakeService('ok'),
+      staticEnableError: 'disabled by config',
+      telemetry,
+    })(true);
+    await postHandler({ service: fakeService('error'), telemetry })(true);
+
+    expect(tracked).toEqual([
+      ['remote_control_toggle', { enabled: true, outcome: 'ok', error_type: undefined }],
+      ['remote_control_toggle', { enabled: false, outcome: 'ok', error_type: undefined }],
+      ['remote_control_toggle', { enabled: true, outcome: 'already_running', error_type: undefined }],
+      ['remote_control_toggle', { enabled: true, outcome: 'rejected', error_type: undefined }],
+      ['remote_control_toggle', { enabled: true, outcome: 'error', error_type: 'Error' }],
+    ]);
   });
 });
 

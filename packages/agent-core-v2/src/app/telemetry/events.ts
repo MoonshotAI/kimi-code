@@ -226,6 +226,12 @@ export interface ExternalHookResolvedEvent {
   duration_ms: number;
 }
 
+export interface RemoteControlToggleEvent {
+  enabled: boolean;
+  outcome: 'ok' | 'already_running' | 'rejected' | 'error';
+  error_type?: string;
+}
+
 export interface CompactionFinishedEvent {
   turn_id?: number;
   source: 'manual' | 'auto';
@@ -832,6 +838,15 @@ export const telemetryEventDefinitions = {
       matched_count: 'Number of hooks that ran for the trigger',
       failed_count: 'Number of hooks that failed (timeout, spawn error, or a non-zero exit code other than 2)',
       duration_ms: 'Wall-clock time running the matched hooks in milliseconds',
+    },
+  }),
+  remote_control_toggle: defineTelemetryEvent<RemoteControlToggleEvent>({
+    owner: 'kimi-code',
+    comment: 'A request to toggle the Remote Control tunnel resolves.',
+    properties: {
+      enabled: 'Whether the request was to enable or disable the tunnel',
+      outcome: 'How the request resolved',
+      error_type: 'Error class name when the request failed',
     },
   }),
   compaction_finished: defineAgentTelemetryEvent<CompactionFinishedEvent>({
