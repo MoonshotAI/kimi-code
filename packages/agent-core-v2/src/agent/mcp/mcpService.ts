@@ -30,6 +30,7 @@ import {
   type McpToolCollision,
 } from './mcpDiscoveryOps';
 import { AgentErrorEvent, McpServerStatus, ToolListUpdated } from './mcpEvents';
+import { WarningIssued } from '#/agent/profile/profileOps';
 
 interface McpToolRegistration {
   readonly disposable: IDisposable;
@@ -235,6 +236,20 @@ export class AgentMcpService extends Service implements IAgentMcpService {
       serverUrl,
       oauthService,
       reconnect: (signal) => this.reconnect(entry.name, signal),
+      onAuthorizationUrl: (data) => {
+        try {
+          void this.dispatcher.dispatch(
+            new WarningIssued({
+              agentId: this.scopeContext.agentId,
+              code: 'mcp.oauth.authorization_url',
+              message:
+                `MCP server "${data.serverName}" requires OAuth authorization. ` +
+                `Open this URL in your browser to approve access:\n${data.authorizationUrl}`,
+            }),
+          );
+        } catch {
+        }
+      },
     });
     const deferred = this.mcpHandle.connectionManager.configOf(entry.name)?.deferred === true;
     const disposable = this._register(
