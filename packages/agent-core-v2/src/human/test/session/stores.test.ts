@@ -217,6 +217,19 @@ describe('SessionStores reopen', () => {
     expect(restoredMain.getState().turnIndex.nextTurnId).toBe(3);
 
     actor2.stop();
+
+    await restoredMain.dispatch(turnStarted({ turnId: 3 }));
+    await restored.stores.flush();
+
+    const crashed = await reopen(restored);
+    const crashedMain = await crashed.stores.open('main');
+    expect(crashedMain.getState().turnIndex.nextTurnId).toBe(4);
+
+    const actor3 = startAgent(crashedMain);
+    await runTurn(actor3, crashedMain, 'after-crash', 8);
+    expect(crashedMain.getState().turnIndex.turns.at(-1)?.turnId).toBe(4);
+
+    actor3.stop();
   });
 });
 
