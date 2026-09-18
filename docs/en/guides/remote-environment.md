@@ -114,7 +114,7 @@ A remote session depends on one connection per (workspace, environment). When th
 
 There is no automatic reconnect after a drop and **no silent fallback to the local environment**: a command like `rm` or `git` that was meant for the remote machine must never land on yours. Instead, tool calls fail with an `environment.unavailable` error, and you reconnect explicitly from the `/environment` dialog.
 
-Resuming a session is the one exception: a restored remote binding reconnects automatically in the background, so the session opens immediately while the environment moves from `connecting` to `ready` — or to `disconnected`, with the failure reason shown in the footer's environment slot and in the `/environment` manager. A tool call that arrives while the reconnect is still in flight waits for the connect attempt to finish (bounded by its own timeout) instead of erroring immediately, and there is never a silent fallback to `local`.
+Resuming a session is no exception: a restored remote binding does not reconnect in the background, so the session opens immediately while the environment stays `disconnected`. Tool calls on the target fail with `environment.unavailable` until you reconnect explicitly from the `/environment` dialog — and there is never a silent fallback to `local`.
 
 Every connect attempt is bounded to 10 seconds: a target that never answers the handshake fails with an `initialize timed out` error instead of hanging silently, and when the launcher wrote anything to stderr — a stuck password prompt, an `npx` download's progress — the error includes that tail, so the cause is visible.
 
