@@ -735,6 +735,23 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
+   * The workspace's additional dirs (`.kimi-code/local.toml`
+   * `workspace.additional_dir` plus any session-merged entries) without
+   * creating a session, so session-less hosts can reflect them before the
+   * lazy first session exists. Same `handlerFor({ root })` path as
+   * {@link getWorkspaceTrustInfo}; `dirs.ready` gates on the initial disk
+   * load, so the returned list already includes the persisted entries.
+   */
+  override async getWorkspaceAdditionalDirs(workDir: string): Promise<readonly string[]> {
+    const handler = await this.engineAccessor
+      .get(IWorkspaceInstanceManager)
+      .getOrCreate({ root: workDir });
+    const dirs = handler.program.dirs;
+    await dirs.ready;
+    return dirs.additionalDirs;
+  }
+
+  /**
    * v1 returns the whole config.toml document as one `KimiConfig`; v2
    * resolves the same file per config domain. `getAll()` is the effective
    * view (file + env overlays + section defaults), which matches v1's
