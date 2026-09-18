@@ -5,8 +5,8 @@ import type {
   PermissionMode,
   ProviderConfig,
   PromptPart,
-  SessionRuntimeStatus,
-  SessionRuntimeType,
+  SessionEnvironmentStatus,
+  SessionEnvironmentType,
   ThinkingEffort,
   TokenUsage,
   ToolInputDisplay,
@@ -27,10 +27,10 @@ export interface BannerState {
   ttlHours?: number;
 }
 
-export interface RuntimeSlotState {
-  readonly runtimeId: string;
-  readonly type: SessionRuntimeType;
-  readonly status: SessionRuntimeStatus;
+export interface EnvironmentSlotState {
+  readonly environmentId: string;
+  readonly type: SessionEnvironmentType;
+  readonly status: SessionEnvironmentStatus;
   readonly cwd?: string;
   readonly connectError?: string;
 }
@@ -103,11 +103,11 @@ export interface AppState {
   /** Optional banner shown below the welcome panel; null means no banner to render. */
   banner?: BannerState | null;
   /**
-   * Current session's runtime binding + connection status (experimental
-   * remote runtime). Undefined while unsynced or when the `remote_runtime`
+   * Current session's environment binding + connection status (experimental
+   * remote environment). Undefined while unsynced or when the `remote_runtime`
    * flag is off — every consumer must treat that as the plain local session.
    */
-  runtime?: RuntimeSlotState;
+  environment?: EnvironmentSlotState;
 }
 
 export function sumTokenUsage(total: TokenUsage): number {

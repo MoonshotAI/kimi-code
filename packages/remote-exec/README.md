@@ -3,19 +3,19 @@
 Remote execution protocol and bridge: a self-contained NDJSON line-framed RPC
 (codex exec-server dialect) between the local `ExecBridge` and the light
 `kimi exec-server` executor, plus the fs/process/terminal RPC stubs behind the
-agent-core-v2 `Runtime` interface.
+agent-core-v2 `Environment` interface.
 
 ```text
 packages/remote-exec/src/
 ├── protocol/   message types, error codes, NDJSON codec (self-contained)
-├── client/     execBridge, launchers, connection, fs/process/terminal stubs, remoteRuntime, remoteRuntimeProvider,
+├── client/     execBridge, launchers, connection, fs/process/terminal stubs, remoteEnvironment, remoteEnvironmentProvider,
 │               artifactLocator, executorInstaller, installTrigger (executor auto-install, spec D8/D9)
 └── server/     stdioHost, fsHandler, processManager, environment, entry, standalone
 ```
 
 ## Entries
 
-- `.` — client side: protocol + bridge + stubs + `RemoteRuntime` + `RemoteRuntimeProviderFactory`.
+- `.` — client side: protocol + bridge + stubs + `RemoteEnvironment` + `RemoteEnvironmentProviderFactory`.
 - `./client` — the same client surface.
 - `./server` — the executor side: `runExecServer` (light entry), `StdioHost`.
 - `./protocol` — wire types and codec only.
@@ -62,23 +62,23 @@ deviations per the design spec, plus one forced addition:
 
 Client-surface notes beyond the wire protocol:
 
-- `RemoteRuntime.environment` is the handshake payload (adds `cwd`/`tempDir`
+- `RemoteEnvironment.environment` is the handshake payload (adds `cwd`/`tempDir`
   to `HostEnvironmentInfo`).
-- `RemoteRuntime.connection` is public as the protocol escape hatch for calls
-  the `Runtime` interface cannot express (e.g. `process/terminate` with its
+- `RemoteEnvironment.connection` is public as the protocol escape hatch for calls
+  the `Environment` interface cannot express (e.g. `process/terminate` with its
   TERM-then-KILL escalation, which `IHostProcess.kill`'s single signal does
   not cover).
 - Whole-file reads without `maxBytes` are rejected server-side above 32MiB
   (base64 of the response must fit the 64MiB frame cap); larger files are read
   through `offset`/`maxBytes` range reads.
-- `RemoteRuntimeProviderFactory` is the workspace composition root for
-  declared runtimes: it attaches via `IWorkspaceInstanceManager.addProvider`,
-  reads the merged declaration set (`config.toml` `[runtimes]` plus a trusted
-  project-level `.kimi-code/runtimes.toml`, resolved by agent-core-v2's
-  `resolveWorkspaceRuntimeDeclarations`), and registers each declared runtime
-  as a `disconnected` placeholder (`ManagedRemoteRuntime`) — no connections
+- `RemoteEnvironmentProviderFactory` is the workspace composition root for
+  declared environments: it attaches via `IWorkspaceInstanceManager.addProvider`,
+  reads the merged declaration set (`config.toml` `[environments]` plus a trusted
+  project-level `.kimi-code/environments.toml`, resolved by agent-core-v2's
+  `resolveWorkspaceEnvironmentDeclarations`), and registers each declared environment
+  as a `disconnected` placeholder (`ManagedRemoteEnvironment`) — no connections
   are made at registration. An explicit `connect()` (the binding
-  `connectAndSwitch` flow, or reconnect) builds the `RemoteRuntime` and swaps
+  `connectAndSwitch` flow, or reconnect) builds the `RemoteEnvironment` and swaps
   it into the registry with a fresh generation; the old generation drains and
   its leases never migrate. The whole provider is inert unless
   `KIMI_CODE_EXPERIMENTAL_REMOTE_RUNTIME` is enabled.
@@ -90,12 +90,12 @@ handshake failures and acts on them:
 
 - **Missing executor** — the launcher exited 127 (ssh remote shell) or 126
   (docker exec "executable file not found"), or the handshake **timed out**.
-  For typed `ssh`/`docker` runtimes with an artifact locator configured, the
+  For typed `ssh`/`docker` environments with an artifact locator configured, the
   trigger runs **one** auto-install attempt and then retries the connect
   **exactly once**; a failed install surfaces the original failure plus
   install guidance, and a failed retry surfaces the retry failure plus
   reconnect guidance (the executor is present — diagnose it on the target).
-  `command` runtimes are never auto-installed — they fail with manual install
+  `command` environments are never auto-installed — they fail with manual install
   guidance.
 - **Too-old executor** — the handshake answered but `executorVersion <
   MIN_EXECUTOR_VERSION`. The client rejects with *upgrade* guidance (current
@@ -136,7 +136,7 @@ The CDN base is region-dependent app-layer knowledge, so it is **injected**:
 the composition root (kap-server mission) constructs the factory with
 
 ```ts
-new RemoteRuntimeProviderFactory({
+new RemoteEnvironmentProviderFactory({
   artifactLocator: new CdnExecutorArtifactLocator({
     cdnBaseUrl: kimiRegionProfile(resolveKimiRegion({ configuredOAuthHost, configuredOAuthKey })).cdnBase,
   }),

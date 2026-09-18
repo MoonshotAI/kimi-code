@@ -12,7 +12,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { PlanModeInjection } from '#/features/plan/injection/planModeInjection';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
@@ -26,7 +26,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IBlobStore } from '#/persistence/interface/blobStore';
-import type { RuntimeLease, RuntimePath } from '#/runtime/runtime';
+import type { EnvironmentLease, EnvironmentPath } from '#/environment/environment';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { ContextUndone } from '#/agent/undo/undoService';
@@ -47,7 +47,7 @@ import {
 interface PlanFileTarget {
   readonly fs: IHostFileSystem;
   readonly path: string;
-  readonly runtimePath: RuntimePath;
+  readonly environmentPath: EnvironmentPath;
 }
 
 export class AgentPlanService extends Service implements IAgentPlanService {
@@ -57,7 +57,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @IBlobStore private readonly blobs: IBlobStore,
     @IAgentReminderService reminder: IAgentReminderService,
     @IEventBus eventBus: IEventBus,
@@ -247,20 +247,20 @@ export class AgentPlanService extends Service implements IAgentPlanService {
   }
 
   private planFileTarget(id: string): PlanFileTarget | undefined {
-    let lease: RuntimeLease;
+    let lease: EnvironmentLease;
     try {
-      lease = this.runtime.acquire(['fs']);
+      lease = this.environment.acquire(['fs']);
     } catch {
       return undefined;
     }
     try {
-      const fs = lease.runtime.fs;
+      const fs = lease.environment.fs;
       if (fs === undefined) return undefined;
-      const tempDir = lease.runtime.environment.tempDir ?? tmpdir();
+      const tempDir = lease.environment.host.tempDir ?? tmpdir();
       return {
         fs,
-        runtimePath: lease.runtime.path,
-        path: lease.runtime.path.join(
+        environmentPath: lease.environment.path,
+        path: lease.environment.path.join(
           tempDir,
           'kimi-code',
           'plans',
@@ -305,7 +305,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
   }
 
   private async ensurePlanDirectory(target: PlanFileTarget): Promise<void> {
-    await target.fs.mkdir(target.runtimePath.dirname(target.path), {
+    await target.fs.mkdir(target.environmentPath.dirname(target.path), {
       recursive: true,
       mode: 0o700,
     });
@@ -318,12 +318,12 @@ async function canonicalizeExistingPrefix(target: PlanFileTarget, path: string):
   for (let i = 0; i < 256; i++) {
     try {
       const real = await target.fs.realpath(current);
-      return tail.length === 0 ? real : target.runtimePath.join(real, ...tail.toReversed());
+      return tail.length === 0 ? real : target.environmentPath.join(real, ...tail.toReversed());
     } catch (error) {
       if (!isMissingFileError(error)) return path;
-      const parent = target.runtimePath.dirname(current);
+      const parent = target.environmentPath.dirname(current);
       if (parent === current) return path;
-      tail.push(target.runtimePath.basename(current));
+      tail.push(target.environmentPath.basename(current));
       current = parent;
     }
   }

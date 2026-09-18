@@ -16,7 +16,7 @@ Some commands are only available in the idle state. Executing these commands whi
 | `/logout` | — | Clear credentials for the currently selected account | No |
 | `/provider` | — | Open the interactive provider manager to view, add, and remove configured providers. See [Platforms & Models — `/provider` and provider management](../configuration/providers.md#provider-—-interactive-provider-management) | Yes |
 | `/model` | — | Switch the LLM model used in the current session | Yes |
-| `/runtime` | — | Manage remote runtimes for the current session: list declared runtimes, add one, switch the session binding, or reconnect a disconnected runtime. Switching requires an idle session. Experimental; requires `KIMI_CODE_EXPERIMENTAL_REMOTE_RUNTIME` — see [Remote runtimes](../guides/remote-runtime.md) | No |
+| `/environment` | `/environments` | Manage remote environments for the current session: list declared environments, add one, switch the session binding, or reconnect a disconnected environment. Switching requires an idle session. Experimental; requires `KIMI_CODE_EXPERIMENTAL_REMOTE_RUNTIME` — see [Remote environments](../guides/remote-environment.md) | No |
 | `/secondary-model` | `/subagent-model` | Pick the default model for subagents (writes `[secondary_model] default_model`; see the [subagent model pool](../configuration/config-files.md#subagent-model-pool)) | Yes |
 | `/settings` | `/config` | Open the settings panel inside the TUI | Yes |
 | `/experiments` | `/experimental` | Open the experimental feature panel | Yes |

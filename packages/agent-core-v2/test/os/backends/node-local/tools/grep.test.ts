@@ -43,8 +43,8 @@ import {
   IGrepTool,
 } from '#/agent/tools/os/grep/grep';
 import { GrepTool as ProductionGrepTool } from '#/agent/tools/os/grep/grepTool';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { ensureRgPath } from '#/os/backends/node-local/tools/rgLocator';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
 import { recordingTelemetry, type TelemetryRecord } from '../../../../app/telemetry/stubs';
@@ -179,28 +179,28 @@ class GrepTool extends ProductionGrepTool {
   ) {
     const environment = createTestEnv(kaos);
     const backend = Object.assign(
-      new FakeRuntime(
-        { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+      new FakeEnvironment(
+        { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
         { capabilities: ['fs', 'process'], pathClass: environment.pathClass },
       ),
       {
         process: createTestProcessService(kaos),
         fs: createTestFs(kaos),
-        environment,
+        host: environment,
       },
     );
-    const runtime: IAgentRuntimeService = {
+    const environmentService: IAgentEnvironmentService = {
       _serviceBrand: undefined,
       onDidChange: () => ({ dispose: () => {} }),
       isAvailable: () => true,
       inspect: () => backend,
-      acquire: () => ({ runtime: backend, track: (resource) => resource, dispose: () => {} }),
-      acquireWhenReady: async () => ({ runtime: backend, track: (resource) => resource, dispose: () => {} }),
+      acquire: () => ({ environment: backend, track: (resource) => resource, dispose: () => {} }),
+      acquireWhenReady: async () => ({ environment: backend, track: (resource) => resource, dispose: () => {} }),
       reconnect: async () => {},
       workspaceRoots: () => ({ workDir: workspaceConfig.workspaceDir, additionalDirs: workspaceConfig.additionalDirs ?? [] }),
     };
     super(
-      runtime,
+      environmentService,
       stubWorkspaceContext(workspaceConfig.workspaceDir, workspaceConfig.additionalDirs),
       telemetry,
     );
@@ -340,20 +340,20 @@ describe('GrepTool', () => {
           const processService = createTestProcessService(kaos);
           const fs = createTestFs(kaos);
           reg.defineInstance(IHostEnvironment, environment);
-          const runtime = Object.assign(
-            new FakeRuntime(
-              { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+          const backend = Object.assign(
+            new FakeEnvironment(
+              { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
               { capabilities: ['fs', 'process'], pathClass: environment.pathClass },
             ),
-            { process: processService, fs, environment },
+            { process: processService, fs, host: environment },
           );
-          reg.defineInstance(IAgentRuntimeService, {
+          reg.defineInstance(IAgentEnvironmentService, {
             _serviceBrand: undefined,
             onDidChange: () => ({ dispose: () => {} }),
             isAvailable: () => true,
-            inspect: () => runtime,
-            acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
-            acquireWhenReady: async () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
+            inspect: () => backend,
+            acquire: () => ({ environment: backend, track: (resource) => resource, dispose: () => {} }),
+            acquireWhenReady: async () => ({ environment: backend, track: (resource) => resource, dispose: () => {} }),
             reconnect: async () => {},
             workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
           });

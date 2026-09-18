@@ -163,7 +163,7 @@ const MIGRATE_CLI_OPTIONS: CLIOptions = {
   skillsDirs: [],
   agent: undefined,
   agentFiles: [],
-  runtime: undefined,
+  environment: undefined,
 };
 
 export function main(): void {

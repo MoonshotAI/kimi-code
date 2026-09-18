@@ -48,8 +48,8 @@ import {
 import { ErrorCodes, Error2, isError2, unwrapErrorCause } from '#/errors';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem, type HostDirEntry, type HostFileStat } from '#/os/interface/hostFileSystem';
-import type { RuntimePath } from '#/runtime/runtime';
-import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import type { EnvironmentPath } from '#/environment/environment';
+import { IEnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
@@ -100,19 +100,19 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     | undefined = undefined;
   private readonly workDir: string;
   private readonly workspaceId: string;
-  private readonly path: RuntimePath;
+  private readonly path: EnvironmentPath;
 
   constructor(
     @IWorkspaceContext workspace: IWorkspaceContext,
     @IWorkspaceDirs private readonly workspaceDirs: IWorkspaceDirs,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
-    @IRuntimeResolver private readonly resolver: IRuntimeResolver,
+    @IEnvironmentResolver private readonly resolver: IEnvironmentResolver,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IWorkspaceGitService private readonly git: IWorkspaceGitService,
-    private readonly runtimeId = 'local',
+    private readonly environmentId = 'local',
   ) {
     this.workspaceId = workspace.workspaceId;
-    this.path = resolver.inspect({ workspaceId: workspace.workspaceId, runtimeId }).path;
+    this.path = resolver.inspect({ workspaceId: workspace.workspaceId, environmentId }).path;
     this.workDir = this.path.resolve(workspace.cwd);
   }
 
@@ -674,10 +674,10 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     }
 
     const lease = this.resolver.acquire(
-      { workspaceId: this.workspaceId, runtimeId: this.runtimeId },
+      { workspaceId: this.workspaceId, environmentId: this.environmentId },
       ['process'],
     );
-    const proc = await lease.runtime.process!.spawn(rgBinary, args, { cwd: this.workDir });
+    const proc = await lease.environment.process!.spawn(rgBinary, args, { cwd: this.workDir });
 
     const top = new SuggestTopHeap(cap);
     const seenDirs = new Set<string>();
@@ -897,8 +897,8 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     args.push(req.pattern);
     args.push('.');
 
-    const lease = this.resolver.acquire({ workspaceId: this.workspaceId, runtimeId: this.runtimeId }, ['process']);
-    const proc = await lease.runtime.process!.spawn(rgPath, args, { cwd: this.workDir });
+    const lease = this.resolver.acquire({ workspaceId: this.workspaceId, environmentId: this.environmentId }, ['process']);
+    const proc = await lease.environment.process!.spawn(rgPath, args, { cwd: this.workDir });
 
     const acc = new RgJsonAccumulator(req);
     let killed = false;
@@ -1079,14 +1079,14 @@ export class WorkspaceFsService implements IWorkspaceFsService {
 
   private async resolveRg(): Promise<RgResolution | null> {
     if (this.rgResolution !== undefined) return this.rgResolution;
-    const lease = this.resolver.acquire({ workspaceId: this.workspaceId, runtimeId: this.runtimeId }, ['process']);
+    const lease = this.resolver.acquire({ workspaceId: this.workspaceId, environmentId: this.environmentId }, ['process']);
     const probe: RgProbe = {
-      exec: (args) => runCommand(lease.runtime.process!, args, { cwd: this.workDir }),
+      exec: (args) => runCommand(lease.environment.process!, args, { cwd: this.workDir }),
     };
     try {
       this.rgResolution = await ensureRgPath(probe, {
         allowCachedFallback: true,
-        runtime: lease.runtime,
+        environment: lease.environment,
       });
     } catch {
       this.rgResolution = null;
@@ -1359,7 +1359,7 @@ function isMissingPathError(err: unknown): boolean {
   return code === 'ENOENT' || code === 'ENOTDIR';
 }
 
-function isInsideOrEqual(path: RuntimePath, child: string, parent: string): boolean {
+function isInsideOrEqual(path: EnvironmentPath, child: string, parent: string): boolean {
   const rel = path.relative(parent, child);
   if (rel === '') return true;
   if (rel.startsWith('..')) return false;

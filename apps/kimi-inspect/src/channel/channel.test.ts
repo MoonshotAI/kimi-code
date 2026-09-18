@@ -11,7 +11,7 @@ import { probeDebugSurface } from './channels';
 import { createInspectClient } from './client';
 import { RPCError } from './errors';
 import {
-  fetchAgentRuntimeBinding,
+  fetchAgentEnvironmentBinding,
   fetchSessionWorkspaceAssociation,
   fetchWorkspaceSnapshot,
 } from '../snapshots/api';
@@ -136,9 +136,9 @@ describe('business snapshots', () => {
       }
       return {
         json: async () => ok({
-          binding: { workspaceId: 'w 1', runtimeId: 'remote' },
+          binding: { workspaceId: 'w 1', environmentId: 'remote' },
           available: true,
-          runtime: { runtimeId: 'remote', generation: 'g2', status: 'ready', capabilities: ['process'] },
+          environment: { environmentId: 'remote', generation: 'g2', status: 'ready', capabilities: ['process'] },
         }),
       };
     });
@@ -146,14 +146,14 @@ describe('business snapshots', () => {
 
     await expect(fetchWorkspaceSnapshot(client, 'w 1')).resolves.toMatchObject({ metadata: { id: 'w 1' } });
     await expect(fetchSessionWorkspaceAssociation(client, 's 1')).resolves.toMatchObject({ workspaceId: 'w 1' });
-    await expect(fetchAgentRuntimeBinding(client, 's 1', 'main')).resolves.toMatchObject({
-      binding: { runtimeId: 'remote' },
-      runtime: { generation: 'g2' },
+    await expect(fetchAgentEnvironmentBinding(client, 's 1', 'main')).resolves.toMatchObject({
+      binding: { environmentId: 'remote' },
+      environment: { generation: 'g2' },
     });
     expect(calls).toEqual([
       'http://h:9/api/v1/debug/workspace/w%201/snapshot',
       'http://h:9/api/v1/debug/session/s%201/association',
-      'http://h:9/api/v1/debug/session/s%201/agent/main/runtime-binding',
+      'http://h:9/api/v1/debug/session/s%201/agent/main/environment-binding',
     ]);
   });
 });

@@ -6,9 +6,9 @@ import type { Writable } from 'node:stream';
 import { join } from 'pathe';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostProcess } from '#/os/interface/hostProcess';
-import type { Runtime, RuntimeLease } from '#/runtime/runtime';
+import type { Environment, EnvironmentLease } from '#/environment/environment';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
@@ -301,9 +301,9 @@ describe('AgentTaskService — spill target pinning', () => {
   let persistence: ReturnType<typeof createAgentTaskPersistence>;
   let writesA: { path: string; data: string }[];
   let writesB: { path: string; data: string }[];
-  let runtimeA: Runtime;
-  let runtimeB: Runtime;
-  let currentRuntime: Runtime;
+  let environmentA: Environment;
+  let environmentB: Environment;
+  let currentEnvironment: Environment;
 
   function recordingFs(writes: { path: string; data: string }[]): IHostFileSystem {
     return {
@@ -314,23 +314,23 @@ describe('AgentTaskService — spill target pinning', () => {
     } as unknown as IHostFileSystem;
   }
 
-  function fakeRuntime(fs: IHostFileSystem, tempDir: string): Runtime {
+  function fakeEnvironment(fs: IHostFileSystem, tempDir: string): Environment {
     return {
-      identity: { workspaceId: 'workspace-1', runtimeId: 'remote', generation: 'test' },
+      identity: { workspaceId: 'workspace-1', environmentId: 'remote', generation: 'test' },
       capabilities: new Set(['fs'] as const),
-      environment: { tempDir },
+      host: { tempDir },
       path: posixPath,
       workspace: { mapRoots: (roots: { workDir: string }) => roots },
       fs,
       status: 'ready',
       onDidChangeStatus: () => ({ dispose: () => {} }),
       dispose: () => {},
-    } as unknown as Runtime;
+    } as unknown as Environment;
   }
 
-  function runtimeService(): IAgentRuntimeService {
-    const lease = (): RuntimeLease => ({
-      runtime: currentRuntime,
+  function environmentService(): IAgentEnvironmentService {
+    const lease = (): EnvironmentLease => ({
+      environment: currentEnvironment,
       track: <T extends { dispose(): void | Promise<void> }>(resource: T): T => resource,
       dispose: () => {},
     });
@@ -338,7 +338,7 @@ describe('AgentTaskService — spill target pinning', () => {
       _serviceBrand: undefined,
       onDidChange: () => ({ dispose: () => {} }),
       isAvailable: () => true,
-      inspect: () => currentRuntime,
+      inspect: () => currentEnvironment,
       acquire: lease,
       acquireWhenReady: async () => lease(),
       reconnect: async () => {},
@@ -351,7 +351,7 @@ describe('AgentTaskService — spill target pinning', () => {
     const fixtureCtx = createTestAgent(
       homeDirServices(homedir),
       taskServices(),
-      agentService(IAgentRuntimeService, runtimeService()),
+      agentService(IAgentEnvironmentService, environmentService()),
     );
     return {
       ctx: fixtureCtx,
@@ -396,9 +396,9 @@ describe('AgentTaskService — spill target pinning', () => {
     sessionDir = mkdtempSync(join(tmpdir(), 'bpm-spill-pin-'));
     writesA = [];
     writesB = [];
-    runtimeA = fakeRuntime(recordingFs(writesA), '/remote-a/tmp');
-    runtimeB = fakeRuntime(recordingFs(writesB), '/remote-b/tmp');
-    currentRuntime = runtimeA;
+    environmentA = fakeEnvironment(recordingFs(writesA), '/remote-a/tmp');
+    environmentB = fakeEnvironment(recordingFs(writesB), '/remote-b/tmp');
+    currentEnvironment = environmentA;
     const fixture = createSpillTaskService(sessionDir);
     ctx = fixture.ctx;
     manager = fixture.manager;
@@ -415,7 +415,7 @@ describe('AgentTaskService — spill target pinning', () => {
     }
   });
 
-  it('keeps appending to the original runtime after a switch and reports its path across a restart', async () => {
+  it('keeps appending to the original environment after a switch and reports its path across a restart', async () => {
     const { proc, push, end } = controllableProcess();
     const taskId = registerProcess(manager, proc, 'tail -f', 'spill pinning');
 
@@ -424,7 +424,7 @@ describe('AgentTaskService — spill target pinning', () => {
     await manager.getOutputSnapshot(taskId, 1_000);
     expect(writesA).toEqual([{ path: `${dirA}/${taskId}.log`, data: 'first\n' }]);
 
-    currentRuntime = runtimeB;
+    currentEnvironment = environmentB;
     push('second\n');
     await waitForOutput(manager, taskId, 'second');
     const snapshot = await manager.getOutputSnapshot(taskId, 1_000);

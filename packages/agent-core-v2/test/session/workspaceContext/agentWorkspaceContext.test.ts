@@ -3,11 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { Emitter } from '#/_base/event';
 import type { ISessionEventBus } from '#/app/event/eventBus';
 import type { IFlagService } from '#/app/flag/flag';
-import { AgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import type { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
-import type { RuntimeBinding } from '#/runtime/runtime';
-import { RuntimeRegistry } from '#/runtime/runtimeRegistry';
+import { AgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import type { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
+import type { EnvironmentBinding } from '#/environment/environment';
+import { EnvironmentRegistry } from '#/environment/environmentRegistry';
 import { AgentWorkspaceContextService } from '#/session/workspaceContext/agentWorkspaceContextService';
 import { makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { SessionStateService } from '#/session/state/sessionStateService';
@@ -20,18 +20,18 @@ import { stubAgentContext } from '../../agent/agentContext/stubs';
 
 interface AgentHarness {
   readonly shadow: AgentWorkspaceContextService;
-  readonly binding: IAgentRuntimeBindingService & { apply(next: RuntimeBinding): void };
+  readonly binding: IAgentEnvironmentBindingService & { apply(next: EnvironmentBinding): void };
   readonly publishBus: (type: string, event: { readonly agentId?: string }) => void;
 }
 
 function setup(options: { readonly flagOn?: boolean; readonly sessionCwd?: string } = {}) {
-  const registry = new RuntimeRegistry('workspace');
-  registry.register(Object.assign(new FakeRuntime(
-    { workspaceId: 'workspace', runtimeId: 'local', generation: 'local-one' },
+  const registry = new EnvironmentRegistry('workspace');
+  registry.register(Object.assign(new FakeEnvironment(
+    { workspaceId: 'workspace', environmentId: 'local', generation: 'local-one' },
     { capabilities: ['fs', 'process'] },
   ), { fs: {}, process: {} }));
-  registry.register(Object.assign(new FakeRuntime(
-    { workspaceId: 'workspace', runtimeId: 'remote', generation: 'remote-one' },
+  registry.register(Object.assign(new FakeEnvironment(
+    { workspaceId: 'workspace', environmentId: 'remote', generation: 'remote-one' },
     { capabilities: ['fs', 'process'] },
   ), { fs: {}, process: {} }));
   const sessionState = new SessionStateService();
@@ -52,7 +52,7 @@ function setup(options: { readonly flagOn?: boolean; readonly sessionCwd?: strin
   const workspaces = {
     _serviceBrand: undefined,
     onDidChange: () => ({ dispose: () => {} }),
-    get: () => ({ runtimes: registry }),
+    get: () => ({ environments: registry }),
   } as unknown as IWorkspaceInstanceManager;
   const busHandlers = new Map<string, ((event: { readonly agentId?: string }) => void)[]>();
   const eventBus = {
@@ -67,8 +67,8 @@ function setup(options: { readonly flagOn?: boolean; readonly sessionCwd?: strin
     for (const handler of busHandlers.get(type) ?? []) handler(event);
   };
 
-  function agent(agentId: string, initial: RuntimeBinding): AgentHarness {
-    const bindingEmitter = new Emitter<RuntimeBinding>();
+  function agent(agentId: string, initial: EnvironmentBinding): AgentHarness {
+    const bindingEmitter = new Emitter<EnvironmentBinding>();
     let current = initial;
     const binding = {
       _serviceBrand: undefined,
@@ -77,25 +77,25 @@ function setup(options: { readonly flagOn?: boolean; readonly sessionCwd?: strin
         return current;
       },
       get: () => current,
-      apply(next: RuntimeBinding) {
+      apply(next: EnvironmentBinding) {
         current = next;
         bindingEmitter.fire(next);
       },
-    } as unknown as IAgentRuntimeBindingService & { apply(next: RuntimeBinding): void };
+    } as unknown as IAgentEnvironmentBindingService & { apply(next: EnvironmentBinding): void };
     const scopeContext = {
       _serviceBrand: undefined,
       agentId,
       agentContext: stubAgentContext(agentId, 1),
       scope: (subKey?: string) => subKey ?? '',
     };
-    const runtime = new AgentRuntimeService(scopeContext, binding, {
+    const environment = new AgentEnvironmentService(scopeContext, binding, {
       _serviceBrand: undefined,
-      inspect: (b: RuntimeBinding) => registry.inspect(b),
-      acquire: (b: RuntimeBinding, required?: never) => registry.acquire(b, required),
-      acquireWhenReady: (b: RuntimeBinding, required?: never) => registry.acquireWhenReady(b, required),
+      inspect: (b: EnvironmentBinding) => registry.inspect(b),
+      acquire: (b: EnvironmentBinding, required?: never) => registry.acquire(b, required),
+      acquireWhenReady: (b: EnvironmentBinding, required?: never) => registry.acquireWhenReady(b, required),
     }, workspaces, eventBus, session, sessionState, flags);
     const shadow = new AgentWorkspaceContextService(sessionState, {
-      current: runtime,
+      current: environment,
       onDidChange: () => ({ dispose: () => {} }),
     });
     return { shadow, binding, publishBus };
@@ -113,7 +113,7 @@ function setup(options: { readonly flagOn?: boolean; readonly sessionCwd?: strin
 describe('AgentWorkspaceContextService', () => {
   it('passes the shared session workDir through when the flag is off', () => {
     const { agent, sessionState } = setup({ flagOn: false });
-    const main = agent('main', { workspaceId: 'workspace', runtimeId: 'local' });
+    const main = agent('main', { workspaceId: 'workspace', environmentId: 'local' });
 
     expect(main.shadow.workDir).toBe('/workspace');
     expect(main.shadow.additionalDirs).toEqual(['/extra']);
@@ -121,19 +121,19 @@ describe('AgentWorkspaceContextService', () => {
     sessionState.set(workspaceContextWorkDirKey, '/switched');
     expect(main.shadow.workDir).toBe('/switched');
 
-    main.binding.apply({ workspaceId: 'workspace', runtimeId: 'remote', cwd: '/remote/work' });
+    main.binding.apply({ workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' });
     expect(main.shadow.workDir).toBe('/switched');
     expect(main.shadow.additionalDirs).toEqual(['/extra']);
   });
 
   it('derives the workDir from each agent binding when the flag is on', () => {
     const { agent } = setup({ flagOn: true });
-    const main = agent('main', { workspaceId: 'workspace', runtimeId: 'local' });
-    const sub = agent('agent-1', { workspaceId: 'workspace', runtimeId: 'local' });
+    const main = agent('main', { workspaceId: 'workspace', environmentId: 'local' });
+    const sub = agent('agent-1', { workspaceId: 'workspace', environmentId: 'local' });
 
     expect(main.shadow.workDir).toBe('/workspace');
 
-    main.binding.apply({ workspaceId: 'workspace', runtimeId: 'remote', cwd: '/remote/work' });
+    main.binding.apply({ workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' });
     expect(main.shadow.workDir).toBe('/remote/work');
     expect(main.shadow.additionalDirs).toEqual([]);
 
@@ -143,10 +143,10 @@ describe('AgentWorkspaceContextService', () => {
 
   it('keeps a sub-agent on its own inherited binding cwd after the main agent switches', () => {
     const { agent } = setup({ flagOn: true });
-    const main = agent('main', { workspaceId: 'workspace', runtimeId: 'local', cwd: '/workspace' });
-    const sub = agent('agent-1', { workspaceId: 'workspace', runtimeId: 'local', cwd: '/workspace' });
+    const main = agent('main', { workspaceId: 'workspace', environmentId: 'local', cwd: '/workspace' });
+    const sub = agent('agent-1', { workspaceId: 'workspace', environmentId: 'local', cwd: '/workspace' });
 
-    main.binding.apply({ workspaceId: 'workspace', runtimeId: 'remote', cwd: '/remote/work' });
+    main.binding.apply({ workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' });
 
     expect(main.shadow.workDir).toBe('/remote/work');
     expect(sub.shadow.workDir).toBe('/workspace');
@@ -154,10 +154,10 @@ describe('AgentWorkspaceContextService', () => {
 
   it('pins the derived roots to the turn snapshot until the turn ends', () => {
     const { agent } = setup({ flagOn: true });
-    const main = agent('main', { workspaceId: 'workspace', runtimeId: 'local' });
+    const main = agent('main', { workspaceId: 'workspace', environmentId: 'local' });
 
     main.publishBus('turn.started', { agentId: 'main' });
-    main.binding.apply({ workspaceId: 'workspace', runtimeId: 'remote', cwd: '/remote/work' });
+    main.binding.apply({ workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' });
     expect(main.shadow.workDir).toBe('/workspace');
 
     main.publishBus('turn.ended', { agentId: 'main' });
@@ -166,7 +166,7 @@ describe('AgentWorkspaceContextService', () => {
 
   it('resolves and guards paths against the derived roots', () => {
     const { agent } = setup({ flagOn: true });
-    const main = agent('main', { workspaceId: 'workspace', runtimeId: 'remote', cwd: '/remote/work' });
+    const main = agent('main', { workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' });
 
     expect(main.shadow.resolve('src/index.ts')).toBe('/remote/work/src/index.ts');
     expect(main.shadow.isWithin('/remote/work/src')).toBe(true);
@@ -176,7 +176,7 @@ describe('AgentWorkspaceContextService', () => {
 
   it('keeps setWorkDir writing the shared session state', () => {
     const { agent, sessionState } = setup({ flagOn: true });
-    const main = agent('main', { workspaceId: 'workspace', runtimeId: 'local' });
+    const main = agent('main', { workspaceId: 'workspace', environmentId: 'local' });
 
     main.shadow.setWorkDir('/pushed');
     expect(sessionState.get(workspaceContextWorkDirKey)).toBe('/pushed');

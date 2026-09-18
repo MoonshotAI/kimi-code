@@ -5,8 +5,8 @@ import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
-import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
+import { IAgentEnvironmentService, inspectAgentEnvironment } from '#/agent/environmentBinding/agentEnvironment';
+import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { getShellPathBridge } from '#/_base/execEnv/shellPathBridge';
 import {
@@ -99,7 +99,7 @@ export class BashTool implements IBashTool {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(BashInputSchema);
 
   constructor(
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @ISessionContext private readonly ctx: ISessionContext,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
@@ -126,7 +126,7 @@ export class BashTool implements IBashTool {
   }
 
   get description(): string {
-    const renderedDescription = renderBashDescription(inspectAgentRuntime(this.runtime).environment.shellName);
+    const renderedDescription = renderBashDescription(inspectAgentEnvironment(this.environment).host.shellName);
     if (!this.allowBackground()) return withoutBackgroundDescription(renderedDescription);
     if (!this.autoBackgroundOnTimeout()) {
       return withoutAutoBackgroundOnTimeout(renderedDescription);
@@ -156,7 +156,7 @@ export class BashTool implements IBashTool {
 
   private executionCwd(args: BashInput): string {
     try {
-      const view = new RuntimeWorkspaceView(inspectAgentRuntime(this.runtime), this.workspaceCtx);
+      const view = new EnvironmentWorkspaceView(inspectAgentEnvironment(this.environment), this.workspaceCtx);
       return view.resolve(args.cwd ?? view.workDir);
     } catch {
       return args.cwd ?? this.ctx.cwd;
@@ -193,11 +193,11 @@ export class BashTool implements IBashTool {
 
     const startsInBackground = args.run_in_background === true;
     const foregroundTimeoutMs = normalizeTimeoutMs(args.timeout, false);
-    const lease = this.runtime.isAvailable(['process'])
-      ? this.runtime.acquire(['process'])
-      : await this.runtime.acquireWhenReady(['process']);
-    const view = new RuntimeWorkspaceView(lease.runtime, this.workspaceCtx);
-    const env = lease.runtime.environment;
+    const lease = this.environment.isAvailable(['process'])
+      ? this.environment.acquire(['process'])
+      : await this.environment.acquireWhenReady(['process']);
+    const view = new EnvironmentWorkspaceView(lease.environment, this.workspaceCtx);
+    const env = lease.environment.host;
     const command = env.osKind === 'Windows' ? rewriteWindowsNullRedirect(args.command) : args.command;
     const effectiveCwd = view.resolve(args.cwd ?? view.workDir);
     const description = startsInBackground ? args.description!.trim() : foregroundDescription(args);
@@ -210,7 +210,7 @@ export class BashTool implements IBashTool {
     const builder = new ToolOutputAccumulator();
     let proc: IHostProcess;
     try {
-      proc = lease.track(await this.spawn(lease.runtime.process!, env, effectiveCwd, command));
+      proc = lease.track(await this.spawn(lease.environment.process!, env, effectiveCwd, command));
     } catch (error) {
       lease.dispose();
       return {
@@ -450,7 +450,7 @@ export class BashTool implements IBashTool {
 registerAgentToolService(IBashTool, BashTool, {
   name: 'Bash',
   domain: 'os/backends',
-  requiredRuntimeCapabilities: ['process'],
+  requiredEnvironmentCapabilities: ['process'],
 });
 
 function formatTimeoutLabel(timeoutMs: number): string {

@@ -25,7 +25,7 @@ import {
   type PermissionRule,
 } from '#/agent/permissionRules/permissionRules';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IConfigService } from '#/app/config/config';
 import { PERMISSION_SECTION } from '#/agent/permissionRules/configSection';
 import { IBashParserService } from '#/app/bashParser/bashParser';
@@ -88,20 +88,20 @@ describe('AgentPermissionPolicyService chain', () => {
         }));
         reg.defineInstance(ISessionWorkspaceContext, workspace.stub);
         reg.defineInstance(IHostEnvironment, kaosStub());
-        reg.defineInstance(IAgentRuntimeService, {
+        reg.defineInstance(IAgentEnvironmentService, {
           _serviceBrand: undefined,
           onDidChange: () => ({ dispose: () => {} }),
           isAvailable: () => true,
-          inspect() { return (this as IAgentRuntimeService).acquire().runtime; },
+          inspect() { return (this as IAgentEnvironmentService).acquire().environment; },
           acquire: () => ({
             track: (resource) => resource,
-            runtime: {
-              identity: { workspaceId: 'test', runtimeId: 'local', generation: 'test' },
+            environment: {
+              identity: { workspaceId: 'test', environmentId: 'local', generation: 'test' },
               capabilities: new Set(),
               status: 'ready',
               onDidChangeStatus: () => ({ dispose: () => {} }),
               dispose: () => {},
-              environment: { pathClass: 'posix' } as never,
+              host: { pathClass: 'posix' } as never,
               path: {
                 separator: '/',
                 delimiter: ':',
@@ -116,7 +116,7 @@ describe('AgentPermissionPolicyService chain', () => {
             },
             dispose: () => {},
           }),
-          acquireWhenReady() { return Promise.resolve((this as IAgentRuntimeService).acquire()); },
+          acquireWhenReady() { return Promise.resolve((this as IAgentEnvironmentService).acquire()); },
           reconnect: async () => {},
           workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
         });
@@ -497,20 +497,20 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
         reg.definePartialInstance(IAgentPermissionRulesService, permissionRulesStub());
         reg.defineInstance(ISessionWorkspaceContext, workspace.stub);
         reg.defineInstance(IHostEnvironment, kaosStub());
-        reg.defineInstance(IAgentRuntimeService, {
+        reg.defineInstance(IAgentEnvironmentService, {
           _serviceBrand: undefined,
           onDidChange: () => ({ dispose: () => {} }),
           isAvailable: () => true,
-          inspect() { return (this as IAgentRuntimeService).acquire().runtime; },
+          inspect() { return (this as IAgentEnvironmentService).acquire().environment; },
           acquire: () => ({
             track: (resource) => resource,
-            runtime: {
-              identity: { workspaceId: 'test', runtimeId: 'local', generation: 'test' },
+            environment: {
+              identity: { workspaceId: 'test', environmentId: 'local', generation: 'test' },
               capabilities: new Set(),
               status: 'ready',
               onDidChangeStatus: () => ({ dispose: () => {} }),
               dispose: () => {},
-              environment: { pathClass: 'posix' } as never,
+              host: { pathClass: 'posix' } as never,
               path: {
                 separator: '/',
                 delimiter: ':',
@@ -526,7 +526,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
             },
             dispose: () => {},
           }),
-          acquireWhenReady() { return Promise.resolve((this as IAgentRuntimeService).acquire()); },
+          acquireWhenReady() { return Promise.resolve((this as IAgentEnvironmentService).acquire()); },
           reconnect: async () => {},
           workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
         });

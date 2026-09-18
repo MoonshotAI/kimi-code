@@ -35,8 +35,8 @@ import {
 } from '@moonshot-ai/kimi-code-oauth';
 import {
   CdnExecutorArtifactLocator,
-  RemoteRuntimeProviderFactory,
-  type RemoteRuntimeProviderFactoryOptions,
+  RemoteEnvironmentProviderFactory,
+  type RemoteEnvironmentProviderFactoryOptions,
 } from '@moonshot-ai/remote-exec';
 import { createAsyncApiDocument } from './protocol/asyncapi';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -146,15 +146,15 @@ export interface RunningServer {
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 58627;
 
-export interface CreateRemoteRuntimeProviderOptionsInput {
+export interface CreateRemoteEnvironmentProviderOptionsInput {
   readonly region: KimiRegion;
   readonly clientVersion: string;
   readonly onDiagnostic: (line: string) => void;
 }
 
-export function createRemoteRuntimeProviderOptions(
-  input: CreateRemoteRuntimeProviderOptionsInput,
-): RemoteRuntimeProviderFactoryOptions {
+export function createRemoteEnvironmentProviderOptions(
+  input: CreateRemoteEnvironmentProviderOptionsInput,
+): RemoteEnvironmentProviderFactoryOptions {
   return {
     clientName: 'kimi-code',
     clientVersion: input.clientVersion,
@@ -249,9 +249,9 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     },
     [...logSeed(logging), ...(opts.seeds ?? [])],
   );
-  const remoteRuntimeProvider = await core.accessor.get(IWorkspaceInstanceManager).addProvider(
-    new RemoteRuntimeProviderFactory(
-      createRemoteRuntimeProviderOptions({
+  const remoteEnvironmentProvider = await core.accessor.get(IWorkspaceInstanceManager).addProvider(
+    new RemoteEnvironmentProviderFactory(
+      createRemoteEnvironmentProviderOptions({
         region: core.accessor.get(IOAuthService).getRegion(),
         clientVersion: serverVersion,
         onDiagnostic: (line) => {
@@ -367,7 +367,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       await core.accessor.get(ISessionIndexMirror).drain();
       await core.accessor.get(IMcpOAuthService).shutdown();
       const appendLogStore = core.accessor.get(IAppendLogStore);
-      await remoteRuntimeProvider.dispose();
+      await remoteEnvironmentProvider.dispose();
       core.dispose();
       await appendLogStore.drainRetirements();
       await drainSessionIndexMirror();

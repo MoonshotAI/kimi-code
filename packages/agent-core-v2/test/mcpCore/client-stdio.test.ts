@@ -8,7 +8,7 @@ import { Error2 } from '#/errors';
 import { mergeStdioEnv, StdioMcpClient, type StdioMcpClientOptions } from '#/mcpCore/client-stdio';
 import type { McpServerStdioConfig } from '#/mcpCore/config-schema';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
 
 import {
   crashAfterConnectFixture,
@@ -21,30 +21,30 @@ function createClient(
   config: McpServerStdioConfig,
   options: Partial<StdioMcpClientOptions> = {},
 ): StdioMcpClient {
-  const runtime = Object.assign(
-    new FakeRuntime(
-      { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+  const environment = Object.assign(
+    new FakeEnvironment(
+      { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
       { capabilities: ['process'] },
     ),
     { process: new HostProcessService() },
   );
   return new StdioMcpClient(config, {
-    runtimeResolver: {
+    environmentResolver: {
       _serviceBrand: undefined,
-      inspect: () => runtime,
+      inspect: () => environment,
       acquire: () => ({
-        runtime,
+        environment,
         track: (resource) => resource,
         dispose: () => {},
       }),
       acquireWhenReady: async () => ({
-        runtime,
+        environment,
         track: (resource) => resource,
         dispose: () => {},
       }),
     },
     workspaceId: 'workspace',
-    runtimeId: 'local',
+    environmentId: 'local',
     defaultCwd: process.cwd(),
     ...options,
   });

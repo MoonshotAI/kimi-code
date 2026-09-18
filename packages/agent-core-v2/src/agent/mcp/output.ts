@@ -20,12 +20,12 @@ import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { buildDaemonFileUrl, mediaExtensionForMime } from '#/agent/media/mediaRef';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { MCPContentBlock, MCPToolResult } from '#/mcpCore/types';
-import type { RuntimePath } from '#/runtime/runtime';
+import type { EnvironmentPath } from '#/environment/environment';
 
 export interface McpOriginalsTarget {
   readonly fs: IHostFileSystem;
   readonly dir: string;
-  readonly path?: RuntimePath;
+  readonly path?: EnvironmentPath;
 }
 
 export interface McpOutputOptions {

@@ -7,7 +7,7 @@ import {
   type AgentActorRestoreEvent,
 } from '#/agent/actorService/agentActorService';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
+import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import type {
@@ -70,7 +70,7 @@ const dateChangeInjection = fromCallback(({
   const sessionContext = runtime.get(ISessionContext);
   const bindingCwd = (): string | undefined => {
     try {
-      return runtime.get(IAgentRuntimeBindingService).current.cwd;
+      return runtime.get(IAgentEnvironmentBindingService).current.cwd;
     } catch {
       return undefined;
     }

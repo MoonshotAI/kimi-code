@@ -39,10 +39,10 @@ import { IHostProcessService } from '#/os/interface/hostProcess';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { WorkspaceInstance } from '#/workspace/workspaceInstance/workspaceInstance';
 import {
-  IRuntimeResolver,
+  IEnvironmentResolver,
   IWorkspaceInstanceManager,
 } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
@@ -100,9 +100,9 @@ describe('McpManagementService', () => {
     );
     findContaining = vi.fn<IWorkspaceInstanceManager['findContaining']>(() => undefined);
     const hostProcess = new HostProcessService();
-    const runtime = Object.assign(
-      new FakeRuntime(
-        { workspaceId: 'test-workspace', runtimeId: 'local', generation: 'test-generation' },
+    const environment = Object.assign(
+      new FakeEnvironment(
+        { workspaceId: 'test-workspace', environmentId: 'local', generation: 'test-generation' },
         { capabilities: ['process'] },
       ),
       { process: hostProcess },
@@ -147,11 +147,11 @@ describe('McpManagementService', () => {
           resolved: () => identityReady,
           current: () => identitySnapshot,
         });
-        reg.defineInstance(IRuntimeResolver, {
+        reg.defineInstance(IEnvironmentResolver, {
           _serviceBrand: undefined,
-          inspect: () => runtime,
-          acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
-          acquireWhenReady: async () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
+          inspect: () => environment,
+          acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
+          acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
         });
         reg.definePartialInstance(IWorkspaceInstanceManager, { findContaining, getOrCreate });
         reg.defineInstance(ILogService, stubLog());
@@ -726,7 +726,7 @@ describe('McpManagementService', () => {
       expect(getOrCreate).not.toHaveBeenCalled();
     }, 20000);
 
-    it('probes a nested cwd against the containing workspace runtimes', async () => {
+    it('probes a nested cwd against the containing workspace environments', async () => {
       const cwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-management-nested-'));
       tempDirs.push(cwd);
       findContaining.mockReturnValue({ id: 'test-workspace' } as unknown as WorkspaceInstance);
@@ -747,7 +747,7 @@ describe('McpManagementService', () => {
       expect(getOrCreate).not.toHaveBeenCalled();
     }, 20000);
 
-    it('rejects a non-local runtime_id probe when no workspace contains the cwd', async () => {
+    it('rejects a non-local environment_id probe when no workspace contains the cwd', async () => {
       const cwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-management-remote-miss-'));
       tempDirs.push(cwd);
 
@@ -758,19 +758,19 @@ describe('McpManagementService', () => {
             transport: 'stdio',
             command: process.execPath,
             args: [stdioFixture],
-            runtime_id: 'remote',
+            environment_id: 'remote',
           },
           cwd,
         }),
       ).rejects.toMatchObject({
         code: ErrorCodes.REQUEST_INVALID,
-        message: expect.stringContaining('runtime_id "remote"'),
+        message: expect.stringContaining('environment_id "remote"'),
       });
       expect(findContaining).toHaveBeenCalledWith(cwd);
       expect(getOrCreate).not.toHaveBeenCalled();
     });
 
-    it('probes a non-local runtime_id through the containing workspace', async () => {
+    it('probes a non-local environment_id through the containing workspace', async () => {
       const cwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-management-remote-hit-'));
       tempDirs.push(cwd);
       findContaining.mockReturnValue({ id: 'test-workspace' } as unknown as WorkspaceInstance);
@@ -781,7 +781,7 @@ describe('McpManagementService', () => {
           transport: 'stdio',
           command: process.execPath,
           args: [stdioFixture],
-          runtime_id: 'remote',
+          environment_id: 'remote',
         },
         cwd,
       });
@@ -791,7 +791,7 @@ describe('McpManagementService', () => {
       expect(getOrCreate).not.toHaveBeenCalled();
     }, 20000);
 
-    it('keeps the transient local probe for an explicit local runtime_id', async () => {
+    it('keeps the transient local probe for an explicit local environment_id', async () => {
       const cwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-management-local-explicit-'));
       tempDirs.push(cwd);
 
@@ -801,7 +801,7 @@ describe('McpManagementService', () => {
           transport: 'stdio',
           command: process.execPath,
           args: [stdioFixture],
-          runtime_id: 'local',
+          environment_id: 'local',
         },
         cwd,
       });

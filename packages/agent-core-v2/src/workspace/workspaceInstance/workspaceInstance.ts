@@ -1,8 +1,8 @@
 import type { Workspace } from '#/app/workspace/workspace';
 import { Program, type ProgramSnapshot } from '#/program/program';
 import type { ProgramDependencies } from '#/program/programDependencies';
-import type { RuntimeRegistry, RuntimeRegistrySnapshot } from '#/runtime/runtimeRegistry';
-import type { RuntimeUnitHost } from '#/runtime/runtimeUnitHost';
+import type { EnvironmentRegistry, EnvironmentRegistrySnapshot } from '#/environment/environmentRegistry';
+import type { EnvironmentUnitHost } from '#/environment/environmentUnitHost';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 
 export type WorkspaceInstanceLifecycle = 'materializing' | 'active' | 'closing' | 'disposed';
@@ -11,25 +11,25 @@ export interface WorkspaceInstanceSnapshot {
   readonly metadata: Workspace;
   readonly lifecycle: WorkspaceInstanceLifecycle;
   readonly program: ProgramSnapshot;
-  readonly runtimes: RuntimeRegistrySnapshot;
+  readonly environments: EnvironmentRegistrySnapshot;
 }
 
 export class WorkspaceInstance {
-  readonly runtimes: RuntimeRegistry;
-  readonly unitHost: RuntimeUnitHost;
+  readonly environments: EnvironmentRegistry;
+  readonly unitHost: EnvironmentUnitHost;
   readonly program: Program;
   private lifecycle: WorkspaceInstanceLifecycle = 'materializing';
 
   constructor(
     readonly metadata: Workspace,
-    runtimes: RuntimeRegistry,
-    unitHost: RuntimeUnitHost,
+    environments: EnvironmentRegistry,
+    unitHost: EnvironmentUnitHost,
     context: IWorkspaceContext,
     dependencies: ProgramDependencies,
   ) {
-    this.runtimes = runtimes;
+    this.environments = environments;
     this.unitHost = unitHost;
-    this.program = new Program(metadata.id, this.runtimes, context, dependencies);
+    this.program = new Program(metadata.id, this.environments, context, dependencies);
   }
 
   get id(): string {
@@ -49,7 +49,7 @@ export class WorkspaceInstance {
       metadata: this.metadata,
       lifecycle: this.lifecycle,
       program: this.program.snapshot(),
-      runtimes: this.runtimes.snapshot(),
+      environments: this.environments.snapshot(),
     };
   }
 
@@ -58,7 +58,7 @@ export class WorkspaceInstance {
     this.lifecycle = 'closing';
     this.program.dispose();
     await this.unitHost.dispose();
-    await this.runtimes.dispose();
+    await this.environments.dispose();
     this.lifecycle = 'disposed';
   }
 }

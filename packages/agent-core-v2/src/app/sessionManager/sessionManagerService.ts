@@ -11,12 +11,12 @@ import { ILogService } from '#/_base/log/log';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { RuntimeSetBinding } from '#/agent/runtimeBinding/runtimeBindingOps';
-import { REMOTE_RUNTIME_FLAG_ID } from '#/runtime/flag';
-import { LOCAL_RUNTIME_ID, type RuntimeBinding } from '#/runtime/runtime';
-import { resolveWorkspaceRuntimeDeclarations } from '#/runtime/runtimeDeclarations';
-import type { RuntimeDeclarationSet } from '#/runtime/remoteRuntimeDeclaration';
-import { RuntimeError, runtimeStatusAllows } from '#/runtime/runtimeRegistry';
+import { EnvironmentSetBinding } from '#/agent/environmentBinding/environmentBindingOps';
+import { REMOTE_RUNTIME_FLAG_ID } from '#/environment/flag';
+import { LOCAL_ENVIRONMENT_ID, type EnvironmentBinding } from '#/environment/environment';
+import { resolveWorkspaceEnvironmentDeclarations } from '#/environment/environmentDeclarations';
+import type { EnvironmentDeclarationSet } from '#/environment/remoteEnvironmentDeclaration';
+import { EnvironmentError, environmentStatusAllows } from '#/environment/environmentRegistry';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
@@ -57,7 +57,7 @@ interface SessionControllerEntry {
 interface LocatedSession {
   readonly controller: SessionLifecycleService;
   readonly workspace?: WorkspaceInstance;
-  readonly persistedBinding?: RuntimeBinding;
+  readonly persistedBinding?: EnvironmentBinding;
 }
 
 export class SessionManager implements ISessionManager {
@@ -102,103 +102,103 @@ export class SessionManager implements ISessionManager {
         ? { root: options.workDir }
         : { workspaceId: options.workspaceId, root: options.workDir },
     );
-    const declarations = await this.workspaceRuntimeDeclarations(workspace);
+    const declarations = await this.workspaceEnvironmentDeclarations(workspace);
     const declared =
-      options.runtimeId === undefined || options.runtimeId === LOCAL_RUNTIME_ID
+      options.environmentId === undefined || options.environmentId === LOCAL_ENVIRONMENT_ID
         ? undefined
-        : declarations?.entries.find((entry) => entry.id === options.runtimeId);
-    if (options.runtimeId !== undefined && options.runtimeId !== LOCAL_RUNTIME_ID && declarations !== undefined) {
+        : declarations?.entries.find((entry) => entry.id === options.environmentId);
+    if (options.environmentId !== undefined && options.environmentId !== LOCAL_ENVIRONMENT_ID && declarations !== undefined) {
       if (declared === undefined) {
         throw new Error2(
           ErrorCodes.CONFIG_INVALID,
-          `runtime "${options.runtimeId}" is not declared in [runtimes]`,
+          `environment "${options.environmentId}" is not declared in [environments]`,
         );
       }
-      if (options.runtimeCwd === undefined && declared.entry.defaultCwd === undefined) {
+      if (options.environmentCwd === undefined && declared.entry.defaultCwd === undefined) {
         throw new Error2(
           ErrorCodes.CONFIG_INVALID,
-          `runtime "${options.runtimeId}" does not set defaultCwd in [runtimes]`,
+          `environment "${options.environmentId}" does not set defaultCwd in [environments]`,
         );
       }
     }
-    const resolved = options.runtimeId === undefined ? declarations?.default : undefined;
-    const runtimeId = options.runtimeId ?? resolved?.runtimeId;
-    const runtimeCwd = options.runtimeCwd ?? resolved?.cwd ?? declared?.entry.defaultCwd;
+    const resolved = options.environmentId === undefined ? declarations?.default : undefined;
+    const environmentId = options.environmentId ?? resolved?.environmentId;
+    const environmentCwd = options.environmentCwd ?? resolved?.cwd ?? declared?.entry.defaultCwd;
     const effective =
-      runtimeId === undefined && runtimeCwd === undefined
+      environmentId === undefined && environmentCwd === undefined
         ? options
-        : { ...options, runtimeId, runtimeCwd };
+        : { ...options, environmentId, environmentCwd };
     const create = async () => {
-      if (runtimeId !== undefined) await this.connectForCreate(workspace, runtimeId, runtimeCwd);
-      const controllerRuntimeId = this.selectControllerRuntimeId(workspace, runtimeId ?? LOCAL_RUNTIME_ID);
-      return this.controllerForWorkspace(workspace.id, controllerRuntimeId).create(effective);
+      if (environmentId !== undefined) await this.connectForCreate(workspace, environmentId, environmentCwd);
+      const controllerEnvironmentId = this.selectControllerEnvironmentId(workspace, environmentId ?? LOCAL_ENVIRONMENT_ID);
+      return this.controllerForWorkspace(workspace.id, controllerEnvironmentId).create(effective);
     };
     if (options.sessionId === undefined) return create();
     return this.serializeLifecycle(options.sessionId, create);
   }
 
-  private async connectForCreate(workspace: WorkspaceInstance, runtimeId: string, runtimeCwd?: string): Promise<void> {
-    if (runtimeId === LOCAL_RUNTIME_ID || !this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) return;
-    let runtime = workspace.runtimes.current(runtimeId);
-    if (runtime === undefined) return;
-    if (!runtimeStatusAllows(runtime, ['fs', 'process'])) {
-      if (typeof runtime.connect !== 'function') {
-        throw new RuntimeError('runtime.unavailable', `runtime ${runtimeId} is ${runtime.status}`);
+  private async connectForCreate(workspace: WorkspaceInstance, environmentId: string, environmentCwd?: string): Promise<void> {
+    if (environmentId === LOCAL_ENVIRONMENT_ID || !this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) return;
+    let environment = workspace.environments.current(environmentId);
+    if (environment === undefined) return;
+    if (!environmentStatusAllows(environment, ['fs', 'process'])) {
+      if (typeof environment.connect !== 'function') {
+        throw new EnvironmentError('environment.unavailable', `environment ${environmentId} is ${environment.status}`);
       }
       try {
-        await runtime.connect();
+        await environment.connect();
       } catch (error) {
-        throw new RuntimeError(
-          'runtime.unavailable',
-          `failed to connect runtime ${runtimeId}: ${error instanceof Error ? error.message : String(error)}`,
+        throw new EnvironmentError(
+          'environment.unavailable',
+          `failed to connect environment ${environmentId}: ${error instanceof Error ? error.message : String(error)}`,
           { cause: error },
         );
       }
     }
-    if (runtimeCwd === undefined) return;
-    runtime = workspace.runtimes.current(runtimeId);
-    if (runtime === undefined || runtime.identity.cwd === runtimeCwd) return;
-    const lease = workspace.runtimes.acquire({ workspaceId: workspace.id, runtimeId }, ['fs']);
+    if (environmentCwd === undefined) return;
+    environment = workspace.environments.current(environmentId);
+    if (environment === undefined || environment.identity.cwd === environmentCwd) return;
+    const lease = workspace.environments.acquire({ workspaceId: workspace.id, environmentId }, ['fs']);
     try {
-      const stat = await lease.runtime.fs!.stat(runtimeCwd).catch((error: unknown) => {
-        throw new RuntimeError(
-          'runtime.invalid_cwd',
-          `cwd ${runtimeCwd} is not readable on runtime ${runtimeId}: ${error instanceof Error ? error.message : String(error)}`,
+      const stat = await lease.environment.fs!.stat(environmentCwd).catch((error: unknown) => {
+        throw new EnvironmentError(
+          'environment.invalid_cwd',
+          `cwd ${environmentCwd} is not readable on environment ${environmentId}: ${error instanceof Error ? error.message : String(error)}`,
         );
       });
       if (!stat.isDirectory) {
-        throw new RuntimeError('runtime.invalid_cwd', `cwd ${runtimeCwd} is not a directory on runtime ${runtimeId}`);
+        throw new EnvironmentError('environment.invalid_cwd', `cwd ${environmentCwd} is not a directory on environment ${environmentId}`);
       }
     } finally {
       lease.dispose();
     }
-    await workspace.runtimes.current(runtimeId)?.reroot?.(runtimeCwd);
+    await workspace.environments.current(environmentId)?.reroot?.(environmentCwd);
   }
 
-  private async workspaceRuntimeDeclarations(workspace: WorkspaceInstance): Promise<RuntimeDeclarationSet | undefined> {
+  private async workspaceEnvironmentDeclarations(workspace: WorkspaceInstance): Promise<EnvironmentDeclarationSet | undefined> {
     if (!this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) return undefined;
     try {
-      const declarations = await resolveWorkspaceRuntimeDeclarations({
+      const declarations = await resolveWorkspaceEnvironmentDeclarations({
         config: this.config,
         fs: this.fs,
         docs: this.docs,
         root: workspace.root,
       });
       if (declarations.projectError !== undefined) {
-        this.log.warn('project remote runtime declarations failed to load', { error: declarations.projectError });
+        this.log.warn('project remote environment declarations failed to load', { error: declarations.projectError });
       }
       return declarations;
     } catch (error) {
-      this.log.warn('remote runtime declaration resolution failed', { error });
+      this.log.warn('remote environment declaration resolution failed', { error });
       return undefined;
     }
   }
 
-  private selectControllerRuntimeId(workspace: WorkspaceInstance, runtimeId: string): string {
-    if (runtimeId === LOCAL_RUNTIME_ID) return LOCAL_RUNTIME_ID;
-    const runtime = workspace.runtimes.current(runtimeId);
-    if (runtime === undefined || !runtimeStatusAllows(runtime, ['fs', 'process'])) return LOCAL_RUNTIME_ID;
-    return runtimeId;
+  private selectControllerEnvironmentId(workspace: WorkspaceInstance, environmentId: string): string {
+    if (environmentId === LOCAL_ENVIRONMENT_ID) return LOCAL_ENVIRONMENT_ID;
+    const environment = workspace.environments.current(environmentId);
+    if (environment === undefined || !environmentStatusAllows(environment, ['fs', 'process'])) return LOCAL_ENVIRONMENT_ID;
+    return environmentId;
   }
 
   async resume(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined> {
@@ -373,14 +373,14 @@ export class SessionManager implements ISessionManager {
     this.didForkEmitter.dispose();
   }
 
-  private controllerForWorkspace(workspaceId: string, runtimeId: string = LOCAL_RUNTIME_ID): SessionLifecycleService {
+  private controllerForWorkspace(workspaceId: string, environmentId: string = LOCAL_ENVIRONMENT_ID): SessionLifecycleService {
     const workspace = this.workspaces.get(workspaceId);
     if (workspace === undefined) throw new Error(`workspace ${workspaceId} is not materialized`);
-    const key = `${workspaceId}\0${runtimeId}`;
-    const generation = workspace.program.sessionControllerGenerationFor(runtimeId);
+    const key = `${workspaceId}\0${environmentId}`;
+    const generation = workspace.program.sessionControllerGenerationFor(environmentId);
     const existing = this.controllers.get(key);
     if (existing?.generation === generation) return existing.controller;
-    const controller = workspace.program.createSessionController(runtimeId);
+    const controller = workspace.program.createSessionController(environmentId);
     const subscriptions = new DisposableStore();
     const entry: SessionControllerEntry = { generation, controller, subscriptions, sessionCount: 0 };
     subscriptions.add(controller.onWillCreateSession((event) => this.willCreateEmitter.fire(event)));
@@ -432,7 +432,7 @@ export class SessionManager implements ISessionManager {
     const workspace = await this.workspaces.getOrCreate({ workspaceId: summary.workspaceId, root: summary.cwd });
     const persistedBinding = await this.peekPersistedBinding(workspace.id, sessionId);
     return {
-      controller: this.controllerForWorkspace(workspace.id, this.selectControllerRuntimeId(workspace, persistedBinding?.runtimeId ?? LOCAL_RUNTIME_ID)),
+      controller: this.controllerForWorkspace(workspace.id, this.selectControllerEnvironmentId(workspace, persistedBinding?.environmentId ?? LOCAL_ENVIRONMENT_ID)),
       workspace,
       persistedBinding,
     };
@@ -440,38 +440,38 @@ export class SessionManager implements ISessionManager {
 
   private reconnectRestoredBinding(located: LocatedSession): void {
     const binding = located.persistedBinding;
-    if (located.workspace === undefined || binding === undefined || binding.runtimeId === LOCAL_RUNTIME_ID) return;
+    if (located.workspace === undefined || binding === undefined || binding.environmentId === LOCAL_ENVIRONMENT_ID) return;
     if (!this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) return;
-    const runtime = located.workspace.runtimes.current(binding.runtimeId);
-    if (runtime === undefined || runtimeStatusAllows(runtime, ['fs', 'process'])) return;
-    if (typeof runtime.connect !== 'function') return;
+    const environment = located.workspace.environments.current(binding.environmentId);
+    if (environment === undefined || environmentStatusAllows(environment, ['fs', 'process'])) return;
+    if (typeof environment.connect !== 'function') return;
     try {
       if (binding.cwd !== undefined) {
-        void runtime.reroot?.(binding.cwd)?.catch((error: unknown) => {
-          this.log.warn(`background reroot of restored runtime ${binding.runtimeId} failed`, { error });
+        void environment.reroot?.(binding.cwd)?.catch((error: unknown) => {
+          this.log.warn(`background reroot of restored environment ${binding.environmentId} failed`, { error });
         });
       }
-      void runtime.connect().catch((error: unknown) => {
-        this.log.warn(`background reconnect of restored runtime ${binding.runtimeId} failed`, { error });
+      void environment.connect().catch((error: unknown) => {
+        this.log.warn(`background reconnect of restored environment ${binding.environmentId} failed`, { error });
       });
     } catch (error) {
-      this.log.warn(`background reconnect of restored runtime ${binding.runtimeId} failed`, { error });
+      this.log.warn(`background reconnect of restored environment ${binding.environmentId} failed`, { error });
     }
   }
 
-  private async peekPersistedBinding(workspaceId: string, sessionId: string): Promise<RuntimeBinding | undefined> {
+  private async peekPersistedBinding(workspaceId: string, sessionId: string): Promise<EnvironmentBinding | undefined> {
     if (!this.flags.enabled(REMOTE_RUNTIME_FLAG_ID)) return undefined;
     try {
       const scope = agentScopeOf(
         sessionScopeOf(workspacePersistenceScope(this.bootstrap.scope('sessions'), workspaceId), sessionId),
         MAIN_AGENT_ID,
       );
-      let binding: RuntimeBinding | undefined;
+      let binding: EnvironmentBinding | undefined;
       for await (const record of this.appendLogStore.read<WireRecord>(scope, AGENT_WIRE_RECORD_KEY)) {
-        if (record.type === RuntimeSetBinding.type && typeof record['runtimeId'] === 'string') {
+        if (record.type === EnvironmentSetBinding.type && typeof record['environmentId'] === 'string') {
           binding = {
             workspaceId,
-            runtimeId: record['runtimeId'],
+            environmentId: record['environmentId'],
             cwd: typeof record['cwd'] === 'string' ? record['cwd'] : undefined,
           };
         }

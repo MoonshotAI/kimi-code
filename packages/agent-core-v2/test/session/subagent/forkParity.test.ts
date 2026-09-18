@@ -12,13 +12,13 @@ import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 import { IHostTerminalService } from '#/os/interface/terminal';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
-import { LocalRuntime } from '#/runtime/localRuntime';
+import { LocalEnvironment } from '#/environment/localEnvironment';
 import type {
-  Runtime,
-  RuntimeBinding,
-  RuntimeCapability,
-  RuntimeLease,
-} from '#/runtime/runtime';
+  Environment,
+  EnvironmentBinding,
+  EnvironmentCapability,
+  EnvironmentLease,
+} from '#/environment/environment';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IFlagService } from '#/app/flag/flag';
 import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
@@ -26,7 +26,7 @@ import { FORK_CONTEXT_NOTICE } from '#/session/subagent/spawn';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import {
-  IRuntimeResolver,
+  IEnvironmentResolver,
   IWorkspaceInstanceManager,
   type WorkspaceInstanceChange,
 } from '#/workspace/workspaceInstance/workspaceInstanceManager';
@@ -90,9 +90,9 @@ class ScopedAppendLogStore implements IAppendLogStore {
   }
 }
 
-class TestRuntimeResolver implements IRuntimeResolver {
+class TestEnvironmentResolver implements IEnvironmentResolver {
   declare readonly _serviceBrand: undefined;
-  private readonly runtime: LocalRuntime;
+  private readonly environment: LocalEnvironment;
 
   constructor(
     @IHostEnvironment environment: IHostEnvironment,
@@ -100,19 +100,19 @@ class TestRuntimeResolver implements IRuntimeResolver {
     @IHostProcessService processes: IHostProcessService,
     @IHostTerminalService terminal: IHostTerminalService,
   ) {
-    this.runtime = new LocalRuntime('test-workspace', environment, fs, processes, terminal);
+    this.environment = new LocalEnvironment('test-workspace', environment, fs, processes, terminal);
   }
 
-  inspect(_binding: RuntimeBinding): Runtime {
-    return this.runtime;
+  inspect(_binding: EnvironmentBinding): Environment {
+    return this.environment;
   }
 
-  acquire(_binding: RuntimeBinding, _required?: readonly RuntimeCapability[]): RuntimeLease {
-    return { runtime: this.runtime, track: (resource) => resource, dispose: () => {} };
+  acquire(_binding: EnvironmentBinding, _required?: readonly EnvironmentCapability[]): EnvironmentLease {
+    return { environment: this.environment, track: (resource) => resource, dispose: () => {} };
   }
 
-  acquireWhenReady(_binding: RuntimeBinding, _required?: readonly RuntimeCapability[]): Promise<RuntimeLease> {
-    return Promise.resolve({ runtime: this.runtime, track: (resource) => resource, dispose: () => {} });
+  acquireWhenReady(_binding: EnvironmentBinding, _required?: readonly EnvironmentCapability[]): Promise<EnvironmentLease> {
+    return Promise.resolve({ environment: this.environment, track: (resource) => resource, dispose: () => {} });
   }
 }
 
@@ -134,7 +134,7 @@ describe('fork subagent first-request parity', () => {
       appService(IAppendLogStore, store),
       appService(IFlagService, stubFlag((id) => id === SUBAGENT_FORK_FLAG_ID)),
       sessionServices((reg) => {
-        reg.defineDescriptor(IRuntimeResolver, new SyncDescriptor(TestRuntimeResolver));
+        reg.defineDescriptor(IEnvironmentResolver, new SyncDescriptor(TestEnvironmentResolver));
         reg.definePartialInstance(IWorkspaceInstanceManager, {
           onDidChange: Event.None as Event<WorkspaceInstanceChange>,
           get: () => undefined,

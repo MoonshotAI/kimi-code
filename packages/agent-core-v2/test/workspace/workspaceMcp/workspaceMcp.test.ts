@@ -25,14 +25,14 @@ import {
 } from '#/mcpCore/connection-manager';
 import { McpOAuthService, type McpOAuthEvent } from '#/mcpCore/oauth/service';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { ISessionEphemeralMcpServers } from '#/session/mcp/ephemeralMcpServers';
 import { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import type { SessionWillCreateEvent } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IEnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import {
   IWorkspaceMcpService,
   type ISessionMcpOverlay,
@@ -58,7 +58,7 @@ function stdioServer(): McpServerConfig {
     transport: 'stdio',
     command: process.execPath,
     args: [stdioFixture],
-    runtime_id: 'local',
+    environment_id: 'local',
   };
 }
 
@@ -117,18 +117,18 @@ describe('WorkspaceMcpService', () => {
         reg.definePartialInstance(IMcpOAuthService, oauthService);
         reg.defineInstance(ILogService, stubLog());
         reg.defineInstance(ITelemetryService, noopTelemetryService);
-        const runtime = Object.assign(
-          new FakeRuntime(
-            { workspaceId: 'test-workspace', runtimeId: 'local', generation: 'test-generation' },
+        const environment = Object.assign(
+          new FakeEnvironment(
+            { workspaceId: 'test-workspace', environmentId: 'local', generation: 'test-generation' },
             { capabilities: ['process'] },
           ),
           { process: new HostProcessService() },
         );
-        reg.defineInstance(IRuntimeResolver, {
+        reg.defineInstance(IEnvironmentResolver, {
           _serviceBrand: undefined,
-          inspect: () => runtime,
-          acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
-          acquireWhenReady: async () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
+          inspect: () => environment,
+          acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
+          acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
         });
         reg.definePartialInstance(ISessionManager, {
           onWillCreateSession: assemblyEvents.event,

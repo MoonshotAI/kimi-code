@@ -20,8 +20,8 @@ import {
 import { canonicalMcpOAuthResource } from '#/mcpCore/oauth/store';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostProcessService } from '#/os/interface/hostProcess';
-import { LocalRuntime } from '#/runtime/localRuntime';
-import { RuntimeRegistry } from '#/runtime/runtimeRegistry';
+import { LocalEnvironment } from '#/environment/localEnvironment';
+import { EnvironmentRegistry } from '#/environment/environmentRegistry';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IConfigService } from '#/app/config/config';
 import { MCP_SECTION, type McpSection } from '#/app/mcpConfig/configSection';
@@ -33,7 +33,7 @@ import {
   type McpRegistryQuery,
 } from '#/app/mcpRegistry/mcpRegistry';
 import {
-  IRuntimeResolver,
+  IEnvironmentResolver,
   IWorkspaceInstanceManager,
 } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
@@ -71,7 +71,7 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
     @IMcpOAuthService private readonly oauth: McpOAuthService,
     @IConfigService private readonly config: IConfigService,
     @IAgentIdentity private readonly identity: IAgentIdentity,
-    @IRuntimeResolver private readonly runtimeResolver: IRuntimeResolver,
+    @IEnvironmentResolver private readonly environmentResolver: IEnvironmentResolver,
     @IWorkspaceInstanceManager private readonly workspaceInstances: IWorkspaceInstanceManager,
     @IHostEnvironment private readonly hostEnvironment: IHostEnvironment,
     @IHostProcessService private readonly hostProcess: IHostProcessService,
@@ -181,26 +181,26 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
     const section = this.config.get<McpSection | undefined>(MCP_SECTION);
     let workspaceId: string | undefined;
     let stdioCwd = cwd;
-    let runtimeResolver = this.runtimeResolver;
-    let transientRuntimes: RuntimeRegistry | undefined;
+    let environmentResolver = this.environmentResolver;
+    let transientEnvironments: EnvironmentRegistry | undefined;
     if (server.transport === 'stdio') {
       stdioCwd = normalize(cwd ?? process.cwd());
       const workspace = this.workspaceInstances.findContaining(stdioCwd);
       if (workspace !== undefined) {
         workspaceId = workspace.id;
       } else {
-        const runtimeId = server.runtime_id;
-        if (runtimeId !== undefined && runtimeId !== 'local') {
+        const environmentId = server.environment_id;
+        if (environmentId !== undefined && environmentId !== 'local') {
           throw new Error2(
             ErrorCodes.REQUEST_INVALID,
-            `Cannot probe MCP server "${server.name}" with runtime_id "${runtimeId}": no materialized workspace contains ${stdioCwd}, and an out-of-workspace probe only supports the local runtime`,
+            `Cannot probe MCP server "${server.name}" with environment_id "${environmentId}": no materialized workspace contains ${stdioCwd}, and an out-of-workspace probe only supports the local environment`,
           );
         }
         await this.hostEnvironment.ready;
         workspaceId = `mcp-probe-${randomUUID()}`;
-        transientRuntimes = new RuntimeRegistry(workspaceId);
-        transientRuntimes.register(
-          new LocalRuntime(
+        transientEnvironments = new EnvironmentRegistry(workspaceId);
+        transientEnvironments.register(
+          new LocalEnvironment(
             workspaceId,
             this.hostEnvironment,
             undefined,
@@ -208,20 +208,20 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
             undefined,
           ),
         );
-        runtimeResolver = {
+        environmentResolver = {
           _serviceBrand: undefined,
-          inspect: (binding) => transientRuntimes!.inspect(binding),
-          acquire: (binding, required) => transientRuntimes!.acquire(binding, required),
-          acquireWhenReady: (binding, required) => transientRuntimes!.acquireWhenReady(binding, required),
+          inspect: (binding) => transientEnvironments!.inspect(binding),
+          acquire: (binding, required) => transientEnvironments!.acquire(binding, required),
+          acquireWhenReady: (binding, required) => transientEnvironments!.acquireWhenReady(binding, required),
         };
       }
     }
     const manager = new McpConnectionManager({
       log: this.log,
       stdioCwd,
-      runtimeResolver,
+      environmentResolver,
       workspaceId,
-      runtimeId: workspaceId === undefined ? undefined : 'local',
+      environmentId: workspaceId === undefined ? undefined : 'local',
       oauthService: this.oauth,
       resolveClientName: () => this.identity.current().slug,
       resolveDefaultTimeouts: () => ({
@@ -236,7 +236,7 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
       try {
         await manager.shutdown();
       } finally {
-        await transientRuntimes?.dispose();
+        await transientEnvironments?.dispose();
       }
     }
   }

@@ -7,5 +7,5 @@ export * from './installTrigger';
 export * from './remoteFileSystem';
 export * from './remoteProcess';
 export * from './remoteTerminal';
-export * from './remoteRuntime';
-export * from './remoteRuntimeProvider';
+export * from './remoteEnvironment';
+export * from './remoteEnvironmentProvider';

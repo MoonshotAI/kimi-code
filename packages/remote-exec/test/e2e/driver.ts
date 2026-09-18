@@ -6,7 +6,7 @@ import {
   classifyHandshakeFailure,
   connectWithAutoInstall,
   installExecutor,
-  RemoteRuntime,
+  RemoteEnvironment,
   type ExecutorArtifactLocator,
   type LauncherSpec,
 } from '../../src/client/index';
@@ -128,17 +128,17 @@ async function collectStdout(proc: {
   return { out: Buffer.concat(chunks).toString(), code };
 }
 
-async function remotePidAlive(runtime: RemoteRuntime, pid: number): Promise<boolean> {
-  const proc = await runtime.process.spawn('kill', ['-0', String(pid)]);
+async function remotePidAlive(environment: RemoteEnvironment, pid: number): Promise<boolean> {
+  const proc = await environment.process.spawn('kill', ['-0', String(pid)]);
   const { code } = await collectStdout(proc);
   return code === 0;
 }
 
-async function scenarioBasic(runtime: RemoteRuntime, cwd: string): Promise<void> {
+async function scenarioBasic(environment: RemoteEnvironment, cwd: string): Promise<void> {
   process.stdout.write('scenario: basic\n');
-  record('basic', 'connect + handshake', true, `executor ${runtime.executorVersion} on ${runtime.environment.osKind}/${runtime.environment.osArch}`);
+  record('basic', 'connect + handshake', true, `executor ${environment.executorVersion} on ${environment.host.osKind}/${environment.host.osArch}`);
   await check('basic', 'environment payload is sane', async () => {
-    const env = runtime.environment;
+    const env = environment.host;
     for (const field of ['osKind', 'osArch', 'osVersion', 'shellName', 'shellPath', 'pathClass', 'homeDir', 'cwd', 'tempDir'] as const) {
       if (env[field].length === 0) throw new Error(`environment.${field} is empty`);
     }
@@ -146,29 +146,29 @@ async function scenarioBasic(runtime: RemoteRuntime, cwd: string): Promise<void>
   });
   const file = `${cwd}/remote-exec-e2e-basic.txt`;
   await check('basic', 'fs write/read/rename/remove round-trip', async () => {
-    await runtime.fs.writeText(file, 'e2e-data');
-    expectEqual(await runtime.fs.readText(file), 'e2e-data', 'readText');
+    await environment.fs.writeText(file, 'e2e-data');
+    expectEqual(await environment.fs.readText(file), 'e2e-data', 'readText');
     const renamed = `${file}.renamed`;
-    await runtime.fs.rename(file, renamed);
-    expectEqual(await runtime.fs.readText(renamed), 'e2e-data', 'readText after rename');
-    await runtime.fs.remove(renamed);
-    const stat = await runtime.fs.stat(renamed).then(
+    await environment.fs.rename(file, renamed);
+    expectEqual(await environment.fs.readText(renamed), 'e2e-data', 'readText after rename');
+    await environment.fs.remove(renamed);
+    const stat = await environment.fs.stat(renamed).then(
       () => 'present',
       () => 'gone',
     );
     expectEqual(stat, 'gone', 'remove');
   });
   await check('basic', 'process run with output and exit code', async () => {
-    const proc = await runtime.process.spawn('bash', ['-c', 'echo e2e-out; echo e2e-err >&2; exit 5'], { cwd });
+    const proc = await environment.process.spawn('bash', ['-c', 'echo e2e-out; echo e2e-err >&2; exit 5'], { cwd });
     const { out, code } = await collectStdout(proc);
     expectEqual(out, 'e2e-out\n', 'stdout');
     expectEqual(code, 5, 'exit code');
   });
   await check('basic', 'only explicit env overrides cross the wire', async () => {
     const witness = 'REMOTE_EXEC_E2E_WITNESS';
-    const plain = await runtime.process.spawn('sh', ['-c', `printf '[%s]' "$${witness}"`], { cwd });
+    const plain = await environment.process.spawn('sh', ['-c', `printf '[%s]' "$${witness}"`], { cwd });
     expectEqual((await collectStdout(plain)).out, '[]', 'without override');
-    const explicit = await runtime.process.spawn('sh', ['-c', `printf '[%s]' "$${witness}"`], {
+    const explicit = await environment.process.spawn('sh', ['-c', `printf '[%s]' "$${witness}"`], {
       cwd,
       env: { [witness]: 'explicit-e2e' },
     });
@@ -176,11 +176,11 @@ async function scenarioBasic(runtime: RemoteRuntime, cwd: string): Promise<void>
   });
 }
 
-async function scenarioPty(runtime: RemoteRuntime, cwd: string): Promise<void> {
+async function scenarioPty(environment: RemoteEnvironment, cwd: string): Promise<void> {
   process.stdout.write('scenario: pty\n');
-  const shell = runtime.environment.shellPath;
+  const shell = environment.host.shellPath;
   try {
-    const terminal = await runtime.terminal.spawn({ cwd, shell, cols: 90, rows: 30 });
+    const terminal = await environment.terminal.spawn({ cwd, shell, cols: 90, rows: 30 });
     await check('pty', 'interactive shell over pty with merged streams', async () => {
       let output = '';
       terminal.onProcessData((data) => {
@@ -210,25 +210,25 @@ async function scenarioPty(runtime: RemoteRuntime, cwd: string): Promise<void> {
   }
 }
 
-async function scenarioTermIgnore(runtime: RemoteRuntime, cwd: string): Promise<void> {
+async function scenarioTermIgnore(environment: RemoteEnvironment, cwd: string): Promise<void> {
   process.stdout.write('scenario: term-ignore\n');
   await check('term-ignore', 'SIGTERM-ignoring process is escalated to SIGKILL', async () => {
     const processId = randomUUID();
-    await runtime.connection.call('process/start', {
+    await environment.connection.call('process/start', {
       processId,
       argv: ['bash', '-c', 'trap "" TERM; sleep 300'],
       cwd,
       pipeStdin: false,
     });
     const started = Date.now();
-    const terminate = (await runtime.connection.call('process/terminate', { processId })) as {
+    const terminate = (await environment.connection.call('process/terminate', { processId })) as {
       running: boolean;
     };
     expectEqual(terminate.running, true, 'terminate.running');
     let exited = false;
     const deadline = Date.now() + 10_000;
     while (!exited && Date.now() < deadline) {
-      const read = (await runtime.connection.call('process/read', { processId, waitMs: 1000 })) as {
+      const read = (await environment.connection.call('process/read', { processId, waitMs: 1000 })) as {
         exited: boolean;
       };
       exited = read.exited;
@@ -238,10 +238,10 @@ async function scenarioTermIgnore(runtime: RemoteRuntime, cwd: string): Promise<
   });
 }
 
-async function scenarioGroupResidue(runtime: RemoteRuntime, cwd: string): Promise<void> {
+async function scenarioGroupResidue(environment: RemoteEnvironment, cwd: string): Promise<void> {
   process.stdout.write('scenario: group-residue\n');
   await check('group-residue', 'residue of an exited leader is cleaned on signal', async () => {
-    const proc = await runtime.process.spawn('sh', ['-c', 'sleep 300 & echo $!; exit 0'], { cwd });
+    const proc = await environment.process.spawn('sh', ['-c', 'sleep 300 & echo $!; exit 0'], { cwd });
     let buffer = '';
     const childPid = await new Promise<number>((resolve, reject) => {
       proc.stdout.on('data', (chunk: Buffer) => {
@@ -254,13 +254,13 @@ async function scenarioGroupResidue(runtime: RemoteRuntime, cwd: string): Promis
       }, 8_000);
     });
     await proc.wait();
-    if (!(await remotePidAlive(runtime, childPid))) {
+    if (!(await remotePidAlive(environment, childPid))) {
       throw new Error(`residue pid ${childPid} was never alive`);
     }
     await proc.kill('SIGTERM');
     const deadline = Date.now() + 8_000;
     while (Date.now() < deadline) {
-      if (!(await remotePidAlive(runtime, childPid))) return;
+      if (!(await remotePidAlive(environment, childPid))) return;
       await new Promise((resolve) => {
         setTimeout(resolve, 100);
       });
@@ -270,26 +270,26 @@ async function scenarioGroupResidue(runtime: RemoteRuntime, cwd: string): Promis
 }
 
 async function scenarioDisconnect(
-  runtime: RemoteRuntime,
+  environment: RemoteEnvironment,
   cwd: string,
-  reconnect: () => Promise<RemoteRuntime>,
+  reconnect: () => Promise<RemoteEnvironment>,
 ): Promise<void> {
   process.stdout.write('scenario: disconnect\n');
   let sleepPid = -1;
   await check('disconnect', 'long-running process started', async () => {
-    const proc = await runtime.process.spawn('sleep', ['300'], { cwd });
+    const proc = await environment.process.spawn('sleep', ['300'], { cwd });
     sleepPid = proc.pid;
   });
   if (sleepPid <= 0) return;
-  await runtime.dispose();
+  await environment.dispose();
   await check('disconnect', 'calls after disconnect reject instead of falling back to local', async () => {
-    await runtime.process.spawn('touch', ['/tmp/remote-exec-e2e-must-not-exist']).then(
+    await environment.process.spawn('touch', ['/tmp/remote-exec-e2e-must-not-exist']).then(
       () => {
         throw new Error('spawn succeeded after disconnect — silent fallback suspected');
       },
       () => {},
     );
-    await runtime.fs.readText('/etc/hostname').then(
+    await environment.fs.readText('/etc/hostname').then(
       () => {
         throw new Error('fs call succeeded after disconnect — silent fallback suspected');
       },
@@ -311,27 +311,27 @@ async function scenarioDisconnect(
   });
 }
 
-async function scenarioContainerStop(runtime: RemoteRuntime, container: string, cwd: string): Promise<void> {
+async function scenarioContainerStop(environment: RemoteEnvironment, container: string, cwd: string): Promise<void> {
   process.stdout.write('scenario: container-stop\n');
-  const proc = await runtime.process.spawn('sleep', ['300'], { cwd });
+  const proc = await environment.process.spawn('sleep', ['300'], { cwd });
   const stop = localSpawn('docker', ['stop', container], { stdio: 'ignore' });
   await new Promise<void>((resolve) => {
     stop.on('exit', () => {
       resolve();
     });
   });
-  await check('container-stop', 'runtime reports disconnected after the container stops', async () => {
+  await check('container-stop', 'environment reports disconnected after the container stops', async () => {
     const deadline = Date.now() + 15_000;
     while (Date.now() < deadline) {
-      if (runtime.status === 'disconnected') return;
+      if (environment.status === 'disconnected') return;
       await new Promise((resolve) => {
         setTimeout(resolve, 100);
       });
     }
-    throw new Error(`runtime status is still ${runtime.status}`);
+    throw new Error(`environment status is still ${environment.status}`);
   });
   await check('container-stop', 'calls after the stop reject, no local fallback', async () => {
-    await runtime.process.spawn('true').then(
+    await environment.process.spawn('true').then(
       () => {
         throw new Error('spawn succeeded after container stop — silent fallback suspected');
       },
@@ -359,7 +359,7 @@ async function scenarioInstall(flags: Flags): Promise<void> {
   };
   const connectBase = {
     workspaceId: 'remote-exec-e2e',
-    runtimeId: 'e2e-target',
+    environmentId: 'e2e-target',
     clientName: 'remote-exec-e2e-driver',
     clientVersion,
     onDiagnostic,
@@ -367,7 +367,7 @@ async function scenarioInstall(flags: Flags): Promise<void> {
 
   await check('install', 'connect on a fresh target fails as a missing executor', async () => {
     try {
-      await RemoteRuntime.connect({ ...connectBase, launcher });
+      await RemoteEnvironment.connect({ ...connectBase, launcher });
     } catch (error) {
       const cls = classifyHandshakeFailure(error);
       if (cls === 'missing' || cls === 'timeout') return;
@@ -392,7 +392,7 @@ async function scenarioInstall(flags: Flags): Promise<void> {
       await connectWithAutoInstall(
         async (retryLauncher) => {
           attempts += 1;
-          return RemoteRuntime.connect({ ...connectBase, launcher: retryLauncher });
+          return RemoteEnvironment.connect({ ...connectBase, launcher: retryLauncher });
         },
         { launcher, artifactLocator: badLocator, clientVersion, onDiagnostic },
       );
@@ -412,12 +412,12 @@ async function scenarioInstall(flags: Flags): Promise<void> {
     }
   });
 
-  await check('install', 'auto-install on the handshake failure yields a working runtime', async () => {
+  await check('install', 'auto-install on the handshake failure yields a working environment', async () => {
     let attempts = 0;
-    const runtime = await connectWithAutoInstall(
+    const environment = await connectWithAutoInstall(
       async (retryLauncher) => {
         attempts += 1;
-        return RemoteRuntime.connect({ ...connectBase, launcher: retryLauncher });
+        return RemoteEnvironment.connect({ ...connectBase, launcher: retryLauncher });
       },
       { launcher, artifactLocator: locator, clientVersion, onDiagnostic },
     );
@@ -425,16 +425,16 @@ async function scenarioInstall(flags: Flags): Promise<void> {
       if (attempts !== 2) {
         throw new Error(`expected exactly 2 connect attempts (fail + one retry), got ${String(attempts)}`);
       }
-      const binPath = flags.remoteBin ?? `${runtime.environment.homeDir}/.kimi-code/bin/kimi`;
-      const meta = await runtime.fs.stat(binPath);
+      const binPath = flags.remoteBin ?? `${environment.host.homeDir}/.kimi-code/bin/kimi`;
+      const meta = await environment.fs.stat(binPath);
       if (!meta.isFile) throw new Error(`${binPath} is not a file on the target`);
-      const probe = `${runtime.environment.tempDir}/remote-exec-e2e-install.txt`;
-      await runtime.fs.writeText(probe, 'installed');
-      const text = await runtime.fs.readText(probe);
-      await runtime.fs.remove(probe);
+      const probe = `${environment.host.tempDir}/remote-exec-e2e-install.txt`;
+      await environment.fs.writeText(probe, 'installed');
+      const text = await environment.fs.readText(probe);
+      await environment.fs.remove(probe);
       if (text !== 'installed') throw new Error('fs round-trip after install failed');
     } finally {
-      await runtime.dispose();
+      await environment.dispose();
     }
   });
 
@@ -478,10 +478,10 @@ async function main(): Promise<void> {
     });
 
     process.stdout.write(`connecting via ${flags.target ?? ''} launcher...\n`);
-    const connect = (): Promise<RemoteRuntime> =>
-      RemoteRuntime.connect({
+    const connect = (): Promise<RemoteEnvironment> =>
+      RemoteEnvironment.connect({
         workspaceId: 'remote-exec-e2e',
-        runtimeId: 'e2e-target',
+        environmentId: 'e2e-target',
         launcher,
         clientName: 'remote-exec-e2e-driver',
         clientVersion: '0.0.0',
@@ -490,22 +490,22 @@ async function main(): Promise<void> {
           process.stdout.write(`  [diag] ${line}\n`);
         },
       });
-    const runtime = await connect();
-    const cwd = flags.remoteCwd ?? runtime.environment.cwd;
+    const environment = await connect();
+    const cwd = flags.remoteCwd ?? environment.host.cwd;
 
     for (const name of ordered) {
       switch (name) {
         case 'basic':
-          await scenarioBasic(runtime, cwd);
+          await scenarioBasic(environment, cwd);
           break;
         case 'pty':
-          await scenarioPty(runtime, cwd);
+          await scenarioPty(environment, cwd);
           break;
         case 'term-ignore':
-          await scenarioTermIgnore(runtime, cwd);
+          await scenarioTermIgnore(environment, cwd);
           break;
         case 'group-residue':
-          await scenarioGroupResidue(runtime, cwd);
+          await scenarioGroupResidue(environment, cwd);
           break;
         case 'container-stop': {
           if (flags.container === undefined) {
@@ -530,8 +530,8 @@ async function main(): Promise<void> {
       }
     }
 
-    if (runtime.status !== 'disposed') {
-      await runtime.dispose();
+    if (environment.status !== 'disposed') {
+      await environment.dispose();
     }
   }
 

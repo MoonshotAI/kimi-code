@@ -393,7 +393,7 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(body.code).toBe(40410);
   });
 
-  it('creates a session for a missing metadata.cwd and defers root validation to the first runtime binding', async () => {
+  it('creates a session for a missing metadata.cwd and defers root validation to the first environment binding', async () => {
     const missing = join(home as string, 'never-created');
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: missing } });
     expect(created.body.code).toBe(0);

@@ -278,9 +278,9 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
-    name: 'runtime',
-    aliases: ['runtimes'],
-    description: 'Manage runtimes (local machine and remote environments)',
+    name: 'environment',
+    aliases: ['environments'],
+    description: 'Manage environments (local machine and remote environments)',
     priority: 60,
     availability: 'idle-only',
     experimentalFlag: 'remote_runtime',

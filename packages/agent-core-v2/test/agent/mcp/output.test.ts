@@ -12,7 +12,7 @@ import { createMcpTool } from '#/agent/mcp/tools/mcp';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { StdioMcpClient } from '#/mcpCore/client-stdio';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { MCPClient, MCPContentBlock, MCPToolResult } from '#/mcpCore/types';
 import type { ToolExecution } from '#/tool/toolContract';
 import { sniffImageDimensions } from '#/agent/media/file-type';
@@ -820,7 +820,7 @@ describe('mcpResultToExecutableOutput', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  test('persists originals through the provided runtime filesystem', async () => {
+  test('persists originals through the provided environment filesystem', async () => {
     const bigBytes = Buffer.from(
       await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
     );
@@ -998,9 +998,9 @@ describe('mcpResultToExecutableOutput over a real stdio server', () => {
   const fixture = join(import.meta.dirname, '../../mcpCore/fixtures/structured-content-stdio-server.mjs');
 
   async function callFixtureTool(name: string) {
-    const runtime = Object.assign(
-      new FakeRuntime(
-        { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+    const environment = Object.assign(
+      new FakeEnvironment(
+        { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
         { capabilities: ['process'] },
       ),
       { process: new HostProcessService() },
@@ -1012,22 +1012,22 @@ describe('mcpResultToExecutableOutput over a real stdio server', () => {
         args: [fixture],
       },
       {
-        runtimeResolver: {
+        environmentResolver: {
           _serviceBrand: undefined,
-          inspect: () => runtime,
+          inspect: () => environment,
           acquire: () => ({
-            runtime,
+            environment,
             track: (resource) => resource,
             dispose: () => {},
           }),
           acquireWhenReady: async () => ({
-            runtime,
+            environment,
             track: (resource) => resource,
             dispose: () => {},
           }),
         },
         workspaceId: 'workspace',
-        runtimeId: 'local',
+        environmentId: 'local',
         defaultCwd: process.cwd(),
       },
     );

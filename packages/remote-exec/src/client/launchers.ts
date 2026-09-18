@@ -1,4 +1,4 @@
-import { resolveProgramPath } from '@moonshot-ai/agent-core-v2/runtime/programPath';
+import { resolveProgramPath } from '@moonshot-ai/agent-core-v2/environment/programPath';
 
 export { resolveProgramPath };
 

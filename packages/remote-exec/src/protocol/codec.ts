@@ -26,33 +26,38 @@ export function decodeBase64(data: string): Uint8Array {
 // NDJSON line framing: \n-terminated, \r\n tolerated, blank lines skipped,
 // strict UTF-8, one message bounded by MAX_MESSAGE_BYTES.
 export class LineFrameDecoder {
+  // Bytes after the last newline seen, retained as chunk views and copied
+  // only once, when their frame completes — never re-copied per push.
   private pending: Buffer[] = [];
   private pendingBytes = 0;
 
   push(chunk: Uint8Array): unknown[] {
     const frames: unknown[] = [];
-    let buffer: Buffer = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-    if (this.pendingBytes > 0) {
-      buffer = Buffer.concat([...this.pending, buffer]);
-      this.pending = [];
-      this.pendingBytes = 0;
-    }
+    const buffer: Buffer = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
     let start = 0;
     for (let i = 0; i < buffer.length; i += 1) {
       if (buffer[i] !== 0x0a) continue;
-      const frame = this.decodeLine(buffer.subarray(start, i));
+      const frame = this.decodeLine(this.takeLine(buffer, start, i));
       if (frame !== undefined) frames.push(frame);
       start = i + 1;
     }
     if (start < buffer.length) {
-      const rest = buffer.subarray(start);
-      this.pending = [rest];
-      this.pendingBytes = rest.length;
+      this.pending.push(buffer.subarray(start));
+      this.pendingBytes += buffer.length - start;
       if (this.pendingBytes > MAX_MESSAGE_BYTES) {
         throw new ProtocolViolationError(`message exceeds the ${MAX_MESSAGE_BYTES}-byte frame cap`);
       }
     }
     return frames;
+  }
+
+  private takeLine(buffer: Buffer, start: number, end: number): Buffer {
+    const tail = buffer.subarray(start, end);
+    if (this.pendingBytes === 0) return tail;
+    const parts = tail.length === 0 ? this.pending : [...this.pending, tail];
+    this.pending = [];
+    this.pendingBytes = 0;
+    return parts.length === 1 ? parts[0]! : Buffer.concat(parts);
   }
 
   private decodeLine(line: Buffer): unknown {

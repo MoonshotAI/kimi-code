@@ -17,14 +17,14 @@ import {
 import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import { Error2, ErrorCodes, isError2 } from '#/errors';
 import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
-import type { RuntimeBinding, RuntimeLease } from '#/runtime/runtime';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
+import type { EnvironmentBinding, EnvironmentLease } from '#/environment/environment';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { collectGitContext } from '#/session/agentLifecycle/profile/gitContext';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -60,14 +60,14 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   let createdHandles: Map<string, IAgentScopeHandle>;
   let createAgent: ReturnType<typeof vi.fn>;
   let forkAgent: ReturnType<typeof vi.fn>;
-  let acquireRuntime: ReturnType<typeof vi.fn>;
+  let acquireEnvironment: ReturnType<typeof vi.fn>;
   let callerPermissionMode: { mode: string; setMode: ReturnType<typeof vi.fn> };
   let createdPermissionMode: { mode: string; setMode: ReturnType<typeof vi.fn> };
   let callerUserTools: IAgentUserToolService;
   let createdUserTools: IAgentUserToolService;
   let createdReminder: { notify: ReturnType<typeof vi.fn> };
-  let lease: RuntimeLease;
-  let callerBinding: RuntimeBinding;
+  let lease: EnvironmentLease;
+  let callerBinding: EnvironmentBinding;
 
   function userToolsStub(): IAgentUserToolService {
     return {
@@ -137,12 +137,12 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     createdUserTools = userToolsStub();
     createdReminder = { notify: vi.fn() };
     lease = {
-      runtime: new FakeRuntime({ workspaceId: 'w1', runtimeId: 'acp:s1', generation: 'g1' }),
+      environment: new FakeEnvironment({ workspaceId: 'w1', environmentId: 'acp:s1', generation: 'g1' }),
       track: (resource) => resource,
       dispose: vi.fn(),
     };
-    acquireRuntime = vi.fn(() => lease);
-    callerBinding = { workspaceId: 'w1', runtimeId: 'acp:s1' };
+    acquireEnvironment = vi.fn(() => lease);
+    callerBinding = { workspaceId: 'w1', environmentId: 'acp:s1' };
     caller = {
       id: CALLER_ID,
       kind: LifecycleScope.Agent,
@@ -151,13 +151,13 @@ describe('SessionSubagentService planSpawn and spawn', () => {
           if (serviceId === IAgentProfileService) return profileServiceStub(callerData);
           if (serviceId === IAgentPermissionModeService) return callerPermissionMode;
           if (serviceId === IAgentUserToolService) return callerUserTools;
-          if (serviceId === IAgentRuntimeService) {
+          if (serviceId === IAgentEnvironmentService) {
             return {
               _serviceBrand: undefined,
-              acquire: acquireRuntime,
+              acquire: acquireEnvironment,
             };
           }
-          if (serviceId === IAgentRuntimeBindingService) {
+          if (serviceId === IAgentEnvironmentBindingService) {
             return {
               _serviceBrand: undefined,
               current: callerBinding,
@@ -327,11 +327,11 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     svc: ISessionSubagentService,
     git: { process: IHostProcessService; gitCwds: string[] },
   ): Promise<SpawnedSubagent> {
-    const runtime = Object.assign(
-      new FakeRuntime({ workspaceId: 'w1', runtimeId: 'acp:s1', generation: 'g1' }),
+    const environment = Object.assign(
+      new FakeEnvironment({ workspaceId: 'w1', environmentId: 'acp:s1', generation: 'g1' }),
       { process: git.process },
     );
-    lease = { runtime, track: (resource) => resource, dispose: vi.fn() };
+    lease = { environment, track: (resource) => resource, dispose: vi.fn() };
     profiles = [
       normalizeAgentProfile({
         name: 'explore',
@@ -604,12 +604,12 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     );
   });
 
-  it('creates the child on the acquired runtime lease', async () => {
+  it('creates the child on the acquired environment lease', async () => {
     const svc = service();
 
     await spawnNonForkChild(svc);
 
-    expect(createAgent).toHaveBeenCalledWith(expect.objectContaining({ runtimeId: 'acp:s1' }));
+    expect(createAgent).toHaveBeenCalledWith(expect.objectContaining({ environmentId: 'acp:s1' }));
   });
 
   it('inherits the caller permission mode and user tools', async () => {
@@ -643,8 +643,8 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     });
   });
 
-  it('collects the explore git context at the inherited binding cwd on the bound runtime', async () => {
-    callerBinding = { workspaceId: 'w1', runtimeId: 'acp:s1', cwd: '/remote/repo' };
+  it('collects the explore git context at the inherited binding cwd on the bound environment', async () => {
+    callerBinding = { workspaceId: 'w1', environmentId: 'acp:s1', cwd: '/remote/repo' };
     const git = gitProcessForRepo('/remote/repo');
     const svc = service();
 
@@ -669,7 +669,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     expect(spawned.promptText).toContain('Project: owner/repo-only-there');
   });
 
-  it('releases the runtime lease after spawn', async () => {
+  it('releases the environment lease after spawn', async () => {
     const svc = service();
 
     await spawnNonForkChild(svc);
@@ -719,14 +719,14 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   });
 
   it('does not require the process capability when forking', async () => {
-    acquireRuntime.mockImplementation(() => {
+    acquireEnvironment.mockImplementation(() => {
       throw new Error('process capability is no longer available');
     });
     const svc = service();
 
     await expect(spawnForkChild(svc)).resolves.toMatchObject({ agentId: 'agent-fork' });
 
-    expect(acquireRuntime).not.toHaveBeenCalled();
+    expect(acquireEnvironment).not.toHaveBeenCalled();
     expect(forkAgent).toHaveBeenCalledWith(
       expect.objectContaining({ agentId: 'main' }),
       { labels: { parentAgentId: 'main' } },
@@ -754,8 +754,8 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     expect(error.message).toContain('comes from [secondary_model.models]');
   });
 
-  it('spawn throws before creating anything when the caller runtime lease fails', async () => {
-    acquireRuntime.mockImplementation(() => {
+  it('spawn throws before creating anything when the caller environment lease fails', async () => {
+    acquireEnvironment.mockImplementation(() => {
       throw new Error('process capability is no longer available');
     });
     const svc = service();

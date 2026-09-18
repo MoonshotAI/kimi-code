@@ -9,12 +9,12 @@ import type {
   AddAdditionalDirOptions,
   AddAdditionalDirResult,
   AgentCommandInfo,
-  AgentRuntimeBinding,
+  AgentEnvironmentBinding,
   BackgroundTaskInfo,
   CapabilityStatus,
   CompactOptions,
   CreateGoalInput,
-  DeclareRuntimeInput,
+  DeclareEnvironmentInput,
   GetCronTasksResult,
   GoalSnapshot,
   GoalToolResult,
@@ -34,7 +34,7 @@ import type {
   SessionPlan,
   SessionStatus,
   SessionSummary,
-  SessionRuntimesInfo,
+  SessionEnvironmentsInfo,
   SessionTodoItem,
   SessionUsage,
   SkillSummary,
@@ -256,63 +256,63 @@ export class Session {
     await this.rpc.setModel({ sessionId: this.id, model: normalized });
   }
 
-  async getRuntime(): Promise<AgentRuntimeBinding> {
+  async getEnvironment(): Promise<AgentEnvironmentBinding> {
     this.ensureOpen();
-    return this.rpc.getRuntime({ sessionId: this.id });
+    return this.rpc.getEnvironment({ sessionId: this.id });
   }
 
-  async switchRuntime(runtimeId: string, options?: { cwd?: string }): Promise<AgentRuntimeBinding> {
+  async switchEnvironment(environmentId: string, options?: { cwd?: string }): Promise<AgentEnvironmentBinding> {
     this.ensureOpen();
     const normalized = normalizeRequiredString(
-      runtimeId,
-      'Session runtime cannot be empty',
+      environmentId,
+      'Session environment cannot be empty',
       ErrorCodes.REQUEST_INVALID,
     );
     const cwd = normalizeOptionalString(options?.cwd);
-    return this.rpc.switchRuntime({ sessionId: this.id, runtimeId: normalized, cwd });
+    return this.rpc.switchEnvironment({ sessionId: this.id, environmentId: normalized, cwd });
   }
 
   /**
-   * Explicitly reconnect the currently bound runtime (experimental remote
-   * runtime). Replaces the connection handle and drains old leases; the
-   * binding itself is unchanged. Rejects when the bound runtime is local or
+   * Explicitly reconnect the currently bound environment (experimental remote
+   * environment). Replaces the connection handle and drains old leases; the
+   * binding itself is unchanged. Rejects when the bound environment is local or
    * unavailable.
    */
-  async reconnectRuntime(): Promise<AgentRuntimeBinding> {
+  async reconnectEnvironment(): Promise<AgentEnvironmentBinding> {
     this.ensureOpen();
-    return this.rpc.reconnectRuntime({ sessionId: this.id });
+    return this.rpc.reconnectEnvironment({ sessionId: this.id });
   }
 
   /**
-   * List the runtimes registered for this session's workspace (experimental
-   * remote runtime): `local` plus every declared runtime with its connection
+   * List the environments registered for this session's workspace (experimental
+   * remote environment): `local` plus every declared environment with its connection
    * status, plus the ssh host candidates discovered from `~/.ssh/config` for
-   * the runtime-add flow. With the `remote_runtime` flag off this reports only
-   * the local runtime and no ssh candidates.
+   * the environment-add flow. With the `remote_runtime` flag off this reports only
+   * the local environment and no ssh candidates.
    */
-  async listRuntimes(): Promise<SessionRuntimesInfo> {
+  async listEnvironments(): Promise<SessionEnvironmentsInfo> {
     this.ensureOpen();
-    return this.rpc.listRuntimes({ sessionId: this.id });
+    return this.rpc.listEnvironments({ sessionId: this.id });
   }
 
   /**
-   * Declare a new runtime for this session's workspace (experimental remote
-   * runtime). `scope: 'global'` (the default) deep-merges the entry into the
-   * user-level `config.toml` `[runtimes]` section; `scope: 'project'`
-   * merge-writes it into the workspace's `.kimi-code/runtimes.toml`,
+   * Declare a new environment for this session's workspace (experimental remote
+   * environment). `scope: 'global'` (the default) deep-merges the entry into the
+   * user-level `config.toml` `[environments]` section; `scope: 'project'`
+   * merge-writes it into the workspace's `.kimi-code/environments.toml`,
    * preserving existing entries and file layout. Either way the engine's
-   * declaration watch registers the runtime live — no restart. Fails closed:
+   * declaration watch registers the environment live — no restart. Fails closed:
    * a duplicate id, an invalid entry, or an unreadable/invalid project file
    * rejects without writing.
    */
-  async declareRuntime(input: DeclareRuntimeInput): Promise<void> {
+  async declareEnvironment(input: DeclareEnvironmentInput): Promise<void> {
     this.ensureOpen();
-    return this.rpc.declareRuntime({ sessionId: this.id, ...input });
+    return this.rpc.declareEnvironment({ sessionId: this.id, ...input });
   }
 
   /**
    * Fuzzy file suggestions rooted at this session's workspace context and
-   * served by the session's currently bound runtime — a remote binding
+   * served by the session's currently bound environment — a remote binding
    * suggests files on the remote side, a local one keeps the session-less
    * `KimiHarness.suggestFiles` results. `undefined` on the v1 engine.
    */

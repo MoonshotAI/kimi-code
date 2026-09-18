@@ -24,7 +24,7 @@ import type {
 } from '#/agent/toolExecutor/toolHooks';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ToolCall } from '#human/llm/message';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { ToolAccesses } from '#/tool/toolContract';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
@@ -33,7 +33,7 @@ import { createFakeHostFs } from '../../tools/fixtures/fake-exec';
 import { registerTestAgentWireServices } from '../../wire/stubs';
 import { stubPermissionModeService } from '../../agent/permissionMode/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
-import { stubPlanRuntime } from './stubs';
+import { stubPlanEnvironment } from './stubs';
 
 const signal = new AbortController().signal;
 const TEMP_DIR = '/var/folders/x/T';
@@ -141,11 +141,11 @@ describe('AgentPlanService plan-guard listener', () => {
     permissionRan = false;
     permissionStandInRegistered = false;
     executorEvents = stubToolExecutorEvents();
-    buildServices(availableRuntime());
+    buildServices(availableEnvironment());
   });
 
-  function availableRuntime(): IAgentRuntimeService {
-    return stubPlanRuntime({
+  function availableEnvironment(): IAgentEnvironmentService {
+    return stubPlanEnvironment({
       fs: createFakeHostFs({
         mkdir: vi.fn().mockResolvedValue(undefined),
         readText: vi.fn(async (path: string) => files.get(path) ?? ''),
@@ -160,17 +160,17 @@ describe('AgentPlanService plan-guard listener', () => {
     });
   }
 
-  function unavailableRuntime(): IAgentRuntimeService {
-    const stub = availableRuntime();
+  function unavailableEnvironment(): IAgentEnvironmentService {
+    const stub = availableEnvironment();
     return {
       ...stub,
       acquire: () => {
-        throw new Error('runtime unavailable');
+        throw new Error('environment unavailable');
       },
     };
   }
 
-  function buildServices(runtime: IAgentRuntimeService): void {
+  function buildServices(environment: IAgentEnvironmentService): void {
     const toolApproval: IAgentToolApprovalService = {
       _serviceBrand: undefined,
       resolvePermissionResolution: async () => {
@@ -188,7 +188,7 @@ describe('AgentPlanService plan-guard listener', () => {
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         registerTestAgentWireServices(reg);
-        reg.defineInstance(IAgentRuntimeService, runtime);
+        reg.defineInstance(IAgentEnvironmentService, environment);
         reg.definePartialInstance(IAgentContextMemoryService, {});
         reg.defineInstance(IAgentReminderService, createReminderStub());
         reg.defineInstance(IAgentToolExecutorService, executorEvents.executor);
@@ -290,7 +290,7 @@ describe('AgentPlanService plan-guard listener', () => {
     });
 
     it('denies every write when the plan file location cannot be resolved', async () => {
-      buildServices(unavailableRuntime());
+      buildServices(unavailableEnvironment());
       const svc = await enterPlan();
 
       expect((await svc.status())?.path).toBe('');

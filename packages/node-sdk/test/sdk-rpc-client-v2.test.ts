@@ -59,7 +59,7 @@ import {
 
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
-import { FakeRuntime } from '@moonshot-ai/agent-core-v2/runtime/fakeRuntime';
+import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
 
 import { McpOAuthService as McpOAuthServiceV2 } from '@moonshot-ai/agent-core-v2/mcpCore/oauth/service';
 
@@ -138,37 +138,37 @@ async function sessionDirExists(homeDir: string, sessionId: string): Promise<boo
 }
 
 describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
-  it('exposes the validated runtime binding through Session', async () => {
+  it('exposes the validated environment binding through Session', async () => {
     const { harness } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(workDir);
-    const session = await harness.createSession({ id: 'ses_runtime', workDir });
+    const session = await harness.createSession({ id: 'ses_environment', workDir });
     try {
-      const binding = await session.getRuntime();
-      expect(binding.runtimeId).toBe('local');
+      const binding = await session.getEnvironment();
+      expect(binding.environmentId).toBe('local');
       expect(binding.workspaceId.length).toBeGreaterThan(0);
-      await expect(session.switchRuntime('missing-runtime')).rejects.toThrow(/missing-runtime/);
-      expect(await session.getRuntime()).toEqual(binding);
+      await expect(session.switchEnvironment('missing-environment')).rejects.toThrow(/missing-environment/);
+      expect(await session.getEnvironment()).toEqual(binding);
     } finally {
       await harness.close();
     }
   });
 
-  it('rejects createSession runtime options while the remote_runtime flag is off', async () => {
+  it('rejects createSession environment options while the remote_runtime flag is off', async () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', 'false');
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_RUNTIME', 'false');
     const { harness } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(workDir);
     try {
-      await expect(harness.createSession({ workDir, runtimeId: 'box', runtimeCwd: '/remote' })).rejects.toThrow(
+      await expect(harness.createSession({ workDir, environmentId: 'box', environmentCwd: '/remote' })).rejects.toThrow(
         /remote_runtime/,
       );
-      await expect(harness.createSession({ workDir, runtimeCwd: '/remote' })).rejects.toThrow(
-        /runtimeCwd requires runtimeId/,
+      await expect(harness.createSession({ workDir, environmentCwd: '/remote' })).rejects.toThrow(
+        /environmentCwd requires environmentId/,
       );
       const session = await harness.createSession({ workDir });
-      await expect(session.switchRuntime('box', { cwd: '/remote' })).rejects.toThrow(/remote_runtime/);
+      await expect(session.switchEnvironment('box', { cwd: '/remote' })).rejects.toThrow(/remote_runtime/);
     } finally {
       await harness.close();
       vi.unstubAllEnvs();
@@ -192,7 +192,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       '[experimental]',
       'remote_runtime = true',
       '',
-      '[runtimes.fake-box]',
+      '[environments.fake-box]',
       'type = "ssh"',
       'host = "fake-box"',
       `defaultCwd = ${JSON.stringify(defaultCwd)}`,
@@ -200,7 +200,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     ].join('\n');
   }
 
-  async function makeRuntimeHarness(options: { readonly defaultCwd?: string } = {}): Promise<{ harness: KimiHarness; client: SDKRpcClientV2; homeDir: string }> {
+  async function makeEnvironmentHarness(options: { readonly defaultCwd?: string } = {}): Promise<{ harness: KimiHarness; client: SDKRpcClientV2; homeDir: string }> {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', 'false');
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_RUNTIME', 'true');
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
@@ -219,51 +219,51 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     return { harness, client, homeDir };
   }
 
-  async function attachFakeBoxRuntime(
+  async function attachFakeBoxEnvironment(
     client: SDKRpcClientV2,
-    options: { readonly connect?: () => Promise<void>; readonly configure?: (fake: FakeRuntime) => void } = {},
+    options: { readonly connect?: () => Promise<void>; readonly configure?: (fake: FakeEnvironment) => void } = {},
   ) {
     // The constructor attaches the real remote-exec provider, which owns every
-    // declared runtime as a placeholder; retire it so the fake provider can
-    // register the same runtime id.
+    // declared environment as a placeholder; retire it so the fake provider can
+    // register the same environment id.
     const attached = await (client as unknown as {
-      remoteRuntimeProvider: Promise<{ dispose(): void | Promise<void> } | undefined>;
-    }).remoteRuntimeProvider;
+      remoteEnvironmentProvider: Promise<{ dispose(): void | Promise<void> } | undefined>;
+    }).remoteEnvironmentProvider;
     await attached?.dispose();
     return client.engineAccessor.get(IWorkspaceInstanceManager).addProvider({
       id: 'fake-box-provider',
       imports: { root: [], imports: [], local: [] },
       attach: async (context, host) => {
-        const fake = new FakeRuntime(
-          { workspaceId: context.id, runtimeId: 'fake-box', generation: 'fake-generation' },
+        const fake = new FakeEnvironment(
+          { workspaceId: context.id, environmentId: 'fake-box', generation: 'fake-generation' },
           { capabilities: ['fs', 'process'] },
         );
-        const runtime = Object.assign(fake, {
+        const environment = Object.assign(fake, {
           fs: new HostFileSystem(),
           process: new HostProcessService(),
           connect: options.connect,
         });
         options.configure?.(fake);
-        const registration = host.registerRuntime(runtime);
+        const registration = host.registerEnvironment(environment);
         return { dispose: () => registration.remove() };
       },
     });
   }
 
-  it('seeds the initial binding from createSession runtimeId with the declaration defaultCwd', async () => {
+  it('seeds the initial binding from createSession environmentId with the declaration defaultCwd', async () => {
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(workDir);
-    const { harness, client } = await makeRuntimeHarness({ defaultCwd: workDir });
-    const provider = await attachFakeBoxRuntime(client);
+    const { harness, client } = await makeEnvironmentHarness({ defaultCwd: workDir });
+    const provider = await attachFakeBoxEnvironment(client);
     try {
-      await expect(harness.createSession({ workDir, runtimeId: 'ghost' })).rejects.toThrow(/not declared/);
-      const session = await harness.createSession({ workDir, runtimeId: 'fake-box' });
-      const binding = await session.getRuntime();
-      expect(binding.runtimeId).toBe('fake-box');
+      await expect(harness.createSession({ workDir, environmentId: 'ghost' })).rejects.toThrow(/not declared/);
+      const session = await harness.createSession({ workDir, environmentId: 'fake-box' });
+      const binding = await session.getEnvironment();
+      expect(binding.environmentId).toBe('fake-box');
       expect(binding.cwd).toBe(workDir);
 
-      const listed = await session.listRuntimes();
-      const byId = new Map(listed.runtimes.map((entry) => [entry.runtimeId, entry]));
+      const listed = await session.listEnvironments();
+      const byId = new Map(listed.environments.map((entry) => [entry.environmentId, entry]));
       expect(byId.get('local')).toMatchObject({ type: 'local', status: 'ready' });
       expect(byId.get('fake-box')).toMatchObject({ type: 'ssh', status: 'ready', defaultCwd: workDir });
       expect(listed.sshHosts).toEqual(expect.any(Array));
@@ -275,28 +275,28 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
   });
 
   it('switches with cwd through connectAndSwitch and reconnects explicitly', async () => {
-    const { harness, client } = await makeRuntimeHarness();
+    const { harness, client } = await makeEnvironmentHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(workDir);
     const connect = vi.fn(async () => {});
-    const provider = await attachFakeBoxRuntime(client, { connect });
+    const provider = await attachFakeBoxEnvironment(client, { connect });
     try {
       const session = await harness.createSession({ workDir });
-      const switched = await session.switchRuntime('fake-box', { cwd: workDir });
-      expect(switched.runtimeId).toBe('fake-box');
+      const switched = await session.switchEnvironment('fake-box', { cwd: workDir });
+      expect(switched.environmentId).toBe('fake-box');
       expect(switched.cwd).toBe(workDir);
-      expect((await session.getRuntime()).cwd).toBe(workDir);
+      expect((await session.getEnvironment()).cwd).toBe(workDir);
 
-      const listed = await session.listRuntimes();
-      const fakeBox = listed.runtimes.find((entry) => entry.runtimeId === 'fake-box');
+      const listed = await session.listEnvironments();
+      const fakeBox = listed.environments.find((entry) => entry.environmentId === 'fake-box');
       expect(fakeBox).toMatchObject({ type: 'ssh', status: 'ready', defaultCwd: '/remote/work' });
 
-      const reconnected = await session.reconnectRuntime();
-      expect(reconnected.runtimeId).toBe('fake-box');
+      const reconnected = await session.reconnectEnvironment();
+      expect(reconnected.environmentId).toBe('fake-box');
       expect(connect).toHaveBeenCalledTimes(1);
 
-      await session.switchRuntime('local');
-      await expect(session.reconnectRuntime()).rejects.toThrow(/does not support reconnect/);
+      await session.switchEnvironment('local');
+      await expect(session.reconnectEnvironment()).rejects.toThrow(/does not support reconnect/);
     } finally {
       await provider.dispose();
       await harness.close();
@@ -304,11 +304,11 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     }
   });
 
-  it('surfaces the recorded connectError of a disconnected runtime in listRuntimes', async () => {
-    const { harness, client } = await makeRuntimeHarness();
+  it('surfaces the recorded connectError of a disconnected environment in listEnvironments', async () => {
+    const { harness, client } = await makeEnvironmentHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(workDir);
-    const provider = await attachFakeBoxRuntime(client, {
+    const provider = await attachFakeBoxEnvironment(client, {
       configure: (fake) => {
         fake.setStatus('disconnected');
         fake.connectError = 'executor process exited before the handshake completed (code 255, signal null): ssh: connect failed';
@@ -316,8 +316,8 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     });
     try {
       const session = await harness.createSession({ workDir });
-      const listed = await session.listRuntimes();
-      const fakeBox = listed.runtimes.find((entry) => entry.runtimeId === 'fake-box');
+      const listed = await session.listEnvironments();
+      const fakeBox = listed.environments.find((entry) => entry.environmentId === 'fake-box');
       expect(fakeBox).toMatchObject({
         status: 'disconnected',
         connectError: 'executor process exited before the handshake completed (code 255, signal null): ssh: connect failed',
@@ -329,13 +329,13 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     }
   });
 
-  it('previews project-declared runtimes with full command lines in the trust info', async () => {
-    const { harness } = await makeRuntimeHarness();
+  it('previews project-declared environments with full command lines in the trust info', async () => {
+    const { harness } = await makeEnvironmentHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(workDir);
     await mkdir(join(workDir, '.kimi-code'), { recursive: true });
     await writeFile(
-      join(workDir, '.kimi-code', 'runtimes.toml'),
+      join(workDir, '.kimi-code', 'environments.toml'),
       [
         '[project-box]',
         'type = "ssh"',
@@ -353,7 +353,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     try {
       const info = await harness.getWorkspaceTrustInfo(workDir);
       expect(info.trusted).toBe(false);
-      expect(info.gatedRuntimes).toEqual([
+      expect(info.gatedEnvironments).toEqual([
         {
           id: 'project-box',
           commandLine: 'ssh project-box ~/.kimi-code/bin/kimi exec-server --listen stdio',
@@ -365,7 +365,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       ]);
 
       await harness.trustWorkspace(workDir);
-      expect((await harness.getWorkspaceTrustInfo(workDir)).gatedRuntimes).toEqual([]);
+      expect((await harness.getWorkspaceTrustInfo(workDir)).gatedEnvironments).toEqual([]);
     } finally {
       await harness.close();
       vi.unstubAllEnvs();
@@ -1100,20 +1100,20 @@ key = "${titleOAuthRef.key}"
     }
   });
 
-  it('serves session.suggestFiles from the bound runtime fs after a remote switch', async () => {
-    const { harness, client } = await makeRuntimeHarness();
+  it('serves session.suggestFiles from the bound environment fs after a remote switch', async () => {
+    const { harness, client } = await makeEnvironmentHarness();
     const localDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-local-'));
     const remoteDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-remote-'));
     tempDirs.push(localDir, remoteDir);
     await writeFile(join(localDir, 'local-only.ts'), 'local');
     await writeFile(join(remoteDir, 'remote-only.ts'), 'remote');
-    const provider = await attachFakeBoxRuntime(client);
+    const provider = await attachFakeBoxEnvironment(client);
     try {
       const session = await harness.createSession({ workDir: localDir });
       const before = await session.suggestFiles({ query: 'local-only', limit: 20 });
       expect(before?.items).toContainEqual(expect.objectContaining({ name: 'local-only.ts' }));
 
-      await session.switchRuntime('fake-box', { cwd: remoteDir });
+      await session.switchEnvironment('fake-box', { cwd: remoteDir });
       const after = await session.suggestFiles({ query: 'remote-only', limit: 20 });
       expect(after?.items).toContainEqual(expect.objectContaining({ name: 'remote-only.ts' }));
       const stale = await session.suggestFiles({ query: 'local-only', limit: 20 });
@@ -1126,14 +1126,14 @@ key = "${titleOAuthRef.key}"
     }
   });
 
-  it('attaches the remote runtime provider so declared runtimes appear as placeholders', async () => {
-    const { harness } = await makeRuntimeHarness();
+  it('attaches the remote environment provider so declared environments appear as placeholders', async () => {
+    const { harness } = await makeEnvironmentHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(workDir);
     try {
       const session = await harness.createSession({ workDir });
-      const listed = await session.listRuntimes();
-      const byId = new Map(listed.runtimes.map((entry) => [entry.runtimeId, entry]));
+      const listed = await session.listEnvironments();
+      const byId = new Map(listed.environments.map((entry) => [entry.environmentId, entry]));
       expect(byId.get('local')).toMatchObject({ type: 'local', status: 'ready' });
       expect(byId.get('fake-box')).toMatchObject({
         type: 'ssh',
@@ -1147,29 +1147,29 @@ key = "${titleOAuthRef.key}"
     }
   });
 
-  it('declares a global runtime byte-identically to the setConfig patch flow', async () => {
-    const viaDeclare = await makeRuntimeHarness();
-    const viaPatch = await makeRuntimeHarness();
+  it('declares a global environment byte-identically to the setConfig patch flow', async () => {
+    const viaDeclare = await makeEnvironmentHarness();
+    const viaPatch = await makeEnvironmentHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(workDir);
-    // The payload mirrors the /runtime Add form: defaultCwd stays undefined
+    // The payload mirrors the /environment Add form: defaultCwd stays undefined
     // when the field is left empty.
     const entry = { type: 'ssh', host: 'new-box', defaultCwd: undefined } as const;
     try {
       const declareSession = await viaDeclare.harness.createSession({ workDir });
       const patchSession = await viaPatch.harness.createSession({ workDir });
       // The default scope is global.
-      await declareSession.declareRuntime({ id: 'new-box', entry });
-      await viaPatch.harness.setConfig({ runtimes: { 'new-box': entry } } as never);
+      await declareSession.declareEnvironment({ id: 'new-box', entry });
+      await viaPatch.harness.setConfig({ environments: { 'new-box': entry } } as never);
       const [declareToml, patchToml] = await Promise.all([
         readFile(join(viaDeclare.homeDir, 'config.toml'), 'utf-8'),
         readFile(join(viaPatch.homeDir, 'config.toml'), 'utf-8'),
       ]);
       expect(declareToml).toBe(patchToml);
-      expect(declareToml).toContain('[runtimes.new-box]');
+      expect(declareToml).toContain('[environments.new-box]');
       await vi.waitFor(async () => {
-        const listed = await declareSession.listRuntimes();
-        expect(listed.runtimes.some((runtime) => runtime.runtimeId === 'new-box')).toBe(true);
+        const listed = await declareSession.listEnvironments();
+        expect(listed.environments.some((environment) => environment.environmentId === 'new-box')).toBe(true);
       });
       await declareSession.close();
       await patchSession.close();
@@ -1181,15 +1181,15 @@ key = "${titleOAuthRef.key}"
   });
 
   it('rejects a global declare whose id is already declared, leaving config.toml untouched', async () => {
-    const { harness, homeDir } = await makeRuntimeHarness();
+    const { harness, homeDir } = await makeEnvironmentHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(workDir);
     const before = await readFile(join(homeDir, 'config.toml'), 'utf-8');
-    expect(before).toContain('[runtimes.fake-box]');
+    expect(before).toContain('[environments.fake-box]');
     try {
       const session = await harness.createSession({ workDir });
       await expect(
-        session.declareRuntime({ id: 'fake-box', entry: { type: 'ssh', host: 'other-box' } }),
+        session.declareEnvironment({ id: 'fake-box', entry: { type: 'ssh', host: 'other-box' } }),
       ).rejects.toThrow(/already declared/);
       expect(await readFile(join(homeDir, 'config.toml'), 'utf-8')).toBe(before);
       await session.close();
@@ -1199,13 +1199,13 @@ key = "${titleOAuthRef.key}"
     }
   });
 
-  it('declares a project runtime into .kimi-code/runtimes.toml without clobbering it, registering live', async () => {
-    const { harness } = await makeRuntimeHarness();
+  it('declares a project environment into .kimi-code/environments.toml without clobbering it, registering live', async () => {
+    const { harness } = await makeEnvironmentHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(workDir);
     await mkdir(join(workDir, '.kimi-code'), { recursive: true });
     await writeFile(
-      join(workDir, '.kimi-code', 'runtimes.toml'),
+      join(workDir, '.kimi-code', 'environments.toml'),
       [
         '# Shared with the team — keep this comment.',
         '[existing-box]',
@@ -1219,28 +1219,28 @@ key = "${titleOAuthRef.key}"
     try {
       await harness.trustWorkspace(workDir);
       const session = await harness.createSession({ workDir });
-      await session.declareRuntime({
+      await session.declareEnvironment({
         id: 'proj-box',
         entry: { type: 'ssh', host: 'proj-box', defaultCwd: '/remote/proj' },
         scope: 'project',
       });
-      const toml = await readFile(join(workDir, '.kimi-code', 'runtimes.toml'), 'utf-8');
+      const toml = await readFile(join(workDir, '.kimi-code', 'environments.toml'), 'utf-8');
       expect(toml).toContain('# Shared with the team — keep this comment.');
       expect(toml).toContain('[existing-box]');
       expect(toml).toContain('[proj-box]');
       expect(toml).toContain('host = "proj-box"');
-      // The project declaration watch (M11) registers the new runtime without
+      // The project declaration watch (M11) registers the new environment without
       // a restart.
       await vi.waitFor(
         async () => {
-          const listed = await session.listRuntimes();
-          const projBox = listed.runtimes.find((runtime) => runtime.runtimeId === 'proj-box');
+          const listed = await session.listEnvironments();
+          const projBox = listed.environments.find((environment) => environment.environmentId === 'proj-box');
           expect(projBox).toMatchObject({ type: 'ssh', defaultCwd: '/remote/proj' });
         },
         { timeout: 10_000, interval: 100 },
       );
-      const listed = await session.listRuntimes();
-      expect(listed.runtimes.some((runtime) => runtime.runtimeId === 'existing-box')).toBe(true);
+      const listed = await session.listEnvironments();
+      expect(listed.environments.some((environment) => environment.environmentId === 'existing-box')).toBe(true);
       await session.close();
     } finally {
       await harness.close();
@@ -1249,23 +1249,23 @@ key = "${titleOAuthRef.key}"
   });
 
   it('rejects a project declare whose id is already declared, leaving the file untouched', async () => {
-    const { harness } = await makeRuntimeHarness();
+    const { harness } = await makeEnvironmentHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(workDir);
     await mkdir(join(workDir, '.kimi-code'), { recursive: true });
     const before = ['[proj-box]', 'type = "ssh"', 'host = "proj-box"', ''].join('\n');
-    await writeFile(join(workDir, '.kimi-code', 'runtimes.toml'), before, 'utf-8');
+    await writeFile(join(workDir, '.kimi-code', 'environments.toml'), before, 'utf-8');
     try {
       await harness.trustWorkspace(workDir);
       const session = await harness.createSession({ workDir });
       await expect(
-        session.declareRuntime({
+        session.declareEnvironment({
           id: 'proj-box',
           entry: { type: 'ssh', host: 'other-box' },
           scope: 'project',
         }),
       ).rejects.toThrow(/already declared/);
-      expect(await readFile(join(workDir, '.kimi-code', 'runtimes.toml'), 'utf-8')).toBe(before);
+      expect(await readFile(join(workDir, '.kimi-code', 'environments.toml'), 'utf-8')).toBe(before);
       await session.close();
     } finally {
       await harness.close();
@@ -1274,23 +1274,23 @@ key = "${titleOAuthRef.key}"
   });
 
   it('refuses a project declare when the existing file is invalid, leaving it untouched', async () => {
-    const { harness } = await makeRuntimeHarness();
+    const { harness } = await makeEnvironmentHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(workDir);
     await mkdir(join(workDir, '.kimi-code'), { recursive: true });
     const before = '[broken\n';
-    await writeFile(join(workDir, '.kimi-code', 'runtimes.toml'), before, 'utf-8');
+    await writeFile(join(workDir, '.kimi-code', 'environments.toml'), before, 'utf-8');
     try {
       await harness.trustWorkspace(workDir);
       const session = await harness.createSession({ workDir });
       await expect(
-        session.declareRuntime({
+        session.declareEnvironment({
           id: 'proj-box',
           entry: { type: 'ssh', host: 'proj-box' },
           scope: 'project',
         }),
       ).rejects.toThrow(/Invalid TOML/);
-      expect(await readFile(join(workDir, '.kimi-code', 'runtimes.toml'), 'utf-8')).toBe(before);
+      expect(await readFile(join(workDir, '.kimi-code', 'environments.toml'), 'utf-8')).toBe(before);
       await session.close();
     } finally {
       await harness.close();
@@ -1298,7 +1298,7 @@ key = "${titleOAuthRef.key}"
     }
   });
 
-  it('rejects declareRuntime while the remote_runtime flag is off', async () => {
+  it('rejects declareEnvironment while the remote_runtime flag is off', async () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', 'false');
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_RUNTIME', 'false');
     const { harness } = await makeHarness();
@@ -1307,7 +1307,7 @@ key = "${titleOAuthRef.key}"
     try {
       const session = await harness.createSession({ workDir });
       await expect(
-        session.declareRuntime({ id: 'box', entry: { type: 'ssh', host: 'box' } }),
+        session.declareEnvironment({ id: 'box', entry: { type: 'ssh', host: 'box' } }),
       ).rejects.toThrow(/remote_runtime/);
       await session.close();
     } finally {
@@ -1343,7 +1343,7 @@ key = "${titleOAuthRef.key}"
       expect(byName.has('demo-project-skill')).toBe(false);
 
       // The session skill catalog (the Skill tool's listing) goes through the
-      // seeded engine runtime options, so it sees the same explicit source.
+      // seeded engine environment options, so it sees the same explicit source.
       const session = await harness.createSession({ workDir });
       const sessionNames = new Set((await session.listSkills()).map((skill) => skill.name));
       expect(sessionNames.has('demo-explicit-skill')).toBe(true);
@@ -1927,7 +1927,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
     await writeFile(join(workDir, '.mcp.json'), '{not json', 'utf-8');
     try {
       const info = await harness.getWorkspaceTrustInfo(workDir);
-      expect(info).toEqual({ trusted: false, gatedMcpServers: [], gatedRuntimes: [] });
+      expect(info).toEqual({ trusted: false, gatedMcpServers: [], gatedEnvironments: [] });
     } finally {
       await harness.close();
     }
@@ -1942,7 +1942,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
       expect(await harness.getWorkspaceTrustInfo(workDir)).toEqual({
         trusted: true,
         gatedMcpServers: [],
-        gatedRuntimes: [],
+        gatedEnvironments: [],
       });
       // The trust marker lives in the kimi home, never in the checkout.
       const markers = await readdir(join(homeDir, 'workspace-trust'));

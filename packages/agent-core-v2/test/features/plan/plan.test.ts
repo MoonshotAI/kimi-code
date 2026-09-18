@@ -12,13 +12,13 @@ import { runWillBeginStepHooks, type StubLoop } from '../../agent/loop/stubs';
 import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
 import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { createFakeHostFs, createFakeProcessRunner } from '../../tools/fixtures/fake-exec';
-import { createMapFs, stubPlanRuntime } from './stubs';
+import { createMapFs, stubPlanEnvironment } from './stubs';
 import {
   agentService,
   createCommandRunner,
@@ -189,7 +189,7 @@ describe('Plan service', () => {
       expect(ctx.llmCalls).toHaveLength(0);
     });
 
-    it('derives the plan path from the runtime tempDir on enter and restore', async () => {
+    it('derives the plan path from the environment tempDir on enter and restore', async () => {
       useFakes(createPlanFakes({
         writeText: vi.fn(async (_path: string, _content: string): Promise<void> => {}),
       }));
@@ -240,7 +240,7 @@ describe('Plan service', () => {
     });
   });
 
-  describe('remote runtime binding', () => {
+  describe('remote environment binding', () => {
     const remoteTempDir = '/remote/tmp';
     let remoteCtx: TestAgentContext;
     let remotePlan: IAgentPlanService;
@@ -255,8 +255,8 @@ describe('Plan service', () => {
       remoteCtx = createTestAgent([
         execEnvServices({ hostFs: createMapFs(localFiles) }),
         agentService(
-          IAgentRuntimeService,
-          stubPlanRuntime({
+          IAgentEnvironmentService,
+          stubPlanEnvironment({
             fs: createMapFs(remoteFiles, { mkdir: remoteMkdir }),
             tempDir: remoteTempDir,
           }),
@@ -275,7 +275,7 @@ describe('Plan service', () => {
       remoteCtx.newEvents();
     }
 
-    it('stores the plan file on the bound runtime fs under the runtime tempDir', async () => {
+    it('stores the plan file on the bound environment fs under the environment tempDir', async () => {
       useRemoteTools(['Write']);
       await remotePlan.enter('remote-plan', false);
 
@@ -300,7 +300,7 @@ describe('Plan service', () => {
       expect((await remotePlan.status())?.content).toBe(content);
     });
 
-    it('creates the plans directory on the runtime fs with owner-only permissions', async () => {
+    it('creates the plans directory on the environment fs with owner-only permissions', async () => {
       await remotePlan.enter('remote-plan', false);
 
       const planPath = `${remoteTempDir}/kimi-code/plans/main/remote-plan.md`;

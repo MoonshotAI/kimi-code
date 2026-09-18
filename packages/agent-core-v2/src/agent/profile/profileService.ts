@@ -26,8 +26,8 @@ import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import type { LoopControl } from '#/agent/loop/configSection';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ToolSource } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -145,7 +145,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IConfigService private readonly config: IConfigService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IProtocolAdapterRegistry private readonly protocolAdapters: IProtocolAdapterRegistry,
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ISessionNotify private readonly notify: ISessionNotify,
@@ -808,10 +808,10 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   ): Promise<SystemPromptContext> {
     await this.notify.ready;
     const preloadedAgentsMd = await this.workspaceInstructionsSnapshot();
-    const fsAvailable = this.runtime.isAvailable(['fs']);
-    const lease = this.runtime.acquire(fsAvailable ? ['fs'] : []);
-    const env = lease.runtime.environment;
-    const view = new RuntimeWorkspaceView(lease.runtime, {
+    const fsAvailable = this.environment.isAvailable(['fs']);
+    const lease = this.environment.acquire(fsAvailable ? ['fs'] : []);
+    const env = lease.environment.host;
+    const view = new EnvironmentWorkspaceView(lease.environment, {
       workDir: this.sessionContext.cwd,
       additionalDirs: options?.additionalDirs ?? this.workspace.additionalDirs,
     });
@@ -820,7 +820,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       base = !fsAvailable
         ? {}
         : await prepareSystemPromptContext(
-            { fs: lease.runtime.fs!, homeDir: env.homeDir },
+            { fs: lease.environment.fs!, homeDir: env.homeDir },
             view.workDir,
             this.bootstrap.homeDir,
             {
