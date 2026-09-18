@@ -7,14 +7,17 @@ import {
   ControlCallTimeoutError,
   HandshakeError,
   RemoteExecConnection,
+  RequestTimeoutError,
 } from '../src/client/connection';
 import type { BytePipe } from '../src/client/execBridge';
 import { LineFrameDecoder } from '../src/protocol/codec';
 import { RpcError } from '../src/protocol/errors';
 import {
+  ENVIRONMENT_STATUS_METHOD,
   FS_READ_FILE_METHOD,
   INITIALIZE_METHOD,
   PROCESS_READ_METHOD,
+  PROCESS_START_METHOD,
   type InitializeResult,
 } from '../src/protocol/methods';
 import {
@@ -252,7 +255,7 @@ describe('control call timeout', () => {
       controlCallTimeoutMs: 100,
     });
     const started = Date.now();
-    const call = connection.call(FS_READ_FILE_METHOD, { path: '/etc/hostname' });
+    const call = connection.call(ENVIRONMENT_STATUS_METHOD);
     await expect(call).rejects.toThrow(ConnectionClosedError);
     await expect(call).rejects.toThrow(/timed out/);
     expect(Date.now() - started).toBeLessThan(5_000);
@@ -272,7 +275,7 @@ describe('control call timeout', () => {
       controlCallTimeoutMs: 100,
     });
     const longPoll = connection.call(PROCESS_READ_METHOD, { processId: 'p1', waitMs: 30_000 });
-    const control = connection.call(FS_READ_FILE_METHOD, { path: '/etc/hostname' });
+    const control = connection.call(ENVIRONMENT_STATUS_METHOD);
     await expect(control).rejects.toThrow(ConnectionClosedError);
     await expect(longPoll).rejects.toThrow(ConnectionClosedError);
     expect(connection.closed).toBe(true);
@@ -299,6 +302,137 @@ describe('control call timeout', () => {
     expect(result).toEqual({ chunks: [], nextSeq: 0, exited: false, closed: false });
     expect(connection.closed).toBe(false);
     connection.close();
+  });
+});
+
+describe('request call timeout', () => {
+  it('times out a stalled exec call without killing the connection', async () => {
+    const pipe = createScriptedServer((frame, reply) => {
+      if (frame.method === INITIALIZE_METHOD) {
+        reply({ id: frame.id, result: testInitializeResult() });
+        return;
+      }
+      if (frame.method === ENVIRONMENT_STATUS_METHOD) {
+        reply({ id: frame.id, result: { status: 'ready' } });
+      }
+      // process/start is left unanswered: the executor stalled on one request.
+    });
+    const connection = await RemoteExecConnection.connect(pipe, {
+      clientName: 'test',
+      clientVersion: '0.0.0',
+      requestCallTimeoutMs: 100,
+    });
+    const started = Date.now();
+    const call = connection.call(PROCESS_START_METHOD, {
+      processId: 'p1',
+      argv: ['sleep', '1'],
+      cwd: '/tmp',
+    });
+    await expect(call).rejects.toThrow(RequestTimeoutError);
+    await expect(call).rejects.toThrow(/timed out after 100ms/);
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(connection.closed).toBe(false);
+    await expect(connection.call(ENVIRONMENT_STATUS_METHOD)).resolves.toEqual({ status: 'ready' });
+    connection.close();
+  });
+
+  it('discards a late response to a timed-out request', async () => {
+    const pipe = createScriptedServer((frame, reply) => {
+      if (frame.method === INITIALIZE_METHOD) {
+        reply({ id: frame.id, result: testInitializeResult() });
+        return;
+      }
+      if (frame.method === ENVIRONMENT_STATUS_METHOD) {
+        reply({ id: frame.id, result: { status: 'ready' } });
+        return;
+      }
+      if (frame.method === FS_READ_FILE_METHOD) {
+        setTimeout(() => {
+          reply({ id: frame.id, result: { dataBase64: '', eof: true } });
+        }, 300);
+      }
+    });
+    const connection = await RemoteExecConnection.connect(pipe, {
+      clientName: 'test',
+      clientVersion: '0.0.0',
+      requestCallTimeoutMs: 100,
+    });
+    const call = connection.call(FS_READ_FILE_METHOD, { path: '/etc/hostname' });
+    await expect(call).rejects.toThrow(RequestTimeoutError);
+    // The answer lands after the request already failed: it must be dropped
+    // silently, not fault the connection as a response with an unknown id.
+    await new Promise((resolve) => {
+      setTimeout(resolve, 600);
+    });
+    expect(connection.closed).toBe(false);
+    await expect(connection.call(ENVIRONMENT_STATUS_METHOD)).resolves.toEqual({ status: 'ready' });
+    connection.close();
+  });
+
+  it('settles a stale request when its connection generation is replaced', async () => {
+    const firstToServer = new PassThrough();
+    const firstToClient = new PassThrough();
+    const decoder = new LineFrameDecoder();
+    firstToServer.on('data', (chunk: Buffer) => {
+      for (const frame of decoder.push(chunk)) {
+        const request = frame as ScriptedFrame;
+        if (request.method === INITIALIZE_METHOD) {
+          firstToClient.write(`${JSON.stringify({ id: request.id, result: testInitializeResult() })}\n`);
+        }
+        // process/start is left unanswered: generation 1 stalls on it.
+      }
+    });
+    const firstPipe: BytePipe = {
+      write: (chunk) => {
+        firstToServer.write(chunk);
+      },
+      end: () => {
+        firstToServer.end();
+      },
+      onData: (listener) => {
+        firstToClient.on('data', listener);
+      },
+      onEnd: (listener) => {
+        firstToClient.on('end', listener);
+      },
+      onError: (listener) => {
+        firstToClient.on('error', listener);
+      },
+    };
+    const first = await RemoteExecConnection.connect(firstPipe, {
+      clientName: 'test',
+      clientVersion: '0.0.0',
+    });
+    const stale = first.call(PROCESS_START_METHOD, {
+      processId: 'p1',
+      argv: ['sleep', '1'],
+      cwd: '/tmp',
+    });
+    // A reconnect replaces the connection generation: disposal settles the old
+    // generation's in-flight requests instead of replaying them.
+    first.close();
+    await expect(stale).rejects.toThrow(ConnectionClosedError);
+    // A late response on the replaced generation's pipe is inert.
+    firstToClient.write('{"id":2,"result":{"processId":"p1","pid":1}}\n');
+    await new Promise((resolve) => {
+      setTimeout(resolve, 50);
+    });
+    expect(first.closed).toBe(true);
+    const secondPipe = createScriptedServer((frame, reply) => {
+      if (frame.method === INITIALIZE_METHOD) {
+        reply({ id: frame.id, result: testInitializeResult() });
+        return;
+      }
+      if (frame.method === ENVIRONMENT_STATUS_METHOD) {
+        reply({ id: frame.id, result: { status: 'ready' } });
+      }
+    });
+    const second = await RemoteExecConnection.connect(secondPipe, {
+      clientName: 'test',
+      clientVersion: '0.0.0',
+    });
+    await expect(second.call(ENVIRONMENT_STATUS_METHOD)).resolves.toEqual({ status: 'ready' });
+    second.close();
   });
 });
 

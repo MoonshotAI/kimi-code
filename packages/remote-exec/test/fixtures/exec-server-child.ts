@@ -12,6 +12,15 @@ if (delayMs > 0) {
   });
 }
 
+// Simulates a transport drop: the executor dies on its own after serving for a
+// while, ending the stdout stream underneath the client.
+const exitAfterMs = Number(process.env['EXEC_SERVER_EXIT_AFTER_MS'] ?? '0');
+if (exitAfterMs > 0) {
+  setTimeout(() => {
+    process.exit(0);
+  }, exitAfterMs).unref();
+}
+
 const version = process.env['EXEC_SERVER_VERSION'] ?? '0.0.0-test';
 
 try {

@@ -68,6 +68,13 @@ Client-surface notes beyond the wire protocol:
   the `Environment` interface cannot express (e.g. `process/terminate` with its
   TERM-then-KILL escalation, which `IHostProcess.kill`'s single signal does
   not cover).
+- Bounded business calls (fs/*, process/start, process/write, …) carry a
+  per-request timeout (default 60s): a stall fails only that request with
+  `RequestTimeoutError`, and a late response is discarded — the connection and
+  its generation survive. Control calls (`environment/status`) keep the
+  kill-the-connection timeout: an unanswered control call closes the connection
+  (`ControlCallTimeoutError`), marking the environment disconnected exactly
+  like a transport drop. `process/read` long-polls stay unbounded.
 - Whole-file reads without `maxBytes` are rejected server-side above 32MiB
   (base64 of the response must fit the 64MiB frame cap); larger files are read
   through `offset`/`maxBytes` range reads.
