@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { unlink } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
@@ -32,7 +33,7 @@ import {
   TuiAltScreen,
   TuiMainScreen,
 } from '@moonshot-ai/pi-tui';
-import { resolve } from 'pathe';
+import { isAbsolute, normalize, resolve } from 'pathe';
 
 import type { CLIOptions } from '#/cli/options';
 import { MigrationScreenComponent, type MigrationScreenResult } from '#/migration/index';
@@ -248,6 +249,18 @@ function waitingSpinnerLabel(retry: StepRetryState | null): string {
 
 function sameStringArrays(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+/**
+ * Dedup key for an additional-dirs entry, mirroring the engine's resolution
+ * (projectLocalConfigService.resolveAdditionalDir): `~` expands to the OS
+ * home, relative entries resolve against the workspace root, and the result
+ * is normalized for comparison.
+ */
+function additionalDirDedupKey(workDir: string, dir: string): string {
+  const expanded =
+    dir === '~' ? homedir() : dir.startsWith('~/') ? `${homedir()}/${dir.slice(2)}` : dir;
+  return normalize(isAbsolute(expanded) ? expanded : resolve(workDir, expanded));
 }
 
 type MutableCreateSessionOptions = {
@@ -960,6 +973,7 @@ export class KimiTUI {
         // shows the config defaults the engine would apply at createSession
         // time (model, permission, plan mode, thinking effort, context cap).
         await this.hydrateLazyConfigDefaults();
+        await this.hydratePersistedAdditionalDirs();
         this.appendStartupNotice(SESSIONLESS_STARTUP_NOTICE);
       }
       if (session !== undefined && shouldReplayHistory) {
@@ -2252,6 +2266,35 @@ export class KimiTUI {
       patch.agentFiles = startup.agentFiles?.length ? [...startup.agentFiles] : undefined;
     }
     this.setAppState(patch);
+  }
+
+  /**
+   * Seed appState.additionalDirs with the workspace's persisted dirs
+   * (`.kimi-code/local.toml` `workspace.additional_dir`) while session-less,
+   * so a pre-session `/add-dir list` reflects them and the lazy create path
+   * carries them. --add-dir flags are preserved and deduped against the
+   * persisted entries by resolved form; the engine serves the same union
+   * (persisted entries first) once a session exists. Best-effort: a failed
+   * query (e.g. an unreadable local.toml) must not break startup.
+   */
+  private async hydratePersistedAdditionalDirs(): Promise<void> {
+    let persisted: readonly string[];
+    try {
+      persisted = await this.harness.getWorkspaceAdditionalDirs(this.state.appState.workDir);
+    } catch {
+      return;
+    }
+    if (persisted.length === 0) return;
+    const { workDir } = this.state.appState;
+    const seen = new Set(persisted.map((dir) => additionalDirDedupKey(workDir, dir)));
+    const merged = [...persisted];
+    for (const dir of this.state.appState.additionalDirs) {
+      const key = additionalDirDedupKey(workDir, dir);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(dir);
+    }
+    this.setAppState({ additionalDirs: merged });
   }
 
   private async createSessionFromCurrentState(bindStartupAgent = false): Promise<Session> {

@@ -98,6 +98,17 @@ describe('handleAddDirCommand', () => {
     expect(host.showStatus).toHaveBeenCalledWith('Additional directories:\n  /repo/shared');
   });
 
+  it('lists the hydrated workspace dirs before a session exists (v2 session-less)', async () => {
+    const { host } = makeHost(['/persisted/repo2']);
+    Object.assign(host, { session: undefined });
+
+    await handleAddDirCommand(host, 'list');
+
+    // The list comes from appState (hydrated from .kimi-code/local.toml at
+    // startup); the read-only form must not lazy-create a session.
+    expect(host.showStatus).toHaveBeenCalledWith('Additional directories:\n  /persisted/repo2');
+  });
+
   it('renders the add-dir confirmation without option descriptions', async () => {
     const { host, getMountedPanel } = makeHost();
 

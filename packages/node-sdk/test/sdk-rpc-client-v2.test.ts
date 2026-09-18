@@ -1587,6 +1587,62 @@ describe('SDKRpcClientV2 workspace trust', () => {
   });
 });
 
+describe('SDKRpcClientV2 workspace additional dirs', () => {
+  it('returns an empty list for a workspace with no project local config', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    try {
+      await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([]);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('returns the dirs persisted in .kimi-code/local.toml', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    const extraDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-extra-'));
+    tempDirs.push(workDir, extraDir);
+    await mkdir(join(workDir, '.kimi-code'), { recursive: true });
+    await writeFile(
+      join(workDir, '.kimi-code', 'local.toml'),
+      `[workspace]\nadditional_dir = [${JSON.stringify(extraDir)}]\n`,
+      'utf-8',
+    );
+    try {
+      await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([extraDir]);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('serves dirs persisted by an earlier process without creating a session', async () => {
+    // The issue #3898 repro at the SDK seam: one host remembers the dir, a
+    // fresh host over the same workDir must see it before any session exists.
+    const writer = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    const extraDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-extra-'));
+    tempDirs.push(workDir, extraDir);
+    try {
+      const session = await writer.harness.createSession({ workDir });
+      await session.addAdditionalDir(extraDir, { persist: true });
+      await writer.harness.close();
+
+      const reader = await makeHarness();
+      try {
+        await expect(reader.harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([
+          extraDir,
+        ]);
+      } finally {
+        await reader.harness.close();
+      }
+    } finally {
+      await writer.harness.close().catch(() => {});
+    }
+  });
+});
+
 describe('foldAgentWireReplay', () => {
   it('folds a journal into v1 replay records and the tool store', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-fold-'));
