@@ -4,7 +4,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
 
 function syncTheme() {
-  const isDark = document.body.classList.contains("vscode-dark");
+  const themeKind = document.body.dataset.vscodeThemeKind;
+  const isDark =
+    themeKind === "vscode-dark" ||
+    themeKind === "vscode-high-contrast";
   document.documentElement.classList.toggle("dark", isDark);
 }
 
