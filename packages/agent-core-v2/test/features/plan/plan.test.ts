@@ -282,6 +282,10 @@ describe('Plan service', () => {
       const status = await remotePlan.status();
       const planPath = `${remoteTempDir}/kimi-code/plans/main/remote-plan.md`;
       expect(status?.path).toBe(planPath);
+      expect(remoteMkdir).toHaveBeenCalledWith(dirname(planPath), {
+        recursive: true,
+        mode: 0o700,
+      });
 
       const content = '# Plan\n\n- Inspect the remote tree';
       const writeCall: ToolCall = {
@@ -298,16 +302,6 @@ describe('Plan service', () => {
 
       expect(remoteFiles.get(planPath)).toBe(content);
       expect((await remotePlan.status())?.content).toBe(content);
-    });
-
-    it('creates the plans directory on the environment fs with owner-only permissions', async () => {
-      await remotePlan.enter('remote-plan', false);
-
-      const planPath = `${remoteTempDir}/kimi-code/plans/main/remote-plan.md`;
-      expect(remoteMkdir).toHaveBeenCalledWith(dirname(planPath), {
-        recursive: true,
-        mode: 0o700,
-      });
     });
 
     it('keeps denying writes to non-plan files on a remote binding', async () => {

@@ -1087,6 +1087,11 @@ describe('AgentLifecycleService', () => {
     return { connectCalls, rerootCalls, remoteEnvironment };
   }
 
+  function expectCurrentBinding(agentId: string, expected: EnvironmentBinding): void {
+    const svc = ix.get(IAgentLifecycleService);
+    expect(svc.handleOf(agentId)!.accessor.get(IAgentEnvironmentBindingService).current).toEqual(expected);
+  }
+
   it('persists a create-seeded remote binding at create time', async () => {
     const log = recordingAppendLog();
     ix.stub(IAppendLogStore, log.store);
@@ -1103,11 +1108,7 @@ describe('AgentLifecycleService', () => {
         cwd: '/remote/work',
       }),
     ]);
-    expect(svc.handleOf('agent-1')!.accessor.get(IAgentEnvironmentBindingService).current).toEqual({
-      workspaceId: 'ws_test',
-      environmentId: 'remote',
-      cwd: '/remote/work',
-    });
+    expectCurrentBinding('agent-1', { workspaceId: 'ws_test', environmentId: 'remote', cwd: '/remote/work' });
   });
 
   it('restores a remote-bound subagent from wire records and background-reconnects', async () => {
@@ -1120,11 +1121,7 @@ describe('AgentLifecycleService', () => {
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'agent-1' });
 
-    expect(svc.handleOf('agent-1')!.accessor.get(IAgentEnvironmentBindingService).current).toEqual({
-      workspaceId: 'ws_test',
-      environmentId: 'remote',
-      cwd: '/remote/work',
-    });
+    expectCurrentBinding('agent-1', { workspaceId: 'ws_test', environmentId: 'remote', cwd: '/remote/work' });
     expect(connectCalls).toEqual(['remote']);
     expect(rerootCalls).toEqual(['/remote/work']);
   });
@@ -1140,11 +1137,7 @@ describe('AgentLifecycleService', () => {
     await svc.create({ agentId: 'agent-1' });
     const agent = svc.handleOf('agent-1')!;
 
-    expect(agent.accessor.get(IAgentEnvironmentBindingService).current).toEqual({
-      workspaceId: 'ws_test',
-      environmentId: 'ghost',
-      cwd: '/ghost/work',
-    });
+    expectCurrentBinding('agent-1', { workspaceId: 'ws_test', environmentId: 'ghost', cwd: '/ghost/work' });
     expect(() => agent.accessor.get(IAgentEnvironmentService).acquire()).toThrowError(
       expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.not_found' }),
     );
@@ -1162,11 +1155,7 @@ describe('AgentLifecycleService', () => {
 
     await svc.create({ agentId: 'agent-1' });
 
-    expect(svc.handleOf('agent-1')!.accessor.get(IAgentEnvironmentBindingService).current).toEqual({
-      workspaceId: 'ws_test',
-      environmentId: 'remote',
-      cwd: '/remote/work',
-    });
+    expectCurrentBinding('agent-1', { workspaceId: 'ws_test', environmentId: 'remote', cwd: '/remote/work' });
     expect(connectCalls).toEqual(['remote']);
   });
 
@@ -1180,11 +1169,7 @@ describe('AgentLifecycleService', () => {
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'main' });
 
-    expect(svc.handleOf('main')!.accessor.get(IAgentEnvironmentBindingService).current).toEqual({
-      workspaceId: 'ws_test',
-      environmentId: 'remote',
-      cwd: '/remote/work',
-    });
+    expectCurrentBinding('main', { workspaceId: 'ws_test', environmentId: 'remote', cwd: '/remote/work' });
     expect(connectCalls).toEqual([]);
   });
 

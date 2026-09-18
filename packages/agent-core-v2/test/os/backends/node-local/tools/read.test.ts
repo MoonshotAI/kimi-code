@@ -203,6 +203,20 @@ function createRegistryBackedTool(environmentValue: FakeEnvironment) {
   return { registry, tool };
 }
 
+async function connectingReadExecution(status?: 'connecting') {
+  const env = createTestEnv();
+  const fs = createSpiedFs('visible').fs;
+  const environmentValue = new FakeEnvironment(
+    { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
+    { capabilities: ['fs'], status },
+  );
+  Object.assign(environmentValue, { host: env, fs });
+  const { tool } = createRegistryBackedTool(environmentValue);
+  const execution = await tool.resolveExecution({ path: '/workspace/a.txt' });
+  if (!('execute' in execution)) throw new Error('expected executable Read tool');
+  return { environmentValue, execution };
+}
+
 describe('ReadTool', () => {
   it('reads a 4621-line document in full when the requested character budget fits', async () => {
     const content = Array.from({ length: 4621 }, (_, index) =>
@@ -1363,15 +1377,7 @@ describe('ReadTool', () => {
   });
 
   it('rechecks environment availability when execution starts after the tool was shown', async () => {
-    const env = createTestEnv();
-    const fs = createSpiedFs('visible').fs;
-    const environmentValue = new FakeEnvironment(
-      { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
-      { capabilities: ['fs'] },
-    );
-    Object.assign(environmentValue, { host: env, fs });
-    const { tool } = createRegistryBackedTool(environmentValue);
-    const execution = await tool.resolveExecution({ path: '/workspace/a.txt' });
+    const { environmentValue, execution } = await connectingReadExecution();
     expect('execute' in execution).toBe(true);
 
     environmentValue.setStatus('disconnected');
@@ -1383,16 +1389,7 @@ describe('ReadTool', () => {
   });
 
   it('waits for an in-flight connect when execution starts while the environment is connecting', async () => {
-    const env = createTestEnv();
-    const fs = createSpiedFs('visible').fs;
-    const environmentValue = new FakeEnvironment(
-      { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
-      { capabilities: ['fs'], status: 'connecting' },
-    );
-    Object.assign(environmentValue, { host: env, fs });
-    const { tool } = createRegistryBackedTool(environmentValue);
-    const execution = await tool.resolveExecution({ path: '/workspace/a.txt' });
-    if (!('execute' in execution)) throw new Error('expected executable Read tool');
+    const { environmentValue, execution } = await connectingReadExecution('connecting');
 
     let releaseConnect!: () => void;
     environmentValue.whenReady = new Promise<void>((resolve) => {
@@ -1419,16 +1416,7 @@ describe('ReadTool', () => {
   });
 
   it('fails with the connect reason when the in-flight connect fails during execution', async () => {
-    const env = createTestEnv();
-    const fs = createSpiedFs('visible').fs;
-    const environmentValue = new FakeEnvironment(
-      { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
-      { capabilities: ['fs'], status: 'connecting' },
-    );
-    Object.assign(environmentValue, { host: env, fs });
-    const { tool } = createRegistryBackedTool(environmentValue);
-    const execution = await tool.resolveExecution({ path: '/workspace/a.txt' });
-    if (!('execute' in execution)) throw new Error('expected executable Read tool');
+    const { environmentValue, execution } = await connectingReadExecution('connecting');
 
     const failure = new Error('executor process exited before the handshake completed (code 255, signal null): ssh: connect failed');
     environmentValue.whenReady = Promise.reject(failure);

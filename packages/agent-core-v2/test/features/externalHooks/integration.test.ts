@@ -271,6 +271,19 @@ function registerAgentEventBus(reg: ServiceRegistration): void {
   reg.define(IEventBus, AgentEventBusView);
 }
 
+function registerHookTestServices(reg: ServiceRegistration): void {
+  registerStateServices(reg);
+  reg.defineInstance(IBootstrapService, stubBootstrap());
+  reg.defineInstance(ISessionMetadata, stubSessionMetadata());
+  reg.definePartialInstance(IConfigService, {});
+  reg.definePartialInstance(IPluginService, {});
+  reg.defineInstance(IAgentContextMemoryService, stubContextMemory());
+  registerAgentEventBus(reg);
+  reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
+  reg.definePartialInstance(IAgentPermissionGate, {});
+  reg.definePartialInstance(IAgentTaskService, {});
+}
+
 function activateAgentEventBus(ix: TestInstantiationService): IEventBus {
   const agent = ix.get(IAgentScopeContext).agentContext;
   ix.get(ISessionEventBus).activateAgent(agent);
@@ -1460,9 +1473,8 @@ describe('IExternalHooksRunnerService integration', () => {
       ix = createServices(disposables, {
         strict: true,
         additionalServices: (reg) => {
-          registerStateServices(reg);
           registerTestAgentWireServices(reg, 'wire/external-hooks-cwd');
-          reg.defineInstance(IBootstrapService, stubBootstrap());
+          registerHookTestServices(reg);
           reg.defineInstance(ISessionContext, {
             _serviceBrand: undefined,
             sessionId: 'session-1',
@@ -1475,16 +1487,8 @@ describe('IExternalHooksRunnerService integration', () => {
                 ? 'sessions/workspace-1/session-1'
                 : `sessions/workspace-1/session-1/${subKey}`,
           });
-          reg.defineInstance(ISessionMetadata, stubSessionMetadata());
-          reg.definePartialInstance(IConfigService, {});
-          reg.definePartialInstance(IPluginService, {});
-          reg.defineInstance(IAgentContextMemoryService, stubContextMemory());
           reg.defineInstance(IAgentLoopService, loop);
-          registerAgentEventBus(reg);
-          reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
-          reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, { hooks: compactionHooks });
-          reg.definePartialInstance(IAgentTaskService, {});
         },
       });
       activateAgentEventBus(ix);
@@ -1549,21 +1553,12 @@ describe('IExternalHooksRunnerService integration', () => {
       ix = createServices(disposables, {
         strict: true,
         additionalServices: (reg) => {
-          registerStateServices(reg);
-          reg.defineInstance(IBootstrapService, stubBootstrap());
+          registerHookTestServices(reg);
           reg.defineInstance(ISessionContext, stubSessionContext());
-          reg.defineInstance(ISessionMetadata, stubSessionMetadata());
-          reg.definePartialInstance(IConfigService, {});
-          reg.definePartialInstance(IPluginService, {});
-          reg.defineInstance(IAgentContextMemoryService, stubContextMemory());
           reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
-          registerAgentEventBus(reg);
-          reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
-          reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, {
             hooks: createHooks(['onWillCompact']),
           });
-          reg.definePartialInstance(IAgentTaskService, {});
           reg.defineInstance(IEventDispatcher, {
             _serviceBrand: undefined,
             hooks: { onDidRestore: new OrderedHookSlot() },

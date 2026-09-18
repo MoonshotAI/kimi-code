@@ -3,9 +3,10 @@ import * as posixPath from 'node:path/posix';
 import { Event } from '#/_base/event';
 import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
-import type { Environment, EnvironmentLease, EnvironmentPath, EnvironmentStatus } from '#/environment/environment';
+import type { Environment, EnvironmentPath, EnvironmentStatus } from '#/environment/environment';
 
 import { createFakeHostFs } from '../../tools/fixtures/fake-exec';
+import { stubAgentEnvironment } from '../../environment/stubs';
 
 export function posixEnvironmentPath(): EnvironmentPath {
   return {
@@ -52,17 +53,7 @@ export function stubPlanEnvironment(options: PlanEnvironmentOptions): IAgentEnvi
     onDidChangeStatus: Event.None as Event<EnvironmentStatus>,
     dispose: () => {},
   };
-  const lease = (): EnvironmentLease => ({ environment, track: (resource) => resource, dispose: () => {} });
-  return {
-    _serviceBrand: undefined,
-    onDidChange: Event.None as Event<void>,
-    inspect: () => environment,
-    isAvailable: () => true,
-    acquire: lease,
-    acquireWhenReady: () => Promise.resolve(lease()),
-    reconnect: () => Promise.resolve(),
-    workspaceRoots: () => ({ workDir: options.workDir ?? '/workspace', additionalDirs: [] }),
-  };
+  return stubAgentEnvironment(environment, { workDir: options.workDir });
 }
 
 export function missingFileError(path: string): Error {

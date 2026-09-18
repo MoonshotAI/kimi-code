@@ -64,6 +64,24 @@ function setup() {
 }
 
 describe('EnvironmentUnitHost', () => {
+  async function provideHost() {
+    const { disposables, host, registry } = setup();
+    let providerHost!: EnvironmentProviderHost;
+    const handle = await host.provide(emptyImports(), async (provider) => {
+      providerHost = provider;
+      return { dispose: () => {} };
+    });
+    return {
+      registry,
+      providerHost,
+      handle,
+      dispose: async () => {
+        await host.dispose();
+        disposables.dispose();
+      },
+    };
+  }
+
   it('separates root, imported, and local dependencies and hides raw DI APIs', async () => {
     const { disposables, host } = setup();
     const producer = await host.provide(
@@ -199,12 +217,7 @@ describe('EnvironmentUnitHost', () => {
   });
 
   it('publishes environments registered by a committed attachment and owns their teardown', async () => {
-    const { disposables, host, registry } = setup();
-    let providerHost!: EnvironmentProviderHost;
-    const handle = await host.provide(emptyImports(), async (provider) => {
-      providerHost = provider;
-      return { dispose: () => {} };
-    });
+    const { registry, providerHost, handle, dispose } = await provideHost();
 
     const first = environment('one');
     const registration = providerHost.registerEnvironment(first);
@@ -219,17 +232,11 @@ describe('EnvironmentUnitHost', () => {
     await handle.remove();
     expect(registry.current('dynamic')).toBeUndefined();
     expect(second.disposed).toBe(true);
-    await host.dispose();
-    disposables.dispose();
+    await dispose();
   });
 
   it('re-registers the same environment id after its registration was removed', async () => {
-    const { disposables, host, registry } = setup();
-    let providerHost!: EnvironmentProviderHost;
-    const handle = await host.provide(emptyImports(), async (provider) => {
-      providerHost = provider;
-      return { dispose: () => {} };
-    });
+    const { registry, providerHost, handle, dispose } = await provideHost();
 
     const first = environment('one');
     const registration = providerHost.registerEnvironment(first);
@@ -243,17 +250,11 @@ describe('EnvironmentUnitHost', () => {
     await handle.remove();
     expect(registry.current('local')).toBeUndefined();
     expect(second.disposed).toBe(true);
-    await host.dispose();
-    disposables.dispose();
+    await dispose();
   });
 
   it('re-registers the same environment id even when removal teardown fails', async () => {
-    const { disposables, host, registry } = setup();
-    let providerHost!: EnvironmentProviderHost;
-    const handle = await host.provide(emptyImports(), async (provider) => {
-      providerHost = provider;
-      return { dispose: () => {} };
-    });
+    const { registry, providerHost, handle, dispose } = await provideHost();
 
     const failing = environment('one');
     failing.dispose = () => {
@@ -269,8 +270,7 @@ describe('EnvironmentUnitHost', () => {
 
     await handle.remove();
     expect(registry.current('local')).toBeUndefined();
-    await host.dispose();
-    disposables.dispose();
+    await dispose();
   });
 
   it('waits for in-flight prepare, rejects new transactions, and tears down in reverse order', async () => {
