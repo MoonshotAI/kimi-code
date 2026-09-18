@@ -41,10 +41,10 @@ function projectContextViewKey(binding: EnvironmentBinding, fallbackCwd: string)
 function projectContextReminderText(binding: EnvironmentBinding, cwd: string, paths: readonly string[]): string {
   return (
     `The active project context is now "${binding.environmentId}" at working directory ${cwd}. ` +
-    'Project instructions from previously used directories no longer apply. ' +
-    'The AGENTS.md file(s) below apply to this working directory but may not be reflected in your system prompt:\n' +
+    'Previous working directories, AGENTS.md instructions, and environment details no longer apply. ' +
+    'The AGENTS.md file(s) below apply to this working directory:\n' +
     paths.map((path) => `- ${path}`).join('\n') +
-    '\nRead them with your tools before making changes in this working directory.'
+    '\nRead them before making changes in this working directory.'
   );
 }
 
