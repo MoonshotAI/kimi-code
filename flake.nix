@@ -244,9 +244,9 @@
       apps = forAllSystems (pkgs: {
         kimi-code = {
           type = "app";
-          program = "${self.packages.${pkgs.system}.kimi-code}/bin/kimi";
+          program = "${self.packages.${pkgs.stdenv.hostPlatform.system}.kimi-code}/bin/kimi";
         };
-        default = self.apps.${pkgs.system}.kimi-code;
+        default = self.apps.${pkgs.stdenv.hostPlatform.system}.kimi-code;
       });
 
       devShells = forAllSystems (pkgs: {
