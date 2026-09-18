@@ -308,6 +308,12 @@ describe('ExternalHooksRunnerService', () => {
     await runner.trigger('PreToolUse', { matcherValue: 'Bash', inputData: {} });
     await runner.trigger('PreToolUse', { matcherValue: 'Grep', inputData: {} });
 
+    const spawnFailRunner = makeHookRunner(
+      [{ event: 'PreToolUse', matcher: 'Bash', command: 'true', timeout: 5, cwd: '/nonexistent-hook-cwd' }],
+      { telemetry },
+    );
+    await spawnFailRunner.trigger('PreToolUse', { matcherValue: 'Bash', inputData: {} });
+
     expect(tracked).toEqual([
       [
         'external_hook_resolved',
@@ -315,6 +321,15 @@ describe('ExternalHooksRunnerService', () => {
           event: 'PreToolUse',
           action: 'block',
           matched_count: 2,
+          failed_count: 1,
+        },
+      ],
+      [
+        'external_hook_resolved',
+        {
+          event: 'PreToolUse',
+          action: 'allow',
+          matched_count: 1,
           failed_count: 1,
         },
       ],

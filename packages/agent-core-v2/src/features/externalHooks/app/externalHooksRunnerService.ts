@@ -103,7 +103,9 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
         event,
         action: blockDecision(event, results) === undefined ? 'allow' : 'block',
         matched_count: results.length,
-        failed_count: results.filter((r) => r.timedOut === true || (!!r.exitCode && r.exitCode !== 2)).length,
+        failed_count: results.filter(
+          (r) => r.timedOut === true || r.errored === true || (!!r.exitCode && r.exitCode !== 2),
+        ).length,
       });
     }
     return results;
