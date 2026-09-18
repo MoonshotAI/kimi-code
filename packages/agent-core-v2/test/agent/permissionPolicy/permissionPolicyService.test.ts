@@ -26,6 +26,7 @@ import {
 } from '#/agent/permissionRules/permissionRules';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { EnvironmentError } from '#/environment/environmentRegistry';
 import { IConfigService } from '#/app/config/config';
 import { PERMISSION_SECTION } from '#/agent/permissionRules/configSection';
 import { IBashParserService } from '#/app/bashParser/bashParser';
@@ -472,10 +473,14 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
   let workspace: ReturnType<typeof workspaceStub>;
   let workspaceDir: string;
   let cleanupDirs: string[];
+  let environmentAcquireError: (() => Error) | undefined;
+  let environmentFsAvailable: boolean;
 
   beforeEach(async () => {
     disposables = new DisposableStore();
     mode = 'manual';
+    environmentAcquireError = undefined;
+    environmentFsAvailable = true;
     workspaceDir = await mkdtemp(join(tmpdir(), 'kimi-permission-git-'));
     cleanupDirs = [workspaceDir];
     await mkdir(join(workspaceDir, '.git'), { recursive: true });
@@ -502,30 +507,33 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
           onDidChange: () => ({ dispose: () => {} }),
           isAvailable: () => true,
           inspect() { return (this as IAgentEnvironmentService).acquire().environment; },
-          acquire: () => ({
-            track: (resource) => resource,
-            environment: {
-              identity: { workspaceId: 'test', environmentId: 'local', generation: 'test' },
-              capabilities: new Set(),
-              status: 'ready',
-              onDidChangeStatus: () => ({ dispose: () => {} }),
-              dispose: () => {},
-              host: { pathClass: 'posix' } as never,
-              path: {
-                separator: '/',
-                delimiter: ':',
-                isAbsolute: () => true,
-                join: (...paths: readonly string[]) => join(...paths),
-                relative: (from: string, to: string) => to.replace(`${from}/`, ''),
-                resolve: (...paths: readonly string[]) => join(...paths),
-                basename: (path: string) => basename(path),
-                dirname: (path: string) => dirname(path),
+          acquire: () => {
+            if (environmentAcquireError !== undefined) throw environmentAcquireError();
+            return {
+              track: (resource) => resource,
+              environment: {
+                identity: { workspaceId: 'test', environmentId: 'local', generation: 'test' },
+                capabilities: new Set(),
+                status: 'ready',
+                onDidChangeStatus: () => ({ dispose: () => {} }),
+                dispose: () => {},
+                host: { pathClass: 'posix' } as never,
+                path: {
+                  separator: '/',
+                  delimiter: ':',
+                  isAbsolute: () => true,
+                  join: (...paths: readonly string[]) => join(...paths),
+                  relative: (from: string, to: string) => to.replace(`${from}/`, ''),
+                  resolve: (...paths: readonly string[]) => join(...paths),
+                  basename: (path: string) => basename(path),
+                  dirname: (path: string) => dirname(path),
+                },
+                workspace: { mapRoots: (roots) => roots },
+                fs: environmentFsAvailable ? hostFs : undefined,
               },
-              workspace: { mapRoots: (roots) => roots },
-              fs: hostFs,
-            },
-            dispose: () => {},
-          }),
+              dispose: () => {},
+            };
+          },
           acquireWhenReady() { return Promise.resolve((this as IAgentEnvironmentService).acquire()); },
           reconnect: async () => {},
           workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
@@ -660,6 +668,68 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
       policyName: 'fallback-ask',
       result: { kind: 'ask' },
     });
+  });
+
+  it.each(['environment.unavailable', 'environment.not_found'] as const)(
+    'asks for Write when environment acquire fails with %s',
+    async (code) => {
+      environmentAcquireError = () => new EnvironmentError(code, `acquire failed: ${code}`);
+      await expect(evaluate({
+        toolName: 'Write',
+        args: { path: 'src/a.ts', content: 'x' },
+        accesses: ToolAccesses.writeFile(join(workspaceDir, 'src/a.ts')),
+      })).resolves.toMatchObject({
+        policyName: 'fallback-ask',
+        result: { kind: 'ask' },
+      });
+    },
+  );
+
+  it('asks for Edit when environment acquire fails', async () => {
+    environmentAcquireError = () =>
+      new EnvironmentError('environment.unavailable', 'environment remote is disconnected');
+    await expect(evaluate({
+      toolName: 'Edit',
+      args: { path: 'src/a.ts', old_string: 'a', new_string: 'b' },
+      accesses: ToolAccesses.readWriteFile(join(workspaceDir, 'src/a.ts')),
+    })).resolves.toMatchObject({
+      policyName: 'fallback-ask',
+      result: { kind: 'ask' },
+    });
+  });
+
+  it('lets a Read through git-control-path-access-ask proceed when environment acquire fails', async () => {
+    environmentAcquireError = () =>
+      new EnvironmentError('environment.unavailable', 'environment remote is disconnected');
+    await expect(evaluate({
+      toolName: 'Read',
+      args: { path: join(workspaceDir, '.git', 'config') },
+      accesses: ToolAccesses.readFile(join(workspaceDir, '.git', 'config')),
+    })).resolves.toMatchObject({
+      policyName: 'default-tool-approve',
+      result: { kind: 'approve' },
+    });
+  });
+
+  it('asks for Write when the environment has no fs capability', async () => {
+    environmentFsAvailable = false;
+    await expect(evaluate({
+      toolName: 'Write',
+      args: { path: 'src/a.ts', content: 'x' },
+      accesses: ToolAccesses.writeFile(join(workspaceDir, 'src/a.ts')),
+    })).resolves.toMatchObject({
+      policyName: 'fallback-ask',
+      result: { kind: 'ask' },
+    });
+  });
+
+  it('surfaces non-environment acquire failures', async () => {
+    environmentAcquireError = () => new TypeError('programming error');
+    await expect(evaluate({
+      toolName: 'Write',
+      args: { path: 'src/a.ts', content: 'x' },
+      accesses: ToolAccesses.writeFile(join(workspaceDir, 'src/a.ts')),
+    })).rejects.toThrow(TypeError);
   });
 });
 
