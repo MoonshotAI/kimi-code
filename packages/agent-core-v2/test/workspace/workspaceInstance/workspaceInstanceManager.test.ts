@@ -53,6 +53,7 @@ class TestEnvironmentUnitHost implements EnvironmentUnitHost {
         registrations.push(handle);
         return handle;
       },
+      onDidChangeEnvironmentIdleness: this.registry.onDidChangeIdleness,
     };
     let attachment: T;
     try {
