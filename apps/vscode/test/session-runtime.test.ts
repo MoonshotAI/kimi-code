@@ -44,6 +44,7 @@ interface FakeSessionBoundary {
   readonly setPermissions: PermissionMode[];
   readonly subscriptionCount: () => number;
   readonly cancelCount: () => number;
+  readonly compactionCount: () => number;
   readonly cancelCompactionCount: () => number;
   readonly closeCount: () => number;
   emit(event: Event): void;
@@ -68,6 +69,7 @@ function createFakeSession(): FakeSessionBoundary {
   let nextMetadataError: Error | undefined;
   let subscriptions = 0;
   let cancellations = 0;
+  let compactions = 0;
   let compactionCancellations = 0;
   let closes = 0;
   let permission: PermissionMode = "manual";
@@ -112,6 +114,9 @@ function createFakeSession(): FakeSessionBoundary {
     async cancel() {
       cancellations += 1;
     },
+    async compact() {
+      compactions += 1;
+    },
     async cancelCompaction() {
       compactionCancellations += 1;
     },
@@ -151,6 +156,7 @@ function createFakeSession(): FakeSessionBoundary {
     setPermissions,
     subscriptionCount: () => subscriptions,
     cancelCount: () => cancellations,
+    compactionCount: () => compactions,
     cancelCompactionCount: () => compactionCancellations,
     closeCount: () => closes,
     emit(event) {
@@ -759,5 +765,51 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
     });
 
     expect(baselines).toEqual([]);
+  });
+
+  it("waits for the compaction completion event before resolving runCompaction", async () => {
+    const { runtime, sdk } = createRuntime();
+
+    let settled = false;
+    const pending = runtime.runCompaction().then((result) => {
+      settled = true;
+      return result;
+    });
+    // The pending marker is registered synchronously, but the SDK call itself
+    // resolves immediately for the v2 runtime — the wait must outlive it.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(sdk.compactionCount()).toBe(1);
+    expect(settled).toBe(false);
+
+    sdk.emit({
+      type: "compaction.completed",
+      sessionId: "session-1",
+      agentId: "main",
+      result: { summary: "s", compactedCount: 2, tokensBefore: 100, tokensAfter: 40 },
+    });
+    await expect(pending).resolves.toBe("completed");
+  });
+
+  it("resolves runCompaction as cancelled when the engine cancels the compaction", async () => {
+    const { runtime, sdk } = createRuntime();
+
+    const pending = runtime.runCompaction();
+    sdk.emit({ type: "compaction.cancelled", sessionId: "session-1", agentId: "main" });
+
+    await expect(pending).resolves.toBe("cancelled");
+  });
+
+  it("rejects runCompaction while a turn is active", async () => {
+    const { runtime, sdk } = createRuntime();
+
+    const prompt = runtime.prompt("hello");
+    await expect(runtime.runCompaction()).rejects.toThrow(
+      "A response is already being generated for this session.",
+    );
+    expect(sdk.compactionCount()).toBe(0);
+
+    sdk.emit(turnStarted());
+    sdk.emit(turnEnded("completed"));
+    await expect(prompt).resolves.toEqual({ status: "finished" });
   });
 });
