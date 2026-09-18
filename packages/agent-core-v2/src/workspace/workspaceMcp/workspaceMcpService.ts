@@ -89,11 +89,13 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     this.sessionLifecycleAttached = true;
     this._register(
       lifecycle.onWillCreateSession((event) => {
-        if (event.readSeed(ISessionContext).workspaceId !== this.workspaceId) return;
+        const context = event.readSeed(ISessionContext);
+        if (context.workspaceId !== this.workspaceId) return;
         const servers = event.readSeed(ISessionEphemeralMcpServers);
         if (Object.keys(servers).length === 0) return;
         const overlay = this.sessionOverlay(servers, {
-          stdioCwd: event.readSeed(ISessionContext).cwd,
+          stdioCwd: context.cwd,
+          sessionId: context.sessionId,
         });
         event.contributeSeed(ISessionMcpHandle, overlay.handle);
         event.onSessionDispose(() => {
@@ -128,6 +130,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
       workspaceId: this.workspaceId,
       environmentId: 'local',
       requireStdioEnvironmentId: true,
+      sessionId: opts?.sessionId,
       resolveDefaultTimeouts: () => this.mcpConfig.tunables(),
       resolveClientName: this.resolveClientName,
     });

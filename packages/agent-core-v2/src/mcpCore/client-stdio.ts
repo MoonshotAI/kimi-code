@@ -30,6 +30,7 @@ export interface StdioMcpClientOptions {
   readonly environmentResolver: IEnvironmentResolver;
   readonly workspaceId: string;
   readonly environmentId: string;
+  readonly sessionId?: string;
 }
 
 const STDERR_BUFFER_CAPACITY = 4 * 1024;
@@ -189,9 +190,9 @@ class EnvironmentStdioTransport implements Transport {
         this.config.command,
         this.config.args,
         { cwd, env: mergeStdioEnv(this.config.env) },
-      ));
+      ), this.options.sessionId);
       this.process = process;
-      lease.track(this);
+      lease.track(this, this.options.sessionId);
       process.stdin.on('error', (error: Error) => this.onerror?.(error));
       process.stdout.on('data', (chunk: Buffer | string) => this.onData(chunk));
       process.stdout.on('end', () => this.finish());
