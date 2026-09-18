@@ -46,7 +46,9 @@ async function openEnvironmentManager(host: SlashCommandHost, session: Session):
     onClose: () => {
       host.restoreEditor();
     },
-    requestRender: () => host.requestRender(),
+    requestRender: () => {
+      host.requestRender();
+    },
   });
   host.mountEditorReplacement(manager);
 }
@@ -94,7 +96,9 @@ async function switchFlow(
     onCancel: () => {
       void openEnvironmentManager(host, session);
     },
-    requestRender: () => host.requestRender(),
+    requestRender: () => {
+      host.requestRender();
+    },
   });
   host.mountEditorReplacement(dialog);
 }
@@ -156,7 +160,9 @@ async function reconnectFlow(
     onClose: () => {
       host.restoreEditor();
     },
-    requestRender: () => host.requestRender(),
+    requestRender: () => {
+      host.requestRender();
+    },
   });
 }
 
@@ -206,7 +212,9 @@ async function addFlow(host: SlashCommandHost, session: Session, list: SessionEn
       onCancel: () => {
         resolve(undefined);
       },
-      requestRender: () => host.requestRender(),
+      requestRender: () => {
+        host.requestRender();
+      },
     });
     host.mountEditorReplacement(dialog);
   });
