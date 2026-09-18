@@ -84,7 +84,6 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
     args: ExternalHooksRunnerTriggerArgs,
   ): Promise<HookResult[]> {
     await this.ready;
-    const startedAt = Date.now();
     const results = await runMatchedHooks(
       this.hostProcess,
       this.byEvent,
@@ -104,8 +103,9 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
         event,
         action: blockDecision(event, results) === undefined ? 'allow' : 'block',
         matched_count: results.length,
-        failed_count: results.filter(isFailedHookResult).length,
-        duration_ms: Date.now() - startedAt,
+        failed_count: results.filter(
+          (r) => r.timedOut === true || (r.exitCode !== undefined && r.exitCode !== 0 && r.exitCode !== 2),
+        ).length,
       });
     }
     return results;
@@ -130,10 +130,4 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
     this.byEvent = indexHooks([...(configured ?? []), ...pluginHooks]);
     this._onDidReload.fire();
   }
-}
-
-function isFailedHookResult(result: HookResult): boolean {
-  if (result.aborted === true) return false;
-  if (result.timedOut === true) return true;
-  return result.exitCode !== 0 && result.exitCode !== 2;
 }

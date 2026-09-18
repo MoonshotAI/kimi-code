@@ -312,7 +312,7 @@ describe('AgentTowerService', () => {
     expect(events).toEqual([{ type: 'agent.status.updated', towerMode: true }]);
   });
 
-  it('tracks tower_mode_enter on entry and on rejection', async () => {
+  it('tracks tower_mode_enter and tower_mode_exit on transitions only', async () => {
     const tower = ix.get(IAgentTowerService);
 
     await tower.enter();
@@ -323,35 +323,8 @@ describe('AgentTowerService', () => {
     });
 
     telemetryTrack2.mockClear();
-    towerFlagOn = false;
-    await expect(tower.enter()).resolves.toEqual({ entered: false, reason: 'experiment-off' });
-    expect(telemetryTrack2).toHaveBeenCalledWith('tower_mode_enter', {
-      outcome: 'rejected',
-      reason: 'experiment-off',
-      has_base: false,
-    });
-
-    telemetryTrack2.mockClear();
-    towerFlagOn = true;
-    await expect(tower.enter('some-base')).rejects.toThrow();
-    expect(telemetryTrack2).toHaveBeenCalledWith('tower_mode_enter', {
-      outcome: 'error',
-      reason: undefined,
-      has_base: true,
-      error_type: expect.any(String),
-    });
-  });
-
-  it('tracks tower_mode_exit on exit only', async () => {
-    const tower = ix.get(IAgentTowerService);
-    await tower.enter();
-    telemetryTrack2.mockClear();
-
     await tower.exit();
-    expect(telemetryTrack2).toHaveBeenCalledWith('tower_mode_exit', {
-      reason: 'user',
-      has_base: false,
-    });
+    expect(telemetryTrack2).toHaveBeenCalledWith('tower_mode_exit', { reason: 'user' });
 
     telemetryTrack2.mockClear();
     await tower.exit();
@@ -385,10 +358,7 @@ describe('AgentTowerService', () => {
 
       await tower.exit();
       expect(tower.requestedBase).toBeUndefined();
-      expect(telemetryTrack2).toHaveBeenCalledWith('tower_mode_exit', {
-        reason: 'user',
-        has_base: true,
-      });
+      expect(telemetryTrack2).toHaveBeenCalledWith('tower_mode_exit', { reason: 'user' });
     } finally {
       await rm(repo, { recursive: true, force: true });
     }

@@ -42,7 +42,6 @@ export interface HookResult {
   readonly stderr?: string;
   readonly exitCode?: number;
   readonly timedOut?: boolean;
-  readonly aborted?: boolean;
   readonly structuredOutput?: boolean;
 }
 

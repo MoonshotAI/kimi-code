@@ -200,15 +200,13 @@ export interface PlanEnterResolvedEvent {
 }
 
 export interface TowerModeEnterEvent {
-  outcome: 'entered' | 'rejected' | 'error';
+  outcome: 'entered' | 'rejected';
   reason?: 'not-main-agent' | 'experiment-off' | 'feature-not-assembled' | 'owned-by-live-session';
   has_base: boolean;
-  error_type?: string;
 }
 
 export interface TowerModeExitEvent {
   reason: 'user' | 'takeover' | 'foreign-reconcile';
-  has_base: boolean;
 }
 
 export interface SwarmModeEnteredEvent {
@@ -224,13 +222,11 @@ export interface ExternalHookResolvedEvent {
   action: 'allow' | 'block';
   matched_count: number;
   failed_count: number;
-  duration_ms: number;
 }
 
 export interface RemoteControlToggleEvent {
   enabled: boolean;
   outcome: 'ok' | 'already_running' | 'rejected' | 'error';
-  error_type?: string;
 }
 
 export interface CompactionFinishedEvent {
@@ -802,10 +798,9 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A request to enter tower mode resolves.',
     properties: {
-      outcome: 'Whether tower mode was entered, the request was rejected, or the entry failed',
+      outcome: 'Whether tower mode was entered or the request was rejected',
       reason: 'Why the request was rejected; omitted when tower mode was entered',
       has_base: 'Whether a base branch was specified',
-      error_type: 'Error class name when the entry failed',
     },
   }),
   tower_mode_exit: defineAgentTelemetryEvent<TowerModeExitEvent>({
@@ -814,7 +809,6 @@ export const telemetryEventDefinitions = {
     properties: {
       reason:
         'Why tower mode was exited: the user turned it off, another session took the tower over, or a foreign tower was reconciled away',
-      has_base: 'Whether a base branch was recorded at exit',
     },
   }),
   swarm_mode_entered: defineAgentTelemetryEvent<SwarmModeEnteredEvent>({
@@ -838,8 +832,7 @@ export const telemetryEventDefinitions = {
       event: 'Hook event type (e.g. PreToolUse, UserPromptSubmit, Stop)',
       action: 'Whether the trigger resolved to allow or block',
       matched_count: 'Number of hooks that ran for the trigger',
-      failed_count: 'Number of hooks that failed (timeout, spawn error, or a non-zero exit code other than 2); aborted hooks are excluded',
-      duration_ms: 'Wall-clock time running the matched hooks in milliseconds',
+      failed_count: 'Number of hooks that failed (timeout, spawn error, or a non-zero exit code other than 2)',
     },
   }),
   remote_control_toggle: defineTelemetryEvent<RemoteControlToggleEvent>({
@@ -848,7 +841,6 @@ export const telemetryEventDefinitions = {
     properties: {
       enabled: 'Whether the request was to enable or disable the tunnel',
       outcome: 'How the request resolved',
-      error_type: 'Error class name when the request failed',
     },
   }),
   compaction_finished: defineAgentTelemetryEvent<CompactionFinishedEvent>({

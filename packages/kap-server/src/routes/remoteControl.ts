@@ -79,25 +79,13 @@ export function registerRemoteControlRoutes(
     },
     async (req, reply) => {
       const { enabled } = req.body as { enabled: boolean };
-      const trackToggle = (
-        outcome: RemoteControlToggleEvent['outcome'],
-        errorType?: string,
-      ): void => {
-        const properties: RemoteControlToggleEvent = { enabled, outcome, error_type: errorType };
-        opts.telemetry?.track2('remote_control_toggle', properties);
+      const trackToggle = (outcome: RemoteControlToggleEvent['outcome']): void => {
+        opts.telemetry?.track2('remote_control_toggle', { enabled, outcome });
       };
       if (!enabled) {
-        try {
-          const priorState = opts.service.status().state;
-          const status = await opts.service.disable();
-          const stopFailed =
-            (priorState === 'on' || priorState === 'stopping') && status.error !== undefined;
-          trackToggle(stopFailed ? 'error' : 'ok', stopFailed ? 'disable_failed' : undefined);
-          reply.send(okEnvelope(toRemoteControlStatusResponse(status), req.id));
-        } catch (error) {
-          trackToggle('error', error instanceof Error ? error.name : 'unknown');
-          throw error;
-        }
+        const status = await opts.service.disable();
+        trackToggle('ok');
+        reply.send(okEnvelope(toRemoteControlStatusResponse(status), req.id));
         return;
       }
       if (opts.staticEnableError !== undefined) {
@@ -117,7 +105,7 @@ export function registerRemoteControlRoutes(
           );
           return;
         }
-        trackToggle('error', error instanceof Error ? error.name : 'unknown');
+        trackToggle('error');
         const message = error instanceof Error ? error.message : String(error);
         requestLog(req)?.error({ err: error }, 'remote-control enable failed');
         reply.send(errEnvelope(ErrorCode.INTERNAL_ERROR, message, req.id));

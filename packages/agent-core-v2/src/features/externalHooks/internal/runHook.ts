@@ -119,7 +119,7 @@ export async function runHook(
 
     const onAbort = (): void => {
       killProcess(proc);
-      settle(allowResult({ stdout, stderr, aborted: true }));
+      settle(allowResult({ stdout, stderr }));
     };
 
     options.signal?.addEventListener('abort', onAbort, { once: true });
@@ -211,7 +211,6 @@ function allowResult(input: {
   readonly stderr?: string;
   readonly exitCode?: number;
   readonly timedOut?: boolean;
-  readonly aborted?: boolean;
   readonly structuredOutput?: boolean;
 }): HookResult {
   return {
@@ -221,7 +220,6 @@ function allowResult(input: {
     stderr: input.stderr,
     exitCode: input.exitCode,
     timedOut: input.timedOut,
-    aborted: input.aborted,
     structuredOutput: input.structuredOutput,
   };
 }
