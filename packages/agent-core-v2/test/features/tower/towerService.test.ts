@@ -49,6 +49,7 @@ import { IConfigService } from '#/app/config/config';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { IFlagService } from '#/app/flag/flag';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
   ISessionActivityView,
   type SessionPendingInteraction,
@@ -146,6 +147,7 @@ describe('AgentTowerService', () => {
   let executorEvents: ToolExecutorEventStubs;
   let permissionGateRan: boolean;
   let formatDenyMessage: Mock<(message: string) => string>;
+  let telemetryTrack2: Mock<(event: string, properties?: unknown) => void>;
   let towerFlagOn: boolean;
   let addedTools: string[];
   let removedTools: string[];
@@ -165,6 +167,8 @@ describe('AgentTowerService', () => {
     ix.stub(IAgentToolExecutorService, executorEvents.executor);
     formatDenyMessage = vi.fn((message: string) => message);
     ix.stub(IAgentToolApprovalService, { formatDenyMessage });
+    telemetryTrack2 = vi.fn();
+    ix.stub(ITelemetryService, { track2: telemetryTrack2 });
     towerFlagOn = true;
     ix.stub(IFlagService, stubFlag((id) => towerFlagOn && id === TOWER_FLAG_ID));
     liveSessions = new Map();
@@ -308,6 +312,26 @@ describe('AgentTowerService', () => {
     expect(events).toEqual([{ type: 'agent.status.updated', towerMode: true }]);
   });
 
+  it('tracks tower_mode_enter on entry and on rejection', async () => {
+    const tower = ix.get(IAgentTowerService);
+
+    await tower.enter();
+    expect(telemetryTrack2).toHaveBeenCalledWith('tower_mode_enter', {
+      outcome: 'entered',
+      reason: undefined,
+      has_base: false,
+    });
+
+    telemetryTrack2.mockClear();
+    towerFlagOn = false;
+    await expect(tower.enter()).resolves.toEqual({ entered: false, reason: 'experiment-off' });
+    expect(telemetryTrack2).toHaveBeenCalledWith('tower_mode_enter', {
+      outcome: 'rejected',
+      reason: 'experiment-off',
+      has_base: false,
+    });
+  });
+
   it('enter(base) records the requested base; exit clears it', async () => {
     const repo = await mkdtemp(join(tmpdir(), 'tower-enter-base-'));
     try {
@@ -324,6 +348,11 @@ describe('AgentTowerService', () => {
 
       expect(tower.isActive).toBe(true);
       expect(tower.requestedBase).toBe('develop');
+      expect(telemetryTrack2).toHaveBeenCalledWith('tower_mode_enter', {
+        outcome: 'entered',
+        reason: undefined,
+        has_base: true,
+      });
       const state = await new TowerStore(repo).load();
       expect(state.base).toBe('develop');
       expect(state.sessionId).toBe('session-base');
