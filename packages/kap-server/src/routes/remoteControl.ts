@@ -87,9 +87,15 @@ export function registerRemoteControlRoutes(
         opts.telemetry?.track2('remote_control_toggle', properties);
       };
       if (!enabled) {
-        const status = await opts.service.disable();
-        trackToggle('ok');
-        reply.send(okEnvelope(toRemoteControlStatusResponse(status), req.id));
+        try {
+          const status = await opts.service.disable();
+          const failed = status.error !== undefined;
+          trackToggle(failed ? 'error' : 'ok', failed ? 'disable_failed' : undefined);
+          reply.send(okEnvelope(toRemoteControlStatusResponse(status), req.id));
+        } catch (error) {
+          trackToggle('error', error instanceof Error ? error.name : 'unknown');
+          throw error;
+        }
         return;
       }
       if (opts.staticEnableError !== undefined) {
