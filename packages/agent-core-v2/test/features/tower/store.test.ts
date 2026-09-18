@@ -594,6 +594,42 @@ describe('plan', () => {
     );
     expect((await store.load()).missions).toHaveLength(0);
   });
+
+  it('rejects titles containing non-ASCII characters and names the first offender', async () => {
+    await expect(
+      store.plan([{ title: '航运市场B010100迁移', scope: ['src/x/**'] }]),
+    ).rejects.toThrow(/contains non-ASCII characters \(first: "航"\)/);
+    expect((await store.load()).missions).toHaveLength(0);
+  });
+
+  it('rejects a batch when any title contains non-ASCII characters, even mixed with ASCII ones', async () => {
+    await expect(
+      store.plan([
+        { title: 'Build engine', scope: ['src/engine/**'] },
+        { title: '金融市场B010400迁移', scope: ['src/finance/**'] },
+      ]),
+    ).rejects.toThrow(/contains non-ASCII characters/);
+    expect((await store.load()).missions).toHaveLength(0);
+  });
+
+  it('rejects Russian and Korean titles — they slug to the same generic word as CJK', async () => {
+    await expect(
+      store.plan([{ title: 'Исправить ошибку входа', scope: ['src/x/**'] }]),
+    ).rejects.toThrow(/contains non-ASCII characters \(first: "И"\)/);
+    await expect(
+      store.plan([{ title: '한글 제목', scope: ['src/x/**'] }]),
+    ).rejects.toThrow(/contains non-ASCII characters \(first: "한"\)/);
+    expect((await store.load()).missions).toHaveLength(0);
+  });
+
+  it('accepts titles with printable ASCII punctuation — dashes, underscores, spaces, plus signs', async () => {
+    const missions = await store.plan([
+      { title: 'fix login_error + retry-logic', scope: ['src/x/**'] },
+    ]);
+
+    expect(missions[0]?.title).toBe('fix login_error + retry-logic');
+    expect(missions[0]?.branch).toBe('feat/fix-login-error-retry-logic');
+  });
 });
 
 describe('inbox send', () => {
@@ -641,6 +677,33 @@ describe('inbox send', () => {
     const ref = /ref=(\S+)/.exec(sendLine ?? '')?.[1];
     expect(ref).toBe(rel);
     expect((await stat(join(repo, ref!))).isFile()).toBe(true);
+  });
+
+  it('stamps the sender token count into the frontmatter and the activity log', async () => {
+    const rel = await store.send('tower', {
+      to: 'w1',
+      subject: 'get started',
+      body: 'please start on M1',
+      tokens: 12345,
+    });
+
+    const { fields } = parseFrontmatter(await readFile(join(repo, rel), 'utf8'));
+    expect(fields['tokens']).toBe('12345');
+
+    const log = await readFile(join(repo, '.tower/comms/log/activity.log'), 'utf8');
+    const sendLine = log.split('\n').find((line) => line.includes('inbox.send'));
+    expect(sendLine).toContain('tokens=12345');
+  });
+
+  it('records tokens as -1 when the sender usage is unavailable', async () => {
+    const rel = await store.send('tower', {
+      to: 'w1',
+      subject: 'get started',
+      body: 'please start on M1',
+    });
+
+    const { fields } = parseFrontmatter(await readFile(join(repo, rel), 'utf8'));
+    expect(fields['tokens']).toBe('-1');
   });
 });
 
@@ -707,6 +770,29 @@ describe('findings', () => {
     expect(text).toContain('**Agent**: w1');
     expect(text).toContain('**Type**: bug');
     expect(text).toContain('**Severity**: high');
+  });
+
+  it('stamps the reporter token count into the finding and defaults to -1', async () => {
+    const rel = await store.fileFinding('w1', {
+      type: 'bug',
+      title: 'leaky cache',
+      summary: 'the cache never invalidates',
+      details: 'no eviction path exists',
+      suggestedFix: 'add a ttl',
+      tokens: 4321,
+    });
+    const withTokens = await readFile(join(repo, rel), 'utf8');
+    expect(withTokens).toContain('**Tokens**: 4321');
+
+    const relDefault = await store.fileFinding('w1', {
+      type: 'improve',
+      title: 'second finding',
+      summary: 's',
+      details: 'd',
+      suggestedFix: 'f',
+    });
+    const withoutTokens = await readFile(join(repo, relDefault), 'utf8');
+    expect(withoutTokens).toContain('**Tokens**: -1');
   });
 });
 
@@ -833,6 +919,43 @@ describe('merge gate', () => {
     await expect(store.submitReview('rev', { ...input, target: 'feat/other' })).rejects.toThrow(
       /not an assigned reviewer/,
     );
+  });
+
+  it('stamps the reviewer token count into the review frontmatter and defaults to -1', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/x.ts',
+      content: 'x\n',
+    });
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: mission.branch }),
+    );
+
+    await store.submitReview('rev', {
+      target: mission.branch,
+      status: 'clean',
+      merge: 'merge',
+      findings: 'none',
+      decision: 'ok',
+      tokens: 777,
+    });
+    const withTokens = await store.latestReview(mission.branch);
+    expect(
+      parseFrontmatter(await readFile(join(repo, withTokens!.file), 'utf8')).fields['tokens'],
+    ).toBe('777');
+
+    await store.submitReview('rev', {
+      target: mission.branch,
+      status: 'clean',
+      merge: 'merge',
+      findings: 'none',
+      decision: 'ok again',
+    });
+    const withoutTokens = await store.latestReview(mission.branch);
+    expect(
+      parseFrontmatter(await readFile(join(repo, withoutTokens!.file), 'utf8')).fields['tokens'],
+    ).toBe('-1');
   });
 
   it('refuses to merge while dependency missions are unmerged', async () => {
