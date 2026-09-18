@@ -1,10 +1,14 @@
 import { type SpawnOptionsWithoutStdio } from 'node:child_process';
+import { stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { isAbsolute, join, resolve } from 'node:path';
 
 import { z } from 'zod';
 
 import { type IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 
 import type { HookResult } from './types';
+import { spawnWorkerHookProcess } from './workerHookProcess';
 
 export interface RunHookOptions {
   readonly timeout: number;
@@ -29,6 +33,23 @@ export function buildHookSpawnOptions(options: {
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
 const KILL_GRACE_MS = 100;
+const JS_HOOK_COMMAND_PATTERN = /\.(cjs|mjs|js)$/;
+
+async function resolveHookScript(command: string, cwd?: string): Promise<string | undefined> {
+  const trimmed = command.trim();
+  if (!JS_HOOK_COMMAND_PATTERN.test(trimmed)) return undefined;
+  let scriptPath = trimmed;
+  if (scriptPath === '~' || scriptPath.startsWith('~/') || scriptPath.startsWith('~\\')) {
+    scriptPath = join(homedir(), scriptPath.slice(1));
+  } else if (!isAbsolute(scriptPath)) {
+    scriptPath = resolve(cwd ?? '', scriptPath);
+  }
+  try {
+    return (await stat(scriptPath)).isFile() ? scriptPath : undefined;
+  } catch {
+    return undefined;
+  }
+}
 const OptionalStringSchema = z.preprocess(
   (value) => {
     if (value === undefined || value === null) return undefined;
@@ -63,11 +84,15 @@ export async function runHook(
 ): Promise<HookResult> {
   let proc: IHostProcess;
   try {
-    proc = await hostProcess.spawn(command, [], {
-      shell: true,
-      cwd: options.cwd,
-      env: options.env,
-    });
+    const script = await resolveHookScript(command, options.cwd);
+    proc =
+      script === undefined
+        ? await hostProcess.spawn(command, [], {
+            shell: true,
+            cwd: options.cwd,
+            env: options.env,
+          })
+        : spawnWorkerHookProcess(script, options.env);
   } catch (error) {
     return allowResult({ stderr: errorMessage(error), errored: true });
   }

@@ -45,19 +45,19 @@ All hook rules are written in the `[[hooks]]` array in `~/.kimi-code/config.toml
 | --- | --- | --- | --- |
 | `event` | `string` | Yes | Trigger event name; must be one of the events in the [event reference](#event-reference) |
 | `matcher` | `string` | No | A regular expression to filter event targets; if omitted, matches all |
-| `command` | `string` | Yes | The shell command to run when triggered |
+| `command` | `string` | Yes | The shell command to run when triggered; a path to a `.js`/`.mjs`/`.cjs` file instead runs inside the CLI's own Node.js runtime (a worker thread — no shell, no external Node.js required) |
 | `timeout` | `integer` | No | Timeout in seconds, range 0–600; `0` means no timeout; defaults to 30 seconds |
 
 `[[hooks]]` only allows these four fields; extra fields will cause the config file to fail to load.
 
 **When multiple rules match the same event**, all matching hooks run in parallel; multiple rules with identical `command` values run only once.
 
-The working directory for hook commands is the current session's project directory.
+The working directory for hook commands is the current session's project directory. Hooks configured as a `.js` file path are the exception: they run in a worker thread of the CLI process and inherit that process's working directory — use the `cwd` field of the [event payload](#event-data-format) when the script needs the session directory.
 
 <details>
 <summary>Process group and timeout handling</summary>
 
-On non-Windows platforms, hook processes run in a separate process group; on timeout, the CLI first sends a signal to give the script a chance to clean up, then forcibly terminates it.
+On non-Windows platforms, hook processes run in a separate process group; on timeout, the CLI first sends a signal to give the script a chance to clean up, then forcibly terminates it. Hooks configured as a `.js` file path run in a worker thread instead of a child process: on timeout the worker is terminated immediately without a grace period, and any child processes the script itself spawned are not cleaned up.
 
 </details>
 
@@ -137,7 +137,7 @@ The following hook checks the command content before the Agent calls the `Bash` 
 [[hooks]]
 event = "PreToolUse"
 matcher = "Bash"
-command = "node ~/.kimi-code/hooks/block-dangerous-bash.mjs"
+command = "~/.kimi-code/hooks/block-dangerous-bash.mjs"
 timeout = 5
 ```
 

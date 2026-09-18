@@ -45,19 +45,19 @@ command = "terminal-notifier -title Kimi -message 'Task done'"
 | --- | --- | --- | --- |
 | `event` | `string` | 是 | 触发事件名，取值见 [事件一览](#事件一览) |
 | `matcher` | `string` | 否 | 用正则表达式（一种字符串匹配语法）过滤事件目标；不填则匹配全部 |
-| `command` | `string` | 是 | 触发时要运行的 Shell 命令 |
+| `command` | `string` | 是 | 触发时要运行的 Shell 命令；如果是 `.js`/`.mjs`/`.cjs` 文件路径，则在 CLI 自身的 Node.js 运行时内（worker 线程）运行该文件，不经过 Shell，也不依赖外部 Node.js |
 | `timeout` | `integer` | 否 | 超时秒数，范围 0–600，`0` 表示不超时；默认 30 秒 |
 
 `[[hooks]]` 只允许这四个字段，多写会导致配置文件加载失败。
 
 **同一事件匹配多条规则时**，所有命中的 hook 并行运行；`command` 完全相同的多条规则只运行一次。
 
-Hook 命令的工作目录是当前会话的项目目录。
+Hook 命令的工作目录是当前会话的项目目录。配置为 `.js` 文件路径的 hook 例外：它们运行在 CLI 进程的 worker 线程中，继承的是该进程的工作目录——脚本需要会话目录时，请使用 [事件数据](#事件数据格式) 中的 `cwd` 字段。
 
 <details>
 <summary>进程组与超时处理</summary>
 
-非 Windows 平台上，hook 进程运行在独立进程组中；超时后 CLI 先发送信号让脚本有机会善后，再强制终止。
+非 Windows 平台上，hook 进程运行在独立进程组中；超时后 CLI 先发送信号让脚本有机会善后，再强制终止。配置为 `.js` 文件路径的 hook 运行在 worker 线程而非子进程中：超时后 worker 会被立即终止，没有善后宽限期，脚本自己启动的子进程也不会被清理。
 
 </details>
 
@@ -137,7 +137,7 @@ Hook 命令的工作目录是当前会话的项目目录。
 [[hooks]]
 event = "PreToolUse"
 matcher = "Bash"
-command = "node ~/.kimi-code/hooks/block-dangerous-bash.mjs"
+command = "~/.kimi-code/hooks/block-dangerous-bash.mjs"
 timeout = 5
 ```
 

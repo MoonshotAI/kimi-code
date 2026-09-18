@@ -1,3 +1,7 @@
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import { buildHookSpawnOptions, runHook } from '#/features/externalHooks/internal/runHook';
@@ -67,6 +71,13 @@ describe('runHook process runner', () => {
 
     expect(result.action).toBe('block');
     expect(result.reason).toContain('blocked');
+
+    const script = join(mkdtempSync(join(tmpdir(), 'hook-js-')), 'block.js');
+    writeFileSync(script, 'process.stderr.write("blocked file\\n"); process.exit(2);');
+
+    const fromFile = await runHook(hostProcess, script, { tool_name: 'Bash' }, { timeout: 5 });
+    expect(fromFile.action).toBe('block');
+    expect(fromFile.reason).toContain('blocked file');
   });
 
   it('returns allow on non-zero, non-2 exit codes', async () => {
@@ -101,6 +112,13 @@ describe('runHook process runner', () => {
     expect(noTimeout.action).toBe('allow');
     expect(noTimeout.timedOut).toBeUndefined();
     expect(noTimeout.exitCode).toBe(0);
+
+    const script = join(mkdtempSync(join(tmpdir(), 'hook-js-')), 'hang.js');
+    writeFileSync(script, 'setInterval(() => {}, 1000);');
+
+    const workerTimedOut = await runHook(hostProcess, script, { tool_name: 'Bash' }, { timeout: 0.05 });
+    expect(workerTimedOut.action).toBe('allow');
+    expect(workerTimedOut.timedOut).toBe(true);
   });
 
   it('parses stdout JSON permissionDecision=deny into a block result with the supplied reason', async () => {
@@ -133,6 +151,27 @@ describe('runHook process runner', () => {
     );
 
     expect(result.stdout?.trim()).toBe('Write');
+
+    const script = join(mkdtempSync(join(tmpdir(), 'hook-js-')), 'echo.js');
+    writeFileSync(script, [
+      'let input = "";',
+      'process.stdin.on("data", (chunk) => { input += chunk; });',
+      'process.stdin.on("end", () => {',
+      '  const parsed = JSON.parse(input);',
+      '  process.stdout.write(parsed.tool_name);',
+      '});',
+    ].join('\n'));
+
+    const fromFile = await runHook(hostProcess, script, { tool_name: 'Edit' }, { timeout: 5 });
+    expect(fromFile.stdout?.trim()).toBe('Edit');
+
+    const missing = await runHook(
+      hostProcess,
+      join(tmpdir(), 'hook-js-definitely-missing.js'),
+      { tool_name: 'Edit' },
+      { timeout: 5 },
+    );
+    expect(missing.action).toBe('allow');
   });
 });
 
