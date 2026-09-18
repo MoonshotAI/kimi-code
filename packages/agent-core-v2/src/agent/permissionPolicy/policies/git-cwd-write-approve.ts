@@ -8,6 +8,7 @@ import type {
   PermissionPolicy,
   PermissionPolicyResult,
 } from '#/agent/permissionPolicy/types';
+import { acquireEnvironmentLease } from './environment-lease';
 import { writeFileAccesses } from './path-utils';
 
 export class GitCwdWriteApprovePermissionPolicyService implements PermissionPolicy {
@@ -23,7 +24,8 @@ export class GitCwdWriteApprovePermissionPolicyService implements PermissionPoli
   ): Promise<PermissionPolicyResult | undefined> {
     const toolName = context.toolCall.name;
     if (toolName !== 'Write' && toolName !== 'Edit') return undefined;
-    const lease = this.environment.acquire();
+    const lease = acquireEnvironmentLease(this.environment);
+    if (lease === undefined) return undefined;
     try {
       const pathClass = lease.environment.host.pathClass;
       if (pathClass !== 'posix') return undefined;
