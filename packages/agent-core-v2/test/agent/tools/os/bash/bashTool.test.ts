@@ -29,8 +29,8 @@ function environmentService(environment: Environment): IAgentEnvironmentService 
     onDidChange: () => ({ dispose: () => {} }),
     inspect: () => environment,
     isAvailable: () => true,
-    acquire: () => ({ environment: environment, track: (resource) => resource, dispose: () => {} }),
-    acquireWhenReady: async () => ({ environment: environment, track: (resource) => resource, dispose: () => {} }),
+    acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
+    acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
     reconnect: async () => {},
     workspaceRoots: () => ({ workDir: '', additionalDirs: [] }),
   };

@@ -27,7 +27,7 @@ import type { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileL
 import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
 import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
 
-function runtime(generation: string, status: EnvironmentStatus = 'ready'): FakeEnvironment {
+function environment(generation: string, status: EnvironmentStatus = 'ready'): FakeEnvironment {
   return Object.assign(
     new FakeEnvironment(
       { workspaceId: 'workspace', environmentId: 'local', generation },
@@ -129,7 +129,7 @@ function setup(readiness = new Map<string, Promise<void>>(), order: string[] = [
 describe('Program', () => {
   it('acquires only available local generations and recovers after reconnect', async () => {
     const { registry, program, create } = setup();
-    const current = runtime('one', 'disconnected');
+    const current = environment('one', 'disconnected');
     registry.register(current);
     expect(create).toHaveBeenCalledTimes(1);
     expect(program.status).toBe('degraded');
@@ -147,7 +147,7 @@ describe('Program', () => {
   it('stays preparing until the fixed local generation behavior becomes ready', async () => {
     const pending = deferred();
     const { registry, program } = setup(new Map([['one', pending.promise]]));
-    registry.register(runtime('one'));
+    registry.register(environment('one'));
 
     expect(program.binding).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
     expect(program.status).toBe('preparing');
@@ -165,7 +165,7 @@ describe('Program', () => {
   it('marks rejected behavior readiness degraded', async () => {
     const failed = deferred();
     const { registry, program } = setup(new Map([['one', failed.promise]]));
-    registry.register(runtime('one'));
+    registry.register(environment('one'));
     failed.reject(new Error('failed'));
     await program.ready;
     await Promise.resolve();
@@ -176,11 +176,11 @@ describe('Program', () => {
 
   it('retains the replaced generation lease until its session controller is disposed', async () => {
     const { registry, program } = setup();
-    const first = runtime('one');
+    const first = environment('one');
     const registration = registry.register(first);
     await program.ready;
     const controller = program.createSessionController();
-    const replacement = registration.replace(runtime('two'));
+    const replacement = registration.replace(environment('two'));
     await Promise.resolve();
     expect(program.sessionControllerGeneration).toBe('two');
     expect(first.disposed).toBe(false);
@@ -191,9 +191,9 @@ describe('Program', () => {
     await registry.dispose();
   });
 
-  it('owns catalog, instructions, MCP, provenance, and current runtime in one generation', async () => {
+  it('owns catalog, instructions, MCP, provenance, and current environment in one generation', async () => {
     const { registry, program, create } = setup();
-    registry.register(runtime('one'));
+    registry.register(environment('one'));
     const generation = create.mock.results[0]?.value as {
       skills: { catalog: {
         listSkills(): unknown[];
@@ -249,8 +249,8 @@ describe('Program', () => {
     const firstReady = deferred();
     const order: string[] = [];
     const { registry, program } = setup(new Map([['one', firstReady.promise]]), order);
-    const registration = registry.register(runtime('one'));
-    const replacement = registration.replace(runtime('two'));
+    const registration = registry.register(environment('one'));
+    const replacement = registration.replace(environment('two'));
     await replacement;
     await Promise.resolve();
     expect(program.sessionControllerGeneration).toBe('two');
@@ -266,9 +266,9 @@ describe('Program', () => {
     await registry.dispose();
   });
 
-  it('isolates generations per runtime so same-workspace sessions do not cross project context', async () => {
+  it('isolates generations per environment so same-workspace sessions do not cross project context', async () => {
     const { registry, program, create, controllerInputs } = setup();
-    registry.register(runtime('one'));
+    registry.register(environment('one'));
     registry.register(remoteEnvironment('remote-one'));
 
     expect(create).toHaveBeenCalledTimes(1);
@@ -296,9 +296,9 @@ describe('Program', () => {
     await registry.dispose();
   });
 
-  it('retires a remote generation when its runtime is removed without touching local', async () => {
+  it('retires a remote generation when its environment is removed without touching local', async () => {
     const { registry, program, create } = setup();
-    registry.register(runtime('one'));
+    registry.register(environment('one'));
     const remote = remoteEnvironment('remote-one');
     const remoteRegistration = registry.register(remote);
     program.createSessionController('remote');
@@ -359,7 +359,7 @@ function suggestSetup() {
 }
 
 describe('Program.suggestFiles', () => {
-  it('suggests files for a runtime with the given session roots', async () => {
+  it('suggests files for a environment with the given session roots', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'kimi-program-suggest-'));
     try {
       await mkdir(join(dir, 'src'), { recursive: true });
@@ -392,7 +392,7 @@ describe('Program.suggestFiles', () => {
     }
   });
 
-  it('routes the suggest to the requested runtime and rejects an unknown runtime', async () => {
+  it('routes the suggest to the requested environment and rejects an unknown environment', async () => {
     const localDir = await mkdtemp(join(tmpdir(), 'kimi-program-suggest-local-'));
     const remoteDir = await mkdtemp(join(tmpdir(), 'kimi-program-suggest-remote-'));
     try {
@@ -703,7 +703,7 @@ describe('Program.createGeneration workspace and user locality', () => {
     }
   });
 
-  it('roots a remote generation at the runtime workspace root on the target fs while user config stays local', async () => {
+  it('roots a remote generation at the environment workspace root on the target fs while user config stays local', async () => {
     const fixture = await localityFixture();
     try {
       await awaitLocality(fixture.generations.get('local')!);
@@ -745,7 +745,7 @@ describe('Program.createGeneration workspace and user locality', () => {
 });
 
 describe('Program remote generation activation', () => {
-  it('re-roots a reconciled remote generation when the runtime registration gains identity.cwd', async () => {
+  it('re-roots a reconciled remote generation when the environment registration gains identity.cwd', async () => {
     const fixture = await localityFixture({ remoteCwd: undefined });
     try {
       const local = fixture.generations.get('local')!;

@@ -349,7 +349,7 @@ describe('FooterComponent environment slot', () => {
 
   beforeEach(() => {
     // A real repo so the local git slot has a branch to render when visible.
-    repoDir = mkdtempSync(join(tmpdir(), 'kimi-footer-runtime-'));
+    repoDir = mkdtempSync(join(tmpdir(), 'kimi-footer-environment-'));
     spawnSync('git', ['init', '-b', 'main'], { cwd: repoDir });
     writeFileSync(join(repoDir, 'a.txt'), 'a');
     spawnSync('git', ['add', '.'], { cwd: repoDir });
@@ -386,7 +386,7 @@ describe('FooterComponent environment slot', () => {
     const footer = footerWith({ environmentId: 'dev-box', type: 'ssh', status: 'ready' });
     const rendered = line1(footer);
     expect(rendered).toContain('dev-box');
-    expect(rendered.indexOf('dev-box')).toBeLessThan(rendered.indexOf('kimi-footer-runtime'));
+    expect(rendered.indexOf('dev-box')).toBeLessThan(rendered.indexOf('kimi-footer-environment'));
     footer.dispose();
   });
 
@@ -450,7 +450,7 @@ describe('FooterComponent environment slot', () => {
     });
     const rendered = line1(footer);
     expect(rendered).toContain('/home/deploy/app');
-    expect(rendered).not.toContain('kimi-footer-runtime');
+    expect(rendered).not.toContain('kimi-footer-environment');
     footer.dispose();
   });
 

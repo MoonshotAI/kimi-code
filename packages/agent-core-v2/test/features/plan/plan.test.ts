@@ -189,7 +189,7 @@ describe('Plan service', () => {
       expect(ctx.llmCalls).toHaveLength(0);
     });
 
-    it('derives the plan path from the runtime tempDir on enter and restore', async () => {
+    it('derives the plan path from the environment tempDir on enter and restore', async () => {
       useFakes(createPlanFakes({
         writeText: vi.fn(async (_path: string, _content: string): Promise<void> => {}),
       }));
@@ -275,7 +275,7 @@ describe('Plan service', () => {
       remoteCtx.newEvents();
     }
 
-    it('stores the plan file on the bound runtime fs under the runtime tempDir', async () => {
+    it('stores the plan file on the bound environment fs under the environment tempDir', async () => {
       useRemoteTools(['Write']);
       await remotePlan.enter('remote-plan', false);
 
@@ -300,7 +300,7 @@ describe('Plan service', () => {
       expect((await remotePlan.status())?.content).toBe(content);
     });
 
-    it('creates the plans directory on the runtime fs with owner-only permissions', async () => {
+    it('creates the plans directory on the environment fs with owner-only permissions', async () => {
       await remotePlan.enter('remote-plan', false);
 
       const planPath = `${remoteTempDir}/kimi-code/plans/main/remote-plan.md`;

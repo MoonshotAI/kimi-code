@@ -604,7 +604,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     );
   });
 
-  it('creates the child on the acquired runtime lease', async () => {
+  it('creates the child on the acquired environment lease', async () => {
     const svc = service();
 
     await spawnNonForkChild(svc);
@@ -643,7 +643,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     });
   });
 
-  it('collects the explore git context at the inherited binding cwd on the bound runtime', async () => {
+  it('collects the explore git context at the inherited binding cwd on the bound environment', async () => {
     callerBinding = { workspaceId: 'w1', environmentId: 'acp:s1', cwd: '/remote/repo' };
     const git = gitProcessForRepo('/remote/repo');
     const svc = service();
@@ -669,7 +669,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     expect(spawned.promptText).toContain('Project: owner/repo-only-there');
   });
 
-  it('releases the runtime lease after spawn', async () => {
+  it('releases the environment lease after spawn', async () => {
     const svc = service();
 
     await spawnNonForkChild(svc);
@@ -754,7 +754,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     expect(error.message).toContain('comes from [secondary_model.models]');
   });
 
-  it('spawn throws before creating anything when the caller runtime lease fails', async () => {
+  it('spawn throws before creating anything when the caller environment lease fails', async () => {
     acquireEnvironment.mockImplementation(() => {
       throw new Error('process capability is no longer available');
     });

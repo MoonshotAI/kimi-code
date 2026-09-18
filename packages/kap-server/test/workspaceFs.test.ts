@@ -509,14 +509,14 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
       id: 'remote-test-provider',
       imports: { root: [], imports: [], local: [] },
       attach: async (context, host) => {
-        const runtime = Object.assign(
+        const environment = Object.assign(
           new FakeEnvironment(
             { workspaceId: context.id, environmentId: 'remote-test', generation: 'remote-generation' },
             { capabilities: ['fs'] },
           ),
           { fs: mappingHostFs(remoteRoots.get(context.root) ?? (remoteRoot as string)) },
         );
-        const registration = host.registerEnvironment(runtime);
+        const registration = host.registerEnvironment(environment);
         return { dispose: () => registration.remove() };
       },
     });
@@ -567,7 +567,7 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
     return (await res.json()) as Envelope<{ path: string } | null>;
   }
 
-  it('serves file content from the selected runtime fs', async () => {
+  it('serves file content from the selected environment fs', async () => {
     await writeFile(join(remoteRoot as string, 'remote-only.txt'), 'remote-bytes');
 
     const res = await fetch(contentUrl('/remote-only.txt', 'remote-test', { session_id: sessionId }), {
@@ -578,7 +578,7 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
     expect(await res.text()).toBe('remote-bytes');
   });
 
-  it('reads stat, sample, and body from the runtime fs when the path exists on both filesystems', async () => {
+  it('reads stat, sample, and body from the environment fs when the path exists on both filesystems', async () => {
     const requestPath = join(localRoot as string, 'shared.txt');
     const remoteFile = join(remoteRoot as string, requestPath);
     await mkdir(dirname(remoteFile), { recursive: true });
@@ -593,7 +593,7 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
     expect(await res.text()).toBe('remote-bytes');
   });
 
-  it('honors range requests against the runtime fs', async () => {
+  it('honors range requests against the environment fs', async () => {
     await writeFile(join(remoteRoot as string, 'long.txt'), '0123456789');
 
     const res = await fetch(contentUrl('/long.txt', 'remote-test', { session_id: sessionId }), {
@@ -605,7 +605,7 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
     expect(await res.text()).toBe('2345');
   });
 
-  it('answers If-None-Match with 304 against the runtime fs etag', async () => {
+  it('answers If-None-Match with 304 against the environment fs etag', async () => {
     await writeFile(join(remoteRoot as string, 'cached.txt'), 'cache me');
 
     const first = await fetch(contentUrl('/cached.txt', 'remote-test', { workspace_id: workspaceId }), {
@@ -658,14 +658,14 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
   });
 
   it('maps an unknown content environment_id to ENVIRONMENT_NOT_FOUND', async () => {
-    const res = await fetch(contentUrl('/remote-only.txt', 'no-such-runtime', { workspace_id: workspaceId }), {
+    const res = await fetch(contentUrl('/remote-only.txt', 'no-such-environment', { workspace_id: workspaceId }), {
       headers: { connection: 'close', ...authHeaders(server as RunningServer) },
     } as never);
     const body = (await res.json()) as Envelope<null>;
     expect(body.code).toBe(40420);
   });
 
-  it('creates directories on the runtime fs, never on the server-local disk', async () => {
+  it('creates directories on the environment fs, never on the server-local disk', async () => {
     const requestPath = join(localRoot as string, 'made-remote');
     await mkdir(join(remoteRoot as string, localRoot as string), { recursive: true });
 
@@ -678,7 +678,7 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
     await expect(stat(requestPath)).rejects.toThrow();
   });
 
-  it('rejects mkdir on an existing runtime path (40919)', async () => {
+  it('rejects mkdir on an existing environment path (40919)', async () => {
     const requestPath = join(localRoot as string, 'already-here');
     await mkdir(join(remoteRoot as string, requestPath), { recursive: true });
 
@@ -686,7 +686,7 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
     expect(body.code).toBe(40919);
   });
 
-  it('rejects mkdir with a missing runtime parent (40409)', async () => {
+  it('rejects mkdir with a missing environment parent (40409)', async () => {
     const requestPath = join(localRoot as string, 'no-such-parent', 'child');
 
     const body = await postMkdir({ path: requestPath, environment_id: 'remote-test', session_id: sessionId });
@@ -719,7 +719,7 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
   it('maps an unknown mkdir environment_id to ENVIRONMENT_NOT_FOUND', async () => {
     const body = await postMkdir({
       path: join(localRoot as string, 'x'),
-      environment_id: 'no-such-runtime',
+      environment_id: 'no-such-environment',
       workspace_id: workspaceId,
     });
     expect(body.code).toBe(40420);

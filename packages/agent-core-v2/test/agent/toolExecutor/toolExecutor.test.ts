@@ -1345,7 +1345,7 @@ describe('truncation pipeline', () => {
     expect(readFileSync(paths[1]!).equals(bytes[1]!)).toBe(true);
   });
 
-  it('reads session text from its owner while workspace text still uses the runtime buffer', async () => {
+  it('reads session text from its owner while workspace text still uses the environment buffer', async () => {
     const environmentFs = mediaEnvironment.inspect().fs!;
     const clientRead = vi.spyOn(environmentFs, 'readLines').mockImplementation(async function* () {
       yield 'unsaved client buffer\n';

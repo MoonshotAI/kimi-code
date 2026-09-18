@@ -26,7 +26,7 @@ function workspace(id: string): Workspace {
   return { id, root: `/${id}`, name: id, createdAt: 0, lastOpenedAt: 0 };
 }
 
-function runtime(workspaceId: string, environmentId: string, status: Environment['status'] = 'connecting'): FakeEnvironment {
+function environment(workspaceId: string, environmentId: string, status: Environment['status'] = 'connecting'): FakeEnvironment {
   return new FakeEnvironment({ workspaceId, environmentId, generation: `${environmentId}-one` }, { status });
 }
 
@@ -110,7 +110,7 @@ function provider(
     attach: async (context, host) => {
       events.push(`attach:${id}:${context.id}`);
       if (options.failWorkspace === context.id) throw new Error(`attach failed ${context.id}`);
-      host.registerEnvironment(runtime(context.id, environmentId, options.status));
+      host.registerEnvironment(environment(context.id, environmentId, options.status));
       return { dispose: () => { events.push(`detach:${id}:${context.id}`); } };
     },
   };
@@ -169,7 +169,7 @@ describe('WorkspaceInstanceManager', () => {
     expect(events).toEqual(['attach:local:one', 'detach:local:one']);
   });
 
-  it('keeps runtime registries and provider attachments isolated across workspaces', async () => {
+  it('keeps environment registries and provider attachments isolated across workspaces', async () => {
     const events: string[] = [];
     const value = manager([workspace('one'), workspace('two')], Promise.resolve(), events);
     const one = await value.getOrCreate({ workspaceId: 'one' });

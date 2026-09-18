@@ -113,7 +113,7 @@ function expectStoredBytes(files: ReadonlyMap<string, Uint8Array>, path: string,
   expect(Buffer.compare(Buffer.from(written), Buffer.from(expected))).toBe(0);
 }
 
-describe('resolvePromptMediaFiles with a runtime attachments target', () => {
+describe('resolvePromptMediaFiles with an environment attachments target', () => {
   it('streams a large attachment in frame-safe chunks: first truncate, then append', async () => {
     const size = 50 * 1024 * 1024;
     const data = patternedBytes(size);

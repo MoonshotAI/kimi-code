@@ -75,7 +75,7 @@ class FakeEnvironmentResolver implements EnvironmentResolver {
   declare readonly _serviceBrand: undefined;
   activeLeases = 0;
   readonly bindings: Array<{ workspaceId: string; environmentId: string }> = [];
-  private readonly runtime;
+  private readonly environment;
 
   constructor(
     terminal: IHostTerminalService,
@@ -85,7 +85,7 @@ class FakeEnvironmentResolver implements EnvironmentResolver {
       additionalDirs?: readonly string[];
     },
   ) {
-    this.runtime = Object.assign(
+    this.environment = Object.assign(
       new FakeEnvironment(
         { workspaceId: 'w1', environmentId, generation: 'test' },
         { capabilities: ['terminal'], mapWorkspaceRoots },
@@ -95,7 +95,7 @@ class FakeEnvironmentResolver implements EnvironmentResolver {
   }
 
   inspect() {
-    return this.runtime;
+    return this.environment;
   }
 
   acquire(binding: { workspaceId: string; environmentId: string }): EnvironmentLease {
@@ -103,7 +103,7 @@ class FakeEnvironmentResolver implements EnvironmentResolver {
     this.activeLeases += 1;
     let active = true;
     return {
-      environment: this.runtime,
+      environment: this.environment,
       track: (resource) => resource,
       dispose: () => {
         if (!active) return;

@@ -165,12 +165,12 @@ describe('AgentPlanService plan-guard listener', () => {
     return {
       ...stub,
       acquire: () => {
-        throw new Error('runtime unavailable');
+        throw new Error('environment unavailable');
       },
     };
   }
 
-  function buildServices(runtime: IAgentEnvironmentService): void {
+  function buildServices(environment: IAgentEnvironmentService): void {
     const toolApproval: IAgentToolApprovalService = {
       _serviceBrand: undefined,
       resolvePermissionResolution: async () => {
@@ -188,7 +188,7 @@ describe('AgentPlanService plan-guard listener', () => {
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         registerTestAgentWireServices(reg);
-        reg.defineInstance(IAgentEnvironmentService, runtime);
+        reg.defineInstance(IAgentEnvironmentService, environment);
         reg.definePartialInstance(IAgentContextMemoryService, {});
         reg.defineInstance(IAgentReminderService, createReminderStub());
         reg.defineInstance(IAgentToolExecutorService, executorEvents.executor);

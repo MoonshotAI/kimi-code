@@ -88,14 +88,14 @@ function setup(options: { readonly flagOn?: boolean; readonly sessionCwd?: strin
       agentContext: stubAgentContext(agentId, 1),
       scope: (subKey?: string) => subKey ?? '',
     };
-    const runtime = new AgentEnvironmentService(scopeContext, binding, {
+    const environment = new AgentEnvironmentService(scopeContext, binding, {
       _serviceBrand: undefined,
       inspect: (b: EnvironmentBinding) => registry.inspect(b),
       acquire: (b: EnvironmentBinding, required?: never) => registry.acquire(b, required),
       acquireWhenReady: (b: EnvironmentBinding, required?: never) => registry.acquireWhenReady(b, required),
     }, workspaces, eventBus, session, sessionState, flags);
     const shadow = new AgentWorkspaceContextService(sessionState, {
-      current: runtime,
+      current: environment,
       onDidChange: () => ({ dispose: () => {} }),
     });
     return { shadow, binding, publishBus };

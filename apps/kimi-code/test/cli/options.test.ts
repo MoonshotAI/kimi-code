@@ -523,7 +523,7 @@ describe('CLI options parsing', () => {
       expect(help).not.toContain('--environment');
     });
 
-    it('rejects empty runtime values', () => {
+    it('rejects empty environment values', () => {
       const opts = parse(['--environment', '   ']);
       expect(() => validateOptions(opts)).toThrow(OptionConflictError);
       expect(() => validateOptions(opts)).toThrow('Environment cannot be empty.');

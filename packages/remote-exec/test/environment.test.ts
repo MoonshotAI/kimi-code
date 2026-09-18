@@ -30,7 +30,7 @@ describe('RemoteEnvironment over a subprocess loopback', () => {
   let workDir: string;
 
   beforeAll(async () => {
-    workDir = await mkdtemp(join(tmpdir(), 'remote-exec-runtime-'));
+    workDir = await mkdtemp(join(tmpdir(), 'remote-exec-environment-'));
   });
 
   afterAll(async () => {
@@ -38,36 +38,36 @@ describe('RemoteEnvironment over a subprocess loopback', () => {
   });
 
   it('exposes the Environment surface and runs the fs/process chain', async () => {
-    const runtime = await RemoteEnvironment.connect({
+    const environment = await RemoteEnvironment.connect({
       workspaceId: 'ws-test',
       environmentId: 'loopback',
       launcher: loopbackLauncher(),
     });
     try {
-      expect(runtime.identity).toMatchObject({ workspaceId: 'ws-test', environmentId: 'loopback' });
-      expect(runtime.identity.generation.length).toBeGreaterThan(0);
-      expect(runtime.capabilities).toEqual(new Set(['fs', 'process', 'terminal']));
-      expect(runtime.status).toBe('ready');
-      expect(runtime.executorVersion).toBe(TEST_VERSION);
-      expect(runtime.host.osKind.length).toBeGreaterThan(0);
-      expect(runtime.host.pathClass).toBe('posix');
-      expect(runtime.host.shellPath.length).toBeGreaterThan(0);
-      expect(runtime.host.homeDir.length).toBeGreaterThan(0);
-      expect(runtime.host.cwd.length).toBeGreaterThan(0);
-      expect(runtime.host.tempDir.length).toBeGreaterThan(0);
-      expect(runtime.path.separator).toBe('/');
-      expect(runtime.path.isAbsolute('/tmp/x')).toBe(true);
-      expect(runtime.path.join('/a', 'b')).toBe('/a/b');
-      expect(runtime.workspace.mapRoots({ workDir: 'rel' }).workDir).toBe(
-        runtime.path.resolve('rel'),
+      expect(environment.identity).toMatchObject({ workspaceId: 'ws-test', environmentId: 'loopback' });
+      expect(environment.identity.generation.length).toBeGreaterThan(0);
+      expect(environment.capabilities).toEqual(new Set(['fs', 'process', 'terminal']));
+      expect(environment.status).toBe('ready');
+      expect(environment.executorVersion).toBe(TEST_VERSION);
+      expect(environment.host.osKind.length).toBeGreaterThan(0);
+      expect(environment.host.pathClass).toBe('posix');
+      expect(environment.host.shellPath.length).toBeGreaterThan(0);
+      expect(environment.host.homeDir.length).toBeGreaterThan(0);
+      expect(environment.host.cwd.length).toBeGreaterThan(0);
+      expect(environment.host.tempDir.length).toBeGreaterThan(0);
+      expect(environment.path.separator).toBe('/');
+      expect(environment.path.isAbsolute('/tmp/x')).toBe(true);
+      expect(environment.path.join('/a', 'b')).toBe('/a/b');
+      expect(environment.workspace.mapRoots({ workDir: 'rel' }).workDir).toBe(
+        environment.path.resolve('rel'),
       );
-      expect(runtime.fs).toBeDefined();
-      expect(runtime.process).toBeDefined();
-      expect(runtime.terminal).toBeDefined();
+      expect(environment.fs).toBeDefined();
+      expect(environment.process).toBeDefined();
+      expect(environment.terminal).toBeDefined();
 
       const file = join(workDir, 'chain.txt');
-      await runtime.fs.writeText(file, 'chain-data');
-      const proc = await runtime.process.spawn('cat', [file], { cwd: workDir });
+      await environment.fs.writeText(file, 'chain-data');
+      const proc = await environment.process.spawn('cat', [file], { cwd: workDir });
       const chunks: Buffer[] = [];
       proc.stdout.on('data', (chunk: Buffer) => {
         chunks.push(chunk);
@@ -81,26 +81,26 @@ describe('RemoteEnvironment over a subprocess loopback', () => {
       await ended;
       expect(Buffer.concat(chunks).toString()).toBe('chain-data');
     } finally {
-      await runtime.dispose();
+      await environment.dispose();
     }
-    expect(runtime.status).toBe('disposed');
+    expect(environment.status).toBe('disposed');
   });
 
   it('moves to disconnected when the bridge drops and rejects new calls', async () => {
-    const runtime = await RemoteEnvironment.connect({
+    const environment = await RemoteEnvironment.connect({
       workspaceId: 'ws-test',
       environmentId: 'loopback',
       launcher: loopbackLauncher(),
     });
     const statuses: string[] = [];
-    runtime.onDidChangeStatus((status) => {
+    environment.onDidChangeStatus((status) => {
       statuses.push(status);
     });
-    const proc = await runtime.process.spawn('sleep', ['300']);
+    const proc = await environment.process.spawn('sleep', ['300']);
     expect(proc.pid).toBeGreaterThan(0);
-    await runtime.dispose();
+    await environment.dispose();
     expect(statuses).toContain('disposed');
-    await expect(runtime.process.spawn('true')).rejects.toThrow(ConnectionClosedError);
+    await expect(environment.process.spawn('true')).rejects.toThrow(ConnectionClosedError);
   });
 
   it('fails to connect when the executor is missing, with exit diagnostics', async () => {

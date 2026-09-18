@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { EnvironmentError, EnvironmentRegistry } from '#/environment/environmentRegistry';
 
-function runtime(generation: string, status: 'ready' | 'disconnected' = 'ready'): FakeEnvironment {
+function environment(generation: string, status: 'ready' | 'disconnected' = 'ready'): FakeEnvironment {
   return Object.assign(
     new FakeEnvironment(
       { workspaceId: 'workspace', environmentId: 'local', generation },
@@ -16,14 +16,14 @@ function runtime(generation: string, status: 'ready' | 'disconnected' = 'ready')
 describe('EnvironmentRegistry', () => {
   it('rejects conflicts', () => {
     const registry = new EnvironmentRegistry('workspace');
-    registry.register(runtime('one'));
-    expect(() => registry.register(runtime('two'))).toThrow(EnvironmentError);
+    registry.register(environment('one'));
+    expect(() => registry.register(environment('two'))).toThrow(EnvironmentError);
   });
 
   it('pins leases across replacement', async () => {
     const registry = new EnvironmentRegistry('workspace');
-    const first = runtime('one');
-    const second = runtime('two');
+    const first = environment('one');
+    const second = environment('two');
     const registration = registry.register(first);
     const lease = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' }, ['fs']);
     const replacement = registration.replace(second);
@@ -38,7 +38,7 @@ describe('EnvironmentRegistry', () => {
 
   it('publishes status and reconnects the same generation', () => {
     const registry = new EnvironmentRegistry('workspace');
-    const current = runtime('one');
+    const current = environment('one');
     const statuses: string[] = [];
     registry.onDidChange((change) => {
       if (change.status !== undefined) statuses.push(change.status);
@@ -56,7 +56,7 @@ describe('EnvironmentRegistry', () => {
 
   it('allows degraded generations only when every required capability remains available', () => {
     const registry = new EnvironmentRegistry('workspace');
-    const current = runtime('one');
+    const current = environment('one');
     registry.register(current);
     current.setStatus('degraded');
 
@@ -71,7 +71,7 @@ describe('EnvironmentRegistry', () => {
 
   it('keeps the current generation when replacement preparation fails', async () => {
     const registry = new EnvironmentRegistry('workspace');
-    const first = runtime('one');
+    const first = environment('one');
     const invalid = new FakeEnvironment(
       { workspaceId: 'other', environmentId: 'local', generation: 'two' },
       { capabilities: ['fs'] },
@@ -84,17 +84,17 @@ describe('EnvironmentRegistry', () => {
 
   it('keeps a published replacement current when previous generation cleanup fails', async () => {
     const registry = new EnvironmentRegistry('workspace');
-    const first = runtime('one');
-    const second = runtime('two');
+    const first = environment('one');
+    const second = environment('two');
     Object.assign(first, {
       dispose: vi.fn(async () => {
         first.disposed = true;
-        throw new Error('old runtime cleanup failed');
+        throw new Error('old environment cleanup failed');
       }),
     });
     const registration = registry.register(first);
 
-    await expect(registration.replace(second)).rejects.toThrow('old runtime cleanup failed');
+    await expect(registration.replace(second)).rejects.toThrow('old environment cleanup failed');
 
     expect(registry.current('local')).toBe(second);
     const lease = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' }, ['process']);
@@ -106,8 +106,8 @@ describe('EnvironmentRegistry', () => {
 
   it('serializes replacement and removal', async () => {
     const registry = new EnvironmentRegistry('workspace');
-    const first = runtime('one');
-    const second = runtime('two');
+    const first = environment('one');
+    const second = environment('two');
     const registration = registry.register(first);
     const lease = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
     const replacement = registration.replace(second);
@@ -123,14 +123,14 @@ describe('EnvironmentRegistry', () => {
 
   it('actively closes terminal, watch, MCP, and background resources in reverse order', async () => {
     const registry = new EnvironmentRegistry('workspace');
-    const first = runtime('one');
+    const first = environment('one');
     const registration = registry.register(first);
     const lease = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
     const order: string[] = [];
     for (const name of ['terminal', 'watch', 'mcp', 'background']) {
       lease.track({ dispose: async () => { order.push(name); } });
     }
-    const replacement = registration.replace(runtime('two'));
+    const replacement = registration.replace(environment('two'));
     await Promise.resolve();
     expect(order).toEqual(['background']);
     lease.dispose();
@@ -140,13 +140,13 @@ describe('EnvironmentRegistry', () => {
 
   it('forces bounded disposal exactly once when a lease remains', async () => {
     const registry = new EnvironmentRegistry('workspace', 1);
-    const first = runtime('one');
+    const first = environment('one');
     const originalDispose = first.dispose.bind(first);
     const dispose = vi.fn(originalDispose);
     Object.assign(first, { dispose });
     const registration = registry.register(first);
     const lease = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
-    await registration.replace(runtime('two'));
+    await registration.replace(environment('two'));
     expect(dispose).toHaveBeenCalledTimes(1);
     lease.dispose();
     await registration.remove();
@@ -155,10 +155,10 @@ describe('EnvironmentRegistry', () => {
 
   it('rejects queued replacements after registry disposal starts', async () => {
     const registry = new EnvironmentRegistry('workspace');
-    const registration = registry.register(runtime('one'));
+    const registration = registry.register(environment('one'));
     const lease = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
-    const replacement = registration.replace(runtime('two'));
-    const queued = runtime('three');
+    const replacement = registration.replace(environment('two'));
+    const queued = environment('three');
     const queuedReplacement = registration.replace(queued);
     await Promise.resolve();
     const disposal = registry.dispose();
@@ -172,7 +172,7 @@ describe('EnvironmentRegistry', () => {
 
   it('snapshots only the current generation and its live status', async () => {
     const registry = new EnvironmentRegistry('workspace');
-    const first = runtime('one');
+    const first = environment('one');
     const registration = registry.register(first);
 
     expect(registry.snapshot()).toEqual({
@@ -188,22 +188,22 @@ describe('EnvironmentRegistry', () => {
     first.setStatus('disconnected');
     expect(registry.snapshot().environments[0]?.status).toBe('disconnected');
 
-    await registration.replace(runtime('two'));
+    await registration.replace(environment('two'));
     expect(registry.snapshot().environments[0]).toMatchObject({
       generation: 'two',
       status: 'ready',
     });
   });
 
-  it('does not fallback when a runtime is missing', () => {
+  it('does not fallback when a environment is missing', () => {
     const registry = new EnvironmentRegistry('workspace');
-    registry.register(runtime('one'));
+    registry.register(environment('one'));
     expect(() => registry.acquire({ workspaceId: 'workspace', environmentId: 'ssh1' })).toThrow('ssh1');
   });
 
   it('untracks caller-disposed resources so drain disposes each resource exactly once, survivors in reverse order', async () => {
     const registry = new EnvironmentRegistry('workspace');
-    const registration = registry.register(runtime('one'));
+    const registration = registry.register(environment('one'));
     const lease = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
     const order: string[] = [];
     const counts = new Map<string, number>();
@@ -218,7 +218,7 @@ describe('EnvironmentRegistry', () => {
     const c = lease.track(resource('c'));
     b.dispose();
     b.dispose();
-    const replacement = registration.replace(runtime('two'));
+    const replacement = registration.replace(environment('two'));
     lease.dispose();
     await replacement;
     expect(order).toEqual(['b', 'c', 'a']);
@@ -229,18 +229,18 @@ describe('EnvironmentRegistry', () => {
 
   it('rejects track once the generation is draining', async () => {
     const registry = new EnvironmentRegistry('workspace');
-    const registration = registry.register(runtime('one'));
+    const registration = registry.register(environment('one'));
     const lease = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
-    const replacement = registration.replace(runtime('two'));
+    const replacement = registration.replace(environment('two'));
     await Promise.resolve();
     expect(() => lease.track({ dispose: () => {} })).toThrow('draining');
     lease.dispose();
     await replacement;
   });
 
-  it('acquires a ready runtime through acquireWhenReady without waiting', async () => {
+  it('acquires a ready environment through acquireWhenReady without waiting', async () => {
     const registry = new EnvironmentRegistry('workspace');
-    const current = runtime('one');
+    const current = environment('one');
     registry.register(current);
     const lease = await registry.acquireWhenReady({ workspaceId: 'workspace', environmentId: 'local' }, ['process']);
     expect(lease.environment).toBe(current);
@@ -249,7 +249,7 @@ describe('EnvironmentRegistry', () => {
 
   it('awaits an in-flight readiness signal instead of erroring, then acquires once ready', async () => {
     const registry = new EnvironmentRegistry('workspace');
-    const current = runtime('one', 'disconnected');
+    const current = environment('one', 'disconnected');
     registry.register(current);
     let releaseReady!: () => void;
     current.whenReady = new Promise<void>((resolve) => {
@@ -277,7 +277,7 @@ describe('EnvironmentRegistry', () => {
 
   it('rejects acquireWhenReady with the connect failure reason when the readiness signal rejects', async () => {
     const registry = new EnvironmentRegistry('workspace');
-    const current = runtime('one', 'disconnected');
+    const current = environment('one', 'disconnected');
     registry.register(current);
     const failure = new Error('executor process exited before the handshake completed (code 255)');
     current.whenReady = Promise.reject(failure);
@@ -287,16 +287,16 @@ describe('EnvironmentRegistry', () => {
     await expect(registry.acquireWhenReady({ workspaceId: 'workspace', environmentId: 'local' })).rejects.toBe(failure);
   });
 
-  it('keeps the immediate unavailable error on a plainly disconnected runtime', async () => {
+  it('keeps the immediate unavailable error on a plainly disconnected environment', async () => {
     const registry = new EnvironmentRegistry('workspace');
-    registry.register(runtime('one', 'disconnected'));
+    registry.register(environment('one', 'disconnected'));
     await expect(registry.acquireWhenReady({ workspaceId: 'workspace', environmentId: 'local' })).rejects.toThrow('disconnected');
     await expect(registry.acquireWhenReady({ workspaceId: 'workspace', environmentId: 'missing' })).rejects.toThrow('not exist');
   });
 
   it('appends the recorded connect error first line to the unavailable error', async () => {
     const registry = new EnvironmentRegistry('workspace');
-    const current = runtime('one', 'disconnected');
+    const current = environment('one', 'disconnected');
     current.connectError = 'initialize timed out after 10000ms; executor stderr: Password:\nsecond line stays out';
     registry.register(current);
 
@@ -312,7 +312,7 @@ describe('EnvironmentRegistry', () => {
 
   it('includes the recorded connect error in the generation snapshot', () => {
     const registry = new EnvironmentRegistry('workspace');
-    const current = runtime('one', 'disconnected');
+    const current = environment('one', 'disconnected');
     current.connectError = 'ssh: connect failed (code 255)';
     registry.register(current);
     expect(registry.snapshot().environments[0]).toMatchObject({

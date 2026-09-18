@@ -539,14 +539,14 @@ export function defineKlientConformance(
     it('agent environment binding is available through every transport', async () => {
       const created = await target.klient.global.sessions.create({
         workDir: process.cwd(),
-        title: 'conformance runtime',
+        title: 'conformance environment',
       });
       try {
         const agent = target.klient.session(created.id).agent('main');
         const binding = await agent.getEnvironment();
         expect(binding.environmentId).toBe('local');
         expect(binding.workspaceId.length).toBeGreaterThan(0);
-        await expect(agent.switchEnvironment('missing-runtime')).rejects.toThrow(/missing-runtime/);
+        await expect(agent.switchEnvironment('missing-environment')).rejects.toThrow(/missing-environment/);
         expect(await agent.getEnvironment()).toEqual(binding);
       } finally {
         await target.klient.session(created.id).close();

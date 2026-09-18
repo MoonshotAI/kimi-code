@@ -53,7 +53,7 @@ describe('ensureRgPath cached fallback', () => {
     expect(probe.exec).not.toHaveBeenCalledWith([getShareBinRgPath(), '--version']);
   });
 
-  it('uses the runtime homeDir of the bound generation', async () => {
+  it('uses the environment homeDir of the bound generation', async () => {
     const probe = probeWith((args) => (args[0] === 'rg' ? -1 : 0));
 
     const resolution = await ensureRgPath(probe, {
@@ -85,7 +85,7 @@ describe('ensureRgPath cached fallback', () => {
     expect(resolution).toEqual({ path: getShareBinRgPath(), source: 'share-bin-cached' });
   });
 
-  it('probes the local share bin without a runtime', async () => {
+  it('probes the local share bin without an environment', async () => {
     const probe = probeWith((args) => (args[0] === 'rg' ? -1 : 0));
 
     const resolution = await ensureRgPath(probe, { allowCachedFallback: true });
@@ -95,7 +95,7 @@ describe('ensureRgPath cached fallback', () => {
 });
 
 describe('rgUnavailableMessage', () => {
-  it('names the runtime and the target-side path for a remote environment', () => {
+  it('names the environment and the target-side path for a remote environment', () => {
     const msg = rgUnavailableMessage(new Error('boom'), remoteEnvironment('ssh-dev'));
 
     expect(msg).toContain('ssh-dev');
@@ -106,7 +106,7 @@ describe('rgUnavailableMessage', () => {
     expect(msg).not.toContain(getShareBinRgPath());
   });
 
-  it('keeps the local message byte-identical for the local environment and for no runtime', () => {
+  it('keeps the local message byte-identical for the local environment and for no environment', () => {
     const saved = process.env['KIMI_CODE_HOME'];
     process.env['KIMI_CODE_HOME'] = '/kimi-home-test';
     try {

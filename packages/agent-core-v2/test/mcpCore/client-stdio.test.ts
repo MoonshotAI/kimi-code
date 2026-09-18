@@ -21,7 +21,7 @@ function createClient(
   config: McpServerStdioConfig,
   options: Partial<StdioMcpClientOptions> = {},
 ): StdioMcpClient {
-  const runtime = Object.assign(
+  const environment = Object.assign(
     new FakeEnvironment(
       { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
       { capabilities: ['process'] },
@@ -31,14 +31,14 @@ function createClient(
   return new StdioMcpClient(config, {
     environmentResolver: {
       _serviceBrand: undefined,
-      inspect: () => runtime,
+      inspect: () => environment,
       acquire: () => ({
-        environment: runtime,
+        environment,
         track: (resource) => resource,
         dispose: () => {},
       }),
       acquireWhenReady: async () => ({
-        environment: runtime,
+        environment,
         track: (resource) => resource,
         dispose: () => {},
       }),

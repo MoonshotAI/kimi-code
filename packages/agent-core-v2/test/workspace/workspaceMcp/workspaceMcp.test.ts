@@ -117,7 +117,7 @@ describe('WorkspaceMcpService', () => {
         reg.definePartialInstance(IMcpOAuthService, oauthService);
         reg.defineInstance(ILogService, stubLog());
         reg.defineInstance(ITelemetryService, noopTelemetryService);
-        const runtime = Object.assign(
+        const environment = Object.assign(
           new FakeEnvironment(
             { workspaceId: 'test-workspace', environmentId: 'local', generation: 'test-generation' },
             { capabilities: ['process'] },
@@ -126,9 +126,9 @@ describe('WorkspaceMcpService', () => {
         );
         reg.defineInstance(IEnvironmentResolver, {
           _serviceBrand: undefined,
-          inspect: () => runtime,
-          acquire: () => ({ environment: runtime, track: (resource) => resource, dispose: () => {} }),
-          acquireWhenReady: async () => ({ environment: runtime, track: (resource) => resource, dispose: () => {} }),
+          inspect: () => environment,
+          acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
+          acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
         });
         reg.definePartialInstance(ISessionManager, {
           onWillCreateSession: assemblyEvents.event,

@@ -70,8 +70,8 @@ describe('EnvironmentCwdDialogComponent', () => {
   it('shows a server-side validation failure inline and keeps editing', () => {
     const onSubmit = vi.fn();
     const dialog = makeDialog({ onSubmit });
-    dialog.showError('cwd /nope is not a directory on runtime dev-box');
-    expect(rendered(dialog)).toContain('cwd /nope is not a directory on runtime dev-box');
+    dialog.showError('cwd /nope is not a directory on environment dev-box');
+    expect(rendered(dialog)).toContain('cwd /nope is not a directory on environment dev-box');
     // Typing clears the error and the dialog stays submittable.
     dialog.handleInput(ENTER);
     expect(onSubmit).toHaveBeenCalledWith('/home/me/projects');

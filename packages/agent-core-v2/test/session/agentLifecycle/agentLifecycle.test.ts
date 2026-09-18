@@ -1073,7 +1073,7 @@ describe('AgentLifecycleService', () => {
     const environmentFor = (binding: EnvironmentBinding): FakeEnvironment => {
       if (binding.environmentId === 'local') return localEnvironment;
       if (binding.environmentId === 'remote') return remoteEnvironment;
-      throw new EnvironmentError('environment.not_found', `runtime ${binding.environmentId} does not exist in workspace ws_test`);
+      throw new EnvironmentError('environment.not_found', `environment ${binding.environmentId} does not exist in workspace ws_test`);
     };
     ix.stub(IEnvironmentResolver, {
       _serviceBrand: undefined,
@@ -1137,7 +1137,7 @@ describe('AgentLifecycleService', () => {
     expect(rerootCalls).toEqual(['/remote/work']);
   });
 
-  it('keeps a restored gone runtime declaration bound and fails explicitly at use', async () => {
+  it('keeps a restored gone environment declaration bound and fails explicitly at use', async () => {
     ix.stub(IAppendLogStore, recordingAppendLog([
       createWireMetadataRecord(1),
       { type: 'environment.set_binding', agentId: 'agent-1', environmentId: 'ghost', cwd: '/ghost/work', time: 2 },
@@ -1449,13 +1449,13 @@ describe('AgentLifecycleService', () => {
     });
   });
 
-  it('fork snapshots the source runtime and remains independent', async () => {
+  it('fork snapshots the source environment and remains independent', async () => {
     const svc = ix.get(IAgentLifecycleService);
     const source = await svc.create({ agentId: 'main' });
     const sourceEnvironment = svc.handleOf('main')!.accessor.get(IAgentEnvironmentBindingService);
     sourceEnvironment.switch('remote');
 
-    const child = await svc.fork(source, { agentId: 'forked-runtime' });
+    const child = await svc.fork(source, { agentId: 'forked-environment' });
     const childEnvironment = svc.handleOf(child.agentId)!.accessor.get(IAgentEnvironmentBindingService);
     expect(childEnvironment.current.environmentId).toBe('remote');
 
@@ -1664,7 +1664,7 @@ describe('AgentLifecycleService', () => {
 
     expect(() =>
       dispatcher.attach({
-        id: 'late-runtime',
+        id: 'late-environment',
         events: [],
         undoable: false,
         transition: () => undefined,

@@ -391,7 +391,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
     const invalid = await call<null>(
       'POST',
       `/api/v1/sessions/${id}/environment`,
-      { environment_id: 'missing-runtime' },
+      { environment_id: 'missing-environment' },
     );
     expect(invalid.body.code).toBe(40420);
 

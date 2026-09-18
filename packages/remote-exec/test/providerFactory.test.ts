@@ -129,10 +129,10 @@ function fakeHost(services: HostServices, registry: EnvironmentRegistry): Enviro
     provide: () => {
       throw new Error('not used');
     },
-    registerEnvironment: (runtime: Environment) => {
-      const registration = registry.register(runtime);
+    registerEnvironment: (environment: Environment) => {
+      const registration = registry.register(environment);
       return {
-        environmentId: runtime.identity.environmentId,
+        environmentId: environment.identity.environmentId,
         update: async (prepare: () => Environment | Promise<Environment>) => {
           await registration.replace(await prepare());
         },
@@ -143,11 +143,11 @@ function fakeHost(services: HostServices, registry: EnvironmentRegistry): Enviro
 }
 
 function connectedEnvironment(options: RemoteEnvironmentOptions, generation: string): RemoteEnvironment {
-  const runtime = new FakeEnvironment(
+  const environment = new FakeEnvironment(
     { workspaceId: options.workspaceId, environmentId: options.environmentId, generation },
     { capabilities: ['fs', 'process'] },
   );
-  return Object.assign(runtime, { fs: {}, process: {} }) as unknown as RemoteEnvironment;
+  return Object.assign(environment, { fs: {}, process: {} }) as unknown as RemoteEnvironment;
 }
 
 function baseServices(overrides: Partial<HostServices> = {}): HostServices {
@@ -301,7 +301,7 @@ describe('RemoteEnvironmentProviderFactory', () => {
     await registry.dispose();
   });
 
-  it('awaits the in-flight connect on acquireWhenReady and leases the connected runtime', async () => {
+  it('awaits the in-flight connect on acquireWhenReady and leases the connected environment', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
     let releaseConnect!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -334,7 +334,7 @@ describe('RemoteEnvironmentProviderFactory', () => {
     await registry.dispose();
   });
 
-  it('awaits an in-flight reconnect on a connected view and leases the swapped runtime', async () => {
+  it('awaits an in-flight reconnect on a connected view and leases the swapped environment', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
     let generation = 0;
     let releaseReconnect!: () => void;
@@ -345,13 +345,13 @@ describe('RemoteEnvironmentProviderFactory', () => {
       generation += 1;
       const current = generation;
       if (current === 2) await reconnectGate;
-      const runtime = connectedEnvironment(options, `connected-${current}`) as unknown as FakeEnvironment & {
+      const environment = connectedEnvironment(options, `connected-${current}`) as unknown as FakeEnvironment & {
         connection: { closeReason?: { reason: string } };
       };
-      runtime.connection = {
+      environment.connection = {
         closeReason: { reason: 'control call fs/read timed out after 60000ms; closing the connection' },
       };
-      return runtime as unknown as RemoteEnvironment;
+      return environment as unknown as RemoteEnvironment;
     });
     const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
     const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
@@ -429,9 +429,9 @@ describe('RemoteEnvironmentProviderFactory', () => {
     const produced: FakeEnvironment[] = [];
     const connect = vi.fn(async (options: RemoteEnvironmentOptions) => {
       generation += 1;
-      const runtime = connectedEnvironment(options, `connected-${generation}`);
-      produced.push(runtime as unknown as FakeEnvironment);
-      return runtime;
+      const environment = connectedEnvironment(options, `connected-${generation}`);
+      produced.push(environment as unknown as FakeEnvironment);
+      return environment;
     });
     const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
     const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
@@ -457,16 +457,16 @@ describe('RemoteEnvironmentProviderFactory', () => {
     await registry.dispose();
   });
 
-  it('records the connection close reason when a connected runtime drops mid-session', async () => {
+  it('records the connection close reason when a connected environment drops mid-session', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
     const connect = vi.fn(async (options: RemoteEnvironmentOptions) => {
-      const runtime = connectedEnvironment(options, 'connected-1') as unknown as FakeEnvironment & {
+      const environment = connectedEnvironment(options, 'connected-1') as unknown as FakeEnvironment & {
         connection: { closeReason?: { reason: string } };
       };
-      runtime.connection = {
+      environment.connection = {
         closeReason: { reason: 'control call fs/read timed out after 60000ms; closing the connection' },
       };
-      return runtime as unknown as RemoteEnvironment;
+      return environment as unknown as RemoteEnvironment;
     });
     const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
     const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
@@ -494,13 +494,13 @@ describe('RemoteEnvironmentProviderFactory', () => {
   it('does not record a connect error on a normal dispose', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
     const connect = vi.fn(async (options: RemoteEnvironmentOptions) => {
-      const runtime = connectedEnvironment(options, 'connected-1') as unknown as FakeEnvironment & {
+      const environment = connectedEnvironment(options, 'connected-1') as unknown as FakeEnvironment & {
         connection: { closeReason?: { reason: string } };
       };
-      runtime.connection = {
+      environment.connection = {
         closeReason: { reason: 'connection closed by client' },
       };
-      return runtime as unknown as RemoteEnvironment;
+      return environment as unknown as RemoteEnvironment;
     });
     const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
     const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
@@ -592,13 +592,13 @@ describe('RemoteEnvironmentProviderFactory', () => {
 });
 
 describe('ManagedRemoteEnvironment reroot', () => {
-  it('re-registers the connected runtime with identity.cwd on a fresh generation, keeping the connection alive', async () => {
+  it('re-registers the connected environment with identity.cwd on a fresh generation, keeping the connection alive', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
     const produced: FakeEnvironment[] = [];
     const connect = vi.fn(async (options: RemoteEnvironmentOptions) => {
-      const runtime = connectedEnvironment(options, `connected-${produced.length + 1}`);
-      produced.push(runtime as unknown as FakeEnvironment);
-      return runtime;
+      const environment = connectedEnvironment(options, `connected-${produced.length + 1}`);
+      produced.push(environment as unknown as FakeEnvironment);
+      return environment;
     });
     const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
     const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
@@ -700,7 +700,7 @@ describe('declaration watch', () => {
 
   it('skips a declaration whose registration fails and still registers the rest', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
-    // A runtime registered outside the factory collides with the declaration id.
+    // A environment registered outside the factory collides with the declaration id.
     registry.register(new FakeEnvironment(
       { workspaceId: 'workspace-1', environmentId: 'conflict', generation: 'other' },
       { capabilities: [] },
@@ -791,16 +791,16 @@ describe('declaration watch', () => {
     await registry.dispose();
   });
 
-  it('drains an in-use runtime on removal: held leases keep their runtime, new acquires fail, no local fallback', async () => {
+  it('drains an in-use environment on removal: held leases keep their environment, new acquires fail, no local fallback', async () => {
     const registry = new EnvironmentRegistry('workspace-1', 5_000);
     const config = watchableConfigService({
       'dev-box': { type: 'ssh', host: 'dev-box', defaultCwd: '/home/me' },
     });
     const produced: FakeEnvironment[] = [];
     const connect = vi.fn(async (options: RemoteEnvironmentOptions) => {
-      const runtime = connectedEnvironment(options, 'connected-1');
-      produced.push(runtime as unknown as FakeEnvironment);
-      return runtime;
+      const environment = connectedEnvironment(options, 'connected-1');
+      produced.push(environment as unknown as FakeEnvironment);
+      return environment;
     });
     const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
     const attachment = await factory.attach(CONTEXT, fakeHost(baseServices({ config: config.service }), registry));
@@ -818,7 +818,7 @@ describe('declaration watch', () => {
     expect(() => registry.acquire({ workspaceId: 'workspace-1', environmentId: 'dev-box' })).toThrowError(
       expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.not_found' }),
     );
-    // The held lease keeps its runtime; the drain disposes it once the lease releases.
+    // The held lease keeps its environment; the drain disposes it once the lease releases.
     expect(lease.environment).toBe(connected);
     expect((produced[0]! as unknown as { disposed: boolean }).disposed).toBe(false);
     lease.dispose();
@@ -922,9 +922,9 @@ describe('declaration watch', () => {
     const produced: FakeEnvironment[] = [];
     const connect = vi.fn((options: RemoteEnvironmentOptions) => new Promise<RemoteEnvironment>((resolve) => {
       releaseConnect = () => {
-        const runtime = connectedEnvironment(options, 'stale-1');
-        produced.push(runtime as unknown as FakeEnvironment);
-        resolve(runtime);
+        const environment = connectedEnvironment(options, 'stale-1');
+        produced.push(environment as unknown as FakeEnvironment);
+        resolve(environment);
       };
     }));
     const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
@@ -1035,7 +1035,7 @@ describe('factory auto-install trigger', () => {
     );
   }
 
-  it('auto-installs a typed runtime once and retries the connect once after a missing executor', async () => {
+  it('auto-installs a typed environment once and retries the connect once after a missing executor', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
     let calls = 0;
     const connect = vi.fn(async (options: RemoteEnvironmentOptions) => {

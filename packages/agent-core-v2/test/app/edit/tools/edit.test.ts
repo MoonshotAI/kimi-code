@@ -220,7 +220,7 @@ describe('EditTool', () => {
   it('executes against the selected environment filesystem instead of the App filesystem', async () => {
     const environmentWrite = vi.fn().mockResolvedValue(undefined);
     const { fs: environmentFs } = createSpiedEditFs({
-      readText: vi.fn().mockResolvedValue('runtime content'),
+      readText: vi.fn().mockResolvedValue('environment content'),
       writeText: environmentWrite,
     });
     const appRead = vi.fn().mockRejectedValue(new Error('App filesystem bypass'));
@@ -235,7 +235,7 @@ describe('EditTool', () => {
     });
 
     expect(result.output).toContain('Replaced 1 occurrence');
-    expect(environmentWrite).toHaveBeenCalledWith('/tmp/a.txt', 'runtime generation');
+    expect(environmentWrite).toHaveBeenCalledWith('/tmp/a.txt', 'environment generation');
     expect(appRead).not.toHaveBeenCalled();
     expect(appWrite).not.toHaveBeenCalled();
   });

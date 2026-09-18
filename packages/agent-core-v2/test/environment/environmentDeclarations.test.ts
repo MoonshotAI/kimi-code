@@ -198,7 +198,7 @@ host = "project-dev"
 });
 
 describe('previewProjectEnvironmentDeclarations', () => {
-  it('lists each declared runtime with its full command line for the trust prompt', async () => {
+  it('lists each declared environment with its full command line for the trust prompt', async () => {
     const preview = await previewProjectEnvironmentDeclarations(
       fakeFs({
         [PROJECT_FILE]: `

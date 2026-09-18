@@ -91,7 +91,7 @@ scenarios' upfront connect.
   grace window (spec §5.3).
 - `group-residue` — `sleep & exit 0` leader exits; the residue group member is
   killed on `process/signal` (verified with remote `kill -0`).
-- `container-stop` — `docker stop` mid-session: runtime reports `disconnected`
+- `container-stop` — `docker stop` mid-session: environment reports `disconnected`
   and later calls reject (no local fallback). Runs on a fresh connection and is
   skipped (not failed) when `--container` is absent.
 - `disconnect` — client-side bridge drop: later fs/process calls reject, and a
@@ -103,7 +103,7 @@ scenarios' upfront connect.
 The `install` scenario verifies spec D8/D9 end-to-end on a **fresh** target
 (no executor installed): the connect fails as missing-executor, the
 auto-install downloads + verifies + activates the executor, the retried
-connect yields a working runtime, a tampered checksum is rejected without a
+connect yields a working environment, a tampered checksum is rejected without a
 retry, and a second install is a no-op. It runs real ssh/docker and a real
 HTTP download against a manifest you serve locally.
 
@@ -145,7 +145,7 @@ What each check proves:
 - `a tampered checksum aborts the auto-install without a connect retry` — a
   manifest whose sha256 does not match the served binary fails at the
   `download` step with `checksum mismatch`, and the connect is NOT retried.
-- `auto-install on the handshake failure yields a working runtime` — the
+- `auto-install on the handshake failure yields a working environment` — the
   trigger installs once and retries the connect exactly once; the executor
   binary exists at the expected absolute path on the target and an fs
   round-trip works through it.
@@ -178,7 +178,7 @@ full list). To re-run `install`, remove the executor on the target
   disconnect` paused at a prompt, or a manual `sleep` via the driver), then
   kill the local ssh process (`pkill -f 'ssh.*dev-box'`) or drop the network.
   The ServerAlive options in the ssh lowering (`ServerAliveInterval=15`,
-  `ServerAliveCountMax=3`) bound the half-open detection to ~45s; the runtime
+  `ServerAliveCountMax=3`) bound the half-open detection to ~45s; the environment
   must go `disconnected` and calls must reject.
 - **executor missing (127)**: point `--remote-bin` at a nonexistent path; the
   driver must fail with the exit code and bounded stderr, not hang.
@@ -193,4 +193,4 @@ full list). To re-run `install`, remove the executor on the target
 - Launcher discipline (spec §3.1): every launcher must be verified to allocate
   no TTY and to carry only protocol frames on stdout. The shipped ssh lowering
   uses `-T` and docker lowering uses `exec -i` (no `-t`); the zero-tolerance
-  handshake is the runtime guard for any launcher that violates this.
+  handshake is the environment guard for any launcher that violates this.

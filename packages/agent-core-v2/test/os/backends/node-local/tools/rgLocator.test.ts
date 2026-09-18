@@ -157,7 +157,7 @@ describe('ensureRgPath remote environment branch', () => {
     const fetchMock = vi.fn();
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const resolution = await ensureRgPath(probe, { environment: environment, allowCachedFallback: true });
+    const resolution = await ensureRgPath(probe, { environment, allowCachedFallback: true });
 
     expect(resolution).toEqual({ path: 'rg', source: 'system-path' });
     expect(probe.exec).toHaveBeenCalledWith(['rg', '--version']);
@@ -168,7 +168,7 @@ describe('ensureRgPath remote environment branch', () => {
     const probe = probeWith((args) => (args[0] === 'rg' ? -1 : 0));
     const environment = remoteEnvironment('remote-cached');
 
-    const resolution = await ensureRgPath(probe, { environment: environment, allowCachedFallback: true });
+    const resolution = await ensureRgPath(probe, { environment, allowCachedFallback: true });
 
     expect(resolution).toEqual({ path: '/home/remote/.kimi-code/bin/rg', source: 'share-bin-cached' });
   });
@@ -202,12 +202,12 @@ describe('ensureRgPath remote environment branch', () => {
     const environment = remoteEnvironment('remote-download-fails');
     globalThis.fetch = vi.fn().mockRejectedValue(new Error('network unreachable')) as typeof fetch;
 
-    await expect(ensureRgPath(probe, { environment: environment, allowCachedFallback: true })).rejects.toThrow(
+    await expect(ensureRgPath(probe, { environment, allowCachedFallback: true })).rejects.toThrow(
       /network unreachable/,
     );
 
     const retryProbe = probeWith((args) => (args[0] === 'rg' ? 0 : -1));
-    const resolution = await ensureRgPath(retryProbe, { environment: environment, allowCachedFallback: true });
+    const resolution = await ensureRgPath(retryProbe, { environment, allowCachedFallback: true });
     expect(resolution).toEqual({ path: 'rg', source: 'system-path' });
   });
 
@@ -217,7 +217,7 @@ describe('ensureRgPath remote environment branch', () => {
     const fetchMock = vi.fn();
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    await expect(ensureRgPath(probe, { environment: environment, allowCachedFallback: true })).rejects.toThrow(
+    await expect(ensureRgPath(probe, { environment, allowCachedFallback: true })).rejects.toThrow(
       /Unsupported platform\/arch/,
     );
     expect(fetchMock).not.toHaveBeenCalled();
@@ -235,7 +235,7 @@ describe('ensureRgPath remote environment branch', () => {
     process.env['PATH'] = '';
     try {
       writeFileSync(join(fakeShare, 'bin', process.platform === 'win32' ? 'rg.exe' : 'rg'), 'fake rg');
-      const resolution = await ensureRgPath(probe, { environment: environment, shareDir: fakeShare, allowCachedFallback: true });
+      const resolution = await ensureRgPath(probe, { environment, shareDir: fakeShare, allowCachedFallback: true });
       expect(resolution.source).toBe('share-bin-cached');
     } finally {
       if (savedPath === undefined) {

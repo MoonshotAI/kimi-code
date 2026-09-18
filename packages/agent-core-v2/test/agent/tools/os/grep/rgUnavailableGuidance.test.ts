@@ -122,7 +122,7 @@ describe('GrepTool rg-unavailable guidance', () => {
     }
   });
 
-  it('names the bound runtime and the target-side share-bin path on a remote environment', async () => {
+  it('names the bound environment and the target-side share-bin path on a remote environment', async () => {
     ensureRgPathMock.mockRejectedValue(new Error('boom'));
     const tool = new TestGrepTool(createBackend({ environmentId: 'ssh-dev', homeDir: REMOTE_HOME }));
 
@@ -158,7 +158,7 @@ describe('GrepTool rg-unavailable guidance', () => {
     );
   });
 
-  it('names the runtime and target path when the resolved rg fails to spawn', async () => {
+  it('names the environment and target path when the resolved rg fails to spawn', async () => {
     ensureRgPathMock.mockResolvedValue({ path: REMOTE_SHARE_BIN_RG, source: 'share-bin-cached' });
     const enoent = Object.assign(new Error(`spawn ${REMOTE_SHARE_BIN_RG} ENOENT`), {
       code: 'ENOENT',

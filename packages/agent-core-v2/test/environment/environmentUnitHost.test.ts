@@ -45,7 +45,7 @@ class DependentUnit implements IValue {
   }
 }
 
-function runtime(generation: string, environmentId = 'local'): FakeEnvironment {
+function environment(generation: string, environmentId = 'local'): FakeEnvironment {
   return new FakeEnvironment(
     { workspaceId: 'workspace', environmentId, generation },
     { capabilities: [] },
@@ -102,12 +102,12 @@ describe('EnvironmentUnitHost', () => {
 
   it('rolls back failed async updates and only publishes prepared generations', async () => {
     const { disposables, host, registry } = setup();
-    const first = runtime('one');
+    const first = environment('one');
     const handle = await host.provide(emptyImports(), async (provider) => {
       provider.registerEnvironment(first);
       return { dispose: () => {} };
     });
-    const failed = runtime('failed');
+    const failed = environment('failed');
     await expect(handle.update(emptyImports(), async (provider) => {
       provider.registerEnvironment(failed);
       await Promise.resolve();
@@ -115,7 +115,7 @@ describe('EnvironmentUnitHost', () => {
     })).rejects.toThrow('prepare failed');
     expect(registry.current('local')).toBe(first);
     expect(failed.disposed).toBe(true);
-    const second = runtime('two');
+    const second = environment('two');
     await handle.update(emptyImports(), async (provider) => {
       provider.registerEnvironment(second);
       return { dispose: () => {} };
@@ -130,8 +130,8 @@ describe('EnvironmentUnitHost', () => {
 
   it('publishes every replacement before reporting previous generation cleanup failures', async () => {
     const { disposables, host, registry } = setup();
-    const firstLocal = runtime('one-local');
-    const firstRemote = runtime('one-remote', 'remote');
+    const firstLocal = environment('one-local');
+    const firstRemote = environment('one-remote', 'remote');
     Object.assign(firstRemote, {
       dispose: async () => {
         firstRemote.disposed = true;
@@ -143,8 +143,8 @@ describe('EnvironmentUnitHost', () => {
       provider.registerEnvironment(firstRemote);
       return { dispose: () => {} };
     });
-    const secondLocal = runtime('two-local');
-    const secondRemote = runtime('two-remote', 'remote');
+    const secondLocal = environment('two-local');
+    const secondRemote = environment('two-remote', 'remote');
 
     await expect(handle.update(emptyImports(), async (provider) => {
       provider.registerEnvironment(secondLocal);
@@ -175,7 +175,7 @@ describe('EnvironmentUnitHost', () => {
     const first = setup();
     const second = setup();
     const handle = await first.host.provide(emptyImports(), async (provider) => {
-      provider.registerEnvironment(runtime('one'));
+      provider.registerEnvironment(environment('one'));
       return { dispose: () => {} };
     });
     await expect(second.host.remove(handle)).rejects.toThrow('not owned');
@@ -190,7 +190,7 @@ describe('EnvironmentUnitHost', () => {
   it('allows an attachment to remove its owned registration during host teardown', async () => {
     const { disposables, host, registry } = setup();
     const handle = await host.provide(emptyImports(), async (provider) => {
-      const registration = provider.registerEnvironment(runtime('one'));
+      const registration = provider.registerEnvironment(environment('one'));
       return { dispose: () => registration.remove() };
     });
 
@@ -208,14 +208,14 @@ describe('EnvironmentUnitHost', () => {
       return { dispose: () => {} };
     });
 
-    const first = runtime('one');
+    const first = environment('one');
     const registration = providerHost.registerEnvironment(first);
     expect(registry.current('local')).toBe(first);
     await registration.remove();
     expect(registry.current('local')).toBeUndefined();
     expect(first.disposed).toBe(true);
 
-    const second = runtime('two', 'dynamic');
+    const second = environment('two', 'dynamic');
     providerHost.registerEnvironment(second);
     expect(registry.current('dynamic')).toBe(second);
     await handle.remove();
@@ -233,12 +233,12 @@ describe('EnvironmentUnitHost', () => {
       return { dispose: () => {} };
     });
 
-    const first = runtime('one');
+    const first = environment('one');
     const registration = providerHost.registerEnvironment(first);
     await registration.remove();
     expect(registry.current('local')).toBeUndefined();
 
-    const second = runtime('two');
+    const second = environment('two');
     providerHost.registerEnvironment(second);
     expect(registry.current('local')).toBe(second);
 
@@ -257,7 +257,7 @@ describe('EnvironmentUnitHost', () => {
       return { dispose: () => {} };
     });
 
-    const failing = runtime('one');
+    const failing = environment('one');
     failing.dispose = () => {
       throw new Error('boom');
     };
@@ -265,7 +265,7 @@ describe('EnvironmentUnitHost', () => {
     await expect(registration.remove()).rejects.toThrow('boom');
     expect(registry.current('local')).toBeUndefined();
 
-    const second = runtime('two');
+    const second = environment('two');
     providerHost.registerEnvironment(second);
     expect(registry.current('local')).toBe(second);
 

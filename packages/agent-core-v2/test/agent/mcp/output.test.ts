@@ -998,7 +998,7 @@ describe('mcpResultToExecutableOutput over a real stdio server', () => {
   const fixture = join(import.meta.dirname, '../../mcpCore/fixtures/structured-content-stdio-server.mjs');
 
   async function callFixtureTool(name: string) {
-    const runtime = Object.assign(
+    const environment = Object.assign(
       new FakeEnvironment(
         { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
         { capabilities: ['process'] },
@@ -1014,14 +1014,14 @@ describe('mcpResultToExecutableOutput over a real stdio server', () => {
       {
         environmentResolver: {
           _serviceBrand: undefined,
-          inspect: () => runtime,
+          inspect: () => environment,
           acquire: () => ({
-            environment: runtime,
+            environment,
             track: (resource) => resource,
             dispose: () => {},
           }),
           acquireWhenReady: async () => ({
-            environment: runtime,
+            environment,
             track: (resource) => resource,
             dispose: () => {},
           }),

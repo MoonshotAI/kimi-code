@@ -246,7 +246,7 @@ describe('AgentToolActivationService', () => {
     expect(registry.resolve('Beta')).toBeInstanceOf(BetaTool);
   });
 
-  it('declares the runtime requirements used by every static runtime-bound tool', () => {
+  it('declares the environment requirements used by every static environment-bound tool', () => {
     const requirements = Object.fromEntries(
       savedContributions.map((contribution) => [
         contribution.options.name,
@@ -265,7 +265,7 @@ describe('AgentToolActivationService', () => {
     });
   });
 
-  it('keeps Agent and runtime-independent tools on a process-only runtime', async () => {
+  it('keeps Agent and environment-independent tools on a process-only environment', async () => {
     environmentData.capabilities.delete('fs');
     const agentOptions = savedContributions.find((record) => record.options.name === 'Agent')!.options;
     registerAgentToolService(IAlphaTool, AlphaTool, {
@@ -302,7 +302,7 @@ describe('AgentToolActivationService', () => {
     expect(registry.resolve('Agent')).toBeInstanceOf(AgentStubTool);
   });
 
-  it('withdraws and restores only runtime-bound tools on capability and status changes', async () => {
+  it('withdraws and restores only environment-bound tools on capability and status changes', async () => {
     registerAgentToolService(IAlphaTool, AlphaTool, {
       name: 'Alpha',
       requiredEnvironmentCapabilities: ['fs'],

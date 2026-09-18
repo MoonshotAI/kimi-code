@@ -560,7 +560,7 @@ describe('SessionEventBroadcaster', () => {
     ]);
   });
 
-  it('fans out a runtime status change hint like other session events', async () => {
+  it('fans out an environment status change hint like other session events', async () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
     sessions.set('s1', lc);

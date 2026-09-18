@@ -1559,7 +1559,7 @@ describe('agentsMdReminder remote environment binding', () => {
     return h;
   }
 
-  it('reminds for a relative Bash target resolved against the bound runtime workDir', async () => {
+  it('reminds for a relative Bash target resolved against the bound environment workDir', async () => {
     const h = remoteHarness();
 
     const result = await fire(h, didCtx('Bash', { command: 'ls packages/kap-server' }));
@@ -1568,7 +1568,7 @@ describe('agentsMdReminder remote environment binding', () => {
     expect(reminderText(h)).toContain(remoteAgentsMd);
   });
 
-  it('reminds for an explicit relative cwd argument resolved against the bound runtime workDir', async () => {
+  it('reminds for an explicit relative cwd argument resolved against the bound environment workDir', async () => {
     const h = remoteHarness();
 
     const result = await fire(

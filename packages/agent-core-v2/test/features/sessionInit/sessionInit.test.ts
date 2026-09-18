@@ -222,7 +222,7 @@ describe('SessionInitService', () => {
     );
   });
 
-  it('reloads and seeds AGENTS.md from the bound runtime at the binding cwd', async () => {
+  it('reloads and seeds AGENTS.md from the bound environment at the binding cwd', async () => {
     const remoteWorkDir = '/remote/work';
     const remoteAgentsMdPath = `${remoteWorkDir}/AGENTS.md`;
     hostFs = stubHostFs({

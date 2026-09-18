@@ -183,7 +183,7 @@ function createRegistryBackedTool(environmentValue: FakeEnvironment) {
   const registry = new EnvironmentRegistry('workspace');
   registry.register(environmentValue);
   const binding = { workspaceId: 'workspace', environmentId: 'local' } as const;
-  const runtime: IAgentEnvironmentService = {
+  const environment: IAgentEnvironmentService = {
     _serviceBrand: undefined,
     onDidChange: (listener) => registry.onDidChange(() => listener()),
     isAvailable: (required = []) => {
@@ -202,7 +202,7 @@ function createRegistryBackedTool(environmentValue: FakeEnvironment) {
     workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
   };
   const tool = new ReadTool(
-    runtime,
+    environment,
     stubWorkspaceContext('/workspace'),
     { catalog: { getSkillRoots: () => [] } } as unknown as ISessionSkillCatalog,
     stubToolResultTruncationService(),
@@ -1370,7 +1370,7 @@ describe('ReadTool', () => {
     expect(result.truncated).toBeUndefined();
   });
 
-  it('rechecks runtime availability when execution starts after the tool was shown', async () => {
+  it('rechecks environment availability when execution starts after the tool was shown', async () => {
     const env = createTestEnv();
     const fs = createSpiedFs('visible').fs;
     const environmentValue = new FakeEnvironment(
@@ -1390,7 +1390,7 @@ describe('ReadTool', () => {
     ).rejects.toMatchObject({ code: 'environment.unavailable' });
   });
 
-  it('waits for an in-flight connect when execution starts while the runtime is connecting', async () => {
+  it('waits for an in-flight connect when execution starts while the environment is connecting', async () => {
     const env = createTestEnv();
     const fs = createSpiedFs('visible').fs;
     const environmentValue = new FakeEnvironment(

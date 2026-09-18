@@ -146,7 +146,7 @@ describe('AgentProfileService.applyProfile', () => {
     expect(svc.getAgentsMdWarning()).toBeUndefined();
   });
 
-  it('renders the complete runtime context exactly', async () => {
+  it('renders the complete environment context exactly', async () => {
     await writeFile(join(workDir, 'AGENTS.md'), 'project instructions', 'utf-8');
     const { profile: svc } = buildContext();
 
@@ -155,7 +155,7 @@ describe('AgentProfileService.applyProfile', () => {
     expect(svc.data().systemPrompt).toBe(exactSystemPrompt(workDir, 'project instructions'));
   });
 
-  it('maps prompt context roots through the bound runtime workspace view', async () => {
+  it('maps prompt context roots through the bound environment workspace view', async () => {
     const mappedDir = await mkdtemp(join(tmpdir(), 'kimi-apply-mapped-'));
     const localExtra = await mkdtemp(join(tmpdir(), 'kimi-apply-extra-local-'));
     const mappedExtra = await mkdtemp(join(tmpdir(), 'kimi-apply-extra-mapped-'));
@@ -192,7 +192,7 @@ describe('AgentProfileService.applyProfile', () => {
     }
   });
 
-  it('skips the directory listing when the bound runtime has no fs capability', async () => {
+  it('skips the directory listing when the bound environment has no fs capability', async () => {
     const fs = new HostFileSystem();
     const { profile: svc } = buildContext(
       agentService(IAgentEnvironmentService, mappedEnvironmentService(fs, homeDir, (path) => path, [])),
@@ -502,7 +502,7 @@ function mappedEnvironmentService(
   map: (path: string) => string,
   capabilities: readonly EnvironmentCapability[] = ['fs'],
 ): IAgentEnvironmentService {
-  const runtime: Environment = {
+  const environment: Environment = {
     identity: { workspaceId: 'workspace-1', environmentId: 'mapped', generation: 'g1' },
     capabilities: new Set(capabilities),
     host: {
@@ -539,15 +539,15 @@ function mappedEnvironmentService(
     _serviceBrand: undefined,
     onDidChange: Event.None as Event<void>,
     isAvailable: (required = []) =>
-      required.every((capability) => runtime.capabilities.has(capability)),
-    inspect: () => runtime,
+      required.every((capability) => environment.capabilities.has(capability)),
+    inspect: () => environment,
     acquire: () => ({
-      environment: runtime,
+      environment,
       track: <T,>(resource: T): T => resource,
       dispose: () => {},
     }),
     acquireWhenReady: async () => ({
-      environment: runtime,
+      environment,
       track: <T,>(resource: T): T => resource,
       dispose: () => {},
     }),

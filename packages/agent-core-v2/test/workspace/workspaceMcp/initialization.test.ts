@@ -81,11 +81,11 @@ describe('Workspace MCP initialization', () => {
         });
         reg.defineInstance(ILogService, stubLog());
         reg.defineInstance(ITelemetryService, noopTelemetryService);
-        const runtime = Object.assign(
+        const environment = Object.assign(
           new FakeEnvironment({ workspaceId: 'test-workspace', environmentId: 'local', generation: 'test-generation' }, { capabilities: ['process'] }),
           { process: new HostProcessService() },
         );
-        reg.defineInstance(IEnvironmentResolver, { _serviceBrand: undefined, inspect: () => runtime, acquire: () => ({ environment: runtime, track: (resource) => resource, dispose: () => {} }), acquireWhenReady: async () => ({ environment: runtime, track: (resource) => resource, dispose: () => {} }) });
+        reg.defineInstance(IEnvironmentResolver, { _serviceBrand: undefined, inspect: () => environment, acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }), acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }) });
         reg.definePartialInstance(IConfigService, {
           ready,
           get: (<T = unknown>(domain: string): T =>

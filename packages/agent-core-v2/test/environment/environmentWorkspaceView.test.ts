@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 
-function runtime(generation: string, pathClass: 'posix' | 'win32'): FakeEnvironment {
+function environment(generation: string, pathClass: 'posix' | 'win32'): FakeEnvironment {
   return new FakeEnvironment(
     { workspaceId: 'workspace', environmentId: 'local', generation },
     { pathClass },
@@ -11,8 +11,8 @@ function runtime(generation: string, pathClass: 'posix' | 'win32'): FakeEnvironm
 }
 
 describe('EnvironmentWorkspaceView', () => {
-  it('resolves posix paths within the fixed runtime roots', () => {
-    const view = new EnvironmentWorkspaceView(runtime('one', 'posix'), {
+  it('resolves posix paths within the fixed environment roots', () => {
+    const view = new EnvironmentWorkspaceView(environment('one', 'posix'), {
       workDir: '/workspace/project',
       additionalDirs: ['/shared'],
     });
@@ -24,7 +24,7 @@ describe('EnvironmentWorkspaceView', () => {
   });
 
   it('uses win32 path semantics and rejects sibling prefixes', () => {
-    const view = new EnvironmentWorkspaceView(runtime('one', 'win32'), {
+    const view = new EnvironmentWorkspaceView(environment('one', 'win32'), {
       workDir: 'C:\\workspace\\project',
       additionalDirs: ['D:\\shared'],
     });
@@ -100,11 +100,11 @@ describe('EnvironmentWorkspaceView', () => {
   });
 
   it('deduplicates roots and preserves generation identity', () => {
-    const first = new EnvironmentWorkspaceView(runtime('one', 'posix'), {
+    const first = new EnvironmentWorkspaceView(environment('one', 'posix'), {
       workDir: '/workspace',
       additionalDirs: ['/shared', '/shared'],
     });
-    const second = new EnvironmentWorkspaceView(runtime('two', 'posix'), {
+    const second = new EnvironmentWorkspaceView(environment('two', 'posix'), {
       workDir: '/workspace',
       additionalDirs: ['/shared'],
     });

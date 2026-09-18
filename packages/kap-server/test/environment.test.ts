@@ -86,7 +86,7 @@ describe('server-v2 /api/v1 environment routes', () => {
     let base: string;
 
     beforeAll(async () => {
-      home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-runtime-off-'));
+      home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-environment-off-'));
       server = await startServer({
         hostIdentity: TEST_HOST_IDENTITY,
         host: '127.0.0.1',
@@ -165,13 +165,13 @@ describe('server-v2 /api/v1 environment routes', () => {
     });
   });
 
-  describe('with the remote_runtime flag on and a loopback command runtime', () => {
+  describe('with the remote_runtime flag on and a loopback command environment', () => {
     let server: RunningServer | undefined;
     let home: string | undefined;
     let base: string;
 
     beforeAll(async () => {
-      home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-runtime-on-'));
+      home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-environment-on-'));
       await writeFile(join(home, 'config.toml'), configToml(), 'utf-8');
       server = await startServer({
         hostIdentity: TEST_HOST_IDENTITY,
@@ -276,7 +276,7 @@ describe('server-v2 /api/v1 environment routes', () => {
       expect(missing.body.code).toBe(40420);
     }, 90_000);
 
-    it('surfaces the connect failure reason as connect_error in the runtime list', async () => {
+    it('surfaces the connect failure reason as connect_error in the environment list', async () => {
       const id = await createSession();
 
       const dying = await call<null>('POST', `/api/v1/sessions/${id}/environment`, {
@@ -321,7 +321,7 @@ describe('server-v2 /api/v1 environment routes', () => {
       return created.body.data;
     }
 
-    it('declares a runtime at global scope into config.toml and registers it live', async () => {
+    it('declares an environment at global scope into config.toml and registers it live', async () => {
       const { id } = await createSessionWire();
       const declared = await call<DeclaredWire>('POST', `/api/v1/sessions/${id}/environments`, {
         environment_id: 'rest-box',
@@ -360,7 +360,7 @@ describe('server-v2 /api/v1 environment routes', () => {
       expect(await readFile(join(home as string, 'config.toml'), 'utf-8')).toBe(before);
     });
 
-    it('declares a runtime at project scope into .kimi-code/environments.toml without clobbering it', async () => {
+    it('declares an environment at project scope into .kimi-code/environments.toml without clobbering it', async () => {
       const session = await createSessionWire();
       await mkdir(join(home as string, '.kimi-code'), { recursive: true });
       await writeFile(

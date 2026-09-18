@@ -177,7 +177,7 @@ function createTestEnv(): IHostEnvironment {
 }
 
 function environmentFor(fs: IHostFileSystem, env: IHostEnvironment = createTestEnv()): IAgentEnvironmentService {
-  const runtime = {
+  const environment = {
     identity: { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
     capabilities: new Set(['fs'] as const),
     host: env,
@@ -191,15 +191,15 @@ function environmentFor(fs: IHostFileSystem, env: IHostEnvironment = createTestE
   return {
     _serviceBrand: undefined,
     onDidChange: () => ({ dispose: () => {} }),
-    isAvailable: (required = []) => required.every((capability) => runtime.capabilities.has(capability)),
-    inspect: () => runtime,
+    isAvailable: (required = []) => required.every((capability) => environment.capabilities.has(capability)),
+    inspect: () => environment,
     acquire: () => ({
-      environment: runtime,
+      environment,
       track: (resource) => resource,
       dispose: () => {},
     }),
     acquireWhenReady: async () => ({
-      environment: runtime,
+      environment,
       track: (resource) => resource,
       dispose: () => {},
     }),
@@ -854,7 +854,7 @@ describe('registerMediaTools', () => {
     expect(() => disposable.dispose()).not.toThrow();
   });
 
-  it('does not register when the runtime lacks filesystem availability', () => {
+  it('does not register when the environment lacks filesystem availability', () => {
     const registry = new AgentToolRegistryService();
     const availableEnvironment = environmentFor(fs, env);
     registerMediaTools(registry, {
@@ -913,12 +913,12 @@ describe('AgentMediaToolsRegistrar', () => {
     const baseEnvironment = environmentFor(createTestFs(files));
     const environmentChanges = new Emitter<void>();
     let environmentAvailable = true;
-    const runtime: IAgentEnvironmentService = {
+    const environment: IAgentEnvironmentService = {
       _serviceBrand: undefined,
       onDidChange: environmentChanges.event,
       isAvailable: (required = []) => environmentAvailable && baseEnvironment.isAvailable(required),
       inspect: () => {
-        if (!environmentAvailable) throw new Error('runtime unavailable');
+        if (!environmentAvailable) throw new Error('environment unavailable');
         return baseEnvironment.inspect();
       },
       acquire: (required = []) => baseEnvironment.acquire(required),
@@ -931,7 +931,7 @@ describe('AgentMediaToolsRegistrar', () => {
       profile,
       modelCatalog,
       eventBus,
-      runtime,
+      environment,
       workspaceCtx,
       recordingTelemetry([]),
       new AgentStateService(),
@@ -1034,7 +1034,7 @@ describe('AgentMediaToolsRegistrar', () => {
     expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
   });
 
-  it('keeps session-image reads available while the workspace runtime is unavailable', async () => {
+  it('keeps session-image reads available while the workspace environment is unavailable', async () => {
     const storage = new InMemoryStorageService();
     const store = new SessionMediaStoreService(makeSessionContext({
       sessionId: 'session', workspaceId: 'workspace', cwd: '/workspace',

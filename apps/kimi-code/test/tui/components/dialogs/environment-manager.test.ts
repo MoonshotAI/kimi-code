@@ -66,7 +66,7 @@ describe('EnvironmentManagerComponent', () => {
     expect(addIdx).toBeGreaterThan(sandboxIdx);
   });
 
-  it('marks the bound runtime with the shared current marker', () => {
+  it('marks the bound environment with the shared current marker', () => {
     const component = makeComponent({ currentEnvironmentId: 'dev-box' });
     const plain = rendered(component);
     expect(plain).toContain('← current');
@@ -131,7 +131,7 @@ describe('EnvironmentManagerComponent', () => {
     expect(onSwitch).toHaveBeenCalledWith('dev-box');
   });
 
-  it('does not call onSwitch when Enter lands on the current runtime', () => {
+  it('does not call onSwitch when Enter lands on the current environment', () => {
     const onSwitch = vi.fn();
     const component = makeComponent({ onSwitch, currentEnvironmentId: 'local' });
     component.handleInput(ENTER);

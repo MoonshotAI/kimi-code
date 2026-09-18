@@ -539,7 +539,7 @@ describe('SessionManager', () => {
 });
 
 describe('SessionManager controller retirement', () => {
-  function runtime(generation: string): FakeEnvironment {
+  function environment(generation: string): FakeEnvironment {
     return Object.assign(
       new FakeEnvironment(
         { workspaceId: 'workspace', environmentId: 'local', generation },
@@ -692,13 +692,13 @@ describe('SessionManager controller retirement', () => {
 
   it('releases the superseded program generation once its last session closes, before the drain timeout', async () => {
     const { registry, program, controllers } = liveProgram(60_000);
-    const first = runtime('one');
+    const first = environment('one');
     const registration = registry.register(first);
     await program.ready;
     const manager = managerFor(program, registry);
 
     const handleOne = await manager.create({ workDir: '/workspace' });
-    const replacement = registration.replace(runtime('two'));
+    const replacement = registration.replace(environment('two'));
     await Promise.resolve();
     const handleTwo = await manager.create({ workDir: '/workspace' });
     expect(manager.list()).toEqual([handleOne, handleTwo]);
@@ -720,7 +720,7 @@ describe('SessionManager controller retirement', () => {
 
   it('retires an idle current-generation controller and rebuilds it for the next session', async () => {
     const { registry, program, controllers } = liveProgram(50);
-    registry.register(runtime('one'));
+    registry.register(environment('one'));
     await program.ready;
     const manager = managerFor(program, registry);
 
@@ -739,9 +739,9 @@ describe('SessionManager controller retirement', () => {
     await registry.dispose();
   });
 
-  it('keeps per-runtime controllers isolated for same-workspace sessions on different environments', async () => {
+  it('keeps per-environment controllers isolated for same-workspace sessions on different environments', async () => {
     const { registry, program, controllers } = liveProgram(50);
-    registry.register(runtime('one'));
+    registry.register(environment('one'));
     registry.register(remoteEnvironment('remote-one'));
     await program.ready;
     const manager = managerFor(program, registry);
@@ -1076,7 +1076,7 @@ describe('SessionManager remote environment wiring', () => {
     await registry.dispose();
   });
 
-  it('connects a disconnected declared runtime before creating the session', async () => {
+  it('connects a disconnected declared environment before creating the session', async () => {
     const { manager, registry, byEnvironment, remote } = remoteWiringSetup({
       config: { sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
       remote: {},
@@ -1090,7 +1090,7 @@ describe('SessionManager remote environment wiring', () => {
     await registry.dispose();
   });
 
-  it('aborts creation when the runtime connect fails', async () => {
+  it('aborts creation when the environment connect fails', async () => {
     const handshake = new Error('executor process exited before the handshake completed (code 255, signal null): ssh: connect failed');
     const { manager, registry, byEnvironment, remote } = remoteWiringSetup({
       config: { sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
@@ -1145,7 +1145,7 @@ describe('SessionManager remote environment wiring', () => {
     await registry.dispose();
   });
 
-  it('does not reconnect a runtime that is already ready', async () => {
+  it('does not reconnect a environment that is already ready', async () => {
     const { manager, registry, byEnvironment, remote } = remoteWiringSetup({
       config: { sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
       remote: { status: 'ready' },
@@ -1158,7 +1158,7 @@ describe('SessionManager remote environment wiring', () => {
     await registry.dispose();
   });
 
-  it('re-roots the connected runtime with the validated cwd before creating the session', async () => {
+  it('re-roots the connected environment with the validated cwd before creating the session', async () => {
     const { manager, registry, byEnvironment, remote } = remoteWiringSetup({
       config: { sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
       remote: { reroot: async () => {} },
@@ -1171,7 +1171,7 @@ describe('SessionManager remote environment wiring', () => {
     await registry.dispose();
   });
 
-  it('re-roots an already-ready runtime when the session binds a different cwd', async () => {
+  it('re-roots an already-ready environment when the session binds a different cwd', async () => {
     const { manager, registry, remote } = remoteWiringSetup({
       config: { sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
       remote: { status: 'ready', reroot: async () => {} },
@@ -1287,7 +1287,7 @@ describe('SessionManager remote environment wiring', () => {
     return { manager, byEnvironment, registry, remoteConnect, remoteReroot, callOrder, warn };
   }
 
-  it('restores a remote-bound session on the local controller and reconnects the disconnected runtime in the background', async () => {
+  it('restores a remote-bound session on the local controller and reconnects the disconnected environment in the background', async () => {
     let releaseConnect!: () => void;
     const gate = new Promise<void>((resolve) => {
       releaseConnect = resolve;
@@ -1357,7 +1357,7 @@ describe('SessionManager remote environment wiring', () => {
     await registry.dispose();
   });
 
-  it('awaits the in-flight background reconnect when acquiring the restored runtime', async () => {
+  it('awaits the in-flight background reconnect when acquiring the restored environment', async () => {
     let releaseConnect!: () => void;
     const gate = new Promise<void>((resolve) => {
       releaseConnect = resolve;
@@ -1414,7 +1414,7 @@ describe('SessionManager remote environment wiring', () => {
     await registry.dispose();
   });
 
-  it('restores a remote-bound session on the remote controller when the runtime is ready', async () => {
+  it('restores a remote-bound session on the remote controller when the environment is ready', async () => {
     const { manager, byEnvironment, registry, remoteConnect } = restoreSetup({ remoteStatus: 'ready', flagOn: true });
 
     await manager.resume('session-1');
@@ -1435,7 +1435,7 @@ describe('SessionManager remote environment wiring', () => {
     await registry.dispose();
   });
 
-  it('re-roots the restored runtime with the persisted cwd before the background reconnect', async () => {
+  it('re-roots the restored environment with the persisted cwd before the background reconnect', async () => {
     const { manager, registry, remoteConnect, remoteReroot, callOrder } = restoreSetup({
       remoteStatus: 'disconnected',
       flagOn: true,
@@ -1464,7 +1464,7 @@ describe('SessionManager remote environment wiring', () => {
     await registry.dispose();
   });
 
-  it('does not reroot a restored binding when the runtime is already ready', async () => {
+  it('does not reroot a restored binding when the environment is already ready', async () => {
     const { manager, registry, remoteConnect, remoteReroot } = restoreSetup({
       remoteStatus: 'ready',
       flagOn: true,

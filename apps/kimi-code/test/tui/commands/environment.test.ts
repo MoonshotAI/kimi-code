@@ -47,7 +47,7 @@ function makeHost(options: {
 }) {
   let currentList = options.list ?? makeEnvironmentsInfo();
   // Simulate the engine's declaration watch: once declareEnvironment writes a
-  // [environments] entry, listEnvironments includes the new runtime — after
+  // [environments] entry, listEnvironments includes the new environment — after
   // `registrationDelayCalls` polls, to mimic the async reconcile.
   let callsAfterAdd = -1;
   let pending: SessionEnvironmentsInfo['environments'][number] | undefined;
@@ -113,7 +113,7 @@ function typeText(panel: MountedPanel, text: string): void {
 }
 
 describe('handleEnvironmentCommand', () => {
-  it('mounts the manager with the fetched runtime list and binding', async () => {
+  it('mounts the manager with the fetched environment list and binding', async () => {
     const { host, session, mounted } = makeHost({});
     await handleEnvironmentCommand(host);
 
@@ -180,7 +180,7 @@ describe('handleEnvironmentCommand', () => {
     });
   });
 
-  it('reconnects the bound disconnected runtime on R and refreshes the list', async () => {
+  it('reconnects the bound disconnected environment on R and refreshes the list', async () => {
     const { host, session, mounted } = makeHost({ currentEnvironmentId: 'sandbox' });
     await handleEnvironmentCommand(host);
 
@@ -211,7 +211,7 @@ describe('handleEnvironmentCommand', () => {
     expect(host.restoreEditor).not.toHaveBeenCalled();
   });
 
-  it('adds an ssh runtime from a discovery candidate through the full form flow', async () => {
+  it('adds an ssh environment from a discovery candidate through the full form flow', async () => {
     const { host, session, mounted } = makeHost({});
     await handleEnvironmentCommand(host);
 
@@ -255,7 +255,7 @@ describe('handleEnvironmentCommand', () => {
       expect(host.showStatus).toHaveBeenCalledWith('Environment "staging" added to config.toml.');
     });
     // The watch-driven registration lands before the manager reopens, so the
-    // new runtime is listed immediately.
+    // new environment is listed immediately.
     await vi.waitFor(() => {
       const reopened = latest(mounted, EnvironmentManagerComponent);
       const plain = reopened.render(120).join('\n').replaceAll(/\[[0-9;]*m/g, '');
@@ -263,7 +263,7 @@ describe('handleEnvironmentCommand', () => {
     });
   });
 
-  it('adds a project-scope runtime through the form scope control', async () => {
+  it('adds a project-scope environment through the form scope control', async () => {
     const { host, session, mounted } = makeHost({});
     await handleEnvironmentCommand(host);
 

@@ -38,7 +38,7 @@ describe('EnvironmentsSectionSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('rejects reserved runtime ids', () => {
+  it('rejects reserved environment ids', () => {
     expect(parse({ local: { type: 'ssh', host: 'x' } }).success).toBe(false);
     expect(environmentIdProblem('local')).toContain('reserved');
     expect(environmentIdProblem('default')).toContain('reserved');

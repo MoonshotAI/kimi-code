@@ -8268,7 +8268,7 @@ command = "vim"
     });
   });
 
-  it('reports when the forked runtime cannot be released', async () => {
+  it('reports when the forked environment cannot be released', async () => {
     const source = makeSession({ id: 'ses-source' });
     const forked = makeSession({ id: 'ses-fork' });
     forked.close.mockRejectedValueOnce(new Error('close unavailable'));
@@ -9250,7 +9250,7 @@ describe('KimiTUI session rating survey', () => {
   });
 });
 
-describe('KimiTUI runtime slot (experimental remote environment)', () => {
+describe('KimiTUI environment slot (experimental remote environment)', () => {
   afterEach(() => {
     setExperimentalFeatures([]);
   });

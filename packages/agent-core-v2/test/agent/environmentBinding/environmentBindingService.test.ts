@@ -30,7 +30,7 @@ import type {
 } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import { stubAgentContext } from '../agentContext/stubs';
 
-function runtime(
+function environment(
   environmentId: string,
   generation: string,
   status: Environment['status'] = 'ready',
@@ -54,14 +54,14 @@ interface RestoreHook {
 
 function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: EnvironmentBinding } = {}) {
   const registry = new EnvironmentRegistry('workspace');
-  const local = runtime('local', 'local-one', 'ready', ['fs', 'process'], {
+  const local = environment('local', 'local-one', 'ready', ['fs', 'process'], {
     osKind: 'Linux',
     osArch: 'x86_64',
     osVersion: '6.1.0-local',
     shellName: 'bash',
     shellPath: '/bin/bash',
   });
-  const remote = runtime('remote', 'remote-one', 'ready', ['process'], {
+  const remote = environment('remote', 'remote-one', 'ready', ['process'], {
     osKind: 'FreeBSD',
     osArch: 'arm64',
     osVersion: '13.2-remote',
@@ -245,7 +245,7 @@ describe('AgentEnvironmentBindingService', () => {
 
   it('keeps the prior binding for missing and unavailable targets without fallback', () => {
     const { registry, binding } = setup();
-    registry.register(runtime('offline', 'offline-one', 'disconnected'));
+    registry.register(environment('offline', 'offline-one', 'disconnected'));
 
     expect(() => binding.switch('missing')).toThrowError(
       expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.not_found' }),
@@ -264,7 +264,7 @@ describe('AgentEnvironmentBindingService', () => {
     expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
   });
 
-  it('pins old leases while new calls use the switched runtime', () => {
+  it('pins old leases while new calls use the switched environment', () => {
     const { binding, agentEnvironment } = setup();
     const oldLease = agentEnvironment.acquire();
     binding.switch('remote');
@@ -279,9 +279,9 @@ describe('AgentEnvironmentBindingService', () => {
   it('persists no generation and resolves the current generation after replacement', async () => {
     const { registry, state, binding, agentEnvironment } = setup();
     binding.switch('remote');
-    const registration = registry.register(runtime('replaceable', 'one'));
+    const registration = registry.register(environment('replaceable', 'one'));
     binding.switch('replaceable');
-    await registration.replace(runtime('replaceable', 'two'));
+    await registration.replace(environment('replaceable', 'two'));
 
     expect(state.get(agentEnvironmentBindingKey)).toEqual({
       workspaceId: 'workspace',
@@ -307,7 +307,7 @@ describe('AgentEnvironmentBindingService', () => {
     expect(agentEnvironment.isAvailable(['process'])).toBe(true);
   });
 
-  it('snapshots the binding switch and current runtime generation', () => {
+  it('snapshots the binding switch and current environment generation', () => {
     const { binding, agentEnvironment } = setup();
 
     expect(snapshotAgentEnvironmentBinding(binding, agentEnvironment)).toEqual({
@@ -329,7 +329,7 @@ describe('AgentEnvironmentBindingService', () => {
     });
   });
 
-  it('forwards the bound runtime connectError into the snapshot', () => {
+  it('forwards the bound environment connectError into the snapshot', () => {
     const { remote, binding, agentEnvironment } = setup();
     binding.switch('remote');
     remote.setStatus('disconnected');
@@ -360,7 +360,7 @@ describe('AgentEnvironmentBindingService', () => {
     expect(changes).toHaveLength(3);
   });
 
-  it('publishes a runtime status hint when the bound runtime changes status', () => {
+  it('publishes a environment status hint when the bound environment changes status', () => {
     const { local, remote, binding, published } = setup();
     binding.switch('remote');
 
@@ -377,14 +377,14 @@ describe('AgentEnvironmentBindingService', () => {
     expect(published).toEqual([]);
   });
 
-  it('does not publish runtime status hints for a non-main agent', () => {
+  it('does not publish environment status hints for a non-main agent', () => {
     const { remote, binding, published } = setup({ agentId: 'agent-1' });
     binding.switch('remote');
     remote.setStatus('disconnected');
     expect(published).toEqual([]);
   });
 
-  it('applies the shared status gate to every runtime lifecycle state', () => {
+  it('applies the shared status gate to every environment lifecycle state', () => {
     const { local, agentEnvironment } = setup();
 
     local.setStatus('connecting');
@@ -404,7 +404,7 @@ describe('AgentEnvironmentBindingService', () => {
     const changes: void[] = [];
     agentEnvironment.onDidChange(() => changes.push(undefined));
 
-    await localRegistration.replace(runtime('local', 'local-two', 'ready', ['process']));
+    await localRegistration.replace(environment('local', 'local-two', 'ready', ['process']));
 
     expect(changes).toHaveLength(1);
     expect(agentEnvironment.inspect().identity.generation).toBe('local-two');
@@ -505,11 +505,11 @@ describe('AgentEnvironmentBindingService', () => {
     next.dispose();
   });
 
-  it('fails turn acquires when the pinned runtime generation changes mid-turn', async () => {
+  it('fails turn acquires when the pinned environment generation changes mid-turn', async () => {
     const { agentEnvironment, localRegistration, publishBus } = setup();
     publishBus('turn.started', { agentId: 'main' });
 
-    await localRegistration.replace(runtime('local', 'local-two', 'ready', ['fs', 'process']));
+    await localRegistration.replace(environment('local', 'local-two', 'ready', ['fs', 'process']));
 
     expect(() => agentEnvironment.acquire()).toThrowError(
       expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.unavailable' }),
@@ -747,7 +747,7 @@ describe('AgentEnvironmentBindingService environment reminder', () => {
     const { binding, registry, reminders, flagState } = setup();
     flagState.remoteEnvironment = true;
     registry.register(
-      runtime('remote-two', 'remote-two-one', 'ready', ['process'], {
+      environment('remote-two', 'remote-two-one', 'ready', ['process'], {
         osKind: 'Linux',
         osArch: 'x86_64',
         osVersion: '5.15-remote-two',
@@ -771,7 +771,7 @@ describe('AgentEnvironmentBindingService environment reminder', () => {
     const { binding, registry, reminders, flagState } = setup();
     flagState.remoteEnvironment = true;
     registry.register(
-      runtime('acp:session-1', 'acp-one', 'ready', ['fs', 'process'], {
+      environment('acp:session-1', 'acp-one', 'ready', ['fs', 'process'], {
         osKind: 'Linux',
         osArch: 'x86_64',
         osVersion: '6.1.0-local',
@@ -790,7 +790,7 @@ describe('AgentEnvironmentBindingService environment reminder', () => {
     const { binding, registry, reminders, flagState } = setup();
     flagState.remoteEnvironment = true;
     registry.register(
-      runtime('remote-two', 'remote-two-one', 'ready', ['process'], {
+      environment('remote-two', 'remote-two-one', 'ready', ['process'], {
         osKind: 'FreeBSD',
         osArch: 'arm64',
         osVersion: '13.2-remote',
@@ -864,7 +864,7 @@ describe('AgentEnvironmentBindingService.connectAndSwitch', () => {
     return { fake: connectable, calls, rerootCalls };
   }
 
-  it('connects a disconnected runtime, validates the cwd with the target fs, and commits', async () => {
+  it('connects a disconnected environment, validates the cwd with the target fs, and commits', async () => {
     const { registry, binding, dispatched } = setup();
     const stats: string[] = [];
     const { calls } = connectableEnvironment(registry, 'connectable', {
@@ -929,9 +929,9 @@ describe('AgentEnvironmentBindingService.connectAndSwitch', () => {
     expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
   });
 
-  it('raises environment.unavailable for a disconnected runtime that cannot connect', async () => {
+  it('raises environment.unavailable for a disconnected environment that cannot connect', async () => {
     const { registry, binding } = setup();
-    registry.register(runtime('offline', 'offline-one', 'disconnected'));
+    registry.register(environment('offline', 'offline-one', 'disconnected'));
 
     await expect(binding.connectAndSwitch('offline', '/work')).rejects.toThrowError(
       expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.unavailable' }),
@@ -966,7 +966,7 @@ describe('AgentEnvironmentBindingService.connectAndSwitch', () => {
     expect(stats).toEqual(['/remote/work']);
   });
 
-  it('re-roots the connected runtime with the validated cwd before committing', async () => {
+  it('re-roots the connected environment with the validated cwd before committing', async () => {
     const { registry, binding } = setup();
     const { calls, rerootCalls } = connectableEnvironment(registry, 'rootable', { reroot: async () => {} });
 
@@ -1021,7 +1021,7 @@ describe('AgentEnvironmentBindingService.connectAndSwitch', () => {
 });
 
 describe('AgentEnvironmentService reconnect', () => {
-  it('delegates to the connect method of the bound runtime', async () => {
+  it('delegates to the connect method of the bound environment', async () => {
     const { registry, binding, agentEnvironment } = setup();
     const calls: string[] = [];
     const fake = new FakeEnvironment(
@@ -1040,7 +1040,7 @@ describe('AgentEnvironmentService reconnect', () => {
     expect(calls).toEqual(['connect']);
   });
 
-  it('raises environment.unavailable when the bound runtime cannot reconnect', async () => {
+  it('raises environment.unavailable when the bound environment cannot reconnect', async () => {
     const { agentEnvironment } = setup();
     await expect(agentEnvironment.reconnect()).rejects.toThrowError(
       expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.unavailable' }),
@@ -1049,7 +1049,7 @@ describe('AgentEnvironmentService reconnect', () => {
 });
 
 describe('AgentEnvironmentService.acquireWhenReady', () => {
-  it('acquires a ready runtime without waiting on a readiness signal', async () => {
+  it('acquires a ready environment without waiting on a readiness signal', async () => {
     const { remote, binding, agentEnvironment } = setup();
     binding.switch('remote');
     remote.whenReady = new Promise<void>(() => {});
@@ -1059,7 +1059,7 @@ describe('AgentEnvironmentService.acquireWhenReady', () => {
     lease.dispose();
   });
 
-  it('waits for the in-flight connect of a connecting runtime and acquires once ready', async () => {
+  it('waits for the in-flight connect of a connecting environment and acquires once ready', async () => {
     const { remote, binding, agentEnvironment } = setup();
     binding.switch('remote');
     remote.setStatus('connecting');
@@ -1095,7 +1095,7 @@ describe('AgentEnvironmentService.acquireWhenReady', () => {
     await expect(agentEnvironment.acquireWhenReady(['process'])).rejects.toBe(failure);
   });
 
-  it('keeps the immediate environment.unavailable error for a plainly disconnected runtime', async () => {
+  it('keeps the immediate environment.unavailable error for a plainly disconnected environment', async () => {
     const { remote, binding, agentEnvironment } = setup();
     binding.switch('remote');
     remote.setStatus('disconnected');
@@ -1108,7 +1108,7 @@ describe('AgentEnvironmentService.acquireWhenReady', () => {
   it('fails when the pinned turn generation changes mid-turn', async () => {
     const { agentEnvironment, localRegistration, publishBus } = setup();
     publishBus('turn.started', { agentId: 'main' });
-    await localRegistration.replace(runtime('local', 'local-two', 'ready', ['fs', 'process']));
+    await localRegistration.replace(environment('local', 'local-two', 'ready', ['fs', 'process']));
 
     await expect(agentEnvironment.acquireWhenReady()).rejects.toThrowError(
       expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.unavailable' }),

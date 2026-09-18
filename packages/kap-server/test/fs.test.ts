@@ -146,7 +146,7 @@ describe('server-v2 /api/v1 fs routes', () => {
       id: 'remote-test-provider',
       imports: { root: [], imports: [], local: [] },
       attach: async (context, host) => {
-        const runtime = Object.assign(
+        const environment = Object.assign(
           new FakeEnvironment(
             { workspaceId: context.id, environmentId: 'remote-test', generation: 'remote-generation' },
             {
@@ -156,7 +156,7 @@ describe('server-v2 /api/v1 fs routes', () => {
           ),
           { fs: new HostFileSystem() },
         );
-        const registration = host.registerEnvironment(runtime);
+        const registration = host.registerEnvironment(environment);
         return { dispose: () => registration.remove() };
       },
     });
@@ -756,11 +756,11 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect(body.code).toBe(ErrorCode.VALIDATION_FAILED);
   });
 
-  it('fs:suggest maps an unknown runtime to ENVIRONMENT_NOT_FOUND', async () => {
+  it('fs:suggest maps an unknown environment to ENVIRONMENT_NOT_FOUND', async () => {
     const body = await postRootSuggest<null>({
       roots: [work],
       query: 'x',
-      environment_id: 'no-such-runtime',
+      environment_id: 'no-such-environment',
     });
     expect(body.code).toBe(ErrorCode.ENVIRONMENT_NOT_FOUND);
   });

@@ -1877,7 +1877,7 @@ describe('BashTool background mode', () => {
   });
 });
 
-describe('BashTool prompt / runtime consistency', () => {
+describe('BashTool prompt / environment consistency', () => {
   it('reports unavailable background using only tools the prompt documents', async () => {
     const { runner } = createTestRunner(processWithOutput());
 

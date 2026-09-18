@@ -1595,11 +1595,11 @@ describe('server-v2 /api/v1 prompts', () => {
           { workspaceId: context.id, environmentId: 'remote-test', generation: 'remote-generation' },
           { capabilities: ['fs'] },
         );
-        const runtime = Object.assign(fake, {
+        const environment = Object.assign(fake, {
           fs: new HostFileSystem(),
           host: { ...fake.host, tempDir: remoteTempDir },
         });
-        const registration = host.registerEnvironment(runtime);
+        const registration = host.registerEnvironment(environment);
         return { dispose: () => registration.remove() };
       },
     });
@@ -1624,7 +1624,7 @@ describe('server-v2 /api/v1 prompts', () => {
     await expect(readdir(localAttachmentsDir)).rejects.toMatchObject({ code: 'ENOENT' });
   }
 
-  it('materializes file_id attachments into the bound runtime tempDir, never the server-local session dir', async () => {
+  it('materializes file_id attachments into the bound environment tempDir, never the server-local session dir', async () => {
     const id = await createSession(home as string);
     const remote = await bindRemoteEnvironment(id);
     try {
@@ -1652,7 +1652,7 @@ describe('server-v2 /api/v1 prompts', () => {
     }
   });
 
-  it('persists an unsupported-format upload into the bound runtime tempDir', async () => {
+  it('persists an unsupported-format upload into the bound environment tempDir', async () => {
     const id = await createSession(home as string);
     const remote = await bindRemoteEnvironment(id);
     try {
@@ -1680,7 +1680,7 @@ describe('server-v2 /api/v1 prompts', () => {
     }
   });
 
-  it('persists compressed image originals into the bound runtime tempDir, never the server-local session dir', async () => {
+  it('persists compressed image originals into the bound environment tempDir, never the server-local session dir', async () => {
     const id = await createSession(home as string);
     const remote = await bindRemoteEnvironment(id);
     try {
@@ -1710,7 +1710,7 @@ describe('server-v2 /api/v1 prompts', () => {
     }
   });
 
-  it('fails loudly instead of writing the server-local disk when the runtime fs write fails', async () => {
+  it('fails loudly instead of writing the server-local disk when the environment fs write fails', async () => {
     const id = await createSession(home as string);
     const remoteRoot = await realpath(await mkdtemp(join(tmpdir(), 'kimi-prompt-broken-remote-')));
     const session = getLiveSessionById(server!.core.accessor, id);
