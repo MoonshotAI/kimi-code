@@ -527,7 +527,10 @@ export class TranscriptService {
     const taskOriginTurnTaskIds = new Set<string>();
     const steeredContents = new Map<string, Map<string, number>>();
     const pendingSteers = new Map<string, Map<string, number>>();
-    const matchedSteers: ({ messageId: string } | { key: string; kind: string })[] = [];
+    const matchedSteers: (
+      | { messageId: string; promptIds: readonly string[] }
+      | { key: string; kind: string }
+    )[] = [];
     const turnPromptIds = new Set<string>();
     const anchorStack: { taskIdsSnapshot: Set<string>; steerCount: number }[] = [];
     let anchorFloor = 0;
@@ -567,7 +570,7 @@ export class TranscriptService {
       if (record.type === 'turn.steer') {
         const messageId = record['messageId'];
         if (typeof messageId === 'string' && messageId.length > 0) {
-          matchedSteers.push({ messageId });
+          matchedSteers.push({ messageId, promptIds: promptIdsFromSteerRecord(record) });
           continue;
         }
         const input = record['input'];
@@ -594,10 +597,10 @@ export class TranscriptService {
         taskOriginTurnTaskIds.add(origin.taskId);
       }
     }
-    const steeredMessageIds = new Set<string>();
+    const steeredByMessageId = new Map<string, readonly string[]>();
     for (const steer of matchedSteers) {
       if ('messageId' in steer) {
-        steeredMessageIds.add(steer.messageId);
+        steeredByMessageId.set(steer.messageId, steer.promptIds);
         continue;
       }
       const byKind = steeredContents.get(steer.key) ?? new Map<string, number>();
@@ -606,8 +609,8 @@ export class TranscriptService {
     }
     const base = groupMessagesIntoSnapshot(
       messages,
-      sawTurnPrompt || steeredContents.size > 0 || steeredMessageIds.size > 0
-        ? { taskOriginTurnTaskIds, steeredContents, steeredMessageIds, turnPromptIds }
+      sawTurnPrompt || steeredContents.size > 0 || steeredByMessageId.size > 0
+        ? { taskOriginTurnTaskIds, steeredContents, steeredByMessageId, turnPromptIds }
         : undefined,
     );
     const folded = foldWireRecordFacts(projectQuestionInteractionRecords(records, sessionId), base, {
@@ -840,4 +843,10 @@ export function healTurnOps(
     }
   }
   return ops;
+}
+
+function promptIdsFromSteerRecord(record: ContextRecord): readonly string[] {
+  const value = record['promptIds'];
+  if (!Array.isArray(value)) return [];
+  return value.filter((id): id is string => typeof id === 'string' && id.length > 0);
 }
