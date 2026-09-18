@@ -21,7 +21,7 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
-import type { Environment, EnvironmentBinding } from '#/environment/environment';
+import type { Environment, EnvironmentBinding, EnvironmentLease } from '#/environment/environment';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { EnvironmentError, environmentStatusAllows } from '#/environment/environmentRegistry';
 import { resolveWorkspaceEnvironmentDeclarations } from '#/environment/environmentDeclarations';
@@ -162,7 +162,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     const spawnBinding = await this.resolveSpawnBinding(callerBinding, opts.environment);
     const lease = plan.fork
       ? undefined
-      : caller.accessor.get(IAgentEnvironmentService).acquire(['process']);
+      : this.acquirePromptEnvironment(caller, callerBinding, spawnBinding);
     try {
       let created: IAgentScopeHandle;
       try {
@@ -207,7 +207,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       }
       const promptText = plan.fork
         ? opts.prompt
-        : await this.applyPromptPrefix(plan.profileName, opts.prompt, lease!.environment, callerBinding.cwd);
+        : await this.applyPromptPrefix(plan.profileName, opts.prompt, lease!.environment, spawnBinding.cwd);
       return {
         agentId: created.id,
         profileName: plan.profileName,
@@ -240,6 +240,21 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       process: environment.process!,
       log: this.log,
     });
+  }
+
+  private acquirePromptEnvironment(
+    caller: IAgentScopeHandle,
+    callerBinding: EnvironmentBinding,
+    spawnBinding: EnvironmentBinding,
+  ): EnvironmentLease {
+    if (spawnBinding.environmentId === callerBinding.environmentId) {
+      return caller.accessor.get(IAgentEnvironmentService).acquire(['process']);
+    }
+    const workspace = this.workspaces.get(this.sessionContext.workspaceId);
+    if (workspace === undefined) {
+      throw new EnvironmentError('environment.not_found', `workspace ${this.sessionContext.workspaceId} is not materialized`);
+    }
+    return workspace.environments.acquire(spawnBinding, ['process']);
   }
 
   private async resolveSpawnBinding(

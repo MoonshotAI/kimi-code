@@ -244,6 +244,7 @@ interface FileHistoryTrackedPayload {
     size?: number;
     oversize?: boolean;
     mtimeMs?: number;
+    environmentId?: string;
   };
 }
 

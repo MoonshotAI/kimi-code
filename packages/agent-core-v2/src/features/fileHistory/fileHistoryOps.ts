@@ -20,6 +20,7 @@ const backupEntrySchema = z.object({
   size: z.number().optional(),
   oversize: z.boolean().optional(),
   mtimeMs: z.number().optional(),
+  environmentId: z.string().optional(),
 });
 
 const fileHistoryTrackedSchema = z.object({
@@ -76,7 +77,7 @@ export function displacedCheckpoints<
       ...checkpoints.filter((c) => checkpointPhaseOf(c) === 'end').map((c) => c.turnId),
       ...(completingTurnId === undefined ? [] : [completingTurnId]),
     ]),
-  ].sort((a, b) => b - a);
+  ].toSorted((a, b) => b - a);
   if (completedIds.length <= FILE_HISTORY_TURN_WINDOW) return [];
   const keep = new Set(completedIds.slice(0, FILE_HISTORY_TURN_WINDOW));
   return checkpoints.filter((c) => !keep.has(c.turnId) && c.turnId <= completedIds[0]!);

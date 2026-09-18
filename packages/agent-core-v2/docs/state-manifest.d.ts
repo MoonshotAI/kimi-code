@@ -1266,6 +1266,7 @@ export interface AgentStateSnapshot {
         readonly size?: number;
         readonly oversize?: boolean;
         readonly mtimeMs?: number;
+        readonly environmentId?: string;
       }>>;
     }[];
     readonly tracked: readonly string[];
