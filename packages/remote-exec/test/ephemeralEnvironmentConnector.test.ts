@@ -145,4 +145,27 @@ describe('RemoteEphemeralEnvironmentConnector', () => {
     ).rejects.toThrow(/code 255/);
     expect(registry.list()).toHaveLength(0);
   });
+
+  it('disposes the connection when the registry rejects the registration', async () => {
+    const registry = new EnvironmentRegistry('workspace');
+    await registry.dispose();
+    const connected = fakeConnected('eph-test');
+    let disposed = false;
+    Object.assign(connected, {
+      dispose: async () => {
+        disposed = true;
+      },
+    });
+    const connector = new RemoteEphemeralEnvironmentConnector(
+      bootstrap(),
+      oauth(),
+      log(),
+      async () => connected as unknown as RemoteEnvironment,
+    );
+
+    await expect(
+      connector.connect(request(registry, { type: 'ssh', host: 'dev-box' })),
+    ).rejects.toThrow(/disposing/);
+    expect(disposed).toBe(true);
+  });
 });

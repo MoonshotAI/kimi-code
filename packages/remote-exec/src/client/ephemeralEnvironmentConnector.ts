@@ -57,7 +57,12 @@ export class RemoteEphemeralEnvironmentConnector implements IEphemeralEnvironmen
         onDiagnostic,
       },
     );
-    request.registry.register(connected);
+    try {
+      request.registry.register(connected);
+    } catch (error) {
+      await connected.dispose();
+      throw error;
+    }
     return { environment: connected, initialCwd: connected.host.cwd };
   }
 }

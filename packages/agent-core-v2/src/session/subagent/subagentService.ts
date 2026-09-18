@@ -269,11 +269,11 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       }
       await environment.connect();
     }
+    const connected = workspace.environments.current(environmentId)!;
     const declaredDefaultCwd = await this.declaredDefaultCwd(workspace.root, environmentId);
     if (declaredDefaultCwd !== undefined) {
-      const current = workspace.environments.current(environmentId)!;
-      if (current.fs !== undefined) {
-        const stat = await current.fs.stat(declaredDefaultCwd).catch((error: unknown) => {
+      if (connected.fs !== undefined) {
+        const stat = await connected.fs.stat(declaredDefaultCwd).catch((error: unknown) => {
           throw new EnvironmentError(
             'environment.invalid_cwd',
             `cwd ${declaredDefaultCwd} is not readable on environment ${environmentId}: ${error instanceof Error ? error.message : String(error)}`,
@@ -285,11 +285,11 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       }
       return { workspaceId: callerBinding.workspaceId, environmentId, cwd: declaredDefaultCwd };
     }
-    const host = environment.host as { readonly cwd?: string };
+    const host = connected.host as { readonly cwd?: string };
     return {
       workspaceId: callerBinding.workspaceId,
       environmentId,
-      cwd: host.cwd ?? environment.host.homeDir,
+      cwd: host.cwd ?? connected.host.homeDir,
     };
   }
 

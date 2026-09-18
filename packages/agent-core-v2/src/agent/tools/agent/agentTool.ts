@@ -61,7 +61,11 @@ import { type AgentMeta, ISessionMetadata } from '#/session/sessionMetadata/sess
 import { emitAgentRunSpawned, mirrorAgentRun, SubagentStarted } from '#/session/subagent/mirrorAgentRun';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
-import { FORK_EXPERIMENTAL_UNAVAILABLE, forkIncompatibility } from '#/session/subagent/spawn';
+import {
+  ENVIRONMENT_EXPERIMENTAL_UNAVAILABLE,
+  FORK_EXPERIMENTAL_UNAVAILABLE,
+  forkIncompatibility,
+} from '#/session/subagent/spawn';
 import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
 import {
   buildSubagentModelDescriptions,
@@ -255,6 +259,16 @@ export class SubagentTool implements ISubagentTool {
       }
     }
 
+    const requestedEnvironment = args.environment?.trim();
+    if (
+      requestedEnvironment !== undefined &&
+      requestedEnvironment.length > 0 &&
+      (resumeAgentId === undefined || resumeAgentId.length === 0) &&
+      !this.flags.enabled(AGENT_ENVIRONMENT_TOOLS_FLAG_ID)
+    ) {
+      return { output: ENVIRONMENT_EXPERIMENTAL_UNAVAILABLE, isError: true };
+    }
+
     const profileNameForDisplay =
       resumeAgentId !== undefined && resumeAgentId.length > 0
         ? (await this.resumeProfileName(resumeAgentId)) ?? RESUMED_LABEL
@@ -446,6 +460,16 @@ export class SubagentTool implements ISubagentTool {
         if (forkError !== undefined) {
           return { output: forkError, isError: true };
         }
+      }
+
+      const requestedEnvironment = args.environment?.trim();
+      if (
+        requestedEnvironment !== undefined &&
+        requestedEnvironment.length > 0 &&
+        !isResume &&
+        !this.flags.enabled(AGENT_ENVIRONMENT_TOOLS_FLAG_ID)
+      ) {
+        return { output: ENVIRONMENT_EXPERIMENTAL_UNAVAILABLE, isError: true };
       }
 
       const allowBackground = this.canRunInBackground();

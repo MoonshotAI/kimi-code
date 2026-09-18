@@ -743,22 +743,20 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   it('connects a disconnected requested environment before binding', async () => {
     const registry = new EnvironmentRegistry('w1');
     const connectCalls: string[] = [];
-    const staging = Object.assign(
-      new FakeEnvironment(
-        { workspaceId: 'w1', environmentId: 'staging', generation: 'staging-pending' },
-        { status: 'disconnected', capabilities: ['fs', 'process'] },
-      ),
-      {
-        connect: async () => {
-          connectCalls.push('connect');
-          staging.setStatus('ready');
-        },
-        fs: {
-          stat: async () => ({ isDirectory: true }),
-        },
-        process: {},
-      },
+    const staging = new FakeEnvironment(
+      { workspaceId: 'w1', environmentId: 'staging', generation: 'staging-pending' },
+      { status: 'disconnected', capabilities: ['fs', 'process'] },
     );
+    Object.assign(staging, {
+      connect: async () => {
+        connectCalls.push('connect');
+        staging.setStatus('ready');
+      },
+      fs: {
+        stat: async () => ({ isDirectory: true }),
+      },
+      process: {},
+    });
     registry.register(staging);
     ix.stub(IWorkspaceInstanceManager, {
       _serviceBrand: undefined,
@@ -776,6 +774,43 @@ describe('SessionSubagentService planSpawn and spawn', () => {
 
     expect(connectCalls).toEqual(['connect']);
     expect(createAgent).toHaveBeenCalledWith(expect.objectContaining({ environmentId: 'staging' }));
+  });
+
+  it('binds the host of the replaced view after connect swaps the registry generation', async () => {
+    const registry = new EnvironmentRegistry('w1');
+    const pending = new FakeEnvironment(
+      { workspaceId: 'w1', environmentId: 'staging', generation: 'staging-pending' },
+      { status: 'disconnected', capabilities: ['fs', 'process'], host: { homeDir: '/' } },
+    );
+    Object.assign(pending, { fs: {}, process: {} });
+    const registration = registry.register(pending);
+    const connected = new FakeEnvironment(
+      { workspaceId: 'w1', environmentId: 'staging', generation: 'staging-connected' },
+      { status: 'ready', capabilities: ['fs', 'process'], host: { homeDir: '/home/remote' } },
+    );
+    Object.assign(connected, { fs: {}, process: {} });
+    Object.assign(pending, {
+      connect: async () => {
+        await registration.replace(connected);
+      },
+    });
+    ix.stub(IWorkspaceInstanceManager, {
+      _serviceBrand: undefined,
+      get: (workspaceId: string) => (workspaceId === 'w1' ? { environments: registry, root: '/repo' } : undefined),
+    } as unknown as IWorkspaceInstanceManager);
+    const svc = service();
+
+    await svc.spawn({
+      callerAgentId: CALLER_ID,
+      plan: { profileName: 'coder', model: 'provider/fast', modelSource: 'secondary_pool', thinking: 'low', fork: false },
+      labels: { parentAgentId: 'main' },
+      prompt: 'Review the file',
+      environment: 'staging',
+    });
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: 'staging', environmentCwd: '/home/remote' }),
+    );
   });
 
   it('inherits the caller permission mode and user tools', async () => {
