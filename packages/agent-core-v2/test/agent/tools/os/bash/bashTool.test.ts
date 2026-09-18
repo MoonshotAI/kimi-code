@@ -10,7 +10,7 @@ import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { Environment } from '#/environment/environment';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { makeSessionContext, type ISessionContext } from '#/session/sessionContext/sessionContext';
-import type { ToolExecution } from '#/tool/toolContract';
+import type { ToolExecution, ExecutableToolOutput } from '#/tool/toolContract';
 import { BashTool } from '#/agent/tools/os/bash/bashTool';
 import type { BashInput } from '#/agent/tools/os/bash/bash';
 
@@ -135,11 +135,15 @@ function stubTasks(): IAgentTaskService {
   } as unknown as IAgentTaskService;
 }
 
+function errorText(output: ExecutableToolOutput): string {
+  return typeof output === 'string' ? output : JSON.stringify(output);
+}
+
 async function runCommand(tool: BashTool, args: BashInput): Promise<void> {
   const resolved: ToolExecution = await Promise.resolve(tool.resolveExecution(args));
-  if (resolved.isError === true) throw new Error(resolved.output);
-  const result = await resolved.execute({ signal: new AbortController().signal });
-  if (result.isError === true) throw new Error(result.output);
+  if (resolved.isError === true) throw new Error(errorText(resolved.output));
+  const result = await resolved.execute({ turnId: 0, toolCallId: 'call_1', signal: new AbortController().signal });
+  if (result.isError === true) throw new Error(errorText(result.output));
 }
 
 describe('BashTool spawn cwd', () => {
