@@ -177,6 +177,43 @@ describe('Program', () => {
     await registry.dispose();
   });
 
+  it('recycles a retired view only after its last holder releases while a sibling view keeps working on the shared connection', async () => {
+    const order: string[] = [];
+    const { registry, program, create, controllerInputs } = setup(new Map(), order);
+    registry.register(fakeEnvironment('local', 'one'));
+    const remoteRegistration = registry.register(fakeEnvironment('remote', 'remote-one'));
+    await program.ready;
+
+    const controllerA = program.createSessionController('remote', '/srv/a');
+    const controllerB = program.createSessionController('remote', '/srv/b');
+    expect(create).toHaveBeenCalledTimes(3);
+    expect(create.mock.calls[1]?.[1]).toBe('/srv/a');
+    expect(create.mock.calls[2]?.[1]).toBe('/srv/b');
+
+    const remoteTwo = fakeEnvironment('remote', 'remote-two');
+    await remoteRegistration.replace(remoteTwo);
+    expect(create).toHaveBeenCalledTimes(5);
+    expect(program.sessionControllerGenerationFor('remote', '/srv/a')).toBe('remote-two');
+    expect(program.sessionControllerGenerationFor('remote', '/srv/b')).toBe('remote-two');
+    expect(order).toEqual([]);
+
+    controllerA.dispose();
+    expect(order).toEqual(['behavior:remote-one']);
+    expect(remoteTwo.disposed).toBe(false);
+
+    const revived = program.createSessionController('remote', '/srv/b');
+    expect(controllerInputs).toHaveLength(3);
+    expect(controllerInputs[2]!.instructions).toBe(create.mock.results[4]?.value.instructions);
+    expect(order).toEqual(['behavior:remote-one']);
+    expect(remoteTwo.disposed).toBe(false);
+
+    controllerB.dispose();
+    expect(order).toEqual(['behavior:remote-one', 'behavior:remote-one']);
+    revived.dispose();
+    program.dispose();
+    await registry.dispose();
+  });
+
   it('owns catalog, instructions, MCP, provenance, and current environment in one generation', async () => {
     const { registry, program, create } = setup();
     registry.register(fakeEnvironment('local', 'one'));
