@@ -12,6 +12,7 @@ import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/
 import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
+import { EnvironmentError } from '#/environment/environmentRegistry';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
@@ -129,6 +130,7 @@ describe('AgentFileHistoryService', () => {
     readonly mainService?: AgentFileHistoryService;
     readonly mainEnvironmentId?: string;
     readonly stateService?: IAgentStateService;
+    readonly remoteUnavailable?: { current: boolean };
   }
 
   function createService(agentId = 'main', remoteShape = false, options: CreateServiceOptions = {}): AgentFileHistoryService {
@@ -149,15 +151,20 @@ describe('AgentFileHistoryService', () => {
     };
     const resolver = {
       _serviceBrand: undefined,
-      acquire: (binding: { environmentId: string }) => ({
-        environment: {
-          fs: hostFs(remoteShape, options.remoteFiles ?? options.localFiles ?? files),
-          path: posix,
-          workspace: { mapRoots: (roots: unknown) => roots },
-        },
-        track: (resource: unknown) => resource,
-        dispose: () => {},
-      }),
+      acquire: (binding: { environmentId: string }) => {
+        if (options.remoteUnavailable?.current === true) {
+          throw new EnvironmentError('environment.unavailable', `environment ${binding.environmentId} is disconnected`);
+        }
+        return {
+          environment: {
+            fs: hostFs(remoteShape, options.remoteFiles ?? options.localFiles ?? files),
+            path: posix,
+            workspace: { mapRoots: (roots: unknown) => roots },
+          },
+          track: (resource: unknown) => resource,
+          dispose: () => {},
+        };
+      },
     };
     const mainHandle = options.mainService === undefined
       ? undefined
@@ -495,6 +502,49 @@ describe('AgentFileHistoryService', () => {
     const endEntry = mainService.history().checkpoints
       .find((c) => c.turnId === 1 && c.phase === 'end')?.entries['/remote/src/x.ts'];
     expect(endEntry?.environmentId).toBe('remote-b');
+  });
+
+  it('completes the end checkpoint for local paths when the subagent environment is gone before turn end', async () => {
+    const localFiles = new Map<string, Uint8Array>();
+    const remoteFiles = new Map<string, Uint8Array>();
+    const remoteUnavailable = { current: false };
+    const mainService = createService('main', false, { localFiles, remoteFiles, remoteUnavailable });
+    const subagentEvents = stubToolExecutorEvents();
+    createService('sub-1', false, {
+      environmentId: 'remote-b',
+      workDir: '/remote',
+      executorEvents: subagentEvents,
+      mainService,
+      stateService: new AgentStateService(),
+    });
+    remoteFiles.set('/remote/src/x.ts', encoder.encode('before\n'));
+    localFiles.set('/ws/a.txt', encoder.encode('local-one\n'));
+
+    startTurn(1);
+    await fireEdit(mainService, '/ws/a.txt', 1);
+    const toolCall: ToolCall = { type: 'function', id: 'call-1', name: 'Edit', arguments: null };
+    const execution: RunnableToolExecution = {
+      approvalRule: 'Edit',
+      display: { kind: 'file_io', operation: 'edit', path: 'src/x.ts' },
+      execute: async () => ({ output: '' }),
+    };
+    await subagentEvents.fireWillExecute(
+      { turnId: 1, toolCall, execution, args: {} },
+      new AbortController().signal,
+    );
+    await mainService.settled();
+
+    remoteUnavailable.current = true;
+    localFiles.set('/ws/a.txt', encoder.encode('local-two\n'));
+    endTurn(1);
+    await mainService.settled();
+
+    expect(await mainService.changes(1)).toEqual([
+      { path: 'a.txt', status: 'modified', additions: 1, deletions: 1 },
+    ]);
+    const end = mainService.history().checkpoints.find((c) => c.turnId === 1 && c.phase === 'end');
+    expect(end?.entries['/remote/src/x.ts']).toBeUndefined();
+    expect(await mainService.turnRecorded(1)).toBe(true);
   });
 
   it('drops turns outside the retention window and re-baselines returning files', async () => {

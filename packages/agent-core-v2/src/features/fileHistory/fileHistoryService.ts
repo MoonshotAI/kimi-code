@@ -21,6 +21,8 @@ import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
+import type { EnvironmentLease } from '#/environment/environment';
+import { EnvironmentError } from '#/environment/environmentRegistry';
 import { IEnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
 import {
@@ -483,9 +485,15 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     Uint8Array | 'missing' | 'unreadable' | { oversizeBytes: number; mtimeMs?: number }
   > {
     const absolute = isAbsolute(pathKey) ? pathKey : resolve(this.workspaceCtx.workDir, pathKey);
-    const lease = environmentId === undefined
-      ? this.environment.acquire(['fs'])
-      : this.resolver.acquire({ workspaceId: this.sessionCtx.workspaceId, environmentId }, ['fs']);
+    let lease: EnvironmentLease;
+    try {
+      lease = environmentId === undefined
+        ? this.environment.acquire(['fs'])
+        : this.resolver.acquire({ workspaceId: this.sessionCtx.workspaceId, environmentId }, ['fs']);
+    } catch (error) {
+      if (error instanceof EnvironmentError) return 'unreadable';
+      throw error;
+    }
     try {
       const fs = lease.environment.fs;
       if (fs === undefined) return 'unreadable';
