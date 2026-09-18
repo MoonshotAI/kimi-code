@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Readable, type Writable } from 'node:stream';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -22,7 +21,8 @@ import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/envi
 import { Error2, ErrorCodes, isError2 } from '#/errors';
 import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
-import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
+import type { IHostProcessService } from '#/os/interface/hostProcess';
+import { stubHostProcess } from '../../os/stubs';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { EnvironmentBinding, EnvironmentLease } from '#/environment/environment';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -282,25 +282,6 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     });
   }
 
-  function processWith(stdout: string, exitCode: number, stderr = ''): IHostProcess {
-    const stdoutStream = Readable.from([Buffer.from(stdout)]);
-    const stderrStream = Readable.from([Buffer.from(stderr)]);
-    return {
-      _serviceBrand: undefined,
-      stdin: { end: vi.fn(), write: vi.fn() } as unknown as Writable,
-      stdout: stdoutStream,
-      stderr: stderrStream,
-      pid: 1,
-      exitCode,
-      wait: vi.fn().mockResolvedValue(exitCode),
-      kill: vi.fn(async () => {}),
-      dispose: vi.fn(async () => {
-        stdoutStream.destroy();
-        stderrStream.destroy();
-      }),
-    };
-  }
-
   function gitProcessForRepo(repoCwd: string): { process: IHostProcessService; gitCwds: string[] } {
     const gitCwds: string[] = [];
     const script: Record<string, { stdout?: string; exitCode?: number; stderr?: string }> = {
@@ -314,11 +295,11 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       const cwd = args[1]!;
       gitCwds.push(cwd);
       if (cwd !== repoCwd) {
-        return processWith('', 128, 'fatal: not a git repository (or any of the parent directories): .git');
+        return stubHostProcess('', 128, 'fatal: not a git repository (or any of the parent directories): .git');
       }
       const out = script[args.slice(2).join(' ')];
-      if (out === undefined) return processWith('', 1);
-      return processWith(out.stdout ?? '', out.exitCode ?? 0, out.stderr ?? '');
+      if (out === undefined) return stubHostProcess('', 1);
+      return stubHostProcess(out.stdout ?? '', out.exitCode ?? 0, out.stderr ?? '');
     });
     return { process: { _serviceBrand: undefined, spawn } as IHostProcessService, gitCwds };
   }

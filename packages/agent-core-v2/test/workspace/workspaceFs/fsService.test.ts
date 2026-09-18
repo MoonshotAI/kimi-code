@@ -387,12 +387,7 @@ function makeSession(
   ]);
   const environment = new FakeEnvironment({ workspaceId: 'w', environmentId: 'local', generation: 'test' }, { capabilities: ['process'], pathClass });
   Object.defineProperty(environment, 'process', { value: runner ?? fakeRunner(handler) });
-  host.app.instantiation.provide(IEnvironmentResolver, {
-    _serviceBrand: undefined,
-    inspect: () => environment,
-    acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
-    acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
-  });
+  host.app.instantiation.provide(IEnvironmentResolver, resolverFor(environment));
   const workspace = host.child('program', 'w1', [
     stubPair(IWorkspaceContext, stubWorkspaceContext()),
     stubPair(IWorkspaceDirs, stubWorkspaceDirs(additionalDirs)),
@@ -406,6 +401,15 @@ function makeSession(
 
 const emptyHandler: RunHandler = () => ({ stdout: '', exitCode: 0 });
 
+function resolverFor(environment: FakeEnvironment): IEnvironmentResolver {
+  return {
+    _serviceBrand: undefined,
+    inspect: () => environment,
+    acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
+    acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
+  };
+}
+
 function makeRemoteSession(
   files: Record<string, string | Buffer>,
   handler: RunHandler,
@@ -418,12 +422,7 @@ function makeRemoteSession(
     { capabilities: ['process'], host: { homeDir } },
   );
   Object.defineProperty(environment, 'process', { value: fakeRunner(handler) });
-  const resolver: IEnvironmentResolver = {
-    _serviceBrand: undefined,
-    inspect: () => environment,
-    acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
-    acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
-  };
+  const resolver = resolverFor(environment);
   return new WorkspaceFsService(
     stubWorkspaceContext(),
     stubWorkspaceDirs(),

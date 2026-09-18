@@ -357,20 +357,22 @@ describe('ExternalHooksRunnerService', () => {
     return { log, warnings };
   }
 
-  it('logs and reports a hook that exits with a non-zero, non-block code while failing open', async () => {
+  function failingRunner(hooks: Parameters<typeof makeHookRunner>[0]) {
     const { log, warnings } = captureWarnings();
     const failures: HookExecutionError[] = [];
-    const runner = makeHookRunner(
-      [
-        {
-          event: 'PostToolUse',
-          command: nodeCommand('process.stderr.write("boom"); process.exit(1);'),
-          timeout: 5,
-        },
-      ],
-      { log },
-    );
+    const runner = makeHookRunner(hooks, { log });
     runner.onDidHookError((failure) => failures.push(failure));
+    return { runner, warnings, failures };
+  }
+
+  it('logs and reports a hook that exits with a non-zero, non-block code while failing open', async () => {
+    const { runner, warnings, failures } = failingRunner([
+      {
+        event: 'PostToolUse',
+        command: nodeCommand('process.stderr.write("boom"); process.exit(1);'),
+        timeout: 5,
+      },
+    ]);
 
     const results = await runner.trigger('PostToolUse', {
       inputData: { toolName: 'Write' },
@@ -392,13 +394,9 @@ describe('ExternalHooksRunnerService', () => {
   });
 
   it('logs and reports a hook that times out', async () => {
-    const { log, warnings } = captureWarnings();
-    const failures: HookExecutionError[] = [];
-    const runner = makeHookRunner(
-      [{ event: 'Stop', command: nodeCommand('setTimeout(() => {}, 10000);'), timeout: 1 }],
-      { log },
-    );
-    runner.onDidHookError((failure) => failures.push(failure));
+    const { runner, warnings, failures } = failingRunner([
+      { event: 'Stop', command: nodeCommand('setTimeout(() => {}, 10000);'), timeout: 1 },
+    ]);
 
     const results = await runner.trigger('Stop', { inputData: {} });
 
@@ -411,13 +409,9 @@ describe('ExternalHooksRunnerService', () => {
   });
 
   it('logs and reports a hook that fails to spawn', async () => {
-    const { log, warnings } = captureWarnings();
-    const failures: HookExecutionError[] = [];
-    const runner = makeHookRunner(
-      [{ event: 'Stop', command: 'echo hi', cwd: '/nonexistent-hook-cwd-xyz', timeout: 5 }],
-      { log },
-    );
-    runner.onDidHookError((failure) => failures.push(failure));
+    const { runner, warnings, failures } = failingRunner([
+      { event: 'Stop', command: 'echo hi', cwd: '/nonexistent-hook-cwd-xyz', timeout: 5 },
+    ]);
 
     const results = await runner.trigger('Stop', { inputData: {} });
 
@@ -429,20 +423,14 @@ describe('ExternalHooksRunnerService', () => {
   });
 
   it('does not report a deliberate block (exit code 2) as a failure', async () => {
-    const { log, warnings } = captureWarnings();
-    const failures: HookExecutionError[] = [];
-    const runner = makeHookRunner(
-      [
-        {
-          event: 'PreToolUse',
-          matcher: 'Read',
-          command: nodeCommand('process.stderr.write("blocked"); process.exit(2);'),
-          timeout: 5,
-        },
-      ],
-      { log },
-    );
-    runner.onDidHookError((failure) => failures.push(failure));
+    const { runner, warnings, failures } = failingRunner([
+      {
+        event: 'PreToolUse',
+        matcher: 'Read',
+        command: nodeCommand('process.stderr.write("blocked"); process.exit(2);'),
+        timeout: 5,
+      },
+    ]);
 
     await expect(
       runner.triggerBlock('PreToolUse', { matcherValue: 'Read', inputData: {} }),
@@ -452,19 +440,13 @@ describe('ExternalHooksRunnerService', () => {
   });
 
   it('does not report a successful hook that writes to stderr', async () => {
-    const { log, warnings } = captureWarnings();
-    const failures: HookExecutionError[] = [];
-    const runner = makeHookRunner(
-      [
-        {
-          event: 'Stop',
-          command: nodeCommand('process.stderr.write("just a warning"); process.exit(0);'),
-          timeout: 5,
-        },
-      ],
-      { log },
-    );
-    runner.onDidHookError((failure) => failures.push(failure));
+    const { runner, warnings, failures } = failingRunner([
+      {
+        event: 'Stop',
+        command: nodeCommand('process.stderr.write("just a warning"); process.exit(0);'),
+        timeout: 5,
+      },
+    ]);
 
     const results = await runner.trigger('Stop', { inputData: {} });
     expect(results).toHaveLength(1);
@@ -473,8 +455,6 @@ describe('ExternalHooksRunnerService', () => {
   });
 
   it('logs and reports a trigger-level failure while still returning an empty result list', async () => {
-    const { log, warnings } = captureWarnings();
-    const failures: HookExecutionError[] = [];
     const inputData = {};
     Object.defineProperty(inputData, 'broken', {
       enumerable: true,
@@ -482,11 +462,9 @@ describe('ExternalHooksRunnerService', () => {
         throw new Error('broken input');
       },
     });
-    const runner = makeHookRunner(
-      [{ event: 'PreToolUse', matcher: 'Bash', command: nodeCommand('process.exit(0);') }],
-      { log },
-    );
-    runner.onDidHookError((failure) => failures.push(failure));
+    const { runner, warnings, failures } = failingRunner([
+      { event: 'PreToolUse', matcher: 'Bash', command: nodeCommand('process.exit(0);') },
+    ]);
 
     await expect(
       runner.trigger('PreToolUse', { matcherValue: 'Bash', inputData, sessionId: 'ses_2' }),

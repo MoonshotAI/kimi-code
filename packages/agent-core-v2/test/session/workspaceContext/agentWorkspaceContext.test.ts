@@ -4,9 +4,9 @@ import { Emitter } from '#/_base/event';
 import type { ISessionEventBus } from '#/app/event/eventBus';
 import { AgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
-import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { EnvironmentBinding } from '#/environment/environment';
 import { EnvironmentRegistry } from '#/environment/environmentRegistry';
+import { fakeEnvironment } from '../../environment/stubs';
 import { AgentWorkspaceContextService } from '#/session/workspaceContext/agentWorkspaceContextService';
 import { makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { SessionStateService } from '#/session/state/sessionStateService';
@@ -25,14 +25,8 @@ interface AgentHarness {
 
 function setup(options: { readonly sessionCwd?: string } = {}) {
   const registry = new EnvironmentRegistry('workspace');
-  registry.register(Object.assign(new FakeEnvironment(
-    { workspaceId: 'workspace', environmentId: 'local', generation: 'local-one' },
-    { capabilities: ['fs', 'process'] },
-  ), { fs: {}, process: {} }));
-  registry.register(Object.assign(new FakeEnvironment(
-    { workspaceId: 'workspace', environmentId: 'remote', generation: 'remote-one' },
-    { capabilities: ['fs', 'process'] },
-  ), { fs: {}, process: {} }));
+  registry.register(fakeEnvironment('local', 'local-one'));
+  registry.register(fakeEnvironment('remote', 'remote-one'));
   const sessionState = new SessionStateService();
   sessionState.contributeState(workspaceContextWorkDirKey);
   sessionState.contributeState(workspaceContextAdditionalDirsKey);

@@ -45,21 +45,9 @@ function createChunkedFakeFs(files: Map<string, FakeFile>, options: { append: bo
     });
   };
   const fs = {
-    mkdir: async () => {},
+    ...createFakeFs(files),
     writeBytes: async (path: string, data: Uint8Array) => {
       put(path, data, 'truncate');
-    },
-    stat: async (path: string) => {
-      const file = files.get(path);
-      if (file === undefined) throw new Error(`ENOENT: ${path}`);
-      return { isFile: true, isDirectory: false, size: file.data.length, mtimeMs: file.mtimeMs };
-    },
-    readdir: async (dir: string) =>
-      [...files.keys()]
-        .filter((key) => key.startsWith(`${dir}/`))
-        .map((key) => ({ name: key.slice(dir.length + 1), isFile: true, isDirectory: false })),
-    remove: async (path: string) => {
-      files.delete(path);
     },
     appendBytes: options.append
       ? async (path: string, data: Uint8Array) => {

@@ -94,104 +94,85 @@ describe('loadProjectEnvironmentsSection', () => {
 });
 
 describe('resolveWorkspaceEnvironmentDeclarations', () => {
-  it('does not load project declarations for an untrusted workspace', async () => {
+  async function resolve(options: {
+    readonly config?: EnvironmentsSection;
+    readonly files?: Readonly<Record<string, string>>;
+    readonly root?: string;
+    readonly trusted?: boolean;
+  }) {
     const docs = fakeDocs();
-    const resolved = await resolveWorkspaceEnvironmentDeclarations({
-      config: fakeConfig(USER_TOML),
-      fs: fakeFs({ [PROJECT_FILE]: PROJECT_TOML }),
+    const root = options.root ?? ROOT;
+    if (options.trusted === true) await writeWorkspaceTrust(docs, root, Date.now());
+    return resolveWorkspaceEnvironmentDeclarations({
+      config: fakeConfig(options.config),
+      fs: fakeFs(options.files ?? {}),
       docs,
-      root: ROOT,
+      root,
     });
+  }
+
+  it('does not load project declarations for an untrusted workspace', async () => {
+    const resolved = await resolve({ config: USER_TOML, files: { [PROJECT_FILE]: PROJECT_TOML } });
     expect(resolved.entries.map((entry) => entry.id).toSorted()).toEqual(['shared', 'user-box']);
     expect(resolved.entries.every((entry) => entry.source === 'user')).toBe(true);
     expect(resolved.default).toEqual({ environmentId: 'user-box', cwd: '/home/me/user' });
   });
 
   it('loads project declarations for a trusted workspace, overriding same-id user entries', async () => {
-    const docs = fakeDocs();
-    await writeWorkspaceTrust(docs, ROOT, Date.now());
-    const resolved = await resolveWorkspaceEnvironmentDeclarations({
-      config: fakeConfig(USER_TOML),
-      fs: fakeFs({ [PROJECT_FILE]: PROJECT_TOML }),
-      docs,
-      root: ROOT,
-    });
+    const resolved = await resolve({ config: USER_TOML, files: { [PROJECT_FILE]: PROJECT_TOML }, trusted: true });
     const shared = resolved.entries.find((entry) => entry.id === 'shared');
     expect(shared).toMatchObject({ source: 'project', entry: { host: 'project-shared' } });
     expect(resolved.entries.map((entry) => entry.id).toSorted()).toEqual(['project-box', 'shared', 'user-box']);
   });
 
   it('prefers the project default over the user default, and falls back to none', async () => {
-    const docs = fakeDocs();
-    await writeWorkspaceTrust(docs, ROOT, Date.now());
-    const resolved = await resolveWorkspaceEnvironmentDeclarations({
-      config: fakeConfig(USER_TOML),
-      fs: fakeFs({ [PROJECT_FILE]: PROJECT_TOML }),
-      docs,
-      root: ROOT,
-    });
+    const resolved = await resolve({ config: USER_TOML, files: { [PROJECT_FILE]: PROJECT_TOML }, trusted: true });
     expect(resolved.default).toEqual({ environmentId: 'project-box', cwd: '/home/me/project' });
 
-    const userOnly = await resolveWorkspaceEnvironmentDeclarations({
-      config: fakeConfig(USER_TOML),
-      fs: fakeFs({}),
-      docs,
-      root: '/elsewhere',
-    });
+    const userOnly = await resolve({ config: USER_TOML, root: '/elsewhere', trusted: true });
     expect(userOnly.default).toEqual({ environmentId: 'user-box', cwd: '/home/me/user' });
 
-    const noDefault = await resolveWorkspaceEnvironmentDeclarations({
-      config: fakeConfig(undefined),
-      fs: fakeFs({}),
-      docs,
-      root: '/elsewhere',
-    });
+    const noDefault = await resolve({ root: '/elsewhere', trusted: true });
     expect(noDefault.default).toBeUndefined();
     expect(noDefault.entries).toEqual([]);
   });
 
   it('takes the default cwd from the merged project entry when the project overrides the user default id', async () => {
-    const docs = fakeDocs();
-    await writeWorkspaceTrust(docs, ROOT, Date.now());
     const user = EnvironmentsSectionSchema.parse({
       default: 'dev',
       dev: { type: 'ssh', host: 'user-dev', defaultCwd: '/home/me/user-dev' },
     });
-    const resolved = await resolveWorkspaceEnvironmentDeclarations({
-      config: fakeConfig(user),
-      fs: fakeFs({
+    const resolved = await resolve({
+      config: user,
+      files: {
         [PROJECT_FILE]: `
 [dev]
 type = "ssh"
 host = "project-dev"
 defaultCwd = "/home/me/project-dev"
 `,
-      }),
-      docs,
-      root: ROOT,
+      },
+      trusted: true,
     });
     expect(resolved.entries.find((entry) => entry.id === 'dev')).toMatchObject({ source: 'project' });
     expect(resolved.default).toEqual({ environmentId: 'dev', cwd: '/home/me/project-dev' });
   });
 
   it('yields no default when the merged winning entry for the default id has no defaultCwd', async () => {
-    const docs = fakeDocs();
-    await writeWorkspaceTrust(docs, ROOT, Date.now());
     const user = EnvironmentsSectionSchema.parse({
       default: 'dev',
       dev: { type: 'ssh', host: 'user-dev', defaultCwd: '/home/me/user-dev' },
     });
-    const resolved = await resolveWorkspaceEnvironmentDeclarations({
-      config: fakeConfig(user),
-      fs: fakeFs({
+    const resolved = await resolve({
+      config: user,
+      files: {
         [PROJECT_FILE]: `
 [dev]
 type = "ssh"
 host = "project-dev"
 `,
-      }),
-      docs,
-      root: ROOT,
+      },
+      trusted: true,
     });
     expect(resolved.entries.find((entry) => entry.id === 'dev')).toMatchObject({ source: 'project' });
     expect(resolved.default).toBeUndefined();

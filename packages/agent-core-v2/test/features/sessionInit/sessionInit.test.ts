@@ -12,6 +12,8 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import type { Environment } from '#/environment/environment';
+import { stubAgentEnvironment } from '../../environment/stubs';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ErrorCodes, Error2 } from '#/errors';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
@@ -50,15 +52,7 @@ function stubHostFs(entries: Record<string, string>): IHostFileSystem {
 }
 
 function stubEnvironmentService(workDir: string, fs: IHostFileSystem, homeDir: string): IAgentEnvironmentService {
-  return {
-    _serviceBrand: undefined,
-    workspaceRoots: () => ({ workDir, additionalDirs: [] }),
-    acquire: () => ({
-      environment: { fs, host: { homeDir } },
-      track: (resource: unknown) => resource,
-      dispose: () => {},
-    }),
-  } as unknown as IAgentEnvironmentService;
+  return stubAgentEnvironment({ fs, host: { homeDir } } as unknown as Environment, { workDir });
 }
 
 describe('SessionInitService', () => {

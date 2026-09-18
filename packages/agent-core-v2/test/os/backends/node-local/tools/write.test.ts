@@ -3,9 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { PathSecurityError } from '#/tool/path-access';
 import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
+import { stubAgentEnvironment } from '../../../../environment/stubs';
 import { type WriteInput, WriteInputSchema } from '#/agent/tools/os/write/write';
 import { WriteTool } from '#/agent/tools/os/write/writeTool';
-import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
@@ -69,16 +69,7 @@ function makeTool(options: WriteFsOptions = {}, workspace = PERMISSIVE_WORKSPACE
     ),
     { fs: fakes.fs, host: createTestEnv() },
   );
-  const environment: IAgentEnvironmentService = {
-    _serviceBrand: undefined,
-    onDidChange: () => ({ dispose: () => {} }),
-    isAvailable: () => true,
-    inspect: () => backend,
-    acquire: () => ({ environment: backend, track: (resource) => resource, dispose: () => {} }),
-    acquireWhenReady: async () => ({ environment: backend, track: (resource) => resource, dispose: () => {} }),
-    reconnect: async () => {},
-    workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
-  };
+  const environment = stubAgentEnvironment(backend);
   const tool = new WriteTool(environment, workspace);
   return { tool, ...fakes };
 }
@@ -185,16 +176,7 @@ describe('WriteTool', () => {
       ),
       { fs: fakes.fs, host: environment },
     );
-    const environmentService: IAgentEnvironmentService = {
-      _serviceBrand: undefined,
-      onDidChange: () => ({ dispose: () => {} }),
-      isAvailable: () => true,
-      inspect: () => backend,
-      acquire: () => ({ environment: backend, track: (resource) => resource, dispose: () => {} }),
-      acquireWhenReady: async () => ({ environment: backend, track: (resource) => resource, dispose: () => {} }),
-      reconnect: async () => {},
-      workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
-    };
+    const environmentService = stubAgentEnvironment(backend);
     const tool = new WriteTool(environmentService, PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, { path: '~/notes/today.txt', content: 'hello' });

@@ -16,6 +16,7 @@ import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { Environment } from '#/environment/environment';
+import { stubAgentEnvironment } from '../../../environment/stubs';
 import type { ITelemetryService, TelemetryProperties } from '#/app/telemetry/telemetry';
 import {
   ReadMediaFileInputSchema,
@@ -188,24 +189,9 @@ function environmentFor(fs: IHostFileSystem, env: IHostEnvironment = createTestE
     onDidChangeStatus: () => ({ dispose: () => {} }),
     dispose: () => {},
   } as unknown as Environment;
-  return {
-    _serviceBrand: undefined,
-    onDidChange: () => ({ dispose: () => {} }),
+  return stubAgentEnvironment(environment, {
     isAvailable: (required = []) => required.every((capability) => environment.capabilities.has(capability)),
-    inspect: () => environment,
-    acquire: () => ({
-      environment,
-      track: (resource) => resource,
-      dispose: () => {},
-    }),
-    acquireWhenReady: async () => ({
-      environment,
-      track: (resource) => resource,
-      dispose: () => {},
-    }),
-    reconnect: async () => {},
-    workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
-  };
+  });
 }
 
 function makeTool(

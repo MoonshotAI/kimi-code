@@ -12,6 +12,7 @@ import {
   type AgentTaskInfo,
 } from '#/agent/task/task';
 import type { AgentTaskSpillTarget } from '#/agent/task/persist';
+import { recordingAppendFs } from './stubs';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -74,6 +75,10 @@ describe('AgentTaskPersistence', () => {
 
   function sessionRoot(): { readonly dir: string; readonly scope: string } {
     return { dir: join(sessionDir, SESSION_SCOPE), scope: SESSION_SCOPE };
+  }
+
+  function spillPersistence(target: () => AgentTaskSpillTarget | undefined): AgentTaskPersistence {
+    return new AgentTaskPersistence(join(sessionDir, AGENT_SCOPE), AGENT_SCOPE, docs, bytes, undefined, target);
   }
 
   it('round-trips a task via write/read', async () => {
@@ -283,20 +288,7 @@ describe('AgentTaskPersistence', () => {
   describe('environment spill mirror', () => {
     it('mirrors appended output into the spill target and reports the spill path', async () => {
       const writes: { path: string; data: string }[] = [];
-      const spillFs = {
-        mkdir: async () => {},
-        appendText: async (path: string, data: string) => {
-          writes.push({ path, data });
-        },
-      };
-      const spill = new AgentTaskPersistence(
-        join(sessionDir, AGENT_SCOPE),
-        AGENT_SCOPE,
-        docs,
-        bytes,
-        undefined,
-        () => ({ fs: spillFs as never, dir: '/remote/tmp/kimi-code/task-output' }),
-      );
+      const spill = spillPersistence(() => ({ fs: recordingAppendFs(writes), dir: '/remote/tmp/kimi-code/task-output' }));
 
       await spill.appendTaskOutput('bash-mirror01', 'chunk-one');
       await spill.appendTaskOutput('bash-mirror01', 'chunk-two');
@@ -311,22 +303,15 @@ describe('AgentTaskPersistence', () => {
     });
 
     it('tolerates spill failures and keeps the server-local output readable', async () => {
-      const spill = new AgentTaskPersistence(
-        join(sessionDir, AGENT_SCOPE),
-        AGENT_SCOPE,
-        docs,
-        bytes,
-        undefined,
-        () => ({
-          fs: {
-            mkdir: async () => {},
-            appendText: async () => {
-              throw new Error('connection lost');
-            },
-          } as never,
-          dir: '/remote/tmp/kimi-code/task-output',
-        }),
-      );
+      const spill = spillPersistence(() => ({
+        fs: {
+          mkdir: async () => {},
+          appendText: async () => {
+            throw new Error('connection lost');
+          },
+        } as never,
+        dir: '/remote/tmp/kimi-code/task-output',
+      }));
 
       await spill.appendTaskOutput('bash-mirror02', 'still-recorded');
       const snapshot = await spill.readTaskOutputSnapshot('bash-mirror02', 100);
@@ -344,28 +329,14 @@ describe('AgentTaskPersistence', () => {
     it('pins the spill target at first spill and keeps it across environment switches', async () => {
       const writesA: { path: string; data: string }[] = [];
       const writesB: { path: string; data: string }[] = [];
-      const fsFor = (writes: { path: string; data: string }[]) =>
-        ({
-          mkdir: async () => {},
-          appendText: async (path: string, data: string) => {
-            writes.push({ path, data });
-          },
-        }) as never;
       const dirA = '/remote-a/tmp/kimi-code/task-output';
       const dirB = '/remote-b/tmp/kimi-code/task-output';
-      let current: AgentTaskSpillTarget = { fs: fsFor(writesA), dir: dirA };
-      const spill = new AgentTaskPersistence(
-        join(sessionDir, AGENT_SCOPE),
-        AGENT_SCOPE,
-        docs,
-        bytes,
-        undefined,
-        () => current,
-      );
+      let current: AgentTaskSpillTarget = { fs: recordingAppendFs(writesA), dir: dirA };
+      const spill = spillPersistence(() => current);
 
       await spill.writeTask(sample({ taskId: 'bash-pinned01' }));
       const firstDir = await spill.appendTaskOutput('bash-pinned01', 'chunk-one');
-      current = { fs: fsFor(writesB), dir: dirB };
+      current = { fs: recordingAppendFs(writesB), dir: dirB };
       const secondDir = await spill.appendTaskOutput('bash-pinned01', 'chunk-two');
 
       expect(firstDir).toBe(dirA);
@@ -389,17 +360,10 @@ describe('AgentTaskPersistence', () => {
 
       expect(await before.readTask('bash-pinned02')).toEqual(task);
 
-      const restarted = new AgentTaskPersistence(
-        join(sessionDir, AGENT_SCOPE),
-        AGENT_SCOPE,
-        docs,
-        bytes,
-        undefined,
-        () => ({
-          fs: { mkdir: async () => {}, appendText: async () => {} } as never,
-          dir: '/remote-b/tmp/kimi-code/task-output',
-        }),
-      );
+      const restarted = spillPersistence(() => ({
+        fs: { mkdir: async () => {}, appendText: async () => {} } as never,
+        dir: '/remote-b/tmp/kimi-code/task-output',
+      }));
 
       const snapshot = await restarted.readTaskOutputSnapshot('bash-pinned02', 100);
       expect(snapshot?.outputPath).toBe(`${dirA}/bash-pinned02.log`);
@@ -415,27 +379,13 @@ describe('AgentTaskPersistence', () => {
 
       const writesA: { path: string; data: string }[] = [];
       const writesB: { path: string; data: string }[] = [];
-      const fsFor = (writes: { path: string; data: string }[]) =>
-        ({
-          mkdir: async () => {},
-          appendText: async (path: string, data: string) => {
-            writes.push({ path, data });
-          },
-        }) as never;
       const dirA = '/remote-a/tmp/kimi-code/task-output';
       const dirB = '/remote-b/tmp/kimi-code/task-output';
-      let current: AgentTaskSpillTarget = { fs: fsFor(writesA), dir: dirA };
-      const spill = new AgentTaskPersistence(
-        join(sessionDir, AGENT_SCOPE),
-        AGENT_SCOPE,
-        docs,
-        bytes,
-        undefined,
-        () => current,
-      );
+      let current: AgentTaskSpillTarget = { fs: recordingAppendFs(writesA), dir: dirA };
+      const spill = spillPersistence(() => current);
 
       const firstDir = await spill.appendTaskOutput(taskId, 'after-one');
-      current = { fs: fsFor(writesB), dir: dirB };
+      current = { fs: recordingAppendFs(writesB), dir: dirB };
       const secondDir = await spill.appendTaskOutput(taskId, 'after-two');
 
       expect(firstDir).toBe(dirA);
@@ -452,14 +402,7 @@ describe('AgentTaskPersistence', () => {
       const dirA = '/remote-a/tmp/kimi-code/task-output';
       const dirB = '/remote-b/tmp/kimi-code/task-output';
       let current: AgentTaskSpillTarget | undefined = undefined;
-      const spill = new AgentTaskPersistence(
-        join(sessionDir, AGENT_SCOPE),
-        AGENT_SCOPE,
-        docs,
-        bytes,
-        undefined,
-        () => current,
-      );
+      const spill = spillPersistence(() => current);
 
       expect(await spill.appendTaskOutput(taskId, 'buffered')).toBeUndefined();
 

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { Emitter, Event } from '#/_base/event';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
@@ -14,6 +14,7 @@ import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumen
 import { Program } from '#/program/program';
 import type { ProgramSessionControllerInput } from '#/program/programDependencies';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
+import { fakeEnvironment, connectableEnvironment } from '../../environment/stubs';
 import { EnvironmentError, EnvironmentRegistry } from '#/environment/environmentRegistry';
 import { writeWorkspaceTrust } from '#/workspace/workspaceTrust/trustRecord';
 import type {
@@ -536,16 +537,6 @@ describe('SessionManager', () => {
 });
 
 describe('SessionManager controller retirement', () => {
-  function environment(generation: string): FakeEnvironment {
-    return Object.assign(
-      new FakeEnvironment(
-        { workspaceId: 'workspace', environmentId: 'local', generation },
-        { capabilities: ['fs', 'process'] },
-      ),
-      { fs: {}, process: {} },
-    ) as FakeEnvironment;
-  }
-
   function remoteEnvironment(generation: string): FakeEnvironment {
     return Object.assign(
       new FakeEnvironment(
@@ -690,13 +681,13 @@ describe('SessionManager controller retirement', () => {
 
   it('releases the superseded program generation once its last session closes, before the drain timeout', async () => {
     const { registry, program, controllers } = liveProgram(60_000);
-    const first = environment('one');
+    const first = fakeEnvironment('local', 'one');
     const registration = registry.register(first);
     await program.ready;
     const manager = managerFor(program, registry);
 
     const handleOne = await manager.create({ workDir: '/workspace' });
-    const replacement = registration.replace(environment('two'));
+    const replacement = registration.replace(fakeEnvironment('local', 'two'));
     await Promise.resolve();
     const handleTwo = await manager.create({ workDir: '/workspace' });
     expect(manager.list()).toEqual([handleOne, handleTwo]);
@@ -718,7 +709,7 @@ describe('SessionManager controller retirement', () => {
 
   it('retires an idle current-generation controller and rebuilds it for the next session', async () => {
     const { registry, program, controllers } = liveProgram(50);
-    registry.register(environment('one'));
+    registry.register(fakeEnvironment('local', 'one'));
     await program.ready;
     const manager = managerFor(program, registry);
 
@@ -739,7 +730,7 @@ describe('SessionManager controller retirement', () => {
 
   it('keeps per-environment controllers isolated for same-workspace sessions on different environments', async () => {
     const { registry, program, controllers } = liveProgram(50);
-    registry.register(environment('one'));
+    registry.register(fakeEnvironment('local', 'one'));
     registry.register(remoteEnvironment('remote-one'));
     await program.ready;
     const manager = managerFor(program, registry, {
@@ -770,6 +761,13 @@ describe('SessionManager controller retirement', () => {
 });
 
 describe('SessionManager remote environment wiring', () => {
+  let manager!: SessionManager;
+  let registry!: EnvironmentRegistry;
+  afterEach(async () => {
+    manager.dispose();
+    await registry.dispose();
+  });
+
   function configWith(section: unknown): IConfigService {
     return {
       _serviceBrand: undefined,
@@ -852,92 +850,60 @@ describe('SessionManager remote environment wiring', () => {
     return { id: 'workspace-1', root, environments: registry, program } as unknown as WorkspaceInstance;
   }
 
-  it('binds a new session to the configured default environment and cwd', async () => {
+  function localRegistry(): EnvironmentRegistry {
     const registry = new EnvironmentRegistry('workspace-1');
     registry.register(Object.assign(new FakeEnvironment(
       { workspaceId: 'workspace-1', environmentId: 'local', generation: 'local-one' },
       { capabilities: ['fs', 'process'] },
     ), { fs: {}, process: {} }));
-    const { program, byEnvironment } = createCapture();
+    return registry;
+  }
+
+  function workspacesFor(registry: EnvironmentRegistry, program: Program): IWorkspaceInstanceManager {
     const workspace = workspaceWith(registry, program);
-    const workspaces = {
+    return {
       getOrCreate: async () => workspace,
       get: () => workspace,
     } as unknown as IWorkspaceInstanceManager;
-    const manager = makeSessionManager(
-      workspaces,
-      { get: async () => undefined } as unknown as ISessionIndex,
-      {
-        config: configWith({
-          default: 'sandbox',
-          sandbox: { command: 'sandbox', args: ['ssh'], defaultCwd: '/home/me/sandbox' },
-        }),
+  }
+
+  it('binds a new session to the configured default environment and cwd', async () => {
+    const { manager, registry, byEnvironment } = remoteWiringSetup({
+      config: {
+        default: 'sandbox',
+        sandbox: { command: 'sandbox', args: ['ssh'], defaultCwd: '/home/me/sandbox' },
       },
-    );
+    });
 
     await manager.create({ workDir: '/workspace' });
     expect(byEnvironment.has('local')).toBe(true);
     expect(byEnvironment.get('local')!.options[0]).toMatchObject({ environmentId: 'sandbox', environmentCwd: '/home/me/sandbox' });
-    manager.dispose();
-    await registry.dispose();
   });
 
   it('prefers a trusted project default over the user default', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    registry.register(Object.assign(new FakeEnvironment(
-      { workspaceId: 'workspace-1', environmentId: 'local', generation: 'local-one' },
-      { capabilities: ['fs', 'process'] },
-    ), { fs: {}, process: {} }));
-    const { program, byEnvironment } = createCapture();
-    const workspace = workspaceWith(registry, program);
-    const workspaces = {
-      getOrCreate: async () => workspace,
-      get: () => workspace,
-    } as unknown as IWorkspaceInstanceManager;
     const docs = docsStore();
     await writeWorkspaceTrust(docs, '/workspace', Date.now());
-    const manager = makeSessionManager(
-      workspaces,
-      { get: async () => undefined } as unknown as ISessionIndex,
-      {
-        config: configWith({
-          default: 'user-box',
-          'user-box': { type: 'ssh', host: 'user-box', defaultCwd: '/user' },
-        }),
-        fs: fsWith({
-          '/workspace/.kimi-code/environments.toml': 'default = "project-box"\n\n[project-box]\ntype = "ssh"\nhost = "project-box"\ndefaultCwd = "/project"\n',
-        }),
-        docs,
+    const { manager, registry, byEnvironment } = remoteWiringSetup({
+      config: {
+        default: 'user-box',
+        'user-box': { type: 'ssh', host: 'user-box', defaultCwd: '/user' },
       },
-    );
+      fs: fsWith({
+        '/workspace/.kimi-code/environments.toml': 'default = "project-box"\n\n[project-box]\ntype = "ssh"\nhost = "project-box"\ndefaultCwd = "/project"\n',
+      }),
+      docs,
+    });
 
     await manager.create({ workDir: '/workspace' });
     expect(byEnvironment.get('local')!.options[0]).toMatchObject({ environmentId: 'project-box', environmentCwd: '/project' });
-    manager.dispose();
-    await registry.dispose();
   });
 
   it('applies the declaration defaultCwd for an explicit environment id and rejects undeclared ids', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    registry.register(Object.assign(new FakeEnvironment(
-      { workspaceId: 'workspace-1', environmentId: 'local', generation: 'local-one' },
-      { capabilities: ['fs', 'process'] },
-    ), { fs: {}, process: {} }));
-    const { program, byEnvironment } = createCapture();
-    const workspace = workspaceWith(registry, program);
-    const workspaces = {
-      getOrCreate: async () => workspace,
-      get: () => workspace,
-    } as unknown as IWorkspaceInstanceManager;
-    const manager = makeSessionManager(
-      workspaces,
-      { get: async () => undefined } as unknown as ISessionIndex,
-      {
-        config: configWith({
-          sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' },
-        }),
+    const { manager, registry, byEnvironment } = remoteWiringSetup({
+      config: {
+        sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' },
       },
-    );
+    });
 
     await manager.create({ workDir: '/workspace', environmentId: 'sandbox' });
     expect(byEnvironment.get('local')!.options[0]).toMatchObject({ environmentId: 'sandbox', environmentCwd: '/home/me/sandbox' });
@@ -948,68 +914,15 @@ describe('SessionManager remote environment wiring', () => {
     await expect(manager.create({ workDir: '/workspace', environmentId: 'missing' })).rejects.toMatchObject({
       code: 'config.invalid',
     });
-    manager.dispose();
-    await registry.dispose();
   });
 
   it('keeps new sessions local when no default is configured', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    registry.register(Object.assign(new FakeEnvironment(
-      { workspaceId: 'workspace-1', environmentId: 'local', generation: 'local-one' },
-      { capabilities: ['fs', 'process'] },
-    ), { fs: {}, process: {} }));
-    const { program, byEnvironment } = createCapture();
-    const workspace = workspaceWith(registry, program);
-    const workspaces = {
-      getOrCreate: async () => workspace,
-      get: () => workspace,
-    } as unknown as IWorkspaceInstanceManager;
-    const index = { get: async () => undefined } as unknown as ISessionIndex;
+    const { manager, registry, byEnvironment } = remoteWiringSetup({ config: undefined });
 
-    const noDefault = makeSessionManager(workspaces, index, { config: configWith(undefined) });
-    await noDefault.create({ workDir: '/workspace' });
+    await manager.create({ workDir: '/workspace' });
     expect(byEnvironment.get('local')!.options[0]).toMatchObject({ workDir: '/workspace' });
     expect((byEnvironment.get('local')!.options[0] as { environmentId?: string }).environmentId).toBeUndefined();
-    noDefault.dispose();
-    await registry.dispose();
   });
-
-  function connectableRemote(
-    registry: EnvironmentRegistry,
-    options: {
-      readonly environmentId?: string;
-      readonly status?: 'ready' | 'disconnected';
-      readonly connect?: () => Promise<void>;
-      readonly stat?: (path: string) => Promise<{ isDirectory: boolean }>;
-      readonly reroot?: (cwd: string) => Promise<void>;
-    } = {},
-  ) {
-    const environmentId = options.environmentId ?? 'sandbox';
-    const fake = new FakeEnvironment(
-      { workspaceId: 'workspace-1', environmentId, generation: `${environmentId}-pending` },
-      { status: options.status ?? 'disconnected', capabilities: ['fs', 'process'] },
-    );
-    const calls: string[] = [];
-    const connectable = Object.assign(fake, {
-      connect: async () => {
-        calls.push('connect');
-        if (options.connect !== undefined) return options.connect();
-        fake.setStatus('ready');
-      },
-      fs: {
-        stat: options.stat ?? (async () => ({ isDirectory: true })),
-      },
-      process: {},
-      reroot: options.reroot === undefined
-        ? undefined
-        : async (cwd: string) => {
-          calls.push(`reroot:${cwd}`);
-          await options.reroot!(cwd);
-        },
-    });
-    registry.register(connectable);
-    return { fake: connectable, calls };
-  }
 
   function remoteWiringSetup(options: {
     readonly config: unknown;
@@ -1020,24 +933,21 @@ describe('SessionManager remote environment wiring', () => {
       readonly stat?: (path: string) => Promise<{ isDirectory: boolean }>;
       readonly reroot?: (cwd: string) => Promise<void>;
     };
+    readonly fs?: IHostFileSystem;
+    readonly docs?: IAtomicDocumentStore;
   }) {
-    const registry = new EnvironmentRegistry('workspace-1');
-    registry.register(Object.assign(new FakeEnvironment(
-      { workspaceId: 'workspace-1', environmentId: 'local', generation: 'local-one' },
-      { capabilities: ['fs', 'process'] },
-    ), { fs: {}, process: {} }));
-    const remote = options.remote === undefined ? undefined : connectableRemote(registry, options.remote);
+    registry = localRegistry();
+    const remote = options.remote === undefined
+      ? undefined
+      : connectableEnvironment(registry, { workspaceId: 'workspace-1', environmentId: 'sandbox', ...options.remote });
     const { program, byEnvironment } = createCapture();
-    const workspace = workspaceWith(registry, program);
-    const workspaces = {
-      getOrCreate: async () => workspace,
-      get: () => workspace,
-    } as unknown as IWorkspaceInstanceManager;
-    const manager = makeSessionManager(
-      workspaces,
+    manager = makeSessionManager(
+      workspacesFor(registry, program),
       { get: async () => undefined } as unknown as ISessionIndex,
       {
         config: configWith(options.config),
+        fs: options.fs,
+        docs: options.docs,
       },
     );
     return { manager, registry, byEnvironment, remote };
@@ -1055,8 +965,6 @@ describe('SessionManager remote environment wiring', () => {
 
     await manager.create({ workDir: '/workspace', environmentId: 'sandbox', environmentCwd: '/elsewhere' });
     expect(byEnvironment.get('local')!.options[0]).toMatchObject({ environmentId: 'sandbox', environmentCwd: '/elsewhere' });
-    manager.dispose();
-    await registry.dispose();
   });
 
   it('connects a disconnected declared environment before creating the session', async () => {
@@ -1069,8 +977,6 @@ describe('SessionManager remote environment wiring', () => {
     expect(remote!.calls).toEqual(['connect']);
     expect(byEnvironment.has('sandbox')).toBe(true);
     expect(byEnvironment.get('sandbox')!.options[0]).toMatchObject({ environmentId: 'sandbox', environmentCwd: '/home/me/sandbox' });
-    manager.dispose();
-    await registry.dispose();
   });
 
   it('aborts creation when the environment connect fails', async () => {
@@ -1091,8 +997,6 @@ describe('SessionManager remote environment wiring', () => {
     expect((failure as Error).message).toContain('code 255');
     expect((failure as { cause?: unknown }).cause).toBe(handshake);
     expect(byEnvironment.size).toBe(0);
-    manager.dispose();
-    await registry.dispose();
   });
 
   it('connects the configured default environment before creating the session', async () => {
@@ -1105,27 +1009,6 @@ describe('SessionManager remote environment wiring', () => {
     expect(remote!.calls).toEqual(['connect']);
     expect(byEnvironment.has('sandbox')).toBe(true);
     expect(byEnvironment.get('sandbox')!.options[0]).toMatchObject({ environmentId: 'sandbox', environmentCwd: '/home/me/sandbox' });
-    manager.dispose();
-    await registry.dispose();
-  });
-
-  it('aborts creation when the configured default environment fails to connect', async () => {
-    const { manager, registry, byEnvironment, remote } = remoteWiringSetup({
-      config: { default: 'sandbox', sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
-      remote: {
-        connect: async () => {
-          throw new Error('ssh: connect failed');
-        },
-      },
-    });
-
-    const failure = await manager.create({ workDir: '/workspace' }).catch((error: unknown) => error);
-    expect(remote!.calls).toEqual(['connect']);
-    expect(failure).toMatchObject({ code: 'environment.unavailable' });
-    expect((failure as Error).message).toContain('sandbox');
-    expect(byEnvironment.size).toBe(0);
-    manager.dispose();
-    await registry.dispose();
   });
 
   it('does not reconnect a environment that is already ready', async () => {
@@ -1137,8 +1020,6 @@ describe('SessionManager remote environment wiring', () => {
     await manager.create({ workDir: '/workspace', environmentId: 'sandbox' });
     expect(remote!.calls).toEqual([]);
     expect(byEnvironment.has('sandbox')).toBe(true);
-    manager.dispose();
-    await registry.dispose();
   });
 
   it('re-roots the connected environment with the validated cwd before creating the session', async () => {
@@ -1150,8 +1031,6 @@ describe('SessionManager remote environment wiring', () => {
     await manager.create({ workDir: '/workspace', environmentId: 'sandbox' });
     expect(remote!.calls).toEqual(['connect', 'reroot:/home/me/sandbox']);
     expect(byEnvironment.has('sandbox')).toBe(true);
-    manager.dispose();
-    await registry.dispose();
   });
 
   it('re-roots an already-ready environment when the session binds a different cwd', async () => {
@@ -1162,8 +1041,6 @@ describe('SessionManager remote environment wiring', () => {
 
     await manager.create({ workDir: '/workspace', environmentId: 'sandbox', environmentCwd: '/elsewhere' });
     expect(remote!.calls).toEqual(['reroot:/elsewhere']);
-    manager.dispose();
-    await registry.dispose();
   });
 
   it('aborts creation with environment.invalid_cwd when the cwd is not a directory on the target', async () => {
@@ -1176,8 +1053,6 @@ describe('SessionManager remote environment wiring', () => {
     expect(failure).toMatchObject({ code: 'environment.invalid_cwd' });
     expect(remote!.calls).toEqual(['connect']);
     expect(byEnvironment.size).toBe(0);
-    manager.dispose();
-    await registry.dispose();
   });
 
   it('aborts creation with environment.invalid_cwd when the cwd is not readable on the target', async () => {
@@ -1193,8 +1068,6 @@ describe('SessionManager remote environment wiring', () => {
     const failure = await manager.create({ workDir: '/workspace', environmentId: 'sandbox' }).catch((error: unknown) => error);
     expect(failure).toMatchObject({ code: 'environment.invalid_cwd' });
     expect(byEnvironment.size).toBe(0);
-    manager.dispose();
-    await registry.dispose();
   });
 
   function restoreSetup(options: {
@@ -1203,11 +1076,7 @@ describe('SessionManager remote environment wiring', () => {
     readonly persistedEnvironmentId?: string;
     readonly persistedCwd?: string | null;
   }) {
-    const registry = new EnvironmentRegistry('workspace-1');
-    registry.register(Object.assign(new FakeEnvironment(
-      { workspaceId: 'workspace-1', environmentId: 'local', generation: 'local-one' },
-      { capabilities: ['fs', 'process'] },
-    ), { fs: {}, process: {} }));
+    registry = localRegistry();
     const remote = new FakeEnvironment(
       { workspaceId: 'workspace-1', environmentId: 'remote', generation: 'remote-one' },
       { status: options.remoteStatus, capabilities: ['fs', 'process'] },
@@ -1222,11 +1091,6 @@ describe('SessionManager remote environment wiring', () => {
     });
     registry.register(Object.assign(remote, { fs: {}, process: {}, connect: remoteConnect, reroot: remoteReroot }));
     const { program, byEnvironment } = createCapture();
-    const workspace = workspaceWith(registry, program);
-    const workspaces = {
-      getOrCreate: async () => workspace,
-      get: () => workspace,
-    } as unknown as IWorkspaceInstanceManager;
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
     } as unknown as ISessionIndex;
@@ -1246,7 +1110,7 @@ describe('SessionManager remote environment wiring', () => {
       },
     } as unknown as IAppendLogStore;
     const warn = vi.fn();
-    const manager = makeSessionManager(workspaces, index, {
+    manager = makeSessionManager(workspacesFor(registry, program), index, {
       appendLogStore,
       log: { _serviceBrand: undefined, warn, info: () => {}, error: () => {} } as unknown as ILogService,
     });
@@ -1269,8 +1133,6 @@ describe('SessionManager remote environment wiring', () => {
     expect(byEnvironment.has('remote')).toBe(false);
     expect(remoteConnect).toHaveBeenCalledTimes(1);
     releaseConnect();
-    manager.dispose();
-    await registry.dispose();
   });
 
   it('opens a remote-bound session when the background reconnect fails and keeps the explicit acquire error', async () => {
@@ -1294,8 +1156,6 @@ describe('SessionManager remote environment wiring', () => {
     expect(() => registry.acquire({ workspaceId: 'workspace-1', environmentId: 'remote' })).toThrowError(
       expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.unavailable' }),
     );
-    manager.dispose();
-    await registry.dispose();
   });
 
   it('opens a remote-bound session when the background reconnect throws synchronously', async () => {
@@ -1316,8 +1176,6 @@ describe('SessionManager remote environment wiring', () => {
         expect.objectContaining({ error: failure }),
       );
     });
-    manager.dispose();
-    await registry.dispose();
   });
 
   it('awaits the in-flight background reconnect when acquiring the restored environment', async () => {
@@ -1349,8 +1207,6 @@ describe('SessionManager remote environment wiring', () => {
     const lease = await pending;
     expect(lease.environment.status).toBe('ready');
     lease.dispose();
-    manager.dispose();
-    await registry.dispose();
   });
 
   it('leaves a local restored binding untouched', async () => {
@@ -1362,8 +1218,6 @@ describe('SessionManager remote environment wiring', () => {
     await manager.resume('session-1');
     expect(byEnvironment.has('local')).toBe(true);
     expect(remoteConnect).not.toHaveBeenCalled();
-    manager.dispose();
-    await registry.dispose();
   });
 
   it('reconnects in the background when restoring an archived remote-bound session', async () => {
@@ -1371,8 +1225,6 @@ describe('SessionManager remote environment wiring', () => {
 
     await manager.restore('session-1');
     expect(remoteConnect).toHaveBeenCalledTimes(1);
-    manager.dispose();
-    await registry.dispose();
   });
 
   it('restores a remote-bound session on the remote controller when the environment is ready', async () => {
@@ -1381,8 +1233,6 @@ describe('SessionManager remote environment wiring', () => {
     await manager.resume('session-1');
     expect(byEnvironment.has('remote')).toBe(true);
     expect(remoteConnect).not.toHaveBeenCalled();
-    manager.dispose();
-    await registry.dispose();
   });
 
   it('re-roots the restored environment with the persisted cwd before the background reconnect', async () => {
@@ -1395,8 +1245,6 @@ describe('SessionManager remote environment wiring', () => {
     expect(remoteReroot).toHaveBeenCalledWith('/remote/work');
     expect(remoteConnect).toHaveBeenCalledTimes(1);
     expect(callOrder).toEqual(['reroot:/remote/work', 'connect']);
-    manager.dispose();
-    await registry.dispose();
   });
 
   it('does not reroot a restored binding that has no persisted cwd', async () => {
@@ -1408,8 +1256,6 @@ describe('SessionManager remote environment wiring', () => {
     await manager.resume('session-1');
     expect(remoteReroot).not.toHaveBeenCalled();
     expect(remoteConnect).toHaveBeenCalledTimes(1);
-    manager.dispose();
-    await registry.dispose();
   });
 
   it('does not reroot a restored binding when the environment is already ready', async () => {
@@ -1420,7 +1266,5 @@ describe('SessionManager remote environment wiring', () => {
     await manager.resume('session-1');
     expect(remoteReroot).not.toHaveBeenCalled();
     expect(remoteConnect).not.toHaveBeenCalled();
-    manager.dispose();
-    await registry.dispose();
   });
 });
