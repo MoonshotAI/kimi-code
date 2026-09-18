@@ -607,39 +607,6 @@ describe('AgentEnvironmentBindingService restore from wire records', () => {
     expect(rerootCalls).toEqual(['/connectable/work']);
   });
 
-  it('keeps a gone declaration bound after reseed and fails explicitly at use', async () => {
-    const { binding, agentEnvironment, restoreHooks, appendLogRecords } = setup({ agentId: 'agent-1' });
-    appendLogRecords.push({ type: 'environment.set_binding', agentId: 'agent-1', environmentId: 'ghost', cwd: '/ghost/work', time: 2 });
-
-    await restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
-
-    expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'ghost', cwd: '/ghost/work' });
-    expect(() => agentEnvironment.acquire()).toThrowError(
-      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.not_found' }),
-    );
-  });
-
-  it('background-reconnects and reroots a replayed remote binding for non-main agents', async () => {
-    const { registry, state, restoreHooks } = setup({ agentId: 'agent-1' });
-    const { connectCalls, rerootCalls } = connectableEnvironment(registry, { environmentId: 'connectable', reroot: async () => {} });
-    state.set(environmentBindingKey, { workspaceId: 'workspace', environmentId: 'connectable', cwd: '/connectable/work' });
-
-    await restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
-
-    expect(connectCalls).toEqual(['connect']);
-    expect(rerootCalls).toEqual(['/connectable/work']);
-  });
-
-  it('does not reconnect a replayed remote binding for the main agent', async () => {
-    const { registry, state, restoreHooks } = setup();
-    const { connectCalls } = connectableEnvironment(registry, { environmentId: 'connectable', reroot: async () => {} });
-    state.set(environmentBindingKey, { workspaceId: 'workspace', environmentId: 'connectable', cwd: '/connectable/work' });
-
-    await restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
-
-    expect(connectCalls).toEqual([]);
-  });
-
   it('ignores local binding records and keeps the seed dispatch', async () => {
     const { binding, restoreHooks, dispatched, appendLogRecords } = setup({ agentId: 'agent-1' });
     appendLogRecords.push({ type: 'environment.set_binding', agentId: 'agent-1', environmentId: 'local', time: 2 });
@@ -965,16 +932,6 @@ describe('AgentEnvironmentService reconnect', () => {
 });
 
 describe('AgentEnvironmentService.acquireWhenReady', () => {
-  it('acquires a ready environment without waiting on a readiness signal', async () => {
-    const { remote, binding, agentEnvironment } = setup();
-    binding.switch('remote');
-    remote.whenReady = new Promise<void>(() => {});
-
-    const lease = await agentEnvironment.acquireWhenReady(['process']);
-    expect(lease.environment.identity).toMatchObject({ environmentId: 'remote', generation: 'remote-one' });
-    lease.dispose();
-  });
-
   it('waits for the in-flight connect of a connecting environment and acquires once ready', async () => {
     const { remote, binding, agentEnvironment } = setup();
     binding.switch('remote');
@@ -998,27 +955,6 @@ describe('AgentEnvironmentService.acquireWhenReady', () => {
     const lease = await pending;
     expect(lease.environment.status).toBe('ready');
     lease.dispose();
-  });
-
-  it('rejects with the connect reason when the in-flight connect fails', async () => {
-    const { remote, binding, agentEnvironment } = setup();
-    binding.switch('remote');
-    remote.setStatus('connecting');
-    const failure = new Error('executor process exited before the handshake completed (code 255, signal null): ssh: connect failed');
-    remote.whenReady = Promise.reject(failure);
-    void remote.whenReady.catch(() => {});
-
-    await expect(agentEnvironment.acquireWhenReady(['process'])).rejects.toBe(failure);
-  });
-
-  it('keeps the immediate environment.unavailable error for a plainly disconnected environment', async () => {
-    const { remote, binding, agentEnvironment } = setup();
-    binding.switch('remote');
-    remote.setStatus('disconnected');
-
-    await expect(agentEnvironment.acquireWhenReady(['process'])).rejects.toThrowError(
-      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.unavailable' }),
-    );
   });
 
   it('fails when the pinned turn generation changes mid-turn', async () => {

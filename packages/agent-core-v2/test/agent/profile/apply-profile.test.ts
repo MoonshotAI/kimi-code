@@ -9,6 +9,7 @@ import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { Environment, EnvironmentCapability, EnvironmentStatus } from '#/environment/environment';
+import { stubAgentEnvironment } from '../../environment/stubs';
 import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSystemPrompt } from '#/app/plugin/types';
@@ -535,23 +536,8 @@ function mappedEnvironmentService(
     onDidChangeStatus: Event.None as Event<EnvironmentStatus>,
     dispose: () => {},
   };
-  return {
-    _serviceBrand: undefined,
-    onDidChange: Event.None as Event<void>,
+  return stubAgentEnvironment(environment, {
     isAvailable: (required = []) =>
       required.every((capability) => environment.capabilities.has(capability)),
-    inspect: () => environment,
-    acquire: () => ({
-      environment,
-      track: <T,>(resource: T): T => resource,
-      dispose: () => {},
-    }),
-    acquireWhenReady: async () => ({
-      environment,
-      track: <T,>(resource: T): T => resource,
-      dispose: () => {},
-    }),
-    reconnect: async () => {},
-    workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
-  };
+  });
 }

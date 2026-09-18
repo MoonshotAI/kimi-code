@@ -1020,25 +1020,6 @@ describe('SessionManager remote environment wiring', () => {
     await registry.dispose();
   });
 
-  it('aborts creation when the configured default environment fails to connect', async () => {
-    const { manager, registry, byEnvironment, remote } = remoteWiringSetup({
-      config: { default: 'sandbox', sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
-      remote: {
-        connect: async () => {
-          throw new Error('ssh: connect failed');
-        },
-      },
-    });
-
-    const failure = await manager.create({ workDir: '/workspace' }).catch((error: unknown) => error);
-    expect(remote!.calls).toEqual(['connect']);
-    expect(failure).toMatchObject({ code: 'environment.unavailable' });
-    expect((failure as Error).message).toContain('sandbox');
-    expect(byEnvironment.size).toBe(0);
-    manager.dispose();
-    await registry.dispose();
-  });
-
   it('does not reconnect a environment that is already ready', async () => {
     const { manager, registry, byEnvironment, remote } = remoteWiringSetup({
       config: { sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },

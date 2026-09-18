@@ -9,7 +9,12 @@ import type { EnvironmentRegistry } from '#/environment/environmentRegistry';
 
 export function stubAgentEnvironment(
   environment: Environment | (() => Environment),
-  options: { readonly workDir?: string; readonly additionalDirs?: readonly string[] } = {},
+  options: {
+    readonly workDir?: string;
+    readonly additionalDirs?: readonly string[];
+    readonly isAvailable?: (required?: readonly EnvironmentCapability[]) => boolean;
+    readonly onDidChange?: IAgentEnvironmentService['onDidChange'];
+  } = {},
 ): IAgentEnvironmentService {
   const resolve = typeof environment === 'function' ? environment : () => environment;
   const lease = () => ({
@@ -19,8 +24,8 @@ export function stubAgentEnvironment(
   });
   return {
     _serviceBrand: undefined,
-    onDidChange: () => ({ dispose: () => {} }),
-    isAvailable: () => true,
+    onDidChange: options.onDidChange ?? (() => ({ dispose: () => {} })),
+    isAvailable: options.isAvailable ?? (() => true),
     inspect: resolve,
     acquire: lease,
     acquireWhenReady: async () => lease(),

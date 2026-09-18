@@ -15,8 +15,9 @@ import type { ToolCall } from '#human/llm/message';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
-import type { EnvironmentLease } from '#/environment/environment';
+import type { Environment } from '#/environment/environment';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { stubAgentEnvironment } from '../../environment/stubs';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import type { WatchChange } from '#human/utils/watch';
@@ -197,42 +198,29 @@ function createHarness(
       } as unknown as IHostEnvironment;
       reg.defineInstance(IHostFileSystem, hostFs);
       reg.defineInstance(IHostEnvironment, hostEnvironment);
-      reg.defineInstance(IAgentEnvironmentService, {
-        _serviceBrand: undefined,
-        onDidChange: () => ({ dispose: () => {} }),
-        isAvailable: () => true,
-        inspect() { return this.acquire().environment; },
-        acquire: (): EnvironmentLease => ({
-          environment: {
-            identity: { workspaceId: 'workspace-1', environmentId: 'local', generation: 'test' },
-            capabilities: new Set(['fs', 'process', 'terminal']),
-            host: hostEnvironment,
-            path: {
-              separator: options.pathClass === 'win32' ? '\\' : '/',
-              delimiter: options.pathClass === 'win32' ? ';' : ':',
-              isAbsolute: (path: string) => path.startsWith('/') || /^[A-Za-z]:[\\\\]/.test(path),
-              join,
-              relative: (from: string, to: string) => normalize(to).replace(`${normalize(from)}/`, ''),
-              resolve: (...paths: readonly string[]) => normalize(join(...paths)),
-              basename: (path: string) => basename(path),
-              dirname: (path: string) => dirname(path),
-            },
-            workspace: { mapRoots: (roots) => roots },
-            fs: hostFs,
-            status: 'ready',
-            onDidChangeStatus: () => ({ dispose: () => {} }),
-            dispose: () => {},
-          },
-          track: (resource) => resource,
-          dispose: () => {},
-        }),
-        acquireWhenReady() { return Promise.resolve(this.acquire()); },
-        reconnect: async () => {},
-        workspaceRoots: () => ({
-          workDir: options.environmentWorkDir ?? options.cwd ?? workDir,
-          additionalDirs: [],
-        }),
-      } satisfies IAgentEnvironmentService);
+      const environment = {
+        identity: { workspaceId: 'workspace-1', environmentId: 'local', generation: 'test' },
+        capabilities: new Set(['fs', 'process', 'terminal']),
+        host: hostEnvironment,
+        path: {
+          separator: options.pathClass === 'win32' ? '\\' : '/',
+          delimiter: options.pathClass === 'win32' ? ';' : ':',
+          isAbsolute: (path: string) => path.startsWith('/') || /^[A-Za-z]:[\\\\]/.test(path),
+          join,
+          relative: (from: string, to: string) => normalize(to).replace(`${normalize(from)}/`, ''),
+          resolve: (...paths: readonly string[]) => normalize(join(...paths)),
+          basename: (path: string) => basename(path),
+          dirname: (path: string) => dirname(path),
+        },
+        workspace: { mapRoots: (roots: { workDir: string; additionalDirs?: readonly string[] }) => roots },
+        fs: hostFs,
+        status: 'ready',
+        onDidChangeStatus: () => ({ dispose: () => {} }),
+        dispose: () => {},
+      } as unknown as Environment;
+      reg.defineInstance(IAgentEnvironmentService, stubAgentEnvironment(environment, {
+        workDir: options.environmentWorkDir ?? options.cwd ?? workDir,
+      }));
       reg.defineInstance(IBashParserService, new BashParserService());
       reg.defineInstance(
         ITelemetryService,

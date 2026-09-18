@@ -223,6 +223,7 @@ describe('EnvironmentRegistry', () => {
 
   it('acquires a ready environment through acquireWhenReady without waiting', async () => {
     const current = fakeEnvironment('local', 'one');
+    current.whenReady = new Promise<void>(() => {});
     registry.register(current);
     const lease = await registry.acquireWhenReady({ workspaceId: 'workspace', environmentId: 'local' }, ['process']);
     expect(lease.environment).toBe(current);
