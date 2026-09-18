@@ -2,12 +2,20 @@ import { describe, expect, it } from 'vitest';
 
 import { Emitter } from '#/_base/event';
 import type { LiveRef } from '#/_base/di/instantiation';
+import { SyncDescriptor } from '#/_base/di/descriptors';
+import { TestInstantiationService } from '#/_base/di/test';
 import type { ISessionEventBus } from '#/app/event/eventBus';
+import { IEventBus } from '#/app/event/eventBus';
+import { EventBusService } from '#/app/event/eventBusService';
+import { IAgentBlobService } from '#/agent/blob/agentBlobService';
+import type { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { ILogService } from '#/_base/log/log';
 import { AgentEnvironmentService, snapshotAgentEnvironmentBinding } from '#/agent/environmentBinding/agentEnvironment';
 import { AgentEnvironmentBindingService, agentEnvironmentBindingKey, ENVIRONMENT_BINDING_REMINDER_VARIANT } from '#/agent/environmentBinding/environmentBindingService';
-import { environmentBindingKey, type EnvironmentSetBinding } from '#/agent/environmentBinding/environmentBindingOps';
+import { environmentBindingKey, EnvironmentSetBinding } from '#/agent/environmentBinding/environmentBindingOps';
 import { AgentStateService } from '#/agent/state/agentStateService';
+import { IAgentStateService } from '#/agent/state/agentState';
 import type { IAgentLoopService } from '#/agent/loop/loop';
 import type { IAgentReminderService } from '#/features/reminder/reminderService';
 import type { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -16,13 +24,15 @@ import type { Environment, EnvironmentBinding, EnvironmentCapability, Environmen
 import { EnvironmentError, EnvironmentRegistry } from '#/environment/environmentRegistry';
 import { makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { SessionStateService } from '#/session/state/sessionStateService';
+import { EventDispatcherService } from '#/state/eventDispatcherService';
+import { IEventDispatcher } from '#/state/eventDispatcher';
+import { IWireService } from '#/wire/wire';
+import type { WireRecord } from '#/wire/record';
 import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
   workspaceContextAdditionalDirsKey,
   workspaceContextWorkDirKey,
 } from '#/session/workspaceContext/workspaceContextService';
-import type { IEventDispatcher } from '#/state/eventDispatcher';
-import type { WireRecord } from '#/wire/record';
 import type {
   IEnvironmentResolver,
   IWorkspaceInstanceManager,
@@ -189,6 +199,11 @@ function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: E
     reminder,
     appendLog,
     noopLog,
+    {
+      _serviceBrand: undefined,
+      register: () => ({ dispose: () => {} }),
+      list: () => [],
+    } as unknown as IAgentConversationUndoParticipantRegistry,
   );
   const workspaceChanges = new Emitter<{ workspaceId: string }>();
   const workspaces = {
@@ -1084,5 +1099,249 @@ describe('AgentEnvironmentService.acquireWhenReady', () => {
     const lease = await agentEnvironment.acquireWhenReady();
     expect(lease.environment.identity.generation).toBe('local-two');
     lease.dispose();
+  });
+});
+
+const noopBlob: IAgentBlobService = {
+  _serviceBrand: undefined,
+  offloadParts: async (parts) => parts,
+  loadParts: async (parts) => parts,
+  isBlobRef: () => false,
+};
+
+function stubWireJournal(journal: WireRecord[]): IWireService {
+  return {
+    _serviceBrand: undefined,
+    seal: async () => {},
+    appendRecord: (record) => {
+      journal.push(record as WireRecord);
+    },
+    append: (record) => {
+      journal.push(record as WireRecord);
+    },
+    readJournal: async function* () {
+      for (const record of journal) yield record;
+    },
+    readRestorable: async function* () {
+      for (const record of journal) yield record;
+    },
+    readHumanChain: () => [],
+    read: async function* () {
+      for (const record of journal) yield record;
+    },
+    readRaw: async function* () {
+      for (const record of journal) yield record;
+    },
+    journalRef: { tree: 'stub', branch: 'main' },
+    switchBranch: async () => {
+      throw new Error('stubWireJournal.switchBranch is not implemented');
+    },
+    branches: () => ['main'],
+    nextSeq: () => journal.length + 1,
+    settled: async () => {},
+    flush: async () => {},
+    drainPersisted: async () => {},
+    lineCount: () => journal.length,
+    lastContextClearLine: () => undefined,
+    journalPath: () => undefined,
+  };
+}
+
+interface UndoHarness {
+  readonly binding: AgentEnvironmentBindingService;
+  readonly dispatcher: IEventDispatcher;
+  readonly journal: WireRecord[];
+  readonly appendLogRecords: WireRecord[];
+  readonly participant: { reconcileAfterUndo(): Promise<void> };
+  readonly workDirWrites: string[];
+  readonly reminders: { content: string; variant: string }[];
+  readonly changes: EnvironmentBinding[];
+  readonly dispose: () => Promise<void>;
+}
+
+function undoSetup(): UndoHarness {
+  const registry = new EnvironmentRegistry('workspace');
+  registry.register(environment('local', 'local-one', 'ready', ['fs', 'process'], {
+    osKind: 'Linux',
+    osArch: 'x86_64',
+    osVersion: '6.1.0-local',
+    shellName: 'bash',
+    shellPath: '/bin/bash',
+  }));
+  registry.register(environment('remote', 'remote-one', 'ready', ['fs', 'process'], {
+    osKind: 'FreeBSD',
+    osArch: 'arm64',
+    osVersion: '13.2-remote',
+    shellName: 'sh',
+    shellPath: '/usr/local/bin/sh',
+  }));
+  const journal: WireRecord[] = [];
+  const appendLogRecords: WireRecord[] = [];
+  const wire = stubWireJournal(journal);
+  const appendingWire: IWireService = {
+    ...wire,
+    appendRecord: (record) => {
+      appendLogRecords.push(record as WireRecord);
+      wire.appendRecord(record);
+    },
+    append: (record) => {
+      appendLogRecords.push(record as WireRecord);
+      wire.append(record);
+    },
+  };
+  const ix = new TestInstantiationService();
+  ix.set(IEventBus, new SyncDescriptor(EventBusService));
+  ix.set(IAgentBlobService, noopBlob);
+  ix.set(IWireService, appendingWire);
+  ix.set(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }));
+  const agentState = new AgentStateService();
+  ix.set(IAgentStateService, agentState);
+  ix.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
+  const dispatcher = ix.get(IEventDispatcher);
+  const session = makeSessionContext({
+    sessionId: 'session',
+    workspaceId: 'workspace',
+    sessionDir: '/session',
+    sessionScope: 'sessions/session',
+    cwd: '/workspace',
+  });
+  const workDirWrites: string[] = [];
+  const workspaceContext = {
+    _serviceBrand: undefined,
+    workDir: session.cwd,
+    additionalDirs: [],
+    setWorkDir: (dir: string) => {
+      workDirWrites.push(dir);
+    },
+  } as unknown as ISessionWorkspaceContext;
+  const scopeContext = {
+    _serviceBrand: undefined,
+    agentId: 'main',
+    agentContext: stubAgentContext('main', 1),
+    scope: (subKey?: string) => subKey ?? '',
+  };
+  const reminders: { content: string; variant: string }[] = [];
+  const reminder = {
+    _serviceBrand: undefined,
+    notify: (content: string, notification: { variant: string }) => {
+      reminders.push({ content, variant: notification.variant });
+    },
+  } as unknown as IAgentReminderService;
+  const appendLog = {
+    _serviceBrand: undefined,
+    read: async function* <R>(): AsyncIterable<R> {
+      for (const record of appendLogRecords) yield record as R;
+    },
+  } as unknown as IAppendLogStore;
+  const noopLog = {
+    _serviceBrand: undefined,
+    level: 'off',
+    setLevel: () => {},
+    flush: async () => {},
+    error: () => {},
+    warn: () => {},
+    info: () => {},
+    debug: () => {},
+    child: () => noopLog,
+  } as unknown as ILogService;
+  const loop: LiveRef<IAgentLoopService> = {
+    current: {
+      snapshot: () => ({
+        state: 'running',
+        queue: [],
+        notificationCount: 0,
+        paused: false,
+        hasPendingRequests: false,
+        turn: undefined,
+      }),
+    } as unknown as IAgentLoopService,
+    onDidChange: () => ({ dispose: () => {} }),
+  };
+  const eventBus = {
+    subscribe: () => ({ dispose: () => {} }),
+    isAgentActive: () => true,
+    publish: () => {},
+  } as unknown as ISessionEventBus;
+  let participant: { reconcileAfterUndo(): Promise<void> } | undefined;
+  const undoParticipants = {
+    _serviceBrand: undefined,
+    register: (entry: { id: string; reconcileAfterUndo(): Promise<void> }) => {
+      participant = entry;
+      return { dispose: () => {} };
+    },
+    list: () => (participant === undefined ? [] : [participant]),
+  } as unknown as IAgentConversationUndoParticipantRegistry;
+  const binding = new AgentEnvironmentBindingService(
+    scopeContext,
+    agentState,
+    { _serviceBrand: undefined, binding: { workspaceId: 'workspace', environmentId: 'local' } },
+    session,
+    workspaceContext,
+    {
+      _serviceBrand: undefined,
+      inspect: (b: EnvironmentBinding) => registry.inspect(b),
+      acquire: (b: EnvironmentBinding, required?: readonly EnvironmentCapability[]) => registry.acquire(b, required),
+      acquireWhenReady: (b: EnvironmentBinding, required?: readonly EnvironmentCapability[]) => registry.acquireWhenReady(b, required),
+    },
+    dispatcher,
+    eventBus,
+    loop,
+    reminder,
+    appendLog,
+    noopLog,
+    undoParticipants,
+  );
+  const changes: EnvironmentBinding[] = [];
+  binding.onDidChange((next) => changes.push(next));
+  return {
+    binding,
+    dispatcher,
+    journal,
+    appendLogRecords,
+    participant: {
+      reconcileAfterUndo: async () => {
+        if (participant === undefined) throw new Error('no undo participant was registered');
+        await participant.reconcileAfterUndo();
+      },
+    },
+    workDirWrites,
+    reminders,
+    changes,
+    dispose: async () => {
+      binding.dispose();
+      ix.dispose();
+      await registry.dispose();
+    },
+  };
+}
+
+describe('AgentEnvironmentBindingService conversation undo', () => {
+  it('reverts the binding, workDir, and reminder on undo across a switch', async () => {
+    const harness = undoSetup();
+    try {
+      await harness.dispatcher.restore();
+      expect(harness.binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+
+      harness.binding.switch('remote', '/remote/work');
+      expect(harness.binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' });
+      expect(harness.journal.map((record) => record['environmentId'])).toEqual(['local', 'remote']);
+
+      harness.journal.pop();
+      await harness.dispatcher.restore();
+      await harness.participant.reconcileAfterUndo();
+
+      expect(harness.binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+      expect(harness.workDirWrites.at(-1)).toBe('/workspace');
+      expect(harness.reminders.at(-1)).toMatchObject({ variant: ENVIRONMENT_BINDING_REMINDER_VARIANT });
+      expect(harness.reminders.at(-1)!.content).toContain('"local"');
+      expect(harness.changes.at(-1)).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+      expect(harness.appendLogRecords.map((record) => record['environmentId'])).toEqual(['local', 'remote']);
+
+      await harness.participant.reconcileAfterUndo();
+      expect(harness.binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+      expect(harness.reminders).toHaveLength(2);
+    } finally {
+      await harness.dispose();
+    }
   });
 });
