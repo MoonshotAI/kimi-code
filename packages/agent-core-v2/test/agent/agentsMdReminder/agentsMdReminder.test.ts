@@ -16,6 +16,7 @@ import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
 import type { Environment } from '#/environment/environment';
+import { EnvironmentError } from '#/environment/environmentRegistry';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { stubAgentEnvironment } from '../../environment/stubs';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -108,6 +109,7 @@ function createHarness(
     readonly hostFs?: IHostFileSystem;
     readonly pathClass?: 'posix' | 'win32';
     readonly environmentWorkDir?: string;
+    readonly acquireError?: Error;
     readonly log?: ILogService;
     readonly restoredProfile?: {
       readonly systemPrompt: string;
@@ -218,9 +220,19 @@ function createHarness(
         onDidChangeStatus: () => ({ dispose: () => {} }),
         dispose: () => {},
       } as unknown as Environment;
-      reg.defineInstance(IAgentEnvironmentService, stubAgentEnvironment(environment, {
+      const agentEnvironment = stubAgentEnvironment(environment, {
         workDir: options.environmentWorkDir ?? options.cwd ?? workDir,
-      }));
+      });
+      if (options.acquireError !== undefined) {
+        const failure = options.acquireError;
+        agentEnvironment.acquire = () => {
+          throw failure;
+        };
+        agentEnvironment.acquireWhenReady = async () => {
+          throw failure;
+        };
+      }
+      reg.defineInstance(IAgentEnvironmentService, agentEnvironment);
       reg.defineInstance(IBashParserService, new BashParserService());
       reg.defineInstance(
         ITelemetryService,
@@ -1603,6 +1615,37 @@ describe('agentsMdReminder remote environment binding', () => {
     expect(debugLogs).toHaveLength(1);
     expect(debugLogs[0]?.message).toContain('no existing anchor');
     expect(debugLogs[0]?.payload).toMatchObject({ path: '/nonexistent/dir' });
+  });
+});
+
+describe('agentsMdReminder environment degradation', () => {
+  it('skips the reminder without escaping when the seeded environment is disconnected', async () => {
+    const h = createHarness({
+      acquireError: new EnvironmentError('environment.unavailable', 'environment remote is disconnected'),
+    });
+    const dir = join(workDir, 'pkg');
+    await writeAgentsMd(dir, 'pkg instructions');
+    h.reminder.seedInjected([], workDir);
+
+    const result = await fire(h, didCtx('Read', { path: join(dir, 'index.ts') }));
+
+    expect(outputText(result)).toBe('original result');
+    expect(agentsMdMessages(h)).toHaveLength(0);
+    expect(h.reminders).toHaveLength(0);
+  });
+
+  it('stays unseeded and keeps the hook quiet when the seed acquire fails on a disconnected environment', async () => {
+    const h = createHarness({
+      acquireError: new EnvironmentError('environment.unavailable', 'environment remote is disconnected'),
+    });
+    const dir = join(workDir, 'pkg');
+    await writeAgentsMd(dir, 'pkg instructions');
+
+    const result = await fire(h, didCtx('Read', { path: join(dir, 'index.ts') }));
+
+    expect(outputText(result)).toBe('original result');
+    expect(agentsMdMessages(h)).toHaveLength(0);
+    expect(h.reminders).toHaveLength(0);
   });
 });
 
