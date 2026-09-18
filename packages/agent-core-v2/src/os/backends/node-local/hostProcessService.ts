@@ -116,27 +116,30 @@ class HostProcess implements IHostProcess {
 
     if (isWindows) {
       const taskkillArgs = ['/T', '/F', '/PID', String(this.pid)];
+      const killer = spawn('taskkill', taskkillArgs, {
+        stdio: 'ignore',
+        windowsHide: true,
+      });
       let timeout: ReturnType<typeof setTimeout> | undefined;
-      try {
-        await Promise.race([
-          new Promise<void>((resolve) => {
-            const killer = spawn('taskkill', taskkillArgs, {
-              stdio: 'ignore',
-              windowsHide: true,
-            });
-            const done = (): void => {
-              resolve();
-            };
-            killer.once('error', done);
-            killer.once('close', done);
-          }),
-          new Promise<void>((resolve) => {
-            timeout = setTimeout(resolve, TASKKILL_TIMEOUT_MS);
-            timeout.unref?.();
-          }),
-        ]);
-      } finally {
-        clearTimeout(timeout);
+      const exited = await Promise.race([
+        new Promise<true>((resolve) => {
+          const done = (): void => {
+            resolve(true);
+          };
+          killer.once('error', done);
+          killer.once('close', done);
+        }),
+        new Promise<false>((resolve) => {
+          timeout = setTimeout(() => {
+            resolve(false);
+          }, TASKKILL_TIMEOUT_MS);
+          timeout.unref?.();
+        }),
+      ]);
+      clearTimeout(timeout);
+      if (!exited) {
+        killer.unref();
+        killer.kill();
       }
       return;
     }

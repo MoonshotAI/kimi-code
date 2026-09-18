@@ -85,11 +85,13 @@ describe('HostProcessService', () => {
 describe('HostProcessService on Windows', () => {
   let savedPlatform: string;
   let spawnedCommands: string[];
+  let taskkills: Array<{ kill: ReturnType<typeof vi.fn>; unref: ReturnType<typeof vi.fn> }>;
 
   beforeEach(() => {
     savedPlatform = process.platform;
     Object.defineProperty(process, 'platform', { value: 'win32' });
     spawnedCommands = [];
+    taskkills = [];
     vi.doMock('node:child_process', async (importOriginal) => ({
       ...(await importOriginal<typeof import('node:child_process')>()),
       spawn: (command: string, args: readonly string[]) => {
@@ -99,8 +101,11 @@ describe('HostProcessService on Windows', () => {
           stdin: new PassThrough(),
           stdout: new PassThrough(),
           stderr: new PassThrough(),
+          kill: vi.fn(() => true),
+          unref: vi.fn(),
         });
-        if (command !== 'taskkill') queueMicrotask(() => child.emit('spawn'));
+        if (command === 'taskkill') taskkills.push(child);
+        else queueMicrotask(() => child.emit('spawn'));
         return child;
       },
     }));
@@ -115,7 +120,7 @@ describe('HostProcessService on Windows', () => {
     Object.defineProperty(process, 'platform', { value: savedPlatform });
   });
 
-  it('stops waiting for a taskkill that never exits', async () => {
+  it('stops waiting for a taskkill that never exits and terminates it', async () => {
     const { HostProcessService: WindowsHostProcessService } = await import(
       '#/os/backends/node-local/hostProcessService'
     );
@@ -129,6 +134,9 @@ describe('HostProcessService on Windows', () => {
 
     expect(spawnedCommands).toContain('taskkill /T /F /PID 4242');
     expect(killed).toBe(true);
+    expect(taskkills).toHaveLength(1);
+    expect(taskkills[0]?.kill).toHaveBeenCalled();
+    expect(taskkills[0]?.unref).toHaveBeenCalled();
     await kill;
   });
 });
