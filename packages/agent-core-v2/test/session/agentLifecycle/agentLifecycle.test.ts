@@ -1052,7 +1052,6 @@ describe('AgentLifecycleService', () => {
 
   function stubRemoteResolver(options: { remoteStatus?: 'ready' | 'disconnected' } = {}) {
     const connectCalls: string[] = [];
-    const rerootCalls: string[] = [];
     const localEnvironment = new FakeEnvironment(
       { workspaceId: 'ws_test', environmentId: 'local', generation: 'local-one' },
       { status: 'ready', capabilities: ['fs', 'process'] },
@@ -1065,9 +1064,6 @@ describe('AgentLifecycleService', () => {
       connect: async () => {
         connectCalls.push('remote');
         remoteEnvironment.setStatus('ready');
-      },
-      reroot: async (cwd: string) => {
-        rerootCalls.push(cwd);
       },
     });
     const environmentFor = (binding: EnvironmentBinding): FakeEnvironment => {
@@ -1084,7 +1080,7 @@ describe('AgentLifecycleService', () => {
         dispose: () => {},
       }),
     } as unknown as IEnvironmentResolver);
-    return { connectCalls, rerootCalls, remoteEnvironment };
+    return { connectCalls, remoteEnvironment };
   }
 
   function expectCurrentBinding(agentId: string, expected: EnvironmentBinding): void {
@@ -1116,14 +1112,13 @@ describe('AgentLifecycleService', () => {
       createWireMetadataRecord(1),
       { type: 'environment.set_binding', agentId: 'agent-1', environmentId: 'remote', cwd: '/remote/work', time: 2 },
     ]).store);
-    const { connectCalls, rerootCalls } = stubRemoteResolver();
+    const { connectCalls } = stubRemoteResolver();
 
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'agent-1' });
 
     expectCurrentBinding('agent-1', { workspaceId: 'ws_test', environmentId: 'remote', cwd: '/remote/work' });
     expect(connectCalls).toEqual(['remote']);
-    expect(rerootCalls).toEqual(['/remote/work']);
   });
 
   it('keeps a restored gone environment declaration bound and fails explicitly at use', async () => {

@@ -623,9 +623,62 @@ describe('RemoteEnvironmentProviderFactory', () => {
   });
 });
 
-describe('ManagedRemoteEnvironment reroot', () => {
-  it('re-registers the connected environment with identity.cwd on a fresh generation, keeping the connection alive', async () => {
+describe('connection generation vs binding cwd', () => {
+  it('registers connected environments without a project cwd in their identity', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
+    const connect = vi.fn(async (options: RemoteEnvironmentOptions) => connectedEnvironment(options, 'connected-1'));
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
+
+    await registry.current('dev-box')!.connect!();
+
+    expect(registry.current('dev-box')!.identity).toEqual({
+      workspaceId: 'workspace-1',
+      environmentId: 'dev-box',
+      generation: 'connected-1',
+    });
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('keeps the live connection and generation when only the declaration defaultCwd changes', async () => {
+    const registry = new EnvironmentRegistry('workspace-1');
+    const config = watchableConfigService({
+      'dev-box': { type: 'ssh', host: 'dev-box', defaultCwd: '/home/me' },
+    });
+    const produced: FakeEnvironment[] = [];
+    const connect = vi.fn(async (options: RemoteEnvironmentOptions) => {
+      const environment = connectedEnvironment(options, 'connected-1');
+      produced.push(environment as unknown as FakeEnvironment);
+      return environment;
+    });
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices({ config: config.service }), registry));
+
+    await registry.current('dev-box')!.connect!();
+    const connected = registry.current('dev-box')!;
+    expect(connected.status).toBe('ready');
+
+    config.setSection({ 'dev-box': { type: 'ssh', host: 'dev-box', defaultCwd: '/srv/other' } });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(registry.current('dev-box')).toBe(connected);
+    expect(registry.current('dev-box')!.identity.generation).toBe('connected-1');
+    expect((produced[0]! as unknown as { disposed: boolean }).disposed).toBe(false);
+    const lease = registry.acquire({ workspaceId: 'workspace-1', environmentId: 'dev-box' }, ['fs']);
+    expect(lease.environment).toBe(connected);
+    lease.dispose();
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('marks the environment explicitly unavailable with the published reason when the declaration target changes', async () => {
+    const registry = new EnvironmentRegistry('workspace-1');
+    const config = watchableConfigService({
+      'dev-box': { type: 'ssh', host: 'dev-box', defaultCwd: '/home/me' },
+    });
     const produced: FakeEnvironment[] = [];
     const connect = vi.fn(async (options: RemoteEnvironmentOptions) => {
       const environment = connectedEnvironment(options, `connected-${produced.length + 1}`);
@@ -633,75 +686,95 @@ describe('ManagedRemoteEnvironment reroot', () => {
       return environment;
     });
     const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
+    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices({ config: config.service }), registry));
 
     await registry.current('dev-box')!.connect!();
-    const bound = registry.current('dev-box')!;
-    expect(bound.identity.cwd).toBeUndefined();
+    const generation = registry.current('dev-box')!.identity.generation;
 
-    await bound.reroot!('/home/me/project');
-
-    const rerooted = registry.current('dev-box')!;
-    expect(rerooted).not.toBe(bound);
-    expect(rerooted.identity.cwd).toBe('/home/me/project');
-    expect(rerooted.identity.generation).not.toBe(bound.identity.generation);
-    expect(rerooted.status).toBe('ready');
-    expect(connect).toHaveBeenCalledTimes(1);
-    expect((produced[0]! as unknown as { disposed: boolean }).disposed).toBe(false);
-    const lease = registry.acquire({ workspaceId: 'workspace-1', environmentId: 'dev-box' }, ['fs']);
-    expect(lease.environment).toBe(rerooted);
-    lease.dispose();
-
-    await attachment.dispose();
-    await registry.dispose();
-  });
-
-  it('carries a pending reroot into the connected registration without an extra swap', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    const changes: (string | undefined)[] = [];
-    const connect = vi.fn(async (options: RemoteEnvironmentOptions) => connectedEnvironment(options, 'connected-1'));
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
-
-    const placeholder = registry.current('dev-box')!;
-    await placeholder.reroot!('/home/me/project');
-    expect(connect).not.toHaveBeenCalled();
-    expect(registry.current('dev-box')).toBe(placeholder);
-
-    registry.onDidChange((change) => {
-      if (change.current !== undefined) changes.push(change.current.identity.generation);
+    config.setSection({ 'dev-box': { type: 'ssh', host: 'renamed-box', defaultCwd: '/home/me' } });
+    await vi.waitFor(() => {
+      expect(registry.current('dev-box')!.identity.generation).not.toBe(generation);
     });
-    await registry.current('dev-box')!.connect!();
 
-    const connected = registry.current('dev-box')!;
-    expect(connected.identity.cwd).toBe('/home/me/project');
-    expect(connected.status).toBe('ready');
-    expect(changes.filter((generation) => generation === 'connected-1')).toHaveLength(1);
+    const pending = registry.current('dev-box')!;
+    expect(pending.status).toBe('disconnected');
+    expect(pending.connectError).toContain('declaration changed the target');
+    expect((produced[0]! as unknown as { disposed: boolean }).disposed).toBe(true);
+    expect(() => registry.acquire({ workspaceId: 'workspace-1', environmentId: 'dev-box' })).toThrowError(
+      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.unavailable' }),
+    );
+    expect(() => registry.acquire({ workspaceId: 'workspace-1', environmentId: 'dev-box' })).toThrow(/declaration changed the target/);
+    expect(registry.snapshot().environments[0]).toMatchObject({
+      environmentId: 'dev-box',
+      status: 'disconnected',
+      connectError: expect.stringContaining('declaration changed the target'),
+    });
+
+    await pending.connect!();
+    expect(connect).toHaveBeenLastCalledWith(expect.objectContaining({
+      launcher: { type: 'ssh', host: 'renamed-box', remoteBin: undefined },
+    }));
+    expect(registry.current('dev-box')!.status).toBe('ready');
+    expect(registry.current('dev-box')!.connectError).toBeUndefined();
 
     await attachment.dispose();
     await registry.dispose();
   });
 
-  it('keeps the bound cwd across a reconnect', async () => {
-    const registry = new EnvironmentRegistry('workspace-1');
-    let generation = 0;
+  it('A15: same-id declarations in different workspaces stay fully isolated', async () => {
+    const registryX = new EnvironmentRegistry('workspace-x');
+    const registryY = new EnvironmentRegistry('workspace-y');
+    const produced = new Map<string, FakeEnvironment[]>();
     const connect = vi.fn(async (options: RemoteEnvironmentOptions) => {
-      generation += 1;
-      return connectedEnvironment(options, `connected-${generation}`);
+      const environment = connectedEnvironment(options, `${options.workspaceId}-connected`);
+      const list = produced.get(options.workspaceId) ?? [];
+      list.push(environment as unknown as FakeEnvironment);
+      produced.set(options.workspaceId, list);
+      return environment;
     });
     const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
-    const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
+    const configX = watchableConfigService({ dev: { type: 'ssh', host: 'box-x', defaultCwd: '/srv/x' } });
+    const servicesX = baseServices({ config: configX.service });
+    const servicesY = baseServices({
+      config: configService({ dev: { type: 'ssh', host: 'box-y', defaultCwd: '/srv/y' } }),
+    });
+    const attachmentX = await factory.attach({ ...CONTEXT, id: 'workspace-x' }, fakeHost(servicesX, registryX));
+    const attachmentY = await factory.attach({ ...CONTEXT, id: 'workspace-y' }, fakeHost(servicesY, registryY));
 
-    await registry.current('dev-box')!.connect!();
-    await registry.current('dev-box')!.reroot!('/home/me/project');
-    await registry.current('dev-box')!.connect!();
+    await registryX.current('dev')!.connect!();
+    await registryY.current('dev')!.connect!();
+    expect(connect).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: 'workspace-x',
+      launcher: { type: 'ssh', host: 'box-x', remoteBin: undefined },
+    }));
+    expect(connect).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: 'workspace-y',
+      launcher: { type: 'ssh', host: 'box-y', remoteBin: undefined },
+    }));
+    expect(registryX.current('dev')!.identity.generation).not.toBe(registryY.current('dev')!.identity.generation);
+    expect(registryX.snapshot().workspaceId).toBe('workspace-x');
+    expect(registryY.snapshot().workspaceId).toBe('workspace-y');
+    expect(() => registryX.acquire({ workspaceId: 'workspace-y', environmentId: 'dev' })).toThrowError(
+      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.not_found' }),
+    );
+    expect(() => registryY.acquire({ workspaceId: 'workspace-x', environmentId: 'dev' })).toThrowError(
+      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.not_found' }),
+    );
 
-    const reconnected = registry.current('dev-box')!;
-    expect(reconnected.identity.cwd).toBe('/home/me/project');
-    expect(reconnected.identity.generation).toBe('connected-2');
+    const generationY = registryY.current('dev')!.identity.generation;
+    configX.setSection({ dev: { type: 'ssh', host: 'box-x2', defaultCwd: '/srv/x' } });
+    await vi.waitFor(() => {
+      expect(registryX.current('dev')!.status).toBe('disconnected');
+    });
 
-    await attachment.dispose();
-    await registry.dispose();
+    expect(registryY.current('dev')!.identity.generation).toBe(generationY);
+    expect(registryY.current('dev')!.status).toBe('ready');
+    expect((produced.get('workspace-y')![0]! as unknown as { disposed: boolean }).disposed).toBe(false);
+
+    await attachmentX.dispose();
+    await attachmentY.dispose();
+    await registryX.dispose();
+    await registryY.dispose();
   });
 });
 

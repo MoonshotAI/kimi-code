@@ -214,6 +214,11 @@ function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: E
   const reminder = stubReminder(reminders);
   const appendLogRecords: WireRecord[] = [];
   const appendLog = stubAppendLog(appendLogRecords);
+  const undoParticipants = {
+    _serviceBrand: undefined,
+    register: () => ({ dispose: () => {} }),
+    list: () => [],
+  } as unknown as IAgentConversationUndoParticipantRegistry;
   const binding = new AgentEnvironmentBindingService(
     scopeContext,
     state,
@@ -227,11 +232,7 @@ function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: E
     reminder,
     appendLog,
     noopLogger,
-    {
-      _serviceBrand: undefined,
-      register: () => ({ dispose: () => {} }),
-      list: () => [],
-    } as unknown as IAgentConversationUndoParticipantRegistry,
+    undoParticipants,
   );
   const workspaceChanges = new Emitter<{ workspaceId: string }>();
   const workspaces = {
@@ -263,6 +264,22 @@ function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: E
     reminders,
     appendLogRecords,
     agentEnvironment: new AgentEnvironmentService(scopeContext, binding, resolver, workspaces, eventBus, session, sessionState),
+    peerBinding: (agentId: string) =>
+      new AgentEnvironmentBindingService(
+        stubScopeContext(agentId),
+        new AgentStateService(),
+        { _serviceBrand: undefined, binding: { workspaceId: 'workspace', environmentId: 'local' } },
+        session,
+        stubWorkspaceContext(session.cwd, []),
+        resolver,
+        dispatcher,
+        eventBus,
+        loop,
+        stubReminder([]),
+        appendLog,
+        noopLogger,
+        undoParticipants,
+      ),
   };
 }
 
@@ -596,15 +613,16 @@ describe('AgentEnvironmentBindingService restore from wire records', () => {
     });
   });
 
-  it('background-reconnects and reroots a reseeded remote binding', async () => {
+  it('background-reconnects a reseeded remote binding without replacing its generation', async () => {
     const { registry, restoreHooks, appendLogRecords } = setup({ agentId: 'agent-1' });
-    const { connectCalls, rerootCalls } = connectableEnvironment(registry, { environmentId: 'connectable', reroot: async () => {} });
+    const { connectCalls } = connectableEnvironment(registry, { environmentId: 'connectable' });
+    const generation = registry.current('connectable')!.identity.generation;
     appendLogRecords.push({ type: 'environment.set_binding', agentId: 'agent-1', environmentId: 'connectable', cwd: '/connectable/work', time: 2 });
 
     await restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
 
     expect(connectCalls).toEqual(['connect']);
-    expect(rerootCalls).toEqual(['/connectable/work']);
+    expect(registry.current('connectable')!.identity.generation).toBe(generation);
   });
 
   it('ignores local binding records and keeps the seed dispatch', async () => {
@@ -795,14 +813,13 @@ describe('AgentEnvironmentBindingService.connectAndSwitch', () => {
     expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
   });
 
-  it('keeps the old binding without dispatch or reroot when the cwd check fails', async () => {
+  it('keeps the old binding without dispatch when the cwd check fails', async () => {
     const { registry, binding, dispatched } = setup();
-    const { rerootCalls } = connectableEnvironment(registry, {
+    connectableEnvironment(registry, {
       environmentId: 'invalid-stat',
       stat: async (path) => {
         throw new Error(`ENOENT: ${path}`);
       },
-      reroot: async () => {},
     });
 
     await expect(binding.connectAndSwitch('invalid-stat', '/missing')).rejects.toThrowError(
@@ -810,7 +827,6 @@ describe('AgentEnvironmentBindingService.connectAndSwitch', () => {
     );
     expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
     expect(dispatched).toHaveLength(0);
-    expect(rerootCalls).toEqual([]);
   });
 
   it('rejects a non-directory cwd and a missing cwd for non-local environments', async () => {
@@ -863,9 +879,10 @@ describe('AgentEnvironmentBindingService.connectAndSwitch', () => {
     expect(stats).toEqual(['/remote/work']);
   });
 
-  it('re-roots the connected environment with the validated cwd before committing', async () => {
+  it('commits the validated cwd against the same connection generation', async () => {
     const { registry, binding } = setup();
-    const { connectCalls, rerootCalls } = connectableEnvironment(registry, { environmentId: 'rootable', reroot: async () => {} });
+    const { connectCalls } = connectableEnvironment(registry, { environmentId: 'rootable' });
+    const generation = registry.current('rootable')!.identity.generation;
 
     await expect(binding.connectAndSwitch('rootable', '/remote/work')).resolves.toEqual({
       workspaceId: 'workspace',
@@ -873,32 +890,47 @@ describe('AgentEnvironmentBindingService.connectAndSwitch', () => {
       cwd: '/remote/work',
     });
     expect(connectCalls).toEqual(['connect']);
-    expect(rerootCalls).toEqual(['/remote/work']);
+    expect(registry.current('rootable')!.identity.generation).toBe(generation);
     expect(binding.current).toMatchObject({ environmentId: 'rootable', cwd: '/remote/work' });
   });
 
-  it('keeps the old binding when the reroot fails', async () => {
-    const { registry, binding, dispatched } = setup();
-    connectableEnvironment(registry, {
-      environmentId: 'failing-root',
-      reroot: async () => {
-        throw new Error('registry drained');
-      },
+  it('A02: switching a peer agent to an in-use remote dir leaves the holder\'s turn, tasks, and terminal untouched', async () => {
+    const { registry, binding, agentEnvironment, publishBus, peerBinding } = setup();
+    connectableEnvironment(registry, { environmentId: 'shared' });
+    await registry.current('shared')!.connect!();
+    const generation = registry.current('shared')!.identity.generation;
+
+    binding.switch('shared', '/srv/a');
+    publishBus('turn.started', { agentId: 'main' });
+    const leaseA = agentEnvironment.acquire(['process']);
+    let terminalDisposed = false;
+    leaseA.track({ dispose: () => { terminalDisposed = true; } });
+    const published: string[] = [];
+    registry.onDidChange((change) => {
+      if (change.current !== undefined) published.push(change.current.identity.generation);
     });
 
-    await expect(binding.connectAndSwitch('failing-root', '/remote/work')).rejects.toThrow('registry drained');
-    expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
-    expect(dispatched).toHaveLength(0);
+    const peer = peerBinding('agent-b');
+    await peer.connectAndSwitch('shared', '/srv/a');
+    expect(peer.current).toMatchObject({ environmentId: 'shared', cwd: '/srv/a' });
+
+    expect(registry.current('shared')!.identity.generation).toBe(generation);
+    expect(published).toEqual([]);
+    expect(terminalDisposed).toBe(false);
+    const midTurn = agentEnvironment.acquire(['process']);
+    expect(midTurn.environment.identity.generation).toBe(generation);
+    midTurn.dispose();
+    leaseA.dispose();
   });
 
-  it('does not reroot when switching back to local', async () => {
+  it('leaves the remote environment untouched when switching back to local', async () => {
     const { registry, binding } = setup();
-    const { rerootCalls } = connectableEnvironment(registry, { environmentId: 'rootable', reroot: async () => {} });
+    const { calls } = connectableEnvironment(registry, { environmentId: 'rootable' });
 
     await binding.connectAndSwitch('rootable', '/remote/work');
     await binding.connectAndSwitch('local');
 
-    expect(rerootCalls).toEqual(['/remote/work']);
+    expect(calls).toEqual(['connect']);
     expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local', cwd: undefined });
   });
 });

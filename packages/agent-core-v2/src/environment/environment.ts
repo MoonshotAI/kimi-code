@@ -15,7 +15,9 @@ export interface EnvironmentBinding {
   readonly cwd?: string;
 }
 
-export interface EnvironmentIdentity extends EnvironmentBinding {
+export interface EnvironmentIdentity {
+  readonly workspaceId: string;
+  readonly environmentId: string;
   readonly generation: string;
 }
 
@@ -53,7 +55,6 @@ export interface Environment {
   readonly whenReady?: Promise<void>;
   readonly connectError?: string;
   connect?(): Promise<void>;
-  reroot?(cwd: string): Promise<void>;
   dispose(): void | Promise<void>;
 }
 

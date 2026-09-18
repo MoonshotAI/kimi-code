@@ -543,7 +543,7 @@ describe('SessionManager controller retirement', () => {
         { workspaceId: 'workspace', environmentId: 'remote', generation },
         { capabilities: ['fs', 'process'] },
       ),
-      { fs: { stat: async () => ({ isDirectory: true }) }, process: {}, reroot: async () => {} },
+      { fs: { stat: async () => ({ isDirectory: true }) }, process: {} },
     ) as FakeEnvironment;
   }
 
@@ -807,9 +807,11 @@ describe('SessionManager remote environment wiring', () => {
   function createCapture() {
     const created: { readonly options: readonly unknown[]; readonly service: SessionLifecycleService }[] = [];
     const byEnvironment = new Map<string, { options: unknown[]; service: SessionLifecycleService; handle: ISessionScopeHandle }>();
+    const controllerCalls: { readonly environmentId: string; readonly cwd?: string }[] = [];
     const program = {
-      sessionControllerGenerationFor: (environmentId: string) => `generation-${environmentId}`,
-      createSessionController: (environmentId: string) => {
+      sessionControllerGenerationFor: (environmentId: string, cwd?: string) => `generation-${environmentId}${cwd ?? ''}`,
+      createSessionController: (environmentId: string, cwd?: string) => {
+        controllerCalls.push({ environmentId, cwd });
         const handle = { id: `session-${environmentId}` } as unknown as ISessionScopeHandle;
         const options: unknown[] = [];
         const service = {
@@ -839,7 +841,7 @@ describe('SessionManager remote environment wiring', () => {
         return service;
       },
     } as unknown as Program;
-    return { program, byEnvironment };
+    return { program, byEnvironment, controllerCalls };
   }
 
   function workspaceWith(
@@ -931,7 +933,6 @@ describe('SessionManager remote environment wiring', () => {
       readonly status?: 'ready' | 'disconnected';
       readonly connect?: () => Promise<void>;
       readonly stat?: (path: string) => Promise<{ isDirectory: boolean }>;
-      readonly reroot?: (cwd: string) => Promise<void>;
     };
     readonly fs?: IHostFileSystem;
     readonly docs?: IAtomicDocumentStore;
@@ -940,7 +941,7 @@ describe('SessionManager remote environment wiring', () => {
     const remote = options.remote === undefined
       ? undefined
       : connectableEnvironment(registry, { workspaceId: 'workspace-1', environmentId: 'sandbox', ...options.remote });
-    const { program, byEnvironment } = createCapture();
+    const { program, byEnvironment, controllerCalls } = createCapture();
     manager = makeSessionManager(
       workspacesFor(registry, program),
       { get: async () => undefined } as unknown as ISessionIndex,
@@ -950,7 +951,7 @@ describe('SessionManager remote environment wiring', () => {
         docs: options.docs,
       },
     );
-    return { manager, registry, byEnvironment, remote };
+    return { manager, registry, byEnvironment, remote, controllerCalls };
   }
 
   it('rejects an explicit environment id whose declaration does not set defaultCwd', async () => {
@@ -1022,31 +1023,38 @@ describe('SessionManager remote environment wiring', () => {
     expect(byEnvironment.has('sandbox')).toBe(true);
   });
 
-  it('re-roots the connected environment with the validated cwd before creating the session', async () => {
-    const { manager, registry, byEnvironment, remote } = remoteWiringSetup({
+  it('validates the cwd and creates the session against the same connection generation', async () => {
+    const { manager, registry, byEnvironment, remote, controllerCalls } = remoteWiringSetup({
       config: { sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
-      remote: { reroot: async () => {} },
+      remote: {},
     });
+    const generation = registry.current('sandbox')!.identity.generation;
 
     await manager.create({ workDir: '/workspace', environmentId: 'sandbox' });
-    expect(remote!.calls).toEqual(['connect', 'reroot:/home/me/sandbox']);
+    expect(remote!.calls).toEqual(['connect']);
+    expect(registry.current('sandbox')!.identity.generation).toBe(generation);
     expect(byEnvironment.has('sandbox')).toBe(true);
+    expect(byEnvironment.get('sandbox')!.options[0]).toMatchObject({ environmentId: 'sandbox', environmentCwd: '/home/me/sandbox' });
+    expect(controllerCalls).toEqual([{ environmentId: 'sandbox', cwd: '/home/me/sandbox' }]);
   });
 
-  it('re-roots an already-ready environment when the session binds a different cwd', async () => {
-    const { manager, registry, remote } = remoteWiringSetup({
+  it('binds a different cwd on an already-ready environment without reconnecting or replacing the generation', async () => {
+    const { manager, registry, remote, controllerCalls } = remoteWiringSetup({
       config: { sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
-      remote: { status: 'ready', reroot: async () => {} },
+      remote: { status: 'ready' },
     });
+    const generation = registry.current('sandbox')!.identity.generation;
 
     await manager.create({ workDir: '/workspace', environmentId: 'sandbox', environmentCwd: '/elsewhere' });
-    expect(remote!.calls).toEqual(['reroot:/elsewhere']);
+    expect(remote!.calls).toEqual([]);
+    expect(registry.current('sandbox')!.identity.generation).toBe(generation);
+    expect(controllerCalls).toEqual([{ environmentId: 'sandbox', cwd: '/elsewhere' }]);
   });
 
   it('aborts creation with environment.invalid_cwd when the cwd is not a directory on the target', async () => {
     const { manager, registry, byEnvironment, remote } = remoteWiringSetup({
       config: { sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },
-      remote: { stat: async () => ({ isDirectory: false }), reroot: async () => {} },
+      remote: { stat: async () => ({ isDirectory: false }) },
     });
 
     const failure = await manager.create({ workDir: '/workspace', environmentId: 'sandbox' }).catch((error: unknown) => error);
@@ -1086,10 +1094,7 @@ describe('SessionManager remote environment wiring', () => {
       callOrder.push('connect');
       await options.connect?.(remote);
     });
-    const remoteReroot = vi.fn(async (cwd: string) => {
-      callOrder.push(`reroot:${cwd}`);
-    });
-    registry.register(Object.assign(remote, { fs: {}, process: {}, connect: remoteConnect, reroot: remoteReroot }));
+    registry.register(Object.assign(remote, { fs: {}, process: {}, connect: remoteConnect }));
     const { program, byEnvironment } = createCapture();
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
@@ -1114,7 +1119,7 @@ describe('SessionManager remote environment wiring', () => {
       appendLogStore,
       log: { _serviceBrand: undefined, warn, info: () => {}, error: () => {} } as unknown as ILogService,
     });
-    return { manager, byEnvironment, registry, remoteConnect, remoteReroot, callOrder, warn };
+    return { manager, byEnvironment, registry, remoteConnect, callOrder, warn };
   }
 
   it('restores a remote-bound session on the local controller and reconnects the disconnected environment in the background', async () => {
@@ -1235,36 +1240,34 @@ describe('SessionManager remote environment wiring', () => {
     expect(remoteConnect).not.toHaveBeenCalled();
   });
 
-  it('re-roots the restored environment with the persisted cwd before the background reconnect', async () => {
-    const { manager, registry, remoteConnect, remoteReroot, callOrder } = restoreSetup({
+  it('background-reconnects the restored environment without replacing its generation', async () => {
+    const { manager, registry, remoteConnect, callOrder } = restoreSetup({
       remoteStatus: 'disconnected',
     });
+    const generation = registry.current('remote')!.identity.generation;
 
     await manager.resume('session-1');
-    expect(remoteReroot).toHaveBeenCalledTimes(1);
-    expect(remoteReroot).toHaveBeenCalledWith('/remote/work');
     expect(remoteConnect).toHaveBeenCalledTimes(1);
-    expect(callOrder).toEqual(['reroot:/remote/work', 'connect']);
+    expect(callOrder).toEqual(['connect']);
+    expect(registry.current('remote')!.identity.generation).toBe(generation);
   });
 
-  it('does not reroot a restored binding that has no persisted cwd', async () => {
-    const { manager, registry, remoteConnect, remoteReroot } = restoreSetup({
+  it('background-reconnects a restored binding that has no persisted cwd', async () => {
+    const { manager, registry, remoteConnect } = restoreSetup({
       remoteStatus: 'disconnected',
       persistedCwd: null,
     });
 
     await manager.resume('session-1');
-    expect(remoteReroot).not.toHaveBeenCalled();
     expect(remoteConnect).toHaveBeenCalledTimes(1);
   });
 
-  it('does not reroot a restored binding when the environment is already ready', async () => {
-    const { manager, registry, remoteConnect, remoteReroot } = restoreSetup({
+  it('leaves an already-ready restored environment untouched', async () => {
+    const { manager, registry, remoteConnect } = restoreSetup({
       remoteStatus: 'ready',
     });
 
     await manager.resume('session-1');
-    expect(remoteReroot).not.toHaveBeenCalled();
     expect(remoteConnect).not.toHaveBeenCalled();
   });
 });

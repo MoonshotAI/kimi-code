@@ -172,11 +172,6 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     if (environmentStatusAllows(environment, ['fs', 'process'])) return;
     if (typeof environment.connect !== 'function') return;
     try {
-      if (binding.cwd !== undefined) {
-        void environment.reroot?.(binding.cwd)?.catch((error: unknown) => {
-          this.log.warn(`background reroot of restored environment ${binding.environmentId} failed`, { error });
-        });
-      }
       void environment.connect().catch((error: unknown) => {
         this.log.warn(`background reconnect of restored environment ${binding.environmentId} failed`, { error });
       });
@@ -261,9 +256,6 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
       }
     } finally {
       lease.dispose();
-    }
-    if (environmentId !== LOCAL_ENVIRONMENT_ID && cwd !== undefined) {
-      await this.resolver.inspect(binding).reroot?.(cwd);
     }
     return this.commit(binding);
   }

@@ -94,10 +94,11 @@ export class ManagedRemoteEnvironment implements Environment {
   constructor(
     private readonly inner: RemoteEnvironment | undefined,
     private readonly connectCallback: () => Promise<void>,
-    private readonly rerootCallback: (cwd: string) => Promise<void>,
     identity: EnvironmentIdentity,
+    connectError?: string,
   ) {
     this.identity = identity;
+    this.lastConnectError = connectError;
     if (inner === undefined) {
       this.capabilities = new Set();
       this.host = PENDING_ENVIRONMENT;
@@ -172,10 +173,6 @@ export class ManagedRemoteEnvironment implements Environment {
     return this.connectInflight;
   }
 
-  reroot(cwd: string): Promise<void> {
-    return this.rerootCallback(cwd);
-  }
-
   private setStatus(status: EnvironmentStatus): void {
     if (this.currentStatus === status || this.currentStatus === 'disposed') return;
     this.currentStatus = status;
@@ -183,8 +180,8 @@ export class ManagedRemoteEnvironment implements Environment {
   }
 
   // The executor connection is owned by the declaring record, not by this
-  // view: replacements (reconnect, reroot, declaration update) drain views
-  // without tearing the connection down, and the record disposes it.
+  // view: replacements (reconnect, declaration update) drain views without
+  // tearing the connection down, and the record disposes it.
   async dispose(): Promise<void> {
     this.statusSubscription?.dispose();
     if (this.currentStatus !== 'disposed') {
@@ -229,13 +226,10 @@ interface DeclaredEnvironmentRecord {
   // registry.
   version: number;
   // The live executor connection, owned by the record: managed views share it
-  // and never dispose it, so a reroot replacement keeps serving the same
-  // connection. The record disposes it on reconnect, update, and removal.
+  // and never dispose it. The record disposes it on reconnect, target-identity
+  // update, and removal. The connection carries no project cwd: a binding cwd
+  // change only selects or creates a project view over this same connection.
   connection?: RemoteEnvironment;
-  // The latest reroot cwd; carried into the identity of every connected view.
-  boundCwd?: string;
-  // The most recent view's connect callback, reused by reroot replacements.
-  connect?: () => Promise<void>;
 }
 
 const PROJECT_DECLARATION_WATCH_DEBOUNCE_MS = 200;
@@ -326,15 +320,29 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
             continue;
           }
           if (record.fingerprint === fingerprint) continue;
-          record.version += 1;
+          const retargeted = targetFingerprint(record.declaration.entry) !== targetFingerprint(declaration.entry);
+          const previous = record.declaration;
           record.declaration = declaration;
-          try {
-            await record.handle.update(() => this.createPendingEnvironment(context, record));
+          if (!retargeted) {
+            // A defaultCwd-only edit seeds future bindings; the live
+            // connection, its generation, and existing views are untouched.
             record.fingerprint = fingerprint;
-            await discardConnection(record);
-          } catch (error) {
-            log.warn(`remote environment ${declaration.id} update failed`, { error });
+            continue;
           }
+          record.version += 1;
+          const stale = record.connection;
+          record.connection = undefined;
+          try {
+            await record.handle.update(() => this.createPendingEnvironment(context, record, retargetReason(declaration.id)));
+            record.fingerprint = fingerprint;
+          } catch (error) {
+            record.version += 1;
+            record.declaration = previous;
+            record.connection = stale;
+            log.warn(`remote environment ${declaration.id} update failed`, { error });
+            continue;
+          }
+          await stale?.dispose();
         }
       });
     };
@@ -381,11 +389,10 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
     return record;
   }
 
-  private createPendingEnvironment(context: EnvironmentProviderContext, record: DeclaredEnvironmentRecord): ManagedRemoteEnvironment {
+  private createPendingEnvironment(context: EnvironmentProviderContext, record: DeclaredEnvironmentRecord, connectError?: string): ManagedRemoteEnvironment {
     let inflight: Promise<void> | undefined;
     const version = record.version;
     const declaration = record.declaration;
-    const reroot = (cwd: string): Promise<void> => this.rerootRecord(context, record, cwd);
     const connectEnvironment = (): Promise<void> => {
       inflight ??= (async () => {
         try {
@@ -418,11 +425,10 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
           const previous = record.connection;
           record.connection = connected;
           try {
-            await record.handle.update(() => new ManagedRemoteEnvironment(connected, connectEnvironment, reroot, {
+            await record.handle.update(() => new ManagedRemoteEnvironment(connected, connectEnvironment, {
               workspaceId: context.id,
               environmentId: declaration.id,
               generation: connected.identity.generation,
-              cwd: record.boundCwd,
             }));
           } catch (error) {
             record.connection = previous;
@@ -436,30 +442,11 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
       })();
       return inflight;
     };
-    record.connect = connectEnvironment;
-    return new ManagedRemoteEnvironment(undefined, connectEnvironment, reroot, {
+    return new ManagedRemoteEnvironment(undefined, connectEnvironment, {
       workspaceId: context.id,
       environmentId: declaration.id,
       generation: `${declaration.id}-pending-${randomUUID()}`,
-    });
-  }
-
-  private async rerootRecord(context: EnvironmentProviderContext, record: DeclaredEnvironmentRecord, cwd: string): Promise<void> {
-    const connection = record.connection;
-    if (connection === undefined) {
-      // Pending or disconnected: the next connected view carries the cwd.
-      record.boundCwd = cwd;
-      return;
-    }
-    const connect = record.connect;
-    if (connect === undefined) throw new Error(`remote environment ${record.declaration.id} has no connect callback`);
-    await record.handle.update(() => new ManagedRemoteEnvironment(connection, connect, (next) => this.rerootRecord(context, record, next), {
-      workspaceId: context.id,
-      environmentId: record.declaration.id,
-      generation: `${record.declaration.id}-root-${randomUUID()}`,
-      cwd,
-    }));
-    record.boundCwd = cwd;
+    }, connectError);
   }
 }
 
@@ -492,6 +479,17 @@ export function watchProjectDeclarationFile(path: string, onChange: () => void):
 
 function declarationFingerprint(entry: RemoteEnvironmentEntry): string {
   return JSON.stringify(sortKeysDeep(entry));
+}
+
+// Target identity excludes defaultCwd: editing it must not invalidate the
+// live connection or any existing binding's view — it only seeds new bindings.
+function targetFingerprint(entry: RemoteEnvironmentEntry): string {
+  const { defaultCwd: _defaultCwd, ...target } = entry;
+  return JSON.stringify(sortKeysDeep(target));
+}
+
+function retargetReason(environmentId: string): string {
+  return `environment ${environmentId} declaration changed the target; reconnect explicitly to adopt the new target`;
 }
 
 function sortKeysDeep(value: unknown): unknown {
