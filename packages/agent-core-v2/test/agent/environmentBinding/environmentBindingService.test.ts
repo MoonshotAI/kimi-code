@@ -827,7 +827,7 @@ describe('AgentEnvironmentBindingService project context reminder', () => {
     expect(projectContextReminders(reminders)[0]!.content).toBe(
       'The active project context is now "remote-view" at working directory /remote/work/sub. ' +
         'Project instructions from previously used directories no longer apply. ' +
-        'The AGENTS.md file(s) below apply to this working directory but were not included in your system prompt:\n' +
+        'The AGENTS.md file(s) below apply to this working directory but may not be reflected in your system prompt:\n' +
         '- /remote/work/AGENTS.md\n' +
         '- /remote/work/sub/AGENTS.md\n' +
         'Read them with your tools before making changes in this working directory.',

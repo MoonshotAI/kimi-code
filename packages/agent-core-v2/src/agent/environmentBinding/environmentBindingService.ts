@@ -42,7 +42,7 @@ function projectContextReminderText(binding: EnvironmentBinding, cwd: string, pa
   return (
     `The active project context is now "${binding.environmentId}" at working directory ${cwd}. ` +
     'Project instructions from previously used directories no longer apply. ' +
-    'The AGENTS.md file(s) below apply to this working directory but were not included in your system prompt:\n' +
+    'The AGENTS.md file(s) below apply to this working directory but may not be reflected in your system prompt:\n' +
     paths.map((path) => `- ${path}`).join('\n') +
     '\nRead them with your tools before making changes in this working directory.'
   );
