@@ -8,7 +8,7 @@ import { toLlmSyntaxErrorMessage } from '#/llm/syntax-errors';
 import type { ProtocolBase, ProtocolRequesterOptions, TraitContext } from '#/llm/protocol/base';
 import { resolveModelConnection } from '#/llm/protocol/connection';
 import { applyThinking } from '#/llm/protocol/thinking';
-import { resolveMaxCompletionCap, type FormatRequestInput } from '#/llm/protocol/format';
+import { resolveMaxCompletionCap, type FormatRequestInput, type StreamParseSink } from '#/llm/protocol/format';
 import {
   mergeRequestHeaders,
   type LlmClientContext,
@@ -31,6 +31,7 @@ import {
   applyAnthropicResponseFormat,
   applyAnthropicThinkingKeep,
   assembleAnthropicRequest,
+  anthropicMessageToStreamEvents,
   createAnthropicFormat,
   defaultAnthropicMergeHistory,
   defaultAnthropicTool,
@@ -176,28 +177,52 @@ async function executeAnthropicRequest(
       ? { 'anthropic-beta': request.betas.join(',') }
       : undefined;
   const requestOptions = { signal, headers: betaHeaders };
+  const parse = format.createStreamParser();
+  let messageId: string | undefined;
+  let failed = false;
+  const sink: StreamParseSink = {
+    onDelta: (part) => onEvent?.({ type: 'llm.streaming.part', part }),
+    onFinish: (finish) => onEvent?.({ type: 'llm.streaming.finish', finish }),
+    onMessageId: (id) => {
+      if (id === messageId) return;
+      messageId = id;
+      onEvent?.({ type: 'llm.streaming.message_id', messageId: id });
+    },
+    onUsage: (usage) => onEvent?.({ type: 'llm.streaming.usage', usage }),
+    onError: (message) => {
+      failed = true;
+      onEvent?.({ type: 'llm.failed.remote', error: message });
+    },
+  };
+  if (!request.stream) {
+    const nonStreamParams =
+      request.params as unknown as Anthropic.MessageCreateParamsNonStreaming;
+    const { data: message, response } = request.useBetaApi
+      ? await client.beta.messages
+          .create(
+            nonStreamParams as unknown as Anthropic.Beta.MessageCreateParamsNonStreaming,
+            requestOptions,
+          )
+          .withResponse()
+      : await client.messages.create(nonStreamParams, requestOptions).withResponse();
+    onEvent?.({ type: 'llm.streaming.headers', headers: headersToRecord(response.headers) ?? {} });
+    for (const event of anthropicMessageToStreamEvents(message)) {
+      failed = false;
+      parse(event, sink);
+      if (failed) {
+        return;
+      }
+    }
+    onEvent?.({ type: 'llm.done' });
+    return;
+  }
   const { data: stream, response } = request.useBetaApi
     ? await client.beta.messages.create(request.params, requestOptions).withResponse()
     : await client.messages.create(request.params, requestOptions).withResponse();
   onEvent?.({ type: 'llm.streaming.headers', headers: headersToRecord(response.headers) ?? {} });
-  const parse = format.createStreamParser();
-  let messageId: string | undefined;
   for await (const event of stream) {
-    let failed = false;
-    parse(event, {
-      onDelta: (part) => onEvent?.({ type: 'llm.streaming.part', part }),
-      onFinish: (finish) => onEvent?.({ type: 'llm.streaming.finish', finish }),
-      onMessageId: (id) => {
-        if (id === messageId) return;
-        messageId = id;
-        onEvent?.({ type: 'llm.streaming.message_id', messageId: id });
-      },
-      onUsage: (usage) => onEvent?.({ type: 'llm.streaming.usage', usage }),
-      onError: (message) => {
-        failed = true;
-        onEvent?.({ type: 'llm.failed.remote', error: message });
-      },
-    });
+    failed = false;
+    parse(event, sink);
     if (failed) {
       return;
     }

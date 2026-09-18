@@ -6,7 +6,7 @@ import { toLlmSyntaxErrorMessage } from '#/llm/syntax-errors';
 import type { ProtocolBase, ProtocolRequesterOptions, TraitContext } from '#/llm/protocol/base';
 import { resolveModelConnection } from '#/llm/protocol/connection';
 import { applyThinking } from '#/llm/protocol/thinking';
-import { resolveMaxCompletionCap, type FormatRequestInput } from '#/llm/protocol/format';
+import { resolveMaxCompletionCap, type FormatRequestInput, type StreamParseSink } from '#/llm/protocol/format';
 import {
   mergeRequestHeaders,
   type LlmClientContext,
@@ -74,7 +74,7 @@ export function prepareGoogleGenAIRequest(
   );
   const params = assembleGoogleGenAIRequest(input, { contents: merged, tools, kwargs });
   const finalParams = trait?.buildParams?.(params, ctx) ?? params;
-  return encodeGoogleGenAIRequest(finalParams);
+  return encodeGoogleGenAIRequest(finalParams, input.stream !== false);
 }
 
 function createClient(
@@ -141,32 +141,48 @@ async function executeGoogleGenAIRequest(
     generateContentStream(
       params: GenerateContentParameters,
     ): Promise<AsyncIterable<Record<string, unknown>>>;
+    generateContent(params: GenerateContentParameters): Promise<Record<string, unknown>>;
   };
+  const parse = format.createStreamParser();
+  let messageId: string | undefined;
+  let failed = false;
+  const sink: StreamParseSink = {
+    onDelta: (part) => onEvent?.({ type: 'llm.streaming.part', part }),
+    onFinish: (finish) => onEvent?.({ type: 'llm.streaming.finish', finish }),
+    onMessageId: (id) => {
+      if (id === messageId) return;
+      messageId = id;
+      onEvent?.({ type: 'llm.streaming.message_id', messageId: id });
+    },
+    onUsage: (usage) => onEvent?.({ type: 'llm.streaming.usage', usage }),
+    onError: (message) => {
+      failed = true;
+      onEvent?.({ type: 'llm.failed.remote', error: message });
+    },
+  };
+  if (!request.stream) {
+    const body = await Promise.race([
+      models.generateContent(request.params),
+      abortPromise(signal),
+    ]);
+    failed = false;
+    parse(body, sink);
+    if (failed) {
+      return;
+    }
+    onEvent?.({ type: 'llm.done' });
+    return;
+  }
   const stream = await Promise.race([
     models.generateContentStream(request.params),
     abortPromise(signal),
   ]);
-  const parse = format.createStreamParser();
-  let messageId: string | undefined;
   for await (const chunk of stream) {
     if (signal.aborted) {
       throw createAbortException();
     }
-    let failed = false;
-    parse(chunk, {
-      onDelta: (part) => onEvent?.({ type: 'llm.streaming.part', part }),
-      onFinish: (finish) => onEvent?.({ type: 'llm.streaming.finish', finish }),
-      onMessageId: (id) => {
-        if (id === messageId) return;
-        messageId = id;
-        onEvent?.({ type: 'llm.streaming.message_id', messageId: id });
-      },
-      onUsage: (usage) => onEvent?.({ type: 'llm.streaming.usage', usage }),
-      onError: (message) => {
-        failed = true;
-        onEvent?.({ type: 'llm.failed.remote', error: message });
-      },
-    });
+    failed = false;
+    parse(chunk, sink);
     if (failed) {
       return;
     }

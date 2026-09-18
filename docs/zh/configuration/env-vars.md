@@ -168,6 +168,7 @@ kimi
 | `KIMI_LOOP_MAX_STEPS_PER_TURN` | Agent 单轮最大步数，优先级高于 `config.toml` 的 `[loop_control] max_steps_per_turn`；`0` 表示无上限 | 非负整数；非法值被忽略 |
 | `KIMI_LOOP_MAX_ATTEMPTS_PER_STEP` | 单步失败后的最大总尝试次数（含首次尝试），优先级高于 `config.toml` 的 `[loop_control] max_attempts_per_step` | 非负整数；非法值被忽略 |
 | `KIMI_CODE_INFINITE_RETRY` | 让所有失败的 LLM 请求无限重试而不是终止任务；指数退避（32 秒封顶）并尊重 `Retry-After`，等待期间中断仍生效 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
+| `KIMI_CODE_TOOLS_DISABLED` | 逗号分隔的工具禁用名单，对所有 Agent 生效，匹配规则同 `[tools] disabled`（内置工具精确名、MCP 工具 `mcp__server__*` glob）；设置时整体替换 `config.toml` 的 `[tools] disabled`，不写回配置文件 | 工具名/glob 列表，如 `Agent,AgentSwarm,mcp__github__*` |
 | `KIMI_TOKEN_COUNTING_STRATEGY` | 对外上报的上下文 token 计数，优先级高于 `config.toml` 的 `[token_counting] strategy` | `measured+estimated`、`measured`、`estimated`（不区分大小写）；非法值被忽略 |
 | `KIMI_WEB_SEARCH_BASE_URL` | 网页搜索（`WebSearch`）服务的 API URL，优先级高于配置文件；凭据与自定义 header 不发往该端点 | 非空字符串；空白值被忽略 |
 | `KIMI_WEB_SEARCH_API_KEY` | 网页搜索（`WebSearch`）服务的 API 密钥；设置后同时替换配置中的 API 密钥和 OAuth 凭据 | 非空字符串；空白值被忽略 |
@@ -180,6 +181,7 @@ kimi
 | `KIMI_MODEL_TOP_P` | 每次请求的核采样 `top_p`，仅对 `kimi` 供应商生效（全局生效） | 数字，如 `0.95` |
 | `KIMI_MODEL_THINKING_EFFORT` | 在线上强制使用指定的思考强度，绕过模型声明的 `support_efforts`；仅 `kimi` 供应商生效 | 思考强度值，如 `max` |
 | `KIMI_MODEL_THINKING_KEEP` | 保留思考透传；`kimi` 以 `thinking.keep` 发送，`anthropic` 以 `clear_thinking_20251015` 编辑发送；覆盖 `[thinking] keep` | API 接受的值，如 `all`；传入关值（`false`/`0`/`no`/`off`/`none`/`null`）可禁用 |
+| `KIMI_CODE_MODEL_STREAM` | 当前活跃模型的 LLM 请求是否使用流式；设为假值时改用非流式（一次性返回完整响应），全局生效（不依赖 `KIMI_MODEL_NAME`），优先级高于 `config.toml` 的 `[modelOverrides] stream` | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off`；非法值会立即失败 |
 | `KIMI_CODE_NO_AUTO_UPDATE` | 完全禁用更新预检：不检查、不后台安装、不提示。同时兼容旧名 `KIMI_CLI_NO_AUTO_UPDATE` | 真值：`1`/`true`/`yes`/`on` |
 | `KIMI_DISABLE_CRON` | 禁用定时任务工具（`CronCreate` 拒绝新计划，已有任务不触发） | `1` 表示禁用 |
 
