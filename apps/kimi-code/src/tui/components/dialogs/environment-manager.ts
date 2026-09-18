@@ -1,6 +1,6 @@
 /**
- * EnvironmentManagerComponent — pure-view management UI for the `/environment` command
- * (experimental remote environment), modeled on `provider-manager.ts`.
+ * EnvironmentManagerComponent — pure-view management UI for the `/environment`
+ * command, modeled on `provider-manager.ts`.
  *
  * One row per registered environment (local first) plus a synthetic
  * `[ Add Environment ]` action row. Each environment row shows its id, the bound
@@ -53,6 +53,8 @@ export interface EnvironmentManagerOptions {
   readonly onReconnect: (environmentId: string) => void;
   readonly onAdd: () => void;
   readonly onClose: () => void;
+  /** Triggers a re-render; the host wires this to `ui.requestRender()`. */
+  readonly requestRender: () => void;
 }
 
 interface EnvironmentRow {
@@ -116,18 +118,21 @@ export class EnvironmentManagerComponent extends Container implements Focusable 
     if (newIdx < 0) newIdx = Math.min(this.selectedIndex, Math.max(0, this.rows.length - 1));
     this.selectedIndex = newIdx;
     this.invalidate();
+    this.opts.requestRender();
   }
 
   /** Lock the dialog while a connect / reconnect is in flight. */
   setBusy(message: string): void {
     this.action = { kind: 'busy', message };
     this.invalidate();
+    this.opts.requestRender();
   }
 
   /** Show a failure inline (handshake exit code + bounded stderr, cwd validation). */
   showError(message: string): void {
     this.action = { kind: 'error', message };
     this.invalidate();
+    this.opts.requestRender();
   }
 
   clearAction(): void {

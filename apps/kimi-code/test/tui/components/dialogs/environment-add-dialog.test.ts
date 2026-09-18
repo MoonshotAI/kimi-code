@@ -21,6 +21,7 @@ function makeDialog(overrides: Partial<EnvironmentAddDialogOptions> = {}): Envir
     existingIds: ['local'],
     onSubmit: vi.fn(),
     onCancel: vi.fn(),
+    requestRender: vi.fn(),
     ...overrides,
   });
   dialog.focused = true;
@@ -188,5 +189,13 @@ describe('EnvironmentAddDialogComponent', () => {
     expect(rendered(dialog)).toContain('Writing config.toml…');
     dialog.handleInput(ENTER);
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it('requests a repaint on setBusy and showError', () => {
+    const requestRender = vi.fn();
+    const dialog = makeDialog({ requestRender });
+    dialog.setBusy('Writing config.toml…');
+    dialog.showError('boom');
+    expect(requestRender).toHaveBeenCalledTimes(2);
   });
 });

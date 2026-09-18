@@ -154,9 +154,11 @@ export interface SlashCommandHost {
   hydrateLazyConfigDefaults(): Promise<void>;
   /**
    * Re-sync the footer environment slot with the session's binding and connection
-   * status (experimental remote environment). A no-op with the flag off.
+   * status.
    */
   refreshEnvironmentSlot(): Promise<void>;
+  /** Schedule a repaint; dialogs call this after async state changes. */
+  requestRender(): void;
 
   // Session
   requireSession(): Session;

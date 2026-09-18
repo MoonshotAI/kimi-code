@@ -553,6 +553,10 @@ export class KimiTUI {
     this.setupAutocomplete();
   }
 
+  requestRender(): void {
+    this.state.ui.requestRender();
+  }
+
   async refreshSkillCommands(session?: SkillListSession): Promise<void> {
     if (session === undefined) {
       // v2 engine: skills live on the workspace handler, not the session, so

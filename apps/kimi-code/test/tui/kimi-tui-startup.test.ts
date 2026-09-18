@@ -42,6 +42,7 @@ interface StartupDriver {
   stop(exitCode?: number): Promise<void>;
   setSession(session: unknown): Promise<void>;
   syncRuntimeState(session?: unknown): Promise<void>;
+  ensureSession(): Promise<unknown>;
 }
 
 interface RuntimeStateDriver extends StartupDriver {
