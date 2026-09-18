@@ -3913,6 +3913,7 @@ export class KimiTUI {
         new TrustPromptComponent({
           workDir,
           gatedMcpServers: info.gatedMcpServers,
+          gatedEnvironments: info.gatedEnvironments,
           onSelect: (c) => {
             resolve(c);
           },
