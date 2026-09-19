@@ -16,6 +16,7 @@ import {
   resumeSessionById,
   writeProjectEnvironmentDeclaration,
   EnvironmentError,
+  isError2,
   type IAgentScopeHandle,
   type RemoteEnvironmentEntry,
   type EnvironmentBinding,
@@ -71,8 +72,12 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
       tags: ['sessions'],
     },
     async (req, reply) => {
-      const agent = await resolveEnvironmentAgent(core, req.params.session_id);
-      reply.send(okEnvelope(toResponse(agent.accessor.get(IAgentEnvironmentBindingService).get()), req.id));
+      try {
+        const agent = await resolveEnvironmentAgent(core, req.params.session_id);
+        reply.send(okEnvelope(toResponse(agent.accessor.get(IAgentEnvironmentBindingService).get()), req.id));
+      } catch (error) {
+        sendEnvironmentRouteError(reply, req.id, error);
+      }
     },
   );
   app.get(getRoute.path, getRoute.options, getRoute.handler as Parameters<EnvironmentRouteHost['get']>[2]);
@@ -139,26 +144,33 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
       path: '/sessions/{session_id}/environments',
       params: sessionEnvironmentParamsSchema,
       success: { data: sessionEnvironmentsResponseSchema },
-      errors: { [ErrorCode.SESSION_NOT_FOUND]: {} },
+      errors: {
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.WORKSPACE_NOT_FOUND]: {},
+      },
       description: 'List the environments registered for the session workspace',
       tags: ['sessions'],
     },
     async (req, reply) => {
-      const session = await resumeSessionById(core.accessor, req.params.session_id);
-      if (session === undefined) {
-        throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${req.params.session_id} does not exist`);
+      try {
+        const session = await resumeSessionById(core.accessor, req.params.session_id);
+        if (session === undefined) {
+          throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${req.params.session_id} does not exist`);
+        }
+        const workspaceId = session.accessor.get(ISessionContext).workspaceId;
+        const instance = await resolveWorkspaceInstance(core, workspaceId);
+        const declarations = await resolveDeclarations(core, instance.root);
+        const payload: SessionEnvironmentsResponse = {
+          workspace_id: workspaceId,
+          environments: instance.environments.snapshot().environments.map((environment) =>
+            toEntry(environment, declarations.get(environment.environmentId)),
+          ),
+          ssh_hosts: [...await resolveSshHosts(core)],
+        };
+        reply.send(okEnvelope(payload, req.id));
+      } catch (error) {
+        sendEnvironmentRouteError(reply, req.id, error);
       }
-      const workspaceId = session.accessor.get(ISessionContext).workspaceId;
-      const instance = await resolveWorkspaceInstance(core, workspaceId);
-      const declarations = await resolveDeclarations(core, instance.root);
-      const payload: SessionEnvironmentsResponse = {
-        workspace_id: workspaceId,
-        environments: instance.environments.snapshot().environments.map((environment) =>
-          toEntry(environment, declarations.get(environment.environmentId)),
-        ),
-        ssh_hosts: [...await resolveSshHosts(core)],
-      };
-      reply.send(okEnvelope(payload, req.id));
     },
   );
   app.get(listRoute.path, listRoute.options, listRoute.handler as Parameters<EnvironmentRouteHost['get']>[2]);
@@ -173,6 +185,7 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.WORKSPACE_NOT_FOUND]: {},
       },
       description: 'Declare an environment for the session workspace',
       tags: ['sessions'],
@@ -342,6 +355,19 @@ function sendEnvironmentRouteError(
   if (error instanceof HandshakeError) {
     reply.send(errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error.message, requestId));
     return;
+  }
+  if (isError2(error)) {
+    switch (error.code) {
+      case ErrorCodes.SESSION_NOT_FOUND:
+        reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, error.message, requestId));
+        return;
+      case ErrorCodes.WORKSPACE_NOT_FOUND:
+        reply.send(errEnvelope(ErrorCode.WORKSPACE_NOT_FOUND, error.message, requestId));
+        return;
+      case ErrorCodes.CONFIG_INVALID:
+        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, error.message, requestId));
+        return;
+    }
   }
   throw error;
 }

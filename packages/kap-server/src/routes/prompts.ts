@@ -7,12 +7,12 @@ import {
   IAgentPermissionModeService,
   IAgentProfileService,
   IAgentEnvironmentBindingService,
+  IAgentEnvironmentService,
   IAgentToolPolicyService,
   IAgentSkillService,
   IEventBus,
   IEventService,
   IFileService,
-  IEnvironmentResolver,
   ISessionMediaStore,
   ISessionMetadata,
   ISessionSkillCatalog,
@@ -32,10 +32,12 @@ import {
   isError2,
   Error2,
   ErrorCodes,
+  EnvironmentError,
   sessionMediaOriginalsDir,
   type ISessionScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { HandshakeError } from '@moonshot-ai/remote-exec';
 import { ErrorCode } from '../protocol/error-codes';
 import { projectPromptContentParts } from '../services/messages/messageProjection';
 import {
@@ -66,6 +68,7 @@ import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, resolveActionTarget, runAction } from './action-dispatch';
+import { environmentErrorCode } from './environment';
 
 interface PromptRouteHost {
   get(
@@ -120,6 +123,7 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     toolPolicy: agent.accessor.get(IAgentToolPolicyService),
     permissionMode: agent.accessor.get(IAgentPermissionModeService),
     binding: agent.accessor.get(IAgentEnvironmentBindingService),
+    environment: agent.accessor.get(IAgentEnvironmentService),
   };
 }
 
@@ -203,6 +207,8 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.FILE_NOT_FOUND]: {},
         [ErrorCode.PROMPT_ID_CONFLICT]: {},
+        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
       },
       description: 'Submit a prompt to a session',
       tags: ['prompts'],
@@ -265,7 +271,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
               resolveOriginalsTarget: binding.environmentId === 'local'
                 ? undefined
                 : async () => {
-                    environmentLease ??= core.accessor.get(IEnvironmentResolver).acquire(binding, ['fs']);
+                    environmentLease ??= await resolved.environment.acquireWhenReady(['fs']);
                     return environmentOriginalsTarget(environmentLease.environment);
                   },
               resolveAttachmentsDir: async () => {
@@ -276,7 +282,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
               resolveAttachmentsTarget: binding.environmentId === 'local'
                 ? undefined
                 : async () => {
-                    environmentLease ??= core.accessor.get(IEnvironmentResolver).acquire(binding, ['fs']);
+                    environmentLease ??= await resolved.environment.acquireWhenReady(['fs']);
                     return environmentAttachmentsTarget(environmentLease.environment);
                   },
             },
@@ -625,6 +631,14 @@ function sendMappedError(
 ): void {
   const requestId = req.id;
   const log = requestLog(req);
+  if (err instanceof EnvironmentError) {
+    reply.send(errEnvelope(environmentErrorCode(err.code), err.message, requestId));
+    return;
+  }
+  if (err instanceof HandshakeError) {
+    reply.send(errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, err.message, requestId));
+    return;
+  }
   if (isError2(err)) {
     switch (err.code) {
       case 'session.not_found':
