@@ -94,13 +94,13 @@ kimi -p --environment dev-box "Run the test suite"
 
 The flag is creation-only, like `--agent`: it cannot be combined with `--session`/`--continue`, because a resumed session restores its recorded binding automatically. An unknown id, or an entry without `defaultCwd`, fails startup outright. Creation also connects to the target before the session starts, so a connection failure aborts with the reported reason instead of opening a broken session.
 
-## Agent environment tools (experimental)
+## Agent environment tools
 
-The switches above are driven by you. An experimental flag instead hands environment switching to the agent itself: the main agent gains two tools, and its system prompt lists the environments available in the session's workspace so it knows which ids exist. Everything else on this page — the binding model, the reminder recorded on every switch, undo restoring the previous binding — applies unchanged.
+The switches above are driven by you. The agent environment tools instead hand environment switching to the agent itself: the main agent gains two tools, and its system prompt lists the environments available in the session's workspace so it knows which ids exist. Everything else on this page — the binding model, the reminder recorded on every switch, undo restoring the previous binding — applies unchanged.
 
-The feature is off by default. Enable it with `KIMI_CODE_EXPERIMENTAL_AGENT_ENVIRONMENT_TOOLS=1`, `[experimental] agent_environment_tools = true` in `config.toml`, or `/experiments` before creating the session; the master switch `KIMI_CODE_EXPERIMENTAL_FLAG=1` enables it too. Sessions created while it is disabled have neither the tools nor the prompt section.
+The tools are on by default. To opt out, set `KIMI_CODE_EXPERIMENTAL_AGENT_ENVIRONMENT_TOOLS=0`, write `[experimental] agent_environment_tools = false` in `config.toml`, or toggle the feature off in `/experiments` before creating the session. Sessions created while it is disabled have neither the tools nor the prompt section.
 
-With the flag on, the main agent can:
+The main agent can:
 
 - **Switch with `change_environment`**: pass an environment `id` (`local` or a declared id) and optionally a `cwd` (falls back to the declaration's `defaultCwd`). The target connects eagerly — a connection or `cwd` validation failure is reported immediately and changes nothing — and the switch itself takes effect at the boundary of the current turn: tool calls in the rest of the turn keep running on the previous environment, and the reminder with the new environment's details arrives with the next turn.
 - **Create a temporary environment with `connect`**: pass a launcher spec — `{ type: "ssh", host: "..." }`, `{ type: "docker", container: "..." }`, or `{ type: "command", command: "...", args: [...] }`, with an optional `id`. The environment connects right away and is registered in the workspace like a declared one, but nothing is written to `config.toml` or `.kimi-code/environments.toml`: a temporary environment vanishes when the process exits, cannot be reconnected after a connection drop (create a fresh one instead), and a session resumed onto it finds it gone.
