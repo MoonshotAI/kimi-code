@@ -28,7 +28,7 @@ XState 时序（entry 拦不住 invoke、onDone 是转移）见 [lifecycle-model
 
 ## 队列的目的
 
-`submit` 立刻返回，不写 journal。机器用三个袋子把「用户想说的话」和「正在跑的 turn」拆开：
+`submit` 等到 `prompt.submitted` 才返回（命令已被接收），不写 journal，也不等 `turn.ended`。机器用三个袋子把「用户想说的话」和「正在跑的 turn」拆开：
 
 | 袋子 | 谁放进去 | 目的 |
 |---|---|---|
@@ -108,7 +108,7 @@ turn 结束（`done` / `failed` / `aborted`）后 agent 回到 `idle`，并 emit
 
 `store.onCommit` 之后 `node.fire(entry.event)`。所以 `session.on('message.appended')` 看到的是已落盘对象。一个 turn 可以有多条 `message.appended`，不是整 turn 一条。
 
-`agent.submit` 目前只 `send` 给机器，**不**写 `input.submitted`。投影里的 queue 字段因此跨重启是空的；活着的 queue 在机器 context 里。
+`agent.submit` / `notify` / `remind` / `cancel` / `steer` / `abort` / `pause` / `continue` 是 XState `send` 到外部 Promise 的翻译器：先订对应 `emit`，再 `send`，再把回执事件返回。`submit` **不**写 `input.submitted`。投影里的 queue 字段因此跨重启是空的；活着的 queue 在机器 context 里。并发 `submit` 用 entry 对象身份匹配回执；`steer` 用请求的 `ids`。每一条命令路径都必须 `emit`，否则 Promise 挂起。
 
 `agent.on('turn.done'|'turn.failed'|'turn.aborted')` 会等到这次 dispatch 链 `settled` 再回调，避免 UI 先于 journal。
 

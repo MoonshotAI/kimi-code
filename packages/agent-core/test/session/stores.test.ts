@@ -71,7 +71,7 @@ async function runTurn(host: AgentHandle, store: AgentStore, text: string, histo
   const done = new Promise<void>((resolve) => {
     host.on('turn.done', () => { resolve(); });
   });
-  host.submit(createUserMessage(text));
+  await host.submit(createUserMessage(text));
   await done;
   expect(store.getState().history.length).toBe(historyLength);
   expect(store.getState().history.some((entry) => entry.message.role === 'assistant')).toBe(true);

@@ -6,7 +6,7 @@
 
 - [1 跑完一个 turn](how-to-guides/01-run-a-turn.md)
 - [2 Todo Feature](how-to-guides/02-add-todo-feature.md)
-- [3 听事件并触发请求](how-to-guides/03-listen-and-trigger.md)
+- [3 写一个会自动压上下文的 Feature](how-to-guides/03-listen-and-trigger.md)
 - [4 暴露 facade](how-to-guides/04-expose-facade.md)
 - [5 可后台 Tool](how-to-guides/05-background-tool.md)
 - [6 Bash 与 detach](how-to-guides/06-bash-and-detach.md)

@@ -5,7 +5,6 @@ import {
   createMedia,
   createMemoryMediaSource,
   createMemoryMediaUploadCache,
-  MAIN_AGENT_ID,
   mountApp,
   useAgent,
   type AppHandle,
@@ -22,15 +21,12 @@ import {
   features,
   fsSessionSpace,
   isToolSelectEnabled,
-  provideSession,
-  type SessionSpace,
 } from '@moonshot-ai/harness-core';
 
 import { loadKimiCodeDefault } from './kimi-code-config';
 
 export interface ExampleApp {
   readonly app: AppHandle;
-  readonly space: SessionSpace;
   readonly key: string;
   readonly model: LlmModel;
   readonly dataRoot: string;
@@ -44,11 +40,8 @@ export function mountExample(options?: { http?: boolean }): ExampleApp {
     process.env['HARNESS_EXAMPLE_DIR'] ?? join(process.cwd(), '.local/harness-example'),
   );
   const port = Number(process.env['PORT'] ?? 8787);
-  const space = fsSessionSpace(dataRoot);
   const app = mountApp({
-    provide(node) {
-      provideSession(node, space, { agent: { agentId: MAIN_AGENT_ID } });
-    },
+    space: fsSessionSpace(dataRoot),
     features: [
       ...features,
       bindExampleLlm(config, credentialProvider, requester),
@@ -79,7 +72,7 @@ export function mountExample(options?: { http?: boolean }): ExampleApp {
           ]),
     ],
   });
-  return { app, space, key, model, dataRoot, requester };
+  return { app, key, model, dataRoot, requester };
 }
 
 function bindExampleLlm(

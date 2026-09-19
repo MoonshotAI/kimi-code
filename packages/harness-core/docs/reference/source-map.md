@@ -26,7 +26,9 @@ Reference：写 Feature 或改文档前，先对上当前 checkout 的路径。�
 | `feature/feature.ts` | `createFeature`、`Features`、`bindHandleOn` |
 | `feature/hooks.ts` | `useFeatureSlot` |
 | `feature/contribution-hooks.ts` | `useAgent` / ports / `useAgentStore` |
-| `app/{app,session,agent}Unit.ts` | 产品树与 Handle；`setConfig` / `setCredentialProvider` / `setRequester` |
+| `feature/run-turn.ts` | `useTurn` / `runTurn`：另开 turn，不进用户 queue |
+| `app/{app,session,agent}Unit.ts` | 产品树与 Handle；`setConfig` / `setCredentialProvider` / `setRequester`；`mountApp({ space })` / `app.open` / `session.create` |
+| `app/session-space.ts` | `SessionSpace`、`memorySessionSpace` |
 | `agent-machine/agent.ts` | agent 机器 |
 | `agent-machine/turn.ts` | turn 机器 |
 | `agent-machine/tool.ts` | tool 机器 |
@@ -45,11 +47,10 @@ Reference：写 Feature 或改文档前，先对上当前 checkout 的路径。�
 
 | 路径 | 核对什么 |
 |---|---|
-| `host/session.ts` | `provideSession`、`createOpenedSession`、`SessionSpace` token |
-| `host/session-space.ts` | catalog：`fsSessionSpace` / `memorySessionSpace` |
+| `host/session-space.ts` | `fsSessionSpace` |
 | `preset.ts` | 默认 Feature 名单 |
 | `features/<name>/feature.ts` | 产品 Feature |
-| `feature-http/` | `createHttp`、`route-builtin` |
+| `feature-http/` | `createHttp`、`route-builtin`（含 `GET /features`） |
 | `example/app.ts` | 完整装配 |
 
 ## 使用前检查

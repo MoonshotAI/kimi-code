@@ -36,7 +36,7 @@ const agent = session.get(agentId);
 - `use*` 返回命令面（`*Commands`）。`mount*` / `get` 返回 `*Handle`（`UnitHandle` + 命令面）。Feature 用命令面；卸载、`ready`、`state`、`resolve` 走 Handle。绑 generate 是命令面上的 `setConfig` / `setCredentialProvider` / `setRequester`，不是 `resolve`。
 - 宿主取 Feature facade 用 `handle.resolve(token)`，与 `inject` 同语义（缺失抛错）。`get(id)` 只表示孩子，可以 miss。不要 `useXxx(handle)` 重载。
 - 宿主订 Feature 事件用 `handle.on(feature, type, handler)`，事件联合是 `createFeature<E>` 的幽灵泛型。不要做成 `feature.on(handle)`。
-- ensure-open、打开持久化容器挂在已有端口方法上（`SessionSpace`、`createOpenedSession`、`useCreateSession`、`openStore`），不新造顶层 hook。
+- ensure-open、打开持久化容器挂在已有端口方法上（`SessionSpace`、`app.open`、`openStore`），不新造顶层 hook。
 
 HTTP handler 由 `asUnit` 恢复上下文，await 前完成所有 `use*`；之后用捕获的 `app` / `session` / `agent`。见 [setup 调用边界](setup-context.md)。
 

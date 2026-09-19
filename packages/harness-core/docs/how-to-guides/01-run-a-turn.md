@@ -6,18 +6,18 @@ How-to：用 builtin SDK 绑一个已知模型的 API，`mountApp` 开出实例�
 
 ## 装配
 
-`openaiProvider` / `createStaticCredentialProvider` / `createUserMessage` / `mountApp` 来自 `@moonshot-ai/agent-core`。`memorySessionSpace` / `provideSession` / `createOpenedSession` 来自 `@moonshot-ai/harness-core`。
+`openaiProvider` / `createStaticCredentialProvider` / `createUserMessage` / `mountApp` / `memorySessionSpace` 来自 `@moonshot-ai/agent-core`。落盘 `fsSessionSpace` 来自 `@moonshot-ai/harness-core`。
 
 ```ts
 import {
   createStaticCredentialProvider,
   createUserMessage,
   MAIN_AGENT_ID,
+  memorySessionSpace,
   mountApp,
   openaiProvider,
   type LlmModel,
 } from '@moonshot-ai/agent-core';
-import { createOpenedSession, memorySessionSpace, provideSession } from '@moonshot-ai/harness-core';
 
 const model: LlmModel = {
   provider: 'openai',
@@ -34,16 +34,13 @@ const model: LlmModel = {
   apiKey: process.env['OPENAI_API_KEY'],
 };
 
-const space = memorySessionSpace();
 const app = mountApp({
-  provide(node) {
-    provideSession(node, space, { agent: { agentId: MAIN_AGENT_ID } });
-  },
+  space: memorySessionSpace(),
 });
 await app.ready();
 ```
 
-要开 session 才注入 `SessionSpace`。`agent` 是每个 `createOpenedSession` 自动挂上的模板。最小路径不要传 `features`；要默认产品名单再写 `features: [...features]`。`config` / 凭证 / 传输不在 `mountApp` 上配，开完 agent 再 set。
+`space` 是 App 的 catalog。最小路径不要传 `features`；要默认产品名单再写 `features: [...features]`。`config` / 凭证 / 传输不在 `mountApp` 上配，开完 agent 再 set。
 
 Anthropic / Google 把 requester 换成 `anthropicProvider.requesters.anthropic` / `googleProvider.requesters['google-genai']`。Kimi 用 `@moonshot-ai/harness-core` 的 `kimiProvider.requesters.openai`（或 `.anthropic` / `.openai_responses`）。协议绑定细节见 [15. 绑定 Provider](15-run-llm-request.md)。按模型再绑一条见 [7. provider-catalog](07-use-provider-catalog.md)。
 
@@ -52,38 +49,43 @@ Anthropic / Google 把 requester 换成 `anthropicProvider.requesters.anthropic`
 ## 开 session、发 prompt、等结束
 
 ```ts
-import type { SessionHandle } from '@moonshot-ai/agent-core';
-
-function waitTurn(session: SessionHandle): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const off = session.on('turn.ended', (event) => {
-      off();
-      const outcome = event['outcome'];
-      if (outcome === 'done') resolve();
-      else reject(new Error(String(event['errorMessage'] ?? outcome)));
-    });
-  });
-}
-
-const session = await createOpenedSession(app, { sessionId: 'demo' });
-const agent = session.get(MAIN_AGENT_ID);
-if (agent === undefined) throw new Error('agent not mounted');
+const session = await app.open({ sessionId: 'demo' });
+const agent = session.get(MAIN_AGENT_ID) ?? await session.create({ agentId: MAIN_AGENT_ID });
 agent.setConfig({ model });
 agent.setCredentialProvider(createStaticCredentialProvider(model.apiKey));
 agent.setRequester(openaiProvider.requesters.openai);
 
-const finished = waitTurn(session);
-agent.submit(createUserMessage('你好'), {
+const ended = session.wait('turn.ended');
+const submitted = await agent.submit(createUserMessage('你好'), {
   promptId: 'p1',
   origin: { kind: 'user' },
   tracked: true,
 });
-await finished;
+console.log(submitted);
+// {
+//   type: 'prompt.submitted',
+//   entry: {
+//     message: { role: 'user', content: [{ type: 'text', text: '你好' }] },
+//     meta: { source: 'input', promptId: 'p1', origin: { kind: 'user' }, tracked: true },
+//   },
+// }
+const event = await ended;
+console.log(event);
+// {
+//   sessionId: 'demo',
+//   agentId: 'main',
+//   type: 'turn.ended',
+//   turnId: 0,
+//   outcome: 'done',
+// }
+if (event['outcome'] !== 'done') {
+  throw new Error(String(event['errorMessage'] ?? event['outcome']));
+}
 ```
 
-`submit` 是同步 `send`，只进机器 queue，立刻返回，**不**写 journal 的 `input.submitted`。等 UI 事实订节点事件 `turn.ended`，不要订 `agent.on('turn.done')`。本步 assistant 落盘看 `session.on('message.appended')`；一个 turn 可以有多条。
+`submit` 先订再 `send`，等到机器 `prompt.submitted` 才把该事件返回——表示命令已被接收，**不**写 journal 的 `input.submitted`，也**不**等 turn 结束。等 UI 事实用 `session.wait('turn.ended')`，不要订 `agent.on('turn.done')`。`wait` 只等之后发生的事件，先订再 `submit`。本步 assistant 落盘看 `session.on('message.appended')`；一个 turn 可以有多条。
 
-`get` 失败是 `undefined`。catalog 里有、树还没挂时也是 `undefined`（ensure-open 未做）。没有模板、或再挂一个 agent：`session.create({ agentId })`。
+`get` 失败是 `undefined`。catalog 里有、树还没挂时也是 `undefined`（ensure-open 未做）。agent 用到时再 `session.create({ agentId })`，不要在 `mountApp` 上预备默认值。
 
 ## 流式 Delta
 
@@ -99,20 +101,20 @@ const off = agent.on('llm.streaming.part', (event) => {
 
 ## 其余命令
 
-`setConfig` / `setCredentialProvider` / `setRequester` 不进机器。其余都是同步 `send`。
+`setConfig` / `setCredentialProvider` / `setRequester` 不进机器，仍是同步。其余命令都是「先订再 `send`，再等对应机器回执」的 async 翻译器。
 
 | 要做什么 | 调用 | 进哪 |
 |---|---|---|
 | 模型 / thinking / 采样 | `setConfig(config)` | 下次 `generate` |
 | 凭证 | `setCredentialProvider(provider)` | 下次 `generate` |
 | 协议传输 | `setRequester(requester)` | 下次 `generate` |
-| 用户 prompt（占队列、可撤/可并） | `submit(message, meta?)` | `queue` |
-| 不占队列的旁路说明 | `notify(message)` | `notifications` |
-| 按 key 覆盖一条 reminder | `remind(key, message)` | `reminders` |
-| 丢掉还没开跑的一条 prompt | `cancel(promptId)` | 从 `queue` 删 |
-| 把若干排队 prompt 合成一条通知 | `steer(id \| ids)` | 取出后当 `notify` |
-| 打断当前 turn | `abort(reason?)` | `aborting` → `turn.ended` `aborted` |
-| 暂停 / 继续 | `pause()` / `continue()` | 立 `paused` |
+| 用户 prompt（占队列、可撤/可并） | `await submit(message, meta?)` → `prompt.submitted` | `queue` |
+| 不占队列的旁路说明 | `await notify(message)` → `prompt.notified` | `notifications` |
+| 按 key 覆盖一条 reminder | `await remind(key, message)` → `prompt.reminded` | `reminders` |
+| 丢掉还没开跑的一条 prompt | `await cancel(promptId)` → `prompt.cancelled` | 从 `queue` 删 |
+| 把若干排队 prompt 合成一条通知 | `await steer(id \| ids)` → `prompt.steered` | 取出后当 `notify` |
+| 打断当前 turn | `await abort(reason?)` → `agent.aborted` | `aborting` → `turn.ended` `aborted` |
+| 暂停 / 继续 | `await pause()` / `await continue()` → `agent.paused` / `agent.continued` | 立 `paused` |
 
 `notify` 不会单独开一个「用户回合」。`remind` 等到下一次 `turn.drain` 才进 history。已经 `running` 的那条 `cancel` 撤不掉。
 
@@ -120,7 +122,7 @@ const off = agent.on('llm.streaming.part', (event) => {
 
 | 目的 | API |
 |---|---|
-| 已落盘事实、Feature `fire` | `session.on('message.appended' \| 'turn.ended' \| …)` |
+| 已落盘事实、Feature `fire` | `session.on` / `session.wait('message.appended' \| 'turn.ended' \| …)` |
 | streaming / retry / 工具中间态 | `agent.on('llm.streaming.part' \| 'tool.update' \| …)` |
 
 `agent.on('turn.done'|'turn.failed'|'turn.aborted')` 会等到这次 journal 写入链结束，但仍是机器载荷，和节点上的 `turn.ended` 不是同一条。事件总表见 [events](../reference/events.md)。

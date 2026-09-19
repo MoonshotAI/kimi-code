@@ -9,7 +9,7 @@ export function usePromptRoutes(prefix: string): void {
     id: 'prompts.submit',
     method: 'POST',
     path: `${prefix}/sessions/:session_id/prompts`,
-    handler: (request, response) => {
+    handler: async (request, response) => {
       const sessionId = param(request, 'session_id');
       if (sessionId === undefined) {
         sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required', 400);
@@ -28,12 +28,8 @@ export function usePromptRoutes(prefix: string): void {
         return;
       }
       const agentId = readAgentId(request) ?? MAIN_AGENT_ID;
-      const agent = session.get(agentId);
-      if (agent === undefined) {
-        sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`, 404);
-        return;
-      }
-      agent.submit(message, {
+      const agent = session.get(agentId) ?? await session.create({ agentId });
+      await agent.submit(message, {
         promptId,
         origin: { kind: 'user' },
         tracked: true,
@@ -50,7 +46,7 @@ export function usePromptRoutes(prefix: string): void {
     id: 'prompts.steerMany',
     method: 'POST',
     path: `${prefix}/sessions/:session_id/prompts\\:\\:steer`,
-    handler: (request, response) => {
+    handler: async (request, response) => {
       const ids = readPromptIds(request.body);
       if (ids === undefined) {
         sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'prompt_ids is required', 400);
@@ -72,7 +68,7 @@ export function usePromptRoutes(prefix: string): void {
         sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`, 404);
         return;
       }
-      agent.steer(ids);
+      await agent.steer(ids);
       sendOk(request, response, { steered: true, prompt_ids: ids });
     },
   });
@@ -81,7 +77,7 @@ export function usePromptRoutes(prefix: string): void {
     id: 'prompts.action',
     method: 'POST',
     path: `${prefix}/sessions/:session_id/prompts/:tail`,
-    handler: (request, response) => {
+    handler: async (request, response) => {
       const sessionId = param(request, 'session_id');
       const tail = param(request, 'tail');
       if (sessionId === undefined) {
@@ -119,11 +115,11 @@ export function usePromptRoutes(prefix: string): void {
         return;
       }
       if (parsed.action === 'abort') {
-        agent.cancel(parsed.id);
+        await agent.cancel(parsed.id);
         sendOk(request, response, { aborted: true });
         return;
       }
-      agent.steer([parsed.id]);
+      await agent.steer([parsed.id]);
       sendOk(request, response, { steered: true, prompt_ids: [parsed.id] });
     },
   });
@@ -132,7 +128,7 @@ export function usePromptRoutes(prefix: string): void {
     id: 'prompts.notify',
     method: 'POST',
     path: `${prefix}/sessions/:session_id/notify`,
-    handler: (request, response) => {
+    handler: async (request, response) => {
       const sessionId = param(request, 'session_id');
       if (sessionId === undefined) {
         sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required', 400);
@@ -149,12 +145,8 @@ export function usePromptRoutes(prefix: string): void {
         return;
       }
       const agentId = readAgentId(request) ?? MAIN_AGENT_ID;
-      const agent = session.get(agentId);
-      if (agent === undefined) {
-        sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`, 404);
-        return;
-      }
-      agent.notify(message);
+      const agent = session.get(agentId) ?? await session.create({ agentId });
+      await agent.notify(message);
       sendOk(request, response, { notified: true, agent_id: agent.agentId });
     },
   });
@@ -163,7 +155,7 @@ export function usePromptRoutes(prefix: string): void {
     id: 'prompts.remind',
     method: 'POST',
     path: `${prefix}/sessions/:session_id/remind`,
-    handler: (request, response) => {
+    handler: async (request, response) => {
       const sessionId = param(request, 'session_id');
       if (sessionId === undefined) {
         sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'session_id is required', 400);
@@ -189,12 +181,8 @@ export function usePromptRoutes(prefix: string): void {
         return;
       }
       const agentId = readAgentId(request) ?? MAIN_AGENT_ID;
-      const agent = session.get(agentId);
-      if (agent === undefined) {
-        sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`, 404);
-        return;
-      }
-      agent.remind(key, message);
+      const agent = session.get(agentId) ?? await session.create({ agentId });
+      await agent.remind(key, message);
       sendOk(request, response, { reminded: true, key, agent_id: agent.agentId });
     },
   });

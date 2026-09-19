@@ -12,6 +12,12 @@ export type EventHandler<E extends RuntimeEvent = RuntimeEvent> = (event: E) => 
 
 export type Unsubscribe = () => void;
 
+export interface WaitOpts<E extends RuntimeEvent = RuntimeEvent> {
+  readonly capture?: boolean;
+  readonly match?: (event: E) => boolean;
+  readonly signal?: AbortSignal;
+}
+
 export const EventContext = createToken<Record<string, unknown>>('kernel.eventContext');
 
 export interface NodeRef {
@@ -26,6 +32,7 @@ export interface NodeRef {
   fold<T>(collection: CollectionToken<T>): readonly T[];
   fire(event: RuntimeEvent): void;
   on(type: string, handler: EventHandler, opts?: { once?: boolean; capture?: boolean }): Unsubscribe;
+  wait(type: string, opts?: WaitOpts): Promise<RuntimeEvent>;
   ready(): Promise<void>;
   unmount(): Promise<void>;
 }
@@ -263,6 +270,61 @@ export class UnitNode implements NodeRef {
         list.splice(index, 1);
       }
     };
+  }
+
+  wait(type: string, opts?: WaitOpts): Promise<RuntimeEvent> {
+    return new Promise((resolve, reject) => {
+      if (this.signal.aborted) {
+        reject(new Error(`unit '${this.name}' is unmounted`));
+        return;
+      }
+      if (opts?.signal?.aborted) {
+        reject(new Error('aborted'));
+        return;
+      }
+      let settled = false;
+      const finish = (fn: () => void): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        off();
+        this.signal.removeEventListener('abort', onAbort);
+        opts?.signal?.removeEventListener('abort', onSignal);
+        fn();
+      };
+      const onAbort = (): void => {
+        finish(() => {
+          reject(new Error(`unit '${this.name}' is unmounted`));
+        });
+      };
+      const onSignal = (): void => {
+        finish(() => {
+          reject(new Error('aborted'));
+        });
+      };
+      const off = this.on(
+        type,
+        (event) => {
+          if (opts?.match !== undefined && !opts.match(event)) {
+            return;
+          }
+          finish(() => {
+            resolve(event);
+          });
+        },
+        { capture: opts?.capture },
+      );
+      this.signal.addEventListener('abort', onAbort, { once: true });
+      opts?.signal?.addEventListener('abort', onSignal, { once: true });
+      if (this.signal.aborted) {
+        onAbort();
+        return;
+      }
+      if (opts?.signal?.aborted) {
+        onSignal();
+      }
+    });
   }
 
   private readonly pendingReady = new Set<Promise<unknown>>();

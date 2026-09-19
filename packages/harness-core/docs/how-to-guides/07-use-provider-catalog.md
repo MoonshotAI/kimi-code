@@ -61,8 +61,7 @@ catalog.providers();
 catalog.models('openai');
 const binding = catalog.resolve('openai', 'gpt-4o');
 if (binding === undefined) throw new Error('model not in catalog');
-const agent = session.get(MAIN_AGENT_ID);
-if (agent === undefined) throw new Error('agent not mounted');
+const agent = session.get(MAIN_AGENT_ID) ?? await session.create({ agentId: MAIN_AGENT_ID });
 agent.setRequester(binding.requester);
 ```
 

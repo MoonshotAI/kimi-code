@@ -161,7 +161,7 @@ export function createCompactionMachine(deps: CompactionMachineDeps) {
         if (store === undefined) {
           throw new CompactError('unknown-agent', `unknown agent: '${deps.agentId}'`);
         }
-        deps.agent.pause();
+        await deps.agent.pause();
         await Promise.race([waitIdle(deps.agent, signal), aborted(signal)]);
         await deps.stores.flush();
         const state = store.getState();
@@ -371,7 +371,7 @@ export function createCompactionMachine(deps: CompactionMachineDeps) {
         entry: [
           ({ context }) => {
             if (context.cause !== 'user-abort') {
-              deps.agent.continue();
+              void deps.agent.continue();
             }
           },
           emit(({ context }) => ({

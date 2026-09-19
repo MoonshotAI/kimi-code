@@ -598,7 +598,7 @@ describe('event fire', () => {
     });
   });
 
-  it('honors once, wildcard handlers, and unsubscribe', () => {
+  it('honors once, wildcard handlers, and unsubscribe', async () => {
     const { node } = mountRoot(createUnit('root', () => {}));
     let onceCount = 0;
     const types: string[] = [];
@@ -610,12 +610,15 @@ describe('event fire', () => {
     const unsubscribe = node.on('e', () => {
       plainCount += 1;
     });
-    node.fire({ type: 'e' });
-    node.fire({ type: 'e' });
+    const matched = node.wait('e', { match: (event) => event['id'] === 2 });
+    await expect(node.wait('never', { signal: AbortSignal.abort() })).rejects.toThrow('aborted');
+    node.fire({ type: 'e', id: 1 });
+    node.fire({ type: 'e', id: 2 });
     node.fire({ type: 'other' });
     expect(onceCount).toBe(1);
     expect(types).toEqual(['e', 'e', 'other']);
     expect(plainCount).toBe(2);
+    expect(await matched).toMatchObject({ type: 'e', id: 2 });
     unsubscribe();
     node.fire({ type: 'e' });
     expect(plainCount).toBe(2);
@@ -633,9 +636,12 @@ describe('event fire', () => {
     const handle = node.mount(child);
     handle.node.fire({ type: 'e' });
     expect(calls).toBe(1);
+    const waiting = handle.node.wait('later');
     await handle.unmount();
     handle.node.fire({ type: 'e' });
     expect(calls).toBe(1);
+    await expect(waiting).rejects.toThrow('unmounted');
+    await expect(handle.node.wait('later')).rejects.toThrow('unmounted');
   });
 });
 

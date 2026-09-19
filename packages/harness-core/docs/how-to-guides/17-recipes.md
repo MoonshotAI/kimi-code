@@ -15,7 +15,7 @@ stores.session.subscribe((state) => { /* 仅状态变化 */ });
 agentStore.onCommit((entry) => { /* 每个已提交事件，重放不触发 */ });
 ```
 
-磁盘：`openSessionTree(dir)` 或 harness 的 `fsSessionSpace` + `createOpenedSession`。
+磁盘：`openSessionTree(dir)` 或 harness 的 `fsSessionSpace` + `app.open`。
 
 ## 开一个裸 store
 

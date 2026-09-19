@@ -4,8 +4,9 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { fsSessionSpace, memorySessionSpace, SessionSpaceError } from '#/host/session-space';
-import type { SessionSpace } from '#/host/session-space';
+import { memorySessionSpace, SessionSpaceError, type SessionSpace } from '@moonshot-ai/agent-core';
+
+import { fsSessionSpace } from '#/host/session-space';
 
 const bytes = new TextEncoder().encode('blob');
 

@@ -21,6 +21,7 @@ NodeRef 不是 Vue Ref，也不会复制或隔离底层 UnitNode。避免仅为�
 | `handle.resolve(token)` / `node.resolve(token)` | 立即解析自己和祖先，缺失时抛错。宿主用 Handle，不要先下到 `node` |
 | `node.providerRef(token)` | 整棵根树的响应式 provider 目录；不同于 resolve |
 | `app.on` / `session.on` / `node.on(type, handler, opts?)` | 返回取消订阅。`on(feature, type, handler)` 按 Feature 事件联合收窄；`on(feature, '*')` 只收 `featureName.` 前缀。开放字符串 overload 仍是 `RuntimeEvent`。`AgentHandle.on` 仍是机器事件 |
+| `app.wait` / `session.wait` / `node.wait(type, opts?)` | `on` 的 Promise 对偶，只等之后发生的事件。`opts.match` 不满足则继续等；`opts.signal` 取消；节点卸载按 `ready()` 同一句拒绝。不解释 `outcome`。`UnitHandle` 没有 `on` / `wait` |
 | `node.fire(event)` | 同步发送到自己和祖先路径 |
 | `node.contribute(collection, value, priority)` | 返回撤销函数，不像 `useContribute` 那样自动压 cleanup 栈 |
 | `node.fold(collection)` | 一次性的聚合数组，不是 computed |

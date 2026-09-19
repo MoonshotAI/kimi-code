@@ -121,10 +121,8 @@ mountApp({
 
 ## 7. 宿主怎么验
 
-开 session 先 `provideSession`，再：
-
 ```ts
-const session = await createOpenedSession(app, { sessionId: 's' });
+const session = await app.open({ sessionId: 's' });
 const face = session.resolve(DemoRef);
 session.on(demo, 'demo.updated', (event) => { /* … */ });
 ```

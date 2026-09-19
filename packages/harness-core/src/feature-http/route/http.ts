@@ -1,8 +1,6 @@
 import type { Request, Response } from 'express';
 
-import type { ContentPart, UserMessage } from '@moonshot-ai/agent-core';
-
-import { SessionSpaceError } from '#/host/session';
+import { SessionSpaceError, type ContentPart, type UserMessage } from '@moonshot-ai/agent-core';
 
 export const ErrorCode = {
   SUCCESS: 0,

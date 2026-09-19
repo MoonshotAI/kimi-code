@@ -1,6 +1,6 @@
 export { features } from './preset';
 
-export * from './host/session';
+export * from './host/session-space';
 export * from './feature-http/index';
 export * from './features/todo/index';
 

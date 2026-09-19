@@ -43,7 +43,7 @@ const ref = await store.put({
   filename: 'shot.png',
 });
 
-agent.submit({
+await agent.submit({
   role: 'user',
   content: [
     { type: 'text', text: '看看这张图' },

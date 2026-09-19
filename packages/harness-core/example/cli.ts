@@ -5,12 +5,10 @@ import {
   createUserMessage,
   MAIN_AGENT_ID,
   type AssistantMessage,
-  type SessionHandle,
 } from '@moonshot-ai/agent-core';
 import type { RuntimeEvent } from '@moonshot-ai/agent-core/kernel/index';
 
 import {
-  createOpenedSession,
   InteractionRef,
   interaction,
   type Interaction,
@@ -63,7 +61,7 @@ export function parseCliArgs(argv: readonly string[]): CliArgs | undefined {
 }
 
 export async function runCli(args: CliArgs): Promise<void> {
-  const { app, space, key, dataRoot } = mountExample({ http: false });
+  const { app, key, dataRoot } = mountExample({ http: false });
   const onSignal = (): void => {
     process.off('SIGINT', onSignal);
     process.off('SIGTERM', onSignal);
@@ -73,17 +71,11 @@ export async function runCli(args: CliArgs): Promise<void> {
   process.on('SIGTERM', onSignal);
   try {
     await app.ready();
-    if (args.sessionId !== undefined && (await space.get(args.sessionId)) === undefined) {
+    if (args.sessionId !== undefined && (await app.space.get(args.sessionId)) === undefined) {
       throw new Error(`session ${args.sessionId} does not exist`);
     }
-    const session = await createOpenedSession(
-      app,
-      args.sessionId === undefined ? {} : { sessionId: args.sessionId },
-    );
-    const agent = session.get(MAIN_AGENT_ID);
-    if (agent === undefined) {
-      throw new Error(`agent ${MAIN_AGENT_ID} does not exist`);
-    }
+    const session = await app.open(args.sessionId === undefined ? {} : { sessionId: args.sessionId });
+    const agent = session.get(MAIN_AGENT_ID) ?? await session.create({ agentId: MAIN_AGENT_ID });
     const store = join(dataRoot, session.sessionId);
     writeSession({ sessionId: session.sessionId, model: key, store }, args.json);
     const interactions = session.resolve(InteractionRef);
@@ -101,13 +93,19 @@ export async function runCli(args: CliArgs): Promise<void> {
     const offEvents = session.on('*', (event) => {
       writeDomain(event, args.json);
     });
-    const finished = waitTurn(session);
-    agent.submit(createUserMessage(args.prompt), {
+    const ended = session.wait('turn.ended');
+    await agent.submit(createUserMessage(args.prompt), {
       origin: { kind: 'user' },
       tracked: true,
     });
     try {
-      await finished;
+      const event = await ended;
+      if (event['outcome'] !== 'done') {
+        if (event['outcome'] === 'aborted') {
+          throw new Error('aborted');
+        }
+        throw new Error(typeof event['errorMessage'] === 'string' ? event['errorMessage'] : 'turn failed');
+      }
       await Promise.all(
         interactions.findAll({ resolved: false }).map((item) => interactions.wait(item.id)),
       );
@@ -256,22 +254,4 @@ function jsonValue(value: unknown): unknown {
 
 function usage(): string {
   return 'usage: example -p <prompt> [-c <session-id>] [--json]';
-}
-
-function waitTurn(session: SessionHandle): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const off = session.on('turn.ended', (event) => {
-      off();
-      const outcome = event['outcome'];
-      if (outcome === 'done') {
-        resolve();
-        return;
-      }
-      if (outcome === 'aborted') {
-        reject(new Error('aborted'));
-        return;
-      }
-      reject(new Error(typeof event['errorMessage'] === 'string' ? event['errorMessage'] : 'turn failed'));
-    });
-  });
 }

@@ -2,18 +2,17 @@
 
 `@moonshot-ai/harness-core` 在 `@moonshot-ai/agent-core` 上实现产品能力。它不是第二套 kernel、Store 或 LLM。宿主同时依赖两个包：
 
-- agent-core：`mountApp`、Unit / Store / LLM / agent-machine、`createFeature`、`waitFor`、`createMedia`、`providerCatalog`
-- harness-core：`SessionSpace`、产品 Feature 名单、HTTP Feature
+- agent-core：`mountApp`、`SessionSpace` / `memorySessionSpace`、Unit / Store / LLM / agent-machine、`createFeature`、`waitFor`、`createMedia`、`providerCatalog`
+- harness-core：`fsSessionSpace`、产品 Feature 名单、HTTP Feature
 
 ```text
 kimi-code / 其它宿主
         │
         ▼
   harness-core          agent-core
-  mountApp        →     AppUnit → SessionUnit → AgentUnit
-  features/*            createFeature / 贡献 hook
-  host/session-space    stores/ + store/
-  feature-http          agent-machine / llm / kernel
+  features/*            mountApp → AppUnit → SessionUnit → AgentUnit
+  fsSessionSpace        SessionSpace / memorySessionSpace
+  feature-http          createFeature / stores / kernel
 ```
 
 ## 产品树
@@ -23,8 +22,8 @@ kimi-code / 其它宿主
 | 节点 | 职责 | 打开方式 |
 |---|---|---|
 | App | 活 session 表、运行时装卸 Feature、解析 App 级 token | `mountApp` |
-| Session | catalog 之外的活容器：agent 表、session journal、blobs、Interaction | `createOpenedSession` |
-| Agent | 一台 store-free 机器 + 一份 agent journal；slot ready 后 `actor.start()` | `session.create` 或 `provideSession` 的 agent 模板 |
+| Session | catalog 之外的活容器：agent 表、session journal、blobs、Interaction | `app.open` |
+| Agent | 一台 store-free 机器 + 一份 agent journal；slot ready 后 `actor.start()` | `session.create` |
 
 Feature 不是第四棵树。`createFeature('name', { app?, session?, agent? })` 的 slot 挂进对应产品节点，卸载随节点撤回。
 

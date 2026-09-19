@@ -4,6 +4,7 @@ import {
   createUserEntry,
   createUserMessage,
   extractText,
+  runTurn,
   type AssistantEntry,
   type HistoryMessage,
   type LlmCredentialProvider,
@@ -12,7 +13,6 @@ import {
   type TokenUsage,
   type TurnOutput,
 } from '@moonshot-ai/agent-core';
-import { createActor, waitFor } from '@moonshot-ai/agent-core/xstate2/index';
 
 import instructionTemplate from './compaction-instruction.md?raw';
 import { CompactError, isShrinkableSummaryError } from './errors';
@@ -97,18 +97,11 @@ async function runSummaryTurn(
   history: readonly HistoryMessage[],
   signal: AbortSignal,
 ): Promise<TurnOutput> {
-  const actor = createActor(turnLogic, {
-    input: { history, parentSignal: signal, maxSteps: 1 },
-  });
-  actor.start();
-  try {
-    const snapshot = await waitFor(actor, (current) => current.status !== 'active', {
-      timeout: options.timeoutMs ?? 120_000,
-    });
-    return snapshot.output as TurnOutput;
-  } finally {
-    actor.stop();
-  }
+  return runTurn(
+    turnLogic,
+    { history, parentSignal: signal, maxSteps: 1 },
+    { timeoutMs: options.timeoutMs },
+  );
 }
 
 function lastAssistantEntry(produced: readonly HistoryMessage[]): AssistantEntry | undefined {

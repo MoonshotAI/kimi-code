@@ -206,6 +206,35 @@ export function bindPromptGate(ports: AgentPorts, host?: PromptGate): PromptGate
   };
 }
 
+export function bindToolLogic(ports: AgentPorts): ReturnType<typeof createToolMachine> {
+  return createToolMachine({
+    execute: async (input) => {
+      const tool = ports.tools.find((entry) => entry.name === input.toolCall.name);
+      if (tool === undefined) {
+        return { content: [{ type: 'text', text: `unknown tool: ${input.toolCall.name}` }] };
+      }
+      return tool.execute(input);
+    },
+    onBefore: async (input) => {
+      let toolCall = input.toolCall;
+      for (const hook of ports.beforeTools.slice()) {
+        const decision = await hook({ toolCall });
+        if (decision === undefined) continue;
+        if (decision.type === 'denied') return decision;
+        if (decision.toolCall !== undefined) toolCall = decision.toolCall;
+      }
+      return { type: 'proceed', toolCall };
+    },
+    onAfter: async (input) => {
+      let result = input.result;
+      for (const hook of ports.afterTools.slice()) {
+        result = (await hook({ toolCall: input.toolCall, result })) ?? result;
+      }
+      return result;
+    },
+  });
+}
+
 export function bindAgentLogics(
   ports: AgentPorts,
   getRequester: () => LlmRequester | undefined,
@@ -233,32 +262,7 @@ export function bindAgentLogics(
         for (const hook of ports.beforeSteps.slice()) await hook(context);
       },
     }),
-    toolLogic: createToolMachine({
-      execute: async (input) => {
-        const tool = ports.tools.find((entry) => entry.name === input.toolCall.name);
-        if (tool === undefined) {
-          return { content: [{ type: 'text', text: `unknown tool: ${input.toolCall.name}` }] };
-        }
-        return tool.execute(input);
-      },
-      onBefore: async (input) => {
-        let toolCall = input.toolCall;
-        for (const hook of ports.beforeTools.slice()) {
-          const decision = await hook({ toolCall });
-          if (decision === undefined) continue;
-          if (decision.type === 'denied') return decision;
-          if (decision.toolCall !== undefined) toolCall = decision.toolCall;
-        }
-        return { type: 'proceed', toolCall };
-      },
-      onAfter: async (input) => {
-        let result = input.result;
-        for (const hook of ports.afterTools.slice()) {
-          result = (await hook({ toolCall: input.toolCall, result })) ?? result;
-        }
-        return result;
-      },
-    }),
+    toolLogic: bindToolLogic(ports),
   };
 }
 

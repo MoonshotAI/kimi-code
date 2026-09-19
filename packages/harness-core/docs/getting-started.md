@@ -6,7 +6,7 @@ How-to 入口：产品路径按编号读。最小闭环是 [1. 启动最小 App 
 |---|---|
 | 1 | [跑完一个 turn](how-to-guides/01-run-a-turn.md) — 报文 [HistoryMessage](reference/history-message.md)，队列 [状态机](explanation/agent-machine.md) |
 | 2 | [Todo Feature](how-to-guides/02-add-todo-feature.md) |
-| 3 | [听事件并触发请求](how-to-guides/03-listen-and-trigger.md) |
+| 3 | [写一个会自动压上下文的 Feature](how-to-guides/03-listen-and-trigger.md) |
 | 4 | [暴露 facade](how-to-guides/04-expose-facade.md) |
 | 5 | [可后台 Tool + WaitFor](how-to-guides/05-background-tool.md) |
 | 6 | [Bash 与手动 detach](how-to-guides/06-bash-and-detach.md) |
@@ -21,10 +21,11 @@ pnpm --filter @moonshot-ai/harness-core example -- -p '你好' -c <session-id> -
 
 ## 走 HTTP 而不是进程内调用
 
-把 `createHttp({ listen: { port, host } })` 加进 `features`，同一套能力暴露为 REST（`/api/v1`）。缺 `agent_id` 默认 `MAIN_AGENT_ID`。session 必须已经 live（`get` 不到回 404）。
+把 `createHttp({ listen: { port, host } })` 加进 `features`，同一套能力暴露为 REST（`/api/v1`）。缺 `agent_id` 默认 `MAIN_AGENT_ID`。session 必须已经 live（`get` 不到回 404）。第一次 `submit` / `notify` / `remind` 再创建 agent；读、steer、abort 仍按活表 404。写命令 HTTP 等的是机器接收回执，不是 `turn.ended`。`GET /features` 反射 live 树：app / 每个 session / agent 各列该 tier 真正挂了 slot 的 Feature；catalog 里未挂树的 session 不出现。
 
 | 进程内 | HTTP |
 |---|---|
+| 三层已挂 Feature | `GET /api/v1/features` |
 | `agent.setConfig` / `setCredentialProvider` / `setRequester` | 无；只在进程内 |
 | `agent.submit` | `POST /api/v1/sessions/:session_id/prompts` |
 | `agent.notify` | `POST /api/v1/sessions/:session_id/notify` |

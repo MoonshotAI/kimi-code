@@ -12,7 +12,7 @@
 |---|---|---|---|
 | 1 | 最小 `mountApp` + builtin SDK + 已知模型 API，跑完一个 turn | [启动最小 App 并跑完一个 turn](how-to-guides/01-run-a-turn.md) | [HistoryMessage 与 Delta](reference/history-message.md) · [队列与状态机](explanation/agent-machine.md) |
 | 2 | 添加 Todo Feature（store / reminder / tool） | [添加一个 Todo Feature](how-to-guides/02-add-todo-feature.md) | [Store 模型](explanation/store-model.md) · [扩展点](reference/contribution-hooks.md) |
-| 3 | 听 agent 事件并触发一次请求（compaction 自动压缩） | [监听 Agent 事件并触发一次请求](how-to-guides/03-listen-and-trigger.md) | [事件表](reference/events.md) |
+| 3 | 从头写 compact Feature（听机器事件、自动压上下文） | [写一个会自动压上下文的 Feature](how-to-guides/03-listen-and-trigger.md) | [事件表](reference/events.md) |
 | 4 | 把 Feature facade 暴露给宿主 | [把 Feature 的 facade 暴露出去](how-to-guides/04-expose-facade.md) | |
 | 5 | 可后台的 Tool + builtin WaitFor | [写一个可以后台的 Tool](how-to-guides/05-background-tool.md) | |
 | 6 | Bash：查看执行中的工具，手动 detach | [引入 Bash](how-to-guides/06-bash-and-detach.md) | |

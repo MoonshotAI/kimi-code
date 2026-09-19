@@ -4,10 +4,10 @@
 
 | 面 | 订阅 | 载荷类型 | 何时出现 |
 |---|---|---|---|
-| 节点 | `app.on` / `session.on` | 已提交的 journal 事件，或 Feature `fire` | `store.onCommit` 之后，或 `useFire()` |
+| 节点 | `app.on` / `session.on` / `app.wait` / `session.wait` | 已提交的 journal 事件，或 Feature `fire` | `store.onCommit` 之后，或 `useFire()` |
 | 机器 | `agent.on` | `AgentEmitted` | 机器 `emit` / 转发，不落盘 |
 
-`on(type, handler)` 的开放字符串仍是 `RuntimeEvent`。带 Feature 泛型：`on(feature, type)`；`on(feature, '*')` 只收 `featureName.` 前缀。
+`on(type, handler)` 的开放字符串仍是 `RuntimeEvent`。带 Feature 泛型：`on(feature, type)`；`on(feature, '*')` 只收 `featureName.` 前缀。`wait` 是 `on` 的 Promise 对偶，overload 相同，只等之后发生的事件，卸载时拒绝。
 
 ## 节点：agent journal（`AgentLogEvent`）
 
@@ -22,14 +22,15 @@
 
 一个 turn 可以有多条 `message.appended`。think 与 text 在同一条 assistant 上。
 
-等回合结束订节点事件：
+等回合结束用 `session.wait`：
 
 ```ts
-const off = session.on('turn.ended', (event) => {
-  off();
-  if (event['outcome'] === 'done') resolve();
-  else reject(new Error(String(event['errorMessage'] ?? event['outcome'])));
-});
+const ended = session.wait('turn.ended');
+await agent.submit(message);
+const event = await ended;
+if (event['outcome'] !== 'done') {
+  throw new Error(String(event['errorMessage'] ?? event['outcome']));
+}
 ```
 
 ## 节点：session journal（`SessionEvent`）
@@ -41,7 +42,7 @@ const off = session.on('turn.ended', (event) => {
 | `agent.opened` | `agentId`，`branch` | `SessionStores.open` 首次登记 |
 | `agent.closed` | `agentId` | `SessionStores.close` |
 | `agent.switched` | `agentId`，`branch`，`reason?`，`stats?` | `undo` / `switchBranch` |
-| `session.meta_updated` | `meta` | `createOpenedSession` 写 catalog 记录；`updateSessionRecord` |
+| `session.meta_updated` | `meta` | `app.open` 写 catalog 记录；`app.updateSession` |
 
 ## 节点：Feature
 
@@ -78,7 +79,13 @@ session.on(interaction, 'interaction.requested', (event) => {
 | `turn.failed` | `failure: TurnFailure`（`max_steps` 或 `{ reason: 'error', error }`） |
 | `turn.aborted` | 用户 / scope abort |
 | `prompt.blocked` | `reason: 'gate' \| 'error'` |
-| `prompt.steered` | 被 steer 的 queue 项 |
+| `prompt.submitted` | `entry`，`submit` 的接收回执 |
+| `prompt.notified` | `entry`，`notify` 的接收回执 |
+| `prompt.reminded` | `key` / `entry`，`remind` 的接收回执 |
+| `prompt.cancelled` | `id` / `cancelled`，没命中 queue 也发（`cancelled: false`） |
+| `prompt.steered` | `ids`（请求的）/ `queueItemIds` / `entries`；空命中也发 |
+| `agent.paused` / `agent.continued` | `pause` / `continue` 的接收回执 |
+| `agent.aborted` | `abort` 的接收回执；idle / 已在 aborting 也发 |
 | `agent.failed` | 机器级失败 |
 
 `agent.on('turn.done'|'turn.failed'|'turn.aborted')` 会等到 journal 这次写入链结束。
@@ -114,12 +121,12 @@ session.on(interaction, 'interaction.requested', (event) => {
 
 ## 机器输入（只给 `send`，不是订阅面）
 
-`input.submit` / `notify` / `remind` / `steer` / `cancel` / `abort` / `pause` / `continue` / `close`。宿主用 `AgentCommands` 的同名方法，不要自己拼这些 type。`setConfig` / `setCredentialProvider` / `setRequester` 也在命令面上，但不进机器。
+`input.submit` / `notify` / `remind` / `steer` / `cancel` / `abort` / `pause` / `continue` / `close`。宿主用 `AgentCommands` 的同名方法，不要自己拼这些 type。这些方法先订再 `send`，再把上表对应回执 `return` 出来。`setConfig` / `setCredentialProvider` / `setRequester` 也在命令面上，但不进机器，仍是同步。
 
 ## 相关文档
 
 - 状态机走位 → [agent-machine](../explanation/agent-machine.md)
 - 报文 → [HistoryMessage 与 Delta](history-message.md)
 - 命令与两个 `on` → [01](../how-to-guides/01-run-a-turn.md)
-- 听事件并触发请求 → [03](../how-to-guides/03-listen-and-trigger.md)
+- 写一个会自动压上下文的 Feature → [03](../how-to-guides/03-listen-and-trigger.md)
 - Feature 如何 `fire` → [08](../how-to-guides/08-develop-feature.md)

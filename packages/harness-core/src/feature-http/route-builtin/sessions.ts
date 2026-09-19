@@ -1,13 +1,10 @@
-import { MAIN_AGENT_ID, useApp } from '@moonshot-ai/agent-core';
-
 import {
+  MAIN_AGENT_ID,
   SessionSpaceError,
-  useCreateSession,
-  useSessionSpace,
-  useUpdateSession,
+  useApp,
   type OpenSessionInput,
   type SessionRecord,
-} from '#/host/session';
+} from '@moonshot-ai/agent-core';
 
 import { useHttpRoute } from '../feature';
 import { parseActionSuffix } from '../route/action-suffix';
@@ -32,7 +29,7 @@ export function useSessionRoutes(prefix: string): void {
     path: `${prefix}/sessions`,
     handler: async (request, response) => {
       const app = useApp();
-      const space = useSessionSpace();
+      const space = app.space;
       sendOk(request, response, {
         items: (await space.list()).map((record) => sessionView(record, app.get(record.id)?.list() ?? [])),
         has_more: false,
@@ -45,9 +42,9 @@ export function useSessionRoutes(prefix: string): void {
     method: 'POST',
     path: `${prefix}/sessions`,
     handler: async (request, response) => {
-      const createSession = useCreateSession();
+      const app = useApp();
       try {
-        const session = await createSession(readSessionInput(request.body));
+        const session = await app.open(readSessionInput(request.body));
         sendOk(request, response, { id: session.sessionId, agent_ids: session.list() }, 201);
       } catch (error) {
         if (sendFacadeErr(request, response, error)) return;
@@ -67,7 +64,7 @@ export function useSessionRoutes(prefix: string): void {
         return;
       }
       const app = useApp();
-      const space = useSessionSpace();
+      const space = app.space;
       const record = await space.get(sessionId);
       if (record === undefined) {
         sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`, 404);
@@ -88,16 +85,14 @@ export function useSessionRoutes(prefix: string): void {
         return;
       }
       const app = useApp();
-      const space = useSessionSpace();
-      const updateSession = useUpdateSession();
       try {
-        if ((await space.get(sessionId)) === undefined) {
+        if ((await app.space.get(sessionId)) === undefined) {
           throw new SessionSpaceError('not-found', `session ${sessionId} does not exist`);
         }
         sendOk(
           request,
           response,
-          sessionView(await updateSession(sessionId, readSessionInput(request.body)), app.get(sessionId)?.list() ?? []),
+          sessionView(await app.updateSession(sessionId, readSessionInput(request.body)), app.get(sessionId)?.list() ?? []),
         );
       } catch (error) {
         if (sendFacadeErr(request, response, error)) return;
@@ -117,15 +112,14 @@ export function useSessionRoutes(prefix: string): void {
         return;
       }
       const app = useApp();
-      const space = useSessionSpace();
       try {
-        if ((await space.get(sessionId)) === undefined) {
+        if ((await app.space.get(sessionId)) === undefined) {
           throw new SessionSpaceError('not-found', `session ${sessionId} does not exist`);
         }
         if (app.get(sessionId) !== undefined) {
           await app.close(sessionId);
         }
-        await space.delete(sessionId);
+        await app.space.delete(sessionId);
         sendOk(request, response, { deleted: true });
       } catch (error) {
         if (sendFacadeErr(request, response, error)) return;
@@ -160,37 +154,34 @@ export function useSessionRoutes(prefix: string): void {
         return;
       }
       const app = useApp();
-      const space = useSessionSpace();
-      const createSession = useCreateSession();
-      const updateSession = useUpdateSession();
       try {
         if (parsed.action === 'fork') {
-          if ((await space.get(parsed.id)) === undefined) {
+          if ((await app.space.get(parsed.id)) === undefined) {
             throw new SessionSpaceError('not-found', `session ${parsed.id} does not exist`);
           }
-          const session = await createSession({ ...readSessionInput(request.body), from: parsed.id });
+          const session = await app.open({ ...readSessionInput(request.body), from: parsed.id });
           sendOk(request, response, { id: session.sessionId, agent_ids: session.list() }, 201);
           return;
         }
         if (parsed.action === 'delete') {
-          if ((await space.get(parsed.id)) === undefined) {
+          if ((await app.space.get(parsed.id)) === undefined) {
             throw new SessionSpaceError('not-found', `session ${parsed.id} does not exist`);
           }
           if (app.get(parsed.id) !== undefined) {
             await app.close(parsed.id);
           }
-          await space.delete(parsed.id);
+          await app.space.delete(parsed.id);
           sendOk(request, response, { deleted: true });
           return;
         }
         if (parsed.action === 'update') {
-          if ((await space.get(parsed.id)) === undefined) {
+          if ((await app.space.get(parsed.id)) === undefined) {
             throw new SessionSpaceError('not-found', `session ${parsed.id} does not exist`);
           }
           sendOk(
             request,
             response,
-            sessionView(await updateSession(parsed.id, readSessionInput(request.body)), app.get(parsed.id)?.list() ?? []),
+            sessionView(await app.updateSession(parsed.id, readSessionInput(request.body)), app.get(parsed.id)?.list() ?? []),
           );
           return;
         }
@@ -206,16 +197,16 @@ export function useSessionRoutes(prefix: string): void {
           return;
         }
         if (parsed.action === 'abort') {
-          agent.abort();
+          await agent.abort();
           sendOk(request, response, { aborted: true });
           return;
         }
         if (parsed.action === 'pause') {
-          agent.pause();
+          await agent.pause();
           sendOk(request, response, { paused: true });
           return;
         }
-        agent.continue();
+        await agent.continue();
         sendOk(request, response, { continued: true });
       } catch (error) {
         if (sendFacadeErr(request, response, error)) return;

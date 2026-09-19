@@ -30,7 +30,7 @@ useOn<E extends RuntimeEvent>(
 - 派发是同步的；抛错会传回发送者并打断后续派发，返回的 Promise 不被等待，详见 [useFire](use-fire.md)。
 - `once` 在调用后才移除：处理器抛错时订阅仍在，同步重入发送也可能再次调用它；它不是重入锁。
 - 避免将 `'*'` 用作发送的业务事件 type；当前派发同时查询具体类型表和通配表，会使未被移除的同组处理器重复执行。
-- 提前取消或 setup 外登记时使用 `node.on(type, handler, opts)`；它返回可重复调用的 `Unsubscribe`。
+- 提前取消或 setup 外登记时使用 `node.on(type, handler, opts)`；它返回可重复调用的 `Unsubscribe`。setup 外等下一条事件用 `node.wait(type, opts?)` 或 `session.wait` / `app.wait`，不要手写 `on` + Promise。
 - 直接 `node.on()` 不自动登记清理栈；目标节点完整卸载时仍会清空其处理器，但不能据此保证某个子所有者退出时就取消订阅。
 - 在父节点上代为订阅时，把返回的取消函数登记到真正所有者的清理栈，否则可能持续到父节点卸载。
 - 派发按处理器列表的快照遍历；派发中撤销某项订阅，不保证跳过本轮已进入快照的调用。

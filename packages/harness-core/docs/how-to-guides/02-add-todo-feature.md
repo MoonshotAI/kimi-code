@@ -58,7 +58,7 @@ agent.on('turn.started', () => {
   if (current.todos.length === 0) return;
   if (current.todos.every((item) => item.status === 'done')) return;
   if (current.currentTurn - current.lastWriteTurn !== 2) return;
-  agent.notify(
+  void agent.notify(
     createHistoryMessageBuilder()
       .systemReminder(`The todo list has not been updated recently.\n${renderTodoList(current.todos)}`)
       .userMessage(),
@@ -100,4 +100,4 @@ mountApp({
 
 - 投影怎么写 → [store-model](../explanation/store-model.md)
 - builtin 扩展点 → [contribution-hooks](../reference/contribution-hooks.md)
-- 下一篇：听事件并触发请求 → [03](03-listen-and-trigger.md)
+- 下一篇：写一个会自动压上下文的 Feature → [03](03-listen-and-trigger.md)

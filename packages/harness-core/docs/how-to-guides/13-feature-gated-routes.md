@@ -87,6 +87,6 @@ export const http = createFeature('http', {
 
 现有实例：`builtin/provider-catalog/feature.ts` 的 `useProvider` / `useCollection(Providers)`。
 
-验收：`installFeature` 写入名单后，观察 `Features` 的孩子挂上；`uninstallFeature` 后孩子卸载且 cleanup 已跑。产品 HTTP 用 harness `createHttp`，不要在本页自造服务器。
+验收：`installFeature` 写入名单后，观察 `Features` 的孩子挂上；`uninstallFeature` 后孩子卸载且 cleanup 已跑。产品 HTTP 用 harness `createHttp`，不要在本页自造服务器。`createHttp` 自带 `GET /features`：按 app / live session / agent 列出该层已挂 slot 的 Feature。
 
 源码：见 [代码定位](../reference/source-map.md)，`feature/hooks.ts` 的 `useFeatureSlot`，`app/appUnit.ts` 的 `installFeature`，`kernel/hooks.ts` 的 `useChildren` / `useCollection`。

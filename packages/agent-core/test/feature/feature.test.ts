@@ -16,7 +16,7 @@ import {
   shallowRef,
   type Ref,
 } from '#/kernel/index';
-import { createUserMessage, extractText } from '#/llm/message';
+import { createUserEntry, createUserMessage, extractText } from '#/llm/message';
 import { UNKNOWN_CAPABILITY, type LlmModel } from '#/llm/model';
 import type { LlmRequester } from '#/llm/requester/requester';
 import { openSessionStores, type SessionStores } from '#/stores/session';
@@ -34,6 +34,7 @@ import {
   useLlmRetryable,
   useMessageResolver,
   usePromptGate,
+  useTurn,
 } from '#/feature/index';
 
 const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -57,6 +58,11 @@ describe('feature DSL', () => {
   it('installs feature tools, resolvers and step hooks into a real agent and withdraws them', async () => {
     const order: string[] = [];
     const Extra = createToken<string>('test.extra');
+    const Side = createToken<{
+      enqueue: ReturnType<typeof useTurn>;
+      calls: Ref<number>;
+      maxActive: () => number;
+    }>('test.side');
     const Calls = createToken<{
       calls: Ref<number>;
       steps: Ref<number>;
@@ -122,10 +128,33 @@ describe('feature DSL', () => {
           parameters: { type: 'object', properties: {} },
           execute: async () => {
             state.calls.value += 1;
-            agent.notify(createUserMessage('notified'));
-            agent.remind('probe', createUserMessage('reminded'));
+            await agent.notify(createUserMessage('notified'));
+            await agent.remind('probe', createUserMessage('reminded'));
             return { content: [{ type: 'text', text: `count=${state.calls.value}` }] };
           },
+        });
+        let sideActive = 0;
+        let sideMax = 0;
+        const sideCalls = ref(0);
+        const enqueue = useTurn({
+          requester: {
+            generate: async (_config, _content, { onEvent }) => {
+              sideActive += 1;
+              sideMax = Math.max(sideMax, sideActive);
+              sideCalls.value += 1;
+              await new Promise<void>((resolve) => setTimeout(resolve, 15));
+              sideActive -= 1;
+              onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'side' } });
+              onEvent?.({ type: 'llm.done' });
+            },
+          },
+          getConfig: () => ({ model }),
+          getTools: () => [],
+        });
+        useExpose(Side, {
+          enqueue,
+          calls: sideCalls,
+          maxActive: () => sideMax,
         });
       },
     })]);
@@ -159,7 +188,7 @@ describe('feature DSL', () => {
     agent.setConfig({ model });
     agent.setRequester(requester);
     const first = turnDone(agent);
-    agent.submit(createUserMessage('run'));
+    await agent.submit(createUserMessage('run'));
     await first;
     const store = env.stores.get('agent-0');
     await env.stores.flush();
@@ -176,6 +205,17 @@ describe('feature DSL', () => {
       { tools: ['increment'], text: ['run', '', 'count=1|hooked', 'notified', 'reminded', 'resolved'], systemPrompt: assembledPrompt },
     ]);
     expect(store?.getState().history.some((entry) => extractText(entry.message) === 'count=1|hooked')).toBe(true);
+    const side = agent.resolve(Side);
+    const sideHistory = [createUserEntry(createUserMessage('side'), { source: 'input' })];
+    const [left, right] = await Promise.all([
+      side.enqueue({ history: sideHistory, maxSteps: 1 }),
+      side.enqueue({ history: sideHistory, maxSteps: 1 }),
+    ]);
+    expect(left.type).toBe('done');
+    expect(right.type).toBe('done');
+    expect(side.calls.value).toBe(2);
+    expect(side.maxActive()).toBe(1);
+    expect(requests).toHaveLength(2);
     installed.value = [createFeature('late', {
       agent() {
         useSystemPrompt({ id: 'late', text: 'should-not-appear' });
@@ -183,7 +223,7 @@ describe('feature DSL', () => {
     })];
     await session.ready();
     const second = turnDone(agent);
-    agent.submit(createUserMessage('again'));
+    await agent.submit(createUserMessage('again'));
     await second;
     await vi.waitFor(() => { expect(requests).toHaveLength(3); });
     expect(requests[2]?.tools).toEqual([]);
@@ -202,7 +242,7 @@ describe('feature DSL', () => {
     const failed = new Promise<unknown>((resolve) => {
       agent.on('turn.failed', (event) => resolve(event.failure.reason === 'error' ? event.failure.error : undefined));
     });
-    agent.submit(createUserMessage('fail'));
+    await agent.submit(createUserMessage('fail'));
     await expect(failed).resolves.toBe(stepError);
     expect(requests).toHaveLength(3);
     await app.disposeAsync();

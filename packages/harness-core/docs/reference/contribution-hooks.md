@@ -12,7 +12,7 @@ Reference：builtin 扩展点。源码 `packages/agent-core/src/feature/contribu
 
 不要 `inject(AppUnitRef)` 等 token。按 id 查找不是 hook：`useApp().get(id)` / `session.get(agentId)`，失败是 `undefined`。绑 generate 用 `setConfig` / `setCredentialProvider` / `setRequester`。缺 `config` 或 requester 的下一次 `generate` 失败。
 
-harness 另有：`useSessionSpace` / `useOpenSession` / `useCreateSession` / `useUpdateSession`（`src/host/session.ts`）。
+catalog 在 `useApp()` 上：`app.space` / `app.open` / `app.updateSession`。未配 `space` 时访问会抛错。
 
 ## Store
 
