@@ -10,7 +10,7 @@ import { attachmentFileSource, environmentFileSource, withAttachmentLocation, ty
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import { isPromiseLike } from '#/_base/lifecycle/disposer';
-import { acquireOrWhenReady, inspectAgentEnvironment, type IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { acquireOrWhenReady, inspectAgentEnvironment, pinnedGeneration, type IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import {
   ToolAccesses,
   type AgentTool,
@@ -233,6 +233,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
       return this.attachmentExecution(args);
     }
     const inspected = inspectAgentEnvironment(this.environment);
+    const expectedGeneration = pinnedGeneration(inspected, ['fs']);
     const env = inspected.host;
     const view = new EnvironmentWorkspaceView(inspected, {
       workDir: this.workspace.workspaceDir,
@@ -259,7 +260,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
         const acquired = acquireOrWhenReady(this.environment, ['fs']);
         const lease = isPromiseLike(acquired) ? await acquired : acquired;
         try {
-          if (lease.environment.identity.generation !== inspected.identity.generation) {
+          if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
             return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
           }
           return await this.execution(args, environmentFileSource(lease.environment.fs!, path), env);

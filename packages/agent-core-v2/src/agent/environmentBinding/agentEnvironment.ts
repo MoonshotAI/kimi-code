@@ -56,6 +56,10 @@ export function acquireOrWhenReady(
   return service.acquireWhenReady(required);
 }
 
+export function pinnedGeneration(environment: Environment, required: readonly EnvironmentCapability[]): string | undefined {
+  return environmentStatusAllows(environment, required) ? environment.identity.generation : undefined;
+}
+
 export function snapshotAgentEnvironmentBinding(
   bindingService: IAgentEnvironmentBindingService,
   environmentService: IAgentEnvironmentService,

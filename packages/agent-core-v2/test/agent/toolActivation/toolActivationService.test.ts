@@ -37,7 +37,7 @@ import {
   SELECT_TOOLS_TOOL_NAME,
 } from '#/agent/toolSelect/toolSelect';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
-import type { EnvironmentCapability } from '#/environment/environment';
+import type { Environment, EnvironmentCapability } from '#/environment/environment';
 import type { AgentTool, ToolExecution } from '#/tool/toolContract';
 import '#/agent/tools/agent/agentTool';
 import '#/agent/tools/ask-user-question/askUserQuestionTool';
@@ -154,7 +154,17 @@ describe('AgentToolActivationService', () => {
   const environmentChangeEmitter = new Emitter<void>();
   const environmentData = {
     available: true,
+    connectable: false,
     capabilities: new Set<EnvironmentCapability>(['fs', 'process']),
+  };
+  const environmentStub = {
+    onDidChange: environmentChangeEmitter.event,
+    isAvailable: (required: readonly EnvironmentCapability[] = []) =>
+      environmentData.available && required.every((capability) => environmentData.capabilities.has(capability)),
+    inspect: () => {
+      if (!environmentData.connectable) throw new Error('environment unavailable');
+      return { connect: async () => {} } as unknown as Environment;
+    },
   };
 
   function createActivationHost() {
@@ -168,11 +178,7 @@ describe('AgentToolActivationService', () => {
         reg.definePartialInstance(IEventBus, {
           subscribe: () => toDisposable(() => {}),
         });
-        reg.definePartialInstance(IAgentEnvironmentService, {
-          onDidChange: environmentChangeEmitter.event,
-          isAvailable: (required = []) =>
-            environmentData.available && required.every((capability) => environmentData.capabilities.has(capability)),
-        });
+        reg.definePartialInstance(IAgentEnvironmentService, environmentStub);
         reg.defineInstance(ISessionToolPolicyGate, {
           _serviceBrand: undefined,
           get disabledTools() {
@@ -200,6 +206,7 @@ describe('AgentToolActivationService', () => {
     betaConstructions = 0;
     gammaConstructions = 0;
     environmentData.available = true;
+    environmentData.connectable = false;
     environmentData.capabilities.clear();
     environmentData.capabilities.add('fs');
     environmentData.capabilities.add('process');
@@ -336,6 +343,61 @@ describe('AgentToolActivationService', () => {
     environmentChangeEmitter.fire();
     expect(registry.resolve('Alpha')).toBeInstanceOf(AlphaTool);
     expect(registry.resolve('Beta')).toBeInstanceOf(BetaTool);
+  });
+
+  it('keeps environment-bound tools registered while the environment is unavailable but reconnectable', async () => {
+    registerAgentToolService(IAlphaTool, AlphaTool, {
+      name: 'Alpha',
+      requiredEnvironmentCapabilities: ['fs'],
+    });
+    registerAgentToolService(IBetaTool, BetaTool, {
+      name: 'Beta',
+      requiredEnvironmentCapabilities: ['process'],
+    });
+    registerAgentToolService(IGammaTool, GammaTool, { name: 'Gamma' });
+    environmentData.available = false;
+    environmentData.connectable = true;
+    const ix = createActivationHost();
+    const registry = ix.get(IAgentToolRegistryService);
+
+    await ix.get(IAgentToolActivationService).activate();
+    expect(registry.resolve('Alpha')).toBeInstanceOf(AlphaTool);
+    expect(registry.resolve('Beta')).toBeInstanceOf(BetaTool);
+    expect(registry.resolve('Gamma')).toBeInstanceOf(GammaTool);
+
+    environmentChangeEmitter.fire();
+    expect(registry.resolve('Alpha')).toBeInstanceOf(AlphaTool);
+    expect(registry.resolve('Beta')).toBeInstanceOf(BetaTool);
+
+    environmentData.available = true;
+    environmentData.connectable = false;
+    environmentChangeEmitter.fire();
+    expect(registry.resolve('Alpha')).toBeInstanceOf(AlphaTool);
+    expect(registry.resolve('Beta')).toBeInstanceOf(BetaTool);
+  });
+
+  it('withdraws environment-bound tools when the environment is unavailable and cannot reconnect', async () => {
+    registerAgentToolService(IAlphaTool, AlphaTool, {
+      name: 'Alpha',
+      requiredEnvironmentCapabilities: ['fs'],
+    });
+    registerAgentToolService(IGammaTool, GammaTool, { name: 'Gamma' });
+    environmentData.available = false;
+    environmentData.connectable = false;
+    const ix = createActivationHost();
+    const registry = ix.get(IAgentToolRegistryService);
+
+    await ix.get(IAgentToolActivationService).activate();
+    expect(registry.resolve('Alpha')).toBeUndefined();
+    expect(registry.resolve('Gamma')).toBeInstanceOf(GammaTool);
+
+    environmentData.connectable = true;
+    environmentChangeEmitter.fire();
+    expect(registry.resolve('Alpha')).toBeInstanceOf(AlphaTool);
+
+    environmentData.available = true;
+    environmentChangeEmitter.fire();
+    expect(registry.resolve('Alpha')).toBeInstanceOf(AlphaTool);
   });
 
   it('activates only the tools allowed by the profile allowlist', async () => {
@@ -492,15 +554,7 @@ describe('AgentToolActivationService', () => {
       return [
         [IAgentProfileService, { data: () => profileData as ProfileData }],
         [IEventBus, { subscribe: () => toDisposable(() => {}) }],
-        [
-          IAgentEnvironmentService,
-          {
-            _serviceBrand: undefined,
-            onDidChange: environmentChangeEmitter.event,
-            isAvailable: (required: readonly EnvironmentCapability[] = []) =>
-              environmentData.available && required.every((capability) => environmentData.capabilities.has(capability)),
-          },
-        ],
+        [IAgentEnvironmentService, { _serviceBrand: undefined, ...environmentStub }],
         ...extra,
       ];
     }
