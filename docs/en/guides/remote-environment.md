@@ -82,7 +82,7 @@ The `/environment` slash command opens the environment manager, modeled after th
 
 The footer shows the active environment's identity (for example `ssh:dev-box`) before the working directory; `local` renders nothing. A disconnected environment is shown in the error color with a banner, and the local git status slot is hidden for remote sessions. Approval prompts display the target environment next to the command or path, and `@` file completion is served by the server so candidates come from the target's filesystem.
 
-Switching is refused while a turn is running or an approval is pending; the switch takes effect at the turn boundary.
+Switching is refused while tool calls are executing or an approval is pending — retry once the turn settles. An accepted switch takes effect immediately: the session's next tool call already runs on the new environment.
 
 ### `kimi --environment`
 
@@ -102,7 +102,7 @@ The tools are on by default. To opt out, set `KIMI_CODE_EXPERIMENTAL_AGENT_ENVIR
 
 The main agent can:
 
-- **Switch with `change_environment`**: pass an environment `id` (`local` or a declared id) and optionally a `cwd` (falls back to the declaration's `defaultCwd`). The target connects eagerly — a connection or `cwd` validation failure is reported immediately and changes nothing — and the switch itself takes effect at the boundary of the current turn: tool calls in the rest of the turn keep running on the previous environment, and the reminder with the new environment's details arrives with the next turn.
+- **Switch with `change_environment`**: pass an environment `id` (`local` or a declared id) and optionally a `cwd` (falls back to the declaration's `defaultCwd`). The target connects eagerly — a connection or `cwd` validation failure is reported immediately and changes nothing — and the switch itself takes effect as soon as the tool call completes: the next tool call in the same turn already runs on the new environment. Only when other tool calls are still executing in parallel is the switch deferred to the turn boundary, so their work is not yanked mid-flight. The reminder with the new environment's details arrives with the next turn.
 - **Create a temporary environment with `connect`**: pass a launcher spec — `{ type: "ssh", host: "..." }`, `{ type: "docker", container: "..." }`, or `{ type: "command", command: "...", args: [...] }`, with an optional `id`. The environment connects right away and is registered in the workspace like a declared one, but nothing is written to `config.toml` or `.kimi-code/environments.toml`: a temporary environment vanishes when the process exits, cannot be reconnected after a connection drop (create a fresh one instead), and a session resumed onto it finds it gone.
 - **Bind a subagent with the `environment` parameter**: the `Agent` tool accepts an optional `environment` id; the spawned subagent binds to that environment (at its `defaultCwd`) instead of inheriting the parent's binding. Resumed subagents keep their own binding.
 

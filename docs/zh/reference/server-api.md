@@ -850,7 +850,7 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 
 #### `POST /api/v1/sessions/{session_id}/environment`
 
-切换 main agent 的环境绑定。新绑定持久化之前会先建立连接，并用目标文件系统校验给定的 `cwd`——失败时保留原绑定。功能介绍见 [远程环境](../guides/remote-environment.md)。
+切换 main agent 的环境绑定。新绑定持久化之前会先建立连接，并用目标文件系统校验给定的 `cwd`——失败时保留原绑定。切换成功后立即生效：会话的下一次工具调用就已在新环境上执行。功能介绍见 [远程环境](../guides/remote-environment.md)。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -863,7 +863,7 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 - `40001`：非 `local` 的 `environment_id` 未提供 `cwd`，或给定的 `cwd` 在目标环境上不是有效目录
 - `40401`：会话不存在
 - `40420`：不存在该 `environment_id` 的环境
-- `40901`：会话有正在执行的轮次或待审批调用，切换在轮次边界生效
+- `40901`：会话有正在执行的工具调用或待审批调用，切换被拒绝——待轮次结束后重试
 - `40926`：环境存在但不可用
 
 #### `POST /api/v1/sessions/{session_id}/environment/reconnect`

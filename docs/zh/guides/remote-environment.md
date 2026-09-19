@@ -82,7 +82,7 @@ defaultCwd = "/home/me/kimi-code"
 
 底部状态栏会在工作目录前显示当前环境标识（例如 `ssh:dev-box`）；`local` 不渲染。断连的环境以错误色显示并附带 banner，远程会话中本机 git 状态槽会隐藏。审批面板会在命令或路径旁显示目标环境标识，`@` 文件补全改由服务端提供，候选来自目标文件系统。
 
-有正在执行的轮次或待审批调用时，切换会被拒绝；切换在轮次边界生效。
+有正在执行的工具调用或待审批调用时，切换会被拒绝——待轮次结束后重试。切换被接受后立即生效：会话的下一次工具调用就已在新环境上执行。
 
 ### `kimi --environment`
 
@@ -102,7 +102,7 @@ kimi -p --environment dev-box "Run the test suite"
 
 main agent 可以：
 
-- **用 `change_environment` 切换**：传入环境 `id`（`local` 或已声明的 id），可选 `cwd`（缺省时回退到声明的 `defaultCwd`）。目标环境会先立即连接——连接或 `cwd` 校验失败会立刻报错且不改变任何状态——切换本身在当前轮次边界生效：本轮剩余的工具调用仍在前一个环境上执行，新环境的详情提醒随下一轮次到达。
+- **用 `change_environment` 切换**：传入环境 `id`（`local` 或已声明的 id），可选 `cwd`（缺省时回退到声明的 `defaultCwd`）。目标环境会先立即连接——连接或 `cwd` 校验失败会立刻报错且不改变任何状态——切换本身在工具调用完成后立即生效：同一轮次中的下一次工具调用就已在新环境上执行。仅当还有其他工具调用在并行执行时，切换才推迟到轮次边界，以免打断它们正在进行的工作。新环境的详情提醒仍随下一轮次到达。
 - **用 `connect` 创建临时环境**：传入启动器规格——`{ type: "ssh", host: "..." }`、`{ type: "docker", container: "..." }` 或 `{ type: "command", command: "...", args: [...] }`，可选 `id`。环境会立即连接并像声明的环境一样注册到工作区，但不会写入 `config.toml` 或 `.kimi-code/environments.toml`：临时环境在进程退出时消失，连接断开后无法重连（重新创建一个即可），恢复会话时也找不到它。
 - **用 `environment` 参数绑定 subagent**：`Agent` 工具接受可选的 `environment` id；新启动的 subagent 绑定到该环境（工作目录取其 `defaultCwd`），而不是继承父 Agent 的绑定。恢复的 subagent 保留自己的绑定。
 
