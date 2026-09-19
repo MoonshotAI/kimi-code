@@ -3,6 +3,12 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
+import {
+  ISessionContext,
+  IWorkspaceInstanceManager,
+  IWorkspaceService,
+  getLiveSessionById,
+} from '@moonshot-ai/agent-core-v2';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -138,6 +144,38 @@ describe('server-v2 /api/v1 environment routes', () => {
 
       const missing = await call<null>('POST', `/api/v1/sessions/${id}/environment`, { environment_id: 'ghost' });
       expect(missing.body.code).toBe(40001);
+    });
+
+    it('returns 40401 without a stack for an unknown session on every environment route', async () => {
+      const ghost = '/api/v1/sessions/s_does_not_exist';
+      const responses = await Promise.all([
+        call<null>('GET', `${ghost}/environment`),
+        call<null>('GET', `${ghost}/environments`),
+        call<null>('POST', `${ghost}/environment`, { environment_id: 'local' }),
+        call<null>('POST', `${ghost}/environment/reconnect`),
+        call<null>('POST', `${ghost}/environments`, {
+          environment_id: 'box',
+          entry: { type: 'ssh', host: 'box' },
+        }),
+      ]);
+      for (const res of responses) {
+        expect(res.body.code).toBe(40401);
+        expect(res.body.msg).toContain('s_does_not_exist');
+        expect((res.body as { stack?: string }).stack).toBeUndefined();
+      }
+    });
+
+    it('returns 40410 when the session workspace no longer exists', async () => {
+      const id = await createSession();
+      const session = getLiveSessionById(server!.core.accessor, id);
+      const workspaceId = session!.accessor.get(ISessionContext).workspaceId;
+      await server!.core.accessor.get(IWorkspaceInstanceManager).close(workspaceId);
+      await server!.core.accessor.get(IWorkspaceService).delete(workspaceId);
+
+      const listed = await call<null>('GET', `/api/v1/sessions/${id}/environments`);
+      expect(listed.body.code).toBe(40410);
+      expect(listed.body.msg).toContain(workspaceId);
+      expect((listed.body as { stack?: string }).stack).toBeUndefined();
     });
 
     it('lists declared environments as pending placeholders before any connect', async () => {

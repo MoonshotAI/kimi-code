@@ -5,6 +5,7 @@ import {
   ErrorCodes,
   EXTRA_SKILL_DIRS_SECTION,
   IAgentEnvironmentBindingService,
+  IAgentEnvironmentService,
   IAgentSkillService,
   IBootstrapService,
   IConfigService,
@@ -17,7 +18,6 @@ import {
   ISessionSkillCatalog,
   ISkillDiscovery,
   ITelemetryService,
-  IEnvironmentResolver,
   IWorkspaceService,
   InMemorySkillCatalog,
   isError2,
@@ -29,6 +29,7 @@ import {
   projectRoots,
   sessionMediaOriginalsDir,
   userRoots,
+  EnvironmentError,
   type ContentPart,
   type ISessionScopeHandle,
   type Scope,
@@ -37,6 +38,7 @@ import {
   type MergeAllAvailableSkillsConfig,
   IAgentProfileService,
 } from '@moonshot-ai/agent-core-v2';
+import { HandshakeError } from '@moonshot-ai/remote-exec';
 import { join } from 'node:path';
 import { z } from 'zod';
 
@@ -65,6 +67,7 @@ import {
 import { workspaceIdParamSchema } from '../protocol/rest-workspace';
 import type { SkillDescriptor } from '../protocol/skill';
 import { parseActionSuffix } from './action-suffix';
+import { environmentErrorCode } from './environment';
 
 interface SkillsRouteHost {
   get(
@@ -196,6 +199,8 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         [ErrorCode.SKILL_NOT_FOUND]: {},
         [ErrorCode.SKILL_NOT_ACTIVATABLE]: {},
         [ErrorCode.FILE_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
       },
       description: 'Activate a skill in a session (REST analogue of the /<skill> slash command)',
       tags: ['skills'],
@@ -276,14 +281,14 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
                 resolveOriginalsTarget: binding.environmentId === 'local'
                   ? undefined
                   : async () => {
-                      environmentLease ??= core.accessor.get(IEnvironmentResolver).acquire(binding, ['fs']);
+                      environmentLease ??= await mainAgent.accessor.get(IAgentEnvironmentService).acquireWhenReady(['fs']);
                       return environmentOriginalsTarget(environmentLease.environment);
                     },
                 resolveAttachmentsDir: async () => join(sessionDir, 'attachments'),
                 resolveAttachmentsTarget: binding.environmentId === 'local'
                   ? undefined
                   : async () => {
-                      environmentLease ??= core.accessor.get(IEnvironmentResolver).acquire(binding, ['fs']);
+                      environmentLease ??= await mainAgent.accessor.get(IAgentEnvironmentService).acquireWhenReady(['fs']);
                       return environmentAttachmentsTarget(environmentLease.environment);
                     },
               },
@@ -400,6 +405,14 @@ function sendMappedError(
   requestId: string,
   err: unknown,
 ): void {
+  if (err instanceof EnvironmentError) {
+    reply.send(errEnvelope(environmentErrorCode(err.code), err.message, requestId));
+    return;
+  }
+  if (err instanceof HandshakeError) {
+    reply.send(errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, err.message, requestId));
+    return;
+  }
   if (isError2(err)) {
     switch (err.code) {
       case ErrorCodes.SKILL_NOT_FOUND:
