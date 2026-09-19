@@ -121,7 +121,7 @@ export function sessionHandle(handle: UnitHandle): SessionHandle {
     ready: () => handle.ready(),
     unmount: () => handle.unmount(),
     disposeAsync: () => handle.unmount(),
-    on: bindHandleOn(handle.node),
+    ...bindHandleOn(handle.node),
     get sessionId() { return commands().sessionId; },
     get stores() { return commands().stores; },
     list: () => commands().list(),

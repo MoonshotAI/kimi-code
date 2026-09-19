@@ -9,7 +9,10 @@ import {
   type UnitRecipe,
   type UnitSetup,
   type Unsubscribe,
+  type WaitOpts,
 } from '#/kernel/index';
+
+export type { WaitOpts };
 
 export type FeatureTier = 'app' | 'session' | 'agent';
 
@@ -45,6 +48,17 @@ export interface FeatureHandleOn {
     opts?: ListenOpts,
   ): Unsubscribe;
   on(type: string, handler: EventHandler, opts?: ListenOpts): Unsubscribe;
+  wait<E extends RuntimeEvent, T extends E['type']>(
+    feature: FeatureSpec<E>,
+    type: T,
+    opts?: WaitOpts<Extract<E, { type: T }>>,
+  ): Promise<Extract<E, { type: T }>>;
+  wait<E extends RuntimeEvent>(
+    feature: FeatureSpec<E>,
+    type: '*',
+    opts?: WaitOpts<E>,
+  ): Promise<E>;
+  wait(type: string, opts?: WaitOpts): Promise<RuntimeEvent>;
 }
 
 export function createFeature<E extends RuntimeEvent = RuntimeEvent>(
@@ -61,13 +75,20 @@ export function createFeature<E extends RuntimeEvent = RuntimeEvent>(
   };
 }
 
-export function bindHandleOn(node: NodeRef): FeatureHandleOn['on'] {
-  return ((
-    featureOrType: FeatureSpec | string,
-    typeOrHandler?: string | EventHandler,
-    handlerOrOpts?: EventHandler | ListenOpts,
-    opts?: ListenOpts,
-  ) => listenOn(node, featureOrType, typeOrHandler, handlerOrOpts, opts)) as FeatureHandleOn['on'];
+export function bindHandleOn(node: NodeRef): Pick<FeatureHandleOn, 'on' | 'wait'> {
+  return {
+    on: ((
+      featureOrType: FeatureSpec | string,
+      typeOrHandler?: string | EventHandler,
+      handlerOrOpts?: EventHandler | ListenOpts,
+      opts?: ListenOpts,
+    ) => listenOn(node, featureOrType, typeOrHandler, handlerOrOpts, opts)) as FeatureHandleOn['on'],
+    wait: ((
+      featureOrType: FeatureSpec | string,
+      typeOrOpts?: string | WaitOpts,
+      opts?: WaitOpts,
+    ) => waitOn(node, featureOrType, typeOrOpts, opts)) as FeatureHandleOn['wait'],
+  };
 }
 
 function listenOn(
@@ -101,6 +122,32 @@ function listenOn(
     { capture: opts?.capture },
   );
   return off;
+}
+
+function waitOn(
+  node: NodeRef,
+  featureOrType: FeatureSpec | string,
+  typeOrOpts?: string | WaitOpts,
+  opts?: WaitOpts,
+): Promise<RuntimeEvent> {
+  if (typeof featureOrType === 'string') {
+    return node.wait(featureOrType, typeOrOpts as WaitOpts | undefined);
+  }
+  const type = typeOrOpts as string;
+  if (type !== '*') {
+    return node.wait(type, opts);
+  }
+  const prefix = `${featureOrType.featureName}.`;
+  return node.wait('*', {
+    capture: opts?.capture,
+    signal: opts?.signal,
+    match: (event) => {
+      if (!event.type.startsWith(prefix)) {
+        return false;
+      }
+      return opts?.match?.(event) ?? true;
+    },
+  });
 }
 
 function wrapSlot(

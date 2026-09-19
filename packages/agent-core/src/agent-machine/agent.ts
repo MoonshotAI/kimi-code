@@ -11,7 +11,6 @@ import {
 } from '#/xstate2/index';
 
 import {
-  createSystemEntry,
   createUserEntry,
   createUserMessage,
   mergeSteerMessages,
@@ -160,7 +159,14 @@ export type AgentEmitted =
       reason: 'gate' | 'error';
       error?: unknown;
     }
-  | { type: 'prompt.steered'; queueItemIds: string[]; entries: UserEntry[] }
+  | { type: 'prompt.submitted'; entry: UserEntry }
+  | { type: 'prompt.notified'; entry: UserEntry }
+  | { type: 'prompt.reminded'; key: string; entry: SystemEntry | UserEntry }
+  | { type: 'prompt.cancelled'; id: string; cancelled: boolean }
+  | { type: 'prompt.steered'; ids: string[]; queueItemIds: string[]; entries: UserEntry[] }
+  | { type: 'agent.paused' }
+  | { type: 'agent.continued' }
+  | { type: 'agent.aborted'; reason?: unknown }
   | { type: 'agent.failed'; error: unknown };
 
 interface ToolEntry {
@@ -425,76 +431,81 @@ export function createAgentMachine({
         target: '.closing',
       },
       'input.submit': {
-        actions: assign(({ context, event }) => {
-          if (event.type !== 'input.submit') return {};
-          return {
-            queue: [
-              ...context.queue,
-              createUserEntry(event.entry.message, { source: 'input', ...event.entry.meta }),
-            ],
-          };
+        actions: enqueueActions(({ context, event, enqueue }) => {
+          if (event.type !== 'input.submit') return;
+          enqueue.assign({ queue: [...context.queue, event.entry] });
+          enqueue.emit({ type: 'prompt.submitted' as const, entry: event.entry   });
         }),
       },
       'input.notify': {
-        actions: assign(({ context, event }) => {
-          if (event.type !== 'input.notify') return {};
-          return {
-            notifications: [
-              ...context.notifications,
-              createUserEntry(event.entry.message, { source: 'notify', ...event.entry.meta }),
-            ],
-          };
+        actions: enqueueActions(({ context, event, enqueue }) => {
+          if (event.type !== 'input.notify') return;
+          enqueue.assign({ notifications: [...context.notifications, event.entry] });
+          enqueue.emit({ type: 'prompt.notified' as const, entry: event.entry });
         }),
       },
       'input.remind': {
-        actions: assign(({ context, event }) => {
-          if (event.type !== 'input.remind') return {};
-          const kept = context.reminders.filter((entry) => entry.meta?.key !== event.key);
-          const meta = { source: 'reminder', key: event.key, ...event.entry.meta };
-          kept.push(
-            event.entry.message.role === 'system'
-              ? createSystemEntry(event.entry.message, meta)
-              : createUserEntry(event.entry.message, meta),
-          );
-          return { reminders: kept };
+        actions: enqueueActions(({ context, event, enqueue }) => {
+          if (event.type !== 'input.remind') return;
+          enqueue.assign({
+            reminders: [
+              ...context.reminders.filter((entry) => entry.meta?.key !== event.key),
+              event.entry,
+            ],
+          });
+          enqueue.emit({ type: 'prompt.reminded' as const, key: event.key, entry: event.entry });
         }),
       },
       'input.steer': {
         actions: enqueueActions(({ context, event, enqueue }) => {
           if (event.type !== 'input.steer') return;
-          const ids = typeof event.id === 'string' ? [event.id] : event.id;
+          const ids = typeof event.id === 'string' ? [event.id] : [...event.id];
           const steered = context.queue.filter(
-            (item) => item.meta?.promptId !== undefined && ids.includes(item.meta?.promptId),
+            (item) => item.meta?.promptId !== undefined && ids.includes(item.meta.promptId),
           );
-          if (steered.length === 0) return;
-          const merged = mergeSteerMessages(
-            steered.map((item) => ({ content: item.message.content, origin: item.meta?.origin })),
-          );
-          enqueue.assign({
-            queue: context.queue.filter((item) => !steered.includes(item)),
-            notifications: [
-              ...context.notifications,
-              createUserEntry({ role: 'user', content: merged.content }, { source: 'input' }),
-            ],
-          });
+          if (steered.length > 0) {
+            const merged = mergeSteerMessages(
+              steered.map((item) => ({ content: item.message.content, origin: item.meta?.origin })),
+            );
+            enqueue.assign({
+              queue: context.queue.filter((item) => !steered.includes(item)),
+              notifications: [
+                ...context.notifications,
+                createUserEntry({ role: 'user', content: merged.content }, { source: 'input' }),
+              ],
+            });
+          }
           enqueue.emit({
             type: 'prompt.steered' as const,
+            ids,
             queueItemIds: steered.map((item) => item.meta?.promptId as string),
             entries: steered,
           });
         }),
       },
       'input.cancel': {
-        actions: assign(({ context, event }) => {
-          if (event.type !== 'input.cancel') return {};
-          return { queue: context.queue.filter((item) => item.meta?.promptId !== event.id) };
+        actions: enqueueActions(({ context, event, enqueue }) => {
+          if (event.type !== 'input.cancel') return;
+          const queue = context.queue.filter((item) => item.meta?.promptId !== event.id);
+          enqueue.assign({ queue });
+          enqueue.emit({
+            type: 'prompt.cancelled' as const,
+            id: event.id,
+            cancelled: queue.length !== context.queue.length,
+          });
         }),
       },
+      'input.abort': {
+        actions: emit(({ event }) => ({
+          type: 'agent.aborted' as const,
+          reason: event.type === 'input.abort' ? event.reason : undefined,
+        })),
+      },
       'input.pause': {
-        actions: assign({ paused: true }),
+        actions: [assign({ paused: true }), emit({ type: 'agent.paused' as const })],
       },
       'input.continue': {
-        actions: assign({ paused: false }),
+        actions: [assign({ paused: false }), emit({ type: 'agent.continued' as const })],
       },
       'tool.update': {
         actions: [emit(({ event }) => event), 'forwardToParent'],
@@ -524,7 +535,17 @@ export function createAgentMachine({
             guard: ({ context }) =>
               !hasPendingWork(context) && historyEndsMidToolChain(context.messages),
             target: 'running',
-            actions: [assign({ paused: false }), 'commitPendingToHistory'],
+            actions: [
+              assign({ paused: false }),
+              'commitPendingToHistory',
+              emit({ type: 'agent.continued' as const }),
+            ],
+          },
+          'input.abort': {
+            actions: emit(({ event }) => ({
+              type: 'agent.aborted' as const,
+              reason: event.type === 'input.abort' ? event.reason : undefined,
+            })),
           },
         },
         states: {
@@ -675,10 +696,18 @@ export function createAgentMachine({
         initial: 'active',
         on: {
           'input.pause': {
-            actions: [assign({ paused: true }), sendTo('turn', { type: 'turn.pause' as const })],
+            actions: [
+              assign({ paused: true }),
+              sendTo('turn', { type: 'turn.pause' as const }),
+              emit({ type: 'agent.paused' as const }),
+            ],
           },
           'input.continue': {
-            actions: [assign({ paused: false }), sendTo('turn', { type: 'turn.continue' as const })],
+            actions: [
+              assign({ paused: false }),
+              sendTo('turn', { type: 'turn.continue' as const }),
+              emit({ type: 'agent.continued' as const }),
+            ],
           },
           'turn.drain': {
             actions: enqueueActions(({ context, enqueue }) => {
@@ -777,6 +806,10 @@ export function createAgentMachine({
                   'abortTurn',
                   'abortTurnTools',
                   emit({ type: 'turn.aborting' as const }),
+                  emit(({ event }) => ({
+                    type: 'agent.aborted' as const,
+                    reason: event.type === 'input.abort' ? event.reason : undefined,
+                  })),
                 ],
               },
             },
@@ -790,7 +823,15 @@ export function createAgentMachine({
                 actions: ['spawnTurnTools', 'abortSpawnedTools', emit(({ event }) => event)],
               },
               'input.abort': {
-                actions: ['rememberAbortReason', 'abortTurn', 'stopTurnTools'],
+                actions: [
+                  'rememberAbortReason',
+                  'abortTurn',
+                  'stopTurnTools',
+                  emit(({ event }) => ({
+                    type: 'agent.aborted' as const,
+                    reason: event.type === 'input.abort' ? event.reason : undefined,
+                  })),
+                ],
               },
             },
           },

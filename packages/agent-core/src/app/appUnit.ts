@@ -15,6 +15,8 @@ import { bindHandleOn, type FeatureHandleOn, type FeatureSpec } from '#/feature/
 import { AppUnitRef } from '#/feature/contribution-hooks';
 import { useFeatureSlot } from '#/feature/hooks';
 
+import { openSession, updateSession, type OpenSessionInput } from './open-session';
+import type { SessionRecord, SessionRecordDraft, SessionSpace } from './session-space';
 import { SessionUnit, sessionHandle, type SessionHandle, type SessionUnitProps } from './sessionUnit';
 
 export type CreateSessionProps = SessionUnitProps;
@@ -22,12 +24,16 @@ export type CreateSessionProps = SessionUnitProps;
 export interface AppUnitProps {
   readonly features?: MaybeRefOrGetter<readonly FeatureSpec[]>;
   readonly provide?: (node: NodeRef) => void;
+  readonly space?: SessionSpace;
 }
 
 export interface AppCommands {
+  readonly space: SessionSpace;
   list(): string[];
   get(sessionId: string): SessionHandle | undefined;
   create(props: CreateSessionProps): Promise<SessionHandle>;
+  open(input?: OpenSessionInput): Promise<SessionHandle>;
+  updateSession(id: string, patch: SessionRecordDraft): Promise<SessionRecord>;
   close(sessionId: string): Promise<void>;
   installFeature(spec: FeatureSpec): void;
   uninstallFeature(feature: FeatureSpec | string): boolean;
@@ -40,6 +46,12 @@ export interface AppHandle extends UnitHandle, AppCommands, FeatureHandleOn {
 export const AppUnit = createUnit<AppUnitProps>('app', (props, ctx) => {
   const sessions = new Map<string, SessionHandle>();
   const installed = shallowRef<readonly FeatureSpec[]>([]);
+  const requireSpace = (): SessionSpace => {
+    if (props.space === undefined) {
+      throw new Error('session space is not configured');
+    }
+    return props.space;
+  };
   const sweep = (): void => {
     for (const [sessionId, session] of sessions) {
       if (session.state === 'unmounted') {
@@ -48,6 +60,9 @@ export const AppUnit = createUnit<AppUnitProps>('app', (props, ctx) => {
     }
   };
   const commands: AppCommands = {
+    get space() {
+      return requireSpace();
+    },
     list: () => {
       sweep();
       return [...sessions.keys()];
@@ -74,6 +89,8 @@ export const AppUnit = createUnit<AppUnitProps>('app', (props, ctx) => {
       }
       return session;
     },
+    open: (input) => openSession(commands, requireSpace(), input),
+    updateSession: (id, patch) => updateSession(commands, requireSpace(), id, patch),
     close: async (sessionId) => {
       const session = sessions.get(sessionId);
       sessions.delete(sessionId);
@@ -111,10 +128,13 @@ export function appHandle(handle: UnitHandle): AppHandle {
     ready: () => handle.ready(),
     unmount: () => handle.unmount(),
     disposeAsync: () => handle.unmount(),
-    on: bindHandleOn(handle.node),
+    ...bindHandleOn(handle.node),
     list: () => commands().list(),
+    get space() { return commands().space; },
     get: (sessionId) => commands().get(sessionId),
     create: (props) => commands().create(props),
+    open: (input) => commands().open(input),
+    updateSession: (id, patch) => commands().updateSession(id, patch),
     close: (sessionId) => commands().close(sessionId),
     installFeature: (spec) => commands().installFeature(spec),
     uninstallFeature: (feature) => commands().uninstallFeature(feature),

@@ -56,6 +56,44 @@ import { useFeatureSlot } from '#/feature/hooks';
 
 type AgentActor = ActorRefFrom<ReturnType<typeof createAgentMachine>>;
 
+type AgentAck<T extends AgentEmitted['type']> = Extract<AgentEmitted, { type: T }>;
+
+function waitEmitted<T extends AgentEmitted['type']>(
+  actor: AgentActor,
+  node: NodeRef,
+  type: T,
+  match: (event: AgentAck<T>) => boolean = () => true,
+): Promise<AgentAck<T>> {
+  return new Promise((resolve, reject) => {
+    if (node.signal.aborted) {
+      reject(new Error(`unit '${node.name}' is unmounted`));
+      return;
+    }
+    const status = actor.getSnapshot().status;
+    if (status === 'done' || status === 'stopped') {
+      reject(new Error('agent is not running'));
+      return;
+    }
+    const subscription = actor.on(type, (event) => {
+      const typed = event as AgentAck<T>;
+      if (!match(typed)) {
+        return;
+      }
+      cleanup();
+      resolve(typed);
+    });
+    const onAbort = (): void => {
+      cleanup();
+      reject(new Error(`unit '${node.name}' is unmounted`));
+    };
+    const cleanup = (): void => {
+      subscription.unsubscribe();
+      node.signal.removeEventListener('abort', onAbort);
+    };
+    node.signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 function invokedHistory(actor: AgentActor): readonly HistoryMessage[] {
   const child = actor.getSnapshot().children['turn'];
   if (child === undefined) return [];
@@ -130,14 +168,14 @@ export interface AgentCommands {
   setRequester(requester: LlmRequester): void;
   setConfig(config: LlmRequestConfig): void;
   setCredentialProvider(provider?: LlmCredentialProvider): void;
-  submit(message: UserMessage, meta?: UserMeta): void;
-  notify(message: UserMessage): void;
-  remind(key: string, message: UserMessage | SystemMessage): void;
-  cancel(id: string): void;
-  steer(ids: string | readonly string[]): void;
-  abort(reason?: unknown): void;
-  pause(): void;
-  continue(): void;
+  submit(message: UserMessage, meta?: UserMeta): Promise<Extract<AgentEmitted, { type: 'prompt.submitted' }>>;
+  notify(message: UserMessage): Promise<Extract<AgentEmitted, { type: 'prompt.notified' }>>;
+  remind(key: string, message: UserMessage | SystemMessage): Promise<Extract<AgentEmitted, { type: 'prompt.reminded' }>>;
+  cancel(id: string): Promise<Extract<AgentEmitted, { type: 'prompt.cancelled' }>>;
+  steer(ids: string | readonly string[]): Promise<Extract<AgentEmitted, { type: 'prompt.steered' }>>;
+  abort(reason?: unknown): Promise<Extract<AgentEmitted, { type: 'agent.aborted' }>>;
+  pause(): Promise<Extract<AgentEmitted, { type: 'agent.paused' }>>;
+  continue(): Promise<Extract<AgentEmitted, { type: 'agent.continued' }>>;
   on<T extends AgentEmitted['type']>(
     type: T,
     handler: (event: Extract<AgentEmitted, { type: T }>) => void,
@@ -202,18 +240,57 @@ export const AgentUnit = createUnit<AgentUnitProps>('agent', (props) => {
     setCredentialProvider: (next) => {
       credentialProvider = next;
     },
-    submit: (message, meta) => send({ type: 'input.submit', entry: { message, meta } }),
-    notify: (message) => send({ type: 'input.notify', entry: { message } }),
-    remind: (key, message) => send({
-      type: 'input.remind',
-      key,
-      entry: message.role === 'system' ? createSystemEntry(message) : createUserEntry(message),
-    }),
-    cancel: (id) => send({ type: 'input.cancel', id }),
-    steer: (ids) => send({ type: 'input.steer', id: ids }),
-    abort: (reason) => send({ type: 'input.abort', reason }),
-    pause: () => send({ type: 'input.pause' }),
-    continue: () => send({ type: 'input.continue' }),
+    submit: (message, meta) => {
+      const entry = createUserEntry(message, { source: 'input', ...meta });
+      const accepted = waitEmitted(actor, node, 'prompt.submitted', (event) => event.entry === entry);
+      send({ type: 'input.submit', entry });
+      return accepted;
+    },
+    notify: (message) => {
+      const entry = createUserEntry(message, { source: 'notify' });
+      const accepted = waitEmitted(actor, node, 'prompt.notified', (event) => event.entry === entry);
+      send({ type: 'input.notify', entry });
+      return accepted;
+    },
+    remind: (key, message) => {
+      const entry = message.role === 'system'
+        ? createSystemEntry(message, { source: 'reminder', key })
+        : createUserEntry(message, { source: 'reminder', key });
+      const accepted = waitEmitted(actor, node, 'prompt.reminded', (event) => event.entry === entry);
+      send({ type: 'input.remind', key, entry });
+      return accepted;
+    },
+    cancel: (id) => {
+      const accepted = waitEmitted(actor, node, 'prompt.cancelled', (event) => event.id === id);
+      send({ type: 'input.cancel', id });
+      return accepted;
+    },
+    steer: (ids) => {
+      const requested = typeof ids === 'string' ? [ids] : [...ids];
+      const accepted = waitEmitted(
+        actor,
+        node,
+        'prompt.steered',
+        (event) => event.ids.length === requested.length && event.ids.every((id, index) => id === requested[index]),
+      );
+      send({ type: 'input.steer', id: ids });
+      return accepted;
+    },
+    abort: (reason) => {
+      const accepted = waitEmitted(actor, node, 'agent.aborted');
+      send({ type: 'input.abort', reason });
+      return accepted;
+    },
+    pause: () => {
+      const accepted = waitEmitted(actor, node, 'agent.paused');
+      send({ type: 'input.pause' });
+      return accepted;
+    },
+    continue: () => {
+      const accepted = waitEmitted(actor, node, 'agent.continued');
+      send({ type: 'input.continue' });
+      return accepted;
+    },
     on: (type, handler) => {
       const subscription = actor.on(type, (event) => {
         if (type === 'turn.done' || type === 'turn.failed' || type === 'turn.aborted') {

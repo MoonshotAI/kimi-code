@@ -42,3 +42,5 @@ export * from './feature/index';
 export * from './app/appUnit';
 export * from './app/sessionUnit';
 export * from './app/agentUnit';
+export * from './app/session-space';
+export type { OpenSessionInput } from './app/open-session';

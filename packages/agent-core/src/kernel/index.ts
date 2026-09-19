@@ -24,6 +24,7 @@ export type {
   UnitSetup,
   UnitState,
   Unsubscribe,
+  WaitOpts,
 } from './runtime';
 export {
   inject,
