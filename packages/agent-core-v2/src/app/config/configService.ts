@@ -681,7 +681,7 @@ export class ConfigService extends Disposable implements IConfigService {
   }
 
   private applyWatchEnabled(): void {
-    setWatchEnabled(this.get<WatchConfig | undefined>(WATCH_SECTION)?.enabled ?? true);
+    setWatchEnabled(this.get<WatchConfig | undefined>(WATCH_SECTION)?.enabled ?? false);
   }
 
   private deliveredValue(domain: string): unknown {

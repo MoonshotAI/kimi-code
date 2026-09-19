@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   createWatchService,
@@ -19,6 +19,14 @@ import {
 const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const longTempDir = (prefix: string): Promise<string> =>
   mkdtemp(join(realpathSync.native(tmpdir()), prefix));
+
+beforeEach(() => {
+  setWatchEnabled(true);
+});
+
+afterEach(() => {
+  setWatchEnabled(false);
+});
 
 class TestNativeWatcher {
   private errorListener: ((error: NodeJS.ErrnoException) => void) | undefined;
@@ -469,14 +477,10 @@ describe('watch chokidar mode', () => {
   it('does not start a filesystem watch when watch is disabled', async () => {
     root = await mkdtemp(join(tmpdir(), 'watch-disabled-'));
     setWatchEnabled(false);
-    try {
-      const events = await start();
-      await writeFile(join(root, 'a.txt'), 'x');
-      await wait(300);
-      expect(events).toHaveLength(0);
-    } finally {
-      setWatchEnabled(true);
-    }
+    const events = await start();
+    await writeFile(join(root, 'a.txt'), 'x');
+    await wait(300);
+    expect(events).toHaveLength(0);
   });
 
   it('stops firing after the handle is disposed', async () => {

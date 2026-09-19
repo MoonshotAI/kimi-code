@@ -474,11 +474,11 @@ Both values must be positive integers. A call's `max_chars` overrides the defaul
 
 ## `watch`
 
-`watch` controls filesystem watchers that reload local.toml, AGENTS.md, skills, MCP config, and `config.toml` itself. It defaults to on. Set `enabled` to `false` to start with no watchers; changing the file later will not be picked up until restart.
+`watch` controls filesystem watchers that reload local.toml, AGENTS.md, skills, MCP config, and `config.toml` itself. It defaults to off. Set `enabled` to `true` to attach watchers; with watchers off, changing the file later will not be picked up until restart.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `enabled` | `boolean` | `true` | Attach filesystem watchers; `false` disables every `watch()` for the process |
+| `enabled` | `boolean` | `false` | Attach filesystem watchers; `false` disables every `watch()` for the process |
 
 `enabled` can be overridden by the `KIMI_CODE_WATCH` environment variable, which takes higher priority than `config.toml`.
 
