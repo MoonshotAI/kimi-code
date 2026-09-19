@@ -3,10 +3,12 @@ import { ReadBuffer, serializeMessage } from '@modelcontextprotocol/sdk/shared/s
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 
+import { proxyEnvForChild, reconcileChildNoProxy } from '#/_base/utils/proxy';
+import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
+import { environmentStatusAllows } from '#/environment/environmentRegistry';
 import { ErrorCodes, Error2 } from '#/errors';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import type { IEnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
-import { proxyEnvForChild, reconcileChildNoProxy } from '#/_base/utils/proxy';
 
 import {
   buildRequestOptions,
@@ -52,9 +54,6 @@ export class StdioMcpClient implements MCPClient {
   static readonly stderrBufferCapacity = STDERR_BUFFER_CAPACITY;
 
   constructor(config: McpServerStdioConfig, options: StdioMcpClientOptions) {
-    if (config.executor !== undefined && config.executor !== 'local') {
-      throw new Error2(ErrorCodes.NOT_IMPLEMENTED, `MCP stdio executor '${config.executor}' is not yet implemented`);
-    }
     this.transport = new EnvironmentStdioTransport(config, options, this.stderrBuffer);
     this.client = new Client({
       name: options.clientName ?? KIMI_MCP_CLIENT_NAME,
@@ -178,19 +177,33 @@ class EnvironmentStdioTransport implements Transport {
     if (this.started) throw new Error('Environment stdio transport is already started');
     if (this.closed) throw new Error('Environment stdio transport is closed');
     this.started = true;
-    const lease = this.options.environmentResolver.acquire(
-      { workspaceId: this.options.workspaceId, environmentId: this.options.environmentId },
-      ['process'],
-    );
+    const binding = {
+      workspaceId: this.options.workspaceId,
+      environmentId: this.options.environmentId,
+    };
+    const required = ['process'] as const;
+    const inspected = this.options.environmentResolver.inspect(binding);
+    if (!environmentStatusAllows(inspected, required) && typeof inspected.connect === 'function') {
+      await inspected.connect();
+    }
+    const lease = await this.options.environmentResolver.acquireWhenReady(binding, required);
     this.lease = lease;
     try {
-      const base = lease.environment.path.resolve(this.options.defaultCwd ?? lease.environment.host.homeDir);
-      const cwd = this.config.cwd === undefined ? base : lease.environment.path.resolve(base, this.config.cwd);
-      const process = lease.track(await lease.environment.process!.spawn(
-        this.config.command,
-        this.config.args,
-        { cwd, env: mergeStdioEnv(this.config.env) },
-      ), this.options.sessionId);
+      const base = lease.environment.path.resolve(
+        this.options.defaultCwd ?? lease.environment.host.homeDir,
+      );
+      const cwd =
+        this.config.cwd === undefined
+          ? base
+          : lease.environment.path.resolve(base, this.config.cwd);
+      const env =
+        this.options.environmentId === LOCAL_ENVIRONMENT_ID
+          ? mergeStdioEnv(this.config.env)
+          : mergeRemoteStdioEnv(this.config);
+      const process = lease.track(
+        await lease.environment.process!.spawn(this.config.command, this.config.args, { cwd, env }),
+        this.options.sessionId,
+      );
       this.process = process;
       lease.track(this, this.options.sessionId);
       process.stdin.on('error', (error: Error) => this.onerror?.(error));
@@ -217,7 +230,8 @@ class EnvironmentStdioTransport implements Transport {
 
   async send(message: JSONRPCMessage): Promise<void> {
     const process = this.process;
-    if (process === undefined || this.closed) throw new Error('Environment stdio transport is not running');
+    if (process === undefined || this.closed)
+      throw new Error('Environment stdio transport is not running');
     const data = serializeMessage(message);
     await new Promise<void>((resolve, reject) => {
       process.stdin.write(data, (error) => {
@@ -301,5 +315,20 @@ export function mergeStdioEnv(
   if (configEnv !== undefined) Object.assign(merged, configEnv);
   Object.assign(merged, proxyEnvForChild(merged));
   reconcileChildNoProxy(merged, configEnv);
+  return merged;
+}
+
+export function mergeRemoteStdioEnv(
+  config: Pick<McpServerStdioConfig, 'env' | 'envVars'>,
+  parentEnv: Readonly<Record<string, string | undefined>> = process.env,
+): Record<string, string> {
+  const merged: Record<string, string> = {};
+  for (const entry of config.envVars ?? []) {
+    if (typeof entry !== 'string' && entry.source === 'remote') continue;
+    const name = typeof entry === 'string' ? entry : entry.name;
+    const value = parentEnv[name];
+    if (value !== undefined) merged[name] = value;
+  }
+  if (config.env !== undefined) Object.assign(merged, config.env);
   return merged;
 }
