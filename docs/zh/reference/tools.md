@@ -155,14 +155,14 @@ Plan 模式是一种受约束的工作状态：进入后 `Write` 与 `Edit` 只�
 
 ## 环境工具
 
-环境工具把 [远程环境](../guides/remote-environment.md) 的切换交给 Agent 自己：`change_environment` 将会话绑定切换到另一个环境，`connect` 根据启动器规格创建一个临时环境。两个工具都仅 main agent 可用——subagent 的工具列表中看不到它们，也无法调用。Plan 模式下调用会被拒绝（先退出 Plan 模式）；tower 模式激活期间不会注册这组工具。与普通工具调用不同，切换或连接在「必要时询问」模式下也会请求确认，只有「完全自动」模式会直接执行。
+环境工具把 [远程环境](../guides/remote-environment.md) 的切换交给 Agent 自己：`change_environment` 将会话绑定切换到另一个环境，`connect` 根据启动器规格创建一个临时环境。两个工具都仅 main agent 可用——subagent 的工具列表中看不到它们，也无法调用。Plan 模式下调用会被拒绝（先退出 Plan 模式）；tower 模式激活期间不会注册这组工具。切换或连接只会在「始终询问」模式下请求确认，「必要时询问」和「完全自动」模式都会直接执行。
 
 这些工具默认开启。如需关闭，设置 `KIMI_CODE_EXPERIMENTAL_AGENT_ENVIRONMENT_TOOLS=0`、在 `config.toml` 中写入 `[experimental] agent_environment_tools = false`，或在创建会话前通过 `/experiments` 关闭该功能。在功能关闭时创建的会话既没有这些工具，也没有系统提示词中的环境列表。
 
 | 工具 | 默认审批 | 说明 |
 | --- | --- | --- |
-| `change_environment` | 需审批（「完全自动」模式除外） | 将会话切换到另一个环境 |
-| `connect` | 需审批（「完全自动」模式除外） | 创建并连接一个临时环境 |
+| `change_environment` | 需审批（仅「始终询问」模式） | 将会话切换到另一个环境 |
+| `connect` | 需审批（仅「始终询问」模式） | 创建并连接一个临时环境 |
 
 **`change_environment`** 接受 `id`（要切换到的环境：`local` 表示本机，或已声明环境、临时环境的 id）和可选的 `cwd`（目标环境上的工作目录；声明未设置 `defaultCwd` 的远程环境必填，切换到 `local` 时可选）。目标环境会立即连接：连接或 `cwd` 校验失败会立刻报错且不改变任何状态。
 
