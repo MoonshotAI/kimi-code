@@ -130,6 +130,52 @@ export function launcherLabel(launcher: LauncherSpec): string {
   }
 }
 
+// docker exec passes argv to execve without a shell, so a tilde-prefixed
+// remoteBin (the default included) would be invoked literally and fail with
+// exit 126. Resolve the container user's $HOME with one shell probe and
+// substitute the absolute path before the first exec attempt. Best-effort:
+// when the probe fails (container down, no shell, empty/relative $HOME) the
+// launcher is returned unchanged and the connect surfaces the underlying
+// error instead. ssh launchers keep the tilde form — the remote shell
+// expands it.
+export async function resolveTildeRemoteBin(
+  launcher: LauncherSpec,
+  runner: LocalRunner,
+): Promise<LauncherSpec> {
+  if (launcher.type !== 'docker') return launcher;
+  const remoteBin = launcher.remoteBin ?? DEFAULT_REMOTE_BIN;
+  if (remoteBin !== '~' && !remoteBin.startsWith('~/')) return launcher;
+  const homeDir = await probeDockerHomeDir(launcher, runner);
+  if (homeDir === undefined) return launcher;
+  return { ...launcher, remoteBin: `${homeDir === '/' ? '' : homeDir}${remoteBin.slice(1)}` };
+}
+
+async function probeDockerHomeDir(
+  launcher: LauncherSpec & { readonly type: 'docker' },
+  runner: LocalRunner,
+): Promise<string | undefined> {
+  let result: LocalRunResult;
+  try {
+    result = await runner({
+      program: 'docker',
+      args: [
+        ...dockerBaseArgs(launcher.context),
+        'exec',
+        launcher.container,
+        'sh',
+        '-c',
+        'printf "%s" "$HOME"',
+      ],
+      timeoutMs: PROBE_TIMEOUT_MS,
+    });
+  } catch {
+    return undefined;
+  }
+  if (result.code !== 0) return undefined;
+  const homeDir = result.stdout.trim();
+  return homeDir.startsWith('/') ? homeDir : undefined;
+}
+
 export function shQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
