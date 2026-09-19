@@ -163,7 +163,7 @@ export async function runAcpServerWithStream(
         .get(IAgentLifecycleService)
         .handleOf(agentContext.agentId)!
         .accessor.get(IAgentEnvironmentBindingService)
-        .switch(environmentId);
+        .switch(environmentId, context.cwd);
     },
     unbindSessionEnvironment: async (sessionId) => {
       const workspaceId = sessionWorkspaces.get(sessionId);
