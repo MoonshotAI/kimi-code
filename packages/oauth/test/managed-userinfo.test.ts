@@ -117,6 +117,18 @@ describe('parseManagedUserInfoPayload', () => {
     });
   });
 
+  it('parses goods_version into goodsVersion', () => {
+    const parsed = parseManagedUserInfoPayload({ user_id: 'u_123', goods_version: 2 });
+    expect(parsed?.goodsVersion).toBe(2);
+  });
+
+  it('treats a missing or non-numeric goods_version as undefined', () => {
+    expect(parseManagedUserInfoPayload({ user_id: 'u_123' })?.goodsVersion).toBeUndefined();
+    expect(
+      parseManagedUserInfoPayload({ user_id: 'u_123', goods_version: 'V2' })?.goodsVersion,
+    ).toBeUndefined();
+  });
+
   it('drops a phone record whose fields are all empty or non-string', () => {
     expect(
       parseManagedUserInfoPayload({ user_id: 'u_1', phone: { country_code: 86 } })?.phone,
