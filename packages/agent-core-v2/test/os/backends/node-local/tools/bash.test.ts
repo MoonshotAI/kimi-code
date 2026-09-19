@@ -24,6 +24,12 @@ import { type ISessionContext, makeSessionContext } from '#/session/sessionConte
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { type BashInput, BashInputSchema } from '#/agent/tools/os/bash/bash';
 import { BashTool } from '#/agent/tools/os/bash/bashTool';
+import { AgentWorkspaceContextService } from '#/session/workspaceContext/agentWorkspaceContextService';
+import { SessionStateService } from '#/session/state/sessionStateService';
+import {
+  workspaceContextAdditionalDirsKey,
+  workspaceContextWorkDirKey,
+} from '#/session/workspaceContext/workspaceContextService';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 
 const posixEnv: IHostEnvironment = {
@@ -873,6 +879,43 @@ describe('BashTool', () => {
 
     expect(exec.mock.calls[0]?.[0]).toBe('/bin/bash');
     expect(exec.mock.calls[0]?.[1]).toEqual(['-c', "cd '/var/app' && pwd"]);
+  });
+
+  it('resolves an omitted cwd from the bound environment workspace, not the host session cwd', async () => {
+    const { runner, exec } = createTestRunner(processWithOutput({ stdout: '' }));
+    const ctx = createTestCtx('/host/session/cwd');
+    const processService: IHostProcessService = {
+      _serviceBrand: undefined,
+      spawn: async (command, args = [], options) => runner.spawn(command, args, options),
+    };
+    const backend = Object.assign(
+      new FakeEnvironment(
+        { workspaceId: ctx.workspaceId, environmentId: 'docker-dev', generation: 'remote-one' },
+        { capabilities: ['process'], pathClass: 'posix' },
+      ),
+      { host: createTestEnv(), process: processService },
+    );
+    const environment = stubAgentEnvironment(backend, { workDir: '/remote-work' });
+    const sessionState = new SessionStateService();
+    sessionState.contributeState(workspaceContextWorkDirKey);
+    sessionState.contributeState(workspaceContextAdditionalDirsKey);
+    sessionState.set(workspaceContextWorkDirKey, ctx.cwd);
+    const shadow = new AgentWorkspaceContextService(sessionState, {
+      current: environment,
+      onDidChange: () => ({ dispose: () => {} }),
+    });
+    const tool = new BashTool(
+      environment,
+      ctx,
+      shadow,
+      createFakeTaskService().service,
+      stubToolPolicy(),
+      stubConfig(),
+    );
+
+    await executeTool(tool, context({ command: 'pwd', timeout: 60 }));
+
+    expect(exec.mock.calls[0]?.[1]).toEqual(['-c', "cd '/remote-work' && pwd"]);
   });
 
   it('uses Git Bash semantics on Windows', async () => {

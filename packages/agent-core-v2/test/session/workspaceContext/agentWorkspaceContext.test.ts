@@ -1,16 +1,27 @@
 import { describe, expect, it } from 'vitest';
 
-import { Emitter } from '#/_base/event';
+import { Emitter, Event } from '#/_base/event';
+import { createScopedTestHost } from '#/_base/di/test';
+import { getScopedServiceDescriptors } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
 import type { ISessionEventBus } from '#/app/event/eventBus';
-import { AgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { AgentEnvironmentService, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import type { EnvironmentBinding } from '#/environment/environment';
 import { EnvironmentRegistry } from '#/environment/environmentRegistry';
-import { fakeEnvironment } from '../../environment/stubs';
+import { fakeEnvironment, stubAgentEnvironment } from '../../environment/stubs';
 import { AgentWorkspaceContextService } from '#/session/workspaceContext/agentWorkspaceContextService';
-import { makeSessionContext } from '#/session/sessionContext/sessionContext';
-import { SessionStateService } from '#/session/state/sessionStateService';
 import {
+  ISessionContext,
+  makeSessionContext,
+} from '#/session/sessionContext/sessionContext';
+import { SessionStateService } from '#/session/state/sessionStateService';
+import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import {
+  ISessionWorkspaceContext,
+} from '#/session/workspaceContext/workspaceContext';
+import {
+  SessionWorkspaceContextService,
   workspaceContextAdditionalDirsKey,
   workspaceContextWorkDirKey,
 } from '#/session/workspaceContext/workspaceContextService';
@@ -153,5 +164,72 @@ describe('AgentWorkspaceContextService', () => {
 
     main.shadow.setWorkDir('/pushed');
     expect(sessionState.get(workspaceContextWorkDirKey)).toBe('/pushed');
+  });
+});
+
+describe('ISessionWorkspaceContext scope resolution', () => {
+  const sessionContext = makeSessionContext({
+    sessionId: 's',
+    workspaceId: 'workspace',
+    sessionDir: '/session',
+    sessionScope: 'sessions/s',
+    cwd: '/host/session/cwd',
+  });
+  const workspaceInfo = {
+    _serviceBrand: undefined,
+    ready: Promise.resolve(),
+    additionalDirs: [],
+    onDidChange: Event.None,
+  } as unknown as ISessionWorkspaceInfo;
+
+  it('registers the shadow at agent scope in the scoped service registry', () => {
+    const entries = getScopedServiceDescriptors(LifecycleScope.Agent).filter(
+      (entry) => (entry.id as unknown) === (ISessionWorkspaceContext as unknown),
+    );
+    expect(entries).toHaveLength(1);
+  });
+
+  it('resolves the session service at session scope and the binding-derived shadow at agent scope', () => {
+    const host = createScopedTestHost();
+    try {
+      const session = host.child(LifecycleScope.Session, 'session-1', [
+        [ISessionContext, sessionContext],
+        [ISessionWorkspaceInfo, workspaceInfo],
+      ]);
+      const fromSession = session.accessor.get(ISessionWorkspaceContext);
+      expect(fromSession).toBeInstanceOf(SessionWorkspaceContextService);
+      expect(fromSession.workDir).toBe('/host/session/cwd');
+
+      const environment = stubAgentEnvironment(fakeEnvironment('docker-dev', 'remote-one'), {
+        workDir: '/home',
+      });
+      const agent = host.childOf(session, LifecycleScope.Agent, 'agent-1', [
+        [IAgentEnvironmentService, environment],
+      ]);
+      const fromAgent = agent.accessor.get(ISessionWorkspaceContext);
+      expect(fromAgent).toBeInstanceOf(AgentWorkspaceContextService);
+      expect(fromAgent.workDir).toBe('/home');
+      expect(fromAgent.additionalDirs).toEqual([]);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('falls back to the session roots while the environment service is not materialized', () => {
+    const host = createScopedTestHost();
+    try {
+      const session = host.child(LifecycleScope.Session, 'session-1', [
+        [ISessionContext, sessionContext],
+        [ISessionWorkspaceInfo, workspaceInfo],
+      ]);
+      const agent = host.childOf(session, LifecycleScope.Agent, 'agent-1');
+
+      const fromAgent = agent.accessor.get(ISessionWorkspaceContext);
+
+      expect(fromAgent).toBeInstanceOf(AgentWorkspaceContextService);
+      expect(fromAgent.workDir).toBe('/host/session/cwd');
+    } finally {
+      host.dispose();
+    }
   });
 });
