@@ -427,6 +427,13 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   private readonly sessionAccessQueues = new Map<string, Promise<void>>();
   /** App-scope subscriptions (global event forwarding, lifecycle tracking), disposed in {@link close}. */
   private readonly appSubscriptions: IDisposable[] = [];
+  /**
+   * `--agent-file` paths accumulated for the engine's `explicit` agent-profile
+   * source (the highest-precedence source). Passed to the engine bootstrap by
+   * reference and grown per createSession before the target workspace's
+   * explicit loader is reloaded (see {@link seedExplicitAgentFiles}).
+   */
+  private readonly explicitAgentFiles: string[] = [];
 
   constructor(options: SDKRpcClientV2Options = {}) {
     super();
@@ -461,6 +468,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
           // user / project discovery for every session this client hosts.
           skillDirs: options.skillDirs,
           uiCapabilities: options.uiCapabilities,
+          // `--agent-file` (v1 parity): explicit agentfiles for the engine's
+          // highest-precedence `explicit` agent-profile source. The array is
+          // shared by reference and grown per createSession (see
+          // {@link seedExplicitAgentFiles}); the engine re-reads it on every
+          // explicit-loader reload.
+          agentFiles: this.explicitAgentFiles,
         },
       },
       [...logSeed(resolveLoggingConfig({ homeDir: this.homeDir, env: process.env }))],
@@ -1340,7 +1353,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * caller metadata). The `model` / `thinking` / `permission` options are the
    * main-agent configuration v1 applies eagerly at creation: supplying any of
    * them materializes the main agent here (v2 otherwise keeps it lazy) and
-   * binds the default profile with the requested model/thinking. v1 never
+   * binds the default profile with the requested model/thinking. `agentProfile`
+   * (the `--agent` name) binds that catalog profile instead of the default, and
+   * `agentFiles` (the `--agent-file` paths) seed the engine's explicit
+   * agent-profile source before the session materializes. v1 never
    * validates either at create time — an unknown alias is recorded verbatim
    * and an unlisted effort normalizes to the model default — so the bind is
    * deliberately NOT `strictThinking`, and the v2-only create-time rejections
@@ -1370,6 +1386,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         );
       }
     }
+    if (input.agentFiles !== undefined && input.agentFiles.length > 0) {
+      await this.seedExplicitAgentFiles(workDir, input.agentFiles);
+    }
     const handle = await this.engineAccessor.get(ISessionManager).create({
       sessionId: input.id,
       workDir,
@@ -1381,11 +1400,13 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     if (
       input.model !== undefined ||
       input.thinking !== undefined ||
-      input.permission !== undefined
+      input.permission !== undefined ||
+      input.agentProfile !== undefined
     ) {
       const agent = await this.materializeMainAgent(handle, {
         model: input.model,
         thinking: input.thinking,
+        profile: input.agentProfile,
       });
       if (input.permission !== undefined) {
         agent.accessor.get(IAgentPermissionModeService).setMode(input.permission);
@@ -1742,17 +1763,41 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   // -----------------------------------------------------------------------
 
   /**
+   * `--agent-file` (v1 parity): explicit agentfiles feed the engine's
+   * highest-precedence `explicit` agent-profile source, which the v2 engine
+   * reads from the process-level bootstrap args at load time. Append the new
+   * paths to the shared list and reload the target workspace's explicit
+   * loader so the upcoming session's profile catalog sees them — the session
+   * lifecycle awaits loader readiness before the main-agent bind, and the
+   * explicit loader is fatal, so an unreadable or invalid file rejects the
+   * create here.
+   */
+  private async seedExplicitAgentFiles(
+    workDir: string,
+    agentFiles: readonly string[],
+  ): Promise<void> {
+    for (const file of agentFiles) {
+      if (!this.explicitAgentFiles.includes(file)) this.explicitAgentFiles.push(file);
+    }
+    const workspace = await this.engineAccessor
+      .get(IWorkspaceInstanceManager)
+      .getOrCreate({ root: workDir });
+    await workspace.program.explicitAgentProfiles.reload();
+  }
+
+  /**
    * The session's materialized main agent with v1's eager default binding
    * applied: a freshly created agent whose profile is still unbound gets the
    * default profile + configured default model (the same bind kap-server's
    * prompt route performs on first use). A home with no configured model
    * leaves the agent unbound instead of failing — v1's model-less session
    * reads (`model: undefined`, `'off'` thinking, zero capabilities) map onto
-   * the unbound state exactly.
+   * the unbound state exactly. `binding.profile` (the `--agent` name) binds
+   * that catalog profile instead of the default.
    */
   private async materializeMainAgent(
     session: ISessionScopeHandle,
-    binding?: { readonly model?: string; readonly thinking?: string },
+    binding?: { readonly model?: string; readonly thinking?: string; readonly profile?: string },
   ): Promise<IAgentScopeHandle> {
     await this.modelReady;
     const context = await ensureMainAgent(session);
@@ -1764,7 +1809,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     if (binding !== undefined || profile.data().profileName === undefined) {
       try {
         await profile.bind({
-          profile: DEFAULT_AGENT_PROFILE_NAME,
+          profile: binding?.profile ?? DEFAULT_AGENT_PROFILE_NAME,
           model: binding?.model,
           thinking: binding?.thinking,
         });
