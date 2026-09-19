@@ -680,7 +680,20 @@ export class KimiTUI {
       }
 
       startupTrace('initMainTui:begin');
-      const shouldReplayHistory = await this.initMainTui();
+      let shouldReplayHistory: boolean;
+      try {
+        shouldReplayHistory = await this.initMainTui();
+      } catch (error) {
+        // The event loop runs here only when the trust prompt already started
+        // it; a startup failure then (e.g. an unknown --environment id failing
+        // fast) must not leak raw mode into the user's shell — mirror the
+        // migration branch's cleanup.
+        if (trustPromptStartedLoop) {
+          this.disposeTerminalTracking();
+          this.state.ui.stop();
+        }
+        throw error;
+      }
       startupTrace('initMainTui:end');
       // Debug-only input→render latency overlay (KIMI_TUI_INPUT_LATENCY=1).
       if (process.env['KIMI_TUI_INPUT_LATENCY']) installInputLatencyProbe(this.state.ui);

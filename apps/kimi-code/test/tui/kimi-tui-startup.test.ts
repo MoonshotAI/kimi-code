@@ -2569,6 +2569,43 @@ describe('KimiTUI startup', () => {
     expect(driver.terminalFocusTrackingDispose).toBeUndefined();
   });
 
+  it('stops the event loop when startup fails after the trust prompt started it', async () => {
+    const getWorkspaceTrustInfo = vi.fn(async () => ({
+      trusted: false,
+      gatedMcpServers: [],
+      gatedEnvironments: [],
+    }));
+    const trustWorkspace = vi.fn(async () => {});
+    const harness = makeHarness(makeSession(), {
+      getWorkspaceTrustInfo,
+      trustWorkspace,
+      listEnvironmentDeclarations: vi.fn(async () => []),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ environment: 'ghost' })) as unknown as MigrateExitDriver & {
+      mountEditorReplacement(panel: { handleInput(data: string): void }): void;
+    };
+    const uiStart = vi.spyOn(driver.state.ui, 'start').mockImplementation(() => {});
+    const uiStop = vi.spyOn(driver.state.ui, 'stop').mockImplementation(() => {});
+    vi.spyOn(driver.state.terminal, 'write').mockImplementation(() => {});
+    const mountSpy = vi.spyOn(driver, 'mountEditorReplacement');
+
+    const startPromise = driver.start();
+    await vi.waitFor(() => {
+      expect(mountSpy).toHaveBeenCalled();
+    });
+    expect(uiStart).toHaveBeenCalled();
+    mountSpy.mock.calls[0]![0].handleInput('\u001B[A');
+    mountSpy.mock.calls[0]![0].handleInput('\r');
+
+    await expect(startPromise).rejects.toThrow(
+      'environment "ghost" is not declared in [environments]',
+    );
+
+    expect(trustWorkspace).toHaveBeenCalledWith('/tmp/proj-a');
+    expect(uiStop).toHaveBeenCalled();
+    expect(driver.terminalFocusTrackingDispose).toBeUndefined();
+  });
+
   it('checks workspace trust before entering the migration screen', async () => {
     const getWorkspaceTrustInfo = vi.fn(async () => ({
       trusted: true,
