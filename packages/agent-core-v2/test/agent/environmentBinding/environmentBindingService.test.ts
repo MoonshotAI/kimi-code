@@ -1440,6 +1440,7 @@ function stubWireJournal(journal: WireRecord[]): IWireService {
     readRestorable: async function* () {
       for (const record of journal) yield record;
     },
+    readRestoreChains: async () => ({ restorable: [...journal], journal: [...journal] }),
     readHumanChain: () => [],
     read: async function* () {
       for (const record of journal) yield record;

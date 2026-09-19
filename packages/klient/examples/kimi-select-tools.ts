@@ -148,10 +148,13 @@ const SELECT_TOOLS: Tool = {
   name: 'select_tools',
   description:
     'Load one or more tools by name so you can call them. ' +
-    'All available tool names are listed in the <tools_added>/<tools_removed> announcements ' +
+    'The loadable names are listed in the <tools_added>/<tools_removed> announcements ' +
     'in the system context — fold them in order to get the current list. ' +
-    'Pass the exact name(s) you need; their full definitions become available immediately, ' +
-    'so you can call them directly in your next tool call.',
+    'Pass the exact tool name(s) you need — plugin, skill, or category names do not work. ' +
+    'The full definitions become available immediately, so you can call them directly ' +
+    'in your next tool call. ' +
+    'Only announced names are loadable — tools you already have available are called ' +
+    'directly, never passed to select_tools.',
   parameters: {
     type: 'object',
     properties: {

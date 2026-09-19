@@ -21,6 +21,7 @@ export interface BundledSkillActivation {
 
 export interface UserPromptOrigin {
   readonly kind: 'user';
+  readonly inTurn?: true;
   readonly clientMetadata?: readonly Readonly<Record<string, unknown>>[];
   readonly skillActivations?: readonly BundledSkillActivation[];
   readonly attachments?: readonly PromptFileAttachment[];
@@ -30,6 +31,7 @@ export const USER_PROMPT_ORIGIN: UserPromptOrigin = { kind: 'user' };
 
 export interface PromptOrigin {
   readonly kind: string;
+  readonly inTurn?: true;
 }
 
 export interface SteerMessage {

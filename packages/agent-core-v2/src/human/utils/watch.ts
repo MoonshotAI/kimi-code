@@ -1,4 +1,4 @@
-import { watch as fsWatch, realpathSync } from 'node:fs';
+import { existsSync, watch as fsWatch, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 
 import { FSWatcher } from 'chokidar';
@@ -28,6 +28,7 @@ export interface WatchOptions {
   readonly ignored?: (path: string) => boolean;
   readonly depth?: number;
   readonly signal?: boolean;
+  readonly listing?: boolean;
 }
 
 export interface WatchSubscription {
@@ -51,6 +52,7 @@ export interface WatchRuntime {
   watchNative(
     root: string,
     listener: (eventType: string, filename: string | null) => void,
+    options?: { readonly recursive?: boolean },
   ): NativeFsWatcher;
   scheduleRetry(callback: () => void, delayMs: number): WatchSubscription;
   reportError(error: unknown): void;
@@ -68,13 +70,14 @@ const CHOKIDAR_EVENTS: Record<string, { action: WatchChangeAction; kind: WatchCh
 
 const NATIVE_RETRY_BASE_MS = 1000;
 const NATIVE_RETRY_MAX_MS = 30000;
+const LISTING_MISSING_RETRY_MS = 250;
 
 const NODE_WATCH_RUNTIME: WatchRuntime = {
   platform: process.platform,
   resolvePath: (path) =>
     process.platform === 'win32' && /~\d/.test(path) ? resolveLongPath(path) : path,
-  watchNative: (root, listener) =>
-    fsWatch(root, { persistent: false, recursive: true }, listener),
+  watchNative: (root, listener, options) =>
+    fsWatch(root, { persistent: false, recursive: options?.recursive !== false }, listener),
   scheduleRetry: (callback, delayMs) => {
     const timer = setTimeout(callback, delayMs);
     timer.unref?.();
@@ -102,6 +105,7 @@ interface WatchMachineContext {
   readonly retryDelayMs: number;
   readonly recovering: boolean;
   readonly chokidarDepth?: number;
+  readonly nativeRecursive: boolean;
 }
 
 type WatchEvent =
@@ -144,14 +148,19 @@ const chokidarLeg = fromCallback<WatchEvent, ChokidarLegInput>(({ input, sendBac
 interface NativeLegInput {
   readonly root: string;
   readonly runtime: WatchRuntime;
+  readonly recursive: boolean;
 }
 
 const nativeLeg = fromCallback<WatchEvent, NativeLegInput>(({ input, sendBack }) => {
   let watcher: NativeFsWatcher;
   try {
-    watcher = input.runtime.watchNative(input.root, (_eventType, filename) => {
-      sendBack({ type: 'leg.nativeEvent', filename });
-    });
+    watcher = input.runtime.watchNative(
+      input.root,
+      (_eventType, filename) => {
+        sendBack({ type: 'leg.nativeEvent', filename });
+      },
+      { recursive: input.recursive },
+    );
   } catch (error) {
     sendBack({ type: 'leg.nativeError', error: error as NodeJS.ErrnoException });
     return () => {};
@@ -193,10 +202,16 @@ const watchMachine = setup({
     retryAttempts: 0,
     retryDelayMs: 0,
     recovering: false,
+    nativeRecursive: true,
   }),
   states: {
     starting: {
       always: [
+        {
+          guard: ({ context }) => context.input.options?.listing === false,
+          target: 'native',
+          actions: assign({ nativeRecursive: false }),
+        },
         {
           guard: ({ context }) =>
             context.input.options?.signal === true &&
@@ -244,7 +259,11 @@ const watchMachine = setup({
     native: {
       invoke: {
         src: 'nativeLeg',
-        input: ({ context }) => ({ root: context.input.path, runtime: context.input.runtime }),
+        input: ({ context }) => ({
+          root: context.input.path,
+          runtime: context.input.runtime,
+          recursive: context.nativeRecursive,
+        }),
       },
       on: {
         'leg.nativeStarted': [
@@ -275,6 +294,16 @@ const watchMachine = setup({
           },
         ],
         'leg.nativeError': [
+          {
+            guard: ({ context, event }) =>
+              context.input.options?.listing === false && event.error.code === 'ENOENT',
+            target: 'backoff',
+            actions: assign({
+              ready: true,
+              recovering: true,
+              retryDelayMs: LISTING_MISSING_RETRY_MS,
+            }),
+          },
           {
             guard: ({ event }) => event.error.code === 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM',
             target: 'chokidar',
@@ -446,6 +475,7 @@ export function createWatchService(runtime: WatchRuntime = NODE_WATCH_RUNTIME): 
   let nextId = 0;
   return {
     watch(path: string, options?: WatchOptions): WatchHandle {
+      if (!isWatchEnabled()) return disabledWatchHandle();
       if (root === undefined) {
         root = createActor(watchRootMachine, { input: { runtime } }).start();
       }
@@ -478,8 +508,217 @@ export function createWatchService(runtime: WatchRuntime = NODE_WATCH_RUNTIME): 
 
 const defaultService = createWatchService();
 
+export const WATCH_ENV = 'KIMI_CODE_WATCH';
+
+const TRUE_WATCH_ENV = new Set(['1', 'true', 'yes', 'on']);
+const FALSE_WATCH_ENV = new Set(['0', 'false', 'no', 'off']);
+
+let watchEnabledFromConfig = true;
+
+export function setWatchEnabled(enabled: boolean): void {
+  watchEnabledFromConfig = enabled;
+}
+
+export function isWatchEnabled(): boolean {
+  const raw = process.env[WATCH_ENV]?.trim().toLowerCase();
+  if (raw !== undefined && raw.length > 0) {
+    if (FALSE_WATCH_ENV.has(raw)) return false;
+    if (TRUE_WATCH_ENV.has(raw)) return true;
+  }
+  return watchEnabledFromConfig;
+}
+
+function disabledWatchHandle(): WatchHandle {
+  return {
+    ready: Promise.resolve(),
+    onDidChange: () => ({ dispose: () => {} }),
+    dispose: () => {},
+  };
+}
+
 export function watch(path: string, options?: WatchOptions): WatchHandle {
   return defaultService.watch(path, options);
+}
+
+export function watchCandidates(
+  root: string,
+  candidates: readonly string[],
+  options?: WatchOptions,
+): WatchHandle {
+  return new CandidateWatchHandle(root, candidates, options);
+}
+
+class CandidateWatchHandle implements WatchHandle {
+  readonly ready: Promise<void>;
+  private disposed = false;
+  private settled = false;
+  private planKey = '';
+  private readonly handles: WatchHandle[] = [];
+  private readonly subscriptions: WatchSubscription[] = [];
+  private readonly listeners = new Set<(change: WatchChange) => void>();
+  private settleReady!: () => void;
+  private rejectReady!: (error: unknown) => void;
+
+  constructor(
+    private readonly root: string,
+    private readonly candidates: readonly string[],
+    private readonly options?: WatchOptions,
+  ) {
+    this.ready = new Promise<void>((resolve, reject) => {
+      this.settleReady = resolve;
+      this.rejectReady = reject;
+    });
+    void this.ready.catch(() => undefined);
+    void this.rebuild(true);
+  }
+
+  onDidChange(listener: (change: WatchChange) => void): WatchSubscription {
+    if (this.disposed) return { dispose: () => {} };
+    this.listeners.add(listener);
+    return {
+      dispose: () => {
+        this.listeners.delete(listener);
+      },
+    };
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.settle();
+    this.teardown();
+    this.listeners.clear();
+  }
+
+  private async rebuild(initial: boolean): Promise<void> {
+    if (this.disposed) return;
+    const plan = planCandidateWatches(this.root, this.candidates);
+    const key = `${plan.notify.join('\0')}\0\0${plan.paths.join('\0')}\0\0${plan.pending.join('\0')}`;
+    if (!initial && key === this.planKey) return;
+    this.planKey = key;
+    this.teardown();
+    const next: WatchHandle[] = [];
+    for (const path of plan.paths) next.push(watch(path, this.options));
+    for (const dir of plan.notify) {
+      if (!watchPathExists(dir)) continue;
+      next.push(
+        watch(dir, {
+          ...this.options,
+          listing: false,
+          recursive: false,
+          ignored: (path) =>
+            !isCandidateRelated(dir, this.candidates, path) ||
+            (this.options?.ignored?.(path) ?? false),
+        }),
+      );
+    }
+    for (const path of plan.pending) {
+      next.push(watch(path, { ...this.options, listing: false }));
+    }
+    this.handles.push(...next);
+    for (const handle of next) {
+      this.subscriptions.push(
+        handle.onDidChange((change) => {
+          void this.rebuild(false);
+          for (const listener of this.listeners) listener(change);
+        }),
+      );
+    }
+    try {
+      await Promise.all(next.map((handle) => handle.ready));
+      this.settle();
+    } catch (error) {
+      this.settle(error);
+    }
+  }
+
+  private teardown(): void {
+    for (const subscription of this.subscriptions) subscription.dispose();
+    this.subscriptions.length = 0;
+    for (const handle of this.handles) handle.dispose();
+    this.handles.length = 0;
+  }
+
+  private settle(error?: unknown): void {
+    if (this.settled) return;
+    this.settled = true;
+    if (error === undefined) this.settleReady();
+    else this.rejectReady(error);
+  }
+}
+
+function planCandidateWatches(
+  root: string,
+  candidates: readonly string[],
+): {
+  readonly paths: readonly string[];
+  readonly notify: readonly string[];
+  readonly pending: readonly string[];
+} {
+  const paths = new Set<string>();
+  const notify = new Set<string>();
+  const pending = new Set<string>();
+  for (const candidate of candidates) {
+    if (watchPathExists(candidate)) {
+      paths.add(candidate);
+      continue;
+    }
+    let current = dirname(candidate);
+    while (!watchPathExists(current) && !sameWatchPath(current, root)) {
+      const parent = dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+    if (watchPathExists(current) && !isKimiCodeDir(current)) notify.add(current);
+    else pending.add(candidate);
+  }
+  return {
+    paths: [...paths].toSorted(),
+    notify: [...notify].toSorted(),
+    pending: [...pending].toSorted(),
+  };
+}
+
+function isKimiCodeDir(path: string): boolean {
+  const name = basename(path);
+  return process.platform === 'win32' ? name.toLowerCase() === '.kimi-code' : name === '.kimi-code';
+}
+
+function isCandidateRelated(root: string, candidates: readonly string[], path: string): boolean {
+  for (const candidate of candidates) {
+    if (sameWatchPath(path, candidate)) return true;
+    if (isPathInside(path, candidate) || isPathInside(candidate, path)) return true;
+    const segment = firstPathSegment(root, candidate);
+    if (segment !== undefined && (basename(path) === segment || path.endsWith(`${sep}${segment}`))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function firstPathSegment(root: string, candidate: string): string | undefined {
+  const rel = relative(root, candidate);
+  if (rel === '' || isOutside(rel)) return undefined;
+  return rel.split(/[/\\]/)[0];
+}
+
+function isPathInside(path: string, parent: string): boolean {
+  const rel = relative(parent, path);
+  return rel !== '' && !isOutside(rel);
+}
+
+function sameWatchPath(left: string, right: string): boolean {
+  const a = left.replaceAll('\\', '/').replace(/\/+$/, '');
+  const b = right.replaceAll('\\', '/').replace(/\/+$/, '');
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
+function watchPathExists(path: string): boolean {
+  try {
+    return existsSync(path);
+  } catch {
+    return false;
+  }
 }
 
 function resolveLongPath(path: string): string {

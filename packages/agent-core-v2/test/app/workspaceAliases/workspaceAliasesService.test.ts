@@ -10,6 +10,7 @@ import {
   registerScopedService,
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
+import { ILogService } from '#/_base/log/log';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -93,6 +94,12 @@ describe('WorkspaceAliasesService (file-backed)', () => {
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(IAppendLogStore, new AppendLogStore(fileStorage)),
+      stubPair(ILogService, {
+        error: () => {},
+        warn: () => {},
+        info: () => {},
+        debug: () => {},
+      } as unknown as ILogService),
       ...(persistence !== undefined ? [stubPair(IWorkspacePersistence, persistence)] : []),
       stubPair(IHostFileSystem, hostFs),
       stubPair(IEventService, {

@@ -8,7 +8,7 @@ import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLoca
 import type { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import { watch } from '#human/utils/watch';
+import { watchCandidates } from '#human/utils/watch';
 
 import {
   IWorkspaceDirs,
@@ -162,8 +162,7 @@ export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
 
   private watchLocalToml(): void {
     try {
-      const handle = watch(this.projectRoot, {
-        recursive: true,
+      const handle = watchCandidates(this.projectRoot, [this.configPath], {
         ignored: subtreeWatchFilter(this.projectRoot, [this.configPath]),
       });
       this._register(handle);

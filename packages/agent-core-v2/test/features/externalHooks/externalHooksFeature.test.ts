@@ -14,6 +14,7 @@ import { IFeatureManager } from '#/app/feature/featureManager';
 import { FeatureManagerService } from '#/app/feature/featureManagerService';
 import { IPluginService } from '#/app/plugin/plugin';
 import { LifecycleScope } from '#/app/scopes';
+import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IFeatureAssemblyService } from '#/features/featureAssembly';
 import { FeatureAssemblyService } from '#/features/featureAssemblyService';
 import { IAgentExternalHooksService } from '#/features/externalHooks/agent/agentExternalHooks';
@@ -62,6 +63,7 @@ describe('ExternalHooksFeature — assembly (src/features/externalHooks)', () =>
         { _serviceBrand: undefined, enabledHooks: async () => [], onDidReload: Event.None },
       ],
       [IHostProcessService, { _serviceBrand: undefined }],
+      [ITelemetryService, noopTelemetryService],
     ]);
     const manager = host.app.accessor.get(IFeatureManager);
     expect(manager.units().map((unit) => unit.name)).toContain('externalHooks');

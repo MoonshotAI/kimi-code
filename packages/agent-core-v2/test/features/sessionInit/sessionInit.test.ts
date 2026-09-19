@@ -174,6 +174,7 @@ describe('SessionInitService', () => {
     expect(create).toHaveBeenCalledTimes(1);
     expect(create.mock.calls[0]![0]).toMatchObject({
       binding: { profile: 'coder', model: 'mock-model', thinking: 'off' },
+      labels: { sessionInit: 'agents-md' },
     });
 
     expect(run).toHaveBeenCalledTimes(1);

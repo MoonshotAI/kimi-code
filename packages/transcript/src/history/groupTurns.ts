@@ -71,6 +71,7 @@ export function groupMessagesIntoSnapshot(
   options?: {
     readonly taskOriginTurnTaskIds?: ReadonlySet<string>;
     readonly steeredContents?: ReadonlyMap<string, ReadonlyMap<string, number>>;
+    readonly steeredByMessageId?: ReadonlyMap<string, readonly string[]>;
     readonly turnPromptIds?: ReadonlySet<string>;
   },
 ): AgentTranscriptSnapshot {
@@ -79,6 +80,7 @@ export function groupMessagesIntoSnapshot(
   const steeredContents = new Map(
     [...(options?.steeredContents ?? [])].map(([key, byKind]) => [key, new Map(byKind)]),
   );
+  const steeredByMessageId = new Map(options?.steeredByMessageId);
   let turn: TurnDraft | undefined;
   let pendingNotificationFrames: {
     text: string;
@@ -247,10 +249,16 @@ export function groupMessagesIntoSnapshot(
       const steerKind = originKind ?? 'user';
       const opensAsTurnPrompt =
         message.id !== undefined && options?.turnPromptIds?.has(message.id) === true;
-      const steeredByKind = opensAsTurnPrompt ? undefined : steeredContents.get(contentKey);
+      const steeredPromptIds =
+        !opensAsTurnPrompt && message.id !== undefined
+          ? steeredByMessageId.get(message.id)
+          : undefined;
+      const steeredById = steeredPromptIds !== undefined;
+      if (steeredById && message.id !== undefined) steeredByMessageId.delete(message.id);
+      const steeredByKind = opensAsTurnPrompt || steeredById ? undefined : steeredContents.get(contentKey);
       const steeredRemaining = steeredByKind?.get(steerKind) ?? 0;
-      if (steeredByKind !== undefined && steeredRemaining > 0) {
-        steeredByKind.set(steerKind, steeredRemaining - 1);
+      if (steeredById || (steeredByKind !== undefined && steeredRemaining > 0)) {
+        if (!steeredById) steeredByKind!.set(steerKind, steeredRemaining - 1);
         const bundled = bundledSkillActivations(message);
         const parts = message.content ?? [];
         bundled.forEach((activation, index) => {
@@ -266,6 +274,10 @@ export function groupMessagesIntoSnapshot(
           taskId: undefined,
           attachmentIds: opening.attachmentIds,
           origin: projectTranscriptUserOrigin(message.origin),
+          promptIds:
+            steeredPromptIds !== undefined && steeredPromptIds.length > 0
+              ? steeredPromptIds
+              : undefined,
           steered: true,
         });
         continue;
