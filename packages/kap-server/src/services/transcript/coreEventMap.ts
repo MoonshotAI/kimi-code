@@ -176,12 +176,15 @@ export type ProjectorMaxOrdinalLookup = () => number;
 export function allocateExportTurn(
   wireId: number,
   highWater: number,
-  existing: { readonly state: string } | undefined,
+  existing: { readonly state: string; readonly ordinal?: number } | undefined,
   adoptRunning: boolean,
 ): { readonly turnId: string; readonly ordinal: number; readonly highWater: number } {
   const candidate = exportTurnKey(wireId);
-  if (adoptRunning && existing?.state === 'running') {
-    return { turnId: candidate, ordinal: wireId, highWater: Math.max(highWater, wireId) };
+  if (adoptRunning && existing !== undefined) {
+    const ordinal = existing.ordinal ?? wireId;
+    if (existing.state === 'running' || ordinal === highWater) {
+      return { turnId: candidate, ordinal, highWater: Math.max(highWater, ordinal) };
+    }
   }
   if (existing === undefined && wireId > highWater) {
     return { turnId: candidate, ordinal: wireId, highWater: wireId };
