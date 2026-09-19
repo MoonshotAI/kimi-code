@@ -40,7 +40,7 @@ import type {
 } from '@moonshot-ai/agent-core-v2/environment/environmentUnitHost';
 
 import type { ExecutorArtifactLocator } from './artifactLocator';
-import type { LocalRunner } from './executorInstaller';
+import { defaultLocalRunner, resolveTildeRemoteBin, type LocalRunner } from './executorInstaller';
 import { connectWithAutoInstall } from './installTrigger';
 import type { LauncherSpec } from './launchers';
 import { RemoteEnvironment, type RemoteEnvironmentOptions } from './remoteEnvironment';
@@ -227,6 +227,12 @@ interface DeclaredEnvironmentRecord {
   // and never dispose it. The record disposes it on reconnect, update, and
   // removal.
   connection?: RemoteEnvironment;
+  // A docker declaration's tilde-prefixed remoteBin resolved to the container
+  // user's absolute home path (docker exec has no shell expansion), keyed by
+  // the declaration fingerprint it was resolved from so a declaration change
+  // re-probes. Reconnects — including after an idle reap — reuse it and skip
+  // both the home probe and the failing tilde handshake.
+  resolvedRemoteBin?: { readonly fingerprint: string; readonly remoteBin: string };
   // Mirrors the registry idleness events for this environment: true while it
   // has zero active leases and zero tracked resources.
   idle: boolean;
@@ -444,6 +450,7 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
     let inflight: Promise<void> | undefined;
     const version = record.version;
     const declaration = record.declaration;
+    const fingerprint = declarationFingerprint(declaration.entry);
     const connectEnvironment = (): Promise<void> => {
       inflight ??= (async () => {
         try {
@@ -459,8 +466,9 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
               initializeTimeoutMs: this.options.initializeTimeoutMs,
               onDiagnostic: this.options.onDiagnostic,
             });
+          const launcher = await this.resolveRecordLauncher(record, toLauncherSpec(declaration.entry), fingerprint);
           const connected = await connectWithAutoInstall(attempt, {
-            launcher: toLauncherSpec(declaration.entry),
+            launcher,
             artifactLocator: this.options.artifactLocator,
             autoInstall: this.options.autoInstall,
             clientVersion: this.options.clientVersion,
@@ -498,6 +506,23 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
       environmentId: declaration.id,
       generation: `${declaration.id}-pending-${randomUUID()}`,
     });
+  }
+
+  private async resolveRecordLauncher(
+    record: DeclaredEnvironmentRecord,
+    launcher: LauncherSpec,
+    fingerprint: string,
+  ): Promise<LauncherSpec> {
+    if (launcher.type !== 'docker') return launcher;
+    const cached = record.resolvedRemoteBin;
+    if (cached !== undefined && cached.fingerprint === fingerprint) {
+      return { ...launcher, remoteBin: cached.remoteBin };
+    }
+    const resolved = await resolveTildeRemoteBin(launcher, this.options.installRunner ?? defaultLocalRunner);
+    if (resolved !== launcher && resolved.type === 'docker' && resolved.remoteBin !== undefined) {
+      record.resolvedRemoteBin = { fingerprint, remoteBin: resolved.remoteBin };
+    }
+    return resolved;
   }
 }
 

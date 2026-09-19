@@ -60,6 +60,14 @@ deviations per the design spec, plus one forced addition:
 - No ws transport, no `resumeSessionId`, no sandbox parameter family, no
   `fs/walk`/`fs/copy`/`capabilityRoots/discoverV1`/`environmentConfig/read`.
 
+Reserved dialect surface: `process/read` (the `afterSeq`/`maxBytes`/`waitMs`
+long-poll) and the executor-side output replay behind it (up to 1MiB / 50k
+retained chunks per process, plus a 30s exited-process retention window) are
+kept for codex exec-server dialect compatibility. No client in this repo calls
+`process/read` — output delivery is notification-driven (`process/output`,
+`process/exited`, `process/closed`) — so treat the method and its buffering as
+compatibility surface, not a feature with a live consumer.
+
 Client-surface notes beyond the wire protocol:
 
 - `RemoteEnvironment.environment` is the handshake payload (adds `cwd`/`tempDir`
@@ -92,7 +100,16 @@ Client-surface notes beyond the wire protocol:
 ## Executor install and version guidance (spec D8/D9)
 
 The connect path (`connectWithAutoInstall`, wired into the factory) classifies
-handshake failures and acts on them:
+handshake failures and acts on them. Before the first exec attempt, a docker
+launcher whose `remoteBin` is `~`-prefixed (the default
+`~/.kimi-code/bin/kimi` is) is resolved to the container user's absolute home
+path with one `docker exec … sh -c` probe — `docker exec` passes argv to
+execve without a shell, so the tilde would reach execve literally and every
+connect would open with a failing exit-126 handshake. The provider caches the
+resolved path per declaration fingerprint, so reconnects (including after idle
+reaping) skip both the probe and the failing handshake, and a
+missing-executor classification below means the executor is genuinely absent
+at the resolved path.
 
 - **Missing executor** — the launcher exited 127 (ssh remote shell) or 126
   (docker exec "executable file not found"), or the handshake **timed out**.

@@ -3,9 +3,11 @@ import { MIN_EXECUTOR_VERSION } from '#/protocol/methods';
 import type { ExecutorArtifactLocator } from './artifactLocator';
 import { HandshakeError } from './connection';
 import {
+  defaultLocalRunner,
   ExecutorInstallError,
   installExecutor,
   launcherLabel,
+  resolveTildeRemoteBin,
   type ExecutorInstallResult,
   type LocalRunner,
 } from './executorInstaller';
@@ -167,19 +169,24 @@ export interface ConnectWithAutoInstallOptions {
   readonly onDiagnostic?: (line: string) => void;
 }
 
-// Connect policy (spec D8/D9): a missing/timing-out executor on a typed
-// ssh/docker environment triggers one auto-install attempt followed by exactly one
-// connect retry; the retry uses the concrete install path (docker needs the
-// absolute home-based path, its exec has no `~` expansion). `command`
-// environments are never auto-installed — a missing executor there fails with
-// guidance. A too-old executor gets upgrade guidance, not an auto-upgrade. A
-// failed install or a failed retry both surface the guidance error.
+// Connect policy (spec D8/D9): a docker launcher with a tilde-prefixed
+// remoteBin is first resolved to the container user's absolute home path
+// (docker exec has no shell expansion), so a missing-executor classification
+// below means the executor is genuinely absent at the resolved path. A
+// missing/timing-out executor on a typed ssh/docker environment triggers one
+// auto-install attempt followed by exactly one connect retry; the retry uses
+// the concrete install path (docker needs the absolute home-based path, its
+// exec has no `~` expansion). `command` environments are never
+// auto-installed — a missing executor there fails with guidance. A too-old
+// executor gets upgrade guidance, not an auto-upgrade. A failed install or a
+// failed retry both surface the guidance error.
 export async function connectWithAutoInstall<T>(
   attempt: (launcher: LauncherSpec) => Promise<T>,
   options: ConnectWithAutoInstallOptions,
 ): Promise<T> {
+  const launcher = await resolveTildeRemoteBin(options.launcher, options.runner ?? defaultLocalRunner);
   try {
-    return await attempt(options.launcher);
+    return await attempt(launcher);
   } catch (error) {
     const failure = classifyHandshakeFailure(error);
     if (failure === 'incompatible') {
@@ -187,7 +194,7 @@ export async function connectWithAutoInstall<T>(
       throw withGuidance(
         error,
         upgradeExecutorGuidance({
-          launcher: options.launcher,
+          launcher,
           executorVersion: handshake?.executorVersion,
           minExecutorVersion: handshake?.minExecutorVersion,
         }),
@@ -196,7 +203,6 @@ export async function connectWithAutoInstall<T>(
     if (failure !== 'missing' && failure !== 'timeout') {
       throw error;
     }
-    const launcher = options.launcher;
     if (launcher.type === 'command') {
       throw withGuidance(
         error,

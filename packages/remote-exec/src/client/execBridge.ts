@@ -31,6 +31,7 @@ export class ExecBridge implements BytePipe {
   private readonly errorListeners = new Set<(error: Error) => void>();
   private stderrTail = '';
   private endFired = false;
+  private stdinBroken = false;
   private closeTimer: NodeJS.Timeout | undefined;
   readonly exited: Promise<ExecBridgeExit>;
 
@@ -47,9 +48,23 @@ export class ExecBridge implements BytePipe {
     this.child.stderr!.on('data', (chunk: Buffer) => {
       this.stderrTail = (this.stderrTail + chunk.toString('utf8')).slice(-stderrLimitBytes);
     });
+    // A write into a dead child's stdin raises EPIPE on the stream; without an
+    // 'error' listener Node throws it uncaught and kills the host process.
+    // Mirror the server-side guard (processManager): swallow the error, mark
+    // stdin broken so later writes drop, and surface the disconnect.
+    if (this.child.stdin !== null) {
+      this.child.stdin.on('error', () => {
+        this.breakStdin();
+      });
+    }
     this.child.on('error', (error: Error) => {
       for (const listener of this.errorListeners) listener(error);
       this.fireEnd();
+    });
+    // Process death is a disconnect signal on its own: stdout 'end' can lag
+    // behind 'exit', and writes in that window would hit the broken pipe.
+    this.child.on('exit', () => {
+      this.breakStdin();
     });
     this.exited = new Promise<ExecBridgeExit>((resolve) => {
       this.child.on('error', (error: Error) => {
@@ -83,10 +98,12 @@ export class ExecBridge implements BytePipe {
   }
 
   write(chunk: Uint8Array): void {
+    if (this.stdinBroken) return;
     this.child.stdin!.write(chunk);
   }
 
   end(): void {
+    if (this.stdinBroken) return;
     this.child.stdin!.end();
   }
 
@@ -123,6 +140,11 @@ export class ExecBridge implements BytePipe {
       }
     }, 500);
     this.closeTimer.unref?.();
+  }
+
+  private breakStdin(): void {
+    this.stdinBroken = true;
+    this.fireEnd();
   }
 
   private fireEnd(): void {

@@ -297,6 +297,9 @@ describe('RemoteEnvironmentProviderFactory', () => {
     expect(second).toBe(first);
     expect(placeholder.status).toBe('connecting');
     expect(placeholder.whenReady).toBe(first);
+    // The launcher resolution ahead of the connect is async, so the underlying
+    // connect starts a microtask later rather than synchronously.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(connect).toHaveBeenCalledTimes(1);
 
     releaseConnect();
@@ -1257,6 +1260,70 @@ describe('factory auto-install trigger', () => {
     );
     expect(connect).toHaveBeenCalledTimes(1);
     expect(runner).not.toHaveBeenCalled();
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+});
+
+describe('factory docker remoteBin resolution', () => {
+  const HOME_PROBE = 'printf "%s" "$HOME"';
+
+  function dockerServices(): HostServices {
+    return baseServices({
+      config: configService({ 'app-box': { type: 'docker', container: 'myapp' } }),
+    });
+  }
+
+  it('resolves the tilde remoteBin once and reuses it across reconnects', async () => {
+    const registry = new EnvironmentRegistry('workspace-1');
+    let probes = 0;
+    const installRunner: LocalRunner = async (request: LocalRunRequest) => {
+      if (request.args.at(-1) === HOME_PROBE) {
+        probes += 1;
+        return { code: 0, signal: null, stdout: '/root', stderr: '' };
+      }
+      return { code: 0, signal: null, stdout: '', stderr: '' };
+    };
+    let generation = 0;
+    const connect = vi.fn(async (options: RemoteEnvironmentOptions) => {
+      generation += 1;
+      return connectedEnvironment(options, `connected-${generation}`);
+    });
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect, installRunner }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(dockerServices(), registry));
+
+    await registry.current('app-box')!.connect!();
+    const resolved = { type: 'docker', container: 'myapp', context: undefined, remoteBin: '/root/.kimi-code/bin/kimi' };
+    expect(connect).toHaveBeenCalledWith(expect.objectContaining({ launcher: resolved }));
+    expect(probes).toBe(1);
+
+    // A reconnect hits the record cache: no second probe, same resolved path.
+    await registry.current('app-box')!.connect!();
+    expect(connect).toHaveBeenCalledTimes(2);
+    expect(connect).toHaveBeenLastCalledWith(expect.objectContaining({ launcher: resolved }));
+    expect(probes).toBe(1);
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('keeps the declared launcher when the home probe fails', async () => {
+    const registry = new EnvironmentRegistry('workspace-1');
+    const installRunner: LocalRunner = async () => ({
+      code: 1,
+      signal: null,
+      stdout: '',
+      stderr: 'Error: No such container: myapp',
+    });
+    const connect = vi.fn(async (options: RemoteEnvironmentOptions) => connectedEnvironment(options, 'connected-1'));
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect, installRunner }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(dockerServices(), registry));
+
+    await registry.current('app-box')!.connect!();
+    expect(connect).toHaveBeenCalledWith(expect.objectContaining({
+      launcher: { type: 'docker', container: 'myapp', context: undefined, remoteBin: undefined },
+    }));
 
     await attachment.dispose();
     await registry.dispose();

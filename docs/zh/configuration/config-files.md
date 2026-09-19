@@ -576,7 +576,7 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 | `type` | `string` | 是 | `"docker"` |
 | `container` | `string` | 是 | 运行中的容器名或 id，经 `docker exec` 接入 |
 | `context` | `string` | 否 | Docker context（例如 `orbstack`） |
-| `remoteBin` | `string` | 否 | 容器内的执行器路径，默认为容器用户 home 下的 `~/.kimi-code/bin/kimi` |
+| `remoteBin` | `string` | 否 | 容器内的执行器路径，默认为容器用户 home 下的 `~/.kimi-code/bin/kimi`；以 `~/` 开头的值会在连接时解析为该绝对 home 路径（`docker exec` 不做 shell 展开） |
 | `defaultCwd` | `string` | 否 | 绑定会话时工作目录的预填值 |
 
 ### command 条目

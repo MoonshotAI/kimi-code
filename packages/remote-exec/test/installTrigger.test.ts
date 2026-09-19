@@ -145,6 +145,9 @@ describe('connectWithAutoInstall', () => {
     const runner: LocalRunner = async (request: LocalRunRequest) => {
       requests.push(request);
       const args = request.args;
+      if (args.at(-1) === 'printf "%s" "$HOME"') {
+        return { code: 0, signal: null, stdout: '/root', stderr: '' };
+      }
       if (args.some((arg) => arg.includes('uname -sm'))) {
         return { code: 0, signal: null, stdout: 'Linux x86_64\n/root', stderr: '' };
       }
@@ -173,8 +176,87 @@ describe('connectWithAutoInstall', () => {
       clientVersion: '1.2.3',
     });
 
+    // The tilde remoteBin is resolved before the first attempt, so the 126
+    // means the executor is genuinely missing at the resolved path — no
+    // tilde-literal handshake ever reaches the target.
     expect(attempt).toHaveBeenCalledTimes(2);
+    expect(launchers[0]).toEqual({ ...DOCKER, remoteBin: '/root/.kimi-code/bin/kimi' });
     expect(launchers[1]).toEqual({ ...DOCKER, remoteBin: '/root/.kimi-code/bin/kimi' });
+  });
+
+  it('resolves the docker tilde remoteBin with one home probe before the first attempt', async () => {
+    const requests: LocalRunRequest[] = [];
+    const runner: LocalRunner = async (request: LocalRunRequest) => {
+      requests.push(request);
+      if (request.args.at(-1) === 'printf "%s" "$HOME"') {
+        return { code: 0, signal: null, stdout: '/root\n', stderr: '' };
+      }
+      throw new Error(`unexpected probe: ${request.args.join(' ')}`);
+    };
+    const attempt = vi.fn(async () => 'connected');
+
+    const result = await connectWithAutoInstall(attempt, { launcher: DOCKER, runner });
+
+    expect(result).toBe('connected');
+    expect(attempt).toHaveBeenCalledTimes(1);
+    expect(attempt).toHaveBeenCalledWith({ ...DOCKER, remoteBin: '/root/.kimi-code/bin/kimi' });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      program: 'docker',
+      args: ['exec', 'myapp-dev', 'sh', '-c', 'printf "%s" "$HOME"'],
+    });
+  });
+
+  it('resolves a custom tilde-prefixed docker remoteBin against the probed home', async () => {
+    const runner: LocalRunner = async () => ({ code: 0, signal: null, stdout: '/home/app', stderr: '' });
+    const attempt = vi.fn(async () => 'connected');
+
+    await connectWithAutoInstall(attempt, {
+      launcher: { type: 'docker', container: 'myapp-dev', remoteBin: '~/bin/kimi' },
+      runner,
+    });
+
+    expect(attempt).toHaveBeenCalledWith({
+      type: 'docker',
+      container: 'myapp-dev',
+      remoteBin: '/home/app/bin/kimi',
+    });
+  });
+
+  it('resolves a root home without a doubled slash', async () => {
+    const runner: LocalRunner = async () => ({ code: 0, signal: null, stdout: '/', stderr: '' });
+    const attempt = vi.fn(async () => 'connected');
+
+    await connectWithAutoInstall(attempt, { launcher: DOCKER, runner });
+
+    expect(attempt).toHaveBeenCalledWith({ ...DOCKER, remoteBin: '/.kimi-code/bin/kimi' });
+  });
+
+  it('keeps the declared remoteBin when the home probe fails', async () => {
+    const runner: LocalRunner = async () => ({
+      code: 1,
+      signal: null,
+      stdout: '',
+      stderr: 'Error: No such container: myapp-dev',
+    });
+    const attempt = vi.fn(async () => 'connected');
+
+    await connectWithAutoInstall(attempt, { launcher: DOCKER, runner });
+
+    expect(attempt).toHaveBeenCalledWith(DOCKER);
+  });
+
+  it('never probes for ssh launchers or an absolute docker remoteBin', async () => {
+    const runner = vi.fn() as unknown as LocalRunner;
+    const attempt = vi.fn(async () => 'connected');
+
+    await connectWithAutoInstall(attempt, { launcher: SSH, runner });
+    await connectWithAutoInstall(attempt, {
+      launcher: { type: 'docker', container: 'myapp-dev', remoteBin: '/opt/kimi/bin/kimi' },
+      runner,
+    });
+
+    expect(runner).not.toHaveBeenCalled();
   });
 
   it('does not retry the connect when the install fails', async () => {
