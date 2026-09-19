@@ -1,39 +1,23 @@
-
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { Emitter, type Event, type IWaitUntil } from '#/_base/event';
 import { ScopeActivation, registerScopedService, type ISessionScopeHandle } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
-import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IConfigService } from '#/app/config/config';
+import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
 import { Error2, ErrorCodes } from '#/errors';
-import { ILogService } from '#/_base/log/log';
-import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
-import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { EnvironmentSetBinding } from '#/agent/environmentBinding/environmentBindingOps';
-import { LOCAL_ENVIRONMENT_ID, type EnvironmentBinding } from '#/environment/environment';
-import { resolveWorkspaceEnvironmentDeclarations } from '#/environment/environmentDeclarations';
-import type { EnvironmentDeclarationSet } from '#/environment/remoteEnvironmentDeclaration';
-import { EnvironmentError, environmentStatusAllows } from '#/environment/environmentRegistry';
-import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
+import { environmentStatusAllows } from '#/environment/environmentRegistry';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
-import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
-import {
-  agentScopeOf,
-  sessionScopeOf,
-  workspacePersistenceScope,
-} from '#/workspace/sessionLifecycle/internal/addressing';
-import {
-  type CreateChildSessionOptions,
-  type ForkSessionOptions,
-  type ResumeSessionOptions,
-  type SessionArchivedEvent,
-  type SessionClosedEvent,
-  type SessionCreatedEvent,
-  type SessionForkedEvent,
-  type SessionWillCloseEvent,
-  type SessionWillCreateEvent,
+import type {
+  CreateChildSessionOptions,
+  ForkSessionOptions,
+  ResumeSessionOptions,
+  SessionArchivedEvent,
+  SessionClosedEvent,
+  SessionCreatedEvent,
+  SessionForkedEvent,
+  SessionWillCloseEvent,
+  SessionWillCreateEvent,
 } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import type { WorkspaceInstance } from '#/workspace/workspaceInstance/workspaceInstance';
@@ -83,12 +67,7 @@ export class SessionManager implements ISessionManager {
   constructor(
     @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
     @ISessionIndex private readonly index: ISessionIndex,
-    @IConfigService private readonly config: IConfigService,
-    @IHostFileSystem private readonly fs: IHostFileSystem,
-    @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
-    @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
-    @IBootstrapService private readonly bootstrap: IBootstrapService,
-    @ILogService private readonly log: ILogService,
+    @IEnvironmentDeclarationService private readonly environmentDeclarations: IEnvironmentDeclarationService,
   ) {}
 
   async create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle> {
@@ -97,7 +76,7 @@ export class SessionManager implements ISessionManager {
         ? { root: options.workDir }
         : { workspaceId: options.workspaceId, root: options.workDir },
     );
-    const declarations = await this.workspaceEnvironmentDeclarations(workspace);
+    const declarations = await this.environmentDeclarations.declarations(workspace.root);
     const declared =
       options.environmentId === undefined || options.environmentId === LOCAL_ENVIRONMENT_ID
         ? undefined
@@ -135,57 +114,9 @@ export class SessionManager implements ISessionManager {
 
   private async connectForCreate(workspace: WorkspaceInstance, environmentId: string, environmentCwd?: string): Promise<void> {
     if (environmentId === LOCAL_ENVIRONMENT_ID) return;
-    let environment = workspace.environments.current(environmentId);
-    if (environment === undefined) return;
-    if (!environmentStatusAllows(environment, ['fs', 'process'])) {
-      if (typeof environment.connect !== 'function') {
-        throw new EnvironmentError('environment.unavailable', `environment ${environmentId} is ${environment.status}`);
-      }
-      try {
-        await environment.connect();
-      } catch (error) {
-        throw new EnvironmentError(
-          'environment.unavailable',
-          `failed to connect environment ${environmentId}: ${error instanceof Error ? error.message : String(error)}`,
-          { cause: error },
-        );
-      }
-    }
-    if (environmentCwd === undefined) return;
-    environment = workspace.environments.current(environmentId);
-    if (environment === undefined) return;
-    const lease = workspace.environments.acquire({ workspaceId: workspace.id, environmentId }, ['fs']);
-    try {
-      const stat = await lease.environment.fs!.stat(environmentCwd).catch((error: unknown) => {
-        throw new EnvironmentError(
-          'environment.invalid_cwd',
-          `cwd ${environmentCwd} is not readable on environment ${environmentId}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      });
-      if (!stat.isDirectory) {
-        throw new EnvironmentError('environment.invalid_cwd', `cwd ${environmentCwd} is not a directory on environment ${environmentId}`);
-      }
-    } finally {
-      lease.dispose();
-    }
-  }
-
-  private async workspaceEnvironmentDeclarations(workspace: WorkspaceInstance): Promise<EnvironmentDeclarationSet | undefined> {
-    try {
-      const declarations = await resolveWorkspaceEnvironmentDeclarations({
-        config: this.config,
-        fs: this.fs,
-        docs: this.docs,
-        root: workspace.root,
-      });
-      if (declarations.projectError !== undefined) {
-        this.log.warn('project remote environment declarations failed to load', { error: declarations.projectError });
-      }
-      return declarations;
-    } catch (error) {
-      this.log.warn('remote environment declaration resolution failed', { error });
-      return undefined;
-    }
+    const environment = await this.environmentDeclarations.ensureConnected(workspace.id, environmentId);
+    if (environment === undefined || environmentCwd === undefined) return;
+    await this.environmentDeclarations.assertCwdUsable(workspace.id, environmentId, environmentCwd);
   }
 
   private selectControllerEnvironmentId(workspace: WorkspaceInstance, environmentId: string): string {
@@ -422,7 +353,7 @@ export class SessionManager implements ISessionManager {
     const summary = await this.index.get(sessionId);
     if (summary === undefined) return undefined;
     const workspace = await this.workspaces.getOrCreate({ workspaceId: summary.workspaceId, root: summary.cwd });
-    const persistedBinding = await this.peekPersistedBinding(workspace.id, sessionId);
+    const persistedBinding = await this.environmentDeclarations.readPersistedEnvironmentBinding(workspace.id, sessionId);
     const boundEnvironmentId = persistedBinding?.environmentId ?? LOCAL_ENVIRONMENT_ID;
     if (options?.connect === true && boundEnvironmentId !== LOCAL_ENVIRONMENT_ID) {
       await this.connectForCreate(workspace, boundEnvironmentId);
@@ -435,28 +366,6 @@ export class SessionManager implements ISessionManager {
         controllerEnvironmentId === LOCAL_ENVIRONMENT_ID ? undefined : persistedBinding?.cwd,
       ),
     };
-  }
-
-  private async peekPersistedBinding(workspaceId: string, sessionId: string): Promise<EnvironmentBinding | undefined> {
-    try {
-      const scope = agentScopeOf(
-        sessionScopeOf(workspacePersistenceScope(this.bootstrap.scope('sessions'), workspaceId), sessionId),
-        MAIN_AGENT_ID,
-      );
-      let binding: EnvironmentBinding | undefined;
-      for await (const record of this.appendLogStore.read<WireRecord>(scope, AGENT_WIRE_RECORD_KEY)) {
-        if (record.type === EnvironmentSetBinding.type && typeof record['environmentId'] === 'string') {
-          binding = {
-            workspaceId,
-            environmentId: record['environmentId'],
-            cwd: typeof record['cwd'] === 'string' ? record['cwd'] : undefined,
-          };
-        }
-      }
-      return binding;
-    } catch {
-      return undefined;
-    }
   }
 }
 

@@ -3,16 +3,15 @@ import {
   ErrorCodes,
   IAgentEnvironmentBindingService,
   IAgentEnvironmentService,
-  IAtomicDocumentStore,
   IBootstrapService,
   IConfigService,
+  IEnvironmentDeclarationService,
   IHostFileSystem,
   ISessionContext,
   IWorkspaceInstanceManager,
   IWorkspaceService,
   ENVIRONMENTS_SECTION,
   readSshConfigHosts,
-  resolveWorkspaceEnvironmentDeclarations,
   resumeSessionById,
   writeProjectEnvironmentDeclaration,
   EnvironmentError,
@@ -298,17 +297,8 @@ async function resolveDeclarations(
   core: Scope,
   root: string,
 ): Promise<ReadonlyMap<string, RemoteEnvironmentEntry>> {
-  try {
-    const resolved = await resolveWorkspaceEnvironmentDeclarations({
-      config: core.accessor.get(IConfigService),
-      fs: core.accessor.get(IHostFileSystem),
-      docs: core.accessor.get(IAtomicDocumentStore),
-      root,
-    });
-    return new Map(resolved.entries.map((declaration) => [declaration.id, declaration.entry]));
-  } catch {
-    return new Map();
-  }
+  const declarations = await core.accessor.get(IEnvironmentDeclarationService).declarations(root);
+  return new Map((declarations?.entries ?? []).map((declaration) => [declaration.id, declaration.entry]));
 }
 
 async function resolveSshHosts(core: Scope): Promise<readonly string[]> {

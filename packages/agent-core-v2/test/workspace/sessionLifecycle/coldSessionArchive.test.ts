@@ -10,6 +10,7 @@ import type { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
 import { ISessionManager, type UnguardedSessionLifecycle } from '#/app/sessionManager/sessionManager';
 import { SessionManager } from '#/app/sessionManager/sessionManagerService';
+import { EnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclarationService';
 import {
   ISessionIndex,
   ISessionIndexMirror,
@@ -237,15 +238,19 @@ function sessionManagerResuming(sessionId: string): SessionManager {
     id: summary.workspaceId,
     program: { sessionControllerGenerationFor: () => 'generation-1', createSessionController: () => controller },
   } as unknown as WorkspaceInstance;
+  const workspaces = { getOrCreate: async () => workspace, get: () => workspace } as unknown as IWorkspaceInstanceManager;
   return new SessionManager(
-    { getOrCreate: async () => workspace, get: () => workspace } as unknown as IWorkspaceInstanceManager,
+    workspaces,
     { get: async () => summary } as unknown as ISessionIndex,
-    { _serviceBrand: undefined, ready: Promise.resolve(), get: () => undefined } as unknown as IConfigService,
-    { _serviceBrand: undefined } as unknown as IHostFileSystem,
-    { _serviceBrand: undefined, get: async () => undefined } as unknown as IAtomicDocumentStore,
-    { _serviceBrand: undefined, read: async function* () {} } as unknown as IAppendLogStore,
-    { _serviceBrand: undefined, scope: (name: string) => name } as unknown as IBootstrapService,
-    { _serviceBrand: undefined, warn: () => {}, info: () => {}, error: () => {} } as unknown as ILogService,
+    new EnvironmentDeclarationService(
+      { _serviceBrand: undefined, ready: Promise.resolve(), get: () => undefined } as unknown as IConfigService,
+      { _serviceBrand: undefined } as unknown as IHostFileSystem,
+      { _serviceBrand: undefined, get: async () => undefined } as unknown as IAtomicDocumentStore,
+      { _serviceBrand: undefined, read: async function* () {} } as unknown as IAppendLogStore,
+      { _serviceBrand: undefined, scope: (name: string) => name } as unknown as IBootstrapService,
+      workspaces,
+      { _serviceBrand: undefined, warn: () => {}, info: () => {}, error: () => {} } as unknown as ILogService,
+    ),
   );
 }
 

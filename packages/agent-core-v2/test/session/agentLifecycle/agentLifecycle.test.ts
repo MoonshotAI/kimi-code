@@ -25,6 +25,8 @@ import {
 } from '#/agent/permissionMode/permissionModeOps';
 import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
+import { EnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclarationService';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
@@ -309,6 +311,7 @@ describe('AgentLifecycleService', () => {
       onDidChange: () => ({ dispose: () => {} }),
       get: () => undefined,
     });
+    ix.set(IEnvironmentDeclarationService, new SyncDescriptor(EnvironmentDeclarationService));
     ix.stub(ISessionMetadata, {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
@@ -1128,7 +1131,7 @@ describe('AgentLifecycleService', () => {
   it('restores a remote-bound subagent from wire records without reconnecting', async () => {
     ix.stub(IAppendLogStore, recordingAppendLog([
       createWireMetadataRecord(1),
-      { type: 'environment.set_binding', agentId: 'agent-1', environmentId: 'remote', cwd: '/remote/work', time: 2 },
+      { type: 'environment.set_binding', agentId: 'agent-1', workspaceId: 'ws_test', environmentId: 'remote', cwd: '/remote/work', time: 2 },
     ]).store);
     const { connectCalls } = stubRemoteResolver();
 
@@ -1142,7 +1145,7 @@ describe('AgentLifecycleService', () => {
   it('keeps a restored gone environment declaration bound and fails explicitly at use', async () => {
     ix.stub(IAppendLogStore, recordingAppendLog([
       createWireMetadataRecord(1),
-      { type: 'environment.set_binding', agentId: 'agent-1', environmentId: 'ghost', cwd: '/ghost/work', time: 2 },
+      { type: 'environment.set_binding', agentId: 'agent-1', workspaceId: 'ws_test', environmentId: 'ghost', cwd: '/ghost/work', time: 2 },
     ]).store);
     stubRemoteResolver();
 

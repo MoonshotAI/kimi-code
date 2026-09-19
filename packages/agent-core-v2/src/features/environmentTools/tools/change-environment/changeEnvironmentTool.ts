@@ -1,9 +1,8 @@
 import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { mainAgentOnlyExecution } from '#/agent/tools/mainAgentOnly';
-import { IConfigService } from '#/app/config/config';
+import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
-import { resolveWorkspaceEnvironmentDeclarations } from '#/environment/environmentDeclarations';
 import { EnvironmentError } from '#/environment/environmentRegistry';
 import {
   CHANGE_ENVIRONMENT_TOOL_NAME,
@@ -11,8 +10,6 @@ import {
   ENVIRONMENT_TOOLS_PLAN_MODE_UNAVAILABLE,
 } from '#/features/environmentTools/environmentTools';
 import { IAgentPlanService } from '#/features/plan/plan';
-import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
@@ -38,9 +35,7 @@ export class ChangeEnvironmentTool implements IChangeEnvironmentTool {
     @IAgentPlanService private readonly planMode: IAgentPlanService,
     @ISessionContext private readonly session: ISessionContext,
     @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
-    @IConfigService private readonly config: IConfigService,
-    @IHostFileSystem private readonly fs: IHostFileSystem,
-    @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
+    @IEnvironmentDeclarationService private readonly environmentDeclarations: IEnvironmentDeclarationService,
   ) {}
 
   async resolveExecution(args: ChangeEnvironmentInput): Promise<ToolExecution> {
@@ -103,16 +98,6 @@ export class ChangeEnvironmentTool implements IChangeEnvironmentTool {
   private async declaredDefaultCwd(environmentId: string): Promise<string | undefined> {
     const workspace = this.workspaces.get(this.session.workspaceId);
     if (workspace === undefined) return undefined;
-    try {
-      const declarations = await resolveWorkspaceEnvironmentDeclarations({
-        config: this.config,
-        fs: this.fs,
-        docs: this.docs,
-        root: workspace.root,
-      });
-      return declarations.entries.find((entry) => entry.id === environmentId)?.entry.defaultCwd;
-    } catch {
-      return undefined;
-    }
+    return this.environmentDeclarations.declaredDefaultCwd(workspace.root, environmentId);
   }
 }
