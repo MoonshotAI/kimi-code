@@ -2878,12 +2878,15 @@ export class KimiTUI {
   appendTranscriptEntry(entry: TranscriptEntry): void {
     this.state.transcriptEntries.push(entry);
     const component = this.createTranscriptComponent(entry);
+    let advancesTurn = false;
     if (component) {
       markTranscriptComponent(component, entry);
+      advancesTurn = this.isTurnBoundaryComponent(component);
       this.state.transcriptContainer.addChild(component);
     }
     const trimmed = this.trimTranscriptWindow();
     const merged = this.mergeCurrentTurnSteps();
+    if (advancesTurn) this.applyFoldedSummaryExpansionState();
     if (component || trimmed || merged) {
       this.state.ui.requestRender();
     }
@@ -2983,6 +2986,20 @@ export class KimiTUI {
     }
     const entry = getTranscriptComponentEntry(child);
     if (entry === undefined) return false;
+    return this.isTurnBoundaryEntry(entry);
+  }
+
+  private isTurnBoundaryEntry(entry: TranscriptEntry): boolean {
+    if (
+      entry.kind !== 'user' &&
+      entry.kind !== 'skill_activation' &&
+      entry.kind !== 'plugin_command'
+    ) {
+      return false;
+    }
+    // Inline skill cards belong to the following prompt's turn. Counting each
+    // card would shrink expansion and transcript windows for multi-skill prompts.
+    if (entry.kind === 'skill_activation' && entry.bundledWithPrompt === true) return false;
     // Live user messages / slash activations have an undefined turnId; replayed
     // ones get a `replay:N` turnId. Both start a new turn. Steer messages carry
     // a defined non-replay turnId and are not boundaries.
@@ -3033,14 +3050,7 @@ export class KimiTUI {
 
     let boundariesToRemove = 0;
     for (const entry of toRemove) {
-      if (
-        (entry.kind === 'user' ||
-          entry.kind === 'skill_activation' ||
-          entry.kind === 'plugin_command') &&
-        entry.turnId === undefined
-      ) {
-        boundariesToRemove++;
-      }
+      if (this.isTurnBoundaryEntry(entry)) boundariesToRemove++;
     }
     if (boundariesToRemove === 0) {
       this.state.transcriptEntries = this.state.transcriptEntries.filter((e) => !toRemove.has(e));
@@ -3139,6 +3149,9 @@ export class KimiTUI {
       ...stepIndices.slice(0, stepMergeCount),
       ...assistantIndices.slice(0, assistantMergeCount),
     ];
+    const foldedAssistants = assistantIndices
+      .slice(0, assistantMergeCount)
+      .map((idx) => children[idx] as AssistantMessageComponent);
 
     let thinkingCount = 0;
     let toolCount = 0;
@@ -3157,6 +3170,8 @@ export class KimiTUI {
       summary = new StepSummaryComponent();
       summary.addCounts(thinkingCount, toolCount, assistantMergeCount);
     }
+    summary.addFoldedMessages(foldedAssistants);
+    summary.setExpanded(this.state.toolOutputExpanded && TRANSCRIPT_EXPAND_TURNS > 0);
 
     // Rebuild children: keep everything except the merged steps, with the summary
     // sitting right after the user message.
@@ -3192,6 +3207,10 @@ export class KimiTUI {
 
     const newChildren: Component[] = [];
     const toDispose: Component[] = [];
+    const expandedTurnStart =
+      TRANSCRIPT_EXPAND_TURNS > 0
+        ? Math.max(0, boundaries.length - TRANSCRIPT_EXPAND_TURNS)
+        : boundaries.length;
     for (let i = 0; i < boundaries[0]!; i++) newChildren.push(children[i]!);
 
     for (let t = 0; t < boundaries.length; t++) {
@@ -3224,6 +3243,9 @@ export class KimiTUI {
           ...stepIndices.slice(0, stepMergeCount),
           ...assistantIndices.slice(0, assistantMergeCount),
         ];
+        const foldedAssistants = assistantIndices
+          .slice(0, assistantMergeCount)
+          .map((idx) => children[idx] as AssistantMessageComponent);
         let thinkingCount = 0;
         let toolCount = 0;
         for (const idx of toMergeIndices) {
@@ -3239,6 +3261,8 @@ export class KimiTUI {
           summary = new StepSummaryComponent();
           summary.addCounts(thinkingCount, toolCount, assistantMergeCount);
         }
+        summary.addFoldedMessages(foldedAssistants);
+        summary.setExpanded(this.state.toolOutputExpanded && t >= expandedTurnStart);
         newChildren.push(summary);
         for (const idx of toMergeIndices) toDispose.push(children[idx]!);
         const toMergeSet = new Set(toMergeIndices);
@@ -3500,6 +3524,14 @@ export class KimiTUI {
 
   toggleToolOutputExpansion(): void {
     this.state.toolOutputExpanded = !this.state.toolOutputExpanded;
+    this.applyToolOutputExpansionState();
+    // Differential render only — no destructive full redraw on expand/collapse.
+    // (When the expanded region reaches above the viewport, the engine's own
+    // fallback may still do a full render; that path is not forced from here.)
+    this.state.ui.requestRender();
+  }
+
+  private applyToolOutputExpansionState(): void {
     const children = this.state.transcriptContainer.children;
     const expandCutoff = this.expandCutoff(children);
 
@@ -3508,10 +3540,17 @@ export class KimiTUI {
       if (!isExpandable(child)) continue;
       child.setExpanded(this.state.toolOutputExpanded && i >= expandCutoff);
     }
-    // Differential render only — no destructive full redraw on expand/collapse.
-    // (When the expanded region reaches above the viewport, the engine's own
-    // fallback may still do a full render; that path is not forced from here.)
-    this.state.ui.requestRender();
+  }
+
+  private applyFoldedSummaryExpansionState(): void {
+    const children = this.state.transcriptContainer.children;
+    const expandCutoff = this.expandCutoff(children);
+
+    for (let i = 0; i < children.length; i++) {
+      const child = children[i]!;
+      if (!(child instanceof StepSummaryComponent)) continue;
+      child.setExpanded(this.state.toolOutputExpanded && i >= expandCutoff);
+    }
   }
 
   toggleTodoPanelExpansion(): void {
