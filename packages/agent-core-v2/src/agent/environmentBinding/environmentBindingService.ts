@@ -14,6 +14,7 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentConversationUndoParticipantRegistry, type AgentConversationUndoParticipant } from '#/agent/contextMemory/conversationUndoParticipants';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
+import { CHANGE_ENVIRONMENT_TOOL_NAME } from '#/features/environmentTools/environmentTools';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { LOCAL_ENVIRONMENT_ID, type EnvironmentBinding, type EnvironmentLease } from '#/environment/environment';
@@ -77,7 +78,6 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
   private readonly restoreHook: IDisposable;
   private readonly undoParticipant: IDisposable;
   private readonly turnEndSubscription: IDisposable;
-  private pendingWorkDir: string | undefined;
   private pendingSwitch: EnvironmentBinding | undefined;
   private readonly visitedViews = new Set<string>();
 
@@ -135,7 +135,6 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     });
     this.turnEndSubscription = this.eventBus.subscribe(TurnEnded, (event) => {
       if (event.agentId !== this.scopeContext.agentId) return;
-      this.flushPendingWorkDir();
       this.flushPendingSwitch();
     });
     const participant: AgentConversationUndoParticipant = {
@@ -192,21 +191,14 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     }
   }
 
-  private applySessionWorkDir(binding: EnvironmentBinding): void {
-    if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
-    const workDir = binding.cwd ?? this.session.cwd;
-    if (this.loop.current?.snapshot().turn !== undefined) {
-      this.pendingWorkDir = workDir;
-      return;
-    }
-    this.workspaceContext.setWorkDir(workDir);
+  private hasForeignInFlightToolCalls(): boolean {
+    const activeToolCalls = this.loop.current?.snapshot().turn?.activeToolCalls ?? [];
+    return activeToolCalls.some((call) => call.name !== CHANGE_ENVIRONMENT_TOOL_NAME);
   }
 
-  private flushPendingWorkDir(): void {
-    const pending = this.pendingWorkDir;
-    if (pending === undefined) return;
-    this.pendingWorkDir = undefined;
-    this.workspaceContext.setWorkDir(pending);
+  private applySessionWorkDir(binding: EnvironmentBinding): void {
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
+    this.workspaceContext.setWorkDir(binding.cwd ?? this.session.cwd);
   }
 
   private flushPendingSwitch(): void {
@@ -253,7 +245,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     const binding: EnvironmentBinding = { workspaceId: this.session.workspaceId, environmentId, cwd };
     this.assertSessionWorkspace(binding);
     await this.prepareSwitch(binding);
-    if (this.loop.current?.snapshot().turn === undefined) {
+    if (!this.hasForeignInFlightToolCalls()) {
       return this.commit(binding);
     }
     this.pendingSwitch = binding;
@@ -302,6 +294,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     ) {
       return previous;
     }
+    this.pendingSwitch = undefined;
     const next = { workspaceId: binding.workspaceId, environmentId: binding.environmentId, cwd: binding.cwd };
     void this.dispatcher.dispatch(
       new EnvironmentSetBinding({ ...next, agentId: this.scopeContext.agentId }),

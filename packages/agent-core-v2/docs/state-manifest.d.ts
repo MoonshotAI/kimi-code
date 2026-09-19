@@ -929,7 +929,7 @@ export interface AgentStateSnapshot {
   // src/agent/contextProjector/contextProjectorService.ts
   'contextProjector.lastRepairSignature': string | null;
   // src/agent/environmentBinding/environmentBindingOps.ts
-  // replayable · durable — folds: EnvironmentSetBinding
+  // replayable · durable · undoable — folds: EnvironmentSetBinding
   'environmentBinding': /* EnvironmentBinding — packages/agent-core-v2/src/environment/environment.ts */ {
     readonly workspaceId: string;
     readonly environmentId: string;

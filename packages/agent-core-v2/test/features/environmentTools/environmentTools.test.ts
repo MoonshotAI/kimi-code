@@ -51,8 +51,10 @@ function planMode(plan: PlanData = null): IAgentPlanService {
 
 function bindingStub(
   calls: { environmentId: string; cwd?: string }[],
-  current: EnvironmentBinding = { workspaceId: 'workspace', environmentId: 'local' },
+  initial: EnvironmentBinding = { workspaceId: 'workspace', environmentId: 'local' },
+  options: { readonly commit?: boolean } = {},
 ): IAgentEnvironmentBindingService {
+  let current = initial;
   return {
     _serviceBrand: undefined,
     get current() {
@@ -60,7 +62,9 @@ function bindingStub(
     },
     connectAndSwitchAtTurnBoundary: async (environmentId: string, cwd?: string) => {
       calls.push({ environmentId, cwd });
-      return { workspaceId: 'workspace', environmentId, cwd };
+      const next = { workspaceId: 'workspace', environmentId, cwd };
+      if (options.commit !== false) current = next;
+      return next;
     },
   } as unknown as IAgentEnvironmentBindingService;
 }
@@ -107,13 +111,14 @@ describe('ChangeEnvironmentTool', () => {
       readonly plan?: PlanData;
       readonly config?: unknown;
       readonly registry?: EnvironmentRegistry;
+      readonly commit?: boolean;
     } = {},
   ) {
     const calls: { environmentId: string; cwd?: string }[] = [];
     const registry = options.registry ?? new EnvironmentRegistry('workspace');
     const tool = new ChangeEnvironmentTool(
       options.scope ?? mainScope,
-      bindingStub(calls),
+      bindingStub(calls, { workspaceId: 'workspace', environmentId: 'local' }, { commit: options.commit }),
       planMode(options.plan),
       session(),
       workspacesStub(registry),
@@ -138,16 +143,27 @@ describe('ChangeEnvironmentTool', () => {
     expect(calls).toHaveLength(0);
   });
 
-  it('switches to local without a cwd and reports the scheduled switch', async () => {
+  it('switches to local without a cwd and reports the committed switch', async () => {
     const { tool, calls } = createTool();
     const execution = await tool.resolveExecution({ id: 'local' } as ChangeEnvironmentInput);
     expect(execution).toMatchObject({ approvalRule: 'change_environment' });
 
     const result = await (execution as RunnableToolExecution).execute({} as never);
     expect(result.isError).toBeUndefined();
-    expect(result.output).toContain('"local"');
-    expect(result.output).toContain('scheduled');
+    expect(result.output).toContain('switched to "local"');
+    expect(result.output).toContain('in this turn');
     expect(calls).toEqual([{ environmentId: 'local', cwd: undefined }]);
+  });
+
+  it('reports the scheduled switch when other tool calls are still in flight', async () => {
+    const { tool, calls } = createTool({ commit: false });
+    const execution = await tool.resolveExecution({ id: 'dev-box', cwd: '/srv/app' } as ChangeEnvironmentInput);
+
+    const result = await (execution as RunnableToolExecution).execute({} as never);
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toContain('scheduled');
+    expect(result.output).toContain('next turn');
+    expect(calls).toEqual([{ environmentId: 'dev-box', cwd: '/srv/app' }]);
   });
 
   it('falls back to the declaration defaultCwd when cwd is omitted', async () => {

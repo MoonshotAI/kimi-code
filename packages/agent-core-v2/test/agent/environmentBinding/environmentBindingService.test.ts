@@ -9,9 +9,11 @@ import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
+import { ContextAppendMessage } from '#/agent/contextMemory/contextEvents';
+import '#/agent/contextMemory/conversationTime';
 import type { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import type { ILogService } from '#/_base/log/log';
+import { ILogService } from '#/_base/log/log';
 import { AgentEnvironmentService, snapshotAgentEnvironmentBinding } from '#/agent/environmentBinding/agentEnvironment';
 import { AgentEnvironmentBindingService, agentEnvironmentBindingKey, ENVIRONMENT_BINDING_REMINDER_VARIANT, PROJECT_CONTEXT_REMINDER_VARIANT } from '#/agent/environmentBinding/environmentBindingService';
 import { environmentBindingKey, EnvironmentSetBinding } from '#/agent/environmentBinding/environmentBindingOps';
@@ -19,7 +21,10 @@ import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentStateService } from '#/agent/state/agentState';
 import type { IAgentLoopService } from '#/agent/loop/loop';
 import type { IAgentReminderService } from '#/features/reminder/reminderService';
-import type { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { Environment, EnvironmentBinding, EnvironmentCapability, EnvironmentLease } from '#/environment/environment';
 import { EnvironmentError, EnvironmentRegistry, type EnvironmentRegistrationHandle } from '#/environment/environmentRegistry';
@@ -29,6 +34,7 @@ import { SessionStateService } from '#/session/state/sessionStateService';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IWireService } from '#/wire/wire';
+import { WireService } from '#/wire/wireService';
 import type { WireRecord } from '#/wire/record';
 import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
@@ -40,7 +46,7 @@ import type {
   IWorkspaceInstanceManager,
 } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import { stubAgentContext } from '../agentContext/stubs';
-import { noopLogger } from '../../wire/stubs';
+import { noopLogger, recordingWireLog } from '../../wire/stubs';
 import { fakeEnvironment, connectableEnvironment } from '../../environment/stubs';
 
 const LOCAL_HOST = {
@@ -518,23 +524,17 @@ describe('AgentEnvironmentBindingService', () => {
     expect(workDirWrites).toEqual(['/workspace']);
   });
 
-  it('defers the workDir switch to the turn boundary while the op commits mid-turn', () => {
+  it('applies the workDir switch immediately even while a turn is between tool calls', () => {
     const { binding, loopState, workDirWrites, publishBus } = setup();
     loopState.turn = { turnId: 1, phase: 'running', step: 1, activeToolCalls: [] };
 
     expect(binding.switch('remote', '/remote/work').environmentId).toBe('remote');
     expect(binding.current).toMatchObject({ environmentId: 'remote', cwd: '/remote/work' });
-    expect(workDirWrites).toEqual([]);
-
-    publishBus('turn.ended', { agentId: 'main' });
     expect(workDirWrites).toEqual(['/remote/work']);
 
-    loopState.turn = { turnId: 2, phase: 'running', step: 1, activeToolCalls: [] };
+    loopState.turn = undefined;
     binding.switch('local');
-    expect(workDirWrites).toEqual(['/remote/work']);
-
-    publishBus('turn.ended', { agentId: 'agent-9' });
-    expect(workDirWrites).toEqual(['/remote/work']);
+    expect(workDirWrites).toEqual(['/remote/work', '/workspace']);
 
     publishBus('turn.ended', { agentId: 'main' });
     expect(workDirWrites).toEqual(['/remote/work', '/workspace']);
@@ -546,18 +546,81 @@ describe('AgentEnvironmentBindingService', () => {
     expect(workDirWrites).toEqual([]);
   });
 
-  it('pins the turn binding and generation from turn start until turn end', () => {
+  it('re-pins the turn binding and generation when the binding switches mid-turn', () => {
     const { binding, agentEnvironment, publishBus } = setup();
     publishBus('turn.started', { agentId: 'main' });
 
     binding.switch('remote');
     const lease = agentEnvironment.acquire();
-    expect(lease.environment.identity).toMatchObject({ environmentId: 'local', generation: 'local-one' });
+    expect(lease.environment.identity).toMatchObject({ environmentId: 'remote', generation: 'remote-one' });
     lease.dispose();
 
     publishBus('turn.ended', { agentId: 'main' });
     const next = agentEnvironment.acquire();
     expect(next.environment.identity).toMatchObject({ environmentId: 'remote', generation: 'remote-one' });
+    next.dispose();
+  });
+
+  it('moves the turn lease to the new environment when the binding switches mid-turn', () => {
+    const { registry, binding, publishBus } = setup();
+    publishBus('turn.started', { agentId: 'main' });
+    expect(registry.idleEnvironments()).not.toContain('local');
+    expect(registry.idleEnvironments()).toContain('remote');
+
+    binding.switch('remote');
+    expect(registry.idleEnvironments()).toContain('local');
+    expect(registry.idleEnvironments()).not.toContain('remote');
+
+    publishBus('turn.ended', { agentId: 'main' });
+    expect(registry.idleEnvironments()).toContain('remote');
+  });
+
+  it('runs the next tool call of the same turn on the new environment after a change_environment commit', async () => {
+    const { registry, binding, agentEnvironment, loopState, publishBus } = setup();
+    connectableEnvironment(registry, { environmentId: 'connectable' });
+    publishBus('turn.started', { agentId: 'main' });
+    loopState.turn = { turnId: 1, phase: 'tool_call', step: 1, activeToolCalls: [{ toolCallId: 'call-1', name: 'change_environment' }] };
+
+    const before = agentEnvironment.acquire();
+    expect(before.environment.identity.environmentId).toBe('local');
+    before.dispose();
+
+    await binding.connectAndSwitchAtTurnBoundary('connectable', '/remote/work');
+
+    const after = agentEnvironment.acquire();
+    expect(after.environment.identity.environmentId).toBe('connectable');
+    after.dispose();
+
+    loopState.turn = undefined;
+    publishBus('turn.ended', { agentId: 'main' });
+  });
+
+  it('keeps parallel in-flight tool calls on the old environment until the turn boundary', async () => {
+    const { registry, binding, agentEnvironment, loopState, publishBus } = setup();
+    connectableEnvironment(registry, { environmentId: 'connectable' });
+    publishBus('turn.started', { agentId: 'main' });
+    loopState.turn = {
+      turnId: 1,
+      phase: 'tool_call',
+      step: 1,
+      activeToolCalls: [{ toolCallId: 'call-1', name: 'change_environment' }, { toolCallId: 'call-2', name: 'Bash' }],
+    };
+
+    await binding.connectAndSwitchAtTurnBoundary('connectable', '/remote/work');
+    expect(binding.current.environmentId).toBe('local');
+
+    const lease = agentEnvironment.acquire();
+    expect(lease.environment.identity.environmentId).toBe('local');
+    lease.dispose();
+
+    loopState.turn = undefined;
+    publishBus('turn.ended', { agentId: 'main' });
+    await vi.waitFor(() => {
+      expect(binding.current.environmentId).toBe('connectable');
+    });
+
+    const next = agentEnvironment.acquire();
+    expect(next.environment.identity.environmentId).toBe('connectable');
     next.dispose();
   });
 
@@ -1125,8 +1188,8 @@ describe('AgentEnvironmentBindingService.connectAndSwitchAtTurnBoundary', () => 
     expect(dispatched.at(-1)).toMatchObject({ environmentId: 'connectable', cwd: '/remote/work' });
   });
 
-  it('connects and validates eagerly but commits the binding at the turn boundary', async () => {
-    const { registry, binding, dispatched, loopState, workDirWrites, publishBus } = setup();
+  it('connects and validates eagerly and commits immediately when only change_environment is in flight', async () => {
+    const { registry, binding, dispatched, loopState, workDirWrites } = setup();
     loopState.turn = { turnId: 1, phase: 'tool_call', step: 1, activeToolCalls: [{ toolCallId: 'call-1', name: 'change_environment' }] };
     const stats: string[] = [];
     const { connectCalls } = connectableEnvironment(registry, {
@@ -1144,8 +1207,28 @@ describe('AgentEnvironmentBindingService.connectAndSwitchAtTurnBoundary', () => 
     });
     expect(connectCalls).toEqual(['connect']);
     expect(stats).toContain('/remote/work');
+    expect(binding.current).toMatchObject({ environmentId: 'connectable', cwd: '/remote/work' });
+    expect(dispatched.at(-1)).toMatchObject({ environmentId: 'connectable', cwd: '/remote/work' });
+    expect(workDirWrites).toEqual(['/remote/work']);
+  });
+
+  it('defers the commit to the turn boundary while other tool calls are in flight', async () => {
+    const { registry, binding, dispatched, loopState, workDirWrites, publishBus } = setup();
+    loopState.turn = {
+      turnId: 1,
+      phase: 'tool_call',
+      step: 1,
+      activeToolCalls: [{ toolCallId: 'call-1', name: 'change_environment' }, { toolCallId: 'call-2', name: 'Bash' }],
+    };
+    connectableEnvironment(registry, { environmentId: 'connectable' });
+
+    await binding.connectAndSwitchAtTurnBoundary('connectable', '/remote/work');
     expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
     expect(dispatched).toHaveLength(0);
+    expect(workDirWrites).toEqual([]);
+
+    publishBus('turn.ended', { agentId: 'agent-9' });
+    expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
 
     loopState.turn = undefined;
     publishBus('turn.ended', { agentId: 'main' });
@@ -1176,14 +1259,32 @@ describe('AgentEnvironmentBindingService.connectAndSwitchAtTurnBoundary', () => 
     expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
   });
 
-  it('commits only the latest scheduled switch when several are queued in one turn', async () => {
+  it('commits each sequential switch immediately so the latest one wins within the turn', async () => {
+    const { registry, binding, loopState } = setup();
+    loopState.turn = { turnId: 1, phase: 'tool_call', step: 1, activeToolCalls: [{ toolCallId: 'call-1', name: 'change_environment' }] };
+    connectableEnvironment(registry, { environmentId: 'first' });
+    connectableEnvironment(registry, { environmentId: 'second' });
+
+    await binding.connectAndSwitchAtTurnBoundary('first', '/remote/one');
+    expect(binding.current).toMatchObject({ environmentId: 'first', cwd: '/remote/one' });
+    await binding.connectAndSwitchAtTurnBoundary('second', '/remote/two');
+    expect(binding.current).toMatchObject({ environmentId: 'second', cwd: '/remote/two' });
+  });
+
+  it('commits only the latest scheduled switch at the turn boundary when other calls stay in flight', async () => {
     const { registry, binding, loopState, publishBus } = setup();
-    loopState.turn = { turnId: 1, phase: 'tool_call', step: 1, activeToolCalls: [] };
+    loopState.turn = {
+      turnId: 1,
+      phase: 'tool_call',
+      step: 1,
+      activeToolCalls: [{ toolCallId: 'call-1', name: 'change_environment' }, { toolCallId: 'call-2', name: 'Bash' }],
+    };
     connectableEnvironment(registry, { environmentId: 'first' });
     connectableEnvironment(registry, { environmentId: 'second' });
 
     await binding.connectAndSwitchAtTurnBoundary('first', '/remote/one');
     await binding.connectAndSwitchAtTurnBoundary('second', '/remote/two');
+    expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
 
     loopState.turn = undefined;
     publishBus('turn.ended', { agentId: 'main' });
@@ -1192,9 +1293,75 @@ describe('AgentEnvironmentBindingService.connectAndSwitchAtTurnBoundary', () => 
     });
   });
 
-  it('emits the environment reminder only after the turn-boundary commit', async () => {
+  it('keeps the latest immediate switch when an earlier deferred switch would flush at the turn boundary', async () => {
+    const { registry, binding, dispatched, loopState, publishBus } = setup();
+    loopState.turn = {
+      turnId: 1,
+      phase: 'tool_call',
+      step: 1,
+      activeToolCalls: [{ toolCallId: 'call-1', name: 'change_environment' }, { toolCallId: 'call-2', name: 'Bash' }],
+    };
+    connectableEnvironment(registry, { environmentId: 'first' });
+    connectableEnvironment(registry, { environmentId: 'second' });
+
+    await binding.connectAndSwitchAtTurnBoundary('first', '/remote/one');
+    expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+
+    loopState.turn = { turnId: 1, phase: 'tool_call', step: 2, activeToolCalls: [{ toolCallId: 'call-3', name: 'change_environment' }] };
+    await binding.connectAndSwitchAtTurnBoundary('second', '/remote/two');
+    expect(binding.current).toMatchObject({ environmentId: 'second', cwd: '/remote/two' });
+
+    loopState.turn = undefined;
+    publishBus('turn.ended', { agentId: 'main' });
+    await Promise.resolve();
+    expect(binding.current).toMatchObject({ environmentId: 'second', cwd: '/remote/two' });
+    expect(dispatched.map((event) => event.environmentId)).toEqual(['second']);
+  });
+
+  it('keeps a switch committed between tool calls when an earlier deferred switch would flush at the turn boundary', async () => {
+    const { registry, binding, dispatched, loopState, publishBus } = setup();
+    loopState.turn = {
+      turnId: 1,
+      phase: 'tool_call',
+      step: 1,
+      activeToolCalls: [{ toolCallId: 'call-1', name: 'change_environment' }, { toolCallId: 'call-2', name: 'Bash' }],
+    };
+    connectableEnvironment(registry, { environmentId: 'first' });
+
+    await binding.connectAndSwitchAtTurnBoundary('first', '/remote/one');
+    expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+
+    loopState.turn = { turnId: 1, phase: 'tool_call', step: 2, activeToolCalls: [] };
+    binding.switch('remote', '/remote/work');
+    expect(binding.current).toMatchObject({ environmentId: 'remote', cwd: '/remote/work' });
+
+    loopState.turn = undefined;
+    publishBus('turn.ended', { agentId: 'main' });
+    await Promise.resolve();
+    expect(binding.current).toMatchObject({ environmentId: 'remote', cwd: '/remote/work' });
+    expect(dispatched.map((event) => event.environmentId)).toEqual(['remote']);
+  });
+
+  it('emits the environment reminder immediately when the switch commits mid-turn', async () => {
+    const { registry, binding, loopState, reminders } = setup();
+    loopState.turn = { turnId: 1, phase: 'tool_call', step: 1, activeToolCalls: [{ toolCallId: 'call-1', name: 'change_environment' }] };
+    connectableEnvironment(registry, { environmentId: 'connectable' });
+
+    await binding.connectAndSwitchAtTurnBoundary('connectable', '/remote/work');
+
+    expect(reminders).toHaveLength(1);
+    expect(reminders[0]!.variant).toBe(ENVIRONMENT_BINDING_REMINDER_VARIANT);
+    expect(reminders[0]!.content).toContain('"connectable"');
+  });
+
+  it('emits the environment reminder only after the turn-boundary commit when other calls are in flight', async () => {
     const { registry, binding, loopState, publishBus, reminders } = setup();
-    loopState.turn = { turnId: 1, phase: 'tool_call', step: 1, activeToolCalls: [] };
+    loopState.turn = {
+      turnId: 1,
+      phase: 'tool_call',
+      step: 1,
+      activeToolCalls: [{ toolCallId: 'call-1', name: 'change_environment' }, { toolCallId: 'call-2', name: 'Bash' }],
+    };
     connectableEnvironment(registry, { environmentId: 'connectable' });
 
     await binding.connectAndSwitchAtTurnBoundary('connectable', '/remote/work');
@@ -1595,6 +1762,249 @@ describe('AgentEnvironmentBindingService conversation undo', () => {
       await harness.participant.reconcileAfterUndo();
       expect(harness.binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
       expect(harness.reminders).toHaveLength(2);
+    } finally {
+      await harness.dispose();
+    }
+  });
+});
+
+interface WireUndoHarness {
+  readonly binding: AgentEnvironmentBindingService;
+  readonly dispatcher: IEventDispatcher;
+  readonly wire: IWireService;
+  readonly appendLogRecords: WireRecord[];
+  readonly participant: { reconcileAfterUndo(): Promise<void> };
+  readonly workDirWrites: string[];
+  readonly reminders: { content: string; variant: string }[];
+  readonly changes: EnvironmentBinding[];
+  readonly loopState: {
+    turn?: { turnId: number; phase: string; step: number; activeToolCalls: { toolCallId: string; name: string }[] };
+  };
+  readonly publishBus: (type: string, event: { readonly agentId?: string }) => void;
+  readonly dispose: () => Promise<void>;
+}
+
+function wireUndoSetup(): WireUndoHarness {
+  const registry = new EnvironmentRegistry('workspace');
+  registry.register(environment('local', 'local-one', 'ready', ['fs', 'process'], LOCAL_HOST));
+  const remote = environment('remote', 'remote-one', 'ready', ['fs', 'process'], REMOTE_HOST);
+  Object.assign(remote, { fs: { stat: async () => ({ isDirectory: true }) } });
+  registry.register(remote);
+  const appendLogRecords: WireRecord[] = [];
+  const appendLog = recordingWireLog(appendLogRecords);
+  const ix = new TestInstantiationService();
+  ix.set(IEventBus, new SyncDescriptor(EventBusService));
+  ix.set(IAgentBlobService, noopBlob);
+  ix.set(IAppendLogStore, appendLog);
+  ix.set(IFileSystemStorageService, new InMemoryStorageService());
+  ix.set(ITelemetryService, noopTelemetryService);
+  ix.set(ILogService, noopLogger);
+  ix.set(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }));
+  const agentState = new AgentStateService();
+  ix.set(IAgentStateService, agentState);
+  ix.set(IWireService, new SyncDescriptor(WireService));
+  ix.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
+  const wire = ix.get(IWireService);
+  const dispatcher = ix.get(IEventDispatcher);
+  const session = makeSessionContext({
+    sessionId: 'session',
+    workspaceId: 'workspace',
+    sessionDir: '/session',
+    sessionScope: 'sessions/session',
+    cwd: '/workspace',
+  });
+  const workDirWrites: string[] = [];
+  const workspaceContext = stubWorkspaceContext(session.cwd, workDirWrites);
+  const scopeContext = stubScopeContext('main');
+  const reminders: { content: string; variant: string }[] = [];
+  const reminder = stubReminder(reminders);
+  const loopState: WireUndoHarness['loopState'] = { turn: undefined };
+  const loop = stubLoop(loopState);
+  const busHandlers = new Map<string, ((event: { readonly agentId?: string }) => void)[]>();
+  const eventBus = {
+    subscribe: (cls: { readonly type: string }, handler: (event: { readonly agentId?: string }) => void) => {
+      const handlers = busHandlers.get(cls.type) ?? [];
+      handlers.push(handler);
+      busHandlers.set(cls.type, handlers);
+      return { dispose: () => {} };
+    },
+    isAgentActive: () => true,
+    publish: () => {},
+  } as unknown as ISessionEventBus;
+  const publishBus = (type: string, event: { readonly agentId?: string }): void => {
+    for (const handler of busHandlers.get(type) ?? []) handler(event);
+  };
+  let participant: { reconcileAfterUndo(): Promise<void> } | undefined;
+  const undoParticipants = {
+    _serviceBrand: undefined,
+    register: (entry: { id: string; reconcileAfterUndo(): Promise<void> }) => {
+      participant = entry;
+      return { dispose: () => {} };
+    },
+    list: () => (participant === undefined ? [] : [participant]),
+  } as unknown as IAgentConversationUndoParticipantRegistry;
+  const binding = new AgentEnvironmentBindingService(
+    scopeContext,
+    agentState,
+    { _serviceBrand: undefined, binding: { workspaceId: 'workspace', environmentId: 'local' } },
+    session,
+    workspaceContext,
+    registryResolver(registry),
+    dispatcher,
+    eventBus,
+    loop,
+    reminder,
+    appendLog,
+    noopLogger,
+    undoParticipants,
+    stubBootstrap(),
+  );
+  const changes: EnvironmentBinding[] = [];
+  binding.onDidChange((next) => changes.push(next));
+  return {
+    binding,
+    dispatcher,
+    wire,
+    appendLogRecords,
+    participant: {
+      reconcileAfterUndo: async () => {
+        if (participant === undefined) throw new Error('no undo participant was registered');
+        await participant.reconcileAfterUndo();
+      },
+    },
+    workDirWrites,
+    reminders,
+    changes,
+    loopState,
+    publishBus,
+    dispose: async () => {
+      binding.dispose();
+      ix.dispose();
+      await registry.dispose();
+    },
+  };
+}
+
+describe('AgentEnvironmentBindingService conversation undo over the real wire', () => {
+  it('reverts an in-turn switch committed at the turn boundary when the turn is undone', async () => {
+    const harness = wireUndoSetup();
+    try {
+      await harness.wire.seal();
+      await harness.dispatcher.restore();
+      expect(harness.binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+
+      await harness.dispatcher.dispatch(
+        new ContextAppendMessage({
+          agentId: 'main',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'switch the environment' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+        }),
+      );
+
+      harness.loopState.turn = { turnId: 1, phase: 'running', step: 1, activeToolCalls: [{ toolCallId: 'call-1', name: 'change_environment' }] };
+      await harness.binding.connectAndSwitchAtTurnBoundary('remote', '/remote/work');
+      expect(harness.binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' });
+      harness.loopState.turn = undefined;
+      expect(harness.appendLogRecords.map((record) => record.type)).toEqual([
+        'metadata',
+        'environment.set_binding',
+        'context.append_message',
+        'environment.set_binding',
+      ]);
+
+      await harness.wire.switchBranch({ turns: 1 });
+      await harness.dispatcher.restore();
+      await harness.participant.reconcileAfterUndo();
+
+      expect(harness.binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+      expect(harness.workDirWrites.at(-1)).toBe('/workspace');
+      expect(harness.reminders.at(-1)).toMatchObject({ variant: ENVIRONMENT_BINDING_REMINDER_VARIANT });
+      expect(harness.reminders.at(-1)!.content).toContain('"local"');
+      expect(harness.changes.at(-1)).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+    } finally {
+      await harness.dispose();
+    }
+  });
+
+  it('reverts a switch deferred to the turn boundary when the turn is undone', async () => {
+    const harness = wireUndoSetup();
+    try {
+      await harness.wire.seal();
+      await harness.dispatcher.restore();
+
+      await harness.dispatcher.dispatch(
+        new ContextAppendMessage({
+          agentId: 'main',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'switch the environment' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+        }),
+      );
+
+      harness.loopState.turn = {
+        turnId: 1,
+        phase: 'running',
+        step: 1,
+        activeToolCalls: [{ toolCallId: 'call-1', name: 'change_environment' }, { toolCallId: 'call-2', name: 'Bash' }],
+      };
+      await harness.binding.connectAndSwitchAtTurnBoundary('remote', '/remote/work');
+      expect(harness.binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+      harness.loopState.turn = undefined;
+      harness.publishBus('turn.ended', { agentId: 'main' });
+      expect(harness.binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' });
+
+      await harness.wire.switchBranch({ turns: 1 });
+      await harness.dispatcher.restore();
+      await harness.participant.reconcileAfterUndo();
+
+      expect(harness.binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+      expect(harness.workDirWrites.at(-1)).toBe('/workspace');
+      expect(harness.reminders.at(-1)).toMatchObject({ variant: ENVIRONMENT_BINDING_REMINDER_VARIANT });
+      expect(harness.reminders.at(-1)!.content).toContain('"local"');
+      expect(harness.changes.at(-1)).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+    } finally {
+      await harness.dispose();
+    }
+  });
+
+  it('reverts an out-of-turn switch when the preceding turn is undone', async () => {
+    const harness = wireUndoSetup();
+    try {
+      await harness.wire.seal();
+      await harness.dispatcher.restore();
+      expect(harness.binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+
+      await harness.dispatcher.dispatch(
+        new ContextAppendMessage({
+          agentId: 'main',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'do some work' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+        }),
+      );
+
+      await harness.binding.connectAndSwitch('remote', '/remote/work');
+      expect(harness.binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' });
+
+      await harness.wire.switchBranch({ turns: 1 });
+      await harness.dispatcher.restore();
+      await harness.participant.reconcileAfterUndo();
+
+      expect(harness.binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+      expect(harness.workDirWrites.at(-1)).toBe('/workspace');
+      expect(harness.reminders.at(-1)).toMatchObject({ variant: ENVIRONMENT_BINDING_REMINDER_VARIANT });
+      expect(harness.reminders.at(-1)!.content).toContain('"local"');
+      expect(harness.changes.at(-1)).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
     } finally {
       await harness.dispose();
     }

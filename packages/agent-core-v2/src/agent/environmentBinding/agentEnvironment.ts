@@ -232,6 +232,12 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
 
   private rebind(): void {
     this.bindRegistry();
+    if (this.turnSnapshot !== undefined) {
+      const binding = this.binding.current;
+      this.turnSnapshot = { binding, generation: this.readyGeneration(binding) };
+      this.releaseTurnLease();
+      this.holdTurnLease();
+    }
     this.changeEmitter.fire();
   }
 
