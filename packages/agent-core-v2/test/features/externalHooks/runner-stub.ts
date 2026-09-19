@@ -6,6 +6,7 @@ import type { HookDef } from '#/features/externalHooks/internal/types';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IPluginService } from '#/app/plugin/plugin';
+import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 
 import { stubLog } from '../../_base/log/stubs';
@@ -15,6 +16,7 @@ export function makeHookRunner(
   options: {
     cwd?: string;
     log?: ILogService;
+    telemetry?: ITelemetryService;
     onTriggered?: (event: string, target: string, count: number) => void;
     onResolved?: (
       event: string,
@@ -43,6 +45,7 @@ export function makeHookRunner(
     } as unknown as IBootstrapService,
     new HostProcessService(),
     options.log ?? stubLog(),
+    options.telemetry ?? noopTelemetryService,
     { onTriggered: options.onTriggered, onResolved: options.onResolved },
   );
 }

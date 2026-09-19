@@ -16,6 +16,8 @@ import { Program } from '#/program/program';
 import type { ProgramSessionControllerInput } from '#/program/programDependencies';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { EnvironmentRegistry } from '#/environment/environmentRegistry';
+import { FileSkillDiscovery } from '#/features/skill/catalog/fileSkillDiscovery';
+import { UserFileSkillSource } from '#/features/skill/catalog/userFileSkillSource';
 import { fakeEnvironment } from '../environment/stubs';
 import { noopLogger } from '../wire/stubs';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
@@ -533,19 +535,26 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
   const registry = new EnvironmentRegistry('workspace', 50);
   const controllerInputs: ProgramSessionControllerInput[] = [];
   const profileRegistrations: { readonly sourceId: string; readonly profiles: readonly string[] }[] = [];
+  const bootstrap = { _serviceBrand: undefined, homeDir: kimiHome, osHomeDir: homeDir, args: {} };
+  const config = {
+    _serviceBrand: undefined,
+    ready: Promise.resolve(),
+    get: () => undefined,
+    onDidSectionChange: () => ({ dispose: () => {} }),
+  };
+  const userSkills = new UserFileSkillSource(
+    new FileSkillDiscovery(noopLogger),
+    bootstrap as never,
+    config as never,
+  );
   const program = new Program(
     'workspace',
     registry,
     programWorkspace(localRoot),
     {
       appState: undefined,
-      bootstrap: { _serviceBrand: undefined, homeDir: kimiHome, osHomeDir: homeDir, args: {} },
-      config: {
-        _serviceBrand: undefined,
-        ready: Promise.resolve(),
-        get: () => undefined,
-        onDidSectionChange: () => ({ dispose: () => {} }),
-      },
+      bootstrap,
+      config,
       git: { current: localGit, onDidChange: Event.None },
       identity: {
         _serviceBrand: undefined,
@@ -576,6 +585,7 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
       },
       builtinAgentProfiles: { getDefault: () => ({ renderSystemPrompt: () => 'default profile' }) },
       builtinSkills: { _serviceBrand: undefined, id: 'builtin', priority: 0, load: async () => ({ skills: [] }) },
+      userSkills,
       telemetry: noopTelemetryService,
       docs,
       createSessionController: (input: ProgramSessionControllerInput) => {
@@ -634,6 +644,7 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
     },
     cleanup: async () => {
       program.dispose();
+      userSkills.dispose();
       await registry.dispose();
       await rm(base, { recursive: true, force: true });
     },

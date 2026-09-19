@@ -386,8 +386,9 @@ describe('transcript contract e2e', () => {
       expect(before.prompts.some((prompt) => prompt.promptId === steer.prompt_id)).toBe(true);
       await rest(server!, base, `/api/v1/sessions/${sid}:undo`, { method: 'POST', body: { count: 1 } });
       const after = await getTranscript(server!, base, sid);
-      expect(after.items.filter((item) => item.kind === 'turn').map((turn) => turn.prompt)).toEqual(['original request']);
-      expect(JSON.stringify(after.items)).toContain('answer before steer');
+      expect(after.items.filter((item) => item.kind === 'turn')).toEqual([]);
+      expect(JSON.stringify(after.items)).not.toContain('original request');
+      expect(JSON.stringify(after.items)).not.toContain('answer before steer');
       expect(JSON.stringify(after.items)).not.toContain('steered request');
       expect(JSON.stringify(after.items)).not.toContain('answer after steer');
       expect(after.prompts).toEqual([]);
@@ -403,12 +404,12 @@ describe('transcript contract e2e', () => {
       await submitPrompt(server!, base, sid, 'steered request');
       await idle(server!, base, sid);
       const resent = await getTranscript(server!, base, sid);
-      expect(resent.items.filter((item) => item.kind === 'turn').map((turn) => turn.prompt)).toEqual(['original request', 'steered request']);
+      expect(resent.items.filter((item) => item.kind === 'turn').map((turn) => turn.prompt)).toEqual(['steered request']);
       expect(resent.prompts.some((prompt) => prompt.promptId === steer.prompt_id)).toBe(false);
       await closeSessionById(server!.core.accessor, sid);
       const reopened = await getTranscript(server!, base, sid);
-      expect(reopened.items.filter((item) => item.kind === 'turn').map((turn) => turn.prompt)).toEqual(['original request', 'steered request']);
-      await rest(server!, base, `/api/v1/sessions/${sid}:undo`, { method: 'POST', body: { count: 2 } });
+      expect(reopened.items.filter((item) => item.kind === 'turn').map((turn) => turn.prompt)).toEqual(['steered request']);
+      await rest(server!, base, `/api/v1/sessions/${sid}:undo`, { method: 'POST', body: { count: 1 } });
       const empty = await getTranscript(server!, base, sid);
       expect(empty.items.filter((item) => item.kind === 'turn')).toEqual([]);
       expect(empty.prompts).toEqual([]);

@@ -1204,6 +1204,12 @@ describe('agent machine input.steer', () => {
       expect(actor.getSnapshot().context.notifications).toHaveLength(1);
     });
     expect(steered).toEqual([['p1']]);
+    expect(actor.getSnapshot().context.notifications[0]?.meta).toMatchObject({
+      source: 'input',
+      promptId: 'p1',
+      userMessageId: 'p1',
+      origin: { kind: 'user', inTurn: true },
+    });
 
     actor.send({
       type: 'input.submit',

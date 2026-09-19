@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.0
+
+### Minor Changes
+
+- [#3852](https://github.com/MoonshotAI/kimi-code/pull/3852) [`bbcdde0`](https://github.com/MoonshotAI/kimi-code/commit/bbcdde0b13a06fbadedca680ef565a5b01cb6c61) Thanks [@Grapedge](https://github.com/Grapedge)! - Add anonymous usage telemetry to the VS Code extension, following the VS Code telemetry setting.
+
+### Patch Changes
+
+- Updated dependencies [[`bbcdde0`](https://github.com/MoonshotAI/kimi-code/commit/bbcdde0b13a06fbadedca680ef565a5b01cb6c61)]:
+  - @moonshot-ai/kimi-telemetry@0.2.0
+
 ## 0.7.5
 
 ### Patch Changes

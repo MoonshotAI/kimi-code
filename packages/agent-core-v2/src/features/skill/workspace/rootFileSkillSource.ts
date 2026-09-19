@@ -18,7 +18,7 @@ import {
 } from '#/features/skill/catalog/skillSource';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import { watch } from '#human/utils/watch';
+import { watchCandidates } from '#human/utils/watch';
 
 export const WORKSPACE_ROOT_SKILL_SOURCE_ID = 'workspace';
 
@@ -86,7 +86,7 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
     const signature = [...scannedDirectories].toSorted().join('\0');
     if (signature === this.watchSignature) return false;
     const resources = this.watchResources.add(new DisposableStore());
-    const handle = watch(projectRoot, {
+    const handle = watchCandidates(projectRoot, candidates, {
       ignored: subtreeWatchFilter(projectRoot, candidates, {
         scannedDirectories,
         keepEntryFile: 'SKILL.md',

@@ -429,9 +429,21 @@ describe('openai requester thinking', () => {
     );
     const finished = accumulator.finish();
     expect(finished.content).toEqual([
-      { type: 'think', think: '原文一原文二' },
-      { type: 'think', think: '摘', detailsIndex: 0, hidden: true },
-      { type: 'think', think: '', encrypted: 'cipher', detailsIndex: 1 },
+      { type: 'think', think: '原文一原文二', reasoningKey: 'reasoning_content' },
+      {
+        type: 'think',
+        think: '摘',
+        detailsIndex: 0,
+        hidden: true,
+        reasoningKey: 'reasoning_details',
+      },
+      {
+        type: 'think',
+        think: '',
+        encrypted: 'cipher',
+        detailsIndex: 1,
+        reasoningKey: 'reasoning_details',
+      },
       { type: 'text', text: 'ok' },
     ]);
 
@@ -452,6 +464,119 @@ describe('openai requester thinking', () => {
     ]);
     expect(continued['reasoning_content']).toBe('原文一原文二');
     expect(continued['content']).toBe('ok');
+
+    const dual = stubOpenAIClient(
+      chatCompletionChunks([
+        {
+          reasoning_content: 'A',
+          reasoning: 'B',
+          reasoning_details: [
+            { index: 0, type: 'summary', summary: '摘' },
+            { index: 1, type: 'encrypted', encrypted: 'cipher' },
+          ],
+        },
+        { content: 'ok' },
+      ]),
+    );
+    const dualAccumulator = createMessageAccumulator();
+    await createOpenAIRequester({
+      clientFactory: dual.clientFactory,
+    }).generate(
+      { model },
+      { messages },
+      {
+        signal: new AbortController().signal,
+        onEvent: (event) => {
+          if (event.type === 'llm.streaming.part') {
+            dualAccumulator.push(event.part);
+          }
+        },
+      },
+    );
+    const dualFinished = dualAccumulator.finish();
+    expect(dualFinished.content).toEqual([
+      { type: 'think', think: 'A', reasoningKey: 'reasoning_content' },
+      { type: 'think', think: 'B', reasoningKey: 'reasoning' },
+      {
+        type: 'think',
+        think: '摘',
+        detailsIndex: 0,
+        hidden: true,
+        reasoningKey: 'reasoning_details',
+      },
+      {
+        type: 'think',
+        think: '',
+        encrypted: 'cipher',
+        detailsIndex: 1,
+        reasoningKey: 'reasoning_details',
+      },
+      { type: 'text', text: 'ok' },
+    ]);
+    const dualOutbound = stubOpenAIClient(chatCompletionChunks());
+    await createOpenAIRequester({
+      clientFactory: dualOutbound.clientFactory,
+    }).generate(
+      { model, thinking: { effort: 'off' } },
+      { messages: [createUserMessage('hi'), dualFinished] },
+      { signal: new AbortController().signal },
+    );
+    const dualReplayed = bodyMessages(dualOutbound.body())[1]!;
+    expect(dualReplayed['reasoning_content']).toBe('A');
+    expect(dualReplayed['reasoning']).toBe('B');
+    expect(dualReplayed['reasoning_details']).toEqual([
+      { type: 'summary', summary: '摘' },
+      { type: 'encrypted', encrypted: 'cipher' },
+    ]);
+
+    const openrouter = stubOpenAIClient(
+      chatCompletionChunks([
+        {
+          reasoning: 'We',
+          reasoning_details: [
+            {
+              index: 0,
+              type: 'reasoning.text',
+              text: 'We',
+              format: 'unknown',
+            },
+          ],
+        },
+        { content: 'ok' },
+      ]),
+    );
+    const openrouterAccumulator = createMessageAccumulator();
+    await createOpenAIRequester({
+      clientFactory: openrouter.clientFactory,
+    }).generate(
+      { model },
+      { messages },
+      {
+        signal: new AbortController().signal,
+        onEvent: (event) => {
+          if (event.type === 'llm.streaming.part') {
+            openrouterAccumulator.push(event.part);
+          }
+        },
+      },
+    );
+    const openrouterFinished = openrouterAccumulator.finish();
+    expect(openrouterFinished.content).toEqual([
+      { type: 'think', think: 'We', reasoningKey: 'reasoning' },
+      { type: 'text', text: 'ok' },
+    ]);
+    const openrouterOutbound = stubOpenAIClient(chatCompletionChunks());
+    await createOpenAIRequester({
+      clientFactory: openrouterOutbound.clientFactory,
+    }).generate(
+      { model, thinking: { effort: 'off' } },
+      { messages: [createUserMessage('hi'), openrouterFinished] },
+      { signal: new AbortController().signal },
+    );
+    const openrouterReplayed = bodyMessages(openrouterOutbound.body())[1]!;
+    expect(openrouterReplayed['reasoning']).toBe('We');
+    expect('reasoning_content' in openrouterReplayed).toBe(false);
+    expect('reasoning_details' in openrouterReplayed).toBe(false);
   });
 
   it('echoes an empty reasoning_content on think-less assistant messages only when keeping all', async () => {
@@ -580,10 +705,14 @@ describe('openai requester thinking', () => {
     };
     await expect(
       collect(chatCompletionChunks([{ reasoning: 'stream-think' }, { content: 'hi' }])),
-    ).resolves.toContainEqual({ type: 'think', think: 'stream-think' });
+    ).resolves.toContainEqual({
+      type: 'think',
+      think: 'stream-think',
+      reasoningKey: 'reasoning',
+    });
     await expect(
       collect(chatCompletionChunks([{ reasoning: '' }, { content: 'hi' }])),
-    ).resolves.toContainEqual({ type: 'think', think: '' });
+    ).resolves.toContainEqual({ type: 'think', think: '', reasoningKey: 'reasoning' });
     await expect(
       collect(
         chatCompletionChunks([
@@ -592,14 +721,14 @@ describe('openai requester thinking', () => {
         ]),
       ),
     ).resolves.toEqual([
-      { type: 'think', think: '' },
+      { type: 'think', think: '', reasoningKey: 'reasoning' },
       { type: 'text', text: 'hello' },
     ]);
     await expect(
       collect(chatCompletionChunks([{ content: 'hi' }, { reasoning: '' }])),
     ).resolves.toEqual([
       { type: 'text', text: 'hi' },
-      { type: 'think', think: '' },
+      { type: 'think', think: '', reasoningKey: 'reasoning' },
     ]);
     await expect(
       collect(
@@ -619,10 +748,28 @@ describe('openai requester thinking', () => {
         ]),
       ),
     ).resolves.toEqual([
-      { type: 'think', think: '第一段' },
-      { type: 'think', think: '第一段续', detailsIndex: 0, hidden: true },
-      { type: 'think', think: '第二段', detailsIndex: 1, hidden: true },
-      { type: 'think', think: '', encrypted: 'cipher', detailsIndex: 2 },
+      { type: 'think', think: '第一段', reasoningKey: 'reasoning_content' },
+      {
+        type: 'think',
+        think: '第一段续',
+        detailsIndex: 0,
+        hidden: true,
+        reasoningKey: 'reasoning_details',
+      },
+      {
+        type: 'think',
+        think: '第二段',
+        detailsIndex: 1,
+        hidden: true,
+        reasoningKey: 'reasoning_details',
+      },
+      {
+        type: 'think',
+        think: '',
+        encrypted: 'cipher',
+        detailsIndex: 2,
+        reasoningKey: 'reasoning_details',
+      },
       { type: 'text', text: 'ok' },
     ]);
     await expect(
@@ -638,7 +785,7 @@ describe('openai requester thinking', () => {
         ]),
       ),
     ).resolves.toEqual([
-      { type: 'think', think: 'kept', detailsIndex: 1 },
+      { type: 'think', think: 'kept', detailsIndex: 1, reasoningKey: 'reasoning_details' },
       { type: 'text', text: 'ok' },
     ]);
     await expect(
@@ -655,9 +802,21 @@ describe('openai requester thinking', () => {
         ]),
       ),
     ).resolves.toEqual([
-      { type: 'think', think: '原文' },
-      { type: 'think', think: '摘', detailsIndex: 0, hidden: true },
-      { type: 'think', think: '', encrypted: 'cipher', detailsIndex: 1 },
+      { type: 'think', think: '原文', reasoningKey: 'reasoning_content' },
+      {
+        type: 'think',
+        think: '摘',
+        detailsIndex: 0,
+        hidden: true,
+        reasoningKey: 'reasoning_details',
+      },
+      {
+        type: 'think',
+        think: '',
+        encrypted: 'cipher',
+        detailsIndex: 1,
+        reasoningKey: 'reasoning_details',
+      },
       { type: 'text', text: 'ok' },
     ]);
     await expect(
@@ -676,9 +835,21 @@ describe('openai requester thinking', () => {
         ]),
       ),
     ).resolves.toEqual([
-      { type: 'think', think: '原文一原文二' },
-      { type: 'think', think: '摘一摘二', detailsIndex: 0, hidden: true },
-      { type: 'think', think: '', encrypted: 'cipher', detailsIndex: 1 },
+      { type: 'think', think: '原文一原文二', reasoningKey: 'reasoning_content' },
+      {
+        type: 'think',
+        think: '摘一摘二',
+        detailsIndex: 0,
+        hidden: true,
+        reasoningKey: 'reasoning_details',
+      },
+      {
+        type: 'think',
+        think: '',
+        encrypted: 'cipher',
+        detailsIndex: 1,
+        reasoningKey: 'reasoning_details',
+      },
       { type: 'text', text: 'ok' },
     ]);
     await expect(
@@ -694,8 +865,30 @@ describe('openai requester thinking', () => {
         ]),
       ),
     ).resolves.toEqual([
-      { type: 'think', think: '摘', detailsIndex: 0 },
-      { type: 'think', think: '', encrypted: 'cipher', detailsIndex: 1 },
+      { type: 'think', think: '摘', detailsIndex: 0, reasoningKey: 'reasoning_details' },
+      {
+        type: 'think',
+        think: '',
+        encrypted: 'cipher',
+        detailsIndex: 1,
+        reasoningKey: 'reasoning_details',
+      },
+      { type: 'text', text: 'ok' },
+    ]);
+    await expect(
+      collect(
+        chatCompletionChunks([
+          {
+            reasoning: 'We',
+            reasoning_details: [
+              { index: 0, type: 'reasoning.text', text: 'We', format: 'unknown' },
+            ],
+          },
+          { content: 'ok' },
+        ]),
+      ),
+    ).resolves.toEqual([
+      { type: 'think', think: 'We', reasoningKey: 'reasoning' },
       { type: 'text', text: 'ok' },
     ]);
   });

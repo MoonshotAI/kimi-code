@@ -12,6 +12,7 @@ import type { AgentToolContribution } from '#/agent/toolRegistry/toolContributio
 import type { IConfigService } from '#/app/config/config';
 import type { IFlagService } from '#/app/flag/flag';
 import type { ILogService } from '#/_base/log/log';
+import type { IModelCatalog } from '#/llm-adapter/model/catalog';
 import { AGENT_ENVIRONMENT_TOOLS_FLAG_ID } from '#/features/environmentTools/flag';
 import type { ISessionNotify } from '#/features/notify/sessionNotify';
 import type { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
@@ -40,6 +41,7 @@ function buildTool(flags: IFlagService): SubagentTool {
     { agentId: 'main' } as unknown as IAgentScopeContext,
     {} as IAgentTaskService,
     { data: () => ({}) } as unknown as IAgentProfileService,
+    {} as IModelCatalog,
     { isToolActive: () => false } as unknown as IAgentToolPolicyService,
     { listReferences: () => [] } as unknown as IAgentToolRegistryService,
     {} as IAgentPermissionModeService,

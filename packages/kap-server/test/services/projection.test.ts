@@ -286,9 +286,9 @@ describe('AgentMessageProjector', () => {
     const messages = feedAll(projector, [
       ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'do A' }),
       ev({ type: 'turn.step.started', turnId: 1, step: 1 }),
-      ev({ type: 'turn.steer', turnId: 1, input: [{ type: 'text', text: 'also B' }], origin: { kind: 'user' } }),
+      ev({ type: 'turn.steer', turnId: 1, input: [{ type: 'text', text: 'also B' }], origin: { kind: 'user', inTurn: true } }),
       ev({ type: 'turn.step.completed', turnId: 1, step: 1 }),
-      ev({ type: 'turn.steer', turnId: 1, input: [{ type: 'text', text: 'and C' }], origin: { kind: 'user' } }),
+      ev({ type: 'turn.steer', turnId: 1, input: [{ type: 'text', text: 'and C' }], origin: { kind: 'user', inTurn: true } }),
       ev({ type: 'turn.step.started', turnId: 1, step: 2 }),
     ]);
     const users = ofType(messages, 'user');
@@ -298,6 +298,7 @@ describe('AgentMessageProjector', () => {
       text: [{ type: 'text', text: 'also B', meta: {} }],
       status: 'read',
       timestamp: T0,
+      origin: { kind: 'user' },
     });
     const betweenSteps = users.find((u) => u.message_id === 't1.u2');
     expect(betweenSteps).toMatchObject({
@@ -305,6 +306,7 @@ describe('AgentMessageProjector', () => {
       text: [{ type: 'text', text: 'and C', meta: {} }],
       status: 'read',
       timestamp: T0,
+      origin: { kind: 'user' },
     });
   });
 

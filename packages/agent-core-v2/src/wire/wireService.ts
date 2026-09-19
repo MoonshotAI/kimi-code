@@ -11,7 +11,7 @@ import {
 } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService, StorageError, StorageErrors } from '#/persistence/interface/storage';
 
-import { IWireService } from './wire';
+import { IWireService, type WireRestoreChains } from './wire';
 import { WireError, WireErrors } from './errors';
 import { isHumanRecordType } from './human';
 import {
@@ -165,6 +165,17 @@ export class WireService extends Service implements IWireService, IAgentJournal 
     for (const { record } of restorableChain(entries, tree)) {
       yield record;
     }
+  }
+
+  async readRestoreChains(): Promise<WireRestoreChains> {
+    const entries = await this.readStableEntries();
+    const tree = parseTree(entries, entries.at(-1)?.line ?? 0);
+    this.treeSnapshot = tree;
+    this.reportTreeDiagnostics(tree);
+    return {
+      restorable: restorableChain(entries, tree).map(({ record }) => record),
+      journal: entries.map(({ record }) => record),
+    };
   }
 
   async switchBranch(input: SwitchBranchInput): Promise<SwitchedBranch> {

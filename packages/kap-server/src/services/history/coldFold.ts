@@ -537,8 +537,13 @@ export function foldWireHistory(
     if (rawId === undefined || hiddenTurnIds.has(rawId)) return;
     const input = Array.isArray(record['input']) ? (record['input'] as ContentPart[]) : [];
     const skipBlocks = kind === 'user' ? (origin?.skillActivations?.length ?? 0) : 0;
+    const steerMessageId = typeof record['messageId'] === 'string' ? record['messageId'] : undefined;
+    const steerPromptIds = Array.isArray(record['promptIds'])
+      ? (record['promptIds'] as unknown[]).filter((id): id is string => typeof id === 'string')
+      : [];
     const entry = scratch(rawId);
     if (
+      steerMessageId === undefined &&
       entry.currentStep === undefined &&
       !entry.openingSteerDeduped &&
       entry.openingInputKey !== undefined &&
@@ -549,6 +554,31 @@ export function foldWireHistory(
     }
     if (kind === 'user') {
       const recordAtMs = atMs(record);
+      const matchedByIds = matchSteerPromptIds(steerPromptIds);
+      if (matchedByIds !== undefined) {
+        if (matchedByIds.length === 1) {
+          emitSteer(rawId, {
+            input,
+            origin: userOriginOf(origin),
+            skillActivations: skillActivationsOf(origin),
+            skipBlocks,
+            at: recordAtMs,
+            messageId: matchedByIds[0]!.messageId,
+          });
+          return;
+        }
+        for (const { messageId, content } of matchedByIds) {
+          const draft: UserDraft = {
+            messageId,
+            turnId: turnIdOf(rawId),
+            text: wireContentParts(content),
+            timestamp: recordAtMs,
+          };
+          users.set(messageId, draft);
+          order.push(`user:${messageId}`);
+        }
+        return;
+      }
       const matchedId = matchQueuedPrompt(input, skipBlocks);
       if (matchedId !== undefined) {
         purgeMergedSteer(promptTextOf(input.slice(skipBlocks)));
@@ -584,6 +614,20 @@ export function foldWireHistory(
       skipBlocks,
       at: atMs(record),
     });
+  };
+
+  const matchSteerPromptIds = (
+    promptIds: readonly string[],
+  ): { messageId: string; content: readonly ContentPart[] }[] | undefined => {
+    if (promptIds.length === 0) return undefined;
+    const matched: { messageId: string; content: readonly ContentPart[] }[] = [];
+    for (const promptId of promptIds) {
+      const queued = queuedPrompts.get(promptId);
+      if (queued === undefined) continue;
+      matched.push({ messageId: promptId, content: queued.content });
+      queuedPrompts.delete(promptId);
+    }
+    return matched.length > 0 ? matched : undefined;
   };
 
   const matchQueuedPrompt = (input: readonly ContentPart[], skipBlocks: number): string | undefined => {

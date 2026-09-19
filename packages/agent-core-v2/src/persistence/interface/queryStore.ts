@@ -68,6 +68,7 @@ export interface Checkpoint {
   readonly seq: number;
   readonly sourceSessionCount?: number;
   readonly schemaVersion?: number;
+  readonly workspaceSignals?: Record<string, number>;
 }
 
 export class QueryStoreRebuiltError extends Error {

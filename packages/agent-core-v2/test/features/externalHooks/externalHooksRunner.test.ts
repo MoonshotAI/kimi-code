@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ILogService } from '#/_base/log/log';
 import type { HookExecutionError } from '#/features/externalHooks/app/externalHooksRunner';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 
 import { stubLog } from '../../_base/log/stubs';
 import { makeHookRunner } from './runner-stub';
@@ -292,6 +293,50 @@ describe('ExternalHooksRunnerService', () => {
     const results = await runner.trigger('PreToolUse', { matcherValue: 'Read', inputData: {} });
     expect(results).toHaveLength(1);
     expect(results[0]?.action).toBe('block');
+  });
+
+  it('reports external_hook_resolved telemetry only when hooks run', async () => {
+    const tracked: [string, unknown][] = [];
+    const telemetry = {
+      track2: (event: string, properties: unknown) => tracked.push([event, properties]),
+    } as unknown as ITelemetryService;
+    const runner = makeHookRunner(
+      [
+        { event: 'PreToolUse', matcher: 'Bash', command: nodeCommand('process.exit(2);'), timeout: 5 },
+        { event: 'PreToolUse', matcher: 'Bash', command: nodeCommand('process.exit(1);'), timeout: 5 },
+      ],
+      { telemetry },
+    );
+
+    await runner.trigger('PreToolUse', { matcherValue: 'Bash', inputData: {} });
+    await runner.trigger('PreToolUse', { matcherValue: 'Grep', inputData: {} });
+
+    const spawnFailRunner = makeHookRunner(
+      [{ event: 'PreToolUse', matcher: 'Bash', command: 'true', timeout: 5, cwd: '/nonexistent-hook-cwd' }],
+      { telemetry },
+    );
+    await spawnFailRunner.trigger('PreToolUse', { matcherValue: 'Bash', inputData: {} });
+
+    expect(tracked).toEqual([
+      [
+        'external_hook_resolved',
+        {
+          event: 'PreToolUse',
+          action: 'block',
+          matched_count: 2,
+          failed_count: 1,
+        },
+      ],
+      [
+        'external_hook_resolved',
+        {
+          event: 'PreToolUse',
+          action: 'allow',
+          matched_count: 1,
+          failed_count: 1,
+        },
+      ],
+    ]);
   });
 
   it('injects the bootstrap client platform as client_type into every payload', async () => {

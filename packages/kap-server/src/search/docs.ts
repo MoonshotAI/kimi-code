@@ -61,6 +61,8 @@ export interface SessionMetaDoc {
   readonly title?: string;
   readonly dir?: string;
   readonly identity?: string;
+  readonly sourceUpdatedAt?: number;
+  readonly syncSource?: string;
 }
 
 export interface StatsDoc {

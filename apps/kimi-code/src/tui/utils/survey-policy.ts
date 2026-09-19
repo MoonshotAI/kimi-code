@@ -345,6 +345,7 @@ export interface SurveyEventCoreFields {
 export interface SurveyEventEnvironmentFields {
   readonly current_model: string;
   readonly kfc_model_id?: string;
+  readonly kfc_trace_id?: string;
   readonly user_turn_count: number;
   readonly cumulative_tokens: number;
   readonly virtual_context_tokens: number;
@@ -352,6 +353,10 @@ export interface SurveyEventEnvironmentFields {
   readonly compaction_count: number;
   readonly permission_mode: string;
   readonly thinking_effort: string;
+  readonly subagent_count: number;
+  readonly subagent_models?: string;
+  readonly swarm_run_count: number;
+  readonly swarm_models?: string;
 }
 
 export function buildSurveyEventProperties(
