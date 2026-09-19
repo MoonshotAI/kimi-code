@@ -9,6 +9,13 @@
  * NATIVE_TARGETS table or resolvePackageRoot if/else chain.
  */
 
+import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
+
 export const SUPPORTED_TARGETS = Object.freeze([
   'darwin-arm64',
   'darwin-x64',
@@ -40,6 +47,59 @@ const piTuiNativeFileByTarget = Object.freeze({
   'win32-x64': ['native/win32/prebuilds/win32-x64/win32-platform.node'],
 });
 
+// node-pty ships prebuilds for darwin/win32 only; on Linux the binding is
+// source-built into build/Release at install time (each linux target builds
+// on its native CI runner, so the arch always matches the target). The
+// spawn-helper executable is a macOS-only gyp target — Linux forks the pty
+// directly. The two win32 lib/*.js entries are spawned by path (child fork /
+// Worker), so the static require-follower cannot see them.
+function nodePtyNativeFileByTarget(target) {
+  if (target === 'linux-arm64' || target === 'linux-x64') {
+    return ['build/Release/pty.node'];
+  }
+  if (target === 'darwin-arm64' || target === 'darwin-x64') {
+    return [`prebuilds/${target}/pty.node`, `prebuilds/${target}/spawn-helper`];
+  }
+  return [
+    `prebuilds/${target}/pty.node`,
+    `prebuilds/${target}/conpty.node`,
+    `prebuilds/${target}/conpty_console_list.node`,
+    `prebuilds/${target}/winpty.dll`,
+    `prebuilds/${target}/winpty-agent.exe`,
+    `prebuilds/${target}/conpty/conpty.dll`,
+    `prebuilds/${target}/conpty/OpenConsole.exe`,
+    'lib/conpty_console_list_agent.js',
+    'lib/worker/conoutSocketWorker.js',
+  ];
+}
+
+async function ensureNodePtyNativeBuild({ packageRoot, target }) {
+  if (!target.startsWith('linux-')) return;
+  const bindingPath = join(packageRoot, 'build', 'Release', 'pty.node');
+  if (existsSync(bindingPath)) return;
+  const host = `${process.platform}-${process.arch}`;
+  if (host !== target) {
+    throw new Error(
+      `node-pty ships no Linux prebuilds and ${bindingPath} is missing; the ${target} binding ` +
+        `cannot be source-built on ${host}. Run this build on a native ${target} runner.`,
+    );
+  }
+  console.log(`node-pty: source-building the Linux binding at ${packageRoot} (node-gyp rebuild)...`);
+  try {
+    await execFileAsync('npm', ['run', 'install', '--prefix', packageRoot], {
+      maxBuffer: 64 * 1024 * 1024,
+    });
+  } catch (error) {
+    const detail = [error.stdout?.trim(), error.stderr?.trim(), error.message]
+      .filter(Boolean)
+      .join('\n');
+    throw new Error(`node-pty source build failed at ${packageRoot}:\n${detail}`);
+  }
+  if (!existsSync(bindingPath)) {
+    throw new Error(`node-pty install script did not produce ${bindingPath}`);
+  }
+}
+
 export function isSupportedTarget(target) {
   return SUPPORTED_TARGETS.includes(target);
 }
@@ -54,10 +114,16 @@ export function isSupportedTarget(target) {
  *           — id of another registered dep this nests under (for pnpm),
  *           or null for top-level (resolvable from app root)
  * @property {(target: string) => string[]} [nativeFileRelatives]
- *           — explicit list of .node files relative to package root
- *           (used by 'js-and-native-file' and 'native-file-only';
- *           native-files mode auto-scans *.node). 'native-file-only' collects
- *           package.json + these .node files but skips the package entry JS.
+ *           — explicit list of files relative to package root that the static
+ *           require-follower cannot see (native binaries, helper executables,
+ *           scripts spawned by path). Used by 'js-and-native-file' and
+ *           'native-file-only'; native-files mode auto-scans *.node.
+ *           'native-file-only' collects package.json + these files but skips
+ *           the package entry JS.
+ * @property {(ctx: { packageRoot: string, target: string }) => Promise<void>} [ensureNativeBuild]
+ *           — optional hook run after the package root resolves and before
+ *           files are collected, for packages whose binding must be
+ *           source-built on the build host (no prebuilt artifacts).
  */
 
 /** @type {readonly NativeDepDescriptor[]} */
@@ -84,6 +150,17 @@ export const nativeDeps = Object.freeze([
     collect: 'native-file-only',
     parent: null,
     nativeFileRelatives: (target) => piTuiNativeFileByTarget[target] ?? [],
+  },
+  {
+    id: 'node-pty',
+    name: () => 'node-pty',
+    // The whole package ships: its JS does a runtime-concatenated require of
+    // the .node binding (unbundleable), so the SEA externalizes it and loads
+    // the extracted copy through the native-module hook.
+    collect: 'js-and-native-file',
+    parent: null,
+    nativeFileRelatives: (target) => nodePtyNativeFileByTarget(target),
+    ensureNativeBuild: ensureNodePtyNativeBuild,
   },
 ]);
 

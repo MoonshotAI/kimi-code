@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { mkdir, readFile, rm, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -77,7 +78,67 @@ async function runExecServerSmoke() {
       });
     });
 
+  // Responses carry a request `id`; server notifications (e.g. process/output)
+  // do not — skip those while awaiting a specific response.
+  const nextResponse = async () => {
+    for (;;) {
+      const frame = await nextFrame();
+      if (frame !== null && typeof frame === 'object' && 'id' in frame) return frame;
+    }
+  };
+
   const send = (message) => child.stdin.write(`${JSON.stringify(message)}\n`);
+
+  // The remote terminal is a core executor feature: a tty spawn must work in
+  // the shipped SEA, where node-pty loads from the native-asset cache through
+  // the module hook. Guards against silent regressions of the SEA node-pty
+  // loading path (native-deps registration, bundle externalization, hook).
+  const runTtySmoke = async () => {
+    const argv =
+      process.platform === 'win32'
+        ? ['cmd.exe', '/c', 'echo tty-smoke-ok']
+        : ['sh', '-c', 'echo tty-smoke-ok'];
+    send({
+      method: 'process/start',
+      id: 3,
+      params: { processId: 'smoke-tty', argv, cwd: tmpdir(), tty: true },
+    });
+    const started = await nextResponse();
+    if (started.id !== 3 || typeof started.result?.pid !== 'number') {
+      fail(`exec-server tty spawn failed: ${JSON.stringify(started)}`);
+    }
+    let output = '';
+    let afterSeq = 0;
+    let readId = 100;
+    const deadline = Date.now() + 30_000;
+    for (;;) {
+      if (Date.now() >= deadline) {
+        send({ method: 'process/terminate', id: readId++, params: { processId: 'smoke-tty' } });
+        fail(`exec-server tty process did not exit in time; output so far: ${JSON.stringify(output)}`);
+      }
+      send({
+        method: 'process/read',
+        id: readId++,
+        params: { processId: 'smoke-tty', afterSeq, waitMs: 1_000 },
+      });
+      const read = await nextResponse();
+      const result = read.result ?? {};
+      for (const chunk of result.chunks ?? []) {
+        output += Buffer.from(chunk.chunkBase64, 'base64').toString('utf8');
+      }
+      afterSeq = result.nextSeq ?? afterSeq;
+      if (result.exited === true) {
+        if (result.exitCode !== 0) {
+          fail(`exec-server tty process exited ${result.exitCode}: ${JSON.stringify(output)}`);
+        }
+        if (!output.includes('tty-smoke-ok')) {
+          fail(`exec-server tty output missing the smoke marker: ${JSON.stringify(output)}`);
+        }
+        console.log('exec-server tty smoke passed');
+        return;
+      }
+    }
+  };
 
   try {
     send({ method: 'initialize', id: 1, params: { clientName: 'native-smoke', clientVersion: expectedVersion } });
@@ -96,6 +157,7 @@ async function runExecServerSmoke() {
     if (status.id !== 2 || status.result?.status !== 'ready') {
       fail(`exec-server environment/status mismatch: ${JSON.stringify(status)}`);
     }
+    await runTtySmoke();
     child.stdin.end();
     const exitCode = await new Promise((resolveExit) => {
       const timer = setTimeout(() => {

@@ -17,17 +17,28 @@ if (isExecServerArgv(process.argv)) {
   // stdout is reserved for protocol frames; the runner logs to stderr only.
   // No process.exit: the stdio streams drain on connection EOF and the
   // process exits with this code on its own.
-  runExecServerCommand('stdio').then(
-    (code) => {
-      process.exitCode = code;
-    },
-    (error: unknown) => {
-      process.stderr.write(
-        `error: exec-server failed: ${error instanceof Error ? error.message : String(error)}\n`,
-      );
-      process.exitCode = 1;
-    },
-  );
+  //
+  // The native-module hook must be installed on this light path too (the full
+  // CLI installs it in cli/main.ts): the executor resolves node-pty through
+  // it when spawning tty processes inside a SEA binary. Kept behind a dynamic
+  // import so the executor's static import graph stays light (guarded by
+  // test/cli/exec-server.test.ts).
+  void import('./native/module-hook')
+    .then(({ installNativeModuleHook }) => {
+      installNativeModuleHook();
+      return runExecServerCommand('stdio');
+    })
+    .then(
+      (code) => {
+        process.exitCode = code;
+      },
+      (error: unknown) => {
+        process.stderr.write(
+          `error: exec-server failed: ${error instanceof Error ? error.message : String(error)}\n`,
+        );
+        process.exitCode = 1;
+      },
+    );
 } else {
   void import('./cli/main').then(({ main }) => main());
 }
