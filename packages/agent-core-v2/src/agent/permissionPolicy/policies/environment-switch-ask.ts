@@ -11,7 +11,7 @@ export class EnvironmentSwitchAskPermissionPolicyService implements PermissionPo
   ) {}
 
   evaluate(context: ResolvedToolExecutionHookContext): PermissionPolicyResult | undefined {
-    if (this.modeService.mode === 'auto') return undefined;
+    if (this.modeService.mode !== 'manual') return undefined;
     return ENVIRONMENT_SWITCH_TOOL_NAMES.includes(context.toolCall.name)
       ? { kind: 'ask' }
       : undefined;
