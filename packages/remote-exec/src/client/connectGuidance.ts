@@ -13,9 +13,10 @@ import {
   launcherLabel,
   probeExecutorTarget,
   resolveTildeRemoteBin,
+  shQuote,
   type LocalRunner,
 } from './executorDetect';
-import { DEFAULT_REMOTE_BIN, dockerBaseArgs, type LauncherSpec } from './launchers';
+import { DEFAULT_REMOTE_BIN, type LauncherSpec } from './launchers';
 
 export type HandshakeFailureClass = 'missing' | 'timeout' | 'incompatible' | 'other';
 
@@ -48,8 +49,8 @@ function failureIntro(launcher: LauncherSpec, failure: 'missing' | 'timeout'): s
 }
 
 function dockerCommand(launcher: LauncherSpec & { readonly type: 'docker' }): string {
-  const base = dockerBaseArgs(launcher.context);
-  return base.length === 0 ? 'docker' : `docker ${base.join(' ')}`;
+  if (launcher.context === undefined) return 'docker';
+  return `docker --context ${shQuote(launcher.context)}`;
 }
 
 // A tilde-prefixed remoteBin reaches the printed commands as text — neither
@@ -76,6 +77,16 @@ function remoteActivateScript(
   return `mkdir -p "${posixDirname(dest)}" && chmod 755 /tmp/kimi-install && mv -f /tmp/kimi-install "${dest}"`;
 }
 
+// The verify step keeps the auto-installer's pinned-hash discipline in the
+// manual flow: the download is checked against the manifest's sha256 before
+// the binary leaves for the target. The commands run on the user's machine,
+// so the tool follows the local platform (sha256sum on Linux, shasum on
+// macOS).
+function verifyDownloadLine(sha256: string): string {
+  const tool = process.platform === 'darwin' ? 'shasum -a 256' : 'sha256sum';
+  return `  echo "${sha256}  /tmp/kimi-install" | ${tool} -c -`;
+}
+
 function downloadAndActivateLines(
   launcher: LauncherSpec & { readonly type: 'ssh' | 'docker' },
   artifact: ExecutorArtifact,
@@ -84,6 +95,7 @@ function downloadAndActivateLines(
   if (launcher.type === 'ssh') {
     return [
       `  curl -fL ${artifact.url} -o /tmp/kimi-install`,
+      verifyDownloadLine(artifact.sha256),
       `  scp /tmp/kimi-install ${launcher.host}:/tmp/kimi-install`,
       `  ssh ${launcher.host} '${remoteActivateScript(launcher, homeDir)}'`,
     ];
@@ -91,6 +103,7 @@ function downloadAndActivateLines(
   const docker = dockerCommand(launcher);
   return [
     `  curl -fL ${artifact.url} -o /tmp/kimi-install`,
+    verifyDownloadLine(artifact.sha256),
     `  ${docker} cp /tmp/kimi-install ${launcher.container}:/tmp/kimi-install`,
     `  ${docker} exec ${launcher.container} sh -c '${remoteActivateScript(launcher, homeDir)}'`,
     '  (or preinstall the executor in the image / bind-mount it, and set remoteBin to that absolute path)',

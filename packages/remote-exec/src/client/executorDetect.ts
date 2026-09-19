@@ -89,6 +89,10 @@ export function launcherLabel(launcher: LauncherSpec): string {
   }
 }
 
+export function shQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
 // docker exec passes argv to execve without a shell, so a tilde-prefixed
 // remoteBin (the default included) would be invoked literally and fail with
 // exit 126. Resolve the container user's $HOME with one shell probe and

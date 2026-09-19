@@ -34,6 +34,9 @@ function fixedLocator(): ExecutorArtifactLocator & { locate: ReturnType<typeof v
   return { locate: vi.fn(async () => ARTIFACT) };
 }
 
+const VERIFY_TOOL = process.platform === 'darwin' ? 'shasum -a 256' : 'sha256sum';
+const VERIFY_LINE = `echo "${ARTIFACT.sha256}  /tmp/kimi-install" | ${VERIFY_TOOL} -c -`;
+
 function unameRunner(stdout = 'Linux x86_64\n/home/test\n'): { runner: LocalRunner; requests: LocalRunRequest[] } {
   const requests: LocalRunRequest[] = [];
   const runner: LocalRunner = async (request: LocalRunRequest) => {
@@ -115,6 +118,7 @@ describe('connectWithGuidance', () => {
     expect(message).toContain('expected at ~/.kimi-code/bin/kimi');
     expect(message).toContain(`Install the executor (version 1.2.3, sha256 ${ARTIFACT.sha256}):`);
     expect(message).toContain(`curl -fL ${ARTIFACT.url} -o /tmp/kimi-install`);
+    expect(message).toContain(VERIFY_LINE);
     expect(message).toContain('scp /tmp/kimi-install dev-box:/tmp/kimi-install');
     expect(message).toContain(
       `ssh dev-box 'mkdir -p "/home/test/.kimi-code/bin" && chmod 755 /tmp/kimi-install && mv -f /tmp/kimi-install "/home/test/.kimi-code/bin/kimi"'`,
@@ -215,6 +219,7 @@ describe('connectWithGuidance', () => {
     const message = (error as Error).message;
     expect(message).toContain('was not found on docker:myapp-dev');
     expect(message).toContain('expected at /root/.kimi-code/bin/kimi');
+    expect(message).toContain(VERIFY_LINE);
     expect(message).toContain('docker cp /tmp/kimi-install myapp-dev:/tmp/kimi-install');
     expect(message).toContain(
       `docker exec myapp-dev sh -c 'mkdir -p "/root/.kimi-code/bin" && chmod 755 /tmp/kimi-install && mv -f /tmp/kimi-install "/root/.kimi-code/bin/kimi"'`,
@@ -227,7 +232,7 @@ describe('connectWithGuidance', () => {
     }
   });
 
-  it('renders the docker context on the printed docker commands', async () => {
+  it('renders the docker context quoted on the printed docker commands', async () => {
     const fake = unameRunner();
     const attempt = vi.fn(async () => {
       throw missingExecutorError(126);
@@ -241,10 +246,20 @@ describe('connectWithGuidance', () => {
     }).catch((error: unknown) => error);
 
     const message = (error as Error).message;
-    expect(message).toContain('docker --context orbstack cp /tmp/kimi-install myapp-dev:/tmp/kimi-install');
+    expect(message).toContain(`docker --context 'orbstack' cp /tmp/kimi-install myapp-dev:/tmp/kimi-install`);
     expect(message).toContain(
-      `docker --context orbstack exec myapp-dev sh -c 'mkdir -p "/usr/local/bin" && chmod 755 /tmp/kimi-install && mv -f /tmp/kimi-install "/usr/local/bin/kimi"'`,
+      `docker --context 'orbstack' exec myapp-dev sh -c 'mkdir -p "/usr/local/bin" && chmod 755 /tmp/kimi-install && mv -f /tmp/kimi-install "/usr/local/bin/kimi"'`,
     );
+  });
+
+  it('quotes a docker context containing spaces', async () => {
+    const text = missingExecutorGuidance({
+      launcher: { type: 'docker', container: 'myapp-dev', context: 'orb stack', remoteBin: '/usr/local/bin/kimi' },
+      failure: 'missing',
+      artifact: ARTIFACT,
+    });
+    expect(text).toContain(`docker --context 'orb stack' cp /tmp/kimi-install myapp-dev:/tmp/kimi-install`);
+    expect(text).not.toContain('--context orb stack');
   });
 
   it('keeps the unresolved docker remoteBin in the guidance when the home probe fails', async () => {
@@ -459,6 +474,7 @@ describe('guidance text', () => {
       failure: 'missing',
       artifact: ARTIFACT,
     });
+    expect(text).toContain(VERIFY_LINE);
     expect(text).toContain('docker cp /tmp/kimi-install myapp-dev:/tmp/kimi-install');
     expect(text).toContain('preinstall the executor in the image');
   });
