@@ -1,5 +1,19 @@
 # @moonshot-ai/kimi-code
 
+## 2.0.2
+
+### Patch Changes
+
+- [#3922](https://github.com/MoonshotAI/kimi-code/pull/3922) [`9df7a9c`](https://github.com/MoonshotAI/kimi-code/commit/9df7a9ccfb0d7d0713b51ae1ac165d0634fc40d2) Thanks [@sailist](https://github.com/sailist)! - Fix new messages occasionally landing at an old position in the conversation after resuming a session.
+
+- [#3911](https://github.com/MoonshotAI/kimi-code/pull/3911) [`88a7d93`](https://github.com/MoonshotAI/kimi-code/commit/88a7d932f1cda95c78bf5488d34ff974a160fb08) Thanks [@Grapedge](https://github.com/Grapedge)! - Fix compaction failing after switching to a model with a smaller context window.
+
+- [#3929](https://github.com/MoonshotAI/kimi-code/pull/3929) [`6ffdf0d`](https://github.com/MoonshotAI/kimi-code/commit/6ffdf0d579fa1a9f30c2d00c437c6c8de0c03997) Thanks [@7Hanrui](https://github.com/7Hanrui)! - The agent no longer assumes the current working directory is the project root.
+
+- [#3933](https://github.com/MoonshotAI/kimi-code/pull/3933) [`9721259`](https://github.com/MoonshotAI/kimi-code/commit/97212596f7d694b9683046ec7aad4d1247d29468) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix a message sent while the agent was running sometimes appearing twice in the chat.
+
+- [#3934](https://github.com/MoonshotAI/kimi-code/pull/3934) [`2e605b1`](https://github.com/MoonshotAI/kimi-code/commit/2e605b10be906fb627c1f3aeaaa066b14ddbdbba) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Improved interactions and fixed known bugs.
+
 ## 2.0.1
 
 ### Patch Changes
