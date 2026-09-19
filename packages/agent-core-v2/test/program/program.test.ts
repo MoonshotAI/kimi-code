@@ -874,4 +874,27 @@ describe('Program.onDidChangeTrust', () => {
       await fixture.cleanup();
     }
   });
+
+  it('trust() resolves only after waitUntil promises registered on the re-fired event settle', async () => {
+    const fixture = await localityFixture();
+    try {
+      await fixture.program.trust.untrust();
+      let settled = false;
+      const subscription = fixture.program.onDidChangeTrust((change) => {
+        change.waitUntil(new Promise<void>((resolve) => {
+          setTimeout(() => {
+            settled = true;
+            resolve();
+          }, 10);
+        }));
+      });
+
+      await fixture.program.trust.trust();
+      expect(settled).toBe(true);
+
+      subscription.dispose();
+    } finally {
+      await fixture.cleanup();
+    }
+  });
 });

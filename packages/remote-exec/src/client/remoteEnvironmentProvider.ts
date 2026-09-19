@@ -293,7 +293,11 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
     // `.kimi-code/environments.toml`. Each trigger re-resolves declarations —
     // trust is re-read on every resolve, so trust flips re-gate project
     // declarations at the next trigger — and diffs them against the
-    // registered records. Reconciles are serialized on `tail`.
+    // registered records. Reconciles are serialized on `tail`; the returned
+    // promise settles once this trigger's reconcile has landed in the
+    // registry. The trust trigger hands it to the event's waitUntil, so a
+    // caller awaiting the trust change (trustWorkspace) observes project
+    // declarations published before it resolves.
     let disposed = false;
     let tail = Promise.resolve();
     // Idle connection reaping: the registry reports environments with zero
@@ -335,7 +339,7 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
       record.idle = change.idle;
       armReapTimer(record);
     });
-    const reconcile = (): void => {
+    const reconcile = (): Promise<void> => {
       tail = tail.catch(() => {}).then(async () => {
         if (disposed) return;
         let resolved: EnvironmentDeclarationSet;
@@ -398,15 +402,18 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
           }
         }
       });
+      return tail;
     };
     const configListener = config.onDidSectionChange((event) => {
-      if (event.domain === ENVIRONMENTS_SECTION) reconcile();
+      if (event.domain === ENVIRONMENTS_SECTION) void reconcile();
     });
-    const trustListener = context.onDidChangeTrust(() => {
-      reconcile();
+    const trustListener = context.onDidChangeTrust((change) => {
+      change.waitUntil(reconcile());
     });
     const watchProjectDeclarations = this.options.watchProjectDeclarations ?? watchProjectDeclarationFile;
-    const projectWatch = watchProjectDeclarations(join(context.root, PROJECT_ENVIRONMENTS_FILE), reconcile);
+    const projectWatch = watchProjectDeclarations(join(context.root, PROJECT_ENVIRONMENTS_FILE), () => {
+      void reconcile();
+    });
     return {
       dispose: async () => {
         disposed = true;

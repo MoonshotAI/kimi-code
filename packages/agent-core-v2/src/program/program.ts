@@ -1,4 +1,4 @@
-import { Emitter, Event } from '#/_base/event';
+import { AsyncEmitter, Emitter, Event, type IWaitUntil } from '#/_base/event';
 import { GitService } from '#/app/git/gitService';
 import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
 import type { Environment, EnvironmentBinding, EnvironmentLease, EnvironmentWorkspaceRoots } from '#/environment/environment';
@@ -113,8 +113,8 @@ export class Program {
   private currentStatus: ProgramStatus = 'preparing';
   private readonly changeEmitter = new Emitter<ProgramSnapshot>();
   readonly onDidChange: Event<ProgramSnapshot> = this.changeEmitter.event;
-  private readonly trustChangeEmitter = new Emitter<WorkspaceTrustChange>();
-  readonly onDidChangeTrust: Event<WorkspaceTrustChange> = this.trustChangeEmitter.event;
+  private readonly trustChangeEmitter = new AsyncEmitter<WorkspaceTrustChange & IWaitUntil>();
+  readonly onDidChangeTrust: Event<WorkspaceTrustChange & IWaitUntil> = this.trustChangeEmitter.event;
   private readonly registrySubscription;
   private readonly resolver: IEnvironmentResolver;
   private readonly generations = new Map<string, ProgramGeneration>();
@@ -372,7 +372,7 @@ export class Program {
       const trust = own(new WorkspaceTrustService(this.context, this.dependencies.docs, state, this.dependencies.telemetry));
       if (environmentId === LOCAL_ENVIRONMENT_ID) {
         own(trust.onDidChange((change) => {
-          this.trustChangeEmitter.fire(change);
+          change.waitUntil(this.trustChangeEmitter.fireAsync({ trusted: change.trusted }, change.signal));
         }));
       }
       const mcpConfig = own(new WorkspaceMcpConfigService(this.context, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, localFs, trust, this.dependencies.configStore));
