@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { ConnectionClosedError } from '../src/client/connection';
 import { RemoteEnvironment } from '../src/client/remoteEnvironment';
@@ -130,6 +130,52 @@ describe('RemoteEnvironment over a subprocess loopback', () => {
     await expect(longPoll).rejects.toThrow(ConnectionClosedError);
     await expect(proc.wait()).resolves.toBe(-1);
     await expect(environment.fs.readText('/etc/hostname')).rejects.toThrow(ConnectionClosedError);
+    await environment.dispose();
+  });
+
+  it('detects a half-open executor through the status ping and disconnects', async () => {
+    const environment = await RemoteEnvironment.connect({
+      workspaceId: 'ws-test',
+      environmentId: 'loopback',
+      launcher: loopbackLauncher({ EXEC_SERVER_BLOCK_AFTER_MS: '200', EXEC_SERVER_BLOCK_MS: '10000' }),
+      controlCallTimeoutMs: 200,
+      statusPingIntervalMs: 50,
+    });
+    await vi.waitFor(() => {
+      expect(environment.status).toBe('disconnected');
+    }, { timeout: 5_000 });
+    await environment.dispose();
+  });
+
+  it('keeps a healthy executor connected across status pings', async () => {
+    const environment = await RemoteEnvironment.connect({
+      workspaceId: 'ws-test',
+      environmentId: 'loopback',
+      launcher: loopbackLauncher(),
+      controlCallTimeoutMs: 200,
+      statusPingIntervalMs: 50,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(environment.status).toBe('ready');
+    await environment.dispose();
+  });
+
+  it('disconnects when the status ping is answered with an error', async () => {
+    const environment = await RemoteEnvironment.connect({
+      workspaceId: 'ws-test',
+      environmentId: 'loopback',
+      launcher: {
+        type: 'command' as const,
+        program: process.execPath,
+        args: [tsxCli(), join(here, 'fixtures', 'exec-server-status-error-child.ts')],
+        env: { EXEC_SERVER_VERSION: TEST_VERSION },
+      },
+      controlCallTimeoutMs: 200,
+      statusPingIntervalMs: 50,
+    });
+    await vi.waitFor(() => {
+      expect(environment.status).toBe('disconnected');
+    }, { timeout: 5_000 });
     await environment.dispose();
   });
 

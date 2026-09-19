@@ -43,6 +43,7 @@ import type { ExecutorArtifactLocator } from './artifactLocator';
 import { connectWithGuidance } from './connectGuidance';
 import { defaultLocalRunner, resolveTildeRemoteBin, type LocalRunner } from './executorDetect';
 import type { LauncherSpec } from './launchers';
+import { RemoteConnectionPool, type RemoteConnectionPoolHandle } from './remoteConnectionPool';
 import { RemoteEnvironment, type RemoteEnvironmentOptions } from './remoteEnvironment';
 
 export function toLauncherSpec(entry: RemoteEnvironmentEntry): LauncherSpec {
@@ -177,9 +178,10 @@ export class ManagedRemoteEnvironment implements Environment {
     this.statusEmitter.fire(status);
   }
 
-  // The executor connection is owned by the declaring record, not by this
-  // view: replacements (reconnect, declaration update) drain views without
-  // tearing the connection down, and the record disposes it.
+  // The executor connection is owned by the app-level connection pool, not by
+  // this view: replacements (reconnect, declaration update, idle reap) drain
+  // views without tearing the connection down, and the pool disposes it once
+  // the last workspace holder lets go.
   async dispose(): Promise<void> {
     this.statusSubscription?.dispose();
     if (this.currentStatus !== 'disposed') {
@@ -220,15 +222,16 @@ interface DeclaredEnvironmentRecord {
   handle: EnvironmentProviderEnvironmentHandle;
   declaration: RemoteEnvironmentDeclaration;
   fingerprint: string;
-  // Bumped whenever the declaration is replaced or the record is torn down.
-  // An in-flight connect started under an older version disposes its result
-  // instead of swapping an environment built from a stale declaration into the
-  // registry.
-  version: number;
-  // The live executor connection, owned by the record: managed views share it
-  // and never dispose it. The record disposes it on reconnect, update, and
-  // removal.
-  connection?: RemoteEnvironment;
+  // Set when the record is torn down (declaration removed or attachment
+  // disposed). An in-flight connect settling afterwards releases its pool
+  // handle instead of swapping a view built from a stale declaration into the
+  // registry; a declaration replace is caught by the fingerprint comparison.
+  detached: boolean;
+  // The lease on the pooled connection backing this record's live view,
+  // owned by the app-level pool: managed views share it and never dispose it.
+  // The record releases it on reconnect, update, and removal; the pool
+  // destroys the connection once the last workspace holder lets go.
+  poolHandle?: RemoteConnectionPoolHandle;
   // A docker declaration's tilde-prefixed remoteBin resolved to the container
   // user's absolute home path (docker exec has no shell expansion), keyed by
   // the declaration fingerprint it was resolved from so a declaration change
@@ -238,8 +241,6 @@ interface DeclaredEnvironmentRecord {
   // Mirrors the registry idleness events for this environment: true while it
   // has zero active leases and zero tracked resources.
   idle: boolean;
-  // Fires the idle reap once the environment has stayed idle for its TTL.
-  reapTimer: TimeoutTimer;
 }
 
 const PROJECT_DECLARATION_WATCH_DEBOUNCE_MS = 200;
@@ -249,13 +250,6 @@ function idleReapTtlMs(entry: RemoteEnvironmentEntry): number {
   return Math.min((entry.idleTtlSeconds ?? DEFAULT_IDLE_TTL_SECONDS) * 1000, MAX_TIMER_DELAY_MS);
 }
 
-class EnvironmentReapAbortedError extends Error {
-  constructor() {
-    super('environment is no longer idle');
-    this.name = 'EnvironmentReapAbortedError';
-  }
-}
-
 export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFactory {
   readonly id = 'remote-exec';
   readonly imports: EnvironmentUnitImports = {
@@ -263,6 +257,12 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
     imports: [],
     local: [],
   };
+
+  // App-level connection pool: one executor connection per declaration
+  // fingerprint, shared by every workspace this factory attaches to. The pool
+  // is only a cache — declaration resolution and trust checks stay per
+  // workspace before any acquire.
+  private readonly pool = new RemoteConnectionPool();
 
   constructor(private readonly options: RemoteEnvironmentProviderFactoryOptions = {}) {}
 
@@ -287,7 +287,7 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
     }
     const records = new Map<string, DeclaredEnvironmentRecord>();
     for (const declaration of initial.entries) {
-      records.set(declaration.id, this.registerDeclaredEnvironment(context, host, declaration));
+      records.set(declaration.id, this.registerDeclaredEnvironment(context, host, declaration, log));
     }
 
     // Live declaration watch: user-level changes arrive through the config
@@ -302,44 +302,19 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
     // declarations published before it resolves.
     let disposed = false;
     let tail = Promise.resolve();
-    // Idle connection reaping: the registry reports environments with zero
-    // active leases and zero tracked resources; once one stays idle for its
-    // declaration TTL the provider swaps the live view for a pending
-    // placeholder and disposes the connection. The next use reconnects on
-    // demand through the placeholder, exactly like the first connect. The
-    // timer captures the connection it armed against: a reconnect that lands
-    // mid-reap replaces it, and the identity check then aborts the reap
-    // instead of tearing the fresh connection down.
-    const reapIdleConnection = async (record: DeclaredEnvironmentRecord, connection: RemoteEnvironment): Promise<void> => {
-      if (disposed || !record.idle || record.connection !== connection) return;
-      record.reapTimer.cancel();
-      await record.handle.update(() => {
-        if (disposed || !record.idle || record.connection !== connection) throw new EnvironmentReapAbortedError();
-        return this.createPendingEnvironment(context, record);
-      });
-      if (disposed || !record.idle || record.connection !== connection) return;
-      if (record.connection === connection) record.connection = undefined;
-      await connection.dispose();
-    };
-    const armReapTimer = (record: DeclaredEnvironmentRecord): void => {
-      const ttlMs = idleReapTtlMs(record.declaration.entry);
-      const connection = record.connection;
-      if (!record.idle || ttlMs === 0 || connection === undefined) {
-        record.reapTimer.cancel();
-        return;
-      }
-      record.reapTimer.cancelAndSet(() => {
-        void reapIdleConnection(record, connection).catch((error: unknown) => {
-          if (error instanceof EnvironmentReapAbortedError) return;
-          log.warn(`remote environment ${record.declaration.id} idle connection reap failed`, { error });
-        });
-      }, ttlMs);
-    };
+    // Idle connection reaping is pool-level: the registry reports this
+    // workspace's environments with zero active leases and zero tracked
+    // resources, and each record mirrors that into its pool holder. The pool
+    // reaps a shared connection only once every workspace holding it stayed
+    // idle for the TTL (the min over conflicting declaration TTLs), so one
+    // workspace going idle never kills a connection another workspace is
+    // actively using. Reaped views swap back to pending placeholders and
+    // reconnect on demand, exactly like the first connect.
     const idlenessSubscription = host.onDidChangeEnvironmentIdleness((change) => {
       const record = records.get(change.environmentId);
       if (record === undefined) return;
       record.idle = change.idle;
-      armReapTimer(record);
+      record.poolHandle?.update({ idle: record.idle, ttlMs: idleReapTtlMs(record.declaration.entry) });
     });
     const reconcile = (): Promise<void> => {
       tail = tail.catch(() => {}).then(async () => {
@@ -364,10 +339,11 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
           // as draining, and disposes the environment once held leases release
           // (bounded by the registry drain timeout). Bindings to the removed
           // environment keep failing explicitly — no silent local fallback (D3).
-          record.version += 1;
-          record.reapTimer.dispose();
+          record.detached = true;
           void record.handle.remove()
-            .then(() => discardConnection(record))
+            .then(() => {
+              releasePoolHandle(record);
+            })
             .catch((error: unknown) => {
               log.warn(`remote environment ${id} removal failed`, { error });
             });
@@ -378,7 +354,7 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
           const record = records.get(declaration.id);
           if (record === undefined) {
             try {
-              records.set(declaration.id, this.registerDeclaredEnvironment(context, host, declaration));
+              records.set(declaration.id, this.registerDeclaredEnvironment(context, host, declaration, log));
             } catch (error) {
               // A failed entry keeps no record, so the next trigger retries it.
               log.warn(`remote environment ${declaration.id} registration failed`, { error });
@@ -389,16 +365,14 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
             // The connection identity is unchanged; only reap policy (the
             // idle TTL is excluded from the fingerprint) may have moved.
             record.declaration = declaration;
-            armReapTimer(record);
+            record.poolHandle?.update({ idle: record.idle, ttlMs: idleReapTtlMs(declaration.entry) });
             continue;
           }
-          record.version += 1;
           record.declaration = declaration;
-          record.reapTimer.cancel();
           try {
-            await record.handle.update(() => this.createPendingEnvironment(context, record));
+            await record.handle.update(() => this.createPendingEnvironment(context, record, log));
             record.fingerprint = fingerprint;
-            await discardConnection(record);
+            releasePoolHandle(record);
           } catch (error) {
             log.warn(`remote environment ${declaration.id} update failed`, { error });
           }
@@ -424,12 +398,11 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
         projectWatch.dispose();
         idlenessSubscription.dispose();
         for (const record of [...records.values()].toReversed()) {
-          record.version += 1;
-          record.reapTimer.dispose();
+          record.detached = true;
           try {
             await record.handle.remove();
           } finally {
-            await discardConnection(record);
+            releasePoolHandle(record);
           }
         }
         records.clear();
@@ -442,65 +415,73 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
     context: EnvironmentProviderContext,
     host: EnvironmentProviderHost,
     declaration: RemoteEnvironmentDeclaration,
+    log: ILogService,
   ): DeclaredEnvironmentRecord {
     const record: DeclaredEnvironmentRecord = {
       handle: undefined as unknown as EnvironmentProviderEnvironmentHandle,
       declaration,
       fingerprint: declarationFingerprint(declaration.entry),
-      version: 0,
+      detached: false,
       idle: true,
-      reapTimer: new TimeoutTimer(),
     };
-    record.handle = host.registerEnvironment(this.createPendingEnvironment(context, record));
+    record.handle = host.registerEnvironment(this.createPendingEnvironment(context, record, log));
     return record;
   }
 
-  private createPendingEnvironment(context: EnvironmentProviderContext, record: DeclaredEnvironmentRecord): ManagedRemoteEnvironment {
+  private createPendingEnvironment(context: EnvironmentProviderContext, record: DeclaredEnvironmentRecord, log: ILogService): ManagedRemoteEnvironment {
     let inflight: Promise<void> | undefined;
-    const version = record.version;
     const declaration = record.declaration;
     const fingerprint = declarationFingerprint(declaration.entry);
     const connectEnvironment = (): Promise<void> => {
       inflight ??= (async () => {
         try {
           const connect = this.options.connect ?? ((opts: RemoteEnvironmentOptions) => RemoteEnvironment.connect(opts));
-          const attempt = (launcher: LauncherSpec): Promise<RemoteEnvironment> =>
-            connect({
-              workspaceId: context.id,
-              environmentId: declaration.id,
+          const handle = await this.pool.acquire(fingerprint, async () => {
+            const attempt = (launcher: LauncherSpec): Promise<RemoteEnvironment> =>
+              connect({
+                workspaceId: context.id,
+                environmentId: declaration.id,
+                launcher,
+                clientName: this.options.clientName,
+                clientVersion: this.options.clientVersion,
+                minExecutorVersion: this.options.minExecutorVersion,
+                initializeTimeoutMs: this.options.initializeTimeoutMs,
+                onDiagnostic: this.options.onDiagnostic,
+              });
+            const launcher = await this.resolveRecordLauncher(record, toLauncherSpec(declaration.entry), fingerprint);
+            return connectWithGuidance(attempt, {
               launcher,
-              clientName: this.options.clientName,
+              artifactLocator: this.options.artifactLocator,
               clientVersion: this.options.clientVersion,
               minExecutorVersion: this.options.minExecutorVersion,
-              initializeTimeoutMs: this.options.initializeTimeoutMs,
-              onDiagnostic: this.options.onDiagnostic,
+              runner: this.options.probeRunner,
             });
-          const launcher = await this.resolveRecordLauncher(record, toLauncherSpec(declaration.entry), fingerprint);
-          const connected = await connectWithGuidance(attempt, {
-            launcher,
-            artifactLocator: this.options.artifactLocator,
-            clientVersion: this.options.clientVersion,
-            minExecutorVersion: this.options.minExecutorVersion,
-            runner: this.options.probeRunner,
+          }, {
+            idle: record.idle,
+            ttlMs: idleReapTtlMs(declaration.entry),
+            onPoolDestroy: (connection) => this.discardPoolConnection(context, record, connection, log),
           });
-          if (record.version !== version) {
-            await connected.dispose();
+          // Stale guards: the record was torn down, or its declaration moved
+          // to a different fingerprint, while the acquire was in flight. The
+          // handle goes straight back; the view swap must not happen.
+          if (record.detached || declarationFingerprint(record.declaration.entry) !== fingerprint) {
+            handle.release();
             return;
           }
-          const previous = record.connection;
-          record.connection = connected;
+          const previous = record.poolHandle;
+          record.poolHandle = handle;
           try {
-            await record.handle.update(() => new ManagedRemoteEnvironment(connected, connectEnvironment, {
+            await record.handle.update(() => new ManagedRemoteEnvironment(handle.connection, connectEnvironment, {
               workspaceId: context.id,
               environmentId: declaration.id,
-              generation: connected.identity.generation,
+              generation: handle.connection.identity.generation,
             }));
           } catch (error) {
-            record.connection = previous;
-            await connected.dispose();
+            record.poolHandle = previous;
+            handle.release();
             throw error;
           }
-          await previous?.dispose();
+          previous?.release();
         } finally {
           inflight = undefined;
         }
@@ -512,6 +493,26 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
       environmentId: declaration.id,
       generation: `${declaration.id}-pending-${randomUUID()}`,
     });
+  }
+
+  // The pool reaped the shared connection after every holder stayed idle for
+  // its TTL: swap this record's view back to a pending placeholder so the next
+  // use reconnects on demand. The handle is already deactivated pool-side, so
+  // the record just drops it — the pool disposes the connection itself once
+  // every holder's view has been swapped.
+  private async discardPoolConnection(
+    context: EnvironmentProviderContext,
+    record: DeclaredEnvironmentRecord,
+    connection: RemoteEnvironment,
+    log: ILogService,
+  ): Promise<void> {
+    if (record.poolHandle?.connection !== connection) return;
+    record.poolHandle = undefined;
+    try {
+      await record.handle.update(() => this.createPendingEnvironment(context, record, log));
+    } catch (error) {
+      log.warn(`remote environment ${record.declaration.id} idle connection reap failed`, { error });
+    }
   }
 
   private async resolveRecordLauncher(
@@ -532,10 +533,10 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
   }
 }
 
-async function discardConnection(record: DeclaredEnvironmentRecord): Promise<void> {
-  const connection = record.connection;
-  record.connection = undefined;
-  await connection?.dispose();
+function releasePoolHandle(record: DeclaredEnvironmentRecord): void {
+  const handle = record.poolHandle;
+  record.poolHandle = undefined;
+  handle?.release();
 }
 
 export function watchProjectDeclarationFile(path: string, onChange: () => void): { dispose(): void } {
