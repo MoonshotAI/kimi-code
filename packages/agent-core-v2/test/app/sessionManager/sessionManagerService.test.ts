@@ -1293,4 +1293,25 @@ describe('SessionManager remote environment wiring', () => {
     expect(byEnvironment.has('local')).toBe(true);
     expect(createCalls).toEqual([{ environmentId: 'local', cwd: undefined }]);
   });
+
+  it('honors the restorable chain boundary when the journal holds JSON-valid lines that are not wire records', async () => {
+    const { manager, byEnvironment, createCalls, remoteConnect } = restoreSetup({
+      remoteStatus: 'disconnected',
+      journal: [
+        { note: 'a JSON-valid line that is not a wire record' } as unknown as WireRecord,
+        createWireMetadataRecord(2),
+        { type: 'environment.set_binding', agentId: 'main', workspaceId: 'workspace-1', environmentId: 'local', time: 3 },
+        { type: 'environment.set_binding', agentId: 'main', workspaceId: 'workspace-1', environmentId: 'remote', cwd: '/remote/work', time: 4 },
+        { type: 'agent.switched', agentId: 'main', branch: 'b1', base: { branch: 'main', line: 3 }, reason: 'undo', turns: 1, legacyUndoLine: 6, time: 5 },
+        { type: 'context.undo', agentId: 'main', count: 1, time: 6 },
+        { type: 'context.undone', agentId: 'main', turns: 1, time: 7 },
+      ],
+    });
+
+    await manager.resume('session-1');
+    expect(remoteConnect).not.toHaveBeenCalled();
+    expect(byEnvironment.has('remote')).toBe(false);
+    expect(byEnvironment.has('local')).toBe(true);
+    expect(createCalls).toEqual([{ environmentId: 'local', cwd: undefined }]);
+  });
 });

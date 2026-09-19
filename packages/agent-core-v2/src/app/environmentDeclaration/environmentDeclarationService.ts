@@ -18,7 +18,7 @@ import {
   workspacePersistenceScope,
 } from '#/workspace/sessionLifecycle/internal/addressing';
 import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
-import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
+import { AGENT_WIRE_RECORD_KEY, isWireRecord, type WireRecord } from '#/wire/record';
 import { parseTree, restorableChain, type WireLine } from '#/wire/tree/index';
 
 import { IEnvironmentDeclarationService } from './environmentDeclaration';
@@ -112,10 +112,13 @@ export class EnvironmentDeclarationService implements IEnvironmentDeclarationSer
         MAIN_AGENT_ID,
       );
       const entries: WireLine[] = [];
-      for await (const record of this.appendLogStore.read<WireRecord>(scope, AGENT_WIRE_RECORD_KEY)) {
-        entries.push({ record, line: entries.length + 1 });
+      let line = 0;
+      for await (const candidate of this.appendLogStore.read<WireRecord>(scope, AGENT_WIRE_RECORD_KEY)) {
+        line += 1;
+        if (!isWireRecord(candidate)) continue;
+        entries.push({ record: candidate, line });
       }
-      const tree = parseTree(entries, entries.length);
+      const tree = parseTree(entries, entries.at(-1)?.line ?? 0);
       let binding: EnvironmentBinding | undefined;
       for (const { record } of restorableChain(entries, tree)) {
         if (record.type === EnvironmentSetBinding.type && typeof record['environmentId'] === 'string') {
