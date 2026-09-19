@@ -221,6 +221,8 @@ export abstract class SDKRpcClientBase {
 
   abstract getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo>;
 
+  abstract getWorkspaceAdditionalDirs(workDir: string): Promise<readonly string[]>;
+
   abstract trustWorkspace(workDir: string): Promise<void>;
 
   abstract renameSession(input: RenameSessionInput): Promise<void>;
