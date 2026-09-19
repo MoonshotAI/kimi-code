@@ -15,6 +15,10 @@ const DIFF_MAX_BYTES = 1_048_576;
 const PR_SPAWN_TIMEOUT_MS = 5_000;
 const PULL_REQUEST_TTL_MS = 60_000;
 
+export interface GitWorkspaceLocator {
+  findByRoot(root: string): { readonly id: string } | undefined;
+}
+
 export class GitService implements IGitService {
   declare readonly _serviceBrand: undefined;
 
@@ -25,7 +29,7 @@ export class GitService implements IGitService {
 
   constructor(
     @IEnvironmentResolver private readonly resolver: IEnvironmentResolver,
-    @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
+    @IWorkspaceInstanceManager private readonly workspaces: GitWorkspaceLocator,
     @IHostFileSystem private readonly fs: IHostFileSystem,
   ) {}
 

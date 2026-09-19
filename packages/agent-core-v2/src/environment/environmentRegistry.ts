@@ -18,9 +18,14 @@ export interface EnvironmentResource {
   dispose(): void | Promise<void>;
 }
 
+interface TrackedResource {
+  readonly sessionId: string | undefined;
+  readonly dispose: () => void | Promise<void>;
+}
+
 interface Generation {
   readonly environment: Environment;
-  readonly resources: Map<EnvironmentResource, string | undefined>;
+  readonly resources: Set<TrackedResource>;
   readonly statusSubscription: { dispose(): void };
   leases: number;
   idle: boolean;
@@ -268,16 +273,30 @@ export class EnvironmentRegistry {
         if (!active || generation.draining) throw new EnvironmentError('environment.unavailable', `environment ${binding.environmentId} is draining`);
         const originalDispose = resource.dispose.bind(resource);
         let disposed = false;
-        resource.dispose = ((): void | Promise<void> => {
-          if (disposed) return;
-          disposed = true;
-          generation.resources.delete(resource);
-          this.updateIdleness(generation);
-          return originalDispose();
-        }) as T['dispose'];
-        generation.resources.set(resource, sessionId);
+        const record: TrackedResource = {
+          sessionId,
+          dispose: () => {
+            if (disposed) return;
+            disposed = true;
+            generation.resources.delete(record);
+            this.updateIdleness(generation);
+            return originalDispose();
+          },
+        };
+        generation.resources.add(record);
         this.updateIdleness(generation);
-        return resource;
+        return new Proxy(resource, {
+          get: (target, property) => {
+            if (property === 'dispose') {
+              const descriptor = Reflect.getOwnPropertyDescriptor(target, property);
+              if (descriptor === undefined || descriptor.configurable === true || descriptor.writable === true) {
+                return record.dispose;
+              }
+            }
+            return Reflect.get(target, property, target);
+          },
+          set: (target, property, value) => Reflect.set(target, property, value),
+        });
       },
       dispose: release,
     };
@@ -294,15 +313,15 @@ export class EnvironmentRegistry {
   }
 
   async drainSession(sessionId: string): Promise<void> {
-    const resources: EnvironmentResource[] = [];
+    const records: TrackedResource[] = [];
     for (const generation of this.currentGenerations.values()) {
-      for (const [resource, owner] of generation.resources) {
-        if (owner === sessionId) resources.push(resource);
+      for (const record of generation.resources) {
+        if (record.sessionId === sessionId) records.push(record);
       }
     }
-    for (const resource of resources.toReversed()) {
+    for (const record of records.toReversed()) {
       try {
-        await resource.dispose();
+        await record.dispose();
       } catch {}
     }
   }
@@ -357,7 +376,7 @@ export class EnvironmentRegistry {
   private createGeneration(environment: Environment): Generation {
     const generation = {
       environment,
-      resources: new Map<EnvironmentResource, string | undefined>(),
+      resources: new Set<TrackedResource>(),
       leases: 0,
       idle: true,
       draining: false,
@@ -406,11 +425,11 @@ export class EnvironmentRegistry {
         current: generation.environment,
         status: 'draining',
       });
-      const resources = [...generation.resources.keys()].toReversed();
+      const records = [...generation.resources].toReversed();
       generation.resources.clear();
-      for (const resource of resources) {
+      for (const record of records) {
         try {
-          await resource.dispose();
+          await record.dispose();
         } catch {}
       }
       if (generation.leases > 0) {

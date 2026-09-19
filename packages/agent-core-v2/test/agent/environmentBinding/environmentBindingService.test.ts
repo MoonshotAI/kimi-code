@@ -1415,7 +1415,7 @@ describe('AgentEnvironmentService workspaceRoots', () => {
     registry.register(environment('remote-cwd', 'remote-cwd-one', 'ready', ['process'], {
       ...REMOTE_HOST,
       cwd: '/remote/initial',
-    } as Partial<Environment['host']>));
+    }));
     binding.switch('remote-cwd');
     expect(agentEnvironment.workspaceRoots().workDir).toBe('/remote/initial');
   });

@@ -39,7 +39,7 @@ import { WorkspaceRootSkillSource } from '#/features/skill/workspace/rootFileSki
 import { EnvironmentSkillDiscovery } from '#/features/skill/workspace/environmentSkillDiscovery';
 import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
 import { WorkspaceSkillCatalogService } from '#/features/skill/workspace/workspaceSkillCatalogService';
-import type { IEnvironmentResolver, IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import type { IEnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
 import type { ProgramDependencies } from './programDependencies';
 
@@ -167,19 +167,7 @@ export class Program {
     try {
       const mapped = lease.environment.workspace.mapRoots(roots);
       const context: IWorkspaceContext = { ...this.context, cwd: mapped.workDir };
-      const dirs = {
-        _serviceBrand: undefined,
-        ready: Promise.resolve(),
-        additionalDirs: mapped.additionalDirs ?? [],
-        onDidChange: () => ({ dispose: () => {} }),
-        addDir: async () => {
-          throw new Error('session fs directories are immutable');
-        },
-        mergeAdditionalDirs: async () => {
-          throw new Error('session fs directories are immutable');
-        },
-        sessionInfo: () => ({ workDir: mapped.workDir, additionalDirs: mapped.additionalDirs ?? [] }),
-      } as unknown as IWorkspaceDirs;
+      const dirs = { additionalDirs: mapped.additionalDirs ?? [] };
       const fs = new WorkspaceFsService(
         context,
         dirs,
@@ -362,7 +350,7 @@ export class Program {
                 acquire: (_binding, required) => this.resolver.acquire({ workspaceId: this.workspaceId, environmentId }, required),
                 acquireWhenReady: (_binding, required) => this.resolver.acquireWhenReady({ workspaceId: this.workspaceId, environmentId }, required),
               },
-              { findByRoot: () => ({ id: this.workspaceId }) } as unknown as IWorkspaceInstanceManager,
+              { findByRoot: () => ({ id: this.workspaceId }) },
               targetFs,
             ),
             onDidChange: Event.None as Event<void>,

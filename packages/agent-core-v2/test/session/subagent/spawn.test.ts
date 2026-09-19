@@ -734,7 +734,32 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     expect(createAgent).not.toHaveBeenCalled();
   });
 
-  it('falls back to the environment host cwd when the declaration sets no defaultCwd', async () => {
+  it('binds the child to the environment host cwd when the contract carries one', async () => {
+    const registry = new EnvironmentRegistry('w1');
+    registry.register(fakeEnvironment('ephemeral-box', 'ephemeral-one', {
+      workspaceId: 'w1',
+      host: { homeDir: '/home/remote', cwd: '/srv/box' },
+    }));
+    ix.stub(IWorkspaceInstanceManager, {
+      _serviceBrand: undefined,
+      get: (workspaceId: string) => (workspaceId === 'w1' ? { environments: registry, root: '/repo' } : undefined),
+    } as unknown as IWorkspaceInstanceManager);
+    const svc = service();
+
+    await svc.spawn({
+      callerAgentId: CALLER_ID,
+      plan: { profileName: 'coder', model: 'provider/fast', modelSource: 'secondary_pool', thinking: 'low', fork: false },
+      labels: { parentAgentId: 'main' },
+      prompt: 'Review the file',
+      environment: 'ephemeral-box',
+    });
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: 'ephemeral-box', environmentCwd: '/srv/box' }),
+    );
+  });
+
+  it('falls back to the environment homeDir when the host carries no cwd', async () => {
     const registry = new EnvironmentRegistry('w1');
     registry.register(fakeEnvironment('ephemeral-box', 'ephemeral-one', {
       workspaceId: 'w1',

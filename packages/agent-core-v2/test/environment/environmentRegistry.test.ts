@@ -221,6 +221,68 @@ describe('EnvironmentRegistry', () => {
     await replacement;
   });
 
+  it('tracks frozen resources without mutating the original dispose', async () => {
+    const registration = registry.register(fakeEnvironment('local', 'one'));
+    const lease = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
+    const disposed: string[] = [];
+    const original = (): void => { disposed.push('dispose'); };
+    const frozen = Object.freeze({ dispose: original });
+
+    const tracked = lease.track(frozen);
+    expect(frozen.dispose).toBe(original);
+
+    tracked.dispose();
+    expect(disposed).toEqual(['dispose']);
+
+    lease.dispose();
+    await registration.remove();
+    expect(disposed).toEqual(['dispose', 'dispose']);
+  });
+
+  it('keeps an independent tracking record per lease when leases share one resource', async () => {
+    registry.register(fakeEnvironment('local', 'one'));
+    const leaseA = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
+    const leaseB = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
+    const disposed: string[] = [];
+    const shared = { dispose: () => { disposed.push('dispose'); } };
+    const trackedA = leaseA.track(shared, 'session-a');
+    const trackedB = leaseB.track(shared, 'session-b');
+
+    await registry.drainSession('session-a');
+    expect(disposed).toEqual(['dispose']);
+
+    trackedB.dispose();
+    expect(disposed).toEqual(['dispose', 'dispose']);
+
+    trackedA.dispose();
+    expect(disposed).toEqual(['dispose', 'dispose']);
+
+    leaseA.dispose();
+    leaseB.dispose();
+    expect(registry.idleEnvironments()).toEqual(['local']);
+  });
+
+  it('forwards property access and method calls to the tracked resource', () => {
+    registry.register(fakeEnvironment('local', 'one'));
+    const lease = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });
+    class Counter {
+      count = 0;
+      get doubled(): number { return this.count * 2; }
+      increment(step = 1): number { this.count += step; return this.count; }
+      dispose(): void {}
+    }
+    const counter = new Counter();
+    const tracked = lease.track(counter);
+
+    expect(tracked.increment(2)).toBe(2);
+    expect(tracked.doubled).toBe(4);
+    expect(counter.count).toBe(2);
+    expect(tracked).not.toBe(counter);
+
+    tracked.dispose();
+    lease.dispose();
+  });
+
   it('drains only the closing session resources and keeps other sessions and untagged resources alive', async () => {
     const registration = registry.register(fakeEnvironment('local', 'one'));
     const leaseA = registry.acquire({ workspaceId: 'workspace', environmentId: 'local' });

@@ -105,7 +105,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
 
   constructor(
     @IWorkspaceContext workspace: IWorkspaceContext,
-    @IWorkspaceDirs private readonly workspaceDirs: IWorkspaceDirs,
+    @IWorkspaceDirs private readonly workspaceDirs: Pick<IWorkspaceDirs, 'additionalDirs'>,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IEnvironmentResolver private readonly resolver: IEnvironmentResolver,
     @ITelemetryService private readonly telemetry: ITelemetryService,

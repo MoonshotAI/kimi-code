@@ -283,11 +283,10 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       }
       return { workspaceId: callerBinding.workspaceId, environmentId, cwd: declaredDefaultCwd };
     }
-    const host = connected.host as { readonly cwd?: string };
     return {
       workspaceId: callerBinding.workspaceId,
       environmentId,
-      cwd: host.cwd ?? connected.host.homeDir,
+      cwd: connected.host.cwd ?? connected.host.homeDir,
     };
   }
 
