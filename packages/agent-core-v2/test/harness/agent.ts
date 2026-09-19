@@ -1352,7 +1352,7 @@ export class AgentTestContext {
               set: (next: EnvironmentBinding) => next,
               switch: (environmentId: string, cwd?: string) => ({ ...harnessBinding, environmentId, cwd }),
               connectAndSwitch: async (environmentId: string, cwd?: string) => ({ ...harnessBinding, environmentId, cwd }),
-              connectAndSwitchAtTurnBoundary: async (environmentId: string, cwd?: string) => ({ ...harnessBinding, environmentId, cwd }),
+              connectAndSwitchInTurn: async (environmentId: string, cwd?: string) => ({ ...harnessBinding, environmentId, cwd }),
             });
             const environment = new LocalEnvironment(
               'workspace-1',

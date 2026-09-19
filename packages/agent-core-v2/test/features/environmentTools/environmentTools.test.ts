@@ -53,7 +53,6 @@ function planMode(plan: PlanData = null): IAgentPlanService {
 function bindingStub(
   calls: { environmentId: string; cwd?: string }[],
   initial: EnvironmentBinding = { workspaceId: 'workspace', environmentId: 'local' },
-  options: { readonly commit?: boolean } = {},
 ): IAgentEnvironmentBindingService {
   let current = initial;
   return {
@@ -61,10 +60,10 @@ function bindingStub(
     get current() {
       return current;
     },
-    connectAndSwitchAtTurnBoundary: async (environmentId: string, cwd?: string) => {
+    connectAndSwitchInTurn: async (environmentId: string, cwd?: string) => {
       calls.push({ environmentId, cwd });
       const next = { workspaceId: 'workspace', environmentId, cwd };
-      if (options.commit !== false) current = next;
+      current = next;
       return next;
     },
   } as unknown as IAgentEnvironmentBindingService;
@@ -124,7 +123,6 @@ describe('ChangeEnvironmentTool', () => {
       readonly plan?: PlanData;
       readonly config?: unknown;
       readonly registry?: EnvironmentRegistry;
-      readonly commit?: boolean;
     } = {},
   ) {
     const calls: { environmentId: string; cwd?: string }[] = [];
@@ -132,7 +130,7 @@ describe('ChangeEnvironmentTool', () => {
     const workspaces = workspacesStub(registry);
     const tool = new ChangeEnvironmentTool(
       options.scope ?? mainScope,
-      bindingStub(calls, { workspaceId: 'workspace', environmentId: 'local' }, { commit: options.commit }),
+      bindingStub(calls, { workspaceId: 'workspace', environmentId: 'local' }),
       planMode(options.plan),
       session(),
       workspaces,
@@ -167,15 +165,34 @@ describe('ChangeEnvironmentTool', () => {
     expect(calls).toEqual([{ environmentId: 'local', cwd: undefined }]);
   });
 
-  it('reports the scheduled switch when other tool calls are still in flight', async () => {
-    const { tool, calls } = createTool({ commit: false });
+  it('reports the in-flight conflict as a retryable tool error', async () => {
+    const registry = new EnvironmentRegistry('workspace');
+    const tool = new ChangeEnvironmentTool(
+      mainScope,
+      {
+        _serviceBrand: undefined,
+        get current() {
+          return { workspaceId: 'workspace', environmentId: 'local' };
+        },
+        connectAndSwitchInTurn: async () => {
+          throw new EnvironmentError(
+            'environment.conflict',
+            'cannot switch environment while 1 other tool call(s) are in flight; retry when no other calls are running',
+          );
+        },
+      } as unknown as IAgentEnvironmentBindingService,
+      planMode(),
+      session(),
+      workspacesStub(registry),
+      declarationService(workspacesStub(registry), undefined),
+    );
     const execution = await tool.resolveExecution({ id: 'dev-box', cwd: '/srv/app' } as ChangeEnvironmentInput);
 
     const result = await (execution as RunnableToolExecution).execute({} as never);
-    expect(result.isError).toBeUndefined();
-    expect(result.output).toContain('scheduled');
-    expect(result.output).toContain('next turn');
-    expect(calls).toEqual([{ environmentId: 'dev-box', cwd: '/srv/app' }]);
+    expect(result).toEqual({
+      isError: true,
+      output: 'cannot switch environment while 1 other tool call(s) are in flight; retry when no other calls are running',
+    });
   });
 
   it('falls back to the declaration defaultCwd when cwd is omitted', async () => {
@@ -216,7 +233,7 @@ describe('ChangeEnvironmentTool', () => {
         get current() {
           return { workspaceId: 'workspace', environmentId: 'local' };
         },
-        connectAndSwitchAtTurnBoundary: async () => {
+        connectAndSwitchInTurn: async () => {
           throw new EnvironmentError(
             'environment.not_found',
             'environment "ghost" does not exist in workspace workspace',

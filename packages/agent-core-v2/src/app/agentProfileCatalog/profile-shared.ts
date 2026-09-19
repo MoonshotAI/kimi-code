@@ -125,7 +125,7 @@ const ADDITIONAL_DIRS_SECTION_PROSE =
   'The following directories have been added to the workspace. You can read, write, search, and glob files in these directories as part of your workspace scope.';
 
 const ENVIRONMENTS_SECTION_PROSE =
-  'This session can execute tool calls on the environments below. Use `change_environment` to switch the active environment (the switch takes effect for the next tool call), or `connect` to create a temporary environment from a launcher spec.';
+  'This session can execute tool calls on the environments below. Use `change_environment` to switch the active environment (the switch takes effect for the next tool call; the call fails while other tool calls are still running, so run it on its own), or `connect` to create a temporary environment from a launcher spec.';
 
 const SKILLS_SECTION_PROSE =
   'Skills are reusable, composable capabilities that enhance your abilities. Each skill is either a self-contained directory with a `SKILL.md` file or a standalone `.md` file that contains instructions, examples, and/or reference material.\n\n' +

@@ -102,7 +102,7 @@ kimi -p --environment dev-box "Run the test suite"
 
 main agent 可以：
 
-- **用 `change_environment` 切换**：传入环境 `id`（`local` 或已声明的 id），可选 `cwd`（缺省时回退到声明的 `defaultCwd`）。目标环境会先立即连接——连接或 `cwd` 校验失败会立刻报错且不改变任何状态——切换本身在工具调用完成后立即生效：同一轮次中的下一次工具调用就已在新环境上执行。仅当还有其他工具调用在并行执行时，切换才推迟到轮次边界，以免打断它们正在进行的工作。新环境的详情提醒仍随下一轮次到达。
+- **用 `change_environment` 切换**：传入环境 `id`（`local` 或已声明的 id），可选 `cwd`（缺省时回退到声明的 `defaultCwd`）。目标环境会先立即连接——连接或 `cwd` 校验失败会立刻报错且不改变任何状态——切换本身在工具调用完成后立即生效：同一轮次中的下一次工具调用就已在新环境上执行。如果还有其他工具调用在并行执行，调用会直接失败，报错中会给出仍在执行的调用数量——等它们结束后重试即可，正在进行的工作不会被打断。新环境的详情提醒仍随下一轮次到达。
 - **用 `connect` 创建临时环境**：传入启动器规格——`{ type: "ssh", host: "..." }`、`{ type: "docker", container: "..." }` 或 `{ type: "command", command: "...", args: [...] }`，可选 `id`。环境会立即连接并像声明的环境一样注册到工作区，但不会写入 `config.toml` 或 `.kimi-code/environments.toml`：临时环境在进程退出时消失，连接断开后无法重连（重新创建一个即可），恢复会话时也找不到它。
 - **用 `environment` 参数绑定 subagent**：`Agent` 工具接受可选的 `environment` id；新启动的 subagent 绑定到该环境（工作目录取其 `defaultCwd`），而不是继承父 Agent 的绑定。恢复的 subagent 保留自己的绑定。
 

@@ -279,7 +279,6 @@ function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: E
       workspaceContext,
       resolver,
       dispatcher,
-      eventBus,
       loop,
       reminder,
       declarationService(registry, appendLog),
@@ -614,7 +613,7 @@ describe('AgentEnvironmentBindingService', () => {
     expect(before.environment.identity.environmentId).toBe('local');
     before.dispose();
 
-    await binding.connectAndSwitchAtTurnBoundary('connectable', '/remote/work');
+    await binding.connectAndSwitchInTurn('connectable', '/remote/work');
 
     const after = agentEnvironment.acquire();
     expect(after.environment.identity.environmentId).toBe('connectable');
@@ -624,7 +623,7 @@ describe('AgentEnvironmentBindingService', () => {
     publishBus('turn.ended', { agentId: 'main' });
   });
 
-  it('keeps parallel in-flight tool calls on the old environment until the turn boundary', async () => {
+  it('rejects the switch while parallel tool calls are in flight and keeps them on the old environment', async () => {
     const { registry, binding, agentEnvironment, loopState, publishBus } = setup();
     connectableEnvironment(registry, { environmentId: 'connectable' });
     publishBus('turn.started', { agentId: 'main' });
@@ -635,7 +634,9 @@ describe('AgentEnvironmentBindingService', () => {
       activeToolCalls: [{ toolCallId: 'call-1', name: 'change_environment' }, { toolCallId: 'call-2', name: 'Bash' }],
     };
 
-    await binding.connectAndSwitchAtTurnBoundary('connectable', '/remote/work');
+    await expect(binding.connectAndSwitchInTurn('connectable', '/remote/work')).rejects.toThrowError(
+      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.conflict' }),
+    );
     expect(binding.current.environmentId).toBe('local');
 
     const lease = agentEnvironment.acquire();
@@ -644,13 +645,8 @@ describe('AgentEnvironmentBindingService', () => {
 
     loopState.turn = undefined;
     publishBus('turn.ended', { agentId: 'main' });
-    await vi.waitFor(() => {
-      expect(binding.current.environmentId).toBe('connectable');
-    });
-
-    const next = agentEnvironment.acquire();
-    expect(next.environment.identity.environmentId).toBe('connectable');
-    next.dispose();
+    await Promise.resolve();
+    expect(binding.current.environmentId).toBe('local');
   });
 
   it('leases the pinned environment for the turn duration so it never reports idle', () => {
@@ -1199,12 +1195,12 @@ describe('AgentEnvironmentBindingService.connectAndSwitch', () => {
   });
 });
 
-describe('AgentEnvironmentBindingService.connectAndSwitchAtTurnBoundary', () => {
+describe('AgentEnvironmentBindingService.connectAndSwitchInTurn', () => {
   it('commits immediately when no turn is active', async () => {
     const { registry, binding, dispatched } = setup();
     const { connectCalls } = connectableEnvironment(registry, { environmentId: 'connectable' });
 
-    await expect(binding.connectAndSwitchAtTurnBoundary('connectable', '/remote/work')).resolves.toEqual({
+    await expect(binding.connectAndSwitchInTurn('connectable', '/remote/work')).resolves.toEqual({
       workspaceId: 'workspace',
       environmentId: 'connectable',
       cwd: '/remote/work',
@@ -1226,7 +1222,7 @@ describe('AgentEnvironmentBindingService.connectAndSwitchAtTurnBoundary', () => 
       },
     });
 
-    await expect(binding.connectAndSwitchAtTurnBoundary('connectable', '/remote/work')).resolves.toEqual({
+    await expect(binding.connectAndSwitchInTurn('connectable', '/remote/work')).resolves.toEqual({
       workspaceId: 'workspace',
       environmentId: 'connectable',
       cwd: '/remote/work',
@@ -1238,35 +1234,37 @@ describe('AgentEnvironmentBindingService.connectAndSwitchAtTurnBoundary', () => 
     expect(workDirWrites).toEqual(['/remote/work']);
   });
 
-  it('defers the commit to the turn boundary while other tool calls are in flight', async () => {
-    const { registry, binding, dispatched, loopState, workDirWrites, publishBus } = setup();
+  it('fails while other tool calls are in flight and commits nothing at the turn boundary', async () => {
+    const { registry, binding, dispatched, loopState, workDirWrites, publishBus, reminders } = setup();
     loopState.turn = {
       turnId: 1,
       phase: 'tool_call',
       step: 1,
       activeToolCalls: [{ toolCallId: 'call-1', name: 'change_environment' }, { toolCallId: 'call-2', name: 'Bash' }],
     };
-    connectableEnvironment(registry, { environmentId: 'connectable' });
+    const { connectCalls } = connectableEnvironment(registry, { environmentId: 'connectable' });
 
-    await binding.connectAndSwitchAtTurnBoundary('connectable', '/remote/work');
+    await expect(binding.connectAndSwitchInTurn('connectable', '/remote/work')).rejects.toThrowError(
+      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.conflict' }),
+    );
+    await expect(binding.connectAndSwitchInTurn('connectable', '/remote/work')).rejects.toThrowError(
+      /1 other tool call\(s\) are in flight; retry when no other calls are running/,
+    );
+    expect(connectCalls).toEqual([]);
     expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
     expect(dispatched).toHaveLength(0);
     expect(workDirWrites).toEqual([]);
-
-    publishBus('turn.ended', { agentId: 'agent-9' });
-    expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+    expect(reminders).toHaveLength(0);
 
     loopState.turn = undefined;
     publishBus('turn.ended', { agentId: 'main' });
-    await vi.waitFor(() => {
-      expect(binding.current).toMatchObject({ environmentId: 'connectable', cwd: '/remote/work' });
-    });
-    expect(dispatched.at(-1)).toMatchObject({ environmentId: 'connectable', cwd: '/remote/work' });
-    expect(workDirWrites).toEqual(['/remote/work']);
+    await Promise.resolve();
+    expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+    expect(dispatched).toHaveLength(0);
   });
 
-  it('keeps the old binding and schedules nothing when the eager connect fails', async () => {
-    const { registry, binding, loopState, publishBus } = setup();
+  it('keeps the old binding when the eager connect fails', async () => {
+    const { registry, binding, loopState } = setup();
     loopState.turn = { turnId: 1, phase: 'tool_call', step: 1, activeToolCalls: [] };
     const fake = new FakeEnvironment(
       { workspaceId: 'workspace', environmentId: 'failing', generation: 'failing-pending' },
@@ -1278,10 +1276,7 @@ describe('AgentEnvironmentBindingService.connectAndSwitchAtTurnBoundary', () => 
       },
     }));
 
-    await expect(binding.connectAndSwitchAtTurnBoundary('failing', '/remote/work')).rejects.toThrow(/code 255/);
-    loopState.turn = undefined;
-    publishBus('turn.ended', { agentId: 'main' });
-    await Promise.resolve();
+    await expect(binding.connectAndSwitchInTurn('failing', '/remote/work')).rejects.toThrow(/code 255/);
     expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
   });
 
@@ -1291,14 +1286,14 @@ describe('AgentEnvironmentBindingService.connectAndSwitchAtTurnBoundary', () => 
     connectableEnvironment(registry, { environmentId: 'first' });
     connectableEnvironment(registry, { environmentId: 'second' });
 
-    await binding.connectAndSwitchAtTurnBoundary('first', '/remote/one');
+    await binding.connectAndSwitchInTurn('first', '/remote/one');
     expect(binding.current).toMatchObject({ environmentId: 'first', cwd: '/remote/one' });
-    await binding.connectAndSwitchAtTurnBoundary('second', '/remote/two');
+    await binding.connectAndSwitchInTurn('second', '/remote/two');
     expect(binding.current).toMatchObject({ environmentId: 'second', cwd: '/remote/two' });
   });
 
-  it('commits only the latest scheduled switch at the turn boundary when other calls stay in flight', async () => {
-    const { registry, binding, loopState, publishBus } = setup();
+  it('rejects every switch while foreign calls stay in flight', async () => {
+    const { registry, binding, loopState } = setup();
     loopState.turn = {
       turnId: 1,
       phase: 'tool_call',
@@ -1308,18 +1303,16 @@ describe('AgentEnvironmentBindingService.connectAndSwitchAtTurnBoundary', () => 
     connectableEnvironment(registry, { environmentId: 'first' });
     connectableEnvironment(registry, { environmentId: 'second' });
 
-    await binding.connectAndSwitchAtTurnBoundary('first', '/remote/one');
-    await binding.connectAndSwitchAtTurnBoundary('second', '/remote/two');
+    await expect(binding.connectAndSwitchInTurn('first', '/remote/one')).rejects.toThrowError(
+      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.conflict' }),
+    );
+    await expect(binding.connectAndSwitchInTurn('second', '/remote/two')).rejects.toThrowError(
+      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.conflict' }),
+    );
     expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
-
-    loopState.turn = undefined;
-    publishBus('turn.ended', { agentId: 'main' });
-    await vi.waitFor(() => {
-      expect(binding.current).toMatchObject({ environmentId: 'second', cwd: '/remote/two' });
-    });
   });
 
-  it('keeps the latest immediate switch when an earlier deferred switch would flush at the turn boundary', async () => {
+  it('commits a later switch immediately once foreign calls drain after an earlier rejection', async () => {
     const { registry, binding, dispatched, loopState, publishBus } = setup();
     loopState.turn = {
       turnId: 1,
@@ -1330,11 +1323,13 @@ describe('AgentEnvironmentBindingService.connectAndSwitchAtTurnBoundary', () => 
     connectableEnvironment(registry, { environmentId: 'first' });
     connectableEnvironment(registry, { environmentId: 'second' });
 
-    await binding.connectAndSwitchAtTurnBoundary('first', '/remote/one');
+    await expect(binding.connectAndSwitchInTurn('first', '/remote/one')).rejects.toThrowError(
+      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.conflict' }),
+    );
     expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
 
     loopState.turn = { turnId: 1, phase: 'tool_call', step: 2, activeToolCalls: [{ toolCallId: 'call-3', name: 'change_environment' }] };
-    await binding.connectAndSwitchAtTurnBoundary('second', '/remote/two');
+    await binding.connectAndSwitchInTurn('second', '/remote/two');
     expect(binding.current).toMatchObject({ environmentId: 'second', cwd: '/remote/two' });
 
     loopState.turn = undefined;
@@ -1344,60 +1339,14 @@ describe('AgentEnvironmentBindingService.connectAndSwitchAtTurnBoundary', () => 
     expect(dispatched.map((event) => event.environmentId)).toEqual(['second']);
   });
 
-  it('keeps a switch committed between tool calls when an earlier deferred switch would flush at the turn boundary', async () => {
-    const { registry, binding, dispatched, loopState, publishBus } = setup();
-    loopState.turn = {
-      turnId: 1,
-      phase: 'tool_call',
-      step: 1,
-      activeToolCalls: [{ toolCallId: 'call-1', name: 'change_environment' }, { toolCallId: 'call-2', name: 'Bash' }],
-    };
-    connectableEnvironment(registry, { environmentId: 'first' });
-
-    await binding.connectAndSwitchAtTurnBoundary('first', '/remote/one');
-    expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
-
-    loopState.turn = { turnId: 1, phase: 'tool_call', step: 2, activeToolCalls: [] };
-    binding.switch('remote', '/remote/work');
-    expect(binding.current).toMatchObject({ environmentId: 'remote', cwd: '/remote/work' });
-
-    loopState.turn = undefined;
-    publishBus('turn.ended', { agentId: 'main' });
-    await Promise.resolve();
-    expect(binding.current).toMatchObject({ environmentId: 'remote', cwd: '/remote/work' });
-    expect(dispatched.map((event) => event.environmentId)).toEqual(['remote']);
-  });
-
   it('emits the environment reminder immediately when the switch commits mid-turn', async () => {
     const { registry, binding, loopState, reminders } = setup();
     loopState.turn = { turnId: 1, phase: 'tool_call', step: 1, activeToolCalls: [{ toolCallId: 'call-1', name: 'change_environment' }] };
     connectableEnvironment(registry, { environmentId: 'connectable' });
 
-    await binding.connectAndSwitchAtTurnBoundary('connectable', '/remote/work');
+    await binding.connectAndSwitchInTurn('connectable', '/remote/work');
 
     expect(reminders).toHaveLength(1);
-    expect(reminders[0]!.variant).toBe(ENVIRONMENT_BINDING_REMINDER_VARIANT);
-    expect(reminders[0]!.content).toContain('"connectable"');
-  });
-
-  it('emits the environment reminder only after the turn-boundary commit when other calls are in flight', async () => {
-    const { registry, binding, loopState, publishBus, reminders } = setup();
-    loopState.turn = {
-      turnId: 1,
-      phase: 'tool_call',
-      step: 1,
-      activeToolCalls: [{ toolCallId: 'call-1', name: 'change_environment' }, { toolCallId: 'call-2', name: 'Bash' }],
-    };
-    connectableEnvironment(registry, { environmentId: 'connectable' });
-
-    await binding.connectAndSwitchAtTurnBoundary('connectable', '/remote/work');
-    expect(reminders).toHaveLength(0);
-
-    loopState.turn = undefined;
-    publishBus('turn.ended', { agentId: 'main' });
-    await vi.waitFor(() => {
-      expect(reminders).toHaveLength(1);
-    });
     expect(reminders[0]!.variant).toBe(ENVIRONMENT_BINDING_REMINDER_VARIANT);
     expect(reminders[0]!.content).toContain('"connectable"');
   });
@@ -1731,7 +1680,6 @@ function undoSetup(): UndoHarness {
     workspaceContext,
     registryResolver(registry),
     dispatcher,
-    eventBus,
     loop,
     reminder,
     declarationService(registry, appendLog),
@@ -1925,7 +1873,6 @@ function wireUndoSetup(options: { readonly withUndo?: boolean; readonly withCont
     workspaceContext,
     registryResolver(registry),
     dispatcher,
-    eventBus,
     loop,
     reminder,
     declarationService(registry, appendLog),
@@ -1988,7 +1935,7 @@ describe('AgentEnvironmentBindingService conversation undo over the real wire', 
       expect(context.get()).toHaveLength(1);
 
       harness.loopState.turn = { turnId: 1, phase: 'running', step: 1, activeToolCalls: [{ toolCallId: 'call-1', name: 'change_environment' }] };
-      await harness.binding.connectAndSwitchAtTurnBoundary('remote', '/remote/work');
+      await harness.binding.connectAndSwitchInTurn('remote', '/remote/work');
       expect(harness.binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' });
       harness.loopState.turn = undefined;
 
@@ -2005,7 +1952,7 @@ describe('AgentEnvironmentBindingService conversation undo over the real wire', 
     }
   });
 
-  it('reverts an in-turn switch committed at the turn boundary when the turn is undone', async () => {
+  it('reverts an in-turn switch across a branch fork and restore', async () => {
     const harness = wireUndoSetup();
     try {
       await harness.wire.seal();
@@ -2025,7 +1972,7 @@ describe('AgentEnvironmentBindingService conversation undo over the real wire', 
       );
 
       harness.loopState.turn = { turnId: 1, phase: 'running', step: 1, activeToolCalls: [{ toolCallId: 'call-1', name: 'change_environment' }] };
-      await harness.binding.connectAndSwitchAtTurnBoundary('remote', '/remote/work');
+      await harness.binding.connectAndSwitchInTurn('remote', '/remote/work');
       expect(harness.binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' });
       harness.loopState.turn = undefined;
       expect(harness.appendLogRecords.map((record) => record.type)).toEqual([
@@ -2034,50 +1981,6 @@ describe('AgentEnvironmentBindingService conversation undo over the real wire', 
         'context.append_message',
         'environment.set_binding',
       ]);
-
-      await harness.wire.switchBranch({ turns: 1 });
-      await harness.dispatcher.restore();
-      await harness.participant.reconcileAfterUndo();
-
-      expect(harness.binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
-      expect(harness.workDirWrites.at(-1)).toBe('/workspace');
-      expect(harness.reminders.at(-1)).toMatchObject({ variant: ENVIRONMENT_BINDING_REMINDER_VARIANT });
-      expect(harness.reminders.at(-1)!.content).toContain('"local"');
-      expect(harness.changes.at(-1)).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
-    } finally {
-      await harness.dispose();
-    }
-  });
-
-  it('reverts a switch deferred to the turn boundary when the turn is undone', async () => {
-    const harness = wireUndoSetup();
-    try {
-      await harness.wire.seal();
-      await harness.dispatcher.restore();
-
-      await harness.dispatcher.dispatch(
-        new ContextAppendMessage({
-          agentId: 'main',
-          message: {
-            role: 'user',
-            content: [{ type: 'text', text: 'switch the environment' }],
-            toolCalls: [],
-            origin: { kind: 'user' },
-          },
-        }),
-      );
-
-      harness.loopState.turn = {
-        turnId: 1,
-        phase: 'running',
-        step: 1,
-        activeToolCalls: [{ toolCallId: 'call-1', name: 'change_environment' }, { toolCallId: 'call-2', name: 'Bash' }],
-      };
-      await harness.binding.connectAndSwitchAtTurnBoundary('remote', '/remote/work');
-      expect(harness.binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
-      harness.loopState.turn = undefined;
-      harness.publishBus('turn.ended', { agentId: 'main' });
-      expect(harness.binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' });
 
       await harness.wire.switchBranch({ turns: 1 });
       await harness.dispatcher.restore();
@@ -2190,7 +2093,7 @@ async function switchEnvironmentInTurn(harness: WireUndoHarness, text: string, t
     }),
   );
   harness.loopState.turn = { turnId, phase: 'running', step: 1, activeToolCalls: [{ toolCallId: `call-${turnId}`, name: 'change_environment' }] };
-  await harness.binding.connectAndSwitchAtTurnBoundary('remote', '/remote/work');
+  await harness.binding.connectAndSwitchInTurn('remote', '/remote/work');
   harness.loopState.turn = undefined;
 }
 
