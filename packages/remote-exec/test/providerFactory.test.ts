@@ -523,8 +523,8 @@ describe('RemoteEnvironmentProviderFactory', () => {
     const managed = registry.current('dev-box')!;
     expect(managed.status).toBe('ready');
 
-    // A reconnect only rebuilds once the pooled connection is dead; a healthy
-    // connection is shared and reused as-is.
+    // A healthy reconnect forces a pool-level replacement; this test targets
+    // the rebuild-after-drop path, so the pooled connection drops first.
     const firstInner = connect.mock.results[0]!.value as unknown as Promise<FakeEnvironment>;
     (await firstInner).setStatus('disconnected');
     expect(managed.status).toBe('disconnected');
@@ -540,7 +540,7 @@ describe('RemoteEnvironmentProviderFactory', () => {
     await registry.dispose();
   });
 
-  it('reuses the pooled connection on a healthy reconnect and still drains old leases', async () => {
+  it('replaces the pooled connection on a healthy reconnect and drains the old view', async () => {
     const registry = new EnvironmentRegistry('workspace-1', 50);
     let generation = 0;
     const produced: FakeEnvironment[] = [];
@@ -558,16 +558,21 @@ describe('RemoteEnvironmentProviderFactory', () => {
     const oldLease = registry.acquire({ workspaceId: 'workspace-1', environmentId: 'dev-box' }, ['fs']);
     expect(oldLease.environment).toBe(first);
 
-    // The pooled connection is still healthy, so the reconnect swaps in a fresh
-    // view over the same shared connection instead of building a new one —
-    // pool-wide connection replacement coordination is M100.
+    // A healthy reconnect no longer reuses the pooled connection: the pool
+    // invalidates it, builds a replacement, and the view swaps to a fresh
+    // generation.
     await first.connect!();
     const second = registry.current('dev-box')!;
     expect(second).not.toBe(first);
-    expect(second.identity.generation).toBe('connected-1');
-    expect(connect).toHaveBeenCalledTimes(1);
+    expect(second.identity.generation).toBe('connected-2');
+    expect(connect).toHaveBeenCalledTimes(2);
+
+    // The held lease keeps the old view; the replaced connection is disposed
+    // once the swap and the drain of the old generation settle.
     expect(oldLease.environment).toBe(first);
-    expect((produced[0]! as unknown as { disposed: boolean }).disposed).toBe(false);
+    await vi.waitFor(() => {
+      expect((produced[0]! as unknown as { disposed: boolean }).disposed).toBe(true);
+    });
 
     const newLease = registry.acquire({ workspaceId: 'workspace-1', environmentId: 'dev-box' }, ['fs']);
     expect(newLease.environment).toBe(second);
@@ -777,6 +782,54 @@ describe('idle connection reaping', () => {
     expect(disposed(produced[0])).toBe(false);
 
     lease.dispose();
+    await vi.waitFor(() => {
+      expect(registry.current('dev-box')!.status).toBe('pending');
+    }, { timeout: 5_000 });
+    expect(disposed(produced[0])).toBe(true);
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('aborts the reap when a lease lands between the timer and the view swap', async () => {
+    const registry = new EnvironmentRegistry('workspace-1');
+    const { connect, produced } = producingConnect();
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
+    const base = fakeHost(ttlServices(0.2), registry);
+    let injectLease = false;
+    let injected: { dispose(): void } | undefined;
+    const host: EnvironmentProviderHost = {
+      ...base,
+      registerEnvironment: (environment: Environment) => {
+        const handle = base.registerEnvironment(environment);
+        return {
+          ...handle,
+          update: async (prepare: () => Environment | Promise<Environment>) => {
+            if (injectLease) {
+              injectLease = false;
+              // A lease lands in the reap window, ahead of the swap's prepare.
+              injected = registry.acquire({ workspaceId: 'workspace-1', environmentId: 'dev-box' }, ['fs']);
+            }
+            return handle.update(prepare);
+          },
+        };
+      },
+    };
+    const attachment = await factory.attach(CONTEXT, host);
+
+    await registry.current('dev-box')!.connect!();
+    const generation = registry.current('dev-box')!.identity.generation;
+    injectLease = true;
+
+    // The reap timer fires, but the injected lease vetoes it: the connection
+    // survives and the view keeps its generation.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(registry.current('dev-box')!.status).toBe('ready');
+    expect(registry.current('dev-box')!.identity.generation).toBe(generation);
+    expect(disposed(produced[0])).toBe(false);
+
+    // Releasing the lease re-arms the reap, which now goes through.
+    injected!.dispose();
     await vi.waitFor(() => {
       expect(registry.current('dev-box')!.status).toBe('pending');
     }, { timeout: 5_000 });
@@ -1039,6 +1092,49 @@ describe('remote connection pool', () => {
     await registryB.dispose();
   });
 
+  it('swaps every workspace view to the replacement when one workspace reconnects', async () => {
+    const registryA = new EnvironmentRegistry('workspace-1', 50);
+    const registryB = new EnvironmentRegistry('workspace-2', 50);
+    const { connect, produced } = producingConnect();
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
+    const attachmentA = await factory.attach(CONTEXT, fakeHost(poolServices(), registryA));
+    const attachmentB = await factory.attach(CONTEXT_B, fakeHost(poolServices(), registryB));
+
+    await registryA.current('dev-box')!.connect!();
+    await registryB.current('dev-box')!.connect!();
+    expect(connect).toHaveBeenCalledTimes(1);
+    const generationB = registryB.current('dev-box')!.identity.generation;
+    // B pins the current generation by holding a lease, like an in-flight turn.
+    const leaseB = registryB.acquire({ workspaceId: 'workspace-2', environmentId: 'dev-box' }, ['fs']);
+    const viewB = leaseB.environment;
+
+    await registryA.current('dev-box')!.connect!();
+
+    expect(connect).toHaveBeenCalledTimes(2);
+    expect(registryA.current('dev-box')!.identity.generation).toBe('connected-2');
+    // The broadcast swaps B's view to the same replacement: B's registry
+    // generation changes, so anything pinned to the old generation (the
+    // agent-level turn guard) fails explicitly, exactly like a drop.
+    await vi.waitFor(() => {
+      expect(registryB.current('dev-box')!.identity.generation).toBe('connected-2');
+    });
+    expect(registryB.current('dev-box')!.identity.generation).not.toBe(generationB);
+    expect(registryB.current('dev-box')!.status).toBe('ready');
+    // B's pinned lease keeps the old view; the replaced connection is
+    // disposed once B's view swap and the old generation's drain settle.
+    expect(leaseB.environment).toBe(viewB);
+    leaseB.dispose();
+    await vi.waitFor(() => {
+      expect(disposed(produced[0])).toBe(true);
+    });
+    expect(disposed(produced[1])).toBe(false);
+
+    await attachmentA.dispose();
+    await attachmentB.dispose();
+    await registryA.dispose();
+    await registryB.dispose();
+  });
+
   it('does not pool ephemeral environment connections with declared ones', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
     const { connect } = producingConnect();
@@ -1081,7 +1177,7 @@ describe('RemoteConnectionPool', () => {
   }
 
   function holder(overrides: Partial<RemoteConnectionPoolHolder> = {}): RemoteConnectionPoolHolder {
-    return { idle: true, ttlMs: 1_000, onPoolDestroy: async () => {}, ...overrides };
+    return { idle: true, ttlMs: 1_000, onPoolDestroy: async () => true, onPoolReplace: async () => {}, ...overrides };
   }
 
   it('disposes a connect that finishes after the pool was disposed instead of installing it', async () => {
@@ -1119,6 +1215,94 @@ describe('RemoteConnectionPool', () => {
     expect(handle.connection.status).toBe('ready');
 
     handle.release();
+    await pool.dispose();
+  });
+
+  it('replaces the connection, broadcasts it to every holder, and disposes the old one', async () => {
+    const pool = new RemoteConnectionPool();
+    const first = pooledEnvironment('connected-1');
+    const second = pooledEnvironment('connected-2');
+    const factory = vi.fn()
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce(second);
+    const replaced: RemoteEnvironment[] = [];
+    const onPoolReplace = async (connection: RemoteEnvironment) => {
+      replaced.push(connection);
+    };
+    const handleA = await pool.acquire('fingerprint', factory, holder({ onPoolReplace }));
+    const handleB = await pool.acquire('fingerprint', factory, holder({ onPoolReplace }));
+    expect(handleA.connection).toBe(first);
+
+    const replacement = await pool.replace('fingerprint', factory);
+
+    expect(replacement).toBe(second);
+    expect(factory).toHaveBeenCalledTimes(2);
+    // Handles read the entry's connection live: a replace swaps it under them.
+    expect(handleA.connection).toBe(second);
+    expect(handleB.connection).toBe(second);
+    await vi.waitFor(() => {
+      expect(replaced).toEqual([second, second]);
+    });
+    await vi.waitFor(() => {
+      expect((first as unknown as FakeEnvironment).disposed).toBe(true);
+    });
+    expect((second as unknown as FakeEnvironment).disposed).toBe(false);
+
+    handleA.release();
+    handleB.release();
+    await pool.dispose();
+  });
+
+  it('joins a concurrent replace instead of driving a second factory run', async () => {
+    const pool = new RemoteConnectionPool();
+    const first = pooledEnvironment('connected-1');
+    await pool.acquire('fingerprint', async () => first, holder());
+    let releaseReplace!: (connection: RemoteEnvironment) => void;
+    const factory = vi.fn(() => new Promise<RemoteEnvironment>((resolve) => {
+      releaseReplace = resolve;
+    }));
+
+    const replaceA = pool.replace('fingerprint', factory);
+    const replaceB = pool.replace('fingerprint', factory);
+    const second = pooledEnvironment('connected-2');
+    releaseReplace(second);
+
+    expect(await replaceA).toBe(second);
+    expect(await replaceB).toBe(second);
+    expect(factory).toHaveBeenCalledTimes(1);
+
+    await pool.dispose();
+  });
+
+  it('rejects a replace for an unknown fingerprint', async () => {
+    const pool = new RemoteConnectionPool();
+    await expect(pool.replace('nope', vi.fn())).rejects.toBeInstanceOf(RemoteConnectionPoolStaleError);
+  });
+
+  it('keeps the connection when a holder vetoes the reap', async () => {
+    const pool = new RemoteConnectionPool();
+    const connection = pooledEnvironment('connected-1');
+    const factory = vi.fn(async () => connection);
+    const handleA = await pool.acquire('fingerprint', factory, holder({
+      ttlMs: 50,
+      onPoolDestroy: async () => true,
+    }));
+    const handleB = await pool.acquire('fingerprint', factory, holder({
+      ttlMs: 50,
+      onPoolDestroy: async () => false,
+    }));
+
+    // Every holder is idle, so the reap fires — but B's veto keeps the
+    // connection and the entry alive.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect((connection as unknown as FakeEnvironment).disposed).toBe(false);
+    const handleC = await pool.acquire('fingerprint', factory, holder());
+    expect(handleC.connection).toBe(connection);
+    expect(factory).toHaveBeenCalledTimes(1);
+
+    handleA.release();
+    handleB.release();
+    handleC.release();
     await pool.dispose();
   });
 });
@@ -1632,17 +1816,19 @@ describe('factory docker remoteBin resolution', () => {
     expect(connect).toHaveBeenCalledWith(expect.objectContaining({ launcher: resolved }));
     expect(probes).toBe(1);
 
-    // A healthy reconnect reuses the pooled connection: no new connect at all.
+    // A healthy reconnect forces a pool-level replacement — a new connect,
+    // but the record cache still skips the home probe.
     await registry.current('app-box')!.connect!();
-    expect(connect).toHaveBeenCalledTimes(1);
+    expect(connect).toHaveBeenCalledTimes(2);
+    expect(connect).toHaveBeenLastCalledWith(expect.objectContaining({ launcher: resolved }));
     expect(probes).toBe(1);
 
     // Once the pooled connection drops, the rebuild hits the record cache: no
     // second probe, same resolved path.
-    const firstInner = connect.mock.results[0]!.value as unknown as Promise<FakeEnvironment>;
-    (await firstInner).setStatus('disconnected');
+    const secondInner = connect.mock.results[1]!.value as unknown as Promise<FakeEnvironment>;
+    (await secondInner).setStatus('disconnected');
     await registry.current('app-box')!.connect!();
-    expect(connect).toHaveBeenCalledTimes(2);
+    expect(connect).toHaveBeenCalledTimes(3);
     expect(connect).toHaveBeenLastCalledWith(expect.objectContaining({ launcher: resolved }));
     expect(probes).toBe(1);
 

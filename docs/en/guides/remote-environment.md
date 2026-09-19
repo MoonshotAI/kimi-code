@@ -110,9 +110,11 @@ Two guardrails apply to both tools. They are rejected in Plan mode — exit plan
 
 ## Disconnects and reconnecting
 
-A remote session depends on one connection per (workspace, environment). When that connection drops — network loss, a stopped container, the executor exiting — every process the session started on the target is terminated. Terminal scrollback stays readable locally.
+Workspaces bound to the same target share one connection per environment: the first workspace to connect builds it, and the rest reuse it. When that connection drops — network loss, a stopped container, the executor exiting — every workspace bound to the target goes `disconnected` at once, and every process the sessions started on the target is terminated. Terminal scrollback stays readable locally.
 
 There is **no silent fallback to the local environment** after a drop: a command like `rm` or `git` that was meant for the remote machine must never land on yours. The next tool call retries the connection on demand — while the target stays unreachable, tool calls fail with an `environment.unavailable` error, and you can also reconnect explicitly from the `/environment` dialog.
+
+Reconnecting replaces the **shared** connection, so it reaches every workspace bound to the same target: whichever workspace triggers it — the `/environment` dialog, the REST API, or an automatic retry — Kimi Code builds a fresh connection and switches every workspace's view to it. A turn still in flight on the old connection fails with `environment.unavailable`, exactly as if the connection had dropped.
 
 Resuming a session works the same way: the restored binding is tried once at load, and when the target is unreachable the session still opens with the binding kept and the environment left `disconnected`. The first tool call retries the connection, and there is never a silent fallback to `local`.
 
@@ -175,7 +177,7 @@ Several behaviors are deliberately scoped. Each of the following is a known limi
 - **Same path on two hosts shares one workspace entry**: workspaces are keyed by root path alone, so `/home/me/app` on two different hosts maps to a single workspace. A cosmetic side effect: the TUI's `~` abbreviation may render remote paths against your local home directory.
 - **Local file paths in prompts are unreadable remotely**: a path like `/tmp/x.png` typed into a prompt resolves on the target's filesystem, so the agent cannot read your local files by path. Pasted images are unaffected — they travel as binary attachments, not paths.
 - **Small-file latency adds up**: session startup reads many small files, and each read is a remote round trip; remote sessions start slower than local ones.
-- **One connection per (workspace, environment)**: there is no connection pooling — every workspace bound to the same environment opens its own connection (SSH `ControlMaster` in `~/.ssh/config` mitigates this for SSH targets).
+- **One shared connection per target**: workspaces bound to the same environment share a single connection instead of opening one each. The flip side: a connection drop — or an explicit reconnect from any one workspace — affects every workspace bound to that target, and a turn in flight on the old connection fails as on a drop.
 
 ## Next steps
 

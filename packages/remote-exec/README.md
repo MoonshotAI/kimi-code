@@ -8,8 +8,8 @@ agent-core-v2 `Environment` interface.
 ```text
 packages/remote-exec/src/
 ├── protocol/   message types, error codes, NDJSON codec (self-contained)
-├── client/     execBridge, launchers, connection, fs/process/terminal stubs, remoteEnvironment, remoteEnvironmentProvider,
-│               artifactLocator, executorDetect, connectGuidance (executor detection + guidance, spec D8/D9)
+├── client/     execBridge, launchers, connection, fs/process/terminal stubs, remoteEnvironment, remoteConnectionPool,
+│               remoteEnvironmentProvider, artifactLocator, executorDetect, connectGuidance (executor detection + guidance, spec D8/D9)
 └── server/     stdioHost, fsHandler, processManager, environment, entry, standalone
 ```
 
@@ -91,11 +91,31 @@ Client-surface notes beyond the wire protocol:
   reads the merged declaration set (`config.toml` `[environments]` plus a trusted
   project-level `.kimi-code/environments.toml`, resolved by agent-core-v2's
   `resolveWorkspaceEnvironmentDeclarations`), and registers each declared environment
-  as a `disconnected` placeholder (`ManagedRemoteEnvironment`) — no connections
-  are made at registration. An explicit `connect()` (the binding
-  `connectAndSwitch` flow, or reconnect) builds the `RemoteEnvironment` and swaps
-  it into the registry with a fresh generation; the old generation drains and
-  its leases never migrate.
+  as a `pending` placeholder (`ManagedRemoteEnvironment`) — no connections
+  are made at registration.
+- Executor connections are owned by an app-level `RemoteConnectionPool`, not by
+  workspaces: one connection per declaration fingerprint (the full entry minus
+  `idleTtlSeconds`) is shared by every workspace bound to the same target, and
+  the pool destroys it once the last workspace holder lets go. Ephemeral
+  environments (the agent-created `connect` tool) never enter the pool. An
+  explicit `connect()` (the binding `connectAndSwitch` flow, or reconnect) goes
+  through the pool: a first connect joins or builds the shared connection, and
+  a **reconnect is a pool-level coordinated replacement** — the pool bumps its
+  version so a stale in-flight connect cannot install, builds the replacement,
+  and broadcasts it to every workspace view on the fingerprint. Each view swaps
+  to the new connection with its fresh generation; turns pinned to the old
+  generation fail explicitly through the registry drain and the disposed
+  connection, exactly as if the connection had dropped — only the trigger may
+  be another workspace. The replaced connection is disposed after every view
+  settles, so old-generation leases keep their registry drain grace first.
+- Idle reaping is pool-level: a shared connection is reaped only after every
+  workspace holder stayed idle for the TTL (the min over conflicting
+  declarations, `0` = never wins). Each holder then votes on the reap — a view
+  that took a lease in the reap window (timer fired, swap not yet published)
+  vetoes it and the connection survives; views already swapped to pending
+  rejoin the surviving connection on their next connect. Reaped views swap
+  back to pending placeholders and reconnect on demand, exactly like the first
+  connect.
 
 ## Executor detection and version guidance (spec D8/D9)
 
