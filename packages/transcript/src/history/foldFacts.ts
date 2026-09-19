@@ -106,7 +106,8 @@ function isVisibleTurnOrigin(origin: unknown): boolean {
 }
 
 function isUndoAnchorTurnOrigin(origin: unknown): boolean {
-  const payload = origin as { kind?: unknown; trigger?: unknown } | undefined;
+  const payload = origin as { kind?: unknown; trigger?: unknown; inTurn?: unknown } | undefined;
+  if (payload?.inTurn === true) return false;
   if (payload?.kind === undefined || payload.kind === 'user') return true;
   return (
     (payload.kind === 'skill_activation' || payload.kind === 'plugin_command') &&
