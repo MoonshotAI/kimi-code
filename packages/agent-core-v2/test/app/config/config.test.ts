@@ -13,7 +13,7 @@ import {
   toErrorPayload,
 } from '#/errors';
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
-import { createTestAgent, type TestAgentContext } from '../../harness';
+import { appService, createTestAgent, type TestAgentContext } from '../../harness';
 import { DEFAULT_TEST_SYSTEM_PROMPT } from '../../harness/snapshots';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -117,6 +117,7 @@ import {
   type McpSection,
 } from '#/app/mcpConfig/configSection';
 import { ILogService } from '#/_base/log/log';
+import { IHostClock } from '#/os/interface/hostClock';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -131,6 +132,12 @@ const TEST_OS_ENV = {
   shellName: 'bash',
   shellPath: '/bin/bash',
 } as const;
+
+const pinnedHostClock: IHostClock = {
+  _serviceBrand: undefined,
+  now: () => new Date(),
+  timeZone: () => 'Asia/Shanghai',
+};
 
 describe('Agent config', () => {
   let ctx: TestAgentContext;
@@ -218,7 +225,7 @@ describe('Agent config', () => {
     expect(ctx.newEvents()).toMatchInlineSnapshot(`
       [wire] config.update            { "agentId": "main", "profileName": "test-profile", "systemPrompt": "Profile system prompt.", "environmentDisclosure": { "cwd": "<cwd>" }, "agentsMdPaths": [], "disallowedTools": [], "time": "<time>" }
       [emit] agent.status.updated     { "time": "<time>", "agentId": "main", "model": "mock-model", "maxContextTokens": 1000000 }
-      [wire] tools.set_active_tools   { "agentId": "main", "names": [ "Read" ], "time": "<time>" }
+      [wire] tools.set_active_tools   { "agentId": "main", "names": [ "Read", "change_environment", "connect" ], "time": "<time>" }
     `);
   });
 
@@ -290,7 +297,7 @@ describe('Agent config', () => {
 
   it('keeps turn-start config for later steps and applies updates to the next turn', async () => {
     await ctx.dispose();
-    ctx = createTestAgent({ autoConfigure: false });
+    ctx = createTestAgent({ autoConfigure: false }, appService(IHostClock, pinnedHostClock));
     await ctx.restorePersisted();
     ctx.configure();
     profile = ctx.get(IAgentProfileService);
