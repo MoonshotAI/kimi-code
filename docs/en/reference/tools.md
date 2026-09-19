@@ -153,8 +153,28 @@ To prevent all users from firing at the same time on the hour, the scheduler app
 
 **`CronDelete`** accepts a single `id`. For recurring tasks, all future fires stop immediately; for one-time tasks, the pending fire is cancelled. One-time tasks that have already fired are auto-deleted, so calling `CronDelete` on an already-fired one-time task returns `No cron job with id ...`. Deletion is irreversible — use `CronCreate` again to restore. `CronDelete` is also blocked in Plan mode.
 
+## Environment Tools
+
+Environment tools hand [remote environment](../guides/remote-environment.md) switching to the agent itself: `change_environment` moves the session's binding to another environment, and `connect` creates a temporary environment from a launcher spec. Both tools are main-agent-only — subagents neither see them in their tool list nor can call them. Calls are rejected in Plan mode (exit Plan mode first), and the tool group is not registered while tower mode is active. Unlike regular tool calls, switching or connecting asks for confirmation even in Ask When Needed mode; only Never Ask mode proceeds without asking.
+
+The tools are on by default. To opt out, set `KIMI_CODE_EXPERIMENTAL_AGENT_ENVIRONMENT_TOOLS=0`, write `[experimental] agent_environment_tools = false` in `config.toml`, or toggle the feature off in `/experiments` before creating the session. Sessions created while it is disabled have neither the tools nor the environment list in the system prompt.
+
+| Tool | Default Approval | Description |
+| --- | --- | --- |
+| `change_environment` | Requires approval (except in Never Ask mode) | Switch the session to another environment |
+| `connect` | Requires approval (except in Never Ask mode) | Create and connect a temporary environment |
+
+**`change_environment`** accepts `id` (the environment to switch to: `local` for this machine, or a declared or temporary environment id) and an optional `cwd` (the working directory on the target; required for remote environments whose declaration does not set `defaultCwd`, optional for `local`). The target connects eagerly: a connection or `cwd` validation failure is reported immediately and changes nothing.
+
+The switch itself takes effect at the boundary of the current turn — tool calls in the rest of the turn keep running on the previous environment, and a reminder with the new environment's OS, shell, and working directory arrives with the next turn. The switch is recorded like a user-driven `/environment` switch, so undo restores the previous binding.
+
+**`connect`** accepts a launcher spec — `{ type: "ssh", host: "..." }`, `{ type: "docker", container: "..." }`, or `{ type: "command", command: "...", args: [...] }` — plus an optional `id` (at most 64 characters; `local` and `default` are reserved; generated from the launcher when omitted). `ssh` specs accept an optional `remoteBin`, `docker` specs accept optional `context` and `remoteBin`, and `command` specs accept optional `args` and `env`.
+
+The environment connects right away: the result reports the target's OS, shell, and initial working directory, or the connection failure. The new environment is registered in the session's workspace like a declared one, so the agent can switch to it with `change_environment` or bind a subagent to it with the `Agent` tool's `environment` parameter. Nothing is written to `config.toml` or `.kimi-code/environments.toml`: a temporary environment vanishes when the process exits, cannot be reconnected after a connection drop (create a fresh one instead), and a session resumed onto it finds it gone — switch back to `local` before ending the session if the work should continue later.
+
 ## Next steps
 
 - [Agent & Sub-Agents](../customization/agents.md) — Scheduling mechanics and context isolation for the `Agent` tool
 - [Hooks](../customization/hooks.md) — Trigger local scripts before and after tool calls
 - [Slash Commands](./slash-commands.md) — Quick reference for TUI built-in control commands
+- [Remote environments](../guides/remote-environment.md) — Environment binding, declared environments, and the `/environment` dialog
