@@ -23,9 +23,9 @@ export interface LlmModelSeed {
 
 export type ProviderModelSource = () => Promise<readonly LlmModelSeed[]>;
 
-export interface ProviderDefinition {
+export interface ProviderDefinition<P extends string = string> {
   readonly id: string;
-  readonly protocols: Readonly<Record<string, ProtocolBinding | undefined>>;
+  readonly protocols: Readonly<{ [K in P]?: ProtocolBinding | undefined }>;
   readonly media?: ProviderMediaContribution;
   readonly models?: ProviderModelSource;
 }
@@ -34,16 +34,41 @@ export interface LlmResolveModelOptions extends LlmConnection {
   readonly protocol?: ProtocolName;
 }
 
-export interface Provider {
+export interface Provider<P extends string = string> {
   readonly id: string;
-  readonly protocols: readonly ProtocolName[];
+  readonly requesters: { readonly [K in P]: LlmRequester };
   readonly media?: ProviderMediaContribution;
   listModels(): Promise<readonly LlmModel[]>;
   resolveModel(model: string, options?: LlmResolveModelOptions): LlmModel;
-  createRequester(protocol?: ProtocolName): LlmRequester;
 }
 
-export function createProvider(definition: ProviderDefinition): Provider {
+export function requesterOf(provider: Provider, protocol?: string): LlmRequester {
+  const requesters = provider.requesters;
+  if (protocol !== undefined) {
+    const found = requesters[protocol];
+    if (found === undefined) {
+      throw new Error(
+        `provider '${provider.id}' has no protocol '${protocol}' (available: ${Object.keys(requesters).join(', ')})`,
+      );
+    }
+    return found;
+  }
+  const first = Object.values(requesters)[0];
+  if (first === undefined) {
+    throw new Error(`provider '${provider.id}' declares no protocols`);
+  }
+  return first;
+}
+
+export function createProvider<
+  const TProtocols extends Readonly<Record<string, ProtocolBinding | undefined>>,
+>(definition: {
+  readonly id: string;
+  readonly protocols: TProtocols;
+  readonly media?: ProviderMediaContribution;
+  readonly models?: ProviderModelSource;
+}): Provider<Extract<keyof TProtocols, string>> {
+  type Protocol = Extract<keyof TProtocols, string>;
   const entries = new Map<string, ProtocolBinding>();
   for (const [name, protocol] of Object.entries(definition.protocols)) {
     if (protocol !== undefined) {
@@ -71,9 +96,22 @@ export function createProvider(definition: ProviderDefinition): Provider {
   const detectCapability = (binding: ProtocolBinding, modelName: string): ModelCapability =>
     binding.capability?.(modelName) ?? binding.base.capability?.(modelName) ?? UNKNOWN_CAPABILITY;
 
+  const requesters = Object.fromEntries(
+    [...entries.entries()].map(([name, binding]) => [
+      name,
+      createRequesterFromHandle(
+        binding.base.bind({
+          connection: binding.connection,
+          trait: binding.trait,
+          classifyError: binding.classifyError,
+        }),
+      ),
+    ]),
+  ) as { readonly [K in Protocol]: LlmRequester };
+
   return {
     id: definition.id,
-    protocols: [...entries.keys()],
+    requesters,
     media: definition.media,
     listModels: async () => {
       if (definition.models === undefined) {
@@ -103,15 +141,5 @@ export function createProvider(definition: ProviderDefinition): Provider {
       betaApi: options.betaApi,
       vertexai: options.vertexai,
     }),
-    createRequester: (protocol) => {
-      const binding = bindingFor(protocol);
-      return createRequesterFromHandle(
-        binding.base.bind({
-          connection: binding.connection,
-          trait: binding.trait,
-          classifyError: binding.classifyError,
-        }),
-      );
-    },
   };
 }

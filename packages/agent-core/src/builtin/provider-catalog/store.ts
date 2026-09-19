@@ -1,6 +1,6 @@
 import { shallowRef, type ShallowRef } from '#/kernel/index';
 import { UNKNOWN_CAPABILITY, type LlmModel, type ModelCapability } from '#/llm/model';
-import type { Provider } from '#/llm/provider';
+import { requesterOf, type Provider } from '#/llm/provider';
 import type { LlmRequester } from '#/llm/requester/requester';
 import { settleLlmRequest } from '#/llm/requester/settle';
 
@@ -142,11 +142,15 @@ export function createProviderStore(options: { snapshot?: CatalogSnapshot } = {}
       const catalogModel =
         mergeEntryModels(entry as CatalogProviderEntry).find((item) => item.model === model) ??
         resolved;
-      return {
-        providerId,
-        model: catalogModel,
-        createRequester: () => provider.createRequester(resolved.protocol),
-      };
+      try {
+        return {
+          providerId,
+          model: catalogModel,
+          requester: requesterOf(provider, resolved.protocol),
+        };
+      } catch {
+        return undefined;
+      }
     },
     hydrate: (next) => {
       write(next);
@@ -298,7 +302,7 @@ async function runPingProbe(
 ): Promise<string | undefined> {
   let requester: LlmRequester;
   try {
-    requester = provider.createRequester(model.protocol);
+    requester = requesterOf(provider, model.protocol);
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
   }

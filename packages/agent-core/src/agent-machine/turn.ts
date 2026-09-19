@@ -27,15 +27,7 @@ function modelMeta(model: LlmModel): { model: { provider: string; model: string 
   return { model: { provider: model.provider, model: model.model } };
 }
 
-export interface TurnRequest {
-  readonly config: LlmRequestConfig;
-  readonly systemPrompt?: string;
-  readonly credentialProvider?: LlmCredentialProvider;
-  readonly maxContextTokens?: number;
-}
-
 export interface TurnInput {
-  request: TurnRequest;
   history: readonly HistoryMessage[];
   maxSteps?: number;
   parentSignal?: AbortSignal;
@@ -113,10 +105,11 @@ function assistantEntry(
   context: TurnMachineContext,
   output: LlmOutput,
   source: string,
+  model?: LlmModel,
 ): AssistantEntry {
   return createAssistantEntry(output.message, {
     source,
-    ...modelMeta(context.input.request.config.model),
+    ...(model === undefined ? {} : modelMeta(model)),
     usage: output.usage,
     headers: output.headers,
     finish: output.finish,
@@ -180,7 +173,7 @@ function maxStepsExceeded(context: TurnMachineContext): boolean {
 
 export interface TurnBeforeStepContext {
   messages: readonly HistoryMessage[];
-  request: TurnRequest;
+  config?: LlmRequestConfig;
   tools: readonly ToolDescription[];
   systemPrompt?: string;
 }
@@ -190,15 +183,15 @@ export type TurnBeforeStep = (context: TurnBeforeStepContext) => void | Promise<
 export type LlmActorLogic = ReturnType<typeof createRequestActor>;
 
 function withCompletionBudget(
-  request: TurnRequest,
+  config: LlmRequestConfig,
   history: readonly HistoryMessage[],
   tools: readonly ToolDescription[] | undefined,
   systemPrompt: string | undefined,
 ): LlmRequestConfig {
-  const maxCompletionTokens = request.config.maxCompletionTokens;
-  const maxContextTokens = request.maxContextTokens;
+  const maxCompletionTokens = config.maxCompletionTokens;
+  const maxContextTokens = config.model.maxContextSize;
   if (maxCompletionTokens === undefined) {
-    return request.config;
+    return config;
   }
   let cap = maxCompletionTokens;
   if (maxContextTokens !== undefined && maxContextTokens > 0) {
@@ -213,15 +206,18 @@ function withCompletionBudget(
   }
   cap = Math.max(1, cap);
   if (cap === maxCompletionTokens) {
-    return request.config;
+    return config;
   }
-  return { ...request.config, maxCompletionTokens: cap };
+  return { ...config, maxCompletionTokens: cap };
 }
 
 export interface CreateTurnMachineOptions {
   readonly abortGraceMs?: number;
   readonly getTools?: () => readonly ToolDescription[] | undefined;
   readonly getSystemPrompt?: (host?: string) => string | undefined;
+  readonly getHostPrompt?: () => string | undefined;
+  readonly getConfig?: () => LlmRequestConfig | undefined;
+  readonly getCredentialProvider?: () => LlmCredentialProvider | undefined;
   readonly onBeforeStep?: TurnBeforeStep;
 }
 
@@ -233,8 +229,11 @@ export function createTurnMachine(
 ) {
   const abortGraceMs = options?.abortGraceMs ?? 2_500;
   const toolsFor = (): readonly ToolDescription[] | undefined => options?.getTools?.();
-  const systemPromptFor = (host?: string): string | undefined =>
-    options?.getSystemPrompt === undefined ? host : options.getSystemPrompt(host);
+  const configOf = (): LlmRequestConfig | undefined => options?.getConfig?.();
+  const systemPromptFor = (): string | undefined => {
+    const host = options?.getHostPrompt?.();
+    return options?.getSystemPrompt === undefined ? host : options.getSystemPrompt(host);
+  };
   return setup({
     types: {
       input: {} as TurnInput,
@@ -297,12 +296,12 @@ export function createTurnMachine(
         invoke: {
           src: 'onBeforeStepActor',
           input: ({ context }) => {
-            const request = context.input.request;
+            const config = configOf();
             return {
               messages: context.history,
-              request,
+              config,
               tools: toolsFor() ?? [],
-              systemPrompt: systemPromptFor(request.systemPrompt),
+              systemPrompt: systemPromptFor(),
             };
           },
           onDone: { target: 'streaming' },
@@ -348,11 +347,14 @@ export function createTurnMachine(
             invoke: {
               src: 'llmActor',
               input: ({ context }) => {
-                const request = context.input.request;
+                const config = configOf();
+                if (config === undefined) {
+                  throw new Error('config is not set');
+                }
                 const tools = toolsFor();
-                const systemPrompt = systemPromptFor(request.systemPrompt);
+                const systemPrompt = systemPromptFor();
                 return {
-                  config: withCompletionBudget(request, context.history, tools, systemPrompt),
+                  config: withCompletionBudget(config, context.history, tools, systemPrompt),
                   content: {
                     systemPrompt,
                     messages: toInputMessages(context.history),
@@ -360,7 +362,7 @@ export function createTurnMachine(
                   },
                   signal: context.llmScope.signal,
                   toolCallIds: context.toolCallIds,
-                  credentialProvider: request.credentialProvider,
+                  credentialProvider: options?.getCredentialProvider?.(),
                 };
               },
               onError: {
@@ -400,7 +402,7 @@ export function createTurnMachine(
                           ? context.history
                           : [
                               ...context.history,
-                              assistantEntry(context, { ...event, message }, 'salvaged'),
+                              assistantEntry(context, { ...event, message }, 'salvaged', configOf()?.model),
                             ],
                     };
                   }),
@@ -412,7 +414,7 @@ export function createTurnMachine(
                   target: '#turn.acting',
                   actions: [
                     assign(({ context, event }) => {
-                      const entry = assistantEntry(context, event, 'llm');
+                      const entry = assistantEntry(context, event, 'llm', configOf()?.model);
                       return {
                         history: [...context.history, entry],
                         pendingToolCalls: [...entry.message.toolCalls],
@@ -433,7 +435,7 @@ export function createTurnMachine(
                     assign({
                       history: ({ context, event }) => [
                         ...context.history,
-                        assistantEntry(context, event, 'llm'),
+                        assistantEntry(context, event, 'llm', configOf()?.model),
                       ],
                     }),
                     {

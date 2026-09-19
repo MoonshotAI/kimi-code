@@ -208,7 +208,7 @@ export function bindPromptGate(ports: AgentPorts, host?: PromptGate): PromptGate
 
 export function bindAgentLogics(
   ports: AgentPorts,
-  requester: LlmRequester,
+  getRequester: () => LlmRequester | undefined,
   turnOptions?: CreateTurnMachineOptions,
   retry?: LlmRetryOptions,
 ): AgentLogics {
@@ -219,12 +219,15 @@ export function bindAgentLogics(
     media: () => ports.media,
     retry,
   };
-  const llmActor = createRequestActor(requester, policy);
+  const llmActor = createRequestActor(getRequester, policy);
   return {
     turnLogic: createTurnMachine(llmActor, {
       abortGraceMs: turnOptions?.abortGraceMs,
       getTools: () => ports.tools.filter((tool) => tool.deferred !== true),
       getSystemPrompt: (host) => ports.getSystemPrompt(host),
+      getHostPrompt: turnOptions?.getHostPrompt,
+      getConfig: turnOptions?.getConfig,
+      getCredentialProvider: turnOptions?.getCredentialProvider,
       onBeforeStep: async (context) => {
         await turnOptions?.onBeforeStep?.(context);
         for (const hook of ports.beforeSteps.slice()) await hook(context);

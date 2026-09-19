@@ -11,7 +11,7 @@ import {
   type UnitHandle,
   type UnitNode,
 } from '#/kernel/index';
-import type { FeatureSpec } from '#/feature/feature';
+import { bindHandleOn, type FeatureHandleOn, type FeatureSpec } from '#/feature/feature';
 import { AppUnitRef } from '#/feature/contribution-hooks';
 import { useFeatureSlot } from '#/feature/hooks';
 
@@ -33,7 +33,7 @@ export interface AppCommands {
   uninstallFeature(feature: FeatureSpec | string): boolean;
 }
 
-export interface AppHandle extends UnitHandle, AppCommands {
+export interface AppHandle extends UnitHandle, AppCommands, FeatureHandleOn {
   disposeAsync(): Promise<void>;
 }
 
@@ -106,10 +106,12 @@ export function appHandle(handle: UnitHandle): AppHandle {
     get name() { return handle.name; },
     get state() { return handle.state; },
     node: handle.node,
+    resolve: (token) => handle.resolve(token),
     update: (props) => handle.update(props),
     ready: () => handle.ready(),
     unmount: () => handle.unmount(),
     disposeAsync: () => handle.unmount(),
+    on: bindHandleOn(handle.node),
     list: () => commands().list(),
     get: (sessionId) => commands().get(sessionId),
     create: (props) => commands().create(props),

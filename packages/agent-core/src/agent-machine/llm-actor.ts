@@ -38,10 +38,22 @@ function eventOf(result: LlmResult): LlmEvent {
   };
 }
 
-export function createRequestActor(requester: LlmRequester, policy: LlmPolicy = {}) {
+export function createRequestActor(
+  getRequester: () => LlmRequester | undefined,
+  policy: LlmPolicy = {},
+) {
   return fromCallback<LlmEvent, LlmInput>(({ input, sendBack }) => {
     void (async () => {
       try {
+        const requester = getRequester();
+        if (requester === undefined) {
+          sendBack({
+            type: 'llm.failed.remote',
+            error: toLlmErrorMessage(new Error('requester is not set')),
+            rawError: new Error('requester is not set'),
+          });
+          return;
+        }
         const result = await runLlmRequest(
           requester,
           {

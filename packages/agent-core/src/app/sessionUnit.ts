@@ -9,21 +9,18 @@ import {
   type UnitHandle,
   type UnitNode,
 } from '#/kernel/index';
-import type { FeatureSpec } from '#/feature/feature';
+import { bindHandleOn, type FeatureHandleOn, type FeatureSpec } from '#/feature/feature';
 import { BlobsRef, SessionStoreRef, SessionUnitRef } from '#/feature/contribution-hooks';
 import { useFeatureSlot } from '#/feature/hooks';
 import type { SessionStores } from '#/stores/session';
 import type { BranchRef } from '#/store/tree';
-import type { LlmRequester } from '#/llm/requester/requester';
-
 import { AgentUnit, agentHandle, type AgentHandle, type AgentUnitProps } from './agentUnit';
 
-export type CreateAgentProps = Omit<AgentUnitProps, 'sessionId' | 'store' | 'requester'>;
+export type CreateAgentProps = Omit<AgentUnitProps, 'sessionId' | 'store'>;
 
 export interface SessionUnitProps {
   readonly sessionId: string;
   readonly stores: SessionStores;
-  readonly requester: LlmRequester;
   readonly features?: MaybeRefOrGetter<readonly FeatureSpec[]>;
   readonly provide?: (node: NodeRef) => void;
 }
@@ -38,7 +35,7 @@ export interface SessionCommands {
   close(agentId: string): Promise<void>;
 }
 
-export interface SessionHandle extends UnitHandle, SessionCommands {
+export interface SessionHandle extends UnitHandle, SessionCommands, FeatureHandleOn {
   disposeAsync(): Promise<void>;
 }
 
@@ -66,7 +63,6 @@ export const SessionUnit = createUnit<SessionUnitProps>('session', (props) => {
         sessionId: props.sessionId,
         store,
         branchId: props.stores.branch(createProps.agentId),
-        requester: props.requester,
       });
       const agent = agentHandle(handle);
       agents.set(createProps.agentId, agent);
@@ -120,10 +116,12 @@ export function sessionHandle(handle: UnitHandle): SessionHandle {
     get name() { return handle.name; },
     get state() { return handle.state; },
     node: handle.node,
+    resolve: (token) => handle.resolve(token),
     update: (props) => handle.update(props),
     ready: () => handle.ready(),
     unmount: () => handle.unmount(),
     disposeAsync: () => handle.unmount(),
+    on: bindHandleOn(handle.node),
     get sessionId() { return commands().sessionId; },
     get stores() { return commands().stores; },
     list: () => commands().list(),
