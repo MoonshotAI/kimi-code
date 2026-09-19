@@ -139,6 +139,16 @@ interface ContextAppendMessagePayload {
     isError?: boolean;
     toolCallDisplays?: Record<string, ToolInputDisplay>;
     note?: string;
+    usage?: TokenUsage;
+    timing?: {
+      llmFirstTokenLatencyMs?: number;
+      llmStreamDurationMs?: number;
+      llmRequestBuildMs?: number;
+      llmServerFirstTokenMs?: number;
+      llmServerDecodeMs?: number;
+      llmClientConsumeMs?: number;
+      llmClientBlockedMs?: number;
+    };
   };
 }
 
