@@ -533,6 +533,31 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(marker?.kind === 'marker' && marker.marker).toBe('compaction');
   });
 
+  it('carries assistant message usage and timing onto the step', () => {
+    const snapshot = groupMessagesIntoSnapshot([
+      { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [], origin: { kind: 'user' } },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'done' }],
+        toolCalls: [],
+        usage: { inputOther: 10, output: 20, inputCacheRead: 30, inputCacheCreation: 40 },
+        timing: { llmFirstTokenLatencyMs: 800, llmStreamDurationMs: 5000 },
+      },
+    ]);
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.steps[0]?.usage).toEqual({
+      inputOther: 10,
+      output: 20,
+      inputCacheRead: 30,
+      inputCacheCreation: 40,
+    });
+    expect(turn.steps[0]?.timing).toEqual({
+      llmFirstTokenLatencyMs: 800,
+      llmStreamDurationMs: 5000,
+    });
+  });
+
   it('folds task-notification user messages into the current turn instead of opening their own', () => {
     const snapshot = groupMessagesIntoSnapshot(
       [
