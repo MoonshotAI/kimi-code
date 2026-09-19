@@ -1,0 +1,40 @@
+{
+  "name": "@moonshot-ai/agent-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agent runtime primitives for Kimi",
+  "license": "MIT",
+  "type": "module",
+  "imports": {
+    "#/*": "./src/*.ts"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./package.json": {
+      "types": "./package.json",
+      "default": "./package.json"
+    },
+    "./*": {
+      "types": "./src/*.ts",
+      "default": "./src/*.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.95.2",
+    "@google/genai": "^1.49.0",
+    "@vue/reactivity": "^3.5.35",
+    "openai": "^6.34.0",
+    "radashi": "^12.9.1",
+    "xstate": "^5.32.5",
+    "zod": "^4.3.6"
+  }
+}
