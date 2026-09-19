@@ -57,6 +57,8 @@ export * from '#/agent/environmentBinding/environmentBindingService';
 export * from '#/agent/environmentBinding/agentEnvironment';
 export * from '#/app/sessionManager/sessionManager';
 export * from '#/app/sessionManager/sessionManagerService';
+export * from '#/app/environmentDeclaration/environmentDeclaration';
+export * from '#/app/environmentDeclaration/environmentDeclarationService';
 
 export * from '#/_base/log/log';
 export * from '#/_base/log/logConfig';

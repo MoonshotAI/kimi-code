@@ -7,6 +7,9 @@ import { Event } from '#/_base/event';
 import { LifecycleScope } from '#/app/scopes';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { IConfigService } from '#/app/config/config';
+import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
+import { EnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclarationService';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
 import { ILogService } from '#/_base/log/log';
 import {
@@ -51,6 +54,7 @@ import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { EnvironmentRegistry, EnvironmentError } from '#/environment/environmentRegistry';
 import { ENVIRONMENTS_SECTION } from '#/environment/configSection';
 import { fakeEnvironment } from '../../environment/stubs';
@@ -248,6 +252,14 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       _serviceBrand: undefined,
       get: async () => undefined,
     } as unknown as IAtomicDocumentStore);
+    ix.stub(IAppendLogStore, {
+      _serviceBrand: undefined,
+      read: async function* () {},
+    } as unknown as IAppendLogStore);
+    ix.stub(IBootstrapService, {
+      _serviceBrand: undefined,
+      scope: (name: string) => name,
+    } as unknown as IBootstrapService);
   });
 
   afterEach(() => {
@@ -256,6 +268,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
 
   function service(configValues: Record<string, unknown> = {}): ISessionSubagentService {
     ix.stub(IConfigService, new StubConfigService(configValues));
+    ix.set(IEnvironmentDeclarationService, new SyncDescriptor(EnvironmentDeclarationService));
     ix.set(ISessionSubagentService, new SyncDescriptor(SessionSubagentService));
     return ix.get(ISessionSubagentService);
   }

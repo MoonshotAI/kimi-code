@@ -5,6 +5,7 @@ import { ref, type LiveRef } from '#/_base/di/instantiation';
 import { Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
 import { ISessionEventBus } from '#/app/event/eventBus';
 import { LifecycleScope } from '#/app/scopes';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -16,14 +17,12 @@ import { IAgentConversationUndoParticipantRegistry, type AgentConversationUndoPa
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { CHANGE_ENVIRONMENT_TOOL_NAME } from '#/features/environmentTools/environmentTools';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
-import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { LOCAL_ENVIRONMENT_ID, type EnvironmentBinding, type EnvironmentLease } from '#/environment/environment';
-import { EnvironmentError, environmentStatusAllows } from '#/environment/environmentRegistry';
+import { EnvironmentError } from '#/environment/environmentRegistry';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import { IEnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
 import { IAgentEnvironmentBindingSeed, IAgentEnvironmentBindingService } from './environmentBinding';
@@ -92,7 +91,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     @ISessionEventBus private readonly eventBus: ISessionEventBus,
     @ref(IAgentLoopService) private readonly loop: LiveRef<IAgentLoopService>,
     @IAgentReminderService private readonly reminder: IAgentReminderService,
-    @IAppendLogStore private readonly appendLog: IAppendLogStore,
+    @IEnvironmentDeclarationService private readonly environmentDeclarations: IEnvironmentDeclarationService,
     @ILogService private readonly log: ILogService,
     @IAgentConversationUndoParticipantRegistry undoParticipants: IAgentConversationUndoParticipantRegistry,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
@@ -113,21 +112,12 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
           this.emitEnvironmentReminder(replayed);
         }
       } else {
-        const persisted = await this.peekPersistedBinding();
-        if (persisted !== undefined && persisted.environmentId !== LOCAL_ENVIRONMENT_ID) {
-          this.state.set(agentEnvironmentBindingKey, persisted);
-          await this.dispatcher.dispatch(
-            new EnvironmentSetBinding({ ...persisted, agentId: this.scopeContext.agentId }),
-          );
-          this.applySessionWorkDir(persisted);
-        } else {
-          await this.dispatcher.dispatch(
-            new EnvironmentSetBinding({ ...this.current, agentId: this.scopeContext.agentId }),
-          );
-          this.applySessionWorkDir(this.current);
-          if (this.current.environmentId !== LOCAL_ENVIRONMENT_ID) {
-            this.emitEnvironmentReminder(this.current);
-          }
+        await this.dispatcher.dispatch(
+          new EnvironmentSetBinding({ ...this.current, agentId: this.scopeContext.agentId }),
+        );
+        this.applySessionWorkDir(this.current);
+        if (this.current.environmentId !== LOCAL_ENVIRONMENT_ID) {
+          this.emitEnvironmentReminder(this.current);
         }
       }
       this.markProjectContextVisited(this.current);
@@ -161,24 +151,6 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
       binding.environmentId === seed.environmentId &&
       binding.cwd === seed.cwd
     );
-  }
-
-  private async peekPersistedBinding(): Promise<EnvironmentBinding | undefined> {
-    try {
-      let binding: EnvironmentBinding | undefined;
-      for await (const record of this.appendLog.read<WireRecord>(this.scopeContext.scope(), AGENT_WIRE_RECORD_KEY)) {
-        if (record.type === EnvironmentSetBinding.type && typeof record['environmentId'] === 'string') {
-          binding = {
-            workspaceId: this.session.workspaceId,
-            environmentId: record['environmentId'],
-            cwd: typeof record['cwd'] === 'string' ? record['cwd'] : undefined,
-          };
-        }
-      }
-      return binding;
-    } catch {
-      return undefined;
-    }
   }
 
   private assertSwitchAllowed(): void {
@@ -256,33 +228,9 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     if (binding.environmentId !== LOCAL_ENVIRONMENT_ID && binding.cwd === undefined) {
       throw new EnvironmentError('environment.invalid_cwd', `binding environment ${binding.environmentId} requires a cwd`);
     }
-    const inspected = this.resolver.inspect(binding);
-    if (!environmentStatusAllows(inspected, [])) {
-      if (typeof inspected.connect !== 'function') {
-        throw new EnvironmentError('environment.unavailable', `environment ${binding.environmentId} is ${inspected.status}`);
-      }
-      await inspected.connect();
-    }
+    await this.environmentDeclarations.ensureConnected(binding.workspaceId, binding.environmentId);
     if (binding.environmentId === LOCAL_ENVIRONMENT_ID || binding.cwd === undefined) return;
-    const lease = this.resolver.acquire(binding, []);
-    try {
-      const fs = lease.environment.fs;
-      if (fs === undefined) {
-        throw new EnvironmentError('environment.capability_unavailable', `environment ${binding.environmentId} does not provide fs`);
-      }
-      const cwd = binding.cwd;
-      const stat = await fs.stat(cwd).catch((error: unknown) => {
-        throw new EnvironmentError(
-          'environment.invalid_cwd',
-          `cwd ${cwd} is not readable on environment ${binding.environmentId}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      });
-      if (!stat.isDirectory) {
-        throw new EnvironmentError('environment.invalid_cwd', `cwd ${cwd} is not a directory on environment ${binding.environmentId}`);
-      }
-    } finally {
-      lease.dispose();
-    }
+    await this.environmentDeclarations.assertCwdUsable(binding.workspaceId, binding.environmentId, binding.cwd);
   }
 
   private commit(binding: EnvironmentBinding): EnvironmentBinding {

@@ -6,6 +6,7 @@ import type { ILogService } from '#/_base/log/log';
 import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { IConfigService } from '#/app/config/config';
 import type { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
+import { EnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclarationService';
 import { SessionManager } from '#/app/sessionManager/sessionManagerService';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
@@ -26,6 +27,7 @@ import type {
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import type { WorkspaceInstance } from '#/workspace/workspaceInstance/workspaceInstance';
 import type { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { createWireMetadataRecord, type WireRecord } from '#/wire/record';
 
 function makeSessionManager(
   workspaces: IWorkspaceInstanceManager,
@@ -42,15 +44,18 @@ function makeSessionManager(
   return new SessionManager(
     workspaces,
     index,
-    overrides.config ??
-      ({ _serviceBrand: undefined, ready: Promise.resolve(), get: () => undefined } as unknown as IConfigService),
-    overrides.fs ?? ({ _serviceBrand: undefined } as unknown as IHostFileSystem),
-    overrides.docs ?? ({ _serviceBrand: undefined, get: async () => undefined } as unknown as IAtomicDocumentStore),
-    overrides.appendLogStore ??
-      ({ _serviceBrand: undefined, read: async function* () {} } as unknown as IAppendLogStore),
-    overrides.bootstrap ?? ({ _serviceBrand: undefined, scope: (name: string) => name } as unknown as IBootstrapService),
-    overrides.log ??
-      ({ _serviceBrand: undefined, warn: () => {}, info: () => {}, error: () => {} } as unknown as ILogService),
+    new EnvironmentDeclarationService(
+      overrides.config ??
+        ({ _serviceBrand: undefined, ready: Promise.resolve(), get: () => undefined } as unknown as IConfigService),
+      overrides.fs ?? ({ _serviceBrand: undefined } as unknown as IHostFileSystem),
+      overrides.docs ?? ({ _serviceBrand: undefined, get: async () => undefined } as unknown as IAtomicDocumentStore),
+      overrides.appendLogStore ??
+        ({ _serviceBrand: undefined, read: async function* () {} } as unknown as IAppendLogStore),
+      overrides.bootstrap ?? ({ _serviceBrand: undefined, scope: (name: string) => name } as unknown as IBootstrapService),
+      workspaces,
+      overrides.log ??
+        ({ _serviceBrand: undefined, warn: () => {}, info: () => {}, error: () => {} } as unknown as ILogService),
+    ),
   );
 }
 
@@ -1105,6 +1110,7 @@ describe('SessionManager remote environment wiring', () => {
     readonly persistedEnvironmentId?: string;
     readonly persistedCwd?: string | null;
     readonly connectFails?: boolean;
+    readonly journal?: readonly WireRecord[];
   }) {
     registry = localRegistry();
     const remote = new FakeEnvironment(
@@ -1122,17 +1128,20 @@ describe('SessionManager remote environment wiring', () => {
     } as unknown as ISessionIndex;
     const persistedEnvironmentId = options.persistedEnvironmentId ?? 'remote';
     const persistedCwd = options.persistedCwd === undefined ? '/remote/work' : options.persistedCwd;
+    const journal = options.journal ?? [
+      {
+        type: 'environment.set_binding',
+        agentId: 'main',
+        workspaceId: 'workspace-1',
+        environmentId: persistedEnvironmentId,
+        cwd: persistedCwd ?? undefined,
+        time: 1,
+      },
+    ];
     const appendLogStore = {
       _serviceBrand: undefined,
       read: async function* () {
-        yield {
-          type: 'environment.set_binding',
-          agentId: 'main',
-          workspaceId: 'workspace-1',
-          environmentId: persistedEnvironmentId,
-          cwd: persistedCwd ?? undefined,
-          time: 1,
-        };
+        for (const record of journal) yield record;
       },
     } as unknown as IAppendLogStore;
     manager = makeSessionManager(workspacesFor(registry, program), index, {
@@ -1238,5 +1247,71 @@ describe('SessionManager remote environment wiring', () => {
     await manager.resume('session-1');
     expect(remoteConnect).not.toHaveBeenCalled();
     expect(registry.current('remote')).toBe(remote);
+  });
+
+  it('does not reconnect or rebind an undone remote binding when the undo fork crossed the switch', async () => {
+    const { manager, byEnvironment, createCalls, remoteConnect } = restoreSetup({
+      remoteStatus: 'disconnected',
+      journal: [
+        createWireMetadataRecord(1),
+        { type: 'environment.set_binding', agentId: 'main', workspaceId: 'workspace-1', environmentId: 'local', time: 2 },
+        {
+          type: 'context.append_message',
+          agentId: 'main',
+          message: { role: 'user', content: [{ type: 'text', text: 'switch the environment' }], toolCalls: [] },
+          time: 3,
+        },
+        { type: 'environment.set_binding', agentId: 'main', workspaceId: 'workspace-1', environmentId: 'remote', cwd: '/remote/work', time: 4 },
+        { type: 'agent.switched', agentId: 'main', branch: 'b1', base: { branch: 'main', line: 2 }, reason: 'undo', turns: 1, legacyUndoLine: 6, time: 5 },
+        { type: 'context.undo', agentId: 'main', count: 1, time: 6 },
+        { type: 'context.undone', agentId: 'main', turns: 1, time: 7 },
+      ],
+    });
+
+    await manager.resume('session-1');
+    expect(remoteConnect).not.toHaveBeenCalled();
+    expect(byEnvironment.has('remote')).toBe(false);
+    expect(byEnvironment.has('local')).toBe(true);
+    expect(createCalls).toEqual([{ environmentId: 'local', cwd: undefined }]);
+  });
+
+  it('resumes as local when the undo fork crossed every persisted binding record', async () => {
+    const { manager, byEnvironment, createCalls, remoteConnect } = restoreSetup({
+      remoteStatus: 'disconnected',
+      journal: [
+        createWireMetadataRecord(1),
+        { type: 'environment.set_binding', agentId: 'main', workspaceId: 'workspace-1', environmentId: 'remote', cwd: '/remote/work', time: 2 },
+        { type: 'agent.switched', agentId: 'main', branch: 'b1', base: { branch: 'main', line: 1 }, reason: 'undo', turns: 1, legacyUndoLine: 4, time: 3 },
+        { type: 'context.undo', agentId: 'main', count: 1, time: 4 },
+        { type: 'context.undone', agentId: 'main', turns: 1, time: 5 },
+      ],
+    });
+
+    await manager.resume('session-1');
+    expect(remoteConnect).not.toHaveBeenCalled();
+    expect(byEnvironment.has('remote')).toBe(false);
+    expect(byEnvironment.has('local')).toBe(true);
+    expect(createCalls).toEqual([{ environmentId: 'local', cwd: undefined }]);
+  });
+
+  it('honors the restorable chain boundary when the journal holds JSON-valid lines that are not wire records', async () => {
+    const { manager, byEnvironment, createCalls, remoteConnect } = restoreSetup({
+      remoteStatus: 'disconnected',
+      journal: [
+        { note: 'a JSON-valid line that is not a wire record' } as unknown as WireRecord,
+        createWireMetadataRecord(2),
+        { type: 'environment.set_binding', agentId: 'main', workspaceId: 'workspace-1', environmentId: 'local', time: 3 },
+        { type: 'environment.set_binding', agentId: 'main', workspaceId: 'workspace-1', environmentId: 'remote', cwd: '/remote/work', time: 4 },
+        { type: 'agent.switched', agentId: 'main', branch: 'b1', base: { branch: 'main', line: 3 }, reason: 'undo', turns: 1, legacyUndoLine: 6, time: 5 },
+        { type: 'context.undo', agentId: 'main', count: 1, time: 6 },
+        { type: 'context.undone', agentId: 'main', turns: 1, time: 7 },
+      ],
+    });
+
+    await manager.resume('session-1');
+    expect(remoteConnect).not.toHaveBeenCalled();
+    expect(byEnvironment.has('remote')).toBe(false);
+    expect(byEnvironment.has('local')).toBe(true);
+    expect(createCalls).toEqual([{ environmentId: 'local', cwd: undefined }]);
   });
 });

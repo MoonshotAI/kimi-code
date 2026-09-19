@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IConfigService } from '#/app/config/config';
+import { EnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclarationService';
 import { ENVIRONMENTS_SECTION } from '#/environment/configSection';
 import type { EnvironmentBinding } from '#/environment/environment';
 import { EnvironmentRegistry, EnvironmentError } from '#/environment/environmentRegistry';
@@ -92,6 +93,18 @@ function docsStub(): IAtomicDocumentStore {
   } as unknown as IAtomicDocumentStore;
 }
 
+function declarationService(workspaces: IWorkspaceInstanceManager, config: unknown): EnvironmentDeclarationService {
+  return new EnvironmentDeclarationService(
+    configStub(config),
+    {} as IHostFileSystem,
+    docsStub(),
+    { _serviceBrand: undefined, read: async function* () {} } as never,
+    { _serviceBrand: undefined, scope: (name: string) => name } as never,
+    workspaces,
+    { _serviceBrand: undefined, warn: () => {}, info: () => {}, error: () => {} } as never,
+  );
+}
+
 describe('buildEnvironmentsInfo', () => {
   it('lists each environment with its status and marks the current one', () => {
     const registry = new EnvironmentRegistry('workspace');
@@ -116,15 +129,14 @@ describe('ChangeEnvironmentTool', () => {
   ) {
     const calls: { environmentId: string; cwd?: string }[] = [];
     const registry = options.registry ?? new EnvironmentRegistry('workspace');
+    const workspaces = workspacesStub(registry);
     const tool = new ChangeEnvironmentTool(
       options.scope ?? mainScope,
       bindingStub(calls, { workspaceId: 'workspace', environmentId: 'local' }, { commit: options.commit }),
       planMode(options.plan),
       session(),
-      workspacesStub(registry),
-      configStub(options.config),
-      {} as IHostFileSystem,
-      docsStub(),
+      workspaces,
+      declarationService(workspaces, options.config),
     );
     return { tool, calls };
   }
@@ -214,9 +226,7 @@ describe('ChangeEnvironmentTool', () => {
       planMode(),
       session(),
       workspacesStub(registry),
-      configStub(undefined),
-      {} as IHostFileSystem,
-      docsStub(),
+      declarationService(workspacesStub(registry), undefined),
     );
     const execution = await tool.resolveExecution({
       id: 'ghost',

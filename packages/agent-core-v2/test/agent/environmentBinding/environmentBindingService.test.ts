@@ -26,6 +26,10 @@ import { AgentEnvironmentBindingService, agentEnvironmentBindingKey, ENVIRONMENT
 import { environmentBindingKey, EnvironmentSetBinding } from '#/agent/environmentBinding/environmentBindingOps';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
+import { EnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclarationService';
+import type { IConfigService } from '#/app/config/config';
+import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import type { IAgentLoopService } from '#/agent/loop/loop';
 import type { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -42,7 +46,7 @@ import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IWireService } from '#/wire/wire';
 import { WireService } from '#/wire/wireService';
-import type { WireRecord } from '#/wire/record';
+import { createWireMetadataRecord, type WireRecord } from '#/wire/record';
 import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
   workspaceContextAdditionalDirsKey,
@@ -123,6 +127,21 @@ function stubAppendLog(records: WireRecord[]): IAppendLogStore {
       for (const record of records) yield record as R;
     },
   } as unknown as IAppendLogStore;
+}
+
+function declarationService(registry: EnvironmentRegistry, appendLog: IAppendLogStore): IEnvironmentDeclarationService {
+  return new EnvironmentDeclarationService(
+    { _serviceBrand: undefined, ready: Promise.resolve(), get: () => undefined } as unknown as IConfigService,
+    { _serviceBrand: undefined } as unknown as IHostFileSystem,
+    { _serviceBrand: undefined, get: async () => undefined } as unknown as IAtomicDocumentStore,
+    appendLog,
+    stubBootstrap(),
+    {
+      _serviceBrand: undefined,
+      get: () => ({ environments: registry, root: '/workspace' }),
+    } as unknown as IWorkspaceInstanceManager,
+    noopLogger,
+  );
 }
 
 const BOOTSTRAP_HOME = '/kimi-home';
@@ -262,7 +281,7 @@ function setup(options: { agentId?: string; sessionCwd?: string; seedBinding?: E
       eventBus,
       loop,
       reminder,
-      appendLog,
+      declarationService(registry, appendLog),
       noopLogger,
       {
         _serviceBrand: undefined,
@@ -711,29 +730,26 @@ describe('AgentEnvironmentBindingService', () => {
 });
 
 describe('AgentEnvironmentBindingService restore from wire records', () => {
-  it('reseeds a remote binding from the agent wire records when replay produced none', async () => {
-    const { binding, restoreHooks, dispatched, appendLogRecords } = setup({ agentId: 'agent-1' });
+  it('does not reseed a remote binding from raw wire records that replay excluded', async () => {
+    const { binding, restoreHooks, dispatched, reminders, appendLogRecords } = setup({ agentId: 'agent-1' });
     appendLogRecords.push({ type: 'environment.set_binding', agentId: 'agent-1', environmentId: 'remote', cwd: '/remote/work', time: 2 });
 
     await restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
 
-    expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' });
-    expect(dispatched.at(-1)).toMatchObject({
-      agentId: 'agent-1',
-      workspaceId: 'workspace',
-      environmentId: 'remote',
-      cwd: '/remote/work',
-    });
+    expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+    expect(dispatched.at(-1)).toMatchObject({ agentId: 'agent-1', workspaceId: 'workspace', environmentId: 'local' });
+    expect(reminders).toEqual([]);
   });
 
-  it('does not connect or reroot a reseeded remote binding', async () => {
-    const { registry, restoreHooks, appendLogRecords } = setup({ agentId: 'agent-1' });
+  it('does not connect or reroot when raw wire records name a connectable environment', async () => {
+    const { registry, binding, restoreHooks, appendLogRecords } = setup({ agentId: 'agent-1' });
     const { connectCalls } = connectableEnvironment(registry, { environmentId: 'connectable' });
     appendLogRecords.push({ type: 'environment.set_binding', agentId: 'agent-1', environmentId: 'connectable', cwd: '/connectable/work', time: 2 });
 
     await restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
 
     expect(connectCalls).toEqual([]);
+    expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
   });
 
   it('ignores local binding records and keeps the seed dispatch', async () => {
@@ -1717,7 +1733,7 @@ function undoSetup(): UndoHarness {
     eventBus,
     loop,
     reminder,
-    appendLog,
+    declarationService(registry, appendLog),
     noopLogger,
     undoParticipants,
     stubBootstrap(),
@@ -1795,13 +1811,13 @@ interface WireUndoHarness {
   readonly dispose: () => Promise<void>;
 }
 
-function wireUndoSetup(options: { readonly withUndo?: boolean } = {}): WireUndoHarness {
+function wireUndoSetup(options: { readonly withUndo?: boolean; readonly journal?: readonly WireRecord[] } = {}): WireUndoHarness {
   const registry = new EnvironmentRegistry('workspace');
   registry.register(environment('local', 'local-one', 'ready', ['fs', 'process'], LOCAL_HOST));
   const remote = environment('remote', 'remote-one', 'ready', ['fs', 'process'], REMOTE_HOST);
   Object.assign(remote, { fs: { stat: async () => ({ isDirectory: true }) } });
   registry.register(remote);
-  const appendLogRecords: WireRecord[] = [];
+  const appendLogRecords: WireRecord[] = [...options.journal ?? []];
   const appendLog = recordingWireLog(appendLogRecords);
   const ix = new TestInstantiationService();
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
@@ -1866,7 +1882,7 @@ function wireUndoSetup(options: { readonly withUndo?: boolean } = {}): WireUndoH
     eventBus,
     loop,
     reminder,
-    appendLog,
+    declarationService(registry, appendLog),
     noopLogger,
     undoParticipants,
     stubBootstrap(),
@@ -2090,6 +2106,46 @@ describe('AgentEnvironmentBindingService conversation undo over the real wire', 
       expect(harness.reminders.at(-1)).toMatchObject({ variant: ENVIRONMENT_BINDING_REMINDER_VARIANT });
       expect(harness.reminders.at(-1)!.content).toContain('"local"');
       expect(harness.changes.at(-1)).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+    } finally {
+      await harness.dispose();
+    }
+  });
+
+  it('does not resurrect an undone remote binding when the undo fork crosses the seed record and the session resumes', async () => {
+    const harness = wireUndoSetup({
+      journal: [
+        createWireMetadataRecord(1),
+        { type: 'environment.set_binding', agentId: 'main', workspaceId: 'workspace', environmentId: 'local', time: 2 },
+        {
+          type: 'context.append_message',
+          agentId: 'main',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'switch the environment' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+          time: 3,
+        },
+        { type: 'environment.set_binding', agentId: 'main', workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work', time: 4 },
+        { type: 'agent.switched', agentId: 'main', branch: 'b1', base: { branch: 'main', line: 1 }, reason: 'undo', turns: 2, legacyUndoLine: 6, time: 5 },
+        { type: 'context.undo', agentId: 'main', count: 2, time: 6 },
+        { type: 'context.undone', agentId: 'main', turns: 2, time: 7 },
+      ],
+    });
+    try {
+      await harness.wire.seal();
+      await harness.dispatcher.restore();
+
+      expect(harness.binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+      expect(harness.reminders).toEqual([]);
+      expect(harness.workDirWrites).toEqual(['/workspace']);
+      expect(
+        harness.appendLogRecords.filter(
+          (record) => record.type === 'environment.set_binding' && record['environmentId'] === 'remote',
+        ),
+      ).toHaveLength(1);
+      expect(harness.appendLogRecords.at(-1)).toMatchObject({ type: 'environment.set_binding', environmentId: 'local' });
     } finally {
       await harness.dispose();
     }
