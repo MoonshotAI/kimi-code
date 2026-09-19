@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatStepDebugTiming } from '#/utils/usage/debug-timing';
+import { formatStepDebugTiming, stepDecodeTps } from '#/utils/usage/debug-timing';
 
 describe('formatStepDebugTiming', () => {
   it('returns undefined when timing fields are missing', () => {
@@ -157,5 +157,22 @@ describe('formatStepDebugTiming', () => {
     });
     expect(result).toContain('TTFT: 1.5s');
     expect(result).toContain('10.0s');
+  });
+});
+
+describe('stepDecodeTps', () => {
+  it('divides output tokens by the decode window', () => {
+    expect(stepDecodeTps(200, 5000)).toBeCloseTo(40);
+  });
+
+  it('returns null without usable output or timing', () => {
+    expect(stepDecodeTps(undefined, 5000)).toBeNull();
+    expect(stepDecodeTps(0, 5000)).toBeNull();
+    expect(stepDecodeTps(200, undefined)).toBeNull();
+  });
+
+  it('returns null for a window too short to measure', () => {
+    expect(stepDecodeTps(200, 49)).toBeNull();
+    expect(stepDecodeTps(200, 50)).toBeCloseTo(4000);
   });
 });

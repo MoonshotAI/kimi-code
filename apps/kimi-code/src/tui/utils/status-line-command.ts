@@ -23,6 +23,8 @@ export interface StatusLinePayload {
   contextUsage: number;
   contextTokens: number;
   maxContextTokens: number;
+  /** Decode TPS of the last measurable step; null until one has completed. */
+  decodeTps: number | null;
   sessionId: string;
   version: string;
 }
