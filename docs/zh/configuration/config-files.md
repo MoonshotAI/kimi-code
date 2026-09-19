@@ -219,6 +219,8 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 
 池别名引用的是 `[models]` 表的当前内容：如果之后删除供应商、登出账号，或其刷新后的模型列表不再包含某个别名，会话启动时会报出指明失效别名的配置错误，修正或移除对应条目即可恢复。系统不会自动改写 `[secondary_model]` 节。
 
+单独存在的遗留 `model` 键（由旧版本写入）在未配置池键时仍作为池默认值生效，但在派发时 `default_model` 和 `models` 的优先级高于它。通过 TUI、Web 界面或配置 API 写入时，两族按键之间遵循 "后写生效"：写入 `default_model` 或 `models` 会移除残留的 `model` 键，写入 `model` 会移除 `default_model` 和 `models`，因此最终生效的总是最近一次设置。单次写入同时包含两族按键时不做清理，按原样合并，此时 `default_model` / `models` 的优先级仍高于 `model`。
+
 在交互式 TUI 中，也可以用 [`/secondary-model`](../reference/slash-commands.md) 命令（别名 `/subagent-model`）打开模型选择器：选择后写入 `default_model`（已有 models 表而所选别名不在其中时，会一并补一条空描述条目），之后派生的 subagent 立即按新默认值绑定，无需重启会话。
 
 配置了模型池（显式的 `models` 表或隐式的单条目池）即启用模型选择：`Agent` / `AgentSwarm` 工具会获得 `model` 参数，工具描述中列出模型池（默认模型标注 `[default]`），main agent 可按次派生选择模型。池 key 只能引用已配置的 [`[models]`](#models) 条目。下面的 `kimi-code/*` 别名由 `/login` 自动提供：

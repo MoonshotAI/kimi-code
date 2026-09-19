@@ -1983,7 +1983,7 @@ describe('subagent config section', () => {
     ix.set(IConfigService, new SyncDescriptor(ConfigService));
     const config = ix.get(IConfigService);
     await config.ready;
-    return { config, disposables };
+    return { config, disposables, storage };
   }
 
   it('defaults to two hours and honours the env override', async () => {
@@ -2215,6 +2215,107 @@ describe('subagent config section', () => {
     const after = config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION);
     expect(after?.defaultEffort).toBe('low');
     expect(after?.maxOutputSize).toBe(8192);
+
+    disposables.dispose();
+  });
+
+  it('lets a model write replace a stale pool instead of being shadowed by it', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables, storage } = await createConfig(
+      {},
+      '[secondary_model]\ndefault_model = "provider/fast"\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n',
+    );
+
+    await config.set(SECONDARY_MODEL_SECTION, { model: 'provider/smart', defaultEffort: 'low' });
+
+    expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
+      model: 'provider/smart',
+      defaultEffort: 'low',
+    });
+    expect(resolveSubagentModelPool(config)).toEqual({
+      defaultModel: 'provider/smart',
+      models: { 'provider/smart': '' },
+    });
+    expect(resolveSubagentBinding(config, own)).toEqual({
+      model: 'provider/smart',
+      thinking: 'low',
+      modelSource: 'secondary_pool',
+    });
+
+    const persisted = new TextDecoder().decode(await storage.read('', 'config.toml'));
+    expect(persisted).not.toContain('default_model');
+    expect(persisted).not.toContain('[secondary_model.models]');
+    expect(persisted).toContain('model = "provider/smart"');
+
+    const reloaded = await createConfig({}, persisted);
+    expect(resolveSubagentModelPool(reloaded.config)).toEqual({
+      defaultModel: 'provider/smart',
+      models: { 'provider/smart': '' },
+    });
+    reloaded.disposables.dispose();
+
+    disposables.dispose();
+  });
+
+  it('lets a default_model write drop the stale legacy model key', async () => {
+    const { config, disposables, storage } = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/slow"\ndefault_effort = "low"\nmax_output_size = 8192\n',
+    );
+
+    await config.set(SECONDARY_MODEL_SECTION, { defaultModel: 'provider/fast' });
+
+    expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
+      defaultModel: 'provider/fast',
+      defaultEffort: 'low',
+      maxOutputSize: 8192,
+    });
+
+    const persisted = new TextDecoder().decode(await storage.read('', 'config.toml'));
+    expect(persisted).not.toContain('model = "provider/slow"');
+    expect(persisted).toContain('default_model = "provider/fast"');
+
+    disposables.dispose();
+  });
+
+  it('preserves unknown on-disk keys while removing superseded ones', async () => {
+    const { config, disposables, storage } = await createConfig(
+      {},
+      '[secondary_model]\ndefault_model = "provider/fast"\nfuture_field = "keep me"\n',
+    );
+
+    await config.set(SECONDARY_MODEL_SECTION, { model: 'provider/smart' });
+
+    const persisted = new TextDecoder().decode(await storage.read('', 'config.toml'));
+    expect(persisted).not.toContain('default_model');
+    expect(persisted).toContain('future_field = "keep me"');
+    expect(persisted).toContain('model = "provider/smart"');
+
+    disposables.dispose();
+  });
+
+  it('keeps both key families on an effort-only write and on a mixed write', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/slow"\ndefault_model = "provider/fast"\n',
+    );
+
+    await config.set(SECONDARY_MODEL_SECTION, { defaultEffort: 'low' });
+    expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
+      model: 'provider/slow',
+      defaultModel: 'provider/fast',
+      defaultEffort: 'low',
+    });
+
+    await config.set(SECONDARY_MODEL_SECTION, {
+      defaultModel: 'provider/fast',
+      model: 'provider/slow',
+    });
+    expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
+      model: 'provider/slow',
+      defaultModel: 'provider/fast',
+      defaultEffort: 'low',
+    });
 
     disposables.dispose();
   });
