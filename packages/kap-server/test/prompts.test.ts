@@ -1672,6 +1672,9 @@ describe('server-v2 /api/v1 prompts', () => {
       content: [{ type: 'text', text: 'hello' }],
     });
     const promptId = submitted.body.data.prompt_id;
+    const session = getLiveSessionById(server!.core.accessor, id);
+    if (session === undefined) throw new Error(`session ${id} not found`);
+    await session.accessor.get(IAgentLifecycleService).handleOf('main')?.accessor.get(IAgentLoopService).settled();
 
     const aborted = await call<{ aborted: boolean }>(
       'POST',

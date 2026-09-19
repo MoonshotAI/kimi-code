@@ -2,7 +2,7 @@ import { estimateMessageTokens, estimateUsedContextTokens } from '#/agent/contex
 import { inputSubmitted, messageAppended, turnEnded, turnStarted } from '#/agent/events';
 import { createHistoryMessageBuilder } from '#/agent/historyBuilder';
 import { createUserEntry, type HistoryMessage, type UserEntry } from '#/agent/turn';
-import type { ExternalEvent } from '#/eventStore/events';
+import type { ExternalEvent } from '#/store/log';
 import type { UserMessage } from '#/llm/message';
 
 import summaryPrefixTemplate from './compaction-summary-prefix.md?raw';

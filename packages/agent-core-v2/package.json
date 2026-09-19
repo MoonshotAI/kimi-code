@@ -39,6 +39,7 @@
       "types": "./package.json",
       "default": "./package.json"
     },
+    "./human/store/internal/*": null,
     "./*": {
       "types": "./src/*.ts",
       "default": "./src/*.ts"

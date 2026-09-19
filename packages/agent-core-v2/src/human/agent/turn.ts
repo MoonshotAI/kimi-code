@@ -358,6 +358,7 @@ export interface CreateTurnMachineOptions {
   readonly retry?: LlmRetryOptions;
   readonly abortGraceMs?: number;
   readonly messageResolvers?: readonly MessageResolver[];
+  readonly getTools?: () => LlmRequestConfig['tools'];
   readonly onBeforeStep?: TurnBeforeStep;
 }
 
@@ -368,6 +369,9 @@ export function createTurnMachine(
   const recovery = options?.recovery;
   const retry = options?.retry;
   const abortGraceMs = options?.abortGraceMs ?? 2_500;
+  const requestFor = (context: TurnMachineContext): LlmRequestConfig => options?.getTools === undefined
+    ? context.input.request
+    : { ...context.input.request, tools: options.getTools() };
   return setup({
     types: {
       input: {} as TurnInput,
@@ -454,10 +458,13 @@ export function createTurnMachine(
           src: 'onBeforeStepActor',
           input: ({ context }) => ({
             messages: [...context.input.history, ...context.produced],
-            request: context.input.request,
+            request: requestFor(context),
           }),
           onDone: { target: 'streaming' },
-          onError: { target: 'done' },
+          onError: {
+            target: 'failed',
+            actions: assign({ outcome: 'failed' as const, error: ({ event }) => event.error }),
+          },
         },
         on: {
           'turn.abort': {
@@ -500,14 +507,15 @@ export function createTurnMachine(
               src: 'llmActor',
               input: ({ context }) => {
                 const entries = [...context.input.history, ...context.produced];
+                const request = requestFor(context);
                 return {
-                  config: context.input.request,
+                  config: request,
                   signal: context.llmScope.signal,
                   content: {
                     messages: attemptMessages(context),
                     usedContextTokens: estimateUsedContextTokens(entries, {
-                      systemPrompt: context.input.request.systemPrompt,
-                      tools: context.input.request.tools,
+                      systemPrompt: request.systemPrompt,
+                      tools: request.tools,
                     }),
                   },
                 };

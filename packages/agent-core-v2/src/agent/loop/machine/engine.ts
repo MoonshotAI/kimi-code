@@ -9,9 +9,7 @@ import { createTurnMachine, type AssistantEntry, type HistoryMessage, type Syste
 import { messageAppended, turnEnded } from '#human/agent/events';
 import { agentSlices, type AgentEventStore } from '#human/agent/slices';
 import { credentialsRecovery } from '#human/credentials/credentials';
-import { createEventStoreSync } from '#human/eventStore/eventStore';
-import type { ExternalEvent } from '#human/eventStore/events';
-import { memoryJournal, type SyncStoreJournal } from '#human/eventStore/journal';
+import { createEventStoreSync, memoryJournal, type ExternalEvent, type SyncStoreJournal } from '#human/store/log';
 import type { LlmErrorMessage } from '#human/llm/errors';
 import type { FinishInfo } from '#human/llm/finish-reason';
 import type { StreamedMessagePart } from '#human/llm/message';

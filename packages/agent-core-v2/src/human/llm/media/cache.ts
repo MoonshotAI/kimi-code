@@ -1,6 +1,5 @@
 import type { VideoURLPart } from '#/llm/message';
-import type { BlobBackend } from '#/store/backend/backend';
-import { sha256Hex } from '#/store/internal/blob';
+import { sha256Hex, type BlobBackend } from '#/store/storage';
 
 const CACHE_PREFIX = 'media-upload';
 

@@ -1,5 +1,5 @@
 import { estimateUsedContextTokens } from '#/agent/context-usage';
-import type { ExternalEvent } from '#/eventStore/events';
+import type { ExternalEvent } from '#/store/log';
 import type { UserMessage } from '#/llm/message';
 import {
   compactionCancelled,

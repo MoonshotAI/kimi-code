@@ -31,11 +31,8 @@ import {
   type HistoryMessage,
 } from '#/agent/turn';
 import { MaxStepsExceededError } from '#/agent/errors';
-import { createEventStore } from '#/eventStore/eventStore';
-import { journalFromBranch } from '#/eventStore/journal';
-import { MemoryBackend } from '#/store/backend/memory';
-import { TreeStore } from '#/store/store';
-import type { Tree } from '#/store/tree';
+import { createEventStore, journalFromBranch } from '#/store/log';
+import { MemoryBackend, TreeStore, type Tree } from '#/store/storage';
 import { testScopeFactory } from '#/test/agent/scope-factory';
 import { waitForTool } from '#/tool/wait-for';
 import { defineTool, type ToolDefinition } from '#/tool/tool';
@@ -210,6 +207,36 @@ describe('agent machine tool failure', () => {
       'tool:plain failure',
       'assistant:done',
     ]);
+    const { memoryJournal } = await import('#/store/log');
+    const journal = memoryJournal();
+    const finalAppend = Promise.withResolvers<void>();
+    const confirmation = Promise.withResolvers<void>();
+    let finalPending = false;
+    const committed = await createEventStore({
+      journal: {
+        ...journal,
+        append: async (input) => {
+          const entry = await journal.append(input);
+          if (input.type === turnEnded.type) { finalPending = true; finalAppend.resolve(); }
+          return entry;
+        },
+        settled: () => finalPending ? confirmation.promise : Promise.resolve(),
+      },
+      slices: agentSlices,
+    });
+    const completing = createTestAgent(committed, createStubRequester([createAssistantMessage([{ type: 'text', text: 'confirmed' }])]));
+    let done = false;
+    completing.on('turn.done', () => { done = true; });
+    completing.start();
+    completing.send({ type: 'input.submit', entry: createUserEntry(createUserMessage('commit')) });
+    await finalAppend.promise;
+    expect(done).toBe(false);
+    expect(completing.getSnapshot().matches('idle')).toBe(false);
+    confirmation.resolve();
+    await waitFor(completing, (snapshot) => snapshot.matches('idle'));
+    expect(done).toBe(true);
+    expect(committed.getState().turnIndex.nextTurnId).toBe(1);
+    completing.stop();
   });
 
   it('continues with the remaining tool calls after a failure', async () => {

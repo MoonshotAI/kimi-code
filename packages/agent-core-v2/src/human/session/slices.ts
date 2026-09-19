@@ -1,4 +1,4 @@
-import { createSlice } from '#/eventStore/slice';
+import { createSlice } from '#/store/log';
 
 import type { AgentClosed, AgentOpened, AgentSwitched, SessionMetaUpdated } from './events';
 

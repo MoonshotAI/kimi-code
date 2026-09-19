@@ -422,6 +422,33 @@ describe('WireService migration rewrite', () => {
     const svc = createAgentWireHarness(log);
 
     await expect(drainJournal(svc)).rejects.toThrow('disk full');
+    const { wireStoreJournal, ENGINE_JOURNAL_DOMAIN } = await import('#/agent/loop/machine/storeJournal');
+    const { createEventStoreSync, createSlice, defineEvent } = await import('#human/store/log');
+    const { z } = await import('zod');
+    const memory = new InMemoryStorageService();
+    const appendLog = createAppendLogHarness(memory);
+    const wire = createAgentWireHarness(appendLog);
+    await wire.seal();
+    memory.append = async () => { throw new Error('append failed'); };
+    const changed = defineEvent({ type: 'test.durable-confirmation', schema: z.object({ value: z.number() }) });
+    const journal = wireStoreJournal(wire, ENGINE_JOURNAL_DOMAIN);
+    const store = createEventStoreSync({
+      journal,
+      slices: { value: createSlice({ name: 'value', initialState: () => 0, reducers: { [changed.type]: (_draft, event: ReturnType<typeof changed>) => event.value } }) },
+    });
+    await expect(store.dispatch(changed({ value: 4 }))).rejects.toThrow('append failed');
+    expect(store.slice('value')).toBe(0);
+    expect(store.phase).toBe('failed');
+    expect(() => store.registerSlice(createSlice({ name: 'late', initialState: () => 0, reducers: {} }))).toThrow('append failed');
+    await expect(store.ready()).rejects.toThrow('append failed');
+    await expect(store.dispatch(changed({ value: 8 }))).rejects.toThrow('append failed');
+    await expect(store.reset(journal)).rejects.toMatchObject({ code: 'recovery-required' });
+    expect(store.slice('value')).toBe(0);
+    const { memoryJournal } = await import('#human/store/log');
+    await store.reset(memoryJournal());
+    expect(store.phase).toBe('open');
+    await store.dispatch(changed({ value: 9 }));
+    expect(store.slice('value')).toBe(9);
   });
 });
 

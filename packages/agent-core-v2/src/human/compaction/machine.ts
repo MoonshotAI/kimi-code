@@ -7,7 +7,7 @@ import {
   inputSubmitted,
 } from '#/agent/events';
 import { createUserEntry, type HistoryMessage, type SystemEntry, type UserEntry } from '#/agent/turn';
-import type { ExternalEvent } from '#/eventStore/events';
+import type { ExternalEvent } from '#/store/log';
 import type { UserMessage } from '#/llm/message';
 import type { AgentActorRef } from '#/session/machine';
 import type { SessionStores } from '#/session/stores';

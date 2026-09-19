@@ -2007,8 +2007,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   private async endTurn(turn: ActiveTurn, result: TurnResult): Promise<void> {
     if (this.active !== turn) return;
-    this.active = undefined;
     await this.wire.drainPersisted().catch(() => undefined);
+    if (this.active !== turn) return;
+    this.active = undefined;
     for (const nudge of this.nudges.slice(this.nudgeCursor)) {
       if (nudge.turnScoped && !nudge.dropped) {
         nudge.dropped = true;

@@ -29,7 +29,7 @@ import { mergeSteerMessages } from './origin';
 import { createSystemEntry, createUserEntry } from './turn';
 import { createAbortScope, withAbort, type AbortScope } from '#/utils/abort';
 import type { createTurnMachine, HistoryMessage, SystemEntry, TurnLlmEvent, TurnOutput, UserEntry } from './turn';
-import { storeActor } from '#/eventStore/actor';
+import { storeActor } from '#/store/actor';
 import type { AgentEventStore, AgentStoreState } from './slices';
 
 export interface AgentInput {
@@ -159,6 +159,7 @@ export interface AgentMachineContext {
   drainedEntry?: UserEntry;
   paused: boolean;
   abortReason?: unknown;
+  turnOutput?: TurnOutput;
 }
 
 function completionNotification(toolCall: ToolCall, output: ToolOutput): UserEntry {
@@ -340,8 +341,19 @@ export function createAgentMachine({
           return { id: head.meta?.promptId, block: false, error };
         }
       }),
-      disposeScopeActor: fromPromise<void, { handle?: AgentScopeHandle }>(async ({ input }) => {
-        await input.handle?.disposeAsync();
+      commitTurnActor: fromPromise<TurnOutput, { store: AgentEventStore; turnId: number; output: TurnOutput }>(async ({ input }) => {
+        await input.store.dispatch([
+          ...input.output.produced.map((message) => messageAppended({ message })),
+          turnEnded({ turnId: input.turnId, outcome: input.output.type, errorMessage: input.output.type === 'failed' ? String(input.output.error) : undefined }),
+        ]);
+        return input.output;
+      }),
+      disposeScopeActor: fromPromise<void, { handle?: AgentScopeHandle; store?: AgentEventStore }>(async ({ input }) => {
+        try {
+          await input.store?.flush();
+        } finally {
+          await input.handle?.disposeAsync();
+        }
       }),
     },
     actions: {
@@ -763,43 +775,12 @@ export function createAgentMachine({
         initial: 'active',
         on: {
           'xstate.done.actor.turn': {
-            target: '#agent.idle',
-            actions: [
-              assign(({ context, event }) => turnOutputPatch(context, event.output)),
-              emit(({ context, event }) => turnOutcomeEvent(context, event.output)),
-              sendTo('store', ({ context, event }) => ({
-                type: 'store.append' as const,
-                event: [
-                  ...event.output.produced.map((message) => messageAppended({ message })),
-                  turnEnded({
-                    turnId: context.activeTurnId ?? context.turnId,
-                    outcome: event.output.type,
-                    errorMessage:
-                      event.output.type === 'failed' ? String(event.output.error) : undefined,
-                  }),
-                ],
-              })),
-            ],
+            target: '.committing',
+            actions: assign({ turnOutput: ({ event }) => event.output }),
           },
           'xstate.error.actor.turn': {
-            target: '#agent.idle',
-            actions: [
-              emit(({ context, event }) => ({
-                type: 'turn.failed' as const,
-                error: event.error,
-                messages: context.messages,
-                interruptReason: interruptReasonOf(event.error),
-                branchId: context.branchId,
-              })),
-              sendTo('store', ({ context, event }) => ({
-                type: 'store.append' as const,
-                event: turnEnded({
-                  turnId: context.activeTurnId ?? context.turnId,
-                  outcome: 'failed',
-                  errorMessage: String(event.error),
-                }),
-              })),
-            ],
+            target: '.committing',
+            actions: assign({ turnOutput: ({ event }) => ({ type: 'failed' as const, error: event.error, produced: [] }) }),
           },
           'store.reset': {
             target: '#agent.idle',
@@ -898,6 +879,27 @@ export function createAgentMachine({
           },
         },
         states: {
+          committing: {
+            invoke: {
+              src: 'commitTurnActor',
+              input: ({ context }) => ({ store: context.store as AgentEventStore, turnId: context.activeTurnId ?? context.turnId, output: context.turnOutput as TurnOutput }),
+              onDone: {
+                target: '#agent.idle',
+                actions: [
+                  assign(({ context, event }) => turnOutputPatch(context, event.output)),
+                  emit(({ context, event }) => turnOutcomeEvent(context, event.output)),
+                  assign({ turnOutput: undefined }),
+                ],
+              },
+              onError: {
+                target: '#agent.idle',
+                actions: [
+                  assign({ paused: true, turnOutput: undefined }),
+                  emit(({ context, event }) => ({ type: 'turn.failed' as const, error: event.error, messages: context.messages, interruptReason: interruptReasonOf(event.error), branchId: context.branchId })),
+                ],
+              },
+            },
+          },
           active: {
             on: {
               'turn.spawn_tools': {
@@ -933,7 +935,7 @@ export function createAgentMachine({
         entry: ['abortScope', 'abortTurnTools', 'stopTurnTools'],
         invoke: {
           src: 'disposeScopeActor',
-          input: ({ context }) => ({ handle: context.handle }),
+          input: ({ context }) => ({ handle: context.handle, store: context.store }),
           onDone: '#agent.disposed',
           onError: '#agent.disposed',
         },

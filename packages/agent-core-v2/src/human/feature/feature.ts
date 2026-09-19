@@ -1,6 +1,7 @@
 import { shallowRef } from '@vue/reactivity';
 
-import { createToken, type StoreRecipe, type UnitRecipe } from '#/kernel/index';
+import { createToken, type UnitRecipe } from '#/kernel/index';
+import type { StoreRecipe } from '#/store/index';
 
 export type SlotRecipe = UnitRecipe<any> | StoreRecipe<any>;
 
@@ -10,20 +11,20 @@ export interface FeatureSlots {
   readonly agent?: SlotRecipe | readonly SlotRecipe[];
 }
 
-export interface FeatureSpec<P = unknown> {
+export interface FeatureSpec<P = unknown, S extends object = any> {
   readonly featureName: string;
   readonly slots: FeatureSlots;
-  readonly handle?: SlotRecipe;
+  readonly handle?: StoreRecipe<S>;
   readonly props: P;
 }
 
-export type FeatureFactory<P = unknown> = (props?: P) => FeatureSpec<P>;
+export type FeatureFactory<P = unknown, S extends object = any> = (props?: P) => FeatureSpec<P, S>;
 
-export function createFeature<P = void>(
+export function createFeature<P = void, S extends object = object>(
   name: string,
   slots: FeatureSlots,
-  opts?: { handle?: SlotRecipe },
-): FeatureFactory<P> {
+  opts?: { handle?: StoreRecipe<S> },
+): FeatureFactory<P, S> {
   return (props?: P) => ({ featureName: name, slots, handle: opts?.handle, props: props as P });
 }
 

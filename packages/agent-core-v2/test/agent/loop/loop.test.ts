@@ -892,6 +892,16 @@ describe('Agent loop', () => {
   });
 
   it('queues consecutive nextTurn requests in FIFO order without overlapping turns', async () => {
+    const { IWireService } = await import('#/wire/wire');
+    const finishing = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const wire = ctx.get(IWireService);
+    const originalDrain = wire.drainPersisted.bind(wire);
+    vi.spyOn(wire, 'drainPersisted').mockImplementationOnce(async () => {
+      finishing.resolve();
+      await release.promise;
+      await originalDrain();
+    });
     const events: string[] = [];
     const subscription = ctx.get(IEventBus).subscribe((event) => {
       if (event instanceof TurnStarted || event instanceof TurnEnded) {
@@ -907,6 +917,13 @@ describe('Agent loop', () => {
     const third = submitTurn(loop, 'third').turn;
     loop.notify();
 
+    await finishing.promise;
+    try {
+      expect(loop.snapshot()).toMatchObject({ state: 'running', activeTurnId: 0 });
+      expect(events).toEqual(['turn.started:0']);
+    } finally {
+      release.resolve();
+    }
     await Promise.all([first.result, second.result, third.result]);
     subscription.dispose();
 

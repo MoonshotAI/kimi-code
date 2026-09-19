@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { encodeHeader, encodeLine, parseHeader, parseLine } from '#/store/internal/codec';
-import type { BranchHeader, EntryLine } from '#/store/types';
+import { encodeHeader, encodeLine, parseHeader, parseLine } from '#/store/internal/storage/codec';
+import type { BranchHeader, EntryLine } from '#/store/storage';
 
 describe('codec header', () => {
   it('round-trips a minimal header', () => {

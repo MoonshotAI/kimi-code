@@ -63,7 +63,9 @@
       # -------------------------------------------------------------------
       workspacePaths = [
         ./packages/acp-server
+        ./packages/agent-core
         ./packages/agent-core-v2
+        ./packages/harness-core
         ./packages/kap-server
         ./packages/klient
         ./packages/migration-legacy
@@ -85,7 +87,9 @@
 
       workspaceNames = [
         "@moonshot-ai/acp-server"
+        "@moonshot-ai/agent-core"
         "@moonshot-ai/agent-core-v2"
+        "@moonshot-ai/harness-core"
         "@moonshot-ai/kap-server"
         "@moonshot-ai/migration-legacy"
         "@moonshot-ai/minidb"

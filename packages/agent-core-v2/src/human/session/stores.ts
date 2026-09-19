@@ -1,11 +1,6 @@
-import { createEventStore, type EventStore } from '#/eventStore/eventStore';
-import type { ExternalEvent } from '#/eventStore/events';
-import { journalFromBranch } from '#/eventStore/journal';
+import { createEventStore, journalFromBranch, type EventStore, type ExternalEvent } from '#/store/log';
 import { agentSlices, type AgentEventStore } from '#/agent/slices';
-import type { StoreBackend } from '#/store/backend/backend';
-import type { Branch } from '#/store/branch';
-import { StoreError, type BranchRef } from '#/store/types';
-import type { Tree } from '#/store/tree';
+import { StoreError, type BranchRef, type Branch, type Tree } from '#/store/storage';
 
 import { agentClosed, agentOpened, agentSwitched, SESSION_LOG_BRANCH } from './events';
 import { sessionSlices } from './slices';
@@ -48,10 +43,7 @@ export class SessionStores {
   private readonly agents = new Map<string, AgentEventStore>();
   private sessionStore: SessionStore | undefined;
 
-  constructor(
-    readonly tree: Tree,
-    readonly backend: StoreBackend,
-  ) {}
+  constructor(readonly tree: Tree) {}
 
   get(agentId: string): AgentEventStore | undefined {
     return this.agents.get(agentId);

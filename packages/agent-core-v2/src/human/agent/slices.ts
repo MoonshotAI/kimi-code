@@ -1,6 +1,5 @@
-import type { CombinedState, EventStore } from '#/eventStore/eventStore';
-import { createSlice } from '#/eventStore/slice';
-import type { BranchRef } from '#/store/types';
+import { createSlice, type CombinedState, type EventStore } from '#/store/log';
+import type { BranchRef } from '#/store/storage';
 
 import {
   inputCancelled,

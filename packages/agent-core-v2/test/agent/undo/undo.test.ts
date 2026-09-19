@@ -439,7 +439,9 @@ describe('AgentConversationUndoService', () => {
     try {
       await ctx.get(IAgentConversationUndoService).undo(1);
 
-      expect(order).toEqual(['flush', 'flush', 'state', 'flush', 'context.undone']);
+      expect(order.filter((entry) => entry !== 'flush')).toEqual(['state', 'context.undone']);
+      expect(order[0]).toBe('flush');
+      expect(order.slice(order.indexOf('state'))).toEqual(['state', 'flush', 'context.undone']);
     } finally {
       subscription.dispose();
       flush.mockRestore();
@@ -447,24 +449,23 @@ describe('AgentConversationUndoService', () => {
   });
 
   it.each([
-    [1, []],
-    [3, ['state']],
+    ['before-switch', []],
+    ['after-reconciliation', ['state']],
   ] as const)(
-    'rejects the undo when wire flush %i fails',
-    async (failureCall, expectedReconciled) => {
+    'rejects the undo when persistence fails %s',
+    async (failurePhase, expectedReconciled) => {
       await setup();
       const wire = ctx.get(IWireService);
       const originalFlush = wire.flush.bind(wire);
-      let flushCalls = 0;
+      const reconciled: string[] = [];
       const storageError = new Error('storage unavailable');
       const flush = vi.spyOn(wire, 'flush').mockImplementation(async () => {
-        flushCalls += 1;
-        if (flushCalls === failureCall) throw storageError;
+        if (failurePhase === 'before-switch' || reconciled.length > 0) throw storageError;
         await originalFlush();
       });
       const originalAppend = wire.appendRecord.bind(wire);
       const appendRecord = vi.spyOn(wire, 'appendRecord');
-      if (failureCall === 1) {
+      if (failurePhase === 'before-switch') {
         appendRecord.mockImplementation((record, dehydrate) => {
           if (
             record.type === 'agent.switched' ||
@@ -476,7 +477,6 @@ describe('AgentConversationUndoService', () => {
           originalAppend(record, dehydrate);
         });
       }
-      const reconciled: string[] = [];
       const participants = ctx.get(IAgentConversationUndoParticipantRegistry);
       participants.register({
         id: 'test.flush-failure-state',
@@ -492,7 +492,7 @@ describe('AgentConversationUndoService', () => {
 
       try {
         await expect(ctx.get(IAgentConversationUndoService).undo(1)).rejects.toBe(storageError);
-        if (failureCall === 1) {
+        if (failurePhase === 'before-switch') {
           expect(ctx.context.get().map((message) => message.role)).toEqual(['user', 'assistant']);
         } else {
           expect(ctx.context.get()).toEqual([]);

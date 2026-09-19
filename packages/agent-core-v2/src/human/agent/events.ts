@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { defineEvent } from '#/eventStore/events';
+import { defineEvent } from '#/store/log';
 
 import {
   historyMessageSchema,

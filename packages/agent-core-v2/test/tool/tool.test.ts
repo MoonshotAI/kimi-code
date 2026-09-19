@@ -3141,8 +3141,9 @@ describe('Agent tool execution contract', () => {
       run_in_background: true,
     });
     if (typeof result.output !== 'string') throw new TypeError('expected string output');
-    const taskId = result.output.match(/task_id: (agent-[0-9a-z]{8})/)?.[1];
-    expect(taskId).toBeDefined();
+    expect(result.isError, result.output).not.toBe(true);
+    const taskId = result.output.match(/task_id: (\S+)/)?.[1];
+    expect(taskId).toBe('call_agent');
 
     await expect(tasks.stop(taskId!, 'no longer needed')).resolves.toMatchObject({
       status: 'killed',

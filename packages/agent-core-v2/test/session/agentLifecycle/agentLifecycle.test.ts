@@ -111,8 +111,8 @@ import {
   type ToolRegistrationOptions,
 } from '#/agent/toolRegistry/toolRegistry';
 import type { ExecutableTool } from '#/tool/toolContract';
-import { createFeature, featureSpecs } from '#human/feature/index';
-import { AgentScope, createUnit, inject, ref, watchEffect, type EffectScope } from '#human/kernel/index';
+import { AgentScope, createFeature, featureSpecs } from '#human/feature/index';
+import { createUnit, inject, ref, watchEffect, type EffectScope } from '#human/kernel/index';
 import '#/agent/toolActivation/toolActivationService';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';

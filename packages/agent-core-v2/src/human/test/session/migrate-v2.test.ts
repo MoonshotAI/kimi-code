@@ -16,9 +16,9 @@ import type { AgentEventStore, TurnIndexState } from '#/agent/slices';
 import type { HistoryMessage } from '#/agent/turn';
 import { createSessionMachine, type AgentActorRef } from '#/session/machine';
 import type { SessionStores } from '#/session/stores';
-import { createSlice } from '#/eventStore/slice';
-import { openSessionStore } from '#/persist/open';
-import { migrateV2Session } from '#/persist/v2/migrate';
+import { createSlice } from '#/store/log';
+import { openSessionStore } from '#/session/open';
+import { migrateV2Session } from '#/store/importers/v2';
 import { testScopeFactory } from '#/test/agent/scope-factory';
 
 const MAIN = 'main';
@@ -564,7 +564,7 @@ describe('migrateV2Session', () => {
         },
       },
     });
-    const first = await openSessionStore(dir);
+    const first = await openSessionStore(dir, { treeName: 'custom-session' });
     expect(first.migrated).toBe(true);
 
     const agentStore = await first.stores.open(MAIN);
@@ -605,7 +605,7 @@ describe('migrateV2Session', () => {
     session.stop();
     await first.stores.dispose();
 
-    const second = await openSessionStore(dir);
+    const second = await openSessionStore(dir, { treeName: 'custom-session' });
     expect(second.migrated).toBe(false);
     const roster = (await second.stores.session()).getState().roster.agents;
     expect(Object.keys(roster)).toEqual([MAIN]);

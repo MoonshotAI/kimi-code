@@ -2,6 +2,7 @@
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
+import { isBuiltin } from 'node:module';
 
 const PKG_ROOT = resolve(import.meta.dirname, '..');
 export const SRC_ROOT = join(PKG_ROOT, 'src');
@@ -39,6 +40,17 @@ function basesInternalViolation(absFile, targetAbs, specifier) {
   if (BASES_DIR_RE.test(absFile) || TEST_DIR_RE.test(absFile)) return undefined;
   return `protocol format modules are internal to the requester pipeline ('${specifier}') — only llm/requester/bases code and tests may import format/lower/patterns; everyone else speaks contract/trait/requester`;
 }
+
+const STORE_IMPORTER_VOCABULARY = new Set([
+  'agent/events',
+  'agent/historyBuilder',
+  'session/events',
+  'session/layout',
+  'llm/message',
+  'llm/finish-reason',
+  'llm/usage',
+  'todo/todoItem',
+]);
 
 const HUMAN_VOCABULARY = new Set([
   'agent/historyBuilder',
@@ -91,8 +103,8 @@ function humanSubpathOf(specifier) {
   return undefined;
 }
 
-function stripTs(path) {
-  return path.endsWith('.ts') ? path.slice(0, -'.ts'.length) : path;
+function stripModuleExtension(path) {
+  return path.replace(/\.(?:[cm]?[jt]s|[jt]sx)$/, '');
 }
 
 function resolveIntraV2(specifier, fromFile) {
@@ -145,8 +157,32 @@ export function checkSource(source, absFile) {
     if (!inSrc) continue;
 
     const targetAbs = resolveIntraV2(specifier, absFile);
+    const kernelRoot = join(HUMAN_ROOT, 'kernel');
+    const storeRoot = join(HUMAN_ROOT, 'store');
+    const target = targetAbs === undefined ? undefined : stripModuleExtension(targetAbs);
+    const importerRoot = join(storeRoot, 'importers');
+    const legacyRoot = join(importerRoot, 'v2');
+    const isLegacyImporter = (path) => path === legacyRoot || isInside(legacyRoot, path);
+    const isStoreAdapter = (path) => path === join(storeRoot, 'node') || path === join(storeRoot, 'actor') || path === join(storeRoot, 'internal/storage/backend/node') || isLegacyImporter(path);
+    const isXState = specifier === 'xstate' || specifier.startsWith('xstate/');
+    if (isInside(kernelRoot, absFile) && (target === undefined ? specifier !== '@vue/reactivity' : !isInside(kernelRoot, target))) {
+      violations.push({ file: absFile, line, message: `kernel primitives must not depend on upper domains ('${specifier}')` });
+    }
+    if (isInside(storeRoot, absFile) && !isStoreAdapter(stripModuleExtension(absFile)) && (target === undefined ? isBuiltin(specifier) || isXState : isStoreAdapter(target) || isInside(importerRoot, target) || (!isInside(storeRoot, target) && !isInside(kernelRoot, target)))) {
+      violations.push({ file: absFile, line, message: `Store core must not depend on business or adapter modules ('${specifier}')` });
+    }
+    if (isLegacyImporter(stripModuleExtension(absFile))) {
+      const vocabulary = target === undefined ? undefined : relative(HUMAN_ROOT, target);
+      const turnTypes = vocabulary === 'agent/turn' && /^(?:import|export)\s+type\b/.test(match[0]);
+      if (target === undefined ? isXState : target === join(storeRoot, 'actor') || (!isInside(storeRoot, target) && !STORE_IMPORTER_VOCABULARY.has(vocabulary) && !turnTypes)) {
+        violations.push({ file: absFile, line, message: `Store importer is limited to legacy event/data vocabulary ('${specifier}')` });
+      }
+    }
+    if (target !== undefined && isInside(join(storeRoot, 'internal'), target) && !isInside(storeRoot, absFile) && absFile !== join(HUMAN_ROOT, 'test/store/codec.test.ts')) {
+      violations.push({ file: absFile, line, message: `Store internals are private; use an explicit public Store entry ('${specifier}')` });
+    }
     if (targetAbs !== undefined) {
-      const basesInternal = basesInternalViolation(absFile, stripTs(targetAbs), specifier);
+      const basesInternal = basesInternalViolation(absFile, stripModuleExtension(targetAbs), specifier);
       if (basesInternal !== undefined) {
         violations.push({ file: absFile, line, message: basesInternal });
       }
@@ -172,7 +208,7 @@ export function checkSource(source, absFile) {
         });
       }
       if (targetAbs !== undefined) {
-        const traitBoundary = traitBoundaryViolation(absFile, stripTs(targetAbs), specifier);
+        const traitBoundary = traitBoundaryViolation(absFile, stripModuleExtension(targetAbs), specifier);
         if (traitBoundary !== undefined) {
           violations.push({ file: absFile, line, message: traitBoundary });
         }
@@ -181,7 +217,7 @@ export function checkSource(source, absFile) {
     }
 
     const humanSub = humanSubpathOf(specifier);
-    if (humanSub !== undefined && !inAdapter && !HUMAN_VOCABULARY.has(stripTs(humanSub))) {
+    if (humanSub !== undefined && !inAdapter && !HUMAN_VOCABULARY.has(stripModuleExtension(humanSub))) {
       violations.push({
         file: absFile,
         line,

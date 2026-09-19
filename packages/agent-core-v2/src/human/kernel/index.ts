@@ -1,8 +1,5 @@
 export * from './primitives';
-export * from './capabilities';
-export * from './store';
 export {
-  AgentScope,
   EventContext,
   UnitNode,
   createUnit,
@@ -19,11 +16,11 @@ export {
   useFire,
   useNode,
   useOn,
+  useReady,
 } from './runtime';
 export type {
   ChildEntry,
   EventHandler,
-  FaceEventMeta,
   KernelRecipe,
   MountRootOptions,
   NodeRef,

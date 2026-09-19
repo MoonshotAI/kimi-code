@@ -1,8 +1,8 @@
 import { HUMAN_AGENT_DOMAIN, humanEventType, humanRecordType } from '#/wire/human';
 import type { WireLine } from '#/wire/tree/index';
 import type { IWireService } from '#/wire/wire';
-import type { JournalRecord, SyncStoreJournal } from '#human/eventStore/journal';
-import type { AppendInput, EntryLine } from '#human/store/types';
+import type { JournalRecord, SyncStoreJournal } from '#human/store/log';
+import type { AppendInput, EntryLine } from '#human/store/storage';
 
 export const ENGINE_JOURNAL_DOMAIN = HUMAN_AGENT_DOMAIN;
 
@@ -60,7 +60,7 @@ export function wireStoreJournal(wire: IWireService, domain: string): SyncStoreJ
     },
     readSync: () => [...read()],
     nextSeq: () => read().length,
-    settled: () => wire.settled(),
+    settled: () => wire.flush(),
   };
 }
 

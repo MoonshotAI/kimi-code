@@ -14,11 +14,10 @@ export type Unsubscribe = () => void;
 
 export const EventContext = createToken<Record<string, unknown>>('kernel.eventContext');
 
-export const AgentScope = createToken<EffectScope>('kernel.agentScope');
-
 export interface NodeRef {
   readonly name: string;
   readonly parent: NodeRef | null;
+  readonly signal: AbortSignal;
   mount(recipe: KernelRecipe, props?: unknown): UnitHandle;
   provide<T>(token: Token<T>, value: T): Unsubscribe;
   providerRef<T>(token: Token<T>): ShallowRef<readonly ProviderEntry<T>[]>;
@@ -27,6 +26,7 @@ export interface NodeRef {
   fold<T>(collection: CollectionToken<T>): readonly T[];
   fire(event: RuntimeEvent): void;
   on(type: string, handler: EventHandler, opts?: { once?: boolean; capture?: boolean }): Unsubscribe;
+  ready(): Promise<void>;
   unmount(): Promise<void>;
 }
 
@@ -42,14 +42,7 @@ export interface UnitRecipe<P = void> {
   readonly setup: UnitSetup<P>;
 }
 
-export interface FaceEventMeta {
-  readonly type: string;
-  readonly payloadKey: string;
-  readonly name: string;
-}
-
 export interface RecipeExtension {
-  readonly faceEvent?: FaceEventMeta;
   readonly onMount?: (recipe: UnitRecipe<any>, node: UnitNode) => void;
 }
 
@@ -66,6 +59,7 @@ export interface UnitHandle {
   readonly state: UnitState;
   readonly node: NodeRef;
   update(props: unknown): void;
+  ready(): Promise<void>;
   unmount(): Promise<void>;
 }
 
@@ -97,6 +91,8 @@ export class UnitNode implements NodeRef {
   parent: UnitNode | null;
   readonly children: UnitNode[] = [];
   readonly internals = new Map<string, unknown>();
+  private readonly lifetime = new AbortController();
+  readonly signal: AbortSignal = this.lifetime.signal;
   props: unknown;
   readonly propsView: unknown;
   state: UnitState = 'pending';
@@ -104,7 +100,6 @@ export class UnitNode implements NodeRef {
   readonly scope: EffectScope;
   readonly postSetup: Array<() => void> = [];
   stack: StackEntry[] = [];
-  faceWatchers: Set<(face: unknown) => void> | undefined;
   private readonly provisions = new Map<Token<unknown>, ProviderEntry[]>();
   private directory: Map<Token<unknown>, ShallowRef<readonly ProviderEntry[]>> | undefined;
   private readonly contributions = shallowReactive(
@@ -269,23 +264,58 @@ export class UnitNode implements NodeRef {
     };
   }
 
+  private readonly pendingReady = new Set<Promise<unknown>>();
   private unmountPromise: Promise<void> | undefined;
 
+  trackReady(operation: Promise<unknown>): void {
+    this.pendingReady.add(operation);
+    void operation.then(() => this.pendingReady.delete(operation), () => {});
+  }
+
+  async ready(): Promise<void> {
+    for (;;) {
+      if (this.signal.aborted) throw new Error(`unit '${this.name}' is unmounted`);
+      await Promise.all(this.pendingReady);
+      const children = [...this.children];
+      await Promise.all(children.map((child) => child.ready().catch(async (error: unknown) => {
+        if (child.state !== 'unmounted') throw error;
+        await child.unmount();
+      })));
+      if (this.signal.aborted) throw new Error(`unit '${this.name}' is unmounted`);
+      if (this.pendingReady.size === 0 && children.length === this.children.length && children.every((child, index) => child === this.children[index])) return;
+    }
+  }
+
   unmount(): Promise<void> {
-    this.unmountPromise ??= this.performUnmount();
+    if (this.unmountPromise === undefined) {
+      this.unmountPromise = this.performUnmount();
+      if (this.parent?.state !== 'unmounted') this.parent?.trackReady(this.unmountPromise);
+    }
     return this.unmountPromise;
   }
 
   private async performUnmount(): Promise<void> {
     this.state = 'unmounted';
-    for (const child of this.children.toReversed()) {
-      await child.unmount();
-    }
+    this.lifetime.abort();
     this.scope.stop();
+    const errors: unknown[] = [];
+    for (const child of this.children.toReversed()) {
+      try {
+        await child.unmount();
+      } catch (error) {
+        errors.push(error);
+      }
+    }
     while (this.stack.length > 0) {
       const entry = this.stack.pop() as StackEntry;
-      await entry.cleanup();
+      try {
+        await entry.cleanup();
+      } catch (error) {
+        errors.push(error);
+      }
     }
+    await Promise.allSettled(this.pendingReady);
+    this.handlers.clear();
     if (this.parent !== null) {
       const index = this.parent.children.indexOf(this);
       if (index >= 0) {
@@ -293,6 +323,7 @@ export class UnitNode implements NodeRef {
       }
       this.parent = null;
     }
+    if (errors.length > 0) throw new AggregateError(errors, `failed to unmount '${this.name}'`);
   }
 }
 
@@ -411,6 +442,7 @@ export function handleFor(node: UnitNode): UnitHandle {
         Object.assign(view, props);
       }
     },
+    ready: () => node.ready(),
     async unmount() {
       await node.unmount();
     },
@@ -462,6 +494,15 @@ export function runUnit(node: UnitNode): void {
   if (node.state === 'pending') {
     node.state = 'active';
   }
+}
+
+export function useReady(operation: Promise<unknown>): void {
+  const node = currentUnit();
+  let cancel = (): void => {};
+  const cancelled = new Promise<void>((resolve) => { cancel = resolve; });
+  node.signal.addEventListener('abort', cancel, { once: true });
+  if (node.signal.aborted) cancel();
+  node.trackReady(Promise.race([operation, cancelled]).finally(() => node.signal.removeEventListener('abort', cancel)));
 }
 
 export function provide<T>(token: Token<T>, value: T): void {
@@ -516,25 +557,29 @@ interface ChildMount {
   handle: UnitHandle;
 }
 
-export function useChildren(source: MaybeRefOrGetter<Array<ChildEntry | null>>): void {
+export function useChildren(source: MaybeRefOrGetter<Array<ChildEntry | null>>): { ready(): Promise<void> } {
   const node = currentUnit();
   const mounts = new Map<string, ChildMount>();
-  watchEffect(() => {
-    const entries = toValue(source);
-    const seen = new Set<string>();
-    for (const entry of entries) {
-      if (entry === null) {
-        continue;
+  let desired = new Map<string, ChildEntry>();
+  let pending: Promise<void> | undefined;
+  const reconcile = (): void => {
+    if (node.state === 'unmounted' || pending !== undefined) return;
+    const removals: Promise<void>[] = [];
+    for (const [key, child] of mounts) {
+      if (desired.get(key)?.recipe !== child.recipe) {
+        mounts.delete(key);
+        removals.push(child.handle.unmount());
       }
-      if (seen.has(entry.key)) {
-        throw new Error(`duplicate child key '${entry.key}' in unit '${node.recipe.name}'`);
-      }
-      seen.add(entry.key);
-      const existing = mounts.get(entry.key);
-      if (existing !== undefined && existing.recipe !== entry.recipe) {
-        void existing.handle.unmount();
-        mounts.delete(entry.key);
-      }
+    }
+    if (removals.length > 0) {
+      pending = Promise.all(removals).then(() => {
+        pending = undefined;
+        reconcile();
+      });
+      node.trackReady(pending);
+      return;
+    }
+    for (const entry of desired.values()) {
       const current = mounts.get(entry.key);
       if (current === undefined) {
         const handle = node.mount(entry.recipe, entry.props);
@@ -544,13 +589,31 @@ export function useChildren(source: MaybeRefOrGetter<Array<ChildEntry | null>>):
         current.handle.update(entry.props);
       }
     }
-    for (const [key, child] of Array.from(mounts)) {
-      if (!seen.has(key)) {
-        mounts.delete(key);
-        void child.handle.unmount();
-      }
+  };
+  watchEffect(() => {
+    const next = new Map<string, ChildEntry>();
+    for (const entry of toValue(source)) {
+      if (entry === null) continue;
+      if (next.has(entry.key)) throw new Error(`duplicate child key '${entry.key}' in unit '${node.recipe.name}'`);
+      next.set(entry.key, entry);
     }
+    desired = next;
+    reconcile();
   });
+  return {
+    ready: async () => {
+      for (;;) {
+        if (node.state === 'unmounted') throw new Error(`unit '${node.name}' is unmounted`);
+        await pending;
+        const snapshot = [...mounts.values()];
+        await Promise.all(snapshot.map((child) => child.handle.ready().catch(async (error: unknown) => {
+          if (child.handle.state !== 'unmounted') throw error;
+          await child.handle.unmount();
+        })));
+        if (pending === undefined && snapshot.length === mounts.size && snapshot.every((child) => [...mounts.values()].includes(child))) return;
+      }
+    },
+  };
 }
 
 export function createUnit<P = void>(name: string, setup: UnitSetup<P>): UnitRecipe<P> {

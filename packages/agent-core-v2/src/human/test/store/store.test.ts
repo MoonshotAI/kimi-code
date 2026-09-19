@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { MemoryBackend } from '#/store/backend/memory';
-import { TreeStore } from '#/store/store';
-import type { CorruptionReport, EntryLine } from '#/store/types';
+import { MemoryBackend, TreeStore, type CorruptionReport, type EntryLine } from '#/store/storage';
 
 function openStore(backend: MemoryBackend = new MemoryBackend(), opts?: { offloadThreshold?: number }) {
   return TreeStore.open(backend, opts);

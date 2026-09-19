@@ -1,4 +1,4 @@
-import { createSlice } from '#/eventStore/slice';
+import { createSlice } from '#/store/log';
 
 import { stateUpdated, turnStarted, type StateUpdated, type TurnStarted } from '#/agent/events';
 

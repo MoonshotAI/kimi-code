@@ -11,9 +11,7 @@ import { createUserEntry } from '#/agent/turn';
 import type { AgentEventStore } from '#/agent/slices';
 import { SessionStores } from '#/session/stores';
 import type { AgentSwitched } from '#/session/events';
-import { MemoryBackend } from '#/store/backend/memory';
-import { TreeStore } from '#/store/store';
-import type { Tree } from '#/store/tree';
+import { MemoryBackend, TreeStore, type Tree } from '#/store/storage';
 import { testScopeFactory } from '#/test/agent/scope-factory';
 
 const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
@@ -42,7 +40,7 @@ async function testEnv(): Promise<TestEnv> {
   const backend = new MemoryBackend();
   const store = await TreeStore.open(backend, {});
   const tree = await store.tree('sess');
-  return { backend, tree, stores: new SessionStores(tree, backend) };
+  return { backend, tree, stores: new SessionStores(tree) };
 }
 
 async function reopen(env: TestEnv): Promise<TestEnv> {
@@ -50,7 +48,7 @@ async function reopen(env: TestEnv): Promise<TestEnv> {
   await env.stores.dispose();
   const store = await TreeStore.open(env.backend, {});
   const tree = await store.tree('sess');
-  return { backend: env.backend, tree, stores: new SessionStores(tree, env.backend) };
+  return { backend: env.backend, tree, stores: new SessionStores(tree) };
 }
 
 function startAgent(store: AgentEventStore, requester: LlmRequester = createEchoRequester()): AgentActor {

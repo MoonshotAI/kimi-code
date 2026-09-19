@@ -2,8 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { turnStarted } from '#/agent/events';
 import { agentSlices, type AgentEventStore } from '#/agent/slices';
-import { createEventStoreSync } from '#/eventStore/eventStore';
-import { memoryJournal } from '#/eventStore/journal';
+import { createEventStoreSync, memoryJournal } from '#/store/log';
 import { extractText, type SystemMessage, type ToolCall, type UserMessage } from '#/llm/message';
 import type { AgentEmitted } from '#/agent/machine';
 import { connectPlugins, type AgentPluginTarget, type Plugin } from '#/plugin';

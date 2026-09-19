@@ -23,12 +23,8 @@ import {
   createSessionMachine,
   type AgentActorRef,
 } from '#/session/machine';
-import { createEventStore } from '#/eventStore/eventStore';
-import { journalFromBranch } from '#/eventStore/journal';
-import { MemoryBackend } from '#/store/backend/memory';
-import { TreeStore } from '#/store/store';
-import type { BranchRef } from '#/store/types';
-import type { Tree } from '#/store/tree';
+import { createEventStore, journalFromBranch } from '#/store/log';
+import { MemoryBackend, TreeStore, type BranchRef, type Tree } from '#/store/storage';
 import { testScopeFactory } from '#/test/agent/scope-factory';
 
 const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
