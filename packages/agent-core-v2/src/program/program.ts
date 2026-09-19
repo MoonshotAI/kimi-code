@@ -1,5 +1,4 @@
 import { Emitter, Event } from '#/_base/event';
-import { UserFileSkillSource } from '#/features/skill/catalog/userFileSkillSource';
 import { GitService } from '#/app/git/gitService';
 import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
 import type { Environment, EnvironmentBinding, EnvironmentLease, EnvironmentWorkspaceRoots } from '#/environment/environment';
@@ -385,7 +384,7 @@ export class Program {
       const agentProfiles = own(new WorkspaceAgentProfileLoaderService(context, targetFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
       const localSkillDiscovery = new EnvironmentSkillDiscovery(this.dependencies.log, localFs);
       const targetSkillDiscovery = new EnvironmentSkillDiscovery(this.dependencies.log, targetFs);
-      const userSkills = own(new UserFileSkillSource(localSkillDiscovery, this.dependencies.bootstrap, this.dependencies.config));
+      const userSkills = this.dependencies.userSkills;
       const explicitSkills = new ExplicitFileSkillSource(localSkillDiscovery, this.context, this.dependencies.bootstrap, localFs);
       const extraSkills = own(new ExtraFileSkillSource(localSkillDiscovery, this.dependencies.config, this.context, this.dependencies.bootstrap, localFs));
       const workspaceSkills = own(new WorkspaceRootSkillSource(targetSkillDiscovery, context, this.dependencies.config, this.dependencies.bootstrap, targetFs));

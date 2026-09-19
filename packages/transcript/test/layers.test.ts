@@ -593,10 +593,10 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
       [
         { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } },
         { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
-        { role: 'user', content: [{ type: 'text', text: 'steered in' }], toolCalls: [], origin: { kind: 'user' } },
+        { id: 'm-steer', role: 'user', content: [{ type: 'text', text: 'steered in' }], toolCalls: [], origin: { kind: 'user' } },
         { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] },
       ],
-      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), new Map([['user', 1]])]]) },
+      { steeredByMessageId: new Map([['m-steer', ['p2']]]) },
     );
 
     expect(snapshot.items.map((i) => i.kind)).toEqual(['turn']);
@@ -607,6 +607,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
       kind: 'text',
       role: 'user',
       text: 'steered in',
+      promptIds: ['p2'],
     });
   });
 

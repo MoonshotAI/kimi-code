@@ -145,6 +145,7 @@ export const catalogProviderItemSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   wire_type: providerWireTypeSchema.nullable(),
+  base_url: z.string().nullable(),
   guessed: z.boolean(),
   needs_base_url: z.boolean(),
   rejected: z.boolean(),

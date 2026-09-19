@@ -13,7 +13,8 @@ import { BugIndicatingError, Error2, ErrorCodes, onUnexpectedError } from '#/err
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ILogService } from '#/_base/log/log';
 import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { watch } from '#human/utils/watch';
+import { setWatchEnabled, watchCandidates } from '#human/utils/watch';
+import { WATCH_SECTION, type WatchConfig } from '#/app/watch/configSection';
 
 import {
   type AnyEnvBindings,
@@ -347,9 +348,10 @@ export class ConfigService extends Disposable implements IConfigService {
     const { configKey } = this;
     const { homeDir } = this.bootstrap;
     this.seedInitialLoad();
+    this.applyWatchEnabled();
     this.ready = this.load('load');
     const configFile = join(homeDir, configKey);
-    const handle = watch(homeDir, { depth: 0 });
+    const handle = watchCandidates(homeDir, [configFile]);
     this._register(handle);
     this._register(
       handle.onDidChange((change) => {
@@ -666,6 +668,7 @@ export class ConfigService extends Disposable implements IConfigService {
     this.applySectionEnvBindings(next, true);
     this.applyEnvOverlay(next);
     this.effective = next;
+    this.applyWatchEnabled();
 
     const candidates = new Set(
       domains ?? [...Object.keys(previous), ...Object.keys(next)],
@@ -675,6 +678,10 @@ export class ConfigService extends Disposable implements IConfigService {
     }
     this.commit(source, [...candidates]);
     this.emitDiagnosticsIfChanged();
+  }
+
+  private applyWatchEnabled(): void {
+    setWatchEnabled(this.get<WatchConfig | undefined>(WATCH_SECTION)?.enabled ?? true);
   }
 
   private deliveredValue(domain: string): unknown {

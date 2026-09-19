@@ -4,6 +4,7 @@ import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IPluginService } from '#/app/plugin/plugin';
+import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 
 import { HOOKS_SECTION, type HookDefConfig } from '../configSection';
@@ -34,6 +35,7 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IHostProcessService private readonly hostProcess: IHostProcessService,
     @ILogService private readonly log: ILogService,
+    @ITelemetryService private readonly telemetry: ITelemetryService = noopTelemetryService,
     private readonly callbacks: HookRunCallbacks = {},
   ) {
     super();
@@ -111,7 +113,7 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
     args: ExternalHooksRunnerTriggerArgs,
   ): Promise<HookResult[]> {
     await this.ready;
-    return runMatchedHooks(
+    const results = await runMatchedHooks(
       this.hostProcess,
       this.byEvent,
       event,
@@ -134,6 +136,17 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
         },
       },
     );
+    if (results.length > 0) {
+      this.telemetry.track2('external_hook_resolved', {
+        event,
+        action: blockDecision(event, results) === undefined ? 'allow' : 'block',
+        matched_count: results.length,
+        failed_count: results.filter(
+          (r) => r.timedOut === true || r.errored === true || (!!r.exitCode && r.exitCode !== 2),
+        ).length,
+      });
+    }
+    return results;
   }
 
   private async loadSafe(): Promise<void> {

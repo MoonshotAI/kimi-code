@@ -530,7 +530,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 浏览 models.dev 目录，由服务端代理，带 10 分钟内存缓存与内置快照兜底。条目保持上游目录顺序。服务无法导入的条目携带 `rejected: true` 与机器可读的 `reject_reason`；`needs_base_url: true` 的条目在导入时要求提供 base URL。
 
-成功时 `data.items` 为 `{ id, name, wire_type, guessed, needs_base_url, rejected, reject_reason, env_key, models }` 数组：`wire_type` 是解析出的协议（可空，枚举与供应商 `type` 相同），`guessed` 标记启发式解析，`env_key` 是上游约定的 API 密钥环境变量（可空），`models` 是 `{ id, name?, max_context_size, capabilities?, reasoning }` 的数组。
+成功时 `data.items` 为 `{ id, name, wire_type, base_url, guessed, needs_base_url, rejected, reject_reason, env_key, models }` 数组：`wire_type` 是解析出的协议（可空，枚举与供应商 `type` 相同），`base_url` 是解析出的端点（可空；`needs_base_url` 或被拒绝的条目为 null），`guessed` 标记启发式解析，`env_key` 是上游约定的 API 密钥环境变量（可空），`models` 是 `{ id, name?, max_context_size, capabilities?, reasoning }` 的数组。
 
 - `50004`：目录不可用（在线拉取与内置快照均失败）
 

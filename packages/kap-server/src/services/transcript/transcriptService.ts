@@ -41,7 +41,7 @@ import {
   type TranscriptTurn,
 } from '@moonshot-ai/transcript';
 
-import { readWireRecords, type ContextRecord } from './wireRecords';
+import { WireRecordCache, type ContextRecord } from './wireCache';
 import { toWireQuestion } from '../../protocol/question-wire';
 import { projectPromptContentParts } from '../messages/messageProjection';
 import {
@@ -92,6 +92,7 @@ export class TranscriptService {
     Set<(event: TranscriptChangeEvent, seq: number) => void>
   >();
   private readonly healTimers = new Map<string, { ordinals: Set<number>; timer: NodeJS.Timeout }>();
+  private readonly wireCache = new WireRecordCache();
 
   constructor(private readonly deps: TranscriptServiceDeps) {
     followSessionLifecycles(deps.core.accessor, (service) => {
@@ -513,9 +514,9 @@ export class TranscriptService {
       agentId,
       WIRE_FILE,
     );
-    let records: Awaited<ReturnType<typeof readWireRecords>>;
+    let records: ContextRecord[];
     try {
-      records = await readWireRecords(wirePath);
+      records = await this.wireCache.read(wirePath);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         return groupMessagesIntoSnapshot([]);
@@ -526,7 +527,10 @@ export class TranscriptService {
     const taskOriginTurnTaskIds = new Set<string>();
     const steeredContents = new Map<string, Map<string, number>>();
     const pendingSteers = new Map<string, Map<string, number>>();
-    const matchedSteers: { key: string; kind: string }[] = [];
+    const matchedSteers: (
+      | { messageId: string; promptIds: readonly string[] }
+      | { key: string; kind: string }
+    )[] = [];
     const turnPromptIds = new Set<string>();
     const anchorStack: { taskIdsSnapshot: Set<string>; steerCount: number }[] = [];
     let anchorFloor = 0;
@@ -564,6 +568,11 @@ export class TranscriptService {
         continue;
       }
       if (record.type === 'turn.steer') {
+        const messageId = record['messageId'];
+        if (typeof messageId === 'string' && messageId.length > 0) {
+          matchedSteers.push({ messageId, promptIds: promptIdsFromSteerRecord(record) });
+          continue;
+        }
         const input = record['input'];
         if (Array.isArray(input)) {
           const key = JSON.stringify(input);
@@ -588,15 +597,20 @@ export class TranscriptService {
         taskOriginTurnTaskIds.add(origin.taskId);
       }
     }
+    const steeredByMessageId = new Map<string, readonly string[]>();
     for (const steer of matchedSteers) {
+      if ('messageId' in steer) {
+        steeredByMessageId.set(steer.messageId, steer.promptIds);
+        continue;
+      }
       const byKind = steeredContents.get(steer.key) ?? new Map<string, number>();
       byKind.set(steer.kind, (byKind.get(steer.kind) ?? 0) + 1);
       steeredContents.set(steer.key, byKind);
     }
     const base = groupMessagesIntoSnapshot(
       messages,
-      sawTurnPrompt || steeredContents.size > 0
-        ? { taskOriginTurnTaskIds, steeredContents, turnPromptIds }
+      sawTurnPrompt || steeredContents.size > 0 || steeredByMessageId.size > 0
+        ? { taskOriginTurnTaskIds, steeredContents, steeredByMessageId, turnPromptIds }
         : undefined,
     );
     const folded = foldWireRecordFacts(projectQuestionInteractionRecords(records, sessionId), base, {
@@ -829,4 +843,10 @@ export function healTurnOps(
     }
   }
   return ops;
+}
+
+function promptIdsFromSteerRecord(record: ContextRecord): readonly string[] {
+  const value = record['promptIds'];
+  if (!Array.isArray(value)) return [];
+  return value.filter((id): id is string => typeof id === 'string' && id.length > 0);
 }
