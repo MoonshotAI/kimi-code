@@ -536,7 +536,10 @@ function effectiveRecordOf(definition: CatalogModel): ModelRecord {
     maxInputSize: definition.maxInputSize,
     maxOutputSize: definition.maxOutputSize,
     displayName: definition.displayName,
-    reasoningKey: definition.reasoningKey,
+    reasoningKey:
+      typeof definition.reasoningKey === 'string' || definition.reasoningKey === undefined
+        ? definition.reasoningKey
+        : [...definition.reasoningKey],
     adaptiveThinking: definition.adaptiveThinking,
     supportEfforts:
       definition.supportEfforts === undefined ? undefined : [...definition.supportEfforts],
@@ -561,8 +564,14 @@ function buildProtocolProviderOptions(
       if (model.betaApi !== undefined) options.betaApi = model.betaApi;
       break;
     case 'openai': {
-      const reasoningKey = nonEmpty(model.reasoningKey);
-      if (reasoningKey !== undefined) options.reasoningKey = reasoningKey;
+      const reasoningKey = model.reasoningKey;
+      if (typeof reasoningKey === 'string') {
+        const pinned = nonEmpty(reasoningKey);
+        if (pinned !== undefined) options.reasoningKey = pinned;
+      } else if (reasoningKey !== undefined) {
+        const keys = reasoningKey.map(nonEmpty).filter((key): key is string => key !== undefined);
+        if (keys.length > 0) options.reasoningKey = keys;
+      }
       if (model.offEffort !== undefined) options.offEffort = model.offEffort;
       break;
     }

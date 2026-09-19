@@ -12,25 +12,28 @@ export const DEFAULT_REASONING_KEY: ReasoningKey = KNOWN_REASONING_KEYS[0];
 
 export function extractReasoningStrings(
   source: unknown,
+  keys: readonly string[] = KNOWN_REASONING_KEYS,
 ): { key: string; value: string }[] {
   if (typeof source !== 'object' || source === null) return [];
   const record = source as Record<string, unknown>;
   const found: { key: string; value: string }[] = [];
-  for (const key of KNOWN_REASONING_KEYS) {
+  const seenValues = new Set<string>();
+  for (const key of keys) {
     const value = record[key];
-    if (typeof value === 'string') found.push({ key, value });
+    if (typeof value !== 'string' || seenValues.has(value)) continue;
+    seenValues.add(value);
+    found.push({ key, value });
   }
   return found;
 }
 
 export function extractReasoning(
   source: unknown,
-  explicitKey?: string,
+  explicitKey?: string | readonly string[],
 ): { key: string; value: string } | undefined {
   if (explicitKey !== undefined) {
-    if (typeof source !== 'object' || source === null) return undefined;
-    const value = (source as Record<string, unknown>)[explicitKey];
-    return typeof value === 'string' ? { key: explicitKey, value } : undefined;
+    const keys = typeof explicitKey === 'string' ? [explicitKey] : explicitKey;
+    return extractReasoningStrings(source, keys)[0];
   }
   return extractReasoningStrings(source)[0];
 }
@@ -38,19 +41,20 @@ export function extractReasoning(
 export class ReasoningKeyDialect {
   private _detected: string | undefined;
 
-  constructor(private readonly _explicitKey?: string) {}
+  constructor(private readonly _explicitKey?: string | readonly string[]) {}
 
   observe(source: unknown): string | undefined {
     const found = extractReasoning(source, this._explicitKey);
     if (found === undefined) return undefined;
-    if (this._explicitKey === undefined && this._detected === undefined) {
+    if (typeof this._explicitKey !== 'string' && this._detected === undefined) {
       this._detected = found.key;
     }
     return found.value;
   }
 
   outboundKey(): string {
-    return this._explicitKey ?? this._detected ?? DEFAULT_REASONING_KEY;
+    if (typeof this._explicitKey === 'string') return this._explicitKey;
+    return this._detected ?? this._explicitKey?.[0] ?? DEFAULT_REASONING_KEY;
   }
 }
 

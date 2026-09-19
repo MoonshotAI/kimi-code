@@ -183,6 +183,23 @@ describe('models config section', () => {
   it('self-registers the models section schema', () => {
     expect(new ConfigRegistry().getSection(MODELS_SECTION)).toBeDefined();
   });
+
+  it('accepts reasoningKey as a string or a non-empty string array', () => {
+    const base = { provider: 'p', model: 'm', maxContextSize: 1000 };
+    expect(
+      ModelsSectionSchema.parse({ m1: { ...base, reasoningKey: 'reasoning' } })['m1']?.reasoningKey,
+    ).toBe('reasoning');
+    expect(
+      ModelsSectionSchema.parse({
+        m1: { ...base, reasoningKey: ['reasoning', 'reasoning_content'] },
+      })['m1']?.reasoningKey,
+    ).toEqual(['reasoning', 'reasoning_content']);
+    expect(() => ModelsSectionSchema.parse({ m1: { ...base, reasoningKey: [] } })).toThrow();
+    expect(() =>
+      ModelsSectionSchema.parse({ m1: { ...base, reasoningKey: ['reasoning', 1] } }),
+    ).toThrow();
+    expect(() => ModelsSectionSchema.parse({ m1: { ...base, reasoningKey: 1 } })).toThrow();
+  });
 });
 
 describe('models TOML transforms', () => {

@@ -156,7 +156,7 @@ Each entry in the `models` table defines a model alias (the name used in `defaul
 | `off_effort` | `string` | No | Effort value sent on the wire to disable thinking (e.g. `none` for xai grok); the only way to actually stop reasoning on models that reason by default |
 | `base_url` | `string` | No | Per-model endpoint override (written by catalog imports); takes precedence over the provider's `base_url`, only effective together with `protocol` |
 | `display_name` | `string` | No | Name shown in the UI; falls back to `model` when unset |
-| `reasoning_key` | `string` | No | `openai` provider only; set when the gateway returns reasoning content under a non-standard field name (`reasoning_content` and friends are auto-detected) |
+| `reasoning_key` | `string` or `array<string>` | No | `openai` provider only; set when the gateway returns reasoning content under a non-standard field name (`reasoning_content` and friends are auto-detected). A string pins that single field; an array restricts detection to the listed fields and scans them in the given order (the first array entry is used when echoing reasoning back before any field has been observed) |
 | `adaptive_thinking` | `boolean` | No | `anthropic` provider only; force adaptive thinking on or off, omit to infer from the model name (Claude ≥ 4.6 uses adaptive) |
 
 When an alias contains `.`, use a quoted key:

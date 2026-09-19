@@ -30,7 +30,7 @@ export interface Model {
   readonly maxInputSize?: number;
   readonly maxOutputSize?: number;
   readonly displayName?: string;
-  readonly reasoningKey?: string;
+  readonly reasoningKey?: string | readonly string[];
   readonly supportEfforts?: readonly string[];
   readonly defaultEffort?: string;
   readonly alwaysThinking: boolean;

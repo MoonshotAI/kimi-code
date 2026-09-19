@@ -892,4 +892,137 @@ describe('openai requester thinking', () => {
       { type: 'text', text: 'ok' },
     ]);
   });
+
+  it('dedupes mirrored reasoning fields carrying identical text within a chunk', async () => {
+    const collect = async (
+      chunks: Record<string, unknown>[],
+      trait?: { readonly reasoningKey?: string | readonly string[] },
+    ) => {
+      const client = stubOpenAIClient(chunks);
+      const requester = createOpenAIRequester({ trait, clientFactory: client.clientFactory });
+      const accumulator = createMessageAccumulator();
+      await requester.generate(
+        { model },
+        { messages },
+        {
+          signal: new AbortController().signal,
+          onEvent: (event) => {
+            if (event.type === 'llm.streaming.part') {
+              accumulator.push(event.part);
+            }
+          },
+        },
+      );
+      return accumulator.finish().content;
+    };
+    await expect(
+      collect(
+        chatCompletionChunks([
+          { reasoning_content: 'The', reasoning: 'The' },
+          { reasoning_content: ' user', reasoning: ' user' },
+          { content: 'ok' },
+        ]),
+      ),
+    ).resolves.toEqual([
+      { type: 'think', think: 'The user', reasoningKey: 'reasoning_content' },
+      { type: 'text', text: 'ok' },
+    ]);
+    await expect(
+      collect(
+        chatCompletionChunks([
+          { reasoning_content: 'The', reasoning: 'The' },
+          { reasoning_content: ' user', reasoning: ' user' },
+          { content: 'ok' },
+        ]),
+        { reasoningKey: 'reasoning' },
+      ),
+    ).resolves.toEqual([
+      { type: 'think', think: 'The user', reasoningKey: 'reasoning' },
+      { type: 'text', text: 'ok' },
+    ]);
+    await expect(
+      collect(
+        chatCompletionChunks([
+          { reasoning_content: 'The', reasoning: 'The' },
+          { reasoning_content: ' user', reasoning: ' user' },
+          { content: 'ok' },
+        ]),
+        { reasoningKey: ['reasoning', 'reasoning_content'] },
+      ),
+    ).resolves.toEqual([
+      { type: 'think', think: 'The user', reasoningKey: 'reasoning' },
+      { type: 'text', text: 'ok' },
+    ]);
+    await expect(
+      collect(
+        chatCompletionChunks([
+          { reasoning_content: '', reasoning: '' },
+          { reasoning_content: 'The', reasoning: 'The' },
+          { content: 'ok' },
+        ]),
+      ),
+    ).resolves.toEqual([
+      { type: 'think', think: 'The', reasoningKey: 'reasoning_content' },
+      { type: 'text', text: 'ok' },
+    ]);
+    await expect(
+      collect(
+        chatCompletionChunks([
+          { reasoning_content: 'A', reasoning: 'B' },
+          { content: 'ok' },
+        ]),
+      ),
+    ).resolves.toEqual([
+      { type: 'think', think: 'A', reasoningKey: 'reasoning_content' },
+      { type: 'think', think: 'B', reasoningKey: 'reasoning' },
+      { type: 'text', text: 'ok' },
+    ]);
+  });
+
+  it('uses the first array entry as the outbound reasoning key before any detection', async () => {
+    const client = stubOpenAIClient(chatCompletionChunks());
+    const requester = createOpenAIRequester({
+      trait: { reasoningKey: ['reasoning', 'reasoning_content'] },
+      clientFactory: client.clientFactory,
+    });
+    await requester.generate(
+      { model, thinking: { effort: 'off' } },
+      {
+        messages: [
+          createUserMessage('hi'),
+          createAssistantMessage([{ type: 'think', think: 'abc' }]),
+        ],
+      },
+      { signal: new AbortController().signal },
+    );
+    const assistant = bodyMessages(client.body())[1]!;
+    expect(assistant['reasoning']).toBe('abc');
+    expect('reasoning_content' in assistant).toBe(false);
+
+    const detected = stubOpenAIClient(
+      chatCompletionChunks([{ reasoning_content: 'detected' }, { content: 'hi' }]),
+    );
+    const detectedRequester = createOpenAIRequester({
+      trait: { reasoningKey: ['reasoning', 'reasoning_content'] },
+      clientFactory: detected.clientFactory,
+    });
+    await detectedRequester.generate(
+      { model },
+      { messages },
+      { signal: new AbortController().signal },
+    );
+    await detectedRequester.generate(
+      { model, thinking: { effort: 'off' } },
+      {
+        messages: [
+          createUserMessage('hi'),
+          createAssistantMessage([{ type: 'think', think: 'abc' }]),
+        ],
+      },
+      { signal: new AbortController().signal },
+    );
+    const detectedAssistant = bodyMessages(detected.body())[1]!;
+    expect(detectedAssistant['reasoning_content']).toBe('abc');
+    expect('reasoning' in detectedAssistant).toBe(false);
+  });
 });

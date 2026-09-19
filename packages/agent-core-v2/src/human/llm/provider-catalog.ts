@@ -18,7 +18,7 @@ export interface CatalogModelOverrides {
   readonly maxOutputSize?: number;
   readonly capability?: ModelCapability;
   readonly displayName?: string;
-  readonly reasoningKey?: string;
+  readonly reasoningKey?: string | readonly string[];
   readonly adaptiveThinking?: boolean;
   readonly supportEfforts?: readonly string[];
   readonly defaultEffort?: string;
@@ -29,7 +29,7 @@ export interface CatalogModelOverrides {
 export interface CatalogModelDefinition extends LlmModel {
   readonly displayName?: string;
   readonly maxOutputSize?: number;
-  readonly reasoningKey?: string;
+  readonly reasoningKey?: string | readonly string[];
   readonly supportEfforts?: readonly string[];
   readonly offEffort?: string;
   readonly alwaysThinking?: boolean;

@@ -200,7 +200,7 @@ export function encodeOpenAIRequest(params: Record<string, unknown>): OpenAIRequ
 }
 
 export interface OpenAIStreamParserOptions extends StreamParserOptions<OpenAIRawChunk> {
-  readonly reasoningKey?: string;
+  readonly reasoningKey?: string | readonly string[];
 }
 
 export interface OpenAIProtocolFormat extends ProtocolFormat<OpenAIRawChunk> {
@@ -299,7 +299,13 @@ export function createOpenAIFormat(): OpenAIProtocolFormat {
         }
         const reasoningDetails =
           options?.reasoningKey === undefined ? extractReasoningDetails(delta) : undefined;
-        for (const reasoning of extractReasoningStrings(delta)) {
+        const reasoningKeys =
+          options?.reasoningKey === undefined
+            ? undefined
+            : typeof options.reasoningKey === 'string'
+              ? [options.reasoningKey]
+              : options.reasoningKey;
+        for (const reasoning of extractReasoningStrings(delta, reasoningKeys)) {
           if (reasoning.key === 'reasoning_content') {
             seenReasoningContent = true;
           }
