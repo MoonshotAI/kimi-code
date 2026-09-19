@@ -850,7 +850,7 @@ On success, `data` is `{ workspace_id, environment_id, cwd? }`; `cwd` is the wor
 
 #### `POST /api/v1/sessions/{session_id}/environment`
 
-Switches the main agent's environment binding. The connection is established and the given `cwd` is validated against the target's filesystem before the new binding is persisted — on failure the previous binding is kept. See [Remote environments](../guides/remote-environment.md) for the feature walkthrough.
+Switches the main agent's environment binding. The connection is established and the given `cwd` is validated against the target's filesystem before the new binding is persisted — on failure the previous binding is kept. A successful switch takes effect immediately: the session's next tool call already runs on the new environment. See [Remote environments](../guides/remote-environment.md) for the feature walkthrough.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -863,7 +863,7 @@ On success, `data` is the new binding `{ workspace_id, environment_id, cwd? }`.
 - `40001`: a non-local `environment_id` without a `cwd`, or the given `cwd` does not resolve to a directory on the target environment
 - `40401`: session not found
 - `40420`: no environment with that `environment_id`
-- `40901`: the session has a running turn or a pending approval; switching applies at the turn boundary
+- `40901`: the session has tool calls executing or a pending approval; the switch is rejected — retry once the turn settles
 - `40926`: the environment exists but is unavailable
 
 #### `POST /api/v1/sessions/{session_id}/environment/reconnect`
