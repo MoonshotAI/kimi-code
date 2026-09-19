@@ -11,7 +11,14 @@ import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { ContextAppendMessage } from '#/agent/contextMemory/contextEvents';
 import '#/agent/contextMemory/conversationTime';
+import { AgentContextMemoryService } from '#/agent/contextMemory/contextMemoryService';
+import type { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
+import type { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
+import { AgentConversationUndoService } from '#/agent/undo/undoService';
+import type { IEventService } from '#/app/event/event';
+import type { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+import type { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ILogService } from '#/_base/log/log';
 import { AgentEnvironmentService, snapshotAgentEnvironmentBinding } from '#/agent/environmentBinding/agentEnvironment';
@@ -140,6 +147,8 @@ function stubLoop(loopState: {
         hasPendingRequests: false,
         turn: loopState.turn,
       }),
+      tryAcquireQuiescence: () => ({ dispose: () => {} }),
+      resetMachineEngine: async () => {},
     } as unknown as IAgentLoopService,
     onDidChange: () => ({ dispose: () => {} }),
   };
@@ -1774,6 +1783,8 @@ interface WireUndoHarness {
   readonly wire: IWireService;
   readonly appendLogRecords: WireRecord[];
   readonly participant: { reconcileAfterUndo(): Promise<void> };
+  readonly context?: IAgentContextMemoryService;
+  readonly undo?: AgentConversationUndoService;
   readonly workDirWrites: string[];
   readonly reminders: { content: string; variant: string }[];
   readonly changes: EnvironmentBinding[];
@@ -1784,7 +1795,7 @@ interface WireUndoHarness {
   readonly dispose: () => Promise<void>;
 }
 
-function wireUndoSetup(): WireUndoHarness {
+function wireUndoSetup(options: { readonly withUndo?: boolean } = {}): WireUndoHarness {
   const registry = new EnvironmentRegistry('workspace');
   registry.register(environment('local', 'local-one', 'ready', ['fs', 'process'], LOCAL_HOST));
   const remote = environment('remote', 'remote-one', 'ready', ['fs', 'process'], REMOTE_HOST);
@@ -1799,7 +1810,8 @@ function wireUndoSetup(): WireUndoHarness {
   ix.set(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(ITelemetryService, noopTelemetryService);
   ix.set(ILogService, noopLogger);
-  ix.set(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }));
+  const ixScopeContext = makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' });
+  ix.set(IAgentScopeContext, ixScopeContext);
   const agentState = new AgentStateService();
   ix.set(IAgentStateService, agentState);
   ix.set(IWireService, new SyncDescriptor(WireService));
@@ -1859,6 +1871,35 @@ function wireUndoSetup(): WireUndoHarness {
     undoParticipants,
     stubBootstrap(),
   );
+  const tokenCounting = {
+    _serviceBrand: undefined,
+    recordTruncation: () => {},
+    estimateText: () => 0,
+    estimateMessage: () => 0,
+    estimateMessages: () => 0,
+  } as unknown as ISessionTokenCountingService;
+  let context: AgentContextMemoryService | undefined;
+  let undo: AgentConversationUndoService | undefined;
+  if (options.withUndo === true) {
+    (ix.get(IEventBus) as EventBusService).activateAgent(ixScopeContext.agentContext);
+    context = new AgentContextMemoryService(dispatcher, scopeContext, tokenCounting, agentState);
+    undo = new AgentConversationUndoService(
+      loop.current as IAgentLoopService,
+      { _serviceBrand: undefined, compacting: null } as unknown as IAgentFullCompactionService,
+      context,
+      undoParticipants,
+      scopeContext,
+      session,
+      { _serviceBrand: undefined, update: async () => {} } as unknown as ISessionMetadata,
+      { _serviceBrand: undefined, publish: () => {} } as unknown as IEventService,
+      noopTelemetryService,
+      dispatcher,
+      agentState,
+      tokenCounting,
+      wire,
+      noopLogger,
+    );
+  }
   const changes: EnvironmentBinding[] = [];
   binding.onDidChange((next) => changes.push(next));
   return {
@@ -1872,12 +1913,16 @@ function wireUndoSetup(): WireUndoHarness {
         await participant.reconcileAfterUndo();
       },
     },
+    context,
+    undo,
     workDirWrites,
     reminders,
     changes,
     loopState,
     publishBus,
     dispose: async () => {
+      undo?.dispose();
+      context?.dispose();
       binding.dispose();
       ix.dispose();
       await registry.dispose();
@@ -1886,6 +1931,46 @@ function wireUndoSetup(): WireUndoHarness {
 }
 
 describe('AgentEnvironmentBindingService conversation undo over the real wire', () => {
+  it('reverts an in-turn switch through the real conversation undo service', async () => {
+    const harness = wireUndoSetup({ withUndo: true });
+    if (harness.context === undefined || harness.undo === undefined) throw new Error('undo harness incomplete');
+    const { context, undo } = harness;
+    try {
+      await harness.wire.seal();
+      await harness.dispatcher.restore();
+      expect(harness.binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+
+      await harness.dispatcher.dispatch(
+        new ContextAppendMessage({
+          agentId: 'main',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'switch the environment' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+        }),
+      );
+      expect(context.get()).toHaveLength(1);
+
+      harness.loopState.turn = { turnId: 1, phase: 'running', step: 1, activeToolCalls: [{ toolCallId: 'call-1', name: 'change_environment' }] };
+      await harness.binding.connectAndSwitchAtTurnBoundary('remote', '/remote/work');
+      expect(harness.binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' });
+      harness.loopState.turn = undefined;
+
+      await undo.undo(1);
+
+      expect(context.get()).toEqual([]);
+      expect(harness.binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+      expect(harness.workDirWrites.at(-1)).toBe('/workspace');
+      expect(harness.reminders.at(-1)).toMatchObject({ variant: ENVIRONMENT_BINDING_REMINDER_VARIANT });
+      expect(harness.reminders.at(-1)!.content).toContain('"local"');
+      expect(harness.changes.at(-1)).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+    } finally {
+      await harness.dispose();
+    }
+  });
+
   it('reverts an in-turn switch committed at the turn boundary when the turn is undone', async () => {
     const harness = wireUndoSetup();
     try {

@@ -108,6 +108,8 @@ async function undoByCount(host: SlashCommandHost, count: number): Promise<boole
   }
   host.noteContextCut?.();
   await refreshTodoPanel(host);
+  // An undone turn may have carried an environment switch; re-pull the binding.
+  void host.refreshEnvironmentSlot();
 
   const children = host.state.transcriptContainer.children;
   const lastUserComponentIndex = findUndoAnchorComponentIndex(children, count);

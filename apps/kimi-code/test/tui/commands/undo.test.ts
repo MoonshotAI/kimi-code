@@ -23,6 +23,7 @@ function hostWith(entries: TranscriptEntry[]): SlashCommandHost {
       appState: { streamingPhase: 'idle' },
     },
     showError: vi.fn(),
+    refreshEnvironmentSlot: vi.fn(async () => {}),
   } as unknown as SlashCommandHost;
 }
 
@@ -98,6 +99,38 @@ describe('/undo with bundled prompts', () => {
 
     expect(host.session?.undoHistory).toHaveBeenCalledWith(2);
     expect(entries).toHaveLength(0);
+  });
+});
+
+describe('/undo environment slot refresh', () => {
+  it('re-syncs the footer environment slot after a successful undo', async () => {
+    const entries: TranscriptEntry[] = [
+      entry({ kind: 'user', content: 'question' }),
+      entry({ kind: 'assistant', content: 'answer' }),
+    ];
+    const host = hostWith(entries);
+
+    await handleUndoCommand(host, '1');
+
+    expect(host.session?.undoHistory).toHaveBeenCalledWith(1);
+    expect(host.refreshEnvironmentSlot).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves the environment slot alone when the undo fails', async () => {
+    const entries: TranscriptEntry[] = [
+      entry({ kind: 'user', content: 'question' }),
+      entry({ kind: 'assistant', content: 'answer' }),
+    ];
+    const host = hostWith(entries);
+    (host as { session?: unknown }).session = {
+      undoHistory: vi.fn(async () => {
+        throw new Error('engine undo failed');
+      }),
+    };
+
+    await handleUndoCommand(host, '1');
+
+    expect(host.refreshEnvironmentSlot).not.toHaveBeenCalled();
   });
 });
 
