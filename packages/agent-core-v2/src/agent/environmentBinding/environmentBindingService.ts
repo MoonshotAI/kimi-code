@@ -294,6 +294,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     ) {
       return previous;
     }
+    this.pendingSwitch = undefined;
     const next = { workspaceId: binding.workspaceId, environmentId: binding.environmentId, cwd: binding.cwd };
     void this.dispatcher.dispatch(
       new EnvironmentSetBinding({ ...next, agentId: this.scopeContext.agentId }),

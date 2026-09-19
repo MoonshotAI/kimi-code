@@ -1293,6 +1293,55 @@ describe('AgentEnvironmentBindingService.connectAndSwitchAtTurnBoundary', () => 
     });
   });
 
+  it('keeps the latest immediate switch when an earlier deferred switch would flush at the turn boundary', async () => {
+    const { registry, binding, dispatched, loopState, publishBus } = setup();
+    loopState.turn = {
+      turnId: 1,
+      phase: 'tool_call',
+      step: 1,
+      activeToolCalls: [{ toolCallId: 'call-1', name: 'change_environment' }, { toolCallId: 'call-2', name: 'Bash' }],
+    };
+    connectableEnvironment(registry, { environmentId: 'first' });
+    connectableEnvironment(registry, { environmentId: 'second' });
+
+    await binding.connectAndSwitchAtTurnBoundary('first', '/remote/one');
+    expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+
+    loopState.turn = { turnId: 1, phase: 'tool_call', step: 2, activeToolCalls: [{ toolCallId: 'call-3', name: 'change_environment' }] };
+    await binding.connectAndSwitchAtTurnBoundary('second', '/remote/two');
+    expect(binding.current).toMatchObject({ environmentId: 'second', cwd: '/remote/two' });
+
+    loopState.turn = undefined;
+    publishBus('turn.ended', { agentId: 'main' });
+    await Promise.resolve();
+    expect(binding.current).toMatchObject({ environmentId: 'second', cwd: '/remote/two' });
+    expect(dispatched.map((event) => event.environmentId)).toEqual(['second']);
+  });
+
+  it('keeps a switch committed between tool calls when an earlier deferred switch would flush at the turn boundary', async () => {
+    const { registry, binding, dispatched, loopState, publishBus } = setup();
+    loopState.turn = {
+      turnId: 1,
+      phase: 'tool_call',
+      step: 1,
+      activeToolCalls: [{ toolCallId: 'call-1', name: 'change_environment' }, { toolCallId: 'call-2', name: 'Bash' }],
+    };
+    connectableEnvironment(registry, { environmentId: 'first' });
+
+    await binding.connectAndSwitchAtTurnBoundary('first', '/remote/one');
+    expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+
+    loopState.turn = { turnId: 1, phase: 'tool_call', step: 2, activeToolCalls: [] };
+    binding.switch('remote', '/remote/work');
+    expect(binding.current).toMatchObject({ environmentId: 'remote', cwd: '/remote/work' });
+
+    loopState.turn = undefined;
+    publishBus('turn.ended', { agentId: 'main' });
+    await Promise.resolve();
+    expect(binding.current).toMatchObject({ environmentId: 'remote', cwd: '/remote/work' });
+    expect(dispatched.map((event) => event.environmentId)).toEqual(['remote']);
+  });
+
   it('emits the environment reminder immediately when the switch commits mid-turn', async () => {
     const { registry, binding, loopState, reminders } = setup();
     loopState.turn = { turnId: 1, phase: 'tool_call', step: 1, activeToolCalls: [{ toolCallId: 'call-1', name: 'change_environment' }] };
