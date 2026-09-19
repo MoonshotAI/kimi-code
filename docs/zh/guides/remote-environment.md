@@ -94,13 +94,13 @@ kimi -p --environment dev-box "Run the test suite"
 
 该标志与 `--agent` 一样只在创建会话时生效：不能与 `--session`/`--continue` 组合，因为恢复会话时会自动还原其记录的绑定。id 未声明、或条目未设置 `defaultCwd` 时，启动会直接失败。创建会话会先连接目标环境再启动，连接失败会带着具体原因中止，而不是打开一个无法正常工作的会话。
 
-## Agent 环境工具（实验性）
+## Agent 环境工具
 
-上面的切换都由你手动完成。一个实验性标志则把环境切换交给 Agent 自己：main agent 会获得两个工具，其系统提示词中会列出会话工作区内可用的环境，让它知道有哪些 id 可用。本页的其他机制——绑定模型、每次切换记录的提醒、undo 恢复上一个绑定——都原样适用。
+上面的切换都由你手动完成。Agent 环境工具则把环境切换交给 Agent 自己：main agent 会获得两个工具，其系统提示词中会列出会话工作区内可用的环境，让它知道有哪些 id 可用。本页的其他机制——绑定模型、每次切换记录的提醒、undo 恢复上一个绑定——都原样适用。
 
-该功能默认关闭。通过 `KIMI_CODE_EXPERIMENTAL_AGENT_ENVIRONMENT_TOOLS=1`、`config.toml` 中的 `[experimental] agent_environment_tools = true`，或创建会话前的 `/experiments` 启用；总开关 `KIMI_CODE_EXPERIMENTAL_FLAG=1` 也会一并启用。在功能关闭时创建的会话既没有这些工具，也没有提示词中的环境列表。
+这些工具默认开启。如需关闭，设置 `KIMI_CODE_EXPERIMENTAL_AGENT_ENVIRONMENT_TOOLS=0`、在 `config.toml` 中写入 `[experimental] agent_environment_tools = false`，或在创建会话前通过 `/experiments` 关闭该功能。在功能关闭时创建的会话既没有这些工具，也没有提示词中的环境列表。
 
-启用后，main agent 可以：
+main agent 可以：
 
 - **用 `change_environment` 切换**：传入环境 `id`（`local` 或已声明的 id），可选 `cwd`（缺省时回退到声明的 `defaultCwd`）。目标环境会先立即连接——连接或 `cwd` 校验失败会立刻报错且不改变任何状态——切换本身在当前轮次边界生效：本轮剩余的工具调用仍在前一个环境上执行，新环境的详情提醒随下一轮次到达。
 - **用 `connect` 创建临时环境**：传入启动器规格——`{ type: "ssh", host: "..." }`、`{ type: "docker", container: "..." }` 或 `{ type: "command", command: "...", args: [...] }`，可选 `id`。环境会立即连接并像声明的环境一样注册到工作区，但不会写入 `config.toml` 或 `.kimi-code/environments.toml`：临时环境在进程退出时消失，连接断开后无法重连（重新创建一个即可），恢复会话时也找不到它。
