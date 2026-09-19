@@ -18,6 +18,9 @@ const optionalRuntimeRequires = new Set([
   'cpu-features',
   'fast-json-stringify/lib/serializer',
   'fast-json-stringify/lib/validator',
+  // Externalized in the SEA bundle; resolved at runtime from the native-asset
+  // cache via the module hook (see src/native/module-hook.ts).
+  'node-pty',
   'utf-8-validate',
 ]);
 const optionalRelativeRuntimeRequires = new Set(['./crypto/build/Release/sshcrypto.node']);
