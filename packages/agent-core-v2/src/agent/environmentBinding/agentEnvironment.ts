@@ -148,8 +148,7 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
     if (workDir === undefined && binding.environmentId !== LOCAL_ENVIRONMENT_ID) {
       try {
         const environment = this.resolver.inspect(binding);
-        const host = environment.host as { readonly cwd?: string };
-        workDir = host.cwd ?? environment.host.homeDir;
+        workDir = environment.host.cwd ?? environment.host.homeDir;
       } catch {
         workDir = undefined;
       }
