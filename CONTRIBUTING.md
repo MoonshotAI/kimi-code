@@ -1,4 +1,4 @@
-# Contributing to kimi-code
+# Contributing to Kimi Code
 
 [中文版](CONTRIBUTING.zh-CN.md)
 
