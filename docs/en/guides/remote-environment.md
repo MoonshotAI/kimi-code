@@ -122,7 +122,7 @@ SSH exit codes are shown as diagnostics when a connection dies — `255` indicat
 
 ## SSH authentication
 
-SSH connections are non-interactive. The launcher spawns the system `ssh` with `-T` (no terminal allocated) and `-o BatchMode=yes`, and the `scp` used for executor installation shares the same options. BatchMode disables every interactive prompt — password, key passphrase, host-key confirmation — because the connection's input and output streams carry the protocol traffic, leaving no terminal to answer a prompt on. A host that requires any of these fails fast with an error like `Permission denied (publickey,password)`, surfaced as a connection failure in the `/environment` dialog, instead of hanging on a prompt nobody can see.
+SSH connections are non-interactive. The launcher spawns the system `ssh` with `-T` (no terminal allocated) and `-o BatchMode=yes`. BatchMode disables every interactive prompt — password, key passphrase, host-key confirmation — because the connection's input and output streams carry the protocol traffic, leaving no terminal to answer a prompt on. A host that requires any of these fails fast with an error like `Permission denied (publickey,password)`, surfaced as a connection failure in the `/environment` dialog, instead of hanging on a prompt nobody can see.
 
 Every non-interactive method the system `ssh` supports works unchanged, configured through `~/.ssh/config` and your shell environment:
 
@@ -151,15 +151,15 @@ The executor is a light build of Kimi Code itself, started as `kimi exec-server`
 
 The fixed install path is `~/.kimi-code/bin/kimi` on the target (override it per entry with `remoteBin` when the executor lives elsewhere, for example a preinstalled container image).
 
-### Automatic installation
+### Installing the executor
 
-For `ssh` and `docker` entries, connecting to a target that has no executor triggers automatic installation: Kimi Code downloads the matching build for the target's OS and architecture, verifies it against a pinned SHA-256, and copies it over (`scp` for SSH, `docker cp` for containers). Container images can also preinstall the executor or mount it — point `remoteBin` at that absolute path.
+Kimi Code does not install the executor automatically. When a connect finds no executor at the expected path, the connection fails with install guidance: it probes the target's OS and architecture, then prints the exact commands for your launcher type — download the verified build from the release CDN, copy it over (`scp` for SSH, `docker cp` for containers), and activate it with `chmod` + `mv`. Run the printed commands, then reconnect.
 
-`command` entries are never auto-installed; a missing executor fails with printed install guidance. When automatic installation is unavailable or fails, the error message includes the exact manual commands to run.
+For `docker` entries you can also preinstall the executor in the image or bind-mount it, and point `remoteBin` at that absolute path. For `command` entries the guidance cannot probe the target — install the matching build at the absolute path your launcher command invokes.
 
 ### Version compatibility
 
-The connection handshake requires a minimum executor version and a POSIX target. An executor that is too old is rejected with upgrade guidance; reinstall it (or delete `~/.kimi-code/bin/kimi` on the target and reconnect) to pick up the current version.
+The connection handshake requires a minimum executor version and a POSIX target. An executor that is too old is rejected with upgrade guidance — run the printed commands to install the current build over it, then reconnect.
 
 ## Limitations
 

@@ -40,8 +40,8 @@ import type {
 } from '@moonshot-ai/agent-core-v2/environment/environmentUnitHost';
 
 import type { ExecutorArtifactLocator } from './artifactLocator';
-import { defaultLocalRunner, resolveTildeRemoteBin, type LocalRunner } from './executorInstaller';
-import { connectWithAutoInstall } from './installTrigger';
+import { connectWithGuidance } from './connectGuidance';
+import { defaultLocalRunner, resolveTildeRemoteBin, type LocalRunner } from './executorDetect';
 import type { LauncherSpec } from './launchers';
 import { RemoteEnvironment, type RemoteEnvironmentOptions } from './remoteEnvironment';
 
@@ -197,15 +197,17 @@ export interface RemoteEnvironmentProviderFactoryOptions {
   readonly initializeTimeoutMs?: number;
   readonly onDiagnostic?: (line: string) => void;
   readonly connect?: (options: RemoteEnvironmentOptions) => Promise<RemoteEnvironment>;
-  // Executor auto-install (spec D8): the locator resolves the SEA artifact for
-  // the probed target; inject `CdnExecutorArtifactLocator` built with the
-  // region CDN base (`kimiRegionProfile(resolveKimiRegion(...)).cdnBase`) from
-  // the composition root. Without a locator, missing executors get manual
-  // install guidance instead of an auto-install attempt.
+  // Executor detection (spec D8/D9): the locator resolves the release
+  // artifact for the probed target so a missing/too-old executor's failure
+  // guidance can name the concrete download (URL + pinned sha256); inject
+  // `CdnExecutorArtifactLocator` built with the region CDN base
+  // (`kimiRegionProfile(resolveKimiRegion(...)).cdnBase`) from the
+  // composition root. Without a locator the guidance falls back to the
+  // generic release-CDN wording.
   readonly artifactLocator?: ExecutorArtifactLocator;
-  readonly autoInstall?: boolean;
-  readonly installRunner?: LocalRunner;
-  readonly installFetch?: typeof fetch;
+  // Runner for the remote probes (docker tilde resolution, the guidance
+  // platform probe). Injectable test seam.
+  readonly probeRunner?: LocalRunner;
   // Project declaration watch (spec §4 hot reload): called once per attach
   // with the absolute path of `<root>/.kimi-code/environments.toml`; `onChange`
   // must fire when the file appears, changes, or disappears. Injectable for
@@ -474,15 +476,12 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
               onDiagnostic: this.options.onDiagnostic,
             });
           const launcher = await this.resolveRecordLauncher(record, toLauncherSpec(declaration.entry), fingerprint);
-          const connected = await connectWithAutoInstall(attempt, {
+          const connected = await connectWithGuidance(attempt, {
             launcher,
             artifactLocator: this.options.artifactLocator,
-            autoInstall: this.options.autoInstall,
             clientVersion: this.options.clientVersion,
             minExecutorVersion: this.options.minExecutorVersion,
-            runner: this.options.installRunner,
-            fetchImpl: this.options.installFetch,
-            onDiagnostic: this.options.onDiagnostic,
+            runner: this.options.probeRunner,
           });
           if (record.version !== version) {
             await connected.dispose();
@@ -525,7 +524,7 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
     if (cached !== undefined && cached.fingerprint === fingerprint) {
       return { ...launcher, remoteBin: cached.remoteBin };
     }
-    const resolved = await resolveTildeRemoteBin(launcher, this.options.installRunner ?? defaultLocalRunner);
+    const resolved = await resolveTildeRemoteBin(launcher, this.options.probeRunner ?? defaultLocalRunner);
     if (resolved !== launcher && resolved.type === 'docker' && resolved.remoteBin !== undefined) {
       record.resolvedRemoteBin = { fingerprint, remoteBin: resolved.remoteBin };
     }

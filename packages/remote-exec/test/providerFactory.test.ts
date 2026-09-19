@@ -25,7 +25,7 @@ import { deleteWorkspaceTrust, writeWorkspaceTrust } from '@moonshot-ai/agent-co
 import type { WorkspaceTrustChange } from '@moonshot-ai/agent-core-v2/workspace/workspaceTrust/workspaceTrust';
 
 import { HandshakeError } from '../src/client/connection';
-import type { LocalRunner, LocalRunRequest } from '../src/client/executorInstaller';
+import type { LocalRunner, LocalRunRequest } from '../src/client/executorDetect';
 import {
   RemoteEnvironmentProviderFactory,
   type RemoteEnvironmentProviderFactoryOptions,
@@ -1174,37 +1174,21 @@ describe('toLauncherSpec via factory connect', () => {
   });
 });
 
-describe('factory auto-install trigger', () => {
-  const INSTALL_ARTIFACT_BYTES = new TextEncoder().encode('fake-kimi-sea-binary\n');
+describe('factory executor detection', () => {
   const INSTALL_ARTIFACT = {
     version: '1.2.3',
     filename: 'kimi-code-linux-x64',
     url: 'https://cdn.example.test/binaries/1.2.3/kimi-code-linux-x64',
-    sha256: createHash('sha256').update(INSTALL_ARTIFACT_BYTES).digest('hex'),
+    sha256: createHash('sha256').update('fake-kimi-sea-binary\n').digest('hex'),
   };
 
-  function installFetch(): typeof fetch {
-    return vi.fn(async () => new Response(INSTALL_ARTIFACT_BYTES, { status: 200 })) as unknown as typeof fetch;
-  }
-
-  function sshInstallRunner(): LocalRunner {
-    let installedVersion: string | undefined;
-    return async (request: LocalRunRequest) => {
-      const last = request.args.at(-1) ?? '';
-      if (request.program === 'ssh') {
-        if (last.includes('uname -sm')) {
-          return { code: 0, signal: null, stdout: 'Linux x86_64\n/home/test', stderr: '' };
-        }
-        if (last.endsWith('--version')) {
-          return installedVersion === undefined
-            ? { code: 127, signal: null, stdout: '', stderr: 'kimi: command not found' }
-            : { code: 0, signal: null, stdout: `${installedVersion}\n`, stderr: '' };
-        }
-        if (last.startsWith('chmod 755')) installedVersion = INSTALL_ARTIFACT.version;
-        return { code: 0, signal: null, stdout: '', stderr: '' };
-      }
-      return { code: 0, signal: null, stdout: '', stderr: '' };
+  function unameRunner(): { runner: LocalRunner; requests: LocalRunRequest[] } {
+    const requests: LocalRunRequest[] = [];
+    const runner: LocalRunner = async (request: LocalRunRequest) => {
+      requests.push(request);
+      return { code: 0, signal: null, stdout: 'Linux x86_64\n', stderr: '' };
     };
+    return { runner, requests };
   }
 
   function missingExecutorError(): HandshakeError {
@@ -1214,37 +1198,42 @@ describe('factory auto-install trigger', () => {
     );
   }
 
-  it('auto-installs a typed environment once and retries the connect once after a missing executor', async () => {
+  it('fails a missing executor with concrete install guidance and never installs', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
-    let calls = 0;
-    const connect = vi.fn(async (options: RemoteEnvironmentOptions) => {
-      calls += 1;
-      if (calls === 1) throw missingExecutorError();
-      return connectedEnvironment(options, `connected-${calls}`);
+    const connect = vi.fn(async () => {
+      throw missingExecutorError();
     });
+    const fake = unameRunner();
     const factory = new RemoteEnvironmentProviderFactory(factoryOptions({
       connect,
       clientVersion: '1.2.3',
       artifactLocator: { locate: vi.fn(async () => INSTALL_ARTIFACT) },
-      installFetch: installFetch(),
-      installRunner: sshInstallRunner(),
+      probeRunner: fake.runner,
     }));
     const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
 
-    await registry.current('dev-box')!.connect!();
+    const placeholder = registry.current('dev-box')!;
+    const error = await placeholder.connect!().catch((error: unknown) => error);
 
-    expect(connect).toHaveBeenCalledTimes(2);
-    expect(connect).toHaveBeenLastCalledWith(expect.objectContaining({
-      launcher: { type: 'ssh', host: 'dev-box', remoteBin: '~/.kimi-code/bin/kimi' },
-    }));
-    expect(registry.current('dev-box')!.status).toBe('ready');
-    expect(registry.current('dev-box')!.identity.generation).toBe('connected-2');
+    expect(error).toBeInstanceOf(HandshakeError);
+    const message = (error as Error).message;
+    expect(message).toContain('was not found on ssh:dev-box');
+    expect(message).toContain(INSTALL_ARTIFACT.url);
+    expect(message).toContain('scp /tmp/kimi-install dev-box:/tmp/kimi-install');
+    expect(message).toContain('Then reconnect the environment.');
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(registry.current('dev-box')).toBe(placeholder);
+    expect(registry.current('dev-box')!.status).toBe('disconnected');
+    // Detection only: the uname probe is the sole remote command — no scp,
+    // no chmod/mv, no download.
+    expect(fake.requests).toHaveLength(1);
+    expect(fake.requests[0]!.args.at(-1)).toBe('uname -sm; printf "%s\\n" "$HOME"');
 
     await attachment.dispose();
     await registry.dispose();
   });
 
-  it('does not retry the connect when the auto-install fails', async () => {
+  it('falls back to generic guidance when the platform probe fails', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
     const connect = vi.fn(async () => {
       throw missingExecutorError();
@@ -1259,13 +1248,14 @@ describe('factory auto-install trigger', () => {
       connect,
       clientVersion: '1.2.3',
       artifactLocator: { locate: vi.fn(async () => INSTALL_ARTIFACT) },
-      installFetch: installFetch(),
-      installRunner: failingRunner,
+      probeRunner: failingRunner,
     }));
     const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
 
     const placeholder = registry.current('dev-box')!;
-    await expect(placeholder.connect!()).rejects.toThrow(/Auto-install failed[\s\S]*Connection refused/);
+    const error = await placeholder.connect!().catch((error: unknown) => error);
+
+    expect((error as Error).message).toContain('Install the executor manually:');
     expect(connect).toHaveBeenCalledTimes(1);
     expect(registry.current('dev-box')).toBe(placeholder);
     expect(registry.current('dev-box')!.status).toBe('disconnected');
@@ -1274,7 +1264,7 @@ describe('factory auto-install trigger', () => {
     await registry.dispose();
   });
 
-  it('fails command environments with guidance and never attempts an install', async () => {
+  it('fails command environments with guidance and never probes', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
     const services = baseServices({
       config: configService({
@@ -1288,12 +1278,12 @@ describe('factory auto-install trigger', () => {
     const factory = new RemoteEnvironmentProviderFactory(factoryOptions({
       connect,
       artifactLocator: { locate: vi.fn(async () => INSTALL_ARTIFACT) },
-      installRunner: runner,
+      probeRunner: runner,
     }));
     const attachment = await factory.attach(CONTEXT, fakeHost(services, registry));
 
     await expect(registry.current('sandbox')!.connect!()).rejects.toThrow(
-      /code 127[\s\S]*Auto-install is not available for `command` environments/,
+      /code 127[\s\S]*place it at the absolute path your launcher command invokes/,
     );
     expect(connect).toHaveBeenCalledTimes(1);
     expect(runner).not.toHaveBeenCalled();
@@ -1302,7 +1292,7 @@ describe('factory auto-install trigger', () => {
     await registry.dispose();
   });
 
-  it('answers a too-old executor with upgrade guidance instead of an install', async () => {
+  it('answers a too-old executor with upgrade guidance', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
     const runner = vi.fn() as unknown as LocalRunner;
     const connect = vi.fn(async () => {
@@ -1314,7 +1304,7 @@ describe('factory auto-install trigger', () => {
     const factory = new RemoteEnvironmentProviderFactory(factoryOptions({
       connect,
       artifactLocator: { locate: vi.fn(async () => INSTALL_ARTIFACT) },
-      installRunner: runner,
+      probeRunner: runner,
     }));
     const attachment = await factory.attach(CONTEXT, fakeHost(baseServices(), registry));
 
@@ -1341,7 +1331,7 @@ describe('factory docker remoteBin resolution', () => {
   it('resolves the tilde remoteBin once and reuses it across reconnects', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
     let probes = 0;
-    const installRunner: LocalRunner = async (request: LocalRunRequest) => {
+    const probeRunner: LocalRunner = async (request: LocalRunRequest) => {
       if (request.args.at(-1) === HOME_PROBE) {
         probes += 1;
         return { code: 0, signal: null, stdout: '/root', stderr: '' };
@@ -1353,7 +1343,7 @@ describe('factory docker remoteBin resolution', () => {
       generation += 1;
       return connectedEnvironment(options, `connected-${generation}`);
     });
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect, installRunner }));
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect, probeRunner }));
     const attachment = await factory.attach(CONTEXT, fakeHost(dockerServices(), registry));
 
     await registry.current('app-box')!.connect!();
@@ -1373,14 +1363,14 @@ describe('factory docker remoteBin resolution', () => {
 
   it('keeps the declared launcher when the home probe fails', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
-    const installRunner: LocalRunner = async () => ({
+    const probeRunner: LocalRunner = async () => ({
       code: 1,
       signal: null,
       stdout: '',
       stderr: 'Error: No such container: myapp',
     });
     const connect = vi.fn(async (options: RemoteEnvironmentOptions) => connectedEnvironment(options, 'connected-1'));
-    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect, installRunner }));
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect, probeRunner }));
     const attachment = await factory.attach(CONTEXT, fakeHost(dockerServices(), registry));
 
     await registry.current('app-box')!.connect!();

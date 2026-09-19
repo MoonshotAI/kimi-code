@@ -9,7 +9,7 @@ agent-core-v2 `Environment` interface.
 packages/remote-exec/src/
 ├── protocol/   message types, error codes, NDJSON codec (self-contained)
 ├── client/     execBridge, launchers, connection, fs/process/terminal stubs, remoteEnvironment, remoteEnvironmentProvider,
-│               artifactLocator, executorInstaller, installTrigger (executor auto-install, spec D8/D9)
+│               artifactLocator, executorDetect, connectGuidance (executor detection + guidance, spec D8/D9)
 └── server/     stdioHost, fsHandler, processManager, environment, entry, standalone
 ```
 
@@ -97,11 +97,14 @@ Client-surface notes beyond the wire protocol:
   it into the registry with a fresh generation; the old generation drains and
   its leases never migrate.
 
-## Executor install and version guidance (spec D8/D9)
+## Executor detection and version guidance (spec D8/D9)
 
-The connect path (`connectWithAutoInstall`, wired into the factory) classifies
-handshake failures and acts on them. Before the first exec attempt, a docker
-launcher whose `remoteBin` is `~`-prefixed (the default
+The connect path (`connectWithGuidance`, wired into the factory) classifies
+handshake failures and attaches per-launcher install/upgrade guidance to the
+error. **The executor is never installed automatically**: a missing or too-old
+executor fails the connect, and the error text tells the user exactly which
+commands to run. Before the first exec attempt, a docker launcher whose
+`remoteBin` is `~`-prefixed (the default
 `~/.kimi-code/bin/kimi` is) is resolved to the container user's absolute home
 path with one `docker exec … sh -c` probe — `docker exec` passes argv to
 execve without a shell, so the tilde would reach execve literally and every
@@ -113,34 +116,24 @@ at the resolved path.
 
 - **Missing executor** — the launcher exited 127 (ssh remote shell) or 126
   (docker exec "executable file not found"), or the handshake **timed out**.
-  For typed `ssh`/`docker` environments with an artifact locator configured, the
-  trigger runs **one** auto-install attempt and then retries the connect
-  **exactly once**; a failed install surfaces the original failure plus
-  install guidance, and a failed retry surfaces the retry failure plus
-  reconnect guidance (the executor is present — diagnose it on the target).
-  `command` environments are never auto-installed — they fail with manual install
-  guidance.
+  The error gains install guidance. When an artifact locator and the client
+  version are configured, the failure path probes the target (`uname -sm` and
+  the remote `$HOME` — the launcher transport still runs one remote command
+  after a missing-executor failure), locates the release artifact for the
+  probed platform, and prints directly runnable commands: `curl` the verified
+  build, copy it over (`scp` for ssh, `docker cp` for containers), then
+  `chmod` + `mv -f` it into the executor path. Tilde-prefixed `remoteBin`
+  values (custom ones included) are resolved against the probed `$HOME` so no
+  unexpanded `~` reaches the printed commands; without a probed home they are
+  spelled through `"$HOME"`. Any probe/locate failure — and `command`
+  environments, which have no probe channel — degrades to the generic
+  release-CDN wording (`<cdnBase>/binaries/<version>/manifest.json`, or the
+  concrete manifest URL when the locator is a `CdnExecutorArtifactLocator`).
+  Guidance generation never masks the original handshake failure.
 - **Too-old executor** — the handshake answered but `executorVersion <
   MIN_EXECUTOR_VERSION`. The client rejects with *upgrade* guidance (current
-  vs minimum version), deliberately distinct from the missing-executor
-  guidance; no auto-upgrade is performed.
-
-`installExecutor` (ssh/docker) runs: probe the target environment (`uname
--sm` and the remote `$HOME`) → skip when a usable executor already answers
-`--version` at the destination → locate the artifact → download with pinned
-SHA-256 verification (same discipline as rgLocator) → upload to a unique tmp
-path (`scp` / `docker cp`) → `chmod 755` + atomic `mv -f` into the destination
-(tmp+rename, so a half-install never presents as success) → post-check that
-the installed binary runs `--version` at or above the minimum. Every step
-failure throws `ExecutorInstallError` naming the step, argv, exit code and
-bounded stderr, and the remote tmp file is removed best-effort. The default
-destination is `~/.kimi-code/bin/kimi` (ssh: the launcher invocation keeps the
-tilde form for the remote shell, while the scp upload targets the probed
-absolute home path verbatim — OpenSSH ≥ 9.0 scp speaks SFTP with no remote
-shell, so `$HOME`/`~` would never expand; docker: the probed container-user
-absolute home path — `docker exec` has no tilde expansion, and the connect
-retry uses that absolute path). A custom `remoteBin` is installed at that
-literal path.
+  vs minimum version, then the same concrete install commands), deliberately
+  distinct from the missing-executor guidance; no auto-upgrade is performed.
 
 ### Artifact locator — injection point
 
@@ -151,7 +144,7 @@ literal path.
 `<cdnBaseUrl>/binaries/<version>/manifest.json`, selects the
 `<platform>-<arch>` platform entry (`linux-x64`, `linux-arm64`, `darwin-x64`,
 `darwin-arm64` — the executor is posix-only), verifies the manifest's own
-`version` matches the request, and downloads
+`version` matches the request, and derives
 `<cdnBaseUrl>/binaries/<version>/<filename>` pinning the entry's `checksum`
 (SHA-256 of the bare binary).
 
@@ -169,8 +162,8 @@ new RemoteEnvironmentProviderFactory({
 
 `kimiRegionProfile`/`resolveKimiRegion` come from `@moonshot-ai/kimi-code-oauth`
 (already a kap-server dependency — the same source rgLocator uses). Without a
-locator, missing executors get manual install guidance instead of an
-auto-install attempt. `installRunner` and `installFetch` are test seams.
+locator the guidance falls back to the generic release-CDN wording.
+`probeRunner` is the test seam for the remote probes.
 
 Wire discipline: NDJSON frames (`\n`-terminated, `\r\n` tolerated, blank lines
 skipped, strict UTF-8), one message capped at 64MiB (disconnect on exceed),

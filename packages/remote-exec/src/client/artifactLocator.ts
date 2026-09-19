@@ -1,11 +1,3 @@
-import { createHash } from 'node:crypto';
-import { createWriteStream } from 'node:fs';
-import { mkdtemp, readFile, stat } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
-
 // The executor is the SEA `kimi` binary published by the native release chain
 // (apps/kimi-code/scripts/native): `<cdnBase>/binaries/<version>/manifest.json`
 // describes `{version, platforms: {<platform>-<arch>: {filename, checksum}}}`
@@ -59,7 +51,6 @@ interface ReleaseManifest {
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const MANIFEST_FETCH_TIMEOUT_MS = 30_000;
-const DOWNLOAD_TIMEOUT_MS = 600_000;
 
 function parseManifest(body: unknown, url: string): ReleaseManifest {
   if (body === null || typeof body !== 'object') {
@@ -162,57 +153,4 @@ export class CdnExecutorArtifactLocator implements ExecutorArtifactLocator {
       url: `${this.cdnBaseUrl}/binaries/${version}/${entry.filename}`,
     };
   }
-}
-
-export interface DownloadedExecutorArtifact {
-  readonly path: string;
-  readonly sizeBytes: number;
-}
-
-export interface DownloadExecutorArtifactOptions {
-  readonly fetchImpl?: typeof fetch;
-  readonly timeoutMs?: number;
-  // Defaults to a fresh `mkdtemp` dir; the caller owns cleanup of the dir.
-  readonly destDir?: string;
-}
-
-export async function downloadExecutorArtifact(
-  artifact: ExecutorArtifact,
-  options: DownloadExecutorArtifactOptions = {},
-): Promise<DownloadedExecutorArtifact> {
-  const fetchImpl = options.fetchImpl ?? fetch;
-  const destDir = options.destDir ?? (await mkdtemp(join(tmpdir(), 'kimi-executor-')));
-  const destPath = join(destDir, artifact.filename);
-  const controller = new AbortController();
-  const timeout = setTimeout(() => {
-    controller.abort();
-  }, options.timeoutMs ?? DOWNLOAD_TIMEOUT_MS);
-  // The timeout must stay armed until the BODY is fully written to disk: a
-  // CDN or proxy can deliver headers within the limit and then stall mid-body.
-  try {
-    const response = await fetchImpl(artifact.url, { signal: controller.signal });
-    if (!response.ok || response.body === null) {
-      throw new ArtifactLocatorError(
-        `executor download from ${artifact.url} returned HTTP ${String(response.status)}`,
-      );
-    }
-    await pipeline(Readable.fromWeb(response.body as never), createWriteStream(destPath));
-  } catch (error) {
-    if (error instanceof ArtifactLocatorError) throw error;
-    throw new ArtifactLocatorError(
-      `failed to download ${artifact.url}: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
-    );
-  } finally {
-    clearTimeout(timeout);
-  }
-  const actualSha256 = createHash('sha256').update(await readFile(destPath)).digest('hex');
-  if (actualSha256 !== artifact.sha256) {
-    throw new ArtifactLocatorError(
-      `executor checksum mismatch for ${artifact.filename}: expected ${artifact.sha256}, ` +
-        `got ${actualSha256}. Refusing to install — CDN content may have changed.`,
-    );
-  }
-  const { size } = await stat(destPath);
-  return { path: destPath, sizeBytes: size };
 }

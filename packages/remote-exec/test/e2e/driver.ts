@@ -1,14 +1,20 @@
 import { spawn as localSpawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { dirname as posixDirname } from 'node:path/posix';
 
 import {
   CdnExecutorArtifactLocator,
   classifyHandshakeFailure,
-  connectWithAutoInstall,
-  installExecutor,
+  connectWithGuidance,
+  dockerBaseArgs,
+  probeExecutorTarget,
   RemoteEnvironment,
-  type ExecutorArtifactLocator,
+  type ExecutorArtifact,
   type LauncherSpec,
+  type LocalRunner,
 } from '../../src/client/index';
 
 interface Flags {
@@ -379,51 +385,70 @@ async function scenarioInstall(flags: Flags): Promise<void> {
     throw new Error('connect succeeded before any install — use a fresh target for this scenario');
   });
 
-  await check('install', 'a tampered checksum aborts the auto-install without a connect retry', async () => {
-    const badLocator: ExecutorArtifactLocator = {
-      locate: async (target, version) => ({
-        ...(await locator.locate(target, version)),
-        sha256: '0'.repeat(64),
-      }),
-    };
+  await check('install', 'the failure prints per-launcher install guidance and installs nothing', async () => {
     let attempts = 0;
-    let outcome: 'connected' | unknown;
-    try {
-      await connectWithAutoInstall(
-        async (retryLauncher) => {
-          attempts += 1;
-          return RemoteEnvironment.connect({ ...connectBase, launcher: retryLauncher });
-        },
-        { launcher, artifactLocator: badLocator, clientVersion, onDiagnostic },
-      );
-      outcome = 'connected';
-    } catch (error) {
-      outcome = error;
-    }
-    if (outcome === 'connected') {
-      throw new Error('connect succeeded despite the tampered checksum');
-    }
-    const message = outcome instanceof Error ? outcome.message : String(outcome);
-    if (!message.includes('Auto-install failed') || !message.includes('checksum mismatch')) {
-      throw new Error(`unexpected failure text: ${message}`);
-    }
-    if (attempts !== 1) {
-      throw new Error(`connect was retried ${String(attempts - 1)} times after the failed install`);
-    }
-  });
-
-  await check('install', 'auto-install on the handshake failure yields a working environment', async () => {
-    let attempts = 0;
-    const environment = await connectWithAutoInstall(
+    const outcome = await connectWithGuidance(
       async (retryLauncher) => {
         attempts += 1;
         return RemoteEnvironment.connect({ ...connectBase, launcher: retryLauncher });
       },
-      { launcher, artifactLocator: locator, clientVersion, onDiagnostic },
+      { launcher, artifactLocator: locator, clientVersion, runner: driverRunner },
+    ).then(
+      () => 'connected' as const,
+      (error: unknown) => error,
+    );
+    if (outcome === 'connected') {
+      throw new Error('connect succeeded on a fresh target');
+    }
+    if (attempts !== 1) {
+      throw new Error(`expected exactly 1 connect attempt, got ${String(attempts)}`);
+    }
+    const message = outcome instanceof Error ? outcome.message : String(outcome);
+    const probed = await probeExecutorTarget(launcher, driverRunner);
+    if (probed === undefined) throw new Error('could not probe the target platform');
+    const artifact = await locator.locate(probed.target, clientVersion);
+    for (const expected of [artifact.url, 'curl -fL', '/tmp/kimi-install', '.kimi-code/bin/kimi', 'Then reconnect the environment.']) {
+      if (!message.includes(expected)) {
+        throw new Error(`guidance is missing ${JSON.stringify(expected)}:\n${message}`);
+      }
+    }
+    if (launcher.type === 'ssh' && !message.includes(`scp /tmp/kimi-install ${launcher.host}:/tmp/kimi-install`)) {
+      throw new Error(`guidance is missing the scp command:\n${message}`);
+    }
+    if (launcher.type === 'docker' && !message.includes(`cp /tmp/kimi-install ${launcher.container}:/tmp/kimi-install`)) {
+      throw new Error(`guidance is missing the docker cp command:\n${message}`);
+    }
+    // Detection only: nothing was installed, so a raw connect still fails as
+    // a missing executor.
+    try {
+      await RemoteEnvironment.connect({ ...connectBase, launcher });
+    } catch (error) {
+      const cls = classifyHandshakeFailure(error);
+      if (cls === 'missing' || cls === 'timeout') return;
+      throw new Error(
+        `expected the target to still miss the executor, got ${cls}: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+    throw new Error('the executor appeared on the target without a manual install');
+  });
+
+  await check('install', 'following the guidance manually yields a working environment', async () => {
+    const probed = await probeExecutorTarget(launcher, driverRunner);
+    if (probed === undefined) throw new Error('could not probe the target platform');
+    const artifact = await locator.locate(probed.target, clientVersion);
+    await manualInstall(launcher, artifact);
+    let attempts = 0;
+    const environment = await connectWithGuidance(
+      async (retryLauncher) => {
+        attempts += 1;
+        return RemoteEnvironment.connect({ ...connectBase, launcher: retryLauncher });
+      },
+      { launcher, artifactLocator: locator, clientVersion, runner: driverRunner },
     );
     try {
-      if (attempts !== 2) {
-        throw new Error(`expected exactly 2 connect attempts (fail + one retry), got ${String(attempts)}`);
+      if (attempts !== 1) {
+        throw new Error(`expected the connect to succeed on the first attempt, got ${String(attempts)}`);
       }
       const binPath = flags.remoteBin ?? `${environment.host.homeDir}/.kimi-code/bin/kimi`;
       const meta = await environment.fs.stat(binPath);
@@ -437,16 +462,102 @@ async function scenarioInstall(flags: Flags): Promise<void> {
       await environment.dispose();
     }
   });
+}
 
-  await check('install', 'a second install is a no-op (already installed)', async () => {
-    const result = await installExecutor({
-      launcher,
-      locator,
-      version: clientVersion,
-      onProgress: onDiagnostic,
+const driverRunner: LocalRunner = (request) =>
+  new Promise((resolve, reject) => {
+    const child = localSpawn(request.program, [...request.args], {
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
-    if (!result.alreadyInstalled) throw new Error('the second install downloaded again');
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString('utf8');
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf8');
+    });
+    child.on('error', reject);
+    child.on('close', (code, signal) => {
+      resolve({ code, signal, stdout, stderr });
+    });
   });
+
+async function runLocal(program: string, args: readonly string[]): Promise<void> {
+  const result = await driverRunner({ program, args });
+  if (result.code !== 0) {
+    const output = result.stderr.trim() || result.stdout.trim() || 'no output';
+    throw new Error(`${program} ${args.join(' ')} exited with code ${String(result.code)}: ${output}`);
+  }
+}
+
+// The manual install the failure guidance describes: download the located
+// artifact, verify the pinned sha256, copy it to the target (scp / docker
+// cp), then chmod + mv it into the executor path.
+async function manualInstall(
+  launcher: LauncherSpec & { readonly type: 'ssh' | 'docker' },
+  artifact: ExecutorArtifact,
+): Promise<void> {
+  const localPath = await downloadVerified(artifact);
+  if (launcher.type === 'ssh') {
+    await runLocal('scp', [localPath, `${launcher.host}:/tmp/kimi-install`]);
+    const dest = launcher.remoteBin;
+    const script =
+      dest === undefined
+        ? 'mkdir -p "$HOME"/.kimi-code/bin && chmod 755 /tmp/kimi-install && mv -f /tmp/kimi-install "$HOME"/.kimi-code/bin/kimi'
+        : `mkdir -p "${posixDirname(dest)}" && chmod 755 /tmp/kimi-install && mv -f /tmp/kimi-install "${dest}"`;
+    await runLocal('ssh', [launcher.host, script]);
+    return;
+  }
+  const home = await dockerHomeDir(launcher);
+  const dest = launcher.remoteBin ?? `${home}/.kimi-code/bin/kimi`;
+  await runLocal('docker', [
+    ...dockerBaseArgs(launcher.context),
+    'cp',
+    localPath,
+    `${launcher.container}:/tmp/kimi-install`,
+  ]);
+  await runLocal('docker', [
+    ...dockerBaseArgs(launcher.context),
+    'exec',
+    launcher.container,
+    'sh',
+    '-c',
+    `mkdir -p "${posixDirname(dest)}" && chmod 755 /tmp/kimi-install && mv -f /tmp/kimi-install "${dest}"`,
+  ]);
+}
+
+async function dockerHomeDir(
+  launcher: LauncherSpec & { readonly type: 'docker' },
+): Promise<string> {
+  const result = await driverRunner({
+    program: 'docker',
+    args: [...dockerBaseArgs(launcher.context), 'exec', launcher.container, 'sh', '-c', 'printf "%s" "$HOME"'],
+  });
+  if (result.code !== 0) {
+    throw new Error(`container home probe failed: ${result.stderr.trim() || result.stdout.trim()}`);
+  }
+  const home = result.stdout.trim();
+  if (!home.startsWith('/')) throw new Error(`unexpected container home ${JSON.stringify(home)}`);
+  return home;
+}
+
+async function downloadVerified(artifact: ExecutorArtifact): Promise<string> {
+  const response = await fetch(artifact.url);
+  if (!response.ok) {
+    throw new Error(`downloading ${artifact.url} returned HTTP ${String(response.status)}`);
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  if (sha256 !== artifact.sha256) {
+    throw new Error(
+      `checksum mismatch for ${artifact.filename}: expected ${artifact.sha256}, got ${sha256}`,
+    );
+  }
+  const dir = await mkdtemp(join(tmpdir(), 'kimi-executor-e2e-'));
+  const path = join(dir, artifact.filename);
+  await writeFile(path, bytes);
+  return path;
 }
 
 const SCENARIOS = ['install', 'basic', 'pty', 'term-ignore', 'group-residue', 'container-stop', 'disconnect'] as const;
