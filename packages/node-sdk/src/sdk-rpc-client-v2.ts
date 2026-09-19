@@ -256,6 +256,7 @@ import {
   type Scope,
   type ServicesAccessor,
   type SessionSummary as V2SessionSummary,
+  type WorkspaceInstance,
 } from '@moonshot-ai/agent-core-v2';
 import {
   RPCError,
@@ -693,6 +694,17 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
+   * Session-less workspace handler resolution shared by the workspace query
+   * surfaces: normalize, reject a missing / non-directory root (the
+   * `POST /workspaces` rule), then create-or-get the handler.
+   */
+  private async workspaceHandlerFor(operation: string, workDir: string): Promise<WorkspaceInstance> {
+    const root = normalizeRequiredWorkDir(operation, workDir);
+    await assertUsableWorkDir(this.engineAccessor.get(IHostFileSystem), root);
+    return this.engineAccessor.get(IWorkspaceInstanceManager).getOrCreate({ root });
+  }
+
+  /**
    * Through the workspace handler's `IWorkspaceSkillCatalog` — the engine's
    * own merged view (builtin / user / explicit / extra / workspace-root /
    * plugin), so the session-less list matches what a session would serve.
@@ -700,9 +712,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * anyway.
    */
   override async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {
-    const handler = await this.engineAccessor
-      .get(IWorkspaceInstanceManager)
-      .getOrCreate({ root: normalizeRequiredWorkDir('listWorkspaceSkills', workDir) });
+    const handler = await this.workspaceHandlerFor('listWorkspaceSkills', workDir);
     const catalog = handler.program.skills;
     await catalog.ready;
     return catalog.catalog.listSkills().map(summarizeSkill);
@@ -716,9 +726,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async suggestFiles(workDir: string, input: SuggestFilesInput): Promise<SuggestFilesResult | undefined> {
     const parsed = parseSuggestFilesInput(input);
-    const handler = await this.engineAccessor
-      .get(IWorkspaceInstanceManager)
-      .getOrCreate({ root: normalizeRequiredWorkDir('suggestFiles', workDir) });
+    const handler = await this.workspaceHandlerFor('suggestFiles', workDir);
     return toSuggestFilesResult(await handler.program.fs.suggest(parsed));
   }
 
@@ -761,9 +769,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * empty list rather than failing the caller.
    */
   override async getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo> {
-    const handler = await this.engineAccessor
-      .get(IWorkspaceInstanceManager)
-      .getOrCreate({ root: workDir });
+    const handler = await this.workspaceHandlerFor('getWorkspaceTrustInfo', workDir);
     const trusted = await handler.program.trust.get();
     if (trusted) return { trusted: true, gatedMcpServers: [], gatedEnvironments: [] };
     const gatedEnvironments = await this.previewGatedEnvironments(workDir);
@@ -813,9 +819,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * servers connect live, no restart needed.
    */
   override async trustWorkspace(workDir: string): Promise<void> {
-    const handler = await this.engineAccessor
-      .get(IWorkspaceInstanceManager)
-      .getOrCreate({ root: workDir });
+    const handler = await this.workspaceHandlerFor('trustWorkspace', workDir);
     await handler.program.trust.trust();
   }
 
@@ -1469,6 +1473,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     if (input.environmentCwd !== undefined && input.environmentId === undefined) {
       throw new KimiError(ErrorCodes.REQUEST_INVALID, 'createSession environmentCwd requires environmentId');
     }
+    await assertUsableWorkDir(this.engineAccessor.get(IHostFileSystem), workDir);
     if (input.id !== undefined) {
       const existing =
         this.liveSession(input.id) ??
@@ -2944,9 +2949,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * Same `McpServerEntry`-as-`McpServerInfo` cast as listMcpServers.
    */
   override async listWorkspaceMcpServers(workDir: string): Promise<readonly McpServerInfo[]> {
-    const handler = await this.engineAccessor
-      .get(IWorkspaceInstanceManager)
-      .getOrCreate({ root: normalizeRequiredWorkDir('listWorkspaceMcpServers', workDir) });
+    const handler = await this.workspaceHandlerFor('listWorkspaceMcpServers', workDir);
     const mcp = handler.program.mcp;
     await mcp.ready;
     return mcp.connectionManager().list() as readonly McpServerInfo[];
@@ -3062,6 +3065,22 @@ function normalizeRequiredWorkDir(operation: string, workDir: string): string {
     throw new KimiError(ErrorCodes.REQUEST_WORK_DIR_REQUIRED, `${operation} requires workDir`);
   }
   return normalizeWorkDir(workDir);
+}
+
+/**
+ * The kap-server `POST /workspaces` rule applied to every SDK path that
+ * registers a workDir as a workspace: the local root must exist and be a
+ * directory — a missing root is rejected here instead of silently creating
+ * a workspace record the engine's `createOrTouch` would accept.
+ */
+async function assertUsableWorkDir(fs: IHostFileSystem, workDir: string): Promise<void> {
+  const stat = await fs.stat(workDir).catch(() => undefined);
+  if (stat === undefined) {
+    throw new KimiError(ErrorCodes.FS_PATH_NOT_FOUND, `workDir ${workDir} does not exist`);
+  }
+  if (!stat.isDirectory) {
+    throw new KimiError(ErrorCodes.FS_PATH_NOT_FOUND, `workDir ${workDir} is not a directory`);
+  }
 }
 
 function parseSuggestFilesInput(input: SuggestFilesInput): FsSuggestRequest {

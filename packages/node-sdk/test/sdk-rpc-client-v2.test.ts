@@ -55,6 +55,7 @@ import {
   IMcpOAuthService,
   ISessionManager,
   IWorkspaceInstanceManager,
+  IWorkspaceService,
   MAIN_AGENT_ID,
   OsProcessErrors,
 } from '@moonshot-ai/agent-core-v2';
@@ -1205,6 +1206,51 @@ key = "${titleOAuthRef.key}"
           code: ErrorCodes.REQUEST_INVALID,
         });
       }
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('rejects createSession with a nonexistent workDir without registering a workspace', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const missing = join(homeDir, 'does-not-exist');
+    try {
+      const failure = await client.createSession({ workDir: missing }).catch((error: unknown) => error);
+      expect(failure).toMatchObject({ code: ErrorCodes.FS_PATH_NOT_FOUND });
+      expect((failure as Error).message).toContain('does not exist');
+      const workspaces = await client.engineAccessor.get(IWorkspaceService).list();
+      expect(workspaces.some((workspace) => workspace.root === missing)).toBe(false);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('rejects createSession when the workDir is a file', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const file = join(homeDir, 'plain-file');
+    await writeFile(file, 'content', 'utf-8');
+    try {
+      const failure = await client.createSession({ workDir: file }).catch((error: unknown) => error);
+      expect(failure).toMatchObject({ code: ErrorCodes.FS_PATH_NOT_FOUND });
+      expect((failure as Error).message).toContain('is not a directory');
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('rejects session-less workspace queries with a nonexistent workDir', async () => {
+    const { harness, homeDir } = await makeHarness();
+    const missing = join(homeDir, 'does-not-exist');
+    try {
+      await expect(harness.listWorkspaceSkills(missing)).rejects.toMatchObject({ code: ErrorCodes.FS_PATH_NOT_FOUND });
+      await expect(harness.suggestFiles(missing, { query: 'a' })).rejects.toMatchObject({ code: ErrorCodes.FS_PATH_NOT_FOUND });
+      await expect(harness.listWorkspaceMcpServers(missing)).rejects.toMatchObject({ code: ErrorCodes.FS_PATH_NOT_FOUND });
+      await expect(harness.getWorkspaceTrustInfo(missing)).rejects.toMatchObject({ code: ErrorCodes.FS_PATH_NOT_FOUND });
+      await expect(harness.trustWorkspace(missing)).rejects.toMatchObject({ code: ErrorCodes.FS_PATH_NOT_FOUND });
     } finally {
       await harness.close();
     }
