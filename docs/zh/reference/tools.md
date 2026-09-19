@@ -153,8 +153,28 @@ Plan 模式是一种受约束的工作状态：进入后 `Write` 与 `Edit` 只�
 
 **`CronDelete`** 只接受一个 `id`。对周期任务，未来所有触发立即停止；对一次性任务，挂起的那次触发会被取消。已触发的一次性任务会自动删除，因此对已触发过的一次性任务调用 `CronDelete` 会返回 `No cron job with id ...`。删除不可撤销，需要还原时只能再次 `CronCreate`。`CronDelete` 在 Plan 模式下同样会被拦截。
 
+## 环境工具
+
+环境工具把 [远程环境](../guides/remote-environment.md) 的切换交给 Agent 自己：`change_environment` 将会话绑定切换到另一个环境，`connect` 根据启动器规格创建一个临时环境。两个工具都仅 main agent 可用——subagent 的工具列表中看不到它们，也无法调用。Plan 模式下调用会被拒绝（先退出 Plan 模式）；tower 模式激活期间不会注册这组工具。与普通工具调用不同，切换或连接在「必要时询问」模式下也会请求确认，只有「完全自动」模式会直接执行。
+
+这些工具默认开启。如需关闭，设置 `KIMI_CODE_EXPERIMENTAL_AGENT_ENVIRONMENT_TOOLS=0`、在 `config.toml` 中写入 `[experimental] agent_environment_tools = false`，或在创建会话前通过 `/experiments` 关闭该功能。在功能关闭时创建的会话既没有这些工具，也没有系统提示词中的环境列表。
+
+| 工具 | 默认审批 | 说明 |
+| --- | --- | --- |
+| `change_environment` | 需审批（「完全自动」模式除外） | 将会话切换到另一个环境 |
+| `connect` | 需审批（「完全自动」模式除外） | 创建并连接一个临时环境 |
+
+**`change_environment`** 接受 `id`（要切换到的环境：`local` 表示本机，或已声明环境、临时环境的 id）和可选的 `cwd`（目标环境上的工作目录；声明未设置 `defaultCwd` 的远程环境必填，切换到 `local` 时可选）。目标环境会立即连接：连接或 `cwd` 校验失败会立刻报错且不改变任何状态。
+
+切换本身在当前轮次边界生效——本轮剩余的工具调用仍在前一个环境上执行，新环境的 OS、Shell 和工作目录提醒随下一轮次到达。这次切换会像手动 `/environment` 切换一样被记录，因此 undo 可以恢复上一个绑定。
+
+**`connect`** 接受一个启动器规格——`{ type: "ssh", host: "..." }`、`{ type: "docker", container: "..." }` 或 `{ type: "command", command: "...", args: [...] }`——以及可选的 `id`（最多 64 个字符；`local` 和 `default` 为保留值；省略时根据启动器生成）。`ssh` 规格接受可选的 `remoteBin`，`docker` 规格接受可选的 `context` 和 `remoteBin`，`command` 规格接受可选的 `args` 和 `env`。
+
+环境会立即连接：结果会返回目标环境的 OS、Shell 和初始工作目录，或连接失败的原因。新环境会像已声明环境一样注册到会话工作区，之后可以用 `change_environment` 切换过去，或通过 `Agent` 工具的 `environment` 参数把 subagent 绑定到它。不会写入 `config.toml` 或 `.kimi-code/environments.toml`：临时环境在进程退出时消失，连接断开后无法重连（重新创建一个即可），恢复会话时也找不到它——如果工作之后还要继续，结束会话前先切回 `local`。
+
 ## 下一步
 
 - [Agent 与 subagent](../customization/agents.md) — `Agent` 工具的调度机制与上下文隔离
 - [Hooks](../customization/hooks.md) — 在工具调用前后触发本地脚本
 - [斜杠命令](./slash-commands.md) — TUI 内置控制命令速查
+- [远程环境](../guides/remote-environment.md) — 环境绑定、声明式环境和 `/environment` 对话框
