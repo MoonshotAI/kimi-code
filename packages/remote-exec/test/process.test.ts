@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 
@@ -92,6 +95,33 @@ describe('process group over a subprocess loopback', () => {
       name: 'HostProcessError',
       code: 'os.process.spawn_failed',
     });
+  });
+
+  it('points at the cwd when the spawn cwd does not exist', async () => {
+    const missing = '/definitely-missing-cwd-9f3x';
+    await expect(
+      processes.spawn('bash', ['-c', 'true'], { cwd: missing }),
+    ).rejects.toSatisfy((error: unknown) => {
+      expect(error).toBeInstanceOf(HostProcessError);
+      const hostError = error as HostProcessError;
+      expect(hostError.code).toBe('os.process.spawn_failed');
+      expect(hostError.message).toContain(`cwd ${missing} does not exist or is not a directory`);
+      return true;
+    });
+  });
+
+  it('spawns in the environment defaultCwd when the call omits cwd', async () => {
+    const envCwd = await mkdtemp(join(tmpdir(), 'kimi-remote-default-cwd-'));
+    try {
+      expect(envCwd).not.toBe(process.cwd());
+      const envProcesses = new RemoteProcessService(connection, envCwd, '/bin/bash');
+      const proc = await envProcesses.spawn('pwd', []);
+      const [out, code] = await Promise.all([collect(proc.stdout), proc.wait()]);
+      expect(code).toBe(0);
+      expect(out.toString().trim()).toBe(envCwd);
+    } finally {
+      await rm(envCwd, { recursive: true, force: true });
+    }
   });
 
   it('sends only explicit env overrides and never the local process env', async () => {

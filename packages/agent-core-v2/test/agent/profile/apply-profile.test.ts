@@ -9,6 +9,7 @@ import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
+import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IAgentPlanService } from '#/features/plan/plan';
 import type { Environment, EnvironmentCapability, EnvironmentStatus } from '#/environment/environment';
 import { stubAgentEnvironment } from '../../environment/stubs';
@@ -230,7 +231,7 @@ describe('AgentProfileService.applyProfile', () => {
       const { profile: svc } = buildContext(
         agentService(
           IAgentEnvironmentService,
-          mappedEnvironmentService(fs, homeDir, (path) => mapping.get(path) ?? path),
+          mappedEnvironmentService(fs, homeDir, (path) => mapping.get(path) ?? path, ['fs'], workDir),
         ),
       );
 
@@ -250,10 +251,39 @@ describe('AgentProfileService.applyProfile', () => {
     }
   });
 
+  it('renders the binding-derived workspace workDir instead of the host session cwd', async () => {
+    const bindingDir = await mkdtemp(join(tmpdir(), 'kimi-apply-binding-'));
+    try {
+      await writeFile(join(bindingDir, 'binding-only.txt'), 'x', 'utf-8');
+      await writeFile(join(workDir, 'host-only.txt'), 'x', 'utf-8');
+      const { profile: svc } = buildContext(
+        agentService(ISessionWorkspaceContext, {
+          _serviceBrand: undefined,
+          workDir: bindingDir,
+          additionalDirs: [],
+          resolve: (rel: string) => resolve(bindingDir, rel),
+          isWithin: () => true,
+          assertAllowed: (absPath: string) => absPath,
+          setWorkDir: () => {},
+        }),
+      );
+
+      await svc.applyProfile(exactProfile);
+
+      const prompt = svc.data().systemPrompt;
+      expect(prompt).toContain(`cwd:${bindingDir}`);
+      expect(prompt).toContain('binding-only.txt');
+      expect(prompt).not.toContain(`cwd:${workDir}`);
+      expect(prompt).not.toContain('host-only.txt');
+    } finally {
+      await rm(bindingDir, { recursive: true, force: true });
+    }
+  });
+
   it('skips the directory listing when the bound environment has no fs capability', async () => {
     const fs = new HostFileSystem();
     const { profile: svc } = buildContext(
-      agentService(IAgentEnvironmentService, mappedEnvironmentService(fs, homeDir, (path) => path, [])),
+      agentService(IAgentEnvironmentService, mappedEnvironmentService(fs, homeDir, (path) => path, [], workDir)),
     );
 
     await svc.applyProfile(exactProfile);
@@ -559,6 +589,7 @@ function mappedEnvironmentService(
   homeDir: string,
   map: (path: string) => string,
   capabilities: readonly EnvironmentCapability[] = ['fs'],
+  workDir?: string,
 ): IAgentEnvironmentService {
   const environment: Environment = {
     identity: { workspaceId: 'workspace-1', environmentId: 'mapped', generation: 'g1' },
@@ -594,6 +625,7 @@ function mappedEnvironmentService(
     dispose: () => {},
   };
   return stubAgentEnvironment(environment, {
+    workDir,
     isAvailable: (required = []) =>
       required.every((capability) => environment.capabilities.has(capability)),
   });
