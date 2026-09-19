@@ -23,6 +23,7 @@ import type { IAgentPlanService, PlanData } from '#/features/plan/plan';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { makeSessionContext } from '#/session/sessionContext/sessionContext';
+import { compileToolArgsValidator, validateToolArgs } from '#/tool/args-validator';
 import type { RunnableToolExecution } from '#/tool/toolContract';
 import type { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
@@ -244,6 +245,21 @@ describe('ConnectEnvironmentTool', () => {
       },
     } as unknown as IEphemeralEnvironmentConnector;
   }
+
+  it('exposes parameters as a strict-provider-compatible object schema', () => {
+    const { tool } = createTool();
+
+    expect(tool.parameters['type']).toBe('object');
+
+    const validator = compileToolArgsValidator(tool.parameters);
+    expect(validateToolArgs(validator, { type: 'ssh', host: 'dev-box' })).toBeNull();
+    expect(validateToolArgs(validator, { type: 'docker', container: 'web' })).toBeNull();
+    expect(validateToolArgs(validator, { type: 'command', command: 'kimi-exec' })).toBeNull();
+    expect(validateToolArgs(validator, { type: 'ssh' })).not.toBeNull();
+    expect(
+      validateToolArgs(validator, { type: 'ssh', host: 'dev-box', bogus: true }),
+    ).not.toBeNull();
+  });
 
   it('rejects subagents', async () => {
     const { tool } = createTool({ scope: subagentScope });
