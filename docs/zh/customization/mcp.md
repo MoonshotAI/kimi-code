@@ -12,7 +12,7 @@ Kimi Code CLI 会保留因格式或大小限制而无法直接交付的内嵌 MC
 
 Kimi Code CLI 支持三种 MCP server 接入方式：
 
-- **stdio**：CLI 以子进程方式启动本地 MCP server，通过标准输入输出通信。适合本地命令行工具。stdio server 始终在运行 Kimi Code 的机器上执行——即使会话绑定了 [远程环境](../guides/remote-environment.md)，它们也看不到目标环境的文件系统。
+- **stdio**：CLI 以子进程方式启动 MCP server，通过标准输入输出通信。适合命令行工具。默认 server 在运行 Kimi Code 的机器上执行；设置 [`environment_id`](#在远程环境中运行-stdio-server) 则改为在 [远程环境](../guides/remote-environment.md) 中启动。
 - **HTTP**：CLI 连接一个已在运行的 HTTP 端点。适合远程服务或需要持久运行的进程。
 - **SSE**：CLI 连接旧式 HTTP+SSE 端点。新 MCP server 优先使用 HTTP；只有服务仍仅暴露旧式 SSE 传输时，才设置 `transport: "sse"`。
 
@@ -58,6 +58,8 @@ MCP server 配置写在 `mcp.json` 中，分两层：
 | 字段 | 类型 | 适用方式 | 说明 |
 | --- | --- | --- | --- |
 | `env` | `Record<string, string>` | stdio | 注入子进程的环境变量 |
+| `envVars` | `Array<string \| { name, source? }>` | stdio | 转发给在远程环境中运行的 stdio server 的环境变量，见 [在远程环境中运行 stdio server](#在远程环境中运行-stdio-server) |
+| `environment_id` | `string` | stdio | 启动该 server 的 [远程环境](../guides/remote-environment.md) id，默认 `local` |
 | `cwd` | `string` | stdio | 子进程工作目录 |
 | `headers` | `Record<string, string>` | HTTP、SSE | 附加到每次请求的静态请求头 |
 | `bearerTokenEnvVar` | `string` | HTTP、SSE | 存放 bearer token 的环境变量名 |
@@ -75,8 +77,61 @@ HTTP 与 SSE server 支持通过 `headers` 或 `bearerTokenEnvVar` 提供静态�
 Plugins 也可以在 manifest 中声明 MCP servers。Plugin 声明的 servers 默认启用，可以在 `/plugins` 中禁用或重新启用：禁用或移除后，已打开会话中的工具调用会失败并返回移除提示；新增或启用 server 会立即连接到已打开的会话。详见 [Plugins](./plugins.md#plugin-中的-mcp-servers)。
 
 ::: warning 注意
-项目级 `.kimi-code/mcp.json` 中的 stdio 条目会在会话启动时执行本地命令，只在你信任的仓库里启用。
+项目级 `.kimi-code/mcp.json` 中的 stdio 条目会在会话启动时执行命令，只在你信任的仓库里启用。
 :::
+
+## 在远程环境中运行 stdio server
+
+stdio server 通常在运行 Kimi Code 的机器上执行，即使会话绑定了远程环境也是如此。在 server 条目上设置 `environment_id` 可以改变这一点：CLI 会在指定的 [远程环境](../guides/remote-environment.md) 中启动该 server，其进程、工作目录以及它访问的一切都位于目标环境上。
+
+```toml
+# config.toml
+[environments.dev-box]
+type = "ssh"
+host = "dev-box"
+defaultCwd = "/srv/work"
+```
+
+```json
+{
+  "mcpServers": {
+    "remote-fs": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/srv/data"],
+      "environment_id": "dev-box"
+    }
+  }
+}
+```
+
+`environment_id` 引用在 `config.toml` 的 `[environments]` 或 `.kimi-code/environments.toml` 中声明的环境（见 [声明环境](../guides/remote-environment.md#声明环境)）。该字段默认为 `local`，且不跟随会话自身的环境绑定：绑定到 `dev-box` 的会话仍会在本地运行未设置 `environment_id` 的 stdio server。环境尚未连接时，会在 server 启动时按需建立连接。
+
+### 远程 stdio server 的环境变量
+
+远程 stdio server 的 `PATH`、`HOME` 等基础环境变量来自目标环境，而不是你的机器，本机路径不会泄漏到远程进程中。CLI 只发送一份显式覆盖层，其余变量都由目标环境解析：
+
+- `env` 条目，按字面量值发送。
+- `source` 为 `"local"`（默认值）的 `envVars` 条目：从本机 CLI 进程的环境中取值，按字面量发送。
+- `source` 为 `"remote"` 的 `envVars` 条目：不发送任何内容，该变量由目标环境自身解析。
+
+```json
+{
+  "mcpServers": {
+    "remote-db": {
+      "command": "db-mcp-server",
+      "environment_id": "dev-box",
+      "env": { "LOG_LEVEL": "debug" },
+      "envVars": [
+        "GITHUB_TOKEN",
+        { "name": "PGPASSWORD", "source": "local" },
+        { "name": "SSH_AUTH_SOCK", "source": "remote" }
+      ]
+    }
+  }
+}
+```
+
+在这个例子中，server 会收到来自 `env` 的 `LOG_LEVEL=debug`、取值为本机当前值的 `GITHUB_TOKEN` 与 `PGPASSWORD`，以及在目标环境上解析的 `SSH_AUTH_SOCK`。对于使用默认 `local` 环境的 server，`envVars` 没有效果，因为子进程本就会继承 CLI 的完整环境。
 
 ## 按需加载工具
 

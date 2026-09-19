@@ -1,14 +1,23 @@
 import { mkdirSync, mkdtempSync, realpathSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+
 import { join } from 'pathe';
 import { describe, expect, it } from 'vitest';
 
-import { Error2 } from '#/errors';
-import { mergeStdioEnv, StdioMcpClient, type StdioMcpClientOptions } from '#/mcpCore/client-stdio';
-import type { McpServerStdioConfig } from '#/mcpCore/config-schema';
-import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
+import type { EnvironmentLease, EnvironmentStatus } from '#/environment/environment';
+import { EnvironmentError, environmentStatusAllows } from '#/environment/environmentRegistry';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
+import {
+  mergeRemoteStdioEnv,
+  mergeStdioEnv,
+  StdioMcpClient,
+  type StdioMcpClientOptions,
+} from '#/mcpCore/client-stdio';
+import { McpServerStdioConfigSchema, type McpServerStdioConfig } from '#/mcpCore/config-schema';
+import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
+import type { IHostProcessService } from '#/os/interface/hostProcess';
+import type { IEnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
 import {
   crashAfterConnectFixture,
@@ -50,6 +59,75 @@ function createClient(
   });
 }
 
+interface EnvironmentClientHarness {
+  readonly client: StdioMcpClient;
+  readonly calls: string[];
+  readonly spawnEnvs: Array<Record<string, string> | undefined>;
+  readonly connectCalls: () => number;
+}
+
+function createEnvironmentClient(
+  config: McpServerStdioConfig,
+  options: { environmentId?: string; status?: EnvironmentStatus } = {},
+): EnvironmentClientHarness {
+  const environmentId = options.environmentId ?? 'local';
+  const calls: string[] = [];
+  const spawnEnvs: Array<Record<string, string> | undefined> = [];
+  let connectCalls = 0;
+  const hostProcess = new HostProcessService();
+  const recordingProcess: IHostProcessService = {
+    _serviceBrand: undefined,
+    spawn: (command, args, spawnOptions) => {
+      spawnEnvs.push(spawnOptions?.env);
+      return hostProcess.spawn(command, args, spawnOptions);
+    },
+  };
+  const environment = new FakeEnvironment(
+    { workspaceId: 'workspace', environmentId, generation: 'test' },
+    { capabilities: ['process'], status: options.status ?? 'ready' },
+  );
+  Object.assign(environment, {
+    process: recordingProcess,
+    connect: async () => {
+      connectCalls += 1;
+      calls.push('connect');
+      environment.setStatus('ready');
+    },
+  });
+  const lease = (): EnvironmentLease => ({
+    environment,
+    track: (resource) => resource,
+    dispose: () => {},
+  });
+  const unavailable = (): never => {
+    throw new EnvironmentError('environment.unavailable', `environment is ${environment.status}`);
+  };
+  const environmentResolver: IEnvironmentResolver = {
+    _serviceBrand: undefined,
+    inspect: () => {
+      calls.push('inspect');
+      return environment;
+    },
+    acquire: () => {
+      calls.push('acquire');
+      if (!environmentStatusAllows(environment, ['process'])) unavailable();
+      return lease();
+    },
+    acquireWhenReady: async () => {
+      calls.push('acquireWhenReady');
+      if (!environmentStatusAllows(environment, ['process'])) unavailable();
+      return lease();
+    },
+  };
+  const client = new StdioMcpClient(config, {
+    environmentResolver,
+    workspaceId: 'workspace',
+    environmentId,
+    defaultCwd: process.cwd(),
+  });
+  return { client, calls, spawnEnvs, connectCalls: () => connectCalls };
+}
+
 function isPostCloseTransportError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return (
@@ -60,27 +138,78 @@ function isPostCloseTransportError(error: unknown): boolean {
 }
 
 describe('StdioMcpClient', () => {
-  it('rejects unsupported executor at construction time', () => {
-    expect(
-      () =>
-        createClient({
-          transport: 'stdio',
-          command: 'true',
-          executor: 'kaos',
-        }),
-    ).toThrow(
-      expect.objectContaining({ name: 'Error2', code: 'not_implemented' }) as unknown as Error,
+  it('connects a pending environment before spawning the server', async () => {
+    const harness = createEnvironmentClient(
+      { transport: 'stdio', command: process.execPath, args: [stdioFixture] },
+      { environmentId: 'dev-box', status: 'pending' },
     );
-
-    let thrown: unknown;
     try {
-      const client = createClient({ transport: 'stdio', command: 'true', executor: 'kaos' });
-      void client;
-    } catch (error) {
-      thrown = error;
+      await harness.client.connect();
+      expect(harness.connectCalls()).toBe(1);
+      expect(harness.calls.slice(0, 3)).toEqual(['inspect', 'connect', 'acquireWhenReady']);
+      const result = await harness.client.callTool('echo', { text: 'remote hello' });
+      expect(result.content).toEqual([{ type: 'text', text: 'remote hello' }]);
+    } finally {
+      await harness.client.close();
     }
-    expect(thrown).toBeInstanceOf(Error2);
-  });
+  }, 15000);
+
+  it('does not connect an environment that is already ready', async () => {
+    const harness = createEnvironmentClient(
+      { transport: 'stdio', command: process.execPath, args: [stdioFixture] },
+      { environmentId: 'dev-box', status: 'ready' },
+    );
+    try {
+      await harness.client.connect();
+      expect(harness.connectCalls()).toBe(0);
+      expect(harness.calls.slice(0, 2)).toEqual(['inspect', 'acquireWhenReady']);
+      const result = await harness.client.callTool('echo', { text: 'hello' });
+      expect(result.content).toEqual([{ type: 'text', text: 'hello' }]);
+    } finally {
+      await harness.client.close();
+    }
+  }, 15000);
+
+  it('sends only the configured env overlay to a non-local environment', async () => {
+    const parentOnly = `KIMI_TEST_PARENT_${Date.now()}`;
+    const localVar = `KIMI_TEST_LOCAL_${Date.now()}`;
+    const remoteVar = `KIMI_TEST_REMOTE_${Date.now()}`;
+    process.env[parentOnly] = 'from-parent';
+    process.env[localVar] = 'resolved-locally';
+    process.env[remoteVar] = 'stays-local';
+    process.env['HTTP_PROXY'] = 'http://127.0.0.1:9';
+    const harness = createEnvironmentClient(
+      {
+        transport: 'stdio',
+        command: process.execPath,
+        args: [stdioFixture],
+        env: { KIMI_TEST_LITERAL: 'literal' },
+        envVars: [localVar, { name: remoteVar, source: 'remote' }],
+      },
+      { environmentId: 'dev-box' },
+    );
+    try {
+      await harness.client.connect();
+      expect(harness.spawnEnvs).toHaveLength(1);
+      const overlay = harness.spawnEnvs[0] ?? {};
+      expect(overlay['KIMI_TEST_LITERAL']).toBe('literal');
+      expect(overlay[localVar]).toBe('resolved-locally');
+      expect(overlay[remoteVar]).toBeUndefined();
+      expect(overlay[parentOnly]).toBeUndefined();
+      expect(overlay['PATH']).toBeUndefined();
+      expect(overlay['HOME']).toBeUndefined();
+      expect(overlay['HTTP_PROXY']).toBeUndefined();
+      expect(overlay['NODE_USE_ENV_PROXY']).toBeUndefined();
+      const result = await harness.client.callTool('read_env', { name: 'KIMI_TEST_LITERAL' });
+      expect(result.content).toEqual([{ type: 'text', text: 'literal' }]);
+    } finally {
+      delete process.env[parentOnly];
+      delete process.env[localVar];
+      delete process.env[remoteVar];
+      delete process.env['HTTP_PROXY'];
+      await harness.client.close();
+    }
+  }, 15000);
 
   it('uses defaultCwd when config.cwd is omitted', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-default-cwd-'));
@@ -185,12 +314,7 @@ describe('StdioMcpClient', () => {
     try {
       await client.connect();
       const tools = await client.listTools();
-      expect(tools.map((t) => t.name).toSorted()).toEqual([
-        'boom',
-        'echo',
-        'read_env',
-        'whoami',
-      ]);
+      expect(tools.map((t) => t.name).toSorted()).toEqual(['boom', 'echo', 'read_env', 'whoami']);
       const echo = tools.find((t) => t.name === 'echo');
       expect(echo?.description).toBe('Echoes input text');
       expect(echo?.inputSchema).toMatchObject({ type: 'object' });
@@ -400,5 +524,63 @@ describe('mergeStdioEnv', () => {
     const dir = mkdtempSync(join(tmpdir(), 'kimi-mcp-env-'));
     await rm(dir, { recursive: true, force: true });
     expect(mergeStdioEnv(undefined, { PATH: dir })['PATH']).toBe(dir);
+  });
+});
+
+describe('mergeRemoteStdioEnv', () => {
+  it('sends only literal env plus source=local values resolved from the parent env', () => {
+    const merged = mergeRemoteStdioEnv(
+      {
+        env: { LITERAL: 'literal' },
+        envVars: ['INHERIT', { name: 'ALSO_INHERIT' }, { name: 'SKIP', source: 'remote' }],
+      },
+      { INHERIT: 'a', ALSO_INHERIT: 'b', SKIP: 'c', PATH: '/usr/bin', HOME: '/home/x' },
+    );
+    expect(merged).toEqual({ INHERIT: 'a', ALSO_INHERIT: 'b', LITERAL: 'literal' });
+  });
+
+  it('lets literal env override an envVars-resolved value', () => {
+    const merged = mergeRemoteStdioEnv({ env: { A: 'literal' }, envVars: ['A'] }, { A: 'parent' });
+    expect(merged['A']).toBe('literal');
+  });
+
+  it('omits unnamed parent variables and never injects proxy variables', () => {
+    const merged = mergeRemoteStdioEnv({}, { HTTP_PROXY: 'http://corp:3128', PATH: '/x' });
+    expect(merged).toEqual({});
+  });
+
+  it('skips envVars entries missing from the parent env', () => {
+    expect(mergeRemoteStdioEnv({ envVars: ['MISSING'] }, {})).toEqual({});
+  });
+});
+
+describe('McpServerStdioConfigSchema envVars', () => {
+  it('accepts string and object entries, with source defaulting to local', () => {
+    const parsed = McpServerStdioConfigSchema.parse({
+      transport: 'stdio',
+      command: 'x',
+      envVars: ['A', { name: 'B' }, { name: 'C', source: 'remote' }],
+    });
+    expect(parsed.envVars).toEqual(['A', { name: 'B' }, { name: 'C', source: 'remote' }]);
+  });
+
+  it('rejects an unknown source', () => {
+    expect(() =>
+      McpServerStdioConfigSchema.parse({
+        transport: 'stdio',
+        command: 'x',
+        envVars: [{ name: 'A', source: 'elsewhere' }],
+      }),
+    ).toThrow();
+  });
+
+  it('rejects an entry without a name', () => {
+    expect(() =>
+      McpServerStdioConfigSchema.parse({
+        transport: 'stdio',
+        command: 'x',
+        envVars: [{ source: 'local' }],
+      }),
+    ).toThrow();
   });
 });
