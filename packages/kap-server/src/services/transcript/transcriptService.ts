@@ -11,6 +11,7 @@ import {
   ISessionMetadata,
   IAgentLoopService,
   TOWER_FLAG_ID,
+  flattenChain,
   followSessionLifecycles,
   getLiveSessionById,
   isTowerFeatureAssembled,
@@ -516,7 +517,7 @@ export class TranscriptService {
     );
     let records: ContextRecord[];
     try {
-      records = await this.wireCache.read(wirePath);
+      records = flattenChain(await this.wireCache.read(wirePath));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         return groupMessagesIntoSnapshot([]);

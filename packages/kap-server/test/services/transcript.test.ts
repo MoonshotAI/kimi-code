@@ -4628,6 +4628,38 @@ describe('WireRecordCache', () => {
       const snap3 = await service.readColdSnapshot('s1', 'main');
       expect(snap3!.items.filter((item) => item.kind === 'turn')).toHaveLength(1);
       expect(snap3).toEqual(await coldTranscriptService(home).readColdSnapshot('s1', 'main'));
+
+      await appendFile(wirePath, wireText(turnRecords(2, 'third', 4000)));
+      await appendFile(wirePath, wireText(turnRecords(3, 'fourth', 5000)));
+      await appendFile(
+        wirePath,
+        wireText([
+          { type: 'context.apply_compaction', summary: 'dead summary', time: 5004 },
+          {
+            type: 'agent.switched',
+            agentId: 'main',
+            branch: 'b1',
+            reason: 'undo',
+            base: { branch: 'main', line: 13 },
+            turns: 1,
+            legacyUndoLine: 20,
+            time: 5005,
+          },
+          { type: 'context.undo', agentId: 'main', count: 1, time: 5006 },
+          { type: 'context.undone', agentId: 'main', turns: 1, fromTurnId: 3, time: 5007 },
+        ]),
+      );
+      await appendFile(wirePath, wireText(turnRecords(4, 'fifth', 6000)));
+      const snap4 = await service.readColdSnapshot('s1', 'main');
+      const snap4Turns = snap4!.items.filter((item) => item.kind === 'turn');
+      expect(snap4Turns.map((turn) => (turn.kind === 'turn' ? turn.prompt : ''))).toEqual([
+        'first',
+        'third',
+        'fifth',
+      ]);
+      expect(JSON.stringify(snap4!.items)).not.toContain('fourth');
+      expect(JSON.stringify(snap4!.items)).not.toContain('dead summary');
+      expect(snap4).toEqual(await coldTranscriptService(home).readColdSnapshot('s1', 'main'));
       service.dropSession('s1');
     } finally {
       await rm(home, { recursive: true, force: true });
