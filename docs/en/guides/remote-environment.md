@@ -106,7 +106,7 @@ The main agent can:
 - **Create a temporary environment with `connect`**: pass a launcher spec — `{ type: "ssh", host: "..." }`, `{ type: "docker", container: "..." }`, or `{ type: "command", command: "...", args: [...] }`, with an optional `id`. The environment connects right away and is registered in the workspace like a declared one, but nothing is written to `config.toml` or `.kimi-code/environments.toml`: a temporary environment vanishes when the process exits, cannot be reconnected after a connection drop (create a fresh one instead), and a session resumed onto it finds it gone.
 - **Bind a subagent with the `environment` parameter**: the `Agent` tool accepts an optional `environment` id; the spawned subagent binds to that environment (at its `defaultCwd`) instead of inheriting the parent's binding. Resumed subagents keep their own binding.
 
-Two guardrails apply to both tools. They are rejected in Plan mode — exit plan mode first. And they follow the permission mode: Always Ask and Ask When Needed modes ask for confirmation before switching or connecting, while Never Ask mode proceeds without asking. The tool group is not registered while tower mode is active.
+Two guardrails apply to both tools. They are rejected in Plan mode — exit plan mode first. And they follow the permission mode: only Always Ask mode asks for confirmation before switching or connecting; Ask When Needed and Never Ask modes proceed without asking. The tool group is not registered while tower mode is active.
 
 ## Disconnects and reconnecting
 

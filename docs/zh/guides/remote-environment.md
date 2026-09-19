@@ -106,7 +106,7 @@ main agent 可以：
 - **用 `connect` 创建临时环境**：传入启动器规格——`{ type: "ssh", host: "..." }`、`{ type: "docker", container: "..." }` 或 `{ type: "command", command: "...", args: [...] }`，可选 `id`。环境会立即连接并像声明的环境一样注册到工作区，但不会写入 `config.toml` 或 `.kimi-code/environments.toml`：临时环境在进程退出时消失，连接断开后无法重连（重新创建一个即可），恢复会话时也找不到它。
 - **用 `environment` 参数绑定 subagent**：`Agent` 工具接受可选的 `environment` id；新启动的 subagent 绑定到该环境（工作目录取其 `defaultCwd`），而不是继承父 Agent 的绑定。恢复的 subagent 保留自己的绑定。
 
-两个工具都有两条限制。Plan 模式下会被拒绝——先退出 Plan 模式。它们也遵循权限模式：「始终询问」和「必要时询问」模式下，切换或连接前都会请求确认；「完全自动」模式则直接执行。tower 模式激活期间不会注册这组工具。
+两个工具都有两条限制。Plan 模式下会被拒绝——先退出 Plan 模式。它们也遵循权限模式：只有「始终询问」模式会在切换或连接前请求确认，「必要时询问」和「完全自动」模式都会直接执行。tower 模式激活期间不会注册这组工具。
 
 ## 断线与重连
 
