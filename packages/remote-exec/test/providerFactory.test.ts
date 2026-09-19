@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { Emitter } from '@moonshot-ai/agent-core-v2/_base/event';
+import { AsyncEmitter, Emitter, type IWaitUntil } from '@moonshot-ai/agent-core-v2/_base/event';
 import { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
 import { IConfigService, type ConfigSectionChangedEvent } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
@@ -98,7 +98,9 @@ const NOOP_LOG = {
   error: () => {},
 } as unknown as ILogService;
 
-const trustChange = new Emitter<WorkspaceTrustChange>();
+const trustChange = new AsyncEmitter<WorkspaceTrustChange & IWaitUntil>();
+
+const NO_ABORT = new AbortController().signal;
 
 const CONTEXT: EnvironmentProviderContext = {
   id: 'workspace-1',
@@ -181,10 +183,66 @@ describe('RemoteEnvironmentProviderFactory', () => {
     expect(registry.current('project-box')).toBeUndefined();
 
     await writeWorkspaceTrust(docs, '/repo', Date.now());
-    trustChange.fire({ trusted: true });
-    await vi.waitFor(() => {
-      expect(registry.current('project-box')).toBeDefined();
+    // The trust event awaits the triggered reconcile through waitUntil: once
+    // the event settles the project declarations are already published, so a
+    // caller that awaits trustWorkspace() before creating a session bound to
+    // a project environment cannot win the race against the registry.
+    await trustChange.fireAsync({ trusted: true }, NO_ABORT);
+    expect(registry.current('project-box')).toBeDefined();
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('settles the trust event without publishing when the project declaration file is broken', async () => {
+    const registry = new EnvironmentRegistry('workspace-1');
+    const docs = docsService();
+    const warn = vi.fn();
+    const services = baseServices({
+      docs,
+      fs: fsService({ '/repo/.kimi-code/environments.toml': 'not = [toml' }),
+      log: { _serviceBrand: undefined, info: () => {}, warn, error: () => {} } as unknown as ILogService,
     });
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect: vi.fn() }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(services, registry));
+
+    await writeWorkspaceTrust(docs, '/repo', Date.now());
+    await trustChange.fireAsync({ trusted: true }, NO_ABORT);
+
+    expect(warn).toHaveBeenCalledWith('project remote environment declarations failed to load', expect.anything());
+    expect(registry.current('project-box')).toBeUndefined();
+    expect(registry.current('dev-box')).toBeDefined();
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('awaits reconciles queued ahead of the trust trigger before the trust event settles', async () => {
+    const registry = new EnvironmentRegistry('workspace-1');
+    const docs = docsService();
+    const config = watchableConfigService({
+      'dev-box': { type: 'ssh', host: 'dev-box', defaultCwd: '/home/me' },
+    });
+    const services = baseServices({
+      config: config.service,
+      docs,
+      fs: fsService({
+        '/repo/.kimi-code/environments.toml': '[project-box]\ntype = "ssh"\nhost = "project-box"\ndefaultCwd = "/project"\n',
+      }),
+    });
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect: vi.fn() }));
+    const attachment = await factory.attach(CONTEXT, fakeHost(services, registry));
+
+    config.setSection({
+      'dev-box': { type: 'ssh', host: 'dev-box', defaultCwd: '/home/me' },
+      staging: { type: 'ssh', host: 'staging', defaultCwd: '/srv' },
+    });
+    await writeWorkspaceTrust(docs, '/repo', Date.now());
+    // The trust reconcile chains behind the config-change reconcile on the
+    // serialized tail; the settled event covers both.
+    await trustChange.fireAsync({ trusted: true }, NO_ABORT);
+    expect(registry.current('staging')).toBeDefined();
+    expect(registry.current('project-box')).toBeDefined();
 
     await attachment.dispose();
     await registry.dispose();
@@ -205,7 +263,7 @@ describe('RemoteEnvironmentProviderFactory', () => {
     expect(registry.current('project-box')).toBeDefined();
 
     await deleteWorkspaceTrust(docs, '/repo');
-    trustChange.fire({ trusted: false });
+    await trustChange.fireAsync({ trusted: false }, NO_ABORT);
     await vi.waitFor(() => {
       expect(registry.current('project-box')).toBeUndefined();
     });
