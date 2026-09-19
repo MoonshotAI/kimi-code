@@ -21,7 +21,7 @@ import type { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata
 import type { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ILogService } from '#/_base/log/log';
-import { AgentEnvironmentService, acquireOrWhenReady, snapshotAgentEnvironmentBinding } from '#/agent/environmentBinding/agentEnvironment';
+import { AgentEnvironmentService, acquireOrWhenReady, pinnedGeneration, snapshotAgentEnvironmentBinding } from '#/agent/environmentBinding/agentEnvironment';
 import { AgentEnvironmentBindingService, agentEnvironmentBindingKey, ENVIRONMENT_BINDING_REMINDER_VARIANT, PROJECT_CONTEXT_REMINDER_VARIANT } from '#/agent/environmentBinding/environmentBindingService';
 import { environmentBindingKey, EnvironmentSetBinding } from '#/agent/environmentBinding/environmentBindingOps';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -1548,6 +1548,23 @@ describe('acquireOrWhenReady', () => {
     expect(calls).toEqual(['connect']);
     expect(lease.environment.status).toBe('ready');
     lease.dispose();
+  });
+});
+
+describe('pinnedGeneration', () => {
+  it('pins the generation of a ready environment', () => {
+    expect(pinnedGeneration(environment('remote', 'remote-one', 'ready', ['fs']), ['fs'])).toBe('remote-one');
+  });
+
+  it('pins the generation of a degraded environment that still provides the required capabilities', () => {
+    expect(pinnedGeneration(environment('remote', 'remote-one', 'degraded', ['fs']), ['fs'])).toBe('remote-one');
+    expect(pinnedGeneration(environment('remote', 'remote-one', 'degraded', ['process']), ['fs'])).toBeUndefined();
+  });
+
+  it('pins nothing while the environment cannot serve an acquire', () => {
+    expect(pinnedGeneration(environment('remote', 'remote-pending', 'pending', ['fs']), ['fs'])).toBeUndefined();
+    expect(pinnedGeneration(environment('remote', 'remote-down', 'disconnected', ['fs']), ['fs'])).toBeUndefined();
+    expect(pinnedGeneration(environment('remote', 'remote-connecting', 'connecting', ['fs']), ['fs'])).toBeUndefined();
   });
 });
 

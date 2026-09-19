@@ -13,7 +13,7 @@ import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { isPromiseLike } from '#/_base/lifecycle/disposer';
-import { acquireOrWhenReady, IAgentEnvironmentService, inspectAgentEnvironment } from '#/agent/environmentBinding/agentEnvironment';
+import { acquireOrWhenReady, IAgentEnvironmentService, inspectAgentEnvironment, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -83,6 +83,7 @@ export class GlobTool implements IGlobTool {
 
   resolveExecution(args: GlobInput): ToolExecution {
     const inspected = inspectAgentEnvironment(this.environment);
+    const expectedGeneration = pinnedGeneration(inspected, ['fs', 'process']);
     const view = new EnvironmentWorkspaceView(inspected, {
       workDir: this.workspaceCtx.workDir,
       additionalDirs: [
@@ -126,7 +127,7 @@ export class GlobTool implements IGlobTool {
         const acquired = acquireOrWhenReady(this.environment, ['fs', 'process']);
         const lease = isPromiseLike(acquired) ? await acquired : acquired;
         try {
-          if (lease.environment.identity.generation !== inspected.identity.generation) {
+          if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
             return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
           }
           return await this.execution(

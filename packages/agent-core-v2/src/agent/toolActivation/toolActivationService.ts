@@ -94,7 +94,13 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
 
   private environmentAllows(record: AgentToolContribution): boolean {
     const required = record.options.requiredEnvironmentCapabilities;
-    return required === undefined || this.environment.isAvailable(required);
+    if (required === undefined) return true;
+    if (this.environment.isAvailable(required)) return true;
+    try {
+      return typeof this.environment.inspect().connect === 'function';
+    } catch {
+      return false;
+    }
   }
 
   private deactivateRecord(record: AgentToolContribution): void {
