@@ -102,6 +102,7 @@ import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { ISessionStateService } from '#/session/state/sessionState';
+import { workspaceContextAdditionalDirsKey } from '#/session/workspaceContext/workspaceContextService';
 import type { StateKey } from '#/state/state';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
@@ -1374,7 +1375,12 @@ export class AgentTestContext {
               },
               acquireWhenReady(required = []) { return Promise.resolve(this.acquire(required)); },
               reconnect: async () => {},
-              workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
+              workspaceRoots: () => ({
+                workDir: this.session.accessor.get(ISessionContext).cwd,
+                additionalDirs: this.session.accessor
+                  .get(ISessionStateService)
+                  .get(workspaceContextAdditionalDirsKey),
+              }),
             });
             reg.defineDescriptor(
               IWireService,

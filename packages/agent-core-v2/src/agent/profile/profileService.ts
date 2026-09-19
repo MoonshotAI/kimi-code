@@ -822,7 +822,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     const env = lease.environment.host;
     const currentEnvironmentId = lease.environment.identity.environmentId;
     const view = new EnvironmentWorkspaceView(lease.environment, {
-      workDir: this.sessionContext.cwd,
+      workDir: this.workspace.workDir,
       additionalDirs: options?.additionalDirs ?? this.workspace.additionalDirs,
     });
     let base: SystemPromptContext;

@@ -30,6 +30,48 @@ async function startProcess(
 }
 
 describe('process protocol semantics', () => {
+  it('rejects a spawn cwd that does not exist with an explicit cwd error', async () => {
+    const loopback = createInProcessLoopback();
+    const raw = new RawClient(loopback);
+    await raw.handshake();
+    const response = await startProcess(raw, 1, {
+      processId: 'missing-cwd',
+      argv: ['bash', '-c', 'true'],
+      cwd: '/definitely-missing-cwd-9f3x',
+      pipeStdin: false,
+    });
+    const error = response['error'] as {
+      code: number;
+      message: string;
+      data?: { domainCode?: string; cwd?: string };
+    };
+    expect(error.code).toBe(-32602);
+    expect(error.message).toBe(
+      'cwd /definitely-missing-cwd-9f3x does not exist or is not a directory',
+    );
+    expect(error.data?.domainCode).toBe('os.process.spawn_failed');
+    expect(error.data?.cwd).toBe('/definitely-missing-cwd-9f3x');
+    loopback.clientInput.end();
+    await loopback.host.done;
+  });
+
+  it('rejects a spawn cwd that is not a directory with an explicit cwd error', async () => {
+    const loopback = createInProcessLoopback();
+    const raw = new RawClient(loopback);
+    await raw.handshake();
+    const response = await startProcess(raw, 1, {
+      processId: 'file-cwd',
+      argv: ['bash', '-c', 'true'],
+      cwd: '/etc/hosts',
+      pipeStdin: false,
+    });
+    const error = response['error'] as { code: number; message: string };
+    expect(error.code).toBe(-32602);
+    expect(error.message).toBe('cwd /etc/hosts does not exist or is not a directory');
+    loopback.clientInput.end();
+    await loopback.host.done;
+  });
+
   it('rejects a duplicate processId with -32600', async () => {
     const loopback = createInProcessLoopback();
     const raw = new RawClient(loopback);

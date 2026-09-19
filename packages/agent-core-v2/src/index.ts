@@ -548,6 +548,7 @@ export * from '#/app/gateway/gatewayService';
 
 export * from '#/session/workspaceContext/workspaceContext';
 export * from '#/session/workspaceContext/workspaceContextService';
+import '#/session/workspaceContext/agentWorkspaceContextService';
 export * from '#/app/projectLocalConfig/projectLocalConfig';
 export * from '#/app/workspace/workspace';
 export * from '#/app/workspace/workspaceService';

@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { stat } from 'node:fs/promises';
 import type { IPty } from 'node-pty';
 
 import { OsProcessErrors } from '@moonshot-ai/agent-core-v2/os/interface/hostProcess';
@@ -108,6 +109,17 @@ export class ProcessManager {
       throw new RpcError(RpcErrorCode.InvalidParams, 'argv must be a non-empty string array');
     }
     const cwd = requireAbsolutePath(params, 'cwd');
+    const cwdStat = await stat(cwd).catch(() => undefined);
+    if (cwdStat === undefined || !cwdStat.isDirectory()) {
+      throw new RpcError(
+        RpcErrorCode.InvalidParams,
+        `cwd ${cwd} does not exist or is not a directory`,
+        {
+          domainCode: OsProcessErrors.codes.OS_PROCESS_SPAWN_FAILED,
+          cwd,
+        },
+      );
+    }
     const env = params['env'];
     if (env !== undefined) {
       if (env === null || typeof env !== 'object' || Array.isArray(env)) {

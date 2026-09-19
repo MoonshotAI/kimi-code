@@ -1,5 +1,7 @@
 import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 
+import { HostProcessError } from '@moonshot-ai/agent-core-v2/os/interface/hostProcess';
+
 import type { RemoteExecConnection } from '../src/client/connection';
 import { RemoteTerminalService } from '../src/client/remoteTerminal';
 import { connectSubprocess, type SpawnedExecutor } from './helpers/loopback';
@@ -83,6 +85,20 @@ describe('terminal over a subprocess loopback', () => {
     expect(output).toContain('err-stream');
     await expect(exited).resolves.toBe(7);
   }, 15_000);
+
+  it('points at the cwd when the spawn cwd does not exist', async () => {
+    if (skip) return;
+    const missing = '/definitely-missing-cwd-9f3x';
+    await expect(
+      terminals.spawn({ cwd: missing, shell: '/bin/bash', cols: 80, rows: 24 }),
+    ).rejects.toSatisfy((error: unknown) => {
+      expect(error).toBeInstanceOf(HostProcessError);
+      const hostError = error as HostProcessError;
+      expect(hostError.code).toBe('os.process.spawn_failed');
+      expect(hostError.message).toContain(`cwd ${missing} does not exist or is not a directory`);
+      return true;
+    });
+  });
 
   it('reports exit when the connection drops', async () => {
     if (skip) return;
