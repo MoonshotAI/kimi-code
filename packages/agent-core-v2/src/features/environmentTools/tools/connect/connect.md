@@ -6,4 +6,4 @@ Use this when you need an environment that is not declared yet: ad-hoc hosts, th
 - Temporary environments are not persisted: they vanish when the process exits, they cannot be reconnected after a connection drop (create a fresh one instead), and a session resumed onto one finds it gone — switch back to `local` (or another environment) before ending the session if the work should continue later.
 - Prefer declared environments (`/environment` add, or the `[environments]` config section) for targets that are reused across sessions.
 
-Not available in plan mode (call ExitPlanMode first) or while tower mode is active. Connecting asks for user confirmation in manual permission mode; it proceeds without asking in yolo and auto modes.
+Not available in plan mode (call ExitPlanMode first) or while tower mode is active. 
