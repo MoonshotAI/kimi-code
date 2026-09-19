@@ -16,6 +16,7 @@ import {
   ISessionIndexMirror,
   ICapabilityService,
   IPluginService,
+  IWorkspaceInstanceManager,
   IWorkspaceService,
   PluginChanged,
   logSeed,
@@ -30,7 +31,13 @@ import {
   createKimiDefaultHeaders,
   kimiRegionProfile,
   type KimiHostIdentity,
+  type KimiRegion,
 } from '@moonshot-ai/kimi-code-oauth';
+import {
+  CdnExecutorArtifactLocator,
+  RemoteEnvironmentProviderFactory,
+  type RemoteEnvironmentProviderFactoryOptions,
+} from '@moonshot-ai/remote-exec';
 import { createAsyncApiDocument } from './protocol/asyncapi';
 import Fastify, { type FastifyInstance } from 'fastify';
 
@@ -137,6 +144,25 @@ export interface RunningServer {
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 58627;
 
+export interface CreateRemoteEnvironmentProviderOptionsInput {
+  readonly region: KimiRegion;
+  readonly clientVersion: string;
+  readonly onDiagnostic: (line: string) => void;
+}
+
+export function createRemoteEnvironmentProviderOptions(
+  input: CreateRemoteEnvironmentProviderOptionsInput,
+): RemoteEnvironmentProviderFactoryOptions {
+  return {
+    clientName: 'kimi-code',
+    clientVersion: input.clientVersion,
+    artifactLocator: new CdnExecutorArtifactLocator({
+      cdnBaseUrl: kimiRegionProfile(input.region).cdnBase,
+    }),
+    onDiagnostic: input.onDiagnostic,
+  };
+}
+
 export async function startServer(opts: ServerStartOptions): Promise<RunningServer> {
   const host = opts.host ?? DEFAULT_HOST;
   const port = opts.port ?? DEFAULT_PORT;
@@ -220,6 +246,17 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       },
     },
     [...logSeed(logging), ...(opts.seeds ?? [])],
+  );
+  const remoteEnvironmentProvider = await core.accessor.get(IWorkspaceInstanceManager).addProvider(
+    new RemoteEnvironmentProviderFactory(
+      createRemoteEnvironmentProviderOptions({
+        region: core.accessor.get(IOAuthService).getRegion(),
+        clientVersion: serverVersion,
+        onDiagnostic: (line) => {
+          logger.warn(line.trimEnd());
+        },
+      }),
+    ),
   );
 
   let telemetry: ServerTelemetry = {};
@@ -328,6 +365,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       await core.accessor.get(ISessionIndexMirror).drain();
       await core.accessor.get(IMcpOAuthService).shutdown();
       const appendLogStore = core.accessor.get(IAppendLogStore);
+      await remoteEnvironmentProvider.dispose();
       core.dispose();
       await appendLogStore.drainRetirements();
       await drainSessionIndexMirror();
@@ -460,7 +498,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
             : undefined,
     },
     onShutdown: () => {
-      void close().catch((err: unknown) => logger.error({ err }, 'server close failed'));
+      void close().catch((error: unknown) => logger.error({ error }, 'server close failed'));
     },
     connectionRegistry,
     broadcaster,

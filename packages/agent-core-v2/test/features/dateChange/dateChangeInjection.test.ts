@@ -8,6 +8,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import {
@@ -19,6 +20,7 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 
 import {
   appService,
+  agentService,
   createTestAgent,
   hostEnvironmentServices,
   InMemoryWireRecordPersistence,
@@ -433,5 +435,103 @@ describe('AgentDateChangeService', () => {
     await runWillBeginStepHooks(loop);
 
     expect(dateReminders(context)).toHaveLength(2);
+  });
+
+  it('labels the disclosure and change reminders with the local client timezone', async () => {
+    updateSystemPrompt(
+      profile,
+      'You are a deterministic test agent.',
+      ctx.get(ISessionContext).cwd,
+    );
+    await runWillBeginStepHooks(loop);
+
+    const initial = dateReminders(context);
+    expect(initial).toHaveLength(1);
+    const initialText = messageText(initial[0] as ContextMessage);
+    expect(initialText).toContain('2026-07-29');
+    expect(initialText).toContain(TEST_TIME_ZONE);
+    expect(initialText).toContain('local client');
+
+    clock.set('2026-07-30T04:00:00.000Z');
+    await runWillBeginStepHooks(loop);
+
+    const reminders = dateReminders(context);
+    expect(reminders).toHaveLength(2);
+    const changeText = messageText(reminders[1] as ContextMessage);
+    expect(changeText).toContain('2026-07-30');
+    expect(changeText).toContain(TEST_TIME_ZONE);
+    expect(changeText).toContain('local client');
+  });
+});
+
+describe('AgentDateChangeService on a remote environment binding', () => {
+  const REMOTE_WORK_DIR = '/remote/work';
+  let ctx: TestAgentContext;
+  let context: IAgentContextMemoryService;
+  let clock: TestHostClock;
+  let loop: IAgentLoopService;
+  let profile: IAgentProfileService;
+
+  beforeEach(async () => {
+    clock = testHostClock(INITIAL_INSTANT);
+    const binding = {
+      _serviceBrand: undefined,
+      current: { workspaceId: 'test-workspace', environmentId: 'remote-1', cwd: REMOTE_WORK_DIR },
+    } as unknown as IAgentEnvironmentBindingService;
+    ctx = createTestAgent(
+      { autoConfigure: false },
+      appService(IHostClock, clock),
+      agentService(IAgentEnvironmentBindingService, binding),
+    );
+    context = ctx.get(IAgentContextMemoryService);
+    loop = ctx.get(IAgentLoopService);
+    profile = ctx.get(IAgentProfileService);
+    await ctx.restorePersisted();
+    ctx.configure();
+  });
+
+  afterEach(async () => {
+    try {
+      await ctx.expectResumeMatches();
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('injects when the disclosed cwd is the binding cwd rather than the session cwd', async () => {
+    updateSystemPrompt(profile, 'You are a deterministic test agent.', REMOTE_WORK_DIR);
+
+    await runWillBeginStepHooks(loop);
+
+    const reminders = dateReminders(context);
+    expect(reminders).toHaveLength(1);
+    expect(messageText(reminders[0] as ContextMessage)).toContain('2026-07-29');
+  });
+
+  it('announces a crossed midnight on a remote binding, labeled as local client time', async () => {
+    updateSystemPrompt(profile, 'You are a deterministic test agent.', REMOTE_WORK_DIR);
+    await runWillBeginStepHooks(loop);
+    expect(dateReminders(context)).toHaveLength(1);
+
+    clock.set('2026-07-30T04:00:00.000Z');
+    await runWillBeginStepHooks(loop);
+
+    const reminders = dateReminders(context);
+    expect(reminders).toHaveLength(2);
+    const text = messageText(reminders[1] as ContextMessage);
+    expect(text).toContain('2026-07-30');
+    expect(text).toContain(TEST_TIME_ZONE);
+    expect(text).toContain('local client');
+  });
+
+  it('stays quiet when the disclosed cwd matches neither the binding nor the session cwd', async () => {
+    updateSystemPrompt(profile, 'You are a deterministic test agent.', '/some/other/workspace');
+
+    await runWillBeginStepHooks(loop);
+    expect(dateReminders(context)).toHaveLength(0);
+
+    clock.set('2026-07-30T04:00:00.000Z');
+    await runWillBeginStepHooks(loop);
+    expect(dateReminders(context)).toHaveLength(0);
   });
 });

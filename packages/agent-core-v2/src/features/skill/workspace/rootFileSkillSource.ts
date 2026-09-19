@@ -16,6 +16,7 @@ import {
   type ISkillSource,
   type SkillContribution,
 } from '#/features/skill/catalog/skillSource';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { watchCandidates } from '#human/utils/watch';
 
@@ -48,6 +49,7 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
     @IWorkspaceContext private readonly workspace: IWorkspaceContext,
     @IConfigService private readonly config: IConfigService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
+    private readonly fs: IHostFileSystem,
   ) {
     super();
     this._register(
@@ -68,7 +70,7 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
       this.config.get<MergeAllAvailableSkillsConfig>(MERGE_ALL_AVAILABLE_SKILLS_SECTION) ?? true;
     const discover = async () =>
       this.discovery.discover(
-        await projectRoots(this.workspace.cwd, { mergeAllAvailableSkills }),
+        await projectRoots(this.workspace.cwd, { mergeAllAvailableSkills }, this.fs),
       );
     let contribution = await discover();
     while (await this.updateProjectSkillRootWatch(contribution.scannedDirectories)) {
@@ -80,7 +82,7 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
   private async updateProjectSkillRootWatch(
     scannedDirectories: readonly string[],
   ): Promise<boolean> {
-    const { projectRoot, candidates } = await projectSkillRootCandidates(this.workspace.cwd);
+    const { projectRoot, candidates } = await projectSkillRootCandidates(this.workspace.cwd, this.fs);
     const signature = [...scannedDirectories].toSorted().join('\0');
     if (signature === this.watchSignature) return false;
     const resources = this.watchResources.add(new DisposableStore());

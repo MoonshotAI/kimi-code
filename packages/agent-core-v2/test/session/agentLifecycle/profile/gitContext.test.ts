@@ -9,25 +9,7 @@ import {
 } from '#/session/agentLifecycle/profile/gitContext';
 import type { ILogger } from '#/_base/log/log';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
-
-function processWith(stdout: string, exitCode: number, stderr = ''): IHostProcess {
-  const stdoutStream = Readable.from([Buffer.from(stdout)]);
-  const stderrStream = Readable.from([Buffer.from(stderr)]);
-  return {
-    _serviceBrand: undefined,
-    stdin: { end: vi.fn(), write: vi.fn() } as unknown as Writable,
-    stdout: stdoutStream,
-    stderr: stderrStream,
-    pid: 1,
-    exitCode,
-    wait: vi.fn().mockResolvedValue(exitCode),
-    kill: vi.fn(async () => {}),
-    dispose: vi.fn(async () => {
-      stdoutStream.destroy();
-      stderrStream.destroy();
-    }),
-  };
-}
+import { stubHostProcess } from '../../../os/stubs';
 
 type GitScript = Record<string, { stdout?: string; exitCode?: number; stderr?: string }>;
 
@@ -35,8 +17,8 @@ function gitRunner(script: GitScript): { process: IHostProcessService; spawn: Re
   const spawn = vi.fn(async (_command: string, args: readonly string[]) => {
     const key = args.slice(2).join(' ');
     const out = script[key];
-    if (out === undefined) return processWith('', 1);
-    return processWith(out.stdout ?? '', out.exitCode ?? 0, out.stderr ?? '');
+    if (out === undefined) return stubHostProcess('', 1);
+    return stubHostProcess(out.stdout ?? '', out.exitCode ?? 0, out.stderr ?? '');
   });
   return { process: { _serviceBrand: undefined, spawn } as IHostProcessService, spawn };
 }

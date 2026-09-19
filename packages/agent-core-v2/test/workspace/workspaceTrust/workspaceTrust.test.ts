@@ -91,7 +91,7 @@ describe('WorkspaceTrustService', () => {
 
     expect(service.isTrusted()).toBe(true);
     expect(await service.get()).toBe(true);
-    expect(events).toEqual([{ trusted: true }]);
+    expect(events.map((event) => event.trusted)).toEqual([true]);
   });
 
   it('untrust() revokes the state and both directions stay idempotent', async () => {
@@ -105,7 +105,37 @@ describe('WorkspaceTrustService', () => {
     await service.untrust();
 
     expect(service.isTrusted()).toBe(false);
-    expect(events).toEqual([{ trusted: true }, { trusted: false }]);
+    expect(events.map((event) => event.trusted)).toEqual([true, false]);
+  });
+
+  it('trust() resolves only after listener waitUntil promises settle', async () => {
+    const { service } = createService(cwd);
+    await service.ready;
+    let settled = false;
+    service.onDidChange((change) => {
+      change.waitUntil(new Promise<void>((resolve) => {
+        setTimeout(() => {
+          settled = true;
+          resolve();
+        }, 10);
+      }));
+    });
+
+    await service.trust();
+
+    expect(settled).toBe(true);
+  });
+
+  it('trust() still resolves when a listener waitUntil promise rejects', async () => {
+    const { service } = createService(cwd);
+    await service.ready;
+    service.onDidChange((change) => {
+      change.waitUntil(Promise.reject(new Error('listener failure')));
+    });
+
+    await service.trust();
+
+    expect(service.isTrusted()).toBe(true);
   });
 
   it('keeps the marker across a restart', async () => {

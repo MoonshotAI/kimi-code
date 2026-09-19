@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createWriteStream, existsSync } from 'node:fs';
 import { chmod, copyFile, mkdir, mkdtemp, readFile, rename, rm, stat } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
@@ -8,10 +8,11 @@ import { pipeline } from 'node:stream/promises';
 import { kimiRegionProfile, resolveKimiRegion } from '@moonshot-ai/kimi-code-oauth';
 import { extract as extractTar } from 'tar';
 import { type Entry, fromBuffer as yauzlFromBuffer } from 'yauzl';
-import { basename, join } from 'pathe';
+import { basename, dirname, join } from 'pathe';
 
 import { abortable } from '#/_base/utils/abort';
 import { ErrorCodes, Error2 } from '#/errors';
+import { LOCAL_ENVIRONMENT_ID, type Environment } from '#/environment/environment';
 
 const RG_VERSION = '15.0.0';
 const DOWNLOAD_TIMEOUT_MS = 600_000;
@@ -49,6 +50,7 @@ export interface EnsureRgPathOptions {
   readonly shareDir?: string | undefined;
   readonly signal?: AbortSignal | undefined;
   readonly allowCachedFallback?: boolean;
+  readonly environment?: Environment | undefined;
 }
 
 function rgBinaryName(): string {
@@ -63,6 +65,17 @@ function getShareDir(): string {
 
 export function getShareBinRgPath(): string {
   return join(getShareDir(), 'bin', rgBinaryName());
+}
+
+function isRemoteEnvironment(environment: Environment | undefined): environment is Environment {
+  return environment !== undefined && environment.identity.environmentId !== LOCAL_ENVIRONMENT_ID;
+}
+
+function shareBinRgPath(environment: Environment | undefined): string {
+  if (isRemoteEnvironment(environment)) {
+    return `${environment.host.homeDir}/.kimi-code/bin/rg`;
+  }
+  return getShareBinRgPath();
 }
 
 function rgBaseUrl(): string {
@@ -80,6 +93,11 @@ export async function ensureRgPath(
   options: EnsureRgPathOptions = {},
 ): Promise<RgResolution> {
   throwIfAborted(options.signal);
+  const environment = options.environment;
+  if (environment !== undefined && environment.identity.environmentId !== LOCAL_ENVIRONMENT_ID) {
+    const resolution = ensureRemoteRgPath(probe, environment, options);
+    return options.signal === undefined ? resolution : abortable(resolution, options.signal);
+  }
   const shareDir = options.shareDir ?? getShareDir();
   const resolution = resolveRgPath(probe, shareDir, options);
   return options.signal === undefined ? resolution : abortable(resolution, options.signal);
@@ -97,6 +115,98 @@ async function resolveRgPath(
     return downloadRgWithLock(probe, shareDir);
   }
   throw new Error2(ErrorCodes.OS_FS_UNAVAILABLE, 'ripgrep (rg) is not available on PATH');
+}
+
+const remoteRgResolutions = new Map<string, Promise<RgResolution>>();
+
+function ensureRemoteRgPath(
+  probe: RgProbe,
+  environment: Environment,
+  options: EnsureRgPathOptions,
+): Promise<RgResolution> {
+  const key = `${environment.identity.environmentId} ${environment.identity.generation}`;
+  let pending = remoteRgResolutions.get(key);
+  if (pending === undefined) {
+    pending = resolveRemoteRgPath(probe, environment, options).catch((error: unknown) => {
+      remoteRgResolutions.delete(key);
+      throw error;
+    });
+    remoteRgResolutions.set(key, pending);
+  }
+  return pending;
+}
+
+async function resolveRemoteRgPath(
+  probe: RgProbe,
+  environment: Environment,
+  options: EnsureRgPathOptions,
+): Promise<RgResolution> {
+  throwIfAborted(options.signal);
+  const system = await probe.exec(['rg', '--version']).catch(() => ({ exitCode: -1 }));
+  if (system.exitCode === 0) return { path: 'rg', source: 'system-path' };
+  if (options.allowCachedFallback !== true) {
+    throw new Error2(ErrorCodes.OS_FS_UNAVAILABLE, 'ripgrep (rg) is not available on PATH');
+  }
+  throwIfAborted(options.signal);
+  const binPath = shareBinRgPath(environment);
+  const binDir = dirname(binPath);
+  const cached = await probe.exec([binPath, '--version']).catch(() => ({ exitCode: -1 }));
+  if (cached.exitCode === 0) return { path: binPath, source: 'share-bin-cached' };
+  throwIfAborted(options.signal);
+  await installRemoteRg(probe, environment, binDir, binPath);
+  const installed = await probe.exec([binPath, '--version']).catch(() => ({ exitCode: -1 }));
+  if (installed.exitCode !== 0) {
+    throw new Error2(
+      ErrorCodes.OS_FS_UNAVAILABLE,
+      `ripgrep was installed to ${binPath} but failed to run`,
+    );
+  }
+  return { path: binPath, source: 'share-bin-downloaded' };
+}
+
+async function installRemoteRg(
+  probe: RgProbe,
+  environment: Environment,
+  binDir: string,
+  binPath: string,
+): Promise<void> {
+  const host = environment.host;
+  const target = detectRemoteTarget(host.osKind, host.osArch);
+  if (target === undefined) {
+    throw new Error2(
+      ErrorCodes.OS_FS_UNAVAILABLE,
+      `Unsupported platform/arch for ripgrep download: ${host.osKind}/${host.osArch}`,
+      { details: { osKind: host.osKind, osArch: host.osArch } },
+    );
+  }
+  const fs = environment.fs;
+  if (fs === undefined) {
+    throw new Error2(
+      ErrorCodes.OS_FS_UNAVAILABLE,
+      'environment does not provide fs for the ripgrep install',
+    );
+  }
+  const binary = await downloadRgBinary(target);
+  await fs.mkdir(binDir, { recursive: true });
+  const staged = `${binPath}.download-${randomUUID()}`;
+  try {
+    await fs.writeBytes(staged, binary);
+    if (typeof fs.rename === 'function') {
+      await fs.rename(staged, binPath);
+    } else {
+      await fs.writeBytes(binPath, binary);
+      await fs.remove(staged).catch(() => {});
+    }
+  } finally {
+    await fs.remove(staged).catch(() => {});
+  }
+  const chmodRun = await probe.exec(['chmod', '755', binPath]).catch(() => ({ exitCode: -1 }));
+  if (chmodRun.exitCode !== 0) {
+    throw new Error2(
+      ErrorCodes.OS_FS_UNAVAILABLE,
+      `failed to mark ${binPath} executable on the target`,
+    );
+  }
 }
 
 export async function findExistingRg(
@@ -173,16 +283,24 @@ export function detectTarget(): string | undefined {
   return undefined;
 }
 
-async function downloadAndInstallRg(shareDir: string): Promise<string> {
-  const target = detectTarget();
-  if (target === undefined) {
-    throw new Error2(
-      ErrorCodes.OS_FS_UNAVAILABLE,
-      `Unsupported platform/arch for ripgrep download: ${process.platform}/${process.arch}`,
-      { details: { platform: process.platform, arch: process.arch } },
-    );
+export function detectRemoteTarget(osKind: string, osArch: string): string | undefined {
+  const arch = osArch === 'x64' ? 'x86_64' : osArch === 'arm64' ? 'aarch64' : undefined;
+  if (arch === undefined) return undefined;
+  if (osKind === 'macOS') return `${arch}-apple-darwin`;
+  if (osKind === 'Linux') {
+    return arch === 'x86_64' ? 'x86_64-unknown-linux-musl' : 'aarch64-unknown-linux-gnu';
   }
+  return undefined;
+}
 
+interface RgArchive {
+  readonly archiveName: string;
+  readonly expectedSha256: string;
+  readonly url: string;
+  readonly isWindows: boolean;
+}
+
+function rgArchiveForTarget(target: string): RgArchive {
   const isWindows = target.includes('windows');
   const archiveExt = isWindows ? 'zip' : 'tar.gz';
   const archiveName = `ripgrep-${RG_VERSION}-${target}.${archiveExt}`;
@@ -194,7 +312,68 @@ async function downloadAndInstallRg(shareDir: string): Promise<string> {
       { details: { archiveName } },
     );
   }
-  const url = `${rgBaseUrl()}/${archiveName}`;
+  return { archiveName, expectedSha256, url: `${rgBaseUrl()}/${archiveName}`, isWindows };
+}
+
+async function fetchRgArchive(archive: RgArchive, archivePath: string): Promise<void> {
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => {
+    controller.abort();
+  }, DOWNLOAD_TIMEOUT_MS);
+  let resp: Response;
+  try {
+    resp = await fetch(archive.url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+  if (!resp.ok || resp.body === null) {
+    throw new Error2(
+      ErrorCodes.OS_FS_UNAVAILABLE,
+      `Failed to download ripgrep: HTTP ${String(resp.status)} ${resp.statusText}`,
+      { details: { url: archive.url, status: resp.status, statusText: resp.statusText } },
+    );
+  }
+  const write = createWriteStream(archivePath);
+  await pipeline(Readable.fromWeb(resp.body as never), write);
+  await verifyArchiveChecksum(archivePath, archive.archiveName, archive.expectedSha256);
+}
+
+async function extractRgArchive(archive: RgArchive, target: string, archivePath: string, tmp: string): Promise<string> {
+  if (archive.isWindows) {
+    const destination = join(tmp, rgBinaryName());
+    await extractRgFromZip(archivePath, destination);
+    return destination;
+  }
+  const extractDir = join(tmp, 'extract');
+  await mkdir(extractDir, { recursive: true });
+  await extractTar({
+    file: archivePath,
+    cwd: extractDir,
+    gzip: true,
+    filter: (entryPath: string) => entryPath.endsWith(`/${rgBinaryName()}`),
+  });
+  const extracted = join(extractDir, `ripgrep-${RG_VERSION}-${target}`, rgBinaryName());
+  if (!existsSync(extracted)) {
+    throw new Error2(
+      ErrorCodes.OS_FS_UNAVAILABLE,
+      `Ripgrep archive did not contain expected binary at ${extracted}. ` +
+        'CDN content may have changed.',
+      { details: { path: extracted } },
+    );
+  }
+  return extracted;
+}
+
+async function downloadAndInstallRg(shareDir: string): Promise<string> {
+  const target = detectTarget();
+  if (target === undefined) {
+    throw new Error2(
+      ErrorCodes.OS_FS_UNAVAILABLE,
+      `Unsupported platform/arch for ripgrep download: ${process.platform}/${process.arch}`,
+      { details: { platform: process.platform, arch: process.arch } },
+    );
+  }
+  const archive = rgArchiveForTarget(target);
 
   const binDir = join(shareDir, 'bin');
   await mkdir(binDir, { recursive: true });
@@ -202,49 +381,12 @@ async function downloadAndInstallRg(shareDir: string): Promise<string> {
 
   const tmp = await mkdtemp(join(tmpdir(), 'kimi-rg-'));
   try {
-    const archivePath = join(tmp, archiveName);
-
-    const controller = new AbortController();
-    const timeoutHandle = setTimeout(() => {
-      controller.abort();
-    }, DOWNLOAD_TIMEOUT_MS);
-    let resp: Response;
-    try {
-      resp = await fetch(url, { signal: controller.signal });
-    } finally {
-      clearTimeout(timeoutHandle);
-    }
-    if (!resp.ok || resp.body === null) {
-      throw new Error2(
-        ErrorCodes.OS_FS_UNAVAILABLE,
-        `Failed to download ripgrep: HTTP ${String(resp.status)} ${resp.statusText}`,
-        { details: { url, status: resp.status, statusText: resp.statusText } },
-      );
-    }
-    const write = createWriteStream(archivePath);
-    await pipeline(Readable.fromWeb(resp.body as never), write);
-    await verifyArchiveChecksum(archivePath, archiveName, expectedSha256);
-
-    if (isWindows) {
-      await extractRgFromZip(archivePath, destination);
+    const archivePath = join(tmp, archive.archiveName);
+    await fetchRgArchive(archive, archivePath);
+    const extracted = await extractRgArchive(archive, target, archivePath, tmp);
+    if (archive.isWindows) {
+      await copyFile(extracted, destination);
     } else {
-      const extractDir = join(tmp, 'extract');
-      await mkdir(extractDir, { recursive: true });
-      await extractTar({
-        file: archivePath,
-        cwd: extractDir,
-        gzip: true,
-        filter: (entryPath: string) => entryPath.endsWith(`/${rgBinaryName()}`),
-      });
-      const extracted = join(extractDir, `ripgrep-${RG_VERSION}-${target}`, rgBinaryName());
-      if (!existsSync(extracted)) {
-        throw new Error2(
-          ErrorCodes.OS_FS_UNAVAILABLE,
-          `Ripgrep archive did not contain expected binary at ${extracted}. ` +
-            'CDN content may have changed.',
-          { details: { path: extracted } },
-        );
-      }
       const installDir = await mkdtemp(join(binDir, '.rg-install-'));
       const staged = join(installDir, rgBinaryName());
       try {
@@ -256,6 +398,19 @@ async function downloadAndInstallRg(shareDir: string): Promise<string> {
       }
     }
     return destination;
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+}
+
+async function downloadRgBinary(target: string): Promise<Uint8Array> {
+  const archive = rgArchiveForTarget(target);
+  const tmp = await mkdtemp(join(tmpdir(), 'kimi-rg-'));
+  try {
+    const archivePath = join(tmp, archive.archiveName);
+    await fetchRgArchive(archive, archivePath);
+    const extracted = await extractRgArchive(archive, target, archivePath, tmp);
+    return await readFile(extracted);
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
@@ -353,9 +508,24 @@ export async function extractRgFromZip(archivePath: string, destination: string)
   });
 }
 
-export function rgUnavailableMessage(cause: unknown): string {
+export function rgUnavailableMessage(cause: unknown, environment?: Environment): string {
   const detail =
     cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : 'unknown error';
+  if (isRemoteEnvironment(environment)) {
+    const shareBin = shareBinRgPath(environment);
+    return (
+      `ripgrep (rg) is not available on environment "${environment.identity.environmentId}" and the automatic bootstrap failed.\n` +
+      `\n` +
+      `Error: ${detail}\n` +
+      `\n` +
+      `Fix options (install on the target):\n` +
+      `  macOS:   brew install ripgrep\n` +
+      `  Ubuntu:  sudo apt-get install ripgrep\n` +
+      `  Other:   https://github.com/BurntSushi/ripgrep#installation\n` +
+      `\n` +
+      `Alternatively, drop a static rg binary at ${shareBin} on the target`
+    );
+  }
   const shareBin = getShareBinRgPath();
   return (
     `ripgrep (rg) is not available and the automatic bootstrap failed.\n` +

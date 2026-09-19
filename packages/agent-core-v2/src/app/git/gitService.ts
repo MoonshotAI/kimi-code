@@ -3,7 +3,8 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IRuntimeResolver, IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
+import { IEnvironmentResolver, IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
 import { IGitService } from './git';
 import { parseNumstat, parsePorcelain, parsePullRequest } from './gitParsers';
@@ -14,6 +15,10 @@ const DIFF_MAX_BYTES = 1_048_576;
 const PR_SPAWN_TIMEOUT_MS = 5_000;
 const PULL_REQUEST_TTL_MS = 60_000;
 
+export interface GitWorkspaceLocator {
+  findByRoot(root: string): { readonly id: string } | undefined;
+}
+
 export class GitService implements IGitService {
   declare readonly _serviceBrand: undefined;
 
@@ -23,8 +28,8 @@ export class GitService implements IGitService {
   >();
 
   constructor(
-    @IRuntimeResolver private readonly resolver: IRuntimeResolver,
-    @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
+    @IEnvironmentResolver private readonly resolver: IEnvironmentResolver,
+    @IWorkspaceInstanceManager private readonly workspaces: GitWorkspaceLocator,
     @IHostFileSystem private readonly fs: IHostFileSystem,
   ) {}
 
@@ -145,8 +150,8 @@ export class GitService implements IGitService {
     options: RunOptions = {},
   ): Promise<RunResult> {
     const workspaceId = this.resolveWorkspaceId(cwd);
-    const lease = this.resolver.acquire({ workspaceId, runtimeId: 'local' }, ['process']);
-    const spawned = await lease.runtime.process!
+    const lease = this.resolver.acquire({ workspaceId, environmentId: LOCAL_ENVIRONMENT_ID }, ['process']);
+    const spawned = await lease.environment.process!
       .spawn(cmd, args, { cwd, env: options.env })
       .then(
         (proc) => ({ ok: true as const, proc }),

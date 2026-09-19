@@ -63,6 +63,8 @@
 
 **`FetchURL`** 接受单个 `url` 参数，返回页面内容。对 HTML 页面，宿主会提取正文而非返回完整 HTML；纯文本或 Markdown 页面直接透传。同样需要宿主注入实现。
 
+这两个网络工具始终从运行 Kimi Code 的机器发起请求，即使会话绑定了 [远程环境](../guides/remote-environment.md)——请求不会从目标环境出网。
+
 ## Plan 模式
 
 | 工具 | 默认审批 | 说明 |
@@ -96,7 +98,7 @@ Plan 模式是一种受约束的工作状态：进入后 `Write` 与 `Edit` 只�
 | `NotifyUser` | 自动放行 | 在轮次进行中向用户展示一条简短的进展更新 |
 | `Skill` | 自动放行 | 调用已注册的 inline Skill |
 
-**`Agent`** 将子任务委托给 subagent 执行。必填参数：`prompt`（完整任务描述）和 `description`（3–5 个词的简短说明）。可选参数：`subagent_type`（默认 `coder`）、`resume`（恢复已有 Agent 的 ID，与 `subagent_type` 互斥）、`run_in_background`（默认 false）和 `model`（在配置 [subagent 模型池](../configuration/config-files.md#subagent-模型池) 后可用——`[secondary_model.models]` 表或仅一行 `default_model`：池中别名，或 `"primary"` 表示调用方自己运行的模型；resume 时无效）。未传入时 subagent 绑定池的 `default_model`；未配置模型池时，subagent 一律继承调用方模型。Agent 任务默认 2 小时超时，可通过 `config.toml` 的 `[subagent] timeout_ms`（`0` = 无超时，或 `KIMI_SUBAGENT_TIMEOUT_MS` 环境变量）配置，且在 print 模式（`kimi -p`）下默认无超时。前台模式下父 Agent 等待 subagent 完成再继续；后台模式立即返回任务 ID，完成时通过合成 User 消息自动回到 main agent。多个前台 `Agent` 调用在同一步运行时，TUI 会合并展示，并为每个 subagent 显示运行、等待、完成或失败状态以及已耗时长。subagent 体系细节见 [Agent 与 subagent](../customization/agents.md)。
+**`Agent`** 将子任务委托给 subagent 执行。必填参数：`prompt`（完整任务描述）和 `description`（3–5 个词的简短说明）。可选参数：`subagent_type`（默认 `coder`）、`resume`（恢复已有 Agent 的 ID，与 `subagent_type` 互斥）、`run_in_background`（默认 false）、`environment`（[环境](../guides/remote-environment.md) id——`local` 或已声明环境——新启动的 subagent 绑定到该环境并使用其 `defaultCwd` 作为工作目录，而不是继承调用方的绑定；resume 时无效——恢复的 subagent 保留自己的绑定；随 [环境工具](#环境工具) 提供，默认开启）和 `model`（在配置 [subagent 模型池](../configuration/config-files.md#subagent-模型池) 后可用——`[secondary_model.models]` 表或仅一行 `default_model`：池中别名，或 `"primary"` 表示调用方自己运行的模型；resume 时无效）。未传入时 subagent 绑定池的 `default_model`；未配置模型池时，subagent 一律继承调用方模型。Agent 任务默认 2 小时超时，可通过 `config.toml` 的 `[subagent] timeout_ms`（`0` = 无超时，或 `KIMI_SUBAGENT_TIMEOUT_MS` 环境变量）配置，且在 print 模式（`kimi -p`）下默认无超时。前台模式下父 Agent 等待 subagent 完成再继续；后台模式立即返回任务 ID，完成时通过合成 User 消息自动回到 main agent。多个前台 `Agent` 调用在同一步运行时，TUI 会合并展示，并为每个 subagent 显示运行、等待、完成或失败状态以及已耗时长。subagent 体系细节见 [Agent 与 subagent](../customization/agents.md)。
 
 **`AgentSwarm`** 可以从共享的 `prompt_template` 和 `items` 数组启动 subagent，也可以通过 `resume_agent_ids` 恢复已有 subagent，或在一次调用中同时使用两者。模板必须包含 `{{item}}` 占位符；每个 item 会替换该占位符，并启动一个新的 subagent。传入 `subagent_type` 可以指定整个 swarm 中所有新启动的 subagent 使用的 profile；省略时默认使用 `coder`。传入 `model`（在配置 [subagent 模型池](../configuration/config-files.md#subagent-模型池) 后可用——`[secondary_model.models]` 表或仅一行 `default_model`）可以让新启动的 subagent 运行在池中别名指定的模型或调用方自己的模型（`"primary"`）上。未传入时新启动的 subagent 绑定池的 `default_model`；未配置模型池时则继承调用方模型。恢复的 subagent 保持其原有模型。不传 `resume_agent_ids` 时，本工具要求至少 2 个 item；传入 `resume_agent_ids` 时，可以恢复 1 个或多个已有 subagent。本工具最多支持 128 个 subagent，会等待全部 subagent 完成，并返回聚合报告。每个 subagent 默认 2 小时超时，可通过 `config.toml` 的 [`[swarm] timeout_ms`](../configuration/config-files.md#swarm)（`0` = 无超时，或 `KIMI_CODE_SWARM_TIMEOUT_MS` 环境变量）配置，且在 print 模式（`kimi -p`）下默认无超时；超时的 subagent 会被中止，并在聚合报告中标记为失败。在 TUI 中，前台 swarm 会在输入框上方显示实时 `Agent swarm` 进度面板。若一次模型响应调用 `AgentSwarm`，该调用必须是该响应中的唯一工具调用；如需运行多个 swarm，应先调用一个 `AgentSwarm` 并等待结果，再调用下一个，若单个模板可以覆盖这些工作，也可以合并为一个 swarm。在 `manual` 权限模式下，未处于 swarm mode 时调用 `AgentSwarm` 会触发审批，除非已有权限规则允许；swarm mode 已开启时，`AgentSwarm` 本身会自动放行。权限规则只能按工具名 `AgentSwarm` 匹配，不支持 `AgentSwarm(swarm)` 这类参数模式。默认情况下，本工具会逐步提升并发且不设上限（立即启动 5 个 subagent，之后每 700 毫秒再启动 1 个）；将 `KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY` 设为正整数可限制该阶段同时运行的 subagent 数量，不设置则表示不限制。若设置为非正整数的值，本次 AgentSwarm 调用会立即失败。
 
@@ -151,8 +153,28 @@ Plan 模式是一种受约束的工作状态：进入后 `Write` 与 `Edit` 只�
 
 **`CronDelete`** 只接受一个 `id`。对周期任务，未来所有触发立即停止；对一次性任务，挂起的那次触发会被取消。已触发的一次性任务会自动删除，因此对已触发过的一次性任务调用 `CronDelete` 会返回 `No cron job with id ...`。删除不可撤销，需要还原时只能再次 `CronCreate`。`CronDelete` 在 Plan 模式下同样会被拦截。
 
+## 环境工具
+
+环境工具把 [远程环境](../guides/remote-environment.md) 的切换交给 Agent 自己：`change_environment` 将会话绑定切换到另一个环境，`connect` 根据启动器规格创建一个临时环境。两个工具都仅 main agent 可用——subagent 的工具列表中看不到它们，也无法调用。Plan 模式下调用会被拒绝（先退出 Plan 模式）；tower 模式激活期间不会注册这组工具。切换或连接只会在「始终询问」模式下请求确认，「必要时询问」和「完全自动」模式都会直接执行。
+
+这些工具默认开启。如需关闭，设置 `KIMI_CODE_EXPERIMENTAL_AGENT_ENVIRONMENT_TOOLS=0`、在 `config.toml` 中写入 `[experimental] agent_environment_tools = false`，或在创建会话前通过 `/experiments` 关闭该功能。在功能关闭时创建的会话既没有这些工具，也没有系统提示词中的环境列表。
+
+| 工具 | 默认审批 | 说明 |
+| --- | --- | --- |
+| `change_environment` | 需审批（仅「始终询问」模式） | 将会话切换到另一个环境 |
+| `connect` | 需审批（仅「始终询问」模式） | 创建并连接一个临时环境 |
+
+**`change_environment`** 接受 `id`（要切换到的环境：`local` 表示本机，或已声明环境、临时环境的 id）和可选的 `cwd`（目标环境上的工作目录；声明未设置 `defaultCwd` 的远程环境必填，切换到 `local` 时可选）。目标环境会立即连接：连接或 `cwd` 校验失败会立刻报错且不改变任何状态。
+
+切换本身在工具调用完成后立即生效——同一轮次中的下一次工具调用就已在新环境上执行。如果还有其他工具调用在并行执行，调用会失败，报错中会给出仍在执行的调用数量；等它们结束后重试即可，正在进行的工作不会被打断。新环境的 OS、Shell 和工作目录提醒仍随下一轮次到达。这次切换会像手动 `/environment` 切换一样被记录，因此 undo 可以恢复上一个绑定。
+
+**`connect`** 接受一个启动器规格——`{ type: "ssh", host: "..." }`、`{ type: "docker", container: "..." }` 或 `{ type: "command", command: "...", args: [...] }`——以及可选的 `id`（最多 64 个字符；`local` 和 `default` 为保留值；省略时根据启动器生成）。`ssh` 规格接受可选的 `remoteBin`，`docker` 规格接受可选的 `context` 和 `remoteBin`，`command` 规格接受可选的 `args` 和 `env`。
+
+环境会立即连接：结果会返回目标环境的 OS、Shell 和初始工作目录，或连接失败的原因。新环境会像已声明环境一样注册到会话工作区，之后可以用 `change_environment` 切换过去，或通过 `Agent` 工具的 `environment` 参数把 subagent 绑定到它。不会写入 `config.toml` 或 `.kimi-code/environments.toml`：临时环境在进程退出时消失，连接断开后无法重连（重新创建一个即可），恢复会话时也找不到它——如果工作之后还要继续，结束会话前先切回 `local`。
+
 ## 下一步
 
 - [Agent 与 subagent](../customization/agents.md) — `Agent` 工具的调度机制与上下文隔离
 - [Hooks](../customization/hooks.md) — 在工具调用前后触发本地脚本
 - [斜杠命令](./slash-commands.md) — TUI 内置控制命令速查
+- [远程环境](../guides/remote-environment.md) — 环境绑定、声明式环境和 `/environment` 对话框

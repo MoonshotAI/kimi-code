@@ -114,6 +114,8 @@ export interface ToolCallSubagentSnapshot {
   readonly model?: string;
   /** Thinking effort, present only for concrete levels (on/off hidden). */
   readonly effort?: string;
+  /** Remote environment the subagent runs in (the Agent tool's `environment` arg), absent for local. */
+  readonly environment?: string;
   readonly phase: SubagentPhase | undefined;
   readonly toolCount: number;
   readonly elapsedSeconds: number | undefined;
@@ -156,6 +158,11 @@ function backgroundFailureMessage(
 
 function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
+}
+
+function subagentEnvironment(args: Readonly<Record<string, unknown>>): string | undefined {
+  const raw = str(args['environment']).trim();
+  return raw.length > 0 && raw !== 'local' ? raw : undefined;
 }
 
 function formatSubagentContextTokens(contextTokens: number | undefined): string | undefined {
@@ -1135,6 +1142,7 @@ export class ToolCallComponent extends Container {
       agentName: this.subagentAgentName,
       model: this.subagentModel,
       effort: this.subagentEffort,
+      environment: subagentEnvironment(this.toolCall.args),
       phase: derivedPhase,
       toolCount: finished,
       elapsedSeconds: this.getSubagentElapsedSeconds(),
@@ -2098,6 +2106,8 @@ export class ToolCallComponent extends Container {
     const parts: string[] = [];
     if (this.subagentModel !== undefined) parts.push(this.subagentModel);
     if (this.subagentEffort !== undefined) parts.push(this.subagentEffort);
+    const environment = subagentEnvironment(this.toolCall.args);
+    if (environment !== undefined) parts.push(`env ${environment}`);
     parts.push(`${String(this.subToolActivities.size)} tool${this.subToolActivities.size === 1 ? '' : 's'}`);
     const elapsed = this.getSubagentElapsedSeconds();
     if (elapsed !== undefined) parts.push(formatElapsed(elapsed));
@@ -2329,6 +2339,15 @@ export class ToolCallComponent extends Container {
         this.addChild(new Text(line, 2, 0));
       }
     } else if (name === 'Bash') {
+      // The engine stamps the cwd the command actually executes in (the bound
+      // environment's resolved path) into display.cwd; show it whenever it says
+      // something the card does not already — a remote environment's path or an
+      // explicit cwd argument. A stamp equal to the local workspace dir is
+      // the default local case and keeps the card's current shape.
+      const executionCwd = this.stampedExecutionCwd();
+      if (executionCwd !== undefined) {
+        this.addChild(new Text(currentTheme.dim(`cwd: ${executionCwd}`), 2, 0));
+      }
       // Collapsed: the header already carries the command's first line, so no
       // command body is added; the outcome row comes from the live tail or the
       // result renderer. Expanded: the full command, across the whole lifecycle.
@@ -2345,6 +2364,14 @@ export class ToolCallComponent extends Container {
         }),
       );
     }
+  }
+
+  private stampedExecutionCwd(): string | undefined {
+    const display = this.toolCall.display;
+    if (display?.kind !== 'command') return undefined;
+    const cwd = display.cwd;
+    if (cwd === undefined || cwd.length === 0 || cwd === this.workspaceDir) return undefined;
+    return cwd;
   }
 
   /**

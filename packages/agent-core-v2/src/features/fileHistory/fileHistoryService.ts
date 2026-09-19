@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto';
 import { isAbsolute, relative, resolve } from 'pathe';
 
 import { Service } from '#/_base/di/service';
-import { unwrapErrorCause } from '#/_base/errors/errors';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -12,6 +12,7 @@ import type { WillExecuteToolEvent } from '#/agent/toolExecutor/toolHooks';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IEventBus } from '#/app/event/eventBus';
@@ -20,11 +21,15 @@ import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
+import type { EnvironmentLease } from '#/environment/environment';
+import { EnvironmentError } from '#/environment/environmentRegistry';
+import { IEnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
 import {
   IAgentFileHistoryService,
   FILE_HISTORY_BLOB_PREFIX,
   type FileBackupEntry,
+  type FileHistoryCaptureSource,
   type FileHistoryChange,
   type FileHistoryCheckpointPhase,
   type FileHistoryCheckpointRecord,
@@ -56,13 +61,15 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IEventBus eventBus: IEventBus,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @IBlobStore private readonly blobs: IBlobStore,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ISessionContext private readonly sessionCtx: ISessionContext,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+    @IAgentEnvironmentBindingService private readonly environmentBinding: IAgentEnvironmentBindingService,
+    @IEnvironmentResolver private readonly resolver: IEnvironmentResolver,
   ) {
     super();
     this.agentState.contributeState(fileHistoryKey);
@@ -172,7 +179,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
           afterBytes = await this.entryBytes(after);
         }
       } else {
-        const current = await this.readCurrent(path);
+        const current = await this.readCurrent(path, before?.environmentId);
         if (current === 'unreadable') continue;
         if (current instanceof Uint8Array) afterBytes = current;
         else if (current === 'missing') liveMissing = true;
@@ -261,13 +268,23 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     if (path === undefined) return;
     const main = this.agentLifecycle.handleOf(MAIN_AGENT_ID);
     if (main === undefined) return;
-    event.waitUntil(main.accessor.get(IAgentFileHistoryService).captureForActiveTurn(path));
+    const binding = this.environmentBinding.current;
+    const mainBinding = main.accessor.get(IAgentEnvironmentBindingService).current;
+    if (binding.environmentId === mainBinding.environmentId) {
+      event.waitUntil(main.accessor.get(IAgentFileHistoryService).captureForActiveTurn(path));
+      return;
+    }
+    event.waitUntil(
+      main.accessor.get(IAgentFileHistoryService).captureForActiveTurn(this.workspaceCtx.resolve(path), {
+        environmentId: binding.environmentId,
+      }),
+    );
   }
 
-  captureForActiveTurn(path: string): Promise<void> {
+  captureForActiveTurn(path: string, source?: FileHistoryCaptureSource): Promise<void> {
     const turnId = this.activeTurnId;
     if (turnId === undefined) return Promise.resolve();
-    return this.enqueue(() => this.capture(path, turnId));
+    return this.enqueue(() => this.capture(path, turnId, source?.environmentId));
   }
 
   private enqueue(op: () => Promise<void>): Promise<void> {
@@ -285,7 +302,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     return run;
   }
 
-  private async capture(path: string, turnId: number): Promise<void> {
+  private async capture(path: string, turnId: number, environmentId?: string): Promise<void> {
     const pathKey = this.pathKey(path);
     const state = this.history();
     const startCheckpoint = state.checkpoints.find(
@@ -293,7 +310,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     );
     if (startCheckpoint !== undefined && Object.hasOwn(startCheckpoint.entries, pathKey)) return;
 
-    const current = await this.readCurrent(pathKey);
+    const current = await this.readCurrent(pathKey, environmentId);
     if (current === 'unreadable') return;
     const latest = latestEntry(state.checkpoints, pathKey);
     const nextVersion = maxVersion(state.checkpoints, pathKey) + 1;
@@ -301,26 +318,27 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     if (current === 'missing') {
       entry =
         latest !== undefined && latest.key === null && latest.oversize !== true
-          ? { ...latest }
-          : { key: null, version: nextVersion };
+          ? { ...latest, environmentId }
+          : { key: null, version: nextVersion, environmentId };
     } else if (current instanceof Uint8Array) {
       const contentHash = sha256(current);
       entry =
         latest !== undefined && latest.contentHash === contentHash
-          ? { ...latest }
-          : await this.backup(pathKey, nextVersion, current, contentHash);
+          ? { ...latest, environmentId }
+          : await this.backup(pathKey, nextVersion, current, contentHash, environmentId);
     } else {
       entry =
         latest?.oversize === true &&
         latest.size === current.oversizeBytes &&
         latest.mtimeMs === current.mtimeMs
-          ? { ...latest }
+          ? { ...latest, environmentId }
           : {
               key: null,
               version: nextVersion,
               oversize: true,
               size: current.oversizeBytes,
               mtimeMs: current.mtimeMs,
+              environmentId,
             };
     }
     await this.dispatcher.dispatch(
@@ -352,11 +370,11 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     >;
     for (const [pathKey, before] of Object.entries(start.entries)) {
       const nextVersion = maxVersion(state.checkpoints, pathKey) + 1;
-      const current = await this.readCurrent(pathKey);
+      const current = await this.readCurrent(pathKey, before.environmentId);
       if (current === 'unreadable') continue;
       if (current === 'missing') {
         if (before.key !== null || before.oversize === true) {
-          entries[pathKey] = { key: null, version: nextVersion };
+          entries[pathKey] = { key: null, version: nextVersion, environmentId: before.environmentId };
         }
         continue;
       }
@@ -372,13 +390,14 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
             oversize: true,
             size: current.oversizeBytes,
             mtimeMs: current.mtimeMs,
+            environmentId: before.environmentId,
           };
         }
         continue;
       }
       const contentHash = sha256(current);
       if (before.contentHash === contentHash) continue;
-      entries[pathKey] = await this.backup(pathKey, nextVersion, current, contentHash);
+      entries[pathKey] = await this.backup(pathKey, nextVersion, current, contentHash, before.environmentId);
     }
 
     const evictable = displacedCheckpoints(state.checkpoints, turnId);
@@ -396,11 +415,12 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     version: number,
     content: Uint8Array,
     contentHash?: string,
+    environmentId?: string,
   ): Promise<FileBackupEntry> {
     const hash = contentHash ?? sha256(content);
     const key = blobKey(pathKey, version);
     await this.blobs.put(this.agentCtx.scope(), key, content);
-    return { key, version, contentHash: hash, size: content.byteLength };
+    return { key, version, contentHash: hash, size: content.byteLength, environmentId };
   }
 
   private async sweepOrphanBlobs(): Promise<void> {
@@ -460,20 +480,28 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
 
   private async readCurrent(
     pathKey: string,
+    environmentId?: string,
   ): Promise<
     Uint8Array | 'missing' | 'unreadable' | { oversizeBytes: number; mtimeMs?: number }
   > {
     const absolute = isAbsolute(pathKey) ? pathKey : resolve(this.workspaceCtx.workDir, pathKey);
-    const lease = this.runtime.acquire(['fs']);
+    let lease: EnvironmentLease;
     try {
-      const fs = lease.runtime.fs;
+      lease = environmentId === undefined
+        ? this.environment.acquire(['fs'])
+        : this.resolver.acquire({ workspaceId: this.sessionCtx.workspaceId, environmentId }, ['fs']);
+    } catch (error) {
+      if (error instanceof EnvironmentError) return 'unreadable';
+      throw error;
+    }
+    try {
+      const fs = lease.environment.fs;
       if (fs === undefined) return 'unreadable';
       let info;
       try {
         info = await fs.stat(absolute);
       } catch (error) {
-        const code = (unwrapErrorCause(error) as { code?: unknown } | null)?.code;
-        return code === 'ENOENT' ? 'missing' : 'unreadable';
+        return isHostFsNotFound(error) ? 'missing' : 'unreadable';
       }
       if (!info.isFile) return 'unreadable';
       if (info.size > FILE_HISTORY_MAX_FILE_BYTES) {
@@ -614,7 +642,7 @@ function splitLines(content: string): string[] {
   if (content === '') return [];
   const lines = content.split('\n');
   if (lines.at(-1) === '') lines.pop();
-  else lines[lines.length - 1] = `${lines[lines.length - 1]!}\u0000`;
+  else lines[lines.length - 1] = `${lines.at(-1)!}\u0000`;
   return lines;
 }
 

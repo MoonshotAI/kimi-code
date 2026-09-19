@@ -86,7 +86,7 @@ export function computeIssues(
               detail: 'no preceding tool.call seen',
             });
           }
-          // Runtime failure / partial-output signals carried on the result.
+          // Environment failure / partial-output signals carried on the result.
           // v1 persisted `truncated` / `message`; v2 persists `note` instead.
           const result = ev.result as { truncated?: boolean; message?: string; note?: string };
           if (ev.result.isError === true) {

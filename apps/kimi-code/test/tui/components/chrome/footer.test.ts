@@ -1,7 +1,16 @@
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import chalk from 'chalk';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FooterComponent } from '#/tui/components/chrome/footer';
+import {
+  BRAILLE_SPINNER_FRAMES,
+  BRAILLE_SPINNER_INTERVAL_MS,
+} from '#/tui/constant/rendering';
 import { setRainbowDance, type RainbowDanceController } from '#/tui/easter-eggs/dance';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
@@ -318,5 +327,331 @@ describe('FooterComponent ctrl+o hint beside an inline tips slot', () => {
     expect(line1.endsWith('ctrl+o expand')).toBe(true);
     expect(line1.length).toBeLessThanOrEqual(width);
     footer.dispose();
+  });
+});
+
+describe('FooterComponent environment slot', () => {
+  const ERROR = '38;2;232;84;84'; // colors.error #E85454
+  let repoDir: string;
+  const previousChalkLevel = chalk.level;
+
+  beforeEach(() => {
+    chalk.level = 3;
+  });
+
+  afterEach(() => {
+    chalk.level = previousChalkLevel;
+    vi.useRealTimers();
+  });
+
+  function plain(text: string): string {
+    return text.replaceAll(/\[[0-9;]*m/g, '');
+  }
+
+  function line1(footer: FooterComponent, width = 160): string {
+    return plain(footer.render(width)[0] ?? '');
+  }
+
+  beforeEach(() => {
+    // A real repo so the local git slot has a branch to render when visible.
+    repoDir = mkdtempSync(join(tmpdir(), 'kimi-footer-environment-'));
+    spawnSync('git', ['init', '-b', 'main'], { cwd: repoDir });
+    writeFileSync(join(repoDir, 'a.txt'), 'a');
+    spawnSync('git', ['add', '.'], { cwd: repoDir });
+    spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-m', 'init'], {
+      cwd: repoDir,
+    });
+  });
+
+  afterEach(() => {
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  function footerWith(environment: AppState['environment']): FooterComponent {
+    return new FooterComponent({ ...appState, workDir: repoDir, environment });
+  }
+
+  it('renders no environment identifier for the local environment and keeps the git slot', () => {
+    const footer = footerWith({ environmentId: 'local', type: 'local', status: 'ready' });
+    const rendered = line1(footer);
+    expect(rendered).not.toContain('local');
+    expect(rendered).toContain('main');
+    footer.dispose();
+  });
+
+  it('renders no environment identifier while the environment state is unsynced', () => {
+    const footer = footerWith(undefined);
+    const rendered = line1(footer);
+    expect(rendered).not.toContain('local');
+    expect(rendered).toContain('main');
+    footer.dispose();
+  });
+
+  it('shows the remote identifier ahead of the cwd', () => {
+    const footer = footerWith({ environmentId: 'dev-box', type: 'ssh', status: 'ready' });
+    const rendered = line1(footer);
+    expect(rendered).toContain('dev-box');
+    expect(rendered.indexOf('dev-box')).toBeLessThan(rendered.indexOf('kimi-footer-environment'));
+    footer.dispose();
+  });
+
+  it('renders the bare environment id with no type prefix, even for command environments', () => {
+    const footer = footerWith({ environmentId: 'kimi-dev', type: 'command', status: 'ready' });
+    const rendered = line1(footer);
+    expect(rendered).toContain('kimi-dev');
+    expect(rendered).not.toContain('command:kimi-dev');
+    expect(rendered).not.toContain('command:');
+    footer.dispose();
+  });
+
+  it('hides the local git slot for a remote-bound session', () => {
+    const footer = footerWith({ environmentId: 'dev-box', type: 'ssh', status: 'ready' });
+    const rendered = line1(footer);
+    expect(rendered).toContain('dev-box');
+    expect(rendered).not.toContain('main');
+    footer.dispose();
+  });
+
+  describe('status line command payload', () => {
+    async function payloadOf(footer: FooterComponent): Promise<{ gitBranch: string | null }> {
+      footer.render(400);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const line = plain(footer.render(400)[0] ?? '');
+      return JSON.parse(line.slice(line.indexOf('{'), line.lastIndexOf('}') + 1)) as { gitBranch: string | null };
+    }
+
+    it('feeds gitBranch null to the status line command for a remote-bound session', async () => {
+      const footer = new FooterComponent({
+        ...appState,
+        workDir: repoDir,
+        environment: { environmentId: 'dev-box', type: 'ssh', status: 'ready' },
+        statusLine: { items: null, command: 'cat' },
+      });
+      const payload = await payloadOf(footer);
+      expect(payload.gitBranch).toBeNull();
+      footer.dispose();
+    });
+
+    it('feeds the local branch to the status line command for a local session', async () => {
+      const footer = new FooterComponent({
+        ...appState,
+        workDir: repoDir,
+        environment: { environmentId: 'local', type: 'local', status: 'ready' },
+        statusLine: { items: null, command: 'cat' },
+      });
+      const payload = await payloadOf(footer);
+      expect(payload.gitBranch).toBe('main');
+      footer.dispose();
+    });
+  });
+
+  it('renders a disconnected remote identifier in the error color', () => {
+    const footer = footerWith({ environmentId: 'dev-box', type: 'ssh', status: 'disconnected' });
+    const rendered = footer.render(160)[0] ?? '';
+    expect(rendered).toContain('dev-box');
+    expect(rendered).toContain(ERROR);
+    footer.dispose();
+  });
+
+  it('appends the disconnect reason to a disconnected remote identifier', () => {
+    const footer = footerWith({
+      environmentId: 'dev-box',
+      type: 'ssh',
+      status: 'disconnected',
+      connectError: 'ssh: connect failed',
+    });
+    const rendered = line1(footer);
+    expect(rendered).toContain('dev-box (ssh: connect failed)');
+    footer.dispose();
+  });
+
+  it('bounds the disconnect reason to its first line and a fixed width', () => {
+    const footer = footerWith({
+      environmentId: 'dev-box',
+      type: 'ssh',
+      status: 'disconnected',
+      connectError: 'ssh: connect failed with a very long reason that keeps going\nretry guidance must not render',
+    });
+    const rendered = line1(footer);
+    expect(rendered).toContain('dev-box (');
+    expect(rendered).toContain('…');
+    expect(rendered).not.toContain('retry guidance');
+    footer.dispose();
+  });
+
+  it('renders a pending remote identifier dim like ready, with no error tone or reason', () => {
+    const pending = new FooterComponent({
+      ...appState,
+      workDir: repoDir,
+      statusLine: { items: ['environment'], command: null },
+      environment: { environmentId: 'dev-box', type: 'ssh', status: 'pending', connectError: 'must not render' },
+    });
+    const ready = new FooterComponent({
+      ...appState,
+      workDir: repoDir,
+      statusLine: { items: ['environment'], command: null },
+      environment: { environmentId: 'dev-box', type: 'ssh', status: 'ready' },
+    });
+    const rendered = pending.render(160)[0] ?? '';
+    expect(rendered).toContain('dev-box');
+    expect(rendered).not.toContain(ERROR);
+    expect(rendered).not.toContain('must not render');
+    expect(rendered).toBe(ready.render(160)[0] ?? '');
+    pending.dispose();
+    ready.dispose();
+  });
+
+  it('shows the binding cwd instead of the local workDir for a remote-bound session', () => {
+    const footer = footerWith({
+      environmentId: 'dev-box',
+      type: 'ssh',
+      status: 'ready',
+      cwd: '/home/deploy/app',
+    });
+    const rendered = line1(footer);
+    expect(rendered).toContain('/home/deploy/app');
+    expect(rendered).not.toContain('kimi-footer-environment');
+    footer.dispose();
+  });
+
+  it('never claims ~ for a remote cwd that happens to sit under the local home', () => {
+    const home = process.env['HOME'] ?? '';
+    const footer = new FooterComponent({
+      ...appState,
+      workDir: repoDir,
+      statusLine: { items: ['environment', 'cwd'], command: null },
+      environment: { environmentId: 'dev-box', type: 'ssh', status: 'ready', cwd: `${home}/remote-project` },
+    });
+    const rendered = line1(footer);
+    expect(rendered).toContain('remote-project');
+    expect(rendered).not.toContain('~');
+    footer.dispose();
+  });
+
+  it('shortens a deep remote cwd by segments without a home claim', () => {
+    const footer = footerWith({
+      environmentId: 'dev-box',
+      type: 'ssh',
+      status: 'ready',
+      cwd: '/home/deploy/very/deep/nested/project',
+    });
+    const rendered = line1(footer);
+    expect(rendered).toContain('…/deep/nested/project');
+    expect(rendered).not.toContain('~');
+    footer.dispose();
+  });
+
+  it('keeps shortening the local workDir against the local home', () => {
+    const home = process.env['HOME'] ?? '';
+    const footer = new FooterComponent({ ...appState, workDir: `${home}/local-project` });
+    const rendered = line1(footer);
+    expect(rendered).toContain('~/local-project');
+    footer.dispose();
+  });
+
+  it('renders a spinner frame beside the identifier while connecting', () => {
+    const footer = footerWith({ environmentId: 'dev-box', type: 'ssh', status: 'connecting' });
+    const rendered = line1(footer);
+    expect(rendered).toContain(`${BRAILLE_SPINNER_FRAMES[0] ?? ''} dev-box`);
+    footer.dispose();
+  });
+
+  it('ticks the spinner through frames on the shared interval while connecting', () => {
+    vi.useFakeTimers();
+    const onRefresh = vi.fn();
+    const footer = new FooterComponent(
+      {
+        ...appState,
+        workDir: repoDir,
+        environment: { environmentId: 'dev-box', type: 'ssh', status: 'connecting' },
+      },
+      onRefresh,
+    );
+    vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 2);
+    expect(onRefresh).toHaveBeenCalledTimes(2);
+    expect(line1(footer)).toContain(`${BRAILLE_SPINNER_FRAMES[2] ?? ''} dev-box`);
+    footer.dispose();
+  });
+
+  it('starts the spinner when the environment enters connecting', () => {
+    vi.useFakeTimers();
+    const onRefresh = vi.fn();
+    const footer = new FooterComponent(
+      {
+        ...appState,
+        workDir: repoDir,
+        environment: { environmentId: 'dev-box', type: 'ssh', status: 'ready' },
+      },
+      onRefresh,
+    );
+    vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 5);
+    expect(onRefresh).not.toHaveBeenCalled();
+    footer.setState({
+      ...appState,
+      workDir: repoDir,
+      environment: { environmentId: 'dev-box', type: 'ssh', status: 'connecting' },
+    });
+    vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    footer.dispose();
+  });
+
+  it('stops the spinner the moment the environment leaves connecting', () => {
+    vi.useFakeTimers();
+    const onRefresh = vi.fn();
+    const footer = new FooterComponent(
+      {
+        ...appState,
+        workDir: repoDir,
+        environment: { environmentId: 'dev-box', type: 'ssh', status: 'connecting' },
+      },
+      onRefresh,
+    );
+    footer.setState({
+      ...appState,
+      workDir: repoDir,
+      environment: { environmentId: 'dev-box', type: 'ssh', status: 'ready' },
+    });
+    vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 5);
+    expect(onRefresh).not.toHaveBeenCalled();
+    const rendered = line1(footer);
+    expect(rendered).toContain('dev-box');
+    for (const frame of BRAILLE_SPINNER_FRAMES) {
+      expect(rendered).not.toContain(frame);
+    }
+    footer.dispose();
+  });
+
+  it('starts no spinner for the local environment even while connecting', () => {
+    vi.useFakeTimers();
+    const onRefresh = vi.fn();
+    const footer = new FooterComponent(
+      {
+        ...appState,
+        workDir: repoDir,
+        environment: { environmentId: 'local', type: 'local', status: 'connecting' },
+      },
+      onRefresh,
+    );
+    expect(line1(footer)).not.toContain('local');
+    vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 5);
+    expect(onRefresh).not.toHaveBeenCalled();
+    footer.dispose();
+  });
+
+  it('leaves no spinner timer running after dispose', () => {
+    vi.useFakeTimers();
+    const onRefresh = vi.fn();
+    const footer = new FooterComponent(
+      {
+        ...appState,
+        workDir: repoDir,
+        environment: { environmentId: 'dev-box', type: 'ssh', status: 'connecting' },
+      },
+      onRefresh,
+    );
+    footer.dispose();
+    vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 5);
+    expect(onRefresh).not.toHaveBeenCalled();
   });
 });

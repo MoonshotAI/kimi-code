@@ -188,7 +188,7 @@ auto_install = false
       host.refreshSlashCommandAutocomplete.mock.invocationCallOrder[0]!,
     );
     expect(host.showStatus).toHaveBeenCalledWith(
-      'Runtime and TUI config reloaded; no active session.',
+      'Environment and TUI config reloaded; no active session.',
       'success',
     );
   });

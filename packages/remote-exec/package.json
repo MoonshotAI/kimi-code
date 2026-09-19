@@ -1,0 +1,68 @@
+{
+  "name": "@moonshot-ai/remote-exec",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Remote execution protocol and bridge: NDJSON line-framed RPC (codex exec-server dialect) between the local ExecBridge and the light kimi exec-server executor.",
+  "license": "MIT",
+  "author": "Moonshot AI",
+  "homepage": "https://github.com/MoonshotAI/kimi-code/tree/main/packages/remote-exec#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MoonshotAI/kimi-code.git",
+    "directory": "packages/remote-exec"
+  },
+  "bugs": {
+    "url": "https://github.com/MoonshotAI/kimi-code/issues"
+  },
+  "keywords": [
+    "kimi",
+    "remote-exec",
+    "exec-server",
+    "ssh",
+    "docker"
+  ],
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "imports": {
+    "#/*": "./src/*.ts"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./client": {
+      "types": "./src/client/index.ts",
+      "default": "./src/client/index.ts"
+    },
+    "./server": {
+      "types": "./src/server/index.ts",
+      "default": "./src/server/index.ts"
+    },
+    "./protocol": {
+      "types": "./src/protocol/index.ts",
+      "default": "./src/protocol/index.ts"
+    },
+    "./package.json": {
+      "types": "./package.json",
+      "default": "./package.json"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "build:executor": "tsdown --config tsdown.executor.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist dist-executor"
+  },
+  "dependencies": {
+    "@moonshot-ai/agent-core-v2": "workspace:^",
+    "@moonshot-ai/kimi-code-oauth": "workspace:^",
+    "node-pty": "^1.1.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0"
+  }
+}

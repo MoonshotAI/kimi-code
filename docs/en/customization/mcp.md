@@ -4,7 +4,7 @@
 
 MCP tool results can include text (`content`) and structured data (`structuredContent`). Kimi Code CLI makes both available to the agent and omits the structured copy only when it can confirm that a text block already contains the same complete JSON value. Text summaries and media do not replace structured records.
 
-Kimi Code CLI preserves embedded MCP attachments that cannot be delivered directly because of format or size limits. Embedded images, audio, and video are saved even when they can be delivered unchanged, because provider conversion or later history reduction may omit them. Session-attachment readers remain available without workspace filesystem access when the model supports the corresponding content. Originals are retained in the session's media storage instead of an evictable image cache. Saved originals, including images preserved during compression, have absolute paths and stable `kimi-file://` references. Pass a reference as the `path` to `Read` or `ReadMediaFile`; bytes are read from the current session's storage even when the workspace runtime cannot access it. Pagination keeps the reference, including after a fork. For binary formats that `Read` cannot open, its error includes a server-local path when available; an external converter must have access to that filesystem. Text attachments such as CSV, HTML, JSON, and plain SVG use readable extensions.
+Kimi Code CLI preserves embedded MCP attachments that cannot be delivered directly because of format or size limits. Embedded images, audio, and video are saved even when they can be delivered unchanged, because provider conversion or later history reduction may omit them. Session-attachment readers remain available without workspace filesystem access when the model supports the corresponding content. Originals are retained in the session's media storage instead of an evictable image cache. Saved originals, including images preserved during compression, have absolute paths and stable `kimi-file://` references. Pass a reference as the `path` to `Read` or `ReadMediaFile`; bytes are read from the current session's storage even when the workspace environment cannot access it. Pagination keeps the reference, including after a fork. For binary formats that `Read` cannot open, its error includes a server-local path when available; an external converter must have access to that filesystem. Text attachments such as CSV, HTML, JSON, and plain SVG use readable extensions.
 
 Attachment paths and compression details share the tool-output budget. Large lists are saved to a text file, with a short pointer that remains visible when accompanying text is shortened; the agent can pass the list’s `kimi-file://` reference to `Read` and page through it. Canceling the tool stops subsequent attachment processing and signals active writes. If decoding or saving fails, the result explicitly reports that the original could not be preserved while retaining other usable output. Resource links are not automatically downloaded.
 
@@ -12,7 +12,7 @@ Attachment paths and compression details share the tool-output budget. Large lis
 
 Kimi Code CLI supports three MCP server connection methods:
 
-- **stdio**: The CLI starts the local MCP server as a child process and communicates via standard input/output. Suitable for local command-line tools.
+- **stdio**: The CLI starts the MCP server as a child process and communicates via standard input/output. Suitable for command-line tools. By default the server runs on the machine running Kimi Code; setting [`environment_id`](#running-stdio-servers-in-a-remote-environment) starts it inside a [remote environment](../guides/remote-environment.md) instead.
 - **HTTP**: The CLI connects to an already-running HTTP endpoint. Suitable for remote services or processes that need to run persistently.
 - **SSE**: The CLI connects to a legacy HTTP+SSE endpoint (Server-Sent Events, a streaming HTTP mechanism). Prefer HTTP for new MCP servers, but use `transport: "sse"` when a service still exposes only the older SSE transport.
 
@@ -58,6 +58,8 @@ Optional fields:
 | Field | Type | Applies to | Description |
 | --- | --- | --- | --- |
 | `env` | `Record<string, string>` | stdio | Environment variables injected into the child process |
+| `envVars` | `Array<string \| { name, source? }>` | stdio | Environment variables forwarded to a stdio server running in a remote environment; see [Running stdio servers in a remote environment](#running-stdio-servers-in-a-remote-environment) |
+| `environment_id` | `string` | stdio | Id of the [remote environment](../guides/remote-environment.md) that starts the server; defaults to `local` |
 | `cwd` | `string` | stdio | Working directory for the child process |
 | `headers` | `Record<string, string>` | HTTP, SSE | Static request headers appended to every request |
 | `bearerTokenEnvVar` | `string` | HTTP, SSE | Name of an environment variable that contains a bearer token |
@@ -75,8 +77,61 @@ HTTP and SSE servers support providing static credentials via `headers` or `bear
 Plugins can also declare MCP servers in their manifest. Servers declared by a plugin are enabled by default and can be disabled or re-enabled in `/plugins`: disabling or removing one makes calls from open sessions fail with a removal notice, and adding or enabling a server connects it in open sessions right away. See [Plugins](./plugins.md#mcp-servers-in-plugins) for details.
 
 ::: warning Note
-stdio entries in a project-level `.kimi-code/mcp.json` execute local commands when a session starts. Only enable these in repositories you trust.
+stdio entries in a project-level `.kimi-code/mcp.json` execute commands when a session starts. Only enable these in repositories you trust.
 :::
+
+## Running stdio servers in a remote environment
+
+A stdio server normally runs on the machine running Kimi Code, even for sessions bound to a remote environment. Setting `environment_id` on the server entry changes that: the CLI starts the server inside the named [remote environment](../guides/remote-environment.md), so the process, its working directory, and everything it touches live on the target.
+
+```toml
+# config.toml
+[environments.dev-box]
+type = "ssh"
+host = "dev-box"
+defaultCwd = "/srv/work"
+```
+
+```json
+{
+  "mcpServers": {
+    "remote-fs": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/srv/data"],
+      "environment_id": "dev-box"
+    }
+  }
+}
+```
+
+`environment_id` references an environment declared in `[environments]` in `config.toml` or in `.kimi-code/environments.toml` (see [Declaring environments](../guides/remote-environment.md#declaring-environments)). The field defaults to `local` and never follows the session's own environment binding: a session bound to `dev-box` still runs stdio servers without `environment_id` locally. A cold environment connects on demand when the server starts.
+
+### Environment variables for remote stdio servers
+
+A remote stdio server inherits `PATH`, `HOME`, and the rest of its base environment from the target — not from your machine — so local paths never leak into a remote process. The CLI sends only an explicit overlay, and the target resolves everything else:
+
+- `env` entries, sent as literal values.
+- `envVars` entries whose `source` is `"local"` (the default): the value is read from the CLI process's environment on this machine and sent as a literal.
+- `envVars` entries whose `source` is `"remote"`: nothing is sent; the variable is resolved from the target's own environment.
+
+```json
+{
+  "mcpServers": {
+    "remote-db": {
+      "command": "db-mcp-server",
+      "environment_id": "dev-box",
+      "env": { "LOG_LEVEL": "debug" },
+      "envVars": [
+        "GITHUB_TOKEN",
+        { "name": "PGPASSWORD", "source": "local" },
+        { "name": "SSH_AUTH_SOCK", "source": "remote" }
+      ]
+    }
+  }
+}
+```
+
+In this example the server receives `LOG_LEVEL=debug` from `env`, `GITHUB_TOKEN` and `PGPASSWORD` with the values they have on this machine, plus `SSH_AUTH_SOCK` resolved from the target's environment. For servers on the default `local` environment, `envVars` has no effect because the child process already inherits the CLI's full environment.
 
 ## Loading tools on demand
 

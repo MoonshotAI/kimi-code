@@ -10,12 +10,15 @@ import { ErrorCodes, makeErrorPayload } from "#/errors";
 import { abortable } from '#/_base/utils/abort';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import type { McpOriginalsTarget } from '#/agent/mcp/output';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import type { EnvironmentLease } from '#/environment/environment';
 import { createMcpAuthTool } from '#/agent/mcp/tools/auth';
 import { createMcpTool } from '#/agent/mcp/tools/mcp';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
@@ -61,6 +64,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     @IAgentStateService private readonly states: IAgentStateService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @ISessionMediaStore private readonly attachmentStore: ISessionMediaStore,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
   ) {
     super();
     this.states.contributeState(mcpDiscoveryKey);
@@ -98,6 +102,27 @@ export class AgentMcpService extends Service implements IAgentMcpService {
 
   get oauthService() {
     return this.mcpHandle.connectionManager.oauthService;
+  }
+
+  private originalsTarget(): McpOriginalsTarget | undefined {
+    let lease: EnvironmentLease;
+    try {
+      lease = this.environment.acquire();
+    } catch {
+      return undefined;
+    }
+    try {
+      const tempDir = lease.environment.host.tempDir;
+      const fs = lease.environment.fs;
+      if (tempDir === undefined || fs === undefined) return undefined;
+      return {
+        fs,
+        dir: lease.environment.path.join(tempDir, 'kimi-code', 'original-images'),
+        path: lease.environment.path,
+      };
+    } finally {
+      lease.dispose();
+    }
   }
 
   waitForInitialLoad(signal?: AbortSignal): Promise<void> {
@@ -295,6 +320,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
           createMcpTool(qualified, tool, client, {
             serverName,
             attachmentStore: this.attachmentStore,
+            originals: () => this.originalsTarget(),
             telemetry: this.telemetry,
             providerType: () => this.profile.getModelProviderType(),
             reconnect: (signal) => this.reconnectForToolCall(serverName, client, signal),

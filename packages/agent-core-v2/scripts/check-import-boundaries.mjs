@@ -73,7 +73,7 @@ const V2_ONLY_FIRST_SEGMENTS = new Set([
   'errors',
   'debug',
   'program',
-  'runtime',
+  'environment',
   '_base',
 ]);
 

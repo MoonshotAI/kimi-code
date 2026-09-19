@@ -45,11 +45,12 @@ import {
   guessLanguageId,
   guessMime,
 } from '#/_base/utils/fileMeta';
-import { ErrorCodes, Error2, isError2, unwrapErrorCause } from '#/errors';
+import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem, type HostDirEntry, type HostFileStat } from '#/os/interface/hostFileSystem';
-import type { RuntimePath } from '#/runtime/runtime';
-import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
+import type { EnvironmentPath } from '#/environment/environment';
+import { IEnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
@@ -100,19 +101,19 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     | undefined = undefined;
   private readonly workDir: string;
   private readonly workspaceId: string;
-  private readonly path: RuntimePath;
+  private readonly path: EnvironmentPath;
 
   constructor(
     @IWorkspaceContext workspace: IWorkspaceContext,
-    @IWorkspaceDirs private readonly workspaceDirs: IWorkspaceDirs,
+    @IWorkspaceDirs private readonly workspaceDirs: Pick<IWorkspaceDirs, 'additionalDirs'>,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
-    @IRuntimeResolver private readonly resolver: IRuntimeResolver,
+    @IEnvironmentResolver private readonly resolver: IEnvironmentResolver,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IWorkspaceGitService private readonly git: IWorkspaceGitService,
-    private readonly runtimeId = 'local',
+    private readonly environmentId = 'local',
   ) {
     this.workspaceId = workspace.workspaceId;
-    this.path = resolver.inspect({ workspaceId: workspace.workspaceId, runtimeId }).path;
+    this.path = resolver.inspect({ workspaceId: workspace.workspaceId, environmentId }).path;
     this.workDir = this.path.resolve(workspace.cwd);
   }
 
@@ -142,8 +143,8 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     let topStat: HostFileStat;
     try {
       topStat = await this.hostFs.stat(abs);
-    } catch (err) {
-      throw mapFsError(err, req.path);
+    } catch (error) {
+      throw mapFsError(error, req.path);
     }
     if (!topStat.isDirectory) {
       throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `path not found: ${req.path}`, {
@@ -176,9 +177,9 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       let names: readonly string[];
       try {
         names = (await this.hostFs.readdir(this.absOf(entry.relPath))).map((e) => e.name);
-      } catch (err) {
+      } catch (error) {
         if (entry.relPath === (rel === '.' ? '' : rel)) {
-          throw mapFsError(err, req.path);
+          throw mapFsError(error, req.path);
         }
         continue;
       }
@@ -234,8 +235,8 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     let st: HostFileStat;
     try {
       st = await this.hostFs.stat(abs);
-    } catch (err) {
-      throw mapFsError(err, req.path);
+    } catch (error) {
+      throw mapFsError(error, req.path);
     }
     if (st.isDirectory) {
       throw new Error2(ErrorCodes.FS_IS_DIRECTORY, `path is a directory: ${req.path}`, {
@@ -333,9 +334,9 @@ export class WorkspaceFsService implements IWorkspaceFsService {
           });
           results[p] = sub.items;
           if (sub.truncated) truncatedPaths.push(p);
-        } catch (err) {
-          if (err instanceof Error2 && err.code === ErrorCodes.FS_PATH_ESCAPES) throw err;
-          partialErrors[p] = toWireError(err);
+        } catch (error) {
+          if (error instanceof Error2 && error.code === ErrorCodes.FS_PATH_ESCAPES) throw error;
+          partialErrors[p] = toWireError(error);
         }
       }),
     );
@@ -352,8 +353,8 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     let st: HostFileStat;
     try {
       st = await this.hostFs.lstat(abs);
-    } catch (err) {
-      throw mapFsError(err, req.path);
+    } catch (error) {
+      throw mapFsError(error, req.path);
     }
     const name = rel === '.' ? this.path.basename(this.workDir) : this.path.basename(abs);
     return buildFsEntry(rel, name, st, true);
@@ -387,19 +388,18 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const rel = this.toRel(abs);
     try {
       await this.hostFs.mkdir(abs, { recursive: req.recursive });
-    } catch (err) {
-      const code = errnoCode(err);
-      if (code === 'EEXIST') {
+    } catch (error) {
+      if (errnoCode(error) === 'EEXIST') {
         throw new Error2(ErrorCodes.FS_ALREADY_EXISTS, `path already exists: ${req.path}`, {
           details: { path: req.path },
         });
       }
-      if (code === 'ENOENT' || code === 'ENOTDIR') {
+      if (isHostFsNotFound(error) || isHostFsNotDirectory(error)) {
         throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `parent not found: ${req.path}`, {
           details: { path: req.path },
         });
       }
-      throw err;
+      throw error;
     }
     const st = await this.hostFs.lstat(abs);
     return buildFsEntry(rel, this.path.basename(abs), st, false);
@@ -411,8 +411,8 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     let st: HostFileStat;
     try {
       st = await this.hostFs.lstat(abs);
-    } catch (err) {
-      throw mapFsError(err, relPath);
+    } catch (error) {
+      throw mapFsError(error, relPath);
     }
     return { absolute: abs, relative: rel, isDirectory: st.isDirectory };
   }
@@ -423,8 +423,8 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     let st: HostFileStat;
     try {
       st = await this.hostFs.stat(abs);
-    } catch (err) {
-      throw mapFsError(err, relPath);
+    } catch (error) {
+      throw mapFsError(error, relPath);
     }
     if (st.isDirectory) {
       throw new Error2(ErrorCodes.FS_IS_DIRECTORY, `path is a directory: ${relPath}`, {
@@ -541,8 +541,8 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       if (resolution !== null) {
         try {
           return await this.suggestWithRg(query, cap, controller.signal, resolution.path, roots);
-        } catch (err) {
-          if (controller.signal.aborted) throw err;
+        } catch (error) {
+          if (controller.signal.aborted) throw error;
           this.telemetry.track2('fs_suggest_node_fallback', { reason: 'rg_error' });
           return await this.suggestWithNode(query, cap, controller.signal, roots);
         }
@@ -603,8 +603,8 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       let entries: readonly HostDirEntry[];
       try {
         entries = await this.hostFs.readdir(root.dir);
-      } catch (err) {
-        throw mapFsError(err, root.dir);
+      } catch (error) {
+        throw mapFsError(error, root.dir);
       }
       const visible: { name: string; kind: TopEntry['kind'] }[] = [];
       for (const entry of entries) {
@@ -674,10 +674,10 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     }
 
     const lease = this.resolver.acquire(
-      { workspaceId: this.workspaceId, runtimeId: this.runtimeId },
+      { workspaceId: this.workspaceId, environmentId: this.environmentId },
       ['process'],
     );
-    const proc = await lease.runtime.process!.spawn(rgBinary, args, { cwd: this.workDir });
+    const proc = await lease.environment.process!.spawn(rgBinary, args, { cwd: this.workDir });
 
     const top = new SuggestTopHeap(cap);
     const seenDirs = new Set<string>();
@@ -823,8 +823,8 @@ export class WorkspaceFsService implements IWorkspaceFsService {
           top.push(this.displayCandidate(root, candidate));
         });
       }
-    } catch (err) {
-      if (err !== SUGGEST_WALK_ABORTED) throw err;
+    } catch (error) {
+      if (error !== SUGGEST_WALK_ABORTED) throw error;
     }
     const items = top.drain().map((candidate) => ({
       path: candidate.path,
@@ -897,8 +897,8 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     args.push(req.pattern);
     args.push('.');
 
-    const lease = this.resolver.acquire({ workspaceId: this.workspaceId, runtimeId: this.runtimeId }, ['process']);
-    const proc = await lease.runtime.process!.spawn(rgPath, args, { cwd: this.workDir });
+    const lease = this.resolver.acquire({ workspaceId: this.workspaceId, environmentId: this.environmentId }, ['process']);
+    const proc = await lease.environment.process!.spawn(rgPath, args, { cwd: this.workDir });
 
     const acc = new RgJsonAccumulator(req);
     let killed = false;
@@ -1079,12 +1079,15 @@ export class WorkspaceFsService implements IWorkspaceFsService {
 
   private async resolveRg(): Promise<RgResolution | null> {
     if (this.rgResolution !== undefined) return this.rgResolution;
-    const lease = this.resolver.acquire({ workspaceId: this.workspaceId, runtimeId: this.runtimeId }, ['process']);
+    const lease = this.resolver.acquire({ workspaceId: this.workspaceId, environmentId: this.environmentId }, ['process']);
     const probe: RgProbe = {
-      exec: (args) => runCommand(lease.runtime.process!, args, { cwd: this.workDir }),
+      exec: (args) => runCommand(lease.environment.process!, args, { cwd: this.workDir }),
     };
     try {
-      this.rgResolution = await ensureRgPath(probe);
+      this.rgResolution = await ensureRgPath(probe, {
+        allowCachedFallback: true,
+        environment: lease.environment,
+      });
     } catch {
       this.rgResolution = null;
     } finally {
@@ -1119,9 +1122,9 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     for (let i = 0; i < 256; i++) {
       try {
         const real = await this.hostFs.realpath(current);
-        return tail.length === 0 ? real : this.path.join(real, ...tail.reverse());
-      } catch (err) {
-        if (!isMissingPathError(err)) throw err;
+        return tail.length === 0 ? real : this.path.join(real, ...tail.toReversed());
+      } catch (error) {
+        if (!isMissingPathError(error)) throw error;
         const parent = this.path.dirname(current);
         if (parent === current) return abs;
         tail.push(this.path.basename(current));
@@ -1268,7 +1271,7 @@ class RgJsonAccumulator {
     const buf = this.fileBuf.get(p);
     if (buf === undefined) return;
     if (buf.matches.length > 0 && buf.pending.length > 0) {
-      const last = buf.matches[buf.matches.length - 1]!;
+      const last = buf.matches.at(-1)!;
       last.after = buf.pending.slice(0, this.req.context_lines);
     }
     if (buf.matches.length > 0) {
@@ -1347,16 +1350,10 @@ function errnoCode(err: unknown): string | undefined {
 }
 
 function isMissingPathError(err: unknown): boolean {
-  if (isError2(err)) {
-    return (
-      err.code === ErrorCodes.OS_FS_NOT_FOUND || err.code === ErrorCodes.OS_FS_NOT_DIRECTORY
-    );
-  }
-  const code = errnoCode(err);
-  return code === 'ENOENT' || code === 'ENOTDIR';
+  return isHostFsNotFound(err) || isHostFsNotDirectory(err);
 }
 
-function isInsideOrEqual(path: RuntimePath, child: string, parent: string): boolean {
+function isInsideOrEqual(path: EnvironmentPath, child: string, parent: string): boolean {
   const rel = path.relative(parent, child);
   if (rel === '') return true;
   if (rel.startsWith('..')) return false;
@@ -1365,8 +1362,7 @@ function isInsideOrEqual(path: RuntimePath, child: string, parent: string): bool
 }
 
 function mapFsError(err: unknown, inputPath: string): Error {
-  const code = errnoCode(err);
-  if (code === 'ENOENT' || code === 'ENOTDIR') {
+  if (isHostFsNotFound(err) || isHostFsNotDirectory(err)) {
     return new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `path not found: ${inputPath}`, {
       details: { path: inputPath },
     });

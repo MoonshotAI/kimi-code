@@ -185,6 +185,7 @@ describe('built-in slash command registry', () => {
         'plan',
         'reload',
         'reload-tui',
+        'environment',
         'secondary-model',
         'sessions',
         'settings',
@@ -222,6 +223,14 @@ describe('built-in slash command registry', () => {
     const command = findBuiltInSlashCommand('tower');
     expect(command).toBeDefined();
     expect((command as KimiSlashCommand).experimentalFlag).toBe('tower');
+  });
+
+  it('exposes environment unconditionally and keeps it idle-only', () => {
+    const command = findBuiltInSlashCommand('environment');
+    expect(command).toBeDefined();
+    expect((command as KimiSlashCommand).experimentalFlag).toBeUndefined();
+    expect(command?.aliases).toContain('environments');
+    expect(resolveSlashCommandAvailability(command!, '')).toBe('idle-only');
   });
 
   it('keeps every tower subcommand always available, including objectives', () => {

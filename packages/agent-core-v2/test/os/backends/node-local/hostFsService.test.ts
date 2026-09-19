@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
@@ -50,6 +50,56 @@ describe('HostFileSystem stat / lstat', () => {
 
     await expect(fs.stat(link)).rejects.toThrow();
     expect((await fs.lstat(link)).isSymbolicLink).toBe(true);
+  });
+});
+
+describe('HostFileSystem unix mode', () => {
+  it('creates a directory with the given mode and reads it back via stat', async () => {
+    const target = join(dir, 'private');
+
+    await fs.mkdir(target, { mode: 0o700 });
+
+    const st = await fs.stat(target);
+    expect(st.isDirectory).toBe(true);
+    expect(st.mode).toBe(0o700);
+  });
+
+  it('reports the mode of files via stat and lstat', async () => {
+    const target = join(dir, 'file.txt');
+    await writeFile(target, 'x', 'utf-8');
+    await chmod(target, 0o640);
+
+    expect((await fs.stat(target)).mode).toBe(0o640);
+    expect((await fs.lstat(target)).mode).toBe(0o640);
+  });
+});
+
+describe('HostFileSystem rename', () => {
+  it('renames a file within the same directory and preserves its contents', async () => {
+    const from = join(dir, 'before.txt');
+    const to = join(dir, 'after.txt');
+    await writeFile(from, 'payload', 'utf-8');
+
+    await fs.rename!(from, to);
+
+    expect(await fs.readText(to)).toBe('payload');
+    await expect(fs.stat(from)).rejects.toThrow();
+  });
+
+  it('moves a file across directories', async () => {
+    const sub = join(dir, 'nested');
+    await mkdir(sub);
+    const from = join(dir, 'move.txt');
+    const to = join(sub, 'move.txt');
+    await writeFile(from, 'data', 'utf-8');
+
+    await fs.rename!(from, to);
+
+    expect(await fs.readText(to)).toBe('data');
+  });
+
+  it('rejects renaming a missing source', async () => {
+    await expect(fs.rename!(join(dir, 'missing'), join(dir, 'target'))).rejects.toThrow();
   });
 });
 

@@ -565,8 +565,11 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `GET /api/v1/sessions/{session_id}/status` | 实时状态汇总 |
 | `GET /api/v1/sessions/{session_id}/goal` | 当前目标快照（无则 `null`） |
 | `GET /api/v1/sessions/{session_id}/warnings` | 会话级告警 |
-| `GET /api/v1/sessions/{session_id}/runtime` | 读取 main agent 的运行时绑定 |
-| `POST /api/v1/sessions/{session_id}/runtime` | 切换 main agent 的运行时绑定 |
+| `GET /api/v1/sessions/{session_id}/environment` | 读取 main agent 的环境绑定 |
+| `POST /api/v1/sessions/{session_id}/environment` | 切换 main agent 的环境绑定 |
+| `POST /api/v1/sessions/{session_id}/environment/reconnect` | 重连已绑定的环境 |
+| `GET /api/v1/sessions/{session_id}/environments` | 列出会话工作区已注册的环境 |
+| `POST /api/v1/sessions/{session_id}/environments` | 为会话工作区声明环境 |
 | `POST /api/v1/sessions/{session_id}/export` | 导出会话与诊断信息（zip 流，不走信封） |
 | `GET /api/v1/sessions/{session_id}/snapshot` | 客户端重建用全量快照（含 `as_of_seq` 与 `epoch`） |
 | `GET /api/v1/sessions/{session_id}/media/{file_id}` | 按文件 id 下载提示词媒体（二进制） |
@@ -833,31 +836,77 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 
 - `40401`：会话不存在
 
-#### `GET /api/v1/sessions/{session_id}/runtime`
+#### `GET /api/v1/sessions/{session_id}/environment`
 
-读取 main agent 的运行时绑定——即该会话的 Agent 循环运行在哪个运行时上。
+读取 main agent 的环境绑定——即该会话的 Agent 循环运行在哪个环境上。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
 
-成功时，`data` 为 `{ workspace_id, runtime_id }`。
+成功时，`data` 为 `{ workspace_id, environment_id, cwd? }`；`cwd` 是被绑定环境上的工作目录，绑定带有该值时返回。
 
 - `40401`：会话不存在
 
-#### `POST /api/v1/sessions/{session_id}/runtime`
+#### `POST /api/v1/sessions/{session_id}/environment`
 
-切换 main agent 的运行时绑定。
+切换 main agent 的环境绑定。新绑定持久化之前会先建立连接，并用目标文件系统校验给定的 `cwd`——失败时保留原绑定。切换成功后立即生效：会话的下一次工具调用就已在新环境上执行。功能介绍见 [远程环境](../guides/remote-environment.md)。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
-| `runtime_id` | body | string | **必填。** 目标运行时 id |
+| `environment_id` | body | string | **必填。** 目标环境 id |
+| `cwd` | body | string | 目标环境上的工作目录；非 `local` 环境必填（缺省时返回 `40001`）——条目的 `defaultCwd` 仅在创建会话绑定该环境时生效 |
 
-成功时，`data` 为新的绑定 `{ workspace_id, runtime_id }`。
+成功时，`data` 为新的绑定 `{ workspace_id, environment_id, cwd? }`。
 
-- `40420`：不存在该 `runtime_id` 的运行时
-- `40926`：运行时存在但不可用
+- `40001`：非 `local` 的 `environment_id` 未提供 `cwd`，或给定的 `cwd` 在目标环境上不是有效目录
+- `40401`：会话不存在
+- `40420`：不存在该 `environment_id` 的环境
+- `40901`：会话有正在执行的工具调用或待审批调用，切换被拒绝——待轮次结束后重试
+- `40926`：环境存在但不可用
+
+#### `POST /api/v1/sessions/{session_id}/environment/reconnect`
+
+在断连后显式重连 main agent 已绑定的环境。远程环境不会自动重连，也绝不静默回退到 `local`——连接断开后，工具调用会以环境不可用错误失败，直到通过本端点（或 `/environment` 对话框）重新建立连接。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **必填。** 会话 id |
+
+成功时，`data` 为当前绑定 `{ workspace_id, environment_id, cwd? }`。
+
+- `40401`：会话不存在
+- `40420`：不存在该 `environment_id` 的环境
+- `40926`：环境存在但不可用
+
+#### `GET /api/v1/sessions/{session_id}/environments`
+
+列出会话工作区已注册的环境，以及从 `~/.ssh/config` 发现的、可作为新声明候选的 SSH 主机。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **必填。** 会话 id |
+
+成功时，`data` 为 `{ workspace_id, environments, ssh_hosts }`。`environments` 每项为 `{ environment_id, type, status, generation, capabilities, default_cwd?, connect_error? }`，其中 `type` 取 `local` / `ssh` / `docker` / `command` 之一，`status` 取 `pending` / `connecting` / `ready` / `degraded` / `disconnected` / `draining` / `disposed` 之一，`capabilities` 从 `fs` / `process` / `terminal` 中取值；`pending` 表示没有可用连接且未观察到失败（尚未连接过，或因空闲被回收），`connect_error` 记录 `disconnected` 条目的失败原因。`ssh_hosts` 为主机名列表。
+
+- `40401`：会话不存在
+
+#### `POST /api/v1/sessions/{session_id}/environments`
+
+为会话工作区声明一个新环境并即时注册——无需重启。`scope` 为 `global`（默认）时，条目深度合并进用户级 `config.toml` 的 `[environments]` 节；为 `project` 时，合并写入工作区的 `.kimi-code/environments.toml`（项目级声明仅对受信任的工作区加载）。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **必填。** 会话 id |
+| `environment_id` | body | string | **必填。** 新环境的 id |
+| `scope` | body | string | `global`（默认）或 `project` |
+| `entry` | body | object | **必填。** 环境条目：`{ type: "ssh", host, remote_bin?, default_cwd? }`、`{ type: "docker", container, context?, remote_bin?, default_cwd? }` 或 `{ command, args?, env?, default_cwd? }` |
+
+成功时，`data` 为 `{ workspace_id, environment_id, scope }`。
+
+- `40001`：条目不合法、id 已声明，或项目文件不可读、内容非法
+- `40401`：会话不存在
 
 #### `POST /api/v1/sessions/{session_id}/export`
 
@@ -1510,9 +1559,9 @@ PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳�
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
-| `runtime_id` | body | string | 生成终端进程的运行时。默认 `local` |
+| `environment_id` | body | string | 生成终端进程的环境。默认 `local` |
 | `cwd` | body | string | 工作目录，相对于会话工作区（传绝对路径会校验失败）。默认工作区根目录 |
-| `shell` | body | string | Shell 可执行文件。默认该运行时的 shell |
+| `shell` | body | string | Shell 可执行文件。默认该环境的 shell |
 | `cols` | body | integer | 终端宽度，正数。默认 `80` |
 | `rows` | body | integer | 终端高度，正数。默认 `24` |
 
@@ -1679,7 +1728,7 @@ PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳�
 
 ### 文件系统
 
-会话内文件操作走 `POST /api/v1/sessions/{session_id}/fs:{action}`，请求体为 JSON；动作包括 `list` / `read` / `list_many` / `stat` / `stat_many` / `mkdir` / `search` / `grep` / `git_status` / `diff` / `open` / `open-in` / `reveal`。每个动作的请求体还接受可选的 `runtime_id`（string，默认 `local`），用于选择执行操作的运行时；`open`、`open-in` 与 `reveal` 仅在 `local` 运行时上可用。另有：
+会话内文件操作走 `POST /api/v1/sessions/{session_id}/fs:{action}`，请求体为 JSON；动作包括 `list` / `read` / `list_many` / `stat` / `stat_many` / `mkdir` / `search` / `grep` / `git_status` / `diff` / `open` / `open-in` / `reveal`。每个动作的请求体还接受可选的 `environment_id`（string，默认 `local`），用于选择执行操作的环境；`open`、`open-in` 与 `reveal` 仅在 `local` 环境上可用。另有：
 
 | 方法与路径 | 说明 |
 | --- | --- |
@@ -1873,7 +1922,7 @@ PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳�
 
 #### `POST /api/v1/sessions/{session_id}/fs:open`
 
-用宿主操作系统的默认程序打开会话文件。仅限 local 运行时。
+用宿主操作系统的默认程序打开会话文件。仅限 local 环境。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -1890,7 +1939,7 @@ PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳�
 
 #### `POST /api/v1/sessions/{session_id}/fs:open-in`
 
-在指定的宿主应用程序中打开会话文件或目录。仅限 local 运行时。
+在指定的宿主应用程序中打开会话文件或目录。仅限 local 环境。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -1909,7 +1958,7 @@ PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳�
 
 #### `POST /api/v1/sessions/{session_id}/fs:reveal`
 
-在宿主操作系统的文件管理器中显示会话文件。仅限 local 运行时。
+在宿主操作系统的文件管理器中显示会话文件。仅限 local 环境。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -1931,7 +1980,7 @@ PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳�
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
 | `path` | path | string | **必填。** 相对于工作区的文件路径，加 `:download` 后缀 |
-| `runtime_id` | query | string | 从哪个运行时读取。默认 `local` |
+| `environment_id` | query | string | 从哪个环境读取。默认 `local` |
 
 - `40001`：路径缺失或为空
 - `40401`：会话不存在
@@ -1950,7 +1999,7 @@ PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳�
 | `include_globs` | body | string[] | 只保留匹配这些 glob 之一的路径 |
 | `exclude_globs` | body | string[] | 跳过匹配这些 glob 的路径 |
 | `follow_gitignore` | body | boolean | 跳过 gitignore 的路径。默认 `true` |
-| `runtime_id` | body | string | 在哪个运行时上搜索。默认 `local` |
+| `environment_id` | body | string | 在哪个环境上搜索。默认 `local` |
 
 成功时 `data` 为 `{ items, truncated }`，命中结构与排序同 `fs:search`。
 
@@ -1970,7 +2019,7 @@ PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳�
 | `show_hidden` | body | boolean | 包含点文件。默认 `false` |
 | `include_globs` | body | string[] | 只保留匹配这些 glob 之一的路径 |
 | `exclude_globs` | body | string[] | 跳过匹配这些 glob 的路径 |
-| `runtime_id` | body | string | 在哪个运行时上补全。默认 `local` |
+| `environment_id` | body | string | 在哪个环境上补全。默认 `local` |
 
 成功时 `data` 为 `{ items, truncated }`，每项为 `{ path, name, kind, score, match_positions }`，命中结构同 `fs:search`。
 

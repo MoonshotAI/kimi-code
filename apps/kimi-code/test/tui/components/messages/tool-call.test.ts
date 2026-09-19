@@ -320,6 +320,55 @@ describe('ToolCallComponent', () => {
       const expanded = strip(component.render(100).join('\n'));
       expect(expanded).toContain('echo done');
     });
+
+    it('shows the engine-stamped execution cwd when it differs from the local workDir', () => {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_bash_remote',
+          name: 'Bash',
+          args: { command: 'ls', cwd: 'src' },
+          display: { kind: 'command', command: 'ls', cwd: '/home/deploy/app/src' },
+        },
+        { tool_call_id: 'call_bash_remote', output: 'ok', is_error: false },
+        undefined,
+        '/Users/mac/project',
+      );
+
+      const collapsed = strip(component.render(100).join('\n'));
+      expect(collapsed).toContain('cwd: /home/deploy/app/src');
+
+      component.setExpanded(true);
+      const expanded = strip(component.render(100).join('\n'));
+      expect(expanded).toContain('cwd: /home/deploy/app/src');
+      expect(expanded).toContain('$ ls');
+    });
+
+    it('omits the cwd line when the stamped cwd is the local workDir', () => {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_bash_local',
+          name: 'Bash',
+          args: { command: 'ls' },
+          display: { kind: 'command', command: 'ls', cwd: '/Users/mac/project' },
+        },
+        { tool_call_id: 'call_bash_local', output: 'ok', is_error: false },
+        undefined,
+        '/Users/mac/project',
+      );
+
+      expect(strip(component.render(100).join('\n'))).not.toContain('cwd:');
+    });
+
+    it('omits the cwd line when the call carries no stamped display', () => {
+      const component = new ToolCallComponent(
+        { id: 'call_bash_plain', name: 'Bash', args: { command: 'ls' } },
+        { tool_call_id: 'call_bash_plain', output: 'ok', is_error: false },
+        undefined,
+        '/Users/mac/project',
+      );
+
+      expect(strip(component.render(100).join('\n'))).not.toContain('cwd:');
+    });
   });
 
   describe('NotifyUser card', () => {
@@ -1292,6 +1341,64 @@ describe('ToolCallComponent', () => {
     out = strip(component.render(120).join('\n'));
     expect(out).toContain('Explore Agent Queued (explore project) · Kimi K2.5 · 0 tools');
     expect(component.getSubagentSnapshot().model).toBe('Kimi K2.5');
+  });
+
+  it('shows the subagent environment in the header and group snapshot when non-local', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_env',
+        name: 'Agent',
+        args: { description: 'explore project', environment: 'dev-box' },
+      },
+      undefined,
+    );
+    component.onSubagentSpawned({
+      agentId: 'sub_env_1',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+
+    const out = strip(component.render(120).join('\n'));
+    expect(out).toContain('Explore Agent Queued (explore project) · env dev-box · 0 tools');
+    expect(component.getSubagentSnapshot().environment).toBe('dev-box');
+  });
+
+  it('hides the environment badge for a local or absent environment', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    const local = new ToolCallComponent(
+      {
+        id: 'call_agent_local',
+        name: 'Agent',
+        args: { description: 'explore project', environment: 'local' },
+      },
+      undefined,
+    );
+    local.onSubagentSpawned({
+      agentId: 'sub_local_1',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+    const plain = new ToolCallComponent(
+      {
+        id: 'call_agent_plain',
+        name: 'Agent',
+        args: { description: 'explore project' },
+      },
+      undefined,
+    );
+    plain.onSubagentSpawned({
+      agentId: 'sub_plain_1',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+
+    expect(strip(local.render(120).join('\n'))).not.toContain('env ');
+    expect(strip(plain.render(120).join('\n'))).not.toContain('env ');
+    expect(local.getSubagentSnapshot().environment).toBeUndefined();
+    expect(plain.getSubagentSnapshot().environment).toBeUndefined();
   });
 
   it('shows Backgrounded after a foreground subagent is detached, even after setResult', () => {

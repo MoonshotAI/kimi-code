@@ -20,9 +20,9 @@ import {
   SessionTerminalService,
 } from '#/session/terminal/terminalService';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import type { RuntimeLease } from '#/runtime/runtime';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
-import { IRuntimeResolver, type IRuntimeResolver as RuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import type { EnvironmentLease } from '#/environment/environment';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
+import { IEnvironmentResolver, type IEnvironmentResolver as EnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
 vi.mock('node-pty', () => ({
   spawn: vi.fn(),
@@ -71,23 +71,24 @@ class FakeHostTerminalService implements IHostTerminalService {
   }
 }
 
-class FakeRuntimeResolver implements RuntimeResolver {
+class FakeEnvironmentResolver implements EnvironmentResolver {
   declare readonly _serviceBrand: undefined;
   activeLeases = 0;
-  readonly bindings: Array<{ workspaceId: string; runtimeId: string }> = [];
-  private readonly runtime;
+  readonly bindings: Array<{ workspaceId: string; environmentId: string }> = [];
+  readonly tracked: Array<{ resource: unknown; sessionId?: string }> = [];
+  private readonly environment;
 
   constructor(
     terminal: IHostTerminalService,
-    runtimeId = 'local',
+    environmentId = 'local',
     mapWorkspaceRoots?: (roots: { workDir: string; additionalDirs?: readonly string[] }) => {
       workDir: string;
       additionalDirs?: readonly string[];
     },
   ) {
-    this.runtime = Object.assign(
-      new FakeRuntime(
-        { workspaceId: 'w1', runtimeId, generation: 'test' },
+    this.environment = Object.assign(
+      new FakeEnvironment(
+        { workspaceId: 'w1', environmentId, generation: 'test' },
         { capabilities: ['terminal'], mapWorkspaceRoots },
       ),
       { terminal },
@@ -95,22 +96,29 @@ class FakeRuntimeResolver implements RuntimeResolver {
   }
 
   inspect() {
-    return this.runtime;
+    return this.environment;
   }
 
-  acquire(binding: { workspaceId: string; runtimeId: string }): RuntimeLease {
+  acquire(binding: { workspaceId: string; environmentId: string }): EnvironmentLease {
     this.bindings.push(binding);
     this.activeLeases += 1;
     let active = true;
     return {
-      runtime: this.runtime,
-      track: (resource) => resource,
+      environment: this.environment,
+      track: (resource, sessionId) => {
+        this.tracked.push({ resource, sessionId });
+        return resource;
+      },
       dispose: () => {
         if (!active) return;
         active = false;
         this.activeLeases -= 1;
       },
     };
+  }
+
+  acquireWhenReady(binding: { workspaceId: string; environmentId: string }): Promise<EnvironmentLease> {
+    return Promise.resolve(this.acquire(binding));
   }
 }
 
@@ -122,6 +130,7 @@ function stubWorkspace(workDir = '/ws'): ISessionWorkspaceContext {
     resolve: (rel) => resolve(workDir, rel),
     isWithin: () => true,
     assertAllowed: (absPath) => resolve(workDir, absPath),
+    setWorkDir: () => {},
   };
 }
 
@@ -145,16 +154,16 @@ describe('SessionTerminalService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let host: FakeHostTerminalService;
-  let resolver: FakeRuntimeResolver;
+  let resolver: FakeEnvironmentResolver;
 
   beforeEach(() => {
     disposables = new DisposableStore();
     host = new FakeHostTerminalService();
-    resolver = new FakeRuntimeResolver(host);
+    resolver = new FakeEnvironmentResolver(host);
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IHostTerminalService, host);
-        reg.defineInstance(IRuntimeResolver, resolver);
+        reg.defineInstance(IEnvironmentResolver, resolver);
         reg.define(ISessionTerminalService, SessionTerminalService);
         reg.defineInstance(ISessionWorkspaceContext, stubWorkspace());
         reg.defineInstance(ISessionContext, stubSessionContext());
@@ -165,7 +174,7 @@ describe('SessionTerminalService', () => {
 
   it('creates a terminal and resolves cwd through the workspace', async () => {
     const svc = ix.get(ISessionTerminalService);
-    const terminal = await svc.create({ runtime_id: 'local', cwd: 'sub', cols: 100, rows: 40 });
+    const terminal = await svc.create({ environment_id: 'local', cwd: 'sub', cols: 100, rows: 40 });
 
     expect(terminal.status).toBe('running');
     expect(terminal.session_id).toBe('s1');
@@ -176,18 +185,18 @@ describe('SessionTerminalService', () => {
     expect(host.lastOptions[0]?.cwd).toBe(resolve('/ws', 'sub'));
   });
 
-  it('uses the selected non-local runtime mapping and terminal instead of the App host', async () => {
+  it('uses the selected non-local environment mapping and terminal instead of the App host', async () => {
     const remoteHost = new FakeHostTerminalService();
-    resolver = new FakeRuntimeResolver(
+    resolver = new FakeEnvironmentResolver(
       remoteHost,
       'remote',
       (roots) => ({ ...roots, workDir: '/remote/workspace' }),
     );
-    ix.set(IRuntimeResolver, resolver);
+    ix.set(IEnvironmentResolver, resolver);
     const svc = ix.get(ISessionTerminalService);
-    const terminal = await svc.create({ runtime_id: 'remote', cwd: 'sub' });
+    const terminal = await svc.create({ environment_id: 'remote', cwd: 'sub' });
 
-    expect(resolver.bindings).toEqual([{ workspaceId: 'w1', runtimeId: 'remote' }]);
+    expect(resolver.bindings).toEqual([{ workspaceId: 'w1', environmentId: 'remote' }]);
     expect(terminal.cwd).toBe('/remote/workspace/sub');
     expect(remoteHost.lastOptions[0]?.cwd).toBe('/remote/workspace/sub');
     expect(host.processes).toHaveLength(0);
@@ -198,15 +207,22 @@ describe('SessionTerminalService', () => {
 
   it('uses the workspace workDir when cwd is omitted', async () => {
     const svc = ix.get(ISessionTerminalService);
-    const terminal = await svc.create({ runtime_id: 'local' });
+    const terminal = await svc.create({ environment_id: 'local' });
     expect(terminal.cwd).toBe('/ws');
     expect(terminal.cols).toBe(80);
     expect(terminal.rows).toBe(24);
   });
 
+  it('tags the tracked terminal killer with the owning session id', async () => {
+    const svc = ix.get(ISessionTerminalService);
+    await svc.create({ environment_id: 'local' });
+    expect(resolver.tracked).toHaveLength(1);
+    expect(resolver.tracked[0]?.sessionId).toBe('s1');
+  });
+
   it('lists and gets terminals', async () => {
     const svc = ix.get(ISessionTerminalService);
-    const created = await svc.create({ runtime_id: 'local',});
+    const created = await svc.create({ environment_id: 'local',});
     const listed = await svc.list();
     expect(listed).toHaveLength(1);
     expect(listed[0]?.id).toBe(created.id);
@@ -224,7 +240,7 @@ describe('SessionTerminalService', () => {
 
   it('attaches a sink, replays buffered frames, then streams live output', async () => {
     const svc = ix.get(ISessionTerminalService);
-    const terminal = await svc.create({ runtime_id: 'local' });
+    const terminal = await svc.create({ environment_id: 'local' });
     const proc = host.processes[0]!;
 
     proc.emitData('hello');
@@ -247,7 +263,7 @@ describe('SessionTerminalService', () => {
 
   it('replays only frames after sinceSeq', async () => {
     const svc = ix.get(ISessionTerminalService);
-    const terminal = await svc.create({ runtime_id: 'local' });
+    const terminal = await svc.create({ environment_id: 'local' });
     const proc = host.processes[0]!;
     proc.emitData('a');
     proc.emitData('b');
@@ -261,7 +277,7 @@ describe('SessionTerminalService', () => {
 
   it('emits an exit frame and marks the terminal exited on process exit', async () => {
     const svc = ix.get(ISessionTerminalService);
-    const terminal = await svc.create({ runtime_id: 'local' });
+    const terminal = await svc.create({ environment_id: 'local' });
     const proc = host.processes[0]!;
     const { sink, frames } = collectSink();
     await svc.attach(terminal.id, sink);
@@ -283,7 +299,7 @@ describe('SessionTerminalService', () => {
 
   it('delegates write and resize to the process', async () => {
     const svc = ix.get(ISessionTerminalService);
-    const terminal = await svc.create({ runtime_id: 'local' });
+    const terminal = await svc.create({ environment_id: 'local' });
     const proc = host.processes[0]!;
 
     await svc.write(terminal.id, 'ls\n');
@@ -296,7 +312,7 @@ describe('SessionTerminalService', () => {
 
   it('closes a terminal by killing the process and marking it exited', async () => {
     const svc = ix.get(ISessionTerminalService);
-    const terminal = await svc.create({ runtime_id: 'local' });
+    const terminal = await svc.create({ environment_id: 'local' });
     const proc = host.processes[0]!;
 
     const result = await svc.close(terminal.id);
@@ -307,7 +323,7 @@ describe('SessionTerminalService', () => {
 
   it('detaches a sink so it stops receiving frames', async () => {
     const svc = ix.get(ISessionTerminalService);
-    const terminal = await svc.create({ runtime_id: 'local' });
+    const terminal = await svc.create({ environment_id: 'local' });
     const proc = host.processes[0]!;
     const { sink, frames } = collectSink();
     await svc.attach(terminal.id, sink);
@@ -319,7 +335,7 @@ describe('SessionTerminalService', () => {
 
   it('kills every live process when the service is disposed', async () => {
     const svc = ix.get(ISessionTerminalService);
-    await svc.create({ runtime_id: 'local' });
+    await svc.create({ environment_id: 'local' });
     const proc = host.processes[0]!;
     expect(resolver.activeLeases).toBe(1);
 

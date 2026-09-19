@@ -112,6 +112,7 @@ timeout = 5
 | [`image`](#image) | `table` | — | 图片压缩参数 |
 | [`services`](#services) | `table` | — | 内置外部服务配置 |
 | [`permission`](#permission) | `table` | — | 初始权限规则 |
+| [`environments`](#environments) | `table` | — | 远程环境声明 |
 | [`hooks`](../customization/hooks.md) | `array<table>` | — | 生命周期 hook |
 | [`identity`](#identity) | `table` | — | 自定义 Agent 身份 |
 
@@ -551,6 +552,69 @@ pattern = "Bash"
 MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-code/mcp.json` 中，不在 `config.toml` 里。交互式配置入口是 `/mcp-config`，详见 [Model Context Protocol](../customization/mcp.md)。
 :::
 
+## `environments`
+
+`environments` 声明远程环境——SSH 主机、Docker 兼容容器或自定义启动命令——会话绑定后，Agent 的工具即在目标环境中执行。功能介绍、边界与限制见 [远程环境](../guides/remote-environment.md)。
+
+每个条目以环境 id 为键：不超过 64 个字符，首尾不能有空白，`local` 和 `default` 是保留字。同一条目内 `type` 与 `command` 互斥。
+
+可选的顶层 `default` 指定新会话初始绑定的环境。它必须指向一个已配置的条目，且该条目必须设置 `defaultCwd`——绑定由环境和工作目录成对构成，缺了工作目录的默认绑定会悬空。未设置 `default` 时，新会话默认使用 `local` 环境。
+
+### SSH 条目
+
+| 字段 | 类型 | 是否必填 | 说明 |
+| --- | --- | --- | --- |
+| `type` | `string` | 是 | `"ssh"` |
+| `host` | `string` | 是 | SSH 主机；经系统 `ssh` 启动，`~/.ssh/config`（用户、端口、密钥、`ProxyJump`、`ControlMaster`）照常生效 |
+| `remoteBin` | `string` | 否 | 目标上的执行器路径，默认 `~/.kimi-code/bin/kimi` |
+| `defaultCwd` | `string` | 否 | 绑定会话时工作目录的预填值，不在本机校验 |
+
+### Docker 条目
+
+| 字段 | 类型 | 是否必填 | 说明 |
+| --- | --- | --- | --- |
+| `type` | `string` | 是 | `"docker"` |
+| `container` | `string` | 是 | 运行中的容器名或 id，经 `docker exec` 接入 |
+| `context` | `string` | 否 | Docker context（例如 `orbstack`） |
+| `remoteBin` | `string` | 否 | 容器内的执行器路径，默认为容器用户 home 下的 `~/.kimi-code/bin/kimi`；以 `~/` 开头的值会在连接时解析为该绝对 home 路径（`docker exec` 不做 shell 展开） |
+| `defaultCwd` | `string` | 否 | 绑定会话时工作目录的预填值 |
+
+### command 条目
+
+通用启动器形式，用于内置启动器未覆盖的环境（OrbStack 机器、`kubectl exec`、Apple Container、受管沙箱等）。声明的命令必须能把 stdio 桥接到目标上的 `kimi exec-server`。
+
+| 字段 | 类型 | 是否必填 | 说明 |
+| --- | --- | --- | --- |
+| `command` | `string` | 是 | 启动器可执行文件：按 `PATH` 解析的名称，或绝对路径。解析结果落在工作目录内会被拒绝，项目无法用同名二进制冒名顶替启动器 |
+| `args` | `array<string>` | 否 | 启动器参数；必须包含执行器调用（`... exec-server`） |
+| `env` | `table<string, string>` | 否 | 本机启动器进程的环境变量，不会传播到目标环境执行的命令中 |
+| `defaultCwd` | `string` | 否 | 绑定会话时工作目录的预填值 |
+
+```toml
+[environments]
+default = "dev-box"
+
+[environments.dev-box]
+type = "ssh"
+host = "dev-box"
+defaultCwd = "/home/me/projects"
+
+[environments.dev-container]
+type = "docker"
+container = "myapp-dev"
+
+[environments.sandbox]
+command = "sandbox"
+args = ["ssh", "i-1234567890", "--",
+        "/home/me/.kimi-code/bin/kimi", "exec-server"]
+env = { SANDBOX_TOKEN = "..." }
+defaultCwd = "/home/me/kimi-code"
+```
+
+### 项目级 `environments.toml`
+
+项目可以在 `<项目根目录>/.kimi-code/environments.toml` 中声明自己的环境，schema 与 `[environments]` 节相同（含可选的 `default`）。项目级声明只为受信任的工作区加载：启动时的信任提示会列出每个声明的环境及其完整启动命令行，未信任工作区的该文件会被完全忽略。同 id 的项目级条目覆盖 user 级条目，项目级 `default` 优先于 user 级。详见 [项目级声明与信任](../guides/remote-environment.md#项目级声明与信任)。
+
 ## `tui.toml`
 
 除了 `config.toml`，CLI 还在同一目录下用一份配套的 `tui.toml` 保存终端界面与客户端偏好（`~/.kimi-code/tui.toml`，或覆盖后的 `$KIMI_CODE_HOME/tui.toml`）。它在首次运行时以默认值创建，交互式命令 `/config`、`/theme`、`/editor` 会自动写入，通常无需手动编辑。文件格式有误时，CLI 会回退到默认值并给出提示，而不是启动失败。
@@ -621,6 +685,8 @@ additional_dir = ["/absolute/path/to/shared"]
 ```
 
 目录以绝对路径存储，与具体机器相关。因此建议把 `.kimi-code/local.toml` 加入项目的 `.gitignore`，避免被提交。
+
+除了 `local.toml`，项目 `.kimi-code/` 目录还可以放 `mcp.json`（项目级 MCP server）和 `environments.toml`（项目级远程环境声明）。两者都受工作区信任门控：在启动提示中选择信任该文件夹后才生效。详见 [Model Context Protocol](../customization/mcp.md) 和 [`environments`](#environments)。
 
 ## 下一步
 

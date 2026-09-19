@@ -111,6 +111,9 @@ importers:
       '@moonshot-ai/remote-control':
         specifier: workspace:^
         version: link:../../packages/remote-control
+      '@moonshot-ai/remote-exec':
+        specifier: workspace:^
+        version: link:../../packages/remote-exec
       '@moonshot-ai/vis-server':
         specifier: workspace:^
         version: link:../vis/server
@@ -665,6 +668,9 @@ importers:
       '@moonshot-ai/remote-control':
         specifier: workspace:^
         version: link:../remote-control
+      '@moonshot-ai/remote-exec':
+        specifier: workspace:^
+        version: link:../remote-exec
       '@moonshot-ai/transcript':
         specifier: workspace:^
         version: link:../transcript
@@ -801,6 +807,9 @@ importers:
       '@moonshot-ai/kosong':
         specifier: workspace:^
         version: link:../kosong
+      '@moonshot-ai/remote-exec':
+        specifier: workspace:^
+        version: link:../remote-exec
       '@types/yazl':
         specifier: ^2.4.6
         version: 2.4.6
@@ -852,6 +861,22 @@ importers:
       '@types/ws':
         specifier: ^8.18.0
         version: 8.18.1
+
+  packages/remote-exec:
+    dependencies:
+      '@moonshot-ai/agent-core-v2':
+        specifier: workspace:^
+        version: link:../agent-core-v2
+      '@moonshot-ai/kimi-code-oauth':
+        specifier: workspace:^
+        version: link:../oauth
+      node-pty:
+        specifier: ^1.1.0
+        version: 1.1.0
+    devDependencies:
+      tsx:
+        specifier: ^4.21.0
+        version: 4.21.0
 
   packages/telemetry: {}
 

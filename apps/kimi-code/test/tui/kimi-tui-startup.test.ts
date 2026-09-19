@@ -42,6 +42,7 @@ interface StartupDriver {
   stop(exitCode?: number): Promise<void>;
   setSession(session: unknown): Promise<void>;
   syncRuntimeState(session?: unknown): Promise<void>;
+  ensureSession(): Promise<unknown>;
 }
 
 interface RuntimeStateDriver extends StartupDriver {
@@ -91,6 +92,7 @@ function makeStartupInput(
       skillsDirs: [],
       agent: undefined,
       agentFiles: [],
+      environment: undefined,
       ...cliOptions,
     },
     tuiConfig: {
@@ -485,6 +487,149 @@ describe('KimiTUI startup', () => {
     expect(driver.state.appState).toMatchObject({
       agentProfile: 'reviewer',
       agentFiles: ['agent.md'],
+    });
+  });
+
+  it('pre-creates the --environment session in the background at startup (v2)', async () => {
+    const listEnvironmentDeclarations = vi.fn(async () => [
+      { id: 'dev-box', type: 'ssh', defaultCwd: '/remote/work' },
+    ]);
+    const harness = makeHarness(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: { model: 'moonshot-v1', maxContextSize: 100 },
+        },
+        defaultModel: 'k2',
+      })),
+      listEnvironmentDeclarations,
+    });
+    const driver = makeDriver(harness, makeStartupInput({ environment: 'dev-box' }));
+
+    await expect(driver.init()).resolves.toBe(false);
+
+    expect(listEnvironmentDeclarations).toHaveBeenCalledWith('/tmp/proj-a');
+    expect(harness.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: 'dev-box' }),
+    );
+  });
+
+  it('fails startup fast when the --environment id is not declared (v2)', async () => {
+    const harness = makeHarness(makeSession(), {
+      listEnvironmentDeclarations: vi.fn(async () => [
+        { id: 'dev-box', type: 'ssh', defaultCwd: '/remote/work' },
+      ]),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ environment: 'ghost' }));
+
+    await expect(driver.init()).rejects.toThrow(
+      'environment "ghost" is not declared in [environments]',
+    );
+    expect(harness.createSession).not.toHaveBeenCalled();
+  });
+
+  it('fails startup fast when the --environment declaration lacks defaultCwd (v2)', async () => {
+    const harness = makeHarness(makeSession(), {
+      listEnvironmentDeclarations: vi.fn(async () => [{ id: 'dev-box', type: 'ssh' }]),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ environment: 'dev-box' }));
+
+    await expect(driver.init()).rejects.toThrow(
+      'environment "dev-box" does not set defaultCwd in [environments]',
+    );
+    expect(harness.createSession).not.toHaveBeenCalled();
+  });
+
+  it('pre-creates without the early check when declarations cannot be resolved (v2)', async () => {
+    const harness = makeHarness(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: { model: 'moonshot-v1', maxContextSize: 100 },
+        },
+        defaultModel: 'k2',
+      })),
+      listEnvironmentDeclarations: vi.fn(async () => {
+        throw new Error('config unreadable');
+      }),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ environment: 'dev-box' }));
+
+    await expect(driver.init()).resolves.toBe(false);
+    expect(harness.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: 'dev-box' }),
+    );
+  });
+
+  it('shows a synthetic connecting environment slot until the startup session takes over (v2)', async () => {
+    const session = makeSession({
+      getEnvironment: vi.fn(async () => ({
+        workspaceId: 'ws-1',
+        environmentId: 'dev-box',
+        cwd: '/remote/work',
+      })),
+      listEnvironments: vi.fn(async () => ({
+        workspaceId: 'ws-1',
+        environments: [
+          { environmentId: 'local', type: 'local', status: 'ready', generation: 'g0', capabilities: [] },
+          { environmentId: 'dev-box', type: 'ssh', status: 'ready', generation: 'g1', capabilities: ['fs'] },
+        ],
+        sshHosts: [],
+      })),
+    });
+    const harness = makeHarness(session, {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: { model: 'moonshot-v1', maxContextSize: 100 },
+        },
+        defaultModel: 'k2',
+      })),
+      listEnvironmentDeclarations: vi.fn(async () => [
+        { id: 'dev-box', type: 'ssh', defaultCwd: '/remote/work' },
+      ]),
+    });
+    let resolveCreate!: (s: ReturnType<typeof makeSession>) => void;
+    harness.createSession.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+    const driver = makeDriver(harness, makeStartupInput({ environment: 'dev-box' }));
+
+    await expect(driver.init()).resolves.toBe(false);
+    expect(driver.state.appState.environment).toEqual({
+      environmentId: 'dev-box',
+      type: 'ssh',
+      status: 'connecting',
+    });
+
+    resolveCreate(session);
+    await driver.ensureSession();
+    expect(driver.state.appState.environment).toEqual({
+      environmentId: 'dev-box',
+      type: 'ssh',
+      status: 'ready',
+      cwd: '/remote/work',
+    });
+  });
+
+  it('clears the synthetic environment slot when the background pre-create fails (v2)', async () => {
+    const harness = makeHarness(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: { model: 'moonshot-v1', maxContextSize: 100 },
+        },
+        defaultModel: 'k2',
+      })),
+      listEnvironmentDeclarations: vi.fn(async () => [
+        { id: 'dev-box', type: 'ssh', defaultCwd: '/remote/work' },
+      ]),
+    });
+    harness.createSession.mockRejectedValueOnce(new Error('connect failed'));
+    const driver = makeDriver(harness, makeStartupInput({ environment: 'dev-box' }));
+
+    await expect(driver.init()).resolves.toBe(false);
+    await vi.waitFor(() => {
+      expect(driver.state.appState.environment).toBeUndefined();
     });
   });
 
@@ -2424,10 +2569,48 @@ describe('KimiTUI startup', () => {
     expect(driver.terminalFocusTrackingDispose).toBeUndefined();
   });
 
+  it('stops the event loop when startup fails after the trust prompt started it', async () => {
+    const getWorkspaceTrustInfo = vi.fn(async () => ({
+      trusted: false,
+      gatedMcpServers: [],
+      gatedEnvironments: [],
+    }));
+    const trustWorkspace = vi.fn(async () => {});
+    const harness = makeHarness(makeSession(), {
+      getWorkspaceTrustInfo,
+      trustWorkspace,
+      listEnvironmentDeclarations: vi.fn(async () => []),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ environment: 'ghost' })) as unknown as MigrateExitDriver & {
+      mountEditorReplacement(panel: { handleInput(data: string): void }): void;
+    };
+    const uiStart = vi.spyOn(driver.state.ui, 'start').mockImplementation(() => {});
+    const uiStop = vi.spyOn(driver.state.ui, 'stop').mockImplementation(() => {});
+    vi.spyOn(driver.state.terminal, 'write').mockImplementation(() => {});
+    const mountSpy = vi.spyOn(driver, 'mountEditorReplacement');
+
+    const startPromise = driver.start();
+    await vi.waitFor(() => {
+      expect(mountSpy).toHaveBeenCalled();
+    });
+    expect(uiStart).toHaveBeenCalled();
+    mountSpy.mock.calls[0]![0].handleInput('\u001B[A');
+    mountSpy.mock.calls[0]![0].handleInput('\r');
+
+    await expect(startPromise).rejects.toThrow(
+      'environment "ghost" is not declared in [environments]',
+    );
+
+    expect(trustWorkspace).toHaveBeenCalledWith('/tmp/proj-a');
+    expect(uiStop).toHaveBeenCalled();
+    expect(driver.terminalFocusTrackingDispose).toBeUndefined();
+  });
+
   it('checks workspace trust before entering the migration screen', async () => {
     const getWorkspaceTrustInfo = vi.fn(async () => ({
       trusted: true,
       gatedMcpServers: [],
+      gatedEnvironments: [],
     }));
     const harness = makeHarness(makeSession(), { getWorkspaceTrustInfo });
     const driver = makeDriver(harness, {
@@ -2457,6 +2640,7 @@ describe('KimiTUI startup', () => {
     const getWorkspaceTrustInfo = vi.fn(async () => ({
       trusted: false,
       gatedMcpServers: [],
+      gatedEnvironments: [],
     }));
     const trustWorkspace = vi.fn(async () => {});
     const harness = makeHarness(makeSession(), { getWorkspaceTrustInfo, trustWorkspace });

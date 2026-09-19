@@ -304,6 +304,7 @@ function formatStats(snap: ToolCallSubagentSnapshot): string {
   const parts: string[] = [];
   if (snap.model !== undefined) parts.push(snap.model);
   if (snap.effort !== undefined) parts.push(snap.effort);
+  if (snap.environment !== undefined) parts.push(`env ${snap.environment}`);
   parts.push(`${String(snap.toolCount)} tool${snap.toolCount === 1 ? '' : 's'}`);
   if (snap.elapsedSeconds !== undefined) parts.push(formatElapsed(snap.elapsedSeconds));
   if (snap.tokens > 0) parts.push(formatTokens(snap.tokens));

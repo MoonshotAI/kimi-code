@@ -1,5 +1,5 @@
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
-import { Error2, type Error2Options } from '#/_base/errors/errors';
+import { Error2, unwrapErrorCause, type Error2Options } from '#/_base/errors/errors';
 
 export const OsFsErrors = {
   codes: {
@@ -63,6 +63,8 @@ registerErrorDomain(OsFsErrors);
 export type HostFsErrorCode = (typeof OsFsErrors.codes)[keyof typeof OsFsErrors.codes];
 
 export class HostFsError extends Error2 {
+  declare readonly code: HostFsErrorCode;
+
   constructor(code: HostFsErrorCode, message: string, options?: Error2Options) {
     super(code, message, options);
     this.name = 'HostFsError';
@@ -121,4 +123,14 @@ export function toHostFsError(error: unknown, ctx: { path: string; op: string })
     details: { path: ctx.path, op: ctx.op, errno, syscall: readSyscall(error) },
     cause: error,
   });
+}
+
+export function isHostFsNotFound(error: unknown): boolean {
+  if (error instanceof HostFsError) return error.code === OsFsErrors.codes.OS_FS_NOT_FOUND;
+  return readErrno(unwrapErrorCause(error)) === 'ENOENT';
+}
+
+export function isHostFsNotDirectory(error: unknown): boolean {
+  if (error instanceof HostFsError) return error.code === OsFsErrors.codes.OS_FS_NOT_DIRECTORY;
+  return readErrno(unwrapErrorCause(error)) === 'ENOTDIR';
 }

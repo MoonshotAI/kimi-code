@@ -979,7 +979,7 @@ describe('WorkspaceSkillCatalogService', () => {
       await catalog.reloadSources(['user', 'explicit', 'extra', 'plugin']);
       sub.dispose();
 
-      expect([...fired].sort()).toEqual(['explicit', 'extra', 'plugin', 'user']);
+      expect([...fired].toSorted()).toEqual(['explicit', 'extra', 'plugin', 'user']);
       expect(catalog.catalog.getSkill('user-skill')?.description).toBe('v2');
       expect(catalog.catalog.getSkill('extra-skill')?.description).toBe('v2');
       expect(catalog.catalog.getPluginSkill('demo', 'demo-skill')).toBeUndefined();

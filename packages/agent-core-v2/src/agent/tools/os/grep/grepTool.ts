@@ -10,10 +10,12 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
-import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
-import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
-import { unwrapErrorCause } from '#/_base/errors/errors';
+import { isPromiseLike } from '#/_base/lifecycle/disposer';
+import { acquireOrWhenReady, IAgentEnvironmentService, inspectAgentEnvironment } from '#/agent/environmentBinding/agentEnvironment';
+import type { Environment } from '#/environment/environment';
+import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
@@ -68,26 +70,26 @@ export class GrepTool implements IGrepTool {
   readonly description = GREP_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(GrepInputSchema);
   constructor(
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
   ) {}
 
-  private workspace(view: RuntimeWorkspaceView): WorkspaceConfig {
+  private workspace(view: EnvironmentWorkspaceView): WorkspaceConfig {
     return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
   resolveExecution(args: GrepInput): ToolExecution {
-    const inspected = inspectAgentRuntime(this.runtime);
-    const view = new RuntimeWorkspaceView(inspected, {
+    const inspected = inspectAgentEnvironment(this.environment);
+    const view = new EnvironmentWorkspaceView(inspected, {
       workDir: this.workspaceCtx.workDir,
       additionalDirs: [
         ...this.workspaceCtx.additionalDirs,
         ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
       ],
     });
-    const env = { _serviceBrand: undefined, ...inspected.environment, ready: Promise.resolve() };
+    const env = { _serviceBrand: undefined, ...inspected.host, ready: Promise.resolve() };
     const workspace = this.workspace(view);
     let path: string | undefined;
     if (args.path !== undefined) {
@@ -107,12 +109,13 @@ export class GrepTool implements IGrepTool {
       approvalRule: literalRulePattern(this.name, args.pattern),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.pattern),
       execute: async ({ signal }) => {
-        const lease = this.runtime.acquire(['fs', 'process']);
+        const acquired = acquireOrWhenReady(this.environment, ['fs', 'process']);
+        const lease = isPromiseLike(acquired) ? await acquired : acquired;
         try {
-          if (lease.runtime.identity.generation !== inspected.identity.generation) {
-            return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
+          if (lease.environment.identity.generation !== inspected.identity.generation) {
+            return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
           }
-          return await this.execution(lease.runtime.process!, lease.runtime.fs!, env, workspace, args, signal, searchPaths);
+          return await this.execution(lease.environment, lease.environment.process!, lease.environment.fs!, env, workspace, args, signal, searchPaths);
         } finally {
           lease.dispose();
         }
@@ -121,6 +124,7 @@ export class GrepTool implements IGrepTool {
   }
 
   private async execution(
+    environment: Environment,
     processService: IHostProcessService,
     fs: IHostFileSystem,
     env: IHostEnvironment,
@@ -139,6 +143,7 @@ export class GrepTool implements IGrepTool {
       const resolution = await ensureRgPath(this.createRgProbe(processService), {
         signal,
         allowCachedFallback: true,
+        environment,
       });
       rgPath = resolution.path;
       if (resolution.source !== 'system-path') {
@@ -152,7 +157,7 @@ export class GrepTool implements IGrepTool {
         return { isError: true, output: 'Grep aborted' };
       }
       this.telemetry.track2('grep_tool_rg_fallback', { outcome: 'failed' });
-      return { isError: true, output: rgUnavailableMessage(error) };
+      return { isError: true, output: rgUnavailableMessage(error, environment) };
     }
 
     let runResult: RunRgResult;
@@ -179,7 +184,7 @@ export class GrepTool implements IGrepTool {
         runResult = retryRun;
       }
     } catch (error) {
-      return { isError: true, output: formatSpawnError(error) };
+      return { isError: true, output: formatSpawnError(error, environment) };
     }
 
     const { exitCode, stderrText, bufferTruncated, stderrTruncated, timedOut } = runResult;
@@ -348,24 +353,15 @@ export class GrepTool implements IGrepTool {
 registerAgentToolService(IGrepTool, GrepTool, {
   name: 'Grep',
   domain: 'os/backends',
-  requiredRuntimeCapabilities: ['fs', 'process'],
+  requiredEnvironmentCapabilities: ['fs', 'process'],
 });
 
-function formatSpawnError(error: unknown): string {
-  return errorCode(error) === 'ENOENT'
-    ? rgUnavailableMessage(error)
+function formatSpawnError(error: unknown, environment: Environment): string {
+  return isHostFsNotFound(error)
+    ? rgUnavailableMessage(error, environment)
     : error instanceof Error
       ? error.message
       : String(error);
-}
-
-function errorCode(error: unknown): string | undefined {
-  const unwrapped = unwrapErrorCause(error);
-  if (unwrapped !== null && typeof unwrapped === 'object' && 'code' in unwrapped) {
-    const code = (unwrapped as { code?: unknown }).code;
-    return typeof code === 'string' ? code : undefined;
-  }
-  return undefined;
 }
 
 type GrepMode = 'content' | 'files_with_matches' | 'count_matches';

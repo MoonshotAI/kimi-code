@@ -10,6 +10,7 @@ import type {
   Role,
   Session,
   ToolCall,
+  ToolInputDisplay,
 } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -60,6 +61,7 @@ function makeStartupInput(): KimiTUIStartupInput {
       skillsDirs: [],
       agent: undefined,
       agentFiles: [],
+      environment: undefined,
     },
     tuiConfig: {
       theme: 'dark',
@@ -79,6 +81,7 @@ function message(
   content: readonly ContentPart[],
   extra: {
     readonly toolCalls?: readonly ToolCall[];
+    readonly toolCallDisplays?: Record<string, ToolInputDisplay>;
     readonly toolCallId?: string;
     readonly origin?: PromptOrigin | TaskNotificationOrigin;
     readonly isError?: boolean;
@@ -91,6 +94,7 @@ function message(
       role,
       content: [...content],
       toolCalls: [...(extra.toolCalls ?? [])],
+      toolCallDisplays: extra.toolCallDisplays,
       toolCallId: extra.toolCallId,
       origin: extra.origin as PromptOrigin | undefined,
       isError: extra.isError,
@@ -427,6 +431,35 @@ describe('KimiTUI resume message replay', () => {
     expect(transcript).toContain('row-01');
     expect(transcript).toContain('row-30');
     expect(transcript).not.toContain('more lines');
+  });
+
+  it('shows the persisted execution cwd on a replayed Bash card', async () => {
+    const driver = await replayIntoDriver([
+      message('assistant', [{ type: 'text', text: 'checking sources' }], {
+        toolCalls: [toolCall('call_remote', 'Bash', { command: 'ls', cwd: 'src' })],
+        toolCallDisplays: {
+          call_remote: { kind: 'command', command: 'ls', cwd: '/home/deploy/app/src' },
+        },
+      }),
+      message('tool', [{ type: 'text', text: 'ok' }], { toolCallId: 'call_remote' }),
+    ]);
+
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).toContain('Ran a command');
+    expect(transcript).toContain('cwd: /home/deploy/app/src');
+  });
+
+  it('keeps a replayed Bash card without a persisted display on the current rendering', async () => {
+    const driver = await replayIntoDriver([
+      message('assistant', [{ type: 'text', text: 'checking sources' }], {
+        toolCalls: [toolCall('call_plain', 'Bash', { command: 'ls' })],
+      }),
+      message('tool', [{ type: 'text', text: 'ok' }], { toolCallId: 'call_plain' }),
+    ]);
+
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).toContain('Ran a command');
+    expect(transcript).not.toContain('cwd:');
   });
 
   it('does not render neutral goal completion context reminders as transcript messages', async () => {

@@ -9,11 +9,12 @@ import type {
   AddAdditionalDirOptions,
   AddAdditionalDirResult,
   AgentCommandInfo,
-  AgentRuntimeBinding,
+  AgentEnvironmentBinding,
   BackgroundTaskInfo,
   CapabilityStatus,
   CompactOptions,
   CreateGoalInput,
+  DeclareEnvironmentInput,
   GetCronTasksResult,
   GoalSnapshot,
   GoalToolResult,
@@ -33,9 +34,12 @@ import type {
   SessionPlan,
   SessionStatus,
   SessionSummary,
+  SessionEnvironmentsInfo,
   SessionTodoItem,
   SessionUsage,
   SkillSummary,
+  SuggestFilesInput,
+  SuggestFilesResult,
   PluginCommandDef,
   ThinkingEffort,
   Unsubscribe,
@@ -252,19 +256,66 @@ export class Session {
     await this.rpc.setModel({ sessionId: this.id, model: normalized });
   }
 
-  async getRuntime(): Promise<AgentRuntimeBinding> {
+  async getEnvironment(): Promise<AgentEnvironmentBinding> {
     this.ensureOpen();
-    return this.rpc.getRuntime({ sessionId: this.id });
+    return this.rpc.getEnvironment({ sessionId: this.id });
   }
 
-  async switchRuntime(runtimeId: string): Promise<AgentRuntimeBinding> {
+  async switchEnvironment(environmentId: string, options?: { cwd?: string }): Promise<AgentEnvironmentBinding> {
     this.ensureOpen();
     const normalized = normalizeRequiredString(
-      runtimeId,
-      'Session runtime cannot be empty',
+      environmentId,
+      'Session environment cannot be empty',
       ErrorCodes.REQUEST_INVALID,
     );
-    return this.rpc.switchRuntime({ sessionId: this.id, runtimeId: normalized });
+    const cwd = normalizeOptionalString(options?.cwd);
+    return this.rpc.switchEnvironment({ sessionId: this.id, environmentId: normalized, cwd });
+  }
+
+  /**
+   * Explicitly reconnect the currently bound environment. Replaces the
+   * connection handle and drains old leases; the binding itself is unchanged.
+   * Rejects when the bound environment is local or unavailable.
+   */
+  async reconnectEnvironment(): Promise<AgentEnvironmentBinding> {
+    this.ensureOpen();
+    return this.rpc.reconnectEnvironment({ sessionId: this.id });
+  }
+
+  /**
+   * List the environments registered for this session's workspace: `local`
+   * plus every declared environment with its connection status, plus the ssh
+   * host candidates discovered from `~/.ssh/config` for the environment-add
+   * flow.
+   */
+  async listEnvironments(): Promise<SessionEnvironmentsInfo> {
+    this.ensureOpen();
+    return this.rpc.listEnvironments({ sessionId: this.id });
+  }
+
+  /**
+   * Declare a new environment for this session's workspace. `scope: 'global'`
+   * (the default) deep-merges the entry into the user-level `config.toml`
+   * `[environments]` section; `scope: 'project'` merge-writes it into the
+   * workspace's `.kimi-code/environments.toml`, preserving existing entries
+   * and file layout. Either way the engine's declaration watch registers the
+   * environment live — no restart. Fails closed: a duplicate id, an invalid
+   * entry, or an unreadable/invalid project file rejects without writing.
+   */
+  async declareEnvironment(input: DeclareEnvironmentInput): Promise<void> {
+    this.ensureOpen();
+    return this.rpc.declareEnvironment({ sessionId: this.id, ...input });
+  }
+
+  /**
+   * Fuzzy file suggestions rooted at this session's workspace context and
+   * served by the session's currently bound environment — a remote binding
+   * suggests files on the remote side, a local one keeps the session-less
+   * `KimiHarness.suggestFiles` results. `undefined` on the v1 engine.
+   */
+  async suggestFiles(input: SuggestFilesInput): Promise<SuggestFilesResult | undefined> {
+    this.ensureOpen();
+    return this.rpc.suggestSessionFiles({ sessionId: this.id, ...input });
   }
 
   async setThinking(effort: ThinkingEffort): Promise<void> {

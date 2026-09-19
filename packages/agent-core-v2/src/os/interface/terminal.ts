@@ -27,7 +27,7 @@ export const terminalSchema = z.object({
 export type Terminal = z.infer<typeof terminalSchema>;
 
 export const createTerminalRequestSchema = z.object({
-  runtime_id: z.string().min(1),
+  environment_id: z.string().min(1),
   cwd: relativeCwdSchema.optional(),
   shell: z.string().min(1).optional(),
   cols: z.number().int().positive().optional(),
@@ -76,6 +76,7 @@ export interface TerminalSpawnOptions {
   readonly shell: string;
   readonly cols: number;
   readonly rows: number;
+  readonly env?: Record<string, string>;
 }
 
 export interface TerminalProcess {

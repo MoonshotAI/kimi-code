@@ -24,23 +24,28 @@ import { KIMI_MCP_CLIENT_NAME } from '#/mcpCore/client-shared';
 import { McpConnectionManager, type McpConnectionManagerOptions, type McpServerEntry } from '#/mcpCore/connection-manager';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
 import type { StoredMcpOAuthTokens } from '#/mcpCore/oauth/provider';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
-import type { RuntimeBinding } from '#/runtime/runtime';
+import type { EnvironmentBinding } from '#/environment/environment';
 
-const testRuntimeBinding: RuntimeBinding = { workspaceId: 'test-workspace', runtimeId: 'local' };
+const testEnvironmentBinding: EnvironmentBinding = { workspaceId: 'test-workspace', environmentId: 'local' };
 const testProcess = new HostProcessService();
-const testRuntime = Object.assign(
-  new FakeRuntime({ ...testRuntimeBinding, generation: 'test-generation' }, {
+const testEnvironment = Object.assign(
+  new FakeEnvironment({ ...testEnvironmentBinding, generation: 'test-generation' }, {
     capabilities: ['process'],
   }),
   { process: testProcess },
 );
-const testRuntimeResolver = {
+const testEnvironmentResolver = {
   _serviceBrand: undefined,
-  inspect: () => testRuntime,
+  inspect: () => testEnvironment,
   acquire: () => ({
-    runtime: testRuntime,
+    environment: testEnvironment,
+    track: <T extends { dispose(): void | Promise<void> }>(resource: T): T => resource,
+    dispose: () => {},
+  }),
+  acquireWhenReady: async () => ({
+    environment: testEnvironment,
     track: <T extends { dispose(): void | Promise<void> }>(resource: T): T => resource,
     dispose: () => {},
   }),
@@ -48,9 +53,9 @@ const testRuntimeResolver = {
 
 function createManager(options: McpConnectionManagerOptions = {}): McpConnectionManager {
   return new McpConnectionManager({
-    runtimeResolver: testRuntimeResolver,
-    workspaceId: testRuntimeBinding.workspaceId,
-    runtimeId: testRuntimeBinding.runtimeId,
+    environmentResolver: testEnvironmentResolver,
+    workspaceId: testEnvironmentBinding.workspaceId,
+    environmentId: testEnvironmentBinding.environmentId,
     stdioCwd: process.cwd(),
     ...options,
   });

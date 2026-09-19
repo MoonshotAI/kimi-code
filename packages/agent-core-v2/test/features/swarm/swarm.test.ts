@@ -40,6 +40,9 @@ import {
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {
@@ -52,6 +55,8 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IConfigService } from '#/app/config/config';
+import { EnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclarationService';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { normalizeAgentProfile, type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -264,6 +269,7 @@ function realSubagents(
     },
   } as unknown as IModelCatalog;
   const sessionContext = { _serviceBrand: undefined, cwd: '/repo' } as unknown as ISessionContext;
+  const workspaces = { _serviceBrand: undefined, get: () => undefined } as unknown as IWorkspaceInstanceManager;
   return new SessionSubagentService(
     agentLifecycle,
     catalog,
@@ -271,6 +277,16 @@ function realSubagents(
     modelCatalog,
     sessionContext,
     stubLog(),
+    workspaces,
+    new EnvironmentDeclarationService(
+      config,
+      {} as IHostFileSystem,
+      {} as IAtomicDocumentStore,
+      { _serviceBrand: undefined, read: async function* () {} } as unknown as IAppendLogStore,
+      { _serviceBrand: undefined, scope: (name: string) => name } as unknown as IBootstrapService,
+      workspaces,
+      stubLog(),
+    ),
   );
 }
 

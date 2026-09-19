@@ -64,7 +64,7 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleService';
 import { createAgentAwaitingClose } from '#/session/agentLifecycle/createAwaitingClose';
@@ -98,7 +98,7 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import {
-  IRuntimeResolver,
+  IEnvironmentResolver,
   IWorkspaceInstanceManager,
 } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import type { AgentEventStore } from '#human/agent/slices';
@@ -362,11 +362,11 @@ describe('SessionSubagentScopeCacheService', () => {
           ? 'sessions/ws_test/sess_test'
           : `sessions/ws_test/sess_test/${subKey}`,
     } as unknown as ISessionContext);
-    ix.stub(IRuntimeResolver, {
+    ix.stub(IEnvironmentResolver, {
       _serviceBrand: undefined,
-      inspect: (binding) => new FakeRuntime({ ...binding, generation: `${binding.runtimeId}-one` }),
+      inspect: (binding) => new FakeEnvironment({ ...binding, generation: `${binding.environmentId}-one` }),
       acquire: (binding) => ({
-        runtime: new FakeRuntime({ ...binding, generation: `${binding.runtimeId}-one` }),
+        environment: new FakeEnvironment({ ...binding, generation: `${binding.environmentId}-one` }),
         track: (resource) => resource,
         dispose: () => {},
       }),
@@ -401,6 +401,7 @@ describe('SessionSubagentScopeCacheService', () => {
       _serviceBrand: undefined,
       workDir: '/tmp/kimi-subagentScopeCache-work',
       additionalDirs: [],
+      setWorkDir: () => {},
     } as unknown as ISessionWorkspaceContext);
     ix.stub(IPluginService, pluginServiceStub);
     ix.stub(IConfigService, {

@@ -1,17 +1,15 @@
 import { isAbortError, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { loadAgentsMdDetailed } from '#/agent/profile/context';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 
@@ -31,10 +29,7 @@ export class SessionInitService implements ISessionInitService {
   constructor(
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
-    @IHostFileSystem private readonly fs: IHostFileSystem,
-    @IHostEnvironment private readonly env: IHostEnvironment,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
-    @ISessionContext private readonly sessionContext: ISessionContext,
   ) {}
 
   cancelInit(): void {
@@ -87,14 +82,23 @@ export class SessionInitService implements ISessionInitService {
         cancel: (reason) => controller.abort(reason),
       });
 
-      const { content: agentsMd, paths: agentsMdPaths } = await loadAgentsMdDetailed(
-        { fs: this.fs, homeDir: this.env.homeDir },
-        this.sessionContext.cwd,
-        this.bootstrap.homeDir,
-      );
+      const environment = main.accessor.get(IAgentEnvironmentService);
+      const workDir = environment.workspaceRoots().workDir;
+      const lease = environment.acquire(['fs']);
+      let agentsMd: string;
+      let agentsMdPaths: readonly string[];
+      try {
+        ({ content: agentsMd, paths: agentsMdPaths } = await loadAgentsMdDetailed(
+          { fs: lease.environment.fs!, homeDir: lease.environment.host.homeDir },
+          workDir,
+          this.bootstrap.homeDir,
+        ));
+      } finally {
+        lease.dispose();
+      }
       main.accessor
         .get(IAgentAgentsMdReminderService)
-        .seedInjected(agentsMdPaths, this.sessionContext.cwd);
+        .seedInjected(agentsMdPaths, workDir);
       main.accessor
         .get(IAgentReminderService)
         .notify(initCompletionReminder(agentsMd), { variant: 'init' });

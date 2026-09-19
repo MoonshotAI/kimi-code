@@ -4,7 +4,8 @@ import {
   Error2,
   ErrorCodes,
   EXTRA_SKILL_DIRS_SECTION,
-  IAgentRuntimeBindingService,
+  IAgentEnvironmentBindingService,
+  IAgentEnvironmentService,
   IAgentSkillService,
   IBootstrapService,
   IConfigService,
@@ -28,6 +29,7 @@ import {
   projectRoots,
   sessionMediaOriginalsDir,
   userRoots,
+  EnvironmentError,
   type ContentPart,
   type ISessionScopeHandle,
   type Scope,
@@ -36,6 +38,7 @@ import {
   type MergeAllAvailableSkillsConfig,
   IAgentProfileService,
 } from '@moonshot-ai/agent-core-v2';
+import { HandshakeError } from '@moonshot-ai/remote-exec';
 import { join } from 'node:path';
 import { z } from 'zod';
 
@@ -47,8 +50,11 @@ import {
   contentToCoreParts,
   resolvePromptMediaFiles,
   resolvePromptSessionMediaRefs,
+  environmentAttachmentsTarget,
+  environmentOriginalsTarget,
   type PromptMediaPreparation,
 } from '../lib/promptMedia';
+import type { EnvironmentLease } from '@moonshot-ai/agent-core-v2/environment/environment';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
@@ -61,6 +67,7 @@ import {
 import { workspaceIdParamSchema } from '../protocol/rest-workspace';
 import type { SkillDescriptor } from '../protocol/skill';
 import { parseActionSuffix } from './action-suffix';
+import { environmentErrorCode } from './environment';
 
 interface SkillsRouteHost {
   get(
@@ -192,6 +199,8 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         [ErrorCode.SKILL_NOT_FOUND]: {},
         [ErrorCode.SKILL_NOT_ACTIVATABLE]: {},
         [ErrorCode.FILE_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
       },
       description: 'Activate a skill in a session (REST analogue of the /<skill> slash command)',
       tags: ['skills'],
@@ -228,10 +237,10 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         if (attachments.length > 0) {
           if (contentHasPathRefs(attachments)) {
             const mainAgent = await ensureMainAgentHandle(resolved.handle);
-            if (mainAgent.accessor.get(IAgentRuntimeBindingService).get().runtimeId !== 'local') {
+            if (mainAgent.accessor.get(IAgentEnvironmentBindingService).get().environmentId !== 'local') {
               throw new Error2(
                 ErrorCodes.REQUEST_INVALID,
-                'file attachments by server-local path require the local runtime',
+                'file attachments by server-local path require the local environment',
               );
             }
           }
@@ -255,19 +264,38 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
           );
           const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
           const sessionDir = resolved.handle.accessor.get(ISessionContext).sessionDir;
-          preparedMedia = await resolvePromptMediaFiles(
-            resolvedSessionMedia,
-            core.accessor.get(IFileService),
-            core.accessor.get(IBootstrapService).cacheDir,
-            {
-              telemetry,
-              providerType: (await ensureMainAgentHandle(resolved.handle)).accessor
-                .get(IAgentProfileService)
-                .getModelProviderType(),
-              resolveOriginalsDir: async () => sessionMediaOriginalsDir(sessionDir),
-              resolveAttachmentsDir: async () => join(sessionDir, 'attachments'),
-            },
-          );
+          const mainAgent = await ensureMainAgentHandle(resolved.handle);
+          const binding = mainAgent.accessor.get(IAgentEnvironmentBindingService).get();
+          let environmentLease: EnvironmentLease | undefined;
+          try {
+            preparedMedia = await resolvePromptMediaFiles(
+              resolvedSessionMedia,
+              core.accessor.get(IFileService),
+              core.accessor.get(IBootstrapService).cacheDir,
+              {
+                telemetry,
+                providerType: mainAgent.accessor
+                  .get(IAgentProfileService)
+                  .getModelProviderType(),
+                resolveOriginalsDir: async () => sessionMediaOriginalsDir(sessionDir),
+                resolveOriginalsTarget: binding.environmentId === 'local'
+                  ? undefined
+                  : async () => {
+                      environmentLease ??= await mainAgent.accessor.get(IAgentEnvironmentService).acquireWhenReady(['fs']);
+                      return environmentOriginalsTarget(environmentLease.environment);
+                    },
+                resolveAttachmentsDir: async () => join(sessionDir, 'attachments'),
+                resolveAttachmentsTarget: binding.environmentId === 'local'
+                  ? undefined
+                  : async () => {
+                      environmentLease ??= await mainAgent.accessor.get(IAgentEnvironmentService).acquireWhenReady(['fs']);
+                      return environmentAttachmentsTarget(environmentLease.environment);
+                    },
+              },
+            );
+          } finally {
+            environmentLease?.dispose();
+          }
           attachmentParts.push(...contentToCoreParts(preparedMedia.content));
         }
         const mainAgent = await ensureMainAgentHandle(resolved.handle);
@@ -377,6 +405,14 @@ function sendMappedError(
   requestId: string,
   err: unknown,
 ): void {
+  if (err instanceof EnvironmentError) {
+    reply.send(errEnvelope(environmentErrorCode(err.code), err.message, requestId));
+    return;
+  }
+  if (err instanceof HandshakeError) {
+    reply.send(errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, err.message, requestId));
+    return;
+  }
   if (isError2(err)) {
     switch (err.code) {
       case ErrorCodes.SKILL_NOT_FOUND:

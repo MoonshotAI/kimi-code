@@ -43,7 +43,7 @@ describe('fetchFsSuggest', () => {
       showHidden: true,
       includeGlobs: ['**/*.ts'],
       excludeGlobs: ['dist/**'],
-      runtimeId: 'local',
+      environmentId: 'local',
       fetchImpl,
     });
 
@@ -61,7 +61,7 @@ describe('fetchFsSuggest', () => {
       show_hidden: true,
       include_globs: ['**/*.ts'],
       exclude_globs: ['dist/**'],
-      runtime_id: 'local',
+      environment_id: 'local',
     });
     expect(result.items).toHaveLength(2);
     expect(result.items[0]).toEqual({

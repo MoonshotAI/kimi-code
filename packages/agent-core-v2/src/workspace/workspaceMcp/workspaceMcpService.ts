@@ -18,7 +18,7 @@ import { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IEnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import {
   IWorkspaceMcpConfigService,
   type McpServersChange,
@@ -45,7 +45,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
 
   constructor(
     @IWorkspaceContext workspace: IWorkspaceContext,
-    @IRuntimeResolver private readonly runtimeResolver: IRuntimeResolver,
+    @IEnvironmentResolver private readonly environmentResolver: IEnvironmentResolver,
     @IWorkspaceMcpConfigService private readonly mcpConfig: IWorkspaceMcpConfigService,
     @IMcpOAuthService oauthService: McpOAuthService,
     @ILogService private readonly log: ILogService,
@@ -62,9 +62,9 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
       log: this.log,
       oauthService: this.oauthService,
       stdioCwd: this.stdioCwd,
-      runtimeResolver: this.runtimeResolver,
+      environmentResolver: this.environmentResolver,
       workspaceId: workspace.workspaceId,
-      runtimeId: 'local',
+      environmentId: 'local',
       resolveDefaultTimeouts: () => this.mcpConfig.tunables(),
       resolveClientName: this.resolveClientName,
     });
@@ -89,11 +89,13 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     this.sessionLifecycleAttached = true;
     this._register(
       lifecycle.onWillCreateSession((event) => {
-        if (event.readSeed(ISessionContext).workspaceId !== this.workspaceId) return;
+        const context = event.readSeed(ISessionContext);
+        if (context.workspaceId !== this.workspaceId) return;
         const servers = event.readSeed(ISessionEphemeralMcpServers);
         if (Object.keys(servers).length === 0) return;
         const overlay = this.sessionOverlay(servers, {
-          stdioCwd: event.readSeed(ISessionContext).cwd,
+          stdioCwd: context.cwd,
+          sessionId: context.sessionId,
         });
         event.contributeSeed(ISessionMcpHandle, overlay.handle);
         event.onSessionDispose(() => {
@@ -124,10 +126,11 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
       log: this.log,
       oauthService: this.oauthService,
       stdioCwd: opts?.stdioCwd ?? this.stdioCwd,
-      runtimeResolver: this.runtimeResolver,
+      environmentResolver: this.environmentResolver,
       workspaceId: this.workspaceId,
-      runtimeId: 'local',
-      requireStdioRuntimeId: true,
+      environmentId: 'local',
+      requireStdioEnvironmentId: true,
+      sessionId: opts?.sessionId,
       resolveDefaultTimeouts: () => this.mcpConfig.tunables(),
       resolveClientName: this.resolveClientName,
     });

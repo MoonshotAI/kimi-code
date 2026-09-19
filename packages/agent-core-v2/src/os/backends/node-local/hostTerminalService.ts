@@ -18,7 +18,9 @@ export class HostTerminalService extends Service implements IHostTerminalService
       cwd: options.cwd,
       cols: options.cols,
       rows: options.rows,
-      env: globalThis.process.env,
+      env: options.env === undefined
+        ? globalThis.process.env
+        : { ...globalThis.process.env, ...options.env },
     });
     const terminalProcess: TerminalProcess = {
       onProcessData: (listener) => proc.onData(listener),

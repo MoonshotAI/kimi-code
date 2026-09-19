@@ -2,11 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { PathSecurityError } from '#/tool/path-access';
 import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { HostFsError } from '#/os/interface/hostFsErrors';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
+import { stubAgentEnvironment } from '../../../../environment/stubs';
 import { type WriteInput, WriteInputSchema } from '#/agent/tools/os/write/write';
 import { WriteTool } from '#/agent/tools/os/write/writeTool';
-import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 
@@ -63,20 +64,14 @@ function createWriteFs(options: WriteFsOptions = {}) {
 function makeTool(options: WriteFsOptions = {}, workspace = PERMISSIVE_WORKSPACE) {
   const fakes = createWriteFs(options);
   const backend = Object.assign(
-    new FakeRuntime(
-      { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+    new FakeEnvironment(
+      { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
       { capabilities: ['fs'] },
     ),
-    { fs: fakes.fs, environment: createTestEnv() },
+    { fs: fakes.fs, host: createTestEnv() },
   );
-  const runtime: IAgentRuntimeService = {
-    _serviceBrand: undefined,
-    onDidChange: () => ({ dispose: () => {} }),
-    isAvailable: () => true,
-    inspect: () => backend,
-    acquire: () => ({ runtime: backend, track: (resource) => resource, dispose: () => {} }),
-  };
-  const tool = new WriteTool(runtime, workspace);
+  const environment = stubAgentEnvironment(backend);
+  const tool = new WriteTool(environment, workspace);
   return { tool, ...fakes };
 }
 
@@ -176,20 +171,14 @@ describe('WriteTool', () => {
     const fakes = createWriteFs();
     const environment = createTestEnv('/home/test');
     const backend = Object.assign(
-      new FakeRuntime(
-        { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+      new FakeEnvironment(
+        { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
         { capabilities: ['fs'] },
       ),
-      { fs: fakes.fs, environment },
+      { fs: fakes.fs, host: environment },
     );
-    const runtime: IAgentRuntimeService = {
-      _serviceBrand: undefined,
-      onDidChange: () => ({ dispose: () => {} }),
-      isAvailable: () => true,
-      inspect: () => backend,
-      acquire: () => ({ runtime: backend, track: (resource) => resource, dispose: () => {} }),
-    };
-    const tool = new WriteTool(runtime, PERMISSIVE_WORKSPACE);
+    const environmentService = stubAgentEnvironment(backend);
+    const tool = new WriteTool(environmentService, PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, { path: '~/notes/today.txt', content: 'hello' });
 
@@ -364,6 +353,19 @@ describe('WriteTool', () => {
     expect(writeText).toHaveBeenCalledWith('/tmp/empty.txt', '');
   });
 
+  it('creates missing parents when a remote fs reports fs-domain not_found without a Node cause', async () => {
+    const remoteNotFound = new HostFsError('os.fs.not_found', 'stat failed: path does not exist', {
+      details: { path: '/tmp/missing-dir', op: 'stat', domainCode: 'os.fs.not_found' },
+    });
+    const { tool, mkdir, writeText } = makeTool({ stat: vi.fn().mockRejectedValue(remoteNotFound) });
+
+    const result = await execute(tool, { path: '/tmp/missing-dir/nested/file.txt', content: 'data' });
+
+    expect(result.isError).toBeFalsy();
+    expect(mkdir).toHaveBeenCalledWith('/tmp/missing-dir/nested', { recursive: true });
+    expect(writeText).toHaveBeenCalledWith('/tmp/missing-dir/nested/file.txt', 'data');
+  });
+
   it('still reports parent-directory ENOENT surfaced by writeText itself', async () => {
     const { tool } = makeTool({
       writeText: vi
@@ -372,6 +374,18 @@ describe('WriteTool', () => {
           Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' }),
         ),
     });
+
+    const result = await execute(tool, { path: '/tmp/missing-dir/file.txt', content: 'data' });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('parent directory does not exist');
+  });
+
+  it('still reports parent-directory not_found surfaced by a remote-shaped writeText failure', async () => {
+    const remoteNotFound = new HostFsError('os.fs.not_found', 'write failed: path does not exist', {
+      details: { path: '/tmp/missing-dir/file.txt', op: 'write', domainCode: 'os.fs.not_found' },
+    });
+    const { tool } = makeTool({ writeText: vi.fn().mockRejectedValue(remoteNotFound) });
 
     const result = await execute(tool, { path: '/tmp/missing-dir/file.txt', content: 'data' });
 

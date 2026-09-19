@@ -1,5 +1,6 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
+import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IPluginService } from '#/app/plugin/plugin';
@@ -8,6 +9,7 @@ import { IHostProcessService } from '#/os/interface/hostProcess';
 
 import { HOOKS_SECTION, type HookDefConfig } from '../configSection';
 import {
+  type HookExecutionError,
   IExternalHooksRunnerService,
   type ExternalHooksRunnerTriggerArgs,
 } from './externalHooksRunner';
@@ -24,11 +26,15 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
   private readonly _onDidReload = this._register(new Emitter<void>());
   readonly onDidReload: Event<void> = this._onDidReload.event;
 
+  private readonly _onDidHookError = this._register(new Emitter<HookExecutionError>());
+  readonly onDidHookError: Event<HookExecutionError> = this._onDidHookError.event;
+
   constructor(
     @IConfigService private readonly config: IConfigService,
     @IPluginService private readonly plugins: IPluginService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IHostProcessService private readonly hostProcess: IHostProcessService,
+    @ILogService private readonly log: ILogService,
     @ITelemetryService private readonly telemetry: ITelemetryService = noopTelemetryService,
     private readonly callbacks: HookRunCallbacks = {},
   ) {
@@ -51,8 +57,12 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
 
   trigger(event: string, args: ExternalHooksRunnerTriggerArgs = {}): Promise<HookResult[]> {
     try {
-      return this.triggerInner(event, args).catch((): HookResult[] => []);
-    } catch {
+      return this.triggerInner(event, args).catch((error: unknown): HookResult[] => {
+        this.reportFailure(event, undefined, error, args.sessionId);
+        return [];
+      });
+    } catch (error) {
+      this.reportFailure(event, undefined, error, args.sessionId);
       return Promise.resolve([]);
     }
   }
@@ -69,14 +79,33 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
     args: ExternalHooksRunnerTriggerArgs = {},
   ): Promise<HookResult[]> {
     try {
-      return this.trigger(event, args).catch((): HookResult[] => []);
-    } catch {
+      return this.trigger(event, args).catch((error: unknown): HookResult[] => {
+        this.reportFailure(event, undefined, error, args.sessionId);
+        return [];
+      });
+    } catch (error) {
+      this.reportFailure(event, undefined, error, args.sessionId);
       return Promise.resolve([]);
     }
   }
 
   hasHooksFor(event: string): boolean {
     return (this.byEvent.get(event)?.length ?? 0) > 0;
+  }
+
+  private reportFailure(
+    event: string,
+    hook: HookDef | undefined,
+    error: unknown,
+    sessionId: string | undefined,
+  ): void {
+    const message = error instanceof Error ? error.message : String(error);
+    this.log.warn(`hook execution failed for event ${event}: ${message}`, {
+      event,
+      sessionId,
+      command: hook?.command,
+    });
+    this._onDidHookError.fire({ event, sessionId, command: hook?.command, message });
   }
 
   private async triggerInner(
@@ -96,7 +125,16 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
           ...args.inputData,
         },
       },
-      this.callbacks,
+      {
+        onTriggered: this.callbacks.onTriggered,
+        onResolved: this.callbacks.onResolved,
+        onError: (failedEvent, hook, message) => {
+          try {
+            this.callbacks.onError?.(failedEvent, hook, message);
+          } catch {}
+          this.reportFailure(failedEvent, hook, message, args.sessionId);
+        },
+      },
     );
     if (results.length > 0) {
       this.telemetry.track2('external_hook_resolved', {

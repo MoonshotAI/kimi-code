@@ -25,7 +25,8 @@ import {
   type PermissionRule,
 } from '#/agent/permissionRules/permissionRules';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { EnvironmentError } from '#/environment/environmentRegistry';
 import { IConfigService } from '#/app/config/config';
 import { PERMISSION_SECTION } from '#/agent/permissionRules/configSection';
 import { IBashParserService } from '#/app/bashParser/bashParser';
@@ -88,20 +89,20 @@ describe('AgentPermissionPolicyService chain', () => {
         }));
         reg.defineInstance(ISessionWorkspaceContext, workspace.stub);
         reg.defineInstance(IHostEnvironment, kaosStub());
-        reg.defineInstance(IAgentRuntimeService, {
+        reg.defineInstance(IAgentEnvironmentService, {
           _serviceBrand: undefined,
           onDidChange: () => ({ dispose: () => {} }),
           isAvailable: () => true,
-          inspect() { return (this as IAgentRuntimeService).acquire().runtime; },
+          inspect() { return (this as IAgentEnvironmentService).acquire().environment; },
           acquire: () => ({
             track: (resource) => resource,
-            runtime: {
-              identity: { workspaceId: 'test', runtimeId: 'local', generation: 'test' },
+            environment: {
+              identity: { workspaceId: 'test', environmentId: 'local', generation: 'test' },
               capabilities: new Set(),
               status: 'ready',
               onDidChangeStatus: () => ({ dispose: () => {} }),
               dispose: () => {},
-              environment: { pathClass: 'posix' } as never,
+              host: { pathClass: 'posix' } as never,
               path: {
                 separator: '/',
                 delimiter: ':',
@@ -116,6 +117,9 @@ describe('AgentPermissionPolicyService chain', () => {
             },
             dispose: () => {},
           }),
+          acquireWhenReady() { return Promise.resolve((this as IAgentEnvironmentService).acquire()); },
+          reconnect: async () => {},
+          workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
         });
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
         reg.definePartialInstance(IGitService, { findWorkTree: async () => null });
@@ -217,6 +221,66 @@ describe('AgentPermissionPolicyService chain', () => {
           match_strategy: 'matches_rule',
         },
       },
+    });
+  });
+
+  it('asks for environment switching tools in manual mode', async () => {
+    await expect(evaluate({
+      toolName: 'change_environment',
+      args: { id: 'staging' },
+    })).resolves.toMatchObject({
+      policyName: 'environment-switch-ask',
+      result: { kind: 'ask' },
+    });
+    await expect(evaluate({
+      toolName: 'connect',
+      args: { type: 'ssh', host: 'dev-box' },
+    })).resolves.toMatchObject({
+      policyName: 'environment-switch-ask',
+      result: { kind: 'ask' },
+    });
+  });
+
+  it('approves environment switching tools in yolo mode', async () => {
+    mode = 'yolo';
+
+    await expect(evaluate({
+      toolName: 'change_environment',
+      args: { id: 'staging' },
+    })).resolves.toMatchObject({
+      policyName: 'yolo-mode-approve',
+      result: { kind: 'approve' },
+    });
+    await expect(evaluate({
+      toolName: 'connect',
+      args: { type: 'ssh', host: 'dev-box' },
+    })).resolves.toMatchObject({
+      policyName: 'yolo-mode-approve',
+      result: { kind: 'approve' },
+    });
+  });
+
+  it('approves environment switching tools in auto mode', async () => {
+    mode = 'auto';
+
+    await expect(evaluate({
+      toolName: 'change_environment',
+      args: { id: 'staging' },
+    })).resolves.toMatchObject({
+      policyName: 'auto-mode-approve',
+      result: { kind: 'approve' },
+    });
+  });
+
+  it('reuses approve-for-session for environment switching tools', async () => {
+    sessionApprovalRulePatterns.push('change_environment');
+
+    await expect(evaluate({
+      toolName: 'change_environment',
+      args: { id: 'staging' },
+    })).resolves.toMatchObject({
+      policyName: 'session-approval-history',
+      result: { kind: 'approve' },
     });
   });
 
@@ -469,10 +533,14 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
   let workspace: ReturnType<typeof workspaceStub>;
   let workspaceDir: string;
   let cleanupDirs: string[];
+  let environmentAcquireError: (() => Error) | undefined;
+  let environmentFsAvailable: boolean;
 
   beforeEach(async () => {
     disposables = new DisposableStore();
     mode = 'manual';
+    environmentAcquireError = undefined;
+    environmentFsAvailable = true;
     workspaceDir = await mkdtemp(join(tmpdir(), 'kimi-permission-git-'));
     cleanupDirs = [workspaceDir];
     await mkdir(join(workspaceDir, '.git'), { recursive: true });
@@ -494,34 +562,41 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
         reg.definePartialInstance(IAgentPermissionRulesService, permissionRulesStub());
         reg.defineInstance(ISessionWorkspaceContext, workspace.stub);
         reg.defineInstance(IHostEnvironment, kaosStub());
-        reg.defineInstance(IAgentRuntimeService, {
+        reg.defineInstance(IAgentEnvironmentService, {
           _serviceBrand: undefined,
           onDidChange: () => ({ dispose: () => {} }),
           isAvailable: () => true,
-          inspect() { return (this as IAgentRuntimeService).acquire().runtime; },
-          acquire: () => ({
-            track: (resource) => resource,
-            runtime: {
-              identity: { workspaceId: 'test', runtimeId: 'local', generation: 'test' },
-              capabilities: new Set(),
-              status: 'ready',
-              onDidChangeStatus: () => ({ dispose: () => {} }),
-              dispose: () => {},
-              environment: { pathClass: 'posix' } as never,
-              path: {
-                separator: '/',
-                delimiter: ':',
-                isAbsolute: () => true,
-                join: (...paths: readonly string[]) => join(...paths),
-                relative: (from: string, to: string) => to.replace(`${from}/`, ''),
-                resolve: (...paths: readonly string[]) => join(...paths),
-                basename: (path: string) => basename(path),
-                dirname: (path: string) => dirname(path),
+          inspect() { return (this as IAgentEnvironmentService).acquire().environment; },
+          acquire: () => {
+            if (environmentAcquireError !== undefined) throw environmentAcquireError();
+            return {
+              track: (resource) => resource,
+              environment: {
+                identity: { workspaceId: 'test', environmentId: 'local', generation: 'test' },
+                capabilities: new Set(),
+                status: 'ready',
+                onDidChangeStatus: () => ({ dispose: () => {} }),
+                dispose: () => {},
+                host: { pathClass: 'posix' } as never,
+                path: {
+                  separator: '/',
+                  delimiter: ':',
+                  isAbsolute: () => true,
+                  join: (...paths: readonly string[]) => join(...paths),
+                  relative: (from: string, to: string) => to.replace(`${from}/`, ''),
+                  resolve: (...paths: readonly string[]) => join(...paths),
+                  basename: (path: string) => basename(path),
+                  dirname: (path: string) => dirname(path),
+                },
+                workspace: { mapRoots: (roots) => roots },
+                fs: environmentFsAvailable ? hostFs : undefined,
               },
-              workspace: { mapRoots: (roots) => roots },
-            },
-            dispose: () => {},
-          }),
+              dispose: () => {},
+            };
+          },
+          acquireWhenReady() { return Promise.resolve((this as IAgentEnvironmentService).acquire()); },
+          reconnect: async () => {},
+          workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
         });
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
         reg.definePartialInstance(IGitService, {
@@ -653,6 +728,68 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
       policyName: 'fallback-ask',
       result: { kind: 'ask' },
     });
+  });
+
+  it.each(['environment.unavailable', 'environment.not_found'] as const)(
+    'asks for Write when environment acquire fails with %s',
+    async (code) => {
+      environmentAcquireError = () => new EnvironmentError(code, `acquire failed: ${code}`);
+      await expect(evaluate({
+        toolName: 'Write',
+        args: { path: 'src/a.ts', content: 'x' },
+        accesses: ToolAccesses.writeFile(join(workspaceDir, 'src/a.ts')),
+      })).resolves.toMatchObject({
+        policyName: 'fallback-ask',
+        result: { kind: 'ask' },
+      });
+    },
+  );
+
+  it('asks for Edit when environment acquire fails', async () => {
+    environmentAcquireError = () =>
+      new EnvironmentError('environment.unavailable', 'environment remote is disconnected');
+    await expect(evaluate({
+      toolName: 'Edit',
+      args: { path: 'src/a.ts', old_string: 'a', new_string: 'b' },
+      accesses: ToolAccesses.readWriteFile(join(workspaceDir, 'src/a.ts')),
+    })).resolves.toMatchObject({
+      policyName: 'fallback-ask',
+      result: { kind: 'ask' },
+    });
+  });
+
+  it('lets a Read through git-control-path-access-ask proceed when environment acquire fails', async () => {
+    environmentAcquireError = () =>
+      new EnvironmentError('environment.unavailable', 'environment remote is disconnected');
+    await expect(evaluate({
+      toolName: 'Read',
+      args: { path: join(workspaceDir, '.git', 'config') },
+      accesses: ToolAccesses.readFile(join(workspaceDir, '.git', 'config')),
+    })).resolves.toMatchObject({
+      policyName: 'default-tool-approve',
+      result: { kind: 'approve' },
+    });
+  });
+
+  it('asks for Write when the environment has no fs capability', async () => {
+    environmentFsAvailable = false;
+    await expect(evaluate({
+      toolName: 'Write',
+      args: { path: 'src/a.ts', content: 'x' },
+      accesses: ToolAccesses.writeFile(join(workspaceDir, 'src/a.ts')),
+    })).resolves.toMatchObject({
+      policyName: 'fallback-ask',
+      result: { kind: 'ask' },
+    });
+  });
+
+  it('surfaces non-environment acquire failures', async () => {
+    environmentAcquireError = () => new TypeError('programming error');
+    await expect(evaluate({
+      toolName: 'Write',
+      args: { path: 'src/a.ts', content: 'x' },
+      accesses: ToolAccesses.writeFile(join(workspaceDir, 'src/a.ts')),
+    })).rejects.toThrow(TypeError);
   });
 });
 
@@ -818,6 +955,7 @@ function workspaceStub(initialWorkDir: string): {
     resolve: (path) => path,
     isWithin: () => true,
     assertAllowed: (path) => path,
+    setWorkDir: () => {},
   };
   return {
     stub,

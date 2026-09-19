@@ -6,7 +6,8 @@ import {
   IAgentLoopService,
   IAgentPermissionModeService,
   IAgentProfileService,
-  IAgentRuntimeBindingService,
+  IAgentEnvironmentBindingService,
+  IAgentEnvironmentService,
   IAgentToolPolicyService,
   IAgentSkillService,
   IEventBus,
@@ -31,10 +32,12 @@ import {
   isError2,
   Error2,
   ErrorCodes,
+  EnvironmentError,
   sessionMediaOriginalsDir,
   type ISessionScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { HandshakeError } from '@moonshot-ai/remote-exec';
 import { ErrorCode } from '../protocol/error-codes';
 import { projectPromptContentParts } from '../services/messages/messageProjection';
 import {
@@ -56,12 +59,16 @@ import {
   contentToCoreParts,
   resolvePromptMediaFiles,
   resolvePromptSessionMediaRefs,
+  environmentAttachmentsTarget,
+  environmentOriginalsTarget,
   type PromptMediaPreparation,
 } from '../lib/promptMedia';
+import type { EnvironmentLease } from '@moonshot-ai/agent-core-v2/environment/environment';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, resolveActionTarget, runAction } from './action-dispatch';
+import { environmentErrorCode } from './environment';
 
 interface PromptRouteHost {
   get(
@@ -115,7 +122,8 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     profile: agent.accessor.get(IAgentProfileService),
     toolPolicy: agent.accessor.get(IAgentToolPolicyService),
     permissionMode: agent.accessor.get(IAgentPermissionModeService),
-    binding: agent.accessor.get(IAgentRuntimeBindingService),
+    binding: agent.accessor.get(IAgentEnvironmentBindingService),
+    environment: agent.accessor.get(IAgentEnvironmentService),
   };
 }
 
@@ -199,6 +207,8 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.FILE_NOT_FOUND]: {},
         [ErrorCode.PROMPT_ID_CONFLICT]: {},
+        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
       },
       description: 'Submit a prompt to a session',
       tags: ['prompts'],
@@ -214,10 +224,10 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         let resolved: Awaited<ReturnType<typeof resolvePromptFromSession>> | undefined;
         if (contentHasPathRefs(req.body.content)) {
           resolved = await resolvePromptFromSession(session, req.body.agent_id);
-          if (resolved.binding.get().runtimeId !== 'local') {
+          if (resolved.binding.get().environmentId !== 'local') {
             throw new Error2(
               ErrorCodes.REQUEST_INVALID,
-              'file attachments by server-local path require the local runtime',
+              'file attachments by server-local path require the local environment',
             );
           }
         }
@@ -243,25 +253,43 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         reservation = reservePromptId(session_id, req.body.prompt_id);
 
         const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
-        preparedMedia = await resolvePromptMediaFiles(
-          resolvedSessionMedia,
-          core.accessor.get(IFileService),
-          core.accessor.get(IBootstrapService).cacheDir,
-          {
-            telemetry,
-            providerType: resolved.profile.getModelProviderType(req.body.model),
-            resolveOriginalsDir: async () => {
-              const session = await resumeSessionById(core.accessor, session_id);
-              if (session === undefined) return undefined;
-              return sessionMediaOriginalsDir(session.accessor.get(ISessionContext).sessionDir);
+        const binding = resolved.binding.get();
+        let environmentLease: EnvironmentLease | undefined;
+        try {
+          preparedMedia = await resolvePromptMediaFiles(
+            resolvedSessionMedia,
+            core.accessor.get(IFileService),
+            core.accessor.get(IBootstrapService).cacheDir,
+            {
+              telemetry,
+              providerType: resolved.profile.getModelProviderType(req.body.model),
+              resolveOriginalsDir: async () => {
+                const session = await resumeSessionById(core.accessor, session_id);
+                if (session === undefined) return undefined;
+                return sessionMediaOriginalsDir(session.accessor.get(ISessionContext).sessionDir);
+              },
+              resolveOriginalsTarget: binding.environmentId === 'local'
+                ? undefined
+                : async () => {
+                    environmentLease ??= await resolved.environment.acquireWhenReady(['fs']);
+                    return environmentOriginalsTarget(environmentLease.environment);
+                  },
+              resolveAttachmentsDir: async () => {
+                const session = await resumeSessionById(core.accessor, session_id);
+                if (session === undefined) return undefined;
+                return join(session.accessor.get(ISessionContext).sessionDir, 'attachments');
+              },
+              resolveAttachmentsTarget: binding.environmentId === 'local'
+                ? undefined
+                : async () => {
+                    environmentLease ??= await resolved.environment.acquireWhenReady(['fs']);
+                    return environmentAttachmentsTarget(environmentLease.environment);
+                  },
             },
-            resolveAttachmentsDir: async () => {
-              const session = await resumeSessionById(core.accessor, session_id);
-              if (session === undefined) return undefined;
-              return join(session.accessor.get(ISessionContext).sessionDir, 'attachments');
-            },
-          },
-        );
+          );
+        } finally {
+          environmentLease?.dispose();
+        }
         const resolvedContent = preparedMedia.content;
         const promptAttachments =
           preparedMedia.attachments.length > 0 ? preparedMedia.attachments : undefined;
@@ -603,6 +631,14 @@ function sendMappedError(
 ): void {
   const requestId = req.id;
   const log = requestLog(req);
+  if (err instanceof EnvironmentError) {
+    reply.send(errEnvelope(environmentErrorCode(err.code), err.message, requestId));
+    return;
+  }
+  if (err instanceof HandshakeError) {
+    reply.send(errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, err.message, requestId));
+    return;
+  }
   if (isError2(err)) {
     switch (err.code) {
       case 'session.not_found':
