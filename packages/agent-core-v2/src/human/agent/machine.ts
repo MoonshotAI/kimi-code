@@ -87,7 +87,7 @@ export type AgentEvent =
   | { type: 'input.remind'; key: string; entry: SystemEntry | UserEntry }
   | { type: 'input.steer'; id: string | readonly string[] }
   | { type: 'input.cancel'; id: string }
-  | { type: 'input.abort' }
+  | { type: 'input.abort'; reason?: unknown }
   | { type: 'input.pause' }
   | { type: 'input.continue' }
   | { type: 'input.close' }
@@ -153,6 +153,7 @@ export interface AgentMachineContext {
   drainedId?: string;
   drainedEntry?: UserEntry;
   paused: boolean;
+  abortReason?: unknown;
 }
 
 function completionNotification(toolCall: ToolCall, output: ToolOutput): UserEntry {
@@ -398,21 +399,27 @@ export function createAgentMachine({
         for (const toolCall of event.toolCalls) {
           const entry = context.turnTools[toolCall.id];
           if (entry !== undefined) {
-            entry.scope.abort();
+            entry.scope.abort(context.abortReason);
             enqueue.sendTo(entry.ref, { type: 'tool.abort' as const });
           }
         }
       }),
-      abortTurn: sendTo('turn', { type: 'turn.abort' as const }),
+      rememberAbortReason: assign(({ event }) => ({
+        abortReason: event.type === 'input.abort' ? event.reason : undefined,
+      })),
+      abortTurn: sendTo('turn', ({ context }) => ({
+        type: 'turn.abort' as const,
+        reason: context.abortReason,
+      })),
       abortTurnTools: enqueueActions(({ context, enqueue }) => {
         for (const entry of Object.values(context.turnTools)) {
-          entry.scope.abort();
+          entry.scope.abort(context.abortReason);
           enqueue.sendTo(entry.ref, { type: 'tool.abort' as const });
         }
       }),
       stopTurnTools: enqueueActions(({ context, enqueue }) => {
         for (const [toolCallId, entry] of Object.entries(context.turnTools)) {
-          entry.scope.abort();
+          entry.scope.abort(context.abortReason);
           enqueue.stopChild(toolCallId);
         }
       }),
@@ -491,11 +498,20 @@ export function createAgentMachine({
           const merged = mergeSteerMessages(
             steered.map((item) => ({ content: item.message.content, origin: item.meta?.origin })),
           );
+          const promptId = steered.length === 1 ? steered[0]?.meta?.promptId : undefined;
           enqueue.assign({
             queue: context.queue.filter((item) => !steered.includes(item)),
             notifications: [
               ...context.notifications,
-              createUserEntry({ role: 'user', content: merged.content }, { source: 'input' }),
+              createUserEntry(
+                { role: 'user', content: merged.content },
+                {
+                  source: 'input',
+                  promptId,
+                  userMessageId: promptId,
+                  origin: { ...merged.origin, inTurn: true },
+                },
+              ),
             ],
           });
           enqueue.emit({
@@ -710,7 +726,7 @@ export function createAgentMachine({
       },
       running: {
         entry: [
-          assign({ activeTurnId: ({ context }) => context.turnId }),
+          assign({ activeTurnId: ({ context }) => context.turnId, abortReason: undefined }),
           emit(({ context }) => ({
             type: 'turn.started' as const,
             turnId: context.turnId,
@@ -892,7 +908,12 @@ export function createAgentMachine({
               },
               'input.abort': {
                 target: 'aborting',
-                actions: ['abortTurn', 'abortTurnTools', emit({ type: 'turn.aborting' as const })],
+                actions: [
+                  'rememberAbortReason',
+                  'abortTurn',
+                  'abortTurnTools',
+                  emit({ type: 'turn.aborting' as const }),
+                ],
               },
             },
           },
@@ -905,7 +926,7 @@ export function createAgentMachine({
                 actions: ['spawnTurnTools', 'abortSpawnedTools'],
               },
               'input.abort': {
-                actions: ['abortTurn', 'stopTurnTools'],
+                actions: ['rememberAbortReason', 'abortTurn', 'stopTurnTools'],
               },
             },
           },

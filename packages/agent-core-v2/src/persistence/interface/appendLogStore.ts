@@ -37,6 +37,10 @@ export interface AppendLogWrite {
   readonly key: string;
 }
 
+export interface AppendLogRewriteOptions {
+  readonly onError?: (error: unknown) => void;
+}
+
 export interface IAppendLogStore {
   readonly _serviceBrand: undefined;
 
@@ -44,8 +48,9 @@ export interface IAppendLogStore {
 
   append<R>(scope: string, key: string, record: R, options?: AppendLogOptions): void;
   read<R>(scope: string, key: string, options?: AppendLogReadOptions): AsyncIterable<R>;
-  rewrite<R>(scope: string, key: string, records: readonly R[]): Promise<void>;
+  rewrite<R>(scope: string, key: string, records: readonly R[], options?: AppendLogRewriteOptions): Promise<void>;
   flush(): Promise<void>;
+  flushLog(scope: string, key: string): Promise<void>;
   close(): Promise<void>;
   acquire(scope: string, key: string): IDisposable;
   drainRetirements(): Promise<void>;

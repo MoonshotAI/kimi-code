@@ -47,7 +47,7 @@ function swarmComponentOf(transcriptContainer: { addChild: ReturnType<typeof vi.
 }
 
 function lifecycleEvent(
-  type: 'subagent.spawned' | 'subagent.started' | 'subagent.completed',
+  type: 'subagent.spawned' | 'subagent.started' | 'subagent.completed' | 'subagent.cancelled',
   subagentId: string,
   parentToolCallId: string,
 ): SubagentLifecycleEvent {
@@ -130,6 +130,37 @@ describe('SubAgentEventHandler — swarm render batching', () => {
 
     vi.advanceTimersByTime(80);
     expect(requestRender).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('SubAgentEventHandler — subagent.cancelled', () => {
+  it('marks a running swarm member cancelled instead of leaving it running', () => {
+    const { handler, transcriptContainer } = makeSwarmHandler();
+    startSwarmWithChild(handler);
+    const component = swarmComponentOf(transcriptContainer);
+
+    handler.handleLifecycleEvent(lifecycleEvent('subagent.cancelled', 'child-1', 'tc-1'));
+
+    const output = component.render(120).join('\n');
+    expect(output).toContain('⊘');
+  });
+
+  it('keeps the batch-level cancelled label when a member cancel event follows', () => {
+    const { handler, transcriptContainer } = makeSwarmHandler();
+    startSwarmWithChild(handler);
+    handler.routeChildAgentEvent(childEvent('assistant.delta', 'child-1'));
+
+    handler.handleAgentSwarmToolResult(
+      'tc-1',
+      { output: 'The user manually interrupted this subagent batch.' } as never,
+      true,
+    );
+    handler.handleLifecycleEvent(lifecycleEvent('subagent.cancelled', 'child-1', 'tc-1'));
+
+    const component = swarmComponentOf(transcriptContainer);
+    const output = component.render(120).join('\n');
+    expect(output).toContain('⊘');
+    expect(output).toContain('hello');
   });
 });
 

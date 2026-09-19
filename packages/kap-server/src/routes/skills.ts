@@ -278,6 +278,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         await mainAgent.accessor.get(IAgentSkillService).activate({
           name: parsed.id,
           args: req.body.args,
+          clientMetadata: req.body.metadata === undefined ? undefined : [structuredClone(req.body.metadata)],
           content: attachmentParts,
           attachments: promptAttachments,
         });
@@ -285,9 +286,9 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         preparedMedia = undefined;
         requestLog(req)?.info({ session_id, skill_name: parsed.id }, 'skill activated');
         reply.send(okEnvelope({ activated: true, skill_name: parsed.id }, req.id));
-      } catch (err) {
+      } catch (error) {
         await preparedMedia?.discard();
-        sendMappedError(reply, req.id, err);
+        sendMappedError(reply, req.id, error);
       }
     },
   );
@@ -367,6 +368,7 @@ function toProtocolSkill(skill: SkillElement): SkillDescriptor {
     ...(disableModelInvocation !== undefined
       ? { disable_model_invocation: disableModelInvocation }
       : {}),
+    scopes: skill.scopes === undefined ? undefined : [...skill.scopes],
   };
 }
 

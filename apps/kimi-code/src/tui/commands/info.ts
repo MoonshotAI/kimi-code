@@ -220,16 +220,18 @@ export async function showMcpServers(host: SlashCommandHost): Promise<void> {
 }
 
 async function loadSessionUsageReport(host: SlashCommandHost): Promise<SessionUsageResult> {
+  if (host.session === undefined) return {};
   try {
-    return { usage: await host.requireSession().getUsage() };
+    return { usage: await host.session.getUsage() };
   } catch (error) {
     return { error: formatErrorMessage(error) };
   }
 }
 
 async function loadRuntimeStatusReport(host: SlashCommandHost): Promise<RuntimeStatusResult> {
+  if (host.session === undefined) return {};
   try {
-    return { status: await host.requireSession().getStatus() };
+    return { status: await host.session.getStatus() };
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
   }

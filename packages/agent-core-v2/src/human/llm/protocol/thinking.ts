@@ -2,7 +2,7 @@ import type { ThinkingRequestOptions } from '#/llm/thinking';
 
 import type { TraitContext } from './base';
 
-export interface ThinkingApplication {
+export interface ThinkingContribution {
   readonly kwargs: Record<string, unknown>;
   readonly preserveThinking?: boolean;
 }
@@ -10,14 +10,14 @@ export interface ThinkingApplication {
 export type ThinkingStrategy = (
   thinking: ThinkingRequestOptions,
   ctx: TraitContext,
-) => ThinkingApplication | undefined;
+) => ThinkingContribution | undefined;
 
 export type ThinkingFallback = (
   thinking: ThinkingRequestOptions,
   ctx: TraitContext,
 ) => Record<string, unknown> | undefined;
 
-export interface ResolvedThinking {
+export interface AppliedThinking {
   readonly kwargs: Record<string, unknown>;
   readonly preserveThinking: boolean;
 }
@@ -28,11 +28,11 @@ export function applyThinking(
   strategy: ThinkingStrategy | undefined,
   ctx: TraitContext,
   fallback?: ThinkingFallback,
-): ResolvedThinking {
-  const applied = strategy?.(thinking, ctx);
-  const hookedKwargs = applied === undefined ? fallback?.(thinking, ctx) : applied.kwargs;
+): AppliedThinking {
+  const contribution = strategy?.(thinking, ctx);
+  const hookedKwargs = contribution === undefined ? fallback?.(thinking, ctx) : contribution.kwargs;
   return {
     kwargs: hookedKwargs === undefined ? kwargs : { ...kwargs, ...hookedKwargs },
-    preserveThinking: applied?.preserveThinking ?? false,
+    preserveThinking: contribution?.preserveThinking ?? false,
   };
 }

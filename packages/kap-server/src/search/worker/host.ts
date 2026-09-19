@@ -53,6 +53,7 @@ export interface SearchWorkerHostOptions {
   readonly requestTimeoutMs?: number;
   readonly syncTimeoutMs?: number;
   readonly maxOldSpaceMb?: number;
+  readonly syncSessionCap?: number;
   readonly workerFactory?: (entry: { url: URL; data: SearchWorkerData; execArgv: string[] }) => Worker;
 }
 
@@ -326,6 +327,7 @@ export class SearchWorkerHost {
       bootSalt: randomUUID(),
       textBuildWorkerPath:
         textBuild.configured && textBuild.entry.kind === 'packaged' ? textBuild.entry.path : undefined,
+      syncSessionCap: this.options.syncSessionCap,
     };
     let worker: Worker;
     try {

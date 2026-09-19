@@ -294,7 +294,7 @@ describe('requester error conversion', () => {
     const requester = createOpenAIRequester({
       connection: kimiConnection,
       trait: kimiOpenAITrait,
-      convertError: classifyKimiQuotaError,
+      classifyError: classifyKimiQuotaError,
       clientFactory: failingOpenAIClient(
         new RawOpenAISDKAPIError(
           429,

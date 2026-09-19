@@ -6,6 +6,67 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 2.0.2（2026-09-19）
+
+### 优化
+
+- 优化系统提示词：Agent 不再假设当前工作目录就是项目根目录。
+
+### 修复
+
+- 修复切换到上下文窗口更小的模型后 compaction 失败的问题。
+- 修复恢复会话后新消息偶尔出现在对话中旧位置的问题。
+- 修复 Agent 运行期间发送的消息有时在聊天中重复显示的问题。
+- web：改进交互体验并修复已知问题。
+
+## 2.0.1（2026-09-18）
+
+### 优化
+
+- 移除系统提示词中禁止访问工作目录以外所有文件的规则。
+- 供应商可通过 `config.toml` 中的 [`api_key_env`](../configuration/providers.md) 从指定的环境变量读取 API 密钥。
+- 工作区文件监听不再无上限地扫描项目根目录，并新增 `[watch] enabled` 配置与 `KIMI_CODE_WATCH` 环境变量，可完全关闭文件监听，详见 [`watch`](../configuration/config-files.md#watch)。
+- 「必要时询问」权限模式下，无法静态分析的 bash 命令不再触发审批请求。
+- `kimi install-app` 子命令更名为 `kimi install-desktop`，旧名称仍作为隐藏别名可用。
+
+### 修复
+
+- 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
+## 2.0.0（2026-09-17）
+
+### 新功能
+
+- 新增 `/desktop` 斜杠命令（别名 `/install-desktop`）与 `kimi install-app` 子命令。
+- Mermaid 代码块现在会在终端中渲染为图表；可在 `/settings` → Mermaid diagrams 中关闭，或在 tui.toml 的 `[markdown]` 配置段中设置 `mermaid = "off"`。
+
+### 优化
+
+- 内置浏览器插件更名为 "Kimi Browser Extension"，插件面板、插件市场与文档中的名称同步更新。
+
+### 修复
+
+- 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
+## 0.43.1（2026-09-15）
+
+### 新功能
+
+- Linux X11 环境新增原生剪贴板支持，从终端界面复制内容不再依赖终端的 OSC 52 能力。
+
+### 优化
+
+- 减少同时运行大量 subagent 的会话中的事件循环卡顿与 GC 开销。
+
+### 修复
+
+- 修复在 subagent 运行时按 `Ctrl-C` 会直接退出整个 CLI 的问题，现在只会中断正在运行的 subagent。
+- 修复大型 agent swarm 运行时渲染逐轮变慢的问题。
+- 修复 subagent 运行结束后内存未释放的问题。
+- 修复 tower 模式将新生成的 agent 误识别为历史会话 roster 条目的问题。
+- 修复全局搜索在索引更新前仍会返回已删除会话的问题。
+- 修复折行 markdown 表格中的链接颜色错误，以及 `@` 文件补全的排序问题。
+
 ## 0.43.0（2026-09-14）
 
 ### 新功能

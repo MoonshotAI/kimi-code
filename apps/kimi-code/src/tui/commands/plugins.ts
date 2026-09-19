@@ -8,7 +8,9 @@ import {
   type PluginSummary,
   type Session,
 } from '@moonshot-ai/kimi-code-sdk';
-import { Markdown, Spacer } from '@moonshot-ai/pi-tui';
+import { Spacer } from '@moonshot-ai/pi-tui';
+
+import { Markdown } from '#/tui/components/markdown/markdown';
 
 import {
   PluginInstallTrustConfirmComponent,
@@ -592,7 +594,10 @@ async function installCapabilityFromPanel(
     host.showNotice(`${label} is installed.`);
     host.state.transcriptContainer.addChild(new Spacer(1));
     host.state.transcriptContainer.addChild(
-      new Markdown(WEBBRIDGE_POST_INSTALL_MARKDOWN, 2, 0, createMarkdownTheme(), undefined, createMarkdownOptions()),
+      new Markdown(WEBBRIDGE_POST_INSTALL_MARKDOWN, 2, 0, createMarkdownTheme(), undefined, {
+        ...createMarkdownOptions(),
+        copySource: true,
+      }),
     );
     host.state.ui.requestRender();
     return;
@@ -808,7 +813,7 @@ async function installPluginFromSource(
 const PLUGIN_RELOAD_HINT = 'Run /new or /reload to apply plugin changes.';
 
 const WEBBRIDGE_POST_INSTALL_MARKDOWN = [
-  '*Two steps left to use Kimi WebBridge:*',
+  '*Two steps left to use Kimi Browser Extension:*',
   '1. Install the browser extension',
   '',
   '   - [Chrome Web Store](https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc)',

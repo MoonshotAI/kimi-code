@@ -585,6 +585,7 @@ describe('buildSurveyEventProperties', () => {
   const ENVIRONMENT: SurveyEventEnvironmentFields = {
     current_model: 'k2',
     kfc_model_id: 'k3',
+    kfc_trace_id: 'trace-1',
     user_turn_count: 9,
     cumulative_tokens: 123,
     virtual_context_tokens: 45,
@@ -592,6 +593,10 @@ describe('buildSurveyEventProperties', () => {
     compaction_count: 2,
     permission_mode: 'manual',
     thinking_effort: 'high',
+    subagent_count: 3,
+    subagent_models: 'k2,k3',
+    swarm_run_count: 1,
+    swarm_models: 'k2',
   };
 
   it('builds the core three-state fields', () => {

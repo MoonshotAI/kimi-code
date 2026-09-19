@@ -189,6 +189,74 @@ export async function startInProcessHttpMcpServer(opts?: {
   };
 }
 
+export async function startAnonymousDiscoveryHttpMcpServer(opts?: {
+  tokenEndpoint?: 'invalid_grant';
+}): Promise<{
+  url: string;
+  origin: string;
+  close: () => Promise<void>;
+}> {
+  const mcpServer = new McpServer({ name: 'mock-http-anon-discovery', version: '0.0.1' });
+  mcpServer.registerTool(
+    'echo',
+    { description: 'Echoes text', inputSchema: { text: z.string() } },
+    ({ text }) => ({ content: [{ type: 'text', text }] }),
+  );
+
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: () => randomUUID(),
+  });
+  await mcpServer.connect(transport);
+
+  const httpServer: Server = createServer((req, res) => {
+    if (opts?.tokenEndpoint === 'invalid_grant' && req.method === 'POST' && req.url === '/token') {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'invalid_grant' }));
+      return;
+    }
+    if (req.method !== 'POST') {
+      void transport.handleRequest(req, res);
+      return;
+    }
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => chunks.push(chunk));
+    req.on('end', () => {
+      let body: unknown;
+      try {
+        body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      } catch {
+        body = undefined;
+      }
+      const messages = Array.isArray(body) ? body : [body];
+      const isToolCall = messages.some(
+        (message) =>
+          typeof message === 'object' &&
+          message !== null &&
+          (message as { method?: unknown }).method === 'tools/call',
+      );
+      if (!isToolCall) {
+        void transport.handleRequest(req, res, body);
+        return;
+      }
+      res.writeHead(401, {
+        'content-type': 'application/json',
+        'www-authenticate':
+          'Bearer realm="mcp", resource_metadata="http://x/.well-known/oauth-protected-resource"',
+      });
+      res.end(JSON.stringify({ error: 'unauthorized' }));
+    });
+  });
+
+  await listen(httpServer);
+  const port = (httpServer.address() as AddressInfo).port;
+
+  return {
+    url: `http://127.0.0.1:${port}/mcp`,
+    origin: `http://127.0.0.1:${port}`,
+    close: () => closeServer(httpServer),
+  };
+}
+
 export async function startInProcessSseMcpServer(opts?: {
   authToken?: string;
 }): Promise<{ url: string; close: () => Promise<void> }> {

@@ -18,6 +18,10 @@ export function isUserActivatableSkill(skill: SkillSummary): boolean {
   );
 }
 
+function isVisibleOnTui(skill: SkillSummary): boolean {
+  return skill.scopes === undefined || skill.scopes.includes('tui');
+}
+
 function compareSkillSlashCommands(a: SkillSummary, b: SkillSummary): number {
   return (
     getSkillSlashCommandGroup(a.source) - getSkillSlashCommandGroup(b.source) ||
@@ -32,7 +36,7 @@ function getSkillSlashCommandGroup(source: SkillSummary['source']): number {
 export function buildSkillSlashCommands(skills: readonly SkillSummary[]): SkillSlashCommands {
   const commandMap = new Map<string, string>();
   const sortedSkills = [...skills].toSorted(compareSkillSlashCommands);
-  const commands = sortedSkills.filter(isUserActivatableSkill).map((skill) => {
+  const commands = sortedSkills.filter(isUserActivatableSkill).filter(isVisibleOnTui).map((skill) => {
     const commandName =
       skill.source === 'builtin' || skill.isSubSkill === true
         ? skill.name

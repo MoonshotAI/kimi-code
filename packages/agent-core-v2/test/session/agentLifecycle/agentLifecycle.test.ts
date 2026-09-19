@@ -238,6 +238,7 @@ function recordingAppendLog(initial: readonly WireRecord[] = []): {
       return Promise.resolve();
     },
     flush: () => Promise.resolve(),
+    flushLog: () => Promise.resolve(),
     close: () => Promise.resolve(),
     acquire: () => ({ dispose: () => {} }),
     drainRetirements: () => Promise.resolve(),
@@ -781,6 +782,23 @@ describe('AgentLifecycleService', () => {
     );
   });
 
+  it('remove finishes teardown instead of reactivating a partially torn-down scope', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const main = await svc.create({ agentId: 'main' });
+    const closed: string[] = [];
+    disposables.add(svc.onDidClose((agent) => closed.push(agent.agentId)));
+    stopAllOnExit.mockRejectedValueOnce(new Error('stop failed'));
+
+    await expect(svc.remove(main)).rejects.toThrow('stop failed');
+
+    expect(svc.get('main')).toBeUndefined();
+    expect(svc.handleOf('main')).toBeUndefined();
+    expect(closed).toEqual(['main']);
+
+    await svc.remove(main);
+    expect(stopAllOnExit).toHaveBeenCalledOnce();
+  });
+
   it('remove waits for prompt intake to drain before disposing the agent scope', async () => {
     let releaseDrain!: () => void;
     let markDrainStarted!: () => void;
@@ -807,6 +825,24 @@ describe('AgentLifecycleService', () => {
     releaseDrain();
     await removal;
     expect(disposed).toEqual(['main']);
+  });
+
+  it('remove finishes once the quiesce deadline passes even if the agent loop never settles', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const main = await svc.create({ agentId: 'main' });
+    const disposed: string[] = [];
+    disposables.add(svc.onDidClose((agent) => disposed.push(agent.agentId)));
+    loopSettled.mockImplementation(() => new Promise<void>(() => {}));
+    vi.useFakeTimers();
+    try {
+      const removal = svc.remove(main);
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect(disposed).toEqual(['main']);
+      await removal;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('remove cancels queued turns before waiting for the active turn to settle', async () => {

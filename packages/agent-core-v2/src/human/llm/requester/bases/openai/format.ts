@@ -39,8 +39,8 @@ import { lowerMessage } from './lower';
 import { extractToolMedia } from './patterns';
 import {
   convertReasoningDetails,
-  extractReasoning,
   extractReasoningDetails,
+  extractReasoningStrings,
 } from './reasoning-key';
 
 export function responseFormatToOpenAI(format: ResponseFormat): Record<string, unknown> {
@@ -153,7 +153,7 @@ export interface OpenAILoweredMessage {
   readonly message: OpenAIWireMessage;
 }
 
-export function lowerOpenAIRequest(
+export function lowerOpenAIMessages(
   input: FormatRequestInput,
   options: OpenAILowerOptions,
 ): OpenAILoweredMessage[] {
@@ -299,22 +299,19 @@ export function createOpenAIFormat(): OpenAIProtocolFormat {
         }
         const reasoningDetails =
           options?.reasoningKey === undefined ? extractReasoningDetails(delta) : undefined;
-        if (reasoningDetails !== undefined) {
-          const inline = extractReasoning(delta, 'reasoning_content');
-          if (inline !== undefined) {
+        for (const reasoning of extractReasoningStrings(delta)) {
+          if (reasoning.key === 'reasoning_content') {
             seenReasoningContent = true;
-            sink.onDelta({ type: 'think', think: inline.value });
           }
+          sink.onDelta({
+            type: 'think',
+            think: reasoning.value,
+            reasoningKey: reasoning.key,
+          });
+        }
+        if (reasoningDetails !== undefined) {
           for (const part of convertReasoningDetails(reasoningDetails, seenReasoningContent)) {
             sink.onDelta(part);
-          }
-        } else {
-          const reasoning = extractReasoning(delta);
-          if (reasoning !== undefined) {
-            if (reasoning.key === 'reasoning_content') {
-              seenReasoningContent = true;
-            }
-            sink.onDelta({ type: 'think', think: reasoning.value });
           }
         }
         if (typeof delta.content === 'string' && delta.content.length > 0) {
@@ -347,12 +344,12 @@ function isOpenAIInsufficientQuotaError(error: RawOpenAISDKAPIError): boolean {
 
 export function convertOpenAIError(
   error: unknown,
-  convertErrorHook?: (error: unknown) => LlmRemoteErrorMessage | undefined,
+  classifyErrorHook?: (error: unknown) => LlmRemoteErrorMessage | undefined,
 ): LlmRemoteErrorMessage {
   if (isAbortError(error)) {
     return toLlmErrorMessage(error);
   }
-  const hooked = convertErrorHook?.(error);
+  const hooked = classifyErrorHook?.(error);
   if (hooked !== undefined) {
     return hooked;
   }

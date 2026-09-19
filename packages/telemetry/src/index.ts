@@ -2,6 +2,7 @@ import {
   flushSync,
   getSink,
   setContext,
+  setEnabled,
   shutdown,
   track as trackEvent,
   withContext,
@@ -26,6 +27,10 @@ export function setTelemetryContext(patch: TelemetryContextIds): void {
 export function setTelemetryModel(model: string | undefined): void {
   if (model === undefined) return;
   getSink()?.setModel(model);
+}
+
+export function setTelemetryEnabled(enabled: boolean): void {
+  setEnabled(enabled);
 }
 
 export function withTelemetryContext(patch: TelemetryContextIds): TelemetryClient {

@@ -37,7 +37,7 @@ import {
   encodeOpenAIResponsesCacheKey,
   encodeOpenAIResponsesMaxCompletionTokens,
   encodeOpenAIResponsesRequest,
-  lowerOpenAIResponsesRequest,
+  lowerOpenAIResponsesMessages,
   normalizeOpenAIResponsesReasoning,
   parseOpenAIResponsesUsage,
   type OpenAIResponsesRequestParams,
@@ -61,20 +61,20 @@ export interface OpenAIResponsesRequesterOptions
   extends ProtocolRequesterOptions<OpenAIResponsesTrait>,
     LlmRequesterOptions<OpenAI> {}
 
-export interface OpenAIResponsesRequestPlanOptions {
+export interface OpenAIResponsesRequestPreparationOptions {
   readonly trait?: OpenAIResponsesTrait;
 }
 
-export function planOpenAIResponsesRequest(
+export function prepareOpenAIResponsesRequest(
   input: FormatRequestInput,
-  options?: OpenAIResponsesRequestPlanOptions,
+  options?: OpenAIResponsesRequestPreparationOptions,
 ): OpenAIResponsesRequestParams {
   const trait = options?.trait;
   const ctx: TraitContext = { model: input.model };
   let kwargs: Record<string, unknown> = {};
   if (input.cacheKey !== undefined) {
     kwargs =
-      trait?.cacheKey?.(input.cacheKey, ctx) ?? encodeOpenAIResponsesCacheKey(input.cacheKey);
+      trait?.encodeCacheKey?.(input.cacheKey, ctx) ?? encodeOpenAIResponsesCacheKey(input.cacheKey);
   }
   if (input.thinking !== undefined) {
     kwargs = applyThinking(kwargs, input.thinking, trait?.thinking, ctx, (t) =>
@@ -85,7 +85,7 @@ export function planOpenAIResponsesRequest(
   if (cap !== undefined) {
     kwargs = {
       ...kwargs,
-      ...(trait?.maxCompletionTokens?.(cap, ctx) ?? encodeOpenAIResponsesMaxCompletionTokens(cap)),
+      ...(trait?.encodeMaxCompletionTokens?.(cap, ctx) ?? encodeOpenAIResponsesMaxCompletionTokens(cap)),
     };
   }
   if (input.responseFormat !== undefined) {
@@ -94,7 +94,7 @@ export function planOpenAIResponsesRequest(
   kwargs = normalizeOpenAIResponsesReasoning(kwargs);
   kwargs = shake(assign(kwargs, input.extraParams?.responses ?? {}));
 
-  const lowered = lowerOpenAIResponsesRequest(input, {
+  const lowered = lowerOpenAIResponsesMessages(input, {
     extractText:
       (input.toolMessageConversion ?? trait?.toolMessageConversion) === 'extract_text',
   });
@@ -117,7 +117,7 @@ interface OpenAIResponsesTransport {
   readonly onEvent?: (event: LlmRequestEvent) => void;
 }
 
-async function internalGenerate(
+async function executeOpenAIResponsesRequest(
   request: OpenAIResponsesRequestParams,
   transport: OpenAIResponsesTransport,
 ): Promise<void> {
@@ -172,7 +172,7 @@ export function createOpenAIResponsesRequester(
 ): LlmRequester {
   const connection = options?.connection;
   const trait = options?.trait;
-  const convertError = options?.convertError;
+  const classifyError = options?.classifyError;
   const format = createOpenAIResponsesFormat();
   const resolveClient =
     options?.clientFactory ??
@@ -191,7 +191,7 @@ export function createOpenAIResponsesRequester(
       let request: OpenAIResponsesRequestParams;
       try {
         const policy = trait?.toolCallIdPolicy ?? OPENAI_RESPONSES_TOOL_CALL_ID_POLICY;
-        request = planOpenAIResponsesRequest(
+        request = prepareOpenAIResponsesRequest(
           {
             ...config,
             model,
@@ -206,7 +206,7 @@ export function createOpenAIResponsesRequester(
         return;
       }
       try {
-        await internalGenerate(request, {
+        await executeOpenAIResponsesRequest(request, {
           connection,
           trait,
           ctx,
@@ -218,7 +218,7 @@ export function createOpenAIResponsesRequester(
       } catch (error) {
         onEvent?.({
           type: 'llm.failed.remote',
-          error: convertOpenAIError(error, (e) => convertError?.(e)),
+          error: convertOpenAIError(error, (e) => classifyError?.(e)),
         });
       }
     },

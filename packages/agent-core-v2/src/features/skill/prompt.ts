@@ -1,13 +1,14 @@
 import { escapeXml } from '#/_base/utils/xml-escape';
-import { promptMetadataTextFromText } from '#/agent/prompt/promptMetadataText';
+import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
 import type { SkillSource } from '#/features/skill/catalog/types';
 
 import type { SkillActivationInput } from './skill';
 
 export function promptMetadataTextFromSkill(input: SkillActivationInput): string | undefined {
   const args = input.args?.trim();
-  return promptMetadataTextFromText(
-    args === undefined || args.length === 0 ? `/${input.name}` : `/${input.name} ${args}`,
+  return promptMetadataTextFromContentParts(
+    [{ type: 'text', text: args === undefined || args.length === 0 ? `/${input.name}` : `/${input.name} ${args}` }],
+    input.clientMetadata,
   );
 }
 

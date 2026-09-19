@@ -11,7 +11,7 @@ import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import { watch, type WatchChange } from '#human/utils/watch';
+import { watchCandidates, type WatchChange } from '#human/utils/watch';
 
 import {
   IWorkspaceInstructionsService,
@@ -121,7 +121,7 @@ export class WorkspaceInstructionsService
     );
     for (const { root, candidates } of plan) {
       try {
-        const handle = watch(root, {
+        const handle = watchCandidates(root, candidates, {
           ignored: subtreeWatchFilter(root, candidates),
         });
         this._register(handle);

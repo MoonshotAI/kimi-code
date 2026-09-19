@@ -5,6 +5,7 @@ import {
   type SessionSummary,
   type ThinkingEffort,
 } from "@moonshot-ai/kimi-code-sdk";
+import { setTelemetryContext, track, withTelemetryContext } from "@moonshot-ai/kimi-telemetry";
 
 import type { RuntimeBroadcast } from "./session-runtime";
 import {
@@ -66,6 +67,11 @@ export class KimiRuntime {
           platform: "kimi_code_vscode",
         },
         uiMode: "vscode",
+        telemetry: {
+          track,
+          withContext: withTelemetryContext,
+          setContext: setTelemetryContext,
+        },
       });
   }
 

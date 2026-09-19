@@ -6,6 +6,7 @@ import type {
 } from '#/mcpCore/connection-manager';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
+import type { MCPClient } from '#/mcpCore/types';
 import { abortable } from '#/_base/utils/abort';
 
 export class MergedMcpConnectionView implements McpConnectionView {
@@ -38,6 +39,10 @@ export class MergedMcpConnectionView implements McpConnectionView {
 
   getRemoteServerUrl(name: string): string | undefined {
     return this.owner(name).getRemoteServerUrl(name);
+  }
+
+  markNeedsAuth(name: string, error: unknown, client?: MCPClient): Promise<boolean> {
+    return this.owner(name).markNeedsAuth(name, error, client);
   }
 
   reconnect(name: string): Promise<void> {

@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/kimi-code",
-  "version": "0.43.1",
+  "version": "2.0.2",
   "description": "The Starting Point for Next-Gen Agents",
   "license": "MIT",
   "author": "Moonshot AI",
@@ -103,6 +103,7 @@
     "cli-highlight": "^2.1.11",
     "commander": "^13.1.0",
     "jimp": "^1.6.1",
+    "lovely-mermaid": "0.3.3",
     "pathe": "^2.0.3",
     "postject": "1.0.0-alpha.6",
     "semver": "^7.7.4",

@@ -86,3 +86,33 @@ export function seededStoreJournal(
     settled: () => base.settled(),
   };
 }
+
+export function appendedStoreJournal(
+  base: SyncStoreJournal,
+  seed: readonly JournalRecord[],
+): SyncStoreJournal {
+  let appended = 0;
+  const baseCount = base.nextSeq();
+  const trailing = seed.map((record, index) => ({
+    ...record,
+    branch: base.ref.branch,
+    seq: baseCount + index,
+  }));
+  return {
+    get ref() {
+      return base.ref;
+    },
+    append: async (input) => {
+      const entry = await base.append(input);
+      appended += 1;
+      return entry;
+    },
+    read: async function* () {
+      for (const record of base.readSync()) yield record;
+      for (const record of trailing) yield record;
+    },
+    readSync: () => [...base.readSync(), ...trailing],
+    nextSeq: () => baseCount + trailing.length + appended,
+    settled: () => base.settled(),
+  };
+}

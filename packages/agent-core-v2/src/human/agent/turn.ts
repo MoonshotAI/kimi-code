@@ -196,9 +196,9 @@ export type TurnEvent =
   | { type: 'turn.notify'; messages: HistoryMessage[] }
   | { type: 'turn.pause' }
   | { type: 'turn.continue' }
-  | { type: 'turn.abort' }
+  | { type: 'turn.abort'; reason?: unknown }
   | {
-      type: 'turn.failure.triaged';
+      type: 'turn.failure.evaluated';
       cause: Extract<LlmEvent, { type: 'llm.failed.remote' }>;
       proposal?: LlmRecoveryProposal & LlmRecoveryRecord;
     };
@@ -231,7 +231,7 @@ export interface TurnMachineContext {
   attempt: number;
   delayMs: number;
   appliedRecoveries: LlmRecoveryRecord[];
-  recoveryMessages?: readonly Message[];
+  attemptMessageOverride?: readonly Message[];
   paused: boolean;
   outcome?: 'done' | 'failed' | 'aborted';
   error?: unknown;
@@ -296,7 +296,7 @@ function baseMessages(context: TurnMachineContext): readonly Message[] {
 }
 
 function attemptMessages(context: TurnMachineContext): readonly Message[] {
-  return context.recoveryMessages ?? baseMessages(context);
+  return context.attemptMessageOverride ?? baseMessages(context);
 }
 
 function proposeRecovery(
@@ -306,7 +306,7 @@ function proposeRecovery(
   if (recovery === undefined) return undefined;
   const proposal = recovery.propose(ctx);
   if (proposal === undefined) return undefined;
-  if (proposal.messages !== undefined && proposal.messages === ctx.messages) return undefined;
+  if (proposal.attemptMessageOverride !== undefined && proposal.attemptMessageOverride === ctx.messages) return undefined;
   return proposal;
 }
 
@@ -631,17 +631,17 @@ export function createTurnMachine(
           },
           'llm.failed.remote': {
             actions: raise(({ context, event }) => ({
-              type: 'turn.failure.triaged' as const,
+              type: 'turn.failure.evaluated' as const,
               cause: event,
               proposal: proposeRecovery(recovery, {
                 error: event.error,
                 messages: baseMessages(context),
-                applied: context.appliedRecoveries,
-                credentials: context.input.request.credentials,
+                appliedRecoveries: context.appliedRecoveries,
+                credentialProvider: context.input.request.credentialProvider,
               }),
             })),
           },
-          'turn.failure.triaged': [
+          'turn.failure.evaluated': [
             {
               guard: ({ event }) => event.proposal !== undefined,
               target: 'thinking',
@@ -649,7 +649,7 @@ export function createTurnMachine(
               actions: [
                 ({ context, event }) => {
                   context.accumulator.rollback();
-                  event.proposal?.prepare?.();
+                  event.proposal?.beforeNextAttempt?.();
                 },
                 assign(({ context, event }) => {
                   const proposal = event.proposal as LlmRecoveryProposal & LlmRecoveryRecord;
@@ -658,7 +658,7 @@ export function createTurnMachine(
                       ...context.appliedRecoveries,
                       { strategy: proposal.strategy, action: proposal.action },
                     ],
-                    recoveryMessages: proposal.messages ?? context.recoveryMessages,
+                    attemptMessageOverride: proposal.attemptMessageOverride ?? context.attemptMessageOverride,
                     attempt: 1,
                   };
                 }),
@@ -706,8 +706,8 @@ export function createTurnMachine(
           'turn.abort': {
             target: 'aborted',
             actions: [
-              ({ context }) => {
-                context.llmScope.abort();
+              ({ context, event }) => {
+                context.llmScope.abort(event.reason);
               },
               'salvageAborted',
             ],
@@ -856,7 +856,7 @@ export function createTurnMachine(
                   steps: event.messages.length > 0 ? 1 : context.steps + 1,
                   attempt: 1,
                   appliedRecoveries: [],
-                  recoveryMessages: undefined,
+                  attemptMessageOverride: undefined,
                 })),
                 'signalRemindersConsumed',
               ],

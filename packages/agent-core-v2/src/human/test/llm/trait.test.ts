@@ -18,7 +18,7 @@ import { createMediaRefResolver } from '#/llm/media/resolver';
 import { createMemoryMediaSource } from '#/llm/media/source';
 import type { LlmModel } from '#/llm/model';
 import { createProvider } from '#/llm/provider/definition';
-import { KimiFiles } from '#/llm-kimi/files';
+import { KimiFiles, kimiFilesBaseUrl } from '#/llm-kimi/files';
 import { kimiMediaContribution } from '#/llm-kimi/media';
 import { kimiProvider } from '#/llm-kimi/provider';
 import {
@@ -56,13 +56,13 @@ const messages: readonly Message[] = [createUserMessage('hi')];
 const kimiOpenAI = {
   connection: kimiConnection,
   trait: kimiOpenAITrait,
-  convertError: classifyKimiQuotaError,
+  classifyError: classifyKimiQuotaError,
 } as const;
 
 const kimiAnthropic = {
   connection: kimiConnection,
   trait: kimiAnthropicTrait,
-  convertError: classifyKimiQuotaError,
+  classifyError: classifyKimiQuotaError,
 } as const;
 
 async function generateAndCollectUsage(
@@ -378,11 +378,41 @@ describe('media', () => {
     ).rejects.toThrow('Expected a video mime type');
   });
 
+  it('rejects a non-image mime type', async () => {
+    const files = new KimiFiles({ apiKey: 'sk-test', baseUrl: 'https://example.test/v1' });
+    await expect(
+      files.uploadImage({ data: new Uint8Array([1]), mimeType: 'video/mp4' }),
+    ).rejects.toThrow('Expected an image mime type');
+  });
+
   it('requires an api key', async () => {
     const files = new KimiFiles({ baseUrl: 'https://example.test/v1' });
     await expect(
       files.uploadVideo({ data: new Uint8Array([1]), mimeType: 'video/mp4' }),
     ).rejects.toThrow('apiKey is required');
+  });
+
+  it('requires an api key for image uploads', async () => {
+    const files = new KimiFiles({ baseUrl: 'https://example.test/v1' });
+    await expect(
+      files.uploadImage({ data: new Uint8Array([1]), mimeType: 'image/png' }),
+    ).rejects.toThrow('apiKey is required');
+  });
+
+  it('restores the stripped /v1 for anthropic-routed kimi models', () => {
+    const anthropic: LlmModel = { ...mediaModel, provider: 'anthropic' };
+    expect(kimiFilesBaseUrl({ ...anthropic, baseUrl: 'https://api.example.test' })).toBe(
+      'https://api.example.test/v1',
+    );
+    expect(kimiFilesBaseUrl({ ...anthropic, baseUrl: 'https://api.example.test/v1' })).toBe(
+      'https://api.example.test/v1',
+    );
+    expect(kimiFilesBaseUrl({ ...anthropic, baseUrl: 'https://api.example.test/' })).toBe(
+      'https://api.example.test/v1',
+    );
+    expect(kimiFilesBaseUrl(anthropic)).toBe(KIMI_DEFAULT_BASE_URL);
+    const openai: LlmModel = { ...mediaModel, provider: 'openai', baseUrl: 'https://api.example.test' };
+    expect(kimiFilesBaseUrl(openai)).toBe('https://api.example.test');
   });
 
   it('uploads a video ref once and serves later requests from the cache', async () => {
@@ -1090,8 +1120,8 @@ describe('request pipeline', () => {
     const client = stubOpenAIClient(chatCompletionChunks);
     const requester = createOpenAIRequester({
       trait: {
-        cacheKey: (key) => {
-          order.push('cacheKey');
+        encodeCacheKey: (key) => {
+          order.push('encodeCacheKey');
           return { prompt_cache_key: key };
         },
         thinking: () => {
@@ -1137,7 +1167,7 @@ describe('request pipeline', () => {
       { signal: new AbortController().signal },
     );
     expect(order).toEqual([
-      'cacheKey',
+      'encodeCacheKey',
       'thinking',
       'convertMessage:user',
       'mergeHistory',

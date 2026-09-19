@@ -15,7 +15,7 @@ import type { McpServerConfig } from '#/mcpCore/config-schema';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
-import { watch } from '#human/utils/watch';
+import { watch, watchCandidates } from '#human/utils/watch';
 
 import {
   IWorkspaceMcpConfigService,
@@ -126,7 +126,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     });
     this.watchPaths([paths.user]);
     const projectRoot = dirname(paths.projectRoot);
-    const handle = watch(projectRoot, {
+    const handle = watchCandidates(projectRoot, [paths.projectRoot, paths.project], {
       ignored: subtreeWatchFilter(projectRoot, [paths.projectRoot, paths.project]),
     });
     this._register(handle);

@@ -31,6 +31,7 @@ import { OrderedHookSlot } from '#/hooks';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
+import { markInTurnOrigin } from '#/agent/contextMemory/conversationTime';
 import { newMessageId } from '#/agent/contextMemory/messageId';
 import { type ContextMessage, type PromptOrigin } from '#/agent/contextMemory/types';
 import { gateImageFormatParts } from '#/agent/media/image-compress';
@@ -665,6 +666,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         agentId: this.scopeContext.agentId,
         promptId: input.promptId,
         content: stripBundledSkillBlocks(input.message),
+        clientMetadata: input.origin.clientMetadata,
         queueLength: (this.engine?.snapshot().queue.length ?? 0) + 1,
       }),
     );
@@ -688,6 +690,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         userMessageId: input.userMessageId,
         status,
         content: stripBundledSkillBlocks(input.message),
+        clientMetadata: input.origin.clientMetadata,
         createdAt: input.createdAt,
       }),
     );
@@ -816,7 +819,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const active = this.active;
     if (active === undefined || (turnId !== undefined && active.id !== turnId)) return false;
     if (active.controller.signal.aborted) {
-      this.machineEngine().abort();
+      this.machineEngine().abort(active.controller.signal.reason);
       return true;
     }
     void this.dispatcher.dispatch(
@@ -828,7 +831,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       }),
     );
     active.controller.abort(cancellation);
-    this.machineEngine().abort();
+    this.machineEngine().abort(cancellation);
     return true;
   }
 
@@ -1237,6 +1240,22 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       nudge.consumed = true;
       if (nudge.contextMessage !== undefined && nudge.contextMessage.content.length > 0) {
         this.materializeMessage(nudge.contextMessage);
+        if (
+          nudge.promptIds !== undefined &&
+          nudge.promptIds.length > 0 &&
+          nudge.contextMessage.id !== this.active?.prompt.message.id
+        ) {
+          void this.dispatcher.dispatch(
+            new TurnSteer({
+              agentId: this.scopeContext.agentId,
+              input: nudge.contextMessage.content,
+              origin: nudge.contextMessage.origin ?? { kind: 'user' },
+              messageId: nudge.contextMessage.id,
+              promptIds: [...nudge.promptIds],
+              turnId: this.active?.id,
+            }),
+          );
+        }
       }
       nudge.onConsume?.();
     }
@@ -1318,30 +1337,27 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           merged.content,
           this.profile.getModelProviderType(),
         );
+        const messageId = children.length === 1 ? children[0]!.waiter.id : newMessageId();
+        const promptIds = children.map((child) => child.waiter.id);
         this.nudges.push({
           contextMessage: {
             role: 'user',
             content: gatedContent,
             toolCalls: [],
-            origin: merged.origin,
-            id: newMessageId(),
+            origin: markInTurnOrigin(merged.origin),
+            id: messageId,
           },
+          promptIds,
           bypassMaxSteps: false,
           turnScoped: false,
           sentToMachine: true,
         });
         void this.dispatcher.dispatch(
-          new TurnSteer({
-            agentId: this.scopeContext.agentId,
-            input: gatedContent,
-            origin: merged.origin,
-          }),
-        );
-        void this.dispatcher.dispatch(
           new PromptSteered({
             agentId: this.scopeContext.agentId,
             activePromptId: active.prompt.id,
-            promptIds: children.map((child) => child.waiter.id),
+            promptIds,
+            messageId,
             content: children.flatMap((child) =>
               stripBundledSkillBlocks(child.projection.message),
             ),
@@ -1414,6 +1430,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
               encrypted: delta.encrypted,
               detailsIndex: delta.detailsIndex,
               hidden: delta.hidden,
+              reasoningKey: delta.reasoningKey,
             });
             if (part?.type === 'think' && part.hidden === true) return;
             void this.dispatcher.dispatch(
@@ -2041,6 +2058,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         durationMs,
         interruptReason,
         stopReason: result.type === 'completed' ? result.stopReason : undefined,
+        traceId,
       }),
     );
     if (error !== undefined) {
@@ -2168,6 +2186,7 @@ function projectionFromEntry(entry: UserEntry): PromptProjection {
 
 interface Nudge {
   readonly contextMessage?: ContextMessage;
+  readonly promptIds?: readonly string[];
   readonly bypassMaxSteps: boolean;
   readonly turnScoped: boolean;
   readonly onConsume?: () => void;

@@ -46,22 +46,33 @@ import { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileL
 import { IExtraAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/extraAgentProfileLoader';
 import { IExplicitAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoader';
 
+import { setWatchEnabled } from '#human/utils/watch';
+
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 
 const watchMockState = vi.hoisted(() => ({ mode: 'inert' as 'inert' | 'real' }));
 
 vi.mock('#human/utils/watch', async (importOriginal) => {
   const original = await importOriginal<typeof import('#human/utils/watch')>();
+  const watch = (path: string, options?: Parameters<typeof original.watch>[1]) => {
+    if (watchMockState.mode === 'real') return original.watch(path, options);
+    return {
+      ready: Promise.resolve(),
+      onDidChange: () => ({ dispose: () => {} }),
+      dispose: () => {},
+    };
+  };
   return {
     ...original,
-    watch: (path: string, options?: Parameters<typeof original.watch>[1]) => {
-      if (watchMockState.mode === 'real') return original.watch(path, options);
-      return {
-        ready: Promise.resolve(),
-        onDidChange: () => ({ dispose: () => {} }),
-        dispose: () => {},
-      };
-    },
+    watch,
+    watchCandidates: (
+      root: string,
+      candidates: readonly string[],
+      options?: Parameters<typeof original.watch>[1],
+    ) =>
+      watchMockState.mode === 'real'
+        ? original.watchCandidates(root, candidates, options)
+        : watch(root, options),
   };
 });
 
@@ -325,6 +336,7 @@ async function withStack(
 describe('agent profile loaders + session catalog', () => {
   beforeEach(() => {
     watchMockState.mode = 'inert';
+    setWatchEnabled(false);
     _clearAgentProfileContributionsForTests();
     const builtinDefault: AgentProfile = normalizeAgentProfile({
       name: DEFAULT_AGENT_PROFILE_NAME,
@@ -748,6 +760,7 @@ describe('agent profile loaders + session catalog', () => {
 
   it('rescans the workspace source when a project agent file changes on disk', async () => {
     watchMockState.mode = 'real';
+    setWatchEnabled(true);
     await withFixture(async (fixture) => {
       await mkdir(join(fixture.workDir, '.kimi-code', 'agents'), { recursive: true });
       await withStack(fixture, undefined, async (stack) => {

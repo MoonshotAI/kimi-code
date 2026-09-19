@@ -28,7 +28,7 @@ import type { Actor, Subscription } from '#human/xstate2';
 
 import { createMachineRequester, type MachineRequester, type MachineRequesterGateDecision } from './requester';
 import { createMachineTools, type MachineTools, type ToolResultExtras } from './tools';
-import { seededStoreJournal } from './storeJournal';
+import { appendedStoreJournal, seededStoreJournal } from './storeJournal';
 
 export type { PromptGateVerdict };
 
@@ -40,6 +40,7 @@ export type MachineEngineDelta =
       readonly encrypted?: string;
       readonly detailsIndex?: number;
       readonly hidden?: boolean;
+      readonly reasoningKey?: string;
     }
   | {
       readonly kind: 'toolCall';
@@ -177,7 +178,7 @@ export interface MachineEngine {
   notify(entry: UserEntry): void;
   remind(key: string, entry: SystemEntry | UserEntry): void;
   cancelQueueItem(id: string): void;
-  abort(): void;
+  abort(reason?: unknown): void;
   pause(): void;
   resume(): void;
   resetHistory(history: readonly HistoryMessage[]): Promise<void>;
@@ -227,6 +228,7 @@ function createDeltaSplitter(): (part: StreamedMessagePart) => MachineEngineDelt
           encrypted: part.encrypted,
           detailsIndex: part.detailsIndex,
           hidden: part.hidden,
+          reasoningKey: part.reasoningKey,
         };
       case 'image_url':
       case 'audio_url':
@@ -311,10 +313,10 @@ export function machineEngineAttachBundle(options: CreateMachineEngineOptions): 
   const current = (): LlmCredentialProvider | undefined => {
     const source = options.source?.();
     return source?.type === 'turn'
-      ? options.llmRequester.credentialsForTurn(source.turnId)
-      : options.llmRequester.currentCredentials();
+      ? options.llmRequester.credentialProviderForTurn(source.turnId)
+      : options.llmRequester.currentCredentialProvider();
   };
-  const credentials: LlmCredentialProvider = {
+  const credentialProvider: LlmCredentialProvider = {
     resolve: () => current()?.resolve(),
     canRecover: (error) => current()?.canRecover?.(error) === true,
     invalidate: () => current()?.invalidate?.(),
@@ -334,7 +336,7 @@ export function machineEngineAttachBundle(options: CreateMachineEngineOptions): 
     }),
     toolLogic: createToolMachine(tools.executor),
     tools: tools.tools,
-    request: { model: options.model, systemPrompt: options.systemPrompt, credentials },
+    request: { model: options.model, systemPrompt: options.systemPrompt, credentialProvider },
     requester,
     machineTools: tools,
     promptGate: options.promptGate,
@@ -519,8 +521,8 @@ export function attachMachineEngine(
     cancelQueueItem: (id) => {
       ref.send({ type: 'input.cancel', id });
     },
-    abort: () => {
-      ref.send({ type: 'input.abort' });
+    abort: (reason) => {
+      ref.send({ type: 'input.abort', reason });
     },
     pause: () => {
       ref.send({ type: 'input.pause' });
@@ -617,9 +619,8 @@ export function engineJournal(base: SyncStoreJournal | undefined, initialTurnId:
     if (initialTurnId <= 0) return memoryJournal();
     return seedRecords([turnEnded({ turnId: initialTurnId - 1, outcome: 'done' })]);
   }
-  if (initialTurnId <= 0 || base.readSync().length > 0) return base;
-  return seededStoreJournal(
-    base,
-    seedRecords([turnEnded({ turnId: initialTurnId - 1, outcome: 'done' })]).readSync(),
-  );
+  if (initialTurnId <= 0) return base;
+  const seed = seedRecords([turnEnded({ turnId: initialTurnId - 1, outcome: 'done' })]).readSync();
+  if (base.readSync().length === 0) return seededStoreJournal(base, seed);
+  return appendedStoreJournal(base, seed);
 }

@@ -76,7 +76,7 @@ export class TelemetryClient {
     this.queue = [];
   }
 
-  disable(): void {
+  teardown(): void {
     this.disabled = true;
     this.queue = [];
     this.systemMetricsCollector?.stop();
@@ -88,8 +88,12 @@ export class TelemetryClient {
     }
   }
 
-  enable(): void {
-    this.disabled = false;
+  setEnabled(enabled: boolean): void {
+    this.disabled = !enabled;
+    if (!enabled) {
+      this.queue = [];
+      this.sink?.clearBuffer();
+    }
   }
 
   track(event: string, properties: TelemetryProperties = {}): void {
@@ -204,12 +208,12 @@ class ScopedTelemetryClient extends TelemetryClient {
     this.parent.attachSink(sink);
   }
 
-  override disable(): void {
-    this.parent.disable();
+  override teardown(): void {
+    this.parent.teardown();
   }
 
-  override enable(): void {
-    this.parent.enable();
+  override setEnabled(enabled: boolean): void {
+    this.parent.setEnabled(enabled);
   }
 
   override track(event: string, properties: TelemetryProperties = {}): void {
@@ -251,12 +255,8 @@ export function attachSink(sink: EventSink): void {
   defaultClient.attachSink(sink);
 }
 
-export function disable(): void {
-  defaultClient.disable();
-}
-
-export function enable(): void {
-  defaultClient.enable();
+export function setEnabled(enabled: boolean): void {
+  defaultClient.setEnabled(enabled);
 }
 
 export function track(event: string, properties: TelemetryProperties = {}): void {

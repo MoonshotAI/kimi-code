@@ -20,3 +20,10 @@ export function parsePositiveIntEnv(value: string | undefined): number | undefin
   const n = parseNonNegativeIntEnv(value);
   return n !== undefined && n > 0 ? n : undefined;
 }
+
+export function parseNumberEnv(value: string | undefined): number | undefined {
+  const normalized = value?.trim();
+  if (normalized === undefined || normalized.length === 0) return undefined;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
