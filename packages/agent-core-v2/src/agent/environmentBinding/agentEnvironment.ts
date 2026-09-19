@@ -48,6 +48,14 @@ export function inspectAgentEnvironment(service: IAgentEnvironmentService): Envi
   return service.inspect();
 }
 
+export function acquireOrWhenReady(
+  service: IAgentEnvironmentService,
+  required: readonly EnvironmentCapability[] = [],
+): EnvironmentLease | Promise<EnvironmentLease> {
+  if (service.isAvailable(required)) return service.acquire(required);
+  return service.acquireWhenReady(required);
+}
+
 export function snapshotAgentEnvironmentBinding(
   bindingService: IAgentEnvironmentBindingService,
   environmentService: IAgentEnvironmentService,

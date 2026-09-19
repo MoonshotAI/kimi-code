@@ -1,6 +1,7 @@
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
-import { IAgentEnvironmentService, inspectAgentEnvironment } from '#/agent/environmentBinding/agentEnvironment';
+import { isPromiseLike } from '#/_base/lifecycle/disposer';
+import { acquireOrWhenReady, IAgentEnvironmentService, inspectAgentEnvironment } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
@@ -227,9 +228,8 @@ export class ReadTool implements IReadTool {
           homeDir: env.homeDir,
         }),
       execute: async () => {
-        const lease = this.environment.isAvailable(['fs'])
-          ? this.environment.acquire(['fs'])
-          : await this.environment.acquireWhenReady(['fs']);
+        const acquired = acquireOrWhenReady(this.environment, ['fs']);
+        const lease = isPromiseLike(acquired) ? await acquired : acquired;
         try {
           if (lease.environment.identity.generation !== inspected.identity.generation) {
             return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };

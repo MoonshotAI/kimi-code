@@ -12,7 +12,8 @@ import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
-import { IAgentEnvironmentService, inspectAgentEnvironment } from '#/agent/environmentBinding/agentEnvironment';
+import { isPromiseLike } from '#/_base/lifecycle/disposer';
+import { acquireOrWhenReady, IAgentEnvironmentService, inspectAgentEnvironment } from '#/agent/environmentBinding/agentEnvironment';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -122,9 +123,8 @@ export class GlobTool implements IGlobTool {
       approvalRule: literalRulePattern(this.name, args.pattern),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.pattern),
       execute: async ({ signal }) => {
-        const lease = this.environment.isAvailable(['fs', 'process'])
-          ? this.environment.acquire(['fs', 'process'])
-          : await this.environment.acquireWhenReady(['fs', 'process']);
+        const acquired = acquireOrWhenReady(this.environment, ['fs', 'process']);
+        const lease = isPromiseLike(acquired) ? await acquired : acquired;
         try {
           if (lease.environment.identity.generation !== inspected.identity.generation) {
             return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };

@@ -21,7 +21,7 @@ import type { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata
 import type { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ILogService } from '#/_base/log/log';
-import { AgentEnvironmentService, snapshotAgentEnvironmentBinding } from '#/agent/environmentBinding/agentEnvironment';
+import { AgentEnvironmentService, acquireOrWhenReady, snapshotAgentEnvironmentBinding } from '#/agent/environmentBinding/agentEnvironment';
 import { AgentEnvironmentBindingService, agentEnvironmentBindingKey, ENVIRONMENT_BINDING_REMINDER_VARIANT, PROJECT_CONTEXT_REMINDER_VARIANT } from '#/agent/environmentBinding/environmentBindingService';
 import { environmentBindingKey, EnvironmentSetBinding } from '#/agent/environmentBinding/environmentBindingOps';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -33,6 +33,7 @@ import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumen
 import type { IAgentLoopService } from '#/agent/loop/loop';
 import type { IAgentReminderService } from '#/features/reminder/reminderService';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
+import { planKey } from '#/features/plan/planOps';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -1352,6 +1353,57 @@ describe('AgentEnvironmentBindingService.connectAndSwitchInTurn', () => {
   });
 });
 
+describe('AgentEnvironmentBindingService plan mode guard', () => {
+  it('rejects switch, connectAndSwitch, and connectAndSwitchInTurn while plan mode is active', async () => {
+    const { registry, state, binding, dispatched } = setup();
+    const { connectCalls } = connectableEnvironment(registry, { environmentId: 'connectable' });
+    state.contributeState(planKey);
+    state.set(planKey, { active: true, id: 'plan-1' });
+
+    expect(() => binding.switch('remote')).toThrowError(
+      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.conflict' }),
+    );
+    expect(() => binding.switch('remote')).toThrowError(/exit plan mode first/);
+    await expect(binding.connectAndSwitch('connectable', '/remote/work')).rejects.toThrowError(
+      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.conflict' }),
+    );
+    await expect(binding.connectAndSwitchInTurn('connectable', '/remote/work')).rejects.toThrowError(
+      /exit plan mode first/,
+    );
+
+    expect(connectCalls).toEqual([]);
+    expect(dispatched).toHaveLength(0);
+    expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+  });
+
+  it('switches again once plan mode is exited', async () => {
+    const { registry, state, binding } = setup();
+    connectableEnvironment(registry, { environmentId: 'connectable' });
+    state.contributeState(planKey);
+    state.set(planKey, { active: true, id: 'plan-1' });
+    expect(() => binding.switch('remote')).toThrowError(/exit plan mode first/);
+
+    state.set(planKey, { active: false });
+
+    expect(binding.switch('remote')).toEqual({ workspaceId: 'workspace', environmentId: 'remote' });
+    await expect(binding.connectAndSwitch('connectable', '/remote/work')).resolves.toMatchObject({
+      environmentId: 'connectable',
+      cwd: '/remote/work',
+    });
+  });
+
+  it('leaves non-switch reads and acquires untouched while plan mode is active', () => {
+    const { state, binding, agentEnvironment } = setup();
+    state.contributeState(planKey);
+    state.set(planKey, { active: true, id: 'plan-1' });
+
+    expect(binding.get()).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+    const lease = agentEnvironment.acquire(['fs']);
+    expect(lease.environment.identity.environmentId).toBe('local');
+    lease.dispose();
+  });
+});
+
 describe('AgentEnvironmentService workspaceRoots', () => {
   it('falls back to the session cwd for a local binding without a cwd', () => {
     const { agentEnvironment } = setup();
@@ -1454,6 +1506,47 @@ describe('AgentEnvironmentService.acquireWhenReady', () => {
     publishBus('turn.ended', { agentId: 'main' });
     const lease = await agentEnvironment.acquireWhenReady();
     expect(lease.environment.identity.generation).toBe('local-two');
+    lease.dispose();
+  });
+});
+
+describe('acquireOrWhenReady', () => {
+  it('takes the synchronous acquire path when the environment is already available', async () => {
+    const { agentEnvironment } = setup();
+    const acquire = vi.spyOn(agentEnvironment, 'acquire');
+    const whenReady = vi.spyOn(agentEnvironment, 'acquireWhenReady');
+
+    const lease = await acquireOrWhenReady(agentEnvironment, ['fs']);
+
+    expect(acquire).toHaveBeenCalledWith(['fs']);
+    expect(whenReady).not.toHaveBeenCalled();
+    expect(lease.environment.identity).toMatchObject({ environmentId: 'local', generation: 'local-one' });
+    lease.dispose();
+  });
+
+  it('falls back to acquireWhenReady when a required capability is missing', async () => {
+    const { binding, agentEnvironment } = setup();
+    binding.switch('remote');
+    const acquire = vi.spyOn(agentEnvironment, 'acquire');
+    const whenReady = vi.spyOn(agentEnvironment, 'acquireWhenReady');
+
+    await expect(acquireOrWhenReady(agentEnvironment, ['fs'])).rejects.toThrowError(
+      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.capability_unavailable' }),
+    );
+    expect(acquire).not.toHaveBeenCalled();
+    expect(whenReady).toHaveBeenCalledWith(['fs']);
+  });
+
+  it('connects a disconnected environment through the whenReady path', async () => {
+    const { registry, state, restoreHooks, agentEnvironment } = setup();
+    const { calls } = connectableEnvironment(registry, { environmentId: 'remote-x', status: 'disconnected' });
+    state.set(environmentBindingKey, { workspaceId: 'workspace', environmentId: 'remote-x', cwd: '/remote/x' });
+    await restoreHooks.get('agent-environment-binding')?.(undefined, async () => {});
+
+    const lease = await acquireOrWhenReady(agentEnvironment, ['fs']);
+
+    expect(calls).toEqual(['connect']);
+    expect(lease.environment.status).toBe('ready');
     lease.dispose();
   });
 });

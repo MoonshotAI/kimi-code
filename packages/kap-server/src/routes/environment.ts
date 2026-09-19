@@ -11,6 +11,7 @@ import {
   IWorkspaceInstanceManager,
   IWorkspaceService,
   ENVIRONMENTS_SECTION,
+  environmentEntryInfo,
   readSshConfigHosts,
   resumeSessionById,
   writeProjectEnvironmentDeclaration,
@@ -313,21 +314,16 @@ async function resolveSshHosts(core: Scope): Promise<readonly string[]> {
 }
 
 function toEntry(environment: EnvironmentGenerationSnapshot, entry: RemoteEnvironmentEntry | undefined): SessionEnvironmentEntry {
+  const info = environmentEntryInfo(environment, entry);
   return {
-    environment_id: environment.environmentId,
-    type: environmentType(environment.environmentId, entry),
-    status: environment.status,
-    generation: environment.generation,
-    capabilities: [...environment.capabilities],
-    default_cwd: entry?.defaultCwd,
-    connect_error: environment.connectError,
+    environment_id: info.environmentId,
+    type: info.type,
+    status: info.status,
+    generation: info.generation,
+    capabilities: [...info.capabilities],
+    default_cwd: info.defaultCwd,
+    connect_error: info.connectError,
   };
-}
-
-function environmentType(environmentId: string, entry: RemoteEnvironmentEntry | undefined): SessionEnvironmentEntry['type'] {
-  if (environmentId === 'local') return 'local';
-  if (entry === undefined || 'command' in entry) return 'command';
-  return entry.type;
 }
 
 function toResponse(binding: EnvironmentBinding): EnvironmentBindingResponse {

@@ -283,6 +283,14 @@ export class SubagentTool implements ISubagentTool {
     return false;
   }
 
+  private environmentExperimentUnavailable(args: SubagentToolInput): boolean {
+    const environment = args.environment?.trim();
+    if (environment === undefined || environment.length === 0) return false;
+    const resume = args.resume?.trim();
+    if (resume !== undefined && resume.length > 0) return false;
+    return !this.flags.enabled(AGENT_ENVIRONMENT_TOOLS_FLAG_ID);
+  }
+
   async resolveExecution(args: SubagentToolInput): Promise<ToolExecution> {
     const requestedProfileName = args.subagent_type?.length ? args.subagent_type : undefined;
     const resumeAgentId = args.resume?.trim();
@@ -305,13 +313,7 @@ export class SubagentTool implements ISubagentTool {
       }
     }
 
-    const requestedEnvironment = args.environment?.trim();
-    if (
-      requestedEnvironment !== undefined &&
-      requestedEnvironment.length > 0 &&
-      (resumeAgentId === undefined || resumeAgentId.length === 0) &&
-      !this.flags.enabled(AGENT_ENVIRONMENT_TOOLS_FLAG_ID)
-    ) {
+    if (this.environmentExperimentUnavailable(args)) {
       return { output: ENVIRONMENT_EXPERIMENTAL_UNAVAILABLE, isError: true };
     }
 
@@ -508,13 +510,7 @@ export class SubagentTool implements ISubagentTool {
         }
       }
 
-      const requestedEnvironment = args.environment?.trim();
-      if (
-        requestedEnvironment !== undefined &&
-        requestedEnvironment.length > 0 &&
-        !isResume &&
-        !this.flags.enabled(AGENT_ENVIRONMENT_TOOLS_FLAG_ID)
-      ) {
+      if (this.environmentExperimentUnavailable(args)) {
         return { output: ENVIRONMENT_EXPERIMENTAL_UNAVAILABLE, isError: true };
       }
 
