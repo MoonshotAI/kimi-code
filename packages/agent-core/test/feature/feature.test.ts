@@ -145,17 +145,19 @@ describe('feature DSL', () => {
       },
     };
     const app = mountApp({ features: [shared] });
-    const session = await app.create({ sessionId: 'sess', stores: env.stores, requester });
-    const state = session.node.resolve(Calls);
+    const session = await app.create({ sessionId: 'sess', stores: env.stores });
+    const state = session.resolve(Calls);
     const agent = await session.create({
       agentId: 'agent-0',
-      request: { config: { model }, systemPrompt: 'host-text' },
+      systemPrompt: 'host-text',
       features: installed,
       provide: (node) => {
         order.push('provide');
         node.provide(Extra, 'extra-value');
       },
     });
+    agent.setConfig({ model });
+    agent.setRequester(requester);
     const first = turnDone(agent);
     agent.submit(createUserMessage('run'));
     await first;
@@ -257,28 +259,31 @@ describe('feature DSL', () => {
     const requester: LlmRequester = { generate: async () => {} };
     const installed = shallowRef([spec]);
     let store = await openGatedStore();
-    const mount = () => mountAgent({
-      store,
-      sessionId: 'sess',
-      agentId: 'agent-0',
-      branchId: 'main',
-      features: installed,
-      requester,
-      request: { config: { model } },
-    });
+    const mount = () => {
+      const handle = mountAgent({
+        store,
+        sessionId: 'sess',
+        agentId: 'agent-0',
+        branchId: 'main',
+        features: installed,
+      });
+      handle.setConfig({ model });
+      handle.setRequester(requester);
+      return handle;
+    };
     const first = mount();
     await first.ready();
-    await first.node.resolve(Counter).write({ count: 3, lastWriteTurn: 1 });
+    await first.resolve(Counter).write({ count: 3, lastWriteTurn: 1 });
     installed.value = [];
     await first.ready();
-    expect(() => first.node.resolve(Counter)).toThrow('no provider');
+    expect(() => first.resolve(Counter)).toThrow('no provider');
     installed.value = [spec];
     await first.ready();
-    expect([first.node.resolve(Counter).count.value, first.node.resolve(Counter).lastWriteTurn.value]).toEqual([3, 1]);
+    expect([first.resolve(Counter).count.value, first.resolve(Counter).lastWriteTurn.value]).toEqual([3, 1]);
     await first.disposeAsync();
     const restored = mount();
     await restored.ready();
-    const face = restored.node.resolve(Counter);
+    const face = restored.resolve(Counter);
     expect([face.count.value, face.lastWriteTurn.value]).toEqual([3, 1]);
     const observations: number[][] = [];
     watch(() => [face.count.value, face.lastWriteTurn.value] as const, (state) => { observations.push([...state]); });
@@ -304,7 +309,7 @@ describe('feature DSL', () => {
     store = await openGatedStore();
     const recovered = mount();
     await recovered.ready();
-    const recoveredFace = recovered.node.resolve(Counter);
+    const recoveredFace = recovered.resolve(Counter);
     expect([recoveredFace.count.value, recoveredFace.lastWriteTurn.value]).toEqual([5, 2]);
     await recoveredFace.write({ count: 6 });
     expect(recoveredFace.count.value).toBe(6);
@@ -313,7 +318,7 @@ describe('feature DSL', () => {
     store = await openGatedStore();
     const again = mount();
     await again.ready();
-    expect([again.node.resolve(Counter).count.value, again.node.resolve(Counter).lastWriteTurn.value]).toEqual([6, 2]);
+    expect([again.resolve(Counter).count.value, again.resolve(Counter).lastWriteTurn.value]).toEqual([6, 2]);
     await again.disposeAsync();
     await store.close();
   });

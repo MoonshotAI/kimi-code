@@ -58,6 +58,7 @@ export interface UnitHandle {
   readonly name: string;
   readonly state: UnitState;
   readonly node: NodeRef;
+  resolve<T>(token: Token<T>): T;
   update(props: unknown): void;
   ready(): Promise<void>;
   unmount(): Promise<void>;
@@ -427,6 +428,7 @@ export function handleFor(node: UnitNode): UnitHandle {
     get node() {
       return node;
     },
+    resolve: (token) => node.resolve(token),
     update(props: unknown) {
       if (node.state === 'unmounted' || node.state === 'failed') {
         return;

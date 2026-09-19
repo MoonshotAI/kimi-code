@@ -6,10 +6,11 @@ import {
   extractText,
   type AssistantEntry,
   type HistoryMessage,
+  type LlmCredentialProvider,
+  type LlmRequestConfig,
   type LlmRequester,
   type TokenUsage,
   type TurnOutput,
-  type TurnRequest,
 } from '@moonshot-ai/agent-core';
 import { createActor, waitFor } from '@moonshot-ai/agent-core/xstate2/index';
 
@@ -31,16 +32,21 @@ export type Summarize = (input: {
 }) => Promise<SummaryOutcome>;
 
 export interface CreateSummarizeOptions {
-  request: TurnRequest;
+  config: LlmRequestConfig;
   requester: LlmRequester;
+  credentialProvider?: LlmCredentialProvider;
+  systemPrompt?: string;
   maxShrinkAttempts?: number;
   timeoutMs?: number;
 }
 
 export function createSummarize(options: CreateSummarizeOptions): Summarize {
   const maxShrinkAttempts = options.maxShrinkAttempts ?? 3;
-  const turnLogic = createTurnMachine(createRequestActor(options.requester), {
+  const turnLogic = createTurnMachine(createRequestActor(() => options.requester), {
     getTools: () => [],
+    getConfig: () => options.config,
+    getCredentialProvider: () => options.credentialProvider,
+    getHostPrompt: () => options.systemPrompt,
   });
   return async ({ history, instruction, signal }) => {
     const instructionEntry = createUserEntry(
@@ -92,7 +98,7 @@ async function runSummaryTurn(
   signal: AbortSignal,
 ): Promise<TurnOutput> {
   const actor = createActor(turnLogic, {
-    input: { request: options.request, history, parentSignal: signal, maxSteps: 1 },
+    input: { history, parentSignal: signal, maxSteps: 1 },
   });
   actor.start();
   try {

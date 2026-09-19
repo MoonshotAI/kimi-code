@@ -1,6 +1,5 @@
 export { features } from './preset';
 
-export * from './harness';
 export * from './host/session';
 export * from './feature-http/index';
 export * from './features/todo/index';

@@ -6,7 +6,7 @@ import type { LlmRequester } from '#/llm/requester/requester';
 import { openBlobs, type Blobs } from '#/store/blob';
 import { MemoryBackend, Trees } from '#/store/tree';
 import { openSessionStores, type SessionStores } from '#/stores/session';
-import { createToken, inject, useExpose, ref, type Ref } from '#/kernel/index';
+import { createToken, inject, useExpose, useFire, ref, type Ref, type RuntimeEvent } from '#/kernel/index';
 import { createFeature, useAgentTools, useBlobs, useSession, useSessionStore } from '#/feature/index';
 import { mountApp, type AgentHandle } from '#/app/index';
 
@@ -51,13 +51,17 @@ describe('app-session-agent units', () => {
   it('assembles the three-tier unit tree and runs a real turn with isolated session features', async () => {
     const envA = await testStores();
     const envB = await testStores();
-    const bridged: string[] = [];
+    const seen: string[] = [];
     const appSpec = createFeature('app-probe', {
       app() {
         useExpose(AppCounter, { count: ref(0) });
       },
     });
-    const sessionSpec = createFeature('session-probe', {
+    interface ProbeReady extends RuntimeEvent {
+      readonly type: 'session-probe.ready';
+      readonly sessionId: string;
+    }
+    const sessionSpec = createFeature<ProbeReady>('session-probe', {
       session() {
         const appState = inject(AppCounter);
         const sessionStore = useSessionStore();
@@ -67,28 +71,33 @@ describe('app-session-agent units', () => {
           roster: () => sessionStore.getState().roster.agents,
           blobs: useBlobs(),
         });
-        bridged.push(useSession().sessionId);
+        useFire()({ type: 'session-probe.ready', sessionId: useSession().sessionId });
       },
     });
     const app = mountApp({ features: [appSpec, sessionSpec] });
     await app.ready();
-    app.node.resolve(AppCounter).count.value += 1;
-    expect(app.node.resolve(AppCounter).count.value).toBe(1);
-    const left = await app.create({ sessionId: 'left', stores: envA.stores, requester: createEchoRequester() });
-    const right = await app.create({ sessionId: 'right', stores: envB.stores, requester: createEchoRequester() });
+    app.on(sessionSpec, 'session-probe.ready', (event) => {
+      seen.push(event.sessionId);
+    });
+    app.resolve(AppCounter).count.value += 1;
+    expect(app.resolve(AppCounter).count.value).toBe(1);
+    const left = await app.create({ sessionId: 'left', stores: envA.stores });
+    const right = await app.create({ sessionId: 'right', stores: envB.stores });
     expect(app.list()).toEqual(['left', 'right']);
     expect(app.get('left')).toBe(left);
-    expect(bridged).toEqual(['left', 'right']);
-    expect(left.node.resolve(SessionCounter).blobs).toBe(envA.stores.blobs);
-    expect(right.node.resolve(SessionCounter).blobs).toBe(envB.stores.blobs);
-    left.node.resolve(SessionCounter).count.value += 1;
-    expect(left.node.resolve(SessionCounter).count.value).toBe(1);
-    expect(right.node.resolve(SessionCounter).count.value).toBe(0);
-    expect(left.node.resolve(SessionCounter).appCount.value).toBe(1);
-    expect(right.node.resolve(SessionCounter).appCount.value).toBe(1);
-    const agent = await left.create({ agentId: 'agent-0', request: { config: { model } } });
-    expect(left.node.resolve(SessionCounter).roster()).toEqual({ 'agent-0': 'agent-0' });
-    expect(right.node.resolve(SessionCounter).roster()).toEqual({});
+    expect(seen).toEqual(['left', 'right']);
+    expect(left.resolve(SessionCounter).blobs).toBe(envA.stores.blobs);
+    expect(right.resolve(SessionCounter).blobs).toBe(envB.stores.blobs);
+    left.resolve(SessionCounter).count.value += 1;
+    expect(left.resolve(SessionCounter).count.value).toBe(1);
+    expect(right.resolve(SessionCounter).count.value).toBe(0);
+    expect(left.resolve(SessionCounter).appCount.value).toBe(1);
+    expect(right.resolve(SessionCounter).appCount.value).toBe(1);
+    const agent = await left.create({ agentId: 'agent-0' });
+    agent.setConfig({ model });
+    agent.setRequester(createEchoRequester());
+    expect(left.resolve(SessionCounter).roster()).toEqual({ 'agent-0': 'agent-0' });
+    expect(right.resolve(SessionCounter).roster()).toEqual({});
     const done = turnDone(agent);
     agent.submit(createUserMessage('hello'));
     expect(await done).toContain('echo:hello');
@@ -103,15 +112,15 @@ describe('app-session-agent units', () => {
     });
     app.installFeature(extraSpec);
     await app.ready();
-    app.node.resolve(ExtraCounter).count.value = 7;
-    expect(app.node.resolve(ExtraCounter).count.value).toBe(7);
+    app.resolve(ExtraCounter).count.value = 7;
+    expect(app.resolve(ExtraCounter).count.value).toBe(7);
     expect(() => app.installFeature(extraSpec)).toThrow('already installed');
     expect(app.uninstallFeature(extraSpec)).toBe(true);
     await app.ready();
-    expect(() => app.node.resolve(ExtraCounter)).toThrow('no provider');
+    expect(() => app.resolve(ExtraCounter)).toThrow('no provider');
     app.installFeature(extraSpec);
     await app.ready();
-    expect(app.node.resolve(ExtraCounter).count.value).toBe(0);
+    expect(app.resolve(ExtraCounter).count.value).toBe(0);
     expect(app.uninstallFeature('extra')).toBe(true);
     expect(app.uninstallFeature('extra')).toBe(false);
     await app.disposeAsync();
@@ -119,7 +128,7 @@ describe('app-session-agent units', () => {
     expect(left.state).toBe('unmounted');
     expect(app.list()).toEqual([]);
     await expect(agent.ready()).rejects.toThrow('unmounted');
-    expect(() => app.node.resolve(AppCounter)).toThrow();
+    expect(() => app.resolve(AppCounter)).toThrow();
     await envA.stores.dispose();
     await envB.stores.dispose();
   });
@@ -162,8 +171,10 @@ describe('app-session-agent units', () => {
     });
     const env = await testStores();
     const app = mountApp({ features: [spec] });
-    const session = await app.create({ sessionId: 'sess', stores: env.stores, requester });
-    const agent = await session.create({ agentId: 'main', request: { config: { model } } });
+    const session = await app.create({ sessionId: 'sess', stores: env.stores });
+    const agent = await session.create({ agentId: 'main' });
+    agent.setConfig({ model });
+    agent.setRequester(requester);
     expect(session.list()).toEqual(['main']);
     expect(session.get('main')).toBe(agent);
     gate = Promise.withResolvers<void>();
@@ -191,7 +202,9 @@ describe('app-session-agent units', () => {
     const store = env.stores.get('main');
     await env.stores.flush();
     expect(store?.getState().history.some((entry) => extractText(entry.message) === 'note')).toBe(true);
-    const copy = await session.fork('main', { agentId: 'copy', request: { config: { model } } });
+    const copy = await session.fork('main', { agentId: 'copy' });
+    copy.setConfig({ model });
+    copy.setRequester(requester);
     expect(session.list()).toEqual(['main', 'copy']);
     const copyStore = env.stores.get('copy');
     expect(copyStore?.getState().history.some((entry) => extractText(entry.message) === 'go')).toBe(true);

@@ -7,6 +7,7 @@ import {
   createStaticCredentialProvider,
   googleProvider,
   openaiProvider,
+  requesterOf,
   type LlmCredentialProvider,
   type LlmModel,
   type LlmRequester,
@@ -66,27 +67,27 @@ export function loadKimiCodeDefault(): KimiCodeDefault {
   const thinking = thinkingOf(asRecord(root['thinking']), asString(entry['default_effort']));
   return {
     model,
-    requester: requesterOf(type, protocol),
+    requester: requesterFor(type, protocol),
     credentialProvider: createStaticCredentialProvider(apiKey),
     thinking,
     key,
   };
 }
 
-function requesterOf(type: string, protocol: string | undefined): LlmRequester {
+function requesterFor(type: string, protocol: string | undefined): LlmRequester {
   if (type === 'kimi') {
-    return kimiProvider.createRequester(protocol);
+    return requesterOf(kimiProvider, protocol);
   }
   if (type === 'anthropic') {
-    return anthropicProvider.createRequester();
+    return anthropicProvider.requesters.anthropic;
   }
   if (type === 'google-genai' || type === 'google') {
-    return googleProvider.createRequester();
+    return googleProvider.requesters['google-genai'];
   }
   if ((protocol ?? type) === 'openai_responses') {
-    return openaiProvider.createRequester('openai_responses');
+    return openaiProvider.requesters.openai_responses;
   }
-  return openaiProvider.createRequester('openai');
+  return openaiProvider.requesters.openai;
 }
 
 function capabilityOf(names: readonly string[]): ModelCapability {

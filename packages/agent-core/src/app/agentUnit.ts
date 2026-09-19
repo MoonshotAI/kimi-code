@@ -14,7 +14,7 @@ import {
   type CreateAgentMachineOptions,
   type PromptGate,
 } from '#/agent-machine/agent';
-import type { CreateTurnMachineOptions, TurnRequest } from '#/agent-machine/turn';
+import type { CreateTurnMachineOptions } from '#/agent-machine/turn';
 import type { AgentLogEvent, AgentStore } from '#/stores/agent';
 import {
   createSystemEntry,
@@ -24,7 +24,7 @@ import {
   type UserMessage,
   type UserMeta,
 } from '#/llm/message';
-import type { LlmRequester } from '#/llm/requester/requester';
+import type { LlmCredentialProvider, LlmRequestConfig, LlmRequester } from '#/llm/requester/requester';
 import type { LlmRetryOptions } from '#/llm/requester/retry';
 import {
   createUnit,
@@ -112,8 +112,7 @@ export interface AgentUnitProps {
   readonly agentId: string;
   readonly store: AgentStore;
   readonly branchId?: string;
-  readonly request: TurnRequest;
-  readonly requester: LlmRequester;
+  readonly systemPrompt?: string;
   readonly features?: MaybeRefOrGetter<readonly FeatureSpec[]>;
   readonly provide?: (node: NodeRef) => void;
   readonly machineOptions?: Omit<CreateAgentMachineOptions, 'turnLogic' | 'toolLogic'>;
@@ -127,6 +126,10 @@ export type AgentSnapshot = SnapshotFrom<ReturnType<typeof createAgentMachine>>;
 export interface AgentCommands {
   readonly agentId: string;
   readonly snapshot: Ref<AgentSnapshot | undefined>;
+  readonly config: LlmRequestConfig | undefined;
+  setRequester(requester: LlmRequester): void;
+  setConfig(config: LlmRequestConfig): void;
+  setCredentialProvider(provider?: LlmCredentialProvider): void;
   submit(message: UserMessage, meta?: UserMeta): void;
   notify(message: UserMessage): void;
   remind(key: string, message: UserMessage | SystemMessage): void;
@@ -148,10 +151,18 @@ export interface AgentHandle extends UnitHandle, AgentCommands {
 export const AgentUnit = createUnit<AgentUnitProps>('agent', (props) => {
   const node = useNode();
   const ports = createAgentPorts();
+  let requester: LlmRequester | undefined;
+  let config: LlmRequestConfig | undefined;
+  let credentialProvider: LlmCredentialProvider | undefined;
   const { turnLogic, toolLogic } = bindAgentLogics(
     ports,
-    props.requester,
-    props.turnOptions,
+    () => requester,
+    {
+      ...props.turnOptions,
+      getConfig: () => config,
+      getCredentialProvider: () => credentialProvider,
+      getHostPrompt: () => props.systemPrompt,
+    },
     props.retry,
   );
   const restored = props.store.getState();
@@ -162,7 +173,6 @@ export const AgentUnit = createUnit<AgentUnitProps>('agent', (props) => {
       start: false,
       fire: false,
       input: {
-        request: props.request,
         promptGate: bindPromptGate(ports, props.promptGate),
         messages: restored.history,
         notifications: restored.notifications,
@@ -180,6 +190,18 @@ export const AgentUnit = createUnit<AgentUnitProps>('agent', (props) => {
   const commands: AgentCommands = {
     agentId: props.agentId,
     snapshot,
+    get config() {
+      return config;
+    },
+    setRequester: (next) => {
+      requester = next;
+    },
+    setConfig: (next) => {
+      config = next;
+    },
+    setCredentialProvider: (next) => {
+      credentialProvider = next;
+    },
     submit: (message, meta) => send({ type: 'input.submit', entry: { message, meta } }),
     notify: (message) => send({ type: 'input.notify', entry: { message } }),
     remind: (key, message) => send({
@@ -235,12 +257,17 @@ export function agentHandle(handle: UnitHandle): AgentHandle {
     get name() { return handle.name; },
     get state() { return handle.state; },
     node: handle.node,
+    resolve: (token) => handle.resolve(token),
     update: (props) => handle.update(props),
     ready: () => handle.ready(),
     unmount: () => handle.unmount(),
     disposeAsync: () => handle.unmount(),
     get agentId() { return commands().agentId; },
     get snapshot() { return commands().snapshot; },
+    get config() { return commands().config; },
+    setRequester: (requester) => commands().setRequester(requester),
+    setConfig: (config) => commands().setConfig(config),
+    setCredentialProvider: (provider) => commands().setCredentialProvider(provider),
     submit: (message, meta) => commands().submit(message, meta),
     notify: (message) => commands().notify(message),
     remind: (key, message) => commands().remind(key, message),

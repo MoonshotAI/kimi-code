@@ -27,5 +27,5 @@ if (args !== undefined) {
   process.on('SIGINT', onSignal);
   process.on('SIGTERM', onSignal);
   await app.ready();
-  process.stdout.write(`${key} ${app.node.resolve(HttpRef).origin ?? ''} ${dataRoot}\n`);
+  process.stdout.write(`${key} ${app.resolve(HttpRef).origin ?? ''} ${dataRoot}\n`);
 }

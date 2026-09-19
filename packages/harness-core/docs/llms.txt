@@ -1,0 +1,46 @@
+# Harness Core
+
+一份文档。先读 [README](README.md)。how-to 1–7 是产品路径。
+
+## 产品 how-to
+
+- [1 跑完一个 turn](how-to-guides/01-run-a-turn.md)
+- [2 Todo Feature](how-to-guides/02-add-todo-feature.md)
+- [3 听事件并触发请求](how-to-guides/03-listen-and-trigger.md)
+- [4 暴露 facade](how-to-guides/04-expose-facade.md)
+- [5 可后台 Tool](how-to-guides/05-background-tool.md)
+- [6 Bash 与 detach](how-to-guides/06-bash-and-detach.md)
+- [7 provider-catalog](how-to-guides/07-use-provider-catalog.md)
+
+## 配套
+
+- [HistoryMessage 与 Delta](reference/history-message.md)
+- [事件表](reference/events.md)
+- [贡献 hook](reference/contribution-hooks.md)
+- [Agent 状态机](explanation/agent-machine.md)
+- [Store 模型](explanation/store-model.md)
+- [provider-catalog](explanation/provider-catalog.md)
+- [总览](explanation/overview.md)
+- [Feature 模型](explanation/feature-model.md)
+- [源码地图](reference/source-map.md)
+- [HTTP](getting-started.md)
+
+## 其余 how-to（8–19）
+
+- [8 开发 Feature](how-to-guides/08-develop-feature.md)
+- [9 bootstrap](how-to-guides/09-bootstrap.md) · [10 异步就绪](how-to-guides/10-async-initialization.md)
+- [11 兄弟状态](how-to-guides/11-sibling-state.md) · [12 兄弟事件](how-to-guides/12-sibling-events.md)
+- [13 Feature 路由](how-to-guides/13-feature-gated-routes.md)
+- [14 media](how-to-guides/14-install-media.md) · [15 LLM 请求](how-to-guides/15-run-llm-request.md)
+- [16 清理](how-to-guides/16-cleanup-resources.md) · [17 Store 配方](how-to-guides/17-recipes.md)
+- [18 钩子](how-to-guides/18-hooks.md) · [19 fromCallback](how-to-guides/19-from-callback.md)
+
+## 运行时原语
+
+- [Unit 树](explanation/unit-tree.md) · [setup 边界](reference/setup-context.md) · [命名](reference/naming.md)
+- [createUnit](reference/create-unit.md) · [mountRoot](reference/mount-root.md) · [Handle](reference/node-handle.md)
+- [provide](reference/provide.md) · [inject](reference/inject.md) · [useExpose](reference/use-expose.md)
+- [useFire](reference/use-fire.md) · [useOn](reference/use-on.md) · [useChildren](reference/use-children.md)
+- [protocol](reference/protocol.md) · [openStore](reference/open-store.md)
+- [drivers](reference/drivers.md) · [blobs](reference/blobs.md) · [domain](reference/domain.md)
+- [XState 生命周期](explanation/lifecycle-model.md)

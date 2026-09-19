@@ -6,14 +6,13 @@ import {
   openAIResponsesBase,
   type AccessTokenResolver,
   type LlmCredentialProvider,
-  type Provider,
 } from '@moonshot-ai/agent-core';
 
 import { classifyKimiQuotaError } from './errors';
 import { kimiMediaContribution } from './media';
 import { kimiAnthropicTrait, kimiConnection, kimiOpenAITrait } from './trait';
 
-export function createKimiProvider(): Provider {
+export function createKimiProvider() {
   return createProvider({
     id: 'kimi',
     protocols: {

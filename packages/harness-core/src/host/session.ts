@@ -4,12 +4,12 @@ import {
   openSessionContainer,
   useApp,
   type AppCommands,
+  type AppHandle,
   type CreateAgentProps,
   type CreateSessionProps,
-  type LlmRequester,
   type SessionHandle,
 } from '@moonshot-ai/agent-core';
-import { createToken, inject } from '@moonshot-ai/agent-core/kernel/index';
+import { createToken, inject, type NodeRef } from '@moonshot-ai/agent-core/kernel/index';
 
 import {
   type SessionRecord,
@@ -39,14 +39,11 @@ export type CreateSession = (input: OpenSessionInput) => Promise<SessionHandle>;
 
 export type UpdateSession = (id: string, patch: SessionRecordDraft) => Promise<SessionRecord>;
 
-export interface HarnessSessionBind {
-  readonly requester: LlmRequester;
+export interface SessionBind {
   readonly agent?: CreateAgentProps | ((input: OpenSessionInput) => CreateAgentProps | undefined);
 }
 
 export const SessionSpaceRef = createToken<SessionSpace>('harness.sessionSpace');
-
-export const HarnessSessionBindRef = createToken<HarnessSessionBind>('harness.sessionBind');
 
 export const OpenSessionRef = createToken<OpenSession>('harness.openSession');
 
@@ -62,7 +59,7 @@ export function useCreateSession(): CreateSession {
   const app = useApp();
   const space = useSessionSpace();
   const openSession = useOpenSession();
-  return (input) => createOpenedSession(app, space, openSession, input);
+  return (input) => openSessionWith(app, space, openSession, input);
 }
 
 export function useUpdateSession(): UpdateSession {
@@ -71,7 +68,16 @@ export function useUpdateSession(): UpdateSession {
   return (id, patch) => updateSessionRecord(app, space, id, patch);
 }
 
-export function bindOpenSession(space: SessionSpace, bind: HarnessSessionBind): OpenSession {
+export function provideSession(
+  node: NodeRef,
+  space: SessionSpace,
+  bind: SessionBind = {},
+): void {
+  node.provide(SessionSpaceRef, space);
+  node.provide(OpenSessionRef, bindOpenSession(space, bind));
+}
+
+export function bindOpenSession(space: SessionSpace, bind: SessionBind): OpenSession {
   return async (input) => {
     const sessionId = input.from !== undefined || input.sessionId === undefined
       ? input.sessionId ?? randomUUID()
@@ -81,13 +87,19 @@ export function bindOpenSession(space: SessionSpace, bind: HarnessSessionBind): 
     return {
       sessionId,
       stores: opened.stores,
-      requester: bind.requester,
       agent: resolveAgent(bind.agent, input),
     };
   };
 }
 
 export async function createOpenedSession(
+  app: AppHandle,
+  input: OpenSessionInput = {},
+): Promise<SessionHandle> {
+  return openSessionWith(app, app.resolve(SessionSpaceRef), app.resolve(OpenSessionRef), input);
+}
+
+async function openSessionWith(
   app: AppCommands,
   space: SessionSpace,
   openSession: OpenSession,
@@ -163,7 +175,7 @@ function draftOf(input: OpenSessionInput): SessionRecordDraft | undefined {
 }
 
 function resolveAgent(
-  agent: HarnessSessionBind['agent'],
+  agent: SessionBind['agent'],
   input: OpenSessionInput,
 ): CreateAgentProps | undefined {
   if (agent === undefined) {

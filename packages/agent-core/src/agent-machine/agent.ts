@@ -30,11 +30,9 @@ import {
   type TurnLlmEvent,
   type TurnLogic,
   type TurnOutput,
-  type TurnRequest,
 } from './turn';
 
 export interface AgentInput {
-  request: TurnRequest;
   promptGate?: PromptGate;
   messages?: HistoryMessage[];
   notifications?: UserEntry[];
@@ -173,7 +171,6 @@ interface ToolEntry {
 
 export interface AgentMachineContext {
   input: AgentInput;
-  request: TurnRequest;
   promptGate?: PromptGate;
   messages: HistoryMessage[];
   turnTools: Record<string, ToolEntry>;
@@ -407,7 +404,6 @@ export function createAgentMachine({
     initial: 'idle',
     context: ({ input }) => ({
       input,
-      request: input.request,
       promptGate: input.promptGate,
       messages: input.messages ?? [],
       turnTools: {},
@@ -636,7 +632,6 @@ export function createAgentMachine({
           id: 'turn',
           src: 'turnActor',
           input: ({ context }) => ({
-            request: context.request,
             history: context.messages,
             maxSteps: maxStepsPerTurn,
             parentSignal: context.scope.signal,

@@ -47,14 +47,15 @@ function mountTestAgent(
   store: AgentStore,
   opts: { agentId: string; branchId?: string; requester?: LlmRequester },
 ): AgentHandle {
-  return mountAgent({
+  const handle = mountAgent({
     sessionId: 'sess',
     agentId: opts.agentId,
     store,
     branchId: opts.branchId,
-    request: { config: { model } },
-    requester: opts.requester ?? createEchoRequester(),
   });
+  handle.setConfig({ model });
+  handle.setRequester(opts.requester ?? createEchoRequester());
+  return handle;
 }
 
 async function startAgent(

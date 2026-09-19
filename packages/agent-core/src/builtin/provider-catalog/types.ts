@@ -75,7 +75,7 @@ export interface ProviderCatalogPersist {
 export interface CatalogModelBinding {
   readonly providerId: string;
   readonly model: CatalogModel;
-  createRequester(): LlmRequester;
+  readonly requester: LlmRequester;
 }
 
 export interface ProviderContribution {

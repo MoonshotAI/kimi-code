@@ -1,4 +1,4 @@
-import { createFeature, useAgent, type LlmModel } from '@moonshot-ai/agent-core';
+import { createFeature, useAgent } from '@moonshot-ai/agent-core';
 import { createToken, shallowRef, useExpose, type Ref } from '@moonshot-ai/agent-core/kernel/index';
 
 import { accumulateUsage, emptyUsageSummary, type UsageRecord, type UsageSummary } from './usage';
@@ -20,7 +20,7 @@ export const usage = createFeature('usage', {
       currentTurnId = event.turnId;
     });
     agent.on('llm.streaming.usage', (event) => {
-      const model = agent.snapshot.value?.context.request.config.model as LlmModel | undefined;
+      const model = agent.config?.model;
       const record: UsageRecord = {
         usage: event.usage,
         model,

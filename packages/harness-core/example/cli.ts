@@ -5,16 +5,15 @@ import {
   createUserMessage,
   MAIN_AGENT_ID,
   type AssistantMessage,
+  type SessionHandle,
 } from '@moonshot-ai/agent-core';
-import type { NodeRef, RuntimeEvent } from '@moonshot-ai/agent-core/kernel/index';
+import type { RuntimeEvent } from '@moonshot-ai/agent-core/kernel/index';
 
 import {
   createOpenedSession,
   InteractionRef,
-  OpenSessionRef,
-  SessionSpaceRef,
+  interaction,
   type Interaction,
-  type InteractionRequestedEvent,
   type QuestionItem,
 } from '@moonshot-ai/harness-core';
 
@@ -64,7 +63,7 @@ export function parseCliArgs(argv: readonly string[]): CliArgs | undefined {
 }
 
 export async function runCli(args: CliArgs): Promise<void> {
-  const { app, key, dataRoot } = mountExample({ http: false });
+  const { app, space, key, dataRoot } = mountExample({ http: false });
   const onSignal = (): void => {
     process.off('SIGINT', onSignal);
     process.off('SIGTERM', onSignal);
@@ -74,14 +73,11 @@ export async function runCli(args: CliArgs): Promise<void> {
   process.on('SIGTERM', onSignal);
   try {
     await app.ready();
-    const space = app.node.resolve(SessionSpaceRef);
     if (args.sessionId !== undefined && (await space.get(args.sessionId)) === undefined) {
       throw new Error(`session ${args.sessionId} does not exist`);
     }
     const session = await createOpenedSession(
       app,
-      space,
-      app.node.resolve(OpenSessionRef),
       args.sessionId === undefined ? {} : { sessionId: args.sessionId },
     );
     const agent = session.get(MAIN_AGENT_ID);
@@ -90,23 +86,22 @@ export async function runCli(args: CliArgs): Promise<void> {
     }
     const store = join(dataRoot, session.sessionId);
     writeSession({ sessionId: session.sessionId, model: key, store }, args.json);
-    const interactions = session.node.resolve(InteractionRef);
+    const interactions = session.resolve(InteractionRef);
     const promptOut = args.json ? process.stderr : process.stdout;
-    const offQuestion = session.node.on('interaction.requested', (event) => {
-      const requested = event as InteractionRequestedEvent;
+    const offQuestion = session.on(interaction, 'interaction.requested', (event) => {
       const rl = createInterface({ input: process.stdin, output: promptOut });
-      void answerInteraction(rl, requested.interaction, promptOut)
+      void answerInteraction(rl, event.interaction, promptOut)
         .then((response) => {
-          interactions.respond(requested.interaction.id, response);
+          interactions.respond(event.interaction.id, response);
         })
         .finally(() => {
           rl.close();
         });
     });
-    const offEvents = session.node.on('*', (event) => {
+    const offEvents = session.on('*', (event) => {
       writeDomain(event, args.json);
     });
-    const finished = waitTurn(session.node);
+    const finished = waitTurn(session);
     agent.submit(createUserMessage(args.prompt), {
       origin: { kind: 'user' },
       tracked: true,
@@ -263,9 +258,9 @@ function usage(): string {
   return 'usage: example -p <prompt> [-c <session-id>] [--json]';
 }
 
-function waitTurn(node: NodeRef): Promise<void> {
+function waitTurn(session: SessionHandle): Promise<void> {
   return new Promise((resolve, reject) => {
-    const off = node.on('turn.ended', (event) => {
+    const off = session.on('turn.ended', (event) => {
       off();
       const outcome = event['outcome'];
       if (outcome === 'done') {

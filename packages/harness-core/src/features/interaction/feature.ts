@@ -8,7 +8,7 @@ import {
   useNode,
 } from '@moonshot-ai/agent-core/kernel/index';
 
-import { openInteractions, type Interactions } from './interaction';
+import { openInteractions, type InteractionEvent, type Interactions } from './interaction';
 import { createAskUserQuestionTool } from './tool';
 
 export const InteractionRef = createToken<Interactions>('interaction');
@@ -17,7 +17,7 @@ export function useInteractions(): Interactions {
   return inject(InteractionRef);
 }
 
-export const interaction = createFeature('interaction', {
+export const interaction = createFeature<InteractionEvent>('interaction', {
   session() {
     const fire = useFire();
     const interactions = openInteractions({ fire });

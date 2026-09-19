@@ -53,12 +53,11 @@ function stubProvider(
 ): Provider {
   return {
     id,
-    protocols: ['openai'],
+    requesters: { openai: requester },
     listModels,
     resolveModel: () => {
       throw new Error('unused');
     },
-    createRequester: () => requester,
   };
 }
 
@@ -79,7 +78,7 @@ async function mountCatalog(extra?: ReturnType<typeof createFeature>): Promise<{
   });
   await app.ready();
   return {
-    catalog: app.node.resolve(ProviderCatalogRef),
+    catalog: app.resolve(ProviderCatalogRef),
     models: () => app.node.fold(CatalogModels),
     dispose: () => app.disposeAsync(),
   };
@@ -118,7 +117,7 @@ describe('providerCatalog feature', () => {
     );
     await until(() => catalog.models('test').length === 1);
     await until(() => models().some((item) => item.model.model === 'm1'));
-    expect(catalog.resolve('test', 'm1')?.createRequester()).toBe(requester);
+    expect(catalog.resolve('test', 'm1')?.requester).toBe(requester);
 
     catalog.ping('test', 'm1');
     await until(() => catalog.models('test').at(0)?.pingError === 'boom');
@@ -154,11 +153,11 @@ describe('providerCatalog feature', () => {
     catalog.ping('test', 'm1');
 
     await until(() => catalog.models('test').at(0)?.pingError === 'second');
-    expect(catalog.resolve('test', 'm1')?.createRequester()).toBeDefined();
+    expect(catalog.resolve('test', 'm1')?.requester).toBeDefined();
     await dispose();
   });
 
-  it('carries the model protocol flags into ping and createRequester', async () => {
+  it('carries the model protocol flags into ping and requester', async () => {
     const seen: LlmModel[] = [];
     const requester: LlmRequester = {
       generate: (config) => {
@@ -168,12 +167,11 @@ describe('providerCatalog feature', () => {
     };
     const provider: Provider = {
       id: 'test',
-      protocols: ['anthropic'],
+      requesters: { anthropic: requester },
       listModels: () => Promise.resolve([]),
       resolveModel: () => {
         throw new Error('unused');
       },
-      createRequester: () => requester,
     };
     const { catalog, dispose } = await mountCatalog();
     catalog.upsert({
@@ -184,7 +182,7 @@ describe('providerCatalog feature', () => {
     catalog.ping('test', 'm1');
     await until(() => seen.length > 0);
     expect(seen[0]?.betaApi).toBe(true);
-    expect(catalog.resolve('test', 'm1')?.createRequester()).toBe(requester);
+    expect(catalog.resolve('test', 'm1')?.requester).toBe(requester);
     await dispose();
   });
 

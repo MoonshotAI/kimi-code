@@ -213,12 +213,11 @@ export function createCompactionController(deps: CompactionControllerDeps): Comp
 
   const onBeforeStep: TurnBeforeStep = async ({
     messages,
-    request,
     tools,
     systemPrompt,
   }: TurnBeforeStepContext) => {
     const used = usedContextTokens(messages, {
-      systemPrompt: systemPrompt ?? request.systemPrompt,
+      systemPrompt,
       tools,
     });
     if (!budgetExceeded(used)) return;
