@@ -68,9 +68,8 @@ export class ChangeEnvironmentTool implements IChangeEnvironmentTool {
     environmentId: string,
     cwd: string | undefined,
   ): Promise<ExecutableToolResult> {
-    const previous = this.binding.current.environmentId;
     try {
-      await this.binding.connectAndSwitchAtTurnBoundary(environmentId, cwd);
+      await this.binding.connectAndSwitchInTurn(environmentId, cwd);
     } catch (error) {
       if (error instanceof EnvironmentError) {
         return { output: error.message, isError: true };
@@ -78,20 +77,10 @@ export class ChangeEnvironmentTool implements IChangeEnvironmentTool {
       throw error;
     }
     const workDir = cwd ?? this.session.cwd;
-    const current = this.binding.current;
-    if (current.environmentId === environmentId && current.cwd === cwd) {
-      return {
-        output:
-          `Environment switched to "${environmentId}" (working directory ${workDir}). ` +
-          `Subsequent tool calls in this turn execute on "${environmentId}".`,
-      };
-    }
     return {
       output:
-        `Environment switch to "${environmentId}" scheduled (working directory ${workDir}). ` +
-        `Other tool calls are still executing on "${previous}"; from the next turn, tool calls execute on "${environmentId}". ` +
-        'A reminder with the new environment details is queued for the next turn. ' +
-        'Finish any work that depends on the previous environment now, or end your turn.',
+        `Environment switched to "${environmentId}" (working directory ${workDir}). ` +
+        `Subsequent tool calls in this turn execute on "${environmentId}".`,
     };
   }
 
