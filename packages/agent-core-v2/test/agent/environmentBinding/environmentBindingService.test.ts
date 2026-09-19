@@ -32,6 +32,7 @@ import type { IConfigService } from '#/app/config/config';
 import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import type { IAgentLoopService } from '#/agent/loop/loop';
 import type { IAgentReminderService } from '#/features/reminder/reminderService';
+import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -1797,6 +1798,7 @@ interface WireUndoHarness {
   readonly binding: AgentEnvironmentBindingService;
   readonly dispatcher: IEventDispatcher;
   readonly wire: IWireService;
+  readonly registry: EnvironmentRegistry;
   readonly appendLogRecords: WireRecord[];
   readonly participant: { reconcileAfterUndo(): Promise<void> };
   readonly context?: IAgentContextMemoryService;
@@ -1811,7 +1813,7 @@ interface WireUndoHarness {
   readonly dispose: () => Promise<void>;
 }
 
-function wireUndoSetup(options: { readonly withUndo?: boolean; readonly journal?: readonly WireRecord[] } = {}): WireUndoHarness {
+function wireUndoSetup(options: { readonly withUndo?: boolean; readonly withContextReminders?: boolean; readonly journal?: readonly WireRecord[] } = {}): WireUndoHarness {
   const registry = new EnvironmentRegistry('workspace');
   registry.register(environment('local', 'local-one', 'ready', ['fs', 'process'], LOCAL_HOST));
   const remote = environment('remote', 'remote-one', 'ready', ['fs', 'process'], REMOTE_HOST);
@@ -1845,7 +1847,6 @@ function wireUndoSetup(options: { readonly withUndo?: boolean; readonly journal?
   const workspaceContext = stubWorkspaceContext(session.cwd, workDirWrites);
   const scopeContext = stubScopeContext('main');
   const reminders: { content: string; variant: string }[] = [];
-  const reminder = stubReminder(reminders);
   const loopState: WireUndoHarness['loopState'] = { turn: undefined };
   const loop = stubLoop(loopState);
   const busHandlers = new Map<string, ((event: { readonly agentId?: string }) => void)[]>();
@@ -1871,22 +1872,6 @@ function wireUndoSetup(options: { readonly withUndo?: boolean; readonly journal?
     },
     list: () => (participant === undefined ? [] : [participant]),
   } as unknown as IAgentConversationUndoParticipantRegistry;
-  const binding = new AgentEnvironmentBindingService(
-    scopeContext,
-    agentState,
-    { _serviceBrand: undefined, binding: { workspaceId: 'workspace', environmentId: 'local' } },
-    session,
-    workspaceContext,
-    registryResolver(registry),
-    dispatcher,
-    eventBus,
-    loop,
-    reminder,
-    declarationService(registry, appendLog),
-    noopLogger,
-    undoParticipants,
-    stubBootstrap(),
-  );
   const tokenCounting = {
     _serviceBrand: undefined,
     recordTruncation: () => {},
@@ -1896,9 +1881,25 @@ function wireUndoSetup(options: { readonly withUndo?: boolean; readonly journal?
   } as unknown as ISessionTokenCountingService;
   let context: AgentContextMemoryService | undefined;
   let undo: AgentConversationUndoService | undefined;
+  let reminder = stubReminder(reminders);
   if (options.withUndo === true) {
     (ix.get(IEventBus) as EventBusService).activateAgent(ixScopeContext.agentContext);
     context = new AgentContextMemoryService(dispatcher, scopeContext, tokenCounting, agentState);
+    if (options.withContextReminders === true) {
+      const contextMemory = context;
+      reminder = {
+        _serviceBrand: undefined,
+        notify: (content: string, notification: { variant: string; ownerPromptId?: string }) => {
+          reminders.push({ content, variant: notification.variant });
+          contextMemory.append({
+            role: 'user',
+            content: [{ type: 'text', text: wrapSystemReminder(content) }],
+            toolCalls: [],
+            origin: { kind: 'injection', variant: notification.variant, ownerPromptId: notification.ownerPromptId },
+          });
+        },
+      } as unknown as IAgentReminderService;
+    }
     undo = new AgentConversationUndoService(
       loop.current as IAgentLoopService,
       { _serviceBrand: undefined, compacting: null } as unknown as IAgentFullCompactionService,
@@ -1916,12 +1917,29 @@ function wireUndoSetup(options: { readonly withUndo?: boolean; readonly journal?
       noopLogger,
     );
   }
+  const binding = new AgentEnvironmentBindingService(
+    scopeContext,
+    agentState,
+    { _serviceBrand: undefined, binding: { workspaceId: 'workspace', environmentId: 'local' } },
+    session,
+    workspaceContext,
+    registryResolver(registry),
+    dispatcher,
+    eventBus,
+    loop,
+    reminder,
+    declarationService(registry, appendLog),
+    noopLogger,
+    undoParticipants,
+    stubBootstrap(),
+  );
   const changes: EnvironmentBinding[] = [];
   binding.onDidChange((next) => changes.push(next));
   return {
     binding,
     dispatcher,
     wire,
+    registry,
     appendLogRecords,
     participant: {
       reconcileAfterUndo: async () => {
@@ -2146,6 +2164,148 @@ describe('AgentEnvironmentBindingService conversation undo over the real wire', 
         ),
       ).toHaveLength(1);
       expect(harness.appendLogRecords.at(-1)).toMatchObject({ type: 'environment.set_binding', environmentId: 'local' });
+    } finally {
+      await harness.dispose();
+    }
+  });
+});
+
+function contextReminderTexts(context: IAgentContextMemoryService, marker: string): string[] {
+  return context.get()
+    .filter((message) => message.origin?.kind === 'injection')
+    .map((message) => message.content.map((part) => (part.type === 'text' ? part.text : '')).join(''))
+    .filter((text) => text.includes(marker));
+}
+
+async function switchEnvironmentInTurn(harness: WireUndoHarness, text: string, turnId: number): Promise<void> {
+  await harness.dispatcher.dispatch(
+    new ContextAppendMessage({
+      agentId: 'main',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    }),
+  );
+  harness.loopState.turn = { turnId, phase: 'running', step: 1, activeToolCalls: [{ toolCallId: `call-${turnId}`, name: 'change_environment' }] };
+  await harness.binding.connectAndSwitchAtTurnBoundary('remote', '/remote/work');
+  harness.loopState.turn = undefined;
+}
+
+describe('AgentEnvironmentBindingService reminder context across undo', () => {
+  it('evicts the in-turn switch reminder from the model context when the turn is undone', async () => {
+    const harness = wireUndoSetup({ withUndo: true, withContextReminders: true });
+    if (harness.context === undefined || harness.undo === undefined) throw new Error('undo harness incomplete');
+    const { context, undo } = harness;
+    try {
+      await harness.wire.seal();
+      await harness.dispatcher.restore();
+      await switchEnvironmentInTurn(harness, 'switch the environment', 1);
+      expect(contextReminderTexts(context, 'The active environment is now')).toHaveLength(1);
+      expect(contextReminderTexts(context, 'The active environment is now')[0]).toContain('"remote"');
+
+      await undo.undo(1);
+
+      expect(harness.binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+      const envReminders = contextReminderTexts(context, 'The active environment is now');
+      expect(envReminders).toHaveLength(1);
+      expect(envReminders[0]).toContain('"local"');
+    } finally {
+      await harness.dispose();
+    }
+  });
+
+  it('does not accumulate environment reminders across repeated switch and undo cycles', async () => {
+    const harness = wireUndoSetup({ withUndo: true, withContextReminders: true });
+    if (harness.context === undefined || harness.undo === undefined) throw new Error('undo harness incomplete');
+    const { context, undo } = harness;
+    try {
+      await harness.wire.seal();
+      await harness.dispatcher.restore();
+
+      await switchEnvironmentInTurn(harness, 'first switch', 1);
+      await undo.undo(1);
+      await switchEnvironmentInTurn(harness, 'second switch', 2);
+      await undo.undo(1);
+
+      expect(harness.binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+      const envReminders = contextReminderTexts(context, 'The active environment is now');
+      expect(envReminders).toHaveLength(1);
+      expect(envReminders[0]).toContain('"local"');
+    } finally {
+      await harness.dispose();
+    }
+  });
+
+  it('evicts an out-of-turn switch reminder from the model context when the preceding turn is undone', async () => {
+    const harness = wireUndoSetup({ withUndo: true, withContextReminders: true });
+    if (harness.context === undefined || harness.undo === undefined) throw new Error('undo harness incomplete');
+    const { context, undo } = harness;
+    try {
+      await harness.wire.seal();
+      await harness.dispatcher.restore();
+      await harness.dispatcher.dispatch(
+        new ContextAppendMessage({
+          agentId: 'main',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'do some work' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+        }),
+      );
+      await harness.binding.connectAndSwitch('remote', '/remote/work');
+      expect(contextReminderTexts(context, 'The active environment is now')[0]).toContain('"remote"');
+
+      await undo.undo(1);
+
+      expect(harness.binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+      const envReminders = contextReminderTexts(context, 'The active environment is now');
+      expect(envReminders).toHaveLength(1);
+      expect(envReminders[0]).toContain('"local"');
+    } finally {
+      await harness.dispose();
+    }
+  });
+
+  it('evicts a stale project context reminder from an undone view once a new view is probed', async () => {
+    const harness = wireUndoSetup({ withUndo: true, withContextReminders: true });
+    if (harness.context === undefined || harness.undo === undefined) throw new Error('undo harness incomplete');
+    const { context, undo } = harness;
+    try {
+      harness.registry.register(probingEnvironment('remote-a', REMOTE_HOST, probeFs({ '/remote/a/AGENTS.md': 'a instructions' }, ['/remote/a/.git'])));
+      harness.registry.register(probingEnvironment('remote-b', REMOTE_HOST, probeFs({ '/remote/b/AGENTS.md': 'b instructions' }, ['/remote/b/.git'])));
+      await harness.wire.seal();
+      await harness.dispatcher.restore();
+
+      await harness.dispatcher.dispatch(
+        new ContextAppendMessage({
+          agentId: 'main',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'switch to a' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+        }),
+      );
+      harness.binding.switch('remote-a', '/remote/a');
+      await flushProbe();
+      expect(contextReminderTexts(context, 'The active project context is now')[0]).toContain('"remote-a"');
+
+      await undo.undo(1);
+      harness.binding.switch('remote-b', '/remote/b');
+      await flushProbe();
+
+      const projectReminders = contextReminderTexts(context, 'The active project context is now');
+      expect(projectReminders).toHaveLength(1);
+      expect(projectReminders[0]).toContain('"remote-b"');
+      const envReminders = contextReminderTexts(context, 'The active environment is now');
+      expect(envReminders).toHaveLength(1);
+      expect(envReminders[0]).toContain('"remote-b"');
     } finally {
       await harness.dispose();
     }
