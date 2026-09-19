@@ -41,6 +41,9 @@ function makeSessionManager(
     readonly log?: ILogService;
   } = {},
 ): SessionManager {
+  const log =
+    overrides.log ??
+    ({ _serviceBrand: undefined, warn: () => {}, info: () => {}, error: () => {} } as unknown as ILogService);
   return new SessionManager(
     workspaces,
     index,
@@ -53,9 +56,9 @@ function makeSessionManager(
         ({ _serviceBrand: undefined, read: async function* () {} } as unknown as IAppendLogStore),
       overrides.bootstrap ?? ({ _serviceBrand: undefined, scope: (name: string) => name } as unknown as IBootstrapService),
       workspaces,
-      overrides.log ??
-        ({ _serviceBrand: undefined, warn: () => {}, info: () => {}, error: () => {} } as unknown as ILogService),
+      log,
     ),
+    log,
   );
 }
 
@@ -1170,11 +1173,12 @@ describe('SessionManager remote environment wiring', () => {
         for (const record of journal) yield record;
       },
     } as unknown as IAppendLogStore;
+    const warn = vi.fn();
     manager = makeSessionManager(workspacesFor(registry, program), index, {
       appendLogStore,
-      log: { _serviceBrand: undefined, warn: () => {}, info: () => {}, error: () => {} } as unknown as ILogService,
+      log: { _serviceBrand: undefined, warn, info: () => {}, error: () => {} } as unknown as ILogService,
     });
-    return { manager, byEnvironment, createCalls, registry, remote, remoteConnect };
+    return { manager, byEnvironment, createCalls, registry, remote, remoteConnect, warn };
   }
 
   it('restores a remote-bound session on the remote controller after connecting the disconnected environment', async () => {
@@ -1201,16 +1205,46 @@ describe('SessionManager remote environment wiring', () => {
     registry.acquire({ workspaceId: 'workspace-1', environmentId: 'remote' }).dispose();
   });
 
-  it('fails the resume instead of falling back to local when the persisted environment cannot connect', async () => {
-    const { manager, byEnvironment, remoteConnect } = restoreSetup({
+  it('resumes with the binding kept on a local controller when the persisted environment cannot connect', async () => {
+    const { manager, byEnvironment, createCalls, registry, remoteConnect, warn } = restoreSetup({
       remoteStatus: 'disconnected',
       connectFails: true,
     });
 
-    await expect(manager.resume('session-1')).rejects.toMatchObject({ code: 'environment.unavailable' });
+    const handle = await manager.resume('session-1');
+    expect(handle).toBeDefined();
     expect(remoteConnect).toHaveBeenCalledTimes(1);
-    expect(byEnvironment.has('local')).toBe(false);
+    expect(byEnvironment.has('local')).toBe(true);
     expect(byEnvironment.has('remote')).toBe(false);
+    expect(createCalls).toEqual([{ environmentId: 'local', cwd: undefined }]);
+    expect(registry.current('remote')!.status).toBe('disconnected');
+    expect(warn).toHaveBeenCalledTimes(1);
+    await expect(manager.whenResumeSettled('session-1')).resolves.toBeUndefined();
+  });
+
+  it('recovers a degraded remote binding on demand and resumes onto the remote controller once reconnected', async () => {
+    const { manager, byEnvironment, createCalls, registry, remote, remoteConnect } = restoreSetup({
+      remoteStatus: 'disconnected',
+      connectFails: true,
+    });
+
+    await manager.resume('session-1');
+    expect(createCalls).toEqual([{ environmentId: 'local', cwd: undefined }]);
+
+    remoteConnect.mockImplementation(async () => {
+      remote.setStatus('ready');
+    });
+    await remoteConnect();
+    expect(remoteConnect).toHaveBeenCalledTimes(2);
+    expect(registry.current('remote')!.status).toBe('ready');
+    registry.acquire({ workspaceId: 'workspace-1', environmentId: 'remote' }).dispose();
+
+    await manager.resume('session-1');
+    expect(createCalls).toEqual([
+      { environmentId: 'local', cwd: undefined },
+      { environmentId: 'remote', cwd: '/remote/work' },
+    ]);
+    expect(byEnvironment.has('remote')).toBe(true);
   });
 
   it('leaves a local restored binding untouched', async () => {
