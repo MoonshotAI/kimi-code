@@ -42,6 +42,7 @@ export interface ContextCompactionShapeInput {
   readonly requestOverheadTokens?: number;
   readonly keptUserMessageCount?: number;
   readonly keptHeadUserMessageCount?: number;
+  readonly appendedUserMessageCount?: number;
   readonly droppedCount?: number;
   readonly legacyTail?: boolean;
 }
@@ -54,6 +55,7 @@ export interface ContextCompactionShape {
   readonly tokensAfter: number;
   readonly keptUserMessageCount: number;
   readonly keptHeadUserMessageCount?: number;
+  readonly appendedUserMessageCount: number;
   readonly droppedCount?: number;
   readonly messages: readonly ContextMessage[];
 }
@@ -76,12 +78,16 @@ export function buildContextCompactionShape(
       tokensBefore: input.tokensBefore,
       tokensAfter: input.tokensAfter ?? estimate.messages(messages),
       keptUserMessageCount: 0,
+      appendedUserMessageCount: 0,
       droppedCount: input.droppedCount,
       messages,
     };
   }
 
-  const compactableUserMessages = collectCompactableUserMessages(history);
+  const compactableUserMessages = collectCompactableUserMessages(
+    history.slice(0, input.compactedCount),
+  );
+  const appendedAfterCompaction = history.slice(input.compactedCount).filter(isRealUserInput);
   const selection = selectCompactionUserMessages(
     compactableUserMessages,
     COMPACT_USER_MESSAGE_MAX_TOKENS,
@@ -100,11 +106,13 @@ export function buildContextCompactionShape(
     input.tokensAfter ??
     (input.requestOverheadTokens ?? 0) +
       (input.summaryOutputTokens ?? estimate.text(contextSummary)) +
-      estimate.messages([...keptMessages, continuationMessage]);
+      estimate.messages([...keptMessages, continuationMessage, ...appendedAfterCompaction]);
   const keptUserMessageCount =
     input.keptUserMessageCount ?? selection.head.length + selection.tail.length;
   const keptHeadUserMessageCount =
     input.keptHeadUserMessageCount ?? (selection.elided ? selection.head.length : undefined);
+  const appendedUserMessageCount =
+    input.appendedUserMessageCount ?? appendedAfterCompaction.length;
 
   return {
     summary: input.summary,
@@ -114,11 +122,13 @@ export function buildContextCompactionShape(
     tokensAfter,
     keptUserMessageCount,
     keptHeadUserMessageCount,
+    appendedUserMessageCount,
     droppedCount: input.droppedCount,
     messages: [
       ...keptMessages,
       createCompactionSummaryMessage(contextSummary),
       continuationMessage,
+      ...appendedAfterCompaction,
     ],
   };
 }
@@ -334,9 +344,9 @@ function truncateTextToTokensFromEnd(text: string, maxTokens: number): string {
   let start = text.length;
   for (let i = text.length - 1; i >= 0; i--) {
     let isAscii = false;
-    const code = text.charCodeAt(i);
+    const code = text.codePointAt(i)!;
     if (code >= 0xdc00 && code <= 0xdfff && i > 0) {
-      const high = text.charCodeAt(i - 1);
+      const high = text.codePointAt(i - 1)!;
       if (high >= 0xd800 && high <= 0xdbff) {
         i--;
       }
