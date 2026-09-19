@@ -84,7 +84,7 @@ describe('environment architecture boundaries', () => {
     ]) {
       const contents = source(path);
       expect(contents).toContain('new EnvironmentWorkspaceView(');
-      expect(contents).toMatch(/\.environment\.(acquire|acquireWhenReady|inspect)\(/);
+      expect(contents).toMatch(/acquireOrWhenReady\(this\.environment|\.environment\.(acquire|acquireWhenReady|inspect)\(/);
       expect(contents).not.toMatch(/@IHost(?:Environment|FileSystem|FsWatchService|ProcessService|TerminalService)/);
     }
     const readTool = source('agent/tools/os/read/readTool.ts');

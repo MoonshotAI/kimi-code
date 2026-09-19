@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
-import { EnvironmentError, EnvironmentRegistry } from '#/environment/environmentRegistry';
+import { EnvironmentError, EnvironmentRegistry, environmentEntryInfo, type EnvironmentGenerationSnapshot } from '#/environment/environmentRegistry';
 import { fakeEnvironment } from './stubs';
 
 describe('EnvironmentRegistry', () => {
@@ -465,5 +465,43 @@ describe('EnvironmentRegistry', () => {
 
     await registry.drainSession('session-a');
     expect(registry.idleEnvironments()).toEqual(['local']);
+  });
+});
+
+describe('environmentEntryInfo', () => {
+  const snapshot: EnvironmentGenerationSnapshot = {
+    environmentId: 'box',
+    generation: 'box-one',
+    status: 'ready',
+    capabilities: ['fs', 'process'],
+    connectError: 'handshake failed',
+  };
+
+  it('classifies the local environment as local without a declaration entry', () => {
+    expect(environmentEntryInfo({ ...snapshot, environmentId: 'local' }, undefined)).toEqual({
+      environmentId: 'local',
+      type: 'local',
+      status: 'ready',
+      generation: 'box-one',
+      capabilities: ['fs', 'process'],
+      defaultCwd: undefined,
+      connectError: 'handshake failed',
+    });
+  });
+
+  it('joins the declaration entry type and defaultCwd for remote entries', () => {
+    expect(environmentEntryInfo(snapshot, { type: 'ssh', host: 'box', defaultCwd: '/remote/box' })).toMatchObject({
+      type: 'ssh',
+      defaultCwd: '/remote/box',
+    });
+    expect(environmentEntryInfo(snapshot, { type: 'docker', container: 'box' }).type).toBe('docker');
+    expect(environmentEntryInfo(snapshot, { command: 'box' }).type).toBe('command');
+  });
+
+  it('classifies a non-local environment without a declaration entry as command', () => {
+    expect(environmentEntryInfo(snapshot, undefined)).toMatchObject({
+      type: 'command',
+      defaultCwd: undefined,
+    });
   });
 });

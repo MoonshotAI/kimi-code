@@ -226,6 +226,7 @@ import {
   programForSession,
   readSshConfigHosts,
   ENVIRONMENTS_SECTION,
+  environmentEntryInfo,
   resolveWorkspaceEnvironmentDeclarations,
   resumeSessionById,
   sessionDirOf,
@@ -2025,18 +2026,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const declarations = await this.resolveEnvironmentDeclarationEntries(instance.root);
     return {
       workspaceId: context.workspaceId,
-      environments: instance.environments.snapshot().environments.map((environment) => {
-        const entry = declarations.get(environment.environmentId);
-        return {
-          environmentId: environment.environmentId,
-          type: environmentEntryType(environment.environmentId, entry),
-          status: environment.status,
-          generation: environment.generation,
-          capabilities: [...environment.capabilities],
-          defaultCwd: entry?.defaultCwd,
-          connectError: environment.connectError,
-        };
-      }),
+      environments: instance.environments.snapshot().environments.map((environment) =>
+        environmentEntryInfo(environment, declarations.get(environment.environmentId)),
+      ),
       sshHosts: await this.resolveSshHostCandidates(),
     };
   }
@@ -3153,13 +3145,4 @@ function describeWorkspaceMcpServer(
     };
   }
   return { name, transport: config.transport, url: config.url };
-}
-
-function environmentEntryType(
-  environmentId: string,
-  entry: RemoteEnvironmentEntry | undefined,
-): SessionEnvironmentsInfo['environments'][number]['type'] {
-  if (environmentId === 'local') return 'local';
-  if (entry === undefined || 'command' in entry) return 'command';
-  return entry.type;
 }

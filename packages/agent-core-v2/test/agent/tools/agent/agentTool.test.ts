@@ -85,4 +85,21 @@ describe('SubagentTool environment parameter flag gate', () => {
 
     expect((result as ExecutableToolResult).isError).not.toBe(true);
   });
+
+  it('rejects environment in execute when the flag flips off after resolution', async () => {
+    let flagOn = true;
+    const tool = buildTool(stubFlag((id) => flagOn && id === AGENT_ENVIRONMENT_TOOLS_FLAG_ID));
+
+    const resolved = await tool.resolveExecution({ ...INPUT });
+    if (!('execute' in resolved)) throw new Error('expected a runnable execution');
+
+    flagOn = false;
+    const result = await resolved.execute({
+      turnId: 1,
+      toolCallId: 'tc-1',
+      signal: new AbortController().signal,
+    });
+
+    expect(result).toEqual({ output: ENVIRONMENT_EXPERIMENTAL_UNAVAILABLE, isError: true });
+  });
 });

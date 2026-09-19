@@ -14,6 +14,7 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentConversationUndoParticipantRegistry, type AgentConversationUndoParticipant } from '#/agent/contextMemory/conversationUndoParticipants';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { CHANGE_ENVIRONMENT_TOOL_NAME } from '#/features/environmentTools/environmentTools';
+import { planKey } from '#/features/plan/planOps';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import { LOCAL_ENVIRONMENT_ID, type EnvironmentBinding, type EnvironmentLease } from '#/environment/environment';
 import { EnvironmentError } from '#/environment/environmentRegistry';
@@ -144,6 +145,14 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     );
   }
 
+  private assertNotInPlanMode(): void {
+    if (!this.state.has(planKey) || !this.state.get(planKey).active) return;
+    throw new EnvironmentError(
+      'environment.conflict',
+      'cannot switch environment while plan mode is active; exit plan mode first',
+    );
+  }
+
   private assertSwitchAllowed(): void {
     const busy = this.loop.current?.snapshot().turn?.activeToolCalls.length ?? 0;
     if (busy > 0) {
@@ -174,6 +183,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
 
   set(binding: EnvironmentBinding): EnvironmentBinding {
     this.assertSessionWorkspace(binding);
+    this.assertNotInPlanMode();
     this.assertSwitchAllowed();
     const lease = this.resolver.acquire(binding, []);
     lease.dispose();
@@ -183,6 +193,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
   async connectAndSwitch(environmentId: string, cwd?: string): Promise<EnvironmentBinding> {
     const binding: EnvironmentBinding = { workspaceId: this.session.workspaceId, environmentId, cwd };
     this.assertSessionWorkspace(binding);
+    this.assertNotInPlanMode();
     this.assertSwitchAllowed();
     await this.prepareSwitch(binding);
     return this.commit(binding);
@@ -191,6 +202,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
   async connectAndSwitchInTurn(environmentId: string, cwd?: string): Promise<EnvironmentBinding> {
     const binding: EnvironmentBinding = { workspaceId: this.session.workspaceId, environmentId, cwd };
     this.assertSessionWorkspace(binding);
+    this.assertNotInPlanMode();
     const foreign = this.foreignInFlightToolCallCount();
     if (foreign > 0) {
       throw new EnvironmentError(

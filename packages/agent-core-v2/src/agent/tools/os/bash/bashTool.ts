@@ -5,7 +5,8 @@ import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { IAgentEnvironmentService, inspectAgentEnvironment } from '#/agent/environmentBinding/agentEnvironment';
+import { isPromiseLike } from '#/_base/lifecycle/disposer';
+import { acquireOrWhenReady, IAgentEnvironmentService, inspectAgentEnvironment } from '#/agent/environmentBinding/agentEnvironment';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { getShellPathBridge } from '#/_base/execEnv/shellPathBridge';
@@ -193,9 +194,8 @@ export class BashTool implements IBashTool {
 
     const startsInBackground = args.run_in_background === true;
     const foregroundTimeoutMs = normalizeTimeoutMs(args.timeout, false);
-    const lease = this.environment.isAvailable(['process'])
-      ? this.environment.acquire(['process'])
-      : await this.environment.acquireWhenReady(['process']);
+    const acquired = acquireOrWhenReady(this.environment, ['process']);
+    const lease = isPromiseLike(acquired) ? await acquired : acquired;
     const view = new EnvironmentWorkspaceView(lease.environment, this.workspaceCtx);
     const env = lease.environment.host;
     const command = env.osKind === 'Windows' ? rewriteWindowsNullRedirect(args.command) : args.command;

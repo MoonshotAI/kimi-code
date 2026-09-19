@@ -1,6 +1,7 @@
 import { Emitter, type Event } from '#/_base/event';
 
-import type { Environment, EnvironmentBinding, EnvironmentCapability, EnvironmentLease } from './environment';
+import { LOCAL_ENVIRONMENT_ID, type Environment, type EnvironmentBinding, type EnvironmentCapability, type EnvironmentLease } from './environment';
+import type { RemoteEnvironmentEntry } from './remoteEnvironmentDeclaration';
 
 export const ENVIRONMENT_DRAIN_TIMEOUT_MS = 5_000;
 
@@ -51,6 +52,42 @@ export interface EnvironmentGenerationSnapshot {
 export interface EnvironmentRegistrySnapshot {
   readonly workspaceId: string;
   readonly environments: readonly EnvironmentGenerationSnapshot[];
+}
+
+export type EnvironmentEntryType = 'local' | 'ssh' | 'docker' | 'command';
+
+export interface EnvironmentEntryInfo {
+  readonly environmentId: string;
+  readonly type: EnvironmentEntryType;
+  readonly status: Environment['status'];
+  readonly generation: string;
+  readonly capabilities: readonly EnvironmentCapability[];
+  readonly defaultCwd?: string;
+  readonly connectError?: string;
+}
+
+export function environmentEntryType(
+  environmentId: string,
+  entry: RemoteEnvironmentEntry | undefined,
+): EnvironmentEntryType {
+  if (environmentId === LOCAL_ENVIRONMENT_ID) return 'local';
+  if (entry === undefined || 'command' in entry) return 'command';
+  return entry.type;
+}
+
+export function environmentEntryInfo(
+  environment: EnvironmentGenerationSnapshot,
+  entry: RemoteEnvironmentEntry | undefined,
+): EnvironmentEntryInfo {
+  return {
+    environmentId: environment.environmentId,
+    type: environmentEntryType(environment.environmentId, entry),
+    status: environment.status,
+    generation: environment.generation,
+    capabilities: [...environment.capabilities],
+    defaultCwd: entry?.defaultCwd,
+    connectError: environment.connectError,
+  };
 }
 
 export interface EnvironmentRegistrationHandle {

@@ -8,7 +8,8 @@ import { IFileEditService } from '#/app/edit/fileEdit';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { Environment } from '#/environment/environment';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
-import { IAgentEnvironmentService, inspectAgentEnvironment } from '#/agent/environmentBinding/agentEnvironment';
+import { isPromiseLike } from '#/_base/lifecycle/disposer';
+import { acquireOrWhenReady, IAgentEnvironmentService, inspectAgentEnvironment } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
@@ -72,9 +73,8 @@ export class EditTool implements IEditTool {
           homeDir: env.homeDir,
         }),
       execute: async () => {
-        const lease = this.environment.isAvailable(['fs'])
-          ? this.environment.acquire(['fs'])
-          : await this.environment.acquireWhenReady(['fs']);
+        const acquired = acquireOrWhenReady(this.environment, ['fs']);
+        const lease = isPromiseLike(acquired) ? await acquired : acquired;
         try {
           if (lease.environment.identity.generation !== inspected.identity.generation) {
             return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
