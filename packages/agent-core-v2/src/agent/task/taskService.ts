@@ -1043,6 +1043,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     if (this.marksTerminalNotificationSuppressed(entry)) {
       entry.terminalNotificationSuppressed = true;
     }
+    this.fireTerminalEffects(entry);
     if (entry.outputPersistStarted) {
       await this.persistLive(entry);
     } else {
@@ -1056,7 +1057,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       entry.terminalNotificationSuppressed = true;
       await this.persistLive(entry);
     }
-    this.fireTerminalEffects(entry);
     foregroundRelease?.resolve('terminal');
     this.resolveWaiters(entry);
     return true;

@@ -641,6 +641,24 @@ describe('AgentTaskService', () => {
     }
   });
 
+  it('dispose records the durable termination event before the agent deactivates', async () => {
+    const { records } = capturingWire();
+    const svc = ix.get(IAgentTaskService);
+    const taskId = svc.registerTask(fakeProcessTask());
+    const agentContext = ix.get(IAgentScopeContext).agentContext;
+
+    (svc as AgentTaskService).dispose();
+    eventBus.deactivateAgent(agentContext);
+    await Promise.resolve();
+
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        type: 'task.terminated',
+        info: expect.objectContaining({ taskId, status: 'killed' }),
+      }),
+    );
+  });
+
   it('scope disposal requests SIGKILL when a process ignores SIGTERM', async () => {
     const stdout = new Readable({ read() {} });
     const stderr = new Readable({ read() {} });
