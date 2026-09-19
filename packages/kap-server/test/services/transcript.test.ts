@@ -199,6 +199,54 @@ describe('AgentTranscriptProjector', () => {
     });
   });
 
+  it('splits a reused or occupied wire turn id into a new export entity', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => {
+      tx.apply(projector.map(event));
+    };
+
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'first' }));
+    feed(ev({ type: 'assistant.delta', turnId: 1, delta: 'old' }));
+    feed(ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'second' }));
+    feed(ev({ type: 'assistant.delta', turnId: 1, delta: 'new' }));
+    feed(ev({ type: 'turn.ended', turnId: 1, reason: 'cancelled' }));
+
+    const first = turnOps('t1', tx.getItems());
+    const second = turnOps('t2', tx.getItems());
+    expect(first.prompt).toBe('first');
+    expect(first.state).toBe('completed');
+    expect(first.steps[0]?.frames.find((frame) => frame.kind === 'text')).toMatchObject({ text: 'old' });
+    expect(second.prompt).toBe('second');
+    expect(second.state).toBe('cancelled');
+    expect(second.ordinal).toBe(2);
+    expect(second.steps[0]?.frames.find((frame) => frame.kind === 'text')).toMatchObject({ text: 'new' });
+
+    const store = new Map<string, TranscriptTurn>([
+      [
+        't1',
+        {
+          kind: 'turn',
+          turnId: 't1',
+          ordinal: 1,
+          state: 'completed',
+          origin: { kind: 'user' },
+          prompt: 'cold',
+          steps: [],
+        },
+      ],
+    ]);
+    const cold = new AgentTranscriptProjector('main', TEST_SESSION_ID, {
+      turn: (id) => store.get(id),
+      maxOrdinal: () => 1,
+    });
+    const coldTx = new AgentTranscript('main');
+    coldTx.apply(cold.map(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'live' })));
+    expect(coldTx.getTurn('t1')).toBeUndefined();
+    expect(turnOps('t2', coldTx.getItems())).toMatchObject({ prompt: 'live', ordinal: 2, state: 'running' });
+  });
+
   it('projects the live prompt from turn.started and keeps it through turn.ended', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
@@ -3815,8 +3863,8 @@ describe('bindSessionTranscript', () => {
     expect(frames).toContainEqual(expect.objectContaining({ frameId: 't0.1.call_3', output: 'y' }));
   });
 
-  it('heal keeps the live attachment ids over the snapshot cold ids', () => {
-    const makeTurn = (attachmentIds: string[] | undefined): TranscriptTurn => ({
+  it('heal keeps the live attachment ids and trigger prompt id over the cold header', () => {
+    const byAttachments = (attachmentIds: string[] | undefined): TranscriptTurn => ({
       kind: 'turn',
       turnId: 't0',
       ordinal: 0,
@@ -3825,18 +3873,15 @@ describe('bindSessionTranscript', () => {
       attachmentIds,
       steps: [],
     });
-    const header = healTurnOps(makeTurn(['att_1']), makeTurn(['t0.att1'])).find(
+    const header = healTurnOps(byAttachments(['att_1']), byAttachments(['t0.att1'])).find(
       (op) => op.op === 'turn.upsert',
     );
     expect(header).toMatchObject({ turn: { attachmentIds: ['t0.att1'] } });
-    const fallback = healTurnOps(makeTurn(['att_1']), makeTurn(undefined)).find(
+    const fallback = healTurnOps(byAttachments(['att_1']), byAttachments(undefined)).find(
       (op) => op.op === 'turn.upsert',
     );
     expect(fallback).toMatchObject({ turn: { attachmentIds: ['att_1'] } });
-  });
-
-  it('heal keeps the live trigger prompt id over a cold turn without one', () => {
-    const makeTurn = (triggerPromptId: string | undefined): TranscriptTurn => ({
+    const byPrompt = (triggerPromptId: string | undefined): TranscriptTurn => ({
       kind: 'turn',
       turnId: 't0',
       triggerPromptId,
@@ -3845,10 +3890,9 @@ describe('bindSessionTranscript', () => {
       origin: { kind: 'user' },
       steps: [],
     });
-    const header = healTurnOps(makeTurn(undefined), makeTurn('prompt-1')).find(
-      (op) => op.op === 'turn.upsert',
-    );
-    expect(header).toMatchObject({ turn: { triggerPromptId: 'prompt-1' } });
+    expect(healTurnOps(byPrompt(undefined), byPrompt('prompt-1')).find((op) => op.op === 'turn.upsert')).toMatchObject({
+      turn: { triggerPromptId: 'prompt-1' },
+    });
   });
 
   it('terminal turn.upsert inherits the backfilled header when the projector missed turn.started', () => {
