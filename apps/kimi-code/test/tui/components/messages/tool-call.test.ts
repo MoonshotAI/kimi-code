@@ -1343,6 +1343,64 @@ describe('ToolCallComponent', () => {
     expect(component.getSubagentSnapshot().model).toBe('Kimi K2.5');
   });
 
+  it('shows the subagent environment in the header and group snapshot when non-local', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_env',
+        name: 'Agent',
+        args: { description: 'explore project', environment: 'dev-box' },
+      },
+      undefined,
+    );
+    component.onSubagentSpawned({
+      agentId: 'sub_env_1',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+
+    const out = strip(component.render(120).join('\n'));
+    expect(out).toContain('Explore Agent Queued (explore project) · env dev-box · 0 tools');
+    expect(component.getSubagentSnapshot().environment).toBe('dev-box');
+  });
+
+  it('hides the environment badge for a local or absent environment', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    const local = new ToolCallComponent(
+      {
+        id: 'call_agent_local',
+        name: 'Agent',
+        args: { description: 'explore project', environment: 'local' },
+      },
+      undefined,
+    );
+    local.onSubagentSpawned({
+      agentId: 'sub_local_1',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+    const plain = new ToolCallComponent(
+      {
+        id: 'call_agent_plain',
+        name: 'Agent',
+        args: { description: 'explore project' },
+      },
+      undefined,
+    );
+    plain.onSubagentSpawned({
+      agentId: 'sub_plain_1',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+
+    expect(strip(local.render(120).join('\n'))).not.toContain('env ');
+    expect(strip(plain.render(120).join('\n'))).not.toContain('env ');
+    expect(local.getSubagentSnapshot().environment).toBeUndefined();
+    expect(plain.getSubagentSnapshot().environment).toBeUndefined();
+  });
+
   it('shows Backgrounded after a foreground subagent is detached, even after setResult', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);

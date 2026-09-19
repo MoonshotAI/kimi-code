@@ -353,6 +353,7 @@ import type {
   SuggestFilesResult,
   TelemetryClient,
   UploadFileOptions,
+  WorkspaceEnvironmentDeclarationInfo,
   WorkspaceTrustInfo,
   WorkspaceTrustEnvironmentInfo,
 } from '#/types';
@@ -815,6 +816,28 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       .get(IWorkspaceInstanceManager)
       .getOrCreate({ root: workDir });
     await handler.program.trust.trust();
+  }
+
+  /**
+   * Session-less declaration lookup (e.g. validating a `--environment <id>`
+   * startup binding before any session exists), composed from the same engine
+   * services the session manager's create-time validation uses. Project
+   * entries resolve only for a trusted folder, matching createSession.
+   */
+  override async listEnvironmentDeclarations(
+    workDir: string,
+  ): Promise<readonly WorkspaceEnvironmentDeclarationInfo[]> {
+    const resolved = await resolveWorkspaceEnvironmentDeclarations({
+      config: this.engineAccessor.get(IConfigService),
+      fs: this.engineAccessor.get(IHostFileSystem),
+      docs: this.engineAccessor.get(IAtomicDocumentStore),
+      root: workDir,
+    });
+    return resolved.entries.map((declaration) => ({
+      id: declaration.id,
+      type: 'command' in declaration.entry ? 'command' : declaration.entry.type,
+      defaultCwd: declaration.entry.defaultCwd,
+    }));
   }
 
   /**

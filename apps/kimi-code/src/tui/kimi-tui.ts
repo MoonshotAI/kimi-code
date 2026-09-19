@@ -15,10 +15,12 @@ import type {
   PluginCommandDef,
   PromptPart,
   Session,
+  SessionEnvironmentType,
   SkillSummary,
   TokenUsage,
   TurnEndedEvent,
   TurnStartedEvent,
+  WorkspaceEnvironmentDeclarationInfo,
   WorkspaceTrustInfo,
 } from '@moonshot-ai/kimi-code-sdk';
 import { isTelemetryDisabledByEnv } from '@moonshot-ai/kimi-telemetry';
@@ -313,6 +315,12 @@ interface SendMessageOptions {
    * it — the queue item owns the raw ids and re-leases at dequeue.
    */
   readonly lease?: StagingLease;
+  /**
+   * Set when the caller already appended the user transcript entry and ran
+   * beginSessionRequest (the pre-session announce in sendNormalUserInput):
+   * dispatch skips both and goes straight to the prompt.
+   */
+  readonly announced?: boolean;
 }
 
 /** How long the one-shot "moved to background" footer hint stays visible. */
@@ -340,6 +348,8 @@ export class KimiTUI {
   state: TUIState;
   /** In-flight lazy session creation (v2 engine), shared by concurrent first-use triggers. */
   private ensureSessionPromise: Promise<Session | undefined> | null = null;
+  /** Type of the validated `--environment` startup declaration, used for the synthetic connecting footer slot. */
+  private startupEnvironmentType: SessionEnvironmentType | undefined;
   private readonly cacheHint = new CacheHintController(this);
   /** Staged prompt media lifecycle (daemon uploads + cache copies) — see StagingLeaseTracker. */
   private readonly staging: StagingLeaseTracker;
@@ -978,6 +988,9 @@ export class KimiTUI {
         // time (model, permission, plan mode, thinking effort, context cap).
         await this.hydrateLazyConfigDefaults();
         this.appendStartupNotice(SESSIONLESS_STARTUP_NOTICE);
+        if (startup.environment !== undefined && startup.environment !== 'local') {
+          await this.prepareStartupEnvironment(startup.environment);
+        }
       }
       if (session !== undefined && shouldReplayHistory) {
         await this.applyStartupModesToResumedSession(session);
@@ -1448,9 +1461,55 @@ export class KimiTUI {
     }
     let session = this.session;
     if (session === undefined) {
+      // The lazy create can block on a remote environment connect
+      // (--environment startup). Announce the prompt and enter the waiting
+      // state before awaiting it: the UI keeps rendering (and the footer
+      // shows the connecting spinner), and the prompt is not lost when
+      // creation fails.
+      const announced =
+        this.state.appState.streamingPhase === 'idle' &&
+        !this.deferUserMessages &&
+        !this.state.appState.isCompacting;
+      if (announced) {
+        this.appendTranscriptEntry({
+          id: nextTranscriptId(),
+          kind: 'user',
+          turnId: undefined,
+          renderMode: 'plain',
+          content: text,
+          imageAttachmentIds:
+            extraction.imageAttachmentIds.length > 0
+              ? [...extraction.imageAttachmentIds]
+              : undefined,
+        });
+        this.beginSessionRequest();
+      }
       session = await this.ensureSession();
       if (session === undefined) {
         this.staging.release(stagingLease);
+        if (announced) {
+          // Creation failed with the error already on screen; unwind only the
+          // waiting state — the announced prompt stays in the transcript.
+          this.setAppState({ streamingPhase: 'idle' });
+          this.resetLivePane();
+        }
+        return;
+      }
+      if (announced) {
+        if (extraction.hasMedia) {
+          this.sendMessageInternal(session, text, {
+            hasMedia: true,
+            parts: extraction.parts,
+            imageAttachmentIds: extraction.imageAttachmentIds,
+            videoAttachmentIds: extraction.videoAttachmentIds,
+            lease: stagingLease,
+            announced: true,
+          });
+        } else {
+          this.sendMessageInternal(session, text, { announced: true });
+        }
+        this.updateQueueDisplay();
+        this.state.ui.requestRender();
         return;
       }
     }
@@ -1794,14 +1853,16 @@ export class KimiTUI {
       options?.imageAttachmentIds !== undefined && options.imageAttachmentIds.length > 0
         ? options.imageAttachmentIds
         : undefined;
-    this.appendTranscriptEntry({
-      id: nextTranscriptId(),
-      kind: 'user',
-      turnId: undefined,
-      renderMode: 'plain',
-      content: input,
-      imageAttachmentIds,
-    });
+    if (options?.announced !== true) {
+      this.appendTranscriptEntry({
+        id: nextTranscriptId(),
+        kind: 'user',
+        turnId: undefined,
+        renderMode: 'plain',
+        content: input,
+        imageAttachmentIds,
+      });
+    }
     // A goal-active steer is buffered into the running goal turn — no new
     // turn.started will fire for handleTurnStarted to claim the lease — so
     // bind it to that turn here. The turn context must be read BEFORE
@@ -1812,7 +1873,9 @@ export class KimiTUI {
       this.state.appState.streamingPhase === 'idle' || this.state.appState.streamingPhase === 'shell'
         ? undefined
         : this.streamingUI.getTurnContext().turnId;
-    this.beginSessionRequest();
+    if (options?.announced !== true) {
+      this.beginSessionRequest();
+    }
 
     // Compression captions for pasted images are authored here — not at
     // extraction — because only now is the session (and its media-originals
@@ -2214,6 +2277,63 @@ export class KimiTUI {
   }
 
   /**
+   * `--environment <id>` startup binding: fail fast on an id the merged
+   * [environments] declarations do not know — the engine only rejects it at
+   * createSession, which the lazy startup defers to the first prompt (losing
+   * that prompt). Then pre-create the session in the background so the remote
+   * connect overlaps startup instead of blocking the first prompt.
+   */
+  private async prepareStartupEnvironment(environmentId: string): Promise<void> {
+    let declarations: readonly WorkspaceEnvironmentDeclarationInfo[] | undefined;
+    try {
+      declarations = await this.harness.listEnvironmentDeclarations(this.state.appState.workDir);
+    } catch {
+      // Declaration resolution failed (e.g. unreadable config): skip the early
+      // check — the background create surfaces the engine's own error.
+      declarations = undefined;
+    }
+    if (declarations !== undefined) {
+      const declared = declarations.find((entry) => entry.id === environmentId);
+      if (declared === undefined) {
+        throw new Error(`environment "${environmentId}" is not declared in [environments]`);
+      }
+      if (declared.defaultCwd === undefined) {
+        throw new Error(`environment "${environmentId}" does not set defaultCwd in [environments]`);
+      }
+      this.startupEnvironmentType = declared.type;
+    }
+    void this.ensureSession();
+  }
+
+  /**
+   * While the `--environment` startup session is being created there is no
+   * binding to sync from yet; a synthetic connecting slot drives the same
+   * footer spinner the registry-backed slot shows once refreshEnvironmentSlot
+   * takes over.
+   */
+  private markStartupEnvironmentConnecting(): void {
+    const environmentId = this.options.startup.environment;
+    if (environmentId === undefined || environmentId === 'local') return;
+    const current = this.state.appState.environment;
+    if (current?.environmentId === environmentId && current.status === 'connecting') return;
+    this.setAppState({
+      environment: {
+        environmentId,
+        type: this.startupEnvironmentType ?? 'command',
+        status: 'connecting',
+      },
+    });
+  }
+
+  private clearStartupEnvironmentConnecting(): void {
+    const environmentId = this.options.startup.environment;
+    const current = this.state.appState.environment;
+    if (environmentId === undefined || current?.environmentId !== environmentId) return;
+    if (current.status !== 'connecting') return;
+    this.setAppState({ environment: undefined });
+  }
+
+  /**
    * Seed appState with the config defaults the v2 engine would apply at
    * createSession time (model, permission, plan mode, thinking effort,
    * context cap), so the footer and the lazy create path reflect them while
@@ -2357,15 +2477,17 @@ export class KimiTUI {
   }
 
   private async lazyCreateSession(): Promise<Session | undefined> {
+    this.markStartupEnvironmentConnecting();
     let session: Session;
     try {
       session = await this.createSessionFromCurrentState(true);
     } catch (error) {
+      this.clearStartupEnvironmentConnecting();
       const msg = formatErrorMessage(error);
       this.showError(`Failed to start a session: ${msg}`);
       return undefined;
     }
-    this.resetSessionRuntime();
+    this.resetSessionRuntime(true);
     await this.setSession(session);
     this.setAppState({ sessionId: session.id });
     try {
@@ -2373,6 +2495,7 @@ export class KimiTUI {
       await this.syncRuntimeState(session);
     } catch (error) {
       this.sessionEventHandler.startSubscription();
+      this.clearStartupEnvironmentConnecting();
       const msg = formatErrorMessage(error);
       this.showError(`Post-create setup failed: ${msg}`);
       return undefined;
@@ -2673,12 +2796,15 @@ export class KimiTUI {
     this.state.terminal.setTitle(label);
   }
 
-  resetSessionRuntime(): void {
+  resetSessionRuntime(preserveQueue = false): void {
     this.aborted = false;
     this.cacheHint.resetRuntime();
     this.surveyController.reset();
     this.streamingUI.discardPending();
-    this.clearQueuedMessages();
+    // The lazy first creation keeps input queued while it was in flight (a
+    // bash command behind the announced first prompt belongs to the session
+    // being created); every other reset discards the old session's backlog.
+    if (!preserveQueue) this.clearQueuedMessages();
     this.state.swarmModeEntry = undefined;
     this.streamingUI.resetToolCallState();
     this.streamingUI.resetToolUi();

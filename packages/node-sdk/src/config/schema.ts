@@ -232,7 +232,6 @@ export const McpServerStdioConfigSchema = z.object({
   args: z.array(z.string()).optional(),
   env: StringRecordSchema.optional(),
   cwd: z.string().optional(),
-  executor: z.enum(['local', 'kaos']).optional(),
   ...McpServerCommonFields,
 });
 
