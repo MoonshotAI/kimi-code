@@ -30,6 +30,7 @@ import type {
   WorkspaceInstanceSnapshot,
 } from '@moonshot-ai/agent-core-v2';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
+import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -391,7 +392,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
     const invalid = await call<null>(
       'POST',
       `/api/v1/sessions/${id}/environment`,
-      { environment_id: 'missing-environment' },
+      { environment_id: 'missing-environment', cwd: home },
     );
     expect(invalid.body.code).toBe(40420);
 
@@ -405,11 +406,11 @@ describe('server-v2 /api/v1/debug RPC', () => {
       id: 'debug-remote-provider',
       imports: { root: [], imports: [], local: [] },
       attach: async (context, host) => {
-        host.registerEnvironment(new FakeEnvironment({
+        host.registerEnvironment(Object.assign(new FakeEnvironment({
           workspaceId: context.id,
           environmentId: 'remote',
           generation: 'remote-two',
-        }));
+        }), { fs: new HostFileSystem() }));
         return { dispose: () => {} };
       },
     });
@@ -417,7 +418,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
       const switched = await call<{ workspace_id: string; environment_id: string }>(
         'POST',
         `/api/v1/sessions/${id}/environment`,
-        { environment_id: 'remote' },
+        { environment_id: 'remote', cwd: home },
       );
       expect(switched.body.data.environment_id).toBe('remote');
       const snapshot = await call<AgentEnvironmentBindingSnapshot>(

@@ -14,10 +14,12 @@ import {
   IAgentLoopService,
   IAgentStateService,
   IAgentToolPolicyService,
+  IAgentToolRegistryService,
   IBootstrapService,
   IConfigService,
   IEventBus,
   IFileService,
+  IFlagService,
   ISessionContext,
   ISessionMetadata,
   IWorkspaceInstanceManager,
@@ -1606,8 +1608,12 @@ describe('server-v2 /api/v1 prompts', () => {
     const bound = await call<{ workspace_id: string; environment_id: string }>(
       'POST',
       `/api/v1/sessions/${sessionId}/environment`,
-      { environment_id: 'remote-test' },
+      { environment_id: 'remote-test', cwd: remoteRoot },
     );
+    if (bound.body.code !== 0) {
+      await provider.dispose();
+      await rm(remoteRoot, { recursive: true, force: true });
+    }
     expect(bound.body.code).toBe(0);
     return {
       remoteTempDir,
@@ -1749,6 +1755,38 @@ describe('server-v2 /api/v1 prompts', () => {
       await expect(readdir(join(remoteRoot, 'remote-tmp'))).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
       await rm(remoteRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('exposes change_environment and connect to the main agent by default through the production bind-then-activate path', async () => {
+    const id = await createSession(home as string);
+    const session = getLiveSessionById(server!.core.accessor, id)!;
+    await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main', binding: { profile: 'agent' } });
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+
+    const names = agent.accessor.get(IAgentToolRegistryService).list().map((tool) => tool.name);
+    expect(names).toContain('change_environment');
+    expect(names).toContain('connect');
+    expect(agent.accessor.get(IAgentProfileService).data().systemPrompt).toContain('## Available environments');
+  });
+
+  it('hides the environment tools and the environments prompt section when the agent_environment_tools flag is off', async () => {
+    const flags = server!.core.accessor.get(IFlagService);
+    flags.setConfigOverrides({ agent_environment_tools: false });
+    try {
+      const id = await createSession(home as string);
+      const session = getLiveSessionById(server!.core.accessor, id)!;
+      await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main', binding: { profile: 'agent' } });
+      const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+
+      const names = agent.accessor.get(IAgentToolRegistryService).list().map((tool) => tool.name);
+      expect(names).not.toContain('change_environment');
+      expect(names).not.toContain('connect');
+      const systemPrompt = agent.accessor.get(IAgentProfileService).data().systemPrompt;
+      expect(systemPrompt).not.toContain('## Available environments');
+      expect(systemPrompt).not.toContain('change_environment');
+    } finally {
+      flags.setConfigOverrides(undefined);
     }
   });
 

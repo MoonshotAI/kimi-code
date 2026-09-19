@@ -66,6 +66,7 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { NOTIFY_USER_TOOL_NAME } from '#/features/notify/tools/notify-user/notify-user';
 import { buildEnvironmentsInfo } from '#/features/environmentTools/environmentsInfo';
+import { ENVIRONMENT_SWITCH_TOOL_NAMES } from '#/features/environmentTools/environmentTools';
 import { AGENT_ENVIRONMENT_TOOLS_FLAG_ID } from '#/features/environmentTools/flag';
 import { towerKey } from '#/features/tower/towerOps';
 import { IFlagService } from '#/app/flag/flag';
@@ -329,7 +330,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       systemPrompt: rendered.text,
       environmentDisclosure: rendered.environment,
       agentsMdPaths: context.agentsMdPaths ?? [],
-      activeToolNames: profile.tools,
+      activeToolNames: this.withEnvironmentTools(profile.tools),
       disallowedTools: profile.disallowedTools ?? [],
       subagents: profile.subagents,
     }));
@@ -405,7 +406,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       agentsMdPaths: context.agentsMdPaths ?? [],
       disallowedTools: profile.disallowedTools ?? [],
     });
-    this.setActiveTools(profile.tools);
+    this.setActiveTools(this.withEnvironmentTools(profile.tools));
   }
 
   async applyProfile(profile: ResolvedAgentProfile, options?: ApplyProfileOptions): Promise<void> {
@@ -898,10 +899,20 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     }
   }
 
+  private environmentToolsVisible(): boolean {
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID) return false;
+    if (!this.flags.enabled(AGENT_ENVIRONMENT_TOOLS_FLAG_ID)) return false;
+    return !(this.states.has(towerKey) && this.states.get(towerKey));
+  }
+
+  private withEnvironmentTools(tools: readonly string[] | undefined): readonly string[] | undefined {
+    if (tools === undefined || !this.environmentToolsVisible()) return tools;
+    const missing = ENVIRONMENT_SWITCH_TOOL_NAMES.filter((name) => !tools.includes(name));
+    return missing.length === 0 ? tools : [...tools, ...missing];
+  }
+
   private resolveEnvironmentsInfo(currentEnvironmentId: string): string {
-    if (this.scopeContext.agentId !== MAIN_AGENT_ID) return '';
-    if (!this.flags.enabled(AGENT_ENVIRONMENT_TOOLS_FLAG_ID)) return '';
-    if (this.states.has(towerKey) && this.states.get(towerKey)) return '';
+    if (!this.environmentToolsVisible()) return '';
     const workspace = this.workspaces.get(this.sessionContext.workspaceId);
     if (workspace === undefined) return '';
     return buildEnvironmentsInfo(workspace.environments.snapshot(), currentEnvironmentId);
