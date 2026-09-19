@@ -617,13 +617,20 @@ export class TranscriptService {
       resolvePlanRevisionKey: (key) =>
         join(SESSIONS_ROOT, summary.workspaceId, sessionId, AGENTS_DIR, agentId, key),
     });
-    const status = getLiveSessionById(this.deps.core.accessor, sessionId)
+    const liveSession = getLiveSessionById(this.deps.core.accessor, sessionId);
+    const tasks =
+      liveSession === undefined
+        ? folded.tasks.map((task) =>
+            task.state === 'running' ? { ...task, state: 'lost' as const } : task,
+          )
+        : folded.tasks;
+    const status = liveSession
       ?.accessor.get(IAgentLifecycleService)
       .handleOf(agentId)
       ?.accessor.get(IAgentLoopService)
       .snapshot();
     const activity: ActivityMeta = status?.state === 'running' ? 'turn' : 'idle';
-    const snapshot = { ...folded, meta: { ...folded.meta, activity } };
+    const snapshot = { ...folded, tasks, meta: { ...folded.meta, activity } };
     if (snapshot.meta.modes?.tower === undefined) return snapshot;
     const flags = this.deps.core.accessor.get(IFlagService);
     if (
