@@ -502,7 +502,6 @@ export class KimiTUI {
     });
     this.editorKeyboard = new EditorKeyboardController(this, this.imageStore);
     this.editorKeyboard.install();
-    this.buildLayout();
   }
 
   // =========================================================================
@@ -1128,23 +1127,6 @@ export class KimiTUI {
     this.terminalFocusTrackingDispose = undefined;
   }
 
-  private buildLayout(): void {
-    const { ui } = this.state;
-    // Fullscreen mounts its layout root (transcript ScrollView + bottom dock)
-    // in createTUIState; the root children list stays empty there.
-    if (ui instanceof TuiAltScreen) return;
-    ui.clear();
-    ui.addChild(this.state.transcriptContainer);
-    ui.addChild(this.state.activityContainer);
-    ui.addChild(this.state.todoPanelContainer);
-    ui.addChild(this.state.notifyPanelContainer);
-    ui.addChild(this.state.queueContainer);
-    ui.addChild(this.state.btwPanelContainer);
-    ui.addChild(this.state.surveyContainer);
-    ui.addChild(this.state.editorContainer);
-    // Footer is mounted later (mountFooter), not here.
-  }
-
   // Footer is the only chrome with content before a session is ready, so
   // mounting it at construction lets a stray pre-start render leak it to the
   // terminal — e.g. above the error when resuming a missing session. Mount it
@@ -1153,14 +1135,9 @@ export class KimiTUI {
   private mountFooter(): void {
     const footerWrap = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
     footerWrap.addChild(this.state.footer);
-    const dock = this.state.dockContainer;
-    if (dock !== undefined) {
-      // Dock sizing contract: the footer may shrink to 1 row under extreme
-      // height pressure, but never disappears (see createTUIState).
-      dock.addChild(footerWrap, { shrink: 1, minSize: 1 });
-      return;
-    }
-    this.state.ui.addChild(footerWrap);
+    // Dock sizing contract: the footer may shrink to 1 row under extreme
+    // height pressure, but never disappears (see createTUIState).
+    this.state.dockContainer.addChild(footerWrap, { shrink: 1, minSize: 1 });
   }
 
   // Fullscreen exit: leave the alternate screen with the frame preserved,
