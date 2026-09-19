@@ -973,6 +973,32 @@ describe('SessionManager remote environment wiring', () => {
     expect(byEnvironment.get('local')!.options[0]).toMatchObject({ environmentId: 'sandbox', environmentCwd: '/elsewhere' });
   });
 
+  it('rejects an explicit environment id when declaration resolution fails', async () => {
+    registry = localRegistry();
+    const { program, byEnvironment } = createCapture();
+    manager = makeSessionManager(
+      workspacesFor(registry, program),
+      { get: async () => undefined } as unknown as ISessionIndex,
+      {
+        config: {
+          _serviceBrand: undefined,
+          ready: Promise.resolve(),
+          get: () => {
+            throw new Error('config store corrupted');
+          },
+        } as unknown as IConfigService,
+      },
+    );
+
+    await expect(manager.create({ workDir: '/workspace', environmentId: 'sandbox' })).rejects.toMatchObject({
+      code: 'config.invalid',
+    });
+    expect(byEnvironment.size).toBe(0);
+
+    await manager.create({ workDir: '/workspace' });
+    expect(byEnvironment.get('local')!.options[0]).toMatchObject({ workDir: '/workspace' });
+  });
+
   it('connects a disconnected declared environment before creating the session', async () => {
     const { manager, registry, byEnvironment, remote } = remoteWiringSetup({
       config: { sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } },

@@ -81,7 +81,13 @@ export class SessionManager implements ISessionManager {
       options.environmentId === undefined || options.environmentId === LOCAL_ENVIRONMENT_ID
         ? undefined
         : declarations?.entries.find((entry) => entry.id === options.environmentId);
-    if (options.environmentId !== undefined && options.environmentId !== LOCAL_ENVIRONMENT_ID && declarations !== undefined) {
+    if (options.environmentId !== undefined && options.environmentId !== LOCAL_ENVIRONMENT_ID) {
+      if (declarations === undefined) {
+        throw new Error2(
+          ErrorCodes.CONFIG_INVALID,
+          `environment declarations failed to resolve; cannot validate environment "${options.environmentId}"`,
+        );
+      }
       if (declared === undefined) {
         throw new Error2(
           ErrorCodes.CONFIG_INVALID,

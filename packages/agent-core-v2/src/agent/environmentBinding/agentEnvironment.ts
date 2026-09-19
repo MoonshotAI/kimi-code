@@ -136,8 +136,18 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
 
   workspaceRoots(): EnvironmentWorkspaceRoots {
     const binding = this.turnSnapshot?.binding ?? this.binding.current;
+    let workDir = binding.cwd;
+    if (workDir === undefined && binding.environmentId !== LOCAL_ENVIRONMENT_ID) {
+      try {
+        const environment = this.resolver.inspect(binding);
+        const host = environment.host as { readonly cwd?: string };
+        workDir = host.cwd ?? environment.host.homeDir;
+      } catch {
+        workDir = undefined;
+      }
+    }
     return {
-      workDir: binding.cwd ?? this.session.cwd,
+      workDir: workDir ?? this.session.cwd,
       additionalDirs:
         binding.environmentId === LOCAL_ENVIRONMENT_ID
           ? this.sessionState.get(workspaceContextAdditionalDirsKey)

@@ -1352,6 +1352,42 @@ describe('AgentEnvironmentBindingService.connectAndSwitchInTurn', () => {
   });
 });
 
+describe('AgentEnvironmentService workspaceRoots', () => {
+  it('falls back to the session cwd for a local binding without a cwd', () => {
+    const { agentEnvironment } = setup();
+    expect(agentEnvironment.workspaceRoots().workDir).toBe('/workspace');
+  });
+
+  it('prefers the remote host cwd over the session cwd when the binding carries no cwd', () => {
+    const { registry, binding, agentEnvironment } = setup();
+    registry.register(environment('remote-cwd', 'remote-cwd-one', 'ready', ['process'], {
+      ...REMOTE_HOST,
+      cwd: '/remote/initial',
+    } as Partial<Environment['host']>));
+    binding.switch('remote-cwd');
+    expect(agentEnvironment.workspaceRoots().workDir).toBe('/remote/initial');
+  });
+
+  it('falls back to the remote homeDir when the host carries no cwd', () => {
+    const { binding, agentEnvironment } = setup();
+    binding.switch('remote');
+    expect(agentEnvironment.workspaceRoots().workDir).toBe('/home/fake');
+  });
+
+  it('keeps the binding cwd when the binding carries one', () => {
+    const { binding, agentEnvironment } = setup();
+    binding.switch('remote', '/remote/work');
+    expect(agentEnvironment.workspaceRoots().workDir).toBe('/remote/work');
+  });
+
+  it('falls back to the session cwd when the bound environment cannot be inspected', () => {
+    const { agentEnvironment } = setup({
+      seedBinding: { workspaceId: 'workspace', environmentId: 'ghost' },
+    });
+    expect(agentEnvironment.workspaceRoots().workDir).toBe('/workspace');
+  });
+});
+
 describe('AgentEnvironmentService reconnect', () => {
   it('delegates to the connect method of the bound environment', async () => {
     const { registry, binding, agentEnvironment } = setup();
