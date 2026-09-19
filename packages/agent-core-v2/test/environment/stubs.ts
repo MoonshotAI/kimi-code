@@ -70,7 +70,7 @@ export function connectableEnvironment(
   options: {
     readonly environmentId?: string;
     readonly workspaceId?: string;
-    readonly status?: 'ready' | 'disconnected';
+    readonly status?: 'pending' | 'ready' | 'disconnected';
     readonly connect?: () => Promise<void>;
     readonly stat?: (path: string) => Promise<{ isDirectory: boolean }>;
   } = {},
@@ -82,7 +82,7 @@ export function connectableEnvironment(
   const environmentId = options.environmentId ?? 'connectable';
   const fake = new FakeEnvironment(
     { workspaceId: options.workspaceId ?? 'workspace', environmentId, generation: `${environmentId}-pending` },
-    { status: options.status ?? 'disconnected', capabilities: ['fs', 'process'] },
+    { status: options.status ?? 'pending', capabilities: ['fs', 'process'] },
   );
   const calls: string[] = [];
   const connectCalls: string[] = [];

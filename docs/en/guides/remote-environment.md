@@ -78,9 +78,9 @@ The `/environment` slash command opens the environment manager, modeled after th
 - **List**: the `local` environment plus every declared environment, each row showing its id, type, connection status, and `defaultCwd`. Target OS/arch is not shown yet — it is only known after a connection handshake, so surfacing it in the list is a future enhancement.
 - **Add**: create a new declaration from a minimal form — SSH entries can pick from hosts discovered in `~/.ssh/config`; other types or a custom command can be entered directly. The form's scope control chooses where the entry lands: **Global** (the default) writes it to the user-level `config.toml`, available in every workspace; **Project** writes it to the workspace's `.kimi-code/environments.toml`, ready to commit and share with the team. Either way it takes effect immediately: the new environment appears in the list and can be switched to without a restart.
 - **Switch**: pick an environment, then enter the working directory on the target (prefilled from the entry's `defaultCwd`). The directory is validated against the target's filesystem by the server; failures are reported inline, and a failed connection shows the exit code and a bounded slice of stderr.
-- **Reconnect**: an environment in the disconnected state offers an explicit reconnect action.
+- **Reconnect**: an environment in the disconnected or pending state offers an explicit reconnect action.
 
-The footer shows the active environment's identity (for example `ssh:dev-box`) before the working directory; `local` renders nothing. A disconnected environment is shown in the error color with a banner, and the local git status slot is hidden for remote sessions. Approval prompts display the target environment next to the command or path, and `@` file completion is served by the server so candidates come from the target's filesystem.
+The footer shows the active environment's identity (for example `ssh:dev-box`) before the working directory; `local` renders nothing. A disconnected environment is shown in the error color with a banner, while a pending one — never connected yet, or reaped after idling past its `idleTtlSeconds` — renders dim with no error tone, and the local git status slot is hidden for remote sessions. Approval prompts display the target environment next to the command or path, and `@` file completion is served by the server so candidates come from the target's filesystem.
 
 Switching is refused while tool calls are executing or an approval is pending — retry once the turn settles. An accepted switch takes effect immediately: the session's next tool call already runs on the new environment.
 
@@ -114,7 +114,7 @@ A remote session depends on one connection per (workspace, environment). When th
 
 There is no automatic reconnect after a drop and **no silent fallback to the local environment**: a command like `rm` or `git` that was meant for the remote machine must never land on yours. Instead, tool calls fail with an `environment.unavailable` error, and you reconnect explicitly from the `/environment` dialog.
 
-Resuming a session is no exception: a restored remote binding does not reconnect in the background, so the session opens immediately while the environment stays `disconnected`. Tool calls on the target fail with `environment.unavailable` until you reconnect explicitly from the `/environment` dialog — and there is never a silent fallback to `local`.
+Resuming a session is no exception: a restored remote binding does not reconnect in the background, so the session opens immediately while the environment stays `pending`. Tool calls on the target fail with `environment.unavailable` until you reconnect explicitly from the `/environment` dialog — and there is never a silent fallback to `local`.
 
 Every connect attempt is bounded to 10 seconds: a target that never answers the handshake fails with an `initialize timed out` error instead of hanging silently, and when the launcher wrote anything to stderr — a stuck password prompt, an `npx` download's progress — the error includes that tail, so the cause is visible.
 

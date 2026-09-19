@@ -364,6 +364,17 @@ describe('EnvironmentRegistry', () => {
     await expect(registry.acquireWhenReady({ workspaceId: 'workspace', environmentId: 'missing' })).rejects.toThrow('not exist');
   });
 
+  it('treats a pending environment like a disconnected one for acquire, without a failure reason', async () => {
+    registry.register(fakeEnvironment('local', 'one', { status: 'pending' }));
+    expect(() => registry.acquire({ workspaceId: 'workspace', environmentId: 'local' })).toThrow('environment local is pending');
+    await expect(registry.acquireWhenReady({ workspaceId: 'workspace', environmentId: 'local' })).rejects.toThrow('pending');
+    expect(registry.snapshot().environments[0]).toMatchObject({
+      environmentId: 'local',
+      status: 'pending',
+      connectError: undefined,
+    });
+  });
+
   it('appends the recorded connect error first line to the unavailable error', async () => {
     const current = fakeEnvironment('local', 'one', { status: 'disconnected' });
     current.connectError = 'initialize timed out after 10000ms; executor stderr: Password:\nsecond line stays out';

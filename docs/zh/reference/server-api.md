@@ -888,7 +888,7 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
 
-成功时，`data` 为 `{ workspace_id, environments, ssh_hosts }`。`environments` 每项为 `{ environment_id, type, status, generation, capabilities, default_cwd?, connect_error? }`，其中 `type` 取 `local` / `ssh` / `docker` / `command` 之一，`status` 取 `connecting` / `ready` / `degraded` / `disconnected` / `draining` / `disposed` 之一，`capabilities` 从 `fs` / `process` / `terminal` 中取值；`connect_error` 记录 `disconnected` 条目的失败原因。`ssh_hosts` 为主机名列表。
+成功时，`data` 为 `{ workspace_id, environments, ssh_hosts }`。`environments` 每项为 `{ environment_id, type, status, generation, capabilities, default_cwd?, connect_error? }`，其中 `type` 取 `local` / `ssh` / `docker` / `command` 之一，`status` 取 `pending` / `connecting` / `ready` / `degraded` / `disconnected` / `draining` / `disposed` 之一，`capabilities` 从 `fs` / `process` / `terminal` 中取值；`pending` 表示没有可用连接且未观察到失败（尚未连接过，或因空闲被回收），`connect_error` 记录 `disconnected` 条目的失败原因。`ssh_hosts` 为主机名列表。
 
 - `40401`：会话不存在
 

@@ -506,15 +506,17 @@ export class FooterComponent implements Component {
     // Environment slot: the local environment renders nothing; a remote binding
     // shows its bare environment id ahead of the cwd — error-colored while
     // disconnected, with the first connect-error line appended so the failure
-    // reason is visible at a glance. While connecting, a braille spinner ticks
-    // ahead of the id (see syncEnvironmentSpinner for the bounded timer).
+    // reason is visible at a glance. A pending environment (never connected or
+    // deliberately reaped while idle) is not a failure and renders dim like a
+    // ready one. While connecting, a braille spinner ticks ahead of the id (see
+    // syncEnvironmentSpinner for the bounded timer).
     const environment = state.environment;
     const remote = isRemoteEnvironment(environment);
     if (remote) {
       const tone =
         environment.status === 'disconnected'
           ? colors.error
-          : environment.status === 'ready'
+          : environment.status === 'ready' || environment.status === 'pending'
             ? colors.textDim
             : colors.warning;
       const label = environment.environmentId;

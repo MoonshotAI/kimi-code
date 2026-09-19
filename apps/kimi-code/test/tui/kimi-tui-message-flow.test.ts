@@ -9306,6 +9306,28 @@ describe('KimiTUI environment slot', () => {
     expect(after.split('Environment ssh:dev-box disconnected').length - 1).toBe(1);
   });
 
+  it('does not show the disconnect notice when the environment is reaped to pending', async () => {
+    let status: 'ready' | 'pending' = 'ready';
+    const session = environmentSession({
+      listEnvironments: vi.fn(async () => ({
+        workspaceId: 'ws-1',
+        environments: [
+          { environmentId: 'local', type: 'local', status: 'ready', generation: 'g0', capabilities: [] },
+          { environmentId: 'dev-box', type: 'ssh', status, generation: 'g1', capabilities: ['fs'] },
+        ],
+        sshHosts: [],
+      })),
+    });
+    const { driver } = await makeDriver(session);
+    await driver.refreshEnvironmentSlot();
+
+    status = 'pending';
+    await driver.refreshEnvironmentSlot();
+
+    expect(driver.state.appState.environment?.status).toBe('pending');
+    expect(stripSgr(renderTranscript(driver))).not.toContain('Environment ssh:dev-box disconnected');
+  });
+
   it('carries the disconnect reason into appState for the footer slot', async () => {
     const session = environmentSession({
       listEnvironments: vi.fn(async () => ({

@@ -77,7 +77,7 @@ function makeHost(options: {
         pending = {
           environmentId: input.id,
           type: input.entry.type ?? 'command',
-          status: 'disconnected',
+          status: 'pending',
           generation: `g-${input.id}`,
           capabilities: [],
           defaultCwd: input.entry.defaultCwd,

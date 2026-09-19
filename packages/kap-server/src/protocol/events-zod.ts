@@ -621,6 +621,7 @@ export const sessionStatusChangedEventSchema = z.object({
 });
 
 export const environmentStatusSchema = z.enum([
+  'pending',
   'connecting',
   'ready',
   'degraded',

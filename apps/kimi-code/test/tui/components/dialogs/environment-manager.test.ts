@@ -111,6 +111,21 @@ describe('EnvironmentManagerComponent', () => {
     expect(plain).not.toContain('retry guidance');
   });
 
+  it('renders the pending status dim with no error tone and no reason line', () => {
+    const component = makeComponent({
+      environments: [
+        LOCAL,
+        { environmentId: 'dev-box', type: 'ssh', status: 'pending', connectError: 'must not render' },
+      ],
+    });
+    const lines = component.render(120);
+    const pendingLine = lines.find((line) => line.includes('pending'));
+    expect(pendingLine).toBeDefined();
+    expect(pendingLine).toContain('38;2;136;136;136'); // colors.textDim #888888
+    expect(pendingLine).not.toContain(ERROR);
+    expect(pendingLine).not.toContain('must not render');
+  });
+
   it('uses the provider-manager header shape (one top border, title, hint, no inner border)', () => {
     const component = makeComponent();
     const lines = component.render(120).map((line) => line.replaceAll(SGR, ''));
@@ -149,7 +164,7 @@ describe('EnvironmentManagerComponent', () => {
     expect(onAdd).toHaveBeenCalledTimes(1);
   });
 
-  it('offers Enter/R reconnect only on the disconnected bound remote row', () => {
+  it('offers Enter/R reconnect on the disconnected bound remote row', () => {
     const onReconnect = vi.fn();
     const component = makeComponent({ onReconnect, currentEnvironmentId: 'sandbox' });
     // Selection starts on the current (sandbox) row, which is disconnected.
@@ -162,6 +177,32 @@ describe('EnvironmentManagerComponent', () => {
     const onReconnect = vi.fn();
     const onSwitch = vi.fn();
     const component = makeComponent({ onReconnect, onSwitch, currentEnvironmentId: 'sandbox' });
+    component.handleInput(ENTER);
+    expect(onReconnect).toHaveBeenCalledWith('sandbox');
+    expect(onSwitch).not.toHaveBeenCalled();
+  });
+
+  it('offers Enter/R reconnect on the pending bound remote row', () => {
+    const onReconnect = vi.fn();
+    const component = makeComponent({
+      onReconnect,
+      currentEnvironmentId: 'sandbox',
+      environments: [LOCAL, DEV_BOX, { ...SANDBOX, status: 'pending' }],
+    });
+    expect(rendered(component)).toContain('Enter/R reconnect');
+    component.handleInput('r');
+    expect(onReconnect).toHaveBeenCalledWith('sandbox');
+  });
+
+  it('reconnects on Enter when the current row is the pending bound remote', () => {
+    const onReconnect = vi.fn();
+    const onSwitch = vi.fn();
+    const component = makeComponent({
+      onReconnect,
+      onSwitch,
+      currentEnvironmentId: 'sandbox',
+      environments: [LOCAL, DEV_BOX, { ...SANDBOX, status: 'pending' }],
+    });
     component.handleInput(ENTER);
     expect(onReconnect).toHaveBeenCalledWith('sandbox');
     expect(onSwitch).not.toHaveBeenCalled();

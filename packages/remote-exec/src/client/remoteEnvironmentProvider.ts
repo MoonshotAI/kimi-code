@@ -107,7 +107,7 @@ export class ManagedRemoteEnvironment implements Environment {
           additionalDirs: roots.additionalDirs?.map((root) => posixPath.resolve(root)),
         }),
       };
-      this.currentStatus = 'disconnected';
+      this.currentStatus = 'pending';
     } else {
       this.capabilities = inner.capabilities;
       this.host = inner.host;
@@ -158,8 +158,8 @@ export class ManagedRemoteEnvironment implements Environment {
         // already settled the view through the status subscription. Syncing
         // with the inner covers a connect started by another view wrapping
         // the same live connection: this view stays usable. Pending views
-        // have no inner and end disconnected, as before.
-        if (this.currentStatus === 'connecting') this.setStatus(this.inner?.status ?? 'disconnected');
+        // have no inner and return to pending — no failure was observed.
+        if (this.currentStatus === 'connecting') this.setStatus(this.inner?.status ?? 'pending');
       } catch (error) {
         this.lastConnectError = error instanceof Error ? error.message : String(error);
         this.setStatus('disconnected');
