@@ -6,6 +6,19 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.0.2 (2026-09-19)
+
+### Polish
+
+- The agent no longer assumes the current working directory is the project root.
+
+### Bug Fixes
+
+- Fix compaction failing after switching to a model with a smaller context window.
+- Fix new messages occasionally landing at an old position in the conversation after resuming a session.
+- Fix a message sent while the agent was running sometimes appearing twice in the chat.
+- web: Improved interactions and fixed known bugs.
+
 ## 2.0.1 (2026-09-18)
 
 ### Polish
