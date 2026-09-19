@@ -9406,4 +9406,113 @@ describe('KimiTUI environment slot', () => {
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EnvironmentManagerComponent);
     });
   });
+
+  it('announces the first prompt while the lazy session is created (no --environment)', async () => {
+    const lazySession = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    let resolveCreate!: (s: unknown) => void;
+    const createSession = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+    const { driver } = await makeDriver(lazySession, { createSession }, startupInput);
+
+    driver.handleUserInput('hello-lazy-world');
+    await vi.waitFor(() => {
+      expect(driver.state.appState.streamingPhase).toBe('waiting');
+    });
+    expect(stripSgr(renderTranscript(driver))).toContain('hello-lazy-world');
+    expect(driver.state.appState.environment).toBeUndefined();
+
+    resolveCreate(lazySession);
+    await vi.waitFor(() => {
+      expect(lazySession.prompt).toHaveBeenCalledWith('hello-lazy-world', { promptId: undefined });
+    });
+    expect(driver.state.transcriptEntries.filter((entry) => entry.kind === 'user')).toHaveLength(1);
+  });
+
+  it('marks the environment connecting while the first prompt awaits the startup session', async () => {
+    const lazySession = environmentSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2', environment: 'dev-box' },
+    };
+    let resolveCreate!: (s: unknown) => void;
+    const createSession = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+    const { driver } = await makeDriver(
+      lazySession,
+      {
+        createSession,
+        listEnvironmentDeclarations: vi.fn(async () => [
+          { id: 'dev-box', type: 'ssh', defaultCwd: '/home/me/projects' },
+        ]),
+      },
+      startupInput,
+    );
+
+    driver.handleUserInput('hello-remote-world');
+    await vi.waitFor(() => {
+      expect(driver.state.appState.streamingPhase).toBe('waiting');
+    });
+    expect(stripSgr(renderTranscript(driver))).toContain('hello-remote-world');
+    expect(driver.state.appState.environment).toEqual({
+      environmentId: 'dev-box',
+      type: 'ssh',
+      status: 'connecting',
+    });
+
+    resolveCreate(lazySession);
+    await vi.waitFor(() => {
+      expect(lazySession.prompt).toHaveBeenCalledWith('hello-remote-world', { promptId: undefined });
+    });
+    expect(driver.state.transcriptEntries.filter((entry) => entry.kind === 'user')).toHaveLength(1);
+    expect(driver.state.appState.environment?.status).toBe('ready');
+  });
+
+  it('keeps the announced prompt visible and resets waiting when the lazy creation fails', async () => {
+    const lazySession = environmentSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2', environment: 'dev-box' },
+    };
+    const createSession = vi.fn(async (): Promise<unknown> => {
+      throw new Error('connect failed');
+    });
+    const { driver } = await makeDriver(
+      lazySession,
+      {
+        createSession,
+        listEnvironmentDeclarations: vi.fn(async () => [
+          { id: 'dev-box', type: 'ssh', defaultCwd: '/home/me/projects' },
+        ]),
+      },
+      startupInput,
+    );
+
+    // The background pre-create kicked off at init already failed once.
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain('Failed to start a session: connect failed');
+    });
+    expect(driver.state.appState.environment).toBeUndefined();
+
+    driver.handleUserInput('hello-remote-world');
+    await vi.waitFor(() => {
+      expect(createSession).toHaveBeenCalledTimes(2);
+    });
+    await vi.waitFor(() => {
+      expect(driver.state.appState.streamingPhase).toBe('idle');
+    });
+    expect(stripSgr(renderTranscript(driver))).toContain('hello-remote-world');
+    expect(driver.state.appState.environment).toBeUndefined();
+  });
 });

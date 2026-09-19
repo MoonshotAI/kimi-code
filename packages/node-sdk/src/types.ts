@@ -200,6 +200,18 @@ export interface WorkspaceTrustInfo {
 }
 
 /**
+ * One resolved `[environments]` declaration for a workspace directory — the
+ * merged user-config + project-file view a new session could bind, with
+ * project entries included only once the folder is trusted. Session-less.
+ * Only meaningful on the agent-core-v2 engine.
+ */
+export interface WorkspaceEnvironmentDeclarationInfo {
+  readonly id: string;
+  readonly type: Exclude<SessionEnvironmentType, 'local'>;
+  readonly defaultCwd?: string;
+}
+
+/**
  * File-suggestion query against a workspace root, no session required. Only
  * meaningful on the agent-core-v2 engine; the v1 engine has no equivalent
  * and reports `undefined`.

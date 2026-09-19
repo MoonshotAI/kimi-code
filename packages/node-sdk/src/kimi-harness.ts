@@ -49,6 +49,7 @@ import type {
   TelemetryProperties,
   TestMcpServerOptions,
   UploadFileOptions,
+  WorkspaceEnvironmentDeclarationInfo,
   WorkspaceTrustInfo,
 } from '#/types';
 
@@ -426,6 +427,17 @@ export class KimiHarness {
    */
   async getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo> {
     return this.rpc.getWorkspaceTrustInfo(workDir);
+  }
+
+  /**
+   * Resolved `[environments]` declarations for `workDir` (agent-core-v2 only):
+   * the merged user/project entries a new session could bind — project entries
+   * appear only once the folder is trusted.
+   */
+  async listEnvironmentDeclarations(
+    workDir: string,
+  ): Promise<readonly WorkspaceEnvironmentDeclarationInfo[]> {
+    return this.rpc.listEnvironmentDeclarations(workDir);
   }
 
   /** Mark `workDir` as trusted; project-level MCP servers connect live afterwards. */
