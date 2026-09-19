@@ -1,0 +1,17 @@
+# Dev State
+
+XState v5 状态节点生命周期时序与钩子写法，结论以 xstate 5.33.2 实测为准。
+
+## Explanation
+
+- [生命周期模型](references/explanation/lifecycle-model.md)：macrostep 语义、进入/离开完整时序、actions 不被 await 的原因。
+
+## How-to guides
+
+- [钩子配方](references/how-to-guides/hooks.md)：onStarting（可拦截/不可拦截）、onStarted、onEnded 的挂载位置；invoke 前同步阻塞；invoke 结果分流 target；异步收尾。
+- [fromCallback 钩子写法](references/how-to-guides/from-callback.md)：cleanup 时序陷阱、sendBack 分流代替 onDone、启动抛错走 onError、与 fromPromise 的选型。
+
+## Tutorials
+
+- [时序验证脚本](references/tutorials/verify-order.mjs)：六个用例的可运行验证，含实测输出。
+- [fromCallback 验证脚本](references/tutorials/verify-callback.mjs)：五个用例覆盖启动时机、头部阻塞、cleanup 时序、sendBack 分流、启动抛错。

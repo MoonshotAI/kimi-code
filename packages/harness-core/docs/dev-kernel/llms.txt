@@ -1,0 +1,47 @@
+# dev-kernel
+
+> 按场景使用 human/kernel 的 Unit 原语；一篇文档回答一个契约或完成一个操作，按 Diataxis 区分解释、参考、指南与教程。
+
+基线是 refact-237 的核心实现，不是 code-app 已发布 API。先确认源码，再按问题选择文档；不要求一次读完。
+
+## 入口
+
+- [技能执行入口](SKILL.md): 读取顺序、使用流程与交付检查。
+- [代码定位](references/reference/source-map.md): 实现路径、导出边界、适用版本与 import 约束。
+- [setup 调用边界](references/reference/setup-context.md): 哪些 API 依赖同步 setup，哪些可在宿主调用。
+
+## Explanation
+
+- [Unit 树与 EffectScope](references/explanation/unit-tree.md): 节点拥有的资源、两棵树的关系、scope.stop 与 unmount 的区别。
+
+## Reference
+
+- [createUnit](references/reference/create-unit.md): 定义可挂载单元；区分配方和实例。
+- [mountRoot](references/reference/mount-root.md): 在宿主创建根节点；确定 scope 父级。
+- [useNode](references/reference/use-node.md): 在 setup 捕获当前实例供后续显式使用。
+- [useReady](references/reference/use-ready.md): 登记异步就绪条件；不等同暂停或取消。
+- [provide](references/reference/provide.md): 向当前节点及后代提供服务或共享状态。
+- [useExpose](references/reference/use-expose.md): 把契约挂到父节点，随当前节点撤销。
+- [inject](references/reference/inject.md): 立即解析最近的 provider；不是等待或动态绑定。
+- [useFire](references/reference/use-fire.md): 捕获事件发送函数，向祖先路径报告事实。
+- [useOn](references/reference/use-on.md): 注册当前节点的事件监听并绑定清理。
+- [useContribute](references/reference/use-contribute.md): 添加有优先级、随节点撤销的扩展项。
+- [useCollection](references/reference/use-collection.md): 响应式聚合自己和祖先的贡献。
+- [useChildren](references/reference/use-children.md): 按 key 和配方身份增删、替换、更新子节点。
+- [Node 与 Handle](references/reference/node-handle.md): setup 外的显式操作、props 更新和资源所有权。
+- [命名：use 与实例方法](references/reference/naming.md): 对齐 Vue：`use*` 取当前上下文，按 id 用实例 `get`，不自造 prefix。
+
+## How-to guides
+
+- [宿主启动](references/how-to-guides/bootstrap.md): mount、ready、运行与退出，不要求启动层是 Unit。
+- [异步初始化门控](references/how-to-guides/async-initialization.md): 初始化完成后才挂载孩子，并避免 ready 等待环。
+- [兄弟共享状态](references/how-to-guides/sibling-state.md): 通过共同父级的 Store / Service 共享状态和 actions。
+- [兄弟即时事件](references/how-to-guides/sibling-events.md): 在共同父级监听，把取消订阅绑定到接收者。
+- [按已注册 Feature 挂卸载路由](references/how-to-guides/feature-gated-routes.md): 观察 `Features` 名单或把扩展贡献到祖先。
+- [安装 createMedia](references/how-to-guides/install-media.md): 装一个 media Feature，在 `lower` 把 ref 收成 base64 或 file-id。
+- [绑定 Provider 并发一次 LLM 请求](references/how-to-guides/run-llm-request.md): 绑定出 requester（无 policy），再 `runLlmRequest` 或 `settleLlmRequest`。
+- [非响应式资源清理](references/how-to-guides/cleanup-resources.md): 显式 cleanup、取消信号、跨节点登记与提前释放。
+
+## Tutorials
+
+- [计数树完整程序](references/tutorials/counter-tree.md): 运行带断言的启动、初始化、观察、事件和卸载示例。

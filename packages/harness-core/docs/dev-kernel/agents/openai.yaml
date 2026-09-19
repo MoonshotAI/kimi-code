@@ -1,0 +1,4 @@
+interface:
+  display_name: "Kernel 原语开发"
+  short_description: "按场景选择 Unit 原语，处理 setup 边界、启动、通信与清理"
+  default_prompt: "使用 $dev-kernel，为当前需求选择 runtime 原语并明确 setup、就绪和资源清理边界。"

@@ -1,0 +1,39 @@
+{
+  "name": "@moonshot-ai/harness-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Kimi product harness built on agent-core",
+  "license": "MIT",
+  "type": "module",
+  "imports": {
+    "#/*": "./src/*.ts"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./package.json": {
+      "types": "./package.json",
+      "default": "./package.json"
+    },
+    "./*": {
+      "types": "./src/*.ts",
+      "default": "./src/*.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "example": "node --import tsx --import ./example/register-raw.mjs example/index.ts",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@moonshot-ai/agent-core": "workspace:^",
+    "@types/express": "^5.0.6",
+    "express": "^5.2.1",
+    "openai": "^6.34.0",
+    "smol-toml": "^1.6.1"
+  }
+}

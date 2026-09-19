@@ -196,9 +196,11 @@ describe('server-v2 /api/v1 skills', () => {
         ],
       });
       expect(result.body.code).toBe(0);
-      const messages = await getJson<{ items: { role: string; content: { type: string; text?: string }[] }[] }>(`/api/v1/sessions/${id}/messages`);
-      const input = messages.body.data.items.find((message) => message.role === 'user' && message.content.some((part) => part.text?.includes('User activated the skill')));
-      const text = input?.content.map((part) => part.text ?? '').join('\n') ?? '';
+      const messages = await getJson<{ messages: { type: string; text?: { type: string; text?: string }[] }[] }>(`/api/v1/sessions/${id}/history`);
+      expect(messages.status, JSON.stringify(messages.body)).toBe(200);
+      expect(messages.body.code).toBe(0);
+      const input = messages.body.data.messages.find((message) => message.type === 'user' && message.text?.some((part) => part.text?.includes('User activated the skill')));
+      const text = input?.text?.map((part) => part.text ?? '').join('\n') ?? '';
       expect(text).toContain('args="Example argument"');
       expect(text).toContain('First context block');
       expect(text.indexOf('Second context block')).toBeGreaterThan(text.indexOf('First context block'));

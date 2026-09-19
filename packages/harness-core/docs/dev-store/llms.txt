@@ -1,0 +1,24 @@
+# Dev Store
+
+事件驱动 Store（agent-core-v3 `src/store/`）的使用文档索引。内核五个概念：Event、Entry/Cursor、Journal、Projection、Store；`Blobs` 与 Journal 平级（领域外置）；`history` 在外面组合。无 mapJournal、无 journal/tree 自动 offload。
+
+## Explanation
+
+- [模型](references/explanation/model.md)：事件是事实，状态是投影，Journal 是持久化边界；设计决策与边界。
+
+## Reference
+
+- [protocol](references/reference/protocol.md)：Event / Entry / Journal / Projection / View / Store 类型契约。
+- [open-store](references/reference/open-store.md)：openStore 的串行提交、两阶段发布、错误分类、订阅、关闭语义。
+- [composition](references/reference/composition.md)：combine / withHistory / replay 与按 projection 选择历史视图。
+- [blobs](references/reference/blobs.md)：领域 Blobs（plan / media://）。
+- [drivers](references/reference/drivers.md)：openWireJournal / openTreeJournal、cursor 形状、undo/fork/checkout。
+- [domain](references/reference/domain.md)：conversation/todos/usage/turns/human 投影、decodeV2/decodeHuman、fixture。
+
+## How-to guides
+
+- [recipes](references/how-to-guides/recipes.md)：开 store、提交、订阅、后加载、undo/fork、领域 Blobs、自定义 Journal/Projection、运行验证。
+
+## Tutorials
+
+- [counter-store](references/tutorials/counter-store.md)：最小完整程序（含断言与恢复）。
