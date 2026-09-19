@@ -138,14 +138,15 @@ describe('server-v2 /api/v1 environment routes', () => {
       expect(missing.body.code).toBe(40001);
     });
 
-    it('lists declared environments as disconnected placeholders before any connect', async () => {
+    it('lists declared environments as pending placeholders before any connect', async () => {
       const id = await createSession();
       const environments = await call<EnvironmentsWire>('GET', `/api/v1/sessions/${id}/environments`);
       expect(environments.body.code).toBe(0);
       const byId = new Map(environments.body.data.environments.map((entry) => [entry.environment_id, entry]));
       expect(byId.get('local')).toMatchObject({ type: 'local', status: 'ready' });
-      expect(byId.get('loop')).toMatchObject({ type: 'command', status: 'disconnected', default_cwd: '/tmp' });
-      expect(byId.get('dying')).toMatchObject({ type: 'command', status: 'disconnected', default_cwd: '/tmp' });
+      expect(byId.get('loop')).toMatchObject({ type: 'command', status: 'pending', default_cwd: '/tmp' });
+      expect(byId.get('dying')).toMatchObject({ type: 'command', status: 'pending', default_cwd: '/tmp' });
+      expect(byId.get('loop')?.connect_error).toBeUndefined();
       expect(Array.isArray(environments.body.data.ssh_hosts)).toBe(true);
     });
 

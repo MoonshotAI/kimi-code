@@ -215,7 +215,7 @@ describe('RemoteEnvironmentProviderFactory', () => {
     await registry.dispose();
   });
 
-  it('registers declared environments as disconnected placeholders without connecting', async () => {
+  it('registers declared environments as pending placeholders without connecting', async () => {
     const registry = new EnvironmentRegistry('workspace-1');
     const connect = vi.fn(async (options: RemoteEnvironmentOptions) => connectedEnvironment(options, 'connected-1'));
     const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
@@ -223,7 +223,8 @@ describe('RemoteEnvironmentProviderFactory', () => {
 
     const registered = registry.current('dev-box');
     expect(registered).toBeDefined();
-    expect(registered!.status).toBe('disconnected');
+    expect(registered!.status).toBe('pending');
+    expect(registered!.connectError).toBeUndefined();
     expect(connect).not.toHaveBeenCalled();
     expect(() => registry.acquire({ workspaceId: 'workspace-1', environmentId: 'dev-box' })).toThrowError(
       expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.unavailable' }),
@@ -267,6 +268,7 @@ describe('RemoteEnvironmentProviderFactory', () => {
     await expect(placeholder.connect!()).rejects.toThrow(/code 127/);
     expect(registry.current('dev-box')).toBe(placeholder);
     expect(registry.current('dev-box')!.status).toBe('disconnected');
+    expect(registry.current('dev-box')!.connectError).toContain('code 127');
 
     await attachment.dispose();
     await registry.dispose();
@@ -662,9 +664,10 @@ describe('idle connection reaping', () => {
     expect(registry.current('dev-box')!.status).toBe('ready');
 
     await vi.waitFor(() => {
-      expect(registry.current('dev-box')!.status).toBe('disconnected');
+      expect(registry.current('dev-box')!.status).toBe('pending');
     }, { timeout: 5_000 });
     expect(disposed(produced[0])).toBe(true);
+    expect(registry.current('dev-box')!.connectError).toBeUndefined();
 
     await registry.current('dev-box')!.connect!();
     expect(connect).toHaveBeenCalledTimes(2);
@@ -689,7 +692,7 @@ describe('idle connection reaping', () => {
 
     lease.dispose();
     await vi.waitFor(() => {
-      expect(registry.current('dev-box')!.status).toBe('disconnected');
+      expect(registry.current('dev-box')!.status).toBe('pending');
     }, { timeout: 5_000 });
     expect(disposed(produced[0])).toBe(true);
 
@@ -713,7 +716,7 @@ describe('idle connection reaping', () => {
 
     resource.dispose();
     await vi.waitFor(() => {
-      expect(registry.current('dev-box')!.status).toBe('disconnected');
+      expect(registry.current('dev-box')!.status).toBe('pending');
     }, { timeout: 5_000 });
     expect(disposed(produced[0])).toBe(true);
 
@@ -774,7 +777,7 @@ describe('idle connection reaping', () => {
     expect(disposed(produced[0])).toBe(false);
 
     await vi.waitFor(() => {
-      expect(registry.current('dev-box')!.status).toBe('disconnected');
+      expect(registry.current('dev-box')!.status).toBe('pending');
     }, { timeout: 5_000 });
     expect(disposed(produced[0])).toBe(true);
 
@@ -800,7 +803,7 @@ describe('declaration watch', () => {
     await vi.waitFor(() => {
       expect(registry.current('staging')).toBeDefined();
     });
-    expect(registry.current('staging')!.status).toBe('disconnected');
+    expect(registry.current('staging')!.status).toBe('pending');
     expect(registry.current('dev-box')).toBeDefined();
     expect(connect).not.toHaveBeenCalled();
 
@@ -853,7 +856,7 @@ describe('declaration watch', () => {
     await vi.waitFor(() => {
       expect(registry.current('dev-box')!.identity.generation).not.toBe(before.identity.generation);
     });
-    expect(registry.current('dev-box')!.status).toBe('disconnected');
+    expect(registry.current('dev-box')!.status).toBe('pending');
 
     await registry.current('dev-box')!.connect!();
     expect(connect).toHaveBeenCalledWith(expect.objectContaining({
@@ -1043,14 +1046,14 @@ describe('declaration watch', () => {
     const connecting = registry.current('dev-box')!.connect!();
     config.setSection({ 'dev-box': { type: 'ssh', host: 'renamed-box', defaultCwd: '/home/me' } });
     await vi.waitFor(() => {
-      expect(registry.current('dev-box')!.status).toBe('disconnected');
+      expect(registry.current('dev-box')!.status).toBe('pending');
     });
     releaseConnect();
     await connecting;
     // The stale connection is disposed, not swapped in over the new placeholder.
     expect((produced[0]! as unknown as { disposed: boolean }).disposed).toBe(true);
     expect(registry.current('dev-box')!.identity.generation).not.toBe('stale-1');
-    expect(registry.current('dev-box')!.status).toBe('disconnected');
+    expect(registry.current('dev-box')!.status).toBe('pending');
 
     await attachment.dispose();
     await registry.dispose();

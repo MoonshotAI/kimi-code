@@ -4,7 +4,7 @@ import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
 import type { IHostTerminalService } from '#/os/interface/terminal';
 
-export type EnvironmentStatus = 'connecting' | 'ready' | 'degraded' | 'disconnected' | 'draining' | 'disposed';
+export type EnvironmentStatus = 'pending' | 'connecting' | 'ready' | 'degraded' | 'disconnected' | 'draining' | 'disposed';
 export type EnvironmentCapability = 'fs' | 'process' | 'terminal';
 
 export const LOCAL_ENVIRONMENT_ID = 'local';

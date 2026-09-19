@@ -479,6 +479,28 @@ describe('FooterComponent environment slot', () => {
     footer.dispose();
   });
 
+  it('renders a pending remote identifier dim like ready, with no error tone or reason', () => {
+    const pending = new FooterComponent({
+      ...appState,
+      workDir: repoDir,
+      statusLine: { items: ['environment'], command: null },
+      environment: { environmentId: 'dev-box', type: 'ssh', status: 'pending', connectError: 'must not render' },
+    });
+    const ready = new FooterComponent({
+      ...appState,
+      workDir: repoDir,
+      statusLine: { items: ['environment'], command: null },
+      environment: { environmentId: 'dev-box', type: 'ssh', status: 'ready' },
+    });
+    const rendered = pending.render(160)[0] ?? '';
+    expect(rendered).toContain('dev-box');
+    expect(rendered).not.toContain(ERROR);
+    expect(rendered).not.toContain('must not render');
+    expect(rendered).toBe(ready.render(160)[0] ?? '');
+    pending.dispose();
+    ready.dispose();
+  });
+
   it('shows the binding cwd instead of the local workDir for a remote-bound session', () => {
     const footer = footerWith({
       environmentId: 'dev-box',

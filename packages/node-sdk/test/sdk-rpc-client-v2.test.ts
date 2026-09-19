@@ -1236,7 +1236,7 @@ key = "${titleOAuthRef.key}"
       expect(byId.get('local')).toMatchObject({ type: 'local', status: 'ready' });
       expect(byId.get('fake-box')).toMatchObject({
         type: 'ssh',
-        status: 'disconnected',
+        status: 'pending',
         defaultCwd: '/remote/work',
       });
       await session.close();

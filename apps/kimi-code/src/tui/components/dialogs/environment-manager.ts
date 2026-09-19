@@ -6,19 +6,21 @@
  * `[ Add Environment ]` action row. Each environment row shows its id, the bound
  * environment's `← current` marker, and a secondary line with type, connection
  * status, the disconnect reason while disconnected, and the declaration's
- * defaultCwd. A disconnected bound row offers
- * an explicit reconnect on `Enter` / `R`; switch and reconnect failures surface
- * inline (exit code and bounded stderr ride the engine's error message).
+ * defaultCwd. A disconnected or pending (never connected / idle-reaped) bound
+ * row offers an explicit reconnect on `Enter` / `R`; switch and reconnect
+ * failures surface inline (exit code and bounded stderr ride the engine's
+ * error message).
  *
  * Keyboard:
  *   - ↑ / ↓             move highlight
  *   - ← / → · PgUp/PgDn page
  *   - Enter             switch to the highlighted environment (no-op on the
  *                       current one, or reconnect when the current one is a
- *                       disconnected remote); on `[ Add Environment ]` →
+ *                       disconnected or pending remote); on `[ Add Environment ]` →
  *                       `onAdd()`
  *   - R                 reconnect the bound environment (only while the
- *                       highlighted row is the bound one and disconnected)
+ *                       highlighted row is the bound one and disconnected or
+ *                       pending)
  *   - Esc               clear an inline error first, then `onClose()`
  *
  * The component is pure-view: every SDK side effect is dispatched back
@@ -146,14 +148,14 @@ export class EnvironmentManagerComponent extends Container implements Focusable 
     return pageView(this.rows.length, this.selectedIndex, PAGE_SIZE);
   }
 
-  /** The highlighted row is the bound environment, remote, and disconnected. */
+  /** The highlighted row is the bound environment, remote, and not connected. */
   private reconnectableSelected(): boolean {
     const selected = this.rows[this.selectedIndex];
     return (
       selected?.kind === 'environment' &&
       selected.environment.environmentId === this.opts.currentEnvironmentId &&
       selected.environment.environmentId !== 'local' &&
-      selected.environment.status === 'disconnected'
+      (selected.environment.status === 'disconnected' || selected.environment.status === 'pending')
     );
   }
 
