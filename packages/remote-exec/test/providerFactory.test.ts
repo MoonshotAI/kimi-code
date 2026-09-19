@@ -11,6 +11,7 @@ import { IConfigService, type ConfigSectionChangedEvent } from '@moonshot-ai/age
 import { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
 import { HostFsError, OsFsErrors } from '@moonshot-ai/agent-core-v2/os/interface/hostFsErrors';
 import { IAtomicDocumentStore } from '@moonshot-ai/agent-core-v2/persistence/interface/atomicDocumentStore';
+import { setWatchEnabled } from '@moonshot-ai/agent-core-v2/human/utils/watch';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
 import type { Environment } from '@moonshot-ai/agent-core-v2/environment/environment';
 import { EnvironmentError, EnvironmentRegistry } from '@moonshot-ai/agent-core-v2/environment/environmentRegistry';
@@ -1122,6 +1123,9 @@ describe('declaration watch', () => {
 
   it('picks up project declarations written to disk through the default file watcher', async () => {
     const root = await mkdtemp(join(tmpdir(), 'remote-exec-watch-'));
+    // The default watcher rides the global filesystem-watch switch, which is
+    // off by default; this path needs it enabled explicitly.
+    setWatchEnabled(true);
     try {
       const registry = new EnvironmentRegistry('workspace-1');
       const docs = docsService();
@@ -1142,6 +1146,7 @@ describe('declaration watch', () => {
       await attachment.dispose();
       await registry.dispose();
     } finally {
+      setWatchEnabled(false);
       await rm(root, { recursive: true, force: true });
     }
   });

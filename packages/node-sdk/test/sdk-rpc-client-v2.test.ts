@@ -1358,6 +1358,9 @@ key = "${titleOAuthRef.key}"
       'utf-8',
     );
     try {
+      // Live registration rides the project declaration watch, which is off
+      // unless the filesystem watch is enabled explicitly.
+      vi.stubEnv('KIMI_CODE_WATCH', '1');
       await harness.trustWorkspace(workDir);
       const session = await harness.createSession({ workDir });
       await session.declareEnvironment({

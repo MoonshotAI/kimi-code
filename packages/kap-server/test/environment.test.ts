@@ -85,6 +85,7 @@ describe('server-v2 /api/v1 environment routes', () => {
     beforeAll(async () => {
       home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-environment-on-'));
       await writeFile(join(home, 'config.toml'), configToml(), 'utf-8');
+      process.env['KIMI_CODE_WATCH'] = '1';
       server = await startServer({
         hostIdentity: TEST_HOST_IDENTITY,
         host: '127.0.0.1',
@@ -100,6 +101,7 @@ describe('server-v2 /api/v1 environment routes', () => {
         await server.close();
         server = undefined;
       }
+      delete process.env['KIMI_CODE_WATCH'];
       if (home !== undefined) {
         await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
         home = undefined;
