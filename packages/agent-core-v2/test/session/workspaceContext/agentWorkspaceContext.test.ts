@@ -125,13 +125,13 @@ describe('AgentWorkspaceContextService', () => {
     expect(sub.shadow.workDir).toBe('/workspace');
   });
 
-  it('pins the derived roots to the turn snapshot until the turn ends', () => {
+  it('re-pins the derived roots when the binding switches mid-turn', () => {
     const { agent } = setup();
     const main = agent('main', { workspaceId: 'workspace', environmentId: 'local' });
 
     main.publishBus('turn.started', { agentId: 'main' });
     main.binding.apply({ workspaceId: 'workspace', environmentId: 'remote', cwd: '/remote/work' });
-    expect(main.shadow.workDir).toBe('/workspace');
+    expect(main.shadow.workDir).toBe('/remote/work');
 
     main.publishBus('turn.ended', { agentId: 'main' });
     expect(main.shadow.workDir).toBe('/remote/work');
