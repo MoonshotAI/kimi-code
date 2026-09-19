@@ -151,6 +151,14 @@ describe('server-v2 /api/v1/workspaces', () => {
     expect(body.code).toBe(40409);
   });
 
+  it('rejects a root that is a file (40409)', async () => {
+    const file = join(home as string, 'plain-file');
+    await writeFile(file, 'content', 'utf-8');
+    const { body } = await postJson<null>('/api/v1/workspaces', { root: file });
+    expect(body.code).toBe(40409);
+    expect(body.msg).toContain('is not a directory');
+  });
+
   it('lists registered workspaces', async () => {
     const root = home as string;
     const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });

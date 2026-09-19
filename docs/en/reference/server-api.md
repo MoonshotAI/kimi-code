@@ -868,7 +868,7 @@ On success, `data` is the new binding `{ workspace_id, environment_id, cwd? }`.
 
 #### `POST /api/v1/sessions/{session_id}/environment/reconnect`
 
-Explicitly reconnects the main agent's bound environment after a disconnect. Remote environments never reconnect automatically and never fall back to `local` silently — after a connection drop, tool calls fail with an environment-unavailable error until this endpoint (or the `/environment` dialog) re-establishes the connection.
+Explicitly reconnects the main agent's bound environment after a disconnect. The binding never falls back to `local` silently: resuming the session or running the next tool call retries the connection on demand, and tool calls fail with an environment-unavailable error only while the target stays unreachable. This endpoint (or the `/environment` dialog) re-establishes the connection without waiting for the next tool call.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |

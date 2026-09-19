@@ -112,9 +112,9 @@ Two guardrails apply to both tools. They are rejected in Plan mode — exit plan
 
 A remote session depends on one connection per (workspace, environment). When that connection drops — network loss, a stopped container, the executor exiting — every process the session started on the target is terminated. Terminal scrollback stays readable locally.
 
-There is no automatic reconnect after a drop and **no silent fallback to the local environment**: a command like `rm` or `git` that was meant for the remote machine must never land on yours. Instead, tool calls fail with an `environment.unavailable` error, and you reconnect explicitly from the `/environment` dialog.
+There is **no silent fallback to the local environment** after a drop: a command like `rm` or `git` that was meant for the remote machine must never land on yours. The next tool call retries the connection on demand — while the target stays unreachable, tool calls fail with an `environment.unavailable` error, and you can also reconnect explicitly from the `/environment` dialog.
 
-Resuming a session is no exception: a restored remote binding does not reconnect in the background, so the session opens immediately while the environment stays `pending`. Tool calls on the target fail with `environment.unavailable` until you reconnect explicitly from the `/environment` dialog — and there is never a silent fallback to `local`.
+Resuming a session works the same way: the restored binding is tried once at load, and when the target is unreachable the session still opens with the binding kept and the environment left `disconnected`. The first tool call retries the connection, and there is never a silent fallback to `local`.
 
 Every connect attempt is bounded to 10 seconds: a target that never answers the handshake fails with an `initialize timed out` error instead of hanging silently, and when the launcher wrote anything to stderr — a stuck password prompt, an `npx` download's progress — the error includes that tail, so the cause is visible.
 

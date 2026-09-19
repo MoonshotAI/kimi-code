@@ -251,6 +251,7 @@ function sessionManagerResuming(sessionId: string): SessionManager {
       workspaces,
       { _serviceBrand: undefined, warn: () => {}, info: () => {}, error: () => {} } as unknown as ILogService,
     ),
+    { _serviceBrand: undefined, warn: () => {}, info: () => {}, error: () => {} } as unknown as ILogService,
   );
 }
 
