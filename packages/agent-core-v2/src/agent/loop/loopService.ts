@@ -815,9 +815,29 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     );
   }
 
+  private unsteerAbortedNudges(): void {
+    for (let i = this.nudges.length - 1; i >= this.nudgeCursor; i--) {
+      const nudge = this.nudges[i]!;
+      if (nudge.consumed === true || nudge.promptIds === undefined || nudge.promptIds.length === 0) continue;
+      this.nudges.splice(i, 1);
+      const first = nudge.promptIds[0]!;
+      for (const [index, promptId] of nudge.promptIds.entries()) {
+        const waiter = this.promptWaiters.get(promptId);
+        if (waiter !== undefined) {
+          this.promptWaiters.set(promptId, { ...waiter, launched: createControlledPromise() });
+        }
+        const projection = this.steered.get(promptId);
+        if (projection === undefined) continue;
+        if (index === 0) this.steered.delete(promptId);
+        else this.steered.set(promptId, { ...projection, parentId: first });
+      }
+    }
+  }
+
   private cancelActiveTurn(turnId: number | undefined, cancellation: unknown): boolean {
     const active = this.active;
     if (active === undefined || (turnId !== undefined && active.id !== turnId)) return false;
+    this.unsteerAbortedNudges();
     if (active.controller.signal.aborted) {
       this.machineEngine().abort(active.controller.signal.reason);
       return true;

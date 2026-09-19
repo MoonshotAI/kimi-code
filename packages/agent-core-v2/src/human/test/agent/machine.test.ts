@@ -1584,7 +1584,7 @@ describe('agent machine input.abort', () => {
     ]);
   });
 
-  it('starts a new turn for queued prompts and notifications after abort', async () => {
+  it('returns an unconsumed steer to the queue after abort', async () => {
     let call = 0;
     const requester: LlmRequester = {
       generate: (_config, _content, { signal, onEvent }) => {
@@ -1616,16 +1616,19 @@ describe('agent machine input.abort', () => {
     actor.send({ type: 'input.submit', entry: { message: createUserMessage('queued'), meta: { promptId: 'p1' } } });
     actor.send({ type: 'input.submit', entry: { message: createUserMessage('steered'), meta: { promptId: 'p2' } } });
     actor.send({ type: 'input.steer', id: 'p2' });
+    actor.send({ type: 'input.notify', entry: { message: createUserMessage('notification') } });
     actor.send({ type: 'input.abort' });
     await waitFor(
       actor,
-      (s) => s.matches('idle') && store.getState().history.length === 4,
+      (s) => s.matches('idle') && store.getState().history.length === 6,
       { timeout: 5000 },
     );
 
     expect(rolesAndTexts(store.getState().history)).toEqual([
       'user:hi',
+      'user:notification',
       'user:steered',
+      'assistant:second',
       'user:queued',
       'assistant:second',
     ]);
