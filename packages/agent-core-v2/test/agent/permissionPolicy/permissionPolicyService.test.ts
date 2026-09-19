@@ -224,27 +224,41 @@ describe('AgentPermissionPolicyService chain', () => {
     });
   });
 
-  it.each(['manual', 'yolo'] as const)(
-    'asks for environment switching tools in %s mode',
-    async (currentMode) => {
-      mode = currentMode;
+  it('asks for environment switching tools in manual mode', async () => {
+    await expect(evaluate({
+      toolName: 'change_environment',
+      args: { id: 'staging' },
+    })).resolves.toMatchObject({
+      policyName: 'environment-switch-ask',
+      result: { kind: 'ask' },
+    });
+    await expect(evaluate({
+      toolName: 'connect',
+      args: { type: 'ssh', host: 'dev-box' },
+    })).resolves.toMatchObject({
+      policyName: 'environment-switch-ask',
+      result: { kind: 'ask' },
+    });
+  });
 
-      await expect(evaluate({
-        toolName: 'change_environment',
-        args: { id: 'staging' },
-      })).resolves.toMatchObject({
-        policyName: 'environment-switch-ask',
-        result: { kind: 'ask' },
-      });
-      await expect(evaluate({
-        toolName: 'connect',
-        args: { type: 'ssh', host: 'dev-box' },
-      })).resolves.toMatchObject({
-        policyName: 'environment-switch-ask',
-        result: { kind: 'ask' },
-      });
-    },
-  );
+  it('approves environment switching tools in yolo mode', async () => {
+    mode = 'yolo';
+
+    await expect(evaluate({
+      toolName: 'change_environment',
+      args: { id: 'staging' },
+    })).resolves.toMatchObject({
+      policyName: 'yolo-mode-approve',
+      result: { kind: 'approve' },
+    });
+    await expect(evaluate({
+      toolName: 'connect',
+      args: { type: 'ssh', host: 'dev-box' },
+    })).resolves.toMatchObject({
+      policyName: 'yolo-mode-approve',
+      result: { kind: 'approve' },
+    });
+  });
 
   it('approves environment switching tools in auto mode', async () => {
     mode = 'auto';
@@ -259,7 +273,6 @@ describe('AgentPermissionPolicyService chain', () => {
   });
 
   it('reuses approve-for-session for environment switching tools', async () => {
-    mode = 'yolo';
     sessionApprovalRulePatterns.push('change_environment');
 
     await expect(evaluate({

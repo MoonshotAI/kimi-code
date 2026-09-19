@@ -7,4 +7,4 @@ Use this when the task at hand belongs on a different machine or container than 
 - Connecting happens eagerly: if the target environment is disconnected, this tool connects it first, and a connection or `cwd` validation failure is reported immediately without changing the current binding.
 - The switch is recorded like a user-driven `/environment` switch, so undo restores the previous binding.
 
-Not available in plan mode (call ExitPlanMode first) or while tower mode is active. Switching asks for user confirmation in manual and yolo permission modes; it proceeds without asking in auto mode.
+Not available in plan mode (call ExitPlanMode first) or while tower mode is active. Switching asks for user confirmation in manual permission mode; it proceeds without asking in yolo and auto modes.
