@@ -367,9 +367,7 @@ describe('createRemoteEnvironmentProviderOptions', () => {
     expect(options.clientName).toBe('kimi-code');
     expect(options.clientVersion).toBe('9.9.9-test');
     expect(options.onDiagnostic).toBe(onDiagnostic);
-    expect(options.autoInstall).toBeUndefined();
-    expect(options.installRunner).toBeUndefined();
-    expect(options.installFetch).toBeUndefined();
+    expect(options.probeRunner).toBeUndefined();
     expect(options.artifactLocator).toBeInstanceOf(CdnExecutorArtifactLocator);
     const locator = options.artifactLocator as CdnExecutorArtifactLocator;
     expect(locator.cdnBaseUrl).toBe('https://code.kimi.ai/kimi-code');

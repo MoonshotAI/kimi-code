@@ -11,7 +11,7 @@ import {
 import { kimiRegionProfile } from '@moonshot-ai/kimi-code-oauth';
 
 import { CdnExecutorArtifactLocator } from './artifactLocator';
-import { connectWithAutoInstall } from './installTrigger';
+import { connectWithGuidance } from './connectGuidance';
 import { RemoteEnvironment, type RemoteEnvironmentOptions } from './remoteEnvironment';
 import { toLauncherSpec } from './remoteEnvironmentProvider';
 
@@ -38,7 +38,7 @@ export class RemoteEphemeralEnvironmentConnector implements IEphemeralEnvironmen
     const onDiagnostic = (line: string): void => {
       this.log.warn(line.trimEnd());
     };
-    const connected = await connectWithAutoInstall(
+    const connected = await connectWithGuidance(
       (spec) =>
         this.connectFn({
           workspaceId: request.workspaceId,
@@ -54,7 +54,6 @@ export class RemoteEphemeralEnvironmentConnector implements IEphemeralEnvironmen
           cdnBaseUrl: kimiRegionProfile(this.oauth.getRegion()).cdnBase,
         }),
         clientVersion,
-        onDiagnostic,
       },
     );
     try {

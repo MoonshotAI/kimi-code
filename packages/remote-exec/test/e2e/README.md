@@ -96,20 +96,22 @@ scenarios' upfront connect.
   skipped (not failed) when `--container` is absent.
 - `disconnect` — client-side bridge drop: later fs/process calls reject, and a
   fresh probe connection confirms the dropped connection's processes are dead.
-- `install` — auto-install acceptance on a fresh target; see §5.
+- `install` — missing-executor guidance and manual install acceptance on a
+  fresh target; see §5.
 
-## 5. Auto-install acceptance (scenario `install`)
+## 5. Manual install acceptance (scenario `install`)
 
 The `install` scenario verifies spec D8/D9 end-to-end on a **fresh** target
-(no executor installed): the connect fails as missing-executor, the
-auto-install downloads + verifies + activates the executor, the retried
-connect yields a working environment, a tampered checksum is rejected without a
-retry, and a second install is a no-op. It runs real ssh/docker and a real
-HTTP download against a manifest you serve locally.
+(no executor installed): the connect fails as missing-executor, the failure
+guidance prints the concrete per-launcher install commands (real download URL
++ pinned sha256) while installing nothing, and performing those documented
+steps manually yields a working environment on the next connect. It runs real
+ssh/docker and a real HTTP download against a manifest you serve locally.
 
 ### 5.1 Stage the artifact + manifest
 
-The auto-install expects the SEA release layout
+The guidance's download URL and the driver's manual install both expect the
+SEA release layout
 (`<cdnBase>/binaries/<version>/manifest.json` +
 `<cdnBase>/binaries/<version>/kimi-code-<target>`). Either download the
 published binary for the target platform from the release CDN, or build one
@@ -142,35 +144,22 @@ What each check proves:
 
 - `connect on a fresh target fails as a missing executor` — the failure is
   classified (ssh exit 127 / docker exit 126), not a generic error.
-- `a tampered checksum aborts the auto-install without a connect retry` — a
-  manifest whose sha256 does not match the served binary fails at the
-  `download` step with `checksum mismatch`, and the connect is NOT retried.
-- `auto-install on the handshake failure yields a working environment` — the
-  trigger installs once and retries the connect exactly once; the executor
-  binary exists at the expected absolute path on the target and an fs
-  round-trip works through it.
-- `a second install is a no-op` — an executor answering `--version` at or
-  above the minimum is left untouched (no re-download).
+- `the failure prints per-launcher install guidance and installs nothing` —
+  the connect is attempted exactly once; the error guidance names the real
+  artifact URL and the launcher-matching copy+activate commands (`scp`+`ssh`
+  for ssh, `docker cp`+`docker exec` for docker); a raw re-connect still
+  fails as missing-executor, proving the client copied nothing.
+- `following the guidance manually yields a working environment` — the driver
+  performs the documented steps (download, sha256 verify, copy, chmod+mv) and
+  the next connect succeeds on the first attempt; the executor binary exists
+  at the expected absolute path on the target and an fs round-trip works
+  through it.
 
 On success the executor stays installed, so the other scenarios can run
 against the same target afterwards (drop `--scenario install` or pass the
 full list). To re-run `install`, remove the executor on the target
 (`ssh dev-box 'rm -f ~/.kimi-code/bin/kimi'` /
 `docker exec myapp-dev rm -f /root/.kimi-code/bin/kimi`).
-
-### 5.3 Manual fault injection for half-installs
-
-- **Unwritable bin dir**: `ssh dev-box 'chmod 500 ~/.kimi-code/bin'` — the
-  install must fail at the `upload` or `activate` step naming argv, exit code
-  and stderr; `~/.kimi-code/bin/kimi` must not appear, and no stale
-  `.kimi-install-*` tmp file remains after the best-effort cleanup.
-- **Interrupted upload**: kill `scp` mid-transfer (throttle with a large
-  file) — the tmp file may remain on the target, but the destination never
-  appears half-written (activation is a single atomic `mv -f`), and the next
-  install attempt starts from a fresh tmp name.
-- **Missing local ssh/docker**: remove the launcher program from PATH — the
-  connect fails before the handshake with the spawn error in the message; no
-  install is attempted.
 
 ## 6. Manual fault injection
 
