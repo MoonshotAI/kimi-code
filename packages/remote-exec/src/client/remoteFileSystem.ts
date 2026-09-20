@@ -102,8 +102,8 @@ export class RemoteFileSystem implements IHostFileSystem {
     path: string,
     options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors },
   ): Promise<string> {
-    const result = await this.call<FsReadFileResult>(FS_READ_FILE_METHOD, { path });
-    const buffer = Buffer.from(result.dataBase64, 'base64');
+    const bytes = await this.readBytes(path);
+    const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     return decodeTextWithErrors(buffer, options?.encoding ?? 'utf-8', options?.errors ?? 'strict');
   }
 
