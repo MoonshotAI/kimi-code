@@ -77,6 +77,15 @@ describe('fs group over a subprocess loopback', () => {
     expect(Buffer.from(read).equals(Buffer.from(data))).toBe(true);
   }, 30_000);
 
+  it('reads text larger than the whole-file limit in bounded chunks', async () => {
+    const path = join(workDir, 'big.txt');
+    const unit = `remote-exec-read-text-${'x'.repeat(55)}\n`;
+    const content = unit.repeat(Math.ceil((FS_READ_FILE_WHOLE_MAX_BYTES + 1024 * 1024) / unit.length));
+    await writeFile(path, content);
+
+    await expect(fs.readText(path)).resolves.toBe(content);
+  }, 30_000);
+
   it('creates exclusively and reports false for an existing path', async () => {
     const path = join(workDir, 'exclusive.txt');
     await expect(fs.createExclusive(path, new Uint8Array([1, 2, 3]))).resolves.toBe(true);

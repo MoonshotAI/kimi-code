@@ -34,7 +34,7 @@ import {
   fsSuggestRequestSchema,
   fsSuggestResponseSchema,
 } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
-import { GitService } from '@moonshot-ai/agent-core-v2/app/git/gitService';
+import { GitService, type GitWorkspaceLocator } from '@moonshot-ai/agent-core-v2/app/git/gitService';
 import type { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
 import type { EnvironmentCapability, EnvironmentLease } from '@moonshot-ai/agent-core-v2/environment/environment';
 import { WorkspaceFsService } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fsService';
@@ -210,15 +210,9 @@ function buildEnvironmentFsScope(
     },
     persistenceScope: `sessions/${workspaceId}`,
   } satisfies IWorkspaceContext;
-  const dirs = {
-    _serviceBrand: undefined,
-    ready: Promise.resolve(),
+  const dirs: Pick<IWorkspaceDirs, 'additionalDirs'> = {
     additionalDirs: mapped.additionalDirs ?? [],
-    onDidChange: () => ({ dispose: () => {} }),
-    addDir: async () => { throw new Error('environment fs directories are immutable'); },
-    mergeAdditionalDirs: async () => { throw new Error('environment fs directories are immutable'); },
-    sessionInfo: () => ({ workDir: mapped.workDir, additionalDirs: mapped.additionalDirs ?? [] }),
-  } as unknown as IWorkspaceDirs;
+  };
   const resolver: IEnvironmentResolver = {
     _serviceBrand: undefined,
     inspect: () => lease.environment,
@@ -235,9 +229,9 @@ function buildEnvironmentFsScope(
       return Promise.resolve(this.acquire(_binding, capabilities));
     },
   };
-  const instances = {
+  const instances: GitWorkspaceLocator = {
     findByRoot: (root: string) => root === mapped.workDir ? { id: workspaceId } : undefined,
-  } as unknown as IWorkspaceInstanceManager;
+  };
   const git = new WorkspaceGitService(
     workspace,
     {

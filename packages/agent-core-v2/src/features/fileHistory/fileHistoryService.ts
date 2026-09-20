@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { isAbsolute, relative, resolve } from 'pathe';
 
 import { Service } from '#/_base/di/service';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
@@ -19,9 +18,14 @@ import { IEventBus } from '#/app/event/eventBus';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import {
+  hostWorkspacePathSemantics,
+  resolveWorkspacePath,
+  type WorkspacePathSemantics,
+} from '#/session/workspaceContext/workspacePaths';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
-import type { EnvironmentLease } from '#/environment/environment';
+import type { Environment, EnvironmentLease } from '#/environment/environment';
 import { EnvironmentError } from '#/environment/environmentRegistry';
 import { IEnvironmentResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
@@ -303,7 +307,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
   }
 
   private async capture(path: string, turnId: number, environmentId?: string): Promise<void> {
-    const pathKey = this.pathKey(path);
+    const pathKey = this.pathKey(path, environmentId);
     const state = this.history();
     const startCheckpoint = state.checkpoints.find(
       (c) => c.turnId === turnId && checkpointPhaseOf(c) === 'start',
@@ -484,7 +488,6 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
   ): Promise<
     Uint8Array | 'missing' | 'unreadable' | { oversizeBytes: number; mtimeMs?: number }
   > {
-    const absolute = isAbsolute(pathKey) ? pathKey : resolve(this.workspaceCtx.workDir, pathKey);
     let lease: EnvironmentLease;
     try {
       lease = environmentId === undefined
@@ -497,6 +500,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     try {
       const fs = lease.environment.fs;
       if (fs === undefined) return 'unreadable';
+      const absolute = resolveWorkspacePath(lease.environment.path, this.workspaceCtx.workDir, pathKey);
       let info;
       try {
         info = await fs.stat(absolute);
@@ -526,23 +530,48 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     }
   }
 
-  private pathKey(path: string): string {
+  private pathKey(path: string, environmentId?: string): string {
     let raw = path;
-    if (isAbsolute(path)) {
-      const relativePath = relative(this.workspaceCtx.workDir, path);
-      if (relativePath !== '' && relativePath !== '..' && !relativePath.startsWith('../')) {
+    const { semantics, caseInsensitive } = this.pathSemantics(environmentId);
+    if (semantics.isAbsolute(path)) {
+      const relativePath = semantics.relative(this.workspaceCtx.workDir, path);
+      if (
+        relativePath !== '' &&
+        !relativePath.startsWith('..') &&
+        !semantics.isAbsolute(relativePath)
+      ) {
         raw = relativePath;
       }
     }
-    const key = this.comparisonKey(raw);
+    const key = caseInsensitive ? raw.toLowerCase() : raw;
     const existing = this.history().tracked.find(
-      (tracked) => this.comparisonKey(tracked) === key,
+      (tracked) => (caseInsensitive ? tracked.toLowerCase() : tracked) === key,
     );
     return existing ?? raw;
   }
 
-  private comparisonKey(pathKey: string): string {
-    return isWindowsPath(this.workspaceCtx.workDir) ? pathKey.toLowerCase() : pathKey;
+  private pathSemantics(environmentId?: string): {
+    semantics: WorkspacePathSemantics;
+    caseInsensitive: boolean;
+  } {
+    const environment = this.inspectEnvironment(environmentId);
+    if (environment !== undefined) {
+      return { semantics: environment.path, caseInsensitive: environment.path.separator === '\\' };
+    }
+    return {
+      semantics: hostWorkspacePathSemantics,
+      caseInsensitive: isWindowsPath(this.workspaceCtx.workDir),
+    };
+  }
+
+  private inspectEnvironment(environmentId?: string): Environment | undefined {
+    try {
+      return environmentId === undefined
+        ? this.environment.inspect()
+        : this.resolver.inspect({ workspaceId: this.sessionCtx.workspaceId, environmentId });
+    } catch {
+      return undefined;
+    }
   }
 }
 
