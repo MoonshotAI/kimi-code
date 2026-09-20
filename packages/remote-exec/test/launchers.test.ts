@@ -2,9 +2,9 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { resolveLauncher, resolveProgramPath } from '../src/client/launchers';
+import { commandLauncherEnv, resolveLauncher, resolveProgramPath } from '../src/client/launchers';
 
 describe('launcher lowering', () => {
   it('lowers ssh to the fixed argv shape', () => {
@@ -23,17 +23,14 @@ describe('launcher lowering', () => {
         '-o',
         'StrictHostKeyChecking=accept-new',
         'dev-box',
-        '~/.kimi-code/bin/kimi',
-        'exec-server',
-        '--listen',
-        'stdio',
+        `~'/.kimi-code/bin/kimi' 'exec-server' '--listen' 'stdio'`,
       ],
     });
   });
 
   it('lowers ssh with a custom remoteBin', () => {
     const resolved = resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin: '/opt/kimi/bin/kimi' });
-    expect(resolved.args.slice(-4)).toEqual(['/opt/kimi/bin/kimi', 'exec-server', '--listen', 'stdio']);
+    expect(resolved.args.at(-1)).toBe(`'/opt/kimi/bin/kimi' 'exec-server' '--listen' 'stdio'`);
   });
 
   it('lowers docker with and without a context', () => {
@@ -61,18 +58,96 @@ describe('launcher lowering', () => {
     ]);
   });
 
-  it('lowers command launchers through PATH resolution', () => {
+  it('lowers command launchers through PATH resolution with a scrubbed environment', () => {
     const resolved = resolveLauncher({
       type: 'command',
       program: process.execPath,
       args: ['run', 'this'],
       env: { SANDBOX_TOKEN: 'x' },
     });
-    expect(resolved).toEqual({
-      program: process.execPath,
-      args: ['run', 'this'],
-      env: { SANDBOX_TOKEN: 'x' },
+    expect(resolved.program).toBe(process.execPath);
+    expect(resolved.args).toEqual(['run', 'this']);
+    expect(resolved.env?.['SANDBOX_TOKEN']).toBe('x');
+  });
+});
+
+describe('launcher operand validation', () => {
+  it('rejects an ssh host that would be parsed as an option', () => {
+    expect(() => resolveLauncher({ type: 'ssh', host: '-oProxyCommand=./pwn' })).toThrow(
+      /ssh host must not start with '-'/,
+    );
+    expect(() => resolveLauncher({ type: 'ssh', host: '' })).toThrow(/ssh host must not be empty/);
+  });
+
+  it('rejects a docker container that would be parsed as a flag', () => {
+    expect(() => resolveLauncher({ type: 'docker', container: '-v' })).toThrow(
+      /docker container must not start with '-'/,
+    );
+    expect(() => resolveLauncher({ type: 'docker', container: '' })).toThrow(
+      /docker container must not be empty/,
+    );
+  });
+});
+
+describe('ssh remote command quoting', () => {
+  it('quotes shell metacharacters in remoteBin against remote re-parsing', () => {
+    const resolved = resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin: '/opt/$(whoami)/kimi' });
+    expect(resolved.args.at(-1)).toBe(`'/opt/$(whoami)/kimi' 'exec-server' '--listen' 'stdio'`);
+  });
+
+  it('keeps tilde prefixes expandable while quoting the remainder', () => {
+    expect(resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin: '~/bin/kimi' }).args.at(-1)).toBe(
+      `~'/bin/kimi' 'exec-server' '--listen' 'stdio'`,
+    );
+    expect(resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin: '~deploy/bin/kimi' }).args.at(-1)).toBe(
+      `~deploy'/bin/kimi' 'exec-server' '--listen' 'stdio'`,
+    );
+    expect(resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin: '~' }).args.at(-1)).toBe(
+      `~ 'exec-server' '--listen' 'stdio'`,
+    );
+  });
+
+  it('quotes a tilde lookalike that is not a valid tilde prefix', () => {
+    const resolved = resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin: '~;id' });
+    expect(resolved.args.at(-1)).toBe(`'~;id' 'exec-server' '--listen' 'stdio'`);
+  });
+
+  it('escapes single quotes inside remoteBin', () => {
+    const resolved = resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin: `/opt/it's/kimi` });
+    expect(resolved.args.at(-1)).toBe(`'/opt/it'\\''s/kimi' 'exec-server' '--listen' 'stdio'`);
+  });
+});
+
+describe('command launcher environment', () => {
+  it('keeps only the base whitelist plus the declaration env', () => {
+    const baseEnv = {
+      PATH: '/usr/bin',
+      HOME: '/home/test',
+      LANG: 'en_US.UTF-8',
+      LC_TIME: 'C',
+      KIMI_TEST_LLM_KEY: 'secret',
+      SANDBOX_INJECTED: 'nope',
+    };
+    const env = commandLauncherEnv({ CUSTOM: '1', PATH: '/custom/bin' }, baseEnv);
+    expect(env).toEqual({
+      PATH: '/custom/bin',
+      HOME: '/home/test',
+      LANG: 'en_US.UTF-8',
+      LC_TIME: 'C',
+      CUSTOM: '1',
     });
+  });
+
+  it('drops host secrets from the resolved command launcher env', () => {
+    vi.stubEnv('REMOTE_EXEC_TEST_LLM_KEY', 'secret');
+    try {
+      const resolved = resolveLauncher({ type: 'command', program: process.execPath });
+      expect(resolved.env?.['REMOTE_EXEC_TEST_LLM_KEY']).toBeUndefined();
+      expect(resolved.env?.['PATH']).toBe(process.env['PATH']);
+      expect(resolved.env?.['HOME']).toBe(process.env['HOME']);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 

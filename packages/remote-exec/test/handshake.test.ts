@@ -16,10 +16,14 @@ import {
   ENVIRONMENT_STATUS_METHOD,
   FS_READ_FILE_METHOD,
   INITIALIZE_METHOD,
+  PROCESS_CLOSED_METHOD,
+  PROCESS_EXITED_METHOD,
+  PROCESS_OUTPUT_METHOD,
   PROCESS_READ_METHOD,
   PROCESS_START_METHOD,
   type InitializeResult,
 } from '../src/protocol/methods';
+import { RemoteProcessService } from '../src/client/remoteProcess';
 import {
   connectInProcess,
   connectSubprocess,
@@ -466,5 +470,64 @@ describe('initialize timeout default', () => {
     await vi.advanceTimersByTimeAsync(11_000);
     await message;
     await kind;
+  });
+});
+
+describe('notification dispatch', () => {
+  function notificationScripting(script: (notify: (value: unknown) => void) => void): BytePipe {
+    return createScriptedServer((frame, reply) => {
+      if (frame.method === INITIALIZE_METHOD) {
+        reply({ id: frame.id, result: testInitializeResult() });
+        return;
+      }
+      if (frame.method === 'initialized') {
+        script((value: unknown) => {
+          reply(value);
+        });
+        return;
+      }
+      if (frame.method === ENVIRONMENT_STATUS_METHOD) {
+        reply({ id: frame.id, result: { status: 'ready' } });
+      }
+    });
+  }
+
+  async function settleDispatch(): Promise<void> {
+    await new Promise((resolve) => {
+      setTimeout(resolve, 30);
+    });
+  }
+
+  it('drops malformed process notifications without closing the connection', async () => {
+    const pipe = notificationScripting((notify) => {
+      notify({ method: PROCESS_OUTPUT_METHOD, params: { processId: 'p1', seq: 1, stream: 'stdout', chunkBase64: null } });
+      notify({ method: PROCESS_OUTPUT_METHOD, params: { processId: 'p1', seq: 2, stream: 'bogus', chunkBase64: 'eA==' } });
+      notify({ method: PROCESS_EXITED_METHOD, params: { processId: 'p1', seq: 3, exitCode: 'zero' } });
+      notify({ method: PROCESS_CLOSED_METHOD, params: null });
+    });
+    const connection = await RemoteExecConnection.connect(pipe, { clientName: 'test', clientVersion: '0.0.0' });
+    const processService = new RemoteProcessService(connection, '/tmp', '/bin/bash');
+    void processService;
+    await settleDispatch();
+    expect(connection.closed).toBe(false);
+    await expect(connection.call(ENVIRONMENT_STATUS_METHOD)).resolves.toEqual({ status: 'ready' });
+    connection.close();
+  });
+
+  it('contains a throwing notification handler instead of crashing the process', async () => {
+    const pipe = notificationScripting((notify) => {
+      notify({
+        method: PROCESS_OUTPUT_METHOD,
+        params: { processId: 'p1', seq: 1, stream: 'stdout', chunkBase64: Buffer.from('x').toString('base64') },
+      });
+    });
+    const connection = await RemoteExecConnection.connect(pipe, { clientName: 'test', clientVersion: '0.0.0' });
+    connection.onNotification(PROCESS_OUTPUT_METHOD, () => {
+      throw new Error('boom');
+    });
+    await settleDispatch();
+    expect(connection.closed).toBe(false);
+    await expect(connection.call(ENVIRONMENT_STATUS_METHOD)).resolves.toEqual({ status: 'ready' });
+    connection.close();
   });
 });

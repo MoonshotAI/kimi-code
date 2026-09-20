@@ -2040,15 +2040,18 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   /**
    * Declare an environment for the session's workspace. The `global` scope (the
-   * default) rides the exact config path the v1 patch flow uses — one
-   * deep-merge `config.set` over the `[environments]` section, so the persisted
-   * bytes match a `setConfig({ environments: ... })` call. The `project` scope
-   * merge-writes the workspace's `.kimi-code/environments.toml` on the host
-   * (declarations must exist before any remote connection, so the project
-   * file always lives on the local disk). Both register through the
-   * engine's live declaration watch. Both scopes fail closed on a
-   * duplicate id, rejecting before any write so an existing entry is never
-   * half-merged.
+   * default) writes the merged `[environments]` section through the config
+   * service's compare-and-swap (`replaceSections` with `expectedValues`), so a
+   * concurrent declare fails instead of silently overwriting another writer —
+   * and the persisted bytes still match a `setConfig({ environments: ... })`
+   * call. The `project` scope merge-writes the workspace's
+   * `.kimi-code/environments.toml` on the host (declarations must exist before
+   * any remote connection, so the project file always lives on the local
+   * disk); a project write requires a trusted workspace, since the declaration
+   * activates the moment trust is granted and the trust prompt is the only
+   * confirmation step. Both register through the engine's live declaration
+   * watch. Both scopes fail closed on a duplicate id, rejecting before any
+   * write so an existing entry is never half-merged.
    */
   override async declareEnvironment(input: DeclareEnvironmentRpcInput): Promise<void> {
     const session = this.requireLiveSession(input.sessionId);
@@ -2058,6 +2061,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       const instance =
         manager.get(context.workspaceId) ??
         (await manager.getOrCreate({ root: context.cwd }));
+      if (!(await instance.program.trust.get())) {
+        throw new KimiError(
+          ErrorCodes.REQUEST_INVALID,
+          `Workspace "${instance.root}" is not trusted; trust it before declaring a project environment.`,
+        );
+      }
       await writeProjectEnvironmentDeclaration(
         this.engineAccessor.get(IHostFileSystem),
         instance.root,
@@ -2067,17 +2076,22 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       return;
     }
     await this.configReady;
-    const declared = await this.klient.global.config.get<Record<string, unknown>>(ENVIRONMENTS_SECTION);
+    const config = this.engineAccessor.get(IConfigService);
+    const declared = config.get<Record<string, unknown>>(ENVIRONMENTS_SECTION);
     if (declared?.[input.id] !== undefined) {
       throw new KimiError(
         ErrorCodes.CONFIG_INVALID,
         `Environment id "${input.id}" is already declared in ${this.engineAccessor.get(IBootstrapService).configPath}.`,
       );
     }
-    await this.klient.global.config.set({
-      domain: ENVIRONMENTS_SECTION,
-      patch: { [input.id]: input.entry },
-    });
+    const entry = Object.fromEntries(
+      Object.entries(input.entry).filter(([, value]) => value !== undefined),
+    ) as RemoteEnvironmentEntry;
+    await config.replaceSections(
+      { [ENVIRONMENTS_SECTION]: { ...declared, [input.id]: entry } },
+      undefined,
+      { expectedValues: { [ENVIRONMENTS_SECTION]: declared ?? null } },
+    );
   }
 
   private async resolveEnvironmentDeclarationEntries(root: string): Promise<ReadonlyMap<string, RemoteEnvironmentEntry>> {

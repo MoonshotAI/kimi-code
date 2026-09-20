@@ -201,6 +201,12 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
         const entry = toEngineEnvironmentEntry(req.body.entry);
         if (scope === 'project') {
           const instance = await resolveWorkspaceInstance(core, workspaceId);
+          if (!(await instance.program.trust.get())) {
+            throw new Error2(
+              ErrorCodes.CONFIG_INVALID,
+              `Workspace "${instance.root}" is not trusted; trust the workspace before declaring a project environment.`,
+            );
+          }
           await writeProjectEnvironmentDeclaration(
             core.accessor.get(IHostFileSystem),
             instance.root,
@@ -217,7 +223,11 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
               `Environment id "${req.body.environment_id}" is already declared in ${core.accessor.get(IBootstrapService).configPath}.`,
             );
           }
-          await config.set(ENVIRONMENTS_SECTION, { [req.body.environment_id]: entry });
+          await config.replaceSections(
+            { [ENVIRONMENTS_SECTION]: { ...declared, [req.body.environment_id]: entry } },
+            undefined,
+            { expectedValues: { [ENVIRONMENTS_SECTION]: declared ?? null } },
+          );
         }
         reply.send(okEnvelope({ workspace_id: workspaceId, environment_id: req.body.environment_id, scope }, req.id));
       } catch (error) {
@@ -273,19 +283,23 @@ const declareEnvironmentResponseSchema = z.object({
 
 function toEngineEnvironmentEntry(entry: z.infer<typeof declareEnvironmentEntrySchema>): RemoteEnvironmentEntry {
   if ('command' in entry) {
-    return { command: entry.command, args: entry.args, env: entry.env, defaultCwd: entry.default_cwd, idleTtlSeconds: entry.idle_ttl_seconds };
+    return definedFields({ command: entry.command, args: entry.args, env: entry.env, defaultCwd: entry.default_cwd, idleTtlSeconds: entry.idle_ttl_seconds });
   }
   if (entry.type === 'ssh') {
-    return { type: 'ssh', host: entry.host, remoteBin: entry.remote_bin, defaultCwd: entry.default_cwd, idleTtlSeconds: entry.idle_ttl_seconds };
+    return definedFields({ type: 'ssh', host: entry.host, remoteBin: entry.remote_bin, defaultCwd: entry.default_cwd, idleTtlSeconds: entry.idle_ttl_seconds });
   }
-  return {
+  return definedFields({
     type: 'docker',
     container: entry.container,
     context: entry.context,
     remoteBin: entry.remote_bin,
     defaultCwd: entry.default_cwd,
     idleTtlSeconds: entry.idle_ttl_seconds,
-  };
+  });
+}
+
+function definedFields<T extends object>(value: T): T {
+  return Object.fromEntries(Object.entries(value).filter(([, field]) => field !== undefined)) as T;
 }
 
 async function resolveEnvironmentAgent(core: Scope, sessionId: string): Promise<IAgentScopeHandle> {

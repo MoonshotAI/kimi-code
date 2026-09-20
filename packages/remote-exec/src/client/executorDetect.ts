@@ -3,7 +3,9 @@ import { spawn } from 'node:child_process';
 import type { ExecutorArtifactTarget } from './artifactLocator';
 import {
   DEFAULT_REMOTE_BIN,
+  assertLauncherOperand,
   dockerBaseArgs,
+  shQuote,
   sshBaseArgs,
   type LauncherSpec,
 } from './launchers';
@@ -89,9 +91,7 @@ export function launcherLabel(launcher: LauncherSpec): string {
   }
 }
 
-export function shQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
+export { shQuote };
 
 // docker exec passes argv to execve without a shell, so a tilde-prefixed
 // remoteBin (the default included) would be invoked literally and fail with
@@ -117,6 +117,7 @@ async function probeDockerHomeDir(
   launcher: LauncherSpec & { readonly type: 'docker' },
   runner: LocalRunner,
 ): Promise<string | undefined> {
+  assertLauncherOperand('docker container', launcher.container);
   let result: LocalRunResult;
   try {
     result = await runner({
@@ -166,6 +167,11 @@ export async function probeExecutorTarget(
   launcher: LauncherSpec & { readonly type: 'ssh' | 'docker' },
   runner: LocalRunner,
 ): Promise<ExecutorTargetInfo | undefined> {
+  if (launcher.type === 'ssh') {
+    assertLauncherOperand('ssh host', launcher.host);
+  } else {
+    assertLauncherOperand('docker container', launcher.container);
+  }
   const unameAndHome = 'uname -sm; printf "%s\\n" "$HOME"';
   const request: LocalRunRequest =
     launcher.type === 'ssh'

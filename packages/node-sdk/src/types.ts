@@ -104,6 +104,7 @@ export type {
 export type {
   BackgroundConfig,
   ConfigDiagnostics,
+  EnvironmentsConfig,
   KimiConfig,
   KimiConfigPatch,
   LoopControl,

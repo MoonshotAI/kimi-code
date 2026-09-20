@@ -18,6 +18,7 @@ import {
   MAX_IN_FLIGHT_CALLS,
   MIN_EXECUTOR_VERSION,
   SERVER_NOTIFICATION_METHODS,
+  isValidServerNotificationParams,
   type InitializeResult,
   type RemoteCapabilities,
   type RemoteEnvironmentInfo,
@@ -419,9 +420,19 @@ export class RemoteExecConnection {
         this.fail(new ProtocolViolationError(`unknown notification ${message.method}`));
         return;
       }
+      // A malformed notification is dropped, not faulted: one bad frame from
+      // a misbehaving peer must not kill an otherwise healthy connection.
+      if (!isValidServerNotificationParams(message.method, message.params)) return;
       const handlers = this.notificationHandlers.get(message.method);
       if (handlers !== undefined) {
-        for (const handler of handlers) handler(message.params);
+        for (const handler of handlers) {
+          try {
+            handler(message.params);
+          } catch {
+            // A throwing handler must not escape the dispatch loop — an
+            // uncaught throw here would crash the host process.
+          }
+        }
       }
       return;
     }

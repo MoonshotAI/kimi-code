@@ -27,6 +27,30 @@ export const SERVER_NOTIFICATION_METHODS: ReadonlySet<string> = new Set([
   PROCESS_CLOSED_METHOD,
 ]);
 
+// Field-level check for server→client notifications: the client casts params
+// to the notification interfaces and decodes chunkBase64 eagerly, so a
+// malformed frame (chunkBase64 null, a numeric processId) would throw
+// synchronously inside the handler. Only the fields the client consumes are
+// checked.
+export function isValidServerNotificationParams(method: string, params: unknown): boolean {
+  if (params === null || typeof params !== 'object') return false;
+  const record = params as Record<string, unknown>;
+  if (typeof record['processId'] !== 'string' || record['processId'].length === 0) return false;
+  switch (method) {
+    case PROCESS_OUTPUT_METHOD:
+      return (
+        (record['stream'] === 'stdout' || record['stream'] === 'stderr' || record['stream'] === 'pty') &&
+        typeof record['chunkBase64'] === 'string'
+      );
+    case PROCESS_EXITED_METHOD:
+      return typeof record['exitCode'] === 'number';
+    case PROCESS_CLOSED_METHOD:
+      return true;
+    default:
+      return false;
+  }
+}
+
 // Client→server request methods that are intentionally unbounded: process/read
 // long-polls server-side until output arrives or waitMs elapses, so a per-call
 // timeout would kill healthy polling. (Terminal streams ride server→client

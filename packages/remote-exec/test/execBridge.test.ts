@@ -70,3 +70,41 @@ describe('ExecBridge disconnect guards', () => {
     expect(onEnd).toHaveBeenCalled();
   });
 });
+
+describe('ExecBridge spawn environment', () => {
+  async function captureStdout(bridge: ExecBridge): Promise<string> {
+    let out = '';
+    bridge.onData((chunk) => {
+      out += Buffer.from(chunk).toString('utf8');
+    });
+    await Promise.all([bridge.exited, new Promise<void>((resolve) => bridge.onEnd(resolve))]);
+    return out;
+  }
+
+  it('uses options.env verbatim instead of merging the host environment', async () => {
+    vi.stubEnv('REMOTE_EXEC_TEST_HOST_ONLY', 'host-secret');
+    try {
+      const bridge = ExecBridge.spawn({
+        program: process.execPath,
+        args: ['-e', 'process.stdout.write(process.env["REMOTE_EXEC_TEST_HOST_ONLY"] ?? "<absent>")'],
+        env: { PATH: process.env['PATH'] ?? '' },
+      });
+      expect(await captureStdout(bridge)).toBe('<absent>');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('inherits the host environment when env is undefined', async () => {
+    vi.stubEnv('REMOTE_EXEC_TEST_HOST_ONLY', 'host-secret');
+    try {
+      const bridge = ExecBridge.spawn({
+        program: process.execPath,
+        args: ['-e', 'process.stdout.write(process.env["REMOTE_EXEC_TEST_HOST_ONLY"] ?? "<absent>")'],
+      });
+      expect(await captureStdout(bridge)).toBe('host-secret');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
