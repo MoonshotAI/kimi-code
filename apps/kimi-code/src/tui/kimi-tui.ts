@@ -2695,9 +2695,13 @@ export class KimiTUI {
 
   private registerSessionHandlers(session: Session): void {
     session.setApprovalHandler(
-      createApprovalRequestHandler(this.approvalController, (request, response) => {
-        this.appendApprovalTranscriptEntry(request, response);
-      }),
+      createApprovalRequestHandler(
+        this.approvalController,
+        (request, response) => {
+          this.appendApprovalTranscriptEntry(request, response);
+        },
+        (agentId) => this.resolveApprovalEnvironment(session, agentId),
+      ),
     );
     session.setQuestionHandler(createQuestionAskHandler(this.questionController));
   }
@@ -4324,15 +4328,13 @@ export class KimiTUI {
   }
 
   private showApprovalPanel(payload: ApprovalPanelData): void {
-    const environment = this.environmentBadge();
-    const data = environment === undefined ? payload : { ...payload, environment };
-    this.patchLivePane({ pendingApproval: { data } });
-    notifyTerminalOnce(this.state, `approval:${data.id}`, {
+    this.patchLivePane({ pendingApproval: { data: payload } });
+    notifyTerminalOnce(this.state, `approval:${payload.id}`, {
       title: 'Kimi Code approval required',
-      body: data.tool_name,
+      body: payload.tool_name,
     });
     const panel = new ApprovalPanelComponent(
-      { data },
+      { data: payload },
       (response: ApprovalPanelResponse) => {
         this.approvalController.respond(adaptPanelResponse(response));
       },
@@ -4352,6 +4354,33 @@ export class KimiTUI {
     const environment = this.state.appState.environment;
     if (environment === undefined || environment.environmentId === 'local') return undefined;
     return `${environment.type}:${environment.environmentId}`;
+  }
+
+  /**
+   * Approval-panel badge for the agent that initiated the request. A subagent
+   * may be bound to a different environment than the main session binding
+   * shown in the footer, so the badge resolves the initiating agent's own
+   * binding through the harness's interactive-agent scope; a local binding
+   * (or a failed lookup) renders no badge rather than a misleading host.
+   */
+  private async resolveApprovalEnvironment(
+    session: Session,
+    agentId: string | undefined,
+  ): Promise<string | undefined> {
+    if (agentId === undefined || agentId === MAIN_AGENT_ID) return this.environmentBadge();
+    try {
+      const binding = await this.harness.withInteractiveAgent(agentId, () =>
+        session.getEnvironment(),
+      );
+      if (binding.environmentId === 'local') return undefined;
+      const { environments } = await session.listEnvironments();
+      const type =
+        environments.find((entry) => entry.environmentId === binding.environmentId)?.type ??
+        'command';
+      return `${type}:${binding.environmentId}`;
+    } catch {
+      return undefined;
+    }
   }
 
   private hideApprovalPanel(): void {

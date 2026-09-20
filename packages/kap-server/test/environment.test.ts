@@ -245,6 +245,55 @@ describe('server-v2 /api/v1 environment routes', () => {
       expect(missing.body.code).toBe(40420);
     }, 90_000);
 
+    it('creates a session bound to a declared environment via POST /sessions', async () => {
+      const created = await call<SessionWire>('POST', '/api/v1/sessions', {
+        metadata: { cwd: home as string },
+        environment_id: 'loop',
+      });
+      expect(created.body.code).toBe(0);
+      const id = created.body.data.id;
+
+      const binding = await call<EnvironmentBindingWire>('GET', `/api/v1/sessions/${id}/environment`);
+      expect(binding.body.code).toBe(0);
+      expect(binding.body.data).toMatchObject({ environment_id: 'loop', cwd: '/tmp' });
+
+      const withCwd = await call<SessionWire>('POST', '/api/v1/sessions', {
+        metadata: { cwd: home as string },
+        environment_id: 'loop',
+        environment_cwd: '/tmp',
+      });
+      expect(withCwd.body.code).toBe(0);
+      const withCwdBinding = await call<EnvironmentBindingWire>(
+        'GET',
+        `/api/v1/sessions/${withCwd.body.data.id}/environment`,
+      );
+      expect(withCwdBinding.body.data).toMatchObject({ environment_id: 'loop', cwd: '/tmp' });
+    }, 90_000);
+
+    it('rejects session creation with an undeclared environment or a lone environment_cwd', async () => {
+      const ghost = await call<null>('POST', '/api/v1/sessions', {
+        metadata: { cwd: home as string },
+        environment_id: 'ghost',
+      });
+      expect(ghost.body.code).toBe(40001);
+      expect(ghost.body.msg).toContain('ghost');
+
+      const cwdOnly = await call<null>('POST', '/api/v1/sessions', {
+        metadata: { cwd: home as string },
+        environment_cwd: '/tmp',
+      });
+      expect(cwdOnly.body.code).toBe(40001);
+      expect(cwdOnly.body.msg).toContain('environment_cwd');
+    });
+
+    it('fails session creation loudly when the environment cannot connect', async () => {
+      const created = await call<null>('POST', '/api/v1/sessions', {
+        metadata: { cwd: home as string },
+        environment_id: 'dying',
+      });
+      expect(created.body.code).toBe(40926);
+    }, 90_000);
+
     it('surfaces the connect failure reason as connect_error in the environment list', async () => {
       const id = await createSession();
 

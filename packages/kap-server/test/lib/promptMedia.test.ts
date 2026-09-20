@@ -23,10 +23,18 @@ function framePayloadBytes(data: Uint8Array): number {
   return Math.ceil(data.byteLength / 3) * 4;
 }
 
-function fakeEnvironmentFs() {
+function fakeEnvironmentFs(options: { failAfterOps?: { path: string; ops: number } } = {}) {
   const files = new Map<string, Uint8Array>();
   const writes: WriteCall[] = [];
+  const removed: string[] = [];
+  const opsPerPath = new Map<string, number>();
   const put = (path: string, data: Uint8Array, mode: 'truncate' | 'append'): void => {
+    const ops = (opsPerPath.get(path) ?? 0) + 1;
+    opsPerPath.set(path, ops);
+    const fail = options.failAfterOps;
+    if (fail !== undefined && fail.path === path && ops > fail.ops) {
+      throw new Error('injected staging failure');
+    }
     if (framePayloadBytes(data) > FRAME_CAP_BYTES) {
       throw new Error('message exceeds the frame cap');
     }
@@ -50,8 +58,12 @@ function fakeEnvironmentFs() {
     appendBytes: async (path: string, data: Uint8Array) => {
       put(path, data, 'append');
     },
+    remove: async (path: string) => {
+      removed.push(path);
+      files.delete(path);
+    },
   } as unknown as IHostFileSystem;
-  return { files, writes, fs };
+  return { files, writes, removed, fs };
 }
 
 const environmentPath: EnvironmentPath = {
@@ -205,5 +217,70 @@ describe('resolvePromptMediaFiles with an environment attachments target', () =>
     expect(fake.writes[0]!.mode).toBe('truncate');
     expect(fake.writes.slice(1).every((write) => write.mode === 'append')).toBe(true);
     expectFrameSafe(fake.writes);
+  });
+
+  it('removes staged remote files when a later part fails to stage', async () => {
+    const data = patternedBytes(11);
+    const store = fakeFileStore(
+      new Map([['f_ok', { meta: meta('f_ok', 'ok.txt', data.byteLength), chunks: [data] }]]),
+    );
+    const fake = fakeEnvironmentFs();
+    const target = '/remote/tmp/kimi-code/attachments/f_ok-ok.txt';
+    await expect(
+      resolvePromptMediaFiles(
+        [
+          { type: 'file', file_id: 'f_ok', name: 'ok.txt', media_type: 'text/plain', size: data.byteLength },
+          { type: 'file', file_id: 'f_missing', name: 'missing.txt', media_type: 'text/plain', size: 1 },
+        ],
+        store,
+        '/cache',
+        { resolveAttachmentsTarget: async () => targetFor(fake.fs) },
+      ),
+    ).rejects.toThrow('no such file: f_missing');
+    expect(fake.files.size).toBe(0);
+    expect(fake.removed).toEqual([target]);
+  });
+
+  it('removes a partially staged remote file when the write fails mid-stream', async () => {
+    const size = 20 * 1024 * 1024;
+    const data = patternedBytes(size);
+    const store = fakeFileStore(
+      new Map([['f_big', { meta: meta('f_big', 'big.bin', size), chunks: [data] }]]),
+    );
+    const target = '/remote/tmp/kimi-code/attachments/f_big-big.bin';
+    const fake = fakeEnvironmentFs({ failAfterOps: { path: target, ops: 1 } });
+    await expect(
+      resolvePromptMediaFiles(
+        [{ type: 'file', file_id: 'f_big', name: 'big.bin', media_type: 'application/octet-stream', size }],
+        store,
+        '/cache',
+        { resolveAttachmentsTarget: async () => targetFor(fake.fs) },
+      ),
+    ).rejects.toThrow('injected staging failure');
+    expect(fake.files.size).toBe(0);
+    expect(fake.removed).toEqual([target]);
+  });
+
+  it('keeps a pre-existing staged file the failing call did not write', async () => {
+    const data = patternedBytes(13);
+    const store = fakeFileStore(
+      new Map([['f_seed', { meta: meta('f_seed', 'seed.txt', data.byteLength), chunks: [data] }]]),
+    );
+    const fake = fakeEnvironmentFs();
+    const target = '/remote/tmp/kimi-code/attachments/f_seed-seed.txt';
+    fake.files.set(target, data);
+    await expect(
+      resolvePromptMediaFiles(
+        [
+          { type: 'file', file_id: 'f_seed', name: 'seed.txt', media_type: 'text/plain', size: data.byteLength },
+          { type: 'file', file_id: 'f_missing', name: 'missing.txt', media_type: 'text/plain', size: 1 },
+        ],
+        store,
+        '/cache',
+        { resolveAttachmentsTarget: async () => targetFor(fake.fs) },
+      ),
+    ).rejects.toThrow('no such file: f_missing');
+    expect(fake.removed).toEqual([]);
+    expectStoredBytes(fake.files, target, data);
   });
 });
