@@ -179,6 +179,79 @@ describe('Program', () => {
     await registry.dispose();
   });
 
+  it('stops serving new sessions from the previous generation when its replacement is unavailable', async () => {
+    const order: string[] = [];
+    const { registry, program, create } = setup(new Map(), order);
+    const first = fakeEnvironment('local', 'one');
+    const registration = registry.register(first);
+    await program.ready;
+    const controller = program.createSessionController();
+    expect(program.sessionControllerGeneration).toBe('one');
+
+    const second = fakeEnvironment('local', 'two', { status: 'disconnected' });
+    await registration.replace(second);
+    await Promise.resolve();
+
+    expect(create).toHaveBeenCalledTimes(3);
+    expect(() => program.sessionControllerGeneration).toThrow('no available generation for environment local');
+    expect(() => program.createSessionController()).toThrow('no available generation for environment local');
+    expect(order).toEqual([]);
+
+    second.setStatus('ready');
+    await vi.waitFor(() => {
+      expect(program.sessionControllerGeneration).toBe('two');
+    });
+    const next = program.createSessionController();
+    expect(create).toHaveBeenCalledTimes(4);
+
+    controller.dispose();
+    expect(order).toEqual(['behavior:one']);
+    next.dispose();
+    program.dispose();
+    await registry.dispose();
+  });
+
+  it('retries a transient replacement failure on the next environment change and recovers', async () => {
+    const { registry, program, create } = setup();
+    const registration = registry.register(fakeEnvironment('local', 'one'));
+    await program.ready;
+    expect(program.sessionControllerGeneration).toBe('one');
+
+    create.mockImplementationOnce(() => {
+      throw new Error('boom');
+    });
+    await registration.replace(fakeEnvironment('local', 'two'));
+
+    await vi.waitFor(() => {
+      expect(program.sessionControllerGeneration).toBe('two');
+    });
+    await vi.waitFor(() => {
+      expect(program.status).toBe('ready');
+    });
+    expect(() => program.createSessionController()).not.toThrow();
+    program.dispose();
+    await registry.dispose();
+  });
+
+  it('marks the program degraded and serves no new sessions while the replacement build keeps failing', async () => {
+    const { registry, program, create } = setup();
+    const registration = registry.register(fakeEnvironment('local', 'one'));
+    await program.ready;
+    expect(program.status).toBe('ready');
+
+    create.mockImplementation(() => {
+      throw new Error('boom');
+    });
+    await registration.replace(fakeEnvironment('local', 'two'));
+    await Promise.resolve();
+
+    expect(program.status).toBe('degraded');
+    expect(() => program.sessionControllerGeneration).toThrow('no available generation for environment local');
+    expect(() => program.createSessionController()).toThrow('no available generation for environment local');
+    program.dispose();
+    await registry.dispose();
+  });
+
   it('owns catalog, instructions, MCP, provenance, and current environment in one generation', async () => {
     const { registry, program, create } = setup();
     registry.register(fakeEnvironment('local', 'one'));

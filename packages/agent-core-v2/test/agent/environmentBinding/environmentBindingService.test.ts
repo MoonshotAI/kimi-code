@@ -1293,6 +1293,61 @@ describe('AgentEnvironmentBindingService.connectAndSwitchInTurn', () => {
     expect(binding.current).toMatchObject({ environmentId: 'second', cwd: '/remote/two' });
   });
 
+  it('counts a same-name switch as foreign so parallel change_environment calls serialize', async () => {
+    const { registry, binding, dispatched, loopState } = setup();
+    loopState.turn = {
+      turnId: 1,
+      phase: 'tool_call',
+      step: 1,
+      activeToolCalls: [
+        { toolCallId: 'call-1', name: 'change_environment' },
+        { toolCallId: 'call-2', name: 'change_environment' },
+      ],
+    };
+    connectableEnvironment(registry, { environmentId: 'first' });
+    connectableEnvironment(registry, { environmentId: 'second' });
+
+    await expect(binding.connectAndSwitchInTurn('first', '/remote/one')).rejects.toThrowError(
+      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.conflict' }),
+    );
+    await expect(binding.connectAndSwitchInTurn('first', '/remote/one')).rejects.toThrowError(
+      /1 other tool call\(s\) are in flight; retry when no other calls are running/,
+    );
+    expect(binding.current).toEqual({ workspaceId: 'workspace', environmentId: 'local' });
+    expect(dispatched).toHaveLength(0);
+
+    loopState.turn = { turnId: 1, phase: 'tool_call', step: 1, activeToolCalls: [{ toolCallId: 'call-2', name: 'change_environment' }] };
+    await binding.connectAndSwitchInTurn('second', '/remote/two');
+    expect(binding.current).toMatchObject({ environmentId: 'second', cwd: '/remote/two' });
+  });
+
+  it('lets the first parallel switch commit, rejects the overlapping sibling, and commits its retry after drain', async () => {
+    const { registry, binding, loopState } = setup();
+    loopState.turn = { turnId: 1, phase: 'tool_call', step: 1, activeToolCalls: [{ toolCallId: 'call-1', name: 'change_environment' }] };
+    connectableEnvironment(registry, { environmentId: 'first' });
+    connectableEnvironment(registry, { environmentId: 'second' });
+
+    const first = binding.connectAndSwitchInTurn('first', '/remote/one');
+    loopState.turn = {
+      turnId: 1,
+      phase: 'tool_call',
+      step: 1,
+      activeToolCalls: [
+        { toolCallId: 'call-1', name: 'change_environment' },
+        { toolCallId: 'call-2', name: 'change_environment' },
+      ],
+    };
+    await expect(binding.connectAndSwitchInTurn('second', '/remote/two')).rejects.toThrowError(
+      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.conflict' }),
+    );
+    await first;
+    expect(binding.current).toMatchObject({ environmentId: 'first', cwd: '/remote/one' });
+
+    loopState.turn = { turnId: 1, phase: 'tool_call', step: 1, activeToolCalls: [{ toolCallId: 'call-2', name: 'change_environment' }] };
+    await binding.connectAndSwitchInTurn('second', '/remote/two');
+    expect(binding.current).toMatchObject({ environmentId: 'second', cwd: '/remote/two' });
+  });
+
   it('rejects every switch while foreign calls stay in flight', async () => {
     const { registry, binding, loopState } = setup();
     loopState.turn = {

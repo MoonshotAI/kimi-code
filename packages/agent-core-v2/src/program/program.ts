@@ -311,6 +311,10 @@ export class Program {
         if (previous !== undefined) this.retireGeneration(previous);
         this.observeReadiness(key, next);
       } catch (error) {
+        if (previous !== undefined) {
+          this.generations.delete(key);
+          this.retireGeneration(previous);
+        }
         if (!(error instanceof EnvironmentError && error.code === 'environment.unavailable')) {
           this.failedGenerations.add(key);
           this.resolveProgramReady();
