@@ -18,68 +18,31 @@ import {
   INITIALIZE_METHOD,
   PROCESS_CLOSED_METHOD,
   PROCESS_EXITED_METHOD,
+  PROCESS_FLOW_CAPABILITY,
   PROCESS_OUTPUT_METHOD,
   PROCESS_READ_METHOD,
   PROCESS_START_METHOD,
-  type InitializeResult,
+  PROCESS_TERMINATE_METHOD,
 } from '../src/protocol/methods';
 import { RemoteProcessService } from '../src/client/remoteProcess';
 import {
   connectInProcess,
   connectSubprocess,
   createInProcessLoopback,
+  createScriptedServer,
   RawClient,
   TEST_ENVIRONMENT,
   TEST_VERSION,
+  testInitializeResult,
+  type ScriptedFrame,
 } from './helpers/loopback';
-
-type ScriptedFrame = { id?: number; method?: string; params?: unknown };
-
-// A minimal server-end pipe scripted per test: each inbound frame is handed to
-// onFrame, which decides whether (and when) to reply — letting tests stall
-// specific methods after a good handshake.
-function createScriptedServer(
-  onFrame: (frame: ScriptedFrame, reply: (value: unknown) => void) => void,
-): BytePipe {
-  const clientToServer = new PassThrough();
-  const serverToClient = new PassThrough();
-  const decoder = new LineFrameDecoder();
-  clientToServer.on('data', (chunk: Buffer) => {
-    for (const frame of decoder.push(chunk)) {
-      onFrame(frame as ScriptedFrame, (value) => {
-        serverToClient.write(`${JSON.stringify(value)}\n`);
-      });
-    }
-  });
-  return {
-    write: (chunk) => {
-      clientToServer.write(chunk);
-    },
-    end: () => {
-      clientToServer.end();
-    },
-    onData: (listener) => {
-      serverToClient.on('data', listener);
-    },
-    onEnd: (listener) => {
-      serverToClient.on('end', listener);
-    },
-    onError: (listener) => {
-      serverToClient.on('error', listener);
-    },
-  };
-}
-
-function testInitializeResult(): InitializeResult {
-  return { executorVersion: TEST_VERSION, environment: TEST_ENVIRONMENT, capabilities: {} };
-}
 
 describe('handshake', () => {
   it('completes initialize/initialized and answers environment/status', async () => {
     const { connection, loopback } = await connectInProcess();
     expect(connection.executorVersion).toBe('9.9.9-test');
     expect(connection.environment).toEqual(TEST_ENVIRONMENT);
-    expect(connection.capabilities).toEqual({});
+    expect(connection.capabilities).toEqual({ [PROCESS_FLOW_CAPABILITY]: true });
     await expect(connection.call('environment/status')).resolves.toEqual({ status: 'ready' });
     connection.close();
     await loopback.host.done;
@@ -335,6 +298,46 @@ describe('request call timeout', () => {
     await expect(call).rejects.toThrow(RequestTimeoutError);
     await expect(call).rejects.toThrow(/timed out after 100ms/);
     expect(Date.now() - started).toBeLessThan(5_000);
+    expect(connection.closed).toBe(false);
+    await expect(connection.call(ENVIRONMENT_STATUS_METHOD)).resolves.toEqual({ status: 'ready' });
+    connection.close();
+  });
+
+  it('cancels a process start that timed out, so the late spawn cannot go orphan', async () => {
+    const seen: ScriptedFrame[] = [];
+    const pipe = createScriptedServer((frame, reply) => {
+      if (frame.method === INITIALIZE_METHOD) {
+        reply({ id: frame.id, result: testInitializeResult() });
+        return;
+      }
+      if (frame.method === ENVIRONMENT_STATUS_METHOD) {
+        reply({ id: frame.id, result: { status: 'ready' } });
+        return;
+      }
+      seen.push(frame);
+      // process/start is left unanswered: the executor stalled on the spawn.
+      if (frame.method === PROCESS_TERMINATE_METHOD) {
+        reply({ id: frame.id, result: { running: false } });
+      }
+    });
+    const connection = await RemoteExecConnection.connect(pipe, {
+      clientName: 'test',
+      clientVersion: '0.0.0',
+      requestCallTimeoutMs: 100,
+    });
+    const processes = new RemoteProcessService(connection, '/tmp', '/bin/bash');
+    await expect(processes.spawn('sleep', ['300'])).rejects.toThrow(RequestTimeoutError);
+    // The cancel must carry the same processId as the stalled start, so the
+    // executor kills whatever it eventually spawns for it.
+    await vi.waitFor(() => {
+      const start = seen.find((frame) => frame.method === PROCESS_START_METHOD);
+      const terminate = seen.find((frame) => frame.method === PROCESS_TERMINATE_METHOD);
+      expect(start).toBeDefined();
+      expect(terminate).toBeDefined();
+      expect((terminate?.params as { processId: string }).processId).toBe(
+        (start?.params as { processId: string }).processId,
+      );
+    });
     expect(connection.closed).toBe(false);
     await expect(connection.call(ENVIRONMENT_STATUS_METHOD)).resolves.toEqual({ status: 'ready' });
     connection.close();

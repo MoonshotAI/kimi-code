@@ -14,9 +14,12 @@ import { RpcError } from '#/protocol/errors';
 import {
   PROCESS_CLOSED_METHOD,
   PROCESS_EXITED_METHOD,
+  PROCESS_FLOW_CAPABILITY,
+  PROCESS_FLOW_METHOD,
   PROCESS_OUTPUT_METHOD,
   PROCESS_SIGNAL_METHOD,
   PROCESS_START_METHOD,
+  PROCESS_TERMINATE_METHOD,
   PROCESS_WRITE_METHOD,
   type ProcessClosedNotification,
   type ProcessExitedNotification,
@@ -25,9 +28,15 @@ import {
   type ProcessStartResult,
   type ProcessWriteResult,
 } from '#/protocol/methods';
-import { ConnectionClosedError, type RemoteExecConnection } from './connection';
+import { ConnectionClosedError, RequestTimeoutError, type RemoteExecConnection } from './connection';
 
 const HOST_PROCESS_CODES: ReadonlySet<string> = new Set(Object.values(OsProcessErrors.codes));
+
+const WRITE_TIMEOUT_RETRIES = 2;
+// Bounded per-stream output buffer: once the consumer falls this far behind,
+// the client asks the executor to pause the child's streams (process/flow)
+// instead of buffering without limit.
+const OUTPUT_BUFFER_BYTES = 256 * 1024;
 
 export function toRemoteProcessError(error: unknown): Error {
   if (!(error instanceof RpcError)) {
@@ -47,10 +56,38 @@ export function toRemoteProcessError(error: unknown): Error {
 }
 
 class PushReadable extends Readable {
-  override _read(): void {}
+  private stalled = false;
+
+  constructor(private readonly onStallChange: (stalled: boolean) => void) {
+    super({ highWaterMark: OUTPUT_BUFFER_BYTES });
+  }
+
+  override _read(): void {
+    this.setStalled(false);
+  }
+
+  pushChunk(chunk: Buffer): void {
+    // push() returns false once the internal buffer reaches the high-water
+    // mark: report the stall so the executor pauses the child's streams until
+    // the consumer catches up (_read) or the stream ends.
+    if (this.push(chunk)) return;
+    this.setStalled(true);
+  }
 
   endStream(): void {
     this.push(null);
+    this.setStalled(false);
+  }
+
+  override _destroy(error: Error | null, callback: (error?: Error | null) => void): void {
+    this.setStalled(false);
+    callback(error);
+  }
+
+  private setStalled(stalled: boolean): void {
+    if (this.stalled === stalled) return;
+    this.stalled = stalled;
+    this.onStallChange(stalled);
   }
 }
 
@@ -71,14 +108,25 @@ export class RemoteProcess implements IHostProcess {
   private readonly exitPromise: Promise<number>;
   private resolveExit!: (code: number) => void;
   private writeChain: Promise<void> = Promise.resolve();
+  private stdoutStalled = false;
+  private stderrStalled = false;
+  private outputFlowPaused = false;
 
   constructor(
     private readonly connection: RemoteExecConnection,
     private readonly processId: string,
     mergeStderr: boolean,
   ) {
-    this.stdout = new PushReadable();
-    this.stderr = mergeStderr ? this.stdout : new PushReadable();
+    this.stdout = new PushReadable((stalled) => {
+      this.stdoutStalled = stalled;
+      this.updateOutputFlow();
+    });
+    this.stderr = mergeStderr
+      ? this.stdout
+      : new PushReadable((stalled) => {
+          this.stderrStalled = stalled;
+          this.updateOutputFlow();
+        });
     this.stdin = new Writable({
       write: (chunk: Buffer, _encoding, callback) => {
         this.enqueueWrite(chunk, false, callback);
@@ -106,8 +154,15 @@ export class RemoteProcess implements IHostProcess {
     callback: (error?: Error | null) => void,
   ): void {
     const writeId = randomUUID();
-    this.writeChain = this.writeChain.then(() => this.sendWrite(chunk, eof, writeId, 0));
-    this.writeChain.then(
+    const run = this.writeChain.then(() => this.sendWriteWithRetry(chunk, eof, writeId));
+    // The chain itself always settles: one failed write reports through the
+    // callback (which errors this Writable) but must not poison every later
+    // queued write with the same rejection.
+    this.writeChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    run.then(
       () => {
         callback();
       },
@@ -115,6 +170,21 @@ export class RemoteProcess implements IHostProcess {
         callback(error);
       },
     );
+  }
+
+  private async sendWriteWithRetry(chunk: Buffer, eof: boolean, writeId: string): Promise<void> {
+    for (let timeouts = 0; ; timeouts += 1) {
+      try {
+        await this.sendWrite(chunk, eof, writeId, 0);
+        return;
+      } catch (error) {
+        // A timed-out write may or may not have landed; replaying the same
+        // writeId is safe because the server dedups accepted write ids.
+        if (!(error instanceof RequestTimeoutError) || timeouts >= WRITE_TIMEOUT_RETRIES) {
+          throw error;
+        }
+      }
+    }
   }
 
   private async sendWrite(chunk: Buffer, eof: boolean, writeId: string, attempt: number): Promise<void> {
@@ -144,10 +214,25 @@ export class RemoteProcess implements IHostProcess {
 
   onOutput(stream: ProcessOutputStream, chunk: Uint8Array): void {
     if (stream === 'stderr' && this.stderr !== this.stdout) {
-      (this.stderr as PushReadable).push(Buffer.from(chunk));
+      (this.stderr as PushReadable).pushChunk(Buffer.from(chunk));
       return;
     }
-    (this.stdout as PushReadable).push(Buffer.from(chunk));
+    (this.stdout as PushReadable).pushChunk(Buffer.from(chunk));
+  }
+
+  private updateOutputFlow(): void {
+    const stalled = this.stdoutStalled || this.stderrStalled;
+    if (stalled === this.outputFlowPaused) return;
+    // Only executors that advertise the capability honor process/flow — older
+    // ones fault unknown notifications, so an unadvertised stall just buffers.
+    if (this.connection.capabilities[PROCESS_FLOW_CAPABILITY] !== true) return;
+    this.outputFlowPaused = stalled;
+    // Per-process flow control: the executor pauses just this child's
+    // stdout/stderr while the consumer is behind, so an unread flood stays
+    // bounded end to end without blocking the connection's other traffic
+    // (call responses included — pausing the whole pipe would deadlock the
+    // stdin write chain against its own responses).
+    this.connection.notify(PROCESS_FLOW_METHOD, { processId: this.processId, paused: stalled });
   }
 
   onExited(exitCode: number): void {
@@ -267,6 +352,13 @@ export class RemoteProcessService implements IHostProcessService {
       return proc;
     } catch (error) {
       this.processes.delete(processId);
+      if (error instanceof RequestTimeoutError) {
+        // The server may still be spawning behind the timed-out request:
+        // cancel the late start so the child does not become an orphan
+        // without a handle. terminate is idempotent (terminateAfterStart
+        // covers an in-flight spawn) and best-effort here.
+        void this.connection.call(PROCESS_TERMINATE_METHOD, { processId }).catch(() => {});
+      }
       if (error instanceof ConnectionClosedError) {
         proc.onConnectionClose();
       }

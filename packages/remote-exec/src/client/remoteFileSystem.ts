@@ -25,6 +25,7 @@ import {
   FS_READ_FILE_METHOD,
   FS_REMOVE_METHOD,
   FS_RENAME_METHOD,
+  FS_WRITE_FILE_CHUNK_BYTES,
   FS_WRITE_FILE_METHOD,
   type FsGetMetadataResult,
   type FsReadDirectoryResult,
@@ -98,6 +99,19 @@ export class RemoteFileSystem implements IHostFileSystem {
     await this.call(FS_WRITE_FILE_METHOD, { path, dataBase64: encodeBase64(data), mode });
   }
 
+  // A single fs/writeFile frame is capped at 64MiB, so large payloads are
+  // sliced into bounded chunks: the first carries the requested mode, the
+  // rest append (mirrors the chunked readBytes shape).
+  private async writeChunked(path: string, data: Uint8Array, mode: FsWriteMode): Promise<void> {
+    if (data.byteLength <= FS_WRITE_FILE_CHUNK_BYTES) {
+      await this.writeMode(path, data, mode);
+      return;
+    }
+    for (let offset = 0; offset < data.byteLength; offset += FS_WRITE_FILE_CHUNK_BYTES) {
+      await this.writeMode(path, data.subarray(offset, offset + FS_WRITE_FILE_CHUNK_BYTES), offset === 0 ? mode : 'append');
+    }
+  }
+
   async readText(
     path: string,
     options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors },
@@ -108,11 +122,11 @@ export class RemoteFileSystem implements IHostFileSystem {
   }
 
   async writeText(path: string, data: string): Promise<void> {
-    await this.writeMode(path, Buffer.from(data, 'utf8'), 'truncate');
+    await this.writeChunked(path, Buffer.from(data, 'utf8'), 'truncate');
   }
 
   async appendText(path: string, data: string): Promise<void> {
-    await this.writeMode(path, Buffer.from(data, 'utf8'), 'append');
+    await this.writeChunked(path, Buffer.from(data, 'utf8'), 'append');
   }
 
   async readBytes(path: string, n?: number, offset = 0): Promise<Uint8Array> {
@@ -136,11 +150,11 @@ export class RemoteFileSystem implements IHostFileSystem {
   }
 
   async writeBytes(path: string, data: Uint8Array): Promise<void> {
-    await this.writeMode(path, data, 'truncate');
+    await this.writeChunked(path, data, 'truncate');
   }
 
   async appendBytes(path: string, data: Uint8Array): Promise<void> {
-    await this.writeMode(path, data, 'append');
+    await this.writeChunked(path, data, 'append');
   }
 
   async *readLines(
@@ -170,7 +184,7 @@ export class RemoteFileSystem implements IHostFileSystem {
 
   async createExclusive(path: string, data: Uint8Array): Promise<boolean> {
     try {
-      await this.writeMode(path, data, 'exclusive');
+      await this.writeChunked(path, data, 'exclusive');
       return true;
     } catch (error) {
       if (error instanceof HostFsError && error.code === OsFsErrors.codes.OS_FS_ALREADY_EXISTS) {

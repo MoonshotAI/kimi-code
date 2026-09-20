@@ -220,6 +220,7 @@ export class FsHandler {
           isDirectory: entry.isDirectory(),
           isFile: entry.isFile(),
         })),
+        truncated: entries.length > FS_READ_DIRECTORY_MAX_ENTRIES,
       };
     } catch (error) {
       throw fsDomainError(error, { path, op: 'readdir' });

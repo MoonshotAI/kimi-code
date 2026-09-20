@@ -16,6 +16,26 @@ function fromB64(value: string): string {
   return Buffer.from(value, 'base64').toString('utf8');
 }
 
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForDeath(pid: number, timeoutMs = 8_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isAlive(pid)) return;
+    await new Promise((resolve) => {
+      setTimeout(resolve, 50);
+    });
+  }
+  throw new Error(`pid ${pid} is still alive`);
+}
+
 interface StartedProcess {
   readonly pid: number;
 }
@@ -354,8 +374,7 @@ describe('process protocol semantics', () => {
     await loopback.host.done;
   });
 
-  it('queues ordinary calls beyond the in-flight cap while control calls proceed', async () => {
-    const loopback = createInProcessLoopback();
+  it('queues ordinary calls beyond the in-flight cap while control calls proceed', async () => {    const loopback = createInProcessLoopback();
     const raw = new RawClient(loopback);
     await raw.handshake();
     await startProcess(raw, 1, { processId: 'idle', argv: ['sleep', '5'], cwd: '/tmp', pipeStdin: true });
@@ -392,4 +411,78 @@ describe('process protocol semantics', () => {
     loopback.clientInput.end();
     await loopback.host.done;
   });
+
+  it('refuses a start that was cancelled while queued behind the in-flight cap', async () => {
+    const loopback = createInProcessLoopback();
+    const raw = new RawClient(loopback);
+    await raw.handshake();
+    await startProcess(raw, 1, { processId: 'waker', argv: ['cat'], cwd: '/tmp', pipeStdin: true });
+    // Park the in-flight budget in long-poll reads so the next ordinary call queues.
+    for (let i = 0; i < 256; i += 1) {
+      raw.send({ id: 1000 + i, method: 'process/read', params: { processId: 'waker', waitMs: 60_000 } });
+    }
+    await new Promise((resolve) => {
+      setTimeout(resolve, 150);
+    });
+    raw.send({
+      id: 2,
+      method: 'process/start',
+      params: { processId: 'late', argv: ['sleep', '300'], cwd: '/tmp', pipeStdin: false },
+    });
+    raw.send({ id: 3, method: 'process/terminate', params: { processId: 'late' } });
+    // terminate rides the control lane and lands while the start is still queued.
+    expect((await raw.nextResponse(3))['result']).toEqual({ running: false });
+    // Wake the parked reads so the queued start finally runs.
+    raw.send({
+      id: 4,
+      method: 'process/write',
+      params: { processId: 'waker', chunkBase64: b64('x'), writeId: 'wake-1' },
+    });
+    expect((await raw.nextResponse(4))['result']).toEqual({ status: 'accepted' });
+    const startResponse = await raw.nextResponse(2, 10_000);
+    const error = startResponse['error'] as { code: number; message: string };
+    expect(error.code).toBe(-32600);
+    expect(error.message).toContain('terminated before it started');
+    // Nothing was ever spawned under that id.
+    raw.send({ id: 5, method: 'process/read', params: { processId: 'late' } });
+    expect(((await raw.nextResponse(5))['error'] as { code: number }).code).toBe(-32600);
+    loopback.clientInput.end();
+    await loopback.host.done;
+  });
+
+  it('terminateAll kills detached descendants whose leader aged out of the map', async () => {
+    const loopback = createInProcessLoopback({ tuning: { exitedRetentionMs: 300 } });
+    const raw = new RawClient(loopback);
+    await raw.handshake();
+    await startProcess(raw, 1, {
+      processId: 'daemonizer',
+      argv: ['sh', '-c', 'sleep 300 & echo $!; exit 0'],
+      cwd: '/tmp',
+      pipeStdin: false,
+    });
+    let childPid = -1;
+    const started = Date.now();
+    while (childPid < 0 && Date.now() - started < 5_000) {
+      const outputs = raw.notifications('process/output');
+      for (const output of outputs) {
+        const match = /(\d+)/.exec(fromB64(output['chunkBase64'] as string));
+        if (match !== null) childPid = Number(match[1]);
+      }
+      if (childPid < 0) {
+        await new Promise((resolve) => {
+          setTimeout(resolve, 50);
+        });
+      }
+    }
+    expect(childPid).toBeGreaterThan(0);
+    // Wait past the retention window: the leader's entry is gone from the map,
+    // but the detached descendant still carries its process group.
+    await new Promise((resolve) => {
+      setTimeout(resolve, 800);
+    });
+    expect(isAlive(childPid)).toBe(true);
+    loopback.clientInput.end();
+    await loopback.host.done;
+    await waitForDeath(childPid);
+  }, 15_000);
 });

@@ -177,7 +177,7 @@ export class GlobTool implements IGlobTool {
 
     let rgPath: string;
     try {
-      const resolution = await ensureRgPath(createRgProbe(processService), {
+      const resolution = await ensureRgPath(createRgProbe(processService, workspace.workspaceDir), {
         signal,
         allowCachedFallback: true,
         environment,
@@ -339,12 +339,12 @@ registerAgentToolService(IGlobTool, GlobTool, {
   requiredEnvironmentCapabilities: ['fs', 'process'],
 });
 
-function createRgProbe(processService: IHostProcessService): RgProbe {
+function createRgProbe(processService: IHostProcessService, cwd: string): RgProbe {
   return {
     exec: async (args) => {
       const [command, ...rest] = args;
       if (command === undefined) return { exitCode: -1 };
-      const proc = await processService.spawn(command, rest);
+      const proc = await processService.spawn(command, rest, { cwd });
       try {
         proc.stdin.end();
       } catch {

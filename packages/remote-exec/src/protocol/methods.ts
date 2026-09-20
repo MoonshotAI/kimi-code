@@ -20,6 +20,7 @@ export const PROCESS_WRITE_METHOD = 'process/write';
 export const PROCESS_SIGNAL_METHOD = 'process/signal';
 export const PROCESS_TERMINATE_METHOD = 'process/terminate';
 export const PROCESS_RESIZE_METHOD = 'process/resize';
+export const PROCESS_FLOW_METHOD = 'process/flow';
 
 export const SERVER_NOTIFICATION_METHODS: ReadonlySet<string> = new Set([
   PROCESS_OUTPUT_METHOD,
@@ -156,6 +157,9 @@ export interface FsReadDirectoryEntry {
 
 export interface FsReadDirectoryResult {
   readonly entries: FsReadDirectoryEntry[];
+  // True when the directory holds more than FS_READ_DIRECTORY_MAX_ENTRIES and
+  // the listing was cut short — callers must not treat it as exhaustive.
+  readonly truncated: boolean;
 }
 
 export interface FsRemoveParams {
@@ -259,7 +263,21 @@ export interface ProcessResizeParams {
   readonly rows: number;
 }
 
+// Client→server flow-control notification: pauses/resumes a single child's
+// output streams when the client's consumer falls behind, so an unread flood
+// stays bounded without head-of-line blocking the connection.
+export interface ProcessFlowParams {
+  readonly processId: string;
+  readonly paused: boolean;
+}
+
 export const MIN_EXECUTOR_VERSION = '0.1.0';
+
+// Advertised in the initialize result when the executor honors process/flow
+// flow-control notifications. Clients must not send process/flow to an
+// executor that does not advertise it (older executors fault unknown
+// notifications).
+export const PROCESS_FLOW_CAPABILITY = 'processFlow';
 
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map((part) => Number.parseInt(part, 10) || 0);
@@ -273,6 +291,7 @@ export function compareVersions(a: string, b: string): number {
 
 export const FS_READ_FILE_MAX_BYTES = 1024 * 1024;
 export const FS_READ_FILE_WHOLE_MAX_BYTES = 32 * 1024 * 1024;
+export const FS_WRITE_FILE_CHUNK_BYTES = 1024 * 1024;
 export const FS_READ_DIRECTORY_MAX_ENTRIES = 50_000;
 export const PROCESS_REPLAY_MAX_BYTES = 1024 * 1024;
 export const PROCESS_REPLAY_MAX_CHUNKS = 50_000;

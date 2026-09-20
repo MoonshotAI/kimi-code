@@ -17,7 +17,7 @@ import {
   type ProcessExitedNotification,
   type ProcessOutputNotification,
 } from '#/protocol/methods';
-import type { RemoteExecConnection } from './connection';
+import { RequestTimeoutError, type RemoteExecConnection } from './connection';
 import { toRemoteProcessError } from './remoteProcess';
 
 class RemoteTerminalProcess implements TerminalProcess {
@@ -122,10 +122,16 @@ export class RemoteTerminalService implements IHostTerminalService {
         processId,
         argv: [options.shell],
         cwd: options.cwd,
+        env: options.env,
         tty: true,
       });
     } catch (error) {
       this.processes.delete(processId);
+      if (error instanceof RequestTimeoutError) {
+        // Same late-start cancel as RemoteProcessService.spawn: keep the
+        // server-side child from becoming an orphan without a handle.
+        void this.connection.call(PROCESS_TERMINATE_METHOD, { processId }).catch(() => {});
+      }
       throw toRemoteProcessError(error);
     }
     proc.resize(options.cols, options.rows);

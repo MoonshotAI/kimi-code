@@ -1,10 +1,21 @@
-import { describe, expect, it, beforeAll, afterAll } from 'vitest';
+import { describe, expect, it, beforeAll, afterAll, vi } from 'vitest';
 
 import { HostProcessError } from '@moonshot-ai/agent-core-v2/os/interface/hostProcess';
 
-import type { RemoteExecConnection } from '../src/client/connection';
+import { RemoteExecConnection, RequestTimeoutError } from '../src/client/connection';
 import { RemoteTerminalService } from '../src/client/remoteTerminal';
-import { connectSubprocess, type SpawnedExecutor } from './helpers/loopback';
+import {
+  INITIALIZE_METHOD,
+  PROCESS_START_METHOD,
+  PROCESS_TERMINATE_METHOD,
+} from '../src/protocol/methods';
+import {
+  connectSubprocess,
+  createScriptedServer,
+  testInitializeResult,
+  type ScriptedFrame,
+  type SpawnedExecutor,
+} from './helpers/loopback';
 
 async function ptyAvailable(): Promise<boolean> {
   try {
@@ -112,4 +123,62 @@ describe('terminal over a subprocess loopback', () => {
     spawned.bridge.close();
     await expect(exited).resolves.toBe(-1);
   }, 15_000);
+
+  it('passes spawn env through to the remote shell', async () => {
+    if (skip) return;
+    const terminal = await terminals.spawn({
+      cwd: '/tmp',
+      shell: '/bin/bash',
+      cols: 80,
+      rows: 24,
+      env: { REMOTE_TERMINAL_WITNESS_9F3X: 'witness-value' },
+    });
+    let output = '';
+    terminal.onProcessData((data) => {
+      output += data;
+    });
+    terminal.write('printf "[%s]\\n" "$REMOTE_TERMINAL_WITNESS_9F3X"\n');
+    const deadline = Date.now() + 8_000;
+    while (!output.includes('[witness-value]') && Date.now() < deadline) {
+      await delay(50);
+    }
+    expect(output).toContain('[witness-value]');
+    terminal.kill();
+  }, 15_000);
+});
+
+describe('terminal start cancel', () => {
+  it('cancels a terminal start that timed out, so the late spawn cannot go orphan', async () => {
+    const seen: ScriptedFrame[] = [];
+    const pipe = createScriptedServer((frame, reply) => {
+      if (frame.method === INITIALIZE_METHOD) {
+        reply({ id: frame.id, result: testInitializeResult() });
+        return;
+      }
+      seen.push(frame);
+      // process/start is left unanswered: the executor stalled on the spawn.
+      if (frame.method === PROCESS_TERMINATE_METHOD) {
+        reply({ id: frame.id, result: { running: false } });
+      }
+    });
+    const connection = await RemoteExecConnection.connect(pipe, {
+      clientName: 'test',
+      clientVersion: '0.0.0',
+      requestCallTimeoutMs: 100,
+    });
+    const terminals = new RemoteTerminalService(connection);
+    await expect(
+      terminals.spawn({ cwd: '/tmp', shell: '/bin/bash', cols: 80, rows: 24 }),
+    ).rejects.toThrow(RequestTimeoutError);
+    await vi.waitFor(() => {
+      const start = seen.find((frame) => frame.method === PROCESS_START_METHOD);
+      const terminate = seen.find((frame) => frame.method === PROCESS_TERMINATE_METHOD);
+      expect(start).toBeDefined();
+      expect(terminate).toBeDefined();
+      expect((terminate?.params as { processId: string }).processId).toBe(
+        (start?.params as { processId: string }).processId,
+      );
+    });
+    connection.close();
+  });
 });
