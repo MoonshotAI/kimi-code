@@ -168,6 +168,10 @@
               pnpm
               (pkgs.pnpmConfigHook.override { inherit pnpm; })
               pkgs.makeWrapper
+              # node-pty ships no Linux prebuilds, so the SEA asset step
+              # source-builds it via node-gyp inside the sandbox; node-gyp
+              # locates a Python interpreter through PATH.
+              pkgs.python3
             ]
             # The SEA inject step (postject) invalidates the macOS code
             # signature on the copied Node executable; build.mjs then re-applies
