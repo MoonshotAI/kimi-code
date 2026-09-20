@@ -82,9 +82,10 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
     const cwd = input.cwd === undefined ? view.workDir : view.assertAllowed(view.resolve(input.cwd));
     const shell = input.shell ?? lease.environment.host.shellPath;
     let process: TerminalProcess;
+    let killer: IDisposable;
     try {
       process = await lease.environment.terminal!.spawn({ cwd, shell, cols, rows });
-      lease.track({ dispose: () => process.kill() }, this.sessionContext.sessionId);
+      killer = lease.track({ dispose: () => process.kill() }, this.sessionContext.sessionId);
     } catch (error) {
       lease.dispose();
       throw error;
@@ -106,7 +107,7 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
       sinks: new Map(),
       buffer: [],
       nextSeq: 0,
-      disposables: [],
+      disposables: [killer],
       closed: false,
     };
     record.disposables.push(

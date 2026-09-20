@@ -164,6 +164,7 @@ class EnvironmentStdioTransport implements Transport {
   private readonly readBuffer = new ReadBuffer();
   private process: IHostProcess | undefined;
   private lease: ReturnType<IEnvironmentResolver['acquire']> | undefined;
+  private tracked: { dispose(): void | Promise<void> } | undefined;
   private started = false;
   private closed = false;
 
@@ -207,7 +208,7 @@ class EnvironmentStdioTransport implements Transport {
         this.options.sessionId,
       );
       this.process = process;
-      lease.track(this, this.options.sessionId);
+      this.tracked = lease.track(this, this.options.sessionId);
       process.stdin.on('error', (error: Error) => this.onerror?.(error));
       process.stdout.on('data', (chunk: Buffer | string) => this.onData(chunk));
       process.stdout.on('end', () => this.finish());
@@ -259,6 +260,9 @@ class EnvironmentStdioTransport implements Transport {
       void process.dispose();
     }
     this.readBuffer.clear();
+    const tracked = this.tracked;
+    this.tracked = undefined;
+    void tracked?.dispose();
     const lease = this.lease;
     this.lease = undefined;
     lease?.dispose();
@@ -281,8 +285,13 @@ class EnvironmentStdioTransport implements Transport {
   private finish(): void {
     if (this.closed) return;
     this.closed = true;
+    const process = this.process;
     this.process = undefined;
+    void process?.dispose();
     this.readBuffer.clear();
+    const tracked = this.tracked;
+    this.tracked = undefined;
+    void tracked?.dispose();
     const lease = this.lease;
     this.lease = undefined;
     lease?.dispose();

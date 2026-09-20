@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, rm, symlink } from 'node:fs/promises';
+import { chmod, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -8,6 +8,7 @@ import { HostFsError } from '@moonshot-ai/agent-core-v2/os/interface/hostFsError
 
 import type { RemoteExecConnection } from '../src/client/connection';
 import { RemoteFileSystem } from '../src/client/remoteFileSystem';
+import { FS_READ_FILE_WHOLE_MAX_BYTES } from '../src/protocol/methods';
 import { connectSubprocess, type SpawnedExecutor } from './helpers/loopback';
 
 describe('fs group over a subprocess loopback', () => {
@@ -63,6 +64,18 @@ describe('fs group over a subprocess loopback', () => {
     await expect(fs.readBytes(path, undefined, 250)).resolves.toEqual(data.subarray(250));
     await expect(fs.readBytes(path, 4, 1000)).resolves.toEqual(new Uint8Array(0));
   });
+
+  it('reads files larger than the whole-file limit in bounded chunks', async () => {
+    const path = join(workDir, 'big.bin');
+    const size = FS_READ_FILE_WHOLE_MAX_BYTES + 1024 * 1024;
+    const data = new Uint8Array(size);
+    for (let i = 0; i < size; i += 1) data[i] = i % 251;
+    await writeFile(path, data);
+
+    const read = await fs.readBytes(path);
+    expect(read.byteLength).toBe(size);
+    expect(Buffer.from(read).equals(Buffer.from(data))).toBe(true);
+  }, 30_000);
 
   it('creates exclusively and reports false for an existing path', async () => {
     const path = join(workDir, 'exclusive.txt');

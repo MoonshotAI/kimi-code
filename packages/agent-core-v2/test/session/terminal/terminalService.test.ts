@@ -75,7 +75,7 @@ class FakeEnvironmentResolver implements EnvironmentResolver {
   declare readonly _serviceBrand: undefined;
   activeLeases = 0;
   readonly bindings: Array<{ workspaceId: string; environmentId: string }> = [];
-  readonly tracked: Array<{ resource: unknown; sessionId?: string }> = [];
+  readonly tracked: Array<{ resource: unknown; sessionId?: string; disposed: boolean }> = [];
   private readonly environment;
 
   constructor(
@@ -105,9 +105,21 @@ class FakeEnvironmentResolver implements EnvironmentResolver {
     let active = true;
     return {
       environment: this.environment,
-      track: (resource, sessionId) => {
-        this.tracked.push({ resource, sessionId });
-        return resource;
+      track: <T extends { dispose(): void | Promise<void> }>(resource: T, sessionId?: string): T => {
+        const entry = { resource, sessionId, disposed: false };
+        this.tracked.push(entry);
+        return new Proxy(resource, {
+          get: (target, property) => {
+            if (property === 'dispose') {
+              return () => {
+                if (entry.disposed) return undefined;
+                entry.disposed = true;
+                return target.dispose();
+              };
+            }
+            return Reflect.get(target, property, target);
+          },
+        });
       },
       dispose: () => {
         if (!active) return;
@@ -297,6 +309,29 @@ describe('SessionTerminalService', () => {
     expect(fetched.exit_code).toBe(7);
   });
 
+  it('disposes the tracked killer when the terminal exits so the environment can go idle', async () => {
+    const svc = ix.get(ISessionTerminalService);
+    await svc.create({ environment_id: 'local' });
+    expect(resolver.tracked).toHaveLength(1);
+    expect(resolver.tracked[0]?.disposed).toBe(false);
+
+    host.processes[0]!.emitExit(0);
+
+    expect(resolver.tracked[0]?.disposed).toBe(true);
+    expect(resolver.activeLeases).toBe(0);
+  });
+
+  it('disposes the tracked killer on close', async () => {
+    const svc = ix.get(ISessionTerminalService);
+    const terminal = await svc.create({ environment_id: 'local' });
+    expect(resolver.tracked[0]?.disposed).toBe(false);
+
+    await svc.close(terminal.id);
+
+    expect(resolver.tracked[0]?.disposed).toBe(true);
+    expect(resolver.activeLeases).toBe(0);
+  });
+
   it('delegates write and resize to the process', async () => {
     const svc = ix.get(ISessionTerminalService);
     const terminal = await svc.create({ environment_id: 'local' });
@@ -342,6 +377,7 @@ describe('SessionTerminalService', () => {
     disposables.dispose();
     expect(proc.killed).toBe(true);
     expect(resolver.activeLeases).toBe(0);
+    expect(resolver.tracked[0]?.disposed).toBe(true);
   });
 });
 
