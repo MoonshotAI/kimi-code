@@ -229,9 +229,15 @@ interface DeclaredEnvironmentRecord {
   detached: boolean;
   // The lease on the pooled connection backing this record's live view,
   // owned by the app-level pool: managed views share it and never dispose it.
-  // The record releases it on reconnect, update, and removal; the pool
-  // destroys the connection once the last workspace holder lets go.
+  // The record releases it on update and removal; the pool destroys the
+  // connection once the last workspace holder lets go.
   poolHandle?: RemoteConnectionPoolHandle;
+  // The pooled connection the record's live registry view wraps, undefined
+  // while the view is a pending placeholder. The pool broadcasts every
+  // replacement to all holders, so a mismatch against the handle's live
+  // connection marks this view stale: it catches up to the pooled connection
+  // instead of forcing another replacement.
+  viewConnection?: RemoteEnvironment;
   // A docker declaration's tilde-prefixed remoteBin resolved to the container
   // user's absolute home path (docker exec has no shell expansion), keyed by
   // the declaration fingerprint it was resolved from so a declaration change
@@ -241,6 +247,20 @@ interface DeclaredEnvironmentRecord {
   // Mirrors the registry idleness events for this environment: true while it
   // has zero active leases and zero tracked resources.
   idle: boolean;
+}
+
+class EnvironmentReapAbortedError extends Error {
+  constructor() {
+    super('environment is no longer idle');
+    this.name = 'EnvironmentReapAbortedError';
+  }
+}
+
+class EnvironmentSwapRedundantError extends Error {
+  constructor() {
+    super('view already wraps the pooled connection');
+    this.name = 'EnvironmentSwapRedundantError';
+  }
 }
 
 const PROJECT_DECLARATION_WATCH_DEBOUNCE_MS = 200;
@@ -308,8 +328,10 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
     // reaps a shared connection only once every workspace holding it stayed
     // idle for the TTL (the min over conflicting declaration TTLs), so one
     // workspace going idle never kills a connection another workspace is
-    // actively using. Reaped views swap back to pending placeholders and
-    // reconnect on demand, exactly like the first connect.
+    // actively using. Each holder then votes on the reap: a view that took a
+    // lease in the reap window vetoes it and the connection survives.
+    // Reaped views swap back to pending placeholders and reconnect on demand,
+    // exactly like the first connect.
     const idlenessSubscription = host.onDidChangeEnvironmentIdleness((change) => {
       const record = records.get(change.environmentId);
       if (record === undefined) return;
@@ -429,14 +451,27 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
   }
 
   private createPendingEnvironment(context: EnvironmentProviderContext, record: DeclaredEnvironmentRecord, log: ILogService): ManagedRemoteEnvironment {
-    let inflight: Promise<void> | undefined;
     const declaration = record.declaration;
+    return new ManagedRemoteEnvironment(undefined, this.createConnectCallback(context, record, declaration, log), {
+      workspaceId: context.id,
+      environmentId: declaration.id,
+      generation: `${declaration.id}-pending-${randomUUID()}`,
+    });
+  }
+
+  private createConnectCallback(
+    context: EnvironmentProviderContext,
+    record: DeclaredEnvironmentRecord,
+    declaration: RemoteEnvironmentDeclaration,
+    log: ILogService,
+  ): () => Promise<void> {
+    let inflight: Promise<void> | undefined;
     const fingerprint = declarationFingerprint(declaration.entry);
     const connectEnvironment = (): Promise<void> => {
       inflight ??= (async () => {
         try {
-          const connect = this.options.connect ?? ((opts: RemoteEnvironmentOptions) => RemoteEnvironment.connect(opts));
-          const handle = await this.pool.acquire(fingerprint, async () => {
+          const factory = async (): Promise<RemoteEnvironment> => {
+            const connect = this.options.connect ?? ((opts: RemoteEnvironmentOptions) => RemoteEnvironment.connect(opts));
             const attempt = (launcher: LauncherSpec): Promise<RemoteEnvironment> =>
               connect({
                 workspaceId: context.id,
@@ -456,63 +491,138 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
               minExecutorVersion: this.options.minExecutorVersion,
               runner: this.options.probeRunner,
             });
-          }, {
+          };
+          // A reconnect against a live pool lease: the pool invalidates the
+          // shared connection, builds its replacement, and broadcasts the
+          // swap to every workspace view on this fingerprint. A view the
+          // broadcast has not reached yet (still draining its previous
+          // generation) just catches up to the current pooled connection
+          // instead of forcing yet another replacement. A handle whose entry
+          // died reads back undefined — treat it as no handle and fall
+          // through to the acquire path.
+          const pooled = record.poolHandle?.connection;
+          if (pooled !== undefined) {
+            if (pooled.status === 'ready' && record.viewConnection !== pooled) {
+              await this.swapPoolConnection(context, record, pooled, log);
+              return;
+            }
+            const replaced = await this.pool.replace(fingerprint, factory);
+            // Stale guards: the record was torn down, or its declaration
+            // moved to a different fingerprint, while the replace was in
+            // flight. The view swap must not happen; the pool handle is
+            // owned (and released) by the reconcile path.
+            if (record.detached || declarationFingerprint(record.declaration.entry) !== fingerprint) return;
+            await this.swapPoolConnection(context, record, replaced, log);
+            return;
+          }
+          const acquired = await this.pool.acquire(fingerprint, factory, {
             idle: record.idle,
             ttlMs: idleReapTtlMs(declaration.entry),
             onPoolDestroy: (connection) => this.discardPoolConnection(context, record, connection, log),
+            onPoolReplace: (connection) =>
+              this.swapPoolConnection(context, record, connection, log).catch((error: unknown) => {
+                log.warn(`remote environment ${declaration.id} pooled connection replacement failed`, { error });
+              }),
           });
           // Stale guards: the record was torn down, or its declaration moved
           // to a different fingerprint, while the acquire was in flight. The
           // handle goes straight back; the view swap must not happen.
           if (record.detached || declarationFingerprint(record.declaration.entry) !== fingerprint) {
-            handle.release();
+            acquired.release();
             return;
           }
-          const previous = record.poolHandle;
-          record.poolHandle = handle;
+          record.poolHandle = acquired;
           try {
-            await record.handle.update(() => new ManagedRemoteEnvironment(handle.connection, connectEnvironment, {
-              workspaceId: context.id,
-              environmentId: declaration.id,
-              generation: handle.connection.identity.generation,
-            }));
+            await record.handle.update(() => {
+              const connection = acquired.connection;
+              record.viewConnection = connection;
+              return new ManagedRemoteEnvironment(connection, connectEnvironment, {
+                workspaceId: context.id,
+                environmentId: declaration.id,
+                generation: connection.identity.generation,
+              });
+            });
           } catch (error) {
-            record.poolHandle = previous;
-            handle.release();
+            record.poolHandle = undefined;
+            record.viewConnection = undefined;
+            acquired.release();
             throw error;
           }
-          previous?.release();
         } finally {
           inflight = undefined;
         }
       })();
       return inflight;
     };
-    return new ManagedRemoteEnvironment(undefined, connectEnvironment, {
-      workspaceId: context.id,
-      environmentId: declaration.id,
-      generation: `${declaration.id}-pending-${randomUUID()}`,
-    });
+    return connectEnvironment;
   }
 
-  // The pool reaped the shared connection after every holder stayed idle for
-  // its TTL: swap this record's view back to a pending placeholder so the next
-  // use reconnects on demand. The handle is already deactivated pool-side, so
-  // the record just drops it — the pool disposes the connection itself once
-  // every holder's view has been swapped.
-  private async discardPoolConnection(
+  // Swap the record's registry view onto the pool's current connection: the
+  // broadcast side of a pool-level replace, and the catch-up for a view the
+  // broadcast has not reached yet. Superseded broadcasts (the entry moved on
+  // again, or the record's declaration changed fingerprint) and views already
+  // wrapping the connection are no-ops.
+  private async swapPoolConnection(
     context: EnvironmentProviderContext,
     record: DeclaredEnvironmentRecord,
     connection: RemoteEnvironment,
     log: ILogService,
   ): Promise<void> {
-    if (record.poolHandle?.connection !== connection) return;
-    record.poolHandle = undefined;
+    if (record.detached) return;
+    const handle = record.poolHandle;
+    if (handle?.connection !== connection || record.viewConnection === connection) return;
+    if (handle.fingerprint !== declarationFingerprint(record.declaration.entry)) return;
+    const connectEnvironment = this.createConnectCallback(context, record, record.declaration, log);
+    const previousView = record.viewConnection;
     try {
-      await record.handle.update(() => this.createPendingEnvironment(context, record, log));
+      await record.handle.update(() => {
+        // A concurrent swap for the same connection (this record's own
+        // reconnect racing the pool broadcast) already landed.
+        if (record.viewConnection === connection) throw new EnvironmentSwapRedundantError();
+        record.viewConnection = connection;
+        return new ManagedRemoteEnvironment(connection, connectEnvironment, {
+          workspaceId: context.id,
+          environmentId: record.declaration.id,
+          generation: connection.identity.generation,
+        });
+      });
     } catch (error) {
-      log.warn(`remote environment ${record.declaration.id} idle connection reap failed`, { error });
+      if (error instanceof EnvironmentSwapRedundantError) return;
+      record.viewConnection = previousView;
+      throw error;
     }
+  }
+
+  // The pool asks this record to drop its view of a connection being reaped:
+  // swap back to a pending placeholder so the next use reconnects on demand,
+  // then release the handle. A lease that landed in the reap window vetoes
+  // the reap (false) — the connection survives and the view stays.
+  private async discardPoolConnection(
+    context: EnvironmentProviderContext,
+    record: DeclaredEnvironmentRecord,
+    connection: RemoteEnvironment,
+    log: ILogService,
+  ): Promise<boolean> {
+    if (record.poolHandle?.connection !== connection) return true;
+    const previousView = record.viewConnection;
+    try {
+      await record.handle.update(() => {
+        // Second-chance abort, checked at the last moment: idleness is
+        // mirrored synchronously, so a false here means a lease landed
+        // between the reap timer firing and this swap.
+        if (!record.idle) throw new EnvironmentReapAbortedError();
+        record.viewConnection = undefined;
+        return this.createPendingEnvironment(context, record, log);
+      });
+    } catch (error) {
+      if (error instanceof EnvironmentReapAbortedError) return false;
+      record.viewConnection = previousView;
+      log.warn(`remote environment ${record.declaration.id} idle connection reap failed`, { error });
+      releasePoolHandle(record);
+      return true;
+    }
+    releasePoolHandle(record);
+    return true;
   }
 
   private async resolveRecordLauncher(
@@ -536,6 +646,7 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
 function releasePoolHandle(record: DeclaredEnvironmentRecord): void {
   const handle = record.poolHandle;
   record.poolHandle = undefined;
+  record.viewConnection = undefined;
   handle?.release();
 }
 

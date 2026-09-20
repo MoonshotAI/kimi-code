@@ -5,17 +5,27 @@ import type { RemoteEnvironment } from './remoteEnvironment';
 // A workspace's lease on a pooled connection. `idle` mirrors the workspace
 // registry's idleness (zero active leases and zero tracked resources);
 // `ttlMs` is the declaration's idle-reap TTL, where 0 means never reap.
-// `onPoolDestroy` fires when the pool reaps the shared connection out from
-// under the holder and must settle once the holder dropped its view of the
-// connection; the pool disposes the connection afterwards.
 export interface RemoteConnectionPoolHolder {
   readonly idle: boolean;
   readonly ttlMs: number;
-  readonly onPoolDestroy: (connection: RemoteEnvironment) => Promise<void>;
+  // Reap vote: once every holder stayed idle for the TTL the pool asks each
+  // holder to drop its view of the connection. Return true once the view is
+  // dropped (or was never installed); return false to veto the reap — a
+  // lease landed in the reap window and the connection must survive. A veto
+  // keeps the entry alive; views already dropped rejoin the surviving
+  // connection on their next connect.
+  readonly onPoolDestroy: (connection: RemoteEnvironment) => Promise<boolean>;
+  // Replace broadcast: the entry's connection was swapped by a reconnect
+  // from any workspace (or by a rebuild after a drop). The holder swaps its
+  // view to the new connection; turns pinned to the old generation fail
+  // explicitly, exactly as on a connection drop.
+  readonly onPoolReplace: (connection: RemoteEnvironment) => Promise<void>;
 }
 
 export interface RemoteConnectionPoolHandle {
   readonly fingerprint: string;
+  // Live read of the entry's installed connection: a pool-level replace
+  // swaps it under existing handles.
   readonly connection: RemoteEnvironment;
   update(state: { readonly idle: boolean; readonly ttlMs: number }): void;
   release(): void;
@@ -32,19 +42,24 @@ interface HolderState {
   idle: boolean;
   ttlMs: number;
   active: boolean;
-  readonly onPoolDestroy: (connection: RemoteEnvironment) => Promise<void>;
+  readonly onPoolDestroy: (connection: RemoteEnvironment) => Promise<boolean>;
+  readonly onPoolReplace: (connection: RemoteEnvironment) => Promise<void>;
 }
 
 interface PoolEntry {
   readonly fingerprint: string;
-  // Bumped on every invalidation: a connect that finishes against an older
-  // version disposes its result instead of installing it into an entry the
-  // pool already tore down.
+  // Bumped on every invalidation and every replace: a connect that finishes
+  // against an older version disposes its result instead of installing it
+  // into an entry that already moved on.
   version: number;
   dead: boolean;
   refs: number;
   connection?: RemoteEnvironment;
   connectInflight?: Promise<RemoteEnvironment>;
+  // The entry version the in-flight connect installs against. Once the
+  // version moves past it the run is stale: new callers start a fresh run
+  // instead of joining, and the stale run's install is rejected.
+  connectInflightVersion?: number;
   readonly holders: Set<HolderState>;
   readonly reapTimer: TimeoutTimer;
 }
@@ -78,11 +93,11 @@ export class RemoteConnectionPool {
       ttlMs: holder.ttlMs,
       active: true,
       onPoolDestroy: holder.onPoolDestroy,
+      onPoolReplace: holder.onPoolReplace,
     };
     entry.holders.add(state);
-    let connection: RemoteEnvironment;
     try {
-      connection = await this.connectionFor(entry, factory);
+      await this.connectionFor(entry, factory);
     } catch (error) {
       entry.holders.delete(state);
       this.releaseRef(entry);
@@ -90,7 +105,9 @@ export class RemoteConnectionPool {
     }
     return {
       fingerprint,
-      connection,
+      get connection() {
+        return entry.connection as RemoteEnvironment;
+      },
       update: (next) => {
         if (!state.active) return;
         state.idle = next.idle;
@@ -104,6 +121,21 @@ export class RemoteConnectionPool {
         this.releaseRef(entry);
       },
     };
+  }
+
+  // Coordinated reconnect: supersede the entry's current connection and drive
+  // one factory run for its replacement. A concurrent replace (or a rebuild
+  // already running against the current version) is joined instead of driving
+  // a second run. Once the new connection installs, every holder's
+  // `onPoolReplace` broadcast swaps its workspace view.
+  async replace(fingerprint: string, factory: () => Promise<RemoteEnvironment>): Promise<RemoteEnvironment> {
+    const entry = this.entries.get(fingerprint);
+    if (entry === undefined || entry.dead) throw new RemoteConnectionPoolStaleError();
+    entry.reapTimer.cancel();
+    const inflight = entry.connectInflight;
+    if (inflight !== undefined && entry.connectInflightVersion === entry.version) return inflight;
+    entry.version += 1;
+    return this.startConnect(entry, factory);
   }
 
   async dispose(): Promise<void> {
@@ -126,32 +158,61 @@ export class RemoteConnectionPool {
   ): Promise<RemoteEnvironment> {
     const existing = entry.connection;
     if (existing !== undefined && existing.status === 'ready') return Promise.resolve(existing);
-    entry.connectInflight ??= this.runFactory(entry, factory);
-    return entry.connectInflight;
+    const inflight = entry.connectInflight;
+    if (inflight !== undefined && entry.connectInflightVersion === entry.version) return inflight;
+    return this.startConnect(entry, factory);
   }
 
-  private async runFactory(
+  private startConnect(
     entry: PoolEntry,
     factory: () => Promise<RemoteEnvironment>,
   ): Promise<RemoteEnvironment> {
     const version = entry.version;
-    const previous = entry.connection;
-    try {
-      const connected = await factory();
-      if (entry.version !== version) {
-        await connected.dispose();
-        throw new RemoteConnectionPoolStaleError();
+    const run = this.runFactory(entry, version, factory);
+    entry.connectInflight = run;
+    entry.connectInflightVersion = version;
+    void run.catch(() => {}).then(() => {
+      if (entry.connectInflight === run) {
+        entry.connectInflight = undefined;
+        entry.connectInflightVersion = undefined;
       }
-      entry.connection = connected;
-      this.rearmReap(entry);
-      // The replaced connection died before this connect started; disposing it
-      // here mirrors the record-level `await previous?.dispose()` reconnect
-      // path without blocking the joiners on a wedged child's teardown.
-      if (previous !== undefined) void previous.dispose();
-      return connected;
-    } finally {
-      entry.connectInflight = undefined;
+    });
+    return run;
+  }
+
+  private async runFactory(
+    entry: PoolEntry,
+    version: number,
+    factory: () => Promise<RemoteEnvironment>,
+  ): Promise<RemoteEnvironment> {
+    const previous = entry.connection;
+    const connected = await factory();
+    if (entry.version !== version) {
+      await connected.dispose();
+      throw new RemoteConnectionPoolStaleError();
     }
+    entry.connection = connected;
+    this.rearmReap(entry);
+    if (previous !== undefined) {
+      // The swap broadcasts before the replaced connection dies: every
+      // workspace view moves to the new connection first, then the old one
+      // is disposed. Leases pinned to an old generation fail through the
+      // registry drain and their dead connection, exactly like a drop.
+      void this.broadcastReplace(entry, connected).then(
+        () => previous.dispose(),
+        () => previous.dispose(),
+      );
+    }
+    return connected;
+  }
+
+  private async broadcastReplace(entry: PoolEntry, connection: RemoteEnvironment): Promise<void> {
+    await Promise.all([...entry.holders].map(async (holder) => {
+      if (!holder.active) return;
+      try {
+        await holder.onPoolReplace(connection);
+      } catch {}
+    }));
   }
 
   private releaseRef(entry: PoolEntry): void {
@@ -195,14 +256,43 @@ export class RemoteConnectionPool {
   private async reap(entry: PoolEntry): Promise<void> {
     const connection = entry.connection;
     if (entry.dead || connection === undefined || connection.status !== 'ready') return;
+    // A connect or replace in flight is activity: skip this round.
+    if (entry.connectInflight !== undefined) {
+      this.rearmReap(entry);
+      return;
+    }
     for (const holder of entry.holders) {
       if (!holder.idle) return;
     }
+    // Two-phase vote: every holder drops its view of the connection and
+    // votes. A false vote means a lease landed in the reap window, so the
+    // connection survives — views already dropped rejoin it on their next
+    // connect, exactly like a first connect.
+    const voted = new Set(entry.holders);
+    const votes = await Promise.all([...voted].map(async (holder) => {
+      if (!holder.active) return true;
+      return holder.onPoolDestroy(connection).catch(() => false);
+    }));
+    // A holder that joined mid-vote never voted: invalidating now would
+    // strand its record on a dead entry. Holders that left mid-vote (their
+    // records released them) are fine — only additions abort the reap.
+    let joinedMidVote = false;
+    for (const holder of entry.holders) {
+      if (!voted.has(holder)) {
+        joinedMidVote = true;
+        break;
+      }
+    }
+    if (votes.includes(false) || entry.dead || entry.connection !== connection || joinedMidVote) {
+      this.rearmReap(entry);
+      return;
+    }
     this.invalidate(entry);
-    const holders = [...entry.holders];
+    // Every vote dropped its view: deactivate whatever did not release during
+    // the vote so later handle calls no-op, then tear the connection down.
+    for (const holder of entry.holders) holder.active = false;
     entry.holders.clear();
-    for (const holder of holders) holder.active = false;
-    await Promise.all(holders.map((holder) => holder.onPoolDestroy(connection).catch(() => {})));
+    entry.connection = undefined;
     await connection.dispose();
   }
 }
