@@ -25,6 +25,9 @@ const DEFAULT_STDERR_LIMIT = 64 * 1024;
 
 // Spawns program+args directly (never a shell string), pipes stdin/stdout,
 // captures a bounded stderr tail, never allocates a TTY, keeps stdin open.
+// options.env is the child's exact environment (undefined inherits the
+// host's); callers that must not leak the host environment build a scrubbed
+// set themselves (see commandLauncherEnv in launchers).
 export class ExecBridge implements BytePipe {
   private readonly dataListeners = new Set<(chunk: Uint8Array) => void>();
   private readonly endListeners = new Set<() => void>();
@@ -79,7 +82,7 @@ export class ExecBridge implements BytePipe {
   static spawn(options: ExecBridgeOptions): ExecBridge {
     const child = spawn(options.program, [...(options.args ?? [])], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: options.env === undefined ? undefined : { ...process.env, ...options.env },
+      env: options.env,
       windowsHide: true,
     });
     return new ExecBridge(child, options.stderrLimitBytes ?? DEFAULT_STDERR_LIMIT);

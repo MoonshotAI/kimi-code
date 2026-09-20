@@ -1347,7 +1347,7 @@ key = "${titleOAuthRef.key}"
       const patchSession = await viaPatch.harness.createSession({ workDir });
       // The default scope is global.
       await declareSession.declareEnvironment({ id: 'new-box', entry });
-      await viaPatch.harness.setConfig({ environments: { 'new-box': entry } } as never);
+      await viaPatch.harness.setConfig({ environments: { 'new-box': entry } });
       const [declareToml, patchToml] = await Promise.all([
         readFile(join(viaDeclare.homeDir, 'config.toml'), 'utf-8'),
         readFile(join(viaPatch.homeDir, 'config.toml'), 'utf-8'),
@@ -1379,6 +1379,27 @@ key = "${titleOAuthRef.key}"
         session.declareEnvironment({ id: 'fake-box', entry: { type: 'ssh', host: 'other-box' } }),
       ).rejects.toThrow(/already declared/);
       expect(await readFile(join(homeDir, 'config.toml'), 'utf-8')).toBe(before);
+      await session.close();
+    } finally {
+      await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('fails one of two concurrent global declares with the same id instead of silently overwriting', async () => {
+    const { harness, homeDir } = await makeEnvironmentHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    try {
+      const session = await harness.createSession({ workDir });
+      const outcomes = await Promise.allSettled([
+        session.declareEnvironment({ id: 'race-box', entry: { type: 'ssh', host: 'first-box' } }),
+        session.declareEnvironment({ id: 'race-box', entry: { type: 'ssh', host: 'second-box' } }),
+      ]);
+      expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1);
+      expect(outcomes.filter((outcome) => outcome.status === 'rejected')).toHaveLength(1);
+      const toml = await readFile(join(homeDir, 'config.toml'), 'utf-8');
+      expect(toml.split('[environments.race-box]').length - 1).toBe(1);
       await session.close();
     } finally {
       await harness.close();
@@ -1482,6 +1503,55 @@ key = "${titleOAuthRef.key}"
       ).rejects.toThrow(/Invalid TOML/);
       expect(await readFile(join(workDir, '.kimi-code', 'environments.toml'), 'utf-8')).toBe(before);
       await session.close();
+    } finally {
+      await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('rejects a project declare while the workspace is untrusted', async () => {
+    const { harness } = await makeEnvironmentHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    try {
+      const session = await harness.createSession({ workDir });
+      await expect(
+        session.declareEnvironment({
+          id: 'proj-box',
+          entry: { type: 'ssh', host: 'proj-box' },
+          scope: 'project',
+        }),
+      ).rejects.toThrow(/not trusted/);
+      await expect(readFile(join(workDir, '.kimi-code', 'environments.toml'), 'utf-8')).rejects.toThrow();
+
+      await harness.trustWorkspace(workDir);
+      await session.declareEnvironment({
+        id: 'proj-box',
+        entry: { type: 'ssh', host: 'proj-box' },
+        scope: 'project',
+      });
+      const toml = await readFile(join(workDir, '.kimi-code', 'environments.toml'), 'utf-8');
+      expect(toml).toContain('[proj-box]');
+      await session.close();
+    } finally {
+      await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('reads the [environments] section through getConfig and extends it through setConfig', async () => {
+    const { harness } = await makeEnvironmentHarness();
+    try {
+      const config = await harness.getConfig();
+      expect(config.environments?.['fake-box']).toMatchObject({
+        type: 'ssh',
+        host: 'fake-box',
+        defaultCwd: '/remote/work',
+      });
+      await harness.setConfig({ environments: { 'added-box': { type: 'ssh', host: 'added-box' } } });
+      const reread = await harness.getConfig({ reload: true });
+      expect(reread.environments?.['added-box']).toMatchObject({ type: 'ssh', host: 'added-box' });
+      expect(reread.environments?.['fake-box']).toMatchObject({ type: 'ssh', host: 'fake-box' });
     } finally {
       await harness.close();
       vi.unstubAllEnvs();

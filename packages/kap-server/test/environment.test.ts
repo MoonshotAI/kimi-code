@@ -367,14 +367,16 @@ describe('server-v2 /api/v1 environment routes', () => {
     it('rejects a duplicate project declare and an invalid entry payload', async () => {
       const wsDir = join(home as string, 'dup-ws');
       await mkdir(wsDir, { recursive: true });
-      const { id } = await createSessionWire(wsDir);
-      const first = await call<DeclaredWire>('POST', `/api/v1/sessions/${id}/environments`, {
+      const session = await createSessionWire(wsDir);
+      const trusted = await call('POST', `/api/v1/workspaces/${session.workspace_id}/trust`);
+      expect(trusted.body.code).toBe(0);
+      const first = await call<DeclaredWire>('POST', `/api/v1/sessions/${session.id}/environments`, {
         environment_id: 'proj-box',
         scope: 'project',
         entry: { type: 'ssh', host: 'proj-box' },
       });
       expect(first.body.code).toBe(0);
-      const duplicate = await call<null>('POST', `/api/v1/sessions/${id}/environments`, {
+      const duplicate = await call<null>('POST', `/api/v1/sessions/${session.id}/environments`, {
         environment_id: 'proj-box',
         scope: 'project',
         entry: { type: 'ssh', host: 'other-box' },
@@ -382,11 +384,34 @@ describe('server-v2 /api/v1 environment routes', () => {
       expect(duplicate.body.code).toBe(40001);
       expect(duplicate.body.msg).toContain('already declared');
 
-      const invalid = await call<null>('POST', `/api/v1/sessions/${id}/environments`, {
+      const invalid = await call<null>('POST', `/api/v1/sessions/${session.id}/environments`, {
         environment_id: 'no-host',
         entry: { type: 'ssh' },
       });
       expect(invalid.body.code).toBe(40001);
+    });
+
+    it('rejects a project declare while the workspace is untrusted', async () => {
+      const wsDir = join(home as string, 'untrusted-ws');
+      await mkdir(wsDir, { recursive: true });
+      const session = await createSessionWire(wsDir);
+      const declared = await call<null>('POST', `/api/v1/sessions/${session.id}/environments`, {
+        environment_id: 'proj-box',
+        scope: 'project',
+        entry: { type: 'ssh', host: 'proj-box' },
+      });
+      expect(declared.body.code).toBe(40001);
+      expect(declared.body.msg).toContain('not trusted');
+      expect(await readFile(join(wsDir, '.kimi-code', 'environments.toml'), 'utf-8').catch(() => undefined)).toBeUndefined();
+
+      const trusted = await call('POST', `/api/v1/workspaces/${session.workspace_id}/trust`);
+      expect(trusted.body.code).toBe(0);
+      const afterTrust = await call<DeclaredWire>('POST', `/api/v1/sessions/${session.id}/environments`, {
+        environment_id: 'proj-box',
+        scope: 'project',
+        entry: { type: 'ssh', host: 'proj-box' },
+      });
+      expect(afterTrust.body.code).toBe(0);
     });
   });
 });

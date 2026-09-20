@@ -69,4 +69,47 @@ api_key_env = "ACME_API_KEY"
     await expect(rpc.validateConfigToml({ text })).resolves.toBeUndefined();
     expect(parseConfigString(text).providers['acme']?.apiKeyEnv).toBe('ACME_API_KEY');
   });
+
+  it('keeps a valid [environments] section through parseConfigString', () => {
+    const text = `
+[environments.dev-box]
+type = "ssh"
+host = "dev-box"
+defaultCwd = "/remote/dev"
+idleTtlSeconds = 120
+
+[environments.sandbox]
+command = "bwrap"
+args = ["--unshare-all"]
+env = { SANDBOX_TOKEN = "x" }
+`;
+    const config = parseConfigString(text);
+    expect(config.environments?.['dev-box']).toEqual({
+      type: 'ssh',
+      host: 'dev-box',
+      defaultCwd: '/remote/dev',
+      idleTtlSeconds: 120,
+    });
+    expect(config.environments?.['sandbox']).toEqual({
+      command: 'bwrap',
+      args: ['--unshare-all'],
+      env: { SANDBOX_TOKEN: 'x' },
+    });
+  });
+
+  it('rejects an invalid [environments] entry through parseConfigString', () => {
+    expect(() =>
+      parseConfigString(`
+[environments.broken]
+type = "ssh"
+`),
+    ).toThrow(/Invalid configuration/);
+    expect(() =>
+      parseConfigString(`
+[environments.local]
+type = "ssh"
+host = "local"
+`),
+    ).toThrow(/Invalid configuration/);
+  });
 });
