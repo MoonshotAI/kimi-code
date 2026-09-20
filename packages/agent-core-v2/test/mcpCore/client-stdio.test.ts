@@ -588,6 +588,86 @@ describe('StdioMcpClient', () => {
     await new Promise((r) => setTimeout(r, 100));
     expect(closes).toEqual([]);
   }, 15000);
+
+  function createTrackingClient(
+    config: McpServerStdioConfig,
+  ): { client: StdioMcpClient; tracked: Array<{ sessionId?: string; disposed: boolean }> } {
+    const tracked: Array<{ sessionId?: string; disposed: boolean }> = [];
+    const environment = Object.assign(
+      new FakeEnvironment(
+        { workspaceId: 'workspace', environmentId: 'local', generation: 'test' },
+        { capabilities: ['process'] },
+      ),
+      { process: new HostProcessService() },
+    );
+    const track = <T extends { dispose(): void | Promise<void> }>(
+      resource: T,
+      sessionId?: string,
+    ): T => {
+      const entry = { sessionId, disposed: false };
+      tracked.push(entry);
+      return new Proxy(resource, {
+        get: (target, property) => {
+          if (property === 'dispose') {
+            return () => {
+              if (entry.disposed) return undefined;
+              entry.disposed = true;
+              return target.dispose();
+            };
+          }
+          return Reflect.get(target, property, target);
+        },
+      });
+    };
+    const client = new StdioMcpClient(config, {
+      environmentResolver: {
+        _serviceBrand: undefined,
+        inspect: () => environment,
+        acquire: () => ({ environment, track, dispose: () => {} }),
+        acquireWhenReady: async () => ({ environment, track, dispose: () => {} }),
+      },
+      workspaceId: 'workspace',
+      environmentId: 'local',
+      defaultCwd: process.cwd(),
+      sessionId: 's1',
+    });
+    return { client, tracked };
+  }
+
+  it('disposes tracked environment resources on close so idle reap is not delayed', async () => {
+    const { client, tracked } = createTrackingClient({
+      transport: 'stdio',
+      command: process.execPath,
+      args: [stdioFixture],
+    });
+    await client.connect();
+    expect(tracked).toHaveLength(2);
+    expect(tracked.every((entry) => entry.sessionId === 's1')).toBe(true);
+
+    await client.close();
+
+    expect(tracked.every((entry) => entry.disposed)).toBe(true);
+  }, 15000);
+
+  it('disposes tracked environment resources when the server exits mid-session', async () => {
+    const { client, tracked } = createTrackingClient({
+      transport: 'stdio',
+      command: process.execPath,
+      args: [crashAfterConnectFixture],
+      env: { KIMI_TEST_MCP_EXIT_AFTER_MS: '50' },
+    });
+    try {
+      await client.connect();
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline && !tracked.every((entry) => entry.disposed)) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      expect(tracked).toHaveLength(2);
+      expect(tracked.every((entry) => entry.disposed)).toBe(true);
+    } finally {
+      await client.close();
+    }
+  }, 15000);
 });
 
 describe('mergeStdioEnv', () => {

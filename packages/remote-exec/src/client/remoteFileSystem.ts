@@ -116,8 +116,23 @@ export class RemoteFileSystem implements IHostFileSystem {
   }
 
   async readBytes(path: string, n?: number, offset = 0): Promise<Uint8Array> {
-    const result = await this.readRange(path, offset, n);
-    return decodeBase64(result.dataBase64);
+    if (n !== undefined) {
+      const result = await this.readRange(path, offset, n);
+      return decodeBase64(result.dataBase64);
+    }
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for await (const chunk of this.readChunks(path, offset)) {
+      chunks.push(chunk);
+      total += chunk.byteLength;
+    }
+    const out = new Uint8Array(total);
+    let position = 0;
+    for (const chunk of chunks) {
+      out.set(chunk, position);
+      position += chunk.byteLength;
+    }
+    return out;
   }
 
   async writeBytes(path: string, data: Uint8Array): Promise<void> {
@@ -142,8 +157,7 @@ export class RemoteFileSystem implements IHostFileSystem {
     yield* readUtf8Lines(this.readChunks(path), errors);
   }
 
-  private async *readChunks(path: string): AsyncGenerator<Uint8Array> {
-    let offset = 0;
+  private async *readChunks(path: string, offset = 0): AsyncGenerator<Uint8Array> {
     for (;;) {
       const result = await this.readRange(path, offset, FS_READ_FILE_MAX_BYTES);
       if (result.dataBase64.length === 0) return;
