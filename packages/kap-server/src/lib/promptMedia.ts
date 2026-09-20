@@ -273,6 +273,7 @@ export interface PromptMediaPreparation {
   readonly content: WireContent;
   readonly attachments: readonly PromptFileAttachment[];
   readonly discard: () => Promise<void>;
+  readonly discardStaged: () => Promise<void>;
 }
 
 export async function resolvePromptMediaFiles(
@@ -289,6 +290,15 @@ export async function resolvePromptMediaFiles(
     await Promise.all(
       [...ownedFileIds].map((fileId) => store.delete(fileId).catch(() => undefined)),
     );
+  };
+  let stagedDiscarded = false;
+  const discardStaged = async (): Promise<void> => {
+    await discard();
+    if (stagedDiscarded) return;
+    stagedDiscarded = true;
+    if (attachmentsSink === undefined || stagedPaths.size === 0) return;
+    const sink = attachmentsSink;
+    await Promise.all([...stagedPaths].map((path) => sink.remove(path).catch(() => undefined)));
   };
   let changed = false;
   let originals:
@@ -624,13 +634,9 @@ export async function resolvePromptMediaFiles(
       });
       changed = true;
     }
-    return { content: changed ? content : input, attachments, discard };
+    return { content: changed ? content : input, attachments, discard, discardStaged };
   } catch (error) {
-    await discard();
-    if (attachmentsSink !== undefined && stagedPaths.size > 0) {
-      const sink = attachmentsSink;
-      await Promise.all([...stagedPaths].map((path) => sink.remove(path).catch(() => undefined)));
-    }
+    await discardStaged();
     throw error;
   }
 }

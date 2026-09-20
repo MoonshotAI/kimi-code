@@ -1658,6 +1658,28 @@ describe('server-v2 /api/v1 prompts', () => {
     }
   });
 
+  it('removes remotely staged attachments when prompt submission fails after staging', async () => {
+    const id = await createSession(home as string);
+    const remote = await bindRemoteEnvironment(id);
+    try {
+      const pdfBytes = Buffer.from('%PDF-1.4 fake pdf bytes');
+      const uploaded = await uploadFile(pdfBytes, 'application/pdf', 'report.pdf');
+
+      const submitted = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+        model: 'ghost',
+        content: [
+          { type: 'file', file_id: uploaded.id, name: 'report.pdf', media_type: 'application/pdf', size: pdfBytes.length },
+        ],
+      });
+      expect(submitted.body.code).not.toBe(0);
+
+      const attachmentsDir = join(remote.remoteTempDir, 'kimi-code', 'attachments');
+      await expect(readdir(attachmentsDir)).resolves.toEqual([]);
+    } finally {
+      await remote.dispose();
+    }
+  });
+
   it('persists an unsupported-format upload into the bound environment tempDir', async () => {
     const id = await createSession(home as string);
     const remote = await bindRemoteEnvironment(id);

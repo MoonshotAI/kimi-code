@@ -315,7 +315,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         requestLog(req)?.info({ session_id, skill_name: parsed.id }, 'skill activated');
         reply.send(okEnvelope({ activated: true, skill_name: parsed.id }, req.id));
       } catch (error) {
-        await preparedMedia?.discard();
+        await preparedMedia?.discardStaged();
         sendMappedError(reply, req.id, error);
       }
     },

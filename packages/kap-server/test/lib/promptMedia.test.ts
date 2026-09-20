@@ -261,6 +261,49 @@ describe('resolvePromptMediaFiles with an environment attachments target', () =>
     expect(fake.removed).toEqual([target]);
   });
 
+  it('discardStaged removes staged remote files after a successful preparation', async () => {
+    const data = patternedBytes(11);
+    const store = fakeFileStore(
+      new Map([['f_ok', { meta: meta('f_ok', 'ok.txt', data.byteLength), chunks: [data] }]]),
+    );
+    const fake = fakeEnvironmentFs();
+    const target = '/remote/tmp/kimi-code/attachments/f_ok-ok.txt';
+    const result = await resolvePromptMediaFiles(
+      [
+        { type: 'file', file_id: 'f_ok', name: 'ok.txt', media_type: 'text/plain', size: data.byteLength },
+      ],
+      store,
+      '/cache',
+      { resolveAttachmentsTarget: async () => targetFor(fake.fs) },
+    );
+    expectStoredBytes(fake.files, target, data);
+    await result.discardStaged();
+    expect(fake.files.size).toBe(0);
+    expect(fake.removed).toEqual([target]);
+    await result.discardStaged();
+    expect(fake.removed).toEqual([target]);
+  });
+
+  it('discard alone leaves staged remote files in place', async () => {
+    const data = patternedBytes(11);
+    const store = fakeFileStore(
+      new Map([['f_ok', { meta: meta('f_ok', 'ok.txt', data.byteLength), chunks: [data] }]]),
+    );
+    const fake = fakeEnvironmentFs();
+    const target = '/remote/tmp/kimi-code/attachments/f_ok-ok.txt';
+    const result = await resolvePromptMediaFiles(
+      [
+        { type: 'file', file_id: 'f_ok', name: 'ok.txt', media_type: 'text/plain', size: data.byteLength },
+      ],
+      store,
+      '/cache',
+      { resolveAttachmentsTarget: async () => targetFor(fake.fs) },
+    );
+    await result.discard();
+    expect(fake.removed).toEqual([]);
+    expectStoredBytes(fake.files, target, data);
+  });
+
   it('keeps a pre-existing staged file the failing call did not write', async () => {
     const data = patternedBytes(13);
     const store = fakeFileStore(
