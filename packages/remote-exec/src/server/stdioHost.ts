@@ -18,6 +18,8 @@ import {
   INITIALIZED_METHOD,
   MAX_IN_FLIGHT_CALLS,
   MAX_PENDING_SEND_BYTES,
+  PROCESS_FLOW_CAPABILITY,
+  PROCESS_FLOW_METHOD,
   PROCESS_RESIZE_METHOD,
   PROCESS_SIGNAL_METHOD,
   PROCESS_TERMINATE_METHOD,
@@ -246,6 +248,10 @@ export class StdioHost {
         this.state = 'ready';
         return;
       }
+      if (message.method === PROCESS_FLOW_METHOD && this.state === 'ready') {
+        this.onProcessFlow(message.params);
+        return;
+      }
       this.violation(new ProtocolViolationError(`unexpected notification ${message.method}`));
       return;
     }
@@ -267,10 +273,19 @@ export class StdioHost {
     const result: InitializeResult = {
       executorVersion: this.options.version,
       environment: this.options.environment,
-      capabilities: this.options.capabilities ?? {},
+      capabilities: { [PROCESS_FLOW_CAPABILITY]: true, ...this.options.capabilities },
     };
     this.respond(message.id, result, 'control');
     this.state = 'awaiting-initialized';
+  }
+
+  private onProcessFlow(params: unknown): void {
+    // A malformed flow frame is dropped, not faulted: it only widens the
+    // consumer's buffer, same as a peer that never pauses.
+    if (params === null || typeof params !== 'object') return;
+    const record = params as Record<string, unknown>;
+    if (typeof record['processId'] !== 'string' || typeof record['paused'] !== 'boolean') return;
+    this.processManager.setClientPaused(record['processId'], record['paused']);
   }
 
   private onRequest(message: JsonRpcRequest): void {

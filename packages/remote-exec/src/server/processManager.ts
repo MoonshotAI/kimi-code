@@ -54,6 +54,7 @@ interface ManagedProcess {
   pty: IPty | undefined;
   stdinOpen: boolean;
   terminateAfterStart: boolean;
+  clientPaused: boolean;
   nextSeq: number;
   readonly retained: RetainedChunk[];
   retainedBytes: number;
@@ -73,6 +74,9 @@ export interface ProcessManagerHost {
 
 const EMPTY: Record<string, never> = {};
 
+const TERMINATED_ID_CACHE_SIZE = 4096;
+const EXITED_GROUP_CACHE_SIZE = 4096;
+
 function rememberWriteId(writeIds: AcceptedWriteIds, writeId: string): void {
   if (writeIds.ids.has(writeId)) return;
   writeIds.ids.add(writeId);
@@ -84,8 +88,28 @@ function rememberWriteId(writeIds: AcceptedWriteIds, writeId: string): void {
   }
 }
 
+// Sets iterate in insertion order, so evicting the first entry keeps the
+// registry bounded at capacity (same idiom as the client's expiredIds).
+function rememberBounded<T>(set: Set<T>, value: T, capacity: number): void {
+  if (set.has(value)) return;
+  set.add(value);
+  while (set.size > capacity) {
+    const oldest = set.values().next();
+    if (oldest.done) break;
+    set.delete(oldest.value);
+  }
+}
+
 export class ProcessManager {
   private readonly processes = new Map<string, ManagedProcess>();
+  // Ids terminated before their start ran (a cancel can overtake a queued
+  // start because terminate rides the control lane): the late start is
+  // refused instead of spawning an orphan without a handle.
+  private readonly terminatedIds = new Set<string>();
+  // Process-group ids (leader pids) whose entries aged out of the map after
+  // exit. Detached descendants keep the leader's pgid, so terminateAll must
+  // still target these groups or daemonized children escape the shutdown.
+  private readonly exitedGroupLeaders = new Set<number>();
   private outputPaused = false;
   private disposed = false;
 
@@ -140,6 +164,14 @@ export class ProcessManager {
     if (this.processes.has(processId)) {
       throw new RpcError(RpcErrorCode.InvalidRequest, `duplicate process id ${processId}`);
     }
+    // From here to processes.set there is no await, so a terminate can only
+    // have run before this check (recorded above) or after the entry exists.
+    if (this.terminatedIds.delete(processId)) {
+      throw new RpcError(
+        RpcErrorCode.InvalidRequest,
+        `process id ${processId} was terminated before it started`,
+      );
+    }
 
     const entry: ManagedProcess = {
       processId,
@@ -151,6 +183,7 @@ export class ProcessManager {
       pty: undefined,
       stdinOpen: tty || pipeStdin,
       terminateAfterStart: false,
+      clientPaused: false,
       nextSeq: 1,
       retained: [],
       retainedBytes: 0,
@@ -214,7 +247,7 @@ export class ProcessManager {
     }
     entry.pty = pty;
     entry.pid = pty.pid;
-    if (this.outputPaused) pty.pause();
+    this.applyOutputPause(entry);
     pty.onData((data) => {
       this.pump(entry, 'pty', Buffer.from(data, 'utf8'));
     });
@@ -242,12 +275,9 @@ export class ProcessManager {
     });
     entry.child = child;
     entry.pid = child.pid ?? -1;
+    this.applyOutputPause(entry);
     const stdout = child.stdout!;
     const stderr = child.stderr!;
-    if (this.outputPaused) {
-      stdout.pause();
-      stderr.pause();
-    }
     stdout.on('data', (chunk: Buffer) => {
       this.pump(entry, 'stdout', chunk);
     });
@@ -334,6 +364,9 @@ export class ProcessManager {
     this.maybeClose(entry);
     entry.removalTimer = setTimeout(() => {
       this.processes.delete(entry.processId);
+      if (entry.pid > 0) {
+        rememberBounded(this.exitedGroupLeaders, entry.pid, EXITED_GROUP_CACHE_SIZE);
+      }
       this.wake(entry);
     }, this.tuning.exitedRetentionMs ?? PROCESS_EXITED_RETENTION_MS);
     entry.removalTimer.unref?.();
@@ -531,6 +564,10 @@ export class ProcessManager {
     const processId = requireString(params, 'processId');
     const entry = this.processes.get(processId);
     if (entry === undefined) {
+      // The start may not have run yet (terminate overtook it on the control
+      // lane): remember the id so the late start is refused instead of
+      // spawning an unmanaged orphan.
+      rememberBounded(this.terminatedIds, processId, TERMINATED_ID_CACHE_SIZE);
       return { running: false };
     }
     if (entry.state !== 'running') {
@@ -601,25 +638,46 @@ export class ProcessManager {
     }
   }
 
+  private killOrphanedGroup(pgid: number, signal: NodeJS.Signals): void {
+    try {
+      process.kill(-pgid, signal);
+    } catch {
+      // Best-effort: the group is gone (ESRCH) or no longer ours (EPERM).
+    }
+  }
+
   setOutputPaused(paused: boolean): void {
     this.outputPaused = paused;
     for (const entry of this.processes.values()) {
-      if (entry.state !== 'running') continue;
-      if (entry.pty !== undefined) {
-        if (paused) entry.pty.pause();
-        else entry.pty.resume();
-      } else if (entry.child !== undefined) {
-        const stdout = entry.child.stdout;
-        const stderr = entry.child.stderr;
-        if (stdout !== null && stdout !== undefined) {
-          if (paused) stdout.pause();
-          else stdout.resume();
-        }
-        if (stderr !== null && stderr !== undefined) {
-          if (paused) stderr.pause();
-          else stderr.resume();
-        }
-      }
+      this.applyOutputPause(entry);
+    }
+  }
+
+  setClientPaused(processId: string, paused: boolean): void {
+    const entry = this.processes.get(processId);
+    if (entry === undefined || entry.clientPaused === paused) return;
+    entry.clientPaused = paused;
+    this.applyOutputPause(entry);
+  }
+
+  private applyOutputPause(entry: ManagedProcess): void {
+    const paused = this.outputPaused || entry.clientPaused;
+    if (entry.pty !== undefined) {
+      if (paused) entry.pty.pause();
+      else entry.pty.resume();
+      return;
+    }
+    const child = entry.child;
+    if (child === undefined) return;
+    const stdout = child.stdout;
+    const stderr = child.stderr;
+    if (stdout !== null && stdout !== undefined) {
+      if (paused) stdout.pause();
+      else stdout.resume();
+    }
+    if (stderr !== null && stderr !== undefined) {
+      if (paused) stderr.pause();
+      else stderr.resume();
     }
   }
 
@@ -631,6 +689,13 @@ export class ProcessManager {
         this.killGroup(entry, 'SIGTERM');
       } catch {
       }
+    }
+    // Groups whose leader exited and aged out of the map: detached descendants
+    // still carry the leader's pgid and would otherwise survive the shutdown.
+    const orphanedGroups = [...this.exitedGroupLeaders];
+    this.exitedGroupLeaders.clear();
+    for (const pgid of orphanedGroups) {
+      this.killOrphanedGroup(pgid, 'SIGTERM');
     }
     if (entries.some((entry) => entry.exitCode === null)) {
       const deadline = Date.now() + (this.tuning.terminateEscalationMs ?? 1_000);
@@ -647,6 +712,9 @@ export class ProcessManager {
       } catch {
       }
     }
+    for (const pgid of orphanedGroups) {
+      this.killOrphanedGroup(pgid, 'SIGKILL');
+    }
     this.dispose();
   }
 
@@ -660,5 +728,7 @@ export class ProcessManager {
       this.breakStdin(entry);
     }
     this.processes.clear();
+    this.terminatedIds.clear();
+    this.exitedGroupLeaders.clear();
   }
 }

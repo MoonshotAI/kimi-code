@@ -8,8 +8,13 @@ import { HostFsError } from '@moonshot-ai/agent-core-v2/os/interface/hostFsError
 
 import type { RemoteExecConnection } from '../src/client/connection';
 import { RemoteFileSystem } from '../src/client/remoteFileSystem';
-import { FS_READ_FILE_WHOLE_MAX_BYTES } from '../src/protocol/methods';
-import { connectSubprocess, type SpawnedExecutor } from './helpers/loopback';
+import { FS_READ_DIRECTORY_MAX_ENTRIES, FS_READ_FILE_WHOLE_MAX_BYTES } from '../src/protocol/methods';
+import {
+  connectSubprocess,
+  createInProcessLoopback,
+  RawClient,
+  type SpawnedExecutor,
+} from './helpers/loopback';
 
 describe('fs group over a subprocess loopback', () => {
   let connection: RemoteExecConnection;
@@ -169,4 +174,79 @@ describe('fs group over a subprocess loopback', () => {
     await expect(fs.readdir(file)).rejects.toMatchObject({ code: 'os.fs.not_directory' });
     await expect(fs.readText(workDir)).rejects.toMatchObject({ code: 'os.fs.is_directory' });
   });
+
+  it('writes files larger than the frame cap in bounded chunks', async () => {
+    const path = join(workDir, 'huge.bin');
+    // base64 of 49MiB would exceed the 64MiB frame cap as a single write.
+    const size = 49 * 1024 * 1024;
+    const data = new Uint8Array(size);
+    for (let i = 0; i < size; i += 1) data[i] = i % 251;
+    await fs.writeBytes(path, data);
+
+    const read = await fs.readBytes(path);
+    expect(read.byteLength).toBe(size);
+    expect(Buffer.from(read).equals(Buffer.from(data))).toBe(true);
+  }, 60_000);
+
+  it('chunks a large appendBytes onto existing content', async () => {
+    const path = join(workDir, 'chunked-append.bin');
+    const first = new Uint8Array(1024 * 1024).map((_, index) => index % 253);
+    const second = new Uint8Array(2 * 1024 * 1024 + 7).map((_, index) => index % 251);
+    await fs.writeBytes(path, first);
+    await fs.appendBytes(path, second);
+
+    const read = await fs.readBytes(path);
+    expect(read.byteLength).toBe(first.byteLength + second.byteLength);
+    expect(Buffer.from(read.subarray(0, first.byteLength)).equals(Buffer.from(first))).toBe(true);
+    expect(Buffer.from(read.subarray(first.byteLength)).equals(Buffer.from(second))).toBe(true);
+  }, 30_000);
+
+  it('creates exclusively with a payload larger than a chunk', async () => {
+    const path = join(workDir, 'chunked-exclusive.bin');
+    const data = new Uint8Array(2 * 1024 * 1024 + 3).map((_, index) => index % 249);
+    await expect(fs.createExclusive(path, data)).resolves.toBe(true);
+    await expect(fs.createExclusive(path, new Uint8Array([1]))).resolves.toBe(false);
+    await expect(fs.readBytes(path)).resolves.toEqual(data);
+  }, 30_000);
+});
+
+describe('fs protocol semantics', () => {
+  it('marks readdir results that exceed the entry cap as truncated', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'remote-exec-readdir-cap-'));
+    const smallDir = await mkdtemp(join(tmpdir(), 'remote-exec-readdir-small-'));
+    try {
+      const total = FS_READ_DIRECTORY_MAX_ENTRIES + 1;
+      for (let start = 0; start < total; start += 1000) {
+        await Promise.all(
+          Array.from({ length: Math.min(1000, total - start) }, (_, index) =>
+            writeFile(join(dir, `entry-${String(start + index).padStart(6, '0')}`), ''),
+          ),
+        );
+      }
+      await writeFile(join(smallDir, 'a'), '');
+      const loopback = createInProcessLoopback();
+      const raw = new RawClient(loopback);
+      await raw.handshake();
+      raw.send({ id: 1, method: 'fs/readDirectory', params: { path: dir } });
+      const capped = (await raw.nextResponse(1, 30_000))['result'] as {
+        entries: unknown[];
+        truncated: boolean;
+      };
+      expect(capped.entries.length).toBe(FS_READ_DIRECTORY_MAX_ENTRIES);
+      expect(capped.truncated).toBe(true);
+
+      raw.send({ id: 2, method: 'fs/readDirectory', params: { path: smallDir } });
+      const complete = (await raw.nextResponse(2, 30_000))['result'] as {
+        entries: unknown[];
+        truncated: boolean;
+      };
+      expect(complete.entries.length).toBe(1);
+      expect(complete.truncated).toBe(false);
+      loopback.clientInput.end();
+      await loopback.host.done;
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+      await rm(smallDir, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

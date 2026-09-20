@@ -7,7 +7,7 @@ import { PassThrough } from 'node:stream';
 import type { BytePipe, ExecBridge } from '../../src/client/execBridge';
 import { RemoteExecConnection, type ConnectOptions } from '../../src/client/connection';
 import { LineFrameDecoder } from '../../src/protocol/codec';
-import type { RemoteEnvironmentInfo } from '../../src/protocol/methods';
+import type { InitializeResult, RemoteEnvironmentInfo } from '../../src/protocol/methods';
 import { StdioHost, type StdioHostTuning } from '../../src/server/stdioHost';
 
 export const TEST_VERSION = '9.9.9-test';
@@ -23,6 +23,47 @@ export const TEST_ENVIRONMENT: RemoteEnvironmentInfo = {
   cwd: '/tmp',
   tempDir: '/tmp',
 };
+
+export type ScriptedFrame = { id?: number; method?: string; params?: unknown };
+
+// A minimal server-end pipe scripted per test: each inbound frame is handed to
+// onFrame, which decides whether (and when) to reply — letting tests stall
+// specific methods after a good handshake.
+export function createScriptedServer(
+  onFrame: (frame: ScriptedFrame, reply: (value: unknown) => void) => void,
+): BytePipe {
+  const clientToServer = new PassThrough();
+  const serverToClient = new PassThrough();
+  const decoder = new LineFrameDecoder();
+  clientToServer.on('data', (chunk: Buffer) => {
+    for (const frame of decoder.push(chunk)) {
+      onFrame(frame as ScriptedFrame, (value) => {
+        serverToClient.write(`${JSON.stringify(value)}\n`);
+      });
+    }
+  });
+  return {
+    write: (chunk) => {
+      clientToServer.write(chunk);
+    },
+    end: () => {
+      clientToServer.end();
+    },
+    onData: (listener) => {
+      serverToClient.on('data', listener);
+    },
+    onEnd: (listener) => {
+      serverToClient.on('end', listener);
+    },
+    onError: (listener) => {
+      serverToClient.on('error', listener);
+    },
+  };
+}
+
+export function testInitializeResult(): InitializeResult {
+  return { executorVersion: TEST_VERSION, environment: TEST_ENVIRONMENT, capabilities: {} };
+}
 
 export interface InProcessLoopback {
   readonly host: StdioHost;

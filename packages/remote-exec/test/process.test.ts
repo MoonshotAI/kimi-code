@@ -3,13 +3,26 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it, beforeAll, afterAll } from 'vitest';
+import { describe, expect, it, beforeAll, afterAll, vi } from 'vitest';
 
 import { HostProcessError } from '@moonshot-ai/agent-core-v2/os/interface/hostProcess';
 
-import type { RemoteExecConnection } from '../src/client/connection';
+import { RemoteExecConnection } from '../src/client/connection';
 import { RemoteProcessService } from '../src/client/remoteProcess';
-import { connectSubprocess, type SpawnedExecutor } from './helpers/loopback';
+import {
+  INITIALIZE_METHOD,
+  PROCESS_FLOW_METHOD,
+  PROCESS_OUTPUT_METHOD,
+  PROCESS_START_METHOD,
+} from '../src/protocol/methods';
+import {
+  connectInProcess,
+  connectSubprocess,
+  createScriptedServer,
+  testInitializeResult,
+  type ScriptedFrame,
+  type SpawnedExecutor,
+} from './helpers/loopback';
 
 function isAlive(pid: number): boolean {
   try {
@@ -173,6 +186,9 @@ describe('process group over a subprocess loopback', () => {
 
   it('handles a slow producer on stdin', async () => {
     const proc = await processes.spawn('cat', []);
+    // Read stdout concurrently: with end-to-end backpressure the echoed
+    // output would otherwise fill the bounded buffer and park the writes.
+    const collecting = collect(proc.stdout);
     const chunk = Buffer.alloc(4096, 0x61);
     const writes = 64;
     for (let i = 0; i < writes; i += 1) {
@@ -185,7 +201,7 @@ describe('process group over a subprocess loopback', () => {
       await delay(5);
     }
     proc.stdin.end();
-    const [out, code] = await Promise.all([collect(proc.stdout), proc.wait()]);
+    const [out, code] = await Promise.all([collecting, proc.wait()]);
     expect(code).toBe(0);
     expect(out.length).toBe(4096 * writes);
   });
@@ -273,5 +289,111 @@ describe('process group over a subprocess loopback', () => {
     spawned.bridge.close();
     await spawned.bridge.exited;
     await waitForDeath(proc.pid);
+  }, 15_000);
+});
+
+describe('process output backpressure', () => {
+  it('bounds an unread flood and resumes losslessly once the consumer catches up', async () => {
+    const { connection, loopback } = await connectInProcess();
+    const processes = new RemoteProcessService(connection, '/tmp', '/bin/bash');
+    const proc = await processes.spawn('yes', []);
+    // Nobody reads: the buffer fills once, then the executor pauses the
+    // child's stdout and the flood stops instead of growing without limit.
+    await delay(500);
+    const first = proc.stdout.readableLength;
+    await delay(400);
+    const second = proc.stdout.readableLength;
+    expect(first).toBeGreaterThan(0);
+    expect(second).toBe(first);
+    expect(second).toBeLessThan(1024 * 1024);
+
+    const collected: Buffer[] = [];
+    proc.stdout.on('data', (chunk: Buffer) => {
+      collected.push(chunk);
+    });
+    await delay(250);
+    await proc.kill('SIGKILL');
+    await proc.wait();
+    connection.close();
+    await loopback.host.done;
+    const text = Buffer.concat(collected).toString();
+    expect(text.length).toBeGreaterThan(second);
+    expect(text).toBe('y\n'.repeat(text.length / 2));
+  }, 15_000);
+
+  it('does not send process/flow to an executor that does not advertise it', async () => {
+    const seen: ScriptedFrame[] = [];
+    let notify: (value: unknown) => void = () => {};
+    const pipe = createScriptedServer((frame, reply) => {
+      if (frame.method === INITIALIZE_METHOD) {
+        // capabilities: {} — a pre-flow-control executor.
+        reply({ id: frame.id, result: testInitializeResult() });
+        return;
+      }
+      if (frame.method === 'initialized') {
+        notify = (value) => {
+          reply(value);
+        };
+        return;
+      }
+      seen.push(frame);
+      if (frame.method === PROCESS_START_METHOD) {
+        const processId = (frame.params as { processId: string }).processId;
+        reply({ id: frame.id, result: { processId, pid: 4321 } });
+        setTimeout(() => {
+          const chunkBase64 = Buffer.alloc(64 * 1024, 0x61).toString('base64');
+          for (let seq = 1; seq <= 8; seq += 1) {
+            notify({
+              method: PROCESS_OUTPUT_METHOD,
+              params: { processId, seq, stream: 'stdout', chunkBase64 },
+            });
+          }
+        }, 50);
+      }
+    });
+    const connection = await RemoteExecConnection.connect(pipe, {
+      clientName: 'test',
+      clientVersion: '0.0.0',
+    });
+    const processes = new RemoteProcessService(connection, '/tmp', '/bin/bash');
+    const proc = await processes.spawn('yes', []);
+    await vi.waitFor(() => {
+      expect(proc.stdout.readableLength).toBeGreaterThan(0);
+    });
+    await delay(300);
+    expect(seen.some((frame) => frame.method === PROCESS_FLOW_METHOD)).toBe(false);
+    expect(connection.closed).toBe(false);
+    connection.close();
+  });
+});
+
+describe('stdin write chain recovery', () => {
+  it('retries a timed-out write with the same writeId and keeps later writes flowing', async () => {
+    const { connection, loopback } = await connectInProcess({
+      connect: { requestCallTimeoutMs: 400 },
+    });
+    const processes = new RemoteProcessService(connection, '/tmp', '/bin/bash');
+    const proc = await processes.spawn('sleep', ['300']);
+    // A 1MiB write parks server-side (sleep never reads) and times out
+    // client-side; the replay with the same writeId is deduped to accepted.
+    const chunk = Buffer.alloc(1024 * 1024, 0x61);
+    const firstError = await new Promise<Error | null>((resolve) => {
+      proc.stdin.write(chunk, (error) => {
+        resolve(error ?? null);
+      });
+    });
+    expect(firstError).toBeNull();
+    // The chain recovered: a later write completes instead of being rejected
+    // by the poisoned queue.
+    const secondError = await new Promise<Error | null>((resolve) => {
+      proc.stdin.write(Buffer.from('x'), (error) => {
+        resolve(error ?? null);
+      });
+    });
+    expect(secondError).toBeNull();
+    await proc.kill('SIGKILL');
+    await proc.wait();
+    connection.close();
+    await loopback.host.done;
   }, 15_000);
 });
