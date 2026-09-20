@@ -63,28 +63,40 @@ interface EnvironmentClientHarness {
   readonly client: StdioMcpClient;
   readonly calls: string[];
   readonly spawnEnvs: Array<Record<string, string> | undefined>;
+  readonly spawnCwds: Array<string | undefined>;
   readonly connectCalls: () => number;
 }
 
 function createEnvironmentClient(
   config: McpServerStdioConfig,
-  options: { environmentId?: string; status?: EnvironmentStatus } = {},
+  options: {
+    environmentId?: string;
+    status?: EnvironmentStatus;
+    host?: Partial<FakeEnvironment['host']>;
+    defaultCwd?: string;
+  } = {},
 ): EnvironmentClientHarness {
   const environmentId = options.environmentId ?? 'local';
   const calls: string[] = [];
   const spawnEnvs: Array<Record<string, string> | undefined> = [];
+  const spawnCwds: Array<string | undefined> = [];
   let connectCalls = 0;
   const hostProcess = new HostProcessService();
   const recordingProcess: IHostProcessService = {
     _serviceBrand: undefined,
     spawn: (command, args, spawnOptions) => {
       spawnEnvs.push(spawnOptions?.env);
+      spawnCwds.push(spawnOptions?.cwd);
       return hostProcess.spawn(command, args, spawnOptions);
     },
   };
   const environment = new FakeEnvironment(
     { workspaceId: 'workspace', environmentId, generation: 'test' },
-    { capabilities: ['process'], status: options.status ?? 'ready' },
+    {
+      capabilities: ['process'],
+      status: options.status ?? 'ready',
+      host: options.host ?? { homeDir: process.cwd() },
+    },
   );
   Object.assign(environment, {
     process: recordingProcess,
@@ -123,9 +135,9 @@ function createEnvironmentClient(
     environmentResolver,
     workspaceId: 'workspace',
     environmentId,
-    defaultCwd: process.cwd(),
+    defaultCwd: options.defaultCwd ?? process.cwd(),
   });
-  return { client, calls, spawnEnvs, connectCalls: () => connectCalls };
+  return { client, calls, spawnEnvs, spawnCwds, connectCalls: () => connectCalls };
 }
 
 function isPostCloseTransportError(error: unknown): boolean {
@@ -302,6 +314,84 @@ describe('StdioMcpClient', () => {
       await client.close();
       await rm(defaultCwd, { recursive: true, force: true });
       await rm(outsideCwd, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it('roots a remote server at the target environment cwd instead of defaultCwd', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'kimi-mcp-remote-cwd-'));
+    const remoteCwd = join(base, 'target');
+    const remoteHome = join(base, 'remote-home');
+    const carrierCwd = join(base, 'carrier');
+    mkdirSync(remoteCwd);
+    mkdirSync(remoteHome);
+    mkdirSync(carrierCwd);
+    const harness = createEnvironmentClient(
+      { transport: 'stdio', command: process.execPath, args: [cwdStdioFixture] },
+      {
+        environmentId: 'dev-box',
+        host: { homeDir: remoteHome, cwd: remoteCwd },
+        defaultCwd: carrierCwd,
+      },
+    );
+    try {
+      await harness.client.connect();
+      const result = await harness.client.callTool('get_cwd', {});
+      const text = (result.content[0] as { type: 'text'; text: string }).text;
+      expect(realpathSync(text)).toBe(realpathSync(remoteCwd));
+      expect(harness.spawnCwds).toEqual([remoteCwd]);
+    } finally {
+      await harness.client.close();
+      await rm(base, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it('falls back to the remote home directory when the target reports no cwd', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'kimi-mcp-remote-home-'));
+    const remoteHome = join(base, 'remote-home');
+    const carrierCwd = join(base, 'carrier');
+    mkdirSync(remoteHome);
+    mkdirSync(carrierCwd);
+    const harness = createEnvironmentClient(
+      { transport: 'stdio', command: process.execPath, args: [cwdStdioFixture] },
+      { environmentId: 'dev-box', host: { homeDir: remoteHome }, defaultCwd: carrierCwd },
+    );
+    try {
+      await harness.client.connect();
+      const result = await harness.client.callTool('get_cwd', {});
+      const text = (result.content[0] as { type: 'text'; text: string }).text;
+      expect(realpathSync(text)).toBe(realpathSync(remoteHome));
+      expect(harness.spawnCwds).toEqual([remoteHome]);
+    } finally {
+      await harness.client.close();
+      await rm(base, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it('honors an explicit config.cwd on a remote environment', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'kimi-mcp-remote-explicit-'));
+    const remoteCwd = join(base, 'target');
+    const explicitCwd = join(base, 'explicit');
+    const carrierCwd = join(base, 'carrier');
+    mkdirSync(remoteCwd);
+    mkdirSync(explicitCwd);
+    mkdirSync(carrierCwd);
+    const harness = createEnvironmentClient(
+      { transport: 'stdio', command: process.execPath, args: [cwdStdioFixture], cwd: explicitCwd },
+      {
+        environmentId: 'dev-box',
+        host: { homeDir: join(base, 'remote-home'), cwd: remoteCwd },
+        defaultCwd: carrierCwd,
+      },
+    );
+    try {
+      await harness.client.connect();
+      const result = await harness.client.callTool('get_cwd', {});
+      const text = (result.content[0] as { type: 'text'; text: string }).text;
+      expect(realpathSync(text)).toBe(realpathSync(explicitCwd));
+      expect(harness.spawnCwds).toEqual([explicitCwd]);
+    } finally {
+      await harness.client.close();
+      await rm(base, { recursive: true, force: true });
     }
   }, 15000);
 

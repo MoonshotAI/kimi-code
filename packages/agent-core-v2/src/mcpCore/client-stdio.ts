@@ -190,7 +190,9 @@ class EnvironmentStdioTransport implements Transport {
     this.lease = lease;
     try {
       const base = lease.environment.path.resolve(
-        this.options.defaultCwd ?? lease.environment.host.homeDir,
+        this.options.environmentId === LOCAL_ENVIRONMENT_ID
+          ? this.options.defaultCwd ?? lease.environment.host.homeDir
+          : lease.environment.host.cwd ?? lease.environment.host.homeDir,
       );
       const cwd =
         this.config.cwd === undefined
